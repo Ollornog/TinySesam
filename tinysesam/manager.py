@@ -316,6 +316,29 @@ class TinySesam:
         from .router import build_router
         return build_router(self)
 
+    def admin_router(self):
+        """Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port
+        montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel."""
+        from .admin import build_admin_router
+        return build_admin_router(self)
+
+    def is_secure(self, request: Request) -> bool:
+        """HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost)."""
+        if request.url.scheme == "https":
+            return True
+        if request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https":
+            return True
+        host = request.client.host if request.client else ""
+        return host in ("127.0.0.1", "::1", "localhost")
+
+    def install_https(self, app):
+        """HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' →
+        läuft auch OHNE Zertifikat (bei 'warn' Panel-Hinweis). Gibt den Modus zurück."""
+        if self.cfg.https_mode == "force":
+            from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+            app.add_middleware(HTTPSRedirectMiddleware)
+        return self.cfg.https_mode
+
     def _deny(self, request: Request):
         # HTML-Browser → Redirect zum Login; sonst (API/JSON) → 401
         if "text/html" in request.headers.get("accept", ""):

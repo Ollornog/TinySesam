@@ -1,15 +1,24 @@
-"""Admin-Panel (nur Admins): Benutzer + Service-Accounts, API-Keys, Sitzungen, Härtung,
-Update, Audit. UI unter /auth/admin, JSON-API unter /auth/admin/api/*. Alles guard-geschützt.
-Sperren statt löschen: User werden deaktiviert, Keys/Sitzungen widerrufen."""
+"""Admin-Panel als eigenständiger, montierbarer Router.
+
+    auth.admin_router()                                       # APIRouter, RELATIVE Pfade
+    app.include_router(auth.admin_router(), prefix="/admin")  # frei wählbarer Pfad
+    # oder auf Sub-App / eigenem Port / Subdomain mounten (Host-Routing der App)
+
+Standardmäßig mountet `auth.router()` es zusätzlich unter `config.admin_path` (Default /auth/admin).
+`admin_ui_enabled=False` → nur die JSON-API (`/api/*`), damit die UI in ein bestehendes Panel
+eingebettet werden kann. Die eingebaute UI ermittelt ihre Basis-URL selbst → läuft an jedem
+Mountpunkt. Nur Admins.
+"""
 from __future__ import annotations
 import json
 
-from fastapi import Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import HTMLResponse
 
 
-def register_admin_routes(router, auth):
+def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
+    ar = APIRouter(tags=["admin"])
 
     def guard(request: Request):
         u = auth.current_user(request)
@@ -29,12 +38,12 @@ def register_admin_routes(router, auth):
                 "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
 
     # ---------- Benutzer / Service-Accounts ----------
-    @router.get("/auth/admin/api/users")
+    @ar.get("/api/users")
     def users(request: Request):
         guard(request)
         return [uview(u) for u in auth.store.list_users()]
 
-    @router.post("/auth/admin/api/users")
+    @ar.post("/api/users")
     async def user_create(request: Request):
         guard(request)
         b = await request.json()
@@ -53,7 +62,7 @@ def register_admin_routes(router, auth):
         auth.audit("user_create", detail=f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
-    @router.post("/auth/admin/api/users/{uid}/disable")
+    @ar.post("/api/users/{uid}/disable")
     async def user_disable(request: Request, uid: int):
         me = guard(request)
         b = await request.json()
@@ -62,11 +71,11 @@ def register_admin_routes(router, auth):
             raise HTTPException(400, "sich selbst nicht sperren")
         auth.store.set_disabled(uid, disabled)
         if disabled:
-            auth.store.delete_user_sessions(uid)   # aktive Sitzungen sofort beenden
+            auth.store.delete_user_sessions(uid)
         auth.audit("user_disable" if disabled else "user_enable", detail=f"uid={uid}")
         return {"ok": True}
 
-    @router.post("/auth/admin/api/users/{uid}/password")
+    @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
         guard(request)
         b = await request.json()
@@ -76,7 +85,7 @@ def register_admin_routes(router, auth):
         auth.audit("user_password_reset", detail=f"uid={uid}")
         return {"ok": True}
 
-    @router.post("/auth/admin/api/users/{uid}/roles")
+    @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
         guard(request)
         b = await request.json()
@@ -87,35 +96,33 @@ def register_admin_routes(router, auth):
         return {"ok": True}
 
     # ---------- API-Keys (je User) ----------
-    @router.get("/auth/admin/api/users/{uid}/keys")
+    @ar.get("/api/users/{uid}/keys")
     def user_keys(request: Request, uid: int):
         guard(request)
         return [kview(k) for k in auth.list_api_keys(uid)]
 
-    @router.post("/auth/admin/api/users/{uid}/keys")
+    @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
         guard(request)
         b = await request.json()
-        return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"),
-                                   roles=b.get("roles"))   # 'key' EINMALIG im Klartext
+        return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"))
 
-    @router.post("/auth/admin/api/keys/{kid}/revoke")
+    @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
         guard(request)
-        auth.revoke_api_key(kid)   # sperren, nicht löschen
+        auth.revoke_api_key(kid)
         return {"ok": True}
 
     # ---------- Sitzungen ----------
-    @router.get("/auth/admin/api/sessions")
+    @ar.get("/api/sessions")
     def sessions(request: Request):
         guard(request)
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
-        return [{"token": s["token"][:10] + "…", "full": s["token"], "user": names.get(s["user_id"], s["user_id"]),
-                 "method": s["method"], "ip": s["ip"], "created_at": s["created_at"],
-                 "expires_at": s["expires_at"], "mfa_ok": bool(s["mfa_ok"])}
+        return [{"full": s["token"], "user": names.get(s["user_id"], s["user_id"]), "method": s["method"],
+                 "ip": s["ip"], "created_at": s["created_at"], "mfa_ok": bool(s["mfa_ok"])}
                 for s in auth.store.list_sessions()]
 
-    @router.post("/auth/admin/api/sessions/revoke")
+    @ar.post("/api/sessions/revoke")
     async def session_revoke(request: Request):
         guard(request)
         b = await request.json()
@@ -126,13 +133,13 @@ def register_admin_routes(router, auth):
         auth.audit("session_revoke")
         return {"ok": True}
 
-    # ---------- Härtung ----------
-    @router.get("/auth/admin/api/security")
+    # ---------- Härtung / Update / Audit ----------
+    @ar.get("/api/security")
     def security_get(request: Request):
         guard(request)
         return auth.all_security()
 
-    @router.post("/auth/admin/api/security")
+    @ar.post("/api/security")
     async def security_set(request: Request):
         guard(request)
         for k, v in (await request.json()).items():
@@ -140,13 +147,12 @@ def register_admin_routes(router, auth):
         auth.audit("security_update")
         return auth.all_security()
 
-    # ---------- Update ----------
-    @router.get("/auth/admin/api/update")
+    @ar.get("/api/update")
     def update_get(request: Request):
         guard(request)
         return {"settings": auth.update_settings(), "status": auth.update_status()}
 
-    @router.post("/auth/admin/api/update/settings")
+    @ar.post("/api/update/settings")
     async def update_set(request: Request):
         guard(request)
         b = await request.json()
@@ -156,23 +162,30 @@ def register_admin_routes(router, auth):
             auth.set_update_setting("pin", b["pin"])
         return auth.update_settings()
 
-    @router.post("/auth/admin/api/update/run")
+    @ar.post("/api/update/run")
     def update_run(request: Request):
         guard(request)
         return auth.run_update()
 
-    # ---------- Audit ----------
-    @router.get("/auth/admin/api/audit")
+    @ar.get("/api/audit")
     def audit(request: Request, limit: int = 100):
         guard(request)
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
                 for a in auth.store.recent_audit(limit)]
 
-    # ---------- UI ----------
-    @router.get("/auth/admin", response_class=HTMLResponse)
-    def admin_page(request: Request):
-        guard(request)
-        return _PAGE.replace("__RP__", cfg.rp_name)
+    # ---------- eingebaute UI (optional) ----------
+    if cfg.admin_ui_enabled:
+        @ar.get("", response_class=HTMLResponse)
+        def admin_page(request: Request):
+            guard(request)
+            base = request.url.path.rstrip("/")          # Mountpunkt → relative API-Basis
+            warn = ""
+            if cfg.https_mode == "warn" and not auth.is_secure(request):
+                warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
+                        "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
+            return _PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base).replace("__WARN__", warn)
+
+    return ar
 
 
 _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
@@ -180,6 +193,7 @@ _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
 <style>
 :root{color-scheme:light dark}*{box-sizing:border-box}
 body{font-family:system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
+.warnbar{background:#442006;color:#fdba74;padding:8px 20px;font-size:13px;border-bottom:1px solid #7c2d12}
 header{padding:14px 20px;background:#161a22;border-bottom:1px solid #262b36;display:flex;gap:14px;align-items:center}
 header h1{font-size:17px;margin:0}a{color:#7dd3fc;text-decoration:none}
 .tabs{display:flex;gap:6px;padding:12px 20px 0;flex-wrap:wrap}
@@ -198,14 +212,16 @@ input,select{background:#0f1115;color:#e6e6e6;border:1px solid #303643;border-ra
 h2{font-size:13px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
 code{background:#0f1115;border:1px solid #303643;border-radius:5px;padding:2px 6px;font-size:12px}
 </style></head><body>
+__WARN__
 <header><h1>🧠 __RP__ · Admin</h1><a href="/">← App</a><a href="/auth/logout">Logout</a></header>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 <script>
+const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
 const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["update","Update"],["audit","Audit"]];
 let cur="users";
-const g=(u)=>fetch(u).then(r=>r.json());
-const p=(u,b)=>fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
+const g=(u)=>fetch(B+u).then(r=>r.json());
+const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
 const esc=s=>(s??"").toString().replace(/</g,"&lt;");
 const dt=t=>t?new Date(t*1000).toLocaleString("de-DE"):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${l}</div>`).join("")}
@@ -213,7 +229,7 @@ function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,up
 const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
-  const us=await g("/auth/admin/api/users");
+  const us=await g("/api/users");
   V(`<div class=card><h2>Neuer Benutzer / Service-Account</h2><div class=row>
     <input id=nu placeholder=Benutzername><input id=np type=password placeholder="Passwort (leer=nur SSO/Key)">
     <input id=nr placeholder="Rollen, komma-getrennt" style=width:200px>
@@ -227,39 +243,39 @@ async function users(){
       <td>
         <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${u.disabled?'Entsperren':'Sperren'}</button>
         <button class=sec onclick="pw(${u.id})">PW</button>
-        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}',${u.is_admin})">Rollen</button>
+        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}')">Rollen</button>
         <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">Keys</button>
       </td></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
-  const r=await p("/auth/admin/api/users",b);if(r.id)users();else alert(r.detail||"Fehler")}
-async function dis(id,d){if(!confirm(d?"Zugang sperren?":"Entsperren?"))return;await p(`/auth/admin/api/users/${id}/disable`,{disabled:d});users()}
-async function pw(id){const v=prompt("Neues Passwort:");if(v)await p(`/auth/admin/api/users/${id}/password`,{password:v})&&alert("gesetzt")}
-async function roles(id,cur,adm){const v=prompt("Rollen (komma-getrennt):",cur);if(v===null)return;const a=confirm("Admin?  OK=ja / Abbrechen=nein");await p(`/auth/admin/api/users/${id}/roles`,{roles:v.split(",").map(s=>s.trim()).filter(Boolean),is_admin:a});users()}
-async function keys(id,name){const ks=await g(`/auth/admin/api/users/${id}/keys`);
+  const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||"Fehler")}
+async function dis(id,d){if(!confirm(d?"Zugang sperren?":"Entsperren?"))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
+async function pw(id){const v=prompt("Neues Passwort:");if(v)await p(`/api/users/${id}/password`,{password:v})&&alert("gesetzt")}
+async function roles(id,cur){const v=prompt("Rollen (komma-getrennt):",cur);if(v===null)return;const a=confirm("Admin?  OK=ja / Abbrechen=nein");await p(`/api/users/${id}/roles`,{roles:v.split(",").map(s=>s.trim()).filter(Boolean),is_admin:a});users()}
+async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>API-Keys · ${esc(name)}</h2>
     <div class=row><input id=kn placeholder="Key-Name"><input id=ke type=number placeholder="Ablauf Tage (leer=nie)" style=width:150px>
     <button onclick="mkkey(${id})">Key erzeugen</button></div>
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?'<span class="badge red">widerrufen</span>':'<span class="badge grn">aktiv</span>'}</td>
       <td>zuletzt: ${dt(k.last_used)}</td><td>${k.expires_at?'läuft ab '+dt(k.expires_at):'unbefristet'}</td>
       <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},'${esc(name)}')">Widerrufen</button>`}</td></tr>`).join("")+`</table></div></td>`}
-async function mkkey(id){const r=await p(`/auth/admin/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
+async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   if(r.key)prompt("API-Key — JETZT kopieren, wird nicht erneut angezeigt:",r.key);keys(id,"")}
-async function revk(kid,uid,name){if(confirm("Key widerrufen (sperren)?")){await p(`/auth/admin/api/keys/${kid}/revoke`);keys(uid,name)}}
+async function revk(kid,uid,name){if(confirm("Key widerrufen (sperren)?")){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
 
-async function sessions(){const ss=await g("/auth/admin/api/sessions");
+async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>User</th><th>Methode</th><th>IP</th><th>seit</th><th>2FA</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
       <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs('${s.full}')">Beenden</button></td></tr>`).join("")+`</table>`)}
-async function revs(t){await p("/auth/admin/api/sessions/revoke",{token:t});sessions()}
+async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
 
-async function security(){const s=await g("/auth/admin/api/security");
+async function security(){const s=await g("/api/security");
   V(`<div class=card><h2>Härtung (Brute-Force / Rate-Limit)</h2>`+
     Object.entries(s).map(([k,v])=>`<div class=row><label style=width:230px>${k}</label><input id=s_${k} value=${v} type=number style=width:120px></div>`).join("")+
     `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>Speichern</button></div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/auth/admin/api/security",b);alert("gespeichert")}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert("gespeichert")}
 
-async function update(){const u=await g("/auth/admin/api/update");const st=u.status,se=u.settings;
+async function update(){const u=await g("/api/update");const st=u.status,se=u.settings;
   V(`<div class=card><h2>Update</h2>
     <div class=row>Installiert: <code>${esc(st.current)}</code> · Neueste: <code>${esc(st.latest||'?')}</code>
       ${st.available?'<span class="badge grn">Update verfügbar</span>':'<span class=badge>aktuell</span>'}</div>
@@ -268,10 +284,10 @@ async function update(){const u=await g("/auth/admin/api/update");const st=u.sta
     <div class=row><button onclick=saveupd()>Einstellungen speichern</button>
       ${st.available?'<button class=ok onclick=runupd()>Jetzt aktualisieren</button>':''}</div>
     <div style=color:#9aa4b2;font-size:12px>Nach dem Update die App neu starten.</div></div>`)}
-async function saveupd(){await p("/auth/admin/api/update/settings",{mode:um.value,pin:up.value});update()}
-async function runupd(){if(!confirm("Update jetzt ziehen?"))return;const r=await p("/auth/admin/api/update/run");alert(r.ok?"OK — App neu starten":"Fehlgeschlagen:\n"+(r.output||"").slice(-400))}
+async function saveupd(){await p("/api/update/settings",{mode:um.value,pin:up.value});update()}
+async function runupd(){if(!confirm("Update jetzt ziehen?"))return;const r=await p("/api/update/run");alert(r.ok?"OK — App neu starten":"Fehlgeschlagen:\n"+(r.output||"").slice(-400))}
 
-async function audit(){const a=await g("/auth/admin/api/audit?limit=120");
+async function audit(){const a=await g("/api/audit?limit=120");
   V(`<table><tr><th>Zeit</th><th>Event</th><th>User</th><th>IP</th><th>Detail</th></tr>`+
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 

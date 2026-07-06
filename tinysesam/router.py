@@ -141,10 +141,9 @@ def build_router(auth) -> APIRouter:
             auth.revoke_api_key(key_id, u["id"])   # sperren, nicht löschen
             return {"ok": True}
 
-    # ---------- Admin-Panel (nur Admins) ----------
+    # ---------- Admin-Panel — an config.admin_path; via auth.admin_router() auch woanders montierbar ----------
     if cfg.admin_enabled:
-        from .admin import register_admin_routes
-        register_admin_routes(r, auth)
+        r.include_router(auth.admin_router(), prefix=cfg.admin_path)
 
     return r
 

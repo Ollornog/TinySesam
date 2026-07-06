@@ -146,7 +146,16 @@ Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extr
 - **Update:** Version/Status, Modus manual/auto, Version-Pin, „jetzt aktualisieren".
 - **Audit-Log** einsehen.
 
-JSON-API unter `/auth/admin/api/*` (dieselben Aktionen — für eigene UIs / Automation).
+JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automation).
+
+**Montieren / einbetten / HTTPS:**
+- **Standard:** automatisch unter `config.admin_path` (Default `/auth/admin`) — frei änderbar.
+- **Woanders montieren:** `app.include_router(auth.admin_router(), prefix="/admin")` — beliebiger Pfad,
+  Sub-App/**Subdomain** (Host-Routing der App) oder **eigener Port** (separate ASGI-App). Die UI ermittelt
+  ihre Basis-URL selbst. `admin_enabled=False` schaltet den Auto-Mount ab.
+- **In bestehendes Panel einbetten:** `admin_ui_enabled=False` → nur die JSON-API, eigene UI davor.
+- **HTTPS** (`config.https_mode` + `auth.install_https(app)`): `force` = HTTP→HTTPS-Redirect;
+  `warn` = läuft auch **ohne Zertifikat**, zeigt aber einen Warnhinweis im Panel; `off` = aus.
 
 ## Status
 
