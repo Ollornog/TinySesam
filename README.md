@@ -111,6 +111,20 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   steht — sonst ist die IP fälschbar.
 - **Audit-Log:** Login / Logout / Fehlversuche in der DB (`store.recent_audit()`), fürs Admin-Panel.
 
+## Update (von GitHub, versioniert)
+
+Auch eingebettet in eine andere App kann TinySesam sich von GitHub aktualisieren:
+
+- **Programmatisch** (fürs Admin-Panel): `tinysesam.update_available()` → `{current, latest, available}`;
+  über den Manager `auth.update_status()` / `auth.run_update()`.
+- **CLI:** `python -m tinysesam check` · `python -m tinysesam update [ref]` (nach Install auch `tinysesam …`).
+- **In den Einstellungen** (Store, Panel-editierbar):
+  - **Modus** `manual` | `auto` (`auth.set_update_setting("mode", …)`) — `auth.auto_update()` beim Start/per Cron
+    zieht im Auto-Modus ein verfügbares Update.
+  - **Version-Pin** (`auth.set_update_setting("pin", "v0.2.0")`) — hält exakt auf dieser Version; leer = neueste.
+- Quelle: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (öffentlich). Privat/SSH: `TINYSESAM_GIT_URL`
+  bzw. `scheme="ssh"`. **Nach dem Update Host-App neu starten** (Python lädt Code nicht zur Laufzeit neu).
+
 ## Status
 
 Passwort + TOTP + Sessions + Rollen: implementiert & getestet (`tests/test_core.py`).
