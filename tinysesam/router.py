@@ -115,4 +115,40 @@ def build_router(auth) -> APIRouter:
         from .webauthn_ import register_passkey_routes
         register_passkey_routes(r, auth)
 
+    # ---------- API-Keys: Self-Service für den eingeloggten User ----------
+    if cfg.apikey_enabled:
+        @r.get("/auth/apikeys")
+        def apikeys_list(request: Request):
+            u = auth.current_user(request)
+            if not u:
+                raise HTTPException(401)
+            return [key_view(k) for k in auth.list_api_keys(u["id"])]
+
+        @r.post("/auth/apikeys")
+        async def apikeys_create(request: Request):
+            u = auth.current_user(request)
+            if not u:
+                raise HTTPException(401)
+            b = await request.json()
+            return auth.create_api_key(u["id"], name=b.get("name"),
+                                       expires_days=b.get("expires_days"), roles=b.get("roles"))
+
+        @r.post("/auth/apikeys/{key_id}/revoke")
+        def apikeys_revoke(request: Request, key_id: int):
+            u = auth.current_user(request)
+            if not u:
+                raise HTTPException(401)
+            auth.revoke_api_key(key_id, u["id"])   # sperren, nicht löschen
+            return {"ok": True}
+
+    # ---------- Admin-Panel (nur Admins) ----------
+    if cfg.admin_enabled:
+        from .admin import register_admin_routes
+        register_admin_routes(r, auth)
+
     return r
+
+
+def key_view(k) -> dict:
+    return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
+            "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}

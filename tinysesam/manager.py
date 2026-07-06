@@ -11,6 +11,9 @@ Einbindung:
 """
 from __future__ import annotations
 import time
+import json
+import hashlib
+import secrets
 from typing import Optional
 
 from fastapi import Request, HTTPException
@@ -38,8 +41,9 @@ class TinySesam:
             self.webauthn = wa
 
     # ---------- User-Verwaltung ----------
-    def create_user(self, username, password=None, is_admin=False, roles=None, display_name=None, email=None) -> int:
-        uid = self.store.create_user(username, display_name, email, is_admin, roles)
+    def create_user(self, username, password=None, is_admin=False, roles=None,
+                    display_name=None, email=None, is_service=False) -> int:
+        uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service)
         if password:
             self.store.set_password_hash(uid, hash_password(password))
         return uid
@@ -61,6 +65,58 @@ class TinySesam:
 
     def set_roles(self, user_id, roles):
         self.store.set_roles(user_id, roles)
+
+    # ---------- API-Keys / Service-Accounts (maschineller Zugang, Daemons) ----------
+    def create_service(self, username, roles=None, display_name=None) -> int:
+        """Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope."""
+        return self.create_user(username, is_service=True, roles=roles, display_name=display_name or username)
+
+    def create_api_key(self, user_id, name=None, expires_days=None, roles=None) -> dict:
+        """Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash)."""
+        raw = "tsk_" + secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        prefix = raw[:12] + "…"
+        expires_at = (int(time.time()) + int(expires_days) * 86400) if expires_days is not None else None
+        kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at)
+        self.audit("apikey_create", detail=f"user={user_id} key={kid} name={name}")
+        return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at}
+
+    def verify_api_key(self, key):
+        """(user, key_roles|None) bei gültigem Key, sonst (None, None)."""
+        if not key or not key.startswith("tsk_"):
+            return None, None
+        row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
+        if not row or row["revoked"]:
+            return None, None
+        if row["expires_at"] and row["expires_at"] < int(time.time()):
+            return None, None
+        u = self.store.get_user(row["user_id"])
+        if not u or u["disabled"]:
+            return None, None
+        self.store.touch_api_key(row["id"])
+        try:
+            kr = json.loads(row["roles"] or "[]")
+        except Exception:
+            kr = []
+        return u, (kr or None)
+
+    def _extract_api_key(self, request: Request):
+        h = request.headers.get("x-api-key")
+        if h:
+            return h.strip()
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            tok = auth[7:].strip()
+            if tok.startswith("tsk_"):
+                return tok
+        return None
+
+    def list_api_keys(self, user_id):
+        return self.store.list_api_keys(user_id)
+
+    def revoke_api_key(self, key_id, user_id=None):
+        self.store.revoke_api_key(key_id, user_id)
+        self.audit("apikey_revoke", detail=f"key={key_id}")
 
     def set_password(self, user_id, password):
         self.store.set_password_hash(user_id, hash_password(password))
@@ -139,13 +195,26 @@ class TinySesam:
         return self.store.get_session(request.cookies.get(self.cfg.session_cookie))
 
     def current_user(self, request) -> Optional[dict]:
+        # 1) Session (Mensch, inkl. MFA)
         s = self.session_from_request(request)
-        if not s or not s["mfa_ok"]:
-            return None
-        u = self.store.get_user(s["user_id"])
-        if not u or u["disabled"]:
-            return None
-        return u
+        if s and s["mfa_ok"]:
+            u = self.store.get_user(s["user_id"])
+            if u and not u["disabled"]:
+                d = dict(u)
+                d["_via"] = "session"
+                return d
+        # 2) API-Key (maschinell / Daemon) — der Key IST der Faktor, kein MFA
+        if self.cfg.apikey_enabled:
+            key = self._extract_api_key(request)
+            if key:
+                u, key_roles = self.verify_api_key(key)
+                if u:
+                    d = dict(u)
+                    d["_via"] = "apikey"
+                    if key_roles is not None:      # Key-Scope überschreibt die User-Rollen
+                        d["roles"] = json.dumps(key_roles)
+                    return d
+        return None
 
     def pending_user(self, request) -> Optional[dict]:
         """User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0)."""

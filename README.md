@@ -125,12 +125,37 @@ Auch eingebettet in eine andere App kann TinySesam sich von GitHub aktualisieren
 - Quelle: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (öffentlich). Privat/SSH: `TINYSESAM_GIT_URL`
   bzw. `scheme="ssh"`. **Nach dem Update Host-App neu starten** (Python lädt Code nicht zur Laufzeit neu).
 
+## API-Keys & Service-/Daemon-Accounts
+
+Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:
+
+- Ein API-Key gehört einem User, liegt **gehasht** (sha256) in der DB, optional mit **Ablauf** und **Rollen-Scope**.
+- Gesendet als `Authorization: Bearer tsk_…` **oder** `X-API-Key: tsk_…`.
+- **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
+- **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
+- **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+
+## Admin-Panel
+
+Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
+
+- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz), Passwort-Reset, Rollen/Admin setzen.
+- **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
+- **Sitzungen:** aktive einsehen + beenden.
+- **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
+- **Update:** Version/Status, Modus manual/auto, Version-Pin, „jetzt aktualisieren".
+- **Audit-Log** einsehen.
+
+JSON-API unter `/auth/admin/api/*` (dieselben Aktionen — für eigene UIs / Automation).
+
 ## Status
 
 Passwort + TOTP + Sessions + Rollen: implementiert & getestet (`tests/test_core.py`).
 Härtung (Brute-Force-Lockout, Rate-Limit, fail2ban-Log, Audit, Trusted-Proxy): getestet (`tests/test_hardening.py`).
+API-Keys + Service-Accounts (`tests/test_apikeys.py`), Admin-Panel (`tests/test_admin.py`),
+Update-Mechanismus (`tests/test_updater.py`): getestet.
 OIDC + Passkey: implementiert, Routen/Options struktur-getestet (`tests/test_methods.py`); der
 Browser-/Provider-abhängige End-to-End-Pfad ist gegen echte Domain/echten Provider zu prüfen.
-Admin-Panel-UI (User-/Session-/Härtungs-Verwaltung) + optionale LDAP-Anbindung: geplant.
+Optionale LDAP/lldap-Anbindung: als andockbare Option vorgesehen.
 
 MIT-Lizenz.

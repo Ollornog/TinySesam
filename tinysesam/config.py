@@ -12,6 +12,8 @@ class TinySesamConfig:
     password_enabled: bool = True
     passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)
     oidc_enabled: bool = False            # externer IdProvider (PocketID …)
+    apikey_enabled: bool = True           # Zugang per API-Key (maschinell/Daemons, an User/Service-Account)
+    admin_enabled: bool = True            # eingebautes Admin-Panel unter /auth/admin (nur für Admins)
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---

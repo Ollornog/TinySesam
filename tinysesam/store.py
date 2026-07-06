@@ -15,8 +15,21 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT,
     is_admin      INTEGER NOT NULL DEFAULT 0,
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
+    is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
     disabled      INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_key (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT,
+    prefix     TEXT NOT NULL,                   -- Anzeige (tsk_xxxx…), NICHT der Key
+    key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
+    roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
+    created_at INTEGER NOT NULL,
+    last_used  INTEGER,
+    expires_at INTEGER,                          -- NULL = unbefristet
+    revoked    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS password_cred (
     user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -85,6 +98,7 @@ CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
+CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 """
 
 
@@ -119,11 +133,11 @@ class Store:
             return cur
 
     # ---------- Users ----------
-    def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None) -> int:
+    def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None, is_service=False) -> int:
         cur = self._exec(
-            "INSERT INTO users(username, display_name, email, is_admin, roles, created_at) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO users(username, display_name, email, is_admin, roles, is_service, created_at) VALUES (?,?,?,?,?,?,?)",
             (username, display_name or username, email, 1 if is_admin else 0,
-             json.dumps(list(roles or [])), _now()))
+             json.dumps(list(roles or [])), 1 if is_service else 0, _now()))
         return cur.lastrowid
 
     def get_roles(self, user_id) -> list:
@@ -147,6 +161,9 @@ class Store:
 
     def set_disabled(self, user_id, disabled: bool):
         self._exec("UPDATE users SET disabled=? WHERE id=?", (1 if disabled else 0, user_id))
+
+    def set_admin(self, user_id, is_admin: bool):
+        self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
 
     def user_count(self) -> int:
         return self._one("SELECT COUNT(*) c FROM users")["c"]
@@ -237,6 +254,11 @@ class Store:
     def gc_sessions(self):
         self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),))
 
+    def list_sessions(self, user_id=None):
+        if user_id is not None:
+            return self._all("SELECT * FROM session WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+        return self._all("SELECT * FROM session ORDER BY created_at DESC")
+
     # ---------- Flow-State (OIDC / WebAuthn, kurzlebig, one-shot) ----------
     def put_flow(self, key, data: dict, ttl=600):
         self._exec("INSERT OR REPLACE INTO flow(key, data, expires_at) VALUES (?,?,?)",
@@ -295,3 +317,25 @@ class Store:
 
     def recent_audit(self, limit=100):
         return self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
+
+    # ---------- API-Keys ----------
+    def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None) -> int:
+        cur = self._exec(
+            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), _now(), expires_at))
+        return cur.lastrowid
+
+    def get_api_key_by_hash(self, key_hash):
+        return self._one("SELECT * FROM api_key WHERE key_hash=?", (key_hash,))
+
+    def list_api_keys(self, user_id):
+        return self._all("SELECT * FROM api_key WHERE user_id=? ORDER BY created_at DESC", (user_id,))
+
+    def touch_api_key(self, key_id):
+        self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
+
+    def revoke_api_key(self, key_id, user_id=None):
+        if user_id is not None:
+            self._exec("UPDATE api_key SET revoked=1 WHERE id=? AND user_id=?", (key_id, user_id))
+        else:
+            self._exec("UPDATE api_key SET revoked=1 WHERE id=?", (key_id,))
