@@ -96,10 +96,27 @@ TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentli
 - WebAuthn: Challenge im Store, an httponly-Cookie gebunden; `sign_count`-Klon-Erkennung.
 - **Produktiv immer hinter HTTPS.** `rp_id`/`origin` müssen exakt zur Domain passen.
 
+## Härtung
+
+Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel / zur Laufzeit** änderbar
+(`auth.set_security(key, wert)`, Defaults in `security.SECURITY_DEFAULTS`):
+
+- **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
+  im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
+  Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
+- **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
+- **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
+  (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+- **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in `trusted_proxies`
+  steht — sonst ist die IP fälschbar.
+- **Audit-Log:** Login / Logout / Fehlversuche in der DB (`store.recent_audit()`), fürs Admin-Panel.
+
 ## Status
 
 Passwort + TOTP + Sessions + Rollen: implementiert & getestet (`tests/test_core.py`).
+Härtung (Brute-Force-Lockout, Rate-Limit, fail2ban-Log, Audit, Trusted-Proxy): getestet (`tests/test_hardening.py`).
 OIDC + Passkey: implementiert, Routen/Options struktur-getestet (`tests/test_methods.py`); der
 Browser-/Provider-abhängige End-to-End-Pfad ist gegen echte Domain/echten Provider zu prüfen.
+Admin-Panel-UI (User-/Session-/Härtungs-Verwaltung) + optionale LDAP-Anbindung: geplant.
 
 MIT-Lizenz.

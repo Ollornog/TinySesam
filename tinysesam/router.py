@@ -25,11 +25,16 @@ def build_router(auth) -> APIRouter:
     def login_submit(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
         if not cfg.password_enabled:
             raise HTTPException(404, "Passwort-Login deaktiviert")
+        ip = auth.client_ip(request)
+        if not auth.rate_ok(ip):
+            return T.login_page(auth, next, "Zu viele Anfragen — bitte kurz warten.", status=429)
+        if auth.is_locked(username, ip):
+            return T.login_page(auth, next, "Zu viele Fehlversuche — vorübergehend gesperrt.", status=429)
         u = auth.check_password(username, password)
+        auth.record_login(username, ip, bool(u), "password")
         if not u:
             return T.login_page(auth, next, "Falsche Zugangsdaten", status=401)
-        ip, ua = _client(request)
-        token, mfa_ok = auth.start_session(u["id"], "password", ip, ua)
+        token, mfa_ok = auth.start_session(u["id"], "password", ip, request.headers.get("user-agent"))
         resp = RedirectResponse(next or cfg.login_redirect, 303) if mfa_ok \
             else RedirectResponse(f"/auth/totp?next={next}", 303)
         auth.set_cookie(resp, token)
@@ -48,8 +53,13 @@ def build_router(auth) -> APIRouter:
         pu = auth.pending_user(request)
         if not s or not pu:
             return RedirectResponse(cfg.login_path, 303)
+        ip = auth.client_ip(request)
+        if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
+            return T.totp_page(auth, next, "Zu viele Versuche — bitte warten.", status=429)
         if not auth.verify_totp(pu["id"], code):
+            auth.record_login(pu["username"], ip, False, "totp")
             return T.totp_page(auth, next, "Code falsch", status=401)
+        auth.record_login(pu["username"], ip, True, "totp")
         auth.complete_mfa(s["token"])
         return RedirectResponse(next or cfg.login_redirect, 303)
 
@@ -79,6 +89,9 @@ def build_router(auth) -> APIRouter:
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
     def logout(request: Request):
+        u = auth.current_user(request) or auth.pending_user(request)
+        if u:
+            auth.audit("logout", u["username"], auth.client_ip(request))
         resp = RedirectResponse(cfg.logout_redirect, 303)
         auth.logout(request, resp)
         return resp

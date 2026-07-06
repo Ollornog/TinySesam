@@ -46,6 +46,12 @@ class TinySesamConfig:
     login_redirect: str = "/"             # Ziel nach erfolgreichem Login
     logout_redirect: str = "/auth/login"  # Ziel nach Logout
 
+    # --- Härtung ---
+    # Reverse-Proxies, deren X-Forwarded-For vertraut werden darf (sonst ist die echte Client-IP fälschbar).
+    trusted_proxies: list[str] = field(default_factory=lambda: ["127.0.0.1/32", "::1/128"])
+    # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
+    # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
+
     def enabled_methods(self) -> list[str]:
         m = []
         if self.password_enabled:

@@ -61,8 +61,30 @@ CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/no
     data       TEXT NOT NULL,               -- JSON
     expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS setting (         -- Runtime-Settings (Härtungs-Schwellen, Panel-editierbar)
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    username TEXT,
+    ip       TEXT,
+    success  INTEGER NOT NULL,
+    method   TEXT
+);
+CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Aktionen)
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    event    TEXT NOT NULL,
+    username TEXT,
+    ip       TEXT,
+    detail   TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
+CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
+CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 """
 
 
@@ -231,3 +253,45 @@ class Store:
             return json.loads(r["data"])
         except Exception:
             return None
+
+    # ---------- Runtime-Settings (Panel-editierbar) ----------
+    def get_setting(self, key) -> Optional[str]:
+        r = self._one("SELECT value FROM setting WHERE key=?", (key,))
+        return r["value"] if r else None
+
+    def set_setting(self, key, value):
+        self._exec("INSERT OR REPLACE INTO setting(key, value) VALUES (?,?)", (key, str(value)))
+
+    def all_settings(self) -> dict:
+        return {r["key"]: r["value"] for r in self._all("SELECT key, value FROM setting")}
+
+    # ---------- Brute-Force-Regulation ----------
+    def record_attempt(self, username, ip, success, method):
+        self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
+                   (_now(), username, ip, 1 if success else 0, method))
+
+    def count_fails(self, since, username=None, ip=None) -> int:
+        if username:
+            return self._one("SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=? AND username=? COLLATE NOCASE",
+                             (since, username))["c"]
+        if ip:
+            return self._one("SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=? AND ip=?",
+                             (since, ip))["c"]
+        return 0
+
+    def clear_fails(self, username=None, ip=None):
+        if username:
+            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE", (username,))
+        if ip:
+            self._exec("DELETE FROM login_attempt WHERE ip=?", (ip,))
+
+    def gc_attempts(self, older_than):
+        self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,))
+
+    # ---------- Audit-Log ----------
+    def audit_log(self, event, username=None, ip=None, detail=None):
+        self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                   (_now(), event, username, ip, detail))
+
+    def recent_audit(self, limit=100):
+        return self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))

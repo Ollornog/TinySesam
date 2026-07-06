@@ -10,6 +10,7 @@ Einbindung:
         return {"hi": user["username"]}
 """
 from __future__ import annotations
+import time
 from typing import Optional
 
 from fastapi import Request, HTTPException
@@ -18,6 +19,7 @@ from .config import TinySesamConfig
 from .store import Store
 from .passwords import hash_password, verify_password, needs_rehash
 from . import totp as _totp
+from . import security
 
 
 class TinySesam:
@@ -26,6 +28,7 @@ class TinySesam:
         self.store = Store(config.db_path)
         self.oidc = None
         self.webauthn = None
+        self.rl = security.RateLimiter()
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             from .oidc import OIDCClient
             self.oidc = OIDCClient(config.oidc_issuer, config.oidc_client_id,
@@ -120,10 +123,17 @@ class TinySesam:
         # Passkey ist bereits ein starker Faktor → kein zusätzliches TOTP nötig
         mfa_ok = (method == "passkey") or (not needs)
         token = self.store.create_session(user_id, self._ttl(), mfa_ok, method, ip, ua)
+        if mfa_ok:   # voller Login abgeschlossen → Audit
+            u = self.store.get_user(user_id)
+            self.store.audit_log("login", u["username"] if u else None, ip, method)
         return token, mfa_ok
 
     def complete_mfa(self, token):
         self.store.set_session_mfa(token, True)
+        s = self.store.get_session(token)
+        if s:
+            u = self.store.get_user(s["user_id"])
+            self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
 
     def session_from_request(self, request):
         return self.store.get_session(request.cookies.get(self.cfg.session_cookie))
@@ -154,6 +164,49 @@ class TinySesam:
         if s:
             self.store.delete_session(s["token"])
         response.delete_cookie(self.cfg.session_cookie, path=self.cfg.cookie_path)
+
+    # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
+    def client_ip(self, request: Request) -> str:
+        return security.client_ip(request, self.cfg.trusted_proxies)
+
+    def sec(self, key) -> int:
+        """Härtungs-Wert: Store-Setting (Panel) ODER Default."""
+        v = self.store.get_setting(key)
+        try:
+            return int(v) if v is not None else security.SECURITY_DEFAULTS[key]
+        except Exception:
+            return security.SECURITY_DEFAULTS[key]
+
+    def all_security(self) -> dict:
+        return {k: self.sec(k) for k in security.SECURITY_DEFAULTS}
+
+    def set_security(self, key, value):
+        if key in security.SECURITY_DEFAULTS:
+            self.store.set_setting(key, int(value))
+
+    def rate_ok(self, ip) -> bool:
+        return self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
+
+    def is_locked(self, username, ip) -> bool:
+        """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT)."""
+        since = int(time.time()) - self.sec("lockout_window_sec")
+        if username and self.store.count_fails(since, username=username) >= self.sec("max_login_attempts"):
+            return True
+        if ip and self.store.count_fails(since, ip=ip) >= self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
+            return True
+        return False
+
+    def record_login(self, username, ip, success, method):
+        self.store.record_attempt(username, ip, success, method)
+        if success:
+            self.store.clear_fails(username=username)   # 'login'-Audit erst beim vollen Abschluss (start_session/complete_mfa)
+        else:
+            self.store.audit_log("login_fail", username, ip, method)
+            # fail2ban parst diese Zeile (ip=…)
+            security.seclog.warning("failed login user=%s ip=%s method=%s", username, ip, method)
+
+    def audit(self, event, username=None, ip=None, detail=None):
+        self.store.audit_log(event, username, ip, detail)
 
     # ---------- FastAPI-Integration ----------
     def router(self):
