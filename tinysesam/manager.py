@@ -147,6 +147,41 @@ class TinySesam:
             self.store.set_password_hash(u["id"], hash_password(password))
         return u
 
+    # ---------- PIN-Login (persönliche PIN pro User) ----------
+    def set_pin(self, user_id, pin):
+        """PIN setzen/ändern. Mindestlänge aus cfg.pin_min_length."""
+        pin = str(pin or "")
+        if len(pin) < self.cfg.pin_min_length:
+            raise ValueError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
+        self.store.set_pin_hash(user_id, hash_password(pin))
+
+    def has_pin(self, user_id) -> bool:
+        return self.store.has_pin(user_id)
+
+    def disable_pin(self, user_id):
+        self.store.delete_pin(user_id)
+
+    def check_pin(self, username, pin) -> Optional[dict]:
+        u = self.store.get_user_by_name(username)
+        if not u or u["disabled"]:
+            return None
+        h = self.store.get_pin_hash(u["id"])
+        if not h or not verify_password(str(pin or ""), h):
+            return None
+        if needs_rehash(h):
+            self.store.set_pin_hash(u["id"], hash_password(str(pin)))
+        return u
+
+    def is_pin_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
+        since = int(time.time()) - self.sec("lockout_window_sec")
+        limit = self.sec("pin_max_attempts")
+        if username and self.store.count_fails(since, username=username, method="pin") >= limit:
+            return True
+        if ip and self.store.count_fails(since, ip=ip, method="pin") >= limit * self.sec("ip_attempt_factor"):
+            return True
+        return False
+
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
         """TOTP verlangt? Ja wenn confirmed-TOTP existiert (oder global erzwungen + eingerichtet)."""

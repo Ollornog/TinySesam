@@ -11,6 +11,8 @@ class TinySesamConfig:
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True
     passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)
+    pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
+    pin_min_length: int = 4               # Mindestlänge beim Setzen einer PIN
     oidc_enabled: bool = False            # externer IdProvider (PocketID …)
     apikey_enabled: bool = True           # Zugang per API-Key (maschinell/Daemons, an User/Service-Account)
     admin_enabled: bool = True            # Admin-Panel automatisch unter admin_path mounten
@@ -73,6 +75,8 @@ class TinySesamConfig:
         m = []
         if self.password_enabled:
             m.append("password")
+        if self.pin_enabled:
+            m.append("pin")
         if self.passkey_enabled:
             m.append("passkey")
         if self.oidc_enabled and self.oidc_issuer and self.oidc_client_id:

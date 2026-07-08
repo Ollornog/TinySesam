@@ -92,11 +92,12 @@ def _login(auth, ctx) -> str:
               f"<button type=submit>Anmelden</button></form>")
     pin = ""
     if "pin" in methods:
-        pin = (f"<form method=post action='/auth/pin'>"
+        sep_pin = "<div class=or>oder</div>" if pw else ""
+        pin = (f"{sep_pin}<form method=post action='/auth/pin'>"
                f"<input type=hidden name=next value='{_e(next_)}'>"
-               f"<label>Benutzer</label><input name=username autocomplete=username>"
+               f"<label>Benutzer</label><input name=username autocomplete=username{'' if pw else ' autofocus'}>"
                f"<label>PIN</label><input name=pin type=password inputmode=numeric autocomplete=off class=code>"
-               f"{remember if not pw else ''}"
+               f"{remember}"
                f"<button type=submit>Mit PIN anmelden</button></form>")
     magic = ""
     if "magic" in methods:

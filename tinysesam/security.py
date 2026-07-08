@@ -18,6 +18,7 @@ SECURITY_DEFAULTS = {
     "rate_limit_max": 30,           # max Requests pro IP …
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
     "password_min_length": 8,
+    "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
 }
 
 

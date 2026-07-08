@@ -90,6 +90,55 @@ def build_router(auth) -> APIRouter:
         auth.totp_disable(u["id"])
         return {"ok": True}
 
+    # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
+    if cfg.pin_enabled:
+        @r.get("/auth/pin")
+        def pin_page(request: Request, next: str = "/"):
+            return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
+
+        @r.post("/auth/pin")
+        def pin_submit(request: Request, username: str = Form(...), pin: str = Form(...),
+                       next: str = Form("/"), remember: str = Form("")):
+            nxt = auth.safe_next(next)
+            remember_me = _remember(cfg, remember)
+            ip = auth.client_ip(request)
+            if not auth.rate_ok(ip):
+                return auth.render_page("login", status=429, next=nxt, error="Zu viele Anfragen — bitte kurz warten.")
+            if auth.is_locked(username, ip) or auth.is_pin_locked(username, ip):
+                return auth.render_page("login", status=429, next=nxt, error="Zu viele Fehlversuche — vorübergehend gesperrt.")
+            u = auth.check_pin(username, pin)
+            auth.record_login(username, ip, bool(u), "pin")
+            if not u:
+                return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
+            token, mfa_ok = auth.start_session(u["id"], "pin", ip, request.headers.get("user-agent"),
+                                               remember=remember_me)
+            resp = RedirectResponse(nxt, 303) if mfa_ok \
+                else RedirectResponse(f"/auth/totp?next={_q(nxt)}", 303)
+            auth.set_cookie(resp, token, remember=remember_me)
+            return resp
+
+        @r.post("/auth/pin/set")
+        async def pin_set(request: Request):
+            u = auth.current_user(request)
+            if not u:
+                raise HTTPException(401)
+            b = await request.json()
+            try:
+                auth.set_pin(u["id"], b.get("pin"))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            auth.audit("pin_set", u["username"])
+            return {"ok": True}
+
+        @r.post("/auth/pin/disable")
+        def pin_off(request: Request):
+            u = auth.current_user(request)
+            if not u:
+                raise HTTPException(401)
+            auth.disable_pin(u["id"])
+            auth.audit("pin_disable", u["username"])
+            return {"ok": True}
+
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):

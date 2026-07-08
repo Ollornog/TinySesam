@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS password_cred (
     hash     TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pin_cred (
+    user_id  INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    hash     TEXT NOT NULL,               -- wie Passwort gehasht (argon2/scrypt)
+    updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS totp_cred (
     user_id   INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     secret    TEXT NOT NULL,
@@ -194,6 +199,22 @@ class Store:
         r = self._one("SELECT hash FROM password_cred WHERE user_id=?", (user_id,))
         return r["hash"] if r else None
 
+    # ---------- PIN ----------
+    def set_pin_hash(self, user_id, hash_):
+        self._exec("INSERT INTO pin_cred(user_id, hash, updated_at) VALUES (?,?,?) "
+                   "ON CONFLICT(user_id) DO UPDATE SET hash=excluded.hash, updated_at=excluded.updated_at",
+                   (user_id, hash_, _now()))
+
+    def get_pin_hash(self, user_id) -> Optional[str]:
+        r = self._one("SELECT hash FROM pin_cred WHERE user_id=?", (user_id,))
+        return r["hash"] if r else None
+
+    def delete_pin(self, user_id):
+        self._exec("DELETE FROM pin_cred WHERE user_id=?", (user_id,))
+
+    def has_pin(self, user_id) -> bool:
+        return self.get_pin_hash(user_id) is not None
+
     # ---------- TOTP ----------
     def set_totp(self, user_id, secret, confirmed=False):
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
@@ -310,14 +331,21 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    def count_fails(self, since, username=None, ip=None) -> int:
+    def count_fails(self, since, username=None, ip=None, method=None) -> int:
+        if not username and not ip:
+            return 0
+        q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
+        args = [since]
         if username:
-            return self._one("SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=? AND username=? COLLATE NOCASE",
-                             (since, username))["c"]
+            q += " AND username=? COLLATE NOCASE"
+            args.append(username)
         if ip:
-            return self._one("SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=? AND ip=?",
-                             (since, ip))["c"]
-        return 0
+            q += " AND ip=?"
+            args.append(ip)
+        if method:
+            q += " AND method=?"
+            args.append(method)
+        return self._one(q, args)["c"]
 
     def clear_fails(self, username=None, ip=None):
         if username:
