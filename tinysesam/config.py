@@ -75,6 +75,21 @@ class TinySesamConfig:
     cookie_path: str = "/"
     cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
 
+    # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---
+    ldap_enabled: bool = False
+    ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636
+    ldap_start_tls: bool = False
+    ldap_user_dn_template: str = ""       # Direkt-Bind, z.B. "uid={username},ou=people,dc=example,dc=com" (lldap)
+    ldap_bind_dn: str = ""                # ODER Service-Account für Search-then-Bind
+    ldap_bind_password: str = ""
+    ldap_user_base: str = ""              # Suchbasis (bei Search-then-Bind)
+    ldap_user_filter: str = "(uid={username})"
+    ldap_attr_email: str = "mail"
+    ldap_attr_name: str = "cn"
+    ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
+    ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (Teilstring-Match)
+    ldap_auto_create: bool = True         # unbekannten LDAP-User lokal anlegen (ohne lokales Passwort)
+
     # --- OIDC ---
     oidc_name: str = "SSO"                # Anzeigename des Buttons
     oidc_issuer: str = ""                 # z.B. https://id.example.com  (…/.well-known/openid-configuration)

@@ -214,6 +214,22 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 
 Vollständige Demo: [`examples/showcase.py`](examples/showcase.py).
 
+## LDAP / lldap
+
+Passwort-Login kann gegen ein Verzeichnis (lldap, OpenLDAP, AD) geprüft werden — als Backend hinter dem
+normalen Passwort-Formular (Faktor `password`). `pip install 'tinysesam[ldap]'`:
+
+```python
+TinySesamConfig(
+    ldap_enabled=True, ldap_url="ldap://lldap:3890",
+    ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",   # Direkt-Bind (lldap)
+    # ODER Search-then-Bind: ldap_bind_dn=…, ldap_bind_password=…, ldap_user_base=…, ldap_user_filter="(uid={username})"
+    ldap_allowed_groups=["staff"],   # optionales Gate (memberOf), leer = alle
+    ldap_auto_create=True,           # unbekannten LDAP-User lokal anlegen
+)
+```
+Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ketten gelten wie sonst.
+
 ## Als reines OIDC-Gateway (Preset)
 
 Wer nur **OIDC-SSO vor beliebige Apps** will (Authelia-/oauth2-proxy-Stil), betreibt TinySesam als

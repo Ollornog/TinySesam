@@ -36,7 +36,11 @@ class TinySesam:
         self._mailer_override = None
         self.oidc = None
         self.webauthn = None
+        self.ldap = None
         self.rl = security.RateLimiter()
+        if config.ldap_enabled and config.ldap_url:
+            from .ldap_ import LDAPClient
+            self.ldap = LDAPClient(config)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             from .oidc import OIDCClient
             self.oidc = OIDCClient(config.oidc_issuer, config.oidc_client_id,
@@ -150,6 +154,31 @@ class TinySesam:
             return None
         if needs_rehash(h):
             self.store.set_password_hash(u["id"], hash_password(password))
+        return u
+
+    # ---------- LDAP / lldap (Passwort-Backend) ----------
+    def check_ldap(self, username, password) -> Optional[dict]:
+        """Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben.
+        Zählt wie ein Passwort-Login (Faktor 'password')."""
+        if not self.ldap:
+            return None
+        info = self.ldap.authenticate(username, password)
+        if not info:
+            return None
+        # Gruppen-Gate (Teilstring-Match gegen memberOf/Gruppen-Werte)
+        allowed = self.cfg.ldap_allowed_groups
+        if allowed:
+            groups = info.get("groups") or []
+            if not any(a and any(a in str(g) for g in groups) for a in allowed):
+                return None
+        u = self.store.get_user_by_name(username)
+        if not u:
+            if not self.cfg.ldap_auto_create:
+                return None
+            uid = self.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
+            u = self.store.get_user(uid)
+        elif u["disabled"]:
+            return None
         return u
 
     # ---------- PIN-Login (persönliche PIN pro User) ----------

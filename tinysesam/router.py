@@ -33,6 +33,8 @@ def build_router(auth) -> APIRouter:
         if auth.is_locked(username, ip):
             return auth.render_page("login", status=429, next=nxt, error="Zu viele Fehlversuche — vorübergehend gesperrt.")
         u = auth.check_password(username, password)
+        if not u and cfg.ldap_enabled:
+            u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
         auth.record_login(username, ip, bool(u), "password")
         if not u:
             return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
