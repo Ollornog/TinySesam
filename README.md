@@ -194,6 +194,19 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 
 Vollständige Demo: [`examples/showcase.py`](examples/showcase.py).
 
+## Tests & CI
+
+```bash
+pip install -e '.[all]'        # + httpx wird für den FastAPI-TestClient gebraucht (in [all] enthalten)
+python tests/run_all.py         # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
+python tests/run_all.py core pin chain   # gezielt einzelne
+```
+
+Die Suiten sind eigenständige assert-Skripte (kein pytest). **GitHub-Actions-CI**
+(`.github/workflows/ci.yml`) fährt bei **jedem Push/PR** automatisch: den vollen Lauf über
+Python 3.10–3.13 (`.[all]`) **und** einen Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback;
+Passkey/OIDC-abhängige Suiten werden dabei übersprungen). Fürs Update also einfach pushen — CI testet.
+
 ## Status
 
 Kern (Passwort/TOTP/Sessions/Rollen), Härtung, API-Keys/Service-Accounts, Admin-Panel und
