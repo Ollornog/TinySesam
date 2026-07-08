@@ -17,6 +17,10 @@ Eine Klasse davorhängen, fertig: Login-Seite, Sessions und Route-Guards inklusi
 - **Von „Passwort reicht" bis „OIDC → Passwort → TOTP"?** → wächst mit — jedes Stück **optional, an/aus per Config**.
 - **Eigenes Look & Feel?** → das komplette **Frontend ist austauschbar** (`auth.set_template(...)`), inkl. Sprache (en/de).
 
+> **Kurz zur Einordnung:** TinySesam sichert **deine eigenen (selbstgebauten) Apps** und **nutzt** dabei vorhandene
+> IdProvider (OIDC, SAML, LDAP/AD) als *Client / Relying Party*. Es ist **selbst kein Identity Provider** — also
+> **kein Ersatz** für Keycloak/Authentik/PocketID, sondern die schlanke Auth-Schicht **davor bzw. in** deiner App.
+
 **Anmelde-Methoden — beliebig kombinierbar:**
 - 🔑 **Passkey / WebAuthn** (passwortlos, phishing-resistent)
 - 🔐 **Passwort** (argon2, mit stdlib-scrypt-Fallback)

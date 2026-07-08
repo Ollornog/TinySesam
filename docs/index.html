@@ -102,6 +102,9 @@
     color:var(--muted); font-size:14px}
   footer a{margin:0 9px}
   .note{color:var(--muted); font-size:13.5px}
+  .pos{max-width:46ch; margin:14px auto 0; padding:11px 15px; font-size:14px; color:var(--muted);
+    background:var(--chip); border:1px solid var(--line); border-radius:10px; text-wrap:balance}
+  .pos b{color:var(--ink); font-weight:600}
   @media (prefers-reduced-motion:no-preference){
     header.hero, section{animation:rise .5s ease both}
     section:nth-of-type(2){animation-delay:.05s}
@@ -116,6 +119,7 @@
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
     <h1><span class="tiny">Tiny</span>Sesam</h1>
     <p class="tagline">The <b>login layer for your self-built apps</b>. Super-light auth for FastAPI where you use <b>only what you need</b> — hang one class in front of your app and get login pages, sessions and route guards. It grows with you.</p>
+    <p class="pos">Secures <b>your own apps</b> and <b>consumes</b> existing identity providers (OIDC, SAML, LDAP&nbsp;/&nbsp;AD). It is <b>not</b> an identity provider itself — not a Keycloak / Authentik / PocketID replacement.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/Ollornog/TinySesam">View on GitHub</a>
       <a class="btn ghost" href="https://github.com/Ollornog/TinySesam#readme">Documentation</a>
