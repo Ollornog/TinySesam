@@ -119,6 +119,8 @@ class TinySesamConfig:
     # --- Härtung ---
     # Reverse-Proxies, deren X-Forwarded-For vertraut werden darf (sonst ist die echte Client-IP fälschbar).
     trusted_proxies: list[str] = field(default_factory=lambda: ["127.0.0.1/32", "::1/128"])
+    # Prozessübergreifendes Rate-Limit über Redis (Multi-Worker); leer = In-Memory pro Prozess. Extra [redis].
+    redis_url: str = ""                   # z.B. redis://localhost:6379/0
     # Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade).
     trusted_redirect_hosts: list[str] = field(default_factory=list)
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar

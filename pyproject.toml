@@ -35,7 +35,8 @@ qr = ["qrcode[pil]>=7"]             # TOTP-Enrollment-QR
 oidc = ["httpx>=0.27", "authlib>=1.3"]
 passkey = ["webauthn>=2.0"]
 ldap = ["ldap3>=2.9"]
-all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.3", "webauthn>=2.0", "ldap3>=2.9"]
+redis = ["redis>=5"]
+all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.3", "webauthn>=2.0", "ldap3>=2.9", "redis>=5"]
 
 [project.urls]
 Homepage = "https://github.com/Ollornog/TinySesam"
