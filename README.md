@@ -1,5 +1,9 @@
 # TinySesam
 
+[![tests](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg)](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+
 Kleines, wiederverwendbares **Multi-Methoden-Auth für FastAPI**. Eine Klasse davorhängen, fertig —
 Login-Seite, Sessions und Guards inklusive. Gedacht als Baustein für eigene Apps (z.B. paperlaiss).
 
