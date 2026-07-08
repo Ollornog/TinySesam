@@ -48,6 +48,20 @@ def verify_password(pw: str, stored: str) -> bool:
     return False
 
 
+# Dummy-Hash (mit dem AKTIVEN Verfahren, einmalig erzeugt) für Timing-Ausgleich: bei unbekanntem
+# User/fehlendem Hash trotzdem gleich viel Verify-Arbeit leisten → keine User-Enumeration per Zeit.
+_DUMMY = hash_password("tinysesam-timing-dummy")
+
+
+def dummy_verify(pw: str) -> bool:
+    """Verify-Arbeit gegen den Dummy-Hash leisten (Rückgabe immer False)."""
+    try:
+        verify_password(pw or "", _DUMMY)
+    except Exception:
+        pass
+    return False
+
+
 def needs_rehash(stored: str) -> bool:
     if _ARGON and not stored.startswith("scrypt$"):
         try:

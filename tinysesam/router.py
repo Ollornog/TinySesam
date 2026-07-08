@@ -354,6 +354,9 @@ def build_router(auth) -> APIRouter:
         if len(new) < auth.sec("password_min_length"):
             raise HTTPException(400, f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
         auth.set_password(u["id"], new)
+        # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
+        s = auth.session_from_request(request)
+        auth.store.delete_user_sessions_except(u["id"], s["token"] if s else None)
         auth.audit("password_change", u["username"], auth.client_ip(request))
         return {"ok": True}
 
