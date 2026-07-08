@@ -104,6 +104,34 @@ class TinySesamConfig:
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 
+    @classmethod
+    def oidc_gateway(cls, *, issuer, client_id, client_secret, base_url,
+                     cookie_domain="", trusted_redirect_hosts=None, allowed_groups=None,
+                     group_claim="groups", oidc_name="SSO", oidc_scopes="openid profile email",
+                     db_path="tinysesam-gateway.db", https_mode="warn", session_ttl_hours=24 * 7,
+                     trusted_proxies=None, **overrides):
+        """Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil).
+        Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`.
+        Einzelne Felder via **overrides überschreibbar."""
+        base = dict(
+            db_path=db_path,
+            password_enabled=False, passkey_enabled=False, pin_enabled=False,
+            oidc_enabled=True, magiclink_enabled=False, apikey_enabled=False,
+            allow_signup=False, admin_enabled=False, account_enabled=False,
+            totp_enabled=False, resource_locks_enabled=False,
+            forward_auth_enabled=True,
+            oidc_issuer=issuer, oidc_client_id=client_id, oidc_client_secret=client_secret,
+            oidc_name=oidc_name, oidc_scopes=oidc_scopes,
+            oidc_allowed_groups=list(allowed_groups or []), oidc_group_claim=group_claim,
+            oidc_auto_create=True,
+            base_url=base_url, cookie_domain=cookie_domain,
+            trusted_redirect_hosts=list(trusted_redirect_hosts or []),
+            session_ttl_hours=session_ttl_hours, https_mode=https_mode,
+            trusted_proxies=list(trusted_proxies or ["127.0.0.1/32", "::1/128"]),
+        )
+        base.update(overrides)
+        return cls(**base)
+
     def enabled_methods(self) -> list[str]:
         m = []
         if self.password_enabled:

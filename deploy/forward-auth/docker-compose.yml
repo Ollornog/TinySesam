@@ -1,0 +1,48 @@
+# TinySesam als OIDC-Forward-Auth-Gateway (deploy-and-go), zusammen mit Caddy.
+#
+#   docker compose up -d
+#
+# Caddy ruft je Request GET /auth/forward beim Gateway (siehe ./Caddyfile). Der Gateway macht
+# ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nur [oidc]-Extra nötig.
+
+services:
+  tinysesam:
+    image: python:3.12-slim
+    working_dir: /app
+    # Installiert TinySesam mit OIDC-Extra direkt von GitHub und startet das Gateway.
+    command: >
+      sh -c "pip install --no-cache-dir 'tinysesam[oidc]@git+https://github.com/Ollornog/TinySesam.git' uvicorn
+      && python -m tinysesam.gateway"
+    environment:
+      TINYSESAM_OIDC_ISSUER: "https://id.example.com"
+      TINYSESAM_OIDC_CLIENT_ID: "gateway"
+      TINYSESAM_OIDC_CLIENT_SECRET: "CHANGE_ME"
+      TINYSESAM_BASE_URL: "https://auth.example.com"
+      TINYSESAM_COOKIE_DOMAIN: ".example.com"
+      TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
+      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
+      TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"          # hier vertrauen wir dem internen Caddy
+      TINYSESAM_HTTPS_MODE: "warn"                     # TLS terminiert Caddy davor
+      TINYSESAM_DB: "/data/gateway.db"
+      TINYSESAM_PORT: "8000"
+    volumes:
+      - tinysesam-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - tinysesam
+    restart: unless-stopped
+
+volumes:
+  tinysesam-data:
+  caddy-data:
+  caddy-config:

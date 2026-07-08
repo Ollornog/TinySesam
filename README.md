@@ -194,6 +194,24 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 
 Vollständige Demo: [`examples/showcase.py`](examples/showcase.py).
 
+## Als reines OIDC-Gateway (Preset)
+
+Wer nur **OIDC-SSO vor beliebige Apps** will (Authelia-/oauth2-proxy-Stil), betreibt TinySesam als
+Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[oidc]'`:
+
+```bash
+export TINYSESAM_OIDC_ISSUER=https://id.example.com \
+       TINYSESAM_OIDC_CLIENT_ID=gateway TINYSESAM_OIDC_CLIENT_SECRET=… \
+       TINYSESAM_BASE_URL=https://auth.example.com \
+       TINYSESAM_COOKIE_DOMAIN=.example.com \
+       TINYSESAM_PROTECTED_HOSTS=app.example.com,wiki.example.com
+python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app
+```
+
+Der Reverse-Proxy ruft je Request `GET /auth/forward`; alle anderen Methoden/Routen sind aus.
+Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
+Fertiges [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (Gateway + Caddy) liegt bei.
+
 ## Tests & CI
 
 ```bash
