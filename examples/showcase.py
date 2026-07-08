@@ -19,10 +19,22 @@ from fastapi.responses import HTMLResponse
 
 from tinysesam import TinySesam, TinySesamConfig
 
+# EIN brand_css re-skinnt ALLE eingebauten Seiten (Login/PIN/TOTP/Konto/Fehlerseiten) — Altrosa wie das Icon.
+BRAND = """
+body{background:#14121a}
+.card{border-color:#3a2b33;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+h1{letter-spacing:-.01em}
+button,.btn2{background:#b0566f}.btn2{background:#2a2333;border:1px solid #3a2b33}
+button:hover{filter:brightness(1.06)}
+a{color:#e0919c}
+input:focus{outline:2px solid #b0566f;border-color:#b0566f}
+"""
+
 auth = TinySesam(TinySesamConfig(
     db_path="/tmp/tinysesam-showcase.db",
     rp_name="Showcase",
     lang="de",                      # eingebaute Seiten auf Deutsch (Default wäre "en")
+    brand_css=BRAND,                # ← einmal setzen, alle eingebauten Seiten sehen so aus
     password_enabled=True,
     pin_enabled=True,               # persönliche PIN
     passkey_enabled=False,          # für lokalen HTTP-Test aus
@@ -30,6 +42,7 @@ auth = TinySesam(TinySesamConfig(
     magiclink_enabled=True,         # Login-Link per E-Mail (hier: Konsolen-Mailer)
     allow_signup=True,              # Selbst-Registrierung offen
     resource_locks_enabled=True,    # geteiltes Ressourcen-Geheimnis
+    available_roles=["editor", "viewer"],   # Rollen als Checkboxen im Admin-Panel
     cookie_secure=False,            # lokal ohne HTTPS
 ))
 auth.ensure_admin("admin", "geheim123")
@@ -64,6 +77,7 @@ def my_login(a, ctx):
 
 app = FastAPI()
 app.include_router(auth.router())
+auth.install_error_pages(app)       # themed 403/404/500 … (Redirects bleiben Redirects)
 
 _SHELL_CSS = """
 :root{color-scheme:dark}*{box-sizing:border-box}
@@ -101,7 +115,13 @@ def landing():
           <li><a href="/auth/account">Mein Konto</a><small>Passwort, PIN, 2FA, Sitzungen</small></li>
           <li><a href="/auth/admin">Admin-Panel</a><small>Benutzer, Rollen, Sitzungen, Audit</small></li>
         </ul>
-        <div class=bar><a href="/auth/login">Anmelden</a><a href="/auth/register">Registrieren</a></div>""")
+        <div class=bar><a href="/auth/login">Anmelden</a><a href="/auth/register">Registrieren</a>
+          <a href="/gibtsnicht">404-Seite</a><a href="/boom">500-Seite</a></div>""")
+
+
+@app.get("/boom", response_class=HTMLResponse)
+def boom():
+    raise RuntimeError("absichtlicher Fehler für die Demo")   # → themed 500-Seite
 
 
 @app.get("/app", response_class=HTMLResponse)

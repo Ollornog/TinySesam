@@ -794,6 +794,31 @@ class TinySesam:
         host = request.client.host if request.client else ""
         return host in ("127.0.0.1", "::1", "localhost")
 
+    def install_error_pages(self, app):
+        """Themed Fehlerseiten registrieren (opt-in). Browser bekommen die 'error'-Seite (im Branding),
+        API-Clients JSON; Redirects (Login/Reauth/Faktor, via Location-Header) bleiben Redirects."""
+        from starlette.exceptions import HTTPException as _HTTPExc
+        from starlette.responses import RedirectResponse, JSONResponse
+
+        def _wants_html(request):
+            return "text/html" in request.headers.get("accept", "")
+
+        @app.exception_handler(_HTTPExc)
+        async def _handle_http(request, exc):
+            headers = exc.headers or {}
+            loc = headers.get("Location") or headers.get("location")
+            if loc:   # unser _deny/_deny_stepup/_redirect_factor → Redirect unverändert durchreichen
+                return RedirectResponse(loc, status_code=exc.status_code, headers=headers)
+            if _wants_html(request):
+                return self.render_page("error", status=exc.status_code, code=exc.status_code, message=exc.detail)
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers or None)
+
+        @app.exception_handler(Exception)
+        async def _handle_500(request, exc):
+            if _wants_html(request):
+                return self.render_page("error", status=500, code=500, message=self.t("error.oops"))
+            return JSONResponse({"detail": "internal server error"}, status_code=500)
+
     def install_https(self, app):
         """HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' →
         läuft auch OHNE Zertifikat (bei 'warn' Panel-Hinweis). Gibt den Modus zurück."""

@@ -11,6 +11,10 @@ class TinySesamConfig:
     # --- Sprache der eingebauten Texte (en|de; eigene via auth.add_messages) ---
     lang: str = "en"
 
+    # --- Branding/Theme: einmal setzen → re-skinnt ALLE eingebauten Seiten (+ Fehlerseiten) ---
+    brand_css: str = ""                   # zusätzliches CSS (nach dem Default → überschreibt es)
+    brand_head: str = ""                  # zusätzliches <head>-HTML (z.B. Logo-Font, Meta)
+
     # --- Rollen/Gruppen ---
     # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).
     available_roles: list[str] = field(default_factory=list)
