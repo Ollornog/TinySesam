@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS session (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- 2FA bestanden (oder nicht nötig)
-    method     TEXT,                          -- password|passkey|oidc
+    mfa_at     INTEGER,                       -- Zeitpunkt des bestandenen 2. Faktors (Step-up-Frische)
+    method     TEXT,                          -- password|passkey|oidc|pin
+    remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
     ip         TEXT,
     user_agent TEXT
 );
@@ -115,6 +117,20 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self.db.executescript(SCHEMA)
+            self.db.commit()
+        self._migrate()
+
+    def _migrate(self):
+        """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent)."""
+        adds = {
+            "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1")],
+        }
+        with self._lock:
+            for table, cols in adds.items():
+                have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
+                for name, decl in cols:
+                    if name not in have:
+                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
             self.db.commit()
 
     def _one(self, sql, args=()):
@@ -225,12 +241,13 @@ class Store:
         return r["user_id"] if r else None
 
     # ---------- Sessions ----------
-    def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None) -> str:
+    def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None, remember=True) -> str:
         token = secrets.token_urlsafe(32)
         now = _now()
-        self._exec("INSERT INTO session(token, user_id, created_at, expires_at, mfa_ok, method, ip, user_agent) "
-                   "VALUES (?,?,?,?,?,?,?,?)",
-                   (token, user_id, now, now + ttl_seconds, 1 if mfa_ok else 0, method, ip, ua))
+        self._exec("INSERT INTO session(token, user_id, created_at, expires_at, mfa_ok, mfa_at, method, remember, ip, user_agent) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                   (token, user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
+                    (now if mfa_ok else None), method, 1 if remember else 0, ip, ua))
         return token
 
     def get_session(self, token) -> Optional[sqlite3.Row]:
@@ -243,7 +260,8 @@ class Store:
         return r
 
     def set_session_mfa(self, token, ok=True):
-        self._exec("UPDATE session SET mfa_ok=? WHERE token=?", (1 if ok else 0, token))
+        self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token=?",
+                   (1 if ok else 0, (_now() if ok else None), token))
 
     def delete_session(self, token):
         self._exec("DELETE FROM session WHERE token=?", (token,))

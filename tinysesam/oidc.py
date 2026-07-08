@@ -111,7 +111,9 @@ def register_oidc_routes(router, auth):
 
         ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
         token, mfa_ok = auth.start_session(uid, "oidc", ip, ua)
-        target = flow.get("next") or cfg.login_redirect
-        resp = RedirectResponse(target, 303) if mfa_ok else RedirectResponse(f"/auth/totp?next={target}", 303)
+        target = auth.safe_next(flow.get("next") or cfg.login_redirect)
+        from urllib.parse import quote
+        resp = RedirectResponse(target, 303) if mfa_ok \
+            else RedirectResponse(f"/auth/totp?next={quote(target, safe='/')}", 303)
         auth.set_cookie(resp, token)
         return resp

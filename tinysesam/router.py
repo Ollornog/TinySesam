@@ -4,8 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
-from . import templates as T
-
 
 def build_router(auth) -> APIRouter:
     cfg = auth.cfg
@@ -17,27 +15,32 @@ def build_router(auth) -> APIRouter:
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = "/", error: str = ""):
+        nxt = auth.safe_next(next)
         if auth.current_user(request):
-            return RedirectResponse(next or cfg.login_redirect, 303)
-        return T.login_page(auth, next, error)
+            return RedirectResponse(nxt, 303)
+        return auth.render_page("login", next=nxt, error=error)
 
     @r.post("/auth/login")
-    def login_submit(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+    def login_submit(request: Request, username: str = Form(...), password: str = Form(...),
+                     next: str = Form("/"), remember: str = Form("")):
         if not cfg.password_enabled:
             raise HTTPException(404, "Passwort-Login deaktiviert")
+        nxt = auth.safe_next(next)
+        remember_me = _remember(cfg, remember)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip):
-            return T.login_page(auth, next, "Zu viele Anfragen — bitte kurz warten.", status=429)
+            return auth.render_page("login", status=429, next=nxt, error="Zu viele Anfragen — bitte kurz warten.")
         if auth.is_locked(username, ip):
-            return T.login_page(auth, next, "Zu viele Fehlversuche — vorübergehend gesperrt.", status=429)
+            return auth.render_page("login", status=429, next=nxt, error="Zu viele Fehlversuche — vorübergehend gesperrt.")
         u = auth.check_password(username, password)
         auth.record_login(username, ip, bool(u), "password")
         if not u:
-            return T.login_page(auth, next, "Falsche Zugangsdaten", status=401)
-        token, mfa_ok = auth.start_session(u["id"], "password", ip, request.headers.get("user-agent"))
-        resp = RedirectResponse(next or cfg.login_redirect, 303) if mfa_ok \
-            else RedirectResponse(f"/auth/totp?next={next}", 303)
-        auth.set_cookie(resp, token)
+            return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
+        token, mfa_ok = auth.start_session(u["id"], "password", ip, request.headers.get("user-agent"),
+                                           remember=remember_me)
+        resp = RedirectResponse(nxt, 303) if mfa_ok \
+            else RedirectResponse(f"/auth/totp?next={_q(nxt)}", 303)
+        auth.set_cookie(resp, token, remember=remember_me)
         return resp
 
     # ---------- TOTP als 2. Faktor ----------
@@ -45,23 +48,24 @@ def build_router(auth) -> APIRouter:
     def totp_page(request: Request, next: str = "/", error: str = ""):
         if not auth.pending_user(request):
             return RedirectResponse(cfg.login_path, 303)
-        return T.totp_page(auth, next, error)
+        return auth.render_page("totp", next=auth.safe_next(next), error=error)
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(...), next: str = Form("/")):
+        nxt = auth.safe_next(next)
         s = auth.session_from_request(request)
         pu = auth.pending_user(request)
         if not s or not pu:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
-            return T.totp_page(auth, next, "Zu viele Versuche — bitte warten.", status=429)
+            return auth.render_page("totp", status=429, next=nxt, error="Zu viele Versuche — bitte warten.")
         if not auth.verify_totp(pu["id"], code):
             auth.record_login(pu["username"], ip, False, "totp")
-            return T.totp_page(auth, next, "Code falsch", status=401)
+            return auth.render_page("totp", status=401, next=nxt, error="Code falsch")
         auth.record_login(pu["username"], ip, True, "totp")
         auth.complete_mfa(s["token"])
-        return RedirectResponse(next or cfg.login_redirect, 303)
+        return RedirectResponse(nxt, 303)
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -69,7 +73,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
-        return T.totp_setup_page(auth, auth.totp_begin(u["id"]))
+        return auth.render_page("totp_setup", data=auth.totp_begin(u["id"]))
 
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...)):
@@ -151,3 +155,15 @@ def build_router(auth) -> APIRouter:
 def key_view(k) -> dict:
     return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
             "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
+
+
+def _remember(cfg, val) -> bool:
+    """Remember-me aus dem Formular auswerten. Ist die Checkbox global aus, gilt immer persistent."""
+    if not cfg.remember_me_enabled:
+        return True
+    return str(val) in ("1", "true", "on", "yes")
+
+
+def _q(s: str) -> str:
+    from urllib.parse import quote
+    return quote(s or "/", safe="/")

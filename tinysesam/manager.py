@@ -17,10 +17,13 @@ import secrets
 from typing import Optional
 
 from fastapi import Request, HTTPException
+from fastapi.responses import HTMLResponse
+from starlette.responses import Response
 
 from .config import TinySesamConfig
 from .store import Store
 from .passwords import hash_password, verify_password, needs_rehash
+from .templates import Templates
 from . import totp as _totp
 from . import security
 
@@ -29,6 +32,7 @@ class TinySesam:
     def __init__(self, config: TinySesamConfig):
         self.cfg = config
         self.store = Store(config.db_path)
+        self.templates = Templates()
         self.oidc = None
         self.webauthn = None
         self.rl = security.RateLimiter()
@@ -170,15 +174,17 @@ class TinySesam:
         self.store.delete_totp(user_id)
 
     # ---------- Sessions ----------
-    def _ttl(self) -> int:
-        return self.cfg.session_ttl_hours * 3600
+    def _ttl(self, remember: bool = True) -> int:
+        """Server-Session-Lebensdauer. remember=False → kurze Transient-TTL (Session-Cookie)."""
+        hours = self.cfg.session_ttl_hours if remember else self.cfg.session_ttl_transient_hours
+        return hours * 3600
 
-    def start_session(self, user_id, method, ip=None, ua=None) -> tuple[str, bool]:
+    def start_session(self, user_id, method, ip=None, ua=None, remember: bool = True) -> tuple[str, bool]:
         """Session anlegen. Gibt (token, mfa_ok). mfa_ok=False → TOTP-Schritt nötig."""
         needs = self.mfa_pending(user_id)
         # Passkey ist bereits ein starker Faktor → kein zusätzliches TOTP nötig
         mfa_ok = (method == "passkey") or (not needs)
-        token = self.store.create_session(user_id, self._ttl(), mfa_ok, method, ip, ua)
+        token = self.store.create_session(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember)
         if mfa_ok:   # voller Login abgeschlossen → Audit
             u = self.store.get_user(user_id)
             self.store.audit_log("login", u["username"] if u else None, ip, method)
@@ -223,16 +229,25 @@ class TinySesam:
             return None
         return self.store.get_user(s["user_id"])
 
-    def set_cookie(self, response, token):
-        response.set_cookie(self.cfg.session_cookie, token, max_age=self._ttl(),
-                            httponly=True, secure=self.cfg.cookie_secure,
-                            samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+    def set_cookie(self, response, token, remember: bool = True):
+        """Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL);
+        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen)."""
+        kw = dict(httponly=True, secure=self.cfg.cookie_secure,
+                  samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+        if self.cfg.cookie_domain:
+            kw["domain"] = self.cfg.cookie_domain
+        if remember:
+            kw["max_age"] = self._ttl(True)
+        response.set_cookie(self.cfg.session_cookie, token, **kw)
 
     def logout(self, request, response):
         s = self.session_from_request(request)
         if s:
             self.store.delete_session(s["token"])
-        response.delete_cookie(self.cfg.session_cookie, path=self.cfg.cookie_path)
+        kw = dict(path=self.cfg.cookie_path)
+        if self.cfg.cookie_domain:
+            kw["domain"] = self.cfg.cookie_domain
+        response.delete_cookie(self.cfg.session_cookie, **kw)
 
     # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
     def client_ip(self, request: Request) -> str:
@@ -311,6 +326,23 @@ class TinySesam:
         st = self.update_status()
         return self.run_update() if st.get("available") else {"up_to_date": True, **st}
 
+    # ---------- Views / Redirect-Sicherheit ----------
+    def set_template(self, name, fn):
+        """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.
+        Namen: 'login', 'totp', 'totp_setup', 'account', 'register', 'magic_request', 'magic_sent',
+        'resource_pin' (je nach aktivierten Features). String → HTML mit Status; Response → 1:1."""
+        self.templates.set(name, fn)
+
+    def render_page(self, name, status=200, **ctx) -> Response:
+        out = self.templates.render(name, self, ctx)
+        if isinstance(out, Response):
+            return out
+        return HTMLResponse(out, status_code=status)
+
+    def safe_next(self, next_: str) -> str:
+        """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts)."""
+        return security.safe_next(next_, self.cfg.login_redirect, self.cfg.trusted_redirect_hosts or None)
+
     # ---------- FastAPI-Integration ----------
     def router(self):
         from .router import build_router
@@ -342,7 +374,9 @@ class TinySesam:
     def _deny(self, request: Request):
         # HTML-Browser → Redirect zum Login; sonst (API/JSON) → 401
         if "text/html" in request.headers.get("accept", ""):
-            raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={request.url.path}"})
+            from urllib.parse import quote
+            nxt = quote(request.url.path, safe="/")
+            raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={nxt}"})
         raise HTTPException(401, "nicht eingeloggt")
 
     def require_user(self, request: Request) -> dict:

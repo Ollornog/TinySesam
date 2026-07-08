@@ -26,10 +26,13 @@ class TinySesamConfig:
 
     # --- Sessions (server-side, revozierbar) ---
     session_cookie: str = "tinysesam_session"
-    session_ttl_hours: int = 24 * 7
+    session_ttl_hours: int = 24 * 7       # TTL bei „Angemeldet bleiben" (persistentes Cookie)
+    session_ttl_transient_hours: int = 12 # TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen)
+    remember_me_enabled: bool = True      # „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent)
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"
+    cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
 
     # --- OIDC ---
     oidc_name: str = "SSO"                # Anzeigename des Buttons
@@ -55,6 +58,8 @@ class TinySesamConfig:
     # --- Härtung ---
     # Reverse-Proxies, deren X-Forwarded-For vertraut werden darf (sonst ist die echte Client-IP fälschbar).
     trusted_proxies: list[str] = field(default_factory=lambda: ["127.0.0.1/32", "::1/128"])
+    # Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade).
+    trusted_redirect_hosts: list[str] = field(default_factory=list)
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 

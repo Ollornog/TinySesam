@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 import logging
 import ipaddress
+from urllib.parse import urlsplit
 from collections import defaultdict, deque
 
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
@@ -18,6 +19,30 @@ SECURITY_DEFAULTS = {
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
     "password_min_length": 8,
 }
+
+
+def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
+    """Open-Redirect-Schutz für ?next=-Ziele.
+
+    Erlaubt nur *relative* Pfade auf demselben Host (beginnen mit genau einem '/', kein
+    protokoll-relatives '//', kein Schema, kein Backslash). Absolute URLs sind nur erlaubt,
+    wenn ihr Host in allowed_hosts steht (für den Forward-Auth-/SSO-Fall). Alles andere → default.
+    """
+    if not next_:
+        return default
+    n = next_.strip()
+    # relativer Pfad: genau ein führender Slash, kein Schema/Backslash/protokoll-relativ
+    if n.startswith("/") and not n.startswith("//") and "\\" not in n and "://" not in n:
+        return n
+    if allowed_hosts:
+        try:
+            parts = urlsplit(n)
+        except Exception:
+            return default
+        host = parts.hostname or ""
+        if parts.scheme in ("http", "https") and host and host in allowed_hosts:
+            return n
+    return default
 
 
 def is_trusted(ip: str, trusted_nets) -> bool:
