@@ -292,3 +292,7 @@ Passwort-vergessen, eigene Sitzungsverwaltung, optionalen OIDC-RP-Logout sowie H
 nach PW-Wechsel, Anti-Enumeration, `auth.gc()`, `py.typed`). Insgesamt **22 Testdateien, alle grün**.
 
 MIT-Lizenz.
+
+## Credits
+
+Icon: <a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">Wizard icons created by max.icons - Flaticon</a>
