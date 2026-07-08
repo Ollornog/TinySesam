@@ -1,4 +1,6 @@
-# TinySesam
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="104" height="104"></p>
+
+<h1 align="center">TinySesam</h1>
 
 [![tests](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg)](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
