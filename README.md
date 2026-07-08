@@ -99,6 +99,16 @@ Depends(auth.require_admin)            # eingeloggt + is_admin
 Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit alle)
 ```
 
+## Rollen & Gruppen
+
+**Rollen sind die Gruppen** — pro User eine Liste (`roles`) + `is_admin`; Guard `require_role("…")`.
+- **Lokale User/Passwort:** Rollen im **Admin-Panel** je User zuweisen. `available_roles=[…]` definiert bekannte
+  Rollen → das Panel zeigt sie als **Checkboxen** (leer = Freitext-Eingabe).
+- **IdP-User (OIDC/SAML/LDAP/AD):** externe Gruppen automatisch auf lokale Rollen mappen —
+  `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, z.B.
+  `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (Ziel `__admin__` = Admin-Flag). Beim Login gesetzt;
+  gemappte Rollen werden synchronisiert, manuell vergebene bleiben. Überall dieselben `require_role(...)`-Guards.
+
 ## Routen (vom Router bereitgestellt)
 
 | Route | Zweck |

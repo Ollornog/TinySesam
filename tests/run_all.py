@@ -16,7 +16,8 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-OPTIONAL = ("webauthn", "authlib", "httpx", "argon2", "qrcode")   # Extras: [passkey]/[oidc]/[argon2]/[qr]
+OPTIONAL = ("webauthn", "authlib", "httpx", "argon2", "qrcode",   # Extras: [passkey]/[oidc]/[argon2]/[qr]
+            "onelogin", "xmlsec", "ldap3", "redis")               # [saml]/[ldap]/[redis]
 
 
 def main(argv):

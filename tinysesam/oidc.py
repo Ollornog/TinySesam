@@ -123,6 +123,10 @@ def register_oidc_routes(router, auth):
             uid = auth.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
             auth.store.link_oidc(issuer, sub, uid)
 
+        # OIDC-Gruppen → lokale Rollen (falls gemappt)
+        _grp = info.get(cfg.oidc_group_claim) or []
+        auth.apply_idp_groups(uid, _grp if isinstance(_grp, list) else [_grp], cfg.oidc_group_role_map)
+
         ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua)
         target = auth.login_redirect_after(request, token, uid,

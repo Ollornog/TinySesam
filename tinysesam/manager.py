@@ -85,6 +85,24 @@ class TinySesam:
     def set_roles(self, user_id, roles):
         self.store.set_roles(user_id, roles)
 
+    def apply_idp_groups(self, user_id, groups, mapping: dict):
+        """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
+        nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
+        entfernt), manuell vergebene Rollen bleiben. Match = Teilstring (auch für LDAP-memberOf-DNs)."""
+        if not mapping:
+            return
+        gs = [str(g) for g in (groups or [])]
+        matched = {role for key, role in mapping.items() if any(str(key) in g for g in gs)}
+        managed = {role for role in mapping.values() if role != "__admin__"}
+        current = set(self.store.get_roles(user_id))
+        new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
+        if new_roles != current:
+            self.store.set_roles(user_id, sorted(new_roles))
+        if "__admin__" in matched:
+            u = self.store.get_user(user_id)
+            if u and not u["is_admin"]:
+                self.store.set_admin(user_id, True)
+
     # ---------- API-Keys / Service-Accounts (maschineller Zugang, Daemons) ----------
     def create_service(self, username, roles=None, display_name=None) -> int:
         """Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope."""
@@ -189,7 +207,8 @@ class TinySesam:
             u = self.store.get_user(uid)
         elif u["disabled"]:
             return None
-        return u
+        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map)
+        return self.store.get_user(u["id"])   # frisch (gemappte Rollen)
 
     # ---------- SAML (Attribute → lokaler User) ----------
     def check_saml(self, nameid, attrs) -> Optional[dict]:
@@ -213,7 +232,8 @@ class TinySesam:
             u = self.store.get_user(uid)
         elif u["disabled"]:
             return None
-        return u
+        self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
+        return self.store.get_user(u["id"])   # frisch (gemappte Rollen)
 
     # ---------- PIN-Login (persönliche PIN pro User) ----------
     def set_pin(self, user_id, pin):
