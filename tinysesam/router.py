@@ -129,7 +129,7 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
-            b = await request.json()
+            b = await auth.json_body(request)
             try:
                 auth.set_pin(u["id"], b.get("pin"))
             except ValueError as e:
@@ -347,7 +347,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
-        b = await request.json()
+        b = await auth.json_body(request)
         if not auth.check_password(u["username"], b.get("current") or ""):
             raise HTTPException(403, "aktuelles Passwort falsch")
         new = b.get("new") or ""
@@ -411,7 +411,7 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
-            b = await request.json()
+            b = await auth.json_body(request)
             return auth.create_api_key(u["id"], name=b.get("name"),
                                        expires_days=b.get("expires_days"), roles=b.get("roles"))
 

@@ -40,6 +40,11 @@ assert c.post("/auth/login", data={"username": "admin", "password": "geheim123"}
 assert c.post("/auth/login", data={"username": "admin", "password": "neuespasswort"}, follow_redirects=False).status_code == 303
 ok("Selbst-Passwortänderung (aktuelles Passwort nötig, Mindestlänge)")
 
+# Robustheit: kaputter JSON-Body → 400 (nicht 500)
+r = c.post("/auth/password", content="{kaputt}", headers={"Content-Type": "application/json"})
+assert r.status_code == 400, r.status_code
+ok("kaputter JSON-Body → 400 (nicht 500)")
+
 # Template-Override der Account-Seite
 auth.set_template("account", lambda a, ctx: f"<html>MEIN-KONTO {ctx['user']['username']}</html>")
 assert "MEIN-KONTO admin" in c.get("/auth/account").text

@@ -121,6 +121,6 @@ def register_passkey_routes(router, auth):
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
-        b = await request.json()
+        b = await auth.json_body(request)
         auth.store.delete_webauthn(int(b["id"]), u["id"])
         return {"ok": True}

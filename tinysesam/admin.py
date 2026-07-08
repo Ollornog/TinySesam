@@ -43,7 +43,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users")
     async def user_create(request: Request):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         username = (b.get("username") or "").strip()
         if not username:
             raise HTTPException(400, "username nötig")
@@ -62,7 +62,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/disable")
     async def user_disable(request: Request, uid: int):
         me = guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, "sich selbst nicht sperren")
@@ -75,7 +75,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, "password nötig")
         auth.set_password(uid, b["password"])
@@ -85,7 +85,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         auth.set_roles(uid, b.get("roles") or [])
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
@@ -101,7 +101,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"))
 
     @ar.post("/api/keys/{kid}/revoke")
@@ -122,7 +122,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/sessions/revoke")
     async def session_revoke(request: Request):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         if b.get("token"):
             auth.store.delete_session(b["token"])
         elif b.get("user_id"):
@@ -135,7 +135,7 @@ def build_admin_router(auth) -> APIRouter:
         @ar.post("/api/invite")
         async def invite(request: Request):
             guard(request)
-            b = await request.json()
+            b = await auth.json_body(request)
             email = (b.get("email") or "").strip()
             base = cfg.base_url or str(request.base_url)
             res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
@@ -153,7 +153,7 @@ def build_admin_router(auth) -> APIRouter:
         @ar.post("/api/resources")
         async def resource_set(request: Request):
             guard(request)
-            b = await request.json()
+            b = await auth.json_body(request)
             name = (b.get("name") or "").strip()
             if not name or not b.get("secret"):
                 raise HTTPException(400, "name + secret nötig")
@@ -180,7 +180,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/security")
     async def security_set(request: Request):
         guard(request)
-        for k, v in (await request.json()).items():
+        for k, v in (await auth.json_body(request)).items():
             auth.set_security(k, v)
         auth.audit("security_update")
         return auth.all_security()
@@ -193,7 +193,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/update/settings")
     async def update_set(request: Request):
         guard(request)
-        b = await request.json()
+        b = await auth.json_body(request)
         if "mode" in b:
             auth.set_update_setting("mode", b["mode"])
         if "pin" in b:

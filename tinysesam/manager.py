@@ -259,6 +259,17 @@ class TinySesam:
                 "magic": "/auth/magic/request"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
 
+    @staticmethod
+    async def json_body(request: Request) -> dict:
+        """JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500."""
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "ungültiger JSON-Body")
+        if not isinstance(data, dict):
+            raise HTTPException(400, "JSON-Objekt erwartet")
+        return data
+
     # ---------- E-Mail-Versand ----------
     def set_mailer(self, fn):
         """Eigenen Mail-Versand einhängen: fn(to, subject, text, html=None). Überschreibt SMTP."""
