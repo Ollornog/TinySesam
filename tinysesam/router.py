@@ -181,6 +181,37 @@ def build_router(auth) -> APIRouter:
             auth.audit("resource_unlock", ip=ip, detail=name)
             return resp
 
+    # ---------- Magic-Link (Einmal-Login per E-Mail) ----------
+    if cfg.magiclink_enabled:
+        @r.get("/auth/magic/request", response_class=HTMLResponse)
+        def magic_request_page(request: Request, next: str = "/"):
+            return auth.render_page("magic_request", next=auth.safe_next(next), sent=False, error="")
+
+        @r.post("/auth/magic/request", response_class=HTMLResponse)
+        def magic_request(request: Request, email: str = Form(...), next: str = Form("/")):
+            nxt = auth.safe_next(next)
+            ip = auth.client_ip(request)
+            if not auth.rate_ok(ip):
+                return auth.render_page("magic_request", status=429, next=nxt, sent=False,
+                                        error="Zu viele Anfragen — bitte kurz warten.")
+            base = cfg.base_url or str(request.base_url)
+            try:
+                auth.send_login_link(email.strip(), base, nxt)
+            except Exception:
+                auth.audit("magic_send_error", detail=email)   # Fehler nicht nach außen leaken
+            # immer dieselbe Antwort (keine User-Enumeration)
+            return auth.render_page("magic_request", next=nxt, sent=True, error="")
+
+        @r.get("/auth/magic/{token}")
+        def magic_redeem(request: Request, token: str):
+            data = auth.redeem_magic(token)
+            if not data:
+                return auth.render_page("magic_invalid", status=400)
+            handled = _magic_dispatch(auth, request, data)
+            if handled is not None:
+                return handled
+            raise HTTPException(400, "nicht unterstützter Token-Zweck")
+
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):
@@ -277,6 +308,21 @@ def build_router(auth) -> APIRouter:
 def key_view(k) -> dict:
     return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
             "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
+
+
+def _magic_dispatch(auth, request, data):
+    """Einen eingelösten Magic-Token nach Zweck behandeln. Gibt eine Response oder None (unbehandelt)."""
+    from fastapi.responses import RedirectResponse
+    if data["purpose"] == "login" and data.get("user_id"):
+        uid = data["user_id"]
+        nxt = auth.safe_next((data.get("payload") or {}).get("next") or "/")
+        token, ok, is_new = auth.apply_factor(request, uid, "magic",
+                                              auth.client_ip(request), request.headers.get("user-agent"))
+        resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+        if is_new:
+            auth.set_cookie(resp, token)
+        return resp
+    return None
 
 
 def _remember(cfg, val) -> bool:

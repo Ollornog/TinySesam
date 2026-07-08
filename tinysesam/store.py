@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS setting (         -- Runtime-Settings (Härtungs-Schw
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS magic_token (      -- Einmal-Token (Magic-Link / Invite / E-Mail-Verify)
+    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token)
+    purpose    TEXT NOT NULL,                  -- login | invite | verify_email | …
+    user_id    INTEGER,                        -- optional: an bestehenden User gebunden
+    email      TEXT,
+    payload    TEXT,                            -- JSON (z.B. Rollen, Ressource)
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at    INTEGER                          -- gesetzt bei Einlösung → one-shot
+);
 CREATE TABLE IF NOT EXISTS resource_secret (  -- geteiltes Ressourcen-Geheimnis (ohne User-Konto)
     name       TEXT PRIMARY KEY,
     hash       TEXT NOT NULL,                 -- wie Passwort gehasht
@@ -191,6 +201,11 @@ class Store:
 
     def get_user_by_name(self, username) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,))
+
+    def get_user_by_email(self, email) -> Optional[sqlite3.Row]:
+        if not email:
+            return None
+        return self._one("SELECT * FROM users WHERE email=? COLLATE NOCASE ORDER BY id LIMIT 1", (email,))
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
@@ -380,6 +395,28 @@ class Store:
 
     def gc_attempts(self, older_than):
         self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,))
+
+    # ---------- Magic-/Einmal-Token ----------
+    def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):
+        self._exec("INSERT INTO magic_token(token_hash, purpose, user_id, email, payload, created_at, expires_at) "
+                   "VALUES (?,?,?,?,?,?,?)",
+                   (token_hash, purpose, user_id, email, json.dumps(payload) if payload is not None else None,
+                    _now(), expires_at))
+
+    def get_magic_token(self, token_hash):
+        return self._one("SELECT * FROM magic_token WHERE token_hash=?", (token_hash,))
+
+    def use_magic_token(self, token_hash) -> bool:
+        """Atomar als benutzt markieren. True nur beim ERSTEN gültigen Einlösen (one-shot)."""
+        with self._lock:
+            cur = self.db.execute(
+                "UPDATE magic_token SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>=?",
+                (_now(), token_hash, _now()))
+            self.db.commit()
+            return cur.rowcount == 1
+
+    def gc_magic_tokens(self):
+        self._exec("DELETE FROM magic_token WHERE expires_at < ? OR used_at IS NOT NULL", (_now(),))
 
     # ---------- Geteilte Ressourcen-Geheimnisse ----------
     def set_resource_secret(self, name, hash_, kind="pin", label=None):

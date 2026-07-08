@@ -127,6 +127,33 @@ def _totp(auth, ctx) -> str:
     return _shell("Bestätigung", body)
 
 
+def _magic_request(auth, ctx) -> str:
+    """ctx: next, sent (bool), error. E-Mail-Adresse für den Login-Link."""
+    if ctx.get("sent"):
+        body = ("<h1>E-Mail unterwegs</h1>"
+                "<div class=ok>Wenn ein Konto zu dieser Adresse existiert, ist ein Anmelde-Link unterwegs.</div>"
+                "<div class=hint>Prüfe dein Postfach. Der Link ist einige Minuten gültig.</div>"
+                "<a class=btn2 href='/auth/login'>Zurück zur Anmeldung</a>")
+        return _shell("E-Mail unterwegs", body)
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    body = (f"<h1>Login-Link per E-Mail</h1>{err}"
+            f"<div class=hint>Wir schicken dir einen einmaligen Anmelde-Link.</div>"
+            f"<form method=post action='/auth/magic/request'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<label>E-Mail-Adresse</label>"
+            f"<input name=email type=email autocomplete=email autofocus>"
+            f"<button type=submit>Link senden</button></form>"
+            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>Zurück</a></div>")
+    return _shell("Login-Link", body)
+
+
+def _magic_invalid(auth, ctx) -> str:
+    body = ("<h1>Link ungültig</h1>"
+            "<div class=err>Dieser Link ist ungültig, abgelaufen oder wurde bereits benutzt.</div>"
+            "<a class=btn2 href='/auth/login'>Zur Anmeldung</a>")
+    return _shell("Link ungültig", body)
+
+
 def _resource_unlock(auth, ctx) -> str:
     """ctx: name, kind ('pin'|'password'), label, next, error. Geteiltes Ressourcen-Geheimnis."""
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
@@ -209,5 +236,7 @@ DEFAULTS = {
     "totp": _totp,
     "reauth": _reauth,
     "resource_unlock": _resource_unlock,
+    "magic_request": _magic_request,
+    "magic_invalid": _magic_invalid,
     "totp_setup": _totp_setup,
 }

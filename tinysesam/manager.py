@@ -33,6 +33,7 @@ class TinySesam:
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
+        self._mailer_override = None
         self.oidc = None
         self.webauthn = None
         self.rl = security.RateLimiter()
@@ -257,6 +258,61 @@ class TinySesam:
                 "passkey": self.cfg.login_path, "totp": "/auth/totp",
                 "magic": "/auth/magic/request"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
+
+    # ---------- E-Mail-Versand ----------
+    def set_mailer(self, fn):
+        """Eigenen Mail-Versand einhängen: fn(to, subject, text, html=None). Überschreibt SMTP."""
+        self._mailer_override = fn
+
+    def mail_configured(self) -> bool:
+        return bool(self._mailer_override or self.cfg.smtp_host)
+
+    def send_mail(self, to, subject, text, html=None):
+        from .mailer import SMTPMailer
+        fn = self._mailer_override or SMTPMailer(self.cfg)
+        fn(to, subject, text, html)
+
+    # ---------- Magic-/Einmal-Token ----------
+    def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
+        """Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB."""
+        raw = secrets.token_urlsafe(32)
+        h = hashlib.sha256(raw.encode()).hexdigest()
+        ttl = int(ttl_min if ttl_min is not None else self.cfg.magiclink_ttl_min) * 60
+        self.store.add_magic_token(h, purpose, int(time.time()) + ttl, user_id, email, payload)
+        return raw
+
+    def magic_url(self, raw, base_url) -> str:
+        return f"{str(base_url).rstrip('/')}/auth/magic/{raw}"
+
+    def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
+        """Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt)."""
+        if not raw:
+            return None
+        h = hashlib.sha256(raw.encode()).hexdigest()
+        row = self.store.get_magic_token(h)
+        if not row or (purpose and row["purpose"] != purpose):
+            return None
+        if not self.store.use_magic_token(h):
+            return None
+        return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
+                "payload": json.loads(row["payload"]) if row["payload"] else None}
+
+    def send_login_link(self, email, base_url, next="/") -> bool:
+        """Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert.
+        Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration)."""
+        u = self.store.get_user_by_email(email)
+        if not u or u["disabled"] or u["is_service"]:
+            return False
+        raw = self.create_magic_token("login", user_id=u["id"], email=email, payload={"next": next})
+        url = self.magic_url(raw, base_url)
+        mins = self.cfg.magiclink_ttl_min
+        self.send_mail(email, "Dein Anmelde-Link",
+                       f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                       html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
+                            f'<p><a href="{url}">Jetzt anmelden</a></p>'
+                            f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
+        return True
 
     # ---------- Sessions ----------
     def _ttl(self, remember: bool = True) -> int:

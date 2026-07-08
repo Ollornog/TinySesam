@@ -27,6 +27,21 @@ class TinySesamConfig:
     resource_unlock_ttl_hours: int = 12   # wie lange eine freigeschaltete Ressource offen bleibt
     resource_cookie: str = "tinysesam_runlock"
 
+    # --- Magic-Link (Einmal-Login/-Zugang per E-Mail) ---
+    magiclink_enabled: bool = False
+    magiclink_ttl_min: int = 15           # Gültigkeit eines Einmal-Links
+
+    # --- E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar) ---
+    smtp_host: str = ""                   # leer + kein set_mailer → Versand deaktiviert
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""                   # Absender; leer = smtp_user
+    smtp_starttls: bool = True            # 587 = STARTTLS; für 465 smtp_ssl=True setzen
+    smtp_ssl: bool = False
+    smtp_timeout: int = 15
+    mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
+
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten
     totp_required: bool = False           # TOTP nach Passwort/OIDC erzwingen (wenn eingerichtet: immer verlangt)
@@ -94,4 +109,6 @@ class TinySesamConfig:
             m.append("passkey")
         if self.oidc_enabled and self.oidc_issuer and self.oidc_client_id:
             m.append("oidc")
+        if self.magiclink_enabled:
+            m.append("magic")
         return m
