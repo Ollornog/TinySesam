@@ -312,6 +312,33 @@ def build_router(auth) -> APIRouter:
                 auth.set_cookie(resp, token, remember=True)
             return resp
 
+    # ---------- Eigenes Konto (Selbstverwaltung) ----------
+    @r.post("/auth/password")
+    async def change_own_password(request: Request):
+        u = auth.current_user(request)
+        if not u:
+            raise HTTPException(401)
+        b = await request.json()
+        if not auth.check_password(u["username"], b.get("current") or ""):
+            raise HTTPException(403, "aktuelles Passwort falsch")
+        new = b.get("new") or ""
+        if len(new) < auth.sec("password_min_length"):
+            raise HTTPException(400, f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+        auth.set_password(u["id"], new)
+        auth.audit("password_change", u["username"], auth.client_ip(request))
+        return {"ok": True}
+
+    if cfg.account_enabled:
+        @r.get("/auth/account", response_class=HTMLResponse)
+        def account_page(request: Request):
+            u = auth.current_user(request)
+            if not u:
+                return RedirectResponse(f"{cfg.login_path}?next=/auth/account", 303)
+            return auth.render_page("account", user=u, methods=cfg.enabled_methods(),
+                                    has_totp=auth.store.has_confirmed_totp(u["id"]),
+                                    has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
+                                    is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path)
+
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
     def logout(request: Request):

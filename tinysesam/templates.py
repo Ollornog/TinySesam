@@ -127,6 +127,124 @@ def _totp(auth, ctx) -> str:
     return _shell("Bestätigung", body)
 
 
+def _account(auth, ctx) -> str:
+    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path. Selbstverwaltung + Logout.
+    Über auth.set_template('account', fn) komplett ersetzbar."""
+    u = ctx["user"]
+    methods = ctx.get("methods", [])
+    name = _e(u["display_name"] or u["username"])
+    sections = []
+
+    # Passwort ändern
+    if "password" in methods:
+        sections.append(
+            "<div class=sec><h2>Passwort</h2>"
+            "<input id=pw_cur type=password placeholder='Aktuelles Passwort'>"
+            "<input id=pw_new type=password placeholder='Neues Passwort'>"
+            "<button onclick=changepw()>Passwort ändern</button><span id=pw_msg class=msg></span></div>")
+
+    # PIN
+    if "pin" in methods:
+        state = "gesetzt" if ctx.get("has_pin") else "nicht gesetzt"
+        sections.append(
+            f"<div class=sec><h2>PIN <small>({state})</small></h2>"
+            "<input id=pin_new type=password inputmode=numeric placeholder='Neue PIN'>"
+            "<button onclick=setpin()>PIN setzen</button> "
+            "<button class=warn onclick=delpin()>PIN entfernen</button><span id=pin_msg class=msg></span></div>")
+
+    # TOTP / 2FA
+    if auth.cfg.totp_enabled:
+        if ctx.get("has_totp"):
+            totp = ("<span class=ok>✓ aktiv</span> "
+                    "<button class=warn onclick=deltotp()>2FA deaktivieren</button>")
+        else:
+            totp = "<a class=btnlink href='/auth/totp/setup'>2FA einrichten</a>"
+        sections.append(f"<div class=sec><h2>Zwei-Faktor (TOTP)</h2>{totp}<span id=totp_msg class=msg></span></div>")
+
+    # Passkeys
+    if "passkey" in methods:
+        sections.append(
+            "<div class=sec><h2>Passkeys</h2><ul id=pklist></ul>"
+            "<button onclick=addpk()>Passkey hinzufügen</button><span id=pk_msg class=msg></span></div>")
+
+    # API-Keys
+    if auth.cfg.apikey_enabled:
+        sections.append(
+            "<div class=sec><h2>API-Keys</h2><ul id=keylist></ul>"
+            "<input id=key_name placeholder='Name (optional)'>"
+            "<button onclick=mkkey()>Key erzeugen</button><span id=key_msg class=msg></span></div>")
+
+    admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>Admin-Panel</a>"
+                  if ctx.get("is_admin") else "")
+
+    css = """
+    body{max-width:640px;margin:0 auto;padding:24px;display:block}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+    header h1{font-size:20px;margin:0}
+    .sec{background:#161a22;border:1px solid #262b36;border-radius:12px;padding:16px;margin-bottom:14px}
+    .sec h2{font-size:13px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px}
+    .sec small{text-transform:none;letter-spacing:0}
+    .sec input{margin:4px 0}
+    .sec button,.btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
+    button.warn{background:#b91c1c}
+    .btnlink{background:#374151;color:#fff;border-radius:8px;text-decoration:none;padding:9px 14px}
+    .msg{margin-left:8px;font-size:12px;color:#9aa4b2}
+    .ok{color:#4ade80} ul{list-style:none;padding:0;margin:0 0 8px} li{padding:4px 0;font-size:13px;border-bottom:1px solid #20252f}
+    a{color:#7dd3fc}
+    """
+    pkjs = _PASSKEY_REGISTER_JS if "passkey" in methods else ""
+    body = (f"<header><h1>Konto · {name}</h1><div>{admin_link} <a href='/auth/logout'>Abmelden</a></div></header>"
+            + "".join(sections) + _ACCOUNT_JS + pkjs)
+    return (f"<!doctype html><html lang=de><head><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>Mein Konto</title><style>{_CSS}{css}</style></head><body>{body}</body></html>")
+
+
+_ACCOUNT_JS = """
+<script>
+const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.style.color=good?'#4ade80':'#f87171'}};
+async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
+  say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
+async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
+  say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
+async function delpin(){const r=await J('/auth/pin/disable');say('pin_msg','✓ entfernt',true);setTimeout(()=>location.reload(),600)}
+async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;await J('/auth/totp/disable');location.reload()}
+async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
+  const ks=await (await fetch('/auth/apikeys')).json();
+  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span style=color:#f87171>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
+async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
+  if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
+async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
+async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
+  const ps=await (await fetch('/auth/passkey/list')).json();
+  el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn onclick=delpk(${p.id})>löschen</button></li>`).join('')||'<li>keine</li>'}
+async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
+loadkeys();loadpk();
+</script>
+"""
+
+_PASSKEY_REGISTER_JS = """
+<script>
+async function addpk(){
+  try{
+    const o=await (await fetch('/auth/passkey/register/begin',{method:'POST'})).json();
+    o.challenge=Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+    o.user.id=Uint8Array.from(atob(o.user.id.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+    (o.excludeCredentials||[]).forEach(c=>c.id=Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0)));
+    const cred=await navigator.credentials.create({publicKey:o});
+    const enc=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');
+    const payload={id:cred.id,rawId:enc(cred.rawId),type:cred.type,response:{
+      clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
+      transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
+    const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();
+  }catch(e){say('pk_msg','abgebrochen: '+e,false)}
+}
+</script>
+"""
+
+
 def _register(auth, ctx) -> str:
     """ctx: next, invite, email, error, invite_only, sent_verify(optional)."""
     if ctx.get("sent_verify"):
@@ -258,6 +376,7 @@ DEFAULTS = {
     "totp": _totp,
     "reauth": _reauth,
     "resource_unlock": _resource_unlock,
+    "account": _account,
     "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,
