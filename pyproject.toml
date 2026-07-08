@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: System :: Systems Administration :: Authentication/Directory",
+    "Private :: Do Not Upload",   # Schutz gegen versehentlichen PyPI-Upload (Installation via GitHub)
 ]
 dependencies = [
     "fastapi>=0.110",

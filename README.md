@@ -30,10 +30,13 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ## Installation
 
+Direkt von GitHub (nicht auf PyPI):
+
 ```bash
-pip install tinysesam                 # Kern: Passwort + TOTP
-pip install 'tinysesam[all]'          # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]
+GH="git+https://github.com/Ollornog/TinySesam.git"
+pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
+pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.5.0
 ```
 
 ## Quickstart
