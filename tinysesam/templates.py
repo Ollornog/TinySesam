@@ -107,8 +107,12 @@ def _login(auth, ctx) -> str:
     passkey = "<button class=btn2 type=button id=pkbtn>🔑 Mit Passkey anmelden</button>" if "passkey" in methods else ""
     others = oidc + passkey + magic
     sep = "<div class=or>oder</div>" if others and (pw or pin) else ""
-    signup = (f"<div class=hint><a href='/auth/register?next={_e(next_)}' style='color:#9aa4b2'>Konto erstellen</a></div>"
-              if cfg.allow_signup else "")
+    links = []
+    if cfg.allow_signup:
+        links.append(f"<a href='/auth/register?next={_e(next_)}' style='color:#9aa4b2'>Konto erstellen</a>")
+    if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
+        links.append("<a href='/auth/forgot' style='color:#9aa4b2'>Passwort vergessen?</a>")
+    signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_)) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
     return _shell("Anmelden", body)
@@ -156,10 +160,12 @@ def _account(auth, ctx) -> str:
     if auth.cfg.totp_enabled:
         if ctx.get("has_totp"):
             totp = ("<span class=ok>✓ aktiv</span> "
-                    "<button class=warn onclick=deltotp()>2FA deaktivieren</button>")
+                    "<button class=warn onclick=deltotp()>2FA deaktivieren</button> "
+                    "<button onclick=recovery()>Recovery-Codes erzeugen</button>")
         else:
             totp = "<a class=btnlink href='/auth/totp/setup'>2FA einrichten</a>"
-        sections.append(f"<div class=sec><h2>Zwei-Faktor (TOTP)</h2>{totp}<span id=totp_msg class=msg></span></div>")
+        sections.append(f"<div class=sec><h2>Zwei-Faktor (TOTP)</h2>{totp}<span id=totp_msg class=msg></span>"
+                        "<pre id=rc_out style='white-space:pre-wrap;margin-top:10px'></pre></div>")
 
     # Passkeys
     if "passkey" in methods:
@@ -210,6 +216,9 @@ async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
   say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
 async function delpin(){const r=await J('/auth/pin/disable');say('pin_msg','✓ entfernt',true);setTimeout(()=>location.reload(),600)}
 async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;await J('/auth/totp/disable');location.reload()}
+async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
+  const r=await (await J('/auth/totp/recovery')).json();
+  if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('/auth/apikeys')).json();
   el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span style=color:#f87171>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
@@ -285,6 +294,35 @@ def _magic_request(auth, ctx) -> str:
             f"<button type=submit>Link senden</button></form>"
             f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>Zurück</a></div>")
     return _shell("Login-Link", body)
+
+
+def _forgot(auth, ctx) -> str:
+    """ctx: sent (bool), error. E-Mail für den Reset-Link."""
+    if ctx.get("sent"):
+        return _shell("E-Mail unterwegs",
+                      "<h1>E-Mail unterwegs</h1>"
+                      "<div class=ok>Wenn ein Konto zu dieser Adresse existiert, ist ein Reset-Link unterwegs.</div>"
+                      "<a class=btn2 href='/auth/login'>Zur Anmeldung</a>")
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    body = (f"<h1>Passwort vergessen</h1>{err}"
+            f"<div class=hint>Wir schicken dir einen Link zum Zurücksetzen.</div>"
+            f"<form method=post action='/auth/forgot'>"
+            f"<label>E-Mail-Adresse</label><input name=email type=email autocomplete=email autofocus>"
+            f"<button type=submit>Reset-Link senden</button></form>"
+            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>Zurück</a></div>")
+    return _shell("Passwort vergessen", body)
+
+
+def _reset(auth, ctx) -> str:
+    """ctx: token, error. Neues Passwort setzen."""
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    body = (f"<h1>Neues Passwort</h1>{err}"
+            f"<form method=post action='/auth/reset'>"
+            f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>"
+            f"<label>Neues Passwort</label>"
+            f"<input name=password type=password autocomplete=new-password autofocus>"
+            f"<button type=submit>Passwort setzen</button></form>")
+    return _shell("Neues Passwort", body)
 
 
 def _magic_invalid(auth, ctx) -> str:
@@ -380,5 +418,7 @@ DEFAULTS = {
     "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,
+    "forgot": _forgot,
+    "reset": _reset,
     "totp_setup": _totp_setup,
 }

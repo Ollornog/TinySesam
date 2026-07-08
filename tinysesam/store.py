@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS totp_cred (
     confirmed INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS recovery_code (   -- Einmal-Codes als 2FA-Ersatz (verlorener Authenticator)
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT NOT NULL,                 -- sha256(normalisierter Code)
+    created_at INTEGER NOT NULL,
+    used_at    INTEGER
+);
 CREATE TABLE IF NOT EXISTS webauthn_cred (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -263,6 +270,31 @@ class Store:
     def has_confirmed_totp(self, user_id) -> bool:
         r = self.get_totp(user_id)
         return bool(r and r["confirmed"])
+
+    # ---------- Recovery-Codes ----------
+    def delete_recovery_codes(self, user_id):
+        self._exec("DELETE FROM recovery_code WHERE user_id=?", (user_id,))
+
+    def add_recovery_codes(self, user_id, hashes):
+        now = _now()
+        with self._lock:
+            self.db.executemany("INSERT INTO recovery_code(user_id, code_hash, created_at) VALUES (?,?,?)",
+                                [(user_id, h, now) for h in hashes])
+            self.db.commit()
+
+    def consume_recovery_code(self, user_id, code_hash) -> bool:
+        """Einen ungenutzten Code atomar entwerten. True nur beim ersten gültigen Einlösen."""
+        with self._lock:
+            cur = self.db.execute(
+                "UPDATE recovery_code SET used_at=? WHERE id=(SELECT id FROM recovery_code "
+                "WHERE user_id=? AND code_hash=? AND used_at IS NULL LIMIT 1)",
+                (_now(), user_id, code_hash))
+            self.db.commit()
+            return cur.rowcount == 1
+
+    def count_recovery_codes(self, user_id) -> int:
+        return self._one("SELECT COUNT(*) c FROM recovery_code WHERE user_id=? AND used_at IS NULL",
+                         (user_id,))["c"]
 
     # ---------- WebAuthn ----------
     def add_webauthn(self, user_id, credential_id, public_key, sign_count, transports, name):
