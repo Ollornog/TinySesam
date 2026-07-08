@@ -330,8 +330,15 @@ class Store:
     def delete_user_sessions(self, user_id):
         self._exec("DELETE FROM session WHERE user_id=?", (user_id,))
 
-    def gc_sessions(self):
-        self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),))
+    def delete_user_sessions_except(self, user_id, keep_token):
+        """Alle Sitzungen eines Users beenden AUSSER einer (z.B. die aktuelle bei Selbst-PW-Änderung)."""
+        self._exec("DELETE FROM session WHERE user_id=? AND token!=?", (user_id, keep_token or ""))
+
+    def gc_sessions(self) -> int:
+        return self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),)).rowcount
+
+    def gc_flow(self) -> int:
+        return self._exec("DELETE FROM flow WHERE expires_at < ?", (_now(),)).rowcount
 
     def list_sessions(self, user_id=None):
         if user_id is not None:
@@ -393,8 +400,8 @@ class Store:
         if ip:
             self._exec("DELETE FROM login_attempt WHERE ip=?", (ip,))
 
-    def gc_attempts(self, older_than):
-        self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,))
+    def gc_attempts(self, older_than) -> int:
+        return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount
 
     # ---------- Magic-/Einmal-Token ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):
@@ -415,8 +422,8 @@ class Store:
             self.db.commit()
             return cur.rowcount == 1
 
-    def gc_magic_tokens(self):
-        self._exec("DELETE FROM magic_token WHERE expires_at < ? OR used_at IS NOT NULL", (_now(),))
+    def gc_magic_tokens(self) -> int:
+        return self._exec("DELETE FROM magic_token WHERE expires_at < ? OR used_at IS NOT NULL", (_now(),)).rowcount
 
     # ---------- Geteilte Ressourcen-Geheimnisse ----------
     def set_resource_secret(self, name, hash_, kind="pin", label=None):
@@ -449,8 +456,8 @@ class Store:
             return False
         return True
 
-    def gc_resource_unlocks(self):
-        self._exec("DELETE FROM resource_unlock WHERE expires_at < ?", (_now(),))
+    def gc_resource_unlocks(self) -> int:
+        return self._exec("DELETE FROM resource_unlock WHERE expires_at < ?", (_now(),)).rowcount
 
     # ---------- Audit-Log ----------
     def audit_log(self, event, username=None, ip=None, detail=None):

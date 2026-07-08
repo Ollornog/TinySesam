@@ -22,7 +22,7 @@ from starlette.responses import Response
 
 from .config import TinySesamConfig
 from .store import Store
-from .passwords import hash_password, verify_password, needs_rehash
+from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from .templates import Templates
 from . import totp as _totp
 from . import security
@@ -140,9 +140,13 @@ class TinySesam:
     def check_password(self, username, password) -> Optional[dict]:
         u = self.store.get_user_by_name(username)
         if not u or u["disabled"]:
+            dummy_verify(password)   # Timing angleichen (keine User-Enumeration)
             return None
         h = self.store.get_password_hash(u["id"])
-        if not h or not verify_password(password, h):
+        if not h:
+            dummy_verify(password)
+            return None
+        if not verify_password(password, h):
             return None
         if needs_rehash(h):
             self.store.set_password_hash(u["id"], hash_password(password))
@@ -165,9 +169,13 @@ class TinySesam:
     def check_pin(self, username, pin) -> Optional[dict]:
         u = self.store.get_user_by_name(username)
         if not u or u["disabled"]:
+            dummy_verify(str(pin or ""))
             return None
         h = self.store.get_pin_hash(u["id"])
-        if not h or not verify_password(str(pin or ""), h):
+        if not h:
+            dummy_verify(str(pin or ""))
+            return None
+        if not verify_password(str(pin or ""), h):
             return None
         if needs_rehash(h):
             self.store.set_pin_hash(u["id"], hash_password(str(pin)))
@@ -514,6 +522,19 @@ class TinySesam:
 
     def audit(self, event, username=None, ip=None, detail=None):
         self.store.audit_log(event, username, ip, detail)
+
+    def gc(self, attempts_older_than_sec: int = 86400) -> dict:
+        """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
+        Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
+        Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich."""
+        older = int(time.time()) - int(attempts_older_than_sec)
+        return {
+            "sessions": self.store.gc_sessions(),
+            "flow": self.store.gc_flow(),
+            "magic_tokens": self.store.gc_magic_tokens(),
+            "resource_unlocks": self.store.gc_resource_unlocks(),
+            "login_attempts": self.store.gc_attempts(older),
+        }
 
     # ---------- Update (Panel-editierbar: manuell/automatisch + Version-Pin) ----------
     def update_settings(self) -> dict:

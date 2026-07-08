@@ -79,6 +79,7 @@ def build_admin_router(auth) -> APIRouter:
         if not b.get("password"):
             raise HTTPException(400, "password nötig")
         auth.set_password(uid, b["password"])
+        auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
         auth.audit("user_password_reset", detail=f"uid={uid}")
         return {"ok": True}
 

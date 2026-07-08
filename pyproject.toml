@@ -46,3 +46,6 @@ tinysesam = "tinysesam.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["tinysesam*"]
+
+[tool.setuptools.package-data]
+tinysesam = ["py.typed"]
