@@ -507,6 +507,53 @@ def build_router(auth) -> APIRouter:
         from .webauthn_ import register_passkey_routes
         register_passkey_routes(r, auth)
 
+    # ---------- SAML 2.0 SP (nur wenn aktiviert) ----------
+    if auth.saml:
+        from fastapi.responses import Response as _Resp
+
+        def _saml_base(request: Request):
+            proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+            host = (request.headers.get("x-forwarded-host") or request.headers.get("host")
+                    or request.url.netloc).split(",")[0].strip()
+            return f"{proto}://{host}"
+
+        def _saml_req(request: Request, form=None):
+            proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+            host = (request.headers.get("x-forwarded-host") or request.headers.get("host")
+                    or request.url.netloc).split(",")[0].strip()
+            return {"https": "on" if proto == "https" else "off", "http_host": host,
+                    "script_name": request.url.path, "get_data": dict(request.query_params),
+                    "post_data": {k: v for k, v in (form or {}).items()}}
+
+        @r.get("/auth/saml/login")
+        def saml_login(request: Request, next: str = "/"):
+            base = cfg.base_url or _saml_base(request)
+            url = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
+            return RedirectResponse(url, 303)
+
+        @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
+        async def saml_acs(request: Request):
+            form = await request.form()
+            base = cfg.base_url or _saml_base(request)
+            data = auth.saml.process(_saml_req(request, form), base)
+            if not data:
+                return auth.render_page("magic_invalid", status=400)
+            u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
+            if not u:
+                raise HTTPException(403, "SAML: kein Zugriff")
+            nxt = auth.safe_next(form.get("RelayState") or "/")
+            token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
+                                                  auth.client_ip(request), request.headers.get("user-agent"))
+            resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+            if is_new:
+                auth.set_cookie(resp, token)
+            return resp
+
+        @r.get("/auth/saml/metadata")
+        def saml_metadata(request: Request):
+            base = cfg.base_url or _saml_base(request)
+            return _Resp(content=auth.saml.metadata(base), media_type="application/xml")
+
     # ---------- API-Keys: Self-Service für den eingeloggten User ----------
     if cfg.apikey_enabled:
         @r.get("/auth/apikeys")

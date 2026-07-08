@@ -112,6 +112,21 @@ class TinySesamConfig:
     oidc_group_claim: str = "groups"      # Claim mit den Gruppen
     oidc_allowed_groups: list[str] = field(default_factory=list)  # leer = alle erlaubt
 
+    # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
+    saml_enabled: bool = False
+    saml_name: str = "SAML"               # Anzeigename des Buttons
+    saml_sp_entity_id: str = ""           # eigene SP-Entity-ID; leer = base_url + /auth/saml/metadata
+    saml_acs_url: str = ""                # Assertion Consumer Service; leer = base_url + /auth/saml/acs
+    saml_idp_entity_id: str = ""
+    saml_idp_sso_url: str = ""            # IdP Single-Sign-On-URL (Redirect-Binding)
+    saml_idp_x509cert: str = ""           # IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END)
+    saml_attr_username: str = ""          # Attribut mit dem Benutzernamen; leer = NameID
+    saml_attr_email: str = "email"
+    saml_attr_name: str = "displayName"
+    saml_attr_groups: str = "groups"
+    saml_allowed_groups: list[str] = field(default_factory=list)  # leer = alle
+    saml_auto_create: bool = True
+
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. paperlaiss.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
@@ -161,6 +176,37 @@ class TinySesamConfig:
         base.update(overrides)
         return cls(**base)
 
+    @classmethod
+    def active_directory(cls, *, ldap_url, upn_suffix=None, base_dn=None, bind_dn="", bind_password="",
+                         allowed_groups=None, **overrides):
+        """Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bind per UPN
+        (`upn_suffix="corp.example.com"` → user@corp.example.com) ODER Search-then-Bind über
+        sAMAccountName (`bind_dn`/`bind_password`/`base_dn`). Restliche Felder via **overrides (db_path …)."""
+        base = dict(
+            ldap_enabled=True, ldap_url=ldap_url, ldap_group_attr="memberOf",
+            ldap_allowed_groups=list(allowed_groups or []), ldap_auto_create=True,
+            ldap_attr_email="mail", ldap_attr_name="displayName",
+        )
+        if upn_suffix:
+            base["ldap_user_dn_template"] = "{username}@" + upn_suffix.lstrip("@")
+        else:
+            base.update(ldap_bind_dn=bind_dn, ldap_bind_password=bind_password,
+                        ldap_user_base=base_dn or "", ldap_user_filter="(sAMAccountName={username})")
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def entra_id(cls, *, tenant_id, client_id, client_secret, oidc_name="Microsoft", **overrides):
+        """Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Tenant-)ID."""
+        base = dict(
+            oidc_enabled=True,
+            oidc_issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+            oidc_client_id=client_id, oidc_client_secret=client_secret,
+            oidc_name=oidc_name, oidc_scopes="openid profile email",
+        )
+        base.update(overrides)
+        return cls(**base)
+
     def enabled_methods(self) -> list[str]:
         m = []
         if self.password_enabled:
@@ -171,6 +217,8 @@ class TinySesamConfig:
             m.append("passkey")
         if self.oidc_enabled and self.oidc_issuer and self.oidc_client_id:
             m.append("oidc")
+        if self.saml_enabled and self.saml_idp_sso_url and self.saml_idp_x509cert:
+            m.append("saml")
         if self.magiclink_enabled:
             m.append("magic")
         return m

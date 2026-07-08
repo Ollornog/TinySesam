@@ -116,8 +116,10 @@ def _login(auth, ctx) -> str:
         magic = f"<a class=btn2 href='/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
     oidc = (f"<a class=btn2 href='/auth/oidc/start?next={_e(next_)}'>{_e(cfg.oidc_name)}</a>"
             if "oidc" in methods else "")
+    saml = (f"<a class=btn2 href='/auth/saml/login?next={_e(next_)}'>{_e(cfg.saml_name)}</a>"
+            if "saml" in methods else "")
     passkey = f"<button class=btn2 type=button id=pkbtn>{_e(t('login.passkey'))}</button>" if "passkey" in methods else ""
-    others = oidc + passkey + magic
+    others = oidc + saml + passkey + magic
     sep = _or if others and (pw or pin) else ""
     links = []
     if cfg.allow_signup:
