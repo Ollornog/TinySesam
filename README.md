@@ -6,11 +6,21 @@ Login-Seite, Sessions und Guards inklusive. Gedacht als Baustein für eigene App
 **Methoden — alle parallel aktivierbar:**
 - 🔑 **Passkey / WebAuthn** (passwortlos, phishing-resistent)
 - 🔐 **Passwort** (argon2, mit stdlib-scrypt-Fallback)
+- 🔢 **PIN** (persönliche PIN pro User, eigener strenger Lockout)
 - 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, …)
-- 📱 **TOTP** als 2. Faktor *on-top* zu Passwort/OIDC (Passkeys gelten schon als vollwertig)
+- ✉️ **Magic-Link** (Einmal-Login per E-Mail)
+- 📱 **TOTP** als 2. Faktor *on-top* (Passkeys gelten schon als vollwertig)
+
+**Kombinierbar in Reihenfolge:** beliebige **Faktor-Ketten** (`login_chain=["oidc","password"]`),
+global oder per Route (`Depends(auth.require(factors=[...], strict=...))`).
 
 **Rollen sind optional:** die meisten Apps brauchen nur „eingeloggt / nicht" (`require_user`).
 Wer differenzieren will: `is_admin` + frei definierbare `roles` (`require_admin`, `require_role("editor")`).
+
+**Mehr:** „Angemeldet bleiben", **Step-up** pro Route (`require(mfa=True)`), **Selbst-Registrierung**
++ **Einladungen**, geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto), eingebaute
+**Konto-Seite**, **Forward-Auth** für fremde Apps — jedes Feature optional, per Config an/aus,
+und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ---
 
@@ -157,14 +167,41 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
 - **HTTPS** (`config.https_mode` + `auth.install_https(app)`): `force` = HTTP→HTTPS-Redirect;
   `warn` = läuft auch **ohne Zertifikat**, zeigt aber einen Warnhinweis im Panel; `off` = aus.
 
+## Neu in 0.5 — Kurzreferenz
+
+Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
+
+- **Frontend austauschbar:** `auth.set_template(name, fn)` — `fn(auth, ctx)` gibt HTML-String **oder**
+  eine eigene `Response` zurück; Namen: `login`, `totp`, `reauth`, `resource_unlock`, `magic_request`,
+  `magic_invalid`, `register`, `account`, `totp_setup`. Eingebaute Renderer sind Fallback.
+- **Angemeldet bleiben:** `remember_me_enabled` — Checkbox → persistentes Cookie; ohne Haken reines
+  Session-Cookie + kurze `session_ttl_transient_hours`.
+- **Step-up / per-Route-MFA:** `Depends(auth.require(mfa=True))` (Sudo-Frische `stepup_max_age_sec`,
+  → `/auth/reauth`). `admin_require_mfa=True` schützt das Panel zusätzlich mit frischer Bestätigung.
+- **Faktor-Ketten (geordnet):** `login_chain=["oidc","password"]` + `login_chain_strict`; pro Route
+  `require(factors=[...], strict=...)`. Faktoren: `password, pin, oidc, passkey, totp, magic`.
+- **PIN pro User:** `pin_enabled` — Benutzer+PIN, eigener strenger Lockout, mit TOTP kombinierbar.
+- **Geteiltes Ressourcen-Geheimnis:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
+  kind="pin"|"password")`, Guard `Depends(auth.require_resource(name))`, ganz ohne Benutzerkonto.
+- **Magic-Link:** `magiclink_enabled` + SMTP-Config **oder** `auth.set_mailer(fn)`; `/auth/magic/request`.
+- **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
+  Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
+- **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
+- **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
+  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik).
+- **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
+  `trusted_redirect_hosts`). `cookie_domain` für SSO über Subdomains.
+
+Vollständige Demo: [`examples/showcase.py`](examples/showcase.py).
+
 ## Status
 
-Passwort + TOTP + Sessions + Rollen: implementiert & getestet (`tests/test_core.py`).
-Härtung (Brute-Force-Lockout, Rate-Limit, fail2ban-Log, Audit, Trusted-Proxy): getestet (`tests/test_hardening.py`).
-API-Keys + Service-Accounts (`tests/test_apikeys.py`), Admin-Panel (`tests/test_admin.py`),
-Update-Mechanismus (`tests/test_updater.py`): getestet.
-OIDC + Passkey: implementiert, Routen/Options struktur-getestet (`tests/test_methods.py`); der
-Browser-/Provider-abhängige End-to-End-Pfad ist gegen echte Domain/echten Provider zu prüfen.
-Optionale LDAP/lldap-Anbindung: als andockbare Option vorgesehen.
+Kern (Passwort/TOTP/Sessions/Rollen), Härtung, API-Keys/Service-Accounts, Admin-Panel und
+Update-Mechanismus: implementiert & getestet. **Neu in 0.5** — Remember-me, Step-up/per-Route-MFA,
+Faktor-Ketten, persönliche PIN, geteiltes Ressourcen-Geheimnis, Magic-Link + Mailer-Hook,
+Registrierung + Einladung, Konto-Seite, Forward-Auth: je mit eigenem Test (`tests/test_*.py`),
+plus Kombinations-Matrix (`tests/test_matrix.py`). 17 Testdateien, alle grün.
+OIDC + Passkey: implementiert, struktur-getestet; der Browser-/Provider-abhängige End-to-End-Pfad
+ist gegen echte Domain/echten Provider zu prüfen. Optionale LDAP/lldap-Anbindung: weiter vorgesehen.
 
 MIT-Lizenz.
