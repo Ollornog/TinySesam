@@ -12,7 +12,7 @@ def ok(name):
 
 sent = []
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, magiclink_enabled=True, password_reset_enabled=True,
                                  recovery_code_count=6))
 auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))

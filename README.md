@@ -110,6 +110,16 @@ Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit 
 | `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | Auto-Anlage + Gruppen-Gate |
 | `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
 
+## Sprache (i18n)
+
+Die eingebauten Texte sind **standardmäßig Englisch** (`lang="en"`); mitgeliefert ist auch **Deutsch**:
+
+```python
+TinySesamConfig(lang="de")                       # eingebaute Seiten + Meldungen auf Deutsch
+auth.add_messages("fr", {"login.submit": "Se connecter", ...})   # eigene Sprache/Überschreibung
+```
+Einzelne Texte oder ganze Seiten lassen sich zusätzlich per `auth.set_template(...)` frei ersetzen.
+
 ## Eigene Login-Seite
 
 TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentlich:

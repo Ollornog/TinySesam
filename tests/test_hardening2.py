@@ -10,7 +10,7 @@ def ok(name):
 
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
 auth.ensure_admin("admin", "geheim123")
 uid = auth.store.get_user_by_name("admin")["id"]

@@ -30,15 +30,15 @@ def build_router(auth) -> APIRouter:
         remember_me = _remember(cfg, remember)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip):
-            return auth.render_page("login", status=429, next=nxt, error="Zu viele Anfragen — bitte kurz warten.")
+            return auth.render_page("login", status=429, next=nxt, error=auth.t("err.rate"))
         if auth.is_locked(username, ip):
-            return auth.render_page("login", status=429, next=nxt, error="Zu viele Fehlversuche — vorübergehend gesperrt.")
+            return auth.render_page("login", status=429, next=nxt, error=auth.t("err.locked"))
         u = auth.check_password(username, password)
         if not u and cfg.ldap_enabled:
             u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
         auth.record_login(username, ip, bool(u), "password")
         if not u:
-            return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
+            return auth.render_page("login", status=401, next=nxt, error=auth.t("err.credentials"))
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me)
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
@@ -70,11 +70,11 @@ def build_router(auth) -> APIRouter:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
-            return auth.render_page("totp", status=429, next=nxt, error="Zu viele Versuche — bitte warten.")
+            return auth.render_page("totp", status=429, next=nxt, error=auth.t("err.retry"))
         # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
         if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
             auth.record_login(pu["username"], ip, False, "totp")
-            return auth.render_page("totp", status=401, next=nxt, error="Code falsch")
+            return auth.render_page("totp", status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
         auth.complete_mfa(s["token"])
         return RedirectResponse(auth.login_redirect_after(request, s["token"], pu["id"], nxt), 303)
@@ -127,13 +127,13 @@ def build_router(auth) -> APIRouter:
             remember_me = _remember(cfg, remember)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
-                return auth.render_page("login", status=429, next=nxt, error="Zu viele Anfragen — bitte kurz warten.")
+                return auth.render_page("login", status=429, next=nxt, error=auth.t("err.rate"))
             if auth.is_locked(username, ip) or auth.is_pin_locked(username, ip):
-                return auth.render_page("login", status=429, next=nxt, error="Zu viele Fehlversuche — vorübergehend gesperrt.")
+                return auth.render_page("login", status=429, next=nxt, error=auth.t("err.locked"))
             u = auth.check_pin(username, pin)
             auth.record_login(username, ip, bool(u), "pin")
             if not u:
-                return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
+                return auth.render_page("login", status=401, next=nxt, error=auth.t("err.credentials"))
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
                                                   request.headers.get("user-agent"), remember_me)
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
@@ -212,7 +212,7 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("magic_request", status=429, next=nxt, sent=False,
-                                        error="Zu viele Anfragen — bitte kurz warten.")
+                                        error=auth.t("err.rate"))
             base = cfg.base_url or str(request.base_url)
             try:
                 auth.send_login_link(email.strip(), base, nxt)
@@ -263,12 +263,12 @@ def build_router(auth) -> APIRouter:
         has_totp = auth.store.has_confirmed_totp(u["id"])
         if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip):
             return auth.render_page("reauth", status=429, next=nxt, username=u["username"],
-                                    has_totp=has_totp, error="Zu viele Versuche — bitte warten.")
+                                    has_totp=has_totp, error=auth.t("err.retry"))
         ok = auth.verify_totp(u["id"], code) if has_totp else bool(auth.check_password(u["username"], password))
         auth.record_login(u["username"], ip, ok, "reauth")
         if not ok:
             return auth.render_page("reauth", status=401, next=nxt, username=u["username"],
-                                    has_totp=has_totp, error="Bestätigung fehlgeschlagen")
+                                    has_totp=has_totp, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
         if s:
             auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
@@ -286,7 +286,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
-                return auth.render_page("forgot", status=429, sent=False, error="Zu viele Anfragen — bitte warten.")
+                return auth.render_page("forgot", status=429, sent=False, error=auth.t("err.rate"))
             base = cfg.base_url or str(request.base_url)
             try:
                 auth.send_password_reset(email.strip(), base)
@@ -306,7 +306,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             if len(password) < auth.sec("password_min_length"):
                 return auth.render_page("reset", status=400, token=token,
-                                        error=f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+                                        error=auth.t("err.pw_short", n=auth.sec("password_min_length")))
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
                 return auth.render_page("magic_invalid", status=400)
@@ -330,7 +330,7 @@ def build_router(auth) -> APIRouter:
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", status=403,
-                                        **_reg_ctx(nxt, error="Registrierung nur mit gültiger Einladung."))
+                                        **_reg_ctx(nxt, error=auth.t("err.invite_required")))
             return auth.render_page("register", **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
 
         @r.post("/auth/register", response_class=HTMLResponse)
@@ -342,21 +342,21 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("register", status=429, **_reg_ctx(nxt, invite=invite, email=email,
-                                        error="Zu viele Anfragen — bitte kurz warten."))
+                                        error=auth.t("err.rate")))
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", status=403,
-                                        **_reg_ctx(nxt, error="Registrierung nur mit gültiger Einladung."))
+                                        **_reg_ctx(nxt, error=auth.t("err.invite_required")))
             username = username.strip()
             def err(msg, status=400):
                 return auth.render_page("register", status=status,
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
             if not username:
-                return err("Benutzername nötig")
+                return err(auth.t("err.username_required"))
             if len(password) < auth.sec("password_min_length"):
-                return err(f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+                return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
             if auth.store.get_user_by_name(username):
-                return err("Benutzername bereits vergeben", 409)
+                return err(auth.t("err.username_taken"), 409)
             roles, is_admin, email_final = list(cfg.signup_default_roles), False, email.strip()
             if inv:
                 roles = (inv.get("payload") or {}).get("roles") or []
