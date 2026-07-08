@@ -12,8 +12,9 @@ Login-Seite, Sessions und Guards inklusive. Gedacht als Baustein für eigene App
 - 🔐 **Passwort** (argon2, mit stdlib-scrypt-Fallback)
 - 🔢 **PIN** (persönliche PIN pro User, eigener strenger Lockout)
 - 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, …)
+- 🗂️ **LDAP / lldap** (Passwort gegen Verzeichnis-Bind)
 - ✉️ **Magic-Link** (Einmal-Login per E-Mail)
-- 📱 **TOTP** als 2. Faktor *on-top* (Passkeys gelten schon als vollwertig)
+- 📱 **TOTP** als 2. Faktor *on-top* (+ **Recovery-Codes**; Passkeys gelten schon als vollwertig)
 
 **Kombinierbar in Reihenfolge:** beliebige **Faktor-Ketten** (`login_chain=["oidc","password"]`),
 global oder per Route (`Depends(auth.require(factors=[...], strict=...))`).
@@ -22,9 +23,9 @@ global oder per Route (`Depends(auth.require(factors=[...], strict=...))`).
 Wer differenzieren will: `is_admin` + frei definierbare `roles` (`require_admin`, `require_role("editor")`).
 
 **Mehr:** „Angemeldet bleiben", **Step-up** pro Route (`require(mfa=True)`), **Selbst-Registrierung**
-+ **Einladungen**, geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto), eingebaute
-**Konto-Seite**, **Forward-Auth** für fremde Apps — jedes Feature optional, per Config an/aus,
-und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
++ **Einladungen**, **Passwort-vergessen**, geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto),
+eingebaute **Konto-Seite** (inkl. eigener Sitzungen + Recovery-Codes), **Forward-Auth** für fremde Apps —
+jedes Feature optional, per Config an/aus, und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ---
 
@@ -260,6 +261,8 @@ Faktor-Ketten, persönliche PIN, geteiltes Ressourcen-Geheimnis, Magic-Link + Ma
 Registrierung + Einladung, Konto-Seite, Forward-Auth: je mit eigenem Test (`tests/test_*.py`),
 plus Kombinations-Matrix (`tests/test_matrix.py`). 17 Testdateien, alle grün.
 OIDC + Passkey: implementiert, struktur-getestet; der Browser-/Provider-abhängige End-to-End-Pfad
-ist gegen echte Domain/echten Provider zu prüfen. Optionale LDAP/lldap-Anbindung: weiter vorgesehen.
+ist gegen echte Domain/echten Provider zu prüfen. **0.6** ergänzt LDAP/lldap-Backend, TOTP-Recovery-Codes,
+Passwort-vergessen, eigene Sitzungsverwaltung, optionalen OIDC-RP-Logout sowie Härtung (Session-Invalidierung
+nach PW-Wechsel, Anti-Enumeration, `auth.gc()`, `py.typed`). Insgesamt **22 Testdateien, alle grün**.
 
 MIT-Lizenz.
