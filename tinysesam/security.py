@@ -68,7 +68,8 @@ def client_ip(request, trusted_nets) -> str:
 
 class RateLimiter:
     """In-memory Token-Bucket pro Schlüssel (IP), pro Prozess. Für Single-Worker-Deployments;
-    bei mehreren Workern greift zusätzlich die DB-basierte Regulation (Lockout)."""
+    bei mehreren Workern greift zusätzlich die DB-basierte Regulation (Lockout). Für ein
+    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url)."""
     def __init__(self):
         self._hits = defaultdict(deque)
 
@@ -81,3 +82,26 @@ class RateLimiter:
             return False
         dq.append(now)
         return True
+
+
+class RedisRateLimiter:
+    """Prozessübergreifendes Rate-Limit über Redis (Fixed-Window-Counter) — für Multi-Worker/
+    Multi-Instanz. Gleiche allow()-Schnittstelle. Bei Redis-Fehler: fail-open (erlauben) + Log,
+    damit ein Redis-Ausfall keine Nutzer aussperrt (die DB-Lockout-Regulation greift weiter)."""
+    def __init__(self, url: str, prefix: str = "tsrl"):
+        import redis   # Extra [redis]
+        self.client = redis.from_url(url)
+        self.prefix = prefix
+
+    def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
+        try:
+            bucket = int(time.time() // max(1, window_sec))
+            rk = f"{self.prefix}:{key}:{window_sec}:{bucket}"
+            pipe = self.client.pipeline()
+            pipe.incr(rk)
+            pipe.expire(rk, window_sec)
+            count = pipe.execute()[0]
+            return int(count) <= max_requests
+        except Exception as e:
+            seclog.warning("redis rate-limit fail-open: %s", e)
+            return True

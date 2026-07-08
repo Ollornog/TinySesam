@@ -38,6 +38,11 @@ class TinySesam:
         self.webauthn = None
         self.ldap = None
         self.rl = security.RateLimiter()
+        if config.redis_url:
+            try:
+                self.rl = security.RedisRateLimiter(config.redis_url)
+            except Exception:
+                security.seclog.warning("Redis-Rate-Limit nicht verfügbar → In-Memory-Fallback")
         if config.ldap_enabled and config.ldap_url:
             from .ldap_ import LDAPClient
             self.ldap = LDAPClient(config)
@@ -567,6 +572,10 @@ class TinySesam:
     def set_security(self, key, value):
         if key in security.SECURITY_DEFAULTS:
             self.store.set_setting(key, int(value))
+
+    def set_rate_limiter(self, limiter):
+        """Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool."""
+        self.rl = limiter
 
     def rate_ok(self, ip) -> bool:
         return self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
