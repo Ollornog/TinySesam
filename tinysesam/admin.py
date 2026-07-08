@@ -130,6 +130,18 @@ def build_admin_router(auth) -> APIRouter:
         auth.audit("session_revoke")
         return {"ok": True}
 
+    # ---------- Einladungen (Magic-Invite) ----------
+    if cfg.magiclink_enabled:
+        @ar.post("/api/invite")
+        async def invite(request: Request):
+            guard(request)
+            b = await request.json()
+            email = (b.get("email") or "").strip()
+            base = cfg.base_url or str(request.base_url)
+            res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
+                                     is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
+            return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
+
     # ---------- Geteilte Ressourcen-Geheimnisse ----------
     if cfg.resource_locks_enabled:
         @ar.get("/api/resources")

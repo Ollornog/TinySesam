@@ -21,6 +21,9 @@ class TinySesamConfig:
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
+    signup_verify_email: bool = False     # Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv
+    signup_invite_only: bool = False      # Registrierung nur mit gültigem Einladungs-Token
+    signup_default_roles: list[str] = field(default_factory=list)  # Rollen für neue Selbst-Registrierte
 
     # --- Geteilte Ressourcen-Geheimnisse (ohne Benutzerkonto: eine PIN/Passphrase schützt einen Bereich) ---
     resource_locks_enabled: bool = False

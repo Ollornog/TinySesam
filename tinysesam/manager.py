@@ -297,6 +297,41 @@ class TinySesam:
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
                 "payload": json.loads(row["payload"]) if row["payload"] else None}
 
+    def peek_magic(self, raw, purpose=None) -> Optional[dict]:
+        """Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen)."""
+        if not raw:
+            return None
+        row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
+        if not row or row["used_at"] or row["expires_at"] < int(time.time()):
+            return None
+        if purpose and row["purpose"] != purpose:
+            return None
+        return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
+                "payload": json.loads(row["payload"]) if row["payload"] else None}
+
+    def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
+        """Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die
+        vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung."""
+        raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
+                                      payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
+        url = self.magic_url(raw, base_url)
+        if email and self.mail_configured():
+            self.send_mail(email, "Deine Einladung",
+                           f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
+                           html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
+        self.audit("invite_create", detail=email)
+        return {"url": url, "token": raw}
+
+    def send_verify_email(self, user_id, email, base_url) -> bool:
+        if not (email and self.mail_configured()):
+            return False
+        raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
+        url = self.magic_url(raw, base_url)
+        self.send_mail(email, "E-Mail bestätigen",
+                       f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
+                       html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+        return True
+
     def send_login_link(self, email, base_url, next="/") -> bool:
         """Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert.
         Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration)."""

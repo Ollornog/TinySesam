@@ -127,6 +127,28 @@ def _totp(auth, ctx) -> str:
     return _shell("Bestätigung", body)
 
 
+def _register(auth, ctx) -> str:
+    """ctx: next, invite, email, error, invite_only, sent_verify(optional)."""
+    if ctx.get("sent_verify"):
+        body = ("<h1>Fast fertig</h1>"
+                "<div class=ok>Wir haben dir eine E-Mail zur Bestätigung geschickt.</div>"
+                "<div class=hint>Öffne den Link darin, um dein Konto zu aktivieren.</div>"
+                "<a class=btn2 href='/auth/login'>Zur Anmeldung</a>")
+        return _shell("Bestätigung nötig", body)
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
+    body = (f"<h1>Konto erstellen</h1>{err}"
+            f"<form method=post action='/auth/register'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>"
+            f"<label>Benutzername</label><input name=username autofocus autocomplete=username>"
+            f"<label>E-Mail</label><input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro} autocomplete=email>"
+            f"<label>Passwort</label><input name=password type=password autocomplete=new-password>"
+            f"<button type=submit>Registrieren</button></form>"
+            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>Schon ein Konto? Anmelden</a></div>")
+    return _shell("Konto erstellen", body)
+
+
 def _magic_request(auth, ctx) -> str:
     """ctx: next, sent (bool), error. E-Mail-Adresse für den Login-Link."""
     if ctx.get("sent"):
@@ -236,6 +258,7 @@ DEFAULTS = {
     "totp": _totp,
     "reauth": _reauth,
     "resource_unlock": _resource_unlock,
+    "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,
     "totp_setup": _totp_setup,

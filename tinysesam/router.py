@@ -204,6 +204,14 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str):
+            info = auth.peek_magic(token)
+            if not info:
+                return auth.render_page("magic_invalid", status=400)
+            # Einladung: NICHT hier verbrauchen → zur Registrierung weiterreichen
+            if info["purpose"] == "invite":
+                if not cfg.allow_signup:
+                    return auth.render_page("magic_invalid", status=400)
+                return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
             data = auth.redeem_magic(token)
             if not data:
                 return auth.render_page("magic_invalid", status=400)
@@ -242,6 +250,67 @@ def build_router(auth) -> APIRouter:
             auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
         auth.audit("stepup", u["username"], ip)
         return RedirectResponse(nxt, 303)
+
+    # ---------- Registrierung (nur wenn allow_signup) ----------
+    if cfg.allow_signup:
+        def _reg_ctx(nxt, invite="", email="", error="", **extra):
+            return dict(next=nxt, invite=invite, email=email, error=error,
+                        invite_only=cfg.signup_invite_only, **extra)
+
+        @r.get("/auth/register", response_class=HTMLResponse)
+        def register_page(request: Request, next: str = "/", invite: str = ""):
+            nxt = auth.safe_next(next)
+            if auth.current_user(request):
+                return RedirectResponse(nxt, 303)
+            inv = auth.peek_magic(invite, purpose="invite") if invite else None
+            if cfg.signup_invite_only and not inv:
+                return auth.render_page("register", status=403,
+                                        **_reg_ctx(nxt, error="Registrierung nur mit gültiger Einladung."))
+            return auth.render_page("register", **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
+
+        @r.post("/auth/register", response_class=HTMLResponse)
+        def register_submit(request: Request, username: str = Form(...), password: str = Form(...),
+                            email: str = Form(""), next: str = Form("/"), invite: str = Form("")):
+            nxt = auth.safe_next(next)
+            ip = auth.client_ip(request)
+            if not auth.rate_ok(ip):
+                return auth.render_page("register", status=429, **_reg_ctx(nxt, invite=invite, email=email,
+                                        error="Zu viele Anfragen — bitte kurz warten."))
+            inv = auth.peek_magic(invite, purpose="invite") if invite else None
+            if cfg.signup_invite_only and not inv:
+                return auth.render_page("register", status=403,
+                                        **_reg_ctx(nxt, error="Registrierung nur mit gültiger Einladung."))
+            username = username.strip()
+            def err(msg, status=400):
+                return auth.render_page("register", status=status,
+                                        **_reg_ctx(nxt, invite=invite, email=email, error=msg))
+            if not username:
+                return err("Benutzername nötig")
+            if len(password) < auth.sec("password_min_length"):
+                return err(f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+            if auth.store.get_user_by_name(username):
+                return err("Benutzername bereits vergeben", 409)
+            roles, is_admin, email_final = list(cfg.signup_default_roles), False, email.strip()
+            if inv:
+                roles = (inv.get("payload") or {}).get("roles") or []
+                is_admin = bool((inv.get("payload") or {}).get("is_admin"))
+                email_final = inv.get("email") or email_final
+            uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
+                                   email=email_final or None)
+            if inv:
+                auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
+            auth.audit("signup", username, ip)
+            # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
+            if cfg.signup_verify_email and not inv and auth.mail_configured() and email_final:
+                auth.store.set_disabled(uid, True)
+                auth.send_verify_email(uid, email_final, cfg.base_url or str(request.base_url))
+                return auth.render_page("register", **_reg_ctx(nxt, sent_verify=True))
+            token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
+                                                  request.headers.get("user-agent"), True)
+            resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+            if is_new:
+                auth.set_cookie(resp, token, remember=True)
+            return resp
 
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
@@ -319,6 +388,16 @@ def _magic_dispatch(auth, request, data):
         token, ok, is_new = auth.apply_factor(request, uid, "magic",
                                               auth.client_ip(request), request.headers.get("user-agent"))
         resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+        if is_new:
+            auth.set_cookie(resp, token)
+        return resp
+    if data["purpose"] == "verify_email" and data.get("user_id"):
+        uid = data["user_id"]
+        auth.store.set_disabled(uid, False)   # Konto aktivieren
+        auth.audit("email_verified", detail=data.get("email"))
+        token, ok, is_new = auth.apply_factor(request, uid, "magic",
+                                              auth.client_ip(request), request.headers.get("user-agent"))
+        resp = RedirectResponse(auth.login_redirect_after(request, token, uid, "/"), 303)
         if is_new:
             auth.set_cookie(resp, token)
         return resp
