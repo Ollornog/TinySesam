@@ -50,11 +50,18 @@ rl.client = FakeRedis(broken=True)
 assert rl.allow("x", 1, 60) is True
 ok("RedisRateLimiter: Redis-Fehler → fail-open (erlauben)")
 
-# ---------- redis_url gesetzt, aber redis nicht installiert → In-Memory-Fallback, kein Crash ----------
+# ---------- redis_url gesetzt: mit redis-Paket → RedisRateLimiter, ohne → In-Memory-Fallback ----------
+# (kein Crash in beiden Fällen; ohne laufenden Redis → fail-open, rate_ok True)
+import importlib.util
 db = tempfile.mktemp(suffix=".db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
-assert isinstance(auth.rl, security.RateLimiter)
-ok("redis_url ohne redis-Paket → In-Memory-Fallback (kein Crash)")
+if importlib.util.find_spec("redis"):
+    assert isinstance(auth.rl, security.RedisRateLimiter)
+    assert auth.rate_ok("ip") is True   # Redis down → fail-open
+    ok("redis_url + redis-Paket → RedisRateLimiter (Redis down → fail-open)")
+else:
+    assert isinstance(auth.rl, security.RateLimiter)
+    ok("redis_url ohne redis-Paket → In-Memory-Fallback (kein Crash)")
 
 # ---------- eigenes Backend injizieren ----------
 class CountingLimiter:
