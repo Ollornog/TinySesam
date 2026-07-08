@@ -4,8 +4,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
-Kleines, wiederverwendbares **Multi-Methoden-Auth für FastAPI**. Eine Klasse davorhängen, fertig —
-Login-Seite, Sessions und Guards inklusive. Gedacht als Baustein für eigene Apps (z.B. paperlaiss).
+Kleines, wiederverwendbares **Multi-Methoden-Auth für FastAPI**.
+Eine Klasse davorhängen, fertig — Login-Seite, Sessions und Guards inklusive.
+Gedacht als Baustein für eigene Apps.
 
 **Methoden — alle parallel aktivierbar:**
 - 🔑 **Passkey / WebAuthn** (passwortlos, phishing-resistent)
@@ -15,15 +16,23 @@ Login-Seite, Sessions und Guards inklusive. Gedacht als Baustein für eigene App
 - ✉️ **Magic-Link** (Einmal-Login per E-Mail)
 - 📱 **TOTP** als 2. Faktor *on-top* (Passkeys gelten schon als vollwertig)
 
-**Kombinierbar in Reihenfolge:** beliebige **Faktor-Ketten** (`login_chain=["oidc","password"]`),
+**Kombinierbar in Reihenfolge:**
+beliebige **Faktor-Ketten** (`login_chain=["oidc","password"]`),
 global oder per Route (`Depends(auth.require(factors=[...], strict=...))`).
 
-**Rollen sind optional:** die meisten Apps brauchen nur „eingeloggt / nicht" (`require_user`).
+**Rollen sind optional:**
+die meisten Apps brauchen nur „eingeloggt / nicht" (`require_user`).
 Wer differenzieren will: `is_admin` + frei definierbare `roles` (`require_admin`, `require_role("editor")`).
 
-**Mehr:** „Angemeldet bleiben", **Step-up** pro Route (`require(mfa=True)`), **Selbst-Registrierung**
-+ **Einladungen**, geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto), eingebaute
-**Konto-Seite**, **Forward-Auth** für fremde Apps — jedes Feature optional, per Config an/aus,
+**Mehr:**
+„Angemeldet bleiben", 
+*Step-up** pro Route (`require(mfa=True)`),
+**Selbst-Registrierung** + **Einladungen**,
+geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto),
+eingebaute **Konto-Seite**,
+**Forward-Auth** für fremde Apps
+
+jedes Feature optional, per Config an/aus,
 und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ---
