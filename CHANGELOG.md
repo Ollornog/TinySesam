@@ -2,6 +2,18 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.7.0] — 2026-07-08
+
+### Hinzugefügt
+- **i18n** — eingebaute Texte in **Englisch (neuer Default)** und **Deutsch**; `config.lang`,
+  `auth.t(key)`, `auth.add_messages(lang, {...})`. **Achtung:** Default ist jetzt Englisch —
+  deutschsprachige Integrationen setzen `lang="de"`.
+- **CSRF-Schutz** (Double-Submit-Cookie, `csrf_enabled`, Default an) auf allen state-ändernden POSTs;
+  eingebaute Formulare/JS erledigen es automatisch, API-Key-Requests sind ausgenommen.
+- **Prozessübergreifendes Rate-Limit** über Redis (`redis_url`, Extra `[redis]`) für Multi-Worker;
+  `auth.set_rate_limiter()` für eigene Backends. Fallback In-Memory, fail-open bei Redis-Ausfall.
+- Projekt-**Icon** + minimale **GitHub-Pages-Website** (`docs/`).
+
 ## [0.6.0] — 2026-07-08
 
 ### Hinzugefügt
