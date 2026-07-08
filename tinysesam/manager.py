@@ -379,26 +379,65 @@ class TinySesam:
             raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={nxt}"})
         raise HTTPException(401, "nicht eingeloggt")
 
-    def require_user(self, request: Request) -> dict:
-        """FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User.
-        paperlaiss: `Depends(auth.require_user)` — mehr braucht es dort nicht."""
+    def _deny_stepup(self, request: Request):
+        # eingeloggt, aber Faktor nicht frisch. Browser → Redirect zu /auth/reauth; sonst 403 + Hinweis-Header.
+        if "text/html" in request.headers.get("accept", ""):
+            from urllib.parse import quote
+            nxt = quote(request.url.path, safe="/")
+            raise HTTPException(307, headers={"Location": f"/auth/reauth?next={nxt}"})
+        raise HTTPException(403, "Step-up-Bestätigung nötig", headers={"X-TinySesam-Reauth": "/auth/reauth"})
+
+    # ---------- Step-up-Frische ----------
+    def stepup_fresh(self, request: Request, user: dict = None) -> bool:
+        """True, wenn die aktuelle Sitzung frisch einen Faktor bestätigt hat (Sudo-Frische)."""
+        user = user or self.current_user(request)
+        if not user or user.get("_via") == "apikey":
+            return False   # maschineller Zugang kann keinen interaktiven Faktor frisch bestätigen
+        s = self.session_from_request(request)
+        if not s or not s["mfa_ok"]:
+            return False
+        if self.cfg.stepup_max_age_sec > 0:
+            if not s["mfa_at"] or (int(time.time()) - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
+                return False
+        return True
+
+    def _enforce(self, request: Request, mfa=False, admin=False, role=None) -> dict:
         u = self.current_user(request)
         if not u:
             self._deny(request)
+        if admin and not self.is_admin(u):
+            raise HTTPException(403, "Adminrechte nötig")
+        if role and not self.has_role(u, role):
+            raise HTTPException(403, f"Rolle '{role}' nötig")
+        if mfa and not self.stepup_fresh(request, u):
+            if u.get("_via") == "apikey":
+                raise HTTPException(403, "Step-up-MFA nötig — nur per interaktiver Sitzung")
+            self._deny_stepup(request)
         return u
+
+    def require_user(self, request: Request) -> dict:
+        """FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User.
+        paperlaiss: `Depends(auth.require_user)` — mehr braucht es dort nicht."""
+        return self._enforce(request)
 
     def require_admin(self, request: Request) -> dict:
-        """FastAPI-Dependency (direkt): eingeloggt + Admin."""
-        u = self.require_user(request)
-        if not self.is_admin(u):
-            raise HTTPException(403, "Adminrechte nötig")
-        return u
+        """FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa)."""
+        return self._enforce(request, admin=True, mfa=self.cfg.admin_require_mfa)
 
-    def require_role(self, role: str):
-        """FastAPI-Dependency-Factory: eingeloggt + Rolle (oder Admin). `Depends(auth.require_role('editor'))`."""
+    def require_role(self, role: str, mfa: bool = False):
+        """FastAPI-Dependency-Factory: eingeloggt + Rolle (oder Admin). `Depends(auth.require_role('editor'))`.
+        mfa=True verlangt zusätzlich Step-up-Frische."""
         def dep(request: Request) -> dict:
-            u = self.require_user(request)
-            if not self.has_role(u, role):
-                raise HTTPException(403, f"Rolle '{role}' nötig")
-            return u
+            return self._enforce(request, role=role, mfa=mfa)
         return dep
+
+    def require(self, mfa: bool = False, admin: bool = False, role: str = None):
+        """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
+        `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`."""
+        def dep(request: Request) -> dict:
+            return self._enforce(request, mfa=mfa, admin=admin, role=role)
+        return dep
+
+    def require_mfa(self, request: Request) -> dict:
+        """FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung."""
+        return self._enforce(request, mfa=True)

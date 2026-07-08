@@ -21,12 +21,9 @@ def build_admin_router(auth) -> APIRouter:
     ar = APIRouter(tags=["admin"])
 
     def guard(request: Request):
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
-        if not auth.is_admin(u):
-            raise HTTPException(403, "Adminrechte nötig")
-        return u
+        # Admin + (optional) Step-up-MFA. Browser-Seitenaufruf → Redirect zu Login/Reauth;
+        # JSON-/fetch-Aufrufe → 401/403 (Panel-UI lädt nach Reauth neu).
+        return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],

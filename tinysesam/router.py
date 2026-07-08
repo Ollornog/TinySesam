@@ -90,6 +90,37 @@ def build_router(auth) -> APIRouter:
         auth.totp_disable(u["id"])
         return {"ok": True}
 
+    # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
+    @r.get("/auth/reauth", response_class=HTMLResponse)
+    def reauth_page(request: Request, next: str = "/", error: str = ""):
+        u = auth.current_user(request)
+        if not u:
+            return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
+        return auth.render_page("reauth", next=auth.safe_next(next), error=error,
+                                username=u["username"], has_totp=auth.store.has_confirmed_totp(u["id"]))
+
+    @r.post("/auth/reauth")
+    def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), next: str = Form("/")):
+        u = auth.current_user(request)
+        if not u:
+            return RedirectResponse(cfg.login_path, 303)
+        nxt = auth.safe_next(next)
+        ip = auth.client_ip(request)
+        has_totp = auth.store.has_confirmed_totp(u["id"])
+        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip):
+            return auth.render_page("reauth", status=429, next=nxt, username=u["username"],
+                                    has_totp=has_totp, error="Zu viele Versuche — bitte warten.")
+        ok = auth.verify_totp(u["id"], code) if has_totp else bool(auth.check_password(u["username"], password))
+        auth.record_login(u["username"], ip, ok, "reauth")
+        if not ok:
+            return auth.render_page("reauth", status=401, next=nxt, username=u["username"],
+                                    has_totp=has_totp, error="Bestätigung fehlgeschlagen")
+        s = auth.session_from_request(request)
+        if s:
+            auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
+        auth.audit("stepup", u["username"], ip)
+        return RedirectResponse(nxt, 303)
+
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
     def logout(request: Request):

@@ -126,6 +126,24 @@ def _totp(auth, ctx) -> str:
     return _shell("Bestätigung", body)
 
 
+def _reauth(auth, ctx) -> str:
+    """ctx: next, error, username, has_totp. Sudo-Frische: erneut Faktor bestätigen (Step-up)."""
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    if ctx.get("has_totp"):
+        field = ("<label>6-stelliger Code aus deiner Authenticator-App</label>"
+                 "<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>")
+    else:
+        field = ("<label>Passwort zur Bestätigung</label>"
+                 "<input name=password type=password autocomplete=current-password autofocus>")
+    body = (f"<h1>Bestätigung nötig</h1>"
+            f"<div class=hint>Für diesen Bereich bitte erneut bestätigen ({_e(ctx.get('username'))}).</div>{err}"
+            f"<form method=post action='/auth/reauth'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"{field}<button type=submit>Bestätigen</button></form>"
+            f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>Abmelden</a></div>")
+    return _shell("Bestätigung", body)
+
+
 def _totp_setup(auth, ctx) -> str:
     """ctx: data = {secret, uri, qr}."""
     data = ctx["data"]
@@ -170,5 +188,6 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
 DEFAULTS = {
     "login": _login,
     "totp": _totp,
+    "reauth": _reauth,
     "totp_setup": _totp_setup,
 }

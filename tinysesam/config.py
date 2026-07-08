@@ -24,6 +24,12 @@ class TinySesamConfig:
     totp_enabled: bool = True             # User dürfen TOTP einrichten
     totp_required: bool = False           # TOTP nach Passwort/OIDC erzwingen (wenn eingerichtet: immer verlangt)
 
+    # --- Step-up / per-Route-MFA (Sudo-Frische) ---
+    # Guards mit mfa=True verlangen eine „frische" Faktor-Bestätigung. Frisch ist eine Sitzung
+    # stepup_max_age_sec lang nach Login/Reauth; danach → /auth/reauth. 0 = nie ablaufen (nur „hat 2FA bestanden").
+    stepup_max_age_sec: int = 900         # 15 min
+    admin_require_mfa: bool = False        # Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA
+
     # --- Sessions (server-side, revozierbar) ---
     session_cookie: str = "tinysesam_session"
     session_ttl_hours: int = 24 * 7       # TTL bei „Angemeldet bleiben" (persistentes Cookie)
