@@ -224,7 +224,8 @@ def build_admin_router(auth) -> APIRouter:
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             html = (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
                     .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
-                    .replace("__ROLES__", json.dumps(list(cfg.available_roles))))
+                    .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
+                    .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
             resp = HTMLResponse(html)
             if cfg.csrf_enabled:
                 import secrets as _s
@@ -258,6 +259,7 @@ input,select{background:#0f1115;color:#e6e6e6;border:1px solid #303643;border-ra
 .card{background:#161a22;border:1px solid #262b36;border-radius:10px;padding:14px;margin-bottom:14px}
 h2{font-size:13px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
 code{background:#0f1115;border:1px solid #303643;border-radius:5px;padding:2px 6px;font-size:12px}
+__BRANDCSS__
 </style></head><body>
 __WARN__
 <header><h1>🧠 __RP__ · Admin</h1><a href="/">← App</a><a href="/auth/logout">Logout</a></header>
@@ -347,8 +349,8 @@ async function update(){const u=await g("/api/update");const st=u.status,se=u.se
     <div class=row><label style=width:120px>Modus</label><select id=um><option value=manual ${se.mode=='manual'?'selected':''}>manuell</option><option value=auto ${se.mode=='auto'?'selected':''}>automatisch</option></select></div>
     <div class=row><label style=width:120px>Version-Pin</label><input id=up value="${esc(se.pin)}" placeholder="z.B. v0.3.0 (leer=neueste)"></div>
     <div class=row><button onclick=saveupd()>Einstellungen speichern</button>
-      ${st.available?'<button class=ok onclick=runupd()>Jetzt aktualisieren</button>':''}</div>
-    <div style=color:#9aa4b2;font-size:12px>Nach dem Update die App neu starten.</div></div>`)}
+      <button class="${st.available?'ok':'sec'}" onclick=runupd()>Jetzt aktualisieren</button></div>
+    <div style=color:#9aa4b2;font-size:12px>${st.available?'Update verfügbar. ':''}Zieht die gepinnte bzw. neueste Version. Nach dem Update die App neu starten.</div></div>`)}
 async function saveupd(){await p("/api/update/settings",{mode:um.value,pin:up.value});update()}
 async function runupd(){if(!confirm("Update jetzt ziehen?"))return;const r=await p("/api/update/run");alert(r.ok?"OK — App neu starten":"Fehlgeschlagen:\n"+(r.output||"").slice(-400))}
 

@@ -57,11 +57,22 @@ img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;b
 """
 
 
-def _shell(title, body, lang="en"):
+def _doc(title, body, lang="en", brand_css="", brand_head="", card=True):
+    inner = f"<div class=card>{body}</div>" if card else body
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{_CSS}</style></head>"
-            f"<body><div class=card>{body}</div></body></html>")
+            f"<title>{html.escape(title)}</title><style>{_CSS}{brand_css or ''}</style>{brand_head or ''}</head>"
+            f"<body>{inner}</body></html>")
+
+
+def _shell(title, body, lang="en"):
+    return _doc(title, body)
+
+
+def _page(auth, title, body, card=True):
+    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head) — re-skinnt alle Seiten zentral."""
+    cfg = auth.cfg
+    return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""), card)
 
 
 def _e(s) -> str:
@@ -129,7 +140,7 @@ def _login(auth, ctx) -> str:
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
-    return _shell(t("login.submit"), body, cfg.lang)
+    return _page(auth, t("login.submit"), body)
 
 
 def _totp(auth, ctx) -> str:
@@ -143,7 +154,7 @@ def _totp(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>{_e(t('cancel'))}</a></div>")
-    return _shell(t("totp.title"), body, auth.cfg.lang)
+    return _page(auth, t("totp.title"), body)
 
 
 def _account(auth, ctx) -> str:
@@ -224,9 +235,8 @@ def _account(auth, ctx) -> str:
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
             f"<div>{admin_link} <a href='/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections) + _ACCOUNT_JS + pkjs)
-    return (f"<!doctype html><html lang={_e(auth.cfg.lang)}><head><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<title>{_e(t('acc.title'))}</title><style>{_CSS}{css}</style></head><body>{body}</body></html>")
+    # Account nutzt volle Breite (kein Card) + Account-CSS + Branding
+    return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
 
 
 _ACCOUNT_JS = """
@@ -293,7 +303,7 @@ def _register(auth, ctx) -> str:
                 f"<div class=ok>{_e(t('reg.verify'))}</div>"
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
                 f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
-        return _shell(t("reg.verify_title"), body, lang)
+        return _page(auth, t("reg.verify_title"), body)
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
@@ -305,7 +315,7 @@ def _register(auth, ctx) -> str:
             f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('reg.have'))}</a></div>")
-    return _shell(t("reg.title"), body, lang)
+    return _page(auth, t("reg.title"), body)
 
 
 def _magic_request(auth, ctx) -> str:
@@ -317,7 +327,7 @@ def _magic_request(auth, ctx) -> str:
                 f"<div class=ok>{_e(t('magic.sent'))}</div>"
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
                 f"<a class=btn2 href='/auth/login'>{_e(t('magic.back_login'))}</a>")
-        return _shell(t("magic.sent_title"), body, lang)
+        return _page(auth, t("magic.sent_title"), body)
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('magic.title'))}</h1>{err}"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
@@ -327,7 +337,7 @@ def _magic_request(auth, ctx) -> str:
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
             f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('back'))}</a></div>")
-    return _shell(t("magic.title"), body, lang)
+    return _page(auth, t("magic.title"), body)
 
 
 def _forgot(auth, ctx) -> str:
@@ -335,10 +345,10 @@ def _forgot(auth, ctx) -> str:
     t = auth.t
     lang = auth.cfg.lang
     if ctx.get("sent"):
-        return _shell(t("magic.sent_title"),
+        return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
                       f"<div class=ok>{_e(t('magic.sent'))}</div>"
-                      f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>", lang)
+                      f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('forgot.title'))}</h1>{err}"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
@@ -346,7 +356,7 @@ def _forgot(auth, ctx) -> str:
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
             f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('back'))}</a></div>")
-    return _shell(t("forgot.title"), body, lang)
+    return _page(auth, t("forgot.title"), body)
 
 
 def _reset(auth, ctx) -> str:
@@ -359,7 +369,18 @@ def _reset(auth, ctx) -> str:
             f"<label>{_e(t('reset.new'))}</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
             f"<button type=submit>{_e(t('reset.submit'))}</button></form>")
-    return _shell(t("reset.title"), body, auth.cfg.lang)
+    return _page(auth, t("reset.title"), body)
+
+
+def _error(auth, ctx) -> str:
+    """ctx: code, message. Themed Fehlerseite (403/404/429/500 …). Über set_template('error') ersetzbar."""
+    t = auth.t
+    code = ctx.get("code", 500)
+    msg = ctx.get("message") or t("error.oops")
+    body = (f"<h1 style='font-size:52px;margin:.1em 0'>{_e(code)}</h1>"
+            f"<div class=hint style='font-size:14px;margin-top:0'>{_e(msg)}</div>"
+            f"<a class=btn2 href='/'>{_e(t('error.home'))}</a>")
+    return _page(auth, str(code), body)
 
 
 def _magic_invalid(auth, ctx) -> str:
@@ -367,7 +388,7 @@ def _magic_invalid(auth, ctx) -> str:
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<div class=err>{_e(t('magic.invalid'))}</div>"
             f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
-    return _shell(t("magic.invalid_title"), body, auth.cfg.lang)
+    return _page(auth, t("magic.invalid_title"), body)
 
 
 def _resource_unlock(auth, ctx) -> str:
@@ -386,7 +407,7 @@ def _resource_unlock(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(lbl)}</label>{field}"
             f"<button type=submit>{_e(t('res.submit'))}</button></form>")
-    return _shell(str(ctx.get("label") or lbl), body, auth.cfg.lang)
+    return _page(auth, str(ctx.get("label") or lbl), body)
 
 
 def _reauth(auth, ctx) -> str:
@@ -405,7 +426,7 @@ def _reauth(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{field}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>{_e(t('logout'))}</a></div>")
-    return _shell(t("reauth.title"), body, auth.cfg.lang)
+    return _page(auth, t("reauth.title"), body)
 
 
 def _totp_setup(auth, ctx) -> str:
@@ -429,7 +450,7 @@ def _totp_setup(auth, ctx) -> str:
             "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
             "body:'code='+encodeURIComponent(c)});const j=await r.json();"
             f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';return false}}</script>")
-    return _shell(t("setup.title"), body, auth.cfg.lang)
+    return _page(auth, t("setup.title"), body)
 
 
 # Passkey-Login-JS (WebAuthn) — nur eingebunden, wenn passkey aktiv.
@@ -462,6 +483,7 @@ DEFAULTS = {
     "register": _register,
     "magic_request": _magic_request,
     "magic_invalid": _magic_invalid,
+    "error": _error,
     "forgot": _forgot,
     "reset": _reset,
     "totp_setup": _totp_setup,

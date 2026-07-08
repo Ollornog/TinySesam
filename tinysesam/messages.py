@@ -10,6 +10,8 @@ MESSAGES = {
         # --- generic / errors ---
         "or": "or",
         "back": "Back",
+        "error.home": "Back to start",
+        "error.oops": "Something went wrong.",
         "cancel": "Cancel",
         "logout": "Sign out",
         "err.credentials": "Invalid credentials",
@@ -114,6 +116,8 @@ MESSAGES = {
     "de": {
         "or": "oder",
         "back": "Zurück",
+        "error.home": "Zur Startseite",
+        "error.oops": "Etwas ist schiefgelaufen.",
         "cancel": "Abbrechen",
         "logout": "Abmelden",
         "err.credentials": "Falsche Zugangsdaten",
