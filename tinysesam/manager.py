@@ -38,6 +38,7 @@ class TinySesam:
         self.oidc = None
         self.webauthn = None
         self.ldap = None
+        self.saml = None
         self.rl = security.RateLimiter()
         if config.redis_url:
             try:
@@ -47,6 +48,9 @@ class TinySesam:
         if config.ldap_enabled and config.ldap_url:
             from .ldap_ import LDAPClient
             self.ldap = LDAPClient(config)
+        if config.saml_enabled and config.saml_idp_sso_url and config.saml_idp_x509cert:
+            from .saml_ import SAMLClient
+            self.saml = SAMLClient(config)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             from .oidc import OIDCClient
             self.oidc = OIDCClient(config.oidc_issuer, config.oidc_client_id,
@@ -187,6 +191,30 @@ class TinySesam:
             return None
         return u
 
+    # ---------- SAML (Attribute → lokaler User) ----------
+    def check_saml(self, nameid, attrs) -> Optional[dict]:
+        """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'."""
+        from .saml_ import first, as_list
+        cfg = self.cfg
+        username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
+        username = (username or nameid or "").strip()
+        if not username:
+            return None
+        if cfg.saml_allowed_groups:
+            groups = as_list(attrs, cfg.saml_attr_groups)
+            if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
+                return None
+        u = self.store.get_user_by_name(username)
+        if not u:
+            if not cfg.saml_auto_create:
+                return None
+            uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
+                                   email=first(attrs, cfg.saml_attr_email))
+            u = self.store.get_user(uid)
+        elif u["disabled"]:
+            return None
+        return u
+
     # ---------- PIN-Login (persönliche PIN pro User) ----------
     def set_pin(self, user_id, pin):
         """PIN setzen/ändern. Mindestlänge aus cfg.pin_min_length."""
@@ -293,7 +321,7 @@ class TinySesam:
         return True
 
     # ---------- Faktor-Ketten-Engine ----------
-    IDENTIFYING = ("password", "pin", "oidc", "passkey", "magic")  # Faktoren, die den User identifizieren
+    IDENTIFYING = ("password", "pin", "oidc", "passkey", "magic", "saml")  # Faktoren, die den User identifizieren
 
     def _global_chain(self):
         """(factors, strict) der globalen Standard-Kette, oder (None, True) für klassischen Modus."""
@@ -339,7 +367,7 @@ class TinySesam:
         from urllib.parse import quote
         base = {"password": self.cfg.login_path, "pin": "/auth/pin", "oidc": "/auth/oidc/start",
                 "passkey": self.cfg.login_path, "totp": "/auth/totp",
-                "magic": "/auth/magic/request"}.get(step, self.cfg.login_path)
+                "magic": "/auth/magic/request", "saml": "/auth/saml/login"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
 
     async def json_body(self, request: Request) -> dict:

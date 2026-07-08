@@ -74,6 +74,15 @@
     padding:6px 13px; font-size:14px; color:var(--ink)}
   .chip b{color:var(--accent); font-weight:600}
 
+  /* "Can it? Yes." list */
+  .solves{list-style:none; padding:0; margin:0; display:grid; gap:12px}
+  .solves li{display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:start; font-size:16px}
+  .solves .yes{color:var(--accent); font-weight:700; font-family:"Iowan Old Style",Palatino,Georgia,serif}
+  .solves b{font-weight:600}
+  .solves span{color:var(--muted)}
+  .solves code, .feat code{font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.86em;
+    background:var(--chip); border:1px solid var(--line); border-radius:5px; padding:1px 5px; color:var(--ink)}
+
   /* Code */
   .code{background:var(--code-bg); color:var(--code-fg); border-radius:12px; padding:16px 18px;
     overflow-x:auto; font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:13.5px; line-height:1.7}
@@ -106,7 +115,7 @@
   <header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
     <h1><span class="tiny">Tiny</span>Sesam</h1>
-    <p class="tagline">A small, reusable <b>multi-method authentication</b> module for FastAPI — hang one class in front of your app and you get login pages, sessions and route guards.</p>
+    <p class="tagline">The <b>login layer for your self-built apps</b>. Super-light auth for FastAPI where you use <b>only what you need</b> — hang one class in front of your app and get login pages, sessions and route guards. It grows with you.</p>
     <div class="cta">
       <a class="btn primary" href="https://github.com/Ollornog/TinySesam">View on GitHub</a>
       <a class="btn ghost" href="https://github.com/Ollornog/TinySesam#readme">Documentation</a>
@@ -117,13 +126,25 @@
   <hr class="rule">
 
   <section>
+    <h2>Use only what you need</h2>
+    <ul class="solves">
+      <li><span class="yes">✓</span><span><b>Just gate one page behind a PIN?</b> — a shared PIN or passphrase, no user account required.</span></li>
+      <li><span class="yes">✓</span><span><b>Forward-auth in front of other apps, like TinyAuth?</b> — yes, via <code>/auth/forward</code> or a ready-made OIDC gateway.</span></li>
+      <li><span class="yes">✓</span><span><b>Want an admin panel?</b> — built in. <b>Prefer it inside your own?</b> — use just the JSON API.</span></li>
+      <li><span class="yes">✓</span><span><b>From “a password is enough” to “OIDC → password → TOTP”?</b> — it grows with you; every piece optional, on/off by config.</span></li>
+      <li><span class="yes">✓</span><span><b>Your own look &amp; language?</b> — the whole front end is replaceable (<code>set_template</code>), texts in English or German.</span></li>
+    </ul>
+  </section>
+
+  <section>
     <h2>Ways to sign in</h2>
     <div class="chips">
       <span class="chip">🔐 Password</span>
       <span class="chip">🔢 PIN</span>
       <span class="chip">🔑 Passkey / WebAuthn</span>
-      <span class="chip">🌐 OIDC</span>
-      <span class="chip">🗂️ LDAP / lldap</span>
+      <span class="chip">🌐 OIDC <b>· Entra</b></span>
+      <span class="chip">🪪 SAML 2.0</span>
+      <span class="chip">🗂️ LDAP / Active Directory</span>
       <span class="chip">✉️ Magic-link</span>
       <span class="chip">📱 TOTP <b>+ recovery codes</b></span>
     </div>

@@ -6,16 +6,24 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
-Kleines, wiederverwendbares **Multi-Methoden-Auth für FastAPI**.
-Eine Klasse davorhängen, fertig — Login-Seite, Sessions und Guards inklusive.
-Gedacht als Baustein für eigene Apps.
+### Der Login-Mechanismus für deine selbstgebauten Apps.
 
-**Methoden — alle parallel aktivierbar:**
+Ein **super-leichtes Auth für FastAPI**, bei dem du **nur nutzt, was du brauchst** — und das mit dir mitwächst.
+Eine Klasse davorhängen, fertig: Login-Seite, Sessions und Route-Guards inklusive.
+
+- **Nur eine Seite mit einer PIN sichern?** → geht. (`require_resource("fotos")`, ganz ohne Benutzerkonto)
+- **Forward-Auth vor fremde Apps hängen, wie TinyAuth?** → kann er. (`/auth/forward` bzw. OIDC-Gateway)
+- **Ein Admin-Panel?** → eingebaut. **Lieber in dein eigenes einbauen?** → auch das (nur JSON-API).
+- **Von „Passwort reicht" bis „OIDC → Passwort → TOTP"?** → wächst mit — jedes Stück **optional, an/aus per Config**.
+- **Eigenes Look & Feel?** → das komplette **Frontend ist austauschbar** (`auth.set_template(...)`), inkl. Sprache (en/de).
+
+**Anmelde-Methoden — beliebig kombinierbar:**
 - 🔑 **Passkey / WebAuthn** (passwortlos, phishing-resistent)
 - 🔐 **Passwort** (argon2, mit stdlib-scrypt-Fallback)
 - 🔢 **PIN** (persönliche PIN pro User, eigener strenger Lockout)
-- 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, …)
-- 🗂️ **LDAP / lldap** (Passwort gegen Verzeichnis-Bind)
+- 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, Entra/Azure AD, …)
+- 🪪 **SAML 2.0** (SP-Login gegen ADFS, Okta, Keycloak, …)
+- 🗂️ **LDAP / Active Directory** (Passwort gegen Verzeichnis-Bind)
 - ✉️ **Magic-Link** (Einmal-Login per E-Mail)
 - 📱 **TOTP** als 2. Faktor *on-top* (+ **Recovery-Codes**; Passkeys gelten schon als vollwertig)
 
@@ -247,6 +255,36 @@ TinySesamConfig(
 )
 ```
 Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ketten gelten wie sonst.
+
+## SAML 2.0
+
+SP-Login gegen einen SAML-IdP (ADFS, Okta, Keycloak, …). `pip install 'tinysesam[saml]'` (braucht System-`libxmlsec1`):
+
+```python
+TinySesamConfig(
+    saml_enabled=True, base_url="https://app.example.com",
+    saml_idp_sso_url="https://idp.example.com/sso",
+    saml_idp_x509cert="MIID…",                 # IdP-Signaturzertifikat (PEM-Body)
+    saml_attr_email="email", saml_attr_groups="groups", saml_allowed_groups=["staff"],
+)
+```
+Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgeprüft — von CSRF ausgenommen),
+`/auth/saml/metadata` (SP-Metadaten für den IdP). Faktor `saml`, in Ketten kombinierbar.
+
+## Presets
+
+Fertige Config-Presets für gängige Fälle (Rest via `**overrides`, z. B. `db_path=`):
+
+```python
+# Active Directory (on-prem, via LDAP) — Direkt-Bind per UPN oder Search-then-Bind
+TinySesamConfig.active_directory(ldap_url="ldaps://dc.corp:636", upn_suffix="corp.example.com", db_path="app.db")
+
+# Entra ID / Azure AD (Cloud-AD, via OIDC)
+TinySesamConfig.entra_id(tenant_id="…", client_id="…", client_secret="…", db_path="app.db")
+
+# Reines OIDC-Forward-Auth-Gateway (siehe unten)
+TinySesamConfig.oidc_gateway(issuer="…", client_id="…", client_secret="…", base_url="…")
+```
 
 ## Als reines OIDC-Gateway (Preset)
 

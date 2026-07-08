@@ -2,6 +2,19 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.8.0] — 2026-07-09
+
+### Hinzugefügt
+- **SAML 2.0 SP-Login** (Extra `[saml]`, python3-saml) — `/auth/saml/login|acs|metadata`, Signatur-
+  geprüfte Assertion (ACS von CSRF ausgenommen), Attribute→User, Gruppen-Gate, Faktor `saml`.
+- **Presets** — `TinySesamConfig.active_directory(...)` (AD via LDAP, UPN- oder sAMAccountName-Bind)
+  und `TinySesamConfig.entra_id(...)` (Azure AD/Entra via OIDC).
+- README/Website: problem-orientierter Pitch (Login-Layer für selbstgebaute Apps).
+
+### Hinweis
+Kerberos/NTLM/GSSAPI-SSO bleibt bewusst außen vor (LAN-/domänengebunden, schwere Ops-Kopplung,
+redundant zu OIDC/SAML für AD).
+
 ## [0.7.0] — 2026-07-08
 
 ### Hinzugefügt
