@@ -45,8 +45,10 @@ auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
 def my_login(a, ctx):
     methods = a.cfg.enabled_methods()
     err = f"<p style='color:#c00'>{ctx.get('error')}</p>" if ctx.get("error") else ""
+    # Wer das Login-Template ersetzt, muss bei aktivem CSRF (Default) das _csrf-Feld selbst einbauen:
     pw = ("<form method=post action='/auth/login'>"
           f"<input type=hidden name=next value='{ctx['next']}'>"
+          f"<input type=hidden name=_csrf value='{ctx.get('csrf', '')}'>"
           "<input name=username placeholder=Benutzer><br><input name=password type=password placeholder=Passwort><br>"
           "<label><input type=checkbox name=remember value=1 checked> angemeldet bleiben</label><br>"
           "<button>Anmelden</button></form>") if "password" in methods else ""
