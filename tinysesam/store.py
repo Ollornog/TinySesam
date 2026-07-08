@@ -69,9 +69,10 @@ CREATE TABLE IF NOT EXISTS session (
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- 2FA bestanden (oder nicht nötig)
-    mfa_at     INTEGER,                       -- Zeitpunkt des bestandenen 2. Faktors (Step-up-Frische)
-    method     TEXT,                          -- password|passkey|oidc|pin
+    mfa_ok     INTEGER NOT NULL DEFAULT 0,   -- erfüllt die aktive Login-Policy (Kette/2FA) vollständig
+    mfa_at     INTEGER,                       -- Zeitpunkt der letzten Faktor-Bestätigung (Step-up-Frische)
+    method     TEXT,                          -- erster/primärer Faktor: password|pin|passkey|oidc|magic
+    factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON-Liste erfüllter Faktoren (Ketten-Engine)
     remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
     ip         TEXT,
     user_agent TEXT
@@ -141,7 +142,8 @@ class Store:
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent)."""
         adds = {
-            "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1")],
+            "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
+                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
         }
         with self._lock:
             for table, cols in adds.items():
@@ -275,14 +277,24 @@ class Store:
         return r["user_id"] if r else None
 
     # ---------- Sessions ----------
-    def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None, remember=True) -> str:
+    def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None, remember=True,
+                       factors=None) -> str:
         token = secrets.token_urlsafe(32)
         now = _now()
-        self._exec("INSERT INTO session(token, user_id, created_at, expires_at, mfa_ok, mfa_at, method, remember, ip, user_agent) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        self._exec("INSERT INTO session(token, user_id, created_at, expires_at, mfa_ok, mfa_at, method, "
+                   "factors_done, remember, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    (token, user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
-                    (now if mfa_ok else None), method, 1 if remember else 0, ip, ua))
+                    (now if mfa_ok else None), method, json.dumps(list(factors or [])),
+                    1 if remember else 0, ip, ua))
         return token
+
+    def set_session_factors(self, token, factors, mfa_ok=None):
+        if mfa_ok is None:
+            self._exec("UPDATE session SET factors_done=?, mfa_at=? WHERE token=?",
+                       (json.dumps(list(factors)), _now(), token))
+        else:
+            self._exec("UPDATE session SET factors_done=?, mfa_ok=?, mfa_at=? WHERE token=?",
+                       (json.dumps(list(factors)), 1 if mfa_ok else 0, _now(), token))
 
     def get_session(self, token) -> Optional[sqlite3.Row]:
         if not token:

@@ -208,6 +208,56 @@ class TinySesam:
     def totp_disable(self, user_id):
         self.store.delete_totp(user_id)
 
+    # ---------- Faktor-Ketten-Engine ----------
+    IDENTIFYING = ("password", "pin", "oidc", "passkey", "magic")  # Faktoren, die den User identifizieren
+
+    def _global_chain(self):
+        """(factors, strict) der globalen Standard-Kette, oder (None, True) für klassischen Modus."""
+        return (list(self.cfg.login_chain), self.cfg.login_chain_strict) if self.cfg.login_chain else (None, True)
+
+    def _chain_satisfied(self, required, strict, done) -> bool:
+        if strict:
+            pos = [done.index(f) for f in required if f in done]
+            return len(pos) == len(required) and pos == sorted(pos)   # alle da UND in Reihenfolge
+        return all(f in done for f in required)
+
+    def _next_factor(self, required, strict, done):
+        for f in required:
+            if f not in done:
+                return f
+        return None
+
+    def _default_satisfied(self, user_id, done) -> bool:
+        """Klassische Policy (keine login_chain): ein Identifikationsfaktor + TOTP, falls eingerichtet."""
+        if not any(f in done for f in self.IDENTIFYING):
+            return False
+        if "passkey" in done:
+            return True   # Passkey allein = vollwertig
+        if self.store.has_confirmed_totp(user_id) and "totp" not in done:
+            return False
+        return True
+
+    def _session_ok(self, user_id, done) -> bool:
+        """Erfüllt die Faktorliste die AKTIVE globale Policy (Kette oder klassisch)?"""
+        req, strict = self._global_chain()
+        if req is not None:
+            return self._chain_satisfied(req, strict, done)
+        return self._default_satisfied(user_id, done)
+
+    def next_login_step(self, user_id, done):
+        """Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig."""
+        req, strict = self._global_chain()
+        if req is not None:
+            return None if self._chain_satisfied(req, strict, done) else self._next_factor(req, strict, done)
+        return None if self._default_satisfied(user_id, done) else "totp"
+
+    def factor_entry(self, step, nxt="/") -> str:
+        from urllib.parse import quote
+        base = {"password": self.cfg.login_path, "pin": "/auth/pin", "oidc": "/auth/oidc/start",
+                "passkey": self.cfg.login_path, "totp": "/auth/totp",
+                "magic": "/auth/magic/request"}.get(step, self.cfg.login_path)
+        return f"{base}?next={quote(nxt or '/', safe='/')}"
+
     # ---------- Sessions ----------
     def _ttl(self, remember: bool = True) -> int:
         """Server-Session-Lebensdauer. remember=False → kurze Transient-TTL (Session-Cookie)."""
@@ -215,20 +265,56 @@ class TinySesam:
         return hours * 3600
 
     def start_session(self, user_id, method, ip=None, ua=None, remember: bool = True) -> tuple[str, bool]:
-        """Session anlegen. Gibt (token, mfa_ok). mfa_ok=False → TOTP-Schritt nötig."""
-        needs = self.mfa_pending(user_id)
-        # Passkey ist bereits ein starker Faktor → kein zusätzliches TOTP nötig
-        mfa_ok = (method == "passkey") or (not needs)
-        token = self.store.create_session(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember)
+        """Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig."""
+        done = [method]
+        mfa_ok = self._session_ok(user_id, done)
+        token = self.store.create_session(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember, factors=done)
         if mfa_ok:   # voller Login abgeschlossen → Audit
             u = self.store.get_user(user_id)
             self.store.audit_log("login", u["username"] if u else None, ip, method)
         return token, mfa_ok
 
-    def complete_mfa(self, token):
-        self.store.set_session_mfa(token, True)
+    def apply_factor(self, request, user_id, factor, ip=None, ua=None, remember=True) -> tuple[str, bool, bool]:
+        """Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen
+        (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel).
+        Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen."""
+        s = self.session_from_request(request)
+        if s and s["user_id"] == user_id:
+            # gleiche Identität → Faktor an laufende Sitzung anhängen (Ketten-/Route-Schritt).
+            # Ein Identitätswechsel (anderer User) fällt durch → neue Sitzung.
+            done = json.loads(s["factors_done"] or "[]")
+            was_ok = bool(s["mfa_ok"])
+            if factor not in done:
+                done.append(factor)
+            ok = self._session_ok(user_id, done)
+            self.store.set_session_factors(s["token"], done, mfa_ok=ok)
+            if ok and not was_ok:
+                u = self.store.get_user(user_id)
+                self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
+            return s["token"], ok, False
+        token, ok = self.start_session(user_id, factor, ip, ua, remember)
+        return token, ok, True
+
+    def login_redirect_after(self, request, token, user_id, nxt):
+        """Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors."""
         s = self.store.get_session(token)
-        if s:
+        done = json.loads(s["factors_done"] or "[]") if s else []
+        if s and s["mfa_ok"]:
+            return nxt
+        step = self.next_login_step(user_id, done)
+        return self.factor_entry(step, nxt) if step else nxt
+
+    def complete_mfa(self, token):
+        """TOTP-Schritt abschließen (Faktor 'totp' anhängen). Rückwärtskompatibler Name."""
+        s = self.store.get_session(token)
+        if not s:
+            return
+        done = json.loads(s["factors_done"] or "[]")
+        if "totp" not in done:
+            done.append("totp")
+        ok = self._session_ok(s["user_id"], done)
+        self.store.set_session_factors(token, done, mfa_ok=ok)
+        if ok:
             u = self.store.get_user(s["user_id"])
             self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
 
@@ -436,10 +522,49 @@ class TinySesam:
                 return False
         return True
 
-    def _enforce(self, request: Request, mfa=False, admin=False, role=None) -> dict:
-        u = self.current_user(request)
-        if not u:
+    def _redirect_factor(self, request: Request, step):
+        # Browser → Redirect zur Eingabeseite des nächsten Faktors; JSON → 401 + X-TinySesam-Factor.
+        if step is None:
             self._deny(request)
+        if "text/html" in request.headers.get("accept", ""):
+            raise HTTPException(307, headers={"Location": self.factor_entry(step, request.url.path)})
+        raise HTTPException(401, "weiterer Faktor nötig", headers={"X-TinySesam-Factor": step})
+
+    def _enforce_route_chain(self, request: Request, factors, strict) -> dict:
+        strict = self.cfg.login_chain_strict if strict is None else strict
+        s = self.session_from_request(request)
+        usr = self.store.get_user(s["user_id"]) if s else None
+        if usr and usr["disabled"]:
+            usr = None
+        done = json.loads(s["factors_done"] or "[]") if s else []
+        if usr is None:
+            self._redirect_factor(request, factors[0] if factors else "password")
+        if self._chain_satisfied(factors, strict, done):
+            d = dict(usr)
+            d["_via"] = "session"
+            return d
+        self._redirect_factor(request, self._next_factor(factors, strict, done))
+
+    def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None, strict=None) -> dict:
+        gchain, _ = self._global_chain()
+        if factors is not None:
+            # explizite Route-Kette: nie per API-Key erfüllbar, treibt eigene Faktor-Schritte
+            u = self._enforce_route_chain(request, factors, strict)
+        elif gchain is None:
+            # klassisch (Schnellpfad, unverändert)
+            u = self.current_user(request)
+            if not u:
+                self._deny(request)
+        else:
+            # globale Kette: current_user spiegelt sie (mfa_ok); partielle Sitzung → nächster Schritt
+            u = self.current_user(request)
+            if not u:
+                s = self.session_from_request(request)
+                usr = self.store.get_user(s["user_id"]) if s else None
+                if not usr or usr["disabled"]:
+                    self._deny(request)   # keine Identität → Login (erster Faktor)
+                done = json.loads(s["factors_done"] or "[]")
+                self._redirect_factor(request, self.next_login_step(usr["id"], done))
         if admin and not self.is_admin(u):
             raise HTTPException(403, "Adminrechte nötig")
         if role and not self.has_role(u, role):
@@ -466,11 +591,14 @@ class TinySesam:
             return self._enforce(request, role=role, mfa=mfa)
         return dep
 
-    def require(self, mfa: bool = False, admin: bool = False, role: str = None):
+    def require(self, mfa: bool = False, admin: bool = False, role: str = None,
+                factors: list = None, strict: bool = None):
         """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
-        `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`."""
+        `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
+        factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale),
+        strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`."""
         def dep(request: Request) -> dict:
-            return self._enforce(request, mfa=mfa, admin=admin, role=role)
+            return self._enforce(request, mfa=mfa, admin=admin, role=role, factors=factors, strict=strict)
         return dep
 
     def require_mfa(self, request: Request) -> dict:

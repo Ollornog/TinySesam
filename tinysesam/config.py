@@ -31,6 +31,14 @@ class TinySesamConfig:
     totp_enabled: bool = True             # User dürfen TOTP einrichten
     totp_required: bool = False           # TOTP nach Passwort/OIDC erzwingen (wenn eingerichtet: immer verlangt)
 
+    # --- Faktor-Ketten (geordnete Kombinationen) ---
+    # Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B.
+    # ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls
+    # eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)).
+    # Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User.
+    login_chain: list[str] = field(default_factory=list)
+    login_chain_strict: bool = True       # Reihenfolge erzwingen (True) oder beliebig (False)
+
     # --- Step-up / per-Route-MFA (Sudo-Frische) ---
     # Guards mit mfa=True verlangen eine „frische" Faktor-Bestätigung. Frisch ist eine Sitzung
     # stepup_max_age_sec lang nach Login/Reauth; danach → /auth/reauth. 0 = nie ablaufen (nur „hat 2FA bestanden").

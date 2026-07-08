@@ -110,10 +110,10 @@ def register_oidc_routes(router, auth):
             auth.store.link_oidc(issuer, sub, uid)
 
         ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
-        token, mfa_ok = auth.start_session(uid, "oidc", ip, ua)
-        target = auth.safe_next(flow.get("next") or cfg.login_redirect)
-        from urllib.parse import quote
-        resp = RedirectResponse(target, 303) if mfa_ok \
-            else RedirectResponse(f"/auth/totp?next={quote(target, safe='/')}", 303)
-        auth.set_cookie(resp, token)
+        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua)
+        target = auth.login_redirect_after(request, token, uid,
+                                           auth.safe_next(flow.get("next") or cfg.login_redirect))
+        resp = RedirectResponse(target, 303)
+        if is_new:
+            auth.set_cookie(resp, token)
         return resp

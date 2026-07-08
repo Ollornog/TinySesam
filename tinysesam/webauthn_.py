@@ -100,9 +100,11 @@ def register_passkey_routes(router, auth):
             credential_current_sign_count=row["sign_count"], require_user_verification=False)
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
         ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
-        token, _ = auth.start_session(row["user_id"], "passkey", ip, ua)   # passkey = vollwertig
-        resp = JSONResponse({"ok": True, "redirect": auth.safe_next(next)})
-        auth.set_cookie(resp, token)
+        token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
+        target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next))
+        resp = JSONResponse({"ok": True, "redirect": target})
+        if is_new:
+            auth.set_cookie(resp, token)
         return resp
 
     # ---------- Verwaltung ----------

@@ -36,25 +36,32 @@ def build_router(auth) -> APIRouter:
         auth.record_login(username, ip, bool(u), "password")
         if not u:
             return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
-        token, mfa_ok = auth.start_session(u["id"], "password", ip, request.headers.get("user-agent"),
-                                           remember=remember_me)
-        resp = RedirectResponse(nxt, 303) if mfa_ok \
-            else RedirectResponse(f"/auth/totp?next={_q(nxt)}", 303)
-        auth.set_cookie(resp, token, remember=remember_me)
+        token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
+                                              request.headers.get("user-agent"), remember_me)
+        resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+        if is_new:
+            auth.set_cookie(resp, token, remember=remember_me)
         return resp
 
-    # ---------- TOTP als 2. Faktor ----------
+    # ---------- TOTP als Faktor (2. Schritt oder Ketten-/Route-Faktor) ----------
     @r.get("/auth/totp", response_class=HTMLResponse)
     def totp_page(request: Request, next: str = "/", error: str = ""):
-        if not auth.pending_user(request):
+        nxt = auth.safe_next(next)
+        user = auth.pending_user(request) or auth.current_user(request)
+        if not user:
             return RedirectResponse(cfg.login_path, 303)
-        return auth.render_page("totp", next=auth.safe_next(next), error=error)
+        if not auth.store.has_confirmed_totp(user["id"]):
+            # Faktor totp verlangt, aber nicht eingerichtet → Einrichtung (nur wenn schon eingeloggt)
+            if auth.current_user(request):
+                return RedirectResponse(f"/auth/totp/setup?next={_q(nxt)}", 303)
+            return RedirectResponse(cfg.login_path, 303)
+        return auth.render_page("totp", next=nxt, error=error)
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(...), next: str = Form("/")):
         nxt = auth.safe_next(next)
         s = auth.session_from_request(request)
-        pu = auth.pending_user(request)
+        pu = auth.pending_user(request) or auth.current_user(request)
         if not s or not pu:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
@@ -65,7 +72,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("totp", status=401, next=nxt, error="Code falsch")
         auth.record_login(pu["username"], ip, True, "totp")
         auth.complete_mfa(s["token"])
-        return RedirectResponse(nxt, 303)
+        return RedirectResponse(auth.login_redirect_after(request, s["token"], pu["id"], nxt), 303)
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -110,11 +117,11 @@ def build_router(auth) -> APIRouter:
             auth.record_login(username, ip, bool(u), "pin")
             if not u:
                 return auth.render_page("login", status=401, next=nxt, error="Falsche Zugangsdaten")
-            token, mfa_ok = auth.start_session(u["id"], "pin", ip, request.headers.get("user-agent"),
-                                               remember=remember_me)
-            resp = RedirectResponse(nxt, 303) if mfa_ok \
-                else RedirectResponse(f"/auth/totp?next={_q(nxt)}", 303)
-            auth.set_cookie(resp, token, remember=remember_me)
+            token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
+                                                  request.headers.get("user-agent"), remember_me)
+            resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+            if is_new:
+                auth.set_cookie(resp, token, remember=remember_me)
             return resp
 
         @r.post("/auth/pin/set")
