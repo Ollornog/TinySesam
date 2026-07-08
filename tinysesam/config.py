@@ -50,6 +50,10 @@ class TinySesamConfig:
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten
     totp_required: bool = False           # TOTP nach Passwort/OIDC erzwingen (wenn eingerichtet: immer verlangt)
+    recovery_code_count: int = 10         # Anzahl Einmal-Recovery-Codes je Erzeugung (verlorener Authenticator)
+
+    # --- Passwort-Reset (Forgot-Password per E-Mail; braucht magiclink_enabled + Mailer) ---
+    password_reset_enabled: bool = False
 
     # --- Faktor-Ketten (geordnete Kombinationen) ---
     # Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B.

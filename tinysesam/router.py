@@ -69,7 +69,8 @@ def build_router(auth) -> APIRouter:
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
             return auth.render_page("totp", status=429, next=nxt, error="Zu viele Versuche — bitte warten.")
-        if not auth.verify_totp(pu["id"], code):
+        # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
+        if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
             auth.record_login(pu["username"], ip, False, "totp")
             return auth.render_page("totp", status=401, next=nxt, error="Code falsch")
         auth.record_login(pu["username"], ip, True, "totp")
@@ -98,6 +99,16 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(401)
         auth.totp_disable(u["id"])
         return {"ok": True}
+
+    @r.post("/auth/totp/recovery")
+    def totp_recovery(request: Request):
+        """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
+        u = auth.current_user(request)
+        if not u:
+            raise HTTPException(401)
+        if not auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(400, "erst 2FA einrichten")
+        return {"codes": auth.generate_recovery_codes(u["id"])}
 
     # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
     if cfg.pin_enabled:
@@ -214,6 +225,9 @@ def build_router(auth) -> APIRouter:
                 if not cfg.allow_signup:
                     return auth.render_page("magic_invalid", status=400)
                 return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
+            # Passwort-Reset: NICHT hier verbrauchen → zur Reset-Seite weiterreichen
+            if info["purpose"] == "reset_password":
+                return RedirectResponse(f"/auth/reset?token={_q(token)}", 303)
             data = auth.redeem_magic(token)
             if not data:
                 return auth.render_page("magic_invalid", status=400)
@@ -252,6 +266,44 @@ def build_router(auth) -> APIRouter:
             auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
         auth.audit("stepup", u["username"], ip)
         return RedirectResponse(nxt, 303)
+
+    # ---------- Passwort vergessen / zurücksetzen (braucht magiclink_enabled + Mailer) ----------
+    if cfg.password_reset_enabled and cfg.magiclink_enabled:
+        @r.get("/auth/forgot", response_class=HTMLResponse)
+        def forgot_page(request: Request):
+            return auth.render_page("forgot", sent=False, error="")
+
+        @r.post("/auth/forgot", response_class=HTMLResponse)
+        def forgot_submit(request: Request, email: str = Form(...)):
+            ip = auth.client_ip(request)
+            if not auth.rate_ok(ip):
+                return auth.render_page("forgot", status=429, sent=False, error="Zu viele Anfragen — bitte warten.")
+            base = cfg.base_url or str(request.base_url)
+            try:
+                auth.send_password_reset(email.strip(), base)
+            except Exception:
+                auth.audit("reset_send_error", detail=email)
+            return auth.render_page("forgot", sent=True, error="")   # generisch (keine Enumeration)
+
+        @r.get("/auth/reset", response_class=HTMLResponse)
+        def reset_page(request: Request, token: str = ""):
+            if not auth.peek_magic(token, purpose="reset_password"):
+                return auth.render_page("magic_invalid", status=400)
+            return auth.render_page("reset", token=token, error="")
+
+        @r.post("/auth/reset", response_class=HTMLResponse)
+        def reset_submit(request: Request, token: str = Form(...), password: str = Form(...)):
+            if len(password) < auth.sec("password_min_length"):
+                return auth.render_page("reset", status=400, token=token,
+                                        error=f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+            data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
+            if not data or not data.get("user_id"):
+                return auth.render_page("magic_invalid", status=400)
+            uid = data["user_id"]
+            auth.set_password(uid, password)
+            auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
+            auth.audit("password_reset", detail=f"uid={uid}")
+            return RedirectResponse(f"{cfg.login_path}?next=/", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
     if cfg.allow_signup:
