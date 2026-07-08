@@ -1,0 +1,41 @@
+# TinySesam Forward-Auth mit Traefik (ForwardAuth-Middleware), dynamische Konfiguration.
+#
+# Voraussetzung in TinySesamConfig: forward_auth_enabled=True, base_url, cookie_domain,
+# trusted_redirect_hosts, trusted_proxies (siehe Caddyfile-Kommentar).
+#
+# Hinweis: Traefik folgt der 401 nicht automatisch. Damit Browser zum Login umgeleitet werden,
+# entweder im Client den Header X-TinySesam-Location auswerten oder einen 401-Errorpage-Router
+# ergänzen. Die Remote-*-Header werden via authResponseHeaders an die App durchgereicht.
+
+http:
+  middlewares:
+    tinysesam-auth:
+      forwardAuth:
+        address: "http://tinysesam:8000/auth/forward"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - "Remote-User"
+          - "Remote-Groups"
+          - "Remote-Email"
+          - "Remote-Name"
+
+  routers:
+    app:
+      rule: "Host(`app.example.com`)"
+      middlewares:
+        - tinysesam-auth
+      service: app-svc
+
+    auth:
+      rule: "Host(`auth.example.com`)"
+      service: tinysesam-svc
+
+  services:
+    app-svc:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:9000"
+    tinysesam-svc:
+      loadBalancer:
+        servers:
+          - url: "http://tinysesam:8000"

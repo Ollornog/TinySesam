@@ -312,6 +312,35 @@ def build_router(auth) -> APIRouter:
                 auth.set_cookie(resp, token, remember=True)
             return resp
 
+    # ---------- Forward-Auth (Reverse-Proxy: Caddy forward_auth / nginx auth_request / Traefik) ----------
+    if cfg.forward_auth_enabled:
+        from fastapi.responses import Response
+
+        def _forward(request: Request):
+            u = auth.current_user(request)   # Session ODER API-Key
+            if u:
+                groups = auth.user_roles(u) + (["admin"] if u["is_admin"] else [])
+                headers = {
+                    "Remote-User": str(u["username"] or ""),
+                    "Remote-Name": str(u["display_name"] or u["username"] or ""),
+                    "Remote-Email": str(u["email"] or ""),
+                    "Remote-Groups": ",".join(groups),
+                }
+                return Response(status_code=200, headers=headers)
+            orig = auth.forwarded_url(request)
+            login = auth.forward_login_url(orig, request)
+            # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
+            return Response(status_code=401, headers={"X-TinySesam-Location": login,
+                                                      "WWW-Authenticate": 'FormBased realm="TinySesam"'})
+
+        @r.get("/auth/forward")
+        def forward_auth(request: Request):
+            return _forward(request)
+
+        @r.get("/auth/verify")
+        def verify_auth(request: Request):
+            return _forward(request)
+
     # ---------- Eigenes Konto (Selbstverwaltung) ----------
     @r.post("/auth/password")
     async def change_own_password(request: Request):

@@ -1,0 +1,43 @@
+# TinySesam Forward-Auth mit Caddy.
+#
+# WICHTIG (Gotcha): Caddys `forward_auth`-Shortcut reicht eine 401 nur durch und leitet NICHT
+# automatisch zum Login um. Für den Redirect braucht es die expandierte reverse_proxy-Form mit
+# handle_response, die den vom Auth-Dienst gesetzten Header X-TinySesam-Location auswertet.
+#
+# Voraussetzung in TinySesamConfig:
+#   forward_auth_enabled=True
+#   base_url="https://auth.example.com"          # zentrale Login-Domain
+#   cookie_domain=".example.com"                 # Cookie gilt für alle Subdomains (SSO)
+#   trusted_redirect_hosts=["app.example.com"]   # erlaubt next= zurück auf die App
+#   trusted_proxies=["<Caddy-IP>/32"]            # echte Client-IP hinter dem Proxy
+
+# Zentraler Auth-Dienst (TinySesam) — eigene Subdomain
+auth.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+
+# Geschützte App (kann eine beliebige Fremd-App / statische Site sein)
+app.example.com {
+    route {
+        reverse_proxy /auth/forward 127.0.0.1:8000 {
+            method GET
+            header_up X-Forwarded-Uri {uri}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+            # nur die Auth-Antwort-Header übernehmen
+            @ok status 200
+            handle_response @ok {
+                request_header Remote-User {rp.header.Remote-User}
+                request_header Remote-Groups {rp.header.Remote-Groups}
+                request_header Remote-Email {rp.header.Remote-Email}
+                request_header Remote-Name {rp.header.Remote-Name}
+            }
+            # nicht eingeloggt → Redirect zur Login-URL aus dem Header
+            @denied status 401
+            handle_response @denied {
+                redir {rp.header.X-TinySesam-Location} 302
+            }
+        }
+        reverse_proxy 127.0.0.1:9000   # die eigentliche Upstream-App
+    }
+}

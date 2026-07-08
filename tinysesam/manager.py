@@ -538,6 +538,32 @@ class TinySesam:
         st = self.update_status()
         return self.run_update() if st.get("available") else {"up_to_date": True, **st}
 
+    # ---------- Forward-Auth (Reverse-Proxy) ----------
+    def forwarded_url(self, request: Request) -> str:
+        """Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forwarded-*,
+        nginx: X-Original-URL). Fallback: Referer bzw. '/'."""
+        h = request.headers
+        orig = h.get("x-original-url")           # nginx auth_request
+        if orig and "://" in orig:
+            return orig
+        proto = (h.get("x-forwarded-proto") or "https").split(",")[0].strip()
+        host = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
+        uri = h.get("x-forwarded-uri") or orig or h.get("x-original-uri") or "/"
+        if host:
+            return f"{proto}://{host}{uri}"
+        return h.get("referer") or "/"
+
+    def forward_login_url(self, orig_url: str, request: Request = None) -> str:
+        """Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>."""
+        from urllib.parse import quote
+        base = self.cfg.base_url
+        if not base and request is not None:
+            h = request.headers
+            proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+            host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc).split(",")[0].strip()
+            base = f"{proto}://{host}"
+        return f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
+
     # ---------- Views / Redirect-Sicherheit ----------
     def set_template(self, name, fn):
         """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.

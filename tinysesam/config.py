@@ -19,6 +19,7 @@ class TinySesamConfig:
     admin_path: str = "/auth/admin"       # Standard-Mountpunkt; auth.admin_router() lässt es auch woanders montieren
     admin_ui_enabled: bool = True         # eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel)
     account_enabled: bool = True          # eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar)
+    forward_auth_enabled: bool = False    # /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik)
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
