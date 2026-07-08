@@ -22,6 +22,11 @@ class TinySesamConfig:
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
 
+    # --- Geteilte Ressourcen-Geheimnisse (ohne Benutzerkonto: eine PIN/Passphrase schützt einen Bereich) ---
+    resource_locks_enabled: bool = False
+    resource_unlock_ttl_hours: int = 12   # wie lange eine freigeschaltete Ressource offen bleibt
+    resource_cookie: str = "tinysesam_runlock"
+
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten
     totp_required: bool = False           # TOTP nach Passwort/OIDC erzwingen (wenn eingerichtet: immer verlangt)

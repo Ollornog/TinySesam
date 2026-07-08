@@ -85,6 +85,19 @@ CREATE TABLE IF NOT EXISTS setting (         -- Runtime-Settings (Härtungs-Schw
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS resource_secret (  -- geteiltes Ressourcen-Geheimnis (ohne User-Konto)
+    name       TEXT PRIMARY KEY,
+    hash       TEXT NOT NULL,                 -- wie Passwort gehasht
+    kind       TEXT NOT NULL DEFAULT 'pin',   -- 'pin' (numerisch) | 'password' (Passphrase)
+    label      TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS resource_unlock (  -- freigeschaltete Ressourcen je Unlock-Token (Cookie)
+    token      TEXT NOT NULL,
+    resource   TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (token, resource)
+);
 CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
@@ -355,6 +368,40 @@ class Store:
 
     def gc_attempts(self, older_than):
         self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,))
+
+    # ---------- Geteilte Ressourcen-Geheimnisse ----------
+    def set_resource_secret(self, name, hash_, kind="pin", label=None):
+        self._exec("INSERT INTO resource_secret(name, hash, kind, label, created_at) VALUES (?,?,?,?,?) "
+                   "ON CONFLICT(name) DO UPDATE SET hash=excluded.hash, kind=excluded.kind, label=excluded.label",
+                   (name, hash_, kind, label, _now()))
+
+    def get_resource_secret(self, name):
+        return self._one("SELECT * FROM resource_secret WHERE name=?", (name,))
+
+    def list_resource_secrets(self):
+        return self._all("SELECT name, kind, label, created_at FROM resource_secret ORDER BY name")
+
+    def delete_resource_secret(self, name):
+        self._exec("DELETE FROM resource_secret WHERE name=?", (name,))
+        self._exec("DELETE FROM resource_unlock WHERE resource=?", (name,))
+
+    def add_resource_unlock(self, token, resource, expires_at):
+        self._exec("INSERT OR REPLACE INTO resource_unlock(token, resource, expires_at) VALUES (?,?,?)",
+                   (token, resource, expires_at))
+
+    def is_resource_unlocked(self, token, resource) -> bool:
+        if not token:
+            return False
+        r = self._one("SELECT expires_at FROM resource_unlock WHERE token=? AND resource=?", (token, resource))
+        if not r:
+            return False
+        if r["expires_at"] < _now():
+            self._exec("DELETE FROM resource_unlock WHERE token=? AND resource=?", (token, resource))
+            return False
+        return True
+
+    def gc_resource_unlocks(self):
+        self._exec("DELETE FROM resource_unlock WHERE expires_at < ?", (_now(),))
 
     # ---------- Audit-Log ----------
     def audit_log(self, event, username=None, ip=None, detail=None):

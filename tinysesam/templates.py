@@ -127,6 +127,24 @@ def _totp(auth, ctx) -> str:
     return _shell("Bestätigung", body)
 
 
+def _resource_unlock(auth, ctx) -> str:
+    """ctx: name, kind ('pin'|'password'), label, next, error. Geteiltes Ressourcen-Geheimnis."""
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    if ctx.get("kind") == "pin":
+        field = "<input name=secret type=password inputmode=numeric autocomplete=off class=code autofocus>"
+        lbl = "PIN"
+    else:
+        field = "<input name=secret type=password autocomplete=off autofocus>"
+        lbl = "Zugangswort"
+    body = (f"<h1>{_e(ctx.get('label'))}</h1>"
+            f"<div class=hint>Dieser Bereich ist geschützt. Bitte {lbl} eingeben.</div>{err}"
+            f"<form method=post action='/auth/resource/{_e(ctx.get('name'))}'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<label>{lbl}</label>{field}"
+            f"<button type=submit>Freischalten</button></form>")
+    return _shell(str(ctx.get("label") or "Geschützt"), body)
+
+
 def _reauth(auth, ctx) -> str:
     """ctx: next, error, username, has_totp. Sudo-Frische: erneut Faktor bestätigen (Step-up)."""
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
@@ -190,5 +208,6 @@ DEFAULTS = {
     "login": _login,
     "totp": _totp,
     "reauth": _reauth,
+    "resource_unlock": _resource_unlock,
     "totp_setup": _totp_setup,
 }

@@ -139,6 +139,41 @@ def build_router(auth) -> APIRouter:
             auth.audit("pin_disable", u["username"])
             return {"ok": True}
 
+    # ---------- Geteiltes Ressourcen-Geheimnis (PIN/Passphrase ohne User-Konto) ----------
+    if cfg.resource_locks_enabled:
+        def _res_ctx(row, name, nxt, error=""):
+            return dict(name=name, kind=row["kind"], label=row["label"] or name, next=nxt, error=error)
+
+        @r.get("/auth/resource/{name}", response_class=HTMLResponse)
+        def resource_page(request: Request, name: str, next: str = "/", error: str = ""):
+            row = auth.store.get_resource_secret(name)
+            if not row:
+                raise HTTPException(404, "unbekannte Ressource")
+            nxt = auth.safe_next(next)
+            if auth.resource_unlocked(request, name):
+                return RedirectResponse(nxt, 303)
+            return auth.render_page("resource_unlock", **_res_ctx(row, name, nxt, error))
+
+        @r.post("/auth/resource/{name}")
+        def resource_submit(request: Request, name: str, secret: str = Form(...), next: str = Form("/")):
+            row = auth.store.get_resource_secret(name)
+            if not row:
+                raise HTTPException(404, "unbekannte Ressource")
+            nxt = auth.safe_next(next)
+            ip = auth.client_ip(request)
+            pseudo = f"res:{name}"
+            if not auth.rate_ok(ip) or auth.is_locked(pseudo, ip):
+                return auth.render_page("resource_unlock", status=429,
+                                        **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
+            if not auth.check_resource(name, secret):
+                auth.record_login(pseudo, ip, False, "resource")
+                return auth.render_page("resource_unlock", status=401, **_res_ctx(row, name, nxt, "Falsch"))
+            auth.record_login(pseudo, ip, True, "resource")
+            resp = RedirectResponse(nxt, 303)
+            auth.unlock_resource(request, resp, name)
+            auth.audit("resource_unlock", ip=ip, detail=name)
+            return resp
+
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):

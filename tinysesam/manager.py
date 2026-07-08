@@ -368,8 +368,8 @@ class TinySesam:
         'resource_pin' (je nach aktivierten Features). String → HTML mit Status; Response → 1:1."""
         self.templates.set(name, fn)
 
-    def render_page(self, name, status=200, **ctx) -> Response:
-        out = self.templates.render(name, self, ctx)
+    def render_page(self, template, status=200, **ctx) -> Response:
+        out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
             return out
         return HTMLResponse(out, status_code=status)
@@ -476,3 +476,48 @@ class TinySesam:
     def require_mfa(self, request: Request) -> dict:
         """FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung."""
         return self._enforce(request, mfa=True)
+
+    # ---------- Geteilte Ressourcen-Geheimnisse (PIN oder Passphrase, ohne User-Konto) ----------
+    def set_resource_secret(self, name, secret, kind="pin", label=None):
+        """Geheimnis für einen Bereich setzen/ändern. kind='pin' (numerisch) | 'password' (Passphrase)."""
+        if not secret:
+            raise ValueError("leeres Geheimnis")
+        if kind not in ("pin", "password"):
+            raise ValueError("kind muss 'pin' oder 'password' sein")
+        self.store.set_resource_secret(name, hash_password(str(secret)), kind, label)
+
+    def remove_resource_secret(self, name):
+        self.store.delete_resource_secret(name)
+
+    def list_resource_secrets(self):
+        return self.store.list_resource_secrets()
+
+    def check_resource(self, name, secret) -> bool:
+        row = self.store.get_resource_secret(name)
+        return bool(row and verify_password(str(secret or ""), row["hash"]))
+
+    def resource_unlocked(self, request: Request, name) -> bool:
+        return self.store.is_resource_unlocked(request.cookies.get(self.cfg.resource_cookie), name)
+
+    def unlock_resource(self, request: Request, response, name):
+        token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
+        ttl = self.cfg.resource_unlock_ttl_hours * 3600
+        self.store.add_resource_unlock(token, name, int(time.time()) + ttl)
+        kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=self.cfg.cookie_samesite,
+                  path=self.cfg.cookie_path, max_age=ttl)
+        if self.cfg.cookie_domain:
+            kw["domain"] = self.cfg.cookie_domain
+        response.set_cookie(self.cfg.resource_cookie, token, **kw)
+
+    def require_resource(self, name: str):
+        """FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich.
+        Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`."""
+        def dep(request: Request):
+            if not self.resource_unlocked(request, name):
+                if "text/html" in request.headers.get("accept", ""):
+                    from urllib.parse import quote
+                    nxt = quote(request.url.path, safe="/")
+                    raise HTTPException(307, headers={"Location": f"/auth/resource/{name}?next={nxt}"})
+                raise HTTPException(401, "Ressource gesperrt")
+            return True
+        return dep

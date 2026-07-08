@@ -130,6 +130,35 @@ def build_admin_router(auth) -> APIRouter:
         auth.audit("session_revoke")
         return {"ok": True}
 
+    # ---------- Geteilte Ressourcen-Geheimnisse ----------
+    if cfg.resource_locks_enabled:
+        @ar.get("/api/resources")
+        def resources(request: Request):
+            guard(request)
+            return [{"name": r["name"], "kind": r["kind"], "label": r["label"], "created_at": r["created_at"]}
+                    for r in auth.list_resource_secrets()]
+
+        @ar.post("/api/resources")
+        async def resource_set(request: Request):
+            guard(request)
+            b = await request.json()
+            name = (b.get("name") or "").strip()
+            if not name or not b.get("secret"):
+                raise HTTPException(400, "name + secret nötig")
+            try:
+                auth.set_resource_secret(name, b["secret"], kind=b.get("kind") or "pin", label=b.get("label"))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            auth.audit("resource_set", detail=name)
+            return {"ok": True}
+
+        @ar.post("/api/resources/{name}/delete")
+        def resource_delete(request: Request, name: str):
+            guard(request)
+            auth.remove_resource_secret(name)
+            auth.audit("resource_delete", detail=name)
+            return {"ok": True}
+
     # ---------- Härtung / Update / Audit ----------
     @ar.get("/api/security")
     def security_get(request: Request):
