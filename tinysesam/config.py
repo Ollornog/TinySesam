@@ -11,6 +11,15 @@ class TinySesamConfig:
     # --- Sprache der eingebauten Texte (en|de; eigene via auth.add_messages) ---
     lang: str = "en"
 
+    # --- Rollen/Gruppen ---
+    # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).
+    available_roles: list[str] = field(default_factory=list)
+    # IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant).
+    # Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert.
+    oidc_group_role_map: dict = field(default_factory=dict)
+    saml_group_role_map: dict = field(default_factory=dict)
+    ldap_group_role_map: dict = field(default_factory=dict)
+
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True
     passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)

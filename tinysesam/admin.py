@@ -223,7 +223,8 @@ def build_admin_router(auth) -> APIRouter:
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             html = (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
-                    .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie))
+                    .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
+                    .replace("__ROLES__", json.dumps(list(cfg.available_roles))))
             resp = HTMLResponse(html)
             if cfg.csrf_enabled:
                 import secrets as _s
@@ -264,6 +265,7 @@ __WARN__
 <div class=wrap id=view></div>
 <script>
 const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
+const ROLES=__ROLES__;                                 // bekannte Rollen/Gruppen (config.available_roles)
 const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["update","Update"],["audit","Audit"]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
@@ -290,15 +292,31 @@ async function users(){
       <td>
         <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${u.disabled?'Entsperren':'Sperren'}</button>
         <button class=sec onclick="pw(${u.id})">PW</button>
-        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}')">Rollen</button>
+        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}',${u.is_admin?1:0})">Rollen</button>
         <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">Keys</button>
-      </td></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
+      </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
   const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||"Fehler")}
 async function dis(id,d){if(!confirm(d?"Zugang sperren?":"Entsperren?"))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
 async function pw(id){const v=prompt("Neues Passwort:");if(v)await p(`/api/users/${id}/password`,{password:v})&&alert("gesetzt")}
-async function roles(id,cur){const v=prompt("Rollen (komma-getrennt):",cur);if(v===null)return;const a=confirm("Admin?  OK=ja / Abbrechen=nein");await p(`/api/users/${id}/roles`,{roles:v.split(",").map(s=>s.trim()).filter(Boolean),is_admin:a});users()}
+async function roles(id,cur,isadmin){
+  const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
+  const inner = ROLES.length
+    ? ROLES.map(r=>`<label style="margin-right:12px"><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
+    : `<input id="rf${id}" value="${esc(cur)}" placeholder="Rollen, komma-getrennt" style=width:280px>`;
+  document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>Rollen / Gruppen</h2>
+    <div class=row>${inner||"<span style=color:#9aa4b2>keine Rollen definiert</span>"}</div>
+    <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> Admin</label>
+      <button onclick="saveroles(${id})">Speichern</button>
+      <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">Abbrechen</button></div></div></td>`;
+}
+async function saveroles(id){
+  const roles = ROLES.length
+    ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
+    : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
+  await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked});users();
+}
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>API-Keys · ${esc(name)}</h2>
     <div class=row><input id=kn placeholder="Key-Name"><input id=ke type=number placeholder="Ablauf Tage (leer=nie)" style=width:150px>
