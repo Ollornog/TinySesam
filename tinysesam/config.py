@@ -101,6 +101,7 @@ class TinySesamConfig:
     oidc_client_secret: str = ""
     oidc_scopes: str = "openid profile email"
     oidc_auto_create: bool = True         # unbekannten OIDC-User automatisch anlegen
+    oidc_rp_logout: bool = False          # beim Abmelden auch den OIDC-Provider abmelden (end_session), optional
     oidc_group_claim: str = "groups"      # Claim mit den Gruppen
     oidc_allowed_groups: list[str] = field(default_factory=list)  # leer = alle erlaubt
 

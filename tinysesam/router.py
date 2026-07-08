@@ -425,13 +425,53 @@ def build_router(auth) -> APIRouter:
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path)
 
+    # ---------- Eigene Sitzungen verwalten ----------
+    @r.get("/auth/sessions")
+    def own_sessions(request: Request):
+        u = auth.current_user(request)
+        if not u:
+            raise HTTPException(401)
+        cur = auth.session_from_request(request)
+        cur_tok = cur["token"] if cur else None
+        out = []
+        for s in auth.store.list_sessions(u["id"]):
+            out.append({"created_at": s["created_at"], "ip": s["ip"], "method": s["method"],
+                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token"] == cur_tok})
+        return out
+
+    @r.post("/auth/sessions/revoke")
+    async def own_sessions_revoke(request: Request):
+        u = auth.current_user(request)
+        if not u:
+            raise HTTPException(401)
+        scope = (await auth.json_body(request)).get("scope", "others")
+        if scope == "all":
+            auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
+        else:
+            cur = auth.session_from_request(request)
+            auth.store.delete_user_sessions_except(u["id"], cur["token"] if cur else None)
+        auth.audit("sessions_revoke", u["username"], auth.client_ip(request), scope)
+        return {"ok": True}
+
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
     def logout(request: Request):
         u = auth.current_user(request) or auth.pending_user(request)
+        # OIDC-Provider-Logout (optional): vor dem lokalen Logout prüfen, ob die Sitzung via OIDC lief
+        oidc_logout_url = None
+        if cfg.oidc_rp_logout and auth.oidc:
+            s = auth.session_from_request(request)
+            factors = []
+            try:
+                factors = __import__("json").loads(s["factors_done"] or "[]") if s else []
+            except Exception:
+                factors = []
+            if s and (s["method"] == "oidc" or "oidc" in factors):
+                base = (cfg.base_url or str(request.base_url)).rstrip("/")
+                oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
         if u:
             auth.audit("logout", u["username"], auth.client_ip(request))
-        resp = RedirectResponse(cfg.logout_redirect, 303)
+        resp = RedirectResponse(oidc_logout_url or cfg.logout_redirect, 303)
         auth.logout(request, resp)
         return resp
 

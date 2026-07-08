@@ -56,6 +56,20 @@ class OIDCClient:
             raise HTTPException(400, "OIDC nonce mismatch")
         return claims, tok
 
+    def end_session_url(self, post_logout_redirect_uri=None):
+        """RP-initiated-Logout-URL beim Provider (oder None, wenn nicht unterstützt).
+        Ohne id_token_hint (wird nicht gespeichert) — best effort; manche Provider verlangen es."""
+        try:
+            ep = self.meta().get("end_session_endpoint")
+        except Exception:
+            ep = None
+        if not ep:
+            return None
+        params = {"client_id": self.client_id}
+        if post_logout_redirect_uri:
+            params["post_logout_redirect_uri"] = post_logout_redirect_uri
+        return ep + ("&" if "?" in ep else "?") + urlencode(params)
+
     def userinfo(self, access_token):
         try:
             import httpx

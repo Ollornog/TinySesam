@@ -180,6 +180,12 @@ def _account(auth, ctx) -> str:
             "<input id=key_name placeholder='Name (optional)'>"
             "<button onclick=mkkey()>Key erzeugen</button><span id=key_msg class=msg></span></div>")
 
+    # Aktive Sitzungen (immer)
+    sections.append(
+        "<div class=sec><h2>Aktive Sitzungen</h2><ul id=sesslist></ul>"
+        "<button class=warn onclick=revokeothers()>Andere Sitzungen beenden</button>"
+        "<span id=sess_msg class=msg></span></div>")
+
     admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>Admin-Panel</a>"
                   if ctx.get("is_admin") else "")
 
@@ -229,7 +235,13 @@ async function loadpk(){const el=document.getElementById('pklist');if(!el)return
   const ps=await (await fetch('/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn onclick=delpk(${p.id})>löschen</button></li>`).join('')||'<li>keine</li>'}
 async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
-loadkeys();loadpk();
+async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
+  const ss=await (await fetch('/auth/sessions')).json();
+  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small style=color:#6b7280>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
+function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
+async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
+  await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
+loadkeys();loadpk();loadsess();
 </script>
 """
 
