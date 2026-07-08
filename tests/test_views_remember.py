@@ -22,7 +22,7 @@ assert safe_next("https://evil.com/x", allowed_hosts=["app.example.com"]) == "/"
 ok("safe_next: relative erlaubt, fremde/protokoll-relative Ziele → /")
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False,
                                  session_ttl_transient_hours=6))
 auth.ensure_admin("admin", "geheim123")

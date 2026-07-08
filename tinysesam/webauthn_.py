@@ -32,6 +32,7 @@ def register_passkey_routes(router, auth):
     # ---------- Registrierung (eingeloggter User) ----------
     @router.post("/auth/passkey/register/begin")
     def reg_begin(request: Request):
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
@@ -54,6 +55,7 @@ def register_passkey_routes(router, auth):
 
     @router.post("/auth/passkey/register/finish")
     async def reg_finish(request: Request, name: str = ""):
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
@@ -74,6 +76,7 @@ def register_passkey_routes(router, auth):
     # ---------- Passwortloser Login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
     def login_begin(request: Request):
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         opts = generate_authentication_options(rp_id=cfg.rp_id,
                                                user_verification=UserVerificationRequirement.PREFERRED)
         fk = secrets.token_urlsafe(24)
@@ -84,6 +87,7 @@ def register_passkey_routes(router, auth):
 
     @router.post("/auth/passkey/login/finish")
     async def login_finish(request: Request, next: str = "/"):
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:

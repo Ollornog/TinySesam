@@ -10,7 +10,7 @@ def ok(name):
 
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, pin_enabled=True))
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()

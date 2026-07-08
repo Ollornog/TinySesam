@@ -12,7 +12,7 @@ def ok(name):
 def build(**cfgkw):
     sent = []
     db = tempfile.mktemp(suffix=".db")
-    auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+    auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, **cfgkw))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
     auth.ensure_admin("admin", "geheim123")

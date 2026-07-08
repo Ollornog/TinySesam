@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, 
     db_path=db, rp_name="Test", rp_id="localhost", origin="http://localhost:8000",
     password_enabled=True, passkey_enabled=True, oidc_enabled=True,
     oidc_name="PocketID", oidc_issuer="https://id.example.invalid",

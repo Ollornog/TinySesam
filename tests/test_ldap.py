@@ -24,7 +24,7 @@ class FakeLDAP:
 
 def build(**cfgkw):
     db = tempfile.mktemp(suffix=".db")
-    auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+    auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, ldap_enabled=True, ldap_url="ldap://dummy", **cfgkw))
     auth.ensure_admin("admin", "lokalpw")   # lokaler User mit lokalem Passwort
     app = FastAPI()

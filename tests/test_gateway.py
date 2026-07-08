@@ -10,7 +10,7 @@ def ok(name):
 
 
 db = tempfile.mktemp(suffix=".db")
-cfg = TinySesamConfig.oidc_gateway(
+cfg = TinySesamConfig.oidc_gateway(csrf_enabled=False, 
     issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
     base_url="https://auth.example.com", cookie_domain=".example.com",
     trusted_redirect_hosts=["app.example.com"], db_path=db)
