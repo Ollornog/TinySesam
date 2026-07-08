@@ -79,6 +79,10 @@ class TinySesamConfig:
     cookie_path: str = "/"
     cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
 
+    # --- CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax) ---
+    csrf_enabled: bool = True             # State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token)
+    csrf_cookie: str = "tinysesam_csrf"
+
     # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---
     ldap_enabled: bool = False
     ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636

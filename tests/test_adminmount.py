@@ -8,7 +8,7 @@ from tinysesam import TinySesam, TinySesamConfig
 
 def fresh(**cfg):
     db = tempfile.mktemp(suffix=".db")
-    a = TinySesam(TinySesamConfig(db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False, **cfg))
+    a = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False, **cfg))
     a.ensure_admin("a", "pw")
     return a, db
 

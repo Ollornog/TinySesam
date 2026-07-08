@@ -52,7 +52,7 @@ ok("RedisRateLimiter: Redis-Fehler → fail-open (erlauben)")
 
 # ---------- redis_url gesetzt, aber redis nicht installiert → In-Memory-Fallback, kein Crash ----------
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
 assert isinstance(auth.rl, security.RateLimiter)
 ok("redis_url ohne redis-Paket → In-Memory-Fallback (kein Crash)")
 

@@ -10,7 +10,7 @@ def ok(name):
 
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()
@@ -49,7 +49,7 @@ os.remove(db)
 
 # ---------- OIDC-RP-Logout: end_session_url + Logout-Redirect zum Provider ----------
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=True,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=True,
                                  oidc_issuer="https://id.example.invalid", oidc_client_id="cid",
                                  oidc_client_secret="sec", cookie_secure=False, oidc_rp_logout=True,
                                  base_url="https://app.example.com", logout_redirect="/"))

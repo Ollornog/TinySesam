@@ -68,6 +68,17 @@ def _e(s) -> str:
     return html.escape(str(s or ""))
 
 
+def _cf(ctx) -> str:
+    """Verstecktes CSRF-Feld für Formulare (leer, wenn CSRF aus → ctx ohne 'csrf')."""
+    return f"<input type=hidden name=_csrf value='{_e(ctx.get('csrf', ''))}'>"
+
+
+def _csrf_js(auth) -> str:
+    """JS-Helfer: liest das CSRF-Cookie → tsCsrf(); die fetch-Aufrufe senden X-CSRF-Token."""
+    return ("<script>function tsCsrf(){return (document.cookie.match("
+            f"/(?:^|; ){_e(auth.cfg.csrf_cookie)}=([^;]+)/)||[])[1]||''}}</script>")
+
+
 # ---------- Default-Renderer  (fn(auth, ctx) -> str) ----------
 
 def _login(auth, ctx) -> str:
@@ -85,7 +96,7 @@ def _login(auth, ctx) -> str:
     pw = ""
     if "password" in methods:
         pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
-              f"<input type=hidden name=next value='{_e(next_)}'>"
+              f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
               f"<label>Benutzer</label><input name=username autofocus autocomplete=username>"
               f"<label>Passwort</label><input name=password type=password autocomplete=current-password>"
               f"{remember}"
@@ -94,7 +105,7 @@ def _login(auth, ctx) -> str:
     if "pin" in methods:
         sep_pin = "<div class=or>oder</div>" if pw else ""
         pin = (f"{sep_pin}<form method=post action='/auth/pin'>"
-               f"<input type=hidden name=next value='{_e(next_)}'>"
+               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
                f"<label>Benutzer</label><input name=username autocomplete=username{'' if pw else ' autofocus'}>"
                f"<label>PIN</label><input name=pin type=password inputmode=numeric autocomplete=off class=code>"
                f"{remember}"
@@ -113,7 +124,7 @@ def _login(auth, ctx) -> str:
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
         links.append("<a href='/auth/forgot' style='color:#9aa4b2'>Passwort vergessen?</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
-    js = _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_)) if "passkey" in methods else ""
+    js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
     return _shell("Anmelden", body)
 
@@ -123,7 +134,7 @@ def _totp(auth, ctx) -> str:
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>Bestätigung</h1>{err}"
             f"<form method=post action='/auth/totp'>"
-            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>6-stelliger Code aus deiner Authenticator-App</label>"
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>Weiter</button></form>"
@@ -214,7 +225,8 @@ def _account(auth, ctx) -> str:
 
 _ACCOUNT_JS = """
 <script>
-const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+function tsCsrf(){return (document.cookie.match(/(?:^|; )tinysesam_csrf=([^;]+)/)||[])[1]||''}
+const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.style.color=good?'#4ade80':'#f87171'}};
 async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
@@ -249,7 +261,7 @@ _PASSKEY_REGISTER_JS = """
 <script>
 async function addpk(){
   try{
-    const o=await (await fetch('/auth/passkey/register/begin',{method:'POST'})).json();
+    const o=await (await fetch('/auth/passkey/register/begin',{method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
     o.challenge=Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     o.user.id=Uint8Array.from(atob(o.user.id.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     (o.excludeCredentials||[]).forEach(c=>c.id=Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0)));
@@ -258,7 +270,7 @@ async function addpk(){
     const payload={id:cred.id,rawId:enc(cred.rawId),type:cred.type,response:{
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
-    const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
     say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();
   }catch(e){say('pk_msg','abgebrochen: '+e,false)}
 }
@@ -279,7 +291,7 @@ def _register(auth, ctx) -> str:
     body = (f"<h1>Konto erstellen</h1>{err}"
             f"<form method=post action='/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
-            f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>"
+            f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
             f"<label>Benutzername</label><input name=username autofocus autocomplete=username>"
             f"<label>E-Mail</label><input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro} autocomplete=email>"
             f"<label>Passwort</label><input name=password type=password autocomplete=new-password>"
@@ -318,7 +330,7 @@ def _forgot(auth, ctx) -> str:
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>Passwort vergessen</h1>{err}"
             f"<div class=hint>Wir schicken dir einen Link zum Zurücksetzen.</div>"
-            f"<form method=post action='/auth/forgot'>"
+            f"<form method=post action='/auth/forgot'>{_cf(ctx)}"
             f"<label>E-Mail-Adresse</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>Reset-Link senden</button></form>"
             f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>Zurück</a></div>")
@@ -330,7 +342,7 @@ def _reset(auth, ctx) -> str:
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>Neues Passwort</h1>{err}"
             f"<form method=post action='/auth/reset'>"
-            f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>"
+            f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>{_cf(ctx)}"
             f"<label>Neues Passwort</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
             f"<button type=submit>Passwort setzen</button></form>")
@@ -356,7 +368,7 @@ def _resource_unlock(auth, ctx) -> str:
     body = (f"<h1>{_e(ctx.get('label'))}</h1>"
             f"<div class=hint>Dieser Bereich ist geschützt. Bitte {lbl} eingeben.</div>{err}"
             f"<form method=post action='/auth/resource/{_e(ctx.get('name'))}'>"
-            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{lbl}</label>{field}"
             f"<button type=submit>Freischalten</button></form>")
     return _shell(str(ctx.get("label") or "Geschützt"), body)
@@ -374,7 +386,7 @@ def _reauth(auth, ctx) -> str:
     body = (f"<h1>Bestätigung nötig</h1>"
             f"<div class=hint>Für diesen Bereich bitte erneut bestätigen ({_e(ctx.get('username'))}).</div>{err}"
             f"<form method=post action='/auth/reauth'>"
-            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{field}<button type=submit>Bestätigen</button></form>"
             f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>Abmelden</a></div>")
     return _shell("Bestätigung", body)
@@ -393,8 +405,9 @@ def _totp_setup(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric maxlength=6 autofocus>"
             f"<button type=submit>Aktivieren</button></form>"
             f"<div class=hint id=msg></div>"
-            "<script>async function conf(e){e.preventDefault();const c=e.target.code.value;"
-            "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},"
+            "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.cfg.csrf_cookie) + "=([^;]+)/)||[])[1]||''}"
+            "async function conf(e){e.preventDefault();const c=e.target.code.value;"
+            "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
             "body:'code='+encodeURIComponent(c)});const j=await r.json();"
             "document.getElementById('msg').textContent=j.ok?'✓ 2FA aktiv':'Code falsch';return false}</script>")
     return _shell("2FA einrichten", body)
@@ -405,7 +418,7 @@ _PASSKEY_LOGIN_JS = """
 <script>
 document.getElementById('pkbtn')?.addEventListener('click', async () => {
   try {
-    const o = await (await fetch('/auth/passkey/login/begin', {method:'POST'})).json();
+    const o = await (await fetch('/auth/passkey/login/begin', {method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
     o.challenge = Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
     (o.allowCredentials||[]).forEach(c => c.id = Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')), x=>x.charCodeAt(0)));
     const cred = await navigator.credentials.get({publicKey:o});
@@ -413,7 +426,7 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
     const payload = {id:cred.id, rawId:enc(cred.rawId), type:cred.type, response:{
       clientDataJSON:enc(cred.response.clientDataJSON), authenticatorData:enc(cred.response.authenticatorData),
       signature:enc(cred.response.signature), userHandle:cred.response.userHandle?enc(cred.response.userHandle):null}};
-    const r = await fetch('/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const r = await fetch('/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
     if (r.ok) location.href = (await r.json()).redirect || '/'; else alert('Passkey-Login fehlgeschlagen');
   } catch(e){ alert('Passkey abgebrochen: '+e); }
 });

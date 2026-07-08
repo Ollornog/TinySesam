@@ -22,7 +22,8 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(...), password: str = Form(...),
-                     next: str = Form("/"), remember: str = Form("")):
+                     next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+        auth.require_csrf(request, csrf_tok)
         if not cfg.password_enabled:
             raise HTTPException(404, "Passwort-Login deaktiviert")
         nxt = auth.safe_next(next)
@@ -60,7 +61,8 @@ def build_router(auth) -> APIRouter:
         return auth.render_page("totp", next=nxt, error=error)
 
     @r.post("/auth/totp")
-    def totp_submit(request: Request, code: str = Form(...), next: str = Form("/")):
+    def totp_submit(request: Request, code: str = Form(...), next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
+        auth.require_csrf(request, csrf_tok)
         nxt = auth.safe_next(next)
         s = auth.session_from_request(request)
         pu = auth.pending_user(request) or auth.current_user(request)
@@ -87,6 +89,7 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...)):
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
@@ -118,7 +121,8 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin")
         def pin_submit(request: Request, username: str = Form(...), pin: str = Form(...),
-                       next: str = Form("/"), remember: str = Form("")):
+                       next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
             remember_me = _remember(cfg, remember)
             ip = auth.client_ip(request)
@@ -175,7 +179,9 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("resource_unlock", **_res_ctx(row, name, nxt, error))
 
         @r.post("/auth/resource/{name}")
-        def resource_submit(request: Request, name: str, secret: str = Form(...), next: str = Form("/")):
+        def resource_submit(request: Request, name: str, secret: str = Form(...), next: str = Form("/"),
+                            csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             row = auth.store.get_resource_secret(name)
             if not row:
                 raise HTTPException(404, "unbekannte Ressource")
@@ -246,7 +252,9 @@ def build_router(auth) -> APIRouter:
                                 username=u["username"], has_totp=auth.store.has_confirmed_totp(u["id"]))
 
     @r.post("/auth/reauth")
-    def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), next: str = Form("/")):
+    def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), next: str = Form("/"),
+                      csrf_tok: str = Form("", alias="_csrf")):
+        auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
@@ -274,7 +282,8 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("forgot", sent=False, error="")
 
         @r.post("/auth/forgot", response_class=HTMLResponse)
-        def forgot_submit(request: Request, email: str = Form(...)):
+        def forgot_submit(request: Request, email: str = Form(...), csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", status=429, sent=False, error="Zu viele Anfragen — bitte warten.")
@@ -292,7 +301,9 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reset", token=token, error="")
 
         @r.post("/auth/reset", response_class=HTMLResponse)
-        def reset_submit(request: Request, token: str = Form(...), password: str = Form(...)):
+        def reset_submit(request: Request, token: str = Form(...), password: str = Form(...),
+                         csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             if len(password) < auth.sec("password_min_length"):
                 return auth.render_page("reset", status=400, token=token,
                                         error=f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
@@ -324,7 +335,9 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/register", response_class=HTMLResponse)
         def register_submit(request: Request, username: str = Form(...), password: str = Form(...),
-                            email: str = Form(""), next: str = Form("/"), invite: str = Form("")):
+                            email: str = Form(""), next: str = Form("/"), invite: str = Form(""),
+                            csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):

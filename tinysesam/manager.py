@@ -341,16 +341,33 @@ class TinySesam:
                 "magic": "/auth/magic/request"}.get(step, self.cfg.login_path)
         return f"{base}?next={quote(nxt or '/', safe='/')}"
 
-    @staticmethod
-    async def json_body(request: Request) -> dict:
-        """JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500."""
+    async def json_body(self, request: Request) -> dict:
+        """JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500. Erzwingt CSRF
+        (Header X-CSRF-Token) für cookie-basierte Clients; API-Key-Requests sind ausgenommen."""
         try:
             data = await request.json()
         except Exception:
             raise HTTPException(400, "ungültiger JSON-Body")
         if not isinstance(data, dict):
             raise HTTPException(400, "JSON-Objekt erwartet")
+        if self.cfg.csrf_enabled and not self._extract_api_key(request):
+            token = request.headers.get("x-csrf-token") or data.get("_csrf")
+            if not self.verify_csrf(request, token):
+                raise HTTPException(403, "CSRF-Token ungültig")
         return data
+
+    # ---------- CSRF (Double-Submit) ----------
+    def verify_csrf(self, request: Request, submitted) -> bool:
+        if not self.cfg.csrf_enabled:
+            return True
+        import hmac
+        cookie = request.cookies.get(self.cfg.csrf_cookie)
+        return bool(cookie) and bool(submitted) and hmac.compare_digest(str(cookie), str(submitted))
+
+    def require_csrf(self, request: Request, submitted):
+        """Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt (API-Key ausgenommen)."""
+        if self.cfg.csrf_enabled and not self._extract_api_key(request) and not self.verify_csrf(request, submitted):
+            raise HTTPException(403, "CSRF-Token ungültig")
 
     # ---------- E-Mail-Versand ----------
     def set_mailer(self, fn):
@@ -682,10 +699,17 @@ class TinySesam:
         self.templates.set(name, fn)
 
     def render_page(self, template, status=200, **ctx) -> Response:
+        tok = None
+        if self.cfg.csrf_enabled:
+            tok = secrets.token_urlsafe(24)
+            ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
         out = self.templates.render(template, self, ctx)
-        if isinstance(out, Response):
-            return out
-        return HTMLResponse(out, status_code=status)
+        resp = out if isinstance(out, Response) else HTMLResponse(out, status_code=status)
+        if tok is not None:
+            # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
+            resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
+                            samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+        return resp
 
     def safe_next(self, next_: str) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts)."""

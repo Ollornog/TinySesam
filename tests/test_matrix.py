@@ -20,7 +20,7 @@ def absent(c, path):
 
 # ---------- ALLES AUS: nur Basis-Routen, keine optionalen ----------
 db = tempfile.mktemp(suffix=".db")
-a = TinySesam(TinySesamConfig(db_path=db, passkey_enabled=False, oidc_enabled=False,
+a = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, passkey_enabled=False, oidc_enabled=False,
                               pin_enabled=False, magiclink_enabled=False, allow_signup=False,
                               resource_locks_enabled=False, forward_auth_enabled=False,
                               account_enabled=False, admin_enabled=False, cookie_secure=False))
@@ -36,7 +36,7 @@ ok("alle optionalen Features aus → zugehörige Routen fehlen (404), Basis blei
 
 # ---------- ALLES AN: Routen vorhanden, keine Kollision ----------
 db = tempfile.mktemp(suffix=".db")
-a = TinySesam(TinySesamConfig(
+a = TinySesam(TinySesamConfig(csrf_enabled=False, 
     db_path=db, passkey_enabled=False, oidc_enabled=False,
     pin_enabled=True, magiclink_enabled=True, allow_signup=True, resource_locks_enabled=True,
     forward_auth_enabled=True, account_enabled=True, admin_enabled=True,
@@ -74,7 +74,7 @@ os.remove(db)
 # ---------- Feature einzeln: nur Magic-Link (kein Passwort) ----------
 db = tempfile.mktemp(suffix=".db")
 sent = []
-a = TinySesam(TinySesamConfig(db_path=db, password_enabled=False, passkey_enabled=False,
+a = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, password_enabled=False, passkey_enabled=False,
                               oidc_enabled=False, magiclink_enabled=True, cookie_secure=False))
 a.set_mailer(lambda to, s, t, html=None: sent.append(t))
 a.create_user("nurmail", email="m@example.com")

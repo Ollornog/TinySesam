@@ -6,7 +6,7 @@ import pyotp
 from tinysesam import TinySesam, TinySesamConfig
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False))
 assert auth.ensure_admin("admin", "geheim123"), "admin sollte angelegt werden"
 assert not auth.ensure_admin("x", "y"), "zweiter ensure_admin darf nichts tun"

@@ -222,7 +222,14 @@ def build_admin_router(auth) -> APIRouter:
             if cfg.https_mode == "warn" and not auth.is_secure(request):
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
-            return _PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base).replace("__WARN__", warn)
+            html = (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+                    .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie))
+            resp = HTMLResponse(html)
+            if cfg.csrf_enabled:
+                import secrets as _s
+                resp.set_cookie(cfg.csrf_cookie, _s.token_urlsafe(24), secure=cfg.cookie_secure,
+                                samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+            return resp
 
     return ar
 
@@ -260,7 +267,8 @@ const B="__BASE__";                                    // Mountpunkt (frei wähl
 const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["update","Update"],["audit","Audit"]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
-const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
+function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
+const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
 const esc=s=>(s??"").toString().replace(/</g,"&lt;");
 const dt=t=>t?new Date(t*1000).toLocaleString("de-DE"):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${l}</div>`).join("")}
