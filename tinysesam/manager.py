@@ -33,6 +33,7 @@ class TinySesam:
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
+        self._messages = {}
         self._mailer_override = None
         self.oidc = None
         self.webauthn = None
@@ -690,6 +691,16 @@ class TinySesam:
             host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc).split(",")[0].strip()
             base = f"{proto}://{host}"
         return f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
+
+    # ---------- i18n ----------
+    def t(self, key, **fmt) -> str:
+        """Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}."""
+        from .messages import translate
+        return translate(self.cfg.lang, key, self._messages, **fmt)
+
+    def add_messages(self, lang, mapping: dict):
+        """Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebauten)."""
+        self._messages.setdefault(lang, {}).update(mapping)
 
     # ---------- Views / Redirect-Sicherheit ----------
     def set_template(self, name, fn):

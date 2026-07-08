@@ -22,6 +22,7 @@ from tinysesam import TinySesam, TinySesamConfig
 auth = TinySesam(TinySesamConfig(
     db_path="/tmp/tinysesam-showcase.db",
     rp_name="Showcase",
+    lang="de",                      # eingebaute Seiten auf Deutsch (Default wäre "en")
     password_enabled=True,
     pin_enabled=True,               # persönliche PIN
     passkey_enabled=False,          # für lokalen HTTP-Test aus

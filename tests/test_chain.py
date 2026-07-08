@@ -12,7 +12,7 @@ def ok(name):
 
 def fresh(chain=None, strict=True, **kw):
     db = tempfile.mktemp(suffix=".db")
-    cfg = TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+    cfg = TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                           cookie_secure=False, login_chain=chain or [], login_chain_strict=strict,
                           pin_enabled=True, **kw)
     auth = TinySesam(cfg)

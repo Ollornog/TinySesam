@@ -8,6 +8,9 @@ class TinySesamConfig:
     # --- Store ---
     db_path: str = "tinysesam.db"
 
+    # --- Sprache der eingebauten Texte (en|de; eigene via auth.add_messages) ---
+    lang: str = "en"
+
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True
     passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)

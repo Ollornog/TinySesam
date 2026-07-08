@@ -10,7 +10,7 @@ def ok(name):
 
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, 
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", 
     db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
     trusted_redirect_hosts=["app.example.com"]))

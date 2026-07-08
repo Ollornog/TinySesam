@@ -12,7 +12,7 @@ def ok(name):
 sent = []   # abgefangene Mails
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, magiclink_enabled=True, magiclink_ttl_min=15))
 auth.set_mailer(lambda to, subject, text, html=None: sent.append({"to": to, "subject": subject, "text": text}))
 auth.ensure_admin("admin", "geheim123")
@@ -79,7 +79,7 @@ ok("abgelaufener Token → ungültig")
 # mail_configured / MailNotConfigured
 assert auth.mail_configured() is True
 db2 = tempfile.mktemp(suffix=".db")
-a2 = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db2, magiclink_enabled=True))   # kein smtp_host, kein Mailer
+a2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, magiclink_enabled=True))   # kein smtp_host, kein Mailer
 assert a2.mail_configured() is False
 from tinysesam.mailer import MailNotConfigured
 try:

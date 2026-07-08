@@ -22,7 +22,7 @@ assert update_available(pin="v" + current_version())["available"] is False
 print("  ✓ Version-Pin: Update nur wenn ≠ gepinnter Version")
 
 db = tempfile.mktemp(suffix=".db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, db_path=db, passkey_enabled=False, oidc_enabled=False))
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False))
 assert auth.update_settings() == {"mode": "manual", "pin": ""}
 auth.set_update_setting("mode", "auto")
 auth.set_update_setting("pin", "v0.2.0")
