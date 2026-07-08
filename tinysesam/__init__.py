@@ -3,7 +3,7 @@
 Methoden (alle parallel aktivierbar): Passwort, Passkey/WebAuthn, OIDC; TOTP als 2FA on-top.
 Rollen optional (paperlaiss nutzt nur require_user = eingeloggt/nicht).
 """
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 from .config import TinySesamConfig
 from .manager import TinySesam
