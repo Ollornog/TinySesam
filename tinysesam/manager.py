@@ -245,6 +245,46 @@ class TinySesam:
 
     def totp_disable(self, user_id):
         self.store.delete_totp(user_id)
+        self.store.delete_recovery_codes(user_id)   # ohne TOTP sind Recovery-Codes gegenstandslos
+
+    # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
+    def generate_recovery_codes(self, user_id, n=None) -> list:
+        """Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL."""
+        n = int(n or self.cfg.recovery_code_count)
+        codes = ["-".join(secrets.token_hex(3) for _ in range(2)) for _ in range(n)]
+        self.store.delete_recovery_codes(user_id)
+        self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
+        self.audit("recovery_generate", detail=f"user={user_id} n={n}")
+        return codes
+
+    @staticmethod
+    def _rc_hash(code) -> str:
+        norm = str(code or "").strip().lower().replace(" ", "")
+        return hashlib.sha256(norm.encode()).hexdigest()
+
+    def verify_recovery_code(self, user_id, code) -> bool:
+        if not code:
+            return False
+        return self.store.consume_recovery_code(user_id, self._rc_hash(code))
+
+    def recovery_codes_remaining(self, user_id) -> int:
+        return self.store.count_recovery_codes(user_id)
+
+    # ---------- Passwort-Reset (Forgot-Password) ----------
+    def send_password_reset(self, email, base_url) -> bool:
+        """Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer
+        gleiche Meldung (keine Enumeration)."""
+        u = self.store.get_user_by_email(email)
+        if not u or u["disabled"] or u["is_service"]:
+            return False
+        raw = self.create_magic_token("reset_password", user_id=u["id"], email=email)
+        url = self.magic_url(raw, base_url)
+        mins = self.cfg.magiclink_ttl_min
+        self.send_mail(email, "Passwort zurücksetzen",
+                       f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                       html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
+        return True
 
     # ---------- Faktor-Ketten-Engine ----------
     IDENTIFYING = ("password", "pin", "oidc", "passkey", "magic")  # Faktoren, die den User identifizieren
