@@ -1,19 +1,27 @@
 name: tests
 
+# Feature-Branches laufen bewusst OHNE CI — dort prüft `ci-local` (Docker, offline).
+# Volle CI erst beim Pull Request und auf main. Gemergt wird nach grünem lokalem Lauf.
+# Notausgang für WIP auf main: [skip ci] in der Commit-Message.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  # Voller Lauf mit allen Extras über mehrere Python-Versionen — das Sicherheitsnetz bei Updates.
+  # Voller Lauf mit allen Extras über die Matrix min + prod + max (siehe testing-policy.md):
+  #   3.10 = Untergrenze aus requires-python  (ohne sie ist die Zusage unbelegt)
+  #   3.12 = was in Prod / im ci-python-web-Image läuft
+  #   3.14 = aktuelle stable (seit 10/2025) — wurde vorher gar nicht getestet
+  # Prerelease (3.15) läuft separat nightly mit continue-on-error, damit ein RC-Bug
+  # keinen Push blockiert.
   full:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
