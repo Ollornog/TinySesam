@@ -5,6 +5,19 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Login-Kennung wählbar** — `login_identifier="username" | "email" | "both"` (Default **`both`**).
+  Passwort- und PIN-Login gehen über `auth.find_user(...)`; das Kennungsfeld beschriftet sich
+  passend („Benutzer" / „E-Mail" / „Benutzer oder E-Mail"). Der Timing-Schutz gegen
+  User-Enumeration (Dummy-Hash) bleibt in allen Modi erhalten.
+- **E-Mail als vollwertige Kennung** — `signup_require_email` (Default **an**), Formatprüfung,
+  kanonische Speicherung (getrimmt/klein) und **Eindeutigkeit** per partiellem UNIQUE-Index
+  (`users(lower(email))`, Konten ohne Adresse bleiben erlaubt). `store.norm_email`/`valid_email`/`email_taken`.
+- Admin-Panel: E-Mail beim Anlegen (Pflicht folgt der Config) + eigene Spalte in der Benutzertabelle.
+- `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
+  klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
+  Neue Suite `tests/test_identifier.py`.
+
+### Hinzugefügt (Showcase &amp; Design)
 - **Showcase-Frontend** (`examples/showcase.py`): `/` ist die Projekt-Website (`docs/index.html`)
   **eins zu eins**, ergänzt um einen Demo-Knopf. `/demo` ist das Demo-Frontend — Nav mit Logo und Titel,
   Anmelden/Registrieren, darunter Login-, Konto- und Admin-Panel als **read-only Live-Vorschau**.

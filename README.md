@@ -93,6 +93,23 @@ def home(user = Depends(auth.require_user)):    # protected: logged in (incl. 2F
 
 Non-logged-in browsers are redirected to `/auth/login`; API clients (Accept ≠ HTML) get a `401`.
 
+## Sign-in identifier
+
+Who signs in with what is one config field — `login_identifier`:
+
+```python
+TinySesamConfig(login_identifier="both")      # username OR email in the same field (default)
+TinySesamConfig(login_identifier="username")  # username only
+TinySesamConfig(login_identifier="email")     # email only
+```
+
+The label of the field follows automatically, and password *and* PIN login both honour it.
+Because the email is a login identifier, it is stored canonically (trimmed, lower-cased) and is
+**unique** (partial UNIQUE index; accounts without an email stay allowed). Registration requires it
+by default — `signup_require_email=False` turns that off. `signup_verify_email=True` activates the
+account only after the confirmation link is clicked; it needs a mailer (`set_mailer` or SMTP config)
+and refuses to register otherwise instead of silently skipping the check.
+
 ## Guards
 
 ```python

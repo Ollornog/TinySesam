@@ -4,7 +4,7 @@ Bewusst stdlib-`sqlite3` (kein ORM): leichtgewichtig, keine zusätzliche Abhäng
 Thread-safe über ein Lock + `check_same_thread=False` (FastAPI-Worker teilen sich die Instanz).
 """
 from __future__ import annotations
-import sqlite3, threading, time, secrets, json
+import sqlite3, threading, time, secrets, json, logging
 from typing import Optional
 
 SCHEMA = """
@@ -140,6 +140,22 @@ CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 """
 
 
+def norm_email(email) -> Optional[str]:
+    """E-Mail kanonisch speichern: getrimmt und klein. `None` bleibt `None` (Konto ohne Adresse)."""
+    e = (email or "").strip().lower()
+    return e or None
+
+
+def valid_email(email) -> bool:
+    """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
+    Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`)."""
+    e = (email or "").strip()
+    if not e or " " in e or e.count("@") != 1:
+        return False
+    local, _, domain = e.partition("@")
+    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
+
+
 def _now() -> int:
     return int(time.time())
 
@@ -168,6 +184,15 @@ class Store:
                 for name, decl in cols:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+            # E-Mail eindeutig (Login-Kennung) — partiell, damit Konten ohne E-Mail erlaubt bleiben.
+            # Bestandsdaten mit Dubletten: Index kann nicht angelegt werden → laut sagen, nicht crashen.
+            try:
+                self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email "
+                                "ON users(lower(email)) WHERE email IS NOT NULL AND email <> ''")
+            except sqlite3.IntegrityError:
+                logging.getLogger("tinysesam").warning(
+                    "users.email enthält Dubletten — Eindeutigkeits-Index nicht angelegt. "
+                    "Doppelte Adressen bereinigen, sonst ist Login per E-Mail mehrdeutig.")
             self.db.commit()
 
     def _one(self, sql, args=()):
@@ -189,9 +214,12 @@ class Store:
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None, is_service=False) -> int:
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, is_admin, roles, is_service, created_at) VALUES (?,?,?,?,?,?,?)",
-            (username, display_name or username, email, 1 if is_admin else 0,
+            (username, display_name or username, norm_email(email), 1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now()))
         return cur.lastrowid
+
+    def set_email(self, user_id, email):
+        self._exec("UPDATE users SET email=? WHERE id=?", (norm_email(email), user_id))
 
     def get_roles(self, user_id) -> list:
         r = self._one("SELECT roles FROM users WHERE id=?", (user_id,))
@@ -210,9 +238,14 @@ class Store:
         return self._one("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,))
 
     def get_user_by_email(self, email) -> Optional[sqlite3.Row]:
+        email = norm_email(email)
         if not email:
             return None
         return self._one("SELECT * FROM users WHERE email=? COLLATE NOCASE ORDER BY id LIMIT 1", (email,))
+
+    def email_taken(self, email, exclude_id=None) -> bool:
+        u = self.get_user_by_email(email)
+        return bool(u and u["id"] != exclude_id)
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")

@@ -38,8 +38,11 @@ class TinySesamConfig:
     forward_auth_enabled: bool = False    # /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik)
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
+    # Womit meldet man sich an? "username" | "email" | "both" (beides im selben Feld erlaubt)
+    login_identifier: str = "both"
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
-    signup_verify_email: bool = False     # Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv
+    signup_require_email: bool = True     # E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier)
+    signup_verify_email: bool = False     # Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer
     signup_invite_only: bool = False      # Registrierung nur mit gültigem Einladungs-Token
     signup_default_roles: list[str] = field(default_factory=list)  # Rollen für neue Selbst-Registrierte
 
