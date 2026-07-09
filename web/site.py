@@ -24,17 +24,19 @@ def page_url(page: str, lang: str) -> str:
 # Beide Leisten werden hier gebaut — die Website nutzt sie, das Showcase auch. Nur der *Inhalt*
 # unterscheidet sich (die Demo kennt Login-Status und Beispielseiten, die Website nicht).
 NAV_CSS = """
-  nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;
-    max-width:900px;margin:0 auto;padding:14px 22px}
+  /* --nav-w setzt jede Seite auf ihre Inhaltsbreite (Startseite 720, sonst 900) */
+  nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
+  nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px}
   nav.top.nobrand{justify-content:flex-end;padding-bottom:0}
   nav.top .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
   nav.top .brand img{width:30px;height:30px}
   nav.top .brand span{font-weight:700;font-size:18px}
   nav.top .brand b{color:var(--accent)}
-  nav.top .right{display:flex;align-items:center;gap:10px;font-size:14px}
-  nav.sub{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    max-width:900px;margin:0 auto;padding:9px 22px;font-size:14px;
-    border-bottom:1px solid var(--line)}
+  nav.top .right{display:flex;align-items:center;gap:6px;font-size:14px}
+  /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
+  nav.sub{position:relative;z-index:30;background:var(--paper);
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    padding:9px 22px;font-size:14px;border-bottom:1px solid var(--line)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
     color:var(--muted);white-space:nowrap;text-decoration:none}
@@ -43,25 +45,61 @@ NAV_CSS = """
   nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
   nav .btn{padding:6px 13px;font-size:14px;border-radius:9px}
   nav .btn.ghost{color:var(--ink)}
+  .iconbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;
+    background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font:inherit;
+    font-size:13px;line-height:1}
+  .iconbtn:hover{background:var(--chip);color:var(--ink)}
+  .iconbtn svg{width:15px;height:15px;fill:currentColor}
   .dd{position:relative}
-  .dd summary{list-style:none;cursor:pointer;padding:5px 11px;border-radius:8px;color:var(--muted);
-    display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .dd summary{list-style:none;cursor:pointer;padding:6px 10px;border-radius:8px;color:var(--muted);
+    display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px}
   .dd summary::-webkit-details-marker{display:none}
   .dd summary::after{content:"▾";font-size:11px}
   .dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
-  .ddmenu{position:absolute;z-index:20;top:calc(100% + 6px);min-width:210px;padding:6px;
+  .dd summary svg{width:15px;height:15px;fill:currentColor}
+  .ddmenu{position:absolute;z-index:40;top:calc(100% + 6px);min-width:190px;padding:6px;
     background:var(--card);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 14px 40px rgba(90,60,70,.14)}
   .dd.r .ddmenu{right:0}
   .dd:not(.r) .ddmenu{left:0}
-  /* stärker als `nav.sub a` (gleiche Spezifität, aber dort inline-flex) → Einträge untereinander */
+  /* muss `nav.sub a` schlagen (gleiche Spezifität) — sonst stehen die Einträge nebeneinander */
   .ddmenu a,nav.sub .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink);
     white-space:normal}
   .ddmenu a:hover,nav.sub .ddmenu a:hover{background:var(--chip);text-decoration:none}
-  .dd summary svg{width:15px;height:15px;fill:currentColor}
   .ddmenu b{display:block;font-weight:600;font-size:14px}
   .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
+  footer{border-top:1px solid var(--line);margin-top:52px;color:var(--muted);font-size:14px}
+  footer .inner{padding:26px 22px 60px;text-align:center}
+  footer a{margin:0 9px}
 """
+
+# Dark-Mode: früh im <head>, damit beim Laden nichts umspringt; theme.css kennt [data-theme].
+THEME_JS = """<script>
+(function(){var t=localStorage.getItem('ts-theme'); if(t) document.documentElement.dataset.theme=t;})();
+document.addEventListener('DOMContentLoaded',function(){
+  var b=document.getElementById('ts-theme'); if(!b) return;
+  b.addEventListener('click',function(){
+    var r=document.documentElement;
+    var dark=r.dataset.theme ? r.dataset.theme==='dark'
+           : matchMedia('(prefers-color-scheme:dark)').matches;
+    r.dataset.theme = dark ? 'light' : 'dark';
+    localStorage.setItem('ts-theme', r.dataset.theme);
+  });
+});
+</script>"""
+
+SUN_MOON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0'
+            '-9.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5Zm0 11a.75.75 0 0 1 .75.75v1'
+            'a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12.5ZM14.5 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1'
+            'A.75.75 0 0 1 14.5 8Zm-11 0a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3.5 8Zm9.1'
+            '-4.6a.75.75 0 0 1 0 1.06l-.7.71a.75.75 0 1 1-1.07-1.06l.71-.71a.75.75 0 0 1 1.06 0ZM4.87 11.13a'
+            '.75.75 0 0 1 0 1.06l-.71.71A.75.75 0 0 1 3.1 11.84l.71-.71a.75.75 0 0 1 1.06 0Zm7.73.71a.75.75 '
+            '0 1 1-1.06 1.06l-.71-.71a.75.75 0 0 1 1.06-1.06ZM4.87 4.87A.75.75 0 0 1 3.81 4.16l-.71-.7A.75.75'
+            ' 0 0 1 4.16 2.39l.71.71a.75.75 0 0 1 0 1.06Z"/></svg>')
+
+
+def theme_toggle(label="Design") -> str:
+    return f'<button class=iconbtn id=ts-theme type=button title="{label}">{SUN_MOON}</button>'
 
 
 def link(href, label, active=False) -> str:
@@ -80,13 +118,13 @@ LANG_LABELS = {"en": "English", "de": "Deutsch"}
 def lang_dropdown(page: str, lang: str) -> str:
     """Sprachwechsel für die Website: bleibt auf derselben Seite, wechselt die Datei."""
     items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(GLOBE_ICON + LANG_LABELS[lang], items, right=True)
+    return dropdown(GLOBE_ICON + lang.upper(), items, right=True)
 
 
 def lang_dropdown_path(path: str, lang: str) -> str:
     """Sprachwechsel für Seiten ohne Sprach-Dateinamen (die Demo): hängt `?lang=` an den Pfad."""
     items = "".join(f"<a href='{path}?lang={code}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(GLOBE_ICON + LANG_LABELS[lang], items, right=True)
+    return dropdown(GLOBE_ICON + lang.upper(), items, right=True)
 
 
 def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
@@ -125,15 +163,13 @@ _BASE_CSS = """
   code{font-family:var(--ts-mono); font-size:.86em; background:var(--chip);
     border:1px solid var(--line); border-radius:5px; padding:1px 5px; color:var(--ink)}
   .note{color:var(--muted); font-size:13.5px}
-  footer{border-top:1px solid var(--line); margin-top:52px; padding:26px 0 60px; text-align:center;
-    color:var(--muted); font-size:14px}
-  footer a{margin:0 9px}
   .lang{display:flex; justify-content:center; gap:10px; padding:14px 0 0; font-size:13.5px;
     color:var(--muted)}
   .lang b{color:var(--ink)}
 """
 
 _INDEX_CSS = """
+  :root{--nav-w:720px}
   header.hero{text-align:center; padding:56px 0 8px; position:relative}
   .badge{position:relative; display:inline-grid; place-items:center; width:132px; height:132px; margin-bottom:10px}
   .badge::before{content:""; position:absolute; inset:-18%; border-radius:50%;
@@ -323,13 +359,14 @@ T = {
 }
 
 
-def _footer(lang: str) -> str:
+def footer(lang: str) -> str:
+    """Fußzeile — auf jeder Seite dieselbe, Website wie Demo."""
     t = T[lang]
-    return (f'<footer><a href="{REPO}">GitHub</a>·'
+    return (f'<footer><div class=inner><a href="{REPO}">GitHub</a>·'
             f'<a href="{REPO}/blob/main/CHANGELOG.md">{t["f_changelog"]}</a>·'
             f'<a href="{REPO}/blob/main/SECURITY.md">{t["f_security"]}</a>·'
             f'<a href="{REPO}/blob/main/LICENSE">{t["f_license"]}</a>'
-            f'<div style="margin-top:14px; font-size:12.5px">{t["credits"]}</div></footer>')
+            f'<div style="margin-top:14px; font-size:12.5px">{t["credits"]}</div></div></footer>')
 
 
 def _head(lang: str, title: str, desc: str, css: str) -> str:
@@ -337,20 +374,21 @@ def _head(lang: str, title: str, desc: str, css: str) -> str:
             f'<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             f'<title>{title}</title>\n<meta name="description" content="{desc}">\n'
             f'<link rel="icon" href="wizard.png">\n<link rel="stylesheet" href="theme.css">\n'
-            f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>\n</head>\n<body>\n')
+            f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>{THEME_JS}\n</head>\n<body>\n')
 
 
-def site_nav_top(lang: str, brand=True) -> str:
-    return nav_top(f'<a href="{REPO}">GitHub</a>',
-                   brand_href=page_url("index", lang) if brand else None)
+def site_nav_top(lang: str, page: str = "index", brand=True) -> str:
+    """Erste Leiste: Marke + Werkzeuge (Sprache, Dark-Mode). Auf jeder Seite gleich."""
+    tools = lang_dropdown(page, lang) + theme_toggle()
+    return nav_top(tools, brand_href=page_url("index", lang) if brand else None)
 
 
-def site_nav_sub(page: str, lang: str) -> str:
-    """Immer dieselben Einträge — die zweite Leiste kennt weder Login-Status noch Seitenkontext."""
+def site_nav_sub(page: str, lang: str, right_html: str = "") -> str:
+    """Zweite Leiste: links die Seiten, rechts der Aktionsbereich (in der Demo: An-/Abmelden)."""
     t = T[lang]
     left = (link(page_url("index", lang), t["nav_overview"], page == "index")
             + link(page_url("flows", lang), t["nav_flows"], page == "flows"))
-    return nav_sub(left, lang_dropdown(page, lang))
+    return nav_sub(left, right_html or f'<a class="btn ghost" href="{REPO}">GitHub</a>')
 
 
 def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
@@ -360,7 +398,7 @@ def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = N
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    top = nav1 if nav1 is not None else site_nav_top(lang, brand=False)
+    top = nav1 if nav1 is not None else site_nav_top(lang, "index", brand=False)
     sub = nav2 if nav2 is not None else site_nav_sub("index", lang)
     return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{top}<header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
@@ -397,9 +435,8 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
     <span class="k">return</span> {{<span class="s">"hi"</span>: user[<span class="s">"username"</span>]}}</div>
     <p class="note" style="margin-top:14px">{t["gateway"]}</p>
   </section>
-
-  {_footer(lang)}
 </div>
+{footer(lang)}
 </body>
 </html>
 """)
@@ -407,7 +444,7 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 
 def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
     t = T[lang]
-    top = nav1 if nav1 is not None else site_nav_top(lang)
+    top = nav1 if nav1 is not None else site_nav_top(lang, "flows")
     sub = nav2 if nav2 is not None else site_nav_sub("flows", lang)
     return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""{top}{sub}
 <main>
@@ -418,7 +455,7 @@ def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = N
   <hr class="rule">
   <p class="lead">{t["flows_outro"]}</p>
 </main>
-<div class="wrap">{_footer(lang)}</div>
+{footer(lang)}
 </body>
 </html>
 """)

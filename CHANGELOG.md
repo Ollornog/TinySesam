@@ -47,17 +47,23 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Login-Flows als Diagramm** — neun Wege, zweisprachig, aus einer Quelle. Auf der Website steht
   neben jedem der Config-Schalter, der ihn einschaltet; in der Demo (`/demo/flows`) stattdessen
   „aktiv/aus", aus der laufenden Config gelesen.
-- **Navigation aus einer Quelle** (`web/site.py`): `nav_top` trägt die Marke und **alles
-  Identitätsabhängige** (Konto, Admin-Panel, An-/Abmelden); `nav_sub` ist auf **jeder** Seite
-  identisch — Seiten, Beispielseiten-Aufklapper, Sprachwechsel, sonst nichts. Sie kennt den
-  Login-Status nicht und springt deshalb auch nicht beim Anmelden.
-  Sprachwechsel mit Globus-Icon, Einträge untereinander; keine Trennlinie über der Leiste.
-  Einziger Sonderfall bleibt die Startseite: `nav_top(brand_href=None)` lässt die Marke weg
-  (der Titelbereich zeigt sie groß), die Knöpfe rechts bleiben.
+- **Kopf, zweite Leiste und Fußzeile aus einer Quelle** (`web/site.py`) — auf jeder Seite dieselben,
+  in Website wie Demo. `nav_top` = Marke + Werkzeuge (Sprachwechsel, **Dark-Mode-Umschalter**),
+  `nav_sub` = Seiten + Beispielseiten-Aufklapper links, An-/Abmelden bzw. Konto/Admin rechts,
+  `footer(lang)` = eine Funktion. Sprache in der Leiste als Kürzel (DE/EN), im Menü ausgeschrieben.
+  Einziger Sonderfall bleibt die Startseite: `nav_top(brand_href=None)` lässt die Marke weg,
+  weil der Titelbereich sie groß zeigt.
+- **Dark-Mode-Umschalter** — setzt `data-theme` auf `<html>` (das `docs/theme.css` schon kennt) und
+  merkt sich die Wahl; ein Inline-Skript im `<head>` verhindert das Aufblitzen des falschen Themes.
   Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
 
 ### Behoben
 - Showcase: die zweite Leiste fiel nicht mit ein (`rise`-Animation galt nur für Hero und Abschnitte).
+- Das offene Dropdown wirkte durchsichtig: die animierten Abschnitte bilden eigene Stapelkontexte und
+  malten darüber. `nav.sub` bekommt jetzt einen eigenen Kontext (`position:relative;z-index:30`) und
+  einen Hintergrund; das Menü liegt bei `z-index:40`.
+- Kopf-, Nav- und Fußzeile richten sich über `--nav-w` nach der Inhaltsbreite der Seite
+  (Startseite 720 px, sonst 900 px) — vorher waren sie überall 900 px breit.
 - Showcase: die Admin-Vorschau war regelmäßig unten abgeschnitten — ihre Tabelle kommt per `fetch`
   **nach** dem `load`-Event. Der Rahmen misst jetzt per `ResizeObserver` nach (plus Nachzügler-Timer).
 - Showcase: auf der Flow-Seite stand die erste Leiste **unter** der zweiten — die Demo klebte ihre
