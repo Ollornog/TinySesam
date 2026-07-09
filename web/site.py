@@ -33,8 +33,8 @@ NAV_CSS = """
   nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px}
   nav.top.nobrand{justify-content:flex-end;padding-bottom:0}
   nav.top .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
-  nav.top .brand img{width:30px;height:30px}
-  nav.top .brand span{font-weight:700;font-size:18px}
+  nav.top .brand img{width:38px;height:38px}
+  nav.top .brand span{font-weight:700;font-size:22px}
   nav.top .brand b{color:var(--accent)}
   nav.top .right{display:flex;align-items:center;gap:10px}
   /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
@@ -52,15 +52,15 @@ NAV_CSS = """
   nav .btn.ghost{color:var(--ink)}
 
   /* Wechsel-Pille: zwei Segmente, das aktive hebt sich ab (Sprache, Hell/Dunkel) */
-  .pill2{display:inline-flex;align-items:center;gap:1px;padding:2px;border-radius:999px;
+  .pill2{display:inline-flex;align-items:center;gap:1px;padding:1px;border-radius:999px;
     background:var(--chip);border:1px solid var(--line)}
   .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;
-    min-width:28px;height:22px;padding:0 7px;border:0;border-radius:999px;background:none;
-    color:var(--muted);cursor:pointer;font:inherit;font-size:11px;font-weight:700;
+    min-width:24px;height:18px;padding:0 6px;border:0;border-radius:999px;background:none;
+    color:var(--muted);cursor:pointer;font:inherit;font-size:10px;font-weight:700;
     letter-spacing:.04em;text-decoration:none;line-height:1}
   .pill2 .seg:hover{color:var(--ink);text-decoration:none}
   .pill2 .seg.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(90,60,70,.12)}
-  .pill2 .seg svg{width:16px;height:16px;fill:currentColor}
+  .pill2 .seg svg{width:14px;height:14px;fill:currentColor}
 
   .dd{position:relative}
   .dd summary{list-style:none;cursor:pointer;padding:6px 11px;border-radius:8px;color:var(--muted);
