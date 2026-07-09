@@ -180,7 +180,7 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 ```
 
 Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](tinysesam/theme.py); `brand_head` hängt
-zusätzliches `<head>`-Markup ein. `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
+zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon auf jeder eingebauten Seite. `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
 API-Clients weiterhin JSON. Mehr als Farben nötig? Ganze Seite per `auth.set_template(...)` ersetzen.
 
 ## Sicherheit

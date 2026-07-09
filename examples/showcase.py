@@ -29,6 +29,7 @@ from tinysesam.admin import render_panel
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
+ICON_URL = "/wizard.png"                                 # ein Wert: App-Seiten UND eingebaute Seiten
 
 # Die Farbpalette — dieselbe Datei, die auch die Website per <link> lädt.
 THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
@@ -47,6 +48,7 @@ auth = TinySesam(TinySesamConfig(
     rp_name="TinySesam",
     lang="de",
     brand_css=BRAND,                 # ← ein Wert stylt alle eingebauten Seiten
+    brand_icon=ICON_URL,             # ← und ein Wert setzt überall das Favicon
     password_enabled=True,
     pin_enabled=True,
     passkey_enabled=False,           # für lokalen HTTP-Test aus
@@ -178,9 +180,9 @@ def page(title, body, user=None, active=""):
     return HTMLResponse(
         f"<!doctype html><html lang=de><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-        f"<link rel=icon href='/wizard.png'><link rel=stylesheet href='/theme.css'>"
+        f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
         f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style></head><body>"
-        f"<nav><a class=brand href='/demo'><img src='/wizard.png' alt=''>"
+        f"<nav><a class=brand href='/demo'><img src='{ICON_URL}' alt=''>"
         f"<span><b>Tiny</b>Sesam</span></a><span class=links>{links}</span></nav>"
         f"{_subnav(user, active)}"
         f"<main>{body}</main>"
@@ -192,7 +194,7 @@ def page(title, body, user=None, active=""):
 _DEMO_BTN = f'<a class="btn primary" href="/demo">{icon("play")}Live-Demo</a>'
 
 
-@app.get("/wizard.png", include_in_schema=False)
+@app.get(ICON_URL, include_in_schema=False)
 def wizard():
     return FileResponse(DOCS / "wizard.png", media_type="image/png")
 

@@ -14,6 +14,7 @@ class TinySesamConfig:
     # --- Branding/Theme: einmal setzen → re-skinnt ALLE eingebauten Seiten (+ Fehlerseiten) ---
     brand_css: str = ""                   # zusätzliches CSS (nach dem Default → überschreibt es)
     brand_head: str = ""                  # zusätzliches <head>-HTML (z.B. Logo-Font, Meta)
+    brand_icon: str = ""                  # Favicon-URL für ALLE eingebauten Seiten (leer = keins)
 
     # --- Rollen/Gruppen ---
     # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).

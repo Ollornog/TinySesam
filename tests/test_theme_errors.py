@@ -74,3 +74,25 @@ ok("Login-Redirect (307) bleibt Redirect (nicht als Fehlerseite abgefangen)")
 
 os.remove(db)
 print("\nTHEME + ERROR-PAGES OK ✅")
+
+
+# ---------- brand_icon: ein Wert, Favicon auf allen eingebauten Seiten ----------
+import tempfile as _tf
+from tinysesam.admin import render_panel as _rp
+
+_db = _tf.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
+                               allow_signup=True, magiclink_enabled=True, brand_icon="/logo.png"))
+_app = FastAPI(); _app.include_router(_a.router()); _a.install_error_pages(_app)
+_c = TestClient(_app, headers={"accept": "text/html"}, raise_server_exceptions=False)
+for _p in ("/auth/login", "/auth/register", "/auth/magic/request", "/gibtsnicht"):
+    assert "rel=icon href='/logo.png'" in _c.get(_p).text, _p
+assert "rel=icon href='/logo.png'" in _rp(_a, "/auth/admin"), "Admin-Panel"
+os.unlink(_db)
+
+_db = _tf.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
+_app = FastAPI(); _app.include_router(_a.router())
+assert "rel=icon" not in TestClient(_app).get("/auth/login").text, "ohne brand_icon kein Link"
+os.unlink(_db)
+print("OK brand_icon: Favicon zentral auf allen eingebauten Seiten")
