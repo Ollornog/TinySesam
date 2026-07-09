@@ -11,6 +11,8 @@ from urllib.parse import urlencode
 from fastapi import Request, HTTPException
 from fastapi.responses import RedirectResponse
 
+from . import security
+
 
 class OIDCClient:
     def __init__(self, issuer, client_id, client_secret, scopes):
@@ -84,10 +86,14 @@ class OIDCClient:
 def register_oidc_routes(router, auth):
     cfg = auth.cfg
     oidc: OIDCClient = auth.oidc
+    if cfg.base_url:
+        # Sichtbar machen, was der IdP als Redirect-URI kennen muss. Stimmt es nicht überein,
+        # meldet den Fehler sonst erst der Provider — nach dem Login, ohne Hinweis auf die Ursache.
+        security.seclog.info("OIDC-Redirect-URI: %s", cfg.base_url.rstrip("/") + cfg.oidc_callback_path)
 
     def _redirect_uri(request: Request):
         base = cfg.base_url or str(request.base_url).rstrip("/")
-        return base.rstrip("/") + "/auth/oidc/callback"
+        return base.rstrip("/") + cfg.oidc_callback_path
 
     @router.get("/auth/oidc/start")
     def oidc_start(request: Request, next: str = "/"):
@@ -95,7 +101,7 @@ def register_oidc_routes(router, auth):
         auth.store.put_flow("oidc:" + state, {"nonce": nonce, "next": next}, ttl=600)
         return RedirectResponse(oidc.auth_url(_redirect_uri(request), state, nonce), 303)
 
-    @router.get("/auth/oidc/callback")
+    @router.get(cfg.oidc_callback_path)
     def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
         if error:
             raise HTTPException(400, f"OIDC-Fehler: {error}")

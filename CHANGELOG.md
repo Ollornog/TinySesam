@@ -2,9 +2,32 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.11.0] — 2026-07-09
+
+Großer Sammelrelease: Login-Kennung, PIN als Zusatzfaktor, Erst-Admin-Bootstrap, Demo-Modus,
+zweisprachige Website — plus die Rechte-Fallen aus dem ersten Produktiveinsatz (`go.ollornog.de`).
+
+### Sicherheit
+- **`has_role()` verlieh Admins jede Rolle.** Das bleibt der Default (`admin_implies_roles=True`),
+  ist aber jetzt abschaltbar — global oder je Guard: `require_role("editor", admin_implies=False)`.
+  Wer Rechte allein aus einer IdP-Gruppe ableitet, sollte das tun; sonst ist jeder lokale Admin
+  stillschweigend auch „editor".
+- **IdP-Gruppen werden exakt verglichen** (`group_match="exact"`, neuer Default). Vorher galt
+  Teilstring — der Schlüssel `admin` passte damit auch auf eine Gruppe `nicht-admin`. Für LDAP
+  bleibt Teilstring aktiv (dort kommen ganze `memberOf`-DNs an), sonst per Config/Parameter.
+- **Erst-Admin-Token nur, wenn lokale Admins vorgesehen sind.** Mit `admin_enabled=False` (reine
+  OIDC-App ohne Panel) wird kein Token mehr erzeugt und keins mehr eingelöst — vorher stand eins im
+  Log, obwohl die App gar keinen lokalen Admin kannte.
+- Doku: **uvicorn ohne `--proxy-headers` starten.** Sonst ersetzt uvicorn `request.client.host` durch
+  die geforwardete IP, `trusted_proxies` prüft ins Leere und Rate-Limit/Lockout/fail2ban sind umgehbar.
 
 ### Hinzugefügt
+- **`auth.issue_csrf(response) -> str`** — CSRF-Cookie setzen und Token holen, für eigene Templates
+  (Jinja & Co.), die nicht über `render_page()` laufen. No-op, wenn CSRF aus ist.
+- **`oidc_callback_path`** — der Callback war fest verdrahtet. Beim Start loggt TinySesam jetzt
+  zusätzlich die erwartete Redirect-URI, damit ein Tippfehler nicht erst der IdP meldet.
+- Neue Suite `tests/test_authz_hardening.py`.
+
 - **Erst-Admin ohne „wer zuerst kommt"** — zwei explizite Wege, beide nur wirksam, solange es
   keinen Admin gibt: `admin_identifiers=[…]` (Allowlist auf Name/E-Mail, greift bei **jeder**
   Login-Methode, auch OIDC/SAML/LDAP) und ein **Einmal-Token** im Log →

@@ -17,6 +17,14 @@ class TinySesamConfig:
     brand_icon: str = ""                  # Favicon-URL für ALLE eingebauten Seiten (leer = keins)
 
     # --- Rollen/Gruppen ---
+    # Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten).
+    # ACHTUNG: hängen die Rechte einer App allein an einer IdP-Gruppe, ist das eine stille
+    # Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`.
+    admin_implies_roles: bool = True
+    # Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen?
+    # "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs).
+    # LDAP nutzt automatisch substring, weil dort ganze DNs ankommen.
+    group_match: str = "exact"
     # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).
     available_roles: list[str] = field(default_factory=list)
     # IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant).
@@ -38,6 +46,9 @@ class TinySesamConfig:
     # Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren.
     stepup_methods: list[str] = field(default_factory=list)
     oidc_enabled: bool = False            # externer IdProvider (PocketID …)
+    # Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad).
+    # Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf.
+    oidc_callback_path: str = "/auth/oidc/callback"
     apikey_enabled: bool = True           # Zugang per API-Key (maschinell/Daemons, an User/Service-Account)
     admin_enabled: bool = True            # Admin-Panel automatisch unter admin_path mounten
     admin_path: str = "/auth/admin"       # Standard-Mountpunkt; auth.admin_router() lässt es auch woanders montieren
@@ -175,6 +186,10 @@ class TinySesamConfig:
 
     # --- Härtung ---
     # Reverse-Proxies, deren X-Forwarded-For vertraut werden darf (sonst ist die echte Client-IP fälschbar).
+    # Nur von diesen Peers wird X-Forwarded-For geglaubt — sonst ist die Client-IP fälschbar
+    # (Rate-Limit, Lockout, fail2ban). WICHTIG: uvicorn **ohne** `--proxy-headers` starten. Sonst
+    # ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP und diese Prüfung
+    # läuft ins Leere.
     trusted_proxies: list[str] = field(default_factory=lambda: ["127.0.0.1/32", "::1/128"])
     # Prozessübergreifendes Rate-Limit über Redis (Multi-Worker); leer = In-Memory pro Prozess. Extra [redis].
     redis_url: str = ""                   # z.B. redis://localhost:6379/0
