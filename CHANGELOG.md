@@ -2,6 +2,19 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+### Hinzugefügt
+- **Showcase mit geführter Demo-Tour** (`examples/showcase.py`): die Startseite ist buchstäblich die
+  Projekt-Website (`docs/index.html`) mit session-bewussten Buttons; `/demo` führt in acht Schritten durch
+  Login, geschützte Route, Step-up, Gäste-PIN, Konto, Admin-Panel und die gebrandeten Fehlerseiten.
+  Die Tour-Leiste erscheint über `brand_head` auch auf den **eingebauten** Seiten.
+- **README zweisprachig**: `README.md` (Englisch, Default) + `README.de.md` (Deutsch), mit Sprachumschalter.
+
+### Behoben
+- Showcase: „Anmelden"/„Konto erstellen" wirkten im eingeloggten Zustand tot (`/auth/login` → `303 /`).
+  Die Landing kennt jetzt den Login-Status und zeigt stattdessen Konto/Abmelden.
+
 ## [0.10.0] — 2026-07-09
 
 ### Hinzugefügt

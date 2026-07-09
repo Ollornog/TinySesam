@@ -185,7 +185,7 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 <span class="k">def</span> home(user = Depends(<span class="k">auth</span>.require_user)):   <span class="c"># protected</span>
     <span class="k">return</span> {<span class="s">"hi"</span>: user[<span class="s">"username"</span>]}</div>
     <p class="note" style="margin-top:14px">Want just SSO in front of existing apps? Run it as an
-      <a href="https://github.com/Ollornog/TinySesam#als-reines-oidc-gateway-preset">OIDC forward-auth gateway</a>.</p>
+      <a href="https://github.com/Ollornog/TinySesam#as-a-pure-oidc-gateway-preset">OIDC forward-auth gateway</a>.</p>
   </section>
 
   <footer>
