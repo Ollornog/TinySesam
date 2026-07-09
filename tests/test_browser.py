@@ -58,22 +58,48 @@ else:
     raise RuntimeError("Showcase startet nicht")
 
 _profile = tempfile.mkdtemp()
+
+# Chromes Ausgabe NICHT nach DEVNULL: stirbt er beim Start, war die Fehlermeldung
+# bisher weg und der Test meldete nur "Chrome antwortet nicht" — ohne Grund.
+# In eine Datei (nicht PIPE): ein volllaufender Pipe-Puffer würde Chrome blockieren.
+_chrome_log = tempfile.NamedTemporaryFile(prefix="chrome-", suffix=".log", delete=False)
 _chrome = subprocess.Popen(
     # --disable-dev-shm-usage: CI-Container haben ein winziges /dev/shm, sonst stirbt der Renderer.
     [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
      "--window-size=1280,900", f"--user-data-dir={_profile}",
      f"--remote-debugging-port={CDP_PORT}", "about:blank"],
-    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stdout=_chrome_log, stderr=subprocess.STDOUT)
+
+# Auf einem kalten CI-Runner braucht der erste Chrome-Start regelmäßig länger als
+# die früheren 10 s — daher der großzügigere Deckel. Der Test wartet nur, solange
+# Chrome wirklich startet: ist der Prozess tot, bricht er sofort ab.
+CHROME_START_TIMEOUT = float(os.environ.get("CHROME_START_TIMEOUT", "30"))
+
+
+def _chrome_output():
+    try:
+        _chrome_log.flush()
+        with open(_chrome_log.name, encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()[-2000:]
+    except OSError:
+        return "(keine Ausgabe)"
 
 
 def _ws_url():
-    for _ in range(100):
+    deadline = time.time() + CHROME_START_TIMEOUT
+    while time.time() < deadline:
+        if _chrome.poll() is not None:
+            raise RuntimeError(
+                f"Chrome ist beim Start gestorben (Exit {_chrome.returncode}).\n"
+                f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
         try:
             tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json"))
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
         except Exception:
             time.sleep(0.1)
-    raise RuntimeError("Chrome antwortet nicht")
+    raise RuntimeError(
+        f"Chrome antwortet nicht (nach {CHROME_START_TIMEOUT:.0f}s auf Port {CDP_PORT}).\n"
+        f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
 
 
 class Page:
@@ -260,6 +286,12 @@ finally:
     _chrome.terminate()
     _server.should_exit = True
     shutil.rmtree(_profile, ignore_errors=True)
+    # Chrome-Logdatei mit abräumen — der Test darf nichts hinterlassen.
+    try:
+        _chrome_log.close()
+        os.unlink(_chrome_log.name)
+    except OSError:
+        pass
     for suffix in ("", "-wal", "-shm"):
         try:
             os.unlink(_db + suffix)
