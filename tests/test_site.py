@@ -57,13 +57,21 @@ assert "Use only what you need" in pages["index.html"]
 assert "Nutze nur, was du brauchst" in pages["index.de.html"]
 assert "Sign-in flows" in pages["flows.html"] and "Login-Flows" in pages["flows.de.html"]
 
-# Sprachumschalter zeigt jeweils auf die andere Fassung, nie auf sich selbst
+# Sprachwechsel als Dropdown, zeigt auf beide Fassungen derselben Seite
 for page in ("index", "flows"):
     for lang in LANGS:
         html = pages[page_url(page, lang)]
-        other = page_url(page, "de" if lang == "en" else "en")
-        assert f"href='{other}'" in html, (page, lang)
-        assert f"href='{page_url(page, lang)}'" not in html.split("<hr")[0], "verlinkt sich selbst"
+        for code in LANGS:
+            assert f"href='{page_url(page, code)}'" in html, (page, lang, code)
+        assert "class='dd r'" in html, "Sprach-Dropdown fehlt"
+
+# Beide Leisten, richtige Reihenfolge: Flow-Seite top→sub, Startseite Titelbereich→sub
+for lang in LANGS:
+    idx, fl = pages[page_url("index", lang)], pages[page_url("flows", lang)]
+    assert "<nav class=top" not in idx, "Startseite: Titelbereich ersetzt die erste Leiste"
+    assert idx.find('<header class="hero"') < idx.find("<nav class=sub") > -1
+    assert -1 < fl.find("<nav class=top") < fl.find("<nav class=sub"), "erste Leiste muss oben stehen"
+print("  Navigation: beide Leisten, Reihenfolge stimmt")
 
 # Nichts Hartkodiertes: beide Sprachen verlinken theme.css/wizard.png relativ
 for html in pages.values():

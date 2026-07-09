@@ -29,7 +29,8 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html               # noqa: E402
-from web.site import build_pages                                         # noqa: E402
+from web.site import (NAV_CSS, REPO as _REPO, dropdown, lang_dropdown, link,  # noqa: E402
+                      nav_sub, nav_top, page_url, render_flows, render_index)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
@@ -84,33 +85,6 @@ def icon(name: str) -> str:
 
 
 # ---------------------------------------------------------------- Frontend-Gerüst
-# Nur die zweite Leiste — sie wird auch in die Website-Seiten injiziert, die ihr eigenes Layout haben.
-_NAV_CSS = """
-/* eigenständig: die Leiste sitzt auch auf den Website-Seiten, die kein nav{} kennen */
-nav.sub{display:flex;align-items:center;max-width:900px;margin:0 auto;
-  border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:9px 22px;
-  justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:14px}
-nav.sub a{text-decoration:none}
-nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
-  color:var(--muted);white-space:nowrap}
-nav.sub a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
-nav.sub a.on{background:var(--chip);color:var(--ink)}
-nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
-.dd{position:relative}
-.dd summary{list-style:none;cursor:pointer;padding:5px 11px;border-radius:8px;color:var(--muted);
-  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.dd summary::-webkit-details-marker{display:none}
-.dd summary::after{content:"▾";font-size:11px}
-.dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
-.ddmenu{position:absolute;z-index:20;top:calc(100% + 6px);left:0;min-width:290px;padding:6px;
-  background:var(--card);border:1px solid var(--line);border-radius:12px;
-  box-shadow:0 14px 40px rgba(90,60,70,.14)}
-.ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink)}
-.ddmenu a:hover{background:var(--chip);text-decoration:none}
-.ddmenu b{display:block;font-weight:600;font-size:14px}
-.ddmenu span{display:block;color:var(--muted);font-size:12.5px}
-"""
-
 _SITE_CSS = """
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-family:var(--ts-font)}
@@ -123,7 +97,7 @@ nav .brand img{width:30px;height:30px}
 nav .brand span{font-weight:700;font-size:18px}
 nav .brand b{color:var(--accent)}
 nav .links{display:flex;align-items:center;gap:10px;font-size:14px}
-""" + _NAV_CSS + """
+""" + NAV_CSS + """
 main{max-width:900px;margin:0 auto;padding:36px 22px 64px}
 h1{font-family:var(--ts-serif);font-size:38px;letter-spacing:-.01em;margin:.2em 0 .1em;text-wrap:balance}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 6px}
@@ -172,14 +146,24 @@ EXAMPLES = [
     ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
     ("/boom", "500", "gebrandete Fehlerseite"),
 ]
-# Die ausgelieferten Website-Seiten heißen anders als ihre Nav-Einträge.
-_SITE_ACTIVE = {"index.html": "/", "index.de.html": "/", "flows.html": "/flows.html",
-                "flows.de.html": "/flows.html"}
+# Die ausgelieferten Website-Seiten heißen anders als ihr Nav-Eintrag.
+_SITE_ACTIVE = {"index.html": "/", "index.de.html": "/",
+                "flows.html": "/flows.html", "flows.de.html": "/flows.html"}
 
 
-def _subnav(user, active="") -> str:
+def nav1(user) -> str:
+    """Erste Leiste: Marke + Login-Status. Auf der Startseite übernimmt der Titelbereich ihre Rolle."""
+    right = (f"<span class=muted>{user['username']}</span>"
+             "<a class='btn ghost' href='/auth/logout'>Abmelden</a>"
+             if user else "<a class='btn ghost' href='/auth/register'>Registrieren</a>"
+                          "<a class='btn primary' href='/auth/login'>Anmelden</a>")
+    return nav_top(right, brand_href="/", icon=ICON_URL)
+
+
+def nav2(user, active="", right="") -> str:
+    """Zweite Leiste: dieselben Einträge auf JEDER Seite, plus der Aufklapper mit den Beispielen."""
     active = _SITE_ACTIVE.get(active, active)
-    out = []
+    items = []
     for href, label, need in NAV:
         if need == "user" and not user:
             continue
@@ -187,29 +171,20 @@ def _subnav(user, active="") -> str:
             continue
         if need == "guest" and user:
             continue
-        out.append(f"<a class='{'on' if href == active else ''}' href='{href}'>{label}</a>")
-    items = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in EXAMPLES)
-    open_ = " open" if any(active == h for h, _, _ in EXAMPLES) else ""
-    drop = (f"<details class=dd{open_}><summary>Beispielseiten</summary>"
-            f"<div class=ddmenu>{items}</div></details>")
-    return f"<nav class=sub>{''.join(out)}{drop}</nav>"
+        items.append(link(href, label, href == active))
+    ex = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in EXAMPLES)
+    open_ = any(active == h for h, _, _ in EXAMPLES)
+    items.append(dropdown("Beispielseiten", ex, open_=open_))
+    return nav_sub("".join(items), right)
 
 
 def page(title, body, user=None, active=""):
-    links = (f"<span class=muted>{user['username']}</span>"
-             "<a class='btn g s' href='/auth/account'>Konto</a>"
-             "<a class='btn g s' href='/auth/logout'>Abmelden</a>"
-             if user else
-             "<a class='btn g s' href='/auth/register'>Registrieren</a>"
-             "<a class='btn p s' href='/auth/login'>Anmelden</a>")
     return HTMLResponse(
         f"<!doctype html><html lang=de><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
         f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style></head><body>"
-        f"<nav><a class=brand href='/'><img src='{ICON_URL}' alt=''>"
-        f"<span><b>Tiny</b>Sesam</span></a><span class=links>{links}</span></nav>"
-        f"{_subnav(user, active)}"
+        f"{nav1(user)}{nav2(user, active)}"
         f"<main>{body}</main>"
         f"<footer>Demo-Frontend · <a href='/'>Projektseite</a> · "
         f"<a href='{REPO}'>GitHub</a> · MIT</footer></body></html>")
@@ -229,19 +204,26 @@ def theme():
     return FileResponse(DOCS / "theme.css", media_type="text/css")
 
 
-# Die Projektseite entsteht zur Laufzeit aus derselben Quelle, die die GitHub-Action baut.
-SITE = build_pages()
+# Die Website-Seiten entstehen zur Laufzeit aus derselben Quelle, die die GitHub-Action baut —
+# nur mit den Navigationsleisten der Demo (Login-Status, Beispielseiten, Demo-Knopf).
+SITE_PAGES = {"index.html": ("index", "en"), "index.de.html": ("index", "de"),
+              "flows.html": ("flows", "en"), "flows.de.html": ("flows", "de")}
+
+_GH_BTN = f'<a class="btn ghost" href="{REPO}">{icon("github")}GitHub</a>'
+_DOC_BTN = f'<a class="btn ghost" href="{REPO}#readme">{icon("book")}Doku</a>'
 
 
 def _site_page(name: str, user=None) -> HTMLResponse:
-    """Website-Seite ausliefern — plus Demo-Leiste, plus (auf der Startseite) den Demo-Knopf."""
-    html = SITE[name]
-    if name.startswith("index"):
-        html = html.replace('<div class="cta">', f'<div class="cta">{_DEMO_BTN}', 1)
-        # Der Demo-Knopf ist hier der Primärknopf; GitHub rückt eine Stufe zurück.
-        html = html.replace('class="btn primary" id="cta-github"', 'class="btn ghost" id="cta-github"', 1)
-    bar = f"<style>{_NAV_CSS}</style>" + _subnav(user, active=name)
-    return HTMLResponse(html.replace("<body>", "<body>" + bar, 1))
+    page_name, lang = SITE_PAGES[name]
+    if page_name == "index":
+        # Startseite: der Titelbereich IST die erste Leiste → kein nav_top. Knöpfe in die zweite.
+        buttons = _DEMO_BTN + _GH_BTN + _DOC_BTN
+        html = render_index(lang, nav1="", nav2=nav2(user, name, buttons + lang_dropdown("index", lang)),
+                            buttons="")
+    else:
+        html = render_flows(lang, nav1=nav1(user),
+                            nav2=nav2(user, name, lang_dropdown("flows", lang)))
+    return HTMLResponse(html)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -253,7 +235,7 @@ def landing(request: Request):
 def site_page(name: str, request: Request):
     """index.de.html · flows.html · flows.de.html — dieselben Seiten wie auf GitHub Pages."""
     fname = f"{name}.html"
-    if fname not in SITE:
+    if fname not in SITE_PAGES:
         raise HTTPException(404)
     return _site_page(fname, auth.current_user(request))
 

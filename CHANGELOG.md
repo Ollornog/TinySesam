@@ -38,13 +38,17 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Login-Flows als Diagramm** — neun Wege, zweisprachig, aus einer Quelle. Auf der Website steht
   neben jedem der Config-Schalter, der ihn einschaltet; in der Demo (`/demo/flows`) stattdessen
   „aktiv/aus", aus der laufenden Config gelesen.
-- Showcase-Nav: Projektseite · Übersicht · Login-Flows, die Beispielrouten in einem Aufklapper;
-  Logo und Titel führen zurück auf die Projektseite. Die Leiste sitzt auch auf den Website-Seiten,
-  die die Demo mit ausliefert. Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
+- **Navigation aus einer Quelle** (`web/site.py`): `nav_top` (Marke + Login-Status) und `nav_sub`
+  (Seiten, Beispielseiten-Aufklapper, Sprachwechsel) bauen beide Leisten für Website **und** Demo —
+  nur der Inhalt unterscheidet sich. Auf der Startseite übernimmt der Titelbereich die erste Leiste,
+  die drei Knöpfe und der Sprachwechsel sitzen in der zweiten.
+  Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
 
 ### Behoben
 - Showcase: die Admin-Vorschau war regelmäßig unten abgeschnitten — ihre Tabelle kommt per `fetch`
   **nach** dem `load`-Event. Der Rahmen misst jetzt per `ResizeObserver` nach (plus Nachzügler-Timer).
+- Showcase: auf der Flow-Seite stand die erste Leiste **unter** der zweiten — die Demo klebte ihre
+  Leiste hinter `<body>`, die Seite brachte ihre eigene Nav mit. Beide kommen jetzt aus `web/site.py`.
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.
