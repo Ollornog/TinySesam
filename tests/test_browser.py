@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import websockets            # noqa: E402  (optional — run_all überspringt sonst)
 import uvicorn               # noqa: E402
 
-CHROME = next((b for b in ("google-chrome", "chromium", "chromium-browser")
+# `browser-actions/setup-chrome` legt die Binärdatei als `chrome` ab, Debian als `chromium`.
+CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
 if not CHROME:
     raise ImportError("kein Chrome gefunden")   # run_all wertet das als „übersprungen"
@@ -58,7 +59,9 @@ else:
 
 _profile = tempfile.mkdtemp()
 _chrome = subprocess.Popen(
-    [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", f"--user-data-dir={_profile}",
+    # --disable-dev-shm-usage: CI-Container haben ein winziges /dev/shm, sonst stirbt der Renderer.
+    [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
+     "--window-size=1280,900", f"--user-data-dir={_profile}",
      f"--remote-debugging-port={CDP_PORT}", "about:blank"],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

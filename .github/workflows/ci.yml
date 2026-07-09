@@ -51,6 +51,10 @@ jobs:
           python-version: "3.12"
       - name: Chrome installieren
         uses: browser-actions/setup-chrome@v1
+        with:
+          install-dependencies: true
+      - name: Chrome vorhanden?
+        run: which chrome || which google-chrome; chrome --version || google-chrome --version
       - name: Abhängigkeiten
         run: pip install -e . uvicorn websockets httpx
       - name: Website bauen (muss durchlaufen)
