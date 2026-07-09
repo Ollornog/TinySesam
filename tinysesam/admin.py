@@ -16,6 +16,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .store import norm_email, valid_email
+from .templates import favicon_link
 from .theme import TOKENS
 
 
@@ -248,6 +249,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
     cfg = auth.cfg
     return (_PAGE.replace("__TOKENS__", TOKENS).replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+            .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
@@ -256,7 +258,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
 
 
 _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>__RP__ — Admin</title>
+<meta name=viewport content="width=device-width,initial-scale=1">__ICON__<title>__RP__ — Admin</title>
 <style>
 __TOKENS__
 *{box-sizing:border-box}

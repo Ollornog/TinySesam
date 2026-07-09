@@ -15,6 +15,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Registrierung folgt `login_identifier`:** im Modus `"email"` entfällt das Benutzernamen-Feld,
   die Adresse ist die Kennung; sonst wie gehabt. Das Admin-Panel darf den Namen dort ebenfalls weglassen.
 - Admin-Panel: E-Mail beim Anlegen (Pflicht folgt der Config) + eigene Spalte in der Benutzertabelle.
+- **`brand_icon`** — Favicon für **alle** eingebauten Seiten aus einem Config-Wert (Login/PIN/TOTP/
+  Konto/Register/Magic/Admin-Panel/Fehlerseiten). Vorher hatte keine davon eins.
 - Showcase: **Demo-Postfach** (`/demo/postfach`) — die Demo verschickt nichts, `set_mailer` legt die
   Mails dort ab. Login-Link und Passwort-vergessen sind damit wirklich ausprobierbar.
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →

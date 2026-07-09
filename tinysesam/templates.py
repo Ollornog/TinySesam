@@ -62,10 +62,16 @@ img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;b
 """
 
 
-def _doc(title, body, lang="en", brand_css="", brand_head="", card=True):
+def favicon_link(icon: str) -> str:
+    """Favicon-<link> für die eingebauten Seiten. Eine Stelle, damit keine Seite es vergisst."""
+    return f"<link rel=icon href='{html.escape(icon)}'>" if icon else ""
+
+
+def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon=""):
     inner = f"<div class=card>{body}</div>" if card else body
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"{favicon_link(brand_icon)}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{brand_css or ''}</style>{brand_head or ''}</head>"
             f"<body>{inner}</body></html>")
 
@@ -75,9 +81,11 @@ def _shell(title, body, lang="en"):
 
 
 def _page(auth, title, body, card=True):
-    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head) — re-skinnt alle Seiten zentral."""
+    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon) —
+    re-skinnt alle Seiten zentral."""
     cfg = auth.cfg
-    return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""), card)
+    return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
+                card, getattr(cfg, "brand_icon", ""))
 
 
 def _e(s) -> str:
