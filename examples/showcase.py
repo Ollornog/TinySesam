@@ -279,7 +279,7 @@ hr.rule{height:1px;background:var(--line);border:0;margin:80px 0}
 .frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
   border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){
-  nav.sub,main{animation:rise .5s ease both}
+  main{animation:rise .5s ease both}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 }
 """

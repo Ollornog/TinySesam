@@ -30,8 +30,7 @@ NAV_CSS = """
   /* --nav-fs: EINE Schriftgröße für beide Leisten — dort ist Abstufung nur Unruhe */
   :root{--nav-fs:14px}
   nav.util,nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
-  nav.util{display:flex;align-items:center;justify-content:space-between;gap:14px;
-    padding:8px 22px;border-bottom:1px solid var(--line)}
+  nav.util{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:8px 22px}
   nav.util .left,nav.util .right{display:flex;align-items:center;gap:4px}
   .ilink{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
     border-radius:8px;color:var(--muted)}
@@ -47,7 +46,7 @@ NAV_CSS = """
   /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
   nav.sub{position:relative;z-index:30;background:var(--paper);
     display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    padding:13px 22px}
+    padding:13px 22px;border-bottom:1px solid var(--line)}
   nav.util,nav.top,nav.sub{font-size:var(--nav-fs)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
@@ -88,6 +87,10 @@ NAV_CSS = """
   .ddmenu b{display:block;font-weight:600}
   .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
 
+  @media (prefers-reduced-motion:no-preference){
+    nav.top,nav.sub,nav.util{animation:rise .5s ease both}
+    @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  }
   footer{margin-top:72px;color:var(--muted);font-size:14px}
   footer .inner{padding:26px 22px 60px;text-align:center;border-top:1px solid var(--line)}
   footer a{margin:0 9px}
@@ -248,7 +251,7 @@ _INDEX_CSS = """
     background:var(--chip); border:1px solid var(--line); border-radius:10px; text-wrap:balance}
   .pos b{color:var(--ink); font-weight:600}
   @media (prefers-reduced-motion:no-preference){
-    header.hero, nav.sub, section{animation:rise .5s ease both}
+    header.hero, section{animation:rise .5s ease both}
     section:nth-of-type(2){animation-delay:.05s}
     @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
   }

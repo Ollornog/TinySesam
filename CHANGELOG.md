@@ -24,7 +24,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert (Website & Showcase)
 - Reihenfolge der Leisten: **Titel/Marke → nav2 → Werkzeugleiste** (die schmale mit GitHub/Doku links
-  und den beiden Wechslern rechts).
+  und den beiden Wechslern rechts). Die Trennlinie sitzt unter nav2; das Einblenden beim Laden gilt
+  jetzt für alle drei Leisten und liegt in `NAV_CSS` — vorher fehlte es auf der Flow-Seite ganz.
 - Der Beispielseiten-Aufklapper springt nicht mehr von selbst auf, wenn man auf einer dieser Seiten ist —
   er wird nur noch markiert.
 - Startseite: unter „Installation" stehen jetzt die **Extras** und was sie bringen (`[oidc]`, `[saml]`,
