@@ -73,3 +73,36 @@ jobs:
         run: python tests/test_repo.py
       - name: Website-Test
         run: python tests/test_site.py
+
+  # Wiederholbarkeit: dieselbe Suite ZWEIMAL im selben Arbeitsverzeichnis.
+  # Ein Test, der beim zweiten Lauf rot wird, ist kaputt — nicht der Code.
+  # Danach muss der Baum unverändert sein: eine Suite, die schreibt, ist beim
+  # nächsten Lauf nicht mehr wiederholbar. Lokales Äquivalent: `ci-local --full`.
+  # Bewusst NICHT im pre-push-Hook — das verdoppelte die Wartezeit bei jedem Push.
+  repeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Chrome installieren
+        uses: browser-actions/setup-chrome@v1
+        with:
+          install-dependencies: true
+      - name: Systempaket für SAML (xmlsec)
+        run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+      - name: Install (alle Extras)
+        run: pip install -e '.[all]' uvicorn websockets
+      - name: Erster Lauf
+        run: scripts/check.sh
+      - name: Zweiter Lauf (muss ebenfalls grün sein)
+        run: scripts/check.sh
+      - name: Baum muss unverändert sein
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Die Suite hat Rückstände hinterlassen — sie ist nicht wiederholbar."
+            git status --porcelain
+            exit 1
+          fi
+          echo "Baum sauber."
