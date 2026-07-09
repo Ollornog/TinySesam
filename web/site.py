@@ -1,7 +1,11 @@
 """Die Projekt-Website — eine Quelle, zwei Sprachen, zwei Seiten.
 
-    index.html / index.de.html   → Überblick
-    flows.html / flows.de.html   → alle Login-Wege als Diagramm (Inhalt: web/flows.py)
+    index.html   → Überblick
+    flows.html   → alle Login-Wege als Diagramm (Inhalt: web/flows.py)
+
+**Ein** Sprachsystem: `?lang=de` bzw. `?lang=en` schaltet, das Cookie `ts_lang` merkt — genauso wie in
+der App. Weil GitHub Pages keinen Server hat, trägt jede Datei **beide** Sprachen und blendet eine aus.
+Keine Sprach-Dateinamen.
 
 `web/build.py` schreibt die vier Dateien für GitHub Pages (die Action baut sie bei jedem Push).
 Die Demo rendert dieselben Funktionen zur Laufzeit — sie braucht keine gebauten Dateien.
@@ -10,14 +14,25 @@ Hier stehen nur **Texte und Seiteninhalt**. Kopf, Navigation und Fußzeile komme
 damit Website, Demo und die eingebauten TinySesam-Seiten denselben Rumpf tragen.
 """
 from .flows import CSS as FLOW_CSS, render as render_flow_list
-from .ui import Ctx, Labels, Nav, LANGS, document, icon
+from .ui import Ctx, Labels, Nav, LANGS, icon, shell, static_document
 
 REPO = "https://github.com/Ollornog/TinySesam"
 
+INDEX, FLOWS, LEGAL = "index.html", "flows.html", "legal.html"
 
-def page_url(page: str, lang: str) -> str:
-    """`index`/`flows` + Sprache → Dateiname. Englisch bleibt ohne Suffix (Standard-Einstieg)."""
-    return f"{page}.html" if lang == "en" else f"{page}.de.html"
+# ────────────────────────────────────────────────────────────────────────────────
+# HIER DEINE DATEN EINTRAGEN. Ohne sie ist das Impressum wertlos.
+# § 5 DDG (seit 14.05.2025, löste § 5 TMG ab) verlangt Name, ladungsfähige Anschrift
+# und einen schnellen elektronischen Kontakt.
+OWNER = {
+    "name": "«Vor- und Nachname»",
+    "street": "«Straße und Hausnummer»",
+    "city": "«PLZ Ort»",
+    "country": "Deutschland",
+    "email": "www@ollornog.de",
+}
+# ────────────────────────────────────────────────────────────────────────────────
+LANG_HREFS = {c: f"?lang={c}" for c in LANGS}   # eine URL je Seite, die Sprache ist ein Parameter
 
 
 T = {
@@ -74,6 +89,36 @@ T = {
         "gateway": ('Want just SSO in front of existing apps? Run it as an '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC forward-auth gateway</a>.'),
         "f_changelog": "Changelog", "f_security": "Security", "f_license": "MIT License",
+        "f_legal": "Legal notice",
+        "legal_title": "TinySesam — legal notice & privacy",
+        "legal_desc": "Imprint under § 5 DDG and privacy information for the TinySesam project page.",
+        "legal_h1": "Legal notice & privacy",
+        "legal_lead": "This page is the documentation of a non-commercial open-source project. "
+                      "It shows no ads, tracks nobody and loads nothing from third-party hosts.",
+        "l_imprint": "Imprint",
+        "l_imprint_note": "Information under § 5 DDG (which replaced § 5 TMG on 14 May 2025) and "
+                          "responsible for the content under § 18 (2) MStV.",
+        "l_privacy": "Privacy",
+        "l_hosting_h": "Hosting on GitHub Pages",
+        "l_hosting": "This page is served by GitHub Pages (GitHub, Inc., 88 Colin P. Kelly Jr. St, "
+                     "San Francisco, CA 94107, USA). GitHub writes server log files for every request: "
+                     "IP address, time, requested file, referrer, browser and operating system. We have "
+                     "no access to those logs. Legal basis is Art. 6 (1) (f) GDPR — the legitimate "
+                     "interest in serving the page securely and reliably. GitHub processes data in the "
+                     "USA and is certified under the EU-US Data Privacy Framework.",
+        "l_browser_h": "What is stored in your browser",
+        "l_browser": "Two things, both because you asked for them, neither for tracking: the cookie "
+                     "<code>ts_lang</code> remembers the language you picked, and "
+                     "<code>localStorage['ts-theme']</code> remembers light or dark mode. No analytics, "
+                     "no third-party cookies, no fonts or scripts from other hosts — which is why there "
+                     "is no cookie banner.",
+        "l_rights_h": "Your rights",
+        "l_rights": "You can ask for information, correction, deletion, restriction and portability of "
+                    "your data, and object to its processing (Art. 15–21 GDPR). You may also complain to "
+                    "a supervisory authority. For anything concerning this page, write to the address above.",
+        "l_liability_h": "Links",
+        "l_liability": "This page links to external sites. Their content is the responsibility of their "
+                       "operators; at the time of linking nothing unlawful was apparent.",
         "credits": '<a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">'
                    'Wizard icons created by max.icons — Flaticon</a>',
         # Flow-Seite
@@ -145,6 +190,37 @@ T = {
         "gateway": ('Nur SSO vor bestehende Apps? Dann als '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC-Forward-Auth-Gateway</a> betreiben.'),
         "f_changelog": "Changelog", "f_security": "Sicherheit", "f_license": "MIT-Lizenz",
+        "f_legal": "Impressum",
+        "legal_title": "TinySesam — Impressum & Datenschutz",
+        "legal_desc": "Impressum nach § 5 DDG und Datenschutzhinweise für die Projektseite von TinySesam.",
+        "legal_h1": "Impressum & Datenschutz",
+        "legal_lead": "Diese Seite ist die Dokumentation eines nicht-kommerziellen Open-Source-Projekts. "
+                      "Sie zeigt keine Werbung, verfolgt niemanden und lädt nichts von fremden Servern.",
+        "l_imprint": "Impressum",
+        "l_imprint_note": "Angaben gemäß § 5 DDG (löste am 14.05.2025 den § 5 TMG ab) und "
+                          "verantwortlich für den Inhalt nach § 18 Abs. 2 MStV.",
+        "l_privacy": "Datenschutz",
+        "l_hosting_h": "Hosting bei GitHub Pages",
+        "l_hosting": "Diese Seite wird von GitHub Pages ausgeliefert (GitHub, Inc., 88 Colin P. Kelly Jr. "
+                     "St, San Francisco, CA 94107, USA). GitHub schreibt bei jedem Aufruf Server-Logs: "
+                     "IP-Adresse, Zeitpunkt, angefragte Datei, Referrer, Browser und Betriebssystem. Auf "
+                     "diese Logs haben wir keinen Zugriff. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO "
+                     "— das berechtigte Interesse, die Seite sicher und zuverlässig auszuliefern. GitHub "
+                     "verarbeitet Daten in den USA und ist unter dem EU-US Data Privacy Framework zertifiziert.",
+        "l_browser_h": "Was in deinem Browser gespeichert wird",
+        "l_browser": "Zwei Dinge, beide weil du sie angefordert hast, keines zum Verfolgen: das Cookie "
+                     "<code>ts_lang</code> merkt sich die gewählte Sprache, "
+                     "<code>localStorage['ts-theme']</code> merkt sich hell oder dunkel. Keine Statistik, "
+                     "keine Fremd-Cookies, keine Schriften oder Skripte von anderen Servern — deshalb gibt "
+                     "es hier auch kein Cookie-Banner.",
+        "l_rights_h": "Deine Rechte",
+        "l_rights": "Du kannst Auskunft, Berichtigung, Löschung, Einschränkung und Übertragung deiner "
+                    "Daten verlangen und der Verarbeitung widersprechen (Art. 15–21 DSGVO). Außerdem "
+                    "steht dir eine Beschwerde bei einer Aufsichtsbehörde offen. Für alles, was diese "
+                    "Seite betrifft, schreib an die Adresse oben.",
+        "l_liability_h": "Links",
+        "l_liability": "Diese Seite verlinkt auf fremde Seiten. Für deren Inhalte sind deren Betreiber "
+                       "verantwortlich; zum Zeitpunkt der Verlinkung war nichts Rechtswidriges erkennbar.",
         "credits": '<a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">'
                    'Wizard icons created by max.icons — Flaticon</a>',
         "flows_title": "TinySesam — Login-Flows",
@@ -170,24 +246,22 @@ LABELS = {
                  login=T[lang]["l_login"], register=T[lang]["l_register"], docs=T[lang]["cta_docs"],
                  theme_light=T[lang]["l_light"], theme_dark=T[lang]["l_dark"],
                  changelog=T[lang]["f_changelog"], security=T[lang]["f_security"],
-                 license=T[lang]["f_license"], credits=T[lang]["credits"])
+                 license=T[lang]["f_license"], legal=T[lang]["f_legal"], credits=T[lang]["credits"])
     for lang in LANGS
 }
 
 
 def site_nav(lang: str) -> Nav:
     t = T[lang]
-    return Nav(brand_href=page_url("index", lang), icon_url="wizard.png", repo=REPO,
-               pages=((page_url("index", lang), t["nav_overview"]),
-                      (page_url("flows", lang), t["nav_flows"])))
+    return Nav(brand_href=INDEX, icon_url="wizard.png", repo=REPO, flows_href=FLOWS,
+               legal_href=LEGAL, pages=((INDEX, t["nav_overview"]), (FLOWS, t["nav_flows"])))
 
 
 def site_ctx(page: str, lang: str, **kw) -> Ctx:
-    return Ctx(lang=lang, labels=LABELS[lang], path=page_url(page, lang),
-               lang_hrefs={c: page_url(page, c) for c in LANGS}, **kw)
+    return Ctx(lang=lang, labels=LABELS[lang], path=page, lang_hrefs=LANG_HREFS, **kw)
 
 
-_INDEX_CSS = """
+INDEX_CSS = """
   .wrap{max-width:720px;margin:0 auto;padding:0 22px}
   main{max-width:720px;padding:0 0 24px}
   :root{--nav-w:720px}
@@ -252,21 +326,18 @@ def hero(lang: str) -> str:
             f'</div><p class="note">{t["meta"]}</p></div>')
 
 
-def render_index(lang: str = "en", ctx: Ctx = None, nav: Nav = None) -> str:
-    """Überblick. Der Titelbereich ersetzt die Marke — der einzige Sonderfall."""
+def index_body(lang: str, nav: Nav) -> str:
+    """Der Inhalt der Startseite (ohne Rumpf)."""
     t = T[lang]
-    ctx = ctx or site_ctx("index", lang)
-    ctx.hero = hero(lang)
-    nav = nav or site_nav(lang)
     solves = "".join(f'<li><span class="yes">✓</span><span><b>{q}</b><br />— {a}</span></li>'
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    body = f"""<div class="wrap">
+    return f"""<div class="wrap">
   <section><h2>{t["h_solves"]}</h2><ul class="solves">{solves}</ul></section>
 
   <section><h2>{t["h_ways"]}</h2><div class="chips">{chips}</div>
-    <p class="note" style="margin-top:16px"><a href="{page_url("flows", lang)}">{t["flows_link"]}</a></p>
+    <p class="note" style="margin-top:16px"><a href="{nav.flows_href}">{t["flows_link"]}</a></p>
   </section>
 
   <section><h2>{t["h_more"]}</h2><div class="feat">{feat}</div></section>
@@ -286,23 +357,83 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
     <p class="note" style="margin-top:14px">{t["gateway"]}</p>
   </section>
 </div>"""
-    return document(ctx, nav, title=t["title"], desc=t["desc"], css=_INDEX_CSS, body=body)
 
 
-def render_flows(lang: str = "en", ctx: Ctx = None, nav: Nav = None) -> str:
+LEGAL_CSS = """
+  h1{font-family:var(--ts-serif);font-weight:600;font-size:48px;letter-spacing:-.01em;
+    margin:.1em 0 .2em;text-wrap:balance}
+  .lead{color:var(--muted);font-size:18px;max-width:60ch;text-wrap:balance}
+  main{max-width:760px}
+  section{margin:64px 0}
+  h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+    font-weight:600;margin:0 0 20px}
+  h3{font-family:var(--ts-serif);font-size:22px;margin:32px 0 8px}
+  p{max-width:70ch}
+  address{font-style:normal;background:var(--chip);border:1px solid var(--line);border-radius:12px;
+    padding:16px 18px;line-height:1.7;display:inline-block}
+  .todo{color:var(--danger);font-weight:600}
+"""
+
+
+def legal_body(lang: str) -> str:
+    """Impressum + Datenschutz. Die Angaben stehen in `OWNER` — Platzhalter fallen sofort auf."""
     t = T[lang]
-    ctx = ctx or site_ctx("flows", lang)
-    nav = nav or site_nav(lang)
-    body = (f'<h1>{t["flows_h1"]}</h1><p class="lead">{t["flows_lead"]}</p><hr class="rule">'
+    def field(key):
+        v = OWNER[key]
+        return f'<span class=todo>{v}</span>' if v.startswith("«") else v
+    return f"""
+  <h1>{t["legal_h1"]}</h1>
+  <p class="lead">{t["legal_lead"]}</p>
+
+  <section><h2>{t["l_imprint"]}</h2>
+    <p>{t["l_imprint_note"]}</p>
+    <address>{field("name")}<br>{field("street")}<br>{field("city")}<br>{field("country")}<br>
+      <a href="mailto:{OWNER["email"]}">{OWNER["email"]}</a></address>
+  </section>
+
+  <section><h2>{t["l_privacy"]}</h2>
+    <h3>{t["l_hosting_h"]}</h3><p>{t["l_hosting"]}</p>
+    <h3>{t["l_browser_h"]}</h3><p>{t["l_browser"]}</p>
+    <h3>{t["l_rights_h"]}</h3><p>{t["l_rights"]}</p>
+    <h3>{t["l_liability_h"]}</h3><p>{t["l_liability"]}</p>
+  </section>"""
+
+
+def flows_body(lang: str) -> str:
+    t = T[lang]
+    return (f'<h1>{t["flows_h1"]}</h1><p class="lead">{t["flows_lead"]}</p><hr class="rule">'
             f'{render_flow_list(lang, cfg=None)}<hr class="rule">'
             f'<p class="lead">{t["flows_outro"]}</p>')
-    return document(ctx, nav, title=t["flows_title"], desc=t["flows_desc"],
-                    css=_FLOWS_CSS + FLOW_CSS, body=body)
+
+
+# Die App rendert dieselben Seiten serverseitig — sie kennt die Sprache schon.
+def render_index(lang: str, ctx: Ctx, nav: Nav) -> str:
+    ctx.hero = hero(lang)
+    return shell(ctx, nav, index_body(lang, nav))
+
+
+def render_flows(lang: str, ctx: Ctx, nav: Nav) -> str:
+    return shell(ctx, nav, flows_body(lang))
+
+
+def render_legal(lang: str, ctx: Ctx, nav: Nav) -> str:
+    return shell(ctx, nav, legal_body(lang))
 
 
 def build_pages() -> dict:
+    """Zwei Dateien, beide zweisprachig. Die Sprache wählt `?lang=`/Cookie — nicht der Dateiname."""
+    nav = site_nav(LANGS[0])
     out = {}
-    for lang in LANGS:
-        out[page_url("index", lang)] = render_index(lang)
-        out[page_url("flows", lang)] = render_flows(lang)
+    for name, page, css, body_of, title_key, desc_key in (
+            (INDEX, "index", INDEX_CSS, lambda l: index_body(l, nav), "title", "desc"),
+            (FLOWS, "flows", _FLOWS_CSS + FLOW_CSS, flows_body, "flows_title", "flows_desc"),
+            (LEGAL, "legal", LEGAL_CSS, legal_body, "legal_title", "legal_desc")):
+        variants = {}
+        for lang in LANGS:
+            ctx = site_ctx(page, lang)
+            if page == "index":
+                ctx.hero = hero(lang)
+            variants[lang] = (T[lang][title_key], T[lang][desc_key],
+                              shell(ctx, site_nav(lang), body_of(lang)))
+        out[name] = static_document(nav, css, variants)
     return out

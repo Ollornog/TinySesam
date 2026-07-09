@@ -9,8 +9,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from web.flows import FLOWS, render                       # noqa: E402
-from web.site import LABELS, build_pages, page_url        # noqa: E402
-from web.ui import LANGS, Ctx, Nav, header, footer        # noqa: E402
+from web.site import FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
+from web.ui import LANG_COOKIE, LANGS, Ctx, Nav, footer, header  # noqa: E402
 
 # ---------- Flow-Daten ----------
 for f in FLOWS:
@@ -50,23 +50,29 @@ assert live.count("pill on") == 5 and live.count("pill off") == 4
 assert "Benutzername</b>" in live, "note(cfg) wird ausgewertet"
 print("  render(): statisch = Config-Schalter, mit cfg = aktiv/aus")
 
-# ---------- Vier Seiten, je Sprache, mit Sprach-Pille ----------
+# ---------- Zwei Dateien, jede zweisprachig — EIN Sprachsystem ----------
 pages = build_pages()
-assert set(pages) == {"index.html", "index.de.html", "flows.html", "flows.de.html"}, sorted(pages)
-assert 'lang="en"' in pages["index.html"] and 'lang="de"' in pages["index.de.html"]
-assert "Use only what you need" in pages["index.html"]
-assert "Nutze nur, was du brauchst" in pages["index.de.html"]
-assert "Sign-in flows" in pages["flows.html"] and "Login-Flows" in pages["flows.de.html"]
+assert set(pages) == {INDEX, FLOWS_FILE, LEGAL}, sorted(pages)
+assert not any(".de.html" in k for k in pages), "keine Sprach-Dateinamen"
 
-for page in ("index", "flows"):
-    for lang in LANGS:
-        html = pages[page_url(page, lang)]
-        for code in LANGS:
-            assert f"href='{page_url(page, code)}'>{code.upper()}<" in html, (page, lang, code)
-        assert f"'seg on' href='{page_url(page, lang)}'" in html, "aktives Segment"
-        assert 'href="theme.css"' in html and 'href="wizard.png"' in html
-        assert "flaticon.com/free-icons/wizard" in html, "Icon-Attribution"
-print("  4 Seiten, Sprach-Pille, Assets + Attribution ok")
+for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauchst")),
+                    (FLOWS_FILE, ("Sign-in flows", "Login-Flows")),
+                    (LEGAL, ("Legal notice", "Impressum & Datenschutz"))):
+    html = pages[name]
+    for m in marks:
+        assert m in html, (name, m)
+    # beide Sprachfassungen liegen in der Datei, eine wird ausgeblendet
+    assert '<div class="l-en">' in html and '<div class="l-de">' in html
+    assert 'html[data-lang="en"] .l-de{display:none}' in html
+    # der Wechsler benutzt überall denselben Parameter
+    for code in LANGS:
+        assert f"href='?lang={code}'" in html, (name, code)
+    assert ".de.html" not in html and "index.de" not in html
+    # und dasselbe Cookie wie die App
+    assert LANG_COOKIE in html and "navigator.language" in html
+    assert 'href="theme.css"' in html and 'href="wizard.png"' in html
+    assert "flaticon.com/free-icons/wizard" in html, "Icon-Attribution"
+print("  2 Dateien, beide Sprachen, ein `?lang=`-Parameter + ein Cookie")
 
 # ---------- Der Rumpf: ein Kopf-Container, zwei Navreihen, gleiche Fußzeile ----------
 def _cut(h, a, b):
@@ -74,23 +80,28 @@ def _cut(h, a, b):
     return h[i:h.index(b, i) + len(b)]
 
 
-feet = set()
-for page in ("index", "flows"):
-    for lang in LANGS:
-        h = pages[page_url(page, lang)]
-        assert h.count("<header class=shell>") == 1
-        assert h.count("<nav class='row pages'>") == 1 and h.count("<nav class='row tools'>") == 1
-        assert "id=ts-theme" in h and "data-theme=light" in h and "data-theme=dark" in h
-        assert "details.dd[open]" in h and "e.key==='Escape'" in h
-        feet.add(_cut(h, "<footer", "</footer>"))
-    # Startseite: Titelbereich statt Marke
-    idx = pages[page_url("index", lang)]
-    head = _cut(idx, "<header class=shell>", "</header>")
-    assert "class=hero" in head and "class=brand" not in head
-    assert "class=brand" in _cut(pages[page_url("flows", lang)], "<header class=shell>", "</header>")
+for name in (INDEX, FLOWS_FILE, LEGAL):
+    h = pages[name]
+    assert h.count("<header class=shell>") == 2, "je Sprachfassung ein Kopf"
+    assert h.count("<nav class='row pages'>") == 2 and h.count("<nav class='row tools'>") == 2
+    assert h.count("<footer") == 2
+    assert "id=ts-theme" in h and "data-theme=light" in h and "data-theme=dark" in h
+    assert "details.dd[open]" in h and "e.key==='Escape'" in h
 
-assert len(feet) == 2, "je Sprache eine Fußzeile, sonst identisch"
-print("  Kopf: ein Container + zwei Navreihen; Fußzeile je Sprache identisch")
+# ---------- Impressum + Datenschutz ----------
+legal = pages[LEGAL]
+for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US Data Privacy Framework",
+              "ts_lang", "ts-theme", "Art. 15", "Cookie-Banner"):
+    assert probe in legal, probe
+assert legal.count("class=todo") >= 4, "unausgefüllte Angaben müssen auffallen"
+assert all(f'href="{LEGAL}"' in pages[p] for p in (INDEX, FLOWS_FILE, LEGAL)), "Fußzeile verlinkt"
+print("  legal.html: Impressum (§5 DDG), Hosting, Browser-Speicher, Betroffenenrechte")
+
+idx, fl = pages[INDEX], pages[FLOWS_FILE]
+assert "class=hero" in _cut(idx, "<header class=shell>", "</header>")
+assert "class=brand" not in _cut(idx, "<header class=shell>", "</header>")
+assert "class=brand" in _cut(fl, "<header class=shell>", "</header>")
+print("  Kopf: ein Container + zwei Navreihen; Startseite mit Titelbereich statt Marke")
 
 # ---------- ui-Bausteine ----------
 _nav = Nav(brand_href="/", icon_url="w.png", repo="https://example.invalid",
@@ -115,24 +126,21 @@ assert ".ilink svg{width:20px;height:20px;flex:0 0 auto" in UI_CSS, "Icon darf n
 assert "height:22px" in UI_CSS.split(".ilink{")[1].split("}")[0], "Icon-Rahmen = Pillenhöhe"
 print("  .ilink: eigenes Polster, Icon 20px, kein Flex-Schrumpfen")
 
-# ---------- Der Sprachwechsler muss auf die andere Fassung DERSELBEN Seite zeigen ----------
-# Seiten mit der Sprache im Dateinamen dürfen kein `?lang=` benutzen: die Datei gewinnt.
-for page in ("index", "flows"):
-    for lang in LANGS:
-        html = pages[page_url(page, lang)]
-        i = html.index("<span class=pill2>")
-        pill = html[i:html.index("</span>", i)]
-        assert "?lang=" not in pill, (page, lang, "Dateiname schlägt den Query-Parameter")
-        for code in LANGS:
-            assert f"href='{page_url(page, code)}'" in pill, (page, lang, code)
-print("  Sprachwechsler: verweist auf die Datei, nicht auf ?lang=")
+# ---------- Ein Sprachsystem: nirgends ein Dateiname, überall `?lang=` ----------
+for name in (INDEX, FLOWS_FILE, LEGAL):
+    html = pages[name]
+    i = html.index("<span class=pill2>")
+    pill = html[i:html.index("</span>", i)]
+    for code in LANGS:
+        assert f"href='?lang={code}'" in pill, (name, code)
+print("  Sprachwechsler: überall `?lang=`, keine Sprach-Dateinamen")
 
 # ---------- Der Generator, den die GitHub-Action ruft ----------
 with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, "-m", "web.build", tmp], cwd=ROOT, check=True, capture_output=True)
     have = sorted(os.listdir(tmp))
-    assert have == sorted([".nojekyll", "flows.de.html", "flows.html", "index.de.html",
-                           "index.html", "theme.css", "wizard.png"]), have
+    assert have == sorted([".nojekyll", "flows.html", "index.html", "legal.html",
+                           "theme.css", "wizard.png"]), have
 print("  web.build schreibt Seiten + Assets + .nojekyll")
 
 print("OK test_site")

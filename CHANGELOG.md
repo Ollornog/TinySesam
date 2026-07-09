@@ -4,7 +4,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Impressum & Datenschutz** (`legal.html`, in der Demo `/legal`) — Angaben nach § 5 DDG, Hinweis auf
+  GitHub Pages als Hoster (Server-Logs, USA, EU-US Data Privacy Framework), was der Browser speichert
+  (`ts_lang`, `ts-theme` — beides angefordert, kein Tracking, kein Cookie-Banner) und die Rechte nach
+  Art. 15–21 DSGVO. Die eigenen Daten stehen in `OWNER` in `web/site.py`; unausgefüllte Platzhalter
+  werden rot dargestellt. Aus der Fußzeile jeder Seite verlinkt.
+
 ### Geändert — UI neu gebaut
+- **Ein Sprachsystem, kein zweites.** `?lang=xx` schaltet, das Cookie `ts_lang` merkt — auf der Website
+  wie in der App. Die Sprach-Dateinamen (`index.de.html`, `flows.de.html`) sind ersatzlos weg: weil
+  GitHub Pages keinen Server hat, trägt jede Datei **beide** Sprachen und blendet eine per CSS aus.
+  Aus vier Dateien werden zwei, aus zwei Mechanismen einer.
 - **`web/ui.py`**: der komplette Seitenrumpf an einer Stelle — Kopf (Titelzeile + zwei Navreihen in
   *einem* Container), Fußzeile, Aufklapper, Wechsel-Pillen, Icons, CSS und JS. Website, Demo **und**
   die eingebauten TinySesam-Seiten benutzen dieselben Funktionen; `Nav` beschreibt die App einmal,
@@ -15,6 +26,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Spezifität), es bleiben 4 px Inhaltsbreite und das Symbol wird zu einem Strich gequetscht.
 
 ### Behoben
+- **Ein leeres Login-Formular lieferte eine 422-JSON-Wand** statt der Seite mit Fehlermeldung.
+  Betroffen waren Login, PIN, TOTP, Registrierung, Ressourcen-PIN, Magic-Link und Passwort-Reset:
+  alle nutzten `Form(...)`, dessen Validierungsfehler FastAPI als JSON ausgibt. Jetzt `Form("")` plus
+  eine eigene Prüfung → 400 mit „Bitte alle Felder ausfüllen."; die Felder tragen zusätzlich `required`.
+- **Das Admin-Panel bekam `brand_head` nie** — deshalb blieb es im Dark-Mode hell (das frühe
+  Theme-Skript fehlte). Neuer Platzhalter `__BRANDHEAD__`.
 - **Der Sprachwechsler war auf den Website-Seiten tot** (`flows.de.html`, `index.de.html`): er zeigte
   auf `…?lang=en`, aber dort steckt die Sprache im **Dateinamen** und überstimmt den Parameter.
   Jetzt verweist er auf die andere Datei. Die Demo-Seiten (`/demo`, `/demo/flows`) benutzen weiter
