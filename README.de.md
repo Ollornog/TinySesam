@@ -415,15 +415,28 @@ Fertiges [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (Gatew
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'        # + httpx wird für den FastAPI-TestClient gebraucht (in [all] enthalten)
-python tests/run_all.py         # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
-python tests/run_all.py core pin chain   # gezielt einzelne
+pip install -e '.[all]'                    # + httpx für den FastAPI-TestClient (in [all] enthalten)
+python tests/run_all.py                    # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
+python tests/run_all.py core pin chain     # gezielt einzelne
 ```
 
-Die Suiten sind eigenständige assert-Skripte (kein pytest). **GitHub-Actions-CI**
-(`.github/workflows/ci.yml`) fährt bei **jedem Push/PR** automatisch: den vollen Lauf über
-Python 3.10–3.13 (`.[all]`) **und** einen Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback;
-Passkey/OIDC-abhängige Suiten werden dabei übersprungen). Fürs Update also einfach pushen — CI testet.
+Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantworten die Frage
+„ist etwas kaputt?", ohne dass du hinschauen musst:
+
+- **`tests/test_browser.py`** fährt einen headless Chrome über das DevTools-Protokoll gegen das laufende
+  Showcase und prüft, was ein Nutzer wirklich sieht: keine Konsolenfehler, keine fehlschlagenden Anfragen,
+  Kopf/Nav/Fußzeile auf jeder Seite, gleiche Breiten, `?lang=`-Umschaltung, Dunkelmodus bis in die
+  Vorschau-iframes, den Login (samt simuliertem Passwort-Autofill) und dass ein leeres Formular eine
+  Meldung liefert statt einer 422-JSON-Wand. Wird übersprungen, wenn Chrome oder `websockets` fehlen.
+- **`tests/test_repo.py`** bewacht die Hygiene: Versionen in `pyproject.toml`, `__init__.py` und Changelog
+  stimmen überein; kein generiertes HTML, keine Geheimnisse, kein vergessenes `print()` in der Bibliothek;
+  Farbwerte nur in `theme.py`/`theme.css`; jede Suite läuft im Sammellauf mit.
+- **`tests/test_site.py`** prüft die erzeugte Website: beide Sprachen je Datei, ein `?lang=`-Mechanismus,
+  überall derselbe Rumpf, Impressum vollständig.
+
+**GitHub Actions** fährt das bei **jedem Push**: den vollen Lauf (Python 3.10–3.13 mit `[all]`), einen
+Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der zusätzlich die
+Website baut. Also: pushen, und die CI sagt dir Bescheid.
 
 ## Status
 

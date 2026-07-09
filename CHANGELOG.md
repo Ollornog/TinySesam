@@ -4,6 +4,20 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Hinzugefügt — Absicherung
+- **`tests/test_browser.py`** — headless Chrome über das DevTools-Protokoll gegen das laufende Showcase:
+  Konsolenfehler, fehlschlagende Anfragen, Rumpf auf jeder Seite, gleiche Breiten, Icon-Größen,
+  `?lang=`-Umschaltung, Dunkelmodus bis in die Vorschau-iframes, leeres Formular ohne JSON-Wand und der
+  Login mit simuliertem Passwort-Autofill. Übersprungen ohne Chrome/`websockets`.
+- **`tests/test_repo.py`** — Versionen konsistent, Pflichtdateien da, kein generiertes HTML, keine
+  Geheimnisse, kein `print()` in der Bibliothek, Farbwerte nur in `theme.py`, jede Suite im Sammellauf.
+- CI: neuer Job **`browser`**, der zusätzlich die Website baut.
+
+### Behoben
+- Die **Konto-Vorschau** lud per `fetch` nach, lief ins `401` und warf `TypeError: ks.map is not a
+  function` in die Konsole. `render_page("account", static=True)` lädt nichts nach; zusätzlich prüfen
+  `loadkeys`/`loadsess` jetzt, ob überhaupt eine Liste zurückkam. (Vom neuen Browser-Test gefunden.)
+
 ### Hinzugefügt
 - **Impressum & Datenschutz** (`legal.html`, in der Demo `/legal`) — Angaben nach § 5 DDG, Hinweis auf
   GitHub Pages als Hoster (Server-Logs, USA, EU-US Data Privacy Framework), was der Browser speichert

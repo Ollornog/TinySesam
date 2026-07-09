@@ -39,3 +39,25 @@ jobs:
         run: pip install -e . httpx
       - name: Tests (Kern / scrypt-Fallback; Passkey/OIDC-Suiten werden übersprungen)
         run: python tests/run_all.py
+
+  # Die Seiten im echten Browser: Konsolenfehler, Breiten, Sprachwechsel, Dark-Mode, Login.
+  # Ohne diesen Job faellt eine Design-Regression erst dem Nutzer auf.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Chrome installieren
+        uses: browser-actions/setup-chrome@v1
+      - name: Abhängigkeiten
+        run: pip install -e . uvicorn websockets httpx
+      - name: Website bauen (muss durchlaufen)
+        run: python -m web.build _site
+      - name: Browser-Test
+        run: python tests/test_browser.py
+      - name: Repo-Hygiene
+        run: python tests/test_repo.py
+      - name: Website-Test
+        run: python tests/test_site.py
