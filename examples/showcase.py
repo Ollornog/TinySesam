@@ -17,6 +17,8 @@ Alles hängt an einer Quelle:
     ändert sich die Vorschau mit. Interaktion ist gesperrt, die Admin-Vorschau liest aus einer Attrappe.
   * **Layout** — Nav, Unterleiste und Vorschau-Rahmen kommen je aus genau einer Funktion.
 """
+import re
+from html import escape
 from pathlib import Path
 
 from fastapi import FastAPI, Depends, Request
@@ -49,7 +51,7 @@ auth = TinySesam(TinySesamConfig(
     pin_enabled=True,
     passkey_enabled=False,           # für lokalen HTTP-Test aus
     oidc_enabled=False,
-    magiclink_enabled=True,          # Login-Link per E-Mail (hier: Konsolen-Mailer)
+    magiclink_enabled=True,          # Login-Link + Passwort-vergessen per E-Mail (→ /demo/postfach)
     login_identifier="both",         # Anmeldung mit Benutzername ODER E-Mail
     allow_signup=True,
     signup_require_email=True,       # E-Mail ist Login-Kennung → Pflicht + eindeutig
@@ -59,8 +61,20 @@ auth = TinySesam(TinySesamConfig(
     cookie_secure=False,             # lokal ohne HTTPS
 ))
 auth.ensure_admin("admin", "geheim123")
-auth.set_mailer(lambda to, subject, text, html=None: print(f"\n=== MAIL an {to}: {subject} ===\n{text}\n"))
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
+
+# Demo-Postfach: die Demo verschickt nichts, sie legt die Mails unter /demo/postfach ab.
+# So sind Login-Link und Passwort-vergessen wirklich benutzbar, statt ins Leere zu zeigen.
+MAILBOX: list[dict] = []
+
+
+def demo_mailer(to, subject, text, html=None):
+    MAILBOX.insert(0, {"to": to, "subject": subject, "text": text})
+    del MAILBOX[8:]
+    print(f"\n=== MAIL an {to}: {subject} ===\n{text}\n")
+
+
+auth.set_mailer(demo_mailer)
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -110,6 +124,9 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .btn.g{border:1px solid var(--line);color:var(--ink)}.btn.g:hover{text-decoration:none;border-color:var(--accent)}
 .btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
+.card2{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:14px 0}
+.card2 pre{white-space:pre-wrap;word-break:break-word;font-family:var(--ts-mono);font-size:13px;
+  color:var(--muted);margin:8px 0 0}
 code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
   border-radius:5px;padding:1px 5px}
 hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
@@ -132,6 +149,7 @@ TESTPAGES = [
     ("/app", "<code>/app</code> · require_user", "all"),
     ("/sensibel", "<code>/sensibel</code> · Step-up", "all"),
     ("/gaeste", "<code>/gaeste</code> · PIN, kein Konto", "all"),
+    ("/demo/postfach", "📬 Postfach", "all"),
     ("/auth/account", "Konto", "user"),
     ("/auth/admin", "Admin-Panel", "admin"),
     ("/gibtsnicht", "404", "all"),
@@ -239,8 +257,10 @@ def demo(request: Request):
              "<b>echte Seiten</b>, live gerendert — nur die Bedienung ist gesperrt. "
              "Zum Mitmachen anmelden: <b>admin / geheim123</b>.</p>")
     panels = (
-        shot("Login-Panel", "Die eingebaute Anmeldeseite. Zeigt genau die Methoden, die in der Config "
-             "aktiv sind — hier Passwort, PIN und Login-Link per E-Mail.",
+        shot("Login-Panel", "Die eingebaute Anmeldeseite zeigt <b>genau die Methoden, die in der Config "
+             "aktiv sind</b> — hier Passwort, PIN und Login-Link per E-Mail. Ohne <code>magiclink_enabled</code> "
+             "oder <code>pin_enabled</code> verschwinden die entsprechenden Felder ersatzlos. Das Kennungsfeld "
+             "beschriftet sich nach <code>login_identifier</code>.",
              "/demo/preview/login", "/auth/login", 430, 0.86)
         + shot("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, PIN, "
                "2FA + Recovery-Codes, Passkeys, API-Keys und die eigenen Sitzungen.",
@@ -346,6 +366,28 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
       <div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>
         <a class='btn g' href='/'>Projektseite</a></div>""",
         user=auth.current_user(request), active="/gaeste")
+
+
+@app.get("/demo/postfach", response_class=HTMLResponse)
+def postfach(request: Request):
+    """Was die Demo „verschickt" hätte. Macht Login-Link und Passwort-vergessen ausprobierbar."""
+    if not MAILBOX:
+        items = ("<p class=lead>Noch nichts da. Fordere auf der Anmeldeseite einen "
+                 "<a href='/auth/magic/request'>Login-Link</a> an oder nutze "
+                 "<a href='/auth/forgot'>Passwort vergessen</a> — die Mail landet hier.</p>")
+    else:
+        rows = []
+        for m in MAILBOX:
+            body = escape(m["text"])
+            body = re.sub(r"(https?://\S+)", r"<a href='\1'>\1</a>", body)
+            rows.append(f"<div class=card2><div class=muted>an {escape(m['to'])}</div>"
+                        f"<b>{escape(m['subject'])}</b><pre>{body}</pre></div>")
+        items = "".join(rows)
+    return page("Postfach", f"""
+      <h1>📬 Demo-Postfach</h1>
+      <p class=lead>Diese Demo verschickt keine E-Mails — <code>auth.set_mailer(...)</code> legt sie
+        hier ab. Genau so hängt man in der eigenen App SMTP oder einen beliebigen Versanddienst ein.</p>
+      {items}""", user=auth.current_user(request), active="/demo/postfach")
 
 
 @app.get("/boom", response_class=HTMLResponse)

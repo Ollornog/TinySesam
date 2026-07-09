@@ -325,16 +325,23 @@ def _register(auth, ctx) -> str:
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
                 f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
         return _page(auth, t("reg.verify_title"), body)
+    cfg = auth.cfg
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
-    emailreq = " required" if auth.cfg.signup_require_email else ""
+    # Die Felder folgen `login_identifier`: im E-Mail-Modus ist die Adresse die Kennung,
+    # im Username-Modus ist die E-Mail nur optionale Zusatzinfo (sofern nicht Pflicht).
+    email_mode = cfg.login_identifier == "email"
+    emailreq = " required" if (cfg.signup_require_email or email_mode) else ""
+    user_field = ("" if email_mode else
+                  f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username>")
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
             f"<form method=post action='/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
-            f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username>"
+            f"{user_field}"
             f"<label>{_e(t('reg.email'))}</label>"
-            f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq} autocomplete=email>"
+            f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq}"
+            f"{' autofocus' if email_mode else ''} autocomplete=email>"
             f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")

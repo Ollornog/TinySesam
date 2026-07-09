@@ -336,7 +336,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("register", **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
 
         @r.post("/auth/register", response_class=HTMLResponse)
-        def register_submit(request: Request, username: str = Form(...), password: str = Form(...),
+        def register_submit(request: Request, password: str = Form(...), username: str = Form(""),
                             email: str = Form(""), next: str = Form("/"), invite: str = Form(""),
                             csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
@@ -353,12 +353,8 @@ def build_router(auth) -> APIRouter:
             def err(msg, status=400):
                 return auth.render_page("register", status=status,
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
-            if not username:
-                return err(auth.t("err.username_required"))
             if len(password) < auth.sec("password_min_length"):
                 return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
-            if auth.store.get_user_by_name(username):
-                return err(auth.t("err.username_taken"), 409)
             roles, is_admin = list(cfg.signup_default_roles), False
             email_final = norm_email(email)
             if inv:
@@ -366,12 +362,19 @@ def build_router(auth) -> APIRouter:
                 is_admin = bool((inv.get("payload") or {}).get("is_admin"))
                 email_final = norm_email(inv.get("email")) or email_final
             # E-Mail ist Login-Kennung → Pflicht, plausibel und eindeutig
-            if cfg.signup_require_email and not email_final:
+            if (cfg.signup_require_email or cfg.login_identifier == "email") and not email_final:
                 return err(auth.t("err.email_required"))
             if email_final and not valid_email(email_final):
                 return err(auth.t("err.email_invalid"))
             if email_final and auth.store.email_taken(email_final):
                 return err(auth.t("err.email_taken"), 409)
+            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
+            if cfg.login_identifier == "email":
+                username = email_final
+            if not username:
+                return err(auth.t("err.username_required"))
+            if auth.store.get_user_by_name(username):
+                return err(auth.t("err.username_taken"), 409)
             # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
             verify = cfg.signup_verify_email and not inv
             if verify and not auth.mail_configured():

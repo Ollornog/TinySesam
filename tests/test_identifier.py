@@ -110,6 +110,26 @@ assert "required" in c.get("/auth/register").text, "Feld als Pflicht markiert"
 os.unlink(db)
 print("  Registrierung: Pflicht + Format + Dublette ok")
 
+# ---------- Registrierung folgt login_identifier ----------
+auth, c, db = build(allow_signup=True, login_identifier="email")
+page = c.get("/auth/register").text
+assert "name=username" not in page, "im E-Mail-Modus kein Benutzernamen-Feld"
+assert "name=email" in page and "required" in page
+r = c.post("/auth/register", data={"password": "geheim12345", "email": "Solo@Example.com", "next": "/"},
+           follow_redirects=False)
+assert r.status_code == 303, r.text[:300]
+u = auth.store.get_user_by_email("solo@example.com")
+assert u["username"] == "solo@example.com", "E-Mail ist die Kennung"
+c.cookies.clear()
+assert login(c, "solo@example.com").status_code == 303
+os.unlink(db)
+
+auth, c, db = build(allow_signup=True, login_identifier="username", signup_require_email=False)
+page = c.get("/auth/register").text
+assert "name=username" in page and "required" not in page, "E-Mail optional -> kein required"
+os.unlink(db)
+print("  Registrierung folgt login_identifier ok")
+
 # ---------- Registrierung: E-Mail optional abschaltbar ----------
 auth, c, db = build(allow_signup=True, signup_require_email=False)
 r = c.post("/auth/register", data={"username": "ohne", "password": "geheim12345", "next": "/"},

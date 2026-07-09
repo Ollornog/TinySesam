@@ -44,8 +44,12 @@ assert c.get("/geheim", headers=JSON).json() == {"u": "neu"}
 # zu kurzes Passwort abgelehnt
 r = c.post("/auth/register", data={"username": "x", "password": "1", "next": "/"})
 assert r.status_code == 400
-# vergebener Name
-r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim", "next": "/"})
+# E-Mail ist Pflicht (signup_require_email, Default an)
+r = c.post("/auth/register", data={"username": "y", "password": "supergeheim", "next": "/"})
+assert r.status_code == 400
+# vergebener Name (mit eigener, freier E-Mail → scheitert wirklich am Namen)
+r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim",
+                                   "email": "anders@example.com", "next": "/"})
 assert r.status_code == 409
 os.remove(db)
 ok("allow_signup=True: Konto anlegen → eingeloggt; Validierung greift")
