@@ -28,8 +28,9 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import (LANGS as SITE_LANGS, NAV_CSS, NAV_JS, dropdown,   # noqa: E402
-                      footer, lang_pill, link, nav_sub, nav_top,
+from web.site import (BOOK_ICON, GITHUB_ICON, LANGS as SITE_LANGS,      # noqa: E402
+                      NAV_CSS, NAV_JS, dropdown, footer, icon_link,
+                      lang_pill, link, nav_sub, nav_top, nav_util,
                       render_flows, render_index, theme_pill, user_menu)
 
 REPO = "https://github.com/Ollornog/TinySesam"
@@ -131,7 +132,7 @@ TEXTS = {
         "guest_h1": "🔑 Gäste-Bereich",
         "guest_lead": "Freigeschaltet über die geteilte PIN — ganz ohne Benutzerkonto.",
         "footer": "Demo-Frontend",
-        "theme_light": "Hell", "theme_dark": "Dunkel",
+        "theme_light": "Hell", "theme_dark": "Dunkel", "docs": "Doku",
     },
     "en": {
         "nav_site": "Project page", "nav_demo": "Demo", "nav_flows": "Sign-in flows",
@@ -167,30 +168,24 @@ TEXTS = {
         "guest_h1": "🔑 Guest area",
         "guest_lead": "Unlocked with the shared PIN — without any user account.",
         "footer": "Demo front end",
-        "theme_light": "Light", "theme_dark": "Dark",
+        "theme_light": "Light", "theme_dark": "Dark", "docs": "Docs",
     },
 }
 
 
-# ---------------------------------------------------------------- Icons
-ICON = {
-    "github": '<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>',
-    "book": '<path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"/>',
-}
-
-
-def icon(name: str) -> str:
-    return f'<svg viewBox="0 0 16 16" aria-hidden="true">{ICON[name]}</svg>'
-
-
 # ---------------------------------------------------------------- Navigation (Inhalt; Bausteine aus web/site.py)
-def nav1(lang, path="/demo", brand=True) -> str:
-    """Erste Leiste: Marke + Werkzeuge (Sprache, Hell/Dunkel) als Wechsel-Pillen.
-    Kennt den Login-Status nicht. Nur die Startseite lässt die Marke weg."""
+def nav0(lang, path="/demo") -> str:
+    """Dritte (oberste) Leiste: links GitHub und Doku als Icon, rechts die beiden Wechsler."""
     t = TEXTS[lang]
+    links = icon_link(REPO, GITHUB_ICON, "GitHub") + icon_link(f"{REPO}#readme", BOOK_ICON, t["docs"])
     tools = (lang_pill({c: f"{path}?lang={c}" for c in SITE_LANGS}, lang)
              + theme_pill(t["theme_light"], t["theme_dark"]))
-    return nav_top(tools, brand_href="/" if brand else None, icon=ICON_URL)
+    return nav_util(links, tools)
+
+
+def nav1(lang) -> str:
+    """Zweite Ebene: nur die Marke. Auf der Startseite entfällt sie — der Titelbereich zeigt sie."""
+    return nav_top("", brand_href="/", icon=ICON_URL)
 
 
 def nav2(lang, user=None, active="") -> str:
@@ -222,9 +217,9 @@ body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-fam
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
 """ + NAV_CSS + FLOW_CSS + """
-main{max-width:var(--nav-w,900px);margin:0 auto;padding:56px 22px 64px}
-h1{font-family:var(--ts-serif);font-size:42px;letter-spacing:-.01em;margin:.2em 0 .16em;text-wrap:balance}
-h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 10px}
+main{max-width:var(--nav-w,900px);margin:0 auto;padding:64px 22px 72px}
+h1{font-family:var(--ts-serif);font-size:48px;letter-spacing:-.01em;margin:.2em 0 .2em;text-wrap:balance}
+h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;margin:0 0 14px}
 .lead{color:var(--muted);font-size:18px;max-width:56ch;text-wrap:balance}
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 17px;border-radius:10px;font-weight:500;font-size:15px}
@@ -236,8 +231,8 @@ h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .muted{color:var(--muted);font-size:14px}
 code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
   border-radius:5px;padding:1px 5px}
-hr.rule{height:1px;background:var(--line);border:0;margin:64px 0}
-.shot{margin:0 0 72px}
+hr.rule{height:1px;background:var(--line);border:0;margin:80px 0}
+.shot{margin:0 0 96px}
 .shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .shot .head p{margin:4px 0 0;color:var(--muted);font-size:15px;max-width:60ch}
 .frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
@@ -259,7 +254,7 @@ def page(title, body, user=None, active="", lang="de"):
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
         f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{NAV_JS}</head><body>"
-        f"{nav1(lang, active or '/demo')}{nav2(lang, user, active)}"
+        f"{nav0(lang, active or '/demo')}{nav1(lang)}{nav2(lang, user, active)}"
         f"<main>{body}</main>{footer(lang)}</body></html>")
 
 
@@ -281,7 +276,7 @@ def theme():
 
 def _index(user, lang) -> HTMLResponse:
     # Einziger Sonderfall: der Titelbereich zeigt die Marke, deshalb erste Leiste ohne sie.
-    return HTMLResponse(render_index(lang, nav1=nav1(lang, "/", brand=False), nav2=nav2(lang, user, "/")))
+    return HTMLResponse(render_index(lang, nav1=nav0(lang, "/"), nav2=nav2(lang, user, "/")))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -300,7 +295,7 @@ def site_page(name: str, request: Request):
     user = auth.current_user(request)
     if which == "index":
         return _index(user, lang)
-    return HTMLResponse(render_flows(lang, nav1=nav1(lang, "/demo/flows"),
+    return HTMLResponse(render_flows(lang, nav1=nav0(lang, "/demo/flows") + nav1(lang),
                                      nav2=nav2(lang, user, "/demo/flows")))
 
 
@@ -350,10 +345,7 @@ def demo(request: Request):
     panels = (shot(*t["p_login"], "/demo/preview/login", "/auth/login", 470, 0.86, t["ro"], t["open"])
               + shot(*t["p_account"], "/demo/preview/account", "/auth/account", 470, 0.8, t["ro"], t["open"])
               + shot(*t["p_admin"], "/demo/preview/admin", "/auth/admin", 520, 0.66, t["ro_fake"], t["open"]))
-    body = (f"<h1>{t['demo_h1']}</h1>{hello}"
-            f"<div class=bar><a class='btn g' href='{REPO}'>{icon('github')}GitHub</a>"
-            f"<a class='btn g' href='{REPO}#readme'>{icon('book')}Doku</a></div>"
-            f"<hr class=rule>{panels}{_FIT_JS}")
+    body = f"<h1>{t['demo_h1']}</h1>{hello}<hr class=rule>{panels}{_FIT_JS}"
     return page(t["demo_h1"], body, user=user, active="/demo", lang=lang)
 
 

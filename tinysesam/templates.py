@@ -156,7 +156,7 @@ def _login(auth, ctx) -> str:
     if "password" in methods:
         pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
-              f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>"
+              f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>"
               f"<label>{_e(t('login.password'))}</label><input name=password type=password autocomplete=current-password>"
               f"{remember}"
               f"<button type=submit>{_e(t('login.submit'))}</button></form>")
@@ -164,7 +164,7 @@ def _login(auth, ctx) -> str:
     if "pin" in methods:
         pin = (f"{_or if pw else ''}<form method=post action='/auth/pin'>"
                f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
-               f"<label>{_e(id_label)}</label><input name=username autocomplete={id_ac}{'' if pw else ' autofocus'}>"
+               f"<label>{_e(id_label)}</label><input name=username autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false{'' if pw else ' autofocus'}>"
                f"<label>{_e(t('login.pin'))}</label><input name=pin type=password inputmode=numeric autocomplete=off class=code>"
                f"{remember}"
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
@@ -366,7 +366,7 @@ def _register(auth, ctx) -> str:
                   or getattr(cfg, "password_reset_enabled", False) or cfg.signup_verify_email)
     emailreq = " required" if (cfg.signup_require_email or email_mode) else ""
     user_field = ("" if email_mode else
-                  f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username>")
+                  f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
             f"<form method=post action='/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
@@ -511,7 +511,7 @@ def _pin(auth, ctx) -> str:
     known = bool(ctx.get("username"))
     id_label, id_ac = _ident(auth)
     user_field = ("" if known else
-                  f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>")
+                  f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>")
     hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
     body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
             f"<form method=post action='/auth/pin'>"

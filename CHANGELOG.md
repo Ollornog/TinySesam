@@ -17,13 +17,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   bzw. `_doc(..., top=…)` rendern Inhalt oberhalb der Karte (Body ist jetzt eine zentrierte Spalte).
 
 ### Geändert (Website & Showcase)
+- **Dritte, schmale Leiste ganz oben**: links GitHub und Doku als Icon-Verweis, rechts die beiden
+  Wechsler (Sprache, Hell/Dunkel). Die Markenleiste darunter trägt nur noch das Logo; auf der
+  Startseite entfällt sie, weil der Titelbereich sie zeigt.
+- Kennungsfelder mit `autocapitalize=none autocorrect=off spellcheck=false` — Tastaturen
+  schrieben den Benutzernamen sonst groß.
 - **Sprache und Hell/Dunkel als Wechsel-Pillen** in der ersten Leiste (statt Dropdown bzw. Knopf) —
   kompakt (18 px hoch); Marke und Titel in der ersten Leiste dafür größer.
 - **Profil-Aufklapper** statt Konto-Knopf: Icon + Benutzername, darunter Konto, Admin-Panel, Abmelden.
 - Aufklapper schließen jetzt bei Klick daneben und mit `Escape` (`<details>` tut das von sich aus nicht).
 - Fußzeile: die Trennlinie sitzt am Inhalt, nicht am Fensterrand — gleiche Breite wie die Leisten (`--nav-w`).
-- Typografie: deutlich mehr Luft vor Überschriften und um die zweite Leiste, Abschnitts- und
-  Flow-Überschriften größer; die Leisten nutzen **eine** Schriftgröße (`--nav-fs`) statt drei.
+- Typografie: deutlich mehr Luft vor Überschriften und um die zweite Leiste; Überschriften größer
+  (h1 50 px, Abschnitts-Label 18 px, Flow-Überschriften 31 px), Abschnittsabstand 112 px; die Leisten nutzen **eine** Schriftgröße (`--nav-fs`) statt drei.
 - Dunkles Theme (`docs/theme.css`): Hintergrund, Flächen und Trennlinien eine Spur heller —
   reines Fast-Schwarz wirkte flach, die Karten hoben sich kaum ab.
 
