@@ -951,14 +951,27 @@ class TinySesam:
         'resource_pin' (je nach aktivierten Features). String → HTML mit Status; Response → 1:1."""
         self.templates.set(name, fn)
 
-    def render_page(self, template, status=200, **ctx) -> Response:
-        tok = None
+    def csrf_token(self, request: Request = None) -> str:
+        """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln."""
+        if request is not None and self.cfg.csrf_enabled:
+            cur = request.cookies.get(self.cfg.csrf_cookie)
+            if cur:
+                return cur
+        return secrets.token_urlsafe(24)
+
+    def render_page(self, template, status=200, request: Request = None, **ctx) -> Response:
+        """`request` mitgeben, wo es eins gibt: dann bleibt ein bereits gesetztes CSRF-Token gültig.
+        Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene
+        Formulare ungültig (klassische „Formular abgelaufen"-Falle)."""
+        tok, fresh = None, False
         if self.cfg.csrf_enabled:
-            tok = secrets.token_urlsafe(24)
+            cur = request.cookies.get(self.cfg.csrf_cookie) if request is not None else None
+            tok = cur or secrets.token_urlsafe(24)
+            fresh = cur is None
             ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
         out = self.templates.render(template, self, ctx)
         resp = out if isinstance(out, Response) else HTMLResponse(out, status_code=status)
-        if tok is not None:
+        if tok is not None and fresh:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
             resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
                             samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
@@ -1004,13 +1017,15 @@ class TinySesam:
             if loc:   # unser _deny/_deny_stepup/_redirect_factor → Redirect unverändert durchreichen
                 return RedirectResponse(loc, status_code=exc.status_code, headers=headers)
             if _wants_html(request):
-                return self.render_page("error", status=exc.status_code, code=exc.status_code, message=exc.detail)
+                return self.render_page("error", status=exc.status_code, request=request,
+                                       code=exc.status_code, message=exc.detail)
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers or None)
 
         @app.exception_handler(Exception)
         async def _handle_500(request, exc):
             if _wants_html(request):
-                return self.render_page("error", status=500, code=500, message=self.t("error.oops"))
+                return self.render_page("error", status=500, request=request, code=500,
+                                       message=self.t("error.oops"))
             return JSONResponse({"detail": "internal server error"}, status_code=500)
 
     def install_https(self, app):

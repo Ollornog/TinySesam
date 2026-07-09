@@ -20,7 +20,7 @@ def build_router(auth) -> APIRouter:
         nxt = auth.safe_next(next)
         if auth.current_user(request):
             return RedirectResponse(nxt, 303)
-        return auth.render_page("login", next=nxt, error=error)
+        return auth.render_page("login", request=request, next=nxt, error=error)
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(...), password: str = Form(...),
@@ -32,15 +32,15 @@ def build_router(auth) -> APIRouter:
         remember_me = _remember(cfg, remember)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip):
-            return auth.render_page("login", status=429, next=nxt, error=auth.t("err.rate"))
+            return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.rate"))
         if auth.is_locked(username, ip):
-            return auth.render_page("login", status=429, next=nxt, error=auth.t("err.locked"))
+            return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.locked"))
         u = auth.check_password(username, password)
         if not u and cfg.ldap_enabled:
             u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
         auth.record_login(username, ip, bool(u), "password")
         if not u:
-            return auth.render_page("login", status=401, next=nxt, error=auth.t("err.credentials"))
+            return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me)
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
@@ -60,7 +60,7 @@ def build_router(auth) -> APIRouter:
             if auth.current_user(request):
                 return RedirectResponse(f"/auth/totp/setup?next={_q(nxt)}", 303)
             return RedirectResponse(cfg.login_path, 303)
-        return auth.render_page("totp", next=nxt, error=error)
+        return auth.render_page("totp", request=request, next=nxt, error=error)
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(...), next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
@@ -72,11 +72,11 @@ def build_router(auth) -> APIRouter:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
-            return auth.render_page("totp", status=429, next=nxt, error=auth.t("err.retry"))
+            return auth.render_page("totp", request=request, status=429, next=nxt, error=auth.t("err.retry"))
         # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
         if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
             auth.record_login(pu["username"], ip, False, "totp")
-            return auth.render_page("totp", status=401, next=nxt, error=auth.t("err.code"))
+            return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
         auth.complete_mfa(s["token"])
         return RedirectResponse(auth.login_redirect_after(request, s["token"], pu["id"], nxt), 303)
@@ -87,7 +87,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
-        return auth.render_page("totp_setup", data=auth.totp_begin(u["id"]))
+        return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
 
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...)):
@@ -124,11 +124,11 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next)
             u = auth.current_user(request)
             if u:
-                return auth.render_page("pin", next=nxt, error=error, username=u["username"])
+                return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
             if not cfg.pin_login:
                 # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
                 return RedirectResponse(f"{cfg.login_path}?next={_q(nxt)}", 303)
-            return auth.render_page("pin", next=nxt, error=error)
+            return auth.render_page("pin", request=request, next=nxt, error=error)
 
         @r.post("/auth/pin")
         def pin_submit(request: Request, pin: str = Form(...), username: str = Form(""),
@@ -145,7 +145,7 @@ def build_router(auth) -> APIRouter:
                 ctx = {"next": nxt, "error": msg}
                 if me:
                     ctx["username"] = me["username"]
-                return auth.render_page(page, status=status, **ctx)
+                return auth.render_page(page, status=status, request=request, **ctx)
 
             if not me and not cfg.pin_login:
                 raise HTTPException(404)          # PIN ist kein Erstfaktor
@@ -205,7 +205,7 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next)
             if auth.resource_unlocked(request, name):
                 return RedirectResponse(nxt, 303)
-            return auth.render_page("resource_unlock", **_res_ctx(row, name, nxt, error))
+            return auth.render_page("resource_unlock", request=request, **_res_ctx(row, name, nxt, error))
 
         @r.post("/auth/resource/{name}")
         def resource_submit(request: Request, name: str, secret: str = Form(...), next: str = Form("/"),
@@ -218,11 +218,11 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
             if not auth.rate_ok(ip) or auth.is_locked(pseudo, ip):
-                return auth.render_page("resource_unlock", status=429,
+                return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
             if not auth.check_resource(name, secret):
                 auth.record_login(pseudo, ip, False, "resource")
-                return auth.render_page("resource_unlock", status=401, **_res_ctx(row, name, nxt, "Falsch"))
+                return auth.render_page("resource_unlock", request=request, status=401, **_res_ctx(row, name, nxt, "Falsch"))
             auth.record_login(pseudo, ip, True, "resource")
             resp = RedirectResponse(nxt, 303)
             auth.unlock_resource(request, resp, name)
@@ -233,14 +233,14 @@ def build_router(auth) -> APIRouter:
     if cfg.magiclink_enabled:
         @r.get("/auth/magic/request", response_class=HTMLResponse)
         def magic_request_page(request: Request, next: str = "/"):
-            return auth.render_page("magic_request", next=auth.safe_next(next), sent=False, error="")
+            return auth.render_page("magic_request", request=request, next=auth.safe_next(next), sent=False, error="")
 
         @r.post("/auth/magic/request", response_class=HTMLResponse)
         def magic_request(request: Request, email: str = Form(...), next: str = Form("/")):
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
-                return auth.render_page("magic_request", status=429, next=nxt, sent=False,
+                return auth.render_page("magic_request", request=request, status=429, next=nxt, sent=False,
                                         error=auth.t("err.rate"))
             base = cfg.base_url or str(request.base_url)
             try:
@@ -248,24 +248,24 @@ def build_router(auth) -> APIRouter:
             except Exception:
                 auth.audit("magic_send_error", detail=email)   # Fehler nicht nach außen leaken
             # immer dieselbe Antwort (keine User-Enumeration)
-            return auth.render_page("magic_request", next=nxt, sent=True, error="")
+            return auth.render_page("magic_request", request=request, next=nxt, sent=True, error="")
 
         @r.get("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str):
             info = auth.peek_magic(token)
             if not info:
-                return auth.render_page("magic_invalid", status=400)
+                return auth.render_page("magic_invalid", request=request, status=400)
             # Einladung: NICHT hier verbrauchen → zur Registrierung weiterreichen
             if info["purpose"] == "invite":
                 if not cfg.allow_signup:
-                    return auth.render_page("magic_invalid", status=400)
+                    return auth.render_page("magic_invalid", request=request, status=400)
                 return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
             # Passwort-Reset: NICHT hier verbrauchen → zur Reset-Seite weiterreichen
             if info["purpose"] == "reset_password":
                 return RedirectResponse(f"/auth/reset?token={_q(token)}", 303)
             data = auth.redeem_magic(token)
             if not data:
-                return auth.render_page("magic_invalid", status=400)
+                return auth.render_page("magic_invalid", request=request, status=400)
             handled = _magic_dispatch(auth, request, data)
             if handled is not None:
                 return handled
@@ -289,7 +289,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
-        return auth.render_page("reauth", next=auth.safe_next(next), error=error,
+        return auth.render_page("reauth", request=request, next=auth.safe_next(next), error=error,
                                 username=u["username"], methods=auth.stepup_options(u))
 
     @r.post("/auth/reauth")
@@ -304,7 +304,7 @@ def build_router(auth) -> APIRouter:
         methods = auth.stepup_options(u)
         if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip) or \
                 ("pin" in methods and auth.is_pin_locked(u["username"], ip)):
-            return auth.render_page("reauth", status=429, next=nxt, username=u["username"],
+            return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
         ok = False
@@ -316,7 +316,7 @@ def build_router(auth) -> APIRouter:
             ok = auth.verify_user_password(u["id"], password)
         auth.record_login(u["username"], ip, ok, "reauth")
         if not ok:
-            return auth.render_page("reauth", status=401, next=nxt, username=u["username"],
+            return auth.render_page("reauth", request=request, status=401, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
         if s:
@@ -328,37 +328,37 @@ def build_router(auth) -> APIRouter:
     if cfg.password_reset_enabled and cfg.magiclink_enabled:
         @r.get("/auth/forgot", response_class=HTMLResponse)
         def forgot_page(request: Request):
-            return auth.render_page("forgot", sent=False, error="")
+            return auth.render_page("forgot", request=request, sent=False, error="")
 
         @r.post("/auth/forgot", response_class=HTMLResponse)
         def forgot_submit(request: Request, email: str = Form(...), csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
-                return auth.render_page("forgot", status=429, sent=False, error=auth.t("err.rate"))
+                return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
             base = cfg.base_url or str(request.base_url)
             try:
                 auth.send_password_reset(email.strip(), base)
             except Exception:
                 auth.audit("reset_send_error", detail=email)
-            return auth.render_page("forgot", sent=True, error="")   # generisch (keine Enumeration)
+            return auth.render_page("forgot", request=request, sent=True, error="")   # generisch (keine Enumeration)
 
         @r.get("/auth/reset", response_class=HTMLResponse)
         def reset_page(request: Request, token: str = ""):
             if not auth.peek_magic(token, purpose="reset_password"):
-                return auth.render_page("magic_invalid", status=400)
-            return auth.render_page("reset", token=token, error="")
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("reset", request=request, token=token, error="")
 
         @r.post("/auth/reset", response_class=HTMLResponse)
         def reset_submit(request: Request, token: str = Form(...), password: str = Form(...),
                          csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             if len(password) < auth.sec("password_min_length"):
-                return auth.render_page("reset", status=400, token=token,
+                return auth.render_page("reset", request=request, status=400, token=token,
                                         error=auth.t("err.pw_short", n=auth.sec("password_min_length")))
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
-                return auth.render_page("magic_invalid", status=400)
+                return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
             auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
@@ -378,9 +378,9 @@ def build_router(auth) -> APIRouter:
                 return RedirectResponse(nxt, 303)
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if cfg.signup_invite_only and not inv:
-                return auth.render_page("register", status=403,
+                return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
-            return auth.render_page("register", **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
+            return auth.render_page("register", request=request, **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
 
         @r.post("/auth/register", response_class=HTMLResponse)
         def register_submit(request: Request, password: str = Form(...), username: str = Form(""),
@@ -390,15 +390,15 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
-                return auth.render_page("register", status=429, **_reg_ctx(nxt, invite=invite, email=email,
+                return auth.render_page("register", request=request, status=429, **_reg_ctx(nxt, invite=invite, email=email,
                                         error=auth.t("err.rate")))
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if cfg.signup_invite_only and not inv:
-                return auth.render_page("register", status=403,
+                return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
             username = username.strip()
             def err(msg, status=400):
-                return auth.render_page("register", status=status,
+                return auth.render_page("register", request=request, status=status,
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
             if len(password) < auth.sec("password_min_length"):
                 return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
@@ -435,7 +435,7 @@ def build_router(auth) -> APIRouter:
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
                 auth.send_verify_email(uid, email_final, cfg.base_url or str(request.base_url))
-                return auth.render_page("register", **_reg_ctx(nxt, sent_verify=True))
+                return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
@@ -497,7 +497,7 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 return RedirectResponse(f"{cfg.login_path}?next=/auth/account", 303)
-            return auth.render_page("account", user=u, methods=cfg.enabled_methods(),
+            return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path)
@@ -601,7 +601,7 @@ def build_router(auth) -> APIRouter:
             base = cfg.base_url or _saml_base(request)
             data = auth.saml.process(_saml_req(request, form), base)
             if not data:
-                return auth.render_page("magic_invalid", status=400)
+                return auth.render_page("magic_invalid", request=request, status=400)
             u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
             if not u:
                 raise HTTPException(403, "SAML: kein Zugriff")

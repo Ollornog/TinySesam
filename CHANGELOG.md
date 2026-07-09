@@ -4,6 +4,14 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Behoben
+- **Anmeldung schlug mit 403 fehl, wenn zwischendurch eine andere Seite geladen wurde.**
+  `render_page()` würfelte bei *jedem* Rendern ein neues CSRF-Token und überschrieb das Cookie —
+  damit war jedes offene Formular (auch eine zweite Registerkarte oder eine Fehlerseite) sofort
+  ungültig, ohne Fehlermeldung. Das Token wird nun wiederverwendet, solange das Cookie existiert;
+  `render_page(..., request=request)` reicht es durch, neu `auth.csrf_token(request)`.
+  Der Schutz bleibt unverändert scharf: falsches oder fehlendes Token → 403.
+
 ### Geändert
 - **Demo-Hinweis steht außerhalb der Login-Karte** — er gehört nicht ins Formular. `_page(..., top=…)`
   bzw. `_doc(..., top=…)` rendern Inhalt oberhalb der Karte (Body ist jetzt eine zentrierte Spalte).
