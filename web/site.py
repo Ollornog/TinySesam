@@ -30,7 +30,8 @@ NAV_CSS = """
   /* --nav-fs: EINE Schriftgröße für beide Leisten — dort ist Abstufung nur Unruhe */
   :root{--nav-fs:14px}
   nav.util,nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
-  nav.util{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 22px 0}
+  nav.util{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding:8px 22px;border-bottom:1px solid var(--line)}
   nav.util .left,nav.util .right{display:flex;align-items:center;gap:4px}
   .ilink{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
     border-radius:8px;color:var(--muted)}
@@ -46,7 +47,7 @@ NAV_CSS = """
   /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
   nav.sub{position:relative;z-index:30;background:var(--paper);
     display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    padding:13px 22px;border-bottom:1px solid var(--line)}
+    padding:13px 22px}
   nav.util,nav.top,nav.sub{font-size:var(--nav-fs)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
@@ -73,7 +74,7 @@ NAV_CSS = """
     display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:var(--nav-fs)}
   .dd summary::-webkit-details-marker{display:none}
   .dd summary::after{content:"▾";font-size:11px}
-  .dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
+  .dd summary:hover,.dd[open] summary,.dd summary.on{background:var(--chip);color:var(--ink)}
   .dd summary svg{width:16px;height:16px;fill:currentColor}
   .ddmenu{position:absolute;z-index:40;top:calc(100% + 6px);min-width:200px;padding:6px;
     background:var(--card);border:1px solid var(--line);border-radius:12px;
@@ -148,9 +149,10 @@ def link(href, label, active=False) -> str:
     return f"<a class='{'on' if active else ''}' href='{href}'>{label}</a>"
 
 
-def dropdown(summary, items_html, right=False, open_=False) -> str:
+def dropdown(summary, items_html, right=False, active=False) -> str:
+    """Aufklapper. `active` markiert nur den Auslöser — von selbst aufspringen soll er nicht."""
     cls = "dd r" if right else "dd"
-    return (f"<details class='{cls}'{' open' if open_ else ''}><summary>{summary}</summary>"
+    return (f"<details class='{cls}'><summary class='{'on' if active else ''}'>{summary}</summary>"
             f"<div class=ddmenu>{items_html}</div></details>")
 
 
@@ -318,6 +320,13 @@ T = {
             ("Hardened", "argon2, CSRF, brute-force lockout, Redis rate-limit, i18n"),
         ],
         "h_install": "Install", "h_use": "Use",
+        "extras": ("<code>[all]</code> pulls every optional dependency. Take only what you need: "
+                   "<code>[argon2]</code> stronger hashing · <code>[oidc]</code> OIDC login · "
+                   "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
+                   "<code>[passkey]</code> WebAuthn · <code>[qr]</code> TOTP&nbsp;QR code · "
+                   "<code>[redis]</code> rate limit across workers. Combine them: "
+                   "<code>[oidc,argon2]</code>. Without any extra you still get password + TOTP "
+                   "(stdlib scrypt)."),
         "use_comment_router": "# /auth/* + login UI", "use_comment_guard": "# protected",
         "gateway": ('Want just SSO in front of existing apps? Run it as an '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC forward-auth gateway</a>.'),
@@ -380,6 +389,13 @@ T = {
             ("Gehärtet", "argon2, CSRF, Brute-Force-Lockout, Redis-Rate-Limit, i18n"),
         ],
         "h_install": "Installation", "h_use": "Benutzung",
+        "extras": ("<code>[all]</code> zieht alle optionalen Abhängigkeiten. Nimm nur, was du brauchst: "
+                   "<code>[argon2]</code> stärkeres Hashing · <code>[oidc]</code> OIDC-Login · "
+                   "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
+                   "<code>[passkey]</code> WebAuthn · <code>[qr]</code> TOTP-QR-Code · "
+                   "<code>[redis]</code> Rate-Limit über mehrere Worker. Kombinierbar: "
+                   "<code>[oidc,argon2]</code>. Ganz ohne Extra bleiben Passwort + TOTP "
+                   "(stdlib-scrypt)."),
         "use_comment_router": "# /auth/* + Login-UI", "use_comment_guard": "# geschützt",
         "gateway": ('Nur SSO vor bestehende Apps? Dann als '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC-Forward-Auth-Gateway</a> betreiben.'),
@@ -440,16 +456,16 @@ def site_nav_sub(page: str, lang: str, right_html: str = "") -> str:
     return nav_sub(left, right_html or f'<a class="btn ghost" href="{REPO}">GitHub</a>')
 
 
-def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
-    """Überblick. Die erste Leiste kommt hier ohne Marke — der Titelbereich zeigt sie groß."""
+def render_index(lang: str = "en", nav2: str | None = None, nav3: str | None = None) -> str:
+    """Überblick. Der Titelbereich ersetzt die Markenleiste; darunter nav2, darunter die Werkzeugleiste."""
     t = T[lang]
     solves = "".join(f'<li><span class="yes">✓</span><span><b>{q}</b><br />— {a}</span></li>'
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    top = nav1 if nav1 is not None else site_nav_util(lang, "index")
     sub = nav2 if nav2 is not None else site_nav_sub("index", lang)
-    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{top}<header class="hero">
+    util = nav3 if nav3 is not None else site_nav_util(lang, "index")
+    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""<header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
     <h1><span class="tiny">Tiny</span>Sesam</h1>
     <p class="tagline">{t["tagline"]}</p>
@@ -460,7 +476,7 @@ def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = N
     </div>
     <p class="note">{t["meta"]}</p>
   </header>
-  {sub}
+  {sub}{util}
   <div class="wrap">
 
   <section><h2>{t["h_solves"]}</h2><ul class="solves">{solves}</ul></section>
@@ -473,6 +489,7 @@ def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = N
 
   <section><h2>{t["h_install"]}</h2>
     <div class="code">pip install <span class="s">"tinysesam[all] @ git+{REPO}.git"</span></div>
+    <p class="note" style="margin-top:14px">{t["extras"]}</p>
   </section>
 
   <section><h2>{t["h_use"]}</h2>
@@ -491,11 +508,13 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 """)
 
 
-def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
+def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = None,
+                 nav3: str | None = None) -> str:
     t = T[lang]
-    top = nav1 if nav1 is not None else site_nav_util(lang, "flows") + site_nav_top(lang)
+    top = nav1 if nav1 is not None else site_nav_top(lang)
     sub = nav2 if nav2 is not None else site_nav_sub("flows", lang)
-    return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""{top}{sub}
+    util = nav3 if nav3 is not None else site_nav_util(lang, "flows")
+    return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""{top}{sub}{util}
 <main>
   <h1>{t["flows_h1"]}</h1>
   <p class="lead">{t["flows_lead"]}</p>

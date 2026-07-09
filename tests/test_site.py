@@ -119,11 +119,12 @@ for lang in LANGS:
     for code in LANGS:
         assert f"href='{page_url('flows', code)}'>{code.upper()}<" in util
 
-    # Reihenfolge: util → Marke → nav2 (Startseite: der Titelbereich ersetzt die Marke)
+    # Reihenfolge: Marke → nav2 → Werkzeugleiste (Startseite: der Titelbereich ersetzt die Marke)
     fl = pages[page_url("flows", lang)]
-    assert -1 < fl.index("<nav class=util>") < fl.index("<nav class=top") < fl.index("<nav class=sub")
+    assert -1 < fl.index("<nav class=top") < fl.index("<nav class=sub") < fl.index("<nav class=util>")
     ix = pages[page_url("index", lang)]
-    assert "<nav class=top" not in ix and ix.index("<nav class=util>") < ix.index('<header class="hero"')
+    assert "<nav class=top" not in ix
+    assert ix.index('<header class="hero"') < ix.index("<nav class=sub") < ix.index("<nav class=util>")
 
     # nav2 ohne Trennlinie oben, Dropdown-Einträge untereinander
     assert "border-top" not in bars2[0]

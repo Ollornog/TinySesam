@@ -16,7 +16,21 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Demo-Hinweis steht außerhalb der Login-Karte** — er gehört nicht ins Formular. `_page(..., top=…)`
   bzw. `_doc(..., top=…)` rendern Inhalt oberhalb der Karte (Body ist jetzt eine zentrierte Spalte).
 
+### Hinzugefügt
+- **`brand_header` / `brand_footer`** — eigene Navigation und Fußzeile um **jede** eingebaute Seite
+  (Login, PIN, TOTP, Konto, Admin-Panel, Fehlerseiten). String oder `fn(auth) -> str`, wenn der Rumpf
+  vom Request abhängt. Der Inhalt sitzt in `.tsmain` mittig dazwischen; wirft der Rumpf eine Ausnahme,
+  wird er stillschweigend weggelassen statt die Seite mitzureißen.
+
 ### Geändert (Website & Showcase)
+- Reihenfolge der Leisten: **Titel/Marke → nav2 → Werkzeugleiste** (die schmale mit GitHub/Doku links
+  und den beiden Wechslern rechts).
+- Der Beispielseiten-Aufklapper springt nicht mehr von selbst auf, wenn man auf einer dieser Seiten ist —
+  er wird nur noch markiert.
+- Startseite: unter „Installation" stehen jetzt die **Extras** und was sie bringen (`[oidc]`, `[saml]`,
+  `[ldap]`, `[passkey]`, `[qr]`, `[redis]`, `[argon2]`) — man muss nicht `[all]` nehmen.
+- Showcase: `stepup_methods=["totp", "pin"]` — der sensible Bereich fragt nach der PIN, und sobald 2FA
+  eingerichtet ist, steht der Einmalcode zusätzlich zur Wahl.
 - **Dritte, schmale Leiste ganz oben**: links GitHub und Doku als Icon-Verweis, rechts die beiden
   Wechsler (Sprache, Hell/Dunkel). Die Markenleiste darunter trägt nur noch das Logo; auf der
   Startseite entfällt sie, weil der Titelbereich sie zeigt.

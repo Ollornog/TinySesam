@@ -36,8 +36,10 @@ class Templates:
 _CSS = TOKENS + """
 *{box-sizing:border-box}
 body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-direction:column;
-     align-items:center;justify-content:center;gap:14px;
      background:var(--ts-bg);color:var(--ts-ink)}
+/* der Inhalt sitzt mittig zwischen dem Kopf und der Fußzeile der Host-App (brand_header/-footer) */
+.tsmain{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+     gap:14px;padding:32px 16px}
 .card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
      border-radius:calc(var(--ts-radius) + 2px);padding:26px}
 h1{font-size:20px;margin:0 0 18px;text-align:center}
@@ -76,14 +78,27 @@ def favicon_link(icon: str) -> str:
     return f"<link rel=icon href='{html.escape(icon)}'>" if icon else ""
 
 
-def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top=""):
-    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit."""
+def brand(value, auth):
+    """`brand_header`/`brand_footer` dürfen ein String oder `fn(auth) -> str` sein — Letzteres,
+    wenn der Rumpf vom Request abhängt (Login-Status, Sprache)."""
+    if callable(value):
+        try:
+            return value(auth) or ""
+        except Exception:      # ein kaputter Rumpf darf die Login-Seite nicht mitreißen
+            return ""
+    return value or ""
+
+
+def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
+         header="", footer=""):
+    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit.
+    `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation drumherum legen kann."""
     inner = f"<div class=card>{body}</div>" if card else body
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"{favicon_link(brand_icon)}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{brand_css or ''}</style>{brand_head or ''}</head>"
-            f"<body>{top}{inner}</body></html>")
+            f"<body>{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
 
 
 def _shell(title, body, lang="en"):
@@ -91,11 +106,12 @@ def _shell(title, body, lang="en"):
 
 
 def _page(auth, title, body, card=True, top=""):
-    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon) —
-    re-skinnt alle Seiten zentral. `top` landet außerhalb der Karte."""
+    """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon/brand_header/
+    brand_footer) — re-skinnt und umrahmt alle Seiten zentral. `top` landet außerhalb der Karte."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
-                card, getattr(cfg, "brand_icon", ""), top)
+                card, getattr(cfg, "brand_icon", ""), top,
+                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth))
 
 
 def _e(s) -> str:
@@ -263,7 +279,7 @@ def _account(auth, ctx) -> str:
                   if ctx.get("is_admin") else "")
 
     css = """
-    body{max-width:640px;margin:0 auto;padding:24px;display:block}
+    .tsmain{max-width:640px;margin:0 auto;padding:24px;display:block}
     header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
     header h1{font-size:20px;margin:0}
     .sec{background:var(--ts-surface);border:1px solid var(--ts-line);border-radius:var(--ts-radius);

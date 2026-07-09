@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .store import norm_email, valid_email
-from .templates import favicon_link
+from .templates import brand, favicon_link
 from .theme import TOKENS
 
 
@@ -248,7 +248,10 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
     cfg = auth.cfg
-    return (_PAGE.replace("__TOKENS__", TOKENS).replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+    return (_PAGE.replace("__TOKENS__", TOKENS)
+            .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
+            .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
+            .replace("__RP__", cfg.rp_name).replace("__BASE__", base)
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
@@ -293,6 +296,7 @@ h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:
 code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;padding:2px 6px;font-size:12px}
 __BRANDCSS__
 </style></head><body>
+__HEADER__
 __WARN__
 <header><h1>🧠 __RP__ · Admin</h1><a href="/">← App</a><a href="/auth/logout">Logout</a></header>
 <div class=tabs id=tabs></div>
@@ -395,4 +399,4 @@ async function audit(){const a=await g("/api/audit?limit=120");
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
 tabs();users();
-</script></body></html>"""
+</script>__FOOTER__</body></html>"""
