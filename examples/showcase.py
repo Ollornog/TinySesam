@@ -373,7 +373,7 @@ def flows(request: Request):
 # ---------------------------------------------------------------- Read-only Vorschauen
 _LOCK = ("<style>html{pointer-events:none;user-select:none}"
          "html,body{min-height:0!important}::-webkit-scrollbar{display:none}</style>")
-_LOCK_CARD = _LOCK + "<style>body{align-items:flex-start!important;padding:26px 0}</style>"
+_LOCK_CARD = _LOCK + "<style>body{justify-content:flex-start!important;padding:26px 0}</style>"
 
 
 def _readonly(html: str, lock: str = _LOCK) -> HTMLResponse:

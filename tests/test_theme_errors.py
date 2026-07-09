@@ -96,3 +96,24 @@ _app = FastAPI(); _app.include_router(_a.router())
 assert "rel=icon" not in TestClient(_app).get("/auth/login").text, "ohne brand_icon kein Link"
 os.unlink(_db)
 print("OK brand_icon: Favicon zentral auf allen eingebauten Seiten")
+
+
+# ---------- Demo-Hinweis steht außerhalb der Login-Karte ----------
+_db = _tf.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
+                               pin_enabled=True, demo_mode=True, cookie_secure=False))
+_app = FastAPI(); _app.include_router(_a.router())
+_c = TestClient(_app, headers={"accept": "text/html"})
+_lp = _c.get("/auth/login").text
+assert _lp.index("class=demobar") < _lp.index("<div class=card>"), "Hinweis vor der Karte"
+assert "<div class=card>" not in _lp[:_lp.index("class=demobar")], "und außerhalb"
+assert "demo_mode" in _lp, "Warnung, dass er produktiv aus gehört"
+os.unlink(_db)
+
+# ohne demo_mode kein Hinweis
+_db = _tf.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
+_app = FastAPI(); _app.include_router(_a.router())
+assert "class=demobar" not in TestClient(_app).get("/auth/login").text
+os.unlink(_db)
+print("OK Demo-Hinweis: außerhalb der Karte, nur bei demo_mode")

@@ -35,7 +35,8 @@ class Templates:
 
 _CSS = TOKENS + """
 *{box-sizing:border-box}
-body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-direction:column;
+     align-items:center;justify-content:center;gap:14px;
      background:var(--ts-bg);color:var(--ts-ink)}
 .card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
      border-radius:calc(var(--ts-radius) + 2px);padding:26px}
@@ -59,8 +60,10 @@ img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;b
       border-radius:6px;padding:6px 8px;font-size:13px;text-align:center;word-break:break-all}
 .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;border-radius:8px;
       font-size:12px;margin-bottom:10px}
-.demobar{background:var(--ts-info-bg);color:var(--ts-info-ink);padding:10px 12px;border-radius:8px;
-      font-size:12.5px;margin-bottom:12px;line-height:1.5}
+/* steht NEBEN der Karte, nicht darin — ein Demo-Hinweis ist kein Teil des Formulars */
+.demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
+      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
+      font-size:12.5px;line-height:1.5}
 .demobar b{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
       border-radius:6px;font-size:11.5px}
@@ -73,25 +76,26 @@ def favicon_link(icon: str) -> str:
     return f"<link rel=icon href='{html.escape(icon)}'>" if icon else ""
 
 
-def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon=""):
+def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top=""):
+    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit."""
     inner = f"<div class=card>{body}</div>" if card else body
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"{favicon_link(brand_icon)}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{brand_css or ''}</style>{brand_head or ''}</head>"
-            f"<body>{inner}</body></html>")
+            f"<body>{top}{inner}</body></html>")
 
 
 def _shell(title, body, lang="en"):
     return _doc(title, body)
 
 
-def _page(auth, title, body, card=True):
+def _page(auth, title, body, card=True, top=""):
     """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon) —
-    re-skinnt alle Seiten zentral."""
+    re-skinnt alle Seiten zentral. `top` landet außerhalb der Karte."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
-                card, getattr(cfg, "brand_icon", ""))
+                card, getattr(cfg, "brand_icon", ""), top)
 
 
 def _e(s) -> str:
@@ -181,8 +185,8 @@ def _login(auth, ctx) -> str:
         links.append(f"<a href='/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
-    body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{_demobar(auth)}{err}{pw}{pin}{sep}{others}{signup}{js}"
-    return _page(auth, t("login.submit"), body)
+    body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
+    return _page(auth, t("login.submit"), body, top=_demobar(auth))
 
 
 def _totp(auth, ctx) -> str:
@@ -509,7 +513,7 @@ def _pin(auth, ctx) -> str:
     user_field = ("" if known else
                   f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>")
     hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
-    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{_demobar(auth, pin=True)}{err}"
+    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
             f"<form method=post action='/auth/pin'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{user_field}"
@@ -518,7 +522,7 @@ def _pin(auth, ctx) -> str:
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
             f"<div class=hint><a href='{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("pin.title"), body)
+    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True))
 
 
 def _totp_setup(auth, ctx) -> str:
