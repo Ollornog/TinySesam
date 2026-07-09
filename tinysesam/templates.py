@@ -34,42 +34,49 @@ class Templates:
 
 
 _CSS = TOKENS + """
+/* WICHTIG: alles unterhalb von .tsmain gekapselt. Sonst faerbt das Karten-CSS auf `brand_header`
+   und `brand_footer` der Host-App ab (nackte button/input/h1-Selektoren). */
 *{box-sizing:border-box}
 body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-direction:column;
      background:var(--ts-bg);color:var(--ts-ink)}
-/* der Inhalt sitzt mittig zwischen dem Kopf und der Fußzeile der Host-App (brand_header/-footer) */
 .tsmain{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
      gap:14px;padding:32px 16px}
-.card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
+.tsmain .card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
      border-radius:calc(var(--ts-radius) + 2px);padding:26px}
-h1{font-size:20px;margin:0 0 18px;text-align:center}
-label{display:block;font-size:12px;color:var(--ts-muted);margin:12px 0 4px}
-input{width:100%;background:var(--ts-field-bg);color:var(--ts-ink);border:1px solid var(--ts-field-line);
-     border-radius:8px;padding:10px 12px;font-size:15px}
-button,.btn2{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;font-size:15px;cursor:pointer;
-     background:var(--ts-accent);color:var(--ts-accent-ink);display:block;text-align:center;text-decoration:none}
-.btn2{background:var(--ts-neutral);color:var(--ts-neutral-ink);margin-top:10px}
-.err{background:var(--ts-err-bg);color:var(--ts-err-ink);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
-.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
-.or{text-align:center;color:var(--ts-muted);font-size:12px;margin:16px 0 4px}
-.hint{color:var(--ts-muted);font-size:12px;text-align:center;margin-top:14px}
-.hint a{color:var(--ts-muted)}
-.remember{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:13px;color:var(--ts-muted)}
-.remember input{width:auto;margin:0}
-.code{width:100%;text-align:center;letter-spacing:.4em;font-size:22px}
-img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;border-radius:8px;padding:6px}
-.mono{font-family:var(--ts-mono);background:var(--ts-field-bg);border:1px solid var(--ts-field-line);
-      border-radius:6px;padding:6px 8px;font-size:13px;text-align:center;word-break:break-all}
-.warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;border-radius:8px;
-      font-size:12px;margin-bottom:10px}
+.tsmain h1{font-size:20px;margin:0 0 18px;text-align:center}
+.tsmain label{display:block;font-size:12px;color:var(--ts-muted);margin:12px 0 4px}
+.tsmain input{width:100%;background:var(--ts-field-bg);color:var(--ts-ink);
+     border:1px solid var(--ts-field-line);border-radius:8px;padding:10px 12px;font-size:15px}
+.tsmain button,.tsmain .btn2{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;
+     font-size:15px;cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);
+     display:block;text-align:center;text-decoration:none}
+.tsmain .btn2{background:var(--ts-neutral);color:var(--ts-neutral-ink);margin-top:10px}
+.tsmain .err{background:var(--ts-err-bg);color:var(--ts-err-ink);padding:9px 12px;border-radius:8px;
+     font-size:13px;margin-bottom:6px}
+.tsmain .ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink);padding:9px 12px;border-radius:8px;
+     font-size:13px;margin-bottom:6px}
+.tsmain .or{text-align:center;color:var(--ts-muted);font-size:12px;margin:16px 0 4px}
+.tsmain .hint{color:var(--ts-muted);font-size:12px;text-align:center;margin-top:14px}
+.tsmain .hint a{color:var(--ts-muted)}
+.tsmain .remember{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:13px;
+     color:var(--ts-muted)}
+.tsmain .remember input{width:auto;margin:0}
+.tsmain .code{width:100%;text-align:center;letter-spacing:.4em;font-size:22px}
+.tsmain img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;
+     border-radius:8px;padding:6px}
+.tsmain .mono{font-family:var(--ts-mono);background:var(--ts-field-bg);
+     border:1px solid var(--ts-field-line);border-radius:6px;padding:6px 8px;font-size:13px;
+     text-align:center;word-break:break-all}
+.tsmain .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;
+     border-radius:8px;font-size:12px;margin-bottom:10px}
 /* steht NEBEN der Karte, nicht darin — ein Demo-Hinweis ist kein Teil des Formulars */
-.demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
-      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
-      font-size:12.5px;line-height:1.5}
-.demobar b{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
-.demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
-      border-radius:6px;font-size:11.5px}
-.demowarn code{background:none;border:0;padding:0}
+.tsmain .demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
+     padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
+     font-size:12.5px;line-height:1.5}
+.tsmain .demobar b{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.tsmain .demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
+     border-radius:6px;font-size:11.5px}
+.tsmain .demowarn code{background:none;border:0;padding:0}
 """
 
 
@@ -168,12 +175,14 @@ def _login(auth, ctx) -> str:
         remember = ("<label class=remember><input type=checkbox name=remember value=1 checked> "
                     f"{_e(t('login.remember'))}</label>")
     id_label, id_ac = _ident(auth)
+    # Im Demo-Modus fuellt der Browser sonst ein gespeichertes Passwort ein und der Login schlaegt fehl.
+    pw_ac = "new-password" if cfg.demo_mode else "current-password"
     pw = ""
     if "password" in methods:
         pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
               f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>"
-              f"<label>{_e(t('login.password'))}</label><input name=password type=password autocomplete=current-password>"
+              f"<label>{_e(t('login.password'))}</label><input name=password type=password autocomplete={pw_ac}>"
               f"{remember}"
               f"<button type=submit>{_e(t('login.submit'))}</button></form>")
     pin = ""
@@ -280,23 +289,24 @@ def _account(auth, ctx) -> str:
 
     css = """
     .tsmain{max-width:640px;margin:0 auto;padding:24px;display:block}
-    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
-    header h1{font-size:20px;margin:0}
-    .sec{background:var(--ts-surface);border:1px solid var(--ts-line);border-radius:var(--ts-radius);
-         padding:16px;margin-bottom:14px}
-    .sec h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px}
-    .sec small{text-transform:none;letter-spacing:0}
-    .sec input{margin:4px 0}
-    .sec button,.btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
-    button.warn{background:var(--ts-danger)}
-    .btnlink{background:var(--ts-neutral);color:var(--ts-neutral-ink);border-radius:8px;
+    .tsmain header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+    .tsmain header h1{font-size:20px;margin:0}
+    .tsmain .sec{background:var(--ts-surface);border:1px solid var(--ts-line);
+         border-radius:var(--ts-radius);padding:16px;margin-bottom:14px}
+    .tsmain .sec h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;
+         letter-spacing:.05em;margin:0 0 12px}
+    .tsmain .sec small{text-transform:none;letter-spacing:0}
+    .tsmain .sec input{margin:4px 0}
+    .tsmain .sec button,.tsmain .btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
+    .tsmain button.warn{background:var(--ts-danger)}
+    .tsmain .btnlink{background:var(--ts-neutral);color:var(--ts-neutral-ink);border-radius:8px;
          text-decoration:none;padding:9px 14px}
-    .msg{margin-left:8px;font-size:12px;color:var(--ts-muted)}
-    .msg.good,.ok{color:var(--ts-ok-ink);background:none;padding:0}
-    .msg.bad,.bad{color:var(--ts-err-ink)}
-    ul{list-style:none;padding:0;margin:0 0 8px}
-    li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
-    a{color:var(--ts-link)}
+    .tsmain .msg{margin-left:8px;font-size:12px;color:var(--ts-muted)}
+    .tsmain .msg.good,.tsmain .ok{color:var(--ts-ok-ink);background:none;padding:0}
+    .tsmain .msg.bad,.tsmain .bad{color:var(--ts-err-ink)}
+    .tsmain ul{list-style:none;padding:0;margin:0 0 8px}
+    .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
+    .tsmain a{color:var(--ts-link)}
     """
     pkjs = _PASSKEY_REGISTER_JS if "passkey" in methods else ""
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"

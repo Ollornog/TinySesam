@@ -264,39 +264,48 @@ _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">__ICON__<title>__RP__ — Admin</title>
 <style>
 __TOKENS__
+/* Alles unter .tsadmin gekapselt — sonst faerbt es auf brand_header/brand_footer ab. */
 *{box-sizing:border-box}
-body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-ink)}
-.warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:8px 20px;font-size:13px;
+body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-ink);
+  min-height:100vh;display:flex;flex-direction:column}
+.tsadmin{flex:1}
+.tsadmin .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:8px 20px;font-size:13px;
   border-bottom:1px solid var(--ts-warn-line)}
-header{padding:14px 20px;background:var(--ts-surface);border-bottom:1px solid var(--ts-line);
+.tsadmin header{padding:14px 20px;background:var(--ts-surface);border-bottom:1px solid var(--ts-line);
   display:flex;gap:14px;align-items:center}
-header h1{font-size:17px;margin:0}a{color:var(--ts-link);text-decoration:none}
-.tabs{display:flex;gap:6px;padding:12px 20px 0;flex-wrap:wrap}
-.tab{padding:7px 13px;border-radius:8px 8px 0 0;background:var(--ts-surface);cursor:pointer;font-size:14px;
-  border:1px solid transparent;border-bottom:none}
-.tab.on{background:var(--ts-surface-2);border-color:var(--ts-line);color:var(--ts-link)}
-.wrap{max-width:1000px;margin:0 auto;padding:18px 20px}
-table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--ts-muted);font-weight:600}
-td,th{padding:7px 8px;border-bottom:1px solid var(--ts-line-soft);white-space:nowrap}
-button{cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);border:0;border-radius:6px;
-  padding:6px 11px;font-size:13px}
-button.sec{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
-button.warn{background:var(--ts-danger);color:#fff}button.ok{background:var(--ts-success);color:#fff}
-input,select{background:var(--ts-field-bg);color:var(--ts-ink);border:1px solid var(--ts-field-line);
-  border-radius:6px;padding:6px 9px;font-size:13px}
-.badge{padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;background:var(--ts-chip);color:var(--ts-muted)}
-.badge.red{background:var(--ts-err-bg);color:var(--ts-err-ink)}
-.badge.grn{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
-.badge.svc{background:var(--ts-info-bg);color:var(--ts-info-ink)}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
-.card{background:var(--ts-surface);border:1px solid var(--ts-line);border-radius:calc(var(--ts-radius) - 2px);
-  padding:14px;margin-bottom:14px}
-h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
-.muted{color:var(--ts-muted)}
-code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;padding:2px 6px;font-size:12px}
+.tsadmin header h1{font-size:17px;margin:0}
+.tsadmin a{color:var(--ts-link);text-decoration:none}
+.tsadmin .tabs{display:flex;gap:6px;padding:12px 20px 0;flex-wrap:wrap}
+.tsadmin .tab{padding:7px 13px;border-radius:8px 8px 0 0;background:var(--ts-surface);cursor:pointer;
+  font-size:14px;border:1px solid transparent;border-bottom:none}
+.tsadmin .tab.on{background:var(--ts-surface-2);border-color:var(--ts-line);color:var(--ts-link)}
+.tsadmin .wrap{max-width:1000px;margin:0 auto;padding:18px 20px}
+.tsadmin table{width:100%;border-collapse:collapse;font-size:13px}
+.tsadmin th{text-align:left;color:var(--ts-muted);font-weight:600}
+.tsadmin td,.tsadmin th{padding:7px 8px;border-bottom:1px solid var(--ts-line-soft);white-space:nowrap}
+.tsadmin button{cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);border:0;
+  border-radius:6px;padding:6px 11px;font-size:13px}
+.tsadmin button.sec{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
+.tsadmin button.warn{background:var(--ts-danger);color:#fff}
+.tsadmin button.ok{background:var(--ts-success);color:#fff}
+.tsadmin input,.tsadmin select{background:var(--ts-field-bg);color:var(--ts-ink);
+  border:1px solid var(--ts-field-line);border-radius:6px;padding:6px 9px;font-size:13px}
+.tsadmin .badge{padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;
+  background:var(--ts-chip);color:var(--ts-muted)}
+.tsadmin .badge.red{background:var(--ts-err-bg);color:var(--ts-err-ink)}
+.tsadmin .badge.grn{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
+.tsadmin .badge.svc{background:var(--ts-info-bg);color:var(--ts-info-ink)}
+.tsadmin .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.tsadmin .card{background:var(--ts-surface);border:1px solid var(--ts-line);
+  border-radius:calc(var(--ts-radius) - 2px);padding:14px;margin-bottom:14px}
+.tsadmin h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
+.tsadmin .muted{color:var(--ts-muted)}
+.tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
+  padding:2px 6px;font-size:12px}
 __BRANDCSS__
 </style></head><body>
 __HEADER__
+<div class=tsadmin>
 __WARN__
 <header><h1>🧠 __RP__ · Admin</h1><a href="/">← App</a><a href="/auth/logout">Logout</a></header>
 <div class=tabs id=tabs></div>
@@ -399,4 +408,5 @@ async function audit(){const a=await g("/api/audit?limit=120");
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
 tabs();users();
-</script>__FOOTER__</body></html>"""
+</script>
+</div>__FOOTER__</body></html>"""
