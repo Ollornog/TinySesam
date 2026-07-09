@@ -93,6 +93,23 @@ def home(user = Depends(auth.require_user)):    # geschützt: eingeloggt (inkl. 
 
 Nicht-eingeloggte Browser werden auf `/auth/login` umgeleitet; API-Clients (Accept ≠ HTML) bekommen `401`.
 
+## Login-Kennung
+
+Womit man sich anmeldet, ist ein Config-Feld — `login_identifier`:
+
+```python
+TinySesamConfig(login_identifier="both")      # Benutzername ODER E-Mail im selben Feld (Default)
+TinySesamConfig(login_identifier="username")  # nur Benutzername
+TinySesamConfig(login_identifier="email")     # nur E-Mail
+```
+
+Die Beschriftung des Feldes zieht automatisch nach, Passwort- **und** PIN-Login halten sich daran.
+Weil die E-Mail eine Login-Kennung ist, wird sie kanonisch gespeichert (getrimmt, klein) und ist
+**eindeutig** (partieller UNIQUE-Index; Konten ohne Adresse bleiben erlaubt). Bei der Registrierung
+ist sie standardmäßig Pflicht — `signup_require_email=False` schaltet das ab. `signup_verify_email=True`
+aktiviert das Konto erst nach Klick auf den Bestätigungslink; das braucht einen Mailer (`set_mailer`
+oder SMTP-Config) und verweigert sonst die Registrierung, statt die Prüfung still zu überspringen.
+
 ## Guards
 
 ```python

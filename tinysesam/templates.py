@@ -84,6 +84,16 @@ def _e(s) -> str:
     return html.escape(str(s or ""))
 
 
+def _ident(auth) -> tuple[str, str]:
+    """Beschriftung + autocomplete fürs Kennungsfeld, je nach `config.login_identifier`."""
+    mode = getattr(auth.cfg, "login_identifier", "both")
+    if mode == "email":
+        return auth.t("login.email"), "email"
+    if mode == "username":
+        return auth.t("login.user"), "username"
+    return auth.t("login.identifier"), "username"
+
+
 def _cf(ctx) -> str:
     """Verstecktes CSRF-Feld für Formulare (leer, wenn CSRF aus → ctx ohne 'csrf')."""
     return f"<input type=hidden name=_csrf value='{_e(ctx.get('csrf', ''))}'>"
@@ -111,11 +121,12 @@ def _login(auth, ctx) -> str:
     if cfg.remember_me_enabled:
         remember = ("<label class=remember><input type=checkbox name=remember value=1 checked> "
                     f"{_e(t('login.remember'))}</label>")
+    id_label, id_ac = _ident(auth)
     pw = ""
     if "password" in methods:
         pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
-              f"<label>{_e(t('login.user'))}</label><input name=username autofocus autocomplete=username>"
+              f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>"
               f"<label>{_e(t('login.password'))}</label><input name=password type=password autocomplete=current-password>"
               f"{remember}"
               f"<button type=submit>{_e(t('login.submit'))}</button></form>")
@@ -123,7 +134,7 @@ def _login(auth, ctx) -> str:
     if "pin" in methods:
         pin = (f"{_or if pw else ''}<form method=post action='/auth/pin'>"
                f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
-               f"<label>{_e(t('login.user'))}</label><input name=username autocomplete=username{'' if pw else ' autofocus'}>"
+               f"<label>{_e(id_label)}</label><input name=username autocomplete={id_ac}{'' if pw else ' autofocus'}>"
                f"<label>{_e(t('login.pin'))}</label><input name=pin type=password inputmode=numeric autocomplete=off class=code>"
                f"{remember}"
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
@@ -316,12 +327,14 @@ def _register(auth, ctx) -> str:
         return _page(auth, t("reg.verify_title"), body)
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
+    emailreq = " required" if auth.cfg.signup_require_email else ""
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
             f"<form method=post action='/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
             f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username>"
-            f"<label>{_e(t('reg.email'))}</label><input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro} autocomplete=email>"
+            f"<label>{_e(t('reg.email'))}</label>"
+            f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq} autocomplete=email>"
             f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")

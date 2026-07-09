@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from .config import TinySesamConfig
-from .store import Store
+from .store import Store, norm_email
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from .templates import Templates
 from . import totp as _totp
@@ -30,6 +30,11 @@ from . import security
 
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
+        if config.login_identifier not in ("username", "email", "both"):
+            raise ValueError("login_identifier muss 'username', 'email' oder 'both' sein")
+        if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
+            raise ValueError("login_identifier='email' braucht signup_require_email=True — "
+                             "sonst entstehen Konten, die sich nicht anmelden können")
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
@@ -62,6 +67,9 @@ class TinySesam:
     # ---------- User-Verwaltung ----------
     def create_user(self, username, password=None, is_admin=False, roles=None,
                     display_name=None, email=None, is_service=False) -> int:
+        email = norm_email(email)
+        if email and self.store.email_taken(email):
+            raise ValueError("E-Mail-Adresse ist bereits vergeben")
         uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service)
         if password:
             self.store.set_password_hash(uid, hash_password(password))
@@ -169,8 +177,26 @@ class TinySesam:
         return self.store.get_user(user_id)
 
     # ---------- Passwort-Login ----------
+    def find_user(self, identifier) -> Optional[dict]:
+        """Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
+
+        "username" = nur Benutzername, "email" = nur E-Mail, "both" = beides im selben Feld.
+        Bei "both" entscheidet das @ die Reihenfolge; gefunden wird trotzdem beides, damit ein
+        Benutzername mit @ nicht plötzlich unauffindbar ist."""
+        ident = (identifier or "").strip()
+        if not ident:
+            return None
+        mode = getattr(self.cfg, "login_identifier", "both")
+        if mode == "username":
+            return self.store.get_user_by_name(ident)
+        if mode == "email":
+            return self.store.get_user_by_email(ident)
+        if "@" in ident:
+            return self.store.get_user_by_email(ident) or self.store.get_user_by_name(ident)
+        return self.store.get_user_by_name(ident) or self.store.get_user_by_email(ident)
+
     def check_password(self, username, password) -> Optional[dict]:
-        u = self.store.get_user_by_name(username)
+        u = self.find_user(username)
         if not u or u["disabled"]:
             dummy_verify(password)   # Timing angleichen (keine User-Enumeration)
             return None
@@ -250,7 +276,7 @@ class TinySesam:
         self.store.delete_pin(user_id)
 
     def check_pin(self, username, pin) -> Optional[dict]:
-        u = self.store.get_user_by_name(username)
+        u = self.find_user(username)
         if not u or u["disabled"]:
             dummy_verify(str(pin or ""))
             return None

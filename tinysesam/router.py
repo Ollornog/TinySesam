@@ -4,6 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+from .store import norm_email, valid_email
+
 
 def build_router(auth) -> APIRouter:
     cfg = auth.cfg
@@ -357,18 +359,30 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
             if auth.store.get_user_by_name(username):
                 return err(auth.t("err.username_taken"), 409)
-            roles, is_admin, email_final = list(cfg.signup_default_roles), False, email.strip()
+            roles, is_admin = list(cfg.signup_default_roles), False
+            email_final = norm_email(email)
             if inv:
                 roles = (inv.get("payload") or {}).get("roles") or []
                 is_admin = bool((inv.get("payload") or {}).get("is_admin"))
-                email_final = inv.get("email") or email_final
+                email_final = norm_email(inv.get("email")) or email_final
+            # E-Mail ist Login-Kennung → Pflicht, plausibel und eindeutig
+            if cfg.signup_require_email and not email_final:
+                return err(auth.t("err.email_required"))
+            if email_final and not valid_email(email_final):
+                return err(auth.t("err.email_invalid"))
+            if email_final and auth.store.email_taken(email_final):
+                return err(auth.t("err.email_taken"), 409)
+            # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
+            verify = cfg.signup_verify_email and not inv
+            if verify and not auth.mail_configured():
+                return err(auth.t("err.verify_no_mailer"), 500)
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
                 auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
             auth.audit("signup", username, ip)
             # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
-            if cfg.signup_verify_email and not inv and auth.mail_configured() and email_final:
+            if verify and email_final:
                 auth.store.set_disabled(uid, True)
                 auth.send_verify_email(uid, email_final, cfg.base_url or str(request.base_url))
                 return auth.render_page("register", **_reg_ctx(nxt, sent_verify=True))

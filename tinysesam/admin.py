@@ -15,6 +15,7 @@ import json
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
+from .store import norm_email, valid_email
 from .theme import TOKENS
 
 
@@ -51,13 +52,18 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, "username nötig")
         if auth.store.get_user_by_name(username):
             raise HTTPException(409, "existiert schon")
+        email = norm_email(b.get("email"))
+        if email and not valid_email(email):
+            raise HTTPException(400, "E-Mail ungültig")
+        if email and auth.store.email_taken(email):
+            raise HTTPException(409, "E-Mail bereits vergeben")
         roles = b.get("roles") or []
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
         else:
             uid = auth.create_user(username, password=b.get("password") or None,
                                    is_admin=bool(b.get("is_admin")), roles=roles,
-                                   display_name=b.get("display_name"), email=b.get("email"))
+                                   display_name=b.get("display_name"), email=email)
         auth.audit("user_create", detail=f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
@@ -241,6 +247,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     return (_PAGE.replace("__TOKENS__", TOKENS).replace("__RP__", cfg.rp_name).replace("__BASE__", base)
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
+            .replace("__REQMAIL__", "true" if cfg.signup_require_email else "false")
             .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
 
 
@@ -287,6 +294,7 @@ __WARN__
 <script>
 const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
 const ROLES=__ROLES__;                                 // bekannte Rollen/Gruppen (config.available_roles)
+const REQMAIL=__REQMAIL__;                             // config.signup_require_email (E-Mail Pflicht)
 const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["update","Update"],["audit","Audit"]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
@@ -301,12 +309,14 @@ const V=h=>document.getElementById("view").innerHTML=h;
 async function users(){
   const us=await g("/api/users");
   V(`<div class=card><h2>Neuer Benutzer / Service-Account</h2><div class=row>
-    <input id=nu placeholder=Benutzername><input id=np type=password placeholder="Passwort (leer=nur SSO/Key)">
+    <input id=nu placeholder=Benutzername><input id=ne type=email placeholder="E-Mail${REQMAIL?'':' (optional)'}">
+    <input id=np type=password placeholder="Passwort (leer=nur SSO/Key)">
     <input id=nr placeholder="Rollen, komma-getrennt" style=width:200px>
     <label><input type=checkbox id=na> Admin</label><label><input type=checkbox id=ns> Service/Daemon</label>
     <button onclick=mkuser()>Anlegen</button></div></div>
-    <table><tr><th>User</th><th>Typ</th><th>Rollen</th><th>Status</th><th>Aktionen</th></tr>`+
+    <table><tr><th>User</th><th>E-Mail</th><th>Typ</th><th>Rollen</th><th>Status</th><th>Aktionen</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
+      <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
       <td>${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
       <td>${u.disabled?'<span class="badge red">gesperrt</span>':'<span class="badge grn">aktiv</span>'}</td>
@@ -317,7 +327,8 @@ async function users(){
         <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">Keys</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
-async function mkuser(){const b={username:nu.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
+async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
+  if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert("E-Mail nötig");
   const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||"Fehler")}
 async function dis(id,d){if(!confirm(d?"Zugang sperren?":"Entsperren?"))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
 async function pw(id){const v=prompt("Neues Passwort:");if(v)await p(`/api/users/${id}/password`,{password:v})&&alert("gesetzt")}
