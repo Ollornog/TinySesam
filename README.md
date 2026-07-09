@@ -431,6 +431,15 @@ The suites are standalone assert scripts (no pytest). Three of them answer the q
 - **`tests/test_site.py`** checks the generated site: both languages per file, one `?lang=` mechanism,
   the shell identical everywhere, imprint complete.
 
+**Before every push** — one gate, locally:
+
+```bash
+git config core.hooksPath .githooks   # once per clone: the pre-push hook runs the gate
+scripts/check.sh                      # suites + browser + hygiene + website build
+scripts/check.sh --fast               # without the browser test (only when in a hurry)
+scripts/ci-status.sh                  # after pushing: fetch the CI result, exit != 0 when red
+```
+
 **GitHub Actions** runs all of it on every push: the full matrix (Python 3.10–3.13 with `[all]`), a
 minimal run without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the
 website. So: push, and CI tells you.

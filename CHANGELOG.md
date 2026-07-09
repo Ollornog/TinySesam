@@ -12,6 +12,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **`tests/test_repo.py`** — Versionen konsistent, Pflichtdateien da, kein generiertes HTML, keine
   Geheimnisse, kein `print()` in der Bibliothek, Farbwerte nur in `theme.py`, jede Suite im Sammellauf.
 - CI: neuer Job **`browser`**, der zusätzlich die Website baut.
+- **`scripts/check.sh`** — ein Tor vor jedem Push (Suiten + Browser + Hygiene + Website-Build),
+  gefahren vom **`.githooks/pre-push`**-Hook (`git config core.hooksPath .githooks`).
+  **`scripts/ci-status.sh`** holt nach dem Push das CI-Ergebnis ab (`gh run watch --exit-status`) —
+  ein Push ohne Rückmeldung gilt als nicht verifiziert.
+- `tests/run_all.py --no-browser` für Zwischenläufe; `tests/test_repo.py` bewacht jetzt auch, dass
+  Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
 ### Behoben
 - Die **Konto-Vorschau** lud per `fetch` nach, lief ins `401` und warf `TypeError: ks.map is not a

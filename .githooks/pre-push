@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Letzte Bremse vor dem Push. Aktivieren: git config core.hooksPath .githooks
+# Notausgang (nur mit gutem Grund): git push --no-verify
+set -euo pipefail
+echo "pre-push: Testsuite läuft — das dauert, und das ist gut so."
+exec "$(git rev-parse --show-toplevel)/scripts/check.sh"

@@ -17,3 +17,15 @@
 - **CSRF-Tokens** für die Formulare (derzeit über `SameSite=Lax` abgesichert) — bei Bedarf explizit.
 - **Forward-Auth**: optionale Feinsteuerung, welche `Remote-*`-Header gesetzt werden.
 - **E-Mail-Verifikation/Invite ohne Magic-Link-Endpoint** (aktuell nutzen sie `/auth/magic/{token}`).
+
+## CI auf eigener Hardware (offen)
+- Runner registrieren: GitHub → Settings → Actions → Runners → New self-hosted runner;
+  Compose-Service in `/home/drog/ci-runner/compose.yml` ergänzen (siehe Tower-Doku
+  `context/servers/ci-runner.md`). **Chrome muss ins Runner-Image** — `tests/test_browser.py`
+  fährt headless Chrome über das DevTools-Protokoll.
+- Danach in `.github/workflows/ci.yml`: `runs-on: ubuntu-latest` → `runs-on: [self-hosted, linux, x64]`.
+- Falle bei parallelen Runnern: Service-Container ohne feste Host-Ports (`ports: ['5432']`).
+
+## Continuous Deployment (zu besprechen)
+Nach grüner CI automatisch ausrollen — Kandidat wäre der Wegwerf-Demo-Container.
+Blast-Radius, Rollback und Umgebungen sind vorher zu klären. Noch nicht eingeführt.
