@@ -15,6 +15,8 @@ import json
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
+from .theme import TOKENS
+
 
 def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
@@ -236,7 +238,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
     cfg = auth.cfg
-    return (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+    return (_PAGE.replace("__TOKENS__", TOKENS).replace("__RP__", cfg.rp_name).replace("__BASE__", base)
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
@@ -245,26 +247,37 @@ def render_panel(auth, base: str, warn: str = "") -> str:
 _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>__RP__ — Admin</title>
 <style>
-:root{color-scheme:light dark}*{box-sizing:border-box}
-body{font-family:system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
-.warnbar{background:#442006;color:#fdba74;padding:8px 20px;font-size:13px;border-bottom:1px solid #7c2d12}
-header{padding:14px 20px;background:#161a22;border-bottom:1px solid #262b36;display:flex;gap:14px;align-items:center}
-header h1{font-size:17px;margin:0}a{color:#7dd3fc;text-decoration:none}
+__TOKENS__
+*{box-sizing:border-box}
+body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-ink)}
+.warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:8px 20px;font-size:13px;
+  border-bottom:1px solid var(--ts-warn-line)}
+header{padding:14px 20px;background:var(--ts-surface);border-bottom:1px solid var(--ts-line);
+  display:flex;gap:14px;align-items:center}
+header h1{font-size:17px;margin:0}a{color:var(--ts-link);text-decoration:none}
 .tabs{display:flex;gap:6px;padding:12px 20px 0;flex-wrap:wrap}
-.tab{padding:7px 13px;border-radius:8px 8px 0 0;background:#161a22;cursor:pointer;font-size:14px;border:1px solid transparent;border-bottom:none}
-.tab.on{background:#1b2130;border-color:#262b36;color:#7dd3fc}
+.tab{padding:7px 13px;border-radius:8px 8px 0 0;background:var(--ts-surface);cursor:pointer;font-size:14px;
+  border:1px solid transparent;border-bottom:none}
+.tab.on{background:var(--ts-surface-2);border-color:var(--ts-line);color:var(--ts-link)}
 .wrap{max-width:1000px;margin:0 auto;padding:18px 20px}
-table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:#9aa4b2;font-weight:600}
-td,th{padding:7px 8px;border-bottom:1px solid #20252f;white-space:nowrap}
-button{cursor:pointer;background:#2563eb;color:#fff;border:0;border-radius:6px;padding:6px 11px;font-size:13px}
-button.sec{background:#374151}button.warn{background:#b91c1c}button.ok{background:#15803d}
-input,select{background:#0f1115;color:#e6e6e6;border:1px solid #303643;border-radius:6px;padding:6px 9px;font-size:13px}
-.badge{padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;background:#22262e;color:#9aa4b2}
-.badge.red{background:#3a1520;color:#f87171}.badge.grn{background:#12331f;color:#4ade80}.badge.svc{background:#12283a;color:#60a5fa}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--ts-muted);font-weight:600}
+td,th{padding:7px 8px;border-bottom:1px solid var(--ts-line-soft);white-space:nowrap}
+button{cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);border:0;border-radius:6px;
+  padding:6px 11px;font-size:13px}
+button.sec{background:var(--ts-neutral);color:var(--ts-neutral-ink)}
+button.warn{background:var(--ts-danger);color:#fff}button.ok{background:var(--ts-success);color:#fff}
+input,select{background:var(--ts-field-bg);color:var(--ts-ink);border:1px solid var(--ts-field-line);
+  border-radius:6px;padding:6px 9px;font-size:13px}
+.badge{padding:1px 7px;border-radius:20px;font-size:11px;font-weight:600;background:var(--ts-chip);color:var(--ts-muted)}
+.badge.red{background:var(--ts-err-bg);color:var(--ts-err-ink)}
+.badge.grn{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
+.badge.svc{background:var(--ts-info-bg);color:var(--ts-info-ink)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
-.card{background:#161a22;border:1px solid #262b36;border-radius:10px;padding:14px;margin-bottom:14px}
-h2{font-size:13px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
-code{background:#0f1115;border:1px solid #303643;border-radius:5px;padding:2px 6px;font-size:12px}
+.card{background:var(--ts-surface);border:1px solid var(--ts-line);border-radius:calc(var(--ts-radius) - 2px);
+  padding:14px;margin-bottom:14px}
+h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
+.muted{color:var(--ts-muted)}
+code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;padding:2px 6px;font-size:12px}
 __BRANDCSS__
 </style></head><body>
 __WARN__
@@ -314,7 +327,7 @@ async function roles(id,cur,isadmin){
     ? ROLES.map(r=>`<label style="margin-right:12px"><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
     : `<input id="rf${id}" value="${esc(cur)}" placeholder="Rollen, komma-getrennt" style=width:280px>`;
   document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>Rollen / Gruppen</h2>
-    <div class=row>${inner||"<span style=color:#9aa4b2>keine Rollen definiert</span>"}</div>
+    <div class=row>${inner||"<span class=muted>keine Rollen definiert</span>"}</div>
     <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> Admin</label>
       <button onclick="saveroles(${id})">Speichern</button>
       <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">Abbrechen</button></div></div></td>`;
@@ -356,7 +369,7 @@ async function update(){const u=await g("/api/update");const st=u.status,se=u.se
     <div class=row><label style=width:120px>Version-Pin</label><input id=up value="${esc(se.pin)}" placeholder="z.B. v0.3.0 (leer=neueste)"></div>
     <div class=row><button onclick=saveupd()>Einstellungen speichern</button>
       <button class="${st.available?'ok':'sec'}" onclick=runupd()>Jetzt aktualisieren</button></div>
-    <div style=color:#9aa4b2;font-size:12px>${st.available?'Update verfügbar. ':''}Zieht die gepinnte bzw. neueste Version. Nach dem Update die App neu starten.</div></div>`)}
+    <div class=muted style=font-size:12px>${st.available?'Update verfügbar. ':''}Zieht die gepinnte bzw. neueste Version. Nach dem Update die App neu starten.</div></div>`)}
 async function saveupd(){await p("/api/update/settings",{mode:um.value,pin:up.value});update()}
 async function runupd(){if(!confirm("Update jetzt ziehen?"))return;const r=await p("/api/update/run");alert(r.ok?"OK — App neu starten":"Fehlgeschlagen:\n"+(r.output||"").slice(-400))}
 

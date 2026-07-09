@@ -152,6 +152,19 @@ TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentli
 `auth.check_password(u,p)`, `auth.start_session(uid, "password")`, `auth.set_cookie(resp, token)`,
 `auth.verify_totp(uid, code)`, `auth.complete_mfa(token)`.
 
+## Look & Feel
+
+Jede eingebaute Seite (Login, PIN, TOTP, Konto, Admin-Panel, Fehlerseiten) stylt sich über **einen Satz
+CSS-Variablen** — kein Selektor muss je Seite nachgebaut werden. In `brand_css` überschreiben, fertig:
+
+```python
+TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#2b2a3a;--ts-accent:#b0566f}")
+```
+
+Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](tinysesam/theme.py); `brand_head` hängt
+zusätzliches `<head>`-Markup ein. `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
+API-Clients weiterhin JSON. Mehr als Farben nötig? Ganze Seite per `auth.set_template(...)` ersetzen.
+
 ## Sicherheit
 
 - Passwörter: **argon2id** (Fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, jederzeit revozierbar).
