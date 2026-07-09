@@ -122,6 +122,8 @@ Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has 
 ## Roles & groups
 
 **Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
+An admin satisfies **every** role. If you don't want that (e.g. because permissions come from an IdP
+group): `admin_implies_roles=False` globally, or `require_role("editor", admin_implies=False)` per route.
 - **Local user/password:** assign roles per user in the **admin panel**. `available_roles=[…]` defines known
   roles → the panel shows them as **checkboxes** (empty = free-text entry).
 - **IdP users (OIDC/SAML/LDAP/AD):** automatically map external groups onto local roles —
@@ -244,12 +246,21 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
   (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP ban at the firewall level.
-- **Real client IP behind a proxy:** `X-Forwarded-For` only counts if the direct peer is in `trusted_proxies`
-  — otherwise the IP is spoofable.
+- **Real client IP behind a proxy:** `X-Forwarded-For` is only trusted when the direct peer is listed
+  in `trusted_proxies` — otherwise the IP is forgeable. **Start uvicorn without `--proxy-headers`.**
+  With that flag uvicorn already rewrites `request.client.host` to the forwarded IP, so TinySesam's
+  check has nothing left to verify and rate limiting, lockout and fail2ban can be bypassed.
+- **Roles and admins:** by default an admin satisfies every `require_role(...)`. If an app derives its
+  permissions purely from an IdP group, that is a silent privilege escalation — set
+  `admin_implies_roles=False` (or `require_role(..., admin_implies=False)`).
+- **IdP groups** are matched **exactly** against the keys of `*_group_role_map` (`group_match="exact"`).
+  Substring matching (needed for LDAP `memberOf` DNs, and used there automatically) would let the key
+  `admin` match a group called `not-admin`.
 - **Audit log:** login / logout / failed attempts in the DB (`store.recent_audit()`), for the admin panel.
 - **CSRF:** double-submit token (`csrf_enabled`, on by default) on all state-changing POSTs — the
   built-in forms/JS handle this automatically (`_csrf` field or `X-CSRF-Token` header);
   API-key requests are exempt (no cookie risk). In addition to `SameSite=Lax`.
+  Rendering your own templates? `token = auth.issue_csrf(response)` sets the cookie and returns the value.
 - **Rate limit across processes:** optional Redis (`redis_url`, extra `[redis]`) for multi-worker; otherwise in-memory.
 - **User enumeration:** login/PIN check against a dummy hash even for an unknown user (no timing leak).
 - **After a password change** the user’s remaining sessions are ended (admin reset: all).

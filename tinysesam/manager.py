@@ -101,20 +101,36 @@ class TinySesam:
     def is_admin(self, user) -> bool:
         return bool(user["is_admin"])
 
-    def has_role(self, user, role) -> bool:
-        return bool(user["is_admin"]) or role in self.user_roles(user)
+    def has_role(self, user, role, admin_implies=None) -> bool:
+        """Hat der User die Rolle? Ein Admin erfüllt standardmäßig JEDE Rolle
+        (`config.admin_implies_roles`). Wer Rechte allein an IdP-Gruppen hängt, schaltet das ab —
+        sonst ist jeder lokale Admin automatisch auch „editor", „viewer", … ."""
+        if admin_implies is None:
+            admin_implies = self.cfg.admin_implies_roles
+        if admin_implies and bool(user["is_admin"]):
+            return True
+        return role in self.user_roles(user)
 
     def set_roles(self, user_id, roles):
         self.store.set_roles(user_id, roles)
 
-    def apply_idp_groups(self, user_id, groups, mapping: dict):
+    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: bool = None):
         """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
         nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
-        entfernt), manuell vergebene Rollen bleiben. Match = Teilstring (auch für LDAP-memberOf-DNs)."""
+        entfernt), manuell vergebene Rollen bleiben.
+
+        Verglichen wird standardmäßig **exakt** (`config.group_match`). Teilstring nur, wo er nötig
+        ist — bei LDAP kommen ganze `memberOf`-DNs an. Sonst würde `admin` auch auf `nicht-admin`
+        passen: eine stille Rechteausweitung."""
         if not mapping:
             return
+        if substring is None:
+            substring = self.cfg.group_match == "substring"
         gs = [str(g) for g in (groups or [])]
-        matched = {role for key, role in mapping.items() if any(str(key) in g for g in gs)}
+        if substring:
+            matched = {role for key, role in mapping.items() if any(str(key) in g for g in gs)}
+        else:
+            matched = {role for key, role in mapping.items() if str(key) in gs}
         managed = {role for role in mapping.values() if role != "__admin__"}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
@@ -212,7 +228,9 @@ class TinySesam:
         """Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal
         eingelöst werden kann (`/auth/claim-admin?token=…`). Es steht nur im Log/in der Konsole —
         wer den Server betreibt, hat es; wer bloß die URL kennt, nicht. Läuft ab."""
-        if self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
+        # Kein Panel, keine lokalen Admins → kein Token. Sonst hätte eine reine OIDC-App einen
+        # Weg zum Admin, den sie gar nicht vorgesehen hat (und der im Log stünde).
+        if not self.cfg.admin_enabled or self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
             return None
         raw = self.store.get_setting("admin_claim")
         now = int(time.time())
@@ -225,7 +243,7 @@ class TinySesam:
         return token
 
     def consume_admin_claim(self, token, user) -> bool:
-        if not token or not user or self.admin_exists():
+        if not token or not user or not self.cfg.admin_enabled or self.admin_exists():
             return False
         raw = self.store.get_setting("admin_claim")
         if not raw:
@@ -329,7 +347,8 @@ class TinySesam:
             u = self.store.get_user(uid)
         elif u["disabled"]:
             return None
-        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map)
+        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map,
+                              substring=True)   # memberOf liefert ganze DNs
         return self.store.get_user(u["id"])   # frisch (gemappte Rollen)
 
     # ---------- SAML (Attribute → lokaler User) ----------
@@ -568,6 +587,17 @@ class TinySesam:
         return data
 
     # ---------- CSRF (Double-Submit) ----------
+    def issue_csrf(self, response: Response) -> str:
+        """CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.), die nicht
+        über `render_page()` laufen. Rückgabe gehört ins Formularfeld `_csrf` bzw. den Header
+        `X-CSRF-Token`. Ist CSRF abgeschaltet, passiert nichts und der Rückgabewert ist leer."""
+        if not self.cfg.csrf_enabled:
+            return ""
+        token = secrets.token_urlsafe(24)
+        response.set_cookie(self.cfg.csrf_cookie, token, secure=self.cfg.cookie_secure,
+                            samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+        return token
+
     def verify_csrf(self, request: Request, submitted) -> bool:
         if not self.cfg.csrf_enabled:
             return True
@@ -1044,7 +1074,8 @@ class TinySesam:
             return d
         self._redirect_factor(request, self._next_factor(factors, strict, done))
 
-    def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None, strict=None) -> dict:
+    def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None, strict=None,
+                 admin_implies=None) -> dict:
         gchain, _ = self._global_chain()
         if factors is not None:
             # explizite Route-Kette: nie per API-Key erfüllbar, treibt eigene Faktor-Schritte
@@ -1066,7 +1097,7 @@ class TinySesam:
                 self._redirect_factor(request, self.next_login_step(usr["id"], done))
         if admin and not self.is_admin(u):
             raise HTTPException(403, "Adminrechte nötig")
-        if role and not self.has_role(u, role):
+        if role and not self.has_role(u, role, admin_implies):
             raise HTTPException(403, f"Rolle '{role}' nötig")
         if mfa and not self.stepup_fresh(request, u):
             if u.get("_via") == "apikey":
@@ -1083,21 +1114,23 @@ class TinySesam:
         """FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa)."""
         return self._enforce(request, admin=True, mfa=self.cfg.admin_require_mfa)
 
-    def require_role(self, role: str, mfa: bool = False):
-        """FastAPI-Dependency-Factory: eingeloggt + Rolle (oder Admin). `Depends(auth.require_role('editor'))`.
+    def require_role(self, role: str, mfa: bool = False, admin_implies: bool = None):
+        """FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
+        Ein Admin erfüllt die Rolle standardmäßig mit — `admin_implies=False` verlangt sie wirklich.
         mfa=True verlangt zusätzlich Step-up-Frische."""
         def dep(request: Request) -> dict:
-            return self._enforce(request, role=role, mfa=mfa)
+            return self._enforce(request, role=role, mfa=mfa, admin_implies=admin_implies)
         return dep
 
     def require(self, mfa: bool = False, admin: bool = False, role: str = None,
-                factors: list = None, strict: bool = None):
+                factors: list = None, strict: bool = None, admin_implies: bool = None):
         """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
         `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
         factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale),
         strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`."""
         def dep(request: Request) -> dict:
-            return self._enforce(request, mfa=mfa, admin=admin, role=role, factors=factors, strict=strict)
+            return self._enforce(request, mfa=mfa, admin=admin, role=role, factors=factors,
+                                 strict=strict, admin_implies=admin_implies)
         return dep
 
     def require_mfa(self, request: Request) -> dict:

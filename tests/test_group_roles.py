@@ -13,10 +13,11 @@ def ok(name):
 db = tempfile.mktemp(suffix=".db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False))
 uid = auth.create_user("bob", roles=["manual"])   # manuell vergebene Rolle
-mapping = {"editors": "editor", "cn=admins,ou=g": "__admin__", "viewers": "viewer"}
+mapping = {"editors": "editor", "admins": "__admin__", "viewers": "viewer"}
 
 # hat editors + admins → editor-Rolle + Admin-Flag; manuelle Rolle bleibt
-auth.apply_idp_groups(uid, ["editors", "cn=admins,ou=g,dc=x"], mapping)
+# (verglichen wird EXAKT — Default seit group_match="exact")
+auth.apply_idp_groups(uid, ["editors", "admins"], mapping)
 u = auth.store.get_user(uid)
 assert set(auth.user_roles(u)) == {"manual", "editor"} and u["is_admin"] == 1
 ok("Gruppen→Rollen: editor gesetzt, manuelle Rolle bleibt, __admin__ → Admin-Flag")
@@ -32,6 +33,16 @@ before = auth.user_roles(auth.store.get_user(uid))
 auth.apply_idp_groups(uid, ["editors"], {})
 assert auth.user_roles(auth.store.get_user(uid)) == before
 ok("leeres Mapping → keine Änderung")
+
+# exakter Vergleich: 'editors' darf NICHT auf 'nicht-editors' passen
+auth.apply_idp_groups(uid, ["nicht-editors"], {"editors": "editor"})
+assert "editor" not in auth.user_roles(auth.store.get_user(uid))
+ok("Default exakt: Teiltreffer verleiht keine Rolle")
+
+# Teilstring bleibt für DNs möglich — explizit
+auth.apply_idp_groups(uid, ["cn=admins,ou=g,dc=x"], {"cn=admins,ou=g": "__admin__"}, substring=True)
+assert auth.store.get_user(uid)["is_admin"] == 1
+ok("substring=True: DN-Teiltreffer greift (so nutzt LDAP es)")
 os.remove(db)
 
 # ---------- LDAP-Login wendet ldap_group_role_map an ----------
