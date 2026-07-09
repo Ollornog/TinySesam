@@ -10,7 +10,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   die eingebauten TinySesam-Seiten benutzen dieselben Funktionen; `Nav` beschreibt die App einmal,
   `Ctx` den Request. `web/site.py` enthält jetzt nur noch Texte und Seiteninhalt.
 - Einziger Sonderfall bleibt die Startseite: dort ersetzt der Titelbereich die Markenzeile.
-- Die GitHub-/Doku-Icons sind so hoch wie die Wechsel-Pillen (22 px Rahmen, 20 px Symbol).
+- Die GitHub-/Doku-Icons sind so hoch wie die Wechsel-Pillen (22 px Rahmen, 20 px Symbol). Dafür muss
+  `nav.row a` das Polster per `:not(.ilink)` aussparen — sonst gewinnt es gegen `.ilink` (höhere
+  Spezifität), es bleiben 4 px Inhaltsbreite und das Symbol wird zu einem Strich gequetscht.
 
 ### Behoben
 - **Das eingebaute CSS färbte auf den Rumpf der Host-App ab.** `_CSS` stylte nackte

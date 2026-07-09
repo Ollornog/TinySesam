@@ -215,7 +215,9 @@ nav.row .l,nav.row .r{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 nav.pages{position:relative;z-index:30;background:var(--paper);padding:11px 22px;
   border-bottom:1px solid var(--line)}
 nav.tools{position:relative;z-index:29;padding:8px 22px}
-nav.row a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
+/* :not(.ilink) — sonst schlaegt diese Regel (0,1,2) das .ilink-Padding (0,1,0) und quetscht das Icon */
+nav.row a:not(.ilink){padding:6px 11px}
+nav.row a{display:inline-flex;align-items:center;gap:6px;border-radius:8px;
   color:var(--muted);white-space:nowrap;text-decoration:none;font-size:var(--nav-fs)}
 nav.row a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
 nav.row a.on{background:var(--chip);color:var(--ink)}
@@ -230,9 +232,9 @@ nav.row code{font-size:1em;background:none;border:0;padding:0;color:inherit}
 nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
 /* genauso hoch wie die Wechsel-Pillen (18px Segment + 2px Polsterung + 2px Rand = 22px) */
 .ilink{display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;
-  border-radius:7px;color:var(--muted)}
+  padding:0;border-radius:7px;color:var(--muted)}
 .ilink:hover{background:var(--chip);color:var(--ink);text-decoration:none}
-.ilink svg{width:20px;height:20px;fill:currentColor}
+.ilink svg{width:20px;height:20px;flex:0 0 auto;fill:currentColor}
 
 /* ---- Zweisegment-Pille (Sprache, Hell/Dunkel) ---- */
 .pill2{display:inline-flex;align-items:center;gap:1px;padding:1px;border-radius:999px;

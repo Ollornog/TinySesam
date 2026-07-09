@@ -106,6 +106,15 @@ assert "max" in h and "Admin-Panel" in h and "Abmelden" in h and "Anmelden" not 
 assert footer(_ctx, _nav).count("<footer") == 1
 print("  ui.header/ui.footer: Seiten markiert, Profil-Menü nur mit Benutzer")
 
+# ---------- Icon-Links dürfen nicht vom Seitenlink-Polster gequetscht werden ----------
+from web.ui import UI_CSS  # noqa: E402
+
+assert "nav.row a:not(.ilink){padding:6px 11px}" in UI_CSS, (
+    "sonst schlägt `nav.row a` (0,1,2) das `.ilink`-Padding (0,1,0) und das Icon wird 4px breit")
+assert ".ilink svg{width:20px;height:20px;flex:0 0 auto" in UI_CSS, "Icon darf nicht schrumpfen"
+assert "height:22px" in UI_CSS.split(".ilink{")[1].split("}")[0], "Icon-Rahmen = Pillenhöhe"
+print("  .ilink: eigenes Polster, Icon 20px, kein Flex-Schrumpfen")
+
 # ---------- Der Generator, den die GitHub-Action ruft ----------
 with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, "-m", "web.build", tmp], cwd=ROOT, check=True, capture_output=True)
