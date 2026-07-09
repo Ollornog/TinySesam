@@ -1,0 +1,72 @@
+/* TinySesam — ein Satz Farben für die Projekt-Website UND für die App/Showcase.
+   Die Website lädt die Datei per <link>, das Showcase reicht sie als `brand_css` in die
+   eingebauten Seiten (Login/Konto/Admin/Fehler). Farbe ändern = nur hier ändern. */
+
+:root{
+  --paper:#f6f1ec; --card:#fbf8f4; --chip:#efe7de;
+  --ink:#2b2a3a; --muted:#6f6a7d; --line:#e6ddd4;
+  --accent:#b0566f; --accent-2:#d98c93;
+  --code-bg:#2b2a3a; --code-fg:#f1ede7; --glow:rgba(176,86,111,.20);
+  --danger:#a12048; --success:#2f7d4f;
+  --err-bg:#f7dde3;  --err-ink:#a12048;
+  --ok-bg:#e2efe4;   --ok-ink:#2f7d4f;
+  --warn-bg:#fbeadb; --warn-ink:#8a5a1e; --warn-line:#e6ccae;
+  --info-bg:#e3e9f6; --info-ink:#3f5a8a;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#1a1922; --card:#221f2c; --chip:#2a2735;
+    --ink:#ece9f2; --muted:#a49eb4; --line:#2f2c3b;
+    --accent:#e0919c; --accent-2:#b0566f;
+    --code-bg:#12111a; --code-fg:#e8e4ef; --glow:rgba(224,145,156,.16);
+    --danger:#c2415f; --success:#3f9e68;
+    --err-bg:#3a1520;  --err-ink:#f5a3b0;
+    --ok-bg:#12331f;   --ok-ink:#7ee0a1;
+    --warn-bg:#3a2a12; --warn-ink:#fdba74; --warn-line:#6b4a20;
+    --info-bg:#12283a; --info-ink:#60a5fa;
+  }
+}
+:root[data-theme="light"]{
+  --paper:#f6f1ec; --card:#fbf8f4; --chip:#efe7de;
+  --ink:#2b2a3a; --muted:#6f6a7d; --line:#e6ddd4;
+  --accent:#b0566f; --accent-2:#d98c93;
+  --code-bg:#2b2a3a; --code-fg:#f1ede7; --glow:rgba(176,86,111,.20);
+  --danger:#a12048; --success:#2f7d4f;
+  --err-bg:#f7dde3;  --err-ink:#a12048;
+  --ok-bg:#e2efe4;   --ok-ink:#2f7d4f;
+  --warn-bg:#fbeadb; --warn-ink:#8a5a1e; --warn-line:#e6ccae;
+  --info-bg:#e3e9f6; --info-ink:#3f5a8a;
+}
+:root[data-theme="dark"]{
+  --paper:#1a1922; --card:#221f2c; --chip:#2a2735;
+  --ink:#ece9f2; --muted:#a49eb4; --line:#2f2c3b;
+  --accent:#e0919c; --accent-2:#b0566f;
+  --code-bg:#12111a; --code-fg:#e8e4ef; --glow:rgba(224,145,156,.16);
+  --danger:#c2415f; --success:#3f9e68;
+  --err-bg:#3a1520;  --err-ink:#f5a3b0;
+  --ok-bg:#12331f;   --ok-ink:#7ee0a1;
+  --warn-bg:#3a2a12; --warn-ink:#fdba74; --warn-line:#6b4a20;
+  --info-bg:#12283a; --info-ink:#60a5fa;
+}
+
+/* Die Tokens der eingebauten TinySesam-Seiten — abgeleitet, nichts doppelt gepflegt.
+   Damit sehen Login-, Konto-, Admin- und Fehlerseite exakt aus wie die Website. */
+:root{
+  --ts-bg:var(--paper);          --ts-surface:var(--card);      --ts-surface-2:var(--chip);
+  --ts-ink:var(--ink);           --ts-muted:var(--muted);
+  --ts-line:var(--line);         --ts-line-soft:var(--line);
+  --ts-link:var(--accent);
+  --ts-field-bg:var(--paper);    --ts-field-line:var(--line);
+  --ts-accent:var(--accent);     --ts-accent-ink:#fff;
+  --ts-neutral:var(--chip);      --ts-neutral-ink:var(--ink);
+  --ts-danger:var(--danger);     --ts-success:var(--success);
+  --ts-chip:var(--chip);
+  --ts-err-bg:var(--err-bg);     --ts-err-ink:var(--err-ink);
+  --ts-ok-bg:var(--ok-bg);       --ts-ok-ink:var(--ok-ink);
+  --ts-warn-bg:var(--warn-bg);   --ts-warn-ink:var(--warn-ink);  --ts-warn-line:var(--warn-line);
+  --ts-info-bg:var(--info-bg);   --ts-info-ink:var(--info-ink);
+  --ts-radius:14px;
+  --ts-font:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --ts-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --ts-serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+}

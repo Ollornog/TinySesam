@@ -10,6 +10,8 @@ ausgeliefert; ein String wird als HTML mit dem jeweiligen Status verpackt.
 from __future__ import annotations
 import html
 
+from .theme import TOKENS
+
 
 class Templates:
     """Registry benannter Seiten-Renderer. `render(name, auth, ctx)` nimmt einen Override
@@ -31,29 +33,32 @@ class Templates:
         return fn(auth, ctx)
 
 
-_CSS = """
-:root{color-scheme:light dark}
+_CSS = TOKENS + """
 *{box-sizing:border-box}
-body{font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-     background:#0f1115;color:#e6e6e6}
-.card{width:340px;max-width:92vw;background:#161a22;border:1px solid #262b36;border-radius:14px;padding:26px}
+body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+     background:var(--ts-bg);color:var(--ts-ink)}
+.card{width:340px;max-width:92vw;background:var(--ts-surface);border:1px solid var(--ts-line);
+     border-radius:calc(var(--ts-radius) + 2px);padding:26px}
 h1{font-size:20px;margin:0 0 18px;text-align:center}
-label{display:block;font-size:12px;color:#9aa4b2;margin:12px 0 4px}
-input{width:100%;background:#0f1115;color:#e6e6e6;border:1px solid #303643;border-radius:8px;padding:10px 12px;font-size:15px}
+label{display:block;font-size:12px;color:var(--ts-muted);margin:12px 0 4px}
+input{width:100%;background:var(--ts-field-bg);color:var(--ts-ink);border:1px solid var(--ts-field-line);
+     border-radius:8px;padding:10px 12px;font-size:15px}
 button,.btn2{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;font-size:15px;cursor:pointer;
-     background:#2563eb;color:#fff;display:block;text-align:center;text-decoration:none}
-.btn2{background:#374151;margin-top:10px}
-.err{background:#3a1520;color:#f87171;padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
-.ok{background:#12331f;color:#4ade80;padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
-.or{text-align:center;color:#6b7280;font-size:12px;margin:16px 0 4px}
-.hint{color:#9aa4b2;font-size:12px;text-align:center;margin-top:14px}
-.remember{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:13px;color:#9aa4b2}
+     background:var(--ts-accent);color:var(--ts-accent-ink);display:block;text-align:center;text-decoration:none}
+.btn2{background:var(--ts-neutral);color:var(--ts-neutral-ink);margin-top:10px}
+.err{background:var(--ts-err-bg);color:var(--ts-err-ink);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
+.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink);padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:6px}
+.or{text-align:center;color:var(--ts-muted);font-size:12px;margin:16px 0 4px}
+.hint{color:var(--ts-muted);font-size:12px;text-align:center;margin-top:14px}
+.hint a{color:var(--ts-muted)}
+.remember{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:13px;color:var(--ts-muted)}
 .remember input{width:auto;margin:0}
 .code{width:100%;text-align:center;letter-spacing:.4em;font-size:22px}
 img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;border-radius:8px;padding:6px}
-.mono{font-family:ui-monospace,monospace;background:#0f1115;border:1px solid #303643;border-radius:6px;padding:6px 8px;
-      font-size:13px;text-align:center;word-break:break-all}
-.warnbar{background:#442006;color:#fdba74;padding:9px 12px;border-radius:8px;font-size:12px;margin-bottom:10px}
+.mono{font-family:var(--ts-mono);background:var(--ts-field-bg);border:1px solid var(--ts-field-line);
+      border-radius:6px;padding:6px 8px;font-size:13px;text-align:center;word-break:break-all}
+.warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;border-radius:8px;
+      font-size:12px;margin-bottom:10px}
 """
 
 
@@ -134,9 +139,9 @@ def _login(auth, ctx) -> str:
     sep = _or if others and (pw or pin) else ""
     links = []
     if cfg.allow_signup:
-        links.append(f"<a href='/auth/register?next={_e(next_)}' style='color:#9aa4b2'>{_e(t('login.signup'))}</a>")
+        links.append(f"<a href='/auth/register?next={_e(next_)}'>{_e(t('login.signup'))}</a>")
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
-        links.append(f"<a href='/auth/forgot' style='color:#9aa4b2'>{_e(t('login.forgot'))}</a>")
+        links.append(f"<a href='/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
@@ -153,7 +158,7 @@ def _totp(auth, ctx) -> str:
             f"<label>{_e(t('totp.label'))}</label>"
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>{_e(t('cancel'))}</a></div>")
+            f"<div class=hint><a href='/auth/logout'>{_e(t('cancel'))}</a></div>")
     return _page(auth, t("totp.title"), body)
 
 
@@ -220,16 +225,21 @@ def _account(auth, ctx) -> str:
     body{max-width:640px;margin:0 auto;padding:24px;display:block}
     header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
     header h1{font-size:20px;margin:0}
-    .sec{background:#161a22;border:1px solid #262b36;border-radius:12px;padding:16px;margin-bottom:14px}
-    .sec h2{font-size:13px;color:#9aa4b2;text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px}
+    .sec{background:var(--ts-surface);border:1px solid var(--ts-line);border-radius:var(--ts-radius);
+         padding:16px;margin-bottom:14px}
+    .sec h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px}
     .sec small{text-transform:none;letter-spacing:0}
     .sec input{margin:4px 0}
     .sec button,.btnlink{width:auto;display:inline-block;margin:8px 6px 0 0;padding:9px 14px}
-    button.warn{background:#b91c1c}
-    .btnlink{background:#374151;color:#fff;border-radius:8px;text-decoration:none;padding:9px 14px}
-    .msg{margin-left:8px;font-size:12px;color:#9aa4b2}
-    .ok{color:#4ade80} ul{list-style:none;padding:0;margin:0 0 8px} li{padding:4px 0;font-size:13px;border-bottom:1px solid #20252f}
-    a{color:#7dd3fc}
+    button.warn{background:var(--ts-danger)}
+    .btnlink{background:var(--ts-neutral);color:var(--ts-neutral-ink);border-radius:8px;
+         text-decoration:none;padding:9px 14px}
+    .msg{margin-left:8px;font-size:12px;color:var(--ts-muted)}
+    .msg.good,.ok{color:var(--ts-ok-ink);background:none;padding:0}
+    .msg.bad,.bad{color:var(--ts-err-ink)}
+    ul{list-style:none;padding:0;margin:0 0 8px}
+    li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
+    a{color:var(--ts-link)}
     """
     pkjs = _PASSKEY_REGISTER_JS if "passkey" in methods else ""
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
@@ -243,7 +253,7 @@ _ACCOUNT_JS = """
 <script>
 function tsCsrf(){return (document.cookie.match(/(?:^|; )tinysesam_csrf=([^;]+)/)||[])[1]||''}
 const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
-const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.style.color=good?'#4ade80':'#f87171'}};
+const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
 async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
@@ -255,7 +265,7 @@ async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden
   if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('/auth/apikeys')).json();
-  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span style=color:#f87171>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
 async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
   if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
 async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
@@ -265,7 +275,7 @@ async function loadpk(){const el=document.getElementById('pklist');if(!el)return
 async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('/auth/sessions')).json();
-  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small style=color:#6b7280>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
 function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
   await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
@@ -314,7 +324,7 @@ def _register(auth, ctx) -> str:
             f"<label>{_e(t('reg.email'))}</label><input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro} autocomplete=email>"
             f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('reg.have'))}</a></div>")
+            f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")
     return _page(auth, t("reg.title"), body)
 
 
@@ -336,7 +346,7 @@ def _magic_request(auth, ctx) -> str:
             f"<label>{_e(t('magic.email'))}</label>"
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
-            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('back'))}</a></div>")
+            f"<div class=hint><a href='/auth/login'>{_e(t('back'))}</a></div>")
     return _page(auth, t("magic.title"), body)
 
 
@@ -355,7 +365,7 @@ def _forgot(auth, ctx) -> str:
             f"<form method=post action='/auth/forgot'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
-            f"<div class=hint><a href='/auth/login' style='color:#9aa4b2'>{_e(t('back'))}</a></div>")
+            f"<div class=hint><a href='/auth/login'>{_e(t('back'))}</a></div>")
     return _page(auth, t("forgot.title"), body)
 
 
@@ -425,7 +435,7 @@ def _reauth(auth, ctx) -> str:
             f"<form method=post action='/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{field}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/logout' style='color:#9aa4b2'>{_e(t('logout'))}</a></div>")
+            f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>")
     return _page(auth, t("reauth.title"), body)
 
 

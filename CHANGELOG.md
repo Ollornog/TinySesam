@@ -12,6 +12,16 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   sind also nie veraltet; die Admin-Vorschau läuft gegen eine lesende Attrappen-API.
 - `tinysesam.admin.render_panel(auth, base, warn="")` — öffentlich, damit das Panel-HTML an genau
   einer Stelle erzeugt wird (Panel und Demo-Vorschau können nicht auseinanderlaufen).
+- Showcase: zweite Nav-Leiste mit den Testseiten; Konto und Admin-Panel erscheinen erst, wenn man
+  angemeldet ist bzw. Admin-Rechte hat. GitHub-/Doku-Knöpfe mit Icon.
+
+### Geändert
+- **Alle eingebauten Seiten stylen sich jetzt über CSS-Variablen** (neu: `tinysesam/theme.py`).
+  Login, Konto und Admin-Panel hatten je eigene, hart kodierte Farben — ein `brand_css` konnte sie
+  nicht vollständig überschreiben (Konto/Panel blieben dunkel). Ein Satz Tokens re-skinnt nun alles.
+  Aussehen der Defaults unverändert (dunkles Theme).
+- Website und Showcase teilen sich die Palette `docs/theme.css` (die Website lädt sie per `<link>`,
+  die App reicht sie als `brand_css` weiter).
 - **README zweisprachig**: `README.md` (Englisch, Default) + `README.de.md` (Deutsch), mit Sprachumschalter.
 
 ### Behoben
