@@ -20,6 +20,13 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
 ### Geändert — CI und lokale Prüfung
+- **Tests sind wiederholbar** — `tests/run_all.py` gibt jeder Suite ein **eigenes Wegwerf-Verzeichnis**
+  (`TMPDIR`, `HOME`, `XDG_*` zeigen dorthin, danach gelöscht). Kein Zustand aus einem Lauf kann den
+  nächsten beeinflussen, keine Suite die andere stören.
+- **Neuer CI-Job `repeat`**: fährt `scripts/check.sh` zweimal hintereinander und prüft anschließend,
+  dass der Baum unverändert ist. Ein Test, der beim zweiten Lauf rot wird, ist kaputt — nicht der Code.
+  Bewusst nicht im `pre-push`-Hook, das verdoppelte die Wartezeit bei jedem Push.
+  Lokales Äquivalent: `ci-local --full`.
 - **Versions-Matrix auf `3.10 / 3.12 / 3.14`** (min + prod + max) statt `3.10`–`3.13`. Die alte Matrix
   ließ **3.14 ungetestet**, obwohl das seit Oktober 2025 die aktuelle stabile Version ist. Getestet
   werden jetzt die Ränder, die `requires-python` zusagt, plus die Version, die im Betrieb läuft.
