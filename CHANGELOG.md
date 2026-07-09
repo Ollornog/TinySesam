@@ -19,6 +19,20 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - `tests/run_all.py --no-browser` für Zwischenläufe; `tests/test_repo.py` bewacht jetzt auch, dass
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
+### Geändert — CI und lokale Prüfung
+- **Versions-Matrix auf `3.10 / 3.12 / 3.14`** (min + prod + max) statt `3.10`–`3.13`. Die alte Matrix
+  ließ **3.14 ungetestet**, obwohl das seit Oktober 2025 die aktuelle stabile Version ist. Getestet
+  werden jetzt die Ränder, die `requires-python` zusagt, plus die Version, die im Betrieb läuft.
+- **Prerelease getrennt:** neuer Workflow `.github/workflows/nightly.yml` fährt Python 3.15
+  (`allow-prereleases`) nachts mit `continue-on-error` — ein RC-Bug blockiert damit keinen Push mehr.
+- **Feature-Branches lösen keine CI mehr aus** (`on.push.branches: [main]` statt `["**"]`).
+  Volle CI läuft beim Pull Request und auf `main`; dazwischen prüft der lokale Container-Lauf.
+  Notausgang für WIP auf `main`: `[skip ci]` in der Commit-Message.
+- **`.githooks/pre-push` läuft im Container** (`ci-local`) — dieselbe Toolchain wie die CI, unabhängig
+  davon, was auf dem Rechner zufällig installiert ist. Fehlt Docker, **bricht der Push ab**; nur beim
+  Push auf `main` genügt der native Host-Lauf, weil dort anschließend die GitHub-CI greift. Auf
+  Feature-Branches läuft keine CI — dort wäre ein stiller Rückfall auf den Host ein Loch im Netz.
+
 ### Geändert
 - **Codeblöcke folgen dem Thema** — bisher waren sie in beiden Themen dunkel, weil `--code-bg` auch
   im hellen Satz ein Dunkelton war. Jetzt helles Blatt auf hellem Papier, dunkel im dunklen Thema;

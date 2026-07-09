@@ -1,6 +1,63 @@
 #!/usr/bin/env bash
 # Letzte Bremse vor dem Push. Aktivieren: git config core.hooksPath .githooks
 # Notausgang (nur mit gutem Grund): git push --no-verify
+#
+# Die Suite läuft im Container (`ci-local` -> ci-python-web): dieselbe Toolchain wie
+# die CI, unabhängig davon, was auf diesem Rechner zufällig installiert ist.
+#
+# Ist Docker/ci-local nicht verfügbar, wird der Push ABGEBROCHEN — mit einer Ausnahme:
+# beim Push auf `main` genügt der native Host-Lauf, weil dort anschließend die
+# GitHub-CI als verbindliches Gate greift. Auf Feature-Branches läuft KEINE CI
+# (on.push.branches: [main]) — der Container-Lauf ist dort die einzige Prüfung, und
+# ein stiller Rückfall auf den Host würde genau dieses Netz entfernen.
+#
+# Kein Schleifenrisiko: ci-local setzt CI_LOCAL_INSIDE=1 im Container und ruft dort
+# check.sh direkt auf, nicht diesen Hook.
 set -euo pipefail
-echo "pre-push: Testsuite läuft — das dauert, und das ist gut so."
-exec "$(git rev-parse --show-toplevel)/scripts/check.sh"
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Läuft der Hook bereits im Container, nie erneut eskalieren.
+if [[ "${CI_LOCAL_INSIDE:-}" == "1" ]]; then
+    exec "$ROOT/scripts/check.sh"
+fi
+
+# Git reicht auf stdin je Ref eine Zeile: <local ref> <local sha> <remote ref> <remote sha>
+# Daraus lesen wir, ob main betroffen ist. Kein stdin (manueller Aufruf) => wie Feature-Branch,
+# also die strenge Regel. Fail-closed ist hier die richtige Richtung.
+pushes_main=0
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    [[ "$remote_ref" == "refs/heads/main" ]] && pushes_main=1
+done || true
+
+# Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo.
+# Ein interaktiver sudo-Prompt wäre hier falsch — der Hook darf nicht nach einem
+# Passwort fragen, deshalb nur 'sudo -n'.
+docker_ok() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker info >/dev/null 2>&1 && return 0
+    sudo -n docker info >/dev/null 2>&1
+}
+
+if command -v ci-local >/dev/null 2>&1 && docker_ok; then
+    echo "pre-push: Testsuite läuft im Container (ci-local) — das dauert, und das ist gut so."
+    exec ci-local
+fi
+
+if [[ "$pushes_main" -eq 1 ]]; then
+    echo "pre-push: Docker/ci-local nicht verfügbar → nativer Host-Lauf." >&2
+    echo "          Erlaubt, weil auf main anschließend die GitHub-CI greift." >&2
+    exec "$ROOT/scripts/check.sh"
+fi
+
+cat >&2 <<'EOF'
+pre-push: ABGEBROCHEN — Docker bzw. ci-local ist nicht verfügbar.
+
+Auf Feature-Branches läuft keine GitHub-CI. Der Container-Lauf ist hier die
+einzige Prüfung; ein Rückfall auf den Host würde ungeprüften Code durchlassen.
+
+Prüfen:  docker info          (Gruppe aktiv? ggf. neu einloggen)
+Bauen:   /home/drog/ci-images/build.sh
+Notfall: git push --no-verify (auf eigene Gefahr, ungeprüft)
+EOF
+exit 1
