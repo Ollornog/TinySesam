@@ -177,10 +177,11 @@ def _fill(user, pw) -> str:
     return f"<button type=button class=demofill data-u='{_e(user)}' data-p='{_e(pw)}'>{_e(user)}</button>"
 
 
-def _demobar(auth, pin=False) -> str:
-    """Zugangsdaten + unmissverständliche Warnung — nur wenn `demo_mode` an ist."""
+def _demobar(auth, pin=False, ctx=None) -> str:
+    """Zugangsdaten + unmissverständliche Warnung — nur wenn `demo_mode` an ist.
+    `ctx['demo_hint']=False` unterdrückt ihn (z.B. in einer Vorschau, wo er nur stört)."""
     cfg = auth.cfg
-    if not cfg.demo_mode:
+    if not cfg.demo_mode or (ctx is not None and not ctx.get("demo_hint", True)):
         return ""
     t = auth.t
     if pin:
@@ -257,7 +258,7 @@ def _login(auth, ctx) -> str:
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
-    return _page(auth, t("login.submit"), body, top=_demobar(auth))
+    return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx))
 
 
 def _totp(auth, ctx) -> str:
@@ -594,7 +595,7 @@ def _pin(auth, ctx) -> str:
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
             f"<div class=hint><a href='{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True))
+    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx))
 
 
 def _totp_setup(auth, ctx) -> str:

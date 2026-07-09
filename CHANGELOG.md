@@ -30,6 +30,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Betroffen waren Login, PIN, TOTP, Registrierung, Ressourcen-PIN, Magic-Link und Passwort-Reset:
   alle nutzten `Form(...)`, dessen Validierungsfehler FastAPI als JSON ausgibt. Jetzt `Form("")` plus
   eine eigene Prüfung → 400 mit „Bitte alle Felder ausfüllen."; die Felder tragen zusätzlich `required`.
+- Der Demo-Hinweis erschien auch in der Login-**Vorschau** auf `/demo`, wo er nichts zu suchen hat.
+  `render_page("login", demo_hint=False)` unterdrückt ihn.
 - **Das Admin-Panel bekam `brand_head` nie** — deshalb blieb es im Dark-Mode hell (das frühe
   Theme-Skript fehlte). Neuer Platzhalter `__BRANDHEAD__`.
 - **Der Sprachwechsler war auf den Website-Seiten tot** (`flows.de.html`, `index.de.html`): er zeigte

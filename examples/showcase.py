@@ -372,7 +372,9 @@ def _readonly(html: str, lock: str = _LOCK) -> HTMLResponse:
 
 @app.get("/demo/preview/login", include_in_schema=False)
 def prev_login():
-    return _readonly(auth.render_page("login", next="/demo", csrf="").body.decode(), _LOCK_CARD)
+    # In der Vorschau stört der Demo-Hinweis — er gehört auf die echte Login-Seite.
+    resp = auth.render_page("login", next="/demo", csrf="", demo_hint=False)
+    return _readonly(resp.body.decode(), _LOCK_CARD)
 
 
 @app.get("/demo/preview/account", include_in_schema=False)
