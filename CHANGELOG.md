@@ -21,7 +21,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.
 
-### Hinzugefügt (Showcase &amp; Design)
+### Hinzugefügt (Showcase & Design)
 - **Showcase-Frontend** (`examples/showcase.py`): `/` ist die Projekt-Website (`docs/index.html`)
   **eins zu eins**, ergänzt um einen Demo-Knopf. `/demo` ist das Demo-Frontend — Nav mit Logo und Titel,
   Anmelden/Registrieren, darunter Login-, Konto- und Admin-Panel als **read-only Live-Vorschau**.
