@@ -18,6 +18,7 @@ Kein FastAPI-Import: der Website-Generator kommt ohne laufende App aus.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from html import escape
 
@@ -94,6 +95,7 @@ class Labels:
     changelog: str
     security: str
     license: str
+    legal: str
     credits: str
 
 
@@ -104,6 +106,8 @@ class Nav:
     icon_url: str
     repo: str
     css_href: str = "theme.css"   # Farbpalette; die Demo liefert sie unter einem absoluten Pfad
+    flows_href: str = "flows.html"   # Ziel des „alle Login-Wege"-Verweises
+    legal_href: str = "legal.html"   # Impressum + Datenschutz
     pages: tuple = ()          # ((href, label), …) — links in der ersten Navreihe
     examples: tuple = ()       # ((href, label, beschreibung), …) — als Aufklapper daneben
     examples_label: str = ""
@@ -169,20 +173,67 @@ def footer(ctx: Ctx, nav: Nav) -> str:
     return (f'<footer><div class=inner><a href="{nav.repo}">GitHub</a>·'
             f'<a href="{nav.repo}/blob/main/CHANGELOG.md">{lb.changelog}</a>·'
             f'<a href="{nav.repo}/blob/main/SECURITY.md">{lb.security}</a>·'
-            f'<a href="{nav.repo}/blob/main/LICENSE">{lb.license}</a>'
+            f'<a href="{nav.repo}/blob/main/LICENSE">{lb.license}</a>·'
+            f'<a href="{nav.legal_href}">{lb.legal}</a>'
             f'<div class=credits>{lb.credits}</div></div></footer>')
 
 
-def document(ctx: Ctx, nav: Nav, *, title: str, desc: str = "", css: str = "", body: str = "") -> str:
-    """Vollständige Seite: Kopf, Inhalt, Fußzeile."""
-    return (f'<!doctype html>\n<html lang="{ctx.lang}">\n<head>\n<meta charset="utf-8">\n'
+def shell(ctx: Ctx, nav: Nav, body: str) -> str:
+    """Kopf + Inhalt + Fußzeile — der Teil, den jede Seite gemeinsam hat."""
+    return f"{header(ctx, nav)}\n<main>{body}</main>\n{footer(ctx, nav)}"
+
+
+def _head(nav: Nav, lang: str, title: str, desc: str, css: str, extra: str = "") -> str:
+    return (f'<!doctype html>\n<html lang="{lang}" data-lang="{lang}">\n<head>\n<meta charset="utf-8">\n'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             f'<title>{escape(title)}</title>\n'
             + (f'<meta name="description" content="{escape(desc)}">\n' if desc else "")
             + f'<link rel="icon" href="{nav.icon_url}">\n'
               f'<link rel="stylesheet" href="{nav.css_href}">\n'
-              f'<style>{UI_CSS}{css}</style>{UI_JS}{ctx.extra_head}\n</head>\n<body>\n'
-            f'{header(ctx, nav)}\n<main>{body}</main>\n{footer(ctx, nav)}\n</body>\n</html>\n')
+              f'<style>{UI_CSS}{css}</style>{UI_JS}{extra}\n</head>\n')
+
+
+def document(ctx: Ctx, nav: Nav, *, title: str, desc: str = "", css: str = "", body: str = "") -> str:
+    """Serverseitig gerenderte Seite — die App kennt die Sprache schon."""
+    return (_head(nav, ctx.lang, title, desc, css, ctx.extra_head)
+            + f"<body>\n{shell(ctx, nav, body)}\n</body>\n</html>\n")
+
+
+def static_document(nav: Nav, css: str, variants: dict) -> str:
+    """Eine Datei, beide Sprachen — für GitHub Pages, das kein `?lang=` auswerten kann.
+
+    `variants` = {lang: (title, desc, shell_html)} — `shell_html` kommt aus `shell(ctx, nav, body)`.
+    `LANG_JS` wählt beim Laden: `?lang=` schlägt Cookie schlägt Browsersprache. **Derselbe Parameter,
+    dasselbe Cookie wie in der App** — es gibt genau ein Sprachsystem, keine Sprach-Dateinamen.
+    """
+    first = LANGS[0]
+    title, desc, _ = variants[first]
+    titles = {lang: v[0] for lang, v in variants.items()}
+    body = "".join(f'<div class="l-{lang}">{v[2]}</div>' for lang, v in variants.items())
+    script = f"<script>window.TS_TITLES={json.dumps(titles)};</script>{LANG_JS}"
+    return (_head(nav, first, title, desc, css + LANG_CSS)
+            + f"<body>\n{body}\n{script}\n</body>\n</html>\n")
+
+
+LANG_COOKIE = "ts_lang"
+
+# Nur für die statischen Seiten: sie tragen beide Sprachen und blenden eine aus.
+LANG_CSS = "".join(f'html[data-lang="{l}"] .l-{o}{{display:none}}'
+                   for l in LANGS for o in LANGS if l != o)
+
+LANG_JS = """<script>
+(function(){
+  var LANGS = %s;
+  function cookie(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)')); return m?m[1]:null;}
+  var q = new URLSearchParams(location.search).get('lang');
+  var l = q || cookie('%s') || (navigator.language||'en').slice(0,2);
+  if(LANGS.indexOf(l) < 0) l = LANGS[0];
+  document.cookie = '%s=' + l + ';path=/;max-age=31536000;samesite=lax';
+  var r = document.documentElement;
+  r.lang = l; r.setAttribute('data-lang', l);
+  if(window.TS_TITLES && TS_TITLES[l]) document.title = TS_TITLES[l];
+})();
+</script>""" % (json.dumps(list(LANGS)), LANG_COOKIE, LANG_COOKIE)
 
 
 # ---------------------------------------------------------------------- Aussehen

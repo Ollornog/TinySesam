@@ -23,12 +23,16 @@ def build_router(auth) -> APIRouter:
         return auth.render_page("login", request=request, next=nxt, error=error)
 
     @r.post("/auth/login")
-    def login_submit(request: Request, username: str = Form(...), password: str = Form(...),
+    def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
         if not cfg.password_enabled:
             raise HTTPException(404, "Passwort-Login deaktiviert")
         nxt = auth.safe_next(next)
+        if not username or not password:
+            # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
+            return auth.render_page("login", status=400, request=request, next=nxt,
+                                    error=auth.t("err.required"))
         remember_me = _remember(cfg, remember)
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip):
@@ -63,9 +67,12 @@ def build_router(auth) -> APIRouter:
         return auth.render_page("totp", request=request, next=nxt, error=error)
 
     @r.post("/auth/totp")
-    def totp_submit(request: Request, code: str = Form(...), next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
+    def totp_submit(request: Request, code: str = Form(""), next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
         nxt = auth.safe_next(next)
+        if not code:
+            return auth.render_page("totp", status=400, request=request, next=nxt,
+                                    error=auth.t("err.required"))
         s = auth.session_from_request(request)
         pu = auth.pending_user(request) or auth.current_user(request)
         if not s or not pu:
@@ -131,7 +138,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("pin", request=request, next=nxt, error=error)
 
         @r.post("/auth/pin")
-        def pin_submit(request: Request, pin: str = Form(...), username: str = Form(""),
+        def pin_submit(request: Request, pin: str = Form(""), username: str = Form(""),
                        next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
@@ -149,6 +156,8 @@ def build_router(auth) -> APIRouter:
 
             if not me and not cfg.pin_login:
                 raise HTTPException(404)          # PIN ist kein Erstfaktor
+            if not pin or (not me and not username):
+                return fail(auth.t("err.required"), 400)
             if not auth.rate_ok(ip):
                 return fail(auth.t("err.rate"), 429)
             ident = me["username"] if me else username
@@ -208,7 +217,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("resource_unlock", request=request, **_res_ctx(row, name, nxt, error))
 
         @r.post("/auth/resource/{name}")
-        def resource_submit(request: Request, name: str, secret: str = Form(...), next: str = Form("/"),
+        def resource_submit(request: Request, name: str, secret: str = Form(""), next: str = Form("/"),
                             csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             row = auth.store.get_resource_secret(name)
@@ -236,7 +245,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("magic_request", request=request, next=auth.safe_next(next), sent=False, error="")
 
         @r.post("/auth/magic/request", response_class=HTMLResponse)
-        def magic_request(request: Request, email: str = Form(...), next: str = Form("/")):
+        def magic_request(request: Request, email: str = Form(""), next: str = Form("/")):
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
@@ -331,7 +340,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("forgot", request=request, sent=False, error="")
 
         @r.post("/auth/forgot", response_class=HTMLResponse)
-        def forgot_submit(request: Request, email: str = Form(...), csrf_tok: str = Form("", alias="_csrf")):
+        def forgot_submit(request: Request, email: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
@@ -350,7 +359,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reset", request=request, token=token, error="")
 
         @r.post("/auth/reset", response_class=HTMLResponse)
-        def reset_submit(request: Request, token: str = Form(...), password: str = Form(...),
+        def reset_submit(request: Request, token: str = Form(""), password: str = Form(""),
                          csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             if len(password) < auth.sec("password_min_length"):
@@ -383,7 +392,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("register", request=request, **_reg_ctx(nxt, invite=invite, email=(inv or {}).get("email") or ""))
 
         @r.post("/auth/register", response_class=HTMLResponse)
-        def register_submit(request: Request, password: str = Form(...), username: str = Form(""),
+        def register_submit(request: Request, password: str = Form(""), username: str = Form(""),
                             email: str = Form(""), next: str = Form("/"), invite: str = Form(""),
                             csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
@@ -400,6 +409,8 @@ def build_router(auth) -> APIRouter:
             def err(msg, status=400):
                 return auth.render_page("register", request=request, status=status,
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
+            if not password:
+                return err(auth.t("err.required"))
             if len(password) < auth.sec("password_min_length"):
                 return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
             roles, is_admin = list(cfg.signup_default_roles), False

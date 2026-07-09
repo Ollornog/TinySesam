@@ -249,6 +249,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
     cfg = auth.cfg
     return (_PAGE.replace("__TOKENS__", TOKENS)
+            .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
             .replace("__RP__", cfg.rp_name).replace("__BASE__", base)
@@ -303,7 +304,7 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
 .tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
   padding:2px 6px;font-size:12px}
 __BRANDCSS__
-</style></head><body>
+</style>__BRANDHEAD__</head><body>
 __HEADER__
 <div class=tsadmin>
 __WARN__

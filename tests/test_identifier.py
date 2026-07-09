@@ -106,7 +106,9 @@ r = c.post("/auth/register", data={"username": "neu2", "password": "geheim12345"
                                    "email": "NEU@example.com", "next": "/"})
 assert r.status_code == 409 and "bereits registriert" in r.text
 c.cookies.clear()
-assert "required" in c.get("/auth/register").text, "Feld als Pflicht markiert"
+reg = c.get("/auth/register").text
+email_tag = "<input name=email" + reg.split("<input name=email", 1)[1].split(">", 1)[0]
+assert "required" in email_tag, "E-Mail-Feld als Pflicht markiert"
 os.unlink(db)
 print("  Registrierung: Pflicht + Format + Dublette ok")
 
@@ -126,7 +128,10 @@ os.unlink(db)
 
 auth, c, db = build(allow_signup=True, login_identifier="username", signup_require_email=False)
 page = c.get("/auth/register").text
-assert "name=username" in page and "required" not in page, "E-Mail optional -> kein required"
+assert "name=username" in page
+if "<input name=email" in page:
+    email_tag = "<input name=email" + page.split("<input name=email", 1)[1].split(">", 1)[0]
+    assert "required" not in email_tag, "E-Mail darf hier nicht Pflicht sein"
 os.unlink(db)
 print("  Registrierung folgt login_identifier ok")
 

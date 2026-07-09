@@ -227,8 +227,8 @@ def _login(auth, ctx) -> str:
     if "password" in methods:
         pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
-              f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>"
-              f"<label>{_e(t('login.password'))}</label><input name=password type=password autocomplete={pw_ac}>"
+              f"<label>{_e(id_label)}</label><input name=username required autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>"
+              f"<label>{_e(t('login.password'))}</label><input name=password required type=password autocomplete={pw_ac}>"
               f"{remember}"
               f"<button type=submit>{_e(t('login.submit'))}</button></form>")
     pin = ""
@@ -236,7 +236,7 @@ def _login(auth, ctx) -> str:
         pin = (f"{_or if pw else ''}<form method=post action='/auth/pin'>"
                f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
                f"<label>{_e(id_label)}</label><input name=username autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false{'' if pw else ' autofocus'}>"
-               f"<label>{_e(t('login.pin'))}</label><input name=pin type=password inputmode=numeric autocomplete=off class=code>"
+               f"<label>{_e(t('login.pin'))}</label><input name=pin required type=password inputmode=numeric autocomplete=off class=code>"
                f"{remember}"
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
     magic = ""
@@ -438,7 +438,7 @@ def _register(auth, ctx) -> str:
                   or getattr(cfg, "password_reset_enabled", False) or cfg.signup_verify_email)
     emailreq = " required" if (cfg.signup_require_email or email_mode) else ""
     user_field = ("" if email_mode else
-                  f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
+                  f"<label>{_e(t('reg.user'))}</label><input name=username required autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
             f"<form method=post action='/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
@@ -447,7 +447,7 @@ def _register(auth, ctx) -> str:
             + (f"<label>{_e(t('reg.email'))}</label>"
                f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq}"
                f"{' autofocus' if email_mode else ''} autocomplete=email>" if email_used else "") +
-            f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
+            f"<label>{_e(t('reg.password'))}</label><input name=password required type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")
     return _page(auth, t("reg.title"), body)

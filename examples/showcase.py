@@ -30,15 +30,14 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import LABELS, page_url, render_flows, render_index        # noqa: E402
-from web.ui import (Ctx, LANGS as UI_LANGS, Nav, UI_CSS, UI_JS,          # noqa: E402
-                    document, footer, header)
+from web.site import (INDEX_CSS, LABELS, LEGAL_CSS, T as SITE_T,         # noqa: E402
+                      flows_body, hero, index_body, legal_body)
+from web.ui import (Ctx, LANG_COOKIE, LANGS as UI_LANGS, Nav, UI_CSS,   # noqa: E402
+                    UI_JS, document, footer, header, shell)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 ICON_URL = "/wizard.png"
-LANG_COOKIE = "ts_lang"
-LANGS = ("de", "en")
 
 THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
 
@@ -83,7 +82,7 @@ auth.install_error_pages(app)
 # ---------------------------------------------------------------- Sprache
 def lang_of(request: Request) -> str:
     lang = request.query_params.get("lang") or request.cookies.get(LANG_COOKIE) or "de"
-    return lang if lang in LANGS else "de"
+    return lang if lang in UI_LANGS else "de"
 
 
 # Der Rumpf der eingebauten Seiten hängt vom Request ab (Sprache, Login-Status, Pfad).
@@ -95,6 +94,7 @@ def nav_of(lang: str) -> Nav:
     """Der Rumpf dieser App — einmal deklariert, überall benutzt."""
     t = TEXTS[lang]
     return Nav(brand_href="/", icon_url=ICON_URL, repo=REPO, css_href="/theme.css",
+               flows_href="/demo/flows", legal_href="/legal",
                pages=(("/", t["nav_site"]), ("/demo", t["nav_demo"]), ("/demo/flows", t["nav_flows"])),
                examples=tuple(t["examples"]), examples_label=t["nav_examples"], auth=True)
 
@@ -136,13 +136,7 @@ class ShellMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         request = Request(scope, receive)
-        path = request.url.path
-        if path.endswith(".de.html"):
-            lang = "de"
-        elif path.endswith(".html"):
-            lang = "en"
-        else:
-            lang = lang_of(request)
+        lang = lang_of(request)          # ?lang= schlägt Cookie — überall gleich
         auth.cfg.lang = lang                       # damit auch die eingebauten Seiten folgen
         _ctx.set(ctx_of(request, lang))
 
@@ -273,10 +267,6 @@ def page(title: str, body: str, request: Request) -> HTMLResponse:
 
 
 # ---------------------------------------------------------------- Website-Seiten (aus web/site.py)
-SITE_PAGES = {"index.html": ("index", "en"), "index.de.html": ("index", "de"),
-              "flows.html": ("flows", "en"), "flows.de.html": ("flows", "de")}
-
-
 @app.get(ICON_URL, include_in_schema=False)
 def wizard():
     return FileResponse(DOCS / "wizard.png", media_type="image/png")
@@ -287,28 +277,23 @@ def theme():
     return FileResponse(DOCS / "theme.css", media_type="text/css")
 
 
+@app.get("/legal", response_class=HTMLResponse)
+def legal(request: Request):
+    """Impressum + Datenschutz — dieselbe Quelle wie auf GitHub Pages."""
+    c = _ctx.get()
+    return HTMLResponse(document(c, nav_of(c.lang), title=SITE_T[c.lang]["legal_title"],
+                                 desc=SITE_T[c.lang]["legal_desc"], css=LEGAL_CSS,
+                                 body=legal_body(c.lang)))
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
+    """Dieselbe Startseite wie auf GitHub Pages — hier serverseitig in der gewählten Sprache."""
     c = _ctx.get()
-    return HTMLResponse(render_index(c.lang, ctx=c, nav=nav_of(c.lang)))
-
-
-@app.get("/{name}.html", include_in_schema=False)
-def site_page(name: str, request: Request):
-    """index.de.html · flows.html · flows.de.html — dieselben Seiten wie auf GitHub Pages,
-    nur mit dem Rumpf der Demo (Login-Status, Beispielseiten)."""
-    fname = f"{name}.html"
-    if fname not in SITE_PAGES:
-        raise HTTPException(404)
-    which, lang = SITE_PAGES[fname]
-    c = _ctx.get()
-    c.lang = lang
-    c.labels = LABELS[lang]
-    # Diese Seiten tragen die Sprache im Dateinamen — ein `?lang=` würde die Middleware
-    # überstimmen. Der Wechsler muss also auf die andere Datei zeigen.
-    c.lang_hrefs = {code: page_url(which, code) for code in UI_LANGS}
-    render = render_index if which == "index" else render_flows
-    return HTMLResponse(render(lang, ctx=c, nav=nav_of(lang)))
+    nav = nav_of(c.lang)
+    c.hero = hero(c.lang)
+    return HTMLResponse(document(c, nav, title=SITE_T[c.lang]["title"], desc=SITE_T[c.lang]["desc"],
+                                 css=INDEX_CSS, body=index_body(c.lang, nav)))
 
 
 # ---------------------------------------------------------------- Demo

@@ -3,7 +3,7 @@
 
     python -m web.build [ziel]        # Standard: _site/
 
-Erzeugt `index.html`, `index.de.html`, `flows.html`, `flows.de.html` aus `web/site.py` und kopiert
+Erzeugt `index.html` und `flows.html` (jeweils zweisprachig) aus `web/site.py` und kopiert
 die statischen Beilagen (`docs/theme.css`, `docs/wizard.png`). Die GitHub-Action `.github/workflows/
 pages.yml` ruft das bei jedem Push auf `main` auf — die HTML-Dateien liegen deshalb **nicht** im Repo.
 """
