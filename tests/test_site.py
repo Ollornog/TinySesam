@@ -93,7 +93,15 @@ legal = pages[LEGAL]
 for probe in ("§ 5 DDG", "Art. 6 Abs. 1 lit. f DSGVO", "GitHub, Inc.", "EU-US Data Privacy Framework",
               "ts_lang", "ts-theme", "Art. 15", "Cookie-Banner"):
     assert probe in legal, probe
-assert legal.count("class=todo") >= 4, "unausgefüllte Angaben müssen auffallen"
+# Platzhalter fallen rot auf — sind jetzt aber ausgefüllt
+for key in ("name", "street", "city", "email"):
+    assert OWNER[key] and not OWNER[key].startswith("«"), f"OWNER[{key}] fehlt"
+    assert OWNER[key] in legal, key
+assert "class=todo" not in legal, "keine unausgefüllten Angaben mehr"
+# Der Geltungsbereich muss klarstellen: nur diese eine Adresse, nicht selbstgehostete Kopien
+assert "ollornog.github.io/TinySesam" in legal
+for probe in ("eigenen Server installiert", "on their own server"):
+    assert probe in legal, probe
 assert all(f'href="{LEGAL}"' in pages[p] for p in (INDEX, FLOWS_FILE, LEGAL)), "Fußzeile verlinkt"
 print("  legal.html: Impressum (§5 DDG), Hosting, Browser-Speicher, Betroffenenrechte")
 
