@@ -76,3 +76,35 @@ ok("API-Key-Request ohne CSRF-Token erlaubt (ausgenommen)")
 
 os.remove(db)
 print("\nCSRF OK ✅")
+
+# ---------- Das Token darf nicht bei jedem Rendern rotieren ----------
+# Sonst macht jede andere gerenderte Seite ein offenes Formular ungültig ("Formular abgelaufen").
+import re as _re
+
+_db = tempfile.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
+                               allow_signup=True, signup_require_email=False,
+                               login_identifier="username"))
+_a.create_user("max", password="geheim12345")
+_app = FastAPI()
+_app.include_router(_a.router())
+_a.install_error_pages(_app)
+_c = TestClient(_app, headers={"accept": "text/html"}, raise_server_exceptions=False)
+
+_r1 = _c.get("/auth/login")
+_tok = _re.search(r"name=_csrf value='([^']+)'", _r1.text).group(1)
+assert "tinysesam_csrf" in _r1.headers.get("set-cookie", ""), "erstes Rendern setzt das Cookie"
+
+# jede weitere gerenderte Seite (auch Fehlerseiten) darf es NICHT überschreiben
+for _p in ("/auth/login", "/auth/register", "/gibtsnicht"):
+    assert "tinysesam_csrf" not in _c.get(_p).headers.get("set-cookie", ""), _p
+
+_r = _c.post("/auth/login", data={"username": "max", "password": "geheim12345", "next": "/", "_csrf": _tok},
+             follow_redirects=False)
+assert _r.status_code == 303, f"Token der offenen Seite muss gültig bleiben, war {_r.status_code}"
+
+# Schutz bleibt scharf
+assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345", "_csrf": "falsch"}).status_code == 403
+assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345"}).status_code == 403
+os.remove(_db)
+print("  CSRF-Token bleibt über Seitenwechsel gültig; falsches/fehlendes Token weiterhin 403")
