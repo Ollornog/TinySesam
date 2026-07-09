@@ -17,8 +17,6 @@ Alles hängt an einer Quelle:
     ändert sich die Vorschau mit. Interaktion ist gesperrt, die Admin-Vorschau liest aus einer Attrappe.
   * **Layout** — Nav, Unterleiste und Vorschau-Rahmen kommen je aus genau einer Funktion.
 """
-import re
-from html import escape
 from pathlib import Path
 
 from fastapi import FastAPI, Depends, Request
@@ -43,40 +41,24 @@ input:focus{outline:2px solid var(--ts-accent);border-color:var(--ts-accent)}
 button:hover,.btn2:hover{filter:brightness(1.05)}
 """
 
-auth = TinySesam(TinySesamConfig(
+auth = TinySesam(TinySesamConfig.local_accounts(   # nur Benutzername + Passwort, keine E-Mail
     db_path="/tmp/tinysesam-showcase.db",
     rp_name="TinySesam",
     lang="de",
     brand_css=BRAND,                 # ← ein Wert stylt alle eingebauten Seiten
     brand_icon=ICON_URL,             # ← und ein Wert setzt überall das Favicon
-    password_enabled=True,
-    pin_enabled=True,
     passkey_enabled=False,           # für lokalen HTTP-Test aus
-    oidc_enabled=False,
-    magiclink_enabled=True,          # Login-Link + Passwort-vergessen per E-Mail (→ /demo/postfach)
-    login_identifier="both",         # Anmeldung mit Benutzername ODER E-Mail
+    pin_enabled=True,                # PIN gibt es …
+    pin_login=False,                 # … aber NICHT als Login-Methode
+    stepup_methods=["pin"],          # … sondern als Bestätigung für sensible Bereiche
     allow_signup=True,
-    signup_require_email=True,       # E-Mail ist Login-Kennung → Pflicht + eindeutig
-    signup_verify_email=False,       # Bestätigungslink (braucht Mailer) — hier aus fürs Ausprobieren
     resource_locks_enabled=True,
     available_roles=["editor", "viewer"],
     cookie_secure=False,             # lokal ohne HTTPS
 ))
 auth.ensure_admin("admin", "geheim123")
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
-
-# Demo-Postfach: die Demo verschickt nichts, sie legt die Mails unter /demo/postfach ab.
-# So sind Login-Link und Passwort-vergessen wirklich benutzbar, statt ins Leere zu zeigen.
-MAILBOX: list[dict] = []
-
-
-def demo_mailer(to, subject, text, html=None):
-    MAILBOX.insert(0, {"to": to, "subject": subject, "text": text})
-    del MAILBOX[8:]
-    print(f"\n=== MAIL an {to}: {subject} ===\n{text}\n")
-
-
-auth.set_mailer(demo_mailer)
+auth.set_pin(auth.store.get_user_by_name("admin")["id"], "1234")   # Step-up-PIN für /sensibel
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -126,6 +108,26 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .btn.g{border:1px solid var(--line);color:var(--ink)}.btn.g:hover{text-decoration:none;border-color:var(--accent)}
 .btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
+.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;color:var(--muted);font-size:14px}
+.legend span{display:flex;align-items:center;gap:8px}
+.legend i.box{width:16px;height:16px;padding:0;display:inline-block}
+.flow{margin:0 0 38px}
+.flowhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.flowhead h3{font-family:var(--ts-serif);font-size:22px;margin:0}
+.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line)}
+.pill.on{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
+.pill.off{background:var(--chip);color:var(--muted)}
+.flow .muted{margin:6px 0 0}
+.chain{list-style:none;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0;margin:16px 0 0}
+.chain li{display:flex}
+.chain .arr{color:var(--muted);font-size:18px}
+.box{display:inline-block;padding:8px 13px;border-radius:10px;font-size:14px;line-height:1.35;
+  border:1px solid var(--line);background:var(--card)}
+.box code{background:none;border:0;padding:0;font-size:.92em}
+.box.do{border-color:var(--accent);color:var(--ink)}
+.box.srv{background:var(--chip)}
+.box.end{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
+.flow .note{margin:12px 0 0;color:var(--muted);font-size:14px;max-width:70ch}
 .card2{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:14px 0}
 .card2 pre{white-space:pre-wrap;word-break:break-word;font-family:var(--ts-mono);font-size:13px;
   color:var(--muted);margin:8px 0 0}
@@ -151,7 +153,7 @@ TESTPAGES = [
     ("/app", "<code>/app</code> · require_user", "all"),
     ("/sensibel", "<code>/sensibel</code> · Step-up", "all"),
     ("/gaeste", "<code>/gaeste</code> · PIN, kein Konto", "all"),
-    ("/demo/postfach", "📬 Postfach", "all"),
+    ("/demo/flows", "Login-Flows", "all"),
     ("/auth/account", "Konto", "user"),
     ("/auth/admin", "Admin-Panel", "admin"),
     ("/gibtsnicht", "404", "all"),
@@ -370,26 +372,108 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
         user=auth.current_user(request), active="/gaeste")
 
 
-@app.get("/demo/postfach", response_class=HTMLResponse)
-def postfach(request: Request):
-    """Was die Demo „verschickt" hätte. Macht Login-Link und Passwort-vergessen ausprobierbar."""
-    if not MAILBOX:
-        items = ("<p class=lead>Noch nichts da. Fordere auf der Anmeldeseite einen "
-                 "<a href='/auth/magic/request'>Login-Link</a> an oder nutze "
-                 "<a href='/auth/forgot'>Passwort vergessen</a> — die Mail landet hier.</p>")
-    else:
-        rows = []
-        for m in MAILBOX:
-            body = escape(m["text"])
-            body = re.sub(r"(https?://\S+)", r"<a href='\1'>\1</a>", body)
-            rows.append(f"<div class=card2><div class=muted>an {escape(m['to'])}</div>"
-                        f"<b>{escape(m['subject'])}</b><pre>{body}</pre></div>")
-        items = "".join(rows)
-    return page("Postfach", f"""
-      <h1>📬 Demo-Postfach</h1>
-      <p class=lead>Diese Demo verschickt keine E-Mails — <code>auth.set_mailer(...)</code> legt sie
-        hier ab. Genau so hängt man in der eigenen App SMTP oder einen beliebigen Versanddienst ein.</p>
-      {items}""", user=auth.current_user(request), active="/demo/postfach")
+def chain(*steps) -> str:
+    """Eine Kette aus Kästchen mit Pfeilen. `steps` sind (kind, text) — kind: do | srv | end."""
+    out = []
+    for i, (kind, text) in enumerate(steps):
+        if i:
+            out.append("<li class=arr aria-hidden=true>&rarr;</li>")
+        out.append(f"<li><span class='box {kind}'>{text}</span></li>")
+    return f"<ol class=chain>{''.join(out)}</ol>"
+
+
+def flow(title, why, steps_html, active: bool, note="") -> str:
+    pill = ("<span class='pill on'>in dieser Demo aktiv</span>" if active
+            else "<span class='pill off'>hier aus</span>")
+    note = f"<p class=note>{note}</p>" if note else ""
+    return (f"<section class=flow><div class=flowhead><h3>{title}</h3>{pill}</div>"
+            f"<p class=muted>{why}</p>{steps_html}{note}</section>")
+
+
+_IDENT_TEXT = {"username": "Benutzername", "email": "E-Mail", "both": "Benutzername oder E-Mail"}
+
+
+@app.get("/demo/flows", response_class=HTMLResponse)
+def flows(request: Request):
+    """Die Login-Wege als Diagramm. Was „aktiv" ist, liest die Seite aus der laufenden Config —
+    die Grafik kann also nicht behaupten, was die Demo nicht tut."""
+    c = auth.cfg
+    m = c.enabled_methods()
+    parts = [
+        flow("Passwort", "Der klassische Weg. Ein Erstfaktor genügt, solange keine Kette gesetzt ist.",
+             chain(("do", "Kennung + Passwort"), ("srv", "<code>/auth/login</code>"),
+                   ("end", "Sitzung"), ("end", "geschützte Route")),
+             "password" in m,
+             f"Das Kennungsfeld akzeptiert hier: <b>{_IDENT_TEXT[c.login_identifier]}</b>."),
+
+        flow("PIN als Erstfaktor", "Statt Passwort mit einer kurzen PIN anmelden — eigener, strenger Lockout.",
+             chain(("do", "Kennung + PIN"), ("srv", "<code>/auth/pin</code>"), ("end", "Sitzung")),
+             "pin" in m,
+             "Hier bewusst aus (<code>pin_login=False</code>): die PIN existiert, ist aber "
+             "<b>kein Login-Weg</b> — sie bestätigt nur sensible Bereiche."),
+
+        flow("Zweiter Faktor (TOTP)", "Nach dem Erstfaktor ein Einmalcode aus der Authenticator-App.",
+             chain(("do", "Erstfaktor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-stelliger Code"),
+                   ("end", "Sitzung <i>mfa_ok</i>")),
+             c.totp_enabled,
+             "Wer keine 2FA eingerichtet hat, überspringt den Schritt. Recovery-Codes gehen ebenso."),
+
+        flow("Step-up für sensible Bereiche",
+             "Du bist eingeloggt — der Bereich verlangt trotzdem eine frische Bestätigung.",
+             chain(("do", "<code>/sensibel</code>"), ("srv", "Frische abgelaufen?"),
+                   ("srv", "<code>/auth/reauth</code>"), ("do", "PIN"), ("end", "Bereich offen")),
+             True,
+             f"<code>require(mfa=True)</code> mit <code>stepup_methods={c.stepup_methods}</code>. "
+             "Ohne diese Einschränkung fragt TinySesam nach dem stärksten Verfahren, das der Nutzer "
+             "eingerichtet hat (TOTP → PIN → Passwort). Nach <code>stepup_max_age_sec</code> erneut."),
+
+        flow("Faktor-Kette pro Route", "Eine Route verlangt mehrere Faktoren in fester Reihenfolge.",
+             chain(("do", "Passwort"), ("srv", "Kette unvollständig"), ("srv", "<code>/auth/pin</code>"),
+                   ("do", "PIN"), ("end", "Route offen")),
+             True,
+             "<code>Depends(auth.require(factors=[\"password\", \"pin\"]))</code> — wer schon eingeloggt "
+             "ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite."),
+
+        flow("Geteiltes Geheimnis (ohne Konto)", "Ein Bereich, eine PIN. Keine Registrierung, kein Benutzer.",
+             chain(("do", "<code>/gaeste</code>"), ("srv", "<code>/auth/resource/gaeste</code>"),
+                   ("do", "PIN 2468"), ("end", "Bereich offen, zeitlich begrenzt")),
+             c.resource_locks_enabled,
+             "<code>Depends(auth.require_resource(\"gaeste\"))</code> — hängt an einem eigenen Cookie, "
+             "nicht an einer Sitzung."),
+
+        flow("Login-Link per E-Mail", "Adresse eingeben, Einmal-Link anklicken, drin.",
+             chain(("do", "E-Mail"), ("srv", "Mailer"), ("do", "Link klicken"), ("end", "Sitzung")),
+             c.magiclink_enabled,
+             "Hier aus: die Demo läuft <b>ganz ohne E-Mail</b> "
+             "(<code>TinySesamConfig.local_accounts()</code>) — also weder Login-Link noch "
+             "Passwort-vergessen, und kein Mailer, der etwas verschicken müsste."),
+
+        flow("Externer IdProvider", "OIDC oder SAML: TinySesam ist der Client, nicht der Provider.",
+             chain(("do", "Knopf"), ("srv", "IdP (PocketID, Entra, ADFS …)"), ("srv", "Callback"),
+                   ("end", "Sitzung + Rollen aus Gruppen")),
+             c.oidc_enabled or c.saml_enabled,
+             "Gruppen des IdP lassen sich auf lokale Rollen mappen — dieselben "
+             "<code>require_role(...)</code>-Guards wie überall."),
+
+        flow("Forward-Auth (fremde Apps)", "Der Reverse-Proxy fragt vor jedem Request nach.",
+             chain(("do", "Request an fremde App"), ("srv", "Proxy → <code>/auth/forward</code>"),
+                   ("end", "200 + Remote-User"), ("end", "App antwortet")),
+             c.forward_auth_enabled,
+             "Ohne Sitzung: 401 + <code>X-TinySesam-Location</code> → der Proxy schickt zum Login."),
+    ]
+    body = (f"<h1>Login-Flows</h1>"
+            f"<p class=lead>Jeder Weg ist ein eigener Schalter, und sie lassen sich kombinieren. "
+            f"Diese Demo läuft mit <code>login_identifier=\"{c.login_identifier}\"</code>, "
+            f"<code>pin_login={c.pin_login}</code> und <code>stepup_methods={c.stepup_methods}</code> — "
+            f"die Markierungen unten liest die Seite direkt aus dieser Config.</p>"
+            f"<div class=legend><span><i class='box do'></i> du tust etwas</span>"
+            f"<span><i class='box srv'></i> TinySesam</span>"
+            f"<span><i class='box end'></i> Ergebnis</span></div>"
+            f"<hr class=rule>{''.join(parts)}<hr class=rule>"
+            f"<div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>"
+            f"<a class='btn g' href='/sensibel'>Step-up ausprobieren</a>"
+            f"<a class='btn g' href='/gaeste'>Gäste-PIN ausprobieren</a></div>")
+    return page("Login-Flows", body, user=auth.current_user(request), active="/demo/flows")
 
 
 @app.get("/boom", response_class=HTMLResponse)

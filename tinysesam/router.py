@@ -117,25 +117,52 @@ def build_router(auth) -> APIRouter:
 
     # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
     if cfg.pin_enabled:
-        @r.get("/auth/pin")
-        def pin_page(request: Request, next: str = "/"):
-            return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
+        @r.get("/auth/pin", response_class=HTMLResponse)
+        def pin_page(request: Request, next: str = "/", error: str = ""):
+            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) ohne Benutzerfeld;
+            für Gäste als eigenständige Seite — die Login-Seite bietet die PIN ohnehin an."""
+            nxt = auth.safe_next(next)
+            u = auth.current_user(request)
+            if u:
+                return auth.render_page("pin", next=nxt, error=error, username=u["username"])
+            if not cfg.pin_login:
+                # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
+                return RedirectResponse(f"{cfg.login_path}?next={_q(nxt)}", 303)
+            return auth.render_page("pin", next=nxt, error=error)
 
         @r.post("/auth/pin")
-        def pin_submit(request: Request, username: str = Form(...), pin: str = Form(...),
+        def pin_submit(request: Request, pin: str = Form(...), username: str = Form(""),
                        next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
             remember_me = _remember(cfg, remember)
             ip = auth.client_ip(request)
+            # Schon eingeloggt → die PIN gehört zur laufenden Sitzung, kein Benutzerfeld nötig.
+            me = auth.current_user(request)
+            page = "pin" if me else "login"
+
+            def fail(msg, status):
+                ctx = {"next": nxt, "error": msg}
+                if me:
+                    ctx["username"] = me["username"]
+                return auth.render_page(page, status=status, **ctx)
+
+            if not me and not cfg.pin_login:
+                raise HTTPException(404)          # PIN ist kein Erstfaktor
             if not auth.rate_ok(ip):
-                return auth.render_page("login", status=429, next=nxt, error=auth.t("err.rate"))
-            if auth.is_locked(username, ip) or auth.is_pin_locked(username, ip):
-                return auth.render_page("login", status=429, next=nxt, error=auth.t("err.locked"))
-            u = auth.check_pin(username, pin)
-            auth.record_login(username, ip, bool(u), "pin")
+                return fail(auth.t("err.rate"), 429)
+            ident = me["username"] if me else username
+            if not ident:
+                return fail(auth.t("err.credentials"), 401)
+            if auth.is_locked(ident, ip) or auth.is_pin_locked(ident, ip):
+                return fail(auth.t("err.locked"), 429)
+            if me:
+                u = auth.get_user(me["id"]) if auth.verify_user_pin(me["id"], pin) else None
+            else:
+                u = auth.check_pin(ident, pin)
+            auth.record_login(ident, ip, bool(u), "pin")
             if not u:
-                return auth.render_page("login", status=401, next=nxt, error=auth.t("err.credentials"))
+                return fail(auth.t("err.credentials"), 401)
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
                                                   request.headers.get("user-agent"), remember_me)
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
@@ -251,26 +278,34 @@ def build_router(auth) -> APIRouter:
         if not u:
             return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
         return auth.render_page("reauth", next=auth.safe_next(next), error=error,
-                                username=u["username"], has_totp=auth.store.has_confirmed_totp(u["id"]))
+                                username=u["username"], methods=auth.stepup_options(u))
 
     @r.post("/auth/reauth")
-    def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), next: str = Form("/"),
-                      csrf_tok: str = Form("", alias="_csrf")):
+    def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
+                      next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
         nxt = auth.safe_next(next)
         ip = auth.client_ip(request)
-        has_totp = auth.store.has_confirmed_totp(u["id"])
-        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip):
+        methods = auth.stepup_options(u)
+        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip) or \
+                ("pin" in methods and auth.is_pin_locked(u["username"], ip)):
             return auth.render_page("reauth", status=429, next=nxt, username=u["username"],
-                                    has_totp=has_totp, error=auth.t("err.retry"))
-        ok = auth.verify_totp(u["id"], code) if has_totp else bool(auth.check_password(u["username"], password))
+                                    methods=methods, error=auth.t("err.retry"))
+        # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
+        ok = False
+        if "totp" in methods and code:
+            ok = auth.verify_totp(u["id"], code)
+        elif "pin" in methods and pin:
+            ok = auth.verify_user_pin(u["id"], pin)
+        elif "password" in methods and password:
+            ok = auth.verify_user_password(u["id"], password)
         auth.record_login(u["username"], ip, ok, "reauth")
         if not ok:
             return auth.render_page("reauth", status=401, next=nxt, username=u["username"],
-                                    has_totp=has_totp, error=auth.t("err.reauth"))
+                                    methods=methods, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
         if s:
             auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch

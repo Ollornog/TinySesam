@@ -19,6 +19,19 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Konto/Register/Magic/Admin-Panel/Fehlerseiten). Vorher hatte keine davon eins.
 - Showcase: **Demo-Postfach** (`/demo/postfach`) — die Demo verschickt nichts, `set_mailer` legt die
   Mails dort ab. Login-Link und Passwort-vergessen sind damit wirklich ausprobierbar.
+- **PIN ohne Login-Rolle** — `pin_login=False`: die PIN existiert, erscheint aber **nicht** auf der
+  Login-Seite. Sie dient dann nur als Zusatzfaktor (`require(factors=[…, "pin"])`) oder als Step-up.
+- **Step-up mit PIN** — `stepup_methods=["pin"]` (leer = alles, was der User hat: TOTP → PIN → Passwort).
+  `/auth/reauth` konnte bisher nur TOTP oder Passwort; jetzt auch PIN, und `auth.stepup_options(user)`
+  sagt, was für den jeweiligen Nutzer in Frage kommt (Fallback, falls die Wunschmethode fehlt).
+- **`/auth/pin` für Eingeloggte** — GET rendert eine echte PIN-Seite (bisher: Redirect auf die Login-Seite),
+  ohne Benutzerfeld, wenn eine Sitzung läuft; POST leitet die Identität aus der Sitzung ab.
+  Neues Template `pin`, `auth.verify_user_pin` / `verify_user_password` prüfen gegen eine bekannte Identität.
+- **Preset `TinySesamConfig.local_accounts(...)`** — nur Benutzername + Passwort, ganz ohne E-Mail
+  (kein Magic-Link, kein Passwort-vergessen, keine Bestätigung). Das Registrierungsformular zeigt
+  **kein E-Mail-Feld mehr**, wenn die App mit der Adresse ohnehin nichts anfängt.
+- Showcase: Seite **`/demo/flows`** — die Login-Wege als Diagramm; „aktiv/aus" liest sie aus der
+  laufenden Config. Neue Suite `tests/test_pin_stepup.py`.
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.
