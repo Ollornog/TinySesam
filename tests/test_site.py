@@ -115,6 +115,18 @@ assert ".ilink svg{width:20px;height:20px;flex:0 0 auto" in UI_CSS, "Icon darf n
 assert "height:22px" in UI_CSS.split(".ilink{")[1].split("}")[0], "Icon-Rahmen = Pillenhöhe"
 print("  .ilink: eigenes Polster, Icon 20px, kein Flex-Schrumpfen")
 
+# ---------- Der Sprachwechsler muss auf die andere Fassung DERSELBEN Seite zeigen ----------
+# Seiten mit der Sprache im Dateinamen dürfen kein `?lang=` benutzen: die Datei gewinnt.
+for page in ("index", "flows"):
+    for lang in LANGS:
+        html = pages[page_url(page, lang)]
+        i = html.index("<span class=pill2>")
+        pill = html[i:html.index("</span>", i)]
+        assert "?lang=" not in pill, (page, lang, "Dateiname schlägt den Query-Parameter")
+        for code in LANGS:
+            assert f"href='{page_url(page, code)}'" in pill, (page, lang, code)
+print("  Sprachwechsler: verweist auf die Datei, nicht auf ?lang=")
+
 # ---------- Der Generator, den die GitHub-Action ruft ----------
 with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, "-m", "web.build", tmp], cwd=ROOT, check=True, capture_output=True)

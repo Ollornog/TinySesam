@@ -30,7 +30,7 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import LABELS, render_flows, render_index                  # noqa: E402
+from web.site import LABELS, page_url, render_flows, render_index        # noqa: E402
 from web.ui import (Ctx, LANGS as UI_LANGS, Nav, UI_CSS, UI_JS,          # noqa: E402
                     document, footer, header)
 
@@ -304,6 +304,9 @@ def site_page(name: str, request: Request):
     c = _ctx.get()
     c.lang = lang
     c.labels = LABELS[lang]
+    # Diese Seiten tragen die Sprache im Dateinamen — ein `?lang=` würde die Middleware
+    # überstimmen. Der Wechsler muss also auf die andere Datei zeigen.
+    c.lang_hrefs = {code: page_url(which, code) for code in UI_LANGS}
     render = render_index if which == "index" else render_flows
     return HTMLResponse(render(lang, ctx=c, nav=nav_of(lang)))
 
