@@ -25,12 +25,16 @@ INDEX, FLOWS, LEGAL = "index.html", "flows.html", "legal.html"
 # § 5 DDG (seit 14.05.2025, löste § 5 TMG ab) verlangt Name, ladungsfähige Anschrift
 # und einen schnellen elektronischen Kontakt.
 OWNER = {
-    "name": "«Vor- und Nachname»",
-    "street": "«Straße und Hausnummer»",
-    "city": "«PLZ Ort»",
+    "name": "Daniel Brunthaler",
+    "street": "Hebbelstraße 22",
+    "city": "23843 Bad Oldesloe",
     "country": "Deutschland",
-    "email": "www@ollornog.de",
+    "email": "tinysesam@ollornog.de",
 }
+
+# Für welche Adresse gilt dieses Impressum? Nur für die offizielle Projektseite. Wer den Code
+# selbst hostet, ist selbst Anbieter — TinySesam ist eine Vorlage, kein Angebot des Autors.
+SITE_URL = "ollornog.github.io/TinySesam"
 # ────────────────────────────────────────────────────────────────────────────────
 LANG_HREFS = {c: f"?lang={c}" for c in LANGS}   # eine URL je Seite, die Sprache ist ein Parameter
 
@@ -124,9 +128,18 @@ T = {
                         "form. Requests about the logs therefore have to go to GitHub; requests about "
                         "this page's content go to the address above.",
         "l_rights_h": "Your rights",
-        "l_rights": "You can ask for information, correction, deletion, restriction and portability of "
-                    "your data, and object to its processing (Art. 15–21 GDPR). You may also complain to "
-                    "a supervisory authority. For anything concerning this page, write to the address above.",
+        "l_rights": "Art. 15–21 GDPR give you the right to information, correction, deletion, "
+                    "restriction, portability and objection — always <b>towards whoever actually holds "
+                    "the data</b>. Server logs are held by GitHub, so requests about them belong there. "
+                    "The operator of this page holds nothing: no database, no logs, no addresses, no "
+                    "backups. There is simply nothing to disclose or delete. What your browser stores "
+                    "(see above) never leaves your device — clearing your browser data removes it. "
+                    "You may complain to a supervisory authority at any time.",
+        "l_scope_h": "What this notice covers",
+        "l_scope": "This imprint applies to the project page at <code>{url}</code> and nothing else. "
+                   "TinySesam is free software under the MIT licence — a template. Whoever installs it "
+                   "on their own server operates their own service, is its provider, and answers for it "
+                   "themselves. The author of the software has nothing to do with those installations.",
         "l_liability_h": "Links",
         "l_liability": "This page links to external sites. Their content is the responsibility of their "
                        "operators; at the time of linking nothing unlawful was apparent.",
@@ -237,10 +250,19 @@ T = {
                         "Kontaktformular. Anfragen zu den Logs müssen daher an GitHub gehen; Anfragen "
                         "zum Inhalt dieser Seite an die Adresse oben.",
         "l_rights_h": "Deine Rechte",
-        "l_rights": "Du kannst Auskunft, Berichtigung, Löschung, Einschränkung und Übertragung deiner "
-                    "Daten verlangen und der Verarbeitung widersprechen (Art. 15–21 DSGVO). Außerdem "
-                    "steht dir eine Beschwerde bei einer Aufsichtsbehörde offen. Für alles, was diese "
-                    "Seite betrifft, schreib an die Adresse oben.",
+        "l_rights": "Art. 15–21 DSGVO geben dir Auskunft, Berichtigung, Löschung, Einschränkung, "
+                    "Übertragung und Widerspruch — immer gegenüber dem, <b>der die Daten tatsächlich "
+                    "hat</b>. Die Server-Logs hat GitHub, dorthin gehören Anfragen dazu. Der Betreiber "
+                    "dieser Seite hat nichts: keine Datenbank, keine Logs, keine Adressen, keine "
+                    "Sicherungen. Es gibt schlicht nichts, worüber Auskunft zu geben oder was zu löschen "
+                    "wäre. Was dein Browser speichert (siehe oben), verlässt dein Gerät nie — Browserdaten "
+                    "löschen genügt. Eine Beschwerde bei einer Aufsichtsbehörde steht dir jederzeit offen.",
+        "l_scope_h": "Wofür dieser Hinweis gilt",
+        "l_scope": "Dieses Impressum gilt für die Projektseite unter <code>{url}</code> und für sonst "
+                   "nichts. TinySesam ist freie Software unter der MIT-Lizenz — eine Vorlage. Wer sie auf "
+                   "einem eigenen Server installiert, betreibt einen eigenen Dienst, ist dessen Anbieter "
+                   "und haftet selbst dafür. Mit solchen Installationen hat der Autor der Software nichts "
+                   "zu tun.",
         "l_liability_h": "Links",
         "l_liability": "Diese Seite verlinkt auf fremde Seiten. Für deren Inhalte sind deren Betreiber "
                        "verantwortlich; zum Zeitpunkt der Verlinkung war nichts Rechtswidriges erkennbar.",
@@ -385,12 +407,11 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 LEGAL_CSS = """
   h1{font-family:var(--ts-serif);font-weight:600;font-size:48px;letter-spacing:-.01em;
     margin:.1em 0 .2em;text-wrap:balance}
-  .lead{color:var(--muted);font-size:18px;max-width:60ch;text-wrap:balance}
+  .lead{color:var(--muted);font-size:18px;text-wrap:balance}
   section{margin:64px 0}
   h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
     font-weight:600;margin:0 0 20px}
   h3{font-family:var(--ts-serif);font-size:22px;margin:32px 0 8px}
-  p{max-width:70ch}
   address{font-style:normal;background:var(--chip);border:1px solid var(--line);border-radius:12px;
     padding:16px 18px;line-height:1.7;display:inline-block}
   .todo{color:var(--danger);font-weight:600}
@@ -411,6 +432,7 @@ def legal_body(lang: str) -> str:
     <p>{t["l_imprint_note"]}</p>
     <address>{field("name")}<br>{field("street")}<br>{field("city")}<br>{field("country")}<br>
       <a href="mailto:{OWNER["email"]}">{OWNER["email"]}</a></address>
+    <h3>{t["l_scope_h"]}</h3><p>{t["l_scope"].format(url=SITE_URL)}</p>
   </section>
 
   <section><h2>{t["l_privacy"]}</h2>
