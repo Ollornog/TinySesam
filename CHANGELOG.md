@@ -15,6 +15,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Spezifität), es bleiben 4 px Inhaltsbreite und das Symbol wird zu einem Strich gequetscht.
 
 ### Behoben
+- **Der Sprachwechsler war auf den Website-Seiten tot** (`flows.de.html`, `index.de.html`): er zeigte
+  auf `…?lang=en`, aber dort steckt die Sprache im **Dateinamen** und überstimmt den Parameter.
+  Jetzt verweist er auf die andere Datei. Die Demo-Seiten (`/demo`, `/demo/flows`) benutzen weiter
+  `?lang=`, weil sie keine Sprachvarianten als Datei haben.
 - **Das eingebaute CSS färbte auf den Rumpf der Host-App ab.** `_CSS` stylte nackte
   `button`/`input`/`h1`-Selektoren; sobald `brand_header`/`brand_footer` gesetzt waren, zerlegte das
   die fremde Navigation (Pillen wurden zu vollbreiten Knöpfen). Alles ist jetzt unter `.tsmain`
