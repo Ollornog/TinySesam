@@ -19,6 +19,73 @@ def page_url(page: str, lang: str) -> str:
     return f"{page}.html" if lang == "en" else f"{page}.de.html"
 
 
+
+# ---------------------------------------------------------------- Navigation (eine Quelle)
+# Beide Leisten werden hier gebaut — die Website nutzt sie, das Showcase auch. Nur der *Inhalt*
+# unterscheidet sich (die Demo kennt Login-Status und Beispielseiten, die Website nicht).
+NAV_CSS = """
+  nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    max-width:900px;margin:0 auto;padding:14px 22px}
+  nav.top .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+  nav.top .brand img{width:30px;height:30px}
+  nav.top .brand span{font-weight:700;font-size:18px}
+  nav.top .brand b{color:var(--accent)}
+  nav.top .right{display:flex;align-items:center;gap:10px;font-size:14px}
+  nav.sub{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    max-width:900px;margin:0 auto;padding:9px 22px;font-size:14px;
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
+    color:var(--muted);white-space:nowrap;text-decoration:none}
+  nav.sub a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
+  nav.sub a.on{background:var(--chip);color:var(--ink)}
+  nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
+  nav .btn{padding:6px 13px;font-size:14px;border-radius:9px}
+  nav .btn.ghost{color:var(--ink)}
+  .dd{position:relative}
+  .dd summary{list-style:none;cursor:pointer;padding:5px 11px;border-radius:8px;color:var(--muted);
+    display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .dd summary::-webkit-details-marker{display:none}
+  .dd summary::after{content:"▾";font-size:11px}
+  .dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
+  .ddmenu{position:absolute;z-index:20;top:calc(100% + 6px);min-width:210px;padding:6px;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 14px 40px rgba(90,60,70,.14)}
+  .dd.r .ddmenu{right:0}
+  .dd:not(.r) .ddmenu{left:0}
+  .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink)}
+  .ddmenu a:hover{background:var(--chip);text-decoration:none}
+  .ddmenu b{display:block;font-weight:600;font-size:14px}
+  .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
+"""
+
+
+def link(href, label, active=False) -> str:
+    return f"<a class='{'on' if active else ''}' href='{href}'>{label}</a>"
+
+
+def dropdown(summary, items_html, right=False, open_=False) -> str:
+    cls = "dd r" if right else "dd"
+    return (f"<details class='{cls}'{' open' if open_ else ''}><summary>{summary}</summary>"
+            f"<div class=ddmenu>{items_html}</div></details>")
+
+
+def lang_dropdown(page: str, lang: str) -> str:
+    """Sprachwechsel. `page` ist 'index' oder 'flows' — der Wechsel bleibt auf derselben Seite."""
+    labels = {"en": "English", "de": "Deutsch"}
+    items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in labels.items())
+    return dropdown(labels[lang], items, right=True)
+
+
+def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
+    return (f"<nav class=top><a class=brand href='{brand_href}'><img src='{icon}' alt=''>"
+            f"<span><b>Tiny</b>Sesam</span></a><span class=right>{right_html}</span></nav>")
+
+
+def nav_sub(left_html, right_html="") -> str:
+    return f"<nav class=sub><span class=left>{left_html}</span><span class=right>{right_html}</span></nav>"
+
+
 _BASE_CSS = """
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
@@ -91,14 +158,7 @@ _INDEX_CSS = """
 """
 
 _FLOWS_CSS = """
-  nav.top{max-width:820px; margin:0 auto; padding:16px 22px; display:flex; align-items:center;
-    justify-content:space-between; gap:14px; border-bottom:1px solid var(--line)}
-  nav.top .brand{display:flex; align-items:center; gap:10px; color:var(--ink)}
-  nav.top .brand img{width:28px; height:28px}
-  nav.top .brand span{font-weight:700; font-size:17px}
-  nav.top .brand b{color:var(--accent)}
-  nav.top .links{display:flex; gap:16px; font-size:14px; align-items:center}
-  main{max-width:820px; margin:0 auto; padding:34px 22px 24px}
+  main{max-width:900px; margin:0 auto; padding:34px 22px 24px}
   h1{font-family:var(--ts-serif); font-weight:600; font-size:40px; letter-spacing:-.01em;
     margin:.1em 0 .12em; text-wrap:balance}
   .lead{color:var(--muted); font-size:18px; max-width:60ch; text-wrap:balance}
@@ -245,14 +305,6 @@ T = {
 }
 
 
-def _lang_switch(page: str, lang: str) -> str:
-    out = []
-    for code, label in (("en", "English"), ("de", "Deutsch")):
-        out.append(f"<b>{label}</b>" if code == lang
-                   else f"<a href='{page_url(page, code)}'>{label}</a>")
-    return f"<div class=lang>{' · '.join(out)}</div>"
-
-
 def _footer(lang: str) -> str:
     t = T[lang]
     return (f'<footer><a href="{REPO}">GitHub</a>·'
@@ -267,30 +319,42 @@ def _head(lang: str, title: str, desc: str, css: str) -> str:
             f'<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             f'<title>{title}</title>\n<meta name="description" content="{desc}">\n'
             f'<link rel="icon" href="wizard.png">\n<link rel="stylesheet" href="theme.css">\n'
-            f'<style>{_BASE_CSS}{css}</style>\n</head>\n<body>\n')
+            f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>\n</head>\n<body>\n')
 
 
-def render_index(lang: str = "en") -> str:
+def site_nav_top(lang: str) -> str:
+    return nav_top(f'<a href="{REPO}">GitHub</a>', brand_href=page_url("index", lang))
+
+
+def site_nav_sub(page: str, lang: str, extra_buttons: str = "") -> str:
     t = T[lang]
+    left = (link(page_url("index", lang), t["nav_overview"], page == "index")
+            + link(page_url("flows", lang), t["nav_flows"], page == "flows"))
+    right = extra_buttons + lang_dropdown(page, lang)
+    return nav_sub(left, right)
+
+
+def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = None,
+                 buttons: str = "") -> str:
+    """Überblick. Auf dieser Seite ist der Titelbereich die erste Leiste — deshalb kein `nav_top`.
+    Die Aktions-Knöpfe sitzen in der zweiten Leiste (`buttons`)."""
+    t = T[lang]
+    btns = buttons or (f'<a class="btn ghost" id="cta-github" href="{REPO}">{GITHUB_ICON}{t["cta_github"]}</a>'
+                       f'<a class="btn ghost" id="cta-docs" href="{REPO}#readme">{BOOK_ICON}{t["cta_docs"]}</a>')
     solves = "".join(f'<li><span class="yes">✓</span><span><b>{q}</b><br />— {a}</span></li>'
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""<div class="wrap">
-  <header class="hero">
+    hero = nav1 if nav1 is not None else ""
+    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{hero}<header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
     <h1><span class="tiny">Tiny</span>Sesam</h1>
     <p class="tagline">{t["tagline"]}</p>
     <p class="pos">{t["pos"]}</p>
-    <div class="cta">
-      <a class="btn primary" id="cta-github" href="{REPO}">{GITHUB_ICON}{t["cta_github"]}</a>
-      <a class="btn ghost" id="cta-docs" href="{REPO}#readme">{BOOK_ICON}{t["cta_docs"]}</a>
-    </div>
     <p class="note">{t["meta"]}</p>
-    {_lang_switch("index", lang)}
   </header>
-
-  <hr class="rule">
+  {nav2 if nav2 is not None else site_nav_sub("index", lang, btns)}
+  <div class="wrap">
 
   <section><h2>{t["h_solves"]}</h2><ul class="solves">{solves}</ul></section>
 
@@ -321,19 +385,14 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 """)
 
 
-def render_flows(lang: str = "en") -> str:
+def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
     t = T[lang]
-    return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""
-<nav class="top">
-  <a class="brand" href="{page_url("index", lang)}"><img src="wizard.png" alt="">
-    <span><b>Tiny</b>Sesam</span></a>
-  <span class="links"><a href="{page_url("index", lang)}">{t["nav_overview"]}</a>
-    <b>{t["nav_flows"]}</b><a href="{REPO}">GitHub</a></span>
-</nav>
+    top = nav1 if nav1 is not None else site_nav_top(lang)
+    sub = nav2 if nav2 is not None else site_nav_sub("flows", lang)
+    return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""{top}{sub}
 <main>
   <h1>{t["flows_h1"]}</h1>
   <p class="lead">{t["flows_lead"]}</p>
-  {_lang_switch("flows", lang)}
   <hr class="rule">
   {render_flow_list(lang, cfg=None)}
   <hr class="rule">
