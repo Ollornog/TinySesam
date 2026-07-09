@@ -29,7 +29,14 @@ class TinySesamConfig:
     password_enabled: bool = True
     passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)
     pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
+    pin_login: bool = True                # PIN als Erstfaktor auf der Login-Seite anbieten.
+                                          # False = PIN existiert, dient aber NUR als Zusatzfaktor
+                                          # (Route-Kette) bzw. Step-up für sensible Bereiche.
     pin_min_length: int = 4               # Mindestlänge beim Setzen einer PIN
+    # Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat
+    # (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche.
+    # Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren.
+    stepup_methods: list[str] = field(default_factory=list)
     oidc_enabled: bool = False            # externer IdProvider (PocketID …)
     apikey_enabled: bool = True           # Zugang per API-Key (maschinell/Daemons, an User/Service-Account)
     admin_enabled: bool = True            # Admin-Panel automatisch unter admin_path mounten
@@ -166,6 +173,20 @@ class TinySesamConfig:
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 
     @classmethod
+    def local_accounts(cls, **overrides):
+        """Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
+
+        Schaltet alles ab, was eine Adresse voraussetzt (Magic-Link, Passwort-vergessen,
+        E-Mail-Bestätigung) und lässt den Login nur den Benutzernamen annehmen. Ideal für interne
+        Werkzeuge ohne Mailserver. Mit `pin_enabled=True` lässt sich eine PIN dazunehmen —
+        z.B. `stepup_methods=["pin"]` für sensible Bereiche.
+        """
+        base = dict(login_identifier="username", signup_require_email=False,
+                    signup_verify_email=False, magiclink_enabled=False, password_reset_enabled=False)
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
     def oidc_gateway(cls, *, issuer, client_id, client_secret, base_url,
                      cookie_domain="", trusted_redirect_hosts=None, allowed_groups=None,
                      group_claim="groups", oidc_name="SSO", oidc_scopes="openid profile email",
@@ -225,10 +246,12 @@ class TinySesamConfig:
         return cls(**base)
 
     def enabled_methods(self) -> list[str]:
+        """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier
+        bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar."""
         m = []
         if self.password_enabled:
             m.append("password")
-        if self.pin_enabled:
+        if self.pin_enabled and self.pin_login:
             m.append("pin")
         if self.passkey_enabled:
             m.append("passkey")

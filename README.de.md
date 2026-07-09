@@ -183,6 +183,24 @@ Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](tinysesam/theme.
 zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon auf jeder eingebauten Seite. `auth.install_error_pages(app)` liefert Browsern gebrandete 403/404/500-Seiten,
 API-Clients weiterhin JSON. Mehr als Farben nötig? Ganze Seite per `auth.set_template(...)` ersetzen.
 
+## PIN und Step-up für sensible Routen
+
+Eine PIN muss kein Weg hinein sein. `pin_login=False` hält sie von der Login-Seite fern und lässt sie
+als *zusätzlichen* Faktor stehen:
+
+```python
+TinySesamConfig.local_accounts(          # nur Benutzername + Passwort, nirgends eine E-Mail
+    pin_enabled=True, pin_login=False,   # eine PIN gibt es, anmelden kann man sich damit nicht
+    stepup_methods=["pin"],              # sensible Routen fragen danach, auch wenn man schon drin ist
+)
+```
+
+- `Depends(auth.require(mfa=True))` → die Route verlangt eine *frische* Bestätigung. `/auth/reauth`
+  bietet TOTP, PIN oder Passwort an — eingeschränkt durch `stepup_methods`, sonst das, was der Nutzer
+  eingerichtet hat (`auth.stepup_options(user)`). Die Frische verfällt nach `stepup_max_age_sec`.
+- `Depends(auth.require(factors=["password", "pin"]))` → eine geordnete Kette pro Route. Wer schon
+  eingeloggt ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite.
+
 ## Sicherheit
 
 - Passwörter: **argon2id** (Fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, jederzeit revozierbar).

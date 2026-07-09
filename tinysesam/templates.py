@@ -336,9 +336,12 @@ def _register(auth, ctx) -> str:
     cfg = auth.cfg
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
-    # Die Felder folgen `login_identifier`: im E-Mail-Modus ist die Adresse die Kennung,
-    # im Username-Modus ist die E-Mail nur optionale Zusatzinfo (sofern nicht Pflicht).
+    # Die Felder folgen der Config: im E-Mail-Modus ist die Adresse die Kennung; ein optionales
+    # E-Mail-Feld erscheint nur, wenn die App überhaupt etwas damit anfängt (Login-Link,
+    # Passwort-vergessen, Bestätigung). Sonst fragt man nach Daten, die man nie benutzt.
     email_mode = cfg.login_identifier == "email"
+    email_used = (cfg.signup_require_email or email_mode or cfg.magiclink_enabled
+                  or getattr(cfg, "password_reset_enabled", False) or cfg.signup_verify_email)
     emailreq = " required" if (cfg.signup_require_email or email_mode) else ""
     user_field = ("" if email_mode else
                   f"<label>{_e(t('reg.user'))}</label><input name=username autofocus autocomplete=username>")
@@ -347,9 +350,9 @@ def _register(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
             f"{user_field}"
-            f"<label>{_e(t('reg.email'))}</label>"
-            f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq}"
-            f"{' autofocus' if email_mode else ''} autocomplete=email>"
+            + (f"<label>{_e(t('reg.email'))}</label>"
+               f"<input name=email type=email value='{_e(ctx.get('email', ''))}'{emailro}{emailreq}"
+               f"{' autofocus' if email_mode else ''} autocomplete=email>" if email_used else "") +
             f"<label>{_e(t('reg.password'))}</label><input name=password type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")
@@ -448,23 +451,56 @@ def _resource_unlock(auth, ctx) -> str:
     return _page(auth, str(ctx.get("label") or lbl), body)
 
 
+def _stepup_field(auth, method, first) -> str:
+    """Ein Eingabefeld je Step-up-Verfahren. `first` bekommt den Fokus."""
+    t = auth.t
+    fc = " autofocus" if first else ""
+    if method == "totp":
+        return (f"<label>{_e(t('totp.label'))}</label>"
+                f"<input name=code class=code inputmode=numeric autocomplete=one-time-code{fc} maxlength=6>")
+    if method == "pin":
+        return (f"<label>{_e(t('reauth.pin'))}</label>"
+                f"<input name=pin type=password inputmode=numeric autocomplete=off class=code{fc}>")
+    return (f"<label>{_e(t('reauth.pw'))}</label>"
+            f"<input name=password type=password autocomplete=current-password{fc}>")
+
+
 def _reauth(auth, ctx) -> str:
-    """ctx: next, error, username, has_totp. Sudo-Frische: erneut Faktor bestätigen (Step-up)."""
+    """ctx: next, error, username, methods (Liste aus auth.stepup_options).
+    Sudo-Frische: erneut einen Faktor bestätigen (Step-up)."""
     t = auth.t
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    if ctx.get("has_totp"):
-        field = (f"<label>{_e(t('totp.label'))}</label>"
-                 "<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>")
-    else:
-        field = (f"<label>{_e(t('reauth.pw'))}</label>"
-                 "<input name=password type=password autocomplete=current-password autofocus>")
+    methods = ctx.get("methods") or ["password"]
+    fields = f"<div class=or>{_e(t('or'))}</div>".join(
+        _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
     body = (f"<h1>{_e(t('reauth.title'))}</h1>"
             f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}"
             f"<form method=post action='/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
-            f"{field}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
+            f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>")
     return _page(auth, t("reauth.title"), body)
+
+
+def _pin(auth, ctx) -> str:
+    """ctx: next, error, username(optional). PIN-Eingabe — ohne Benutzerfeld, wenn schon eingeloggt."""
+    t = auth.t
+    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    known = bool(ctx.get("username"))
+    id_label, id_ac = _ident(auth)
+    user_field = ("" if known else
+                  f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>")
+    hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
+    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
+            f"<form method=post action='/auth/pin'>"
+            f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
+            f"{user_field}"
+            f"<label>{_e(t('login.pin'))}</label>"
+            f"<input name=pin type=password inputmode=numeric autocomplete=off class=code"
+            f"{' autofocus' if known else ''}>"
+            f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
+            f"<div class=hint><a href='{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
+    return _page(auth, t("pin.title"), body)
 
 
 def _totp_setup(auth, ctx) -> str:
@@ -516,6 +552,7 @@ DEFAULTS = {
     "login": _login,
     "totp": _totp,
     "reauth": _reauth,
+    "pin": _pin,
     "resource_unlock": _resource_unlock,
     "account": _account,
     "register": _register,

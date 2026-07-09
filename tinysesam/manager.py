@@ -290,6 +290,46 @@ class TinySesam:
             self.store.set_pin_hash(u["id"], hash_password(str(pin)))
         return u
 
+    # Faktoren gegen eine bekannte Identität prüfen (Step-up: der User steht schon fest).
+    def verify_user_password(self, user_id, password) -> bool:
+        h = self.store.get_password_hash(user_id)
+        if not h:
+            dummy_verify(password or "")
+            return False
+        if not verify_password(password or "", h):
+            return False
+        if needs_rehash(h):
+            self.store.set_password_hash(user_id, hash_password(password))
+        return True
+
+    def verify_user_pin(self, user_id, pin) -> bool:
+        h = self.store.get_pin_hash(user_id)
+        if not h:
+            dummy_verify(str(pin or ""))
+            return False
+        if not verify_password(str(pin or ""), h):
+            return False
+        if needs_rehash(h):
+            self.store.set_pin_hash(user_id, hash_password(str(pin)))
+        return True
+
+    def stepup_options(self, user) -> list[str]:
+        """Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschlag.
+
+        `config.stepup_methods` schränkt ein (z.B. `["pin"]`). Hat der User keine der gewünschten
+        Methoden eingerichtet, fällt es auf seine verfügbaren zurück — sonst wäre der Bereich
+        für ihn unerreichbar, ohne dass er etwas dagegen tun könnte."""
+        cfg = self.cfg
+        avail = []
+        if cfg.totp_enabled and self.store.has_confirmed_totp(user["id"]):
+            avail.append("totp")
+        if cfg.pin_enabled and self.store.has_pin(user["id"]):
+            avail.append("pin")
+        if cfg.password_enabled and self.store.get_password_hash(user["id"]):
+            avail.append("password")
+        wanted = [m for m in (cfg.stepup_methods or []) if m in avail]
+        return wanted or avail
+
     def is_pin_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
         since = int(time.time()) - self.sec("lockout_window_sec")
