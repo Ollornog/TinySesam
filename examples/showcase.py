@@ -114,7 +114,7 @@ hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
 .shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .shot .head p{margin:2px 0 0;color:var(--muted);font-size:14.5px;max-width:60ch}
 .frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
-  background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09)}
+  background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09);transition:height .2s}
 .frame iframe{display:block;border:0;transform-origin:top left}
 .frame .glass{position:absolute;inset:0;cursor:default}
 .frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
@@ -196,13 +196,35 @@ def landing():
 
 # ---------------------------------------------------------------- `/demo` = das Demo-Frontend
 def shot(title, blurb, src, open_url, height, scale, tag="read-only"):
-    """Live-Vorschau einer echten Seite: iframe + Glasscheibe darüber (keine Interaktion)."""
+    """Live-Vorschau einer echten Seite: iframe + Glasscheibe darüber (keine Interaktion).
+
+    `height` ist nur die Starthöhe — `_FIT_JS` misst nach dem Laden den echten Inhalt und zieht
+    den Rahmen auf, damit nichts abgeschnitten wird."""
     return (f"<section class=shot><div class=head><div><h2>{title}</h2><p>{blurb}</p></div>"
             f"<a class='btn g s' href='{open_url}'>Öffnen →</a></div>"
-            f"<div class=frame style='height:{height}px'>"
-            f"<iframe src='{src}' loading=lazy tabindex=-1 scrolling=no title='{title}'"
+            f"<div class=frame data-scale='{scale}' style='height:{height}px'>"
+            f"<iframe src='{src}' tabindex=-1 scrolling=no title='{title}'"
             f" style='width:{100 / scale:.0f}%;height:{height / scale:.0f}px;transform:scale({scale})'></iframe>"
             f"<span class=glass></span><span class=tag>{tag}</span></div></section>")
+
+
+# Passt jeden Vorschau-Rahmen an die tatsächliche Inhaltshöhe an (gleiches Origin → auslesbar).
+_FIT_JS = """<script>
+function tsFit(frame){
+  const f=frame.querySelector('iframe'), s=parseFloat(frame.dataset.scale)||1;
+  try{
+    const d=f.contentDocument; if(!d||!d.body) return;
+    f.style.height='0px';
+    const h=Math.max(d.body.scrollHeight, d.documentElement.scrollHeight);
+    f.style.height=h+'px'; frame.style.height=Math.ceil(h*s)+'px';
+  }catch(e){}
+}
+document.querySelectorAll('.frame').forEach(fr=>{
+  const f=fr.querySelector('iframe');
+  f.addEventListener('load',()=>{tsFit(fr); setTimeout(()=>tsFit(fr),250);});  // 2. Lauf: nach Web-Fonts
+});
+addEventListener('resize',()=>document.querySelectorAll('.frame').forEach(tsFit));
+</script>"""
 
 
 @app.get("/demo", response_class=HTMLResponse)
@@ -226,22 +248,27 @@ def demo(request: Request):
     body = (f"<h1>Live-Demo</h1>{hello}"
             f"<div class=bar><a class='btn g' href='/'>← Projektseite</a>"
             f"<a class='btn g' href='{REPO}'>{icon('github')}GitHub</a>"
-            f"<a class='btn g' href='{REPO}#readme'>{icon('book')}Doku</a></div><hr class=rule>{panels}")
+            f"<a class='btn g' href='{REPO}#readme'>{icon('book')}Doku</a></div>"
+            f"<hr class=rule>{panels}{_FIT_JS}")
     return page("Live-Demo", body, user=user, active="/demo")
 
 
 # ---------------------------------------------------------------- Read-only Vorschauen
-_LOCK = "<style>html{pointer-events:none;user-select:none}::-webkit-scrollbar{display:none}</style>"
+# `min-height:0` ist wichtig: die Login-Karte zentriert sich sonst über 100vh und die gemessene
+# Inhaltshöhe wäre immer die Fensterhöhe statt die der Karte.
+_LOCK = ("<style>html{pointer-events:none;user-select:none}"
+         "html,body{min-height:0!important}::-webkit-scrollbar{display:none}</style>")
+_LOCK_CARD = _LOCK + "<style>body{align-items:flex-start!important;padding:26px 0}</style>"
 
 
-def _readonly(html: str) -> HTMLResponse:
-    return HTMLResponse(html.replace("</body>", _LOCK + "</body>", 1))
+def _readonly(html: str, lock: str = _LOCK) -> HTMLResponse:
+    return HTMLResponse(html.replace("</body>", lock + "</body>", 1))
 
 
 @app.get("/demo/preview/login", include_in_schema=False)
 def prev_login():
     resp = auth.render_page("login", next="/demo", csrf="")     # derselbe Renderer wie /auth/login
-    return _readonly(resp.body.decode())
+    return _readonly(resp.body.decode(), _LOCK_CARD)
 
 
 @app.get("/demo/preview/account", include_in_schema=False)
