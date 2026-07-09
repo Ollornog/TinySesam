@@ -52,15 +52,15 @@ NAV_CSS = """
   nav .btn.ghost{color:var(--ink)}
 
   /* Wechsel-Pille: zwei Segmente, das aktive hebt sich ab (Sprache, Hell/Dunkel) */
-  .pill2{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:999px;
+  .pill2{display:inline-flex;align-items:center;gap:1px;padding:2px;border-radius:999px;
     background:var(--chip);border:1px solid var(--line)}
-  .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;gap:5px;
-    min-width:34px;height:26px;padding:0 9px;border:0;border-radius:999px;background:none;
-    color:var(--muted);cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;
-    letter-spacing:.02em;text-decoration:none;line-height:1}
+  .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;
+    min-width:28px;height:22px;padding:0 7px;border:0;border-radius:999px;background:none;
+    color:var(--muted);cursor:pointer;font:inherit;font-size:11px;font-weight:700;
+    letter-spacing:.04em;text-decoration:none;line-height:1}
   .pill2 .seg:hover{color:var(--ink);text-decoration:none}
   .pill2 .seg.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(90,60,70,.12)}
-  .pill2 .seg svg{width:14px;height:14px;fill:currentColor}
+  .pill2 .seg svg{width:16px;height:16px;fill:currentColor}
 
   .dd{position:relative}
   .dd summary{list-style:none;cursor:pointer;padding:6px 11px;border-radius:8px;color:var(--muted);
