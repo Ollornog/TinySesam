@@ -28,8 +28,9 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import (NAV_CSS, dropdown, lang_dropdown_path, link,      # noqa: E402
-                      nav_sub, nav_top, render_flows, render_index)
+from web.site import (NAV_CSS, THEME_JS, dropdown, footer,              # noqa: E402
+                      lang_dropdown_path, link, nav_sub, nav_top,
+                      render_flows, render_index, theme_toggle)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
@@ -181,25 +182,15 @@ def icon(name: str) -> str:
 
 
 # ---------------------------------------------------------------- Navigation (Inhalt; Bausteine aus web/site.py)
-def nav1(user, lang, brand=True) -> str:
-    """Erste Leiste: Marke + alles, was vom Login-Status abhängt (Konto, Admin-Panel, An-/Abmelden).
-    Auf der Startseite ohne Marke — die zeigt der Titelbereich."""
-    t = TEXTS[lang]
-    if user:
-        right = f"<span class=muted>{user['username']}</span>" + \
-                f"<a class='btn ghost' href='/auth/account'>{t['nav_account']}</a>"
-        if auth.is_admin(user):
-            right += f"<a class='btn ghost' href='/auth/admin'>{t['nav_admin']}</a>"
-        right += f"<a class='btn ghost' href='/auth/logout'>{t['logout']}</a>"
-    else:
-        right = (f"<a class='btn ghost' href='/auth/register'>{t['register']}</a>"
-                 f"<a class='btn primary' href='/auth/login'>{t['login']}</a>")
-    return nav_top(right, brand_href="/" if brand else None, icon=ICON_URL)
+def nav1(lang, path="/demo", brand=True) -> str:
+    """Erste Leiste: Marke + Werkzeuge (Sprache, Dark-Mode). Kennt den Login-Status nicht.
+    Nur die Startseite lässt die Marke weg — ihr Titelbereich zeigt sie groß."""
+    tools = lang_dropdown_path(path, lang) + theme_toggle()
+    return nav_top(tools, brand_href="/" if brand else None, icon=ICON_URL)
 
 
-def nav2(lang, active="") -> str:
-    """Zweite Leiste: auf JEDER Seite exakt dieselben Einträge. Kennt keinen Login-Status —
-    sonst springt sie beim Anmelden, und genau das soll sie nicht."""
+def nav2(lang, user=None, active="") -> str:
+    """Zweite Leiste: links auf jeder Seite dieselben Einträge, rechts der Aktionsbereich."""
     t = TEXTS[lang]
     items = [link("/", t["nav_site"], active == "/"),
              link("/demo", t["nav_demo"], active == "/demo"),
@@ -207,7 +198,16 @@ def nav2(lang, active="") -> str:
     ex = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in t["examples"])
     open_ = any(active == h for h, _, _ in t["examples"])
     items.append(dropdown(t["nav_examples"], ex, open_=open_))
-    return nav_sub("".join(items), lang_dropdown_path(active or "/demo", lang))
+    if user:
+        right = (f"<span class=muted>{user['username']}</span>"
+                 f"<a class='btn ghost' href='/auth/account'>{t['nav_account']}</a>")
+        if auth.is_admin(user):
+            right += f"<a class='btn ghost' href='/auth/admin'>{t['nav_admin']}</a>"
+        right += f"<a class='btn ghost' href='/auth/logout'>{t['logout']}</a>"
+    else:
+        right = (f"<a class='btn ghost' href='/auth/register'>{t['register']}</a>"
+                 f"<a class='btn primary' href='/auth/login'>{t['login']}</a>")
+    return nav_sub("".join(items), right)
 
 
 # ---------------------------------------------------------------- App-Design
@@ -241,8 +241,6 @@ hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
 .frame .glass{position:absolute;inset:0;cursor:default}
 .frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
   border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
-footer{max-width:900px;margin:0 auto;padding:24px 22px 60px;border-top:1px solid var(--line);
-  color:var(--muted);font-size:14px}
 @media (prefers-reduced-motion:no-preference){
   nav.sub,main{animation:rise .5s ease both}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -255,11 +253,9 @@ def page(title, body, user=None, active="", lang="de"):
         f"<!doctype html><html lang={lang}><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
-        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style></head><body>"
-        f"{nav1(user, lang)}{nav2(lang, active)}"
-        f"<main>{body}</main>"
-        f"<footer>{TEXTS[lang]['footer']} · <a href='/'>{TEXTS[lang]['nav_site']}</a> · "
-        f"<a href='{REPO}'>GitHub</a> · MIT</footer></body></html>")
+        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{THEME_JS}</head><body>"
+        f"{nav1(lang, active or '/demo')}{nav2(lang, user, active)}"
+        f"<main>{body}</main>{footer(lang)}</body></html>")
 
 
 # ---------------------------------------------------------------- Website-Seiten (aus web/site.py)
@@ -279,9 +275,8 @@ def theme():
 
 
 def _index(user, lang) -> HTMLResponse:
-    # Einziger Sonderfall: der Titelbereich zeigt die Marke, deshalb erste Leiste ohne sie —
-    # die Knöpfe rechts bleiben. GitHub/Doku sitzen im Titelbereich, wie auf der Website.
-    return HTMLResponse(render_index(lang, nav1=nav1(user, lang, brand=False), nav2=nav2(lang, "/")))
+    # Einziger Sonderfall: der Titelbereich zeigt die Marke, deshalb erste Leiste ohne sie.
+    return HTMLResponse(render_index(lang, nav1=nav1(lang, "/", brand=False), nav2=nav2(lang, user, "/")))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -300,7 +295,8 @@ def site_page(name: str, request: Request):
     user = auth.current_user(request)
     if which == "index":
         return _index(user, lang)
-    return HTMLResponse(render_flows(lang, nav1=nav1(user, lang), nav2=nav2(lang, "/demo/flows")))
+    return HTMLResponse(render_flows(lang, nav1=nav1(lang, "/demo/flows"),
+                                     nav2=nav2(lang, user, "/demo/flows")))
 
 
 # ---------------------------------------------------------------- Demo

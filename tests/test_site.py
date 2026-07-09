@@ -89,22 +89,41 @@ print("  web.build schreibt Seiten + Assets + .nojekyll")
 
 
 
-# ---------- Die zweite Leiste ist überall dieselbe ----------
-from web.site import nav_sub, nav_top, link, lang_dropdown  # noqa: E402
+# ---------- Die drei Elemente: nav1, nav2, Fußzeile ----------
+from web.site import nav_top  # noqa: E402
+
+
+def slice_(html, start, end):
+    i = html.index(start)
+    return html[i:html.index(end, i)]
+
 
 for lang in LANGS:
+    bars1, bars2, feet = [], [], []
     for page in ("index", "flows"):
-        bar = pages[page_url(page, lang)]
-        i = bar.index("<nav class=sub")
-        bar = bar[i:bar.index("</nav>", i)]
-        assert "border-top" not in bar
-        # Sprachwechsel: Icon + beide Sprachen als eigene Zeilen
-        assert "<svg" in bar, "Globus-Icon fehlt"
-        for code in LANGS:
-            assert f"href='{page_url(page, code)}'" in bar
+        html = pages[page_url(page, lang)]
+        bars1.append(slice_(html, "<nav class", "</nav>"))
+        bars2.append(slice_(html, "<nav class=sub", "</nav>"))
+        feet.append(slice_(html, "<footer", "</footer>"))
 
-# nav_top ohne Marke = der eine Sonderfall (Startseite)
-assert "nobrand" in nav_top("x", brand_href=None) and "class=brand" not in nav_top("x", brand_href=None)
-assert "class=brand" in nav_top("x")
-print("  nav2 ohne Trennlinie oben, Sprach-Dropdown mit Icon; nav_top(brand_href=None) = Startseite")
+    # Fußzeile: auf jeder Seite exakt gleich
+    assert feet[0] == feet[1], f"Fußzeile weicht ab ({lang})"
+
+    # nav1 trägt die Werkzeuge: Sprache (Kürzel in der Leiste, ausgeschrieben im Menü) + Dark-Mode
+    top_flows = slice_(pages[page_url("flows", lang)], "<nav class=top", "</nav>")
+    assert 'id=ts-theme' in top_flows, "Dark-Mode-Knopf fehlt"
+    assert f">{lang.upper()}<" in top_flows, "Sprachkürzel fehlt"
+    for label in ("English", "Deutsch"):
+        assert label in top_flows, "Sprachen im Menü ausgeschrieben"
+
+    # nav2 ohne Trennlinie oben, Dropdown-Einträge untereinander
+    assert "border-top" not in bars2[0]
+
+# Startseite: schmaler, ohne Marke in der ersten Leiste
+idx = pages[page_url("index", "en")]
+assert "--nav-w:720px" in idx and "nobrand" in slice_(idx, "<nav class='top nobrand'", "</nav>")
+assert "class=brand" in pages[page_url("flows", "en")]
+assert "nobrand" in nav_top("x", brand_href=None) and "class=brand" in nav_top("x")
+print("  nav1 (Marke + Werkzeuge), nav2, Fußzeile — überall dieselben; Startseite ohne Marke")
+
 print("OK test_site")
