@@ -114,4 +114,30 @@ for key in ("name", "street", "city", "country", "email"):
 assert "@" in OWNER["email"] and SITE_URL
 print("  Impressum: alle Pflichtangaben gesetzt")
 
+# ---------- Die Automatik selbst: Skripte, Hook, CI-Jobs ----------
+for f in ("scripts/check.sh", "scripts/ci-status.sh", ".githooks/pre-push"):
+    assert f in FILES, f"{f} fehlt — ohne das Tor läuft niemand die Suite"
+    assert os.access(os.path.join(ROOT, f), os.X_OK), f"{f} ist nicht ausführbar"
+
+hook = read(".githooks", "pre-push")
+assert "scripts/check.sh" in hook, "der Hook muss die Suite fahren"
+
+check = read("scripts", "check.sh")
+assert "tests/run_all.py" in check and "web.build" in check
+
+ci = read(".github", "workflows", "ci.yml")
+for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.py",
+               "python -m web.build", "setup-chrome"):
+    assert needed in ci, f"CI fährt {needed} nicht"
+print("  check.sh, ci-status.sh, pre-push-Hook da; CI fährt Browser-, Hygiene- und Website-Test")
+
+# ---------- Doku wandert mit: der Changelog kennt den aktuellen Stand ----------
+changelog = read("CHANGELOG.md")
+assert "## [Unreleased]" in changelog or f"## [{pv}]" in changelog
+for readme in ("README.md", "README.de.md"):
+    body = read(readme)
+    assert "tests/test_browser.py" in body, f"{readme} erklärt den Browser-Test nicht"
+    assert "tests/test_repo.py" in body, f"{readme} erklärt den Hygiene-Test nicht"
+print("  beide READMEs erklären Browser- und Hygiene-Test; CHANGELOG gepflegt")
+
 print("OK test_repo")

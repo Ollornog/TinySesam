@@ -22,10 +22,15 @@ OPTIONAL = ("webauthn", "authlib", "httpx", "argon2", "qrcode",   # Extras: [pas
 
 
 def main(argv):
+    # --no-browser: der Browser-Test ist der langsamste. Nur für Zwischenläufe, nie vor einem Push.
+    skip_browser = "--no-browser" in argv
+    argv = [a for a in argv if a != "--no-browser"]
     if argv:
         files = [os.path.join(HERE, a if a.endswith(".py") else f"test_{a}.py") for a in argv]
     else:
         files = sorted(glob.glob(os.path.join(HERE, "test_*.py")))
+    if skip_browser:
+        files = [f for f in files if not f.endswith("test_browser.py")]
     env = {**os.environ, "PYTHONPATH": ROOT}
     ok, skipped, failed = [], [], []
     for path in files:

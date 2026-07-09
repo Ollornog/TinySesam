@@ -434,6 +434,15 @@ Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantwor
 - **`tests/test_site.py`** prüft die erzeugte Website: beide Sprachen je Datei, ein `?lang=`-Mechanismus,
   überall derselbe Rumpf, Impressum vollständig.
 
+**Vor jedem Push** — ein Tor, lokal:
+
+```bash
+git config core.hooksPath .githooks   # einmal pro Klon: der pre-push-Hook fährt das Tor
+scripts/check.sh                      # Suiten + Browser + Hygiene + Website-Build
+scripts/check.sh --fast               # ohne Browser-Test (nur wenn es eilt)
+scripts/ci-status.sh                  # nach dem Push: CI-Ergebnis abholen, Exit != 0 bei Rot
+```
+
 **GitHub Actions** fährt das bei **jedem Push**: den vollen Lauf (Python 3.10–3.13 mit `[all]`), einen
 Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der zusätzlich die
 Website baut. Also: pushen, und die CI sagt dir Bescheid.
