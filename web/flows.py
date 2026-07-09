@@ -229,9 +229,9 @@ CSS = """
 .legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font-size:14px}
 .legend span{display:flex;align-items:center;gap:8px}
 .legend i.box{width:16px;height:16px;padding:0;display:inline-block}
-.flow{margin:0 0 56px}
+.flow{margin:0 0 72px}
 .flowhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.flowhead h3{font-family:var(--ts-serif);font-size:26px;margin:0}
+.flowhead h3{font-family:var(--ts-serif);font-size:26px;margin:0;padding-top:8px}
 .pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line)}
 .pill.on{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
 .pill.off{background:var(--chip);color:var(--muted)}

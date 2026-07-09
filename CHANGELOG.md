@@ -14,8 +14,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Profil-Aufklapper** statt Konto-Knopf: Icon + Benutzername, darunter Konto, Admin-Panel, Abmelden.
 - Aufklapper schließen jetzt bei Klick daneben und mit `Escape` (`<details>` tut das von sich aus nicht).
 - Fußzeile: die Trennlinie sitzt am Inhalt, nicht am Fensterrand — gleiche Breite wie die Leisten (`--nav-w`).
-- Typografie: mehr Luft vor Überschriften, Abschnitts- und Flow-Überschriften größer; die Leisten
-  nutzen **eine** Schriftgröße (`--nav-fs`) statt drei.
+- Typografie: deutlich mehr Luft vor Überschriften und um die zweite Leiste, Abschnitts- und
+  Flow-Überschriften größer; die Leisten nutzen **eine** Schriftgröße (`--nav-fs`) statt drei.
+- Dunkles Theme (`docs/theme.css`): Hintergrund, Flächen und Trennlinien eine Spur heller —
+  reines Fast-Schwarz wirkte flach, die Karten hoben sich kaum ab.
 
 ## [0.11.0] — 2026-07-09
 

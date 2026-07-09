@@ -40,7 +40,7 @@ NAV_CSS = """
   /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
   nav.sub{position:relative;z-index:30;background:var(--paper);
     display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    padding:9px 22px;border-bottom:1px solid var(--line)}
+    padding:13px 22px;border-bottom:1px solid var(--line)}
   nav.top,nav.sub{font-size:var(--nav-fs)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
@@ -176,11 +176,11 @@ _BASE_CSS = """
   a{color:var(--accent); text-decoration:none}
   a:hover{text-decoration:underline}
   a:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px}
-  .rule{height:1px; background:var(--line); border:0; margin:56px 0}
-  section{margin:64px 0}
-  section:first-of-type{margin-top:48px}
+  .rule{height:1px; background:var(--line); border:0; margin:64px 0}
+  section{margin:88px 0}
+  section:first-of-type{margin-top:72px}
   h2{font-size:15px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted);
-    font-weight:600; margin:0 0 20px}
+    font-weight:600; margin:0 0 26px}
   .btn{display:inline-flex; align-items:center; gap:8px; padding:11px 20px; border-radius:10px;
     font-size:15px; font-weight:500}
   .btn svg{width:16px; height:16px; fill:currentColor; flex:0 0 auto}
@@ -238,7 +238,7 @@ _INDEX_CSS = """
 """
 
 _FLOWS_CSS = """
-  main{max-width:var(--nav-w,900px); margin:0 auto; padding:40px 22px 24px}
+  main{max-width:var(--nav-w,900px); margin:0 auto; padding:56px 22px 24px}
   h1{font-family:var(--ts-serif); font-weight:600; font-size:42px; letter-spacing:-.01em;
     margin:.1em 0 .16em; text-wrap:balance}
   .lead{color:var(--muted); font-size:18px; max-width:60ch; text-wrap:balance}
