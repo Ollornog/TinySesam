@@ -30,12 +30,21 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Preset `TinySesamConfig.local_accounts(...)`** — nur Benutzername + Passwort, ganz ohne E-Mail
   (kein Magic-Link, kein Passwort-vergessen, keine Bestätigung). Das Registrierungsformular zeigt
   **kein E-Mail-Feld mehr**, wenn die App mit der Adresse ohnehin nichts anfängt.
-- **Login-Flows als Diagramm** — Inhalt in `examples/flows.py` (eine Quelle, zweisprachig), zwei
-  Ausgaben: die Demo unter `/demo/flows` markiert, was ihre Config anhat; `tools/build_flows.py`
-  backt daraus **`docs/flows.html`** für GitHub Pages, wo stattdessen der Config-Schalter steht.
-  `tests/test_flows_page.py` schlägt Alarm, wenn die statische Seite veraltet ist.
+- **Website zweisprachig und generiert** — Quelle `web/site.py` + `web/flows.py`, Ausgabe
+  `index.html` / `index.de.html` / `flows.html` / `flows.de.html` mit Sprachumschalter.
+  `python -m web.build` baut sie, die Action `.github/workflows/pages.yml` deployt sie bei jedem
+  Push. Die HTML-Dateien liegen **nicht mehr im Repo** (nur `theme.css` + `wizard.png`).
+  *Einmalig nötig: Settings → Pages → Source = „GitHub Actions".*
+- **Login-Flows als Diagramm** — neun Wege, zweisprachig, aus einer Quelle. Auf der Website steht
+  neben jedem der Config-Schalter, der ihn einschaltet; in der Demo (`/demo/flows`) stattdessen
+  „aktiv/aus", aus der laufenden Config gelesen.
 - Showcase-Nav: Projektseite · Übersicht · Login-Flows, die Beispielrouten in einem Aufklapper;
-  Logo und Titel führen zurück auf die Projektseite. Neue Suite `tests/test_pin_stepup.py`.
+  Logo und Titel führen zurück auf die Projektseite. Die Leiste sitzt auch auf den Website-Seiten,
+  die die Demo mit ausliefert. Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
+
+### Behoben
+- Showcase: die Admin-Vorschau war regelmäßig unten abgeschnitten — ihre Tabelle kommt per `fetch`
+  **nach** dem `load`-Event. Der Rahmen misst jetzt per `ResizeObserver` nach (plus Nachzügler-Timer).
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.

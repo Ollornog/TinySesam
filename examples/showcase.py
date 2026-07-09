@@ -20,15 +20,16 @@ Alles hängt an einer Quelle:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))   # damit `flows` gefunden wird
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # damit `web` gefunden wird
 
-from fastapi import FastAPI, Depends, Request                           # noqa: E402
+from fastapi import FastAPI, Depends, Request, HTTPException            # noqa: E402
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse  # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig                        # noqa: E402
 from tinysesam.admin import render_panel                                # noqa: E402
 
-from flows import CSS as FLOW_CSS, render as flow_html                  # noqa: E402
+from web.flows import CSS as FLOW_CSS, render as flow_html               # noqa: E402
+from web.site import build_pages                                         # noqa: E402
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
@@ -83,20 +84,13 @@ def icon(name: str) -> str:
 
 
 # ---------------------------------------------------------------- Frontend-Gerüst
-_SITE_CSS = """
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-family:var(--ts-font)}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
-nav{display:flex;align-items:center;justify-content:space-between;gap:14px;
-  max-width:900px;margin:0 auto;padding:14px 22px}
-nav .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
-nav .brand img{width:30px;height:30px}
-nav .brand span{font-weight:700;font-size:18px}
-nav .brand b{color:var(--accent)}
-nav .links{display:flex;align-items:center;gap:10px;font-size:14px}
-nav.sub{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:9px 22px;
-  justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:14px;overflow-x:auto}
+# Nur die zweite Leiste — sie wird auch in die Website-Seiten injiziert, die ihr eigenes Layout haben.
+_NAV_CSS = """
+/* eigenständig: die Leiste sitzt auch auf den Website-Seiten, die kein nav{} kennen */
+nav.sub{display:flex;align-items:center;max-width:900px;margin:0 auto;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:9px 22px;
+  justify-content:flex-start;gap:6px;flex-wrap:wrap;font-size:14px}
+nav.sub a{text-decoration:none}
 nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
   color:var(--muted);white-space:nowrap}
 nav.sub a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
@@ -115,6 +109,21 @@ nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;fo
 .ddmenu a:hover{background:var(--chip);text-decoration:none}
 .ddmenu b{display:block;font-weight:600;font-size:14px}
 .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
+"""
+
+_SITE_CSS = """
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-family:var(--ts-font)}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
+nav{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  max-width:900px;margin:0 auto;padding:14px 22px}
+nav .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+nav .brand img{width:30px;height:30px}
+nav .brand span{font-weight:700;font-size:18px}
+nav .brand b{color:var(--accent)}
+nav .links{display:flex;align-items:center;gap:10px;font-size:14px}
+""" + _NAV_CSS + """
 main{max-width:900px;margin:0 auto;padding:36px 22px 64px}
 h1{font-family:var(--ts-serif);font-size:38px;letter-spacing:-.01em;margin:.2em 0 .1em;text-wrap:balance}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 6px}
@@ -151,9 +160,10 @@ footer{max-width:900px;margin:0 auto;padding:24px 22px 60px;border-top:1px solid
 NAV = [
     ("/", "Projektseite", "all"),
     ("/demo", "Übersicht", "all"),
-    ("/demo/flows", "Login-Flows", "all"),
+    ("/flows.html", "Login-Flows", "all"),
     ("/auth/account", "Konto", "user"),
     ("/auth/admin", "Admin-Panel", "admin"),
+    ("/auth/login", "Anmelden", "guest"),
 ]
 EXAMPLES = [
     ("/app", "<code>/app</code>", "geschützt mit <code>require_user</code>"),
@@ -162,14 +172,20 @@ EXAMPLES = [
     ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
     ("/boom", "500", "gebrandete Fehlerseite"),
 ]
+# Die ausgelieferten Website-Seiten heißen anders als ihre Nav-Einträge.
+_SITE_ACTIVE = {"index.html": "/", "index.de.html": "/", "flows.html": "/flows.html",
+                "flows.de.html": "/flows.html"}
 
 
-def _subnav(user, active) -> str:
+def _subnav(user, active="") -> str:
+    active = _SITE_ACTIVE.get(active, active)
     out = []
     for href, label, need in NAV:
         if need == "user" and not user:
             continue
         if need == "admin" and not (user and auth.is_admin(user)):
+            continue
+        if need == "guest" and user:
             continue
         out.append(f"<a class='{'on' if href == active else ''}' href='{href}'>{label}</a>")
     items = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in EXAMPLES)
@@ -213,24 +229,33 @@ def theme():
     return FileResponse(DOCS / "theme.css", media_type="text/css")
 
 
-@app.get("/flows.html", include_in_schema=False)
-def flows_static():
-    """Die statische Flow-Seite der Projektseite (tools/build_flows.py) — damit die Links der
-    ausgelieferten `index.html` auch in der Demo ziehen."""
-    return FileResponse(DOCS / "flows.html", media_type="text/html")
+# Die Projektseite entsteht zur Laufzeit aus derselben Quelle, die die GitHub-Action baut.
+SITE = build_pages()
+
+
+def _site_page(name: str, user=None) -> HTMLResponse:
+    """Website-Seite ausliefern — plus Demo-Leiste, plus (auf der Startseite) den Demo-Knopf."""
+    html = SITE[name]
+    if name.startswith("index"):
+        html = html.replace('<div class="cta">', f'<div class="cta">{_DEMO_BTN}', 1)
+        # Der Demo-Knopf ist hier der Primärknopf; GitHub rückt eine Stufe zurück.
+        html = html.replace('class="btn primary" id="cta-github"', 'class="btn ghost" id="cta-github"', 1)
+    bar = f"<style>{_NAV_CSS}</style>" + _subnav(user, active=name)
+    return HTMLResponse(html.replace("<body>", "<body>" + bar, 1))
 
 
 @app.get("/", response_class=HTMLResponse)
-def landing():
-    """Unveränderte Projekt-Website — einzige Ergänzung: der Demo-Knopf im Hero."""
-    try:
-        html = (DOCS / "index.html").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return HTMLResponse("<h1>TinySesam</h1><a href='/demo'>Live-Demo</a>")
-    html = html.replace('<div class="cta">', f'<div class="cta">{_DEMO_BTN}', 1)
-    # Der Demo-Knopf ist hier der Primärknopf; GitHub rückt eine Stufe zurück.
-    html = html.replace('class="btn primary" id="cta-github"', 'class="btn ghost" id="cta-github"', 1)
-    return HTMLResponse(html)
+def landing(request: Request):
+    return _site_page("index.html", auth.current_user(request))
+
+
+@app.get("/{name}.html", include_in_schema=False)
+def site_page(name: str, request: Request):
+    """index.de.html · flows.html · flows.de.html — dieselben Seiten wie auf GitHub Pages."""
+    fname = f"{name}.html"
+    if fname not in SITE:
+        raise HTTPException(404)
+    return _site_page(fname, auth.current_user(request))
 
 
 # ---------------------------------------------------------------- `/demo` = das Demo-Frontend
@@ -249,20 +274,32 @@ def shot(title, blurb, src, open_url, height, scale, tag="read-only"):
 
 # Passt jeden Vorschau-Rahmen an die tatsächliche Inhaltshöhe an (gleiches Origin → auslesbar).
 _FIT_JS = """<script>
+// Der Rahmen wächst auf die echte Inhaltshöhe. Wichtig: das Admin-Panel lädt seine Tabelle per
+// fetch NACH dem load-Event — ein einmaliges Messen schneidet sie ab. Deshalb ein ResizeObserver
+// auf dem Body des iframes plus ein paar Nachzügler-Messungen.
 function tsFit(frame){
-  const f=frame.querySelector('iframe'), s=parseFloat(frame.dataset.scale)||1;
+  const f = frame.querySelector('iframe'), s = parseFloat(frame.dataset.scale) || 1;
   try{
-    const d=f.contentDocument; if(!d||!d.body) return;
-    f.style.height='0px';
-    const h=Math.max(d.body.scrollHeight, d.documentElement.scrollHeight);
-    f.style.height=h+'px'; frame.style.height=Math.ceil(h*s)+'px';
+    const d = f.contentDocument;
+    if(!d || !d.body) return;
+    const h = Math.max(d.body.scrollHeight, d.body.offsetHeight);
+    if(Math.abs(h - (frame._h || 0)) < 2) return;        // nichts Neues → keine Endlosschleife
+    frame._h = h;
+    f.style.height = h + 'px';
+    frame.style.height = Math.ceil(h * s) + 'px';
   }catch(e){}
 }
-document.querySelectorAll('.frame').forEach(fr=>{
-  const f=fr.querySelector('iframe');
-  f.addEventListener('load',()=>{tsFit(fr); setTimeout(()=>tsFit(fr),250);});  // 2. Lauf: nach Web-Fonts
+document.querySelectorAll('.frame').forEach(fr => {
+  const f = fr.querySelector('iframe');
+  f.addEventListener('load', () => {
+    tsFit(fr);
+    try{ new ResizeObserver(() => tsFit(fr)).observe(f.contentDocument.body); }catch(e){}
+    [120, 400, 1000].forEach(ms => setTimeout(() => tsFit(fr), ms));   // Fallback ohne Observer
+  });
 });
-addEventListener('resize',()=>document.querySelectorAll('.frame').forEach(tsFit));
+addEventListener('resize', () => document.querySelectorAll('.frame').forEach(fr => {
+  fr._h = 0; tsFit(fr);
+}));
 </script>"""
 
 
@@ -396,7 +433,7 @@ def flows(request: Request):
             f"Diese Demo läuft mit <code>login_identifier=\"{c.login_identifier}\"</code> und "
             f"<code>pin_login={c.pin_login}</code> — die Markierungen unten liest die Seite direkt "
             f"aus dieser Config. Auf der "
-            f"<a href='/flows.html'>Projektseite</a> steht stattdessen der Schalter, der den Weg einschaltet.</p>"
+            f"<a href='/flows.de.html'>Projektseite</a> steht stattdessen der Schalter, der den Weg einschaltet.</p>"
             + flow_html("de", c) +
             f"<hr class=rule><div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>"
             f"<a class='btn g' href='/sensibel'>Step-up ausprobieren</a>"

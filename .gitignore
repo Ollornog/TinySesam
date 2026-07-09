@@ -9,3 +9,6 @@ dist/
 *.db-wal
 *.db-shm
 .env
+
+# Generierte Website (web/build.py + GitHub-Action "pages")
+_site/
