@@ -47,10 +47,13 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Login-Flows als Diagramm** — neun Wege, zweisprachig, aus einer Quelle. Auf der Website steht
   neben jedem der Config-Schalter, der ihn einschaltet; in der Demo (`/demo/flows`) stattdessen
   „aktiv/aus", aus der laufenden Config gelesen.
-- **Navigation aus einer Quelle** (`web/site.py`): `nav_top` (Marke + Login-Status) und `nav_sub`
-  (Seiten, Beispielseiten-Aufklapper, Sprachwechsel) bauen beide Leisten für Website **und** Demo —
-  nur der Inhalt unterscheidet sich. Auf der Startseite übernimmt der Titelbereich die erste Leiste,
-  die drei Knöpfe und der Sprachwechsel sitzen in der zweiten.
+- **Navigation aus einer Quelle** (`web/site.py`): `nav_top` trägt die Marke und **alles
+  Identitätsabhängige** (Konto, Admin-Panel, An-/Abmelden); `nav_sub` ist auf **jeder** Seite
+  identisch — Seiten, Beispielseiten-Aufklapper, Sprachwechsel, sonst nichts. Sie kennt den
+  Login-Status nicht und springt deshalb auch nicht beim Anmelden.
+  Sprachwechsel mit Globus-Icon, Einträge untereinander; keine Trennlinie über der Leiste.
+  Einziger Sonderfall bleibt die Startseite: `nav_top(brand_href=None)` lässt die Marke weg
+  (der Titelbereich zeigt sie groß), die Knöpfe rechts bleiben.
   Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
 
 ### Behoben

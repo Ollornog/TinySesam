@@ -26,6 +26,7 @@ def page_url(page: str, lang: str) -> str:
 NAV_CSS = """
   nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;
     max-width:900px;margin:0 auto;padding:14px 22px}
+  nav.top.nobrand{justify-content:flex-end;padding-bottom:0}
   nav.top .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
   nav.top .brand img{width:30px;height:30px}
   nav.top .brand span{font-weight:700;font-size:18px}
@@ -33,7 +34,7 @@ NAV_CSS = """
   nav.top .right{display:flex;align-items:center;gap:10px;font-size:14px}
   nav.sub{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
     max-width:900px;margin:0 auto;padding:9px 22px;font-size:14px;
-    border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    border-bottom:1px solid var(--line)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
     color:var(--muted);white-space:nowrap;text-decoration:none}
@@ -53,8 +54,11 @@ NAV_CSS = """
     box-shadow:0 14px 40px rgba(90,60,70,.14)}
   .dd.r .ddmenu{right:0}
   .dd:not(.r) .ddmenu{left:0}
-  .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink)}
-  .ddmenu a:hover{background:var(--chip);text-decoration:none}
+  /* stärker als `nav.sub a` (gleiche Spezifität, aber dort inline-flex) → Einträge untereinander */
+  .ddmenu a,nav.sub .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink);
+    white-space:normal}
+  .ddmenu a:hover,nav.sub .ddmenu a:hover{background:var(--chip);text-decoration:none}
+  .dd summary svg{width:15px;height:15px;fill:currentColor}
   .ddmenu b{display:block;font-weight:600;font-size:14px}
   .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
 """
@@ -76,16 +80,20 @@ LANG_LABELS = {"en": "English", "de": "Deutsch"}
 def lang_dropdown(page: str, lang: str) -> str:
     """Sprachwechsel für die Website: bleibt auf derselben Seite, wechselt die Datei."""
     items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(LANG_LABELS[lang], items, right=True)
+    return dropdown(GLOBE_ICON + LANG_LABELS[lang], items, right=True)
 
 
 def lang_dropdown_path(path: str, lang: str) -> str:
     """Sprachwechsel für Seiten ohne Sprach-Dateinamen (die Demo): hängt `?lang=` an den Pfad."""
     items = "".join(f"<a href='{path}?lang={code}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(LANG_LABELS[lang], items, right=True)
+    return dropdown(GLOBE_ICON + LANG_LABELS[lang], items, right=True)
 
 
 def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
+    """Erste Leiste. `brand_href=None` lässt die Marke weg — für die Startseite, deren Titelbereich
+    sie ohnehin groß zeigt. Die Knöpfe rechts bleiben, damit die Leiste überall dieselbe Rolle hat."""
+    if brand_href is None:
+        return f"<nav class='top nobrand'><span class=right>{right_html}</span></nav>"
     return (f"<nav class=top><a class=brand href='{brand_href}'><img src='{icon}' alt=''>"
             f"<span><b>Tiny</b>Sesam</span></a><span class=right>{right_html}</span></nav>")
 
@@ -180,6 +188,8 @@ GITHUB_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0
                '2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73'
                '.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>'
                '</svg>')
+GLOBE_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM5.78 8.75a9.6 9.6 0 0 0 1.363 4.177c.255.426.542.832.857 1.215.245-.296.551-.705.857-1.215A9.6 9.6 0 0 0 10.22 8.75Zm4.44-1.5a9.6 9.6 0 0 0-1.363-4.177c-.307-.51-.612-.919-.857-1.215a9.8 9.8 0 0 0-.857 1.215A9.6 9.6 0 0 0 5.78 7.25Zm-5.944 1.5H1.543a6.5 6.5 0 0 0 4.666 5.5c-.123-.181-.24-.365-.352-.552-.715-1.192-1.437-2.874-1.581-4.948Zm-2.733-1.5h2.733c.144-2.074.866-3.756 1.58-4.948.12-.197.237-.381.353-.552a6.5 6.5 0 0 0-4.666 5.5Zm10.181 1.5c-.144 2.074-.866 3.756-1.58 4.948-.12.197-.237.381-.353.552a6.5 6.5 0 0 0 4.666-5.5Zm2.733-1.5a6.5 6.5 0 0 0-4.666-5.5c.123.181.24.365.353.552.714 1.192 1.436 2.874 1.58 4.948Z"/></svg>')
+
 BOOK_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 '
              '0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75'
              '.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 '
@@ -330,38 +340,40 @@ def _head(lang: str, title: str, desc: str, css: str) -> str:
             f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>\n</head>\n<body>\n')
 
 
-def site_nav_top(lang: str) -> str:
-    return nav_top(f'<a href="{REPO}">GitHub</a>', brand_href=page_url("index", lang))
+def site_nav_top(lang: str, brand=True) -> str:
+    return nav_top(f'<a href="{REPO}">GitHub</a>',
+                   brand_href=page_url("index", lang) if brand else None)
 
 
-def site_nav_sub(page: str, lang: str, extra_buttons: str = "") -> str:
+def site_nav_sub(page: str, lang: str) -> str:
+    """Immer dieselben Einträge — die zweite Leiste kennt weder Login-Status noch Seitenkontext."""
     t = T[lang]
     left = (link(page_url("index", lang), t["nav_overview"], page == "index")
             + link(page_url("flows", lang), t["nav_flows"], page == "flows"))
-    right = extra_buttons + lang_dropdown(page, lang)
-    return nav_sub(left, right)
+    return nav_sub(left, lang_dropdown(page, lang))
 
 
-def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = None,
-                 buttons: str = "") -> str:
-    """Überblick. Auf dieser Seite ist der Titelbereich die erste Leiste — deshalb kein `nav_top`.
-    Die Aktions-Knöpfe sitzen in der zweiten Leiste (`buttons`)."""
+def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
+    """Überblick. Die erste Leiste kommt hier ohne Marke — der Titelbereich zeigt sie groß."""
     t = T[lang]
-    btns = buttons or (f'<a class="btn ghost" id="cta-github" href="{REPO}">{GITHUB_ICON}{t["cta_github"]}</a>'
-                       f'<a class="btn ghost" id="cta-docs" href="{REPO}#readme">{BOOK_ICON}{t["cta_docs"]}</a>')
     solves = "".join(f'<li><span class="yes">✓</span><span><b>{q}</b><br />— {a}</span></li>'
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    hero = nav1 if nav1 is not None else ""
-    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{hero}<header class="hero">
+    top = nav1 if nav1 is not None else site_nav_top(lang, brand=False)
+    sub = nav2 if nav2 is not None else site_nav_sub("index", lang)
+    return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{top}<header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
     <h1><span class="tiny">Tiny</span>Sesam</h1>
     <p class="tagline">{t["tagline"]}</p>
     <p class="pos">{t["pos"]}</p>
+    <div class="cta">
+      <a class="btn primary" id="cta-github" href="{REPO}">{GITHUB_ICON}{t["cta_github"]}</a>
+      <a class="btn ghost" id="cta-docs" href="{REPO}#readme">{BOOK_ICON}{t["cta_docs"]}</a>
+    </div>
     <p class="note">{t["meta"]}</p>
   </header>
-  {nav2 if nav2 is not None else site_nav_sub("index", lang, btns)}
+  {sub}
   <div class="wrap">
 
   <section><h2>{t["h_solves"]}</h2><ul class="solves">{solves}</ul></section>

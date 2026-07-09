@@ -87,4 +87,24 @@ with tempfile.TemporaryDirectory() as tmp:
                            "index.html", "theme.css", "wizard.png"]), have
 print("  web.build schreibt Seiten + Assets + .nojekyll")
 
+
+
+# ---------- Die zweite Leiste ist überall dieselbe ----------
+from web.site import nav_sub, nav_top, link, lang_dropdown  # noqa: E402
+
+for lang in LANGS:
+    for page in ("index", "flows"):
+        bar = pages[page_url(page, lang)]
+        i = bar.index("<nav class=sub")
+        bar = bar[i:bar.index("</nav>", i)]
+        assert "border-top" not in bar
+        # Sprachwechsel: Icon + beide Sprachen als eigene Zeilen
+        assert "<svg" in bar, "Globus-Icon fehlt"
+        for code in LANGS:
+            assert f"href='{page_url(page, code)}'" in bar
+
+# nav_top ohne Marke = der eine Sonderfall (Startseite)
+assert "nobrand" in nav_top("x", brand_href=None) and "class=brand" not in nav_top("x", brand_href=None)
+assert "class=brand" in nav_top("x")
+print("  nav2 ohne Trennlinie oben, Sprach-Dropdown mit Icon; nav_top(brand_href=None) = Startseite")
 print("OK test_site")
