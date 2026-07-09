@@ -254,8 +254,8 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Open-redirect protection:** every `?next=` runs through `safe_next` (relative paths only, or
   `trusted_redirect_hosts`). `cookie_domain` for SSO across subdomains.
 
-Full demo: [`examples/showcase.py`](examples/showcase.py) — the landing page *is* the project website,
-plus a **guided tour** through every feature (`uvicorn examples.showcase:app`).
+Full demo: [`examples/showcase.py`](examples/showcase.py) — `/` is the project website itself,
+`/demo` a front end whose login/account/admin panels are **live read-only previews** of the real pages (`uvicorn examples.showcase:app`).
 
 ## LDAP / lldap
 

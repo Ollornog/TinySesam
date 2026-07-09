@@ -217,16 +217,12 @@ def build_admin_router(auth) -> APIRouter:
         @ar.get("", response_class=HTMLResponse)
         def admin_page(request: Request):
             guard(request)
-            base = request.url.path.rstrip("/")          # Mountpunkt → relative API-Basis
             warn = ""
             if cfg.https_mode == "warn" and not auth.is_secure(request):
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
-            html = (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
-                    .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
-                    .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
-                    .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
-            resp = HTMLResponse(html)
+            # Mountpunkt → relative API-Basis
+            resp = HTMLResponse(render_panel(auth, request.url.path.rstrip("/"), warn=warn))
             if cfg.csrf_enabled:
                 import secrets as _s
                 resp.set_cookie(cfg.csrf_cookie, _s.token_urlsafe(24), secure=cfg.cookie_secure,
@@ -234,6 +230,16 @@ def build_admin_router(auth) -> APIRouter:
             return resp
 
     return ar
+
+
+def render_panel(auth, base: str, warn: str = "") -> str:
+    """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
+    damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
+    cfg = auth.cfg
+    return (_PAGE.replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+            .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
+            .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
+            .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
 
 
 _PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
