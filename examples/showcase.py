@@ -16,6 +16,7 @@ Alles hängt an je einer Quelle:
 Der **Demo-Modus** (`demo_mode=True`) legt die Konten `demo` und `demoadmin` an und zeigt die
 Zugangsdaten auf der Login-Seite — samt Warnung, dass er produktiv aus gehört.
 """
+import os
 import sys
 from contextvars import ContextVar
 from pathlib import Path
@@ -50,7 +51,7 @@ button:hover,.btn2:hover{filter:brightness(1.05)}
 """
 
 auth = TinySesam(TinySesamConfig.local_accounts(   # nur Benutzername + Passwort, keine E-Mail
-    db_path="/tmp/tinysesam-showcase.db",
+    db_path=os.environ.get("TINYSESAM_SHOWCASE_DB", "/tmp/tinysesam-showcase.db"),
     rp_name="TinySesam",
     lang="de",
     brand_css=BRAND,
@@ -380,8 +381,9 @@ def prev_login():
 @app.get("/demo/preview/account", include_in_schema=False)
 def prev_account():
     demo_user = {"id": 0, "username": "demo", "display_name": "", "is_admin": 0}
+    # `static=True`: die Vorschau lädt nichts nach — sonst fetch't sie ins 401 und wirft JS-Fehler.
     resp = auth.render_page("account", user=demo_user, methods=auth.cfg.enabled_methods(),
-                            has_totp=True, has_pin=True, is_admin=False,
+                            has_totp=True, has_pin=True, is_admin=False, static=True,
                             admin_path=auth.cfg.admin_path, csrf="")
     return _readonly(resp.body.decode())
 

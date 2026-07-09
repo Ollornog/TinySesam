@@ -17,7 +17,8 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 OPTIONAL = ("webauthn", "authlib", "httpx", "argon2", "qrcode",   # Extras: [passkey]/[oidc]/[argon2]/[qr]
-            "onelogin", "xmlsec", "ldap3", "redis")               # [saml]/[ldap]/[redis]
+            "onelogin", "xmlsec", "ldap3", "redis",               # [saml]/[ldap]/[redis]
+            "websockets", "uvicorn", "kein Chrome gefunden")      # der Browser-Test
 
 
 def main(argv):
@@ -38,7 +39,8 @@ def main(argv):
         if r.returncode == 0:
             print(f"  ok   {name}")
             ok.append(name)
-        elif "ModuleNotFoundError" in r.stderr and any(m in r.stderr for m in OPTIONAL):
+        elif ("ModuleNotFoundError" in r.stderr or "ImportError" in r.stderr) \
+                and any(m in r.stderr for m in OPTIONAL):
             print(f"  skip {name} (optionale Abhängigkeit fehlt)")
             skipped.append(name)
         else:

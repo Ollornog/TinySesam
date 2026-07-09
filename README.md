@@ -412,15 +412,28 @@ A ready-made [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (g
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'        # + httpx is needed for the FastAPI TestClient (included in [all])
-python tests/run_all.py         # all suites; exit 0 = green, 1 = failure
-python tests/run_all.py core pin chain   # run individual ones
+pip install -e '.[all]'                    # + httpx for the FastAPI TestClient (included in [all])
+python tests/run_all.py                    # every suite; exit 0 = green, 1 = failure
+python tests/run_all.py core pin chain     # only some
 ```
 
-The suites are standalone assert scripts (no pytest). **GitHub Actions CI**
-(`.github/workflows/ci.yml`) runs automatically on **every push/PR**: the full run across
-Python 3.10–3.13 (`.[all]`) **and** a minimal run without extras (which secures the stdlib-scrypt fallback;
-passkey/OIDC-dependent suites are skipped there). So to update, just push — CI tests it.
+The suites are standalone assert scripts (no pytest). Three of them answer the question
+"is anything broken?" without you having to look:
+
+- **`tests/test_browser.py`** drives a headless Chrome over the DevTools protocol against the running
+  showcase and checks what a user actually sees: no console errors, no failing requests, header/nav/footer
+  on every page, equal widths, `?lang=` switching, dark mode down into the preview iframes, the login
+  (including a simulated password autofill) and that an empty form yields a message, not a 422 JSON wall.
+  Skipped when Chrome or `websockets` are missing.
+- **`tests/test_repo.py`** guards the housekeeping: versions in `pyproject.toml`, `__init__.py` and the
+  changelog agree; no generated HTML, no secrets, no stray `print()` in the library; colour values only in
+  `theme.py`/`theme.css`; every suite is picked up by the runner.
+- **`tests/test_site.py`** checks the generated site: both languages per file, one `?lang=` mechanism,
+  the shell identical everywhere, imprint complete.
+
+**GitHub Actions** runs all of it on every push: the full matrix (Python 3.10–3.13 with `[all]`), a
+minimal run without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the
+website. So: push, and CI tells you.
 
 ## Status
 

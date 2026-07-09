@@ -355,10 +355,12 @@ def _account(auth, ctx) -> str:
     .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
     .tsmain a{color:var(--ts-link)}
     """
-    pkjs = _PASSKEY_REGISTER_JS if "passkey" in methods else ""
+    # `static=True`: nur die Seite zeigen, nichts nachladen (Vorschau/Screenshot).
+    static = bool(ctx.get("static"))
+    pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
             f"<div>{admin_link} <a href='/auth/logout'>{_e(t('logout'))}</a></div></header>"
-            + "".join(sections) + _ACCOUNT_JS + pkjs)
+            + "".join(sections) + ("" if static else _ACCOUNT_JS) + pkjs)
     # Account nutzt volle Breite (kein Card) + Account-CSS + Branding
     return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
 
@@ -378,7 +380,8 @@ async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden
   const r=await (await J('/auth/totp/recovery')).json();
   if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
-  const ks=await (await fetch('/auth/apikeys')).json();
+  const ks=await (await fetch('/auth/apikeys')).json().catch(()=>[]);
+  if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
 async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
   if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
@@ -388,7 +391,8 @@ async function loadpk(){const el=document.getElementById('pklist');if(!el)return
   el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn onclick=delpk(${p.id})>löschen</button></li>`).join('')||'<li>keine</li>'}
 async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
-  const ss=await (await fetch('/auth/sessions')).json();
+  const ss=await (await fetch('/auth/sessions')).json().catch(()=>[]);
+  if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
 function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
