@@ -254,8 +254,8 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
   `trusted_redirect_hosts`). `cookie_domain` für SSO über Subdomains.
 
-Vollständige Demo: [`examples/showcase.py`](examples/showcase.py) — die Startseite *ist* die Projekt-Website,
-dazu eine **geführte Tour** durch alle Funktionen (`uvicorn examples.showcase:app`).
+Vollständige Demo: [`examples/showcase.py`](examples/showcase.py) — `/` ist die Projekt-Website selbst,
+`/demo` ein Frontend, dessen Login-/Konto-/Admin-Panels **read-only Live-Vorschauen** der echten Seiten sind (`uvicorn examples.showcase:app`).
 
 ## LDAP / lldap
 

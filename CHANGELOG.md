@@ -5,15 +5,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Hinzugefügt
-- **Showcase mit geführter Demo-Tour** (`examples/showcase.py`): die Startseite ist buchstäblich die
-  Projekt-Website (`docs/index.html`) mit session-bewussten Buttons; `/demo` führt in acht Schritten durch
-  Login, geschützte Route, Step-up, Gäste-PIN, Konto, Admin-Panel und die gebrandeten Fehlerseiten.
-  Die Tour-Leiste erscheint über `brand_head` auch auf den **eingebauten** Seiten.
+- **Showcase-Frontend** (`examples/showcase.py`): `/` ist die Projekt-Website (`docs/index.html`)
+  **eins zu eins**, ergänzt um einen Demo-Knopf. `/demo` ist das Demo-Frontend — Nav mit Logo und Titel,
+  Anmelden/Registrieren, darunter Login-, Konto- und Admin-Panel als **read-only Live-Vorschau**.
+  Die Vorschauen rendern die **echten** Bausteine (`auth.render_page(...)`, `admin.render_panel(...)`),
+  sind also nie veraltet; die Admin-Vorschau läuft gegen eine lesende Attrappen-API.
+- `tinysesam.admin.render_panel(auth, base, warn="")` — öffentlich, damit das Panel-HTML an genau
+  einer Stelle erzeugt wird (Panel und Demo-Vorschau können nicht auseinanderlaufen).
 - **README zweisprachig**: `README.md` (Englisch, Default) + `README.de.md` (Deutsch), mit Sprachumschalter.
 
 ### Behoben
 - Showcase: „Anmelden"/„Konto erstellen" wirkten im eingeloggten Zustand tot (`/auth/login` → `303 /`).
-  Die Landing kennt jetzt den Login-Status und zeigt stattdessen Konto/Abmelden.
+  Das Demo-Frontend kennt jetzt den Login-Status und zeigt stattdessen Konto/Abmelden.
 
 ## [0.10.0] — 2026-07-09
 

@@ -1,25 +1,29 @@
-"""Showcase = vorzeigbare Referenz-App im Design der Projekt-Website (GitHub Pages).
+"""Showcase — Referenz-Frontend für TinySesam, im Design der Projekt-Website.
 
-    pip install -e '.[all]'          # oder Kern: nur Passwort/PIN/Magic reicht hier
+    pip install -e '.[all]'          # Kern (Passwort/PIN/Magic) reicht hier
     uvicorn examples.showcase:app --reload
-    # → http://127.0.0.1:8000   (Landing = die Website selbst; admin / geheim123)
+    # → http://127.0.0.1:8000        (Demo-Login: admin / geheim123)
 
-Die Startseite ist buchstäblich `docs/index.html` — dieselbe Seite wie auf GitHub Pages —, nur mit
-demo-tauglichen Buttons im Hero. Von dort führt eine **geführte Tour** (`/demo`) Schritt für Schritt
-durch alle Funktionen. Alle Seiten (auch die eingebauten Login-/PIN-/TOTP-/Konto-/Fehlerseiten) tragen
-über `brand_css` / `brand_head` denselben Look. Gedacht als Kopiervorlage für eigene Apps.
+`/`      = die Projekt-Website (`docs/index.html`) **eins zu eins**, nur mit einem Demo-Knopf.
+`/demo`  = das Demo-Frontend: Nav mit Logo + Titel, Anmelden/Registrieren, darunter die Panels
+           (Login, Konto, Admin) als **read-only Live-Vorschau**.
+
+Wichtig: die Vorschauen sind keine Screenshots und keine Nachbauten. Sie rendern dieselben
+Bausteine wie die echten Seiten — `auth.render_page(...)` für Login/Konto, `admin.render_panel(...)`
+fürs Panel. Ändert sich ein Panel, ändert sich die Demo mit. Interaktion ist gesperrt
+(`pointer-events`), die Admin-Vorschau spricht mit einer Attrappen-API, die nur liest.
 """
 import re
 from pathlib import Path
 
 from fastapi import FastAPI, Depends, Request
-from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from tinysesam import TinySesam, TinySesamConfig
+from tinysesam.admin import render_panel
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
-TOUR_COOKIE = "ts_tour"
 
 # Eine Palette für ALLES (Cremeweiß/Altrosa, Light+Dark) — wie die Projekt-Website.
 _TOKENS = """
@@ -29,25 +33,8 @@ _TOKENS = """
   --accent:#e0919c;--accent-2:#b0566f;--line:#2f2c3b;--chip:#2a2735}}
 """
 
-# Die Tour-Leiste erscheint auf JEDER Seite, solange die Tour läuft — auch auf den eingebauten.
-_TOURBAR_CSS = """
-.tourbar{position:sticky;top:0;z-index:99;display:flex;align-items:center;justify-content:center;
-  gap:14px;flex-wrap:wrap;padding:9px 16px;background:var(--accent);color:#fff;font-size:14px}
-.tourbar a{color:#fff;text-decoration:underline;font-weight:500}
-.tourbar .step{opacity:.85}
-"""
-
-# Baut die Leiste im Browser, wenn das Tour-Cookie gesetzt ist (klein genug für den <head>).
-_TOURBAR_JS = """<script>document.addEventListener('DOMContentLoaded',function(){
-var m=document.cookie.match(/(?:^|; )ts_tour=(\\d+)/);
-if(!m||location.pathname.indexOf('/demo')===0)return;
-var b=document.createElement('div');b.className='tourbar';
-b.innerHTML="<span class=step>\\ud83e\\uddd9 Demo-Tour \\u00b7 Schritt "+m[1]+" von __N__</span>"
- +"<a href='/demo'>Zur\\u00fcck zur Tour \\u2192</a>";
-document.body.insertBefore(b,document.body.firstChild);});</script>"""
-
-# brand_css: re-skinnt die EINGEBAUTEN TinySesam-Seiten (Login/PIN/TOTP/Konto/Fehler) im selben Look.
-BRAND = _TOKENS + _TOURBAR_CSS + """
+# brand_css: re-skinnt die EINGEBAUTEN TinySesam-Seiten (Login/PIN/TOTP/Konto/Admin/Fehler).
+BRAND = _TOKENS + """
 body{background:var(--paper);color:var(--ink);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .card{background:var(--card);border-color:var(--line);border-radius:16px;
@@ -69,7 +56,6 @@ auth = TinySesam(TinySesamConfig(
     rp_name="TinySesam",
     lang="de",
     brand_css=BRAND,                 # ← ein Wert stylt alle eingebauten Seiten
-    brand_head="",                   # ← wird unten mit der Tour-Leiste befüllt
     password_enabled=True,
     pin_enabled=True,
     passkey_enabled=False,           # für lokalen HTTP-Test aus
@@ -89,118 +75,73 @@ app.include_router(auth.router())
 auth.install_error_pages(app)        # themed 403/404/500 …
 
 
-# ---------------------------------------------------------------- Die geführte Tour
-# (Schritt, Titel, Erklärung, Ziel-URL, Hinweis)
-TOUR = [
-    ("Anmelden", "Die eingebaute Login-Seite — Passwort oder PIN, „Angemeldet bleiben“, "
-     "Login-Link per E-Mail. Vollständig im Look der App, weil <code>brand_css</code> gesetzt ist.",
-     "/auth/login?next=/demo", "Demo-Konto: <b>admin</b> / <b>geheim123</b>"),
-    ("Geschützter Bereich", "Eine ganz normale Route hinter <code>Depends(auth.require_user)</code>. "
-     "Nicht-Angemeldete landen automatisch auf der Login-Seite.",
-     "/app?tour=1", ""),
-    ("Step-up / Sudo-Frische", "Sensible Route hinter <code>Depends(auth.require(mfa=True))</code>: "
-     "verlangt eine <i>frische</i> Bestätigung, auch wenn die Sitzung noch gilt.",
-     "/sensibel?tour=1", ""),
-    ("Gäste-PIN ohne Konto", "Ein geteiltes Ressourcen-Geheimnis — <code>require_resource(\"gaeste\")</code>. "
-     "Kein Benutzerkonto, nur eine PIN für den Bereich.",
-     "/gaeste?tour=1", "PIN: <b>2468</b>"),
-    ("Konto-Seite", "Eingebaut unter <code>/auth/account</code>: Passwort, PIN, 2FA + Recovery-Codes, "
-     "Passkeys, API-Keys und die eigenen Sitzungen.",
-     "/auth/account", ""),
-    ("Admin-Panel", "Unter <code>/auth/admin</code>: Benutzer &amp; Rollen, Sitzungen, API-Keys, "
-     "Härtungs-Schwellen, Audit-Log, Update. Wahlweise nur als JSON-API fürs eigene Panel.",
-     "/auth/admin", "Nur mit Admin-Rechten sichtbar."),
-    ("Fehlerseite 404", "<code>auth.install_error_pages(app)</code> — Browser bekommen eine gebrandete "
-     "Seite, API-Clients weiterhin JSON.",
-     "/gibtsnicht", ""),
-    ("Fehlerseite 500", "Dieselbe Behandlung für unerwartete Ausnahmen — ohne Stacktrace nach außen.",
-     "/boom", ""),
-]
-N = len(TOUR)
-auth.cfg.brand_head = _TOURBAR_JS.replace("__N__", str(N))
-
-
-def tour_step(request: Request) -> int:
-    try:
-        return max(0, min(N, int(request.cookies.get(TOUR_COOKIE, "0"))))
-    except ValueError:
-        return 0
-
-
-# ---------------------------------------------------------------- App-Design (Kopiervorlage)
-_SITE_CSS = _TOKENS + _TOURBAR_CSS + """
+# ---------------------------------------------------------------- Frontend-Gerüst
+_SITE_CSS = _TOKENS + """
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;
-  max-width:760px;margin:0 auto;padding:16px 22px;border-bottom:1px solid var(--line)}
-nav .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:17px;
-  color:var(--ink);text-decoration:none}
-nav .brand img{width:26px;height:26px}
+nav{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  max-width:900px;margin:0 auto;padding:14px 22px;border-bottom:1px solid var(--line)}
+nav .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
+nav .brand img{width:30px;height:30px}
+nav .brand span{font-weight:700;font-size:18px}
 nav .brand b{color:var(--accent)}
-nav .links{display:flex;gap:16px;font-size:14px}
-main{max-width:760px;margin:0 auto;padding:32px 22px 64px}
+nav .links{display:flex;align-items:center;gap:10px;font-size:14px}
+main{max-width:900px;margin:0 auto;padding:36px 22px 64px}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
   font-size:38px;letter-spacing:-.01em;margin:.2em 0 .1em;text-wrap:balance}
-.lead{color:var(--muted);font-size:18px;max-width:54ch;text-wrap:balance}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+  font-weight:600;margin:0 0 6px}
+.lead{color:var(--muted);font-size:18px;max-width:56ch;text-wrap:balance}
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
-.btn{display:inline-block;padding:10px 18px;border-radius:10px;font-weight:500;font-size:15px}
+.btn{display:inline-block;padding:9px 17px;border-radius:10px;font-weight:500;font-size:15px}
 .btn.p{background:var(--accent);color:#fff}.btn.p:hover{text-decoration:none;filter:brightness(1.05)}
 .btn.g{border:1px solid var(--line);color:var(--ink)}.btn.g:hover{text-decoration:none;border-color:var(--accent)}
+.btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
 code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;background:var(--chip);
   border:1px solid var(--line);border-radius:5px;padding:1px 5px}
-/* Tour-Schienen */
-ol.steps{list-style:none;padding:0;margin:26px 0;display:grid;gap:12px;counter-reset:s}
-ol.steps li{display:grid;grid-template-columns:34px 1fr;gap:14px;align-items:start;
-  background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
-ol.steps li.now{border-color:var(--accent);box-shadow:0 6px 24px rgba(176,86,111,.13)}
-ol.steps li.done{opacity:.62}
-ol.steps .num{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;
-  background:var(--chip);border:1px solid var(--line);font-weight:600;font-size:14px}
-ol.steps li.done .num{background:var(--accent);color:#fff;border-color:var(--accent)}
-ol.steps li.now .num{background:var(--accent);color:#fff;border-color:var(--accent)}
-ol.steps b{display:block;font-size:16px}
-ol.steps p{margin:4px 0 0;color:var(--muted);font-size:14.5px}
-ol.steps .go{margin-top:10px;display:inline-block;padding:7px 14px;border-radius:9px;font-size:14px;
-  border:1px solid var(--line);color:var(--ink)}
-ol.steps li.now .go{background:var(--accent);color:#fff;border-color:var(--accent)}
-ol.steps .go:hover{text-decoration:none}
-footer{max-width:760px;margin:0 auto;padding:24px 22px 60px;border-top:1px solid var(--line);
+hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
+/* Read-only Live-Vorschau eines echten Panels */
+.shot{margin:0 0 34px}
+.shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;margin-bottom:12px}
+.shot .head p{margin:2px 0 0;color:var(--muted);font-size:14.5px;max-width:60ch}
+.frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
+  background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09)}
+.frame iframe{display:block;border:0;transform-origin:top left}
+.frame .glass{position:absolute;inset:0;cursor:default}
+.frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
+  border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
+footer{max-width:900px;margin:0 auto;padding:24px 22px 60px;border-top:1px solid var(--line);
   color:var(--muted);font-size:14px}
 """
 
 
 def page(title, body, user=None):
-    right = ("<a href='/demo'>Tour</a><a href='/auth/account'>Konto</a><a href='/auth/logout'>Abmelden</a>"
-             if user else "<a href='/demo'>Tour</a><a href='/auth/login'>Anmelden</a>")
+    links = (f"<span class=muted>{user['username']}</span>"
+             "<a class='btn g s' href='/auth/account'>Konto</a>"
+             "<a class='btn g s' href='/auth/logout'>Abmelden</a>"
+             if user else
+             "<a class='btn g s' href='/auth/register'>Registrieren</a>"
+             "<a class='btn p s' href='/auth/login'>Anmelden</a>")
     return HTMLResponse(
         f"<!doctype html><html lang=de><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-        f"<link rel=icon href='/wizard.png'>"
-        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>"
-        f"{_TOURBAR_JS.replace('__N__', str(N))}</head><body>"
-        f"<nav><a class=brand href='/'><img src='/wizard.png' alt=''> <span><b>Tiny</b>Sesam</span></a>"
-        f"<span class=links>{right}<a href='{REPO}'>GitHub</a></span></nav>"
+        f"<link rel=icon href='/wizard.png'><title>{title} · TinySesam</title>"
+        f"<style>{_SITE_CSS}</style></head><body>"
+        f"<nav><a class=brand href='/demo'><img src='/wizard.png' alt=''>"
+        f"<span><b>Tiny</b>Sesam</span></a><span class=links>{links}</span></nav>"
         f"<main>{body}</main>"
-        f"<footer>TinySesam-Showcase · <a href='{REPO}'>GitHub</a> · "
-        f"<a href='{REPO}/blob/main/CHANGELOG.md'>Changelog</a> · MIT</footer>"
+        f"<footer>Demo-Frontend · <a href='/'>Projektseite</a> · <a href='{REPO}'>GitHub</a> · MIT</footer>"
         f"</body></html>")
 
 
-# ---------------------------------------------------------------- Landing = die GitHub-Pages-Seite
-_CTA_RE = re.compile(r'<div class="cta">.*?</div>', re.S)
-
-
-def _cta(user) -> str:
-    """Ersetzt die zwei Website-Buttons im Hero durch demo-taugliche, session-bewusste Buttons."""
-    demo = "<a class='btn primary' href='/demo'>▶ Demo starten</a>"
-    account = ("<a class='btn ghost' href='/auth/account'>Konto</a>"
-               "<a class='btn ghost' href='/auth/logout'>Abmelden</a>"
-               if user else "<a class='btn ghost' href='/auth/login'>Anmelden</a>")
-    return (f'<div class="cta">{demo}{account}'
-            f"<a class='btn ghost' href='{REPO}'>GitHub</a></div>")
+# ---------------------------------------------------------------- `/` = die Website, 1:1
+_GH_BTN = ('<a class="btn primary" href="https://github.com/Ollornog/TinySesam">View on GitHub</a>')
+_DEMO_BTN = ('<a class="btn primary" href="/demo">▶ Live-Demo</a>'
+             '<a class="btn ghost" href="https://github.com/Ollornog/TinySesam">View on GitHub</a>')
 
 
 @app.get("/wizard.png", include_in_schema=False)
@@ -209,62 +150,115 @@ def wizard():
 
 
 @app.get("/", response_class=HTMLResponse)
-def landing(request: Request):
-    """Buchstäblich die Website (docs/index.html) — nur mit Demo-Buttons statt der GitHub-Buttons."""
-    user = auth.current_user(request)
+def landing():
+    """Unveränderte Projekt-Website — einzige Ergänzung: der Demo-Knopf im Hero."""
     try:
         html = (DOCS / "index.html").read_text(encoding="utf-8")
     except FileNotFoundError:
-        return page("Showcase", f"<h1>TinySesam Showcase</h1>{_cta(user)}")
-    html = _CTA_RE.sub(lambda _m: _cta(user), html, count=1)
-    hint = "" if user else " · Demo-Login <b>admin / geheim123</b>"
-    html = html.replace('<p class="note">MIT', f'<p class="note">Live-Demo{hint} — MIT', 1)
+        return HTMLResponse("<h1>TinySesam</h1><a href='/demo'>Live-Demo</a>")
+    if _GH_BTN in html:
+        html = html.replace(_GH_BTN, _DEMO_BTN, 1)
+    else:                                     # Website umgebaut → Knopf trotzdem einhängen
+        html = html.replace('<div class="cta">', f'<div class="cta">{_DEMO_BTN}', 1)
     return HTMLResponse(html)
 
 
-# ---------------------------------------------------------------- Tour-Hub
+# ---------------------------------------------------------------- `/demo` = das Demo-Frontend
+def shot(title, blurb, src, open_url, height, scale, tag="read-only"):
+    """Live-Vorschau einer echten Seite: iframe + Glasscheibe darüber (keine Interaktion)."""
+    return (f"<section class=shot><div class=head><div><h2>{title}</h2><p>{blurb}</p></div>"
+            f"<a class='btn g s' href='{open_url}'>Öffnen →</a></div>"
+            f"<div class=frame style='height:{height}px'>"
+            f"<iframe src='{src}' loading=lazy tabindex=-1 scrolling=no title='{title}'"
+            f" style='width:{100 / scale:.0f}%;height:{height / scale:.0f}px;transform:scale({scale})'></iframe>"
+            f"<span class=glass></span><span class=tag>{tag}</span></div></section>")
+
+
 @app.get("/demo", response_class=HTMLResponse)
 def demo(request: Request):
     user = auth.current_user(request)
-    done = tour_step(request)
-    nxt = min(done + 1, N)
-    items = []
-    for i, (title, blurb, url, hint) in enumerate(TOUR, start=1):
-        cls = "done" if i <= done else ("now" if i == nxt else "")
-        mark = "✓" if i <= done else str(i)
-        note = f"<p class=muted style='margin-top:6px'>{hint}</p>" if hint else ""
-        label = "Nochmal ansehen" if i <= done else ("Weiter →" if i == nxt else "Ansehen")
-        items.append(f"<li class='{cls}'><span class=num>{mark}</span><div><b>{title}</b>"
-                     f"<p>{blurb}</p>{note}<a class=go href='/demo/{i}'>{label}</a></div></li>")
-
-    if done >= N:
-        head = ("<h1>Tour abgeschlossen 🎉</h1><p class=lead>Das war TinySesam in acht Schritten — "
-                "jedes Stück davon ist optional und per Config an- und abschaltbar.</p>"
-                f"<div class=bar><a class='btn p' href='{REPO}'>Zum Repo</a>"
-                "<a class='btn g' href='/demo/reset'>Tour zurücksetzen</a></div>")
-    else:
-        head = (f"<h1>Geführte Demo</h1><p class=lead>Acht Schritte durch die Funktionen — "
-                f"jeder Schritt öffnet die echte Seite. Die Leiste oben bringt dich jederzeit hierher zurück.</p>"
-                f"<div class=bar><a class='btn p' href='/demo/{nxt}'>"
-                f"{'Tour starten' if done == 0 else f'Weiter mit Schritt {nxt}'}</a>"
-                f"<a class='btn g' href='/'>← Startseite</a></div>")
-    return page("Demo-Tour", f"{head}<ol class=steps>{''.join(items)}</ol>", user=user)
-
-
-@app.get("/demo/reset", include_in_schema=False)
-def demo_reset():
-    r = RedirectResponse("/demo", status_code=303)
-    r.delete_cookie(TOUR_COOKIE, path="/")
-    return r
+    hello = (f"<p class=lead>Angemeldet als <b>{user['username']}</b> — die Bereiche unten sind jetzt "
+             f"auch wirklich begehbar.</p>" if user else
+             "<p class=lead>Alles, was TinySesam mitbringt, in einem Frontend. Die Panels unten sind "
+             "<b>echte Seiten</b>, live gerendert — nur die Bedienung ist gesperrt. "
+             "Zum Mitmachen anmelden: <b>admin / geheim123</b>.</p>")
+    panels = (
+        shot("Login-Panel", "Die eingebaute Anmeldeseite. Zeigt genau die Methoden, die in der Config "
+             "aktiv sind — hier Passwort, PIN und Login-Link per E-Mail.",
+             "/demo/preview/login", "/auth/login", 430, 0.86)
+        + shot("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, PIN, "
+               "2FA + Recovery-Codes, Passkeys, API-Keys und die eigenen Sitzungen.",
+               "/demo/preview/account", "/auth/account", 470, 0.8)
+        + shot("Admin-Panel", "Benutzer &amp; Rollen, Sitzungen, Härtungs-Schwellen, Update, Audit-Log. "
+               "Wahlweise nur als JSON-API, wenn du dein eigenes Panel baust.",
+               "/demo/preview/admin", "/auth/admin", 520, 0.66, tag="read-only · Beispieldaten"))
+    routes = ("<hr class=rule><section><h2>Geschützte Routen zum Ausprobieren</h2>"
+              "<div class=bar>"
+              "<a class='btn g' href='/app'>/app — <code>require_user</code></a>"
+              "<a class='btn g' href='/sensibel'>/sensibel — Step-up</a>"
+              "<a class='btn g' href='/gaeste'>/gaeste — PIN 2468, kein Konto</a>"
+              "<a class='btn g' href='/gibtsnicht'>404</a>"
+              "<a class='btn g' href='/boom'>500</a></div></section>")
+    body = (f"<h1>Live-Demo</h1>{hello}"
+            f"<div class=bar><a class='btn g' href='/'>← Projektseite</a>"
+            f"<a class='btn g' href='{REPO}'>GitHub</a></div><hr class=rule>{panels}{routes}")
+    return page("Live-Demo", body, user=user)
 
 
-@app.get("/demo/{n}", include_in_schema=False)
-def demo_go(n: int, request: Request):
-    """Merkt den Fortschritt (Cookie, vom Tour-Leisten-JS gelesen) und springt auf die echte Seite."""
-    n = max(1, min(N, n))
-    r = RedirectResponse(TOUR[n - 1][2], status_code=303)
-    r.set_cookie(TOUR_COOKIE, str(max(n, tour_step(request))), path="/", samesite="lax", max_age=3600)
-    return r
+# ---------------------------------------------------------------- Read-only Vorschauen
+_LOCK = "<style>html{pointer-events:none;user-select:none}::-webkit-scrollbar{display:none}</style>"
+
+
+def _readonly(html: str) -> HTMLResponse:
+    return HTMLResponse(html.replace("</body>", _LOCK + "</body>", 1))
+
+
+@app.get("/demo/preview/login", include_in_schema=False)
+def prev_login():
+    resp = auth.render_page("login", next="/demo", csrf="")     # derselbe Renderer wie /auth/login
+    return _readonly(resp.body.decode())
+
+
+@app.get("/demo/preview/account", include_in_schema=False)
+def prev_account():
+    demo_user = {"id": 0, "username": "melli", "display_name": "", "is_admin": 0}
+    resp = auth.render_page("account", user=demo_user, methods=auth.cfg.enabled_methods(),
+                            has_totp=True, has_pin=True, is_admin=False,
+                            admin_path=auth.cfg.admin_path, csrf="")
+    return _readonly(resp.body.decode())
+
+
+@app.get("/demo/preview/admin", include_in_schema=False)
+def prev_admin():
+    # dieselbe Panel-UI wie /auth/admin, nur gegen die Attrappen-API unten
+    return _readonly(render_panel(auth, "/demo/preview/adminapi"))
+
+
+# Attrappen-API: liest Beispieldaten, schreibt nie. Hält die Vorschau ohne Anmeldung am Leben.
+_FAKE = {
+    "/api/users": [
+        {"id": 1, "username": "admin", "is_admin": True, "is_service": False, "roles": [], "disabled": False},
+        {"id": 2, "username": "melli", "is_admin": False, "is_service": False, "roles": ["editor"], "disabled": False},
+        {"id": 3, "username": "martin", "is_admin": False, "is_service": False, "roles": ["viewer"], "disabled": True},
+        {"id": 4, "username": "backup-daemon", "is_admin": False, "is_service": True, "roles": ["reader"], "disabled": False},
+    ],
+    "/api/sessions": [{"id": 1, "username": "admin", "method": "password", "ip": "10.0.0.7",
+                       "created": 1_770_000_000, "expires": 1_770_600_000}],
+    "/api/security": {"max_login_attempts": 5, "lockout_window_sec": 900, "rate_limit_max": 30},
+    "/api/update": {"current": "0.10.0", "latest": "0.10.0", "available": False, "mode": "manual", "pin": ""},
+    "/api/audit": [{"ts": 1_770_000_000, "event": "login", "username": "admin", "ip": "10.0.0.7", "detail": ""}],
+    "/api/resources": [{"name": "gaeste", "kind": "pin", "label": "Gäste-Bereich"}],
+}
+
+
+@app.get("/demo/preview/adminapi/api/{path:path}", include_in_schema=False)
+def prev_api(path: str):
+    return JSONResponse(_FAKE.get(f"/api/{path}", []))
+
+
+@app.post("/demo/preview/adminapi/api/{path:path}", include_in_schema=False)
+def prev_api_ro(path: str):
+    return JSONResponse({"detail": "Vorschau — schreibende Aktionen sind hier abgeschaltet."}, status_code=403)
 
 
 # ---------------------------------------------------------------- Die geschützten Beispiel-Seiten
@@ -274,7 +268,7 @@ def protected(user=Depends(auth.require_user)):
       <h1>Hallo {user['username']} 👋</h1>
       <p class=lead>Eingeloggt — diese Route ist mit <code>Depends(auth.require_user)</code> geschützt,
         mehr steht da nicht.</p>
-      <div class=bar><a class='btn p' href='/demo'>Zurück zur Tour</a>
+      <div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>
         <a class='btn g' href='/sensibel'>Sensibler Bereich</a>
         <a class='btn g' href='/auth/account'>Konto</a></div>""", user=user)
 
@@ -285,8 +279,8 @@ def sensitive(user=Depends(auth.require(mfa=True))):
       <h1>🔒 Sensibler Bereich</h1>
       <p class=lead>{user['username']}, du hast dich soeben frisch bestätigt (Step-up / Sudo-Frische).
         Nach <code>stepup_max_age_sec</code> fragt TinySesam erneut.</p>
-      <div class=bar><a class='btn p' href='/demo'>Zurück zur Tour</a>
-        <a class='btn g' href='/app'>← Bereich</a></div>""", user=user)
+      <div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>
+        <a class='btn g' href='/app'>Bereich</a></div>""", user=user)
 
 
 @app.get("/gaeste", response_class=HTMLResponse)
@@ -295,8 +289,8 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
       <h1>🔑 Gäste-Bereich</h1>
       <p class=lead>Freigeschaltet über die geteilte PIN — ganz ohne Benutzerkonto.
         Genau richtig für „diese eine Seite soll nicht offen im Netz stehen“.</p>
-      <div class=bar><a class='btn p' href='/demo'>Zurück zur Tour</a>
-        <a class='btn g' href='/'>← Startseite</a></div>""", user=auth.current_user(request))
+      <div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>
+        <a class='btn g' href='/'>Projektseite</a></div>""", user=auth.current_user(request))
 
 
 @app.get("/boom", response_class=HTMLResponse)
