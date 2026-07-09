@@ -29,7 +29,13 @@ NAV_CSS = """
   /* --nav-w setzt jede Seite auf ihre Inhaltsbreite (Startseite 720, sonst 900) */
   /* --nav-fs: EINE Schriftgröße für beide Leisten — dort ist Abstufung nur Unruhe */
   :root{--nav-fs:14px}
-  nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
+  nav.util,nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
+  nav.util{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 22px 0}
+  nav.util .left,nav.util .right{display:flex;align-items:center;gap:4px}
+  .ilink{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
+    border-radius:8px;color:var(--muted)}
+  .ilink:hover{background:var(--chip);color:var(--ink);text-decoration:none}
+  .ilink svg{width:17px;height:17px;fill:currentColor}
   nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px}
   nav.top.nobrand{justify-content:flex-end;padding-bottom:0}
   nav.top .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink)}
@@ -41,7 +47,7 @@ NAV_CSS = """
   nav.sub{position:relative;z-index:30;background:var(--paper);
     display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
     padding:13px 22px;border-bottom:1px solid var(--line)}
-  nav.top,nav.sub{font-size:var(--nav-fs)}
+  nav.util,nav.top,nav.sub{font-size:var(--nav-fs)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
     color:var(--muted);white-space:nowrap;text-decoration:none;font-size:var(--nav-fs)}
@@ -154,6 +160,15 @@ def user_menu(name: str, items: list) -> str:
     return dropdown(PERSON + html_escape(name), body, right=True)
 
 
+def icon_link(href: str, svg: str, title: str) -> str:
+    return f'<a class=ilink href="{href}" title="{title}" aria-label="{title}">{svg}</a>'
+
+
+def nav_util(left_html="", right_html="") -> str:
+    """Dritte, schmale Leiste ganz oben: links Verweise als Icon, rechts die beiden Wechsler."""
+    return f"<nav class=util><span class=left>{left_html}</span><span class=right>{right_html}</span></nav>"
+
+
 def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
     """Erste Leiste. `brand_href=None` lässt die Marke weg — für die Startseite, deren Titelbereich
     sie ohnehin groß zeigt. Die Knöpfe rechts bleiben, damit die Leiste überall dieselbe Rolle hat."""
@@ -176,11 +191,11 @@ _BASE_CSS = """
   a{color:var(--accent); text-decoration:none}
   a:hover{text-decoration:underline}
   a:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px}
-  .rule{height:1px; background:var(--line); border:0; margin:64px 0}
-  section{margin:88px 0}
-  section:first-of-type{margin-top:72px}
-  h2{font-size:15px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted);
-    font-weight:600; margin:0 0 26px}
+  .rule{height:1px; background:var(--line); border:0; margin:80px 0}
+  section{margin:112px 0}
+  section:first-of-type{margin-top:88px}
+  h2{font-size:18px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted);
+    font-weight:600; margin:0 0 32px}
   .btn{display:inline-flex; align-items:center; gap:8px; padding:11px 20px; border-radius:10px;
     font-size:15px; font-weight:500}
   .btn svg{width:16px; height:16px; fill:currentColor; flex:0 0 auto}
@@ -203,7 +218,7 @@ _INDEX_CSS = """
   .badge::before{content:""; position:absolute; inset:-18%; border-radius:50%;
     background:radial-gradient(circle at 50% 42%, var(--glow), transparent 68%); z-index:0}
   .badge img{position:relative; z-index:1; width:112px; height:112px; display:block}
-  h1{font-family:var(--ts-serif); font-weight:600; font-size:44px; letter-spacing:-.01em;
+  h1{font-family:var(--ts-serif); font-weight:600; font-size:50px; letter-spacing:-.01em;
     margin:.1em 0 .12em; text-wrap:balance}
   h1 .tiny{color:var(--accent)}
   .tagline{color:var(--muted); font-size:18px; max-width:42ch; margin:0 auto; text-wrap:balance}
@@ -239,8 +254,8 @@ _INDEX_CSS = """
 
 _FLOWS_CSS = """
   main{max-width:var(--nav-w,900px); margin:0 auto; padding:56px 22px 24px}
-  h1{font-family:var(--ts-serif); font-weight:600; font-size:42px; letter-spacing:-.01em;
-    margin:.1em 0 .16em; text-wrap:balance}
+  h1{font-family:var(--ts-serif); font-weight:600; font-size:48px; letter-spacing:-.01em;
+    margin:.1em 0 .2em; text-wrap:balance}
   .lead{color:var(--muted); font-size:18px; max-width:60ch; text-wrap:balance}
 """
 
@@ -404,10 +419,17 @@ def _head(lang: str, title: str, desc: str, css: str) -> str:
             f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>{NAV_JS}\n</head>\n<body>\n')
 
 
-def site_nav_top(lang: str, page: str = "index", brand=True) -> str:
-    """Erste Leiste: Marke + Werkzeuge (Sprache, Hell/Dunkel) — auf jeder Seite gleich."""
+def site_nav_util(lang: str, page: str = "index") -> str:
+    t = T[lang]
+    links = (icon_link(REPO, GITHUB_ICON, "GitHub")
+             + icon_link(f"{REPO}#readme", BOOK_ICON, t["cta_docs"]))
     tools = lang_pill({c: page_url(page, c) for c in LANGS}, lang) + theme_pill()
-    return nav_top(tools, brand_href=page_url("index", lang) if brand else None)
+    return nav_util(links, tools)
+
+
+def site_nav_top(lang: str) -> str:
+    """Zweite Ebene: nur noch die Marke. Auf der Startseite entfällt sie — der Titelbereich zeigt sie."""
+    return nav_top("", brand_href=page_url("index", lang))
 
 
 def site_nav_sub(page: str, lang: str, right_html: str = "") -> str:
@@ -425,7 +447,7 @@ def render_index(lang: str = "en", nav1: str | None = None, nav2: str | None = N
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
-    top = nav1 if nav1 is not None else site_nav_top(lang, "index", brand=False)
+    top = nav1 if nav1 is not None else site_nav_util(lang, "index")
     sub = nav2 if nav2 is not None else site_nav_sub("index", lang)
     return (_head(lang, t["title"], t["desc"], _INDEX_CSS) + f"""{top}<header class="hero">
     <div class="badge"><img src="wizard.png" alt="TinySesam logo" width="112" height="112"></div>
@@ -471,7 +493,7 @@ app.include_router(<span class="k">auth</span>.router())          <span class="c
 
 def render_flows(lang: str = "en", nav1: str | None = None, nav2: str | None = None) -> str:
     t = T[lang]
-    top = nav1 if nav1 is not None else site_nav_top(lang, "flows")
+    top = nav1 if nav1 is not None else site_nav_util(lang, "flows") + site_nav_top(lang)
     sub = nav2 if nav2 is not None else site_nav_sub("flows", lang)
     return (_head(lang, t["flows_title"], t["flows_desc"], _FLOWS_CSS + FLOW_CSS) + f"""{top}{sub}
 <main>

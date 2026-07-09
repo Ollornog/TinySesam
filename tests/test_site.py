@@ -64,6 +64,7 @@ for page in ("index", "flows"):
         for code in LANGS:
             assert f"href='{page_url(page, code)}'>{code.upper()}<" in html, (page, lang, code)
         assert f"'seg on' href='{page_url(page, lang)}'" in html, "aktives Segment"
+        assert "<nav class=util>" in html, "dritte Leiste"
 
 # Beide Leisten, richtige Reihenfolge: Flow-Seite top→sub, Startseite Titelbereich→sub
 for lang in LANGS:
@@ -109,13 +110,20 @@ for lang in LANGS:
     # Fußzeile: auf jeder Seite exakt gleich
     assert feet[0] == feet[1], f"Fußzeile weicht ab ({lang})"
 
-    # nav1 trägt die Werkzeuge: zwei Wechsel-Pillen (Sprache, Hell/Dunkel)
-    top_flows = slice_(pages[page_url("flows", lang)], "<nav class=top", "</nav>")
-    assert top_flows.count("class=pill2") == 2, "Sprach- und Theme-Pille"
-    assert "id=ts-theme" in top_flows and "data-theme=light" in top_flows and "data-theme=dark" in top_flows
-    assert f"'seg on' href='{page_url('flows', lang)}'>{lang.upper()}<" in top_flows, "aktives Segment"
+    # nav0 (oberste Leiste): links GitHub + Doku als Icon, rechts die beiden Wechsel-Pillen
+    util = slice_(pages[page_url("flows", lang)], "<nav class=util>", "</nav>")
+    assert util.count("class=ilink") == 2, "GitHub- und Doku-Icon"
+    assert util.count("class=pill2") == 2, "Sprach- und Theme-Pille"
+    assert "id=ts-theme" in util and "data-theme=light" in util and "data-theme=dark" in util
+    assert f"'seg on' href='{page_url('flows', lang)}'>{lang.upper()}<" in util, "aktives Segment"
     for code in LANGS:
-        assert f"href='{page_url('flows', code)}'>{code.upper()}<" in top_flows
+        assert f"href='{page_url('flows', code)}'>{code.upper()}<" in util
+
+    # Reihenfolge: util → Marke → nav2 (Startseite: der Titelbereich ersetzt die Marke)
+    fl = pages[page_url("flows", lang)]
+    assert -1 < fl.index("<nav class=util>") < fl.index("<nav class=top") < fl.index("<nav class=sub")
+    ix = pages[page_url("index", lang)]
+    assert "<nav class=top" not in ix and ix.index("<nav class=util>") < ix.index('<header class="hero"')
 
     # nav2 ohne Trennlinie oben, Dropdown-Einträge untereinander
     assert "border-top" not in bars2[0]
@@ -124,9 +132,9 @@ for lang in LANGS:
     html = pages[page_url("flows", lang)]
     assert "details.dd[open]" in html and "e.key==='Escape'" in html
 
-# Startseite: schmaler, ohne Marke in der ersten Leiste
+# Startseite: schmaler, ohne Marken-Leiste
 idx = pages[page_url("index", "en")]
-assert "--nav-w:720px" in idx and "nobrand" in slice_(idx, "<nav class='top nobrand'", "</nav>")
+assert "--nav-w:720px" in idx
 assert "class=brand" in pages[page_url("flows", "en")]
 assert "nobrand" in nav_top("x", brand_href=None) and "class=brand" in nav_top("x")
 
