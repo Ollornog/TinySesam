@@ -2,66 +2,68 @@
 
 <h1 align="center">TinySesam</h1>
 
+<p align="center"><b>English</b> · <a href="README.de.md">Deutsch</a></p>
+
 [![tests](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg)](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
-### Der Login-Mechanismus für deine selbstgebauten Apps.
+### The login layer for your self-built apps.
 
-Ein **super-leichtes Auth für FastAPI**, bei dem du **nur nutzt, was du brauchst** — und das mit dir mitwächst.
-Eine Klasse davorhängen, fertig: Login-Seite, Sessions und Route-Guards inklusive.
+**Super-light auth for FastAPI** where you **use only what you need** — and that grows with you.
+Hang one class in front of your app, done: login page, sessions and route guards included.
 
-- **Nur eine Seite mit einer PIN sichern?** → geht. (`require_resource("fotos")`, ganz ohne Benutzerkonto)
-- **Forward-Auth vor fremde Apps hängen, wie TinyAuth?** → kann er. (`/auth/forward` bzw. OIDC-Gateway)
-- **Ein Admin-Panel?** → eingebaut. **Lieber in dein eigenes einbauen?** → auch das (nur JSON-API).
-- **Von „Passwort reicht" bis „OIDC → Passwort → TOTP"?** → wächst mit — jedes Stück **optional, an/aus per Config**.
-- **Eigenes Look & Feel?** → das komplette **Frontend ist austauschbar** (`auth.set_template(...)`), inkl. Sprache (en/de).
+- **Just gate one page behind a PIN?** → yes. (`require_resource("fotos")`, no user account at all)
+- **Forward-auth in front of other apps, like TinyAuth?** → it can. (`/auth/forward` or an OIDC gateway)
+- **An admin panel?** → built in. **Prefer it inside your own?** → that too (JSON API only).
+- **From “a password is enough” to “OIDC → password → TOTP”?** → grows with you — every piece **optional, on/off by config**.
+- **Your own look & feel?** → the whole **front end is replaceable** (`auth.set_template(...)`), including language (en/de).
 
-> **Kurz zur Einordnung:** TinySesam sichert **deine eigenen (selbstgebauten) Apps** und **nutzt** dabei vorhandene
-> IdProvider (OIDC, SAML, LDAP/AD) als *Client / Relying Party*. Es ist **selbst kein Identity Provider** — also
-> **kein Ersatz** für Keycloak/Authentik/PocketID, sondern die schlanke Auth-Schicht **davor bzw. in** deiner App.
+> **A quick word on positioning:** TinySesam secures **your own (self-built) apps** and **consumes** existing
+> identity providers (OIDC, SAML, LDAP/AD) as a *client / relying party*. It is **not an identity provider itself** —
+> so **no replacement** for Keycloak/Authentik/PocketID, but the lean auth layer **in front of or inside** your app.
 
-**Anmelde-Methoden — beliebig kombinierbar:**
-- 🔑 **Passkey / WebAuthn** (passwortlos, phishing-resistent)
-- 🔐 **Passwort** (argon2, mit stdlib-scrypt-Fallback)
-- 🔢 **PIN** (persönliche PIN pro User, eigener strenger Lockout)
-- 🌐 **OIDC** (generischer IdProvider: PocketID, Keycloak, Entra/Azure AD, …)
-- 🪪 **SAML 2.0** (SP-Login gegen ADFS, Okta, Keycloak, …)
-- 🗂️ **LDAP / Active Directory** (Passwort gegen Verzeichnis-Bind)
-- ✉️ **Magic-Link** (Einmal-Login per E-Mail)
-- 📱 **TOTP** als 2. Faktor *on-top* (+ **Recovery-Codes**; Passkeys gelten schon als vollwertig)
+**Sign-in methods — freely combinable:**
+- 🔑 **Passkey / WebAuthn** (passwordless, phishing-resistant)
+- 🔐 **Password** (argon2, with stdlib-scrypt fallback)
+- 🔢 **PIN** (personal PIN per user, its own strict lockout)
+- 🌐 **OIDC** (generic IdProvider: PocketID, Keycloak, Entra/Azure AD, …)
+- 🪪 **SAML 2.0** (SP login against ADFS, Okta, Keycloak, …)
+- 🗂️ **LDAP / Active Directory** (password against a directory bind)
+- ✉️ **Magic-link** (one-time login by email)
+- 📱 **TOTP** as a 2nd factor *on top* (+ **recovery codes**; passkeys already count as full-strength)
 
-**Kombinierbar in Reihenfolge:**
-beliebige **Faktor-Ketten** (`login_chain=["oidc","password"]`),
-global oder per Route (`Depends(auth.require(factors=[...], strict=...))`).
+**Combinable in order:**
+any **factor chains** (`login_chain=["oidc","password"]`),
+global or per route (`Depends(auth.require(factors=[...], strict=...))`).
 
-**Rollen sind optional:**
-die meisten Apps brauchen nur „eingeloggt / nicht" (`require_user`).
-Wer differenzieren will: `is_admin` + frei definierbare `roles` (`require_admin`, `require_role("editor")`).
+**Roles are optional:**
+most apps only need “logged in / not” (`require_user`).
+If you want to differentiate: `is_admin` + freely defined `roles` (`require_admin`, `require_role("editor")`).
 
-**Mehr:**
-„Angemeldet bleiben",
-**Step-up** pro Route (`require(mfa=True)`),
-**Selbst-Registrierung** + **Einladungen**,
-**Passwort-vergessen**,
-geteiltes **Ressourcen-Geheimnis** (PIN/Passphrase ohne Konto),
-eingebaute **Konto-Seite** (inkl. eigener Sitzungen + Recovery-Codes),
-**Forward-Auth** für fremde Apps
+**More:**
+“stay signed in”,
+**step-up** per route (`require(mfa=True)`),
+**self-registration** + **invitations**,
+**forgot password**,
+shared **resource secret** (PIN/passphrase without an account),
+built-in **account page** (including your own sessions + recovery codes),
+**forward-auth** for other apps
 
-jedes Feature optional, per Config an/aus,
-und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
+every feature optional, on/off by config,
+and the whole **front end replaceable** (`auth.set_template(...)`).
 
 ---
 
 ## Installation
 
-Direkt von GitHub (nicht auf PyPI):
+Straight from GitHub (not on PyPI):
 
 ```bash
 GH="git+https://github.com/Ollornog/TinySesam.git"
-pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
-pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.5.0
+pip install "tinysesam @ $GH"          # core: password + TOTP
+pip install "tinysesam[all] @ $GH"     # everything: + argon2, QR, OIDC, passkey
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.5.0
 ```
 
 ## Quickstart
@@ -72,238 +74,239 @@ from tinysesam import TinySesam, TinySesamConfig
 
 auth = TinySesam(TinySesamConfig(
     db_path="app.db",
-    rp_id="app.example.com",           # Domain (WebAuthn), ohne Schema/Port
-    origin="https://app.example.com",  # exaktes Browser-Origin
+    rp_id="app.example.com",           # domain (WebAuthn), no scheme/port
+    origin="https://app.example.com",  # exact browser origin
     passkey_enabled=True,
     oidc_enabled=True,
     oidc_issuer="https://id.example.com",
     oidc_client_id="…", oidc_client_secret="…",
 ))
-auth.ensure_admin("admin", "startpasswort")   # legt Admin an, NUR wenn der Store leer ist
+auth.ensure_admin("admin", "initial-password")   # creates an admin, ONLY if the store is empty
 
 app = FastAPI()
-app.include_router(auth.router())              # /auth/* + Login-UI
+app.include_router(auth.router())              # /auth/* + login UI
 
 @app.get("/")
-def home(user = Depends(auth.require_user)):    # geschützt: eingeloggt (inkl. 2FA)
+def home(user = Depends(auth.require_user)):    # protected: logged in (incl. 2FA)
     return {"hi": user["username"]}
 ```
 
-Nicht-eingeloggte Browser werden auf `/auth/login` umgeleitet; API-Clients (Accept ≠ HTML) bekommen `401`.
+Non-logged-in browsers are redirected to `/auth/login`; API clients (Accept ≠ HTML) get a `401`.
 
 ## Guards
 
 ```python
-Depends(auth.require_user)             # eingeloggt (das braucht paperlaiss)
-Depends(auth.require_admin)            # eingeloggt + is_admin
-Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit alle)
+Depends(auth.require_user)             # logged in (this is what paperlaiss needs)
+Depends(auth.require_admin)            # logged in + is_admin
+Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has all)
 ```
 
-## Rollen & Gruppen
+## Roles & groups
 
-**Rollen sind die Gruppen** — pro User eine Liste (`roles`) + `is_admin`; Guard `require_role("…")`.
-- **Lokale User/Passwort:** Rollen im **Admin-Panel** je User zuweisen. `available_roles=[…]` definiert bekannte
-  Rollen → das Panel zeigt sie als **Checkboxen** (leer = Freitext-Eingabe).
-- **IdP-User (OIDC/SAML/LDAP/AD):** externe Gruppen automatisch auf lokale Rollen mappen —
-  `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, z.B.
-  `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (Ziel `__admin__` = Admin-Flag). Beim Login gesetzt;
-  gemappte Rollen werden synchronisiert, manuell vergebene bleiben. Überall dieselben `require_role(...)`-Guards.
+**Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
+- **Local user/password:** assign roles per user in the **admin panel**. `available_roles=[…]` defines known
+  roles → the panel shows them as **checkboxes** (empty = free-text entry).
+- **IdP users (OIDC/SAML/LDAP/AD):** automatically map external groups onto local roles —
+  `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, e.g.
+  `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (target `__admin__` = admin flag). Set at login;
+  mapped roles are synchronized, manually assigned ones stay. The same `require_role(...)` guards everywhere.
 
-## Routen (vom Router bereitgestellt)
+## Routes (provided by the router)
 
-| Route | Zweck |
+| Route | Purpose |
 |---|---|
-| `GET/POST /auth/login` | Passwort-Login + Login-Seite (zeigt aktive Methoden) |
-| `GET/POST /auth/totp` | 2. Faktor nach Passwort/OIDC |
-| `GET/POST /auth/totp/setup` · `POST /auth/totp/disable` | TOTP einrichten/abschalten |
-| `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC-Flow *(wenn aktiviert)* |
-| `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(wenn aktiviert)* |
-| `GET /auth/passkey/list` · `POST /auth/passkey/delete` | Passkeys verwalten |
-| `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
+| `GET/POST /auth/login` | password login + login page (shows active methods) |
+| `GET/POST /auth/totp` | 2nd factor after password/OIDC |
+| `GET/POST /auth/totp/setup` · `POST /auth/totp/disable` | set up / turn off TOTP |
+| `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC flow *(when enabled)* |
+| `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(when enabled)* |
+| `GET /auth/passkey/list` · `POST /auth/passkey/delete` | manage passkeys |
+| `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
-## Konfiguration (`TinySesamConfig`, Auszug)
+## Configuration (`TinySesamConfig`, excerpt)
 
-| Feld | Default | |
+| Field | Default | |
 |---|---|---|
-| `db_path` | `tinysesam.db` | SQLite-Store |
-| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | aktive Methoden |
-| `totp_enabled` / `totp_required` | `True/False` | 2FA erlauben / erzwingen |
-| `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
-| `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
-| `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
-| `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | Auto-Anlage + Gruppen-Gate |
-| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
+| `db_path` | `tinysesam.db` | SQLite store |
+| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | active methods |
+| `totp_enabled` / `totp_required` | `True/False` | allow / enforce 2FA |
+| `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | sessions/cookie |
+| `rp_id` · `origin` | `localhost` · … | WebAuthn (real domain required, HTTPS) |
+| `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC provider |
+| `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | auto-create + group gate |
+| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | app integration |
 
-## Sprache (i18n)
+## Language (i18n)
 
-Die eingebauten Texte sind **standardmäßig Englisch** (`lang="en"`); mitgeliefert ist auch **Deutsch**:
+The built-in texts are **English by default** (`lang="en"`); **German** ships too:
 
 ```python
-TinySesamConfig(lang="de")                       # eingebaute Seiten + Meldungen auf Deutsch
-auth.add_messages("fr", {"login.submit": "Se connecter", ...})   # eigene Sprache/Überschreibung
+TinySesamConfig(lang="de")                       # built-in pages + messages in German
+auth.add_messages("fr", {"login.submit": "Se connecter", ...})   # your own language/override
 ```
-Einzelne Texte oder ganze Seiten lassen sich zusätzlich per `auth.set_template(...)` frei ersetzen.
+Individual texts or whole pages can additionally be freely replaced via `auth.set_template(...)`.
 
-## Eigene Login-Seite
+## Your own login page
 
-TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentlich:
+Use TinySesam as a pure backend (your own UI) — the building blocks are public:
 `auth.check_password(u,p)`, `auth.start_session(uid, "password")`, `auth.set_cookie(resp, token)`,
 `auth.verify_totp(uid, code)`, `auth.complete_mfa(token)`.
 
-## Sicherheit
+## Security
 
-- Passwörter: **argon2id** (Fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, jederzeit revozierbar).
-- Session-Cookie: `HttpOnly`, `Secure` (Default), `SameSite=Lax`.
-- OIDC: `state` + `nonce` im Store (nicht im Client), ID-Token gegen **JWKS** + `iss`/`aud`/`exp` verifiziert.
-- WebAuthn: Challenge im Store, an httponly-Cookie gebunden; `sign_count`-Klon-Erkennung.
-- **Produktiv immer hinter HTTPS.** `rp_id`/`origin` müssen exakt zur Domain passen.
+- Passwords: **argon2id** (fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, revocable at any time).
+- Session cookie: `HttpOnly`, `Secure` (default), `SameSite=Lax`.
+- OIDC: `state` + `nonce` in the store (not in the client), ID token verified against **JWKS** + `iss`/`aud`/`exp`.
+- WebAuthn: challenge in the store, bound to an httponly cookie; `sign_count` clone detection.
+- **Always run behind HTTPS in production.** `rp_id`/`origin` must match the domain exactly.
 
-## Härtung
+## Hardening
 
-Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel / zur Laufzeit** änderbar
-(`auth.set_security(key, wert)`, Defaults in `security.SECURITY_DEFAULTS`):
+Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin panel / at runtime**
+(`auth.set_security(key, value)`, defaults in `security.SECURITY_DEFAULTS`):
 
-- **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
-  im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
-  Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
-- **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
-- **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
-  (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
-- **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in `trusted_proxies`
-  steht — sonst ist die IP fälschbar.
-- **Audit-Log:** Login / Logout / Fehlversuche in der DB (`store.recent_audit()`), fürs Admin-Panel.
-- **CSRF:** Double-Submit-Token (`csrf_enabled`, Default an) auf allen state-ändernden POSTs — die
-  eingebauten Formulare/JS erledigen das automatisch (`_csrf`-Feld bzw. `X-CSRF-Token`-Header);
-  API-Key-Requests sind ausgenommen (kein Cookie-Risiko). Zusätzlich zu `SameSite=Lax`.
-- **Rate-Limit prozessübergreifend:** optional Redis (`redis_url`, Extra `[redis]`) für Multi-Worker; sonst In-Memory.
-- **User-Enumeration:** Login/PIN prüfen auch bei unbekanntem Benutzer gegen einen Dummy-Hash (kein Timing-Leak).
-- **Nach Passwortwechsel** werden die übrigen Sitzungen des Users beendet (Admin-Reset: alle).
-- **Housekeeping:** `auth.gc()` löscht abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
-  Login-Versuche (Audit-Log bleibt). Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
+- **Brute-force throttling:** failed attempts per **user *and* IP** are counted; after `max_login_attempts`
+  within the `lockout_window_sec` window the login is locked — this also blocks the *correct* password.
+  Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
+- **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
+- **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
+  (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP ban at the firewall level.
+- **Real client IP behind a proxy:** `X-Forwarded-For` only counts if the direct peer is in `trusted_proxies`
+  — otherwise the IP is spoofable.
+- **Audit log:** login / logout / failed attempts in the DB (`store.recent_audit()`), for the admin panel.
+- **CSRF:** double-submit token (`csrf_enabled`, on by default) on all state-changing POSTs — the
+  built-in forms/JS handle this automatically (`_csrf` field or `X-CSRF-Token` header);
+  API-key requests are exempt (no cookie risk). In addition to `SameSite=Lax`.
+- **Rate limit across processes:** optional Redis (`redis_url`, extra `[redis]`) for multi-worker; otherwise in-memory.
+- **User enumeration:** login/PIN check against a dummy hash even for an unknown user (no timing leak).
+- **After a password change** the user’s remaining sessions are ended (admin reset: all).
+- **Housekeeping:** `auth.gc()` deletes expired sessions/flows/magic tokens/resource unlocks + old
+  login attempts (the audit log stays). Call it regularly (cron/startup/scheduler) — otherwise the tables grow.
 
-## Update (von GitHub, versioniert)
+## Update (from GitHub, versioned)
 
-Auch eingebettet in eine andere App kann TinySesam sich von GitHub aktualisieren:
+Even embedded in another app, TinySesam can update itself from GitHub:
 
-- **Programmatisch** (fürs Admin-Panel): `tinysesam.update_available()` → `{current, latest, available}`;
-  über den Manager `auth.update_status()` / `auth.run_update()`.
-- **CLI:** `python -m tinysesam check` · `python -m tinysesam update [ref]` (nach Install auch `tinysesam …`).
-- **In den Einstellungen** (Store, Panel-editierbar):
-  - **Modus** `manual` | `auto` (`auth.set_update_setting("mode", …)`) — `auth.auto_update()` beim Start/per Cron
-    zieht im Auto-Modus ein verfügbares Update.
-  - **Version-Pin** (`auth.set_update_setting("pin", "v0.2.0")`) — hält exakt auf dieser Version; leer = neueste.
-- Quelle: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (öffentlich). Privat/SSH: `TINYSESAM_GIT_URL`
-  bzw. `scheme="ssh"`. **Nach dem Update Host-App neu starten** (Python lädt Code nicht zur Laufzeit neu).
+- **Programmatically** (for the admin panel): `tinysesam.update_available()` → `{current, latest, available}`;
+  via the manager `auth.update_status()` / `auth.run_update()`.
+- **CLI:** `python -m tinysesam check` · `python -m tinysesam update [ref]` (after install also `tinysesam …`).
+- **In the settings** (store, panel-editable):
+  - **Mode** `manual` | `auto` (`auth.set_update_setting("mode", …)`) — `auth.auto_update()` at startup/via cron
+    pulls an available update in auto mode.
+  - **Version pin** (`auth.set_update_setting("pin", "v0.2.0")`) — stays exactly on this version; empty = latest.
+- Source: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (public). Private/SSH: `TINYSESAM_GIT_URL`
+  or `scheme="ssh"`. **Restart the host app after an update** (Python does not reload code at runtime).
 
-## API-Keys & Service-/Daemon-Accounts
+## API keys & service/daemon accounts
 
-Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:
+For **machine access** (scripts, other services, system daemons) — alongside the interactive login:
 
-- Ein API-Key gehört einem User, liegt **gehasht** (sha256) in der DB, optional mit **Ablauf** und **Rollen-Scope**.
-- Gesendet als `Authorization: Bearer tsk_…` **oder** `X-API-Key: tsk_…`.
-- **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
-- **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
-- **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- An API key belongs to a user, sits **hashed** (sha256) in the DB, optionally with an **expiry** and **role scope**.
+- Sent as `Authorization: Bearer tsk_…` **or** `X-API-Key: tsk_…`.
+- **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
+- **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.
+- **Disable instead of delete:** `auth.revoke_api_key(id)` (key disabled, stays in the list). Self-service routes: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
 
-## Admin-Panel
+## Admin panel
 
-Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
+Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
 
-- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz), Passwort-Reset, Rollen/Admin setzen.
-- **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
-- **Sitzungen:** aktive einsehen + beenden.
-- **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
-- **Update:** Version/Status, Modus manual/auto, Version-Pin, „jetzt aktualisieren".
-- **Audit-Log** einsehen.
+- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection), password reset, set roles/admin.
+- **API keys** per user: generate (shown once) / revoke.
+- **Sessions:** view active ones + end them.
+- **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
+- **Update:** version/status, mode manual/auto, version pin, “update now”.
+- **Audit log** view.
 
-JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automation).
+JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation).
 
-**Montieren / einbetten / HTTPS:**
-- **Standard:** automatisch unter `config.admin_path` (Default `/auth/admin`) — frei änderbar.
-- **Woanders montieren:** `app.include_router(auth.admin_router(), prefix="/admin")` — beliebiger Pfad,
-  Sub-App/**Subdomain** (Host-Routing der App) oder **eigener Port** (separate ASGI-App). Die UI ermittelt
-  ihre Basis-URL selbst. `admin_enabled=False` schaltet den Auto-Mount ab.
-- **In bestehendes Panel einbetten:** `admin_ui_enabled=False` → nur die JSON-API, eigene UI davor.
-- **HTTPS** (`config.https_mode` + `auth.install_https(app)`): `force` = HTTP→HTTPS-Redirect;
-  `warn` = läuft auch **ohne Zertifikat**, zeigt aber einen Warnhinweis im Panel; `off` = aus.
+**Mount / embed / HTTPS:**
+- **Default:** automatically under `config.admin_path` (default `/auth/admin`) — freely changeable.
+- **Mount elsewhere:** `app.include_router(auth.admin_router(), prefix="/admin")` — any path,
+  sub-app/**subdomain** (host routing of the app) or a **separate port** (standalone ASGI app). The UI figures
+  out its base URL on its own. `admin_enabled=False` turns off the auto-mount.
+- **Embed into an existing panel:** `admin_ui_enabled=False` → just the JSON API, your own UI in front.
+- **HTTPS** (`config.https_mode` + `auth.install_https(app)`): `force` = HTTP→HTTPS redirect;
+  `warn` = runs **even without a certificate**, but shows a warning in the panel; `off` = off.
 
-## Neu in 0.5 — Kurzreferenz
+## New in 0.5 — quick reference
 
-Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
+All optional (on/off by config), usable individually and combined, front end replaceable everywhere.
 
-- **Frontend austauschbar:** `auth.set_template(name, fn)` — `fn(auth, ctx)` gibt HTML-String **oder**
-  eine eigene `Response` zurück; Namen: `login`, `totp`, `reauth`, `resource_unlock`, `magic_request`,
-  `magic_invalid`, `register`, `account`, `totp_setup`. Eingebaute Renderer sind Fallback.
-- **Angemeldet bleiben:** `remember_me_enabled` — Checkbox → persistentes Cookie; ohne Haken reines
-  Session-Cookie + kurze `session_ttl_transient_hours`.
-- **Step-up / per-Route-MFA:** `Depends(auth.require(mfa=True))` (Sudo-Frische `stepup_max_age_sec`,
-  → `/auth/reauth`). `admin_require_mfa=True` schützt das Panel zusätzlich mit frischer Bestätigung.
-- **Faktor-Ketten (geordnet):** `login_chain=["oidc","password"]` + `login_chain_strict`; pro Route
-  `require(factors=[...], strict=...)`. Faktoren: `password, pin, oidc, passkey, totp, magic`.
-- **PIN pro User:** `pin_enabled` — Benutzer+PIN, eigener strenger Lockout, mit TOTP kombinierbar.
-- **Geteiltes Ressourcen-Geheimnis:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
-  kind="pin"|"password")`, Guard `Depends(auth.require_resource(name))`, ganz ohne Benutzerkonto.
-- **Magic-Link:** `magiclink_enabled` + SMTP-Config **oder** `auth.set_mailer(fn)`; `/auth/magic/request`.
-- **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
-  Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
-- **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
-- **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
-  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik).
-- **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
-  `trusted_redirect_hosts`). `cookie_domain` für SSO über Subdomains.
+- **Replaceable front end:** `auth.set_template(name, fn)` — `fn(auth, ctx)` returns an HTML string **or**
+  its own `Response`; names: `login`, `totp`, `reauth`, `resource_unlock`, `magic_request`,
+  `magic_invalid`, `register`, `account`, `totp_setup`. Built-in renderers are the fallback.
+- **Stay signed in:** `remember_me_enabled` — checkbox → persistent cookie; unchecked = pure
+  session cookie + short `session_ttl_transient_hours`.
+- **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
+  → `/auth/reauth`). `admin_require_mfa=True` additionally protects the panel with a fresh confirmation.
+- **Factor chains (ordered):** `login_chain=["oidc","password"]` + `login_chain_strict`; per route
+  `require(factors=[...], strict=...)`. Factors: `password, pin, oidc, passkey, totp, magic`.
+- **PIN per user:** `pin_enabled` — user+PIN, its own strict lockout, combinable with TOTP.
+- **Shared resource secret:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
+  kind="pin"|"password")`, guard `Depends(auth.require_resource(name))`, with no user account at all.
+- **Magic-link:** `magiclink_enabled` + SMTP config **or** `auth.set_mailer(fn)`; `/auth/magic/request`.
+- **Registration + invitation:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
+  admin invite `auth.create_invite(email, base_url, roles=…)`.
+- **Account page:** built in at `/auth/account` (`account_enabled`) — password/PIN/2FA/passkeys/keys.
+- **Forward-auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` or
+  401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik).
+- **Open-redirect protection:** every `?next=` runs through `safe_next` (relative paths only, or
+  `trusted_redirect_hosts`). `cookie_domain` for SSO across subdomains.
 
-Vollständige Demo: [`examples/showcase.py`](examples/showcase.py).
+Full demo: [`examples/showcase.py`](examples/showcase.py) — the landing page *is* the project website,
+plus a **guided tour** through every feature (`uvicorn examples.showcase:app`).
 
 ## LDAP / lldap
 
-Passwort-Login kann gegen ein Verzeichnis (lldap, OpenLDAP, AD) geprüft werden — als Backend hinter dem
-normalen Passwort-Formular (Faktor `password`). `pip install 'tinysesam[ldap]'`:
+Password login can be checked against a directory (lldap, OpenLDAP, AD) — as a backend behind the
+normal password form (factor `password`). `pip install 'tinysesam[ldap]'`:
 
 ```python
 TinySesamConfig(
     ldap_enabled=True, ldap_url="ldap://lldap:3890",
-    ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",   # Direkt-Bind (lldap)
-    # ODER Search-then-Bind: ldap_bind_dn=…, ldap_bind_password=…, ldap_user_base=…, ldap_user_filter="(uid={username})"
-    ldap_allowed_groups=["staff"],   # optionales Gate (memberOf), leer = alle
-    ldap_auto_create=True,           # unbekannten LDAP-User lokal anlegen
+    ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",   # direct bind (lldap)
+    # OR search-then-bind: ldap_bind_dn=…, ldap_bind_password=…, ldap_user_base=…, ldap_user_filter="(uid={username})"
+    ldap_allowed_groups=["staff"],   # optional gate (memberOf), empty = all
+    ldap_auto_create=True,           # create an unknown LDAP user locally
 )
 ```
-Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ketten gelten wie sonst.
+Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains apply as usual.
 
 ## SAML 2.0
 
-SP-Login gegen einen SAML-IdP (ADFS, Okta, Keycloak, …). `pip install 'tinysesam[saml]'` (braucht System-`libxmlsec1`):
+SP login against a SAML IdP (ADFS, Okta, Keycloak, …). `pip install 'tinysesam[saml]'` (needs system `libxmlsec1`):
 
 ```python
 TinySesamConfig(
     saml_enabled=True, base_url="https://app.example.com",
     saml_idp_sso_url="https://idp.example.com/sso",
-    saml_idp_x509cert="MIID…",                 # IdP-Signaturzertifikat (PEM-Body)
+    saml_idp_x509cert="MIID…",                 # IdP signing certificate (PEM body)
     saml_attr_email="email", saml_attr_groups="groups", saml_allowed_groups=["staff"],
 )
 ```
-Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgeprüft — von CSRF ausgenommen),
-`/auth/saml/metadata` (SP-Metadaten für den IdP). Faktor `saml`, in Ketten kombinierbar.
+Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-checked — exempt from CSRF),
+`/auth/saml/metadata` (SP metadata for the IdP). Factor `saml`, combinable in chains.
 
 ## Presets
 
-Fertige Config-Presets für gängige Fälle (Rest via `**overrides`, z. B. `db_path=`):
+Ready-made config presets for common cases (the rest via `**overrides`, e.g. `db_path=`):
 
 ```python
-# Active Directory (on-prem, via LDAP) — Direkt-Bind per UPN oder Search-then-Bind
+# Active Directory (on-prem, via LDAP) — direct bind by UPN or search-then-bind
 TinySesamConfig.active_directory(ldap_url="ldaps://dc.corp:636", upn_suffix="corp.example.com", db_path="app.db")
 
-# Entra ID / Azure AD (Cloud-AD, via OIDC)
+# Entra ID / Azure AD (cloud AD, via OIDC)
 TinySesamConfig.entra_id(tenant_id="…", client_id="…", client_secret="…", db_path="app.db")
 
-# Reines OIDC-Forward-Auth-Gateway (siehe unten)
+# Pure OIDC forward-auth gateway (see below)
 TinySesamConfig.oidc_gateway(issuer="…", client_id="…", client_secret="…", base_url="…")
 ```
 
-## Als reines OIDC-Gateway (Preset)
+## As a pure OIDC gateway (preset)
 
-Wer nur **OIDC-SSO vor beliebige Apps** will (Authelia-/oauth2-proxy-Stil), betreibt TinySesam als
-Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[oidc]'`:
+If you only want **OIDC SSO in front of arbitrary apps** (Authelia/oauth2-proxy style), run TinySesam as a
+forward-auth **gateway** — no app of your own, just `pip install 'tinysesam[oidc]'`:
 
 ```bash
 export TINYSESAM_OIDC_ISSUER=https://id.example.com \
@@ -311,40 +314,42 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
        TINYSESAM_BASE_URL=https://auth.example.com \
        TINYSESAM_COOKIE_DOMAIN=.example.com \
        TINYSESAM_PROTECTED_HOSTS=app.example.com,wiki.example.com
-python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app
+python -m tinysesam.gateway          # or: uvicorn tinysesam.gateway:app
 ```
 
-Der Reverse-Proxy ruft je Request `GET /auth/forward`; alle anderen Methoden/Routen sind aus.
-Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
-Fertiges [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (Gateway + Caddy) liegt bei.
+The reverse proxy calls `GET /auth/forward` per request; all other methods/routes are off.
+Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
+A ready-made [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (gateway + Caddy) ships with it.
 
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'        # + httpx wird für den FastAPI-TestClient gebraucht (in [all] enthalten)
-python tests/run_all.py         # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
-python tests/run_all.py core pin chain   # gezielt einzelne
+pip install -e '.[all]'        # + httpx is needed for the FastAPI TestClient (included in [all])
+python tests/run_all.py         # all suites; exit 0 = green, 1 = failure
+python tests/run_all.py core pin chain   # run individual ones
 ```
 
-Die Suiten sind eigenständige assert-Skripte (kein pytest). **GitHub-Actions-CI**
-(`.github/workflows/ci.yml`) fährt bei **jedem Push/PR** automatisch: den vollen Lauf über
-Python 3.10–3.13 (`.[all]`) **und** einen Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback;
-Passkey/OIDC-abhängige Suiten werden dabei übersprungen). Fürs Update also einfach pushen — CI testet.
+The suites are standalone assert scripts (no pytest). **GitHub Actions CI**
+(`.github/workflows/ci.yml`) runs automatically on **every push/PR**: the full run across
+Python 3.10–3.13 (`.[all]`) **and** a minimal run without extras (which secures the stdlib-scrypt fallback;
+passkey/OIDC-dependent suites are skipped there). So to update, just push — CI tests it.
 
 ## Status
 
-Kern (Passwort/TOTP/Sessions/Rollen), Härtung, API-Keys/Service-Accounts, Admin-Panel und
-Update-Mechanismus: implementiert & getestet. **Neu in 0.5** — Remember-me, Step-up/per-Route-MFA,
-Faktor-Ketten, persönliche PIN, geteiltes Ressourcen-Geheimnis, Magic-Link + Mailer-Hook,
-Registrierung + Einladung, Konto-Seite, Forward-Auth: je mit eigenem Test (`tests/test_*.py`),
-plus Kombinations-Matrix (`tests/test_matrix.py`). 17 Testdateien, alle grün.
-OIDC + Passkey: implementiert, struktur-getestet; der Browser-/Provider-abhängige End-to-End-Pfad
-ist gegen echte Domain/echten Provider zu prüfen. **0.6** ergänzt LDAP/lldap-Backend, TOTP-Recovery-Codes,
-Passwort-vergessen, eigene Sitzungsverwaltung, optionalen OIDC-RP-Logout sowie Härtung (Session-Invalidierung
-nach PW-Wechsel, Anti-Enumeration, `auth.gc()`, `py.typed`). Insgesamt **22 Testdateien, alle grün**.
+Core (password/TOTP/sessions/roles), hardening, API keys/service accounts, admin panel and
+update mechanism: implemented & tested. **New in 0.5** — remember-me, step-up/per-route MFA,
+factor chains, personal PIN, shared resource secret, magic-link + mailer hook,
+registration + invitation, account page, forward-auth: each with its own test (`tests/test_*.py`),
+plus a combination matrix (`tests/test_matrix.py`). 17 test files, all green.
+OIDC + passkey: implemented, structurally tested; the browser-/provider-dependent end-to-end path
+is to be verified against a real domain/real provider. **0.6** adds the LDAP/lldap backend, TOTP recovery codes,
+forgot-password, your own session management, optional OIDC RP logout, plus hardening (session invalidation
+after a password change, anti-enumeration, `auth.gc()`, `py.typed`). In total **22 test files, all green**.
 
-MIT-Lizenz.
+MIT license.
 
 ## Credits
 
 Icon: <a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">Wizard icons created by max.icons - Flaticon</a>
+</content>
+</invoke>
