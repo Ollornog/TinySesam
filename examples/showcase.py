@@ -222,9 +222,9 @@ body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-fam
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
 """ + NAV_CSS + FLOW_CSS + """
-main{max-width:var(--nav-w,900px);margin:0 auto;padding:40px 22px 64px}
+main{max-width:var(--nav-w,900px);margin:0 auto;padding:56px 22px 64px}
 h1{font-family:var(--ts-serif);font-size:42px;letter-spacing:-.01em;margin:.2em 0 .16em;text-wrap:balance}
-h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 8px}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 10px}
 .lead{color:var(--muted);font-size:18px;max-width:56ch;text-wrap:balance}
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 17px;border-radius:10px;font-weight:500;font-size:15px}
@@ -236,8 +236,8 @@ h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .muted{color:var(--muted);font-size:14px}
 code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
   border-radius:5px;padding:1px 5px}
-hr.rule{height:1px;background:var(--line);border:0;margin:56px 0}
-.shot{margin:0 0 56px}
+hr.rule{height:1px;background:var(--line);border:0;margin:64px 0}
+.shot{margin:0 0 72px}
 .shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .shot .head p{margin:4px 0 0;color:var(--muted);font-size:15px;max-width:60ch}
 .frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
