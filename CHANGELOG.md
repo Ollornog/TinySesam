@@ -10,14 +10,19 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   die eingebauten TinySesam-Seiten benutzen dieselben Funktionen; `Nav` beschreibt die App einmal,
   `Ctx` den Request. `web/site.py` enthält jetzt nur noch Texte und Seiteninhalt.
 - Einziger Sonderfall bleibt die Startseite: dort ersetzt der Titelbereich die Markenzeile.
+- Die GitHub-/Doku-Icons sind so hoch wie die Wechsel-Pillen (22 px Rahmen, 20 px Symbol).
 
 ### Behoben
 - **Das eingebaute CSS färbte auf den Rumpf der Host-App ab.** `_CSS` stylte nackte
   `button`/`input`/`h1`-Selektoren; sobald `brand_header`/`brand_footer` gesetzt waren, zerlegte das
   die fremde Navigation (Pillen wurden zu vollbreiten Knöpfen). Alles ist jetzt unter `.tsmain`
   gekapselt, das Admin-Panel unter `.tsadmin`.
-- Der Demo-Modus setzt `autocomplete=new-password` auf dem Passwortfeld — sonst füllt der Browser ein
-  gespeichertes Passwort ein und der Login scheitert mit „falsche Zugangsdaten".
+- **Der Demo-Login scheiterte durch Browser-Autofill.** Das Passwortfeld wurde mit einem gespeicherten
+  Passwort vorbelegt; wer nur den Benutzernamen darüber tippte, bekam „falsche Zugangsdaten" (im
+  Server-Log: `demo FAIL password`). Jetzt: `autocomplete=new-password`, ein Skript verwirft ein
+  eingefülltes Passwort (mehrfach nachfassend, aber nie nach eigener Eingabe), und die Namen im
+  Demo-Hinweis sind **Knöpfe, die das Formular füllen**. Im echten Chrome per DevTools-Protokoll
+  gegengeprüft: Autofill wird verworfen, Klick füllt, Login geht durch, Selbstgetipptes bleibt stehen.
 - Showcase: die Sprach-/Kontext-Middleware ist reines ASGI. `BaseHTTPMiddleware` führt die App in
   einem eigenen Task aus, dort war die dort gesetzte `ContextVar` nicht mehr sichtbar.
 - **Anmeldung schlug mit 403 fehl, wenn zwischendurch eine andere Seite geladen wurde.**

@@ -29,7 +29,7 @@ MESSAGES = {
         "err.verify_no_mailer": "Email confirmation is switched on, but no mailer is configured.",
         "err.claim": "Invalid or expired token.",
         "demo.title": "Demo mode",
-        "demo.creds": "Sign in as <b>{user}</b> or <b>{admin}</b> — password <b>{pw}</b>.",
+        "demo.creds": "Sign in as {user} or {admin} — password <b>{pw}</b>. Click a name to fill the form.",
         "demo.pin": "Demo PIN: <b>{pin}</b>",
         "demo.warn": "Switch <code>demo_mode</code> off before going live — the demo accounts are "
                      "deleted on the next start.",
@@ -149,7 +149,7 @@ MESSAGES = {
         "err.verify_no_mailer": "E-Mail-Bestätigung ist aktiv, aber kein Mailer konfiguriert.",
         "err.claim": "Token ungültig oder abgelaufen.",
         "demo.title": "Demo-Modus",
-        "demo.creds": "Anmelden als <b>{user}</b> oder <b>{admin}</b> — Passwort <b>{pw}</b>.",
+        "demo.creds": "Anmelden als {user} oder {admin} — Passwort <b>{pw}</b>. Klick auf einen Namen füllt das Formular.",
         "demo.pin": "Demo-PIN: <b>{pin}</b>",
         "demo.warn": "Vor dem Produktivbetrieb <code>demo_mode</code> abschalten — die Demo-Konten "
                      "werden beim nächsten Start gelöscht.",
