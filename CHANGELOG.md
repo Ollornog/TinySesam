@@ -4,7 +4,22 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Geändert — UI neu gebaut
+- **`web/ui.py`**: der komplette Seitenrumpf an einer Stelle — Kopf (Titelzeile + zwei Navreihen in
+  *einem* Container), Fußzeile, Aufklapper, Wechsel-Pillen, Icons, CSS und JS. Website, Demo **und**
+  die eingebauten TinySesam-Seiten benutzen dieselben Funktionen; `Nav` beschreibt die App einmal,
+  `Ctx` den Request. `web/site.py` enthält jetzt nur noch Texte und Seiteninhalt.
+- Einziger Sonderfall bleibt die Startseite: dort ersetzt der Titelbereich die Markenzeile.
+
 ### Behoben
+- **Das eingebaute CSS färbte auf den Rumpf der Host-App ab.** `_CSS` stylte nackte
+  `button`/`input`/`h1`-Selektoren; sobald `brand_header`/`brand_footer` gesetzt waren, zerlegte das
+  die fremde Navigation (Pillen wurden zu vollbreiten Knöpfen). Alles ist jetzt unter `.tsmain`
+  gekapselt, das Admin-Panel unter `.tsadmin`.
+- Der Demo-Modus setzt `autocomplete=new-password` auf dem Passwortfeld — sonst füllt der Browser ein
+  gespeichertes Passwort ein und der Login scheitert mit „falsche Zugangsdaten".
+- Showcase: die Sprach-/Kontext-Middleware ist reines ASGI. `BaseHTTPMiddleware` führt die App in
+  einem eigenen Task aus, dort war die dort gesetzte `ContextVar` nicht mehr sichtbar.
 - **Anmeldung schlug mit 403 fehl, wenn zwischendurch eine andere Seite geladen wurde.**
   `render_page()` würfelte bei *jedem* Rendern ein neues CSRF-Token und überschrieb das Cookie —
   damit war jedes offene Formular (auch eine zweite Registerkarte oder eine Fehlerseite) sofort

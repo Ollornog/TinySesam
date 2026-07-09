@@ -24,15 +24,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # damit `web` 
 
 from fastapi import FastAPI, Depends, Request, HTTPException            # noqa: E402
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse  # noqa: E402
+from starlette.datastructures import MutableHeaders                     # noqa: E402
 
 from tinysesam import TinySesam, TinySesamConfig                        # noqa: E402
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import (BOOK_ICON, GITHUB_ICON, LANGS as SITE_LANGS,      # noqa: E402
-                      NAV_CSS, NAV_JS, dropdown, footer, icon_link,
-                      lang_pill, link, nav_sub, nav_top, nav_util,
-                      render_flows, render_index, theme_pill, user_menu)
+from web.site import LABELS, render_flows, render_index                  # noqa: E402
+from web.ui import (Ctx, LANGS as UI_LANGS, Nav, UI_CSS, UI_JS,          # noqa: E402
+                    document, footer, header)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
@@ -42,7 +42,7 @@ LANGS = ("de", "en")
 
 THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
 
-BRAND = THEME + NAV_CSS + """
+BRAND = THEME + UI_CSS + """
 body{font-family:var(--ts-font)}
 h1{font-family:var(--ts-serif);font-weight:600}
 .card{box-shadow:0 14px 44px rgba(90,60,70,.10)}
@@ -73,7 +73,7 @@ auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
 # Die eingebauten Seiten (Login, Konto, Admin, Fehlerseiten) bekommen denselben Rumpf wie der Rest.
 auth.cfg.brand_header = lambda _a: shell_header(_a)
 auth.cfg.brand_footer = lambda _a: shell_footer(_a)
-auth.cfg.brand_head = NAV_JS      # Theme-Pille + „Aufklapper schließen" auch dort
+auth.cfg.brand_head = UI_JS       # Theme-Pille + „Aufklapper schließen" auch dort
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -88,49 +88,83 @@ def lang_of(request: Request) -> str:
 
 # Der Rumpf der eingebauten Seiten hängt vom Request ab (Sprache, Login-Status, Pfad).
 # ContextVar statt globaler Variable: bei nebenläufigen Requests bleibt jeder bei seinem Wert.
-_ctx: ContextVar[dict] = ContextVar("ctx", default={"lang": "de", "path": "/demo", "user": None})
+_ctx: ContextVar[Ctx] = ContextVar("ctx")
 
 
-def _bare() -> bool:
+def nav_of(lang: str) -> Nav:
+    """Der Rumpf dieser App — einmal deklariert, überall benutzt."""
+    t = TEXTS[lang]
+    return Nav(brand_href="/", icon_url=ICON_URL, repo=REPO, css_href="/theme.css",
+               pages=(("/", t["nav_site"]), ("/demo", t["nav_demo"]), ("/demo/flows", t["nav_flows"])),
+               examples=tuple(t["examples"]), examples_label=t["nav_examples"], auth=True)
+
+
+def ctx_of(request: Request, lang: str) -> Ctx:
+    user = auth.current_user(request)
+    path = request.url.path
+    return Ctx(lang=lang, labels=LABELS[lang], path=path, user=user,
+               is_admin=bool(user and auth.is_admin(user)),
+               lang_hrefs={c: f"{path}?lang={c}" for c in UI_LANGS})
+
+
+def _bare(ctx: Ctx) -> bool:
     # Die read-only Vorschauen zeigen nur die Seite selbst — ohne den Rumpf drumherum.
-    return _ctx.get()["path"].startswith("/demo/preview/")
+    return ctx.path.startswith("/demo/preview/")
 
 
 def shell_header(_auth) -> str:
-    if _bare():
-        return ""
     c = _ctx.get()
-    return nav1(c["lang"]) + nav2(c["lang"], c["user"], c["path"]) + nav0(c["lang"], c["path"])
+    return "" if _bare(c) else header(c, nav_of(c.lang))
 
 
 def shell_footer(_auth) -> str:
-    return "" if _bare() else footer(_ctx.get()["lang"])
+    c = _ctx.get()
+    return "" if _bare(c) else footer(c, nav_of(c.lang))
 
 
-@app.middleware("http")
-async def set_language(request: Request, call_next):
-    """Eine Sprache für alles: die Demo-Seiten UND die eingebauten TinySesam-Seiten (`cfg.lang`).
-    Die Website-Dateien tragen sie im Namen, alles andere im Cookie."""
-    path = request.url.path
-    if path.endswith(".de.html"):
-        lang = "de"
-    elif path.endswith(".html"):
-        lang = "en"
-    else:
-        lang = lang_of(request)
-    auth.cfg.lang = lang
-    _ctx.set({"lang": lang, "path": request.url.path, "user": auth.current_user(request)})
-    response = await call_next(request)
-    if request.cookies.get(LANG_COOKIE) != lang:
-        response.set_cookie(LANG_COOKIE, lang, path="/", samesite="lax", max_age=31536000)
-    return response
+class ShellMiddleware:
+    """Sprache und Seiten-Kontext für diesen Request bereitstellen.
+
+    Bewusst **reines ASGI** statt `@app.middleware("http")`: Starlettes `BaseHTTPMiddleware` führt die
+    App in einem eigenen Task aus — eine dort gesetzte `ContextVar` ist im Endpoint nicht mehr sichtbar.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        request = Request(scope, receive)
+        path = request.url.path
+        if path.endswith(".de.html"):
+            lang = "de"
+        elif path.endswith(".html"):
+            lang = "en"
+        else:
+            lang = lang_of(request)
+        auth.cfg.lang = lang                       # damit auch die eingebauten Seiten folgen
+        _ctx.set(ctx_of(request, lang))
+
+        if request.cookies.get(LANG_COOKIE) == lang:
+            return await self.app(scope, receive, send)
+
+        async def send_with_cookie(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message).append(
+                    "set-cookie", f"{LANG_COOKIE}={lang}; Path=/; Max-Age=31536000; SameSite=lax")
+            await send(message)
+
+        await self.app(scope, receive, send_with_cookie)
+
+
+app.add_middleware(ShellMiddleware)
 
 
 TEXTS = {
     "de": {
         "nav_site": "Projektseite", "nav_demo": "Demo", "nav_flows": "Login-Flows",
         "nav_account": "Konto", "nav_admin": "Admin-Panel", "nav_examples": "Beispielseiten",
-        "logout": "Abmelden", "login": "Anmelden", "register": "Registrieren",
         "examples": [("/app", "<code>/app</code>", "geschützt mit <code>require_user</code>"),
                      ("/sensibel", "<code>/sensibel</code>", "Step-up: fragt nach der PIN"),
                      ("/gaeste", "<code>/gaeste</code>", "geteilte PIN, ganz ohne Konto"),
@@ -165,12 +199,10 @@ TEXTS = {
         "guest_h1": "🔑 Gäste-Bereich",
         "guest_lead": "Freigeschaltet über die geteilte PIN — ganz ohne Benutzerkonto.",
         "footer": "Demo-Frontend",
-        "theme_light": "Hell", "theme_dark": "Dunkel", "docs": "Doku",
     },
     "en": {
         "nav_site": "Project page", "nav_demo": "Demo", "nav_flows": "Sign-in flows",
         "nav_account": "Account", "nav_admin": "Admin panel", "nav_examples": "Example pages",
-        "logout": "Sign out", "login": "Sign in", "register": "Register",
         "examples": [("/app", "<code>/app</code>", "guarded by <code>require_user</code>"),
                      ("/sensibel", "<code>/sensibel</code>", "step-up: asks for the PIN"),
                      ("/gaeste", "<code>/gaeste</code>", "shared PIN, no account at all"),
@@ -205,72 +237,23 @@ TEXTS = {
         "guest_h1": "🔑 Guest area",
         "guest_lead": "Unlocked with the shared PIN — without any user account.",
         "footer": "Demo front end",
-        "theme_light": "Light", "theme_dark": "Dark", "docs": "Docs",
     },
 }
 
 
-# ---------------------------------------------------------------- Navigation (Inhalt; Bausteine aus web/site.py)
-def nav0(lang, path="/demo") -> str:
-    """Dritte (oberste) Leiste: links GitHub und Doku als Icon, rechts die beiden Wechsler."""
-    t = TEXTS[lang]
-    links = icon_link(REPO, GITHUB_ICON, "GitHub") + icon_link(f"{REPO}#readme", BOOK_ICON, t["docs"])
-    tools = (lang_pill({c: f"{path}?lang={c}" for c in SITE_LANGS}, lang)
-             + theme_pill(t["theme_light"], t["theme_dark"]))
-    return nav_util(links, tools)
-
-
-def nav1(lang) -> str:
-    """Zweite Ebene: nur die Marke. Auf der Startseite entfällt sie — der Titelbereich zeigt sie."""
-    return nav_top("", brand_href="/", icon=ICON_URL)
-
-
-def nav2(lang, user=None, active="") -> str:
-    """Zweite Leiste: links auf jeder Seite dieselben Einträge, rechts der Aktionsbereich."""
-    t = TEXTS[lang]
-    items = [link("/", t["nav_site"], active == "/"),
-             link("/demo", t["nav_demo"], active == "/demo"),
-             link("/demo/flows", t["nav_flows"], active == "/demo/flows")]
-    ex = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in t["examples"])
-    on = any(active == h for h, _, _ in t["examples"])
-    items.append(dropdown(t["nav_examples"], ex, active=on))
-    if user:
-        # Profil-Aufklapper statt drei Knöpfen: Icon + Name, darunter Konto/Admin/Abmelden.
-        entries = [("/auth/account", t["nav_account"])]
-        if auth.is_admin(user):
-            entries.append(("/auth/admin", t["nav_admin"]))
-        entries.append(("/auth/logout", t["logout"]))
-        right = user_menu(user["username"], entries)
-    else:
-        right = (f"<a class='btn ghost' href='/auth/register'>{t['register']}</a>"
-                 f"<a class='btn primary' href='/auth/login'>{t['login']}</a>")
-    return nav_sub("".join(items), right)
-
-
-# ---------------------------------------------------------------- App-Design
-_SITE_CSS = """
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-family:var(--ts-font)}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
-""" + NAV_CSS + FLOW_CSS + """
-main{max-width:var(--nav-w,900px);margin:0 auto;padding:64px 22px 72px}
+# ---------------------------------------------------------------- Seitengerüst der Demo
+_DEMO_CSS = FLOW_CSS + """
 h1{font-family:var(--ts-serif);font-size:48px;letter-spacing:-.01em;margin:.2em 0 .2em;text-wrap:balance}
-h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600;margin:0 0 14px}
+h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  font-weight:600;margin:0 0 14px}
 .lead{color:var(--muted);font-size:18px;max-width:56ch;text-wrap:balance}
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:9px 17px;border-radius:10px;font-weight:500;font-size:15px}
-.btn.p,.btn.primary{background:var(--accent);color:#fff}
-.btn.p:hover,.btn.primary:hover{text-decoration:none;filter:brightness(1.05)}
-.btn.g,.btn.ghost{border:1px solid var(--line);color:var(--ink)}
-.btn.g:hover,.btn.ghost:hover{text-decoration:none;border-color:var(--accent)}
 .btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
-code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
-  border-radius:5px;padding:1px 5px}
 hr.rule{height:1px;background:var(--line);border:0;margin:80px 0}
 .shot{margin:0 0 96px}
-.shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+  flex-wrap:wrap;margin-bottom:12px}
 .shot .head p{margin:4px 0 0;color:var(--muted);font-size:15px;max-width:60ch}
 .frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
   background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09);transition:height .2s}
@@ -278,27 +261,20 @@ hr.rule{height:1px;background:var(--line);border:0;margin:80px 0}
 .frame .glass{position:absolute;inset:0;cursor:default}
 .frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
   border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
-@media (prefers-reduced-motion:no-preference){
-  main{animation:rise .5s ease both}
-  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-}
+@media (prefers-reduced-motion:no-preference){main{animation:rise .5s ease both}}
 """
 
 
-def page(title, body, user=None, active="", lang="de"):
-    return HTMLResponse(
-        f"<!doctype html><html lang={lang}><head><meta charset=utf-8>"
-        f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-        f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
-        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{NAV_JS}</head><body>"
-        f"{nav1(lang)}{nav2(lang, user, active)}{nav0(lang, active or '/demo')}"
-        f"<main>{body}</main>{footer(lang)}</body></html>")
+def page(title: str, body: str, request: Request) -> HTMLResponse:
+    """Eine Demo-Seite — Rumpf und Fußzeile kommen aus `web/ui.py`, wie überall sonst."""
+    c = _ctx.get()
+    return HTMLResponse(document(c, nav_of(c.lang), title=f"{title} · TinySesam",
+                                 css=_DEMO_CSS, body=body))
 
 
 # ---------------------------------------------------------------- Website-Seiten (aus web/site.py)
 SITE_PAGES = {"index.html": ("index", "en"), "index.de.html": ("index", "de"),
               "flows.html": ("flows", "en"), "flows.de.html": ("flows", "de")}
-
 
 
 @app.get(ICON_URL, include_in_schema=False)
@@ -311,35 +287,31 @@ def theme():
     return FileResponse(DOCS / "theme.css", media_type="text/css")
 
 
-def _index(user, lang) -> HTMLResponse:
-    # Einziger Sonderfall: der Titelbereich zeigt die Marke, deshalb erste Leiste ohne sie.
-    return HTMLResponse(render_index(lang, nav2=nav2(lang, user, "/"), nav3=nav0(lang, "/")))
-
-
 @app.get("/", response_class=HTMLResponse)
 def landing(request: Request):
-    lang = lang_of(request)
-    return _index(auth.current_user(request), lang)
+    c = _ctx.get()
+    return HTMLResponse(render_index(c.lang, ctx=c, nav=nav_of(c.lang)))
 
 
 @app.get("/{name}.html", include_in_schema=False)
 def site_page(name: str, request: Request):
-    """index.de.html · flows.html · flows.de.html — dieselben Seiten wie auf GitHub Pages."""
+    """index.de.html · flows.html · flows.de.html — dieselben Seiten wie auf GitHub Pages,
+    nur mit dem Rumpf der Demo (Login-Status, Beispielseiten)."""
     fname = f"{name}.html"
     if fname not in SITE_PAGES:
         raise HTTPException(404)
     which, lang = SITE_PAGES[fname]
-    user = auth.current_user(request)
-    if which == "index":
-        return _index(user, lang)
-    return HTMLResponse(render_flows(lang, nav1=nav1(lang), nav2=nav2(lang, user, "/demo/flows"),
-                                     nav3=nav0(lang, "/demo/flows")))
+    c = _ctx.get()
+    c.lang = lang
+    c.labels = LABELS[lang]
+    render = render_index if which == "index" else render_flows
+    return HTMLResponse(render(lang, ctx=c, nav=nav_of(lang)))
 
 
 # ---------------------------------------------------------------- Demo
 def shot(title, blurb, src, open_url, height, scale, tag, open_label):
     return (f"<section class=shot><div class=head><div><h2>{title}</h2><p>{blurb}</p></div>"
-            f"<a class='btn g s' href='{open_url}'>{open_label}</a></div>"
+            f"<a class='btn ghost s' href='{open_url}'>{open_label}</a></div>"
             f"<div class=frame data-scale='{scale}' style='height:{height}px'>"
             f"<iframe src='{src}' tabindex=-1 scrolling=no title='{title}'"
             f" style='width:{100 / scale:.0f}%;height:{height / scale:.0f}px;transform:scale({scale})'></iframe>"
@@ -383,7 +355,7 @@ def demo(request: Request):
               + shot(*t["p_account"], "/demo/preview/account", "/auth/account", 470, 0.8, t["ro"], t["open"])
               + shot(*t["p_admin"], "/demo/preview/admin", "/auth/admin", 520, 0.66, t["ro_fake"], t["open"]))
     body = f"<h1>{t['demo_h1']}</h1>{hello}<hr class=rule>{panels}{_FIT_JS}"
-    return page(t["demo_h1"], body, user=user, active="/demo", lang=lang)
+    return page(t["demo_h1"], body, request)
 
 
 @app.get("/demo/flows", response_class=HTMLResponse)
@@ -393,10 +365,10 @@ def flows(request: Request):
     body = (f"<h1>{t['flows_h1']}</h1>"
             f"<p class=lead>{t['flows_lead'].format(ident=c.login_identifier, pin=c.pin_login)}</p>"
             + flow_html(lang, c) +
-            f"<hr class=rule><div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a>"
-            f"<a class='btn g' href='/sensibel'>{t['try_stepup']}</a>"
-            f"<a class='btn g' href='/gaeste'>{t['try_pin']}</a></div>")
-    return page(t["flows_h1"], body, user=user, active="/demo/flows", lang=lang)
+            f"<hr class=rule><div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
+            f"<a class='btn ghost' href='/sensibel'>{t['try_stepup']}</a>"
+            f"<a class='btn ghost' href='/gaeste'>{t['try_pin']}</a></div>")
+    return page(t["flows_h1"], body, request)
 
 
 # ---------------------------------------------------------------- Read-only Vorschauen
@@ -462,9 +434,8 @@ def protected(request: Request, user=Depends(auth.require_user)):
     t = TEXTS[lang]
     return page("/app", f"<h1>{t['app_h1'].format(u=user['username'])}</h1>"
                         f"<p class=lead>{t['app_lead']}</p>"
-                        f"<div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a>"
-                        f"<a class='btn g' href='/sensibel'>{t['try_stepup']}</a></div>",
-                user=user, active="/app", lang=lang)
+                        f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
+                        f"<a class='btn ghost' href='/sensibel'>{t['try_stepup']}</a></div>", request)
 
 
 @app.get("/sensibel", response_class=HTMLResponse)
@@ -475,9 +446,8 @@ def sensitive(request: Request, user=Depends(auth.require(mfa=True))):
     return page("/sensibel", f"<h1>{t['sens_h1']}</h1>"
                              f"<p class=lead>{t['sens_lead'].format(u=user['username'])}</p>"
                              f"<p class=muted style='max-width:60ch'>{t['sens_hint'].format(m=method)}</p>"
-                             f"<div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a>"
-                             f"<a class='btn g' href='/auth/account'>{t['nav_account']}</a></div>",
-                user=user, active="/sensibel", lang=lang)
+                             f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
+                             f"<a class='btn ghost' href='/auth/account'>{t['nav_account']}</a></div>", request)
 
 
 @app.get("/gaeste", response_class=HTMLResponse)
@@ -485,8 +455,7 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
     lang = lang_of(request)
     t = TEXTS[lang]
     return page("/gaeste", f"<h1>{t['guest_h1']}</h1><p class=lead>{t['guest_lead']}</p>"
-                           f"<div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a></div>",
-                user=auth.current_user(request), active="/gaeste", lang=lang)
+                           f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a></div>", request)
 
 
 @app.get("/boom", response_class=HTMLResponse)
