@@ -10,7 +10,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert (Website & Showcase)
 - **Sprache und Hell/Dunkel als Wechsel-Pillen** in der ersten Leiste (statt Dropdown bzw. Knopf) —
-  kompakt (22 px hoch), dafür größere Icons.
+  kompakt (18 px hoch); Marke und Titel in der ersten Leiste dafür größer.
 - **Profil-Aufklapper** statt Konto-Knopf: Icon + Benutzername, darunter Konto, Admin-Panel, Abmelden.
 - Aufklapper schließen jetzt bei Klick daneben und mit `Escape` (`<details>` tut das von sich aus nicht).
 - Fußzeile: die Trennlinie sitzt am Inhalt, nicht am Fensterrand — gleiche Breite wie die Leisten (`--nav-w`).
