@@ -8,6 +8,8 @@ Die Demo rendert dieselben Funktionen zur Laufzeit — sie braucht also keine ge
 
 Kein FastAPI-Import: Generator und Demo teilen sich diesen Code.
 """
+from html import escape as html_escape
+
 from .flows import CSS as FLOW_CSS, render as render_flow_list
 
 REPO = "https://github.com/Ollornog/TinySesam"
@@ -25,6 +27,8 @@ def page_url(page: str, lang: str) -> str:
 # unterscheidet sich (die Demo kennt Login-Status und Beispielseiten, die Website nicht).
 NAV_CSS = """
   /* --nav-w setzt jede Seite auf ihre Inhaltsbreite (Startseite 720, sonst 900) */
+  /* --nav-fs: EINE Schriftgröße für beide Leisten — dort ist Abstufung nur Unruhe */
+  :root{--nav-fs:14px}
   nav.top,nav.sub,footer .inner{max-width:var(--nav-w,900px);margin:0 auto}
   nav.top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 22px}
   nav.top.nobrand{justify-content:flex-end;padding-bottom:0}
@@ -32,74 +36,106 @@ NAV_CSS = """
   nav.top .brand img{width:30px;height:30px}
   nav.top .brand span{font-weight:700;font-size:18px}
   nav.top .brand b{color:var(--accent)}
-  nav.top .right{display:flex;align-items:center;gap:6px;font-size:14px}
+  nav.top .right{display:flex;align-items:center;gap:10px}
   /* eigener Stapelkontext: sonst malen die animierten Abschnitte über das offene Dropdown */
   nav.sub{position:relative;z-index:30;background:var(--paper);
     display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    padding:9px 22px;font-size:14px;border-bottom:1px solid var(--line)}
+    padding:9px 22px;border-bottom:1px solid var(--line)}
+  nav.top,nav.sub{font-size:var(--nav-fs)}
   nav.sub .left,nav.sub .right{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-  nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:8px;
-    color:var(--muted);white-space:nowrap;text-decoration:none}
+  nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:8px;
+    color:var(--muted);white-space:nowrap;text-decoration:none;font-size:var(--nav-fs)}
   nav.sub a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
   nav.sub a.on{background:var(--chip);color:var(--ink)}
-  nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
-  nav .btn{padding:6px 13px;font-size:14px;border-radius:9px}
+  nav.sub code{font-size:1em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
+  nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
   nav .btn.ghost{color:var(--ink)}
-  .iconbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;
-    background:none;border:1px solid transparent;color:var(--muted);cursor:pointer;font:inherit;
-    font-size:13px;line-height:1}
-  .iconbtn:hover{background:var(--chip);color:var(--ink)}
-  .iconbtn svg{width:15px;height:15px;fill:currentColor}
+
+  /* Wechsel-Pille: zwei Segmente, das aktive hebt sich ab (Sprache, Hell/Dunkel) */
+  .pill2{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:999px;
+    background:var(--chip);border:1px solid var(--line)}
+  .pill2 .seg{display:inline-flex;align-items:center;justify-content:center;gap:5px;
+    min-width:34px;height:26px;padding:0 9px;border:0;border-radius:999px;background:none;
+    color:var(--muted);cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;
+    letter-spacing:.02em;text-decoration:none;line-height:1}
+  .pill2 .seg:hover{color:var(--ink);text-decoration:none}
+  .pill2 .seg.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(90,60,70,.12)}
+  .pill2 .seg svg{width:14px;height:14px;fill:currentColor}
+
   .dd{position:relative}
-  .dd summary{list-style:none;cursor:pointer;padding:6px 10px;border-radius:8px;color:var(--muted);
-    display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px}
+  .dd summary{list-style:none;cursor:pointer;padding:6px 11px;border-radius:8px;color:var(--muted);
+    display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:var(--nav-fs)}
   .dd summary::-webkit-details-marker{display:none}
   .dd summary::after{content:"▾";font-size:11px}
   .dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
-  .dd summary svg{width:15px;height:15px;fill:currentColor}
-  .ddmenu{position:absolute;z-index:40;top:calc(100% + 6px);min-width:190px;padding:6px;
+  .dd summary svg{width:16px;height:16px;fill:currentColor}
+  .ddmenu{position:absolute;z-index:40;top:calc(100% + 6px);min-width:200px;padding:6px;
     background:var(--card);border:1px solid var(--line);border-radius:12px;
     box-shadow:0 14px 40px rgba(90,60,70,.14)}
   .dd.r .ddmenu{right:0}
   .dd:not(.r) .ddmenu{left:0}
   /* muss `nav.sub a` schlagen (gleiche Spezifität) — sonst stehen die Einträge nebeneinander */
   .ddmenu a,nav.sub .ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink);
-    white-space:normal}
+    white-space:normal;font-size:var(--nav-fs)}
   .ddmenu a:hover,nav.sub .ddmenu a:hover{background:var(--chip);text-decoration:none}
-  .ddmenu b{display:block;font-weight:600;font-size:14px}
+  .ddmenu b{display:block;font-weight:600}
   .ddmenu span{display:block;color:var(--muted);font-size:12.5px}
-  footer{border-top:1px solid var(--line);margin-top:52px;color:var(--muted);font-size:14px}
-  footer .inner{padding:26px 22px 60px;text-align:center}
+
+  footer{margin-top:72px;color:var(--muted);font-size:14px}
+  footer .inner{padding:26px 22px 60px;text-align:center;border-top:1px solid var(--line)}
   footer a{margin:0 9px}
 """
 
-# Dark-Mode: früh im <head>, damit beim Laden nichts umspringt; theme.css kennt [data-theme].
-THEME_JS = """<script>
+NAV_JS = """<script>
+// Dark-Mode früh anwenden, damit beim Laden nichts umspringt. theme.css kennt [data-theme].
 (function(){var t=localStorage.getItem('ts-theme'); if(t) document.documentElement.dataset.theme=t;})();
 document.addEventListener('DOMContentLoaded',function(){
-  var b=document.getElementById('ts-theme'); if(!b) return;
-  b.addEventListener('click',function(){
-    var r=document.documentElement;
-    var dark=r.dataset.theme ? r.dataset.theme==='dark'
-           : matchMedia('(prefers-color-scheme:dark)').matches;
-    r.dataset.theme = dark ? 'light' : 'dark';
-    localStorage.setItem('ts-theme', r.dataset.theme);
+  var root=document.documentElement;
+  function current(){ return root.dataset.theme
+    || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light'); }
+  function paint(){ document.querySelectorAll('#ts-theme .seg').forEach(function(b){
+      b.classList.toggle('on', b.dataset.theme === current()); }); }
+  document.querySelectorAll('#ts-theme .seg').forEach(function(b){
+    b.addEventListener('click',function(){
+      root.dataset.theme=b.dataset.theme; localStorage.setItem('ts-theme',b.dataset.theme); paint(); });
   });
+  paint();
+});
+// Aufklapper schließen, sobald man daneben klickt oder Escape drückt.
+document.addEventListener('click',function(e){
+  document.querySelectorAll('details.dd[open]').forEach(function(d){
+    if(!d.contains(e.target)) d.open=false; });
+});
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape') document.querySelectorAll('details.dd[open]').forEach(function(d){ d.open=false; });
 });
 </script>"""
 
-SUN_MOON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0'
-            '-9.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5Zm0 11a.75.75 0 0 1 .75.75v1'
-            'a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12.5ZM14.5 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1'
-            'A.75.75 0 0 1 14.5 8Zm-11 0a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3.5 8Zm9.1'
-            '-4.6a.75.75 0 0 1 0 1.06l-.7.71a.75.75 0 1 1-1.07-1.06l.71-.71a.75.75 0 0 1 1.06 0ZM4.87 11.13a'
-            '.75.75 0 0 1 0 1.06l-.71.71A.75.75 0 0 1 3.1 11.84l.71-.71a.75.75 0 0 1 1.06 0Zm7.73.71a.75.75 '
-            '0 1 1-1.06 1.06l-.71-.71a.75.75 0 0 1 1.06-1.06ZM4.87 4.87A.75.75 0 0 1 3.81 4.16l-.71-.7A.75.75'
-            ' 0 0 1 4.16 2.39l.71.71a.75.75 0 0 1 0 1.06Z"/></svg>')
+SUN = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0-9.5a.75.75 '
+       '0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5Zm0 11a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 '
+       '0v-1A.75.75 0 0 1 8 12.5ZM14.5 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 14.5 8Zm-11 '
+       '0a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3.5 8Zm9.1-4.6a.75.75 0 0 1 0 1.06l-.7.71a'
+       '.75.75 0 1 1-1.07-1.06l.71-.71a.75.75 0 0 1 1.06 0ZM4.87 11.13a.75.75 0 0 1 0 1.06l-.71.71A.75.75 0 0 '
+       '1 3.1 11.84l.71-.71a.75.75 0 0 1 1.06 0Zm7.73.71a.75.75 0 1 1-1.06 1.06l-.71-.71a.75.75 0 0 1 1.06-1.06'
+       'ZM4.87 4.87A.75.75 0 0 1 3.81 4.16l-.71-.7A.75.75 0 0 1 4.16 2.39l.71.71a.75.75 0 0 1 0 1.06Z"/></svg>')
+MOON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 1.2a6.8 6.8 0 1 0 5.2 8.1A5.5 5.5 0 0 1 '
+        '9.6 1.2Z"/></svg>')
+PERSON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 1.5c-2.6 '
+          '0-4.8 1.5-5.5 3.6-.2.6.3 1.2.9 1.2h9.2c.6 0 1.1-.6.9-1.2C12.8 11 10.6 9.5 8 9.5Z"/></svg>')
 
 
-def theme_toggle(label="Design") -> str:
-    return f'<button class=iconbtn id=ts-theme type=button title="{label}">{SUN_MOON}</button>'
+def theme_pill(light="Hell", dark="Dunkel") -> str:
+    """Hell/Dunkel als Wechsel-Pille. Das aktive Segment markiert `NAV_JS` beim Laden."""
+    return (f'<span class=pill2 id=ts-theme>'
+            f'<button class=seg type=button data-theme=light title="{light}">{SUN}</button>'
+            f'<button class=seg type=button data-theme=dark title="{dark}">{MOON}</button></span>')
+
+
+def lang_pill(hrefs: dict, lang: str) -> str:
+    """Sprache als Wechsel-Pille: `hrefs` bildet Sprachcode → Ziel-URL ab."""
+    segs = "".join(f"<a class='seg{' on' if code == lang else ''}' href='{hrefs[code]}'>{code.upper()}</a>"
+                   for code in LANGS)
+    return f"<span class=pill2>{segs}</span>"
 
 
 def link(href, label, active=False) -> str:
@@ -112,19 +148,10 @@ def dropdown(summary, items_html, right=False, open_=False) -> str:
             f"<div class=ddmenu>{items_html}</div></details>")
 
 
-LANG_LABELS = {"en": "English", "de": "Deutsch"}
-
-
-def lang_dropdown(page: str, lang: str) -> str:
-    """Sprachwechsel für die Website: bleibt auf derselben Seite, wechselt die Datei."""
-    items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(GLOBE_ICON + lang.upper(), items, right=True)
-
-
-def lang_dropdown_path(path: str, lang: str) -> str:
-    """Sprachwechsel für Seiten ohne Sprach-Dateinamen (die Demo): hängt `?lang=` an den Pfad."""
-    items = "".join(f"<a href='{path}?lang={code}'>{label}</a>" for code, label in LANG_LABELS.items())
-    return dropdown(GLOBE_ICON + lang.upper(), items, right=True)
+def user_menu(name: str, items: list) -> str:
+    """Profil-Aufklapper: Icon + Name, darunter Konto/Admin/Abmelden. `items` = (href, label)."""
+    body = "".join(f"<a href='{h}'>{l}</a>" for h, l in items)
+    return dropdown(PERSON + html_escape(name), body, right=True)
 
 
 def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
@@ -149,10 +176,11 @@ _BASE_CSS = """
   a{color:var(--accent); text-decoration:none}
   a:hover{text-decoration:underline}
   a:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:4px}
-  .rule{height:1px; background:var(--line); border:0; margin:44px 0}
-  section{margin:38px 0}
-  h2{font-size:13px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted);
-    font-weight:600; margin:0 0 16px}
+  .rule{height:1px; background:var(--line); border:0; margin:56px 0}
+  section{margin:64px 0}
+  section:first-of-type{margin-top:48px}
+  h2{font-size:15px; text-transform:uppercase; letter-spacing:.09em; color:var(--muted);
+    font-weight:600; margin:0 0 20px}
   .btn{display:inline-flex; align-items:center; gap:8px; padding:11px 20px; border-radius:10px;
     font-size:15px; font-weight:500}
   .btn svg{width:16px; height:16px; fill:currentColor; flex:0 0 auto}
@@ -210,9 +238,9 @@ _INDEX_CSS = """
 """
 
 _FLOWS_CSS = """
-  main{max-width:900px; margin:0 auto; padding:34px 22px 24px}
-  h1{font-family:var(--ts-serif); font-weight:600; font-size:40px; letter-spacing:-.01em;
-    margin:.1em 0 .12em; text-wrap:balance}
+  main{max-width:var(--nav-w,900px); margin:0 auto; padding:40px 22px 24px}
+  h1{font-family:var(--ts-serif); font-weight:600; font-size:42px; letter-spacing:-.01em;
+    margin:.1em 0 .16em; text-wrap:balance}
   .lead{color:var(--muted); font-size:18px; max-width:60ch; text-wrap:balance}
 """
 
@@ -224,7 +252,6 @@ GITHUB_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0
                '2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73'
                '.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>'
                '</svg>')
-GLOBE_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM5.78 8.75a9.6 9.6 0 0 0 1.363 4.177c.255.426.542.832.857 1.215.245-.296.551-.705.857-1.215A9.6 9.6 0 0 0 10.22 8.75Zm4.44-1.5a9.6 9.6 0 0 0-1.363-4.177c-.307-.51-.612-.919-.857-1.215a9.8 9.8 0 0 0-.857 1.215A9.6 9.6 0 0 0 5.78 7.25Zm-5.944 1.5H1.543a6.5 6.5 0 0 0 4.666 5.5c-.123-.181-.24-.365-.352-.552-.715-1.192-1.437-2.874-1.581-4.948Zm-2.733-1.5h2.733c.144-2.074.866-3.756 1.58-4.948.12-.197.237-.381.353-.552a6.5 6.5 0 0 0-4.666 5.5Zm10.181 1.5c-.144 2.074-.866 3.756-1.58 4.948-.12.197-.237.381-.353.552a6.5 6.5 0 0 0 4.666-5.5Zm2.733-1.5a6.5 6.5 0 0 0-4.666-5.5c.123.181.24.365.353.552.714 1.192 1.436 2.874 1.58 4.948Z"/></svg>')
 
 BOOK_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 '
              '0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75'
@@ -374,12 +401,12 @@ def _head(lang: str, title: str, desc: str, css: str) -> str:
             f'<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             f'<title>{title}</title>\n<meta name="description" content="{desc}">\n'
             f'<link rel="icon" href="wizard.png">\n<link rel="stylesheet" href="theme.css">\n'
-            f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>{THEME_JS}\n</head>\n<body>\n')
+            f'<style>{_BASE_CSS}{NAV_CSS}{css}</style>{NAV_JS}\n</head>\n<body>\n')
 
 
 def site_nav_top(lang: str, page: str = "index", brand=True) -> str:
-    """Erste Leiste: Marke + Werkzeuge (Sprache, Dark-Mode). Auf jeder Seite gleich."""
-    tools = lang_dropdown(page, lang) + theme_toggle()
+    """Erste Leiste: Marke + Werkzeuge (Sprache, Hell/Dunkel) — auf jeder Seite gleich."""
+    tools = lang_pill({c: page_url(page, c) for c in LANGS}, lang) + theme_pill()
     return nav_top(tools, brand_href=page_url("index", lang) if brand else None)
 
 

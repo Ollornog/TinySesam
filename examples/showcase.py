@@ -28,9 +28,9 @@ from tinysesam import TinySesam, TinySesamConfig                        # noqa: 
 from tinysesam.admin import render_panel                                # noqa: E402
 
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
-from web.site import (NAV_CSS, THEME_JS, dropdown, footer,              # noqa: E402
-                      lang_dropdown_path, link, nav_sub, nav_top,
-                      render_flows, render_index, theme_toggle)
+from web.site import (LANGS as SITE_LANGS, NAV_CSS, NAV_JS, dropdown,   # noqa: E402
+                      footer, lang_pill, link, nav_sub, nav_top,
+                      render_flows, render_index, theme_pill, user_menu)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
@@ -131,6 +131,7 @@ TEXTS = {
         "guest_h1": "🔑 Gäste-Bereich",
         "guest_lead": "Freigeschaltet über die geteilte PIN — ganz ohne Benutzerkonto.",
         "footer": "Demo-Frontend",
+        "theme_light": "Hell", "theme_dark": "Dunkel",
     },
     "en": {
         "nav_site": "Project page", "nav_demo": "Demo", "nav_flows": "Sign-in flows",
@@ -166,6 +167,7 @@ TEXTS = {
         "guest_h1": "🔑 Guest area",
         "guest_lead": "Unlocked with the shared PIN — without any user account.",
         "footer": "Demo front end",
+        "theme_light": "Light", "theme_dark": "Dark",
     },
 }
 
@@ -183,9 +185,11 @@ def icon(name: str) -> str:
 
 # ---------------------------------------------------------------- Navigation (Inhalt; Bausteine aus web/site.py)
 def nav1(lang, path="/demo", brand=True) -> str:
-    """Erste Leiste: Marke + Werkzeuge (Sprache, Dark-Mode). Kennt den Login-Status nicht.
-    Nur die Startseite lässt die Marke weg — ihr Titelbereich zeigt sie groß."""
-    tools = lang_dropdown_path(path, lang) + theme_toggle()
+    """Erste Leiste: Marke + Werkzeuge (Sprache, Hell/Dunkel) als Wechsel-Pillen.
+    Kennt den Login-Status nicht. Nur die Startseite lässt die Marke weg."""
+    t = TEXTS[lang]
+    tools = (lang_pill({c: f"{path}?lang={c}" for c in SITE_LANGS}, lang)
+             + theme_pill(t["theme_light"], t["theme_dark"]))
     return nav_top(tools, brand_href="/" if brand else None, icon=ICON_URL)
 
 
@@ -199,11 +203,12 @@ def nav2(lang, user=None, active="") -> str:
     open_ = any(active == h for h, _, _ in t["examples"])
     items.append(dropdown(t["nav_examples"], ex, open_=open_))
     if user:
-        right = (f"<span class=muted>{user['username']}</span>"
-                 f"<a class='btn ghost' href='/auth/account'>{t['nav_account']}</a>")
+        # Profil-Aufklapper statt drei Knöpfen: Icon + Name, darunter Konto/Admin/Abmelden.
+        entries = [("/auth/account", t["nav_account"])]
         if auth.is_admin(user):
-            right += f"<a class='btn ghost' href='/auth/admin'>{t['nav_admin']}</a>"
-        right += f"<a class='btn ghost' href='/auth/logout'>{t['logout']}</a>"
+            entries.append(("/auth/admin", t["nav_admin"]))
+        entries.append(("/auth/logout", t["logout"]))
+        right = user_menu(user["username"], entries)
     else:
         right = (f"<a class='btn ghost' href='/auth/register'>{t['register']}</a>"
                  f"<a class='btn primary' href='/auth/login'>{t['login']}</a>")
@@ -217,9 +222,9 @@ body{margin:0;background:var(--paper);color:var(--ink);line-height:1.65;font-fam
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 svg{width:16px;height:16px;fill:currentColor;flex:0 0 auto}
 """ + NAV_CSS + FLOW_CSS + """
-main{max-width:900px;margin:0 auto;padding:36px 22px 64px}
-h1{font-family:var(--ts-serif);font-size:38px;letter-spacing:-.01em;margin:.2em 0 .1em;text-wrap:balance}
-h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 6px}
+main{max-width:var(--nav-w,900px);margin:0 auto;padding:40px 22px 64px}
+h1{font-family:var(--ts-serif);font-size:42px;letter-spacing:-.01em;margin:.2em 0 .16em;text-wrap:balance}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 8px}
 .lead{color:var(--muted);font-size:18px;max-width:56ch;text-wrap:balance}
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:9px 17px;border-radius:10px;font-weight:500;font-size:15px}
@@ -231,10 +236,10 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .muted{color:var(--muted);font-size:14px}
 code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
   border-radius:5px;padding:1px 5px}
-hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
-.shot{margin:0 0 34px}
+hr.rule{height:1px;background:var(--line);border:0;margin:56px 0}
+.shot{margin:0 0 56px}
 .shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
-.shot .head p{margin:2px 0 0;color:var(--muted);font-size:14.5px;max-width:60ch}
+.shot .head p{margin:4px 0 0;color:var(--muted);font-size:15px;max-width:60ch}
 .frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
   background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09);transition:height .2s}
 .frame iframe{display:block;border:0;transform-origin:top left}
@@ -253,7 +258,7 @@ def page(title, body, user=None, active="", lang="de"):
         f"<!doctype html><html lang={lang}><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
-        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{THEME_JS}</head><body>"
+        f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{NAV_JS}</head><body>"
         f"{nav1(lang, active or '/demo')}{nav2(lang, user, active)}"
         f"<main>{body}</main>{footer(lang)}</body></html>")
 
