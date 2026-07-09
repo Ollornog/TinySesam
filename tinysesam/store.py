@@ -243,6 +243,15 @@ class Store:
             return None
         return self._one("SELECT * FROM users WHERE email=? COLLATE NOCASE ORDER BY id LIMIT 1", (email,))
 
+    def delete_user(self, user_id):
+        """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""
+        with self._lock:
+            for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
+                          "webauthn_cred", "oidc_identity", "session", "magic_token"):
+                self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+            self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
+            self.db.commit()
+
     def email_taken(self, email, exclude_id=None) -> bool:
         u = self.get_user_by_email(email)
         return bool(u and u["id"] != exclude_id)

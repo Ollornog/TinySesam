@@ -5,6 +5,15 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Erst-Admin ohne „wer zuerst kommt"** — zwei explizite Wege, beide nur wirksam, solange es
+  keinen Admin gibt: `admin_identifiers=[…]` (Allowlist auf Name/E-Mail, greift bei **jeder**
+  Login-Methode, auch OIDC/SAML/LDAP) und ein **Einmal-Token** im Log →
+  `GET /auth/claim-admin?token=…` (`admin_claim_ttl_min`, danach ist die Route 404).
+- **Demo-Modus** (`demo_mode=True`) — legt `demo` + `demoadmin` an, zeigt die Zugangsdaten auf der
+  Login-Seite (und die PIN auf der PIN-Seite) und warnt sichtbar. Beim Abschalten werden **genau
+  diese** Konten wieder gelöscht (`seed_demo`/`purge_demo`, `store.delete_user`).
+- Showcase: durchgängige Sprachumschaltung (`?lang=` + Cookie) für Demo-Seiten **und** die
+  eingebauten TinySesam-Seiten (`cfg.lang` per Middleware).
 - **Login-Kennung wählbar** — `login_identifier="username" | "email" | "both"` (Default **`both`**).
   Passwort- und PIN-Login gehen über `auth.find_user(...)`; das Kennungsfeld beschriftet sich
   passend („Benutzer" / „E-Mail" / „Benutzer oder E-Mail"). Der Timing-Schutz gegen
@@ -45,6 +54,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Neue Suiten `tests/test_pin_stepup.py`, `tests/test_site.py`.
 
 ### Behoben
+- Showcase: die zweite Leiste fiel nicht mit ein (`rise`-Animation galt nur für Hero und Abschnitte).
 - Showcase: die Admin-Vorschau war regelmäßig unten abgeschnitten — ihre Tabelle kommt per `fetch`
   **nach** dem `load`-Event. Der Rahmen misst jetzt per `ResizeObserver` nach (plus Nachzügler-Timer).
 - Showcase: auf der Flow-Seite stand die erste Leiste **unter** der zweiten — die Demo klebte ihre

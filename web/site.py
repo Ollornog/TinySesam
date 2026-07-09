@@ -70,11 +70,19 @@ def dropdown(summary, items_html, right=False, open_=False) -> str:
             f"<div class=ddmenu>{items_html}</div></details>")
 
 
+LANG_LABELS = {"en": "English", "de": "Deutsch"}
+
+
 def lang_dropdown(page: str, lang: str) -> str:
-    """Sprachwechsel. `page` ist 'index' oder 'flows' — der Wechsel bleibt auf derselben Seite."""
-    labels = {"en": "English", "de": "Deutsch"}
-    items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in labels.items())
-    return dropdown(labels[lang], items, right=True)
+    """Sprachwechsel für die Website: bleibt auf derselben Seite, wechselt die Datei."""
+    items = "".join(f"<a href='{page_url(page, code)}'>{label}</a>" for code, label in LANG_LABELS.items())
+    return dropdown(LANG_LABELS[lang], items, right=True)
+
+
+def lang_dropdown_path(path: str, lang: str) -> str:
+    """Sprachwechsel für Seiten ohne Sprach-Dateinamen (die Demo): hängt `?lang=` an den Pfad."""
+    items = "".join(f"<a href='{path}?lang={code}'>{label}</a>" for code, label in LANG_LABELS.items())
+    return dropdown(LANG_LABELS[lang], items, right=True)
 
 
 def nav_top(right_html="", brand_href="index.html", icon="wizard.png") -> str:
@@ -151,7 +159,7 @@ _INDEX_CSS = """
     background:var(--chip); border:1px solid var(--line); border-radius:10px; text-wrap:balance}
   .pos b{color:var(--ink); font-weight:600}
   @media (prefers-reduced-motion:no-preference){
-    header.hero, section{animation:rise .5s ease both}
+    header.hero, nav.sub, section{animation:rise .5s ease both}
     section:nth-of-type(2){animation-delay:.05s}
     @keyframes rise{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
   }

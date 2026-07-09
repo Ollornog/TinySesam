@@ -201,6 +201,33 @@ TinySesamConfig.local_accounts(          # nur Benutzername + Passwort, nirgends
 - `Depends(auth.require(factors=["password", "pin"]))` → eine geordnete Kette pro Route. Wer schon
   eingeloggt ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite.
 
+## Den ersten Admin bestimmen
+
+Offene Registrierung plus „der erste Account wird Admin" ist ein Wettlauf: wer die frische Instanz
+zuerst findet, gewinnt sie. TinySesam bietet deshalb zwei ausdrückliche Wege, **beide nur, solange es
+keinen Admin gibt**:
+
+```python
+TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login-Methode
+```
+
+- **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
+  befördert, egal über welche Methode (auch OIDC/SAML/LDAP, wo die Adresse meist die stabile Kennung
+  ist). Danach nie wieder.
+- **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL ins Log.
+  Anmelden, `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
+  `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404.
+
+Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
+den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
+
+## Demo-Modus
+
+`demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
+Anmeldeseite (und die PIN auf der PIN-Seite) und sagt unmissverständlich, dass er produktiv aus
+gehört. Beim Abschalten werden genau diese Konten beim nächsten Start gelöscht. Niemals auf einer
+öffentlichen Instanz einschalten.
+
 ## Sicherheit
 
 - Passwörter: **argon2id** (Fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, jederzeit revozierbar).

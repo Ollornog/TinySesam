@@ -27,6 +27,12 @@ MESSAGES = {
         "err.email_invalid": "Please enter a valid email address",
         "err.email_taken": "That email is already registered",
         "err.verify_no_mailer": "Email confirmation is switched on, but no mailer is configured.",
+        "err.claim": "Invalid or expired token.",
+        "demo.title": "Demo mode",
+        "demo.creds": "Sign in as <b>{user}</b> or <b>{admin}</b> — password <b>{pw}</b>.",
+        "demo.pin": "Demo PIN: <b>{pin}</b>",
+        "demo.warn": "Switch <code>demo_mode</code> off before going live — the demo accounts are "
+                     "deleted on the next start.",
         "err.invite_required": "Registration only with a valid invitation.",
         # --- login ---
         "login.user": "Username",
@@ -141,6 +147,12 @@ MESSAGES = {
         "err.email_invalid": "Bitte eine gültige E-Mail-Adresse angeben",
         "err.email_taken": "Diese E-Mail ist bereits registriert",
         "err.verify_no_mailer": "E-Mail-Bestätigung ist aktiv, aber kein Mailer konfiguriert.",
+        "err.claim": "Token ungültig oder abgelaufen.",
+        "demo.title": "Demo-Modus",
+        "demo.creds": "Anmelden als <b>{user}</b> oder <b>{admin}</b> — Passwort <b>{pw}</b>.",
+        "demo.pin": "Demo-PIN: <b>{pin}</b>",
+        "demo.warn": "Vor dem Produktivbetrieb <code>demo_mode</code> abschalten — die Demo-Konten "
+                     "werden beim nächsten Start gelöscht.",
         "err.invite_required": "Registrierung nur mit gültiger Einladung.",
         "login.user": "Benutzer",
         "login.email": "E-Mail",

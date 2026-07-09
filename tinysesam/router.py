@@ -271,6 +271,18 @@ def build_router(auth) -> APIRouter:
                 return handled
             raise HTTPException(400, "nicht unterstützter Token-Zweck")
 
+    # ---------- Erst-Admin per Einmal-Token (nur solange es keinen Admin gibt) ----------
+    @r.get("/auth/claim-admin", response_class=HTMLResponse)
+    def claim_admin(request: Request, token: str = ""):
+        u = auth.current_user(request)
+        if not u:
+            return RedirectResponse(f"{cfg.login_path}?next=/auth/claim-admin?token={_q(token)}", 303)
+        if auth.admin_exists():
+            raise HTTPException(404)          # kein Hinweis darauf, dass es die Route mal gab
+        if not auth.consume_admin_claim(token, u):
+            raise HTTPException(403, auth.t("err.claim"))
+        return RedirectResponse(cfg.admin_path, 303)
+
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):
