@@ -2,6 +2,16 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+### Geändert (Website & Showcase)
+- **Sprache und Hell/Dunkel als Wechsel-Pillen** in der ersten Leiste (statt Dropdown bzw. Knopf).
+- **Profil-Aufklapper** statt Konto-Knopf: Icon + Benutzername, darunter Konto, Admin-Panel, Abmelden.
+- Aufklapper schließen jetzt bei Klick daneben und mit `Escape` (`<details>` tut das von sich aus nicht).
+- Fußzeile: die Trennlinie sitzt am Inhalt, nicht am Fensterrand — gleiche Breite wie die Leisten (`--nav-w`).
+- Typografie: mehr Luft vor Überschriften, Abschnitts- und Flow-Überschriften größer; die Leisten
+  nutzen **eine** Schriftgröße (`--nav-fs`) statt drei.
+
 ## [0.11.0] — 2026-07-09
 
 Großer Sammelrelease: Login-Kennung, PIN als Zusatzfaktor, Erst-Admin-Bootstrap, Demo-Modus,

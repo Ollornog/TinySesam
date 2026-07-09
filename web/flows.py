@@ -226,17 +226,17 @@ TEXT = {
 }
 
 CSS = """
-.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;color:var(--muted);font-size:14px}
+.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:22px;color:var(--muted);font-size:14px}
 .legend span{display:flex;align-items:center;gap:8px}
 .legend i.box{width:16px;height:16px;padding:0;display:inline-block}
-.flow{margin:0 0 38px}
+.flow{margin:0 0 56px}
 .flowhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.flowhead h3{font-family:var(--ts-serif);font-size:22px;margin:0}
+.flowhead h3{font-family:var(--ts-serif);font-size:26px;margin:0}
 .pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line)}
 .pill.on{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
 .pill.off{background:var(--chip);color:var(--muted)}
 .pill.cfg{background:var(--chip);color:var(--muted);font-family:var(--ts-mono);font-size:11.5px}
-.flow>.muted{margin:6px 0 0;color:var(--muted);font-size:15px}
+.flow>.muted{margin:8px 0 0;color:var(--muted);font-size:15.5px}
 .chain{list-style:none;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0;margin:16px 0 0}
 .chain li{display:flex}
 .chain .arr{color:var(--muted);font-size:18px}
