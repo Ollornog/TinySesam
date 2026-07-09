@@ -6,7 +6,11 @@
   --paper:#f6f1ec; --card:#fbf8f4; --chip:#efe7de;
   --ink:#2b2a3a; --muted:#6f6a7d; --line:#e6ddd4;
   --accent:#b0566f; --accent-2:#d98c93;
-  --code-bg:#2b2a3a; --code-fg:#f1ede7; --glow:rgba(176,86,111,.20);
+  /* Codeblock folgt dem Thema: helles Blatt auf beigem Papier. Eigene Syntaxtöne, weil
+     die Textfarben des Fließtexts auf diesem Grund zu blass bzw. zu grell wären. */
+  --code-bg:#fbf8f4; --code-fg:#2b2a3a; --code-line:#e6ddd4;
+  --code-com:#79738a; --code-key:#a5375a; --code-str:#7a5326;
+  --glow:rgba(176,86,111,.20);
   --danger:#a12048; --success:#2f7d4f;
   --err-bg:#f7dde3;  --err-ink:#a12048;
   --ok-bg:#e2efe4;   --ok-ink:#2f7d4f;
@@ -18,7 +22,9 @@
     --paper:#201f2a; --card:#282634; --chip:#312e3d;
     --ink:#ece9f2; --muted:#a49eb4; --line:#3a3746;
     --accent:#e0919c; --accent-2:#b0566f;
-    --code-bg:#17161f; --code-fg:#e8e4ef; --glow:rgba(224,145,156,.16);
+    --code-bg:#17161f; --code-fg:#e8e4ef; --code-line:#312e3d;
+    --code-com:#9b93ab; --code-key:#e0919c; --code-str:#c9a98f;
+    --glow:rgba(224,145,156,.16);
     --danger:#c2415f; --success:#3f9e68;
     --err-bg:#3a1520;  --err-ink:#f5a3b0;
     --ok-bg:#12331f;   --ok-ink:#7ee0a1;
@@ -30,7 +36,9 @@
   --paper:#f6f1ec; --card:#fbf8f4; --chip:#efe7de;
   --ink:#2b2a3a; --muted:#6f6a7d; --line:#e6ddd4;
   --accent:#b0566f; --accent-2:#d98c93;
-  --code-bg:#2b2a3a; --code-fg:#f1ede7; --glow:rgba(176,86,111,.20);
+  --code-bg:#fbf8f4; --code-fg:#2b2a3a; --code-line:#e6ddd4;
+  --code-com:#79738a; --code-key:#a5375a; --code-str:#7a5326;
+  --glow:rgba(176,86,111,.20);
   --danger:#a12048; --success:#2f7d4f;
   --err-bg:#f7dde3;  --err-ink:#a12048;
   --ok-bg:#e2efe4;   --ok-ink:#2f7d4f;
@@ -41,7 +49,9 @@
   --paper:#201f2a; --card:#282634; --chip:#312e3d;
   --ink:#ece9f2; --muted:#a49eb4; --line:#3a3746;
   --accent:#e0919c; --accent-2:#b0566f;
-  --code-bg:#17161f; --code-fg:#e8e4ef; --glow:rgba(224,145,156,.16);
+  --code-bg:#17161f; --code-fg:#e8e4ef; --code-line:#312e3d;
+  --code-com:#9b93ab; --code-key:#e0919c; --code-str:#c9a98f;
+  --glow:rgba(224,145,156,.16);
   --danger:#c2415f; --success:#3f9e68;
   --err-bg:#3a1520;  --err-ink:#f5a3b0;
   --ok-bg:#12331f;   --ok-ink:#7ee0a1;

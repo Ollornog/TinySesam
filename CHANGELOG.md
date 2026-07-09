@@ -19,10 +19,21 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - `tests/run_all.py --no-browser` für Zwischenläufe; `tests/test_repo.py` bewacht jetzt auch, dass
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
+### Geändert
+- **Codeblöcke folgen dem Thema** — bisher waren sie in beiden Themen dunkel, weil `--code-bg` auch
+  im hellen Satz ein Dunkelton war. Jetzt helles Blatt auf hellem Papier, dunkel im dunklen Thema;
+  die Syntaxfarben liegen als eigene Tokens (`--code-com/-key/-str`) in `docs/theme.css` und sind für
+  beide Untergründe kontrastgeprüft.
+- **Kopierknopf an jedem Codeblock** (`web/ui.py: codeblock()`). Kopiert wird `innerText`, also der
+  reine Befehl ohne Auszeichnung. Wo `navigator.clipboard` fehlt — das Showcase läuft im LAN über
+  `http://`, also ohne sicheren Kontext — springt ein `execCommand`-Notweg ein.
+
 ### Behoben
 - Die **Konto-Vorschau** lud per `fetch` nach, lief ins `401` und warf `TypeError: ks.map is not a
   function` in die Konsole. `render_page("account", static=True)` lädt nichts nach; zusätzlich prüfen
   `loadkeys`/`loadsess` jetzt, ob überhaupt eine Liste zurückkam. (Vom neuen Browser-Test gefunden.)
+- Codeblöcken fehlte `white-space:pre` — der mehrzeilige Benutzungs-Block war zu **einer** langen
+  Zeile kollabiert. Fiel erst auf, als der Kopierknopf ihn in die Zwischenablage legen sollte.
 
 ### Hinzugefügt
 - **Impressum & Datenschutz** (`legal.html`, in der Demo `/legal`) — Angaben nach § 5 DDG, Hinweis auf

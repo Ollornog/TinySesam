@@ -182,6 +182,35 @@ async def run():
             assert f["bg"] != "rgb(246, 241, 236)", "iframe blieb hell"
         print("  Dunkelmodus greift auch in allen drei Vorschau-iframes")
 
+        # ---------- 5b) Codeblöcke folgen dem Thema und lassen sich kopieren ----------
+        # Der Knopf braucht `navigator.clipboard`; wir ersetzen es, um zu sehen, WAS ankommt.
+        # Kopiert gehört der reine Text — ohne die Spans der Syntaxfarbe.
+        lum = """(function(s){const m=getComputedStyle(document.querySelector(s)).backgroundColor
+            .match(/\\d+/g).map(Number); return (m[0]*.299+m[1]*.587+m[2]*.114)/255;})('.cw .code')"""
+        for theme, hell in (("light", True), ("dark", False)):
+            await p.js(f"localStorage.setItem('ts-theme','{theme}')")
+            await p.go("/", wait=1.6)
+            assert await p.js("document.querySelectorAll('.cw .copy').length") == 2, theme
+            l = await p.js(lum)
+            assert (l > 0.85 if hell else l < 0.2), f"Codeblock im {theme}-Thema: Helligkeit {l:.2f}"
+        # Der Klick — im dunklen Thema, egal, es geht um die Zwischenablage.
+        await p.js("window.__copied=null;"
+                   "navigator.clipboard.writeText=t=>{window.__copied=t;return Promise.resolve();}")
+        await p.js("document.querySelector('.cw .copy').click()")
+        await asyncio.sleep(0.3)          # unter den 1,6 s, die der Haken stehen bleibt
+        got = await p.js("window.__copied")
+        assert got and got.startswith("pip install "), f"kopiert: {got!r}"
+        assert "<span" not in got, "die Auszeichnung ist mitkopiert worden"
+        assert await p.js("document.querySelector('.cw .copy').classList.contains('done')")
+        # Zweiter Block: mehrzeilig — beweist, dass `white-space:pre` die Umbrüche erhält.
+        await p.js("document.querySelectorAll('.cw .copy')[1].click()")
+        await asyncio.sleep(0.2)
+        code2 = await p.js("window.__copied")
+        assert code2.count("\n") >= 4, f"Umbrüche verloren: {code2!r}"
+        assert code2.startswith("auth = TinySesam("), code2[:40]
+        await p.js("localStorage.removeItem('ts-theme')")
+        print("  Codeblöcke: hell im hellen Thema, dunkel im dunklen; Kopierknopf liefert Klartext")
+
         # ---------- 6) Die Vorschauen sind gesperrt und ohne Demo-Hinweis ----------
         await p.go("/demo/preview/login")
         assert await p.js("getComputedStyle(document.documentElement).pointerEvents") == "none"
