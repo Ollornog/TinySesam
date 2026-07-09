@@ -26,6 +26,6 @@
 - Danach in `.github/workflows/ci.yml`: `runs-on: ubuntu-latest` → `runs-on: [self-hosted, linux, x64]`.
 - Falle bei parallelen Runnern: Service-Container ohne feste Host-Ports (`ports: ['5432']`).
 
-## Continuous Deployment (zu besprechen)
-Nach grüner CI automatisch ausrollen — Kandidat wäre der Wegwerf-Demo-Container.
-Blast-Radius, Rollback und Umgebungen sind vorher zu klären. Noch nicht eingeführt.
+## Continuous Deployment — entschieden: nein (2026-07-09)
+Kein automatisches Ausrollen. Die Website deployt GitHub Pages selbst (`pages.yml`), das ist
+zustandslos; alles andere bleibt Handarbeit. Erledigt, nicht offen.
