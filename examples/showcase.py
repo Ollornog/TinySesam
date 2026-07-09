@@ -17,13 +17,18 @@ Alles hängt an einer Quelle:
     ändert sich die Vorschau mit. Interaktion ist gesperrt, die Admin-Vorschau liest aus einer Attrappe.
   * **Layout** — Nav, Unterleiste und Vorschau-Rahmen kommen je aus genau einer Funktion.
 """
+import sys
 from pathlib import Path
 
-from fastapi import FastAPI, Depends, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # damit `flows` gefunden wird
 
-from tinysesam import TinySesam, TinySesamConfig
-from tinysesam.admin import render_panel
+from fastapi import FastAPI, Depends, Request                           # noqa: E402
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse  # noqa: E402
+
+from tinysesam import TinySesam, TinySesamConfig                        # noqa: E402
+from tinysesam.admin import render_panel                                # noqa: E402
+
+from flows import CSS as FLOW_CSS, render as flow_html                  # noqa: E402
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
@@ -97,6 +102,19 @@ nav.sub a{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border
 nav.sub a:hover{background:var(--chip);color:var(--ink);text-decoration:none}
 nav.sub a.on{background:var(--chip);color:var(--ink)}
 nav.sub code{font-size:.86em;background:none;border:0;padding:0;color:inherit;font-family:var(--ts-mono)}
+.dd{position:relative}
+.dd summary{list-style:none;cursor:pointer;padding:5px 11px;border-radius:8px;color:var(--muted);
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.dd summary::-webkit-details-marker{display:none}
+.dd summary::after{content:"▾";font-size:11px}
+.dd summary:hover,.dd[open] summary{background:var(--chip);color:var(--ink)}
+.ddmenu{position:absolute;z-index:20;top:calc(100% + 6px);left:0;min-width:290px;padding:6px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 14px 40px rgba(90,60,70,.14)}
+.ddmenu a{display:block;padding:8px 10px;border-radius:8px;color:var(--ink)}
+.ddmenu a:hover{background:var(--chip);text-decoration:none}
+.ddmenu b{display:block;font-weight:600;font-size:14px}
+.ddmenu span{display:block;color:var(--muted);font-size:12.5px}
 main{max-width:900px;margin:0 auto;padding:36px 22px 64px}
 h1{font-family:var(--ts-serif);font-size:38px;letter-spacing:-.01em;margin:.2em 0 .1em;text-wrap:balance}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0 0 6px}
@@ -108,32 +126,13 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--mute
 .btn.g{border:1px solid var(--line);color:var(--ink)}.btn.g:hover{text-decoration:none;border-color:var(--accent)}
 .btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
-.legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:18px;color:var(--muted);font-size:14px}
-.legend span{display:flex;align-items:center;gap:8px}
-.legend i.box{width:16px;height:16px;padding:0;display:inline-block}
-.flow{margin:0 0 38px}
-.flowhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.flowhead h3{font-family:var(--ts-serif);font-size:22px;margin:0}
-.pill{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--line)}
-.pill.on{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
-.pill.off{background:var(--chip);color:var(--muted)}
-.flow .muted{margin:6px 0 0}
-.chain{list-style:none;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0;margin:16px 0 0}
-.chain li{display:flex}
-.chain .arr{color:var(--muted);font-size:18px}
-.box{display:inline-block;padding:8px 13px;border-radius:10px;font-size:14px;line-height:1.35;
-  border:1px solid var(--line);background:var(--card)}
-.box code{background:none;border:0;padding:0;font-size:.92em}
-.box.do{border-color:var(--accent);color:var(--ink)}
-.box.srv{background:var(--chip)}
-.box.end{background:var(--ok-bg);color:var(--ok-ink);border-color:transparent}
-.flow .note{margin:12px 0 0;color:var(--muted);font-size:14px;max-width:70ch}
 .card2{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:14px 0}
 .card2 pre{white-space:pre-wrap;word-break:break-word;font-family:var(--ts-mono);font-size:13px;
   color:var(--muted);margin:8px 0 0}
 code{font-family:var(--ts-mono);font-size:.86em;background:var(--chip);border:1px solid var(--line);
   border-radius:5px;padding:1px 5px}
 hr.rule{height:1px;background:var(--line);border:0;margin:44px 0}
+""" + FLOW_CSS + """
 .shot{margin:0 0 34px}
 .shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .shot .head p{margin:2px 0 0;color:var(--muted);font-size:14.5px;max-width:60ch}
@@ -147,29 +146,37 @@ footer{max-width:900px;margin:0 auto;padding:24px 22px 60px;border-top:1px solid
   color:var(--muted);font-size:14px}
 """
 
-# Zweite Leiste: die Testseiten. `need` = wann der Punkt überhaupt sichtbar ist.
-TESTPAGES = [
+# Zweite Leiste. Links: die Seiten, die man ständig braucht. Die Beispielrouten mit ihren
+# `/pfad · guard`-Etiketten waren als Leiste unübersichtlich → sie stecken in einem Aufklapper.
+NAV = [
+    ("/", "Projektseite", "all"),
     ("/demo", "Übersicht", "all"),
-    ("/app", "<code>/app</code> · require_user", "all"),
-    ("/sensibel", "<code>/sensibel</code> · Step-up", "all"),
-    ("/gaeste", "<code>/gaeste</code> · PIN, kein Konto", "all"),
     ("/demo/flows", "Login-Flows", "all"),
     ("/auth/account", "Konto", "user"),
     ("/auth/admin", "Admin-Panel", "admin"),
-    ("/gibtsnicht", "404", "all"),
-    ("/boom", "500", "all"),
+]
+EXAMPLES = [
+    ("/app", "<code>/app</code>", "geschützt mit <code>require_user</code>"),
+    ("/sensibel", "<code>/sensibel</code>", "Step-up: fragt nach der PIN"),
+    ("/gaeste", "<code>/gaeste</code>", "geteilte PIN, ganz ohne Konto"),
+    ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
+    ("/boom", "500", "gebrandete Fehlerseite"),
 ]
 
 
 def _subnav(user, active) -> str:
     out = []
-    for href, label, need in TESTPAGES:
+    for href, label, need in NAV:
         if need == "user" and not user:
             continue
         if need == "admin" and not (user and auth.is_admin(user)):
             continue
         out.append(f"<a class='{'on' if href == active else ''}' href='{href}'>{label}</a>")
-    return f"<nav class=sub>{''.join(out)}</nav>"
+    items = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in EXAMPLES)
+    open_ = " open" if any(active == h for h, _, _ in EXAMPLES) else ""
+    drop = (f"<details class=dd{open_}><summary>Beispielseiten</summary>"
+            f"<div class=ddmenu>{items}</div></details>")
+    return f"<nav class=sub>{''.join(out)}{drop}</nav>"
 
 
 def page(title, body, user=None, active=""):
@@ -184,7 +191,7 @@ def page(title, body, user=None, active=""):
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
         f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style></head><body>"
-        f"<nav><a class=brand href='/demo'><img src='{ICON_URL}' alt=''>"
+        f"<nav><a class=brand href='/'><img src='{ICON_URL}' alt=''>"
         f"<span><b>Tiny</b>Sesam</span></a><span class=links>{links}</span></nav>"
         f"{_subnav(user, active)}"
         f"<main>{body}</main>"
@@ -204,6 +211,13 @@ def wizard():
 @app.get("/theme.css", include_in_schema=False)
 def theme():
     return FileResponse(DOCS / "theme.css", media_type="text/css")
+
+
+@app.get("/flows.html", include_in_schema=False)
+def flows_static():
+    """Die statische Flow-Seite der Projektseite (tools/build_flows.py) — damit die Links der
+    ausgelieferten `index.html` auch in der Demo ziehen."""
+    return FileResponse(DOCS / "flows.html", media_type="text/html")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -372,105 +386,19 @@ def guests(request: Request, _=Depends(auth.require_resource("gaeste"))):
         user=auth.current_user(request), active="/gaeste")
 
 
-def chain(*steps) -> str:
-    """Eine Kette aus Kästchen mit Pfeilen. `steps` sind (kind, text) — kind: do | srv | end."""
-    out = []
-    for i, (kind, text) in enumerate(steps):
-        if i:
-            out.append("<li class=arr aria-hidden=true>&rarr;</li>")
-        out.append(f"<li><span class='box {kind}'>{text}</span></li>")
-    return f"<ol class=chain>{''.join(out)}</ol>"
-
-
-def flow(title, why, steps_html, active: bool, note="") -> str:
-    pill = ("<span class='pill on'>in dieser Demo aktiv</span>" if active
-            else "<span class='pill off'>hier aus</span>")
-    note = f"<p class=note>{note}</p>" if note else ""
-    return (f"<section class=flow><div class=flowhead><h3>{title}</h3>{pill}</div>"
-            f"<p class=muted>{why}</p>{steps_html}{note}</section>")
-
-
-_IDENT_TEXT = {"username": "Benutzername", "email": "E-Mail", "both": "Benutzername oder E-Mail"}
-
-
 @app.get("/demo/flows", response_class=HTMLResponse)
 def flows(request: Request):
-    """Die Login-Wege als Diagramm. Was „aktiv" ist, liest die Seite aus der laufenden Config —
-    die Grafik kann also nicht behaupten, was die Demo nicht tut."""
+    """Dieselben Diagramme wie auf der Projektseite — nur markiert diese hier, was in der
+    laufenden Config wirklich an ist. Inhalt: examples/flows.py (eine Quelle)."""
     c = auth.cfg
-    m = c.enabled_methods()
-    parts = [
-        flow("Passwort", "Der klassische Weg. Ein Erstfaktor genügt, solange keine Kette gesetzt ist.",
-             chain(("do", "Kennung + Passwort"), ("srv", "<code>/auth/login</code>"),
-                   ("end", "Sitzung"), ("end", "geschützte Route")),
-             "password" in m,
-             f"Das Kennungsfeld akzeptiert hier: <b>{_IDENT_TEXT[c.login_identifier]}</b>."),
-
-        flow("PIN als Erstfaktor", "Statt Passwort mit einer kurzen PIN anmelden — eigener, strenger Lockout.",
-             chain(("do", "Kennung + PIN"), ("srv", "<code>/auth/pin</code>"), ("end", "Sitzung")),
-             "pin" in m,
-             "Hier bewusst aus (<code>pin_login=False</code>): die PIN existiert, ist aber "
-             "<b>kein Login-Weg</b> — sie bestätigt nur sensible Bereiche."),
-
-        flow("Zweiter Faktor (TOTP)", "Nach dem Erstfaktor ein Einmalcode aus der Authenticator-App.",
-             chain(("do", "Erstfaktor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-stelliger Code"),
-                   ("end", "Sitzung <i>mfa_ok</i>")),
-             c.totp_enabled,
-             "Wer keine 2FA eingerichtet hat, überspringt den Schritt. Recovery-Codes gehen ebenso."),
-
-        flow("Step-up für sensible Bereiche",
-             "Du bist eingeloggt — der Bereich verlangt trotzdem eine frische Bestätigung.",
-             chain(("do", "<code>/sensibel</code>"), ("srv", "Frische abgelaufen?"),
-                   ("srv", "<code>/auth/reauth</code>"), ("do", "PIN"), ("end", "Bereich offen")),
-             True,
-             f"<code>require(mfa=True)</code> mit <code>stepup_methods={c.stepup_methods}</code>. "
-             "Ohne diese Einschränkung fragt TinySesam nach dem stärksten Verfahren, das der Nutzer "
-             "eingerichtet hat (TOTP → PIN → Passwort). Nach <code>stepup_max_age_sec</code> erneut."),
-
-        flow("Faktor-Kette pro Route", "Eine Route verlangt mehrere Faktoren in fester Reihenfolge.",
-             chain(("do", "Passwort"), ("srv", "Kette unvollständig"), ("srv", "<code>/auth/pin</code>"),
-                   ("do", "PIN"), ("end", "Route offen")),
-             True,
-             "<code>Depends(auth.require(factors=[\"password\", \"pin\"]))</code> — wer schon eingeloggt "
-             "ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite."),
-
-        flow("Geteiltes Geheimnis (ohne Konto)", "Ein Bereich, eine PIN. Keine Registrierung, kein Benutzer.",
-             chain(("do", "<code>/gaeste</code>"), ("srv", "<code>/auth/resource/gaeste</code>"),
-                   ("do", "PIN 2468"), ("end", "Bereich offen, zeitlich begrenzt")),
-             c.resource_locks_enabled,
-             "<code>Depends(auth.require_resource(\"gaeste\"))</code> — hängt an einem eigenen Cookie, "
-             "nicht an einer Sitzung."),
-
-        flow("Login-Link per E-Mail", "Adresse eingeben, Einmal-Link anklicken, drin.",
-             chain(("do", "E-Mail"), ("srv", "Mailer"), ("do", "Link klicken"), ("end", "Sitzung")),
-             c.magiclink_enabled,
-             "Hier aus: die Demo läuft <b>ganz ohne E-Mail</b> "
-             "(<code>TinySesamConfig.local_accounts()</code>) — also weder Login-Link noch "
-             "Passwort-vergessen, und kein Mailer, der etwas verschicken müsste."),
-
-        flow("Externer IdProvider", "OIDC oder SAML: TinySesam ist der Client, nicht der Provider.",
-             chain(("do", "Knopf"), ("srv", "IdP (PocketID, Entra, ADFS …)"), ("srv", "Callback"),
-                   ("end", "Sitzung + Rollen aus Gruppen")),
-             c.oidc_enabled or c.saml_enabled,
-             "Gruppen des IdP lassen sich auf lokale Rollen mappen — dieselben "
-             "<code>require_role(...)</code>-Guards wie überall."),
-
-        flow("Forward-Auth (fremde Apps)", "Der Reverse-Proxy fragt vor jedem Request nach.",
-             chain(("do", "Request an fremde App"), ("srv", "Proxy → <code>/auth/forward</code>"),
-                   ("end", "200 + Remote-User"), ("end", "App antwortet")),
-             c.forward_auth_enabled,
-             "Ohne Sitzung: 401 + <code>X-TinySesam-Location</code> → der Proxy schickt zum Login."),
-    ]
     body = (f"<h1>Login-Flows</h1>"
             f"<p class=lead>Jeder Weg ist ein eigener Schalter, und sie lassen sich kombinieren. "
-            f"Diese Demo läuft mit <code>login_identifier=\"{c.login_identifier}\"</code>, "
-            f"<code>pin_login={c.pin_login}</code> und <code>stepup_methods={c.stepup_methods}</code> — "
-            f"die Markierungen unten liest die Seite direkt aus dieser Config.</p>"
-            f"<div class=legend><span><i class='box do'></i> du tust etwas</span>"
-            f"<span><i class='box srv'></i> TinySesam</span>"
-            f"<span><i class='box end'></i> Ergebnis</span></div>"
-            f"<hr class=rule>{''.join(parts)}<hr class=rule>"
-            f"<div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>"
+            f"Diese Demo läuft mit <code>login_identifier=\"{c.login_identifier}\"</code> und "
+            f"<code>pin_login={c.pin_login}</code> — die Markierungen unten liest die Seite direkt "
+            f"aus dieser Config. Auf der "
+            f"<a href='/flows.html'>Projektseite</a> steht stattdessen der Schalter, der den Weg einschaltet.</p>"
+            + flow_html("de", c) +
+            f"<hr class=rule><div class=bar><a class='btn p' href='/demo'>← Zur Demo</a>"
             f"<a class='btn g' href='/sensibel'>Step-up ausprobieren</a>"
             f"<a class='btn g' href='/gaeste'>Gäste-PIN ausprobieren</a></div>")
     return page("Login-Flows", body, user=auth.current_user(request), active="/demo/flows")

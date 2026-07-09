@@ -30,8 +30,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Preset `TinySesamConfig.local_accounts(...)`** — nur Benutzername + Passwort, ganz ohne E-Mail
   (kein Magic-Link, kein Passwort-vergessen, keine Bestätigung). Das Registrierungsformular zeigt
   **kein E-Mail-Feld mehr**, wenn die App mit der Adresse ohnehin nichts anfängt.
-- Showcase: Seite **`/demo/flows`** — die Login-Wege als Diagramm; „aktiv/aus" liest sie aus der
-  laufenden Config. Neue Suite `tests/test_pin_stepup.py`.
+- **Login-Flows als Diagramm** — Inhalt in `examples/flows.py` (eine Quelle, zweisprachig), zwei
+  Ausgaben: die Demo unter `/demo/flows` markiert, was ihre Config anhat; `tools/build_flows.py`
+  backt daraus **`docs/flows.html`** für GitHub Pages, wo stattdessen der Config-Schalter steht.
+  `tests/test_flows_page.py` schlägt Alarm, wenn die statische Seite veraltet ist.
+- Showcase-Nav: Projektseite · Übersicht · Login-Flows, die Beispielrouten in einem Aufklapper;
+  Logo und Titel führen zurück auf die Projektseite. Neue Suite `tests/test_pin_stepup.py`.
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.
