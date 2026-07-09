@@ -102,16 +102,27 @@ T = {
         "l_hosting_h": "Hosting on GitHub Pages",
         "l_hosting": "This page is served by GitHub Pages (GitHub, Inc., 88 Colin P. Kelly Jr. St, "
                      "San Francisco, CA 94107, USA). GitHub writes server log files for every request: "
-                     "IP address, time, requested file, referrer, browser and operating system. We have "
-                     "no access to those logs. Legal basis is Art. 6 (1) (f) GDPR — the legitimate "
-                     "interest in serving the page securely and reliably. GitHub processes data in the "
-                     "USA and is certified under the EU-US Data Privacy Framework.",
+                     "IP address, time, requested file, referrer, browser and operating system. "
+                     "<b>This happens at GitHub, on GitHub's systems — the operator of this page neither "
+                     "receives nor stores those logs and cannot hand them out.</b> Legal basis is "
+                     "Art. 6 (1) (f) GDPR — the legitimate interest in serving the page securely and "
+                     "reliably. GitHub processes data in the USA and is certified under the EU-US Data "
+                     "Privacy Framework. What GitHub does with the data is described in its "
+                     '<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">'
+                     "privacy statement</a>; direct requests about those logs to GitHub.",
         "l_browser_h": "What is stored in your browser",
         "l_browser": "Two things, both because you asked for them, neither for tracking: the cookie "
                      "<code>ts_lang</code> remembers the language you picked, and "
                      "<code>localStorage['ts-theme']</code> remembers light or dark mode. No analytics, "
                      "no third-party cookies, no fonts or scripts from other hosts — which is why there "
                      "is no cookie banner.",
+        "l_controller_h": "Who is responsible for what",
+        "l_controller": "Responsible for the <i>content</i> of this page is the person named in the "
+                        "imprint — they decided to publish it. Responsible for the <i>server</i> is "
+                        "GitHub: it runs the machines, writes the logs and decides how long to keep them. "
+                        "This page itself collects nothing, has no database, no analytics and no contact "
+                        "form. Requests about the logs therefore have to go to GitHub; requests about "
+                        "this page's content go to the address above.",
         "l_rights_h": "Your rights",
         "l_rights": "You can ask for information, correction, deletion, restriction and portability of "
                     "your data, and object to its processing (Art. 15–21 GDPR). You may also complain to "
@@ -203,16 +214,28 @@ T = {
         "l_hosting_h": "Hosting bei GitHub Pages",
         "l_hosting": "Diese Seite wird von GitHub Pages ausgeliefert (GitHub, Inc., 88 Colin P. Kelly Jr. "
                      "St, San Francisco, CA 94107, USA). GitHub schreibt bei jedem Aufruf Server-Logs: "
-                     "IP-Adresse, Zeitpunkt, angefragte Datei, Referrer, Browser und Betriebssystem. Auf "
-                     "diese Logs haben wir keinen Zugriff. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO "
-                     "— das berechtigte Interesse, die Seite sicher und zuverlässig auszuliefern. GitHub "
-                     "verarbeitet Daten in den USA und ist unter dem EU-US Data Privacy Framework zertifiziert.",
+                     "IP-Adresse, Zeitpunkt, angefragte Datei, Referrer, Browser und Betriebssystem. "
+                     "<b>Das passiert bei GitHub, auf GitHubs Systemen — der Betreiber dieser Seite "
+                     "bekommt diese Logs weder zu sehen noch kann er sie herausgeben.</b> Rechtsgrundlage "
+                     "ist Art. 6 Abs. 1 lit. f DSGVO — das berechtigte Interesse, die Seite sicher und "
+                     "zuverlässig auszuliefern. GitHub verarbeitet Daten in den USA und ist unter dem "
+                     "EU-US Data Privacy Framework zertifiziert. Was GitHub mit den Daten tut, steht in "
+                     'seiner <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">'
+                     "Datenschutzerklärung</a>; Anfragen zu diesen Logs richte bitte direkt an GitHub.",
         "l_browser_h": "Was in deinem Browser gespeichert wird",
         "l_browser": "Zwei Dinge, beide weil du sie angefordert hast, keines zum Verfolgen: das Cookie "
                      "<code>ts_lang</code> merkt sich die gewählte Sprache, "
                      "<code>localStorage['ts-theme']</code> merkt sich hell oder dunkel. Keine Statistik, "
                      "keine Fremd-Cookies, keine Schriften oder Skripte von anderen Servern — deshalb gibt "
                      "es hier auch kein Cookie-Banner.",
+        "l_controller_h": "Wer wofür verantwortlich ist",
+        "l_controller": "Für den <i>Inhalt</i> dieser Seite ist die im Impressum genannte Person "
+                        "verantwortlich — sie hat entschieden, ihn zu veröffentlichen. Für den "
+                        "<i>Server</i> ist GitHub verantwortlich: dort laufen die Maschinen, dort "
+                        "entstehen die Logs, dort wird über deren Aufbewahrung entschieden. Diese Seite "
+                        "selbst erhebt nichts, hat keine Datenbank, keine Statistik und kein "
+                        "Kontaktformular. Anfragen zu den Logs müssen daher an GitHub gehen; Anfragen "
+                        "zum Inhalt dieser Seite an die Adresse oben.",
         "l_rights_h": "Deine Rechte",
         "l_rights": "Du kannst Auskunft, Berichtigung, Löschung, Einschränkung und Übertragung deiner "
                     "Daten verlangen und der Verarbeitung widersprechen (Art. 15–21 DSGVO). Außerdem "
@@ -363,7 +386,6 @@ LEGAL_CSS = """
   h1{font-family:var(--ts-serif);font-weight:600;font-size:48px;letter-spacing:-.01em;
     margin:.1em 0 .2em;text-wrap:balance}
   .lead{color:var(--muted);font-size:18px;max-width:60ch;text-wrap:balance}
-  main{max-width:760px}
   section{margin:64px 0}
   h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
     font-weight:600;margin:0 0 20px}
@@ -392,6 +414,7 @@ def legal_body(lang: str) -> str:
   </section>
 
   <section><h2>{t["l_privacy"]}</h2>
+    <h3>{t["l_controller_h"]}</h3><p>{t["l_controller"]}</p>
     <h3>{t["l_hosting_h"]}</h3><p>{t["l_hosting"]}</p>
     <h3>{t["l_browser_h"]}</h3><p>{t["l_browser"]}</p>
     <h3>{t["l_rights_h"]}</h3><p>{t["l_rights"]}</p>
