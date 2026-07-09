@@ -9,12 +9,15 @@ TinySesam-Seiten (Login/PIN/TOTP/Konto/Fehlerseiten). Gedacht als Kopiervorlage:
 Git-Links, ein Design. Zu sehen: geschützter Bereich, Step-up, Gäste-PIN (ohne Konto), Konto-Seite,
 Admin-Panel, Magic-Link (Konsolen-Mailer), themed 404/500.
 """
+from pathlib import Path
+
 from fastapi import FastAPI, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 from tinysesam import TinySesam, TinySesamConfig
 
 REPO = "https://github.com/Ollornog/TinySesam"
+DOCS = Path(__file__).resolve().parent.parent / "docs"   # dieselbe Seite wie GitHub Pages
 
 # Eine Palette/Design für ALLES (Cremeweiß/Altrosa, Light+Dark) — wie die Projekt-Website.
 _TOKENS = """
@@ -113,27 +116,40 @@ def page(title, body, user=None):
         f"</body></html>")
 
 
+# Live-Demo-Sektion, die in die echte GitHub-Seite injiziert wird
+_DEMO = """
+  <hr class="rule">
+  <section>
+    <h2>Live-Demo</h2>
+    <div class="cta">
+      <a class="btn primary" href="/auth/login">Anmelden</a>
+      <a class="btn ghost" href="/auth/register">Konto erstellen</a>
+    </div>
+    <ul class="solves" style="margin-top:18px">
+      <li><span class="yes">✓</span><span><a href="/app">Geschützter Bereich</a> — require_user</span></li>
+      <li><span class="yes">✓</span><span><a href="/sensibel">Sensibler Bereich</a> — Step-up / frische Bestätigung</span></li>
+      <li><span class="yes">✓</span><span><a href="/gaeste">Gäste-Bereich</a> — nur PIN <b>2468</b>, ganz ohne Konto</span></li>
+      <li><span class="yes">✓</span><span><a href="/auth/account">Konto</a> · <a href="/auth/admin">Admin-Panel</a></span></li>
+      <li><span class="yes">✓</span><span>Themed Fehlerseiten — <a href="/gibtsnicht">404</a> · <a href="/boom">500</a></span></li>
+    </ul>
+    <p class="note">Demo-Login: <b>admin / geheim123</b></p>
+  </section>
+"""
+
+
+@app.get("/wizard.png")
+def wizard():
+    return FileResponse(DOCS / "wizard.png")
+
+
 @app.get("/", response_class=HTMLResponse)
 def landing():
-    return page("Showcase", f"""
-      <h1><span class=t>Tiny</span>Sesam — Showcase</h1>
-      <p class=lead>Der Login-Layer für selbstgebaute Apps. Diese Seite läuft im selben Design wie die
-        eingebauten Auth-Seiten — <b>eine Vorlage, die du direkt für deine App übernehmen kannst</b>.</p>
-      <div class=chips>
-        <span class=chip>🔐 Passwort</span><span class=chip>🔢 PIN</span>
-        <span class=chip>✉️ Magic-Link</span><span class=chip>📱 TOTP</span>
-        <span class=chip>🔑 Gäste-PIN</span><span class=chip>🛠️ Admin-Panel</span>
-      </div>
-      <ul class=solves>
-        <li><span class=y>✓</span><span><b>Geschützter Bereich</b> — <a href='/app'>/app</a> (require_user)</span></li>
-        <li><span class=y>✓</span><span><b>Sensibel / Step-up</b> — <a href='/sensibel'>/sensibel</a> (frische Bestätigung)</span></li>
-        <li><span class=y>✓</span><span><b>Gäste-Bereich</b> — <a href='/gaeste'>/gaeste</a>, nur PIN <b>2468</b>, ganz ohne Konto</span></li>
-        <li><span class=y>✓</span><span><b>Konto &amp; Admin</b> — <a href='/auth/account'>Konto</a> · <a href='/auth/admin'>Admin-Panel</a></span></li>
-        <li><span class=y>✓</span><span><b>Themed Fehlerseiten</b> — <a href='/gibtsnicht'>404</a> · <a href='/boom'>500</a></span></li>
-      </ul>
-      <div class=bar><a class='btn p' href='/auth/login'>Anmelden</a>
-        <a class='btn g' href='/auth/register'>Konto erstellen</a></div>
-      <p class=muted style=margin-top:22px>Demo-Login: <b>admin / geheim123</b></p>""")
+    # DIE GitHub-Pages-Seite selbst — plus injizierte Live-Demo-Sektion
+    try:
+        html = (DOCS / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(html.replace("</header>", "</header>" + _DEMO, 1))
+    except FileNotFoundError:
+        return page("Showcase", f"<h1>TinySesam Showcase</h1>{_DEMO}")
 
 
 @app.get("/app", response_class=HTMLResponse)
