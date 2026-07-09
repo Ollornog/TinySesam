@@ -17,6 +17,7 @@ Der **Demo-Modus** (`demo_mode=True`) legt die Konten `demo` und `demoadmin` an 
 Zugangsdaten auf der Login-Seite — samt Warnung, dass er produktiv aus gehört.
 """
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # damit `web` gefunden wird
@@ -41,7 +42,7 @@ LANGS = ("de", "en")
 
 THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
 
-BRAND = THEME + """
+BRAND = THEME + NAV_CSS + """
 body{font-family:var(--ts-font)}
 h1{font-family:var(--ts-serif);font-weight:600}
 .card{box-shadow:0 14px 44px rgba(90,60,70,.10)}
@@ -58,7 +59,8 @@ auth = TinySesam(TinySesamConfig.local_accounts(   # nur Benutzername + Passwort
     passkey_enabled=False,
     pin_enabled=True,                # PIN gibt es …
     pin_login=False,                 # … aber nicht als Login-Methode
-    stepup_methods=["pin"],          # … sondern als Bestätigung für sensible Bereiche
+    stepup_methods=["totp", "pin"],  # … sondern als Bestätigung für sensible Bereiche:
+                                     # TOTP, wenn eingerichtet — sonst die PIN
     demo_mode=True,                  # legt `demo` + `demoadmin` an und zeigt die Zugangsdaten
     demo_pin="1234",
     allow_signup=True,
@@ -67,6 +69,11 @@ auth = TinySesam(TinySesamConfig.local_accounts(   # nur Benutzername + Passwort
     cookie_secure=False,
 ))
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
+
+# Die eingebauten Seiten (Login, Konto, Admin, Fehlerseiten) bekommen denselben Rumpf wie der Rest.
+auth.cfg.brand_header = lambda _a: shell_header(_a)
+auth.cfg.brand_footer = lambda _a: shell_footer(_a)
+auth.cfg.brand_head = NAV_JS      # Theme-Pille + „Aufklapper schließen" auch dort
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -77,6 +84,27 @@ auth.install_error_pages(app)
 def lang_of(request: Request) -> str:
     lang = request.query_params.get("lang") or request.cookies.get(LANG_COOKIE) or "de"
     return lang if lang in LANGS else "de"
+
+
+# Der Rumpf der eingebauten Seiten hängt vom Request ab (Sprache, Login-Status, Pfad).
+# ContextVar statt globaler Variable: bei nebenläufigen Requests bleibt jeder bei seinem Wert.
+_ctx: ContextVar[dict] = ContextVar("ctx", default={"lang": "de", "path": "/demo", "user": None})
+
+
+def _bare() -> bool:
+    # Die read-only Vorschauen zeigen nur die Seite selbst — ohne den Rumpf drumherum.
+    return _ctx.get()["path"].startswith("/demo/preview/")
+
+
+def shell_header(_auth) -> str:
+    if _bare():
+        return ""
+    c = _ctx.get()
+    return nav1(c["lang"]) + nav2(c["lang"], c["user"], c["path"]) + nav0(c["lang"], c["path"])
+
+
+def shell_footer(_auth) -> str:
+    return "" if _bare() else footer(_ctx.get()["lang"])
 
 
 @app.middleware("http")
@@ -91,6 +119,7 @@ async def set_language(request: Request, call_next):
     else:
         lang = lang_of(request)
     auth.cfg.lang = lang
+    _ctx.set({"lang": lang, "path": request.url.path, "user": auth.current_user(request)})
     response = await call_next(request)
     if request.cookies.get(LANG_COOKIE) != lang:
         response.set_cookie(LANG_COOKIE, lang, path="/", samesite="lax", max_age=31536000)
@@ -129,6 +158,10 @@ TEXTS = {
         "sens_h1": "🔒 Sensibler Bereich",
         "sens_lead": "{u}, du hast dich soeben frisch bestätigt (Step-up). Nach "
                      "<code>stepup_max_age_sec</code> fragt TinySesam erneut.",
+        "sens_hint": "Zur Bestätigung stand hier: <b>{m}</b>. <code>stepup_methods=[\"totp\", \"pin\"]</code> "
+                     "bietet alles an, was du <i>eingerichtet</i> hast — ohne 2FA also nur die PIN. "
+                     "Richte auf der <a href='/auth/account'>Konto-Seite</a> 2FA ein und komm zurück: "
+                     "dann steht der Einmalcode zusätzlich zur Wahl.",
         "guest_h1": "🔑 Gäste-Bereich",
         "guest_lead": "Freigeschaltet über die geteilte PIN — ganz ohne Benutzerkonto.",
         "footer": "Demo-Frontend",
@@ -165,6 +198,10 @@ TEXTS = {
         "sens_h1": "🔒 Sensitive area",
         "sens_lead": "{u}, you just confirmed freshly (step-up). After "
                      "<code>stepup_max_age_sec</code> TinySesam asks again.",
+        "sens_hint": "Available here: <b>{m}</b>. <code>stepup_methods=[\"totp\", \"pin\"]</code> "
+                     "offers whatever you have <i>set up</i> — without 2FA that is just the PIN. "
+                     "Enable 2FA on the <a href='/auth/account'>account page</a> and come back: the "
+                     "one-time code then joins the choice.",
         "guest_h1": "🔑 Guest area",
         "guest_lead": "Unlocked with the shared PIN — without any user account.",
         "footer": "Demo front end",
@@ -195,8 +232,8 @@ def nav2(lang, user=None, active="") -> str:
              link("/demo", t["nav_demo"], active == "/demo"),
              link("/demo/flows", t["nav_flows"], active == "/demo/flows")]
     ex = "".join(f"<a href='{h}'><b>{l}</b><span>{d}</span></a>" for h, l, d in t["examples"])
-    open_ = any(active == h for h, _, _ in t["examples"])
-    items.append(dropdown(t["nav_examples"], ex, open_=open_))
+    on = any(active == h for h, _, _ in t["examples"])
+    items.append(dropdown(t["nav_examples"], ex, active=on))
     if user:
         # Profil-Aufklapper statt drei Knöpfen: Icon + Name, darunter Konto/Admin/Abmelden.
         entries = [("/auth/account", t["nav_account"])]
@@ -254,7 +291,7 @@ def page(title, body, user=None, active="", lang="de"):
         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<link rel=icon href='{ICON_URL}'><link rel=stylesheet href='/theme.css'>"
         f"<title>{title} · TinySesam</title><style>{_SITE_CSS}</style>{NAV_JS}</head><body>"
-        f"{nav0(lang, active or '/demo')}{nav1(lang)}{nav2(lang, user, active)}"
+        f"{nav1(lang)}{nav2(lang, user, active)}{nav0(lang, active or '/demo')}"
         f"<main>{body}</main>{footer(lang)}</body></html>")
 
 
@@ -276,7 +313,7 @@ def theme():
 
 def _index(user, lang) -> HTMLResponse:
     # Einziger Sonderfall: der Titelbereich zeigt die Marke, deshalb erste Leiste ohne sie.
-    return HTMLResponse(render_index(lang, nav1=nav0(lang, "/"), nav2=nav2(lang, user, "/")))
+    return HTMLResponse(render_index(lang, nav2=nav2(lang, user, "/"), nav3=nav0(lang, "/")))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -295,8 +332,8 @@ def site_page(name: str, request: Request):
     user = auth.current_user(request)
     if which == "index":
         return _index(user, lang)
-    return HTMLResponse(render_flows(lang, nav1=nav0(lang, "/demo/flows") + nav1(lang),
-                                     nav2=nav2(lang, user, "/demo/flows")))
+    return HTMLResponse(render_flows(lang, nav1=nav1(lang), nav2=nav2(lang, user, "/demo/flows"),
+                                     nav3=nav0(lang, "/demo/flows")))
 
 
 # ---------------------------------------------------------------- Demo
@@ -364,8 +401,9 @@ def flows(request: Request):
 
 # ---------------------------------------------------------------- Read-only Vorschauen
 _LOCK = ("<style>html{pointer-events:none;user-select:none}"
-         "html,body{min-height:0!important}::-webkit-scrollbar{display:none}</style>")
-_LOCK_CARD = _LOCK + "<style>body{justify-content:flex-start!important;padding:26px 0}</style>"
+         "html,body{min-height:0!important}.tsmain{padding:0}"
+         "::-webkit-scrollbar{display:none}</style>")
+_LOCK_CARD = _LOCK + "<style>.tsmain{justify-content:flex-start!important;padding:26px 0}</style>"
 
 
 def _readonly(html: str, lock: str = _LOCK) -> HTMLResponse:
@@ -433,9 +471,12 @@ def protected(request: Request, user=Depends(auth.require_user)):
 def sensitive(request: Request, user=Depends(auth.require(mfa=True))):
     lang = lang_of(request)
     t = TEXTS[lang]
+    method = ", ".join(auth.stepup_options(user)) or "—"
     return page("/sensibel", f"<h1>{t['sens_h1']}</h1>"
                              f"<p class=lead>{t['sens_lead'].format(u=user['username'])}</p>"
-                             f"<div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a></div>",
+                             f"<p class=muted style='max-width:60ch'>{t['sens_hint'].format(m=method)}</p>"
+                             f"<div class=bar><a class='btn p' href='/demo'>{t['back_demo']}</a>"
+                             f"<a class='btn g' href='/auth/account'>{t['nav_account']}</a></div>",
                 user=user, active="/sensibel", lang=lang)
 
 

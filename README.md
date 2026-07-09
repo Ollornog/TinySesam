@@ -182,7 +182,11 @@ TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#
 ```
 
 The tokens (and their defaults) live in [`tinysesam/theme.py`](tinysesam/theme.py); `brand_head` injects
-extra `<head>` markup and `brand_icon` sets the favicon on every built-in page. `auth.install_error_pages(app)` gives browsers themed 403/404/500 pages while API
+extra `<head>` markup and `brand_icon` sets the favicon on every built-in page.
+
+**Want your own nav and footer around them?** `brand_header` and `brand_footer` wrap *every* built-in
+page — login, PIN, TOTP, account, admin panel and the error pages. Both take HTML or `fn(auth) -> str`
+when the shell depends on the request (sign-in state, language). `auth.install_error_pages(app)` gives browsers themed 403/404/500 pages while API
 clients keep getting JSON. Need more than colors? Replace a whole page with `auth.set_template(...)`.
 
 ## PIN, and step-up for sensitive routes

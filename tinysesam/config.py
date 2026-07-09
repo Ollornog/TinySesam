@@ -15,6 +15,11 @@ class TinySesamConfig:
     brand_css: str = ""                   # zusätzliches CSS (nach dem Default → überschreibt es)
     brand_head: str = ""                  # zusätzliches <head>-HTML (z.B. Logo-Font, Meta)
     brand_icon: str = ""                  # Favicon-URL für ALLE eingebauten Seiten (leer = keins)
+    # Rumpf der Host-App um JEDE eingebaute Seite (Login/PIN/TOTP/Konto/Admin/Fehler): eigene
+    # Navigation oben, Fußzeile unten. Entweder HTML-String oder `fn(auth) -> str`, wenn der
+    # Inhalt vom Request abhängt (Login-Status, Sprache) — dann pro Aufruf ausgewertet.
+    brand_header: object = ""
+    brand_footer: object = ""
 
     # --- Rollen/Gruppen ---
     # Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten).

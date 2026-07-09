@@ -117,3 +117,46 @@ _app = FastAPI(); _app.include_router(_a.router())
 assert "class=demobar" not in TestClient(_app).get("/auth/login").text
 os.unlink(_db)
 print("OK Demo-Hinweis: außerhalb der Karte, nur bei demo_mode")
+
+# ---------- brand_header / brand_footer: Rumpf der Host-App um JEDE eingebaute Seite ----------
+_db = _tf.mktemp(suffix=".db")
+_calls = []
+
+
+def _hdr(a):
+    _calls.append("h")
+    return "<nav id=meinenav>NAV</nav>"
+
+
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
+                              cookie_secure=False, allow_signup=True, signup_require_email=False,
+                              login_identifier="username",
+                              brand_header=_hdr, brand_footer="<footer id=meinfooter>F</footer>"))
+_a.create_user("max", password="geheim12345", is_admin=True)
+_app = FastAPI(); _app.include_router(_a.router()); _a.install_error_pages(_app)
+_c = TestClient(_app, headers={"accept": "text/html"}, raise_server_exceptions=False)
+
+for _p in ("/auth/login", "/auth/register", "/gibtsnicht"):
+    _t = _c.get(_p).text
+    assert "meinenav" in _t and "meinfooter" in _t, _p
+    assert _t.index("meinenav") < _t.index("class=tsmain") < _t.index("meinfooter"), _p
+assert _calls, "Callable wird pro Aufruf ausgewertet"
+
+_c.post("/auth/login", data={"username": "max", "password": "geheim12345", "next": "/"})
+for _p in ("/auth/account", "/auth/admin"):
+    _t = _c.get(_p).text
+    assert "meinenav" in _t and "meinfooter" in _t, _p
+
+# kaputter Rumpf reisst die Login-Seite nicht mit
+_a.cfg.brand_header = lambda a: 1 / 0
+assert "<div class=card>" in _c.get("/auth/login").text
+os.unlink(_db)
+
+# ohne brand_header/-footer bleibt alles wie bisher
+_db = _tf.mktemp(suffix=".db")
+_a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
+_app = FastAPI(); _app.include_router(_a.router())
+_t = TestClient(_app).get("/auth/login").text
+assert "<body><div class=tsmain>" in _t
+os.unlink(_db)
+print("OK brand_header/brand_footer: Rumpf um Login, Konto, Admin und Fehlerseiten")
