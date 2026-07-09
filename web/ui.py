@@ -228,10 +228,11 @@ nav.row code{font-size:1em;background:none;border:0;padding:0;color:inherit}
 .btn.ghost{border:1px solid var(--line);color:var(--ink)}
 .btn.ghost:hover{text-decoration:none;border-color:var(--accent)}
 nav .btn{padding:6px 13px;font-size:var(--nav-fs);border-radius:9px}
-.ilink{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
-  border-radius:8px;color:var(--muted)}
+/* genauso hoch wie die Wechsel-Pillen (18px Segment + 2px Polsterung + 2px Rand = 22px) */
+.ilink{display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;
+  border-radius:7px;color:var(--muted)}
 .ilink:hover{background:var(--chip);color:var(--ink);text-decoration:none}
-.ilink svg{width:17px;height:17px;fill:currentColor}
+.ilink svg{width:20px;height:20px;fill:currentColor}
 
 /* ---- Zweisegment-Pille (Sprache, Hell/Dunkel) ---- */
 .pill2{display:inline-flex;align-items:center;gap:1px;padding:1px;border-radius:999px;

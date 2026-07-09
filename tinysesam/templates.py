@@ -74,6 +74,10 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
      font-size:12.5px;line-height:1.5}
 .tsmain .demobar b{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.tsmain .demobar button.demofill{width:auto;display:inline;margin:0;padding:1px 7px;border-radius:6px;
+     font:inherit;font-weight:700;background:var(--ts-chip);color:var(--ts-info-ink);
+     border:1px solid var(--ts-line);cursor:pointer}
+.tsmain .demobar button.demofill:hover{filter:brightness(1.08)}
 .tsmain .demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
      border-radius:6px;font-size:11.5px}
 .tsmain .demowarn code{background:none;border:0;padding:0}
@@ -135,16 +139,58 @@ def _ident(auth) -> tuple[str, str]:
     return auth.t("login.identifier"), "username"
 
 
+# Klick auf einen Namen setzt die Zugangsdaten ins Formular. Und: ein vom Browser eingefülltes
+# Passwort wird verworfen — sonst tippt man den Benutzernamen über die Autofill-Vorgabe und der
+# Login scheitert mit „falsche Zugangsdaten", ohne dass man den Grund sieht.
+_DEMO_JS = """<script>
+(function(){
+  // Browser fuellen gespeicherte Passwoerter zu unterschiedlichen Zeitpunkten ein — deshalb mehrfach
+  // nachfassen. Sobald jemand selbst tippt, wird nicht mehr geleert.
+  var typed = false;
+  function clear(){
+    if(typed) return;
+    document.querySelectorAll('form input[type=password]').forEach(function(f){ f.value = ''; });
+  }
+  function init(){
+    document.querySelectorAll('form input').forEach(function(f){
+      f.addEventListener('input', function(){ typed = true; });
+    });
+    [0, 80, 250, 700].forEach(function(ms){ setTimeout(clear, ms); });
+    document.querySelectorAll('.demofill').forEach(function(b){
+      b.addEventListener('click', function(){
+        typed = true;
+        var form = document.querySelector('form');
+        var u = form.querySelector('[name=username]'), p = form.querySelector('[name=password]');
+        if(u) u.value = b.dataset.u;
+        if(p) p.value = b.dataset.p;
+        (p || u).focus();
+      });
+    });
+  }
+  if(document.readyState !== 'loading') init(); else document.addEventListener('DOMContentLoaded', init);
+  addEventListener('pageshow', function(e){ if(e.persisted) clear(); });   // Zurueck-Taste
+})();
+</script>"""
+
+
+def _fill(user, pw) -> str:
+    return f"<button type=button class=demofill data-u='{_e(user)}' data-p='{_e(pw)}'>{_e(user)}</button>"
+
+
 def _demobar(auth, pin=False) -> str:
     """Zugangsdaten + unmissverständliche Warnung — nur wenn `demo_mode` an ist."""
     cfg = auth.cfg
     if not cfg.demo_mode:
         return ""
     t = auth.t
-    line = t("demo.pin", pin=cfg.demo_pin) if pin else t(
-        "demo.creds", user="demo", admin="demoadmin", pw=cfg.demo_password)
+    if pin:
+        line, js = t("demo.pin", pin=cfg.demo_pin), ""
+    else:
+        line = t("demo.creds", user=_fill("demo", cfg.demo_password),
+                 admin=_fill("demoadmin", cfg.demo_password), pw=_e(cfg.demo_password))
+        js = _DEMO_JS
     return (f"<div class=demobar><b>{_e(t('demo.title'))}</b><br>{line}"
-            f"<div class=demowarn>{t('demo.warn')}</div></div>")
+            f"<div class=demowarn>{t('demo.warn')}</div></div>{js}")
 
 
 def _cf(ctx) -> str:
