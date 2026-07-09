@@ -12,7 +12,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **E-Mail als vollwertige Kennung** — `signup_require_email` (Default **an**), Formatprüfung,
   kanonische Speicherung (getrimmt/klein) und **Eindeutigkeit** per partiellem UNIQUE-Index
   (`users(lower(email))`, Konten ohne Adresse bleiben erlaubt). `store.norm_email`/`valid_email`/`email_taken`.
+- **Registrierung folgt `login_identifier`:** im Modus `"email"` entfällt das Benutzernamen-Feld,
+  die Adresse ist die Kennung; sonst wie gehabt. Das Admin-Panel darf den Namen dort ebenfalls weglassen.
 - Admin-Panel: E-Mail beim Anlegen (Pflicht folgt der Config) + eigene Spalte in der Benutzertabelle.
+- Showcase: **Demo-Postfach** (`/demo/postfach`) — die Demo verschickt nichts, `set_mailer` legt die
+  Mails dort ab. Login-Link und Passwort-vergessen sind damit wirklich ausprobierbar.
 - `signup_verify_email` ist jetzt belastbar: Bestätigung an, aber **kein Mailer** konfiguriert →
   klarer Fehler statt stillem Durchwinken; es wird auch **kein halbfertiges Konto** angelegt.
   Neue Suite `tests/test_identifier.py`.

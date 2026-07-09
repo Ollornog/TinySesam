@@ -48,15 +48,18 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         b = await auth.json_body(request)
         username = (b.get("username") or "").strip()
-        if not username:
-            raise HTTPException(400, "username nötig")
-        if auth.store.get_user_by_name(username):
-            raise HTTPException(409, "existiert schon")
         email = norm_email(b.get("email"))
         if email and not valid_email(email):
             raise HTTPException(400, "E-Mail ungültig")
         if email and auth.store.email_taken(email):
             raise HTTPException(409, "E-Mail bereits vergeben")
+        # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
+        if not username and cfg.login_identifier == "email" and not b.get("is_service"):
+            username = email or ""
+        if not username:
+            raise HTTPException(400, "username nötig")
+        if auth.store.get_user_by_name(username):
+            raise HTTPException(409, "existiert schon")
         roles = b.get("roles") or []
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
@@ -247,7 +250,8 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     return (_PAGE.replace("__TOKENS__", TOKENS).replace("__RP__", cfg.rp_name).replace("__BASE__", base)
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
-            .replace("__REQMAIL__", "true" if cfg.signup_require_email else "false")
+            .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
+                                              cfg.login_identifier == "email") else "false")
             .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
 
 

@@ -106,7 +106,8 @@ TinySesamConfig(login_identifier="email")     # nur E-Mail
 Die Beschriftung des Feldes zieht automatisch nach, Passwort- **und** PIN-Login halten sich daran.
 Weil die E-Mail eine Login-Kennung ist, wird sie kanonisch gespeichert (getrimmt, klein) und ist
 **eindeutig** (partieller UNIQUE-Index; Konten ohne Adresse bleiben erlaubt). Bei der Registrierung
-ist sie standardmäßig Pflicht — `signup_require_email=False` schaltet das ab. `signup_verify_email=True`
+ist sie standardmäßig Pflicht — `signup_require_email=False` schaltet das ab. Im Modus `"email"`
+fällt das Benutzernamen-Feld ganz weg: die Adresse *ist* die Kennung. `signup_verify_email=True`
 aktiviert das Konto erst nach Klick auf den Bestätigungslink; das braucht einen Mailer (`set_mailer`
 oder SMTP-Config) und verweigert sonst die Registrierung, statt die Prüfung still zu überspringen.
 

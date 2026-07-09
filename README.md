@@ -106,7 +106,8 @@ TinySesamConfig(login_identifier="email")     # email only
 The label of the field follows automatically, and password *and* PIN login both honour it.
 Because the email is a login identifier, it is stored canonically (trimmed, lower-cased) and is
 **unique** (partial UNIQUE index; accounts without an email stay allowed). Registration requires it
-by default — `signup_require_email=False` turns that off. `signup_verify_email=True` activates the
+by default — `signup_require_email=False` turns that off. In `"email"` mode the registration form
+drops the username field entirely: the address *is* the identifier. `signup_verify_email=True` activates the
 account only after the confirmation link is clicked; it needs a mailer (`set_mailer` or SMTP config)
 and refuses to register otherwise instead of silently skipping the check.
 
