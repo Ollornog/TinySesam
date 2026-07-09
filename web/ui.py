@@ -32,6 +32,14 @@ _PATHS = {
     "sun": 'M8 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6Zm0-9.5a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 1.5Zm0 11a.75.75 0 0 1 .75.75v1a.75.75 0 0 1-1.5 0v-1A.75.75 0 0 1 8 12.5ZM14.5 8a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 14.5 8Zm-11 0a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1 0-1.5h1A.75.75 0 0 1 3.5 8Zm9.1-4.6a.75.75 0 0 1 0 1.06l-.7.71a.75.75 0 1 1-1.07-1.06l.71-.71a.75.75 0 0 1 1.06 0ZM4.87 11.13a.75.75 0 0 1 0 1.06l-.71.71A.75.75 0 0 1 3.1 11.84l.71-.71a.75.75 0 0 1 1.06 0Zm7.73.71a.75.75 0 1 1-1.06 1.06l-.71-.71a.75.75 0 0 1 1.06-1.06ZM4.87 4.87A.75.75 0 0 1 3.81 4.16l-.71-.7A.75.75 0 0 1 4.16 2.39l.71.71a.75.75 0 0 1 0 1.06Z',
     "moon": 'M9.6 1.2a6.8 6.8 0 1 0 5.2 8.1A5.5 5.5 0 0 1 9.6 1.2Z',
     "person": 'M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 1.5c-2.6 0-4.8 1.5-5.5 3.6-.2.6.3 1.2.9 1.2h9.2c.6 0 1.1-.6.9-1.2C12.8 11 10.6 9.5 8 9.5Z',
+    # Zwei Konturen in einem `d` — `icon()` malt genau einen Pfad.
+    "copy": 'M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 '
+            '.138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 '
+            '9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25ZM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 '
+            '16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 '
+            '0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z',
+    "check": 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 '
+             '.018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z',
 }
 
 
@@ -42,6 +50,20 @@ def icon(name: str) -> str:
 # ---------------------------------------------------------------------- Bausteine
 def link(href: str, label: str, active: bool = False) -> str:
     return f"<a class='{'on' if active else ''}' href='{href}'>{label}</a>"
+
+
+def codeblock(code: str, *, copy: str, copied: str) -> str:
+    """Ein Codeblock mit Kopierknopf. `code` ist fertig ausgezeichnetes HTML (Spans .k/.s/.c).
+
+    Kopiert wird der reine Text (`innerText`), nicht die Auszeichnung — sonst landet die
+    Syntaxfarbe in der Zwischenablage.
+    """
+    return (f'<div class="cw">'
+            f'<button type="button" class="copy" title="{escape(copy)}" aria-label="{escape(copy)}"'
+            f' data-done="{escape(copied)}">'
+            f'<span class="no">{icon("copy")}</span><span class="ok">{icon("check")}</span>'
+            f'</button>'
+            f'<div class="code">{code}</div></div>')
 
 
 def icon_link(href: str, name: str, title: str) -> str:
@@ -324,6 +346,31 @@ footer .inner{max-width:var(--nav-w);margin:0 auto;padding:26px 22px 60px;text-a
 footer a{margin:0 9px}
 footer .credits{margin-top:14px;font-size:12.5px}
 
+/* ---- Codeblock mit Kopierknopf ---- */
+/* Farben aus theme.css: hell im hellen Thema, dunkel im dunklen. Der Knopf sitzt im Block,
+   deshalb rechts so viel Polster, dass er keine Codezeile verdeckt. */
+.cw{position:relative}
+/* `white-space:pre` ist Pflicht: sonst kollabieren die Zeilenumbrüche im Quelltext zu Leerzeichen
+   — und `innerText` gäbe dem Kopierknopf eine einzige endlose Zeile. */
+.cw .code{background:var(--code-bg);color:var(--code-fg);border:1px solid var(--code-line);
+  border-radius:12px;padding:16px 56px 16px 18px;overflow-x:auto;white-space:pre;
+  font-family:var(--ts-mono);font-size:13.5px;line-height:1.7}
+.cw .code .c{color:var(--code-com)}
+.cw .code .k{color:var(--code-key)}
+.cw .code .s{color:var(--code-str)}
+.cw .copy{position:absolute;top:10px;right:10px;display:inline-flex;align-items:center;
+  justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--code-line);
+  border-radius:8px;background:var(--code-bg);color:var(--muted);cursor:pointer;opacity:.65;
+  transition:opacity .15s ease,color .15s ease,border-color .15s ease}
+.cw:hover .copy,.cw .copy:focus-visible{opacity:1}
+.cw .copy:hover{color:var(--ink);border-color:var(--accent)}
+.cw .copy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cw .copy svg{width:15px;height:15px;fill:currentColor}
+.cw .copy .ok{display:none}
+.cw .copy.done{color:var(--success);border-color:var(--success);opacity:1}
+.cw .copy.done .ok{display:inline-flex}
+.cw .copy.done .no{display:none}
+
 @media (prefers-reduced-motion:no-preference){
   header.shell>*{animation:rise .5s ease both}
   @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -352,5 +399,27 @@ document.addEventListener('click',function(e){
 });
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape') document.querySelectorAll('details.dd[open]').forEach(function(d){d.open=false;});
+});
+// Kopierknopf. `navigator.clipboard` gibt es nur im sicheren Kontext — das Showcase laeuft aber
+// oft ueber http:// im LAN. Deshalb der execCommand-Notweg; er ist veraltet, aber dort das Einzige.
+function tsCopy(text){
+  if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise(function(res,rej){
+    var ta=document.createElement('textarea');
+    ta.value=text; ta.readOnly=true;
+    ta.style.cssText='position:fixed;top:-100px;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    var ok=false; try{ ok=document.execCommand('copy'); }catch(e){}
+    document.body.removeChild(ta); ok ? res() : rej(new Error('copy'));
+  });
+}
+document.addEventListener('click',function(e){
+  var b=e.target.closest ? e.target.closest('.cw .copy') : null; if(!b) return;
+  var code=b.parentNode.querySelector('.code'); if(!code) return;
+  tsCopy(code.innerText.replace(/\\s+$/,'')).then(function(){
+    var back=b.getAttribute('aria-label');
+    b.classList.add('done'); b.title=b.dataset.done;
+    clearTimeout(b._t); b._t=setTimeout(function(){b.classList.remove('done'); b.title=back;},1600);
+  }).catch(function(){});
 });
 </script>"""

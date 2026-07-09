@@ -14,7 +14,7 @@ Hier stehen nur **Texte und Seiteninhalt**. Kopf, Navigation und Fußzeile komme
 damit Website, Demo und die eingebauten TinySesam-Seiten denselben Rumpf tragen.
 """
 from .flows import CSS as FLOW_CSS, render as render_flow_list
-from .ui import Ctx, Labels, Nav, LANGS, icon, shell, static_document
+from .ui import Ctx, Labels, Nav, LANGS, codeblock, icon, shell, static_document
 
 REPO = "https://github.com/Ollornog/TinySesam"
 
@@ -82,6 +82,7 @@ T = {
             ("Hardened", "argon2, CSRF, brute-force lockout, Redis rate-limit, i18n"),
         ],
         "h_install": "Install", "h_use": "Use",
+        "copy": "Copy", "copied": "Copied",
         "extras": ("<code>[all]</code> pulls every optional dependency. Take only what you need: "
                    "<code>[argon2]</code> stronger hashing · <code>[oidc]</code> OIDC login · "
                    "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
@@ -203,6 +204,7 @@ T = {
             ("Gehärtet", "argon2, CSRF, Brute-Force-Lockout, Redis-Rate-Limit, i18n"),
         ],
         "h_install": "Installation", "h_use": "Benutzung",
+        "copy": "Kopieren", "copied": "Kopiert",
         "extras": ("<code>[all]</code> zieht alle optionalen Abhängigkeiten. Nimm nur, was du brauchst: "
                    "<code>[argon2]</code> stärkeres Hashing · <code>[oidc]</code> OIDC-Login · "
                    "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
@@ -338,9 +340,6 @@ INDEX_CSS = """
   .solves .yes{color:var(--accent);font-weight:700;font-family:var(--ts-serif)}
   .solves b{font-weight:600}
   .solves span{color:var(--muted)}
-  .code{background:var(--code-bg);color:var(--code-fg);border-radius:12px;padding:16px 18px;
-    overflow-x:auto;font-family:var(--ts-mono);font-size:13.5px;line-height:1.7}
-  .code .c{color:#9b93ab}.code .k{color:var(--accent-2)}.code .s{color:#c9a98f}
   .feat{display:grid;grid-template-columns:1fr 1fr;gap:14px 26px}
   .feat div{font-size:15px}
   .feat b{display:block;font-size:15px}
@@ -378,6 +377,18 @@ def index_body(lang: str, nav: Nav) -> str:
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
+    code = lambda inner: codeblock(inner, copy=t["copy"], copied=t["copied"])  # noqa: E731
+
+    install = code(f'pip install <span class="s">"tinysesam[all] @ git+{REPO}.git"</span>')
+    use = code(
+        f'<span class="k">auth</span> = TinySesam(TinySesamConfig(db_path=<span class="s">"app.db"</span>))\n'
+        f'app.include_router(<span class="k">auth</span>.router())'
+        f'          <span class="c">{t["use_comment_router"]}</span>\n\n'
+        f'<span class="k">@app</span>.get(<span class="s">"/"</span>)\n'
+        f'<span class="k">def</span> home(user = Depends(<span class="k">auth</span>.require_user)):'
+        f'   <span class="c">{t["use_comment_guard"]}</span>\n'
+        f'    <span class="k">return</span> {{<span class="s">"hi"</span>: user[<span class="s">"username"</span>]}}')
+
     return f"""<div class="wrap">
   <section><h2>{t["h_solves"]}</h2><ul class="solves">{solves}</ul></section>
 
@@ -388,17 +399,12 @@ def index_body(lang: str, nav: Nav) -> str:
   <section><h2>{t["h_more"]}</h2><div class="feat">{feat}</div></section>
 
   <section><h2>{t["h_install"]}</h2>
-    <div class="code">pip install <span class="s">"tinysesam[all] @ git+{REPO}.git"</span></div>
+    {install}
     <p class="note" style="margin-top:14px">{t["extras"]}</p>
   </section>
 
   <section><h2>{t["h_use"]}</h2>
-    <div class="code"><span class="k">auth</span> = TinySesam(TinySesamConfig(db_path=<span class="s">"app.db"</span>))
-app.include_router(<span class="k">auth</span>.router())          <span class="c">{t["use_comment_router"]}</span>
-
-<span class="k">@app</span>.get(<span class="s">"/"</span>)
-<span class="k">def</span> home(user = Depends(<span class="k">auth</span>.require_user)):   <span class="c">{t["use_comment_guard"]}</span>
-    <span class="k">return</span> {{<span class="s">"hi"</span>: user[<span class="s">"username"</span>]}}</div>
+    {use}
     <p class="note" style="margin-top:14px">{t["gateway"]}</p>
   </section>
 </div>"""
