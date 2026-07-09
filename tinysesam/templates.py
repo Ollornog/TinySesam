@@ -59,6 +59,12 @@ img.qr{display:block;margin:14px auto;width:190px;height:190px;background:#fff;b
       border-radius:6px;padding:6px 8px;font-size:13px;text-align:center;word-break:break-all}
 .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;border-radius:8px;
       font-size:12px;margin-bottom:10px}
+.demobar{background:var(--ts-info-bg);color:var(--ts-info-ink);padding:10px 12px;border-radius:8px;
+      font-size:12.5px;margin-bottom:12px;line-height:1.5}
+.demobar b{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
+      border-radius:6px;font-size:11.5px}
+.demowarn code{background:none;border:0;padding:0}
 """
 
 
@@ -100,6 +106,18 @@ def _ident(auth) -> tuple[str, str]:
     if mode == "username":
         return auth.t("login.user"), "username"
     return auth.t("login.identifier"), "username"
+
+
+def _demobar(auth, pin=False) -> str:
+    """Zugangsdaten + unmissverständliche Warnung — nur wenn `demo_mode` an ist."""
+    cfg = auth.cfg
+    if not cfg.demo_mode:
+        return ""
+    t = auth.t
+    line = t("demo.pin", pin=cfg.demo_pin) if pin else t(
+        "demo.creds", user="demo", admin="demoadmin", pw=cfg.demo_password)
+    return (f"<div class=demobar><b>{_e(t('demo.title'))}</b><br>{line}"
+            f"<div class=demowarn>{t('demo.warn')}</div></div>")
 
 
 def _cf(ctx) -> str:
@@ -163,7 +181,7 @@ def _login(auth, ctx) -> str:
         links.append(f"<a href='/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
-    body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
+    body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{_demobar(auth)}{err}{pw}{pin}{sep}{others}{signup}{js}"
     return _page(auth, t("login.submit"), body)
 
 
@@ -491,7 +509,7 @@ def _pin(auth, ctx) -> str:
     user_field = ("" if known else
                   f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac}>")
     hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
-    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
+    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{_demobar(auth, pin=True)}{err}"
             f"<form method=post action='/auth/pin'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{user_field}"

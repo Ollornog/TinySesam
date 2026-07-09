@@ -201,6 +201,30 @@ TinySesamConfig.local_accounts(          # username + password only, no email an
 - `Depends(auth.require(factors=["password", "pin"]))` → an ordered chain per route. Someone already
   signed in only gets the missing field, not the whole login page again.
 
+## Bootstrapping the first admin
+
+Open registration plus “the first account becomes admin” is a race: whoever finds the fresh instance
+first wins it. TinySesam therefore offers two explicit paths, **both only while no admin exists**:
+
+```python
+TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in method
+```
+
+- **Allowlist** — the named username or email is promoted on its next successful sign-in, whatever the
+  method (also OIDC/SAML/LDAP, where the email is usually the stable handle). After that: never again.
+- **One-time token** — if no admin exists, TinySesam logs a claim URL on startup. Sign in, open
+  `/auth/claim-admin?token=…`, and that account becomes admin. The token is single-use and expires
+  after `admin_claim_ttl_min`; once an admin exists the route answers 404.
+
+Alternatively `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` seeds an admin before the app
+ever serves a request — best when you deploy from a script.
+
+## Demo mode
+
+`demo_mode=True` creates the accounts `demo` and `demoadmin`, shows their credentials on the sign-in
+page (and the PIN on the PIN page) and states plainly that it must be off in production. Turning it
+off deletes exactly those accounts on the next start. Never enable it on a public instance.
+
 ## Security
 
 - Passwords: **argon2id** (fallback **scrypt**, n=2¹⁵). Sessions **server-side** (in SQLite, revocable at any time).

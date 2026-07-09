@@ -48,6 +48,17 @@ class TinySesamConfig:
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     # Womit meldet man sich an? "username" | "email" | "both" (beides im selben Feld erlaubt)
     login_identifier: str = "both"
+    # --- Erst-Admin (Bootstrap) — bewusst NICHT "der erste registrierte User wird Admin" ---
+    admin_identifiers: list[str] = field(default_factory=list)  # Benutzername/E-Mail, die beim Login
+                                          # zum Admin befördert werden, SOLANGE es keinen Admin gibt.
+                                          # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
+    admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
+
+    # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
+    demo_mode: bool = False
+    demo_password: str = "demo1234"
+    demo_pin: str = "1234"
+
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
     signup_require_email: bool = True     # E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier)
     signup_verify_email: bool = False     # Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer

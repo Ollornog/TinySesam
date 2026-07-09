@@ -159,4 +159,59 @@ assert "name=pin" in c.get("/auth/pin").text
 os.unlink(db)
 print("  pin_login=False: PIN nur noch als Zusatzfaktor ok")
 
+
+
+# ---------- 6) Demo-Modus + Erst-Admin-Bootstrap ----------
+db = tempfile.mktemp(suffix=".db")
+kw = dict(db_path=db, csrf_enabled=False, lang="de", passkey_enabled=False,
+          cookie_secure=False, pin_enabled=True, demo_mode=True)
+auth = TinySesam(TinySesamConfig.local_accounts(**kw))
+app = FastAPI(); app.include_router(auth.router())
+c = TestClient(app, headers=HTML)
+assert auth.store.get_user_by_name("demo") and auth.store.get_user_by_name("demoadmin")["is_admin"]
+lp = c.get("/auth/login").text
+assert "Demo-Modus" in lp and "demoadmin" in lp and "demo_mode" in lp, "Zugangsdaten + Warnung"
+assert c.post("/auth/login", data={"username": "demo", "password": "demo1234", "next": "/"},
+              follow_redirects=False).status_code == 303
+assert "Demo-PIN" in c.get("/auth/pin").text
+# abschalten → Konten weg
+auth2 = TinySesam(TinySesamConfig.local_accounts(**{**kw, "demo_mode": False}))
+assert not auth2.store.get_user_by_name("demo") and not auth2.store.get_user_by_name("demoadmin")
+os.unlink(db)
+print("  demo_mode: Konten + Hinweis, beim Abschalten gelöscht ok")
+
+# Allowlist: nur wer draufsteht wird Admin — und nur solange keiner existiert
+db = tempfile.mktemp(suffix=".db")
+auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
+                                                passkey_enabled=False, cookie_secure=False,
+                                                admin_identifiers=["chef"]))
+auth.create_user("fremder", password="geheim12345")
+auth.create_user("chef", password="geheim12345")
+app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
+c.post("/auth/login", data={"username": "fremder", "password": "geheim12345", "next": "/"})
+assert not auth.store.get_user_by_name("fremder")["is_admin"], "Fremder darf kein Admin werden"
+c.cookies.clear()
+c.post("/auth/login", data={"username": "chef", "password": "geheim12345", "next": "/"})
+assert auth.store.get_user_by_name("chef")["is_admin"]
+os.unlink(db)
+
+# Einmal-Token: genau einmal, danach ist die Route weg
+db = tempfile.mktemp(suffix=".db")
+auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
+                                                passkey_enabled=False, cookie_secure=False))
+tok = auth.admin_claim_token()
+assert tok
+auth.create_user("erster", password="geheim12345")
+app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
+r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
+assert r.status_code == 303 and "/auth/login" in r.headers["location"], "ohne Login erst anmelden"
+c.post("/auth/login", data={"username": "erster", "password": "geheim12345", "next": "/"})
+assert c.get("/auth/claim-admin?token=falsch").status_code == 403
+r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/auth/admin"
+assert auth.store.get_user_by_name("erster")["is_admin"]
+assert c.get(f"/auth/claim-admin?token={tok}").status_code == 404, "Route verschwindet mit dem ersten Admin"
+assert auth.admin_claim_token() is None
+os.unlink(db)
+print("  Erst-Admin: Allowlist + Einmal-Token, kein 'erster User gewinnt' ok")
 print("OK test_pin_stepup")

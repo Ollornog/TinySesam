@@ -63,6 +63,20 @@ class TinySesam:
         if config.passkey_enabled:
             from . import webauthn_ as wa
             self.webauthn = wa
+        if config.demo_mode:
+            security.seclog.warning(
+                "DEMO-MODUS aktiv: Beispielkonten %s mit bekanntem Passwort. NICHT produktiv betreiben.",
+                ", ".join(self.DEMO_USERS))
+            self.seed_demo()
+        elif self.store.get_setting("demo_users"):
+            n = self.purge_demo()                       # Demo-Modus abgeschaltet → Konten sind weg
+            if n:
+                security.seclog.warning("Demo-Modus aus: %d Beispielkonto(en) gelöscht.", n)
+        tok = self.admin_claim_token()
+        if tok:
+            security.seclog.warning(
+                "Kein Admin vorhanden. Ersten Admin setzen: anmelden, dann /auth/claim-admin?token=%s "
+                "(gültig %d Minuten, genau einmal einlösbar).", tok, config.admin_claim_ttl_min)
 
     # ---------- User-Verwaltung ----------
     def create_user(self, username, password=None, is_admin=False, roles=None,
@@ -172,6 +186,88 @@ class TinySesam:
             self.create_user(username, password, is_admin=True)
             return True
         return False
+
+    # ---------- Erst-Admin (Bootstrap) ----------
+    # Bewusst NICHT "der erste registrierte User wird Admin": bei offener Registrierung gewinnt,
+    # wer als Erstes da ist — auch ein Fremder, der die frische Instanz findet. Stattdessen zwei
+    # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt.
+    def admin_exists(self) -> bool:
+        return any(u["is_admin"] for u in self.store.list_users())
+
+    def maybe_promote_admin(self, user) -> bool:
+        """Weg 1: Allowlist. Wer in `admin_identifiers` steht (Name ODER E-Mail), wird beim Login
+        Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder."""
+        ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
+        if not ids or not user or user["is_admin"] or self.admin_exists():
+            return False
+        cand = {str(user["username"] or "").lower(), str(user["email"] or "").lower()} - {""}
+        if not (cand & ids):
+            return False
+        self.store.set_admin(user["id"], True)
+        self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
+        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s", user["username"])
+        return True
+
+    def admin_claim_token(self) -> Optional[str]:
+        """Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal
+        eingelöst werden kann (`/auth/claim-admin?token=…`). Es steht nur im Log/in der Konsole —
+        wer den Server betreibt, hat es; wer bloß die URL kennt, nicht. Läuft ab."""
+        if self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
+            return None
+        raw = self.store.get_setting("admin_claim")
+        now = int(time.time())
+        if raw:
+            token, exp = raw.split(":", 1)
+            if int(exp) > now:
+                return token
+        token = secrets.token_urlsafe(24)
+        self.store.set_setting("admin_claim", f"{token}:{now + self.cfg.admin_claim_ttl_min * 60}")
+        return token
+
+    def consume_admin_claim(self, token, user) -> bool:
+        if not token or not user or self.admin_exists():
+            return False
+        raw = self.store.get_setting("admin_claim")
+        if not raw:
+            return False
+        want, exp = raw.split(":", 1)
+        if int(exp) <= int(time.time()) or not secrets.compare_digest(token, want):
+            return False
+        self.store.set_setting("admin_claim", "")     # einmalig
+        self.store.set_admin(user["id"], True)
+        self.audit("admin_bootstrap", user["username"], detail="claim_token")
+        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s", user["username"])
+        return True
+
+    # ---------- Demo-Modus ----------
+    DEMO_USERS = ("demo", "demoadmin")
+
+    def seed_demo(self) -> None:
+        """Beispielkonten anlegen (idempotent). Nur bei `demo_mode=True`."""
+        ids = []
+        for name in self.DEMO_USERS:
+            u = self.store.get_user_by_name(name)
+            if u:
+                ids.append(str(u["id"]))
+                continue
+            uid = self.create_user(name, password=self.cfg.demo_password, is_admin=(name == "demoadmin"))
+            if self.cfg.pin_enabled:
+                self.set_pin(uid, self.cfg.demo_pin)
+            ids.append(str(uid))
+        self.store.set_setting("demo_users", ",".join(ids))
+
+    def purge_demo(self) -> int:
+        """Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine gleichnamigen."""
+        raw = self.store.get_setting("demo_users") or ""
+        n = 0
+        for sid in filter(None, raw.split(",")):
+            u = self.store.get_user(int(sid))
+            if u and u["username"] in self.DEMO_USERS:
+                self.store.delete_user_sessions(u["id"])
+                self.store.delete_user(u["id"])
+                n += 1
+        self.store.set_setting("demo_users", "")
+        return n
 
     def get_user(self, user_id):
         return self.store.get_user(user_id)
@@ -604,11 +700,13 @@ class TinySesam:
                 done.append(factor)
             ok = self._session_ok(user_id, done)
             self.store.set_session_factors(s["token"], done, mfa_ok=ok)
+            self.maybe_promote_admin(self.store.get_user(user_id))
             if ok and not was_ok:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
             return s["token"], ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
+        self.maybe_promote_admin(self.store.get_user(user_id))
         return token, ok, True
 
     def login_redirect_after(self, request, token, user_id, nxt):
