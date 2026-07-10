@@ -9,6 +9,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least Privilege. Es gibt keinen sicheren Default — die Ausgangsberechtigung des
+# GITHUB_TOKEN kommt aus der Repo-Einstellung. Sobald EINE Berechtigung explizit
+# gesetzt ist, fallen alle übrigen auf `none`.
+permissions:
+  contents: read
+
 jobs:
   # Voller Lauf mit allen Extras über die Matrix min + prod + max (siehe testing-policy.md):
   #   3.10 = Untergrenze aus requires-python  (ohne sie ist die Zusage unbelegt)
@@ -23,8 +29,8 @@ jobs:
       matrix:
         python-version: ["3.10", "3.12", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Systempaket für SAML (xmlsec)
@@ -39,8 +45,8 @@ jobs:
   minimal:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
       - name: Install (nur Kern + httpx fürs TestClient-Werkzeug)
@@ -53,12 +59,12 @@ jobs:
   browser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
       - name: Chrome installieren
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce  # v1
         with:
           install-dependencies: true
       - name: Chrome vorhanden?
@@ -82,12 +88,12 @@ jobs:
   repeat:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
       - name: Chrome installieren
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@c785b87e244131f27c9f19c1a33e2ead956ab7ce  # v1
         with:
           install-dependencies: true
       - name: Systempaket für SAML (xmlsec)

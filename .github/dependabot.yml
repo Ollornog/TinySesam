@@ -1,0 +1,15 @@
+# SHA-gepinnte Actions veralten still — ein Commit-SHA sagt nicht, dass eine neuere
+# Version existiert. Dependabot liest den Versions-Kommentar hinter dem Pin und öffnet
+# einen PR mit dem SHA der neuen Version. Ohne diese Datei wäre das SHA-Pinning ein
+# Sicherheitsgewinn, den man mit Wartungsblindheit bezahlt.
+#
+# Sicherheits-Updates für Abhängigkeiten laufen getrennt davon über den Repo-Schalter
+# (Dependabot security updates) und brauchen keine Konfiguration.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

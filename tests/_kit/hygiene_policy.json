@@ -92,5 +92,25 @@
     ".pdf",
     ".woff",
     ".woff2"
-  ]
+  ],
+  "changelog_kategorien": {
+    "en": [
+      "Added",
+      "Changed",
+      "Deprecated",
+      "Removed",
+      "Fixed",
+      "Security"
+    ],
+    "de": [
+      "Hinzugefügt",
+      "Geändert",
+      "Veraltet",
+      "Entfernt",
+      "Behoben",
+      "Sicherheit"
+    ]
+  },
+  "_changelog_quelle": "https://keepachangelog.com/en/1.1.0/",
+  "_actions_quelle": "GitHub Docs, Security hardening for GitHub Actions"
 }

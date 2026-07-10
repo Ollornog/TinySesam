@@ -42,6 +42,20 @@ hier, mit Impressum und Pages-URL, schlug er sofort an. Der Eintrag ist entfernt
 Gefahr bleibt gefangen: eine Dienst-Subdomain trifft weiterhin das Subdomain-Muster, die nackte
 Domain nicht.
 
+### Hinzugefügt — belegte Standards werden jetzt maschinell erzwungen
+
+Vier Regeln aus einer Standards-Recherche (mit Primärquellen) prüft die Hygiene-Suite jetzt selbst:
+
+- **Actions per vollem Commit-SHA gepinnt**, nicht per Tag. GitHub nennt den SHA „the only way to
+  use an action as an immutable release" — ein Tag lässt sich verschieben. Die Version steht als
+  Kommentar dahinter, und `.github/dependabot.yml` hält sie aktuell, damit der Pin nicht still veraltet.
+- **`permissions:` auf oberster Ebene jedes Workflows.** Es gibt keinen sicheren Default.
+- **CHANGELOG-Kategorien aus Keep a Changelog** (eine Sprache je Repo).
+- **`README.de.md` folgt der Überschriften-Struktur von `README.md`** — GitHub wählt die README nach
+  Ort aus, nicht nach Sprache, eine Übersetzung veraltet also unbemerkt.
+
+Dazu aktiviert: Private Vulnerability Reporting und Dependabot Security Updates.
+
 ### Behoben — der `pre-push`-Hook riet zum falschen Befehl
 
 War Docker nicht erreichbar, nannte der Hook `docker info` als Prüfung und `git push --no-verify`
@@ -536,8 +550,7 @@ zweisprachige Website — plus die Rechte-Fallen aus dem ersten Produktiveinsatz
   und `TinySesamConfig.entra_id(...)` (Azure AD/Entra via OIDC).
 - README/Website: problem-orientierter Pitch (Login-Layer für selbstgebaute Apps).
 
-### Hinweis
-Kerberos/NTLM/GSSAPI-SSO bleibt bewusst außen vor (LAN-/domänengebunden, schwere Ops-Kopplung,
+**Hinweis:** Kerberos/NTLM/GSSAPI-SSO bleibt bewusst außen vor (LAN-/domänengebunden, schwere Ops-Kopplung,
 redundant zu OIDC/SAML für AD).
 
 ## [0.7.0] — 2026-07-08
@@ -563,7 +576,7 @@ redundant zu OIDC/SAML für AD).
 - **Optionaler OIDC-RP-Logout** (`oidc_rp_logout`) — Abmelden auch beim Provider (`end_session`).
 - `auth.gc()` (DB-Housekeeping), `py.typed` (Typinfos werden mitgeliefert).
 
-### Härtung
+### Sicherheit
 - Sessions werden nach Passwortwechsel invalidiert (Self: außer aktueller; Admin-Reset: alle).
 - Dummy-Hash-Verify gegen **User-Enumeration** per Timing (Login & PIN).
 - Ungültiger JSON-Body → **400** statt 500. Test-Runner `tests/run_all.py` + CI (Py 3.10–3.13).
@@ -588,7 +601,7 @@ TOTP falls eingerichtet) bleibt unverändert.
 - **OIDC-Gateway-Preset** — `TinySesamConfig.oidc_gateway(...)`, `python -m tinysesam.gateway`, docker-compose.
 - **Test-Runner** `tests/run_all.py` + **GitHub-Actions-CI** (Py 3.10–3.13, voll + Minimal-Lauf).
 
-### Geändert / Härtung
+### Geändert
 - Zentraler **Open-Redirect-Schutz** `safe_next` auf allen `?next=`-Zielen; `cookie_domain` für Subdomain-SSO.
 - Ungültiger JSON-Body → **400** statt 500 (`TinySesam.json_body`).
 - Store-Auto-Migration (`session.mfa_at`/`remember`/`factors_done`), neues Modul `mailer.py`.
