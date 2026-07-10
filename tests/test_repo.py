@@ -3,14 +3,22 @@
 Prüft, was man beim Aufräumen zuverlässig vergisst — Versionen, die auseinanderlaufen; Reste im
 Repo; Geheimnisse; vergessene Debug-Ausgaben; Suiten, die niemand mehr ausführt. Kein Netz, keine
 Abhängigkeiten, läuft überall.
+
+Die allgemeinen Prüfungen und die Sperrlisten stehen in `tests/_kit/` — einer geteilten,
+eingecheckten Basis, die `repokit sync` hierher schreibt. Sie ist stdlib-only und lädt zur
+Testzeit nichts nach; die Zusage oben bleibt wörtlich wahr. Was hier steht, ist das, was
+nur für dieses Projekt gilt.
 """
-import hashlib
 import os
 import re
-import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _kit import hygiene  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+POLICY = hygiene.lade_policy()
+PROJEKTE = ["TinySesam"]
 
 
 def read(*parts) -> str:
@@ -18,29 +26,25 @@ def read(*parts) -> str:
         return fh.read()
 
 
-def tracked() -> list:
-    out = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
-    return out.stdout.split()
-
-
-FILES = tracked()
+FILES = hygiene.getrackte_dateien(ROOT)
 LIB = [f for f in FILES if f.startswith("tinysesam/") and f.endswith(".py")]
 WEB = [f for f in FILES if f.startswith("web/") and f.endswith(".py")]
 
-# ---------- Version: pyproject, __init__ und der letzte Tag müssen zusammenpassen ----------
+# ---------- Version: pyproject, __init__ und CHANGELOG müssen zusammenpassen ----------
 pv = re.search(r'^version = "([^"]+)"', read("pyproject.toml"), re.M).group(1)
-iv = re.search(r'^__version__ = "([^"]+)"', read("tinysesam/__init__.py"), re.M).group(1)
-assert pv == iv, f"pyproject={pv} aber __init__={iv}"
-assert re.fullmatch(r"\d+\.\d+\.\d+", pv), pv
-assert f"## [{pv}]" in read("CHANGELOG.md"), f"CHANGELOG kennt {pv} nicht"
+fehler = hygiene.pruefe_versionsgleichstand(
+    ROOT, weitere={"tinysesam/__init__.py": r'^__version__ = "([^"]+)"'})
+assert not fehler, fehler
 print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 
 # ---------- Pflichtdateien ----------
-for name in ("LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md",
-             "TODO.md", "tinysesam/py.typed", ".gitignore",
-             ".github/workflows/ci.yml", ".github/workflows/pages.yml",
-             ".github/workflows/release.yml", "Dockerfile", ".dockerignore"):
-    assert name in FILES, f"{name} fehlt im Repo"
+PFLICHT = ["LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md",
+           "TODO.md", "tinysesam/py.typed", ".gitignore",
+           ".github/workflows/ci.yml", ".github/workflows/pages.yml",
+           ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
+           "scripts/_residue_check.sh", "tests/_kit/hygiene.py"]
+fehlend = hygiene.pruefe_pflichtdateien(ROOT, PFLICHT)
+assert not fehlend, f"Pflichtdateien fehlen: {fehlend}"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
 
 # ---------- docs/ enthält nur noch Beilagen; die Seiten baut die Action ----------
@@ -51,21 +55,8 @@ assert "_site/" in read(".gitignore")
 print("  docs/: nur theme.css, wizard.png, .nojekyll — kein generiertes HTML im Repo")
 
 # ---------- Generierte Artefakte gehören nicht ins Repo ----------
-# `pip install -e .` schreibt <paket>.egg-info/ bei JEDEM Lauf neu. Ist das Verzeichnis
-# versioniert, hinterlässt jeder Testlauf eine geänderte Datei — die Suite ist dann nicht
-# wiederholbar. Der Fehler bleibt lange unsichtbar, weil PKG-INFO sich nur ändert, wenn
-# sich Metadaten ändern (Version, Beschreibung, Abhängigkeiten): der Baum bleibt zufällig
-# sauber, bis die Version steigt. Genau so überlebte er in einem Schwesterprojekt sechs
-# grüne Läufe. Keine Testsuite fand ihn — nur der Rückstands-Check.
-ARTEFAKTE = [
-    f for f in FILES
-    if ".egg-info" in f
-    or ".dist-info" in f
-    or f.startswith(("build/", "dist/"))
-    or "__pycache__" in f
-    or f.endswith(".pyc")
-]
-assert not ARTEFAKTE, f"generierte Artefakte sind versioniert: {ARTEFAKTE[:5]}"
+artefakte = hygiene.pruefe_artefakte(FILES, POLICY)
+assert not artefakte, f"generierte Artefakte sind versioniert: {artefakte[:5]}"
 print(f"  keine generierten Artefakte unter {len(FILES)} getrackten Dateien")
 
 # ---------- Farbwerte nur an den zwei erlaubten Stellen ----------
@@ -91,18 +82,8 @@ for f in LIB:
 print("  keine print()/breakpoint() in tinysesam/")
 
 # ---------- Keine offensichtlichen Geheimnisse ----------
-SECRETS = (re.compile(r"ghp_[A-Za-z0-9]{20,}"),          # GitHub-Token
-           re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY"),
-           re.compile(r"AKIA[0-9A-Z]{16}"))              # AWS
-for f in FILES:
-    if f.endswith((".png", ".ico")):
-        continue
-    try:
-        body = read(f)
-    except (UnicodeDecodeError, IsADirectoryError):
-        continue
-    for pat in SECRETS:
-        assert not pat.search(body), f"möglicher Schlüssel in {f}"
+lecks = hygiene.pruefe_geheimnisse(ROOT, FILES, POLICY)
+assert not lecks, f"möglicher Schlüssel in {lecks[:3]}"
 print("  keine Tokens oder privaten Schlüssel eingecheckt")
 
 # ---------- Jede Suite läuft im Sammellauf mit ----------
@@ -114,53 +95,17 @@ print(f"  {len(suites)} Suiten, alle vom Sammellauf erfasst")
 
 # ---------- Keine private Infrastruktur im öffentlichen Repo ----------
 # Die Trennlinie ist **Identität gegen Infrastruktur**, nicht „mein Name kommt vor".
+# Erlaubt und teils rechtlich nötig: Autor, Impressumsadresse, Lizenz, Repo-URL,
+# Projektname. Verboten ist, was jemandem hilft, die Systeme dahinter zu finden.
 #
-# Erlaubt und teils rechtlich nötig: Autor, Kontakt- und Impressumsadresse, Lizenz,
-# Repo-URL, Projektname. Verboten ist alles, was jemandem hilft, die Systeme dahinter
-# zu finden: Dienst-Subdomains, interne Hostnamen, IPs aus privaten Netzen,
-# Container-Nummern, Heimatverzeichnisse, Kundennamen, API-Token-Kennungen.
-#
-# `admin@example.de` ist harmlos — `paperless.example.de` verrät, wo ein Paperless läuft.
-#
-# Die Muster sind bewusst **generisch**: Eine wörtliche Verbotsliste („kunde-x", „mein-server")
-# würde in einem öffentlichen Repo genau das veröffentlichen, was sie schützen soll. Für die
-# Handvoll Eigennamen, die sich nicht generisch fassen lassen, steht deshalb nur der
-# SHA256-Anfang im Repo — er verrät den Namen nicht, erkennt ihn aber wieder.
-PRIVATE = (
-    r"(?<![\w.])/home/[a-z_][a-z0-9_-]*",       # Heimatverzeichnis des Betreibers
-    # Dienst-Subdomain. `admin@…` trifft es nicht (kein Punkt davor); `example.*` ist die für
-    # Doku reservierte Domain aus RFC 2606 und bleibt erlaubt — sonst kann man die Regel nicht
-    # einmal erklären, ohne sie zu verletzen.
-    r"\b[a-z0-9-]+\.(?!example\b)[a-z0-9-]{3,}\.(?:de|at|ch|eu)\b",
-    r"\b10\.\d+\.\d+\.\d+", r"\b192\.168\.\d+\.\d+",     # private Netze
-    r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+",
-    r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+",   # CGNAT/NetBird
-    r"\bCT ?\d{3}\b",                           # Container-Nummern
-    r"[a-z0-9_-]+@pve![a-z0-9_-]+",             # Proxmox-API-Token
-)
-# Interne Hostnamen und Kundennamen — nur als Prüfsumme, nie im Klartext.
-PRIVATE_HASHED = frozenset((
-    "6bb8c80cfa0e95ae", "cb034381b0eee532", "41b8e6744905305f",
-    "a994ffcab684f9e2", "252a8452a103b022", "e177ac5b0aa46203", "a227c36a926bd7f6",
-))
-WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
-hits = []
-for f in FILES:
-    if f == "tests/test_repo.py" or f.endswith((".png", ".ico")):
-        continue
-    try:
-        body = read(f)
-    except (UnicodeDecodeError, IsADirectoryError):
-        continue
-    for n, line in enumerate(body.splitlines(), 1):
-        for pat in PRIVATE:
-            if re.search(pat, line, re.I):
-                hits.append(f"{f}:{n}: {line.strip()[:70]}")
-        for word in WORD.findall(line.lower()):
-            if hashlib.sha256(word.encode()).hexdigest()[:16] in PRIVATE_HASHED:
-                hits.append(f"{f}:{n}: verbotener Name — {line.strip()[:60]}")
+# Muster und Sperrliste stehen in tests/_kit/hygiene_policy.json — einer Quelle für alle
+# Repos. Vorher trug jedes Repo seine eigene Kopie, und sie liefen auseinander: diese hier
+# kannte sieben Namen, das Schwesterprojekt dreizehn, und die IP-Muster hatten in nur einem
+# der beiden die Ausnahme für CIDR-Masken in der Doku.
+hits = hygiene.pruefe_private_infrastruktur(ROOT, FILES, POLICY, PROJEKTE)
 assert not hits, "private Infrastruktur im öffentlichen Repo:\n  " + "\n  ".join(hits[:8])
-print(f"  keine private Infrastruktur ({len(PRIVATE)} Muster + {len(PRIVATE_HASHED)} Namen)")
+print(f"  keine private Infrastruktur ({len(POLICY['private_muster'])} Muster"
+      f" + {len(POLICY['private_namen_sha256_16'])} Namen)")
 
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
 # Sonst empfiehlt die Doku still eine alte Version weiter: Der Pin im Compose und die

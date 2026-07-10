@@ -27,10 +27,18 @@
     "Container-Nummern",
     "Hypervisor-API-Token"
   ],
+  "_namen_kommentar": [
+    "Der GitHub-Owner steht hier BEWUSST NICHT. Er ist Identitaet, nicht Infrastruktur:",
+    "Repo-URL, Copyright-Zeile, Impressums-Mail und die Pages-Adresse muessen ihn nennen",
+    "duerfen. Eine Dienst-Subdomain darunter faengt das Subdomain-Muster ohnehin",
+    "('paperless.<domain>.de' trifft, '<domain>.de' allein nicht).",
+    "Er stand einmal in der Liste und fiel nur deshalb nicht auf, weil die",
+    "Identitaets-Maskierung die URL-Zeilen zufaellig traf - in einem Repo mit Impressum",
+    "und Pages-URL schlug er sofort an."
+  ],
   "private_namen_sha256_16": [
     "061429fadd2701e3",
     "252a8452a103b022",
-    "3a06e0b732af4a2e",
     "3e2559984ba426c0",
     "41b8e6744905305f",
     "5b41917ea3e5cd80",
