@@ -1,5 +1,9 @@
 # Sicherheit
 
+<p align="left"><a href="../SECURITY.md">English</a> · <b>Deutsch</b></p>
+
+<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+
 ## Schwachstellen melden
 
 Bitte Sicherheitslücken **nicht** über öffentliche Issues melden, sondern privat über die
@@ -24,9 +28,3 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 ## Unterstützte Versionen
 
 Sicherheitsfixes landen auf der jeweils neuesten Minor-Version (aktuell `0.5.x`).
-
----
-
-<p align="right"><a href="../SECURITY.md">English</a> · <b>Deutsch</b></p>
-
-<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
