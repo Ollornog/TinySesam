@@ -46,5 +46,5 @@ comments; identifiers stay in English.
 ## Reporting a vulnerability
 
 Do **not** open a public issue for security problems. Use GitHub's private vulnerability reporting
-(the *Report a vulnerability* button under *Security*), or write to admin@ollornog.de. See
+(the *Report a vulnerability* button under *Security*), or write to tinysesam-github@ollornog.de. See
 [`SECURITY.md`](SECURITY.md).

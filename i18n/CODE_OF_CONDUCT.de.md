@@ -40,7 +40,7 @@ Dieser Verhaltenskodex gilt für alle Gemeinschaftsbereiche und gilt auch, wenn 
 
 ## Durchsetzung
 
-Fälle von missbräuchlichem, belästigendem oder anderweitig inakzeptablem Verhalten können unter admin@ollornog.de der für die Durchsetzung zuständigen Gemeinschaftsleitung gemeldet werden. Alle Beschwerden werden zeitnah und fair geprüft und ermittelt.
+Fälle von missbräuchlichem, belästigendem oder anderweitig inakzeptablem Verhalten können unter tinysesam-github@ollornog.de der für die Durchsetzung zuständigen Gemeinschaftsleitung gemeldet werden. Alle Beschwerden werden zeitnah und fair geprüft und ermittelt.
 
 Die gesamte Gemeinschaftsleitung ist verpflichtet, die Privatsphäre und die Sicherheit derjenigen, die einen Vorfall gemeldet haben, zu respektieren.
 

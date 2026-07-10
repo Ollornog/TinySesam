@@ -49,4 +49,4 @@ Deutsch; Bezeichner bleiben englisch.
 
 Für Sicherheitsprobleme **kein** öffentliches Issue öffnen. Nutze GitHubs privates
 Schwachstellen-Reporting (den Knopf *Report a vulnerability* unter *Security*) oder schreib an
-admin@ollornog.de. Siehe [`SECURITY.de.md`](SECURITY.de.md).
+tinysesam-github@ollornog.de. Siehe [`SECURITY.de.md`](SECURITY.de.md).
