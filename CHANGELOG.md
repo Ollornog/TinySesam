@@ -20,8 +20,16 @@ verlinkt die zur Anzeigesprache passende Datei, `tests/test_repo.py` erzwingt da
 und `TODO` bleiben bewusst einsprachig deutsch.
 
 Zum Feinschliff: die README-Badges (Tests, Lizenz, Python) stehen jetzt rechtsbündig, und die
-Doku-Unterseiten tragen das Wizard-Icon in klein über der Überschrift — dasselbe Bild wie die
-README, nur kleiner.
+Doku-Unterseiten tragen das Wizard-Icon über der Überschrift — dasselbe Bild wie die README
+(250 px), auf den Unterseiten in klein (60 px).
+
+Die Übersetzungen liegen jetzt unter `i18n/` (`i18n/README.de.md`, `i18n/CODE_OF_CONDUCT.de.md`,
+`i18n/CONTRIBUTING.de.md`, `i18n/SECURITY.de.md`), im Root nur noch die englischen Fassungen.
+Grund: GitHubs Health-File-Detektor sucht `CODE_OF_CONDUCT`/`SECURITY`/… in Root, `.github/` und
+`docs/` und wählt bei mehreren Treffern die alphabetisch erste — also `CODE_OF_CONDUCT.de.md` vor
+`.md`. Damit zeigte das Community-Profil die deutsche Fassung als „Other" statt die englische als
+Contributor Covenant. Aus `i18n/` heraus sieht der Detektor nur noch die englischen Root-Dateien.
+Die In-App-Fußzeile und `tests/test_repo.py` folgen dem neuen Ort; der Sprachwechsler bleibt.
 
 ### Geändert — die Testbasis ist geteilt, nicht mehr kopiert
 

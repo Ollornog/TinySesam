@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="104" height="104"></p>
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="250" height="250"></p>
 
 <h1 align="center">TinySesam</h1>
 
-<p align="center"><b>English</b> · <a href="README.de.md">Deutsch</a></p>
+<p align="center"><b>English</b> · <a href="i18n/README.de.md">Deutsch</a></p>
 
 <p align="right">
 <a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
