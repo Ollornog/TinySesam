@@ -12,17 +12,14 @@
 ## Offen
 
 ### Auslieferung
-- **Erstes echtes Release erzeugen:** `git tag v0.12.0 && git push --tags`. Tags gibt es seit
-  `v0.2.0`, **Releases bisher keine** — also nie ein Wheel. `release.yml` baut es beim Tag-Push.
 - **PyPI: vertagt bis 1.0** (entschieden 2026-07-10). Bis dahin ist der gepinnte Git-Tag das
   ehrlichere Artefakt: Jede PyPI-Version ist unwiderruflich, und die API bewegt sich noch —
   0.12.0 hat gerade das Selbst-Update ersatzlos entfernt. Dazu ist ein Auth-Paket auf PyPI ein
   Supply-Chain-Ziel: wer das Konto übernimmt, schiebt Code in fremde Anmeldevorgänge.
   Wenn: dann mit **Trusted Publishing** (PyPI vertraut dem Workflow per OIDC, kein Token im Repo).
   Die Namen `tinysesam` und `tiny-sesam` sind Stand 2026-07-10 beide frei.
-- **Gateway-Image** (`Dockerfile` + GHCR): nicht-root, `HEALTHCHECK`, nur das `[oidc]`-Extra.
-  `[all]` zöge `python3-saml` → `libxmlsec1` und damit lange qemu-Builds für arm64.
-  Bis dahin installiert `deploy/forward-auth/docker-compose.yml` den gepinnten Git-Tag.
+- **Abbild-Signatur / SBOM** erwägen (`cosign`, `provenance`) — ein Digest belegt Unverändertheit,
+  aber nicht Herkunft. Erst sinnvoll, wenn Fremde das Abbild produktiv einsetzen.
 
 ### Tests
 - **Freien Port nicht selbst suchen.** `tests/test_browser.py: free_port()` bindet einen Port,
@@ -31,10 +28,26 @@
   `DevToolsActivePort` im Profilverzeichnis lesen. (Aus dem DashMyBoard-Bau; dort bewährt.)
 
 ### Funktion
-- **Passkey/OIDC/SAML end-to-end** gegen echte Domain und echten Provider verifizieren
-  (bisher nur struktur-getestet — siehe „Was Tests nicht können").
+- **End-to-End-Test gegen einen echten Identity Provider** — der größte verbliebene blinde Fleck.
+  Passkey/WebAuthn, OIDC und SAML sind bisher nur **struktur-getestet**: Die Ceremony gegen einen
+  echten Browser auf einer echten HTTPS-Domain, gegen einen echten IdP, hat nie stattgefunden.
+  Ein Fehler dort fiele erst im Betrieb auf.
+  - **Was fehlt:** öffentlich erreichbare Domain mit gültigem Zertifikat (WebAuthn verlangt eine
+    echte `rp_id` und HTTPS), ein IdP mit registriertem Client, ein Passkey-fähiger Browser.
+  - **Wie:** dieselbe CDP-Suite wie `tests/test_browser.py`, aber mit `BASE_URL=https://…` gegen
+    die deployte Instanz — also ein **Smoke-Test nach dem Deploy**, kein CI-Test. WebAuthn lässt
+    sich über CDP mit `WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator` fahren, ohne echten
+    Sicherheitsschlüssel.
+  - **Warum kein CI-Test:** Die CI hat keine Domain, kein Zertifikat und keinen IdP. Ein Test, der
+    das vortäuscht, prüft die Attrappe.
 - **Forward-Auth**: optionale Feinsteuerung, welche `Remote-*`-Header gesetzt werden.
 - **E-Mail-Verifikation/Invite ohne Magic-Link-Endpoint** (aktuell nutzen sie `/auth/magic/{token}`).
+
+## Erledigt in 0.13
+- **Gateway als Container-Abbild**: `Dockerfile` (nicht-root, ohne pip/git, `HEALTHCHECK`),
+  `release.yml` schiebt multi-arch nach GHCR, Compose nutzt das Abbild statt `pip install` zur
+  Laufzeit. Neuer Endpunkt `GET /healthz`.
+- **Erstes echtes Release**: `v0.12.0` mit Wheel, sdist und `SHA256SUMS`.
 
 ## Erledigt in 0.12
 - **Selbst-Update entfernt** (`updater.py`, Panel-Routen, `update_mode`/`update_pin`). Die Version

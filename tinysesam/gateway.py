@@ -51,13 +51,46 @@ def config_from_env() -> TinySesamConfig:
     )
 
 
+HEALTH_PATH = "/healthz"
+
+
+def _install_https_except_health(auth, app):
+    """Wie `auth.install_https`, aber `/healthz` bleibt über HTTP erreichbar.
+
+    Bei `https_mode=force` würde die Redirect-Middleware auch den Health-Check umleiten —
+    und der spricht den Container von innen an, wo es kein TLS gibt. Ein Health-Check, der
+    einen Redirect zurückbekommt, prüft nichts.
+    """
+    if auth.cfg.https_mode != "force":
+        return auth.install_https(app)
+
+    from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+
+    class _ExceptHealth(HTTPSRedirectMiddleware):
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") == "http" and scope.get("path") == HEALTH_PATH:
+                return await self.app(scope, receive, send)
+            await super().__call__(scope, receive, send)
+
+    app.add_middleware(_ExceptHealth)
+    return "force"
+
+
 def build_app(cfg: TinySesamConfig = None):
     """FastAPI-App für das Gateway bauen (cfg optional; sonst aus Env)."""
     from fastapi import FastAPI
     auth = TinySesam(cfg or config_from_env())
     app = FastAPI(title="TinySesam OIDC-Gateway")
     app.include_router(auth.router())
-    auth.install_https(app)   # respektiert https_mode
+
+    @app.get(HEALTH_PATH, include_in_schema=False)
+    def healthz():
+        """Ohne Anmeldung erreichbar — sonst könnte kein Orchestrator ihn benutzen.
+        Verrät nur, dass der Prozess lebt und welche Version läuft."""
+        from . import current_version
+        return {"status": "ok", "version": current_version()}
+
+    _install_https_except_health(auth, app)
     app.state.auth = auth
     return app
 

@@ -1,8 +1,11 @@
 name: release
 
-# Ein Git-Tag `vX.Y.Z` erzeugt ein GitHub-Release mit Wheel, sdist und Prüfsummen.
+# Ein Git-Tag `vX.Y.Z` erzeugt zweierlei:
+#   1. ein GitHub-Release mit Wheel, sdist und Prüfsummen (für die Bibliothek)
+#   2. ein Container-Abbild `ghcr.io/ollornog/tinysesam:<version>` (für das Gateway)
+#
 # Das ist der einzige Verteilweg: TinySesam aktualisiert sich nicht selbst, es wird
-# installiert — per gepinntem Tag oder per Wheel aus genau diesem Release.
+# installiert — per gepinntem Tag, Wheel oder Abbild-Tag aus genau diesem Release.
 #
 # Vorher prüft der Job, dass der Tag zur Version im Paket passt. Ein Release mit
 # falscher Versionsnummer ist schlimmer als keins: es ist unauffällig falsch.
@@ -14,6 +17,7 @@ on:
 
 permissions:
   contents: write        # Release anlegen und Dateien anhängen
+  packages: write        # Abbild nach GHCR schieben
 
 jobs:
   release:
@@ -55,3 +59,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
+
+  # Das Gateway-Abbild. Läuft erst, wenn das Release steht — ein Abbild ohne Release
+  # wäre ein Artefakt, zu dem die Notizen fehlen.
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 wird emuliert. Das ist nur erträglich, weil das Abbild ausschließlich das
+      # `[oidc]`-Extra installiert (reine Python-Räder). Mit `[all]` müsste hier libxmlsec1
+      # kompiliert werden — Minuten statt Sekunden.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: An GHCR anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Abbild bauen und schieben
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
+          # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
+          # andere Version, ohne dass jemand etwas geändert hätte.
+          tags: ghcr.io/${{ github.repository_owner }}/tinysesam:${{ github.ref_name }}
+          provenance: false
+
+      - name: Digest ausgeben (für einen unveränderlichen Pin)
+        run: |
+          echo "Abbild: ghcr.io/${{ github.repository_owner }}/tinysesam:${GITHUB_REF_NAME}"
+          echo "Digest: ${{ steps.push.outputs.digest }}"
+          echo "Unveränderlich pinnen: ghcr.io/${{ github.repository_owner }}/tinysesam@${{ steps.push.outputs.digest }}"

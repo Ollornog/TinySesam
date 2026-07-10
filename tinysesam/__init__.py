@@ -7,7 +7,7 @@ TinySesam aktualisiert sich **nicht selbst**. Die Version bestimmt, wer die Bibl
 installiert: über einen gepinnten Git-Tag bzw. das Wheel eines Releases. Siehe README,
 Abschnitt „Installation und Updates".
 """
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 from .config import TinySesamConfig
 from .manager import TinySesam

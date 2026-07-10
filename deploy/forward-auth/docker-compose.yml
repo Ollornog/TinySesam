@@ -5,22 +5,20 @@
 # Caddy ruft je Request GET /auth/forward beim Gateway (siehe ./Caddyfile). Der Gateway macht
 # ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nur [oidc]-Extra nötig.
 #
-# Die Version ist GEPINNT. Vorher stand hier ein `pip install` ohne Ref: damit zog jeder
+# Das Abbild ist GEPINNT. Vorher stand hier ein `pip install` ohne Ref: damit zog jeder
 # Neustart den aktuellen Hauptzweig — zwei Container derselben Datei konnten verschiedene
 # Versionen fahren, ohne Netz startete gar nichts, und ein Rollback gab es nicht.
-# Aktualisieren = Version unten hochziehen, `docker compose up -d --force-recreate`.
+#
+# Aktualisieren = Abbild-Tag hochziehen, `docker compose pull && docker compose up -d`.
+# Rollback = alten Tag zurückschreiben. Wer es ernst meint, pinnt den Digest
+# (`ghcr.io/ollornog/tinysesam@sha256:…`) — ein Tag lässt sich umhängen, ein Digest nicht.
+# Der Digest steht im Log des release-Workflows. Es gibt bewusst kein `latest`.
 
 services:
   tinysesam:
-    image: python:3.12-slim
-    working_dir: /app
-    # Installiert die gepinnte TinySesam-Version mit OIDC-Extra und startet das Gateway.
-    # Die Version steht bewusst wörtlich hier — `${VAR}` würde Compose selbst ersetzen
-    # (aus der Shell bzw. .env), nicht die Shell im Container, und wäre lautlos leer.
-    command: >
-      sh -c "pip install --no-cache-dir
-      'tinysesam[oidc]@git+https://github.com/Ollornog/TinySesam.git@v0.12.0' uvicorn
-      && python -m tinysesam.gateway"
+    image: ghcr.io/ollornog/tinysesam:v0.13.0
+    # Kein `command:` nötig — der Entrypoint startet das Gateway. Es läuft als Nicht-root
+    # (uid 1000) und bringt einen HEALTHCHECK auf /healthz mit.
     environment:
       TINYSESAM_OIDC_ISSUER: "https://id.example.com"
       TINYSESAM_OIDC_CLIENT_ID: "gateway"
