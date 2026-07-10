@@ -74,6 +74,12 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
+      # Container-Registries verlangen kleingeschriebene Repository-Namen; `repository_owner`
+      # liefert die Schreibweise des GitHub-Kontos. Groß geschrieben bricht `buildx` ab:
+      # `invalid tag …: repository name must be lowercase`.
+      - name: Eigentümer kleinschreiben
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
       - name: An GHCR anmelden
         uses: docker/login-action@v3
         with:
@@ -91,11 +97,11 @@ jobs:
           # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
           # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
           # andere Version, ohne dass jemand etwas geändert hätte.
-          tags: ghcr.io/${{ github.repository_owner }}/tinysesam:${{ github.ref_name }}
+          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
           provenance: false
 
       - name: Digest ausgeben (für einen unveränderlichen Pin)
         run: |
-          echo "Abbild: ghcr.io/${{ github.repository_owner }}/tinysesam:${GITHUB_REF_NAME}"
+          echo "Abbild: ghcr.io/${OWNER_LC}/tinysesam:${GITHUB_REF_NAME}"
           echo "Digest: ${{ steps.push.outputs.digest }}"
-          echo "Unveränderlich pinnen: ghcr.io/${{ github.repository_owner }}/tinysesam@${{ steps.push.outputs.digest }}"
+          echo "Unveränderlich pinnen: ghcr.io/${OWNER_LC}/tinysesam@${{ steps.push.outputs.digest }}"

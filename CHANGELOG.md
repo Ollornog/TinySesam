@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.13.1] — 2026-07-10
+
+### Behoben
+- **Das Abbild wurde nie gebaut.** `${{ github.repository_owner }}` liefert die Schreibweise des
+  GitHub-Kontos; Container-Registries verlangen kleingeschriebene Namen, und `buildx` brach mit
+  *„invalid tag …: repository name must be lowercase"* ab. Der `release`-Job war grün, nur das
+  Abbild fehlte — sichtbar erst im Job-Log. Jetzt wird der Eigentümer vorher kleingeschrieben,
+  und ein Hygiene-Test verbietet `repository_owner` in der `tags:`-Zeile.
+
 ## [0.13.0] — 2026-07-10
 
 ### Hinzugefügt — Gateway als Container-Abbild

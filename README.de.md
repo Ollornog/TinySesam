@@ -63,7 +63,7 @@ Direkt von GitHub (nicht auf PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
 pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.13.0
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.13.1
 ```
 
 ## Quickstart
@@ -287,7 +287,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.13.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.13.1
 ```
 
 Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
@@ -298,7 +298,7 @@ Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256
 installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.0/tinysesam-0.13.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.1/tinysesam-0.13.1-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -306,7 +306,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.13.0
+ghcr.io/ollornog/tinysesam:v0.13.1
 ```
 
 Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen

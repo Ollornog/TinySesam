@@ -215,6 +215,11 @@ rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
 assert "linux/amd64,linux/arm64" in rel, "Abbild ist nicht multi-arch"
 assert ":latest" not in rel, "ein wandernder `latest`-Tag gehört nicht ins Release"
+# Registries verlangen kleingeschriebene Namen; `github.repository_owner` liefert die
+# Schreibweise des Kontos und brach den Build ab („repository name must be lowercase").
+for line in rel.splitlines():
+    if line.strip().startswith("tags:") and "ghcr.io" in line:
+        assert "repository_owner" not in line, "Abbild-Tag nutzt die Groß-/Kleinschreibung des Kontos"
 
 # Das Abbild darf keinen Weg zum Nachladen von Code enthalten — sonst käme das Selbst-Update
 # durch die Hintertür zurück. Und es läuft nicht als root.
