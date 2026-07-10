@@ -1,6 +1,6 @@
-# Contributing
+<h1 align="center">Contributing</h1>
 
-*[Deutsche Fassung](CONTRIBUTING.de.md)*
+<p align="center"><b>English</b> · <a href="CONTRIBUTING.de.md">Deutsch</a></p>
 
 Thanks for taking the time. TinySesam is an authentication library — a small surface that other
 projects trust with their front door. A change that keeps that surface small and obvious is usually

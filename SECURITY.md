@@ -1,26 +1,28 @@
-# Sicherheit
+<h1 align="center">Security</h1>
 
-## Schwachstellen melden
+<p align="center"><b>English</b> · <a href="SECURITY.de.md">Deutsch</a></p>
 
-Bitte Sicherheitslücken **nicht** über öffentliche Issues melden, sondern privat über die
-**GitHub Security Advisories** dieses Repos (Reiter *Security* → *Report a vulnerability*).
-Ich bemühe mich um eine erste Rückmeldung innerhalb weniger Tage.
+## Reporting a vulnerability
 
-## Status / Umfang
+Please do **not** report security issues via public issues. Report them privately through this repo's
+**GitHub Security Advisories** (the *Security* tab → *Report a vulnerability*).
+I aim to give a first response within a few days.
 
-TinySesam ist ein selbst gebautes Auth-Modul und **nicht extern auditiert**. Es setzt bewusst auf
-etablierte Bausteine (argon2id/scrypt für Passwörter & PINs, server-seitige revozierbare Sessions,
-`SameSite`/`HttpOnly`/`Secure`-Cookies, OIDC-ID-Token gegen JWKS + `iss`/`aud`/`exp`/`nonce`,
-WebAuthn mit `sign_count`-Klon-Erkennung, sha256-gehashte Einmal-/API-Tokens, Brute-Force-Lockout +
-Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Einsatz selbst prüfen.
+## Status / scope
 
-## Betriebshinweise (wichtig)
+TinySesam is a self-built auth module and **not externally audited**. It deliberately relies on
+established building blocks (argon2id/scrypt for passwords & PINs, server-side revocable sessions,
+`SameSite`/`HttpOnly`/`Secure` cookies, OIDC ID tokens against JWKS + `iss`/`aud`/`exp`/`nonce`,
+WebAuthn with `sign_count` clone detection, sha256-hashed one-time/API tokens, brute-force lockout +
+rate limit, open-redirect protection via `safe_next`). Even so: review it yourself before production use.
 
-- **Immer hinter HTTPS** betreiben; `rp_id`/`origin` müssen exakt zur Domain passen.
-- Echte Client-IP nur hinter vertrauenswürdigem Proxy (`trusted_proxies`), sonst ist `X-Forwarded-For` fälschbar.
-- `trusted_redirect_hosts` nur auf tatsächlich eigene Hosts setzen (Open-Redirect/Forward-Auth).
-- Secrets (OIDC-Client-Secret, SMTP-Passwort) über Umgebung/Secret-Store, nicht im Code.
+## Operating notes (important)
 
-## Unterstützte Versionen
+- **Always run behind HTTPS**; `rp_id`/`origin` must match the domain exactly.
+- Trust the real client IP only behind a trusted proxy (`trusted_proxies`), otherwise `X-Forwarded-For` is forgeable.
+- Set `trusted_redirect_hosts` only to hosts you actually own (open redirect / forward auth).
+- Keep secrets (OIDC client secret, SMTP password) in the environment / a secret store, not in code.
 
-Sicherheitsfixes landen auf der jeweils neuesten Minor-Version (aktuell `0.5.x`).
+## Supported versions
+
+Security fixes land on the latest minor version (currently `0.5.x`).
