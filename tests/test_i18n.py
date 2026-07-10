@@ -62,4 +62,36 @@ assert auth.t("login.password") == "Password"           # nicht übersetzt → e
 ok("add_messages: eigene Sprache ergänzen (Rest fällt auf en zurück)")
 os.remove(db)
 
+# ---------- Die Tabellen sind vollständig ----------
+# Ein fehlender de-Schlüssel fiele stumm auf Englisch zurück: die Seite wirkt übersetzt,
+# einzelne Wörter sind es nicht. Genau so blieb das Admin-Panel bis 0.13.1 unbemerkt deutsch.
+from tinysesam.messages import MESSAGES                                     # noqa: E402
+en, de = set(MESSAGES["en"]), set(MESSAGES["de"])
+assert not en - de, f"nur auf Englisch: {sorted(en - de)}"
+assert not de - en, f"nur auf Deutsch: {sorted(de - en)}"
+assert all(v.strip() for v in MESSAGES["de"].values()), "leere Übersetzung"
+ok(f"en/de decken dieselben {len(en)} Schlüssel ab")
+
+# ---------- Das Admin-Panel übersetzt sich mit ----------
+from tinysesam.admin import panel_texts, render_panel                        # noqa: E402
+db, auth, c = build(lang="en")
+assert set(panel_texts(auth)) >= {"tab.users", "hardening", "cancel", "logout", "locale"}
+for lang, want, nope in (("en", "Hardening", "Härtung"), ("de", "Härtung", "Hardening")):
+    auth.cfg.lang = lang
+    html = render_panel(auth, "/auth/admin")
+    assert f"lang={lang}" in html, lang
+    assert want in html and nope not in html, (lang, want, nope)
+    # `toLocaleString()` folgt der Sprache, sonst steht ein englisches Datum im deutschen Panel.
+    assert ("en-GB" if lang == "en" else "de-DE") in html, lang
+
+# Eigene Übersetzungen greifen auch im Panel — und `</script>` darf es nicht zerlegen.
+auth.cfg.lang = "en"
+auth.add_messages("en", {"admin.tab.users": "Accounts", "admin.save": "</script>x"})
+html = render_panel(auth, "/auth/admin")
+assert "Accounts" in html
+assert html.count("</script>") == 1, "eigene Übersetzung darf den Skriptblock nicht beenden"
+assert "\\u003c/script>x" in html
+ok("Admin-Panel: de/en, Locale, add_messages, `<` maskiert")
+os.remove(db)
+
 print("\nI18N OK ✅")

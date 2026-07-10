@@ -161,12 +161,13 @@ with tempfile.TemporaryDirectory() as tmp:
     assert have == sorted([".nojekyll", "demo", "demo.html", "flows.html", "index.html",
                            "legal.html", "theme.css", "wizard.png"]), have
 
-    # Die Vorschauen der Demo-Seite: je Sprache eine für Login und Konto, das Admin-Panel
-    # einmal (es ist nicht übersetzt, s. web/demo.py). Dazu die Attrappen-API als Dateien.
+    # Die Vorschauen der Demo-Seite: jedes Panel je Sprache — alle drei sprechen `cfg.lang`.
+    # Dazu die Attrappen-API als Dateien.
     demo = sorted(os.listdir(os.path.join(tmp, "demo")))
-    assert demo == sorted(["adminapi", "admin.html",
+    assert demo == sorted(["adminapi",
                            "login.en.html", "login.de.html",
-                           "account.en.html", "account.de.html"]), demo
+                           "account.en.html", "account.de.html",
+                           "admin.en.html", "admin.de.html"]), demo
 
     api = os.path.join(tmp, "demo", "adminapi", "api")
     assert sorted(os.listdir(api)) == sorted(["users", "sessions", "security", "audit",
@@ -179,12 +180,25 @@ with tempfile.TemporaryDirectory() as tmp:
     assert version["version"] == TS_VERSION, "das Panel zeigt die gebaute Version"
 
     # Die Panels sind echte Seiten, aber gesperrt — und die Demo-Seite bindet genau sie ein.
-    admin = open(os.path.join(tmp, "demo", "admin.html"), encoding="utf-8").read()
-    assert "pointer-events:none" in admin, "Vorschau muss read-only sein"
-    login = open(os.path.join(tmp, "demo", "login.en.html"), encoding="utf-8").read()
-    assert "pointer-events:none" in login and "<form" in login
+    def panel(name):
+        return open(os.path.join(tmp, "demo", name), encoding="utf-8").read()
+
+    for name in ("admin.en.html", "admin.de.html", "login.en.html", "account.de.html"):
+        assert "pointer-events:none" in panel(name), f"{name} muss read-only sein"
+    assert "<form" in panel("login.en.html")
+
+    # Jedes Panel spricht die Sprache seiner Datei — auch das Admin-Panel.
+    for name, lang, want, nope in (("admin.en.html", "en", "Hardening", "Härtung"),
+                                   ("admin.de.html", "de", "Härtung", "Hardening"),
+                                   ("login.en.html", "en", "Sign in", "Anmelden"),
+                                   ("login.de.html", "de", "Anmelden", "Sign in")):
+        html = panel(name)
+        assert f"lang={lang}" in html or f'lang="{lang}"' in html, name
+        assert want in html and nope not in html, (name, want, nope)
+
     page = open(os.path.join(tmp, "demo.html"), encoding="utf-8").read()
-    for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.html"):
+    for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.en.html",
+                "demo/admin.de.html"):
         assert f"src='{src}'" in page, src
     # Auf Pages läuft nichts — ein „Öffnen"-Knopf hätte kein Ziel.
     assert "/auth/login" not in page, "die gebaute Seite verlinkt keine laufende App"
