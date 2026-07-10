@@ -58,7 +58,8 @@
     "github\\.com",
     "keepachangelog\\.com",
     "semver\\.org",
-    "www\\.w3\\.org"
+    "www\\.w3\\.org",
+    "contributor-covenant\\.org"
   ],
   "geheimnis_muster": [
     "ghp_[A-Za-z0-9]{20,}",
