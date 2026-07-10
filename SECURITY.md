@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="48" height="48"></p>
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
 
 <h1 align="center">Security</h1>
 
-<p align="center"><b>English</b> · <a href="SECURITY.de.md">Deutsch</a></p>
+<p align="center"><b>English</b> · <a href="i18n/SECURITY.de.md">Deutsch</a></p>
 
 ## Reporting a vulnerability
 

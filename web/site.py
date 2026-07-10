@@ -28,7 +28,7 @@ OWNER = {
     "street": "Hebbelstraße 22",
     "city": "23843 Bad Oldesloe",
     "country": "Deutschland",
-    "email": "tinysesam@ollornog.de",
+    "email": "tinysesam-github@ollornog.de",
 }
 
 # Für welche Adresse gilt dieses Impressum? Nur für die offizielle Projektseite. Wer den Code
