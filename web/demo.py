@@ -227,11 +227,9 @@ def demo_body(lang: str, *, src: dict, open_urls: dict | None = None, lead: str 
     return f"<h1>{t['demo_h1']}</h1><p class=lead>{lead}</p><hr class=rule>{panels}{FIT_JS}"
 
 
-#: Das Admin-Panel ist **nicht übersetzt** — `tinysesam/admin.py` trägt sein Deutsch fest im
-#: Template (`<html lang=de>`, Reiter „Benutzer/Sitzungen/Härtung/Audit"). Zwei Sprachfassungen
-#: wären Byte für Byte gleich, also wird es einmal gebaut. Sobald das Panel `auth.t()` benutzt,
-#: gehört es hier in `PER_LANG`. Siehe TODO.md.
-PER_LANG = ("login", "account")
+#: Alle Panels sprechen `cfg.lang`, also bekommt jedes je Sprache eine Datei. (Bis 0.13.1 trug
+#: das Admin-Panel sein Deutsch fest im Template und wurde deshalb nur einmal gebaut.)
+PER_LANG = ("login", "account", "admin")
 
 
 def static_src(lang: str) -> dict[str, str]:

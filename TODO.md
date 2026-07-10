@@ -28,14 +28,6 @@
   `DevToolsActivePort` im Profilverzeichnis lesen. (Aus dem DashMyBoard-Bau; dort bewährt.)
 
 ### Funktion
-- **Das Admin-Panel ist nicht übersetzt.** `tinysesam/admin.py` trägt sein Deutsch fest im
-  Template: `<html lang=de>`, die Reiter „Benutzer / Sitzungen / Härtung / Audit", alle
-  Feldbeschriftungen. `cfg.lang="en"` ändert daran nichts. Login-, Konto- und Fehlerseiten
-  gehen längst über `auth.t()` — das Panel ist der letzte Rest. Sichtbar geworden, als die
-  gebaute Demo-Seite (`web/demo.py`) auf der englischen Fassung ein deutsches Panel zeigte;
-  sie baut es deshalb bewusst nur **einmal** statt zweimal identisch (`PER_LANG`).
-  **Wenn behoben:** `"admin"` in `web/demo.py: PER_LANG` aufnehmen, dann entsteht je Sprache eine
-  Datei, und `tests/test_site.py` erwartet `admin.en.html`/`admin.de.html`.
 - **End-to-End-Test gegen einen echten Identity Provider** — der größte verbliebene blinde Fleck.
   Passkey/WebAuthn, OIDC und SAML sind bisher nur **struktur-getestet**: Die Ceremony gegen einen
   echten Browser auf einer echten HTTPS-Domain, gegen einen echten IdP, hat nie stattgefunden.

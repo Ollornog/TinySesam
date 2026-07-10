@@ -229,9 +229,38 @@ def build_admin_router(auth) -> APIRouter:
     return ar
 
 
+#: Alle Texte des Panels. Das Panel baut seine Oberfläche im Browser, deshalb reisen sie als
+#: JSON mit (`const L`) statt in den Vorlagentext eingesetzt zu werden. Ein Schlüssel je Eintrag,
+#: übersetzt über `auth.t()` — dieselbe Tabelle wie Login-, Konto- und Fehlerseite.
+_KEYS = (
+    "locale app tab.users tab.sessions tab.security tab.audit new_user create save saved "
+    "f.username f.email f.email_optional f.password f.roles f.admin f.service "
+    "f.key_name f.key_expires "
+    "th.user th.email th.type th.roles th.status th.actions th.method th.ip th.since th.mfa "
+    "th.time th.event th.detail "
+    "active disabled revoked enable disable btn.pw btn.roles btn.keys "
+    "err.email err.generic confirm.disable confirm.enable confirm.revoke "
+    "prompt.pw pw_set roles_groups no_roles api_keys create_key last_used expires "
+    "never_expires revoke key_once end_session hardening version installed update_note"
+).split()
+
+
+def panel_texts(auth) -> dict:
+    """Die Panel-Texte in der Sprache der laufenden Config. `cancel`/`logout` teilen sich alle
+    Seiten, deshalb tragen sie keinen `admin.`-Vorsatz."""
+    texts = {k: auth.t(f"admin.{k}") for k in _KEYS}
+    texts["cancel"] = auth.t("cancel")
+    texts["logout"] = auth.t("logout")
+    return texts
+
+
 def render_panel(auth, base: str, warn: str = "") -> str:
     """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
-    damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel."""
+    damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel.
+
+    Die Sprache kommt aus `cfg.lang`, wie bei jeder anderen eingebauten Seite. Wer sie pro
+    Anfrage umschaltet (`?lang=`), bekommt das Panel übersetzt mitgeliefert.
+    """
     cfg = auth.cfg
     return (_PAGE.replace("__TOKENS__", TOKENS)
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
@@ -243,10 +272,16 @@ def render_panel(auth, base: str, warn: str = "") -> str:
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
+            .replace("__LANG__", cfg.lang)
+            # `ensure_ascii=False`: die Seite ist UTF-8, „Härtung" gehört als „Härtung" hinein,
+            # nicht als `Härtung`. Nur `<` wird maskiert — eine eigene Übersetzung
+            # (`add_messages`) mit "</script>" beendete sonst den Skriptblock.
+            .replace("__I18N__",
+                     json.dumps(panel_texts(auth), ensure_ascii=False).replace("<", "\\u003c"))
             .replace("__BRANDCSS__", getattr(cfg, "brand_css", "") or ""))
 
 
-_PAGE = r"""<!doctype html><html lang=de><head><meta charset=utf-8>
+_PAGE = r"""<!doctype html><html lang=__LANG__><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">__ICON__<title>__RP__ — Admin</title>
 <style>
 __TOKENS__
@@ -293,60 +328,63 @@ __BRANDCSS__
 __HEADER__
 <div class=tsadmin>
 __WARN__
-<header><h1>🧠 __RP__ · Admin</h1><a href="/">← App</a><a href="/auth/logout">Logout</a></header>
+<header><h1>🧠 __RP__ · Admin</h1><a href="/" id=applink>← App</a><a href="/auth/logout" id=outlink>Logout</a></header>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 <script>
 const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
 const ROLES=__ROLES__;                                 // bekannte Rollen/Gruppen (config.available_roles)
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (E-Mail Pflicht)
-const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["audit","Audit"]];
+const L=__I18N__;                                      // Texte in config.lang — siehe messages.py
+document.getElementById("applink").textContent="← "+L.app;
+document.getElementById("outlink").textContent=L.logout;
+const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",L["tab.security"]],["audit",L["tab.audit"]]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
 const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
 const esc=s=>(s??"").toString().replace(/</g,"&lt;");
-const dt=t=>t?new Date(t*1000).toLocaleString("de-DE"):"—";
-function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${l}</div>`).join("")}
+const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
+function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${esc(l)}</div>`).join("")}
 function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
   const us=await g("/api/users");
-  V(`<div class=card><h2>Neuer Benutzer / Service-Account</h2><div class=row>
-    <input id=nu placeholder=Benutzername><input id=ne type=email placeholder="E-Mail${REQMAIL?'':' (optional)'}">
-    <input id=np type=password placeholder="Passwort (leer=nur SSO/Key)">
-    <input id=nr placeholder="Rollen, komma-getrennt" style=width:200px>
-    <label><input type=checkbox id=na> Admin</label><label><input type=checkbox id=ns> Service/Daemon</label>
-    <button onclick=mkuser()>Anlegen</button></div></div>
-    <table><tr><th>User</th><th>E-Mail</th><th>Typ</th><th>Rollen</th><th>Status</th><th>Aktionen</th></tr>`+
+  V(`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
+    <input id=nu placeholder="${esc(L["f.username"])}"><input id=ne type=email placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
+    <input id=np type=password placeholder="${esc(L["f.password"])}">
+    <input id=nr placeholder="${esc(L["f.roles"])}" style=width:200px>
+    <label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>
+    <button onclick=mkuser()>${esc(L.create)}</button></div></div>
+    <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
       <td>${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
-      <td>${u.disabled?'<span class="badge red">gesperrt</span>':'<span class="badge grn">aktiv</span>'}</td>
+      <td>${u.disabled?`<span class="badge red">${esc(L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
-        <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${u.disabled?'Entsperren':'Sperren'}</button>
-        <button class=sec onclick="pw(${u.id})">PW</button>
-        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}',${u.is_admin?1:0})">Rollen</button>
-        <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">Keys</button>
+        <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${esc(u.disabled?L.enable:L.disable)}</button>
+        <button class=sec onclick="pw(${u.id})">${esc(L["btn.pw"])}</button>
+        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}',${u.is_admin?1:0})">${esc(L["btn.roles"])}</button>
+        <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">${esc(L["btn.keys"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
-  if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert("E-Mail nötig");
-  const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||"Fehler")}
-async function dis(id,d){if(!confirm(d?"Zugang sperren?":"Entsperren?"))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
-async function pw(id){const v=prompt("Neues Passwort:");if(v)await p(`/api/users/${id}/password`,{password:v})&&alert("gesetzt")}
+  if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
+  const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||L["err.generic"])}
+async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
+async function pw(id){const v=prompt(L["prompt.pw"]);if(v)await p(`/api/users/${id}/password`,{password:v})&&alert(L.pw_set)}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
     ? ROLES.map(r=>`<label style="margin-right:12px"><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
-    : `<input id="rf${id}" value="${esc(cur)}" placeholder="Rollen, komma-getrennt" style=width:280px>`;
-  document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>Rollen / Gruppen</h2>
-    <div class=row>${inner||"<span class=muted>keine Rollen definiert</span>"}</div>
-    <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> Admin</label>
-      <button onclick="saveroles(${id})">Speichern</button>
-      <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">Abbrechen</button></div></div></td>`;
+    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" style=width:280px>`;
+  document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.roles_groups)}</h2>
+    <div class=row>${inner||`<span class=muted>${esc(L.no_roles)}</span>`}</div>
+    <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>
+      <button onclick="saveroles(${id})">${esc(L.save)}</button>
+      <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">${esc(L.cancel)}</button></div></div></td>`;
 }
 async function saveroles(id){
   const roles = ROLES.length
@@ -355,34 +393,33 @@ async function saveroles(id){
   await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked});users();
 }
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
-  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>API-Keys · ${esc(name)}</h2>
-    <div class=row><input id=kn placeholder="Key-Name"><input id=ke type=number placeholder="Ablauf Tage (leer=nie)" style=width:150px>
-    <button onclick="mkkey(${id})">Key erzeugen</button></div>
-    <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?'<span class="badge red">widerrufen</span>':'<span class="badge grn">aktiv</span>'}</td>
-      <td>zuletzt: ${dt(k.last_used)}</td><td>${k.expires_at?'läuft ab '+dt(k.expires_at):'unbefristet'}</td>
-      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},'${esc(name)}')">Widerrufen</button>`}</td></tr>`).join("")+`</table></div></td>`}
+  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
+    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" style=width:150px>
+    <button onclick="mkkey(${id})">${esc(L.create_key)}</button></div>
+    <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
+      <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
+      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},'${esc(name)}')">${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  if(r.key)prompt("API-Key — JETZT kopieren, wird nicht erneut angezeigt:",r.key);keys(id,"")}
-async function revk(kid,uid,name){if(confirm("Key widerrufen (sperren)?")){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
+  if(r.key)prompt(L.key_once,r.key);keys(id,"")}
+async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
-  V(`<table><tr><th>User</th><th>Methode</th><th>IP</th><th>seit</th><th>2FA</th><th></th></tr>`+
+  V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
-      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs('${s.full}')">Beenden</button></td></tr>`).join("")+`</table>`)}
+      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs('${s.full}')">${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
 async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
-  V(`<div class=card><h2>Härtung (Brute-Force / Rate-Limit)</h2>`+
+  V(`<div class=card><h2>${esc(L.hardening)}</h2>`+
     Object.entries(s).map(([k,v])=>`<div class=row><label style=width:230px>${k}</label><input id=s_${k} value=${v} type=number style=width:120px></div>`).join("")+
-    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>Speichern</button></div></div>`+
-    `<div class=card><h2>Version</h2><div class=row>Installiert: <code>${esc(v.version)}</code></div>
-     <div class=muted style=font-size:12px>TinySesam aktualisiert sich nicht selbst. Neue Version:
-     gepinnten Tag hochziehen, neu installieren, Dienst neu starten.</div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert("gespeichert")}
+    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>${esc(L.save)}</button></div></div>`+
+    `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
+     <div class=muted style=font-size:12px>${esc(L.update_note)}</div></div>`)}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert(L.saved)}
 
 
 async function audit(){const a=await g("/api/audit?limit=120");
-  V(`<table><tr><th>Zeit</th><th>Event</th><th>User</th><th>IP</th><th>Detail</th></tr>`+
+  V(`<table><tr><th>${esc(L["th.time"])}</th><th>${esc(L["th.event"])}</th><th>${esc(L["th.user"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.detail"])}</th></tr>`+
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
 tabs();users();
