@@ -1,8 +1,7 @@
 # Sicherheit
 
-<p align="left"><a href="../SECURITY.md">English</a> · <b>Deutsch</b></p>
-
-<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+<a href="../SECURITY.md">English</a> · <b>Deutsch</b>
+<br /><br />
 
 ## Schwachstellen melden
 
@@ -28,3 +27,6 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 ## Unterstützte Versionen
 
 Sicherheitsfixes landen auf der jeweils neuesten Minor-Version (aktuell `0.5.x`).
+
+<br /><br />
+<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
