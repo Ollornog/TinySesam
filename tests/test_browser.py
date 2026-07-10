@@ -32,12 +32,17 @@ if not CHROME:
 
 
 def free_port() -> int:
+    """Nur für den Testserver: er bindet sofort danach.
+
+    Für Chrome taugt das nicht — zwischen Schließen und Start kann ein anderer Prozess
+    den Port nehmen. Chrome wählt ihn deshalb selbst (siehe _cdp_port).
+    """
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
-APP_PORT, CDP_PORT = free_port(), free_port()
+APP_PORT = free_port()
 BASE = f"http://127.0.0.1:{APP_PORT}"
 
 # Eigene DB, damit ein laufendes Demo-Showcase nicht dazwischenfunkt
@@ -67,7 +72,7 @@ _chrome = subprocess.Popen(
     # --disable-dev-shm-usage: CI-Container haben ein winziges /dev/shm, sonst stirbt der Renderer.
     [CHROME, "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
      "--window-size=1280,900", f"--user-data-dir={_profile}",
-     f"--remote-debugging-port={CDP_PORT}", "about:blank"],
+     "--remote-debugging-port=0", "about:blank"],
     stdout=_chrome_log, stderr=subprocess.STDOUT)
 
 # Auf einem kalten CI-Runner braucht der erste Chrome-Start regelmäßig länger als
@@ -85,7 +90,14 @@ def _chrome_output():
         return "(keine Ausgabe)"
 
 
-def _ws_url():
+def _cdp_port():
+    """Chrome wählt den Port selbst und schreibt ihn ins Profil.
+
+    Ein vorab reservierter Port ist ein Wettlauf: zwischen dem Schließen des Probe-Sockets
+    und dem Start von Chrome kann ihn ein anderer Prozess belegen. Auf einem CI-Runner mit
+    parallelen Jobs ist das kein Gedankenspiel.
+    """
+    port_file = os.path.join(_profile, "DevToolsActivePort")
     deadline = time.time() + CHROME_START_TIMEOUT
     while time.time() < deadline:
         if _chrome.poll() is not None:
@@ -93,12 +105,33 @@ def _ws_url():
                 f"Chrome ist beim Start gestorben (Exit {_chrome.returncode}).\n"
                 f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
         try:
-            tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{CDP_PORT}/json"))
+            with open(port_file, encoding="utf-8", errors="replace") as fh:
+                erste = fh.readline().strip()
+            if erste.isdigit():
+                return int(erste)
+        except OSError:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"Chrome schrieb keinen DevTools-Port (nach {CHROME_START_TIMEOUT:.0f}s).\n"
+        f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+
+
+def _ws_url():
+    port = _cdp_port()
+    deadline = time.time() + CHROME_START_TIMEOUT
+    while time.time() < deadline:
+        if _chrome.poll() is not None:
+            raise RuntimeError(
+                f"Chrome ist beim Start gestorben (Exit {_chrome.returncode}).\n"
+                f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
+        try:
+            tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
             return [t for t in tabs if t["type"] == "page"][0]["webSocketDebuggerUrl"]
         except Exception:
             time.sleep(0.1)
     raise RuntimeError(
-        f"Chrome antwortet nicht (nach {CHROME_START_TIMEOUT:.0f}s auf Port {CDP_PORT}).\n"
+        f"Chrome antwortet nicht (nach {CHROME_START_TIMEOUT:.0f}s auf Port {port}).\n"
         f"--- Chrome-Ausgabe ---\n{_chrome_output()}")
 
 
