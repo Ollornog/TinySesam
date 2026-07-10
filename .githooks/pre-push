@@ -54,7 +54,8 @@ run_native_with_residue_check() {
         path="${line:3}"
         skip=0
         for pat in ${allow[@]+"${allow[@]}"}; do
-            # shellcheck disable=SC2053  -- Glob-Vergleich ist gewollt
+            # Glob-Vergleich ist hier gewollt (Muster aus .ci-allow-dirty).
+            # shellcheck disable=SC2053
             [[ "$path" == $pat ]] && { skip=1; break; }
         done
         [[ $skip -eq 0 ]] && leftovers+=("$line")
