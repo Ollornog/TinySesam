@@ -16,7 +16,7 @@
 
 services:
   tinysesam:
-    image: ghcr.io/ollornog/tinysesam:v0.13.1
+    image: ghcr.io/ollornog/tinysesam:v0.14.0
     # Kein `command:` nötig — der Entrypoint startet das Gateway. Es läuft als Nicht-root
     # (uid 1000) und bringt einen HEALTHCHECK auf /healthz mit.
     environment:
