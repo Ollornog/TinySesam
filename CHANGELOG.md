@@ -4,7 +4,39 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
-Nur die Projekt-Website (`web/`), keine Änderung an der Bibliothek.
+Die Projekt-Website und das Demo-Frontend. Die Bibliothek selbst ist unverändert.
+
+### Hinzugefügt — die Demo-Seite gibt es jetzt auch gebaut
+- **`demo.html` auf der Website.** GitHub Pages liefert nur Dateien aus, kein Serverprozess —
+  die Live-Demo konnte dort nie laufen, und ein Link dorthin fehlte deshalb. Jetzt rendert
+  **`web/demo.py`** die drei Vorschauen (Login, Konto, Admin-Panel) **zur Bauzeit aus der
+  Bibliothek selbst** nach `demo/*.html`; `demo.html` bindet sie wie bisher als gesperrte
+  iframes ein. Es sind dieselben Seiten wie live, nur eben schon gerendert.
+  - Gebaut wird gegen eine **In-Memory-Datenbank** (`db_path=":memory:"`): kein temporäres
+    File, nichts aufzuräumen, kein Konto angelegt. Was das Admin-Panel zeigt, sind die
+    hartkodierten Beispieldaten aus `MOCK` — die es per `fetch` aus daneben abgelegten
+    JSON-Dateien holt, genau wie live aus der Attrappen-Route.
+  - **`web/demo.py` ist die einzige Quelle** für Config, Beispieldaten, Panel-Texte und
+    Rahmen-CSS. `examples/showcase.py` benutzt sie ebenfalls, statt sie zu duplizieren.
+    Vorher lagen dieselben Sätze und dieselbe Config an zwei Stellen — und liefen
+    auseinander: die Attrappen-API meldete hartkodiert Version `0.12.0`.
+  - `pages.yml` installiert dafür die Bibliothek (`pip install .`) und baut die Seite auch
+    dann neu, wenn sich `tinysesam/**` ändert — die Panels sind ja ihr Abbild.
+
+### Geändert
+- **Der Kopierknopf steht in einer eigenen Zeile im Codeblock**, oben rechts, statt über dem
+  Code zu schweben. Rahmen und Hintergrund sitzen dafür auf `.cw` statt auf `.code`;
+  `overflow-x` bleibt beim Code, damit eine lange Zeile den Knopf nicht mit wegscrollt.
+- **Die Extras-Liste hat eine einheitliche Schriftgröße.** `code` schrumpft global auf `.86em`,
+  die Beschreibung daneben nicht — nebeneinander sah das ungleich aus. Beide stehen jetzt auf
+  der kleineren Größe, wie die Sätze darüber und darunter.
+- **Auch die Live-Demo startet auf Englisch.** `lang_of()` fiel auf `"de"` zurück, die Website
+  längst nicht mehr.
+
+### Bekannt
+- **Das Admin-Panel ist nicht übersetzt** (`tinysesam/admin.py` trägt sein Deutsch fest im
+  Template). Auf der englischen Demo-Seite steht deshalb ein deutsches Panel. Die gebaute Seite
+  legt es folgerichtig nur **einmal** an statt zweimal identisch. Siehe `TODO.md`.
 
 ### Behoben
 - **Die Website war offline (404).** Nicht der Baujob war schuld, sondern das Ziel: Die

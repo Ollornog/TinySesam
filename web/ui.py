@@ -349,20 +349,22 @@ footer a{margin:0 9px}
 footer .credits{margin-top:14px;font-size:12.5px}
 
 /* ---- Codeblock mit Kopierknopf ---- */
-/* Farben aus theme.css: hell im hellen Thema, dunkel im dunklen. Der Knopf sitzt im Block,
-   deshalb rechts so viel Polster, dass er keine Codezeile verdeckt. */
-.cw{position:relative}
+/* Farben aus theme.css: hell im hellen Thema, dunkel im dunklen. Kasten und Rahmen sitzen auf
+   `.cw`, nicht auf `.code` — so steht der Knopf in einer eigenen Zeile INNERHALB des Blocks,
+   oben rechts, und verdeckt trotzdem keine Codezeile. `overflow-x` bleibt beim Code, damit
+   langes Kopieren den Knopf nicht mit wegscrollt. */
+.cw{display:flex;flex-direction:column;gap:6px;background:var(--code-bg);color:var(--code-fg);
+  border:1px solid var(--code-line);border-radius:12px;padding:10px 12px 16px}
 /* `white-space:pre` ist Pflicht: sonst kollabieren die Zeilenumbrüche im Quelltext zu Leerzeichen
    — und `innerText` gäbe dem Kopierknopf eine einzige endlose Zeile. */
-.cw .code{background:var(--code-bg);color:var(--code-fg);border:1px solid var(--code-line);
-  border-radius:12px;padding:16px 56px 16px 18px;overflow-x:auto;white-space:pre;
+.cw .code{padding:0 6px;overflow-x:auto;white-space:pre;
   font-family:var(--ts-mono);font-size:13.5px;line-height:1.7}
 .cw .code .c{color:var(--code-com)}
 .cw .code .k{color:var(--code-key)}
 .cw .code .s{color:var(--code-str)}
-.cw .copy{position:absolute;top:10px;right:10px;display:inline-flex;align-items:center;
+.cw .copy{align-self:flex-end;display:inline-flex;align-items:center;
   justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--code-line);
-  border-radius:8px;background:var(--code-bg);color:var(--muted);cursor:pointer;opacity:.65;
+  border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;opacity:.8;
   transition:opacity .15s ease,color .15s ease,border-color .15s ease}
 .cw:hover .copy,.cw .copy:focus-visible{opacity:1}
 .cw .copy:hover{color:var(--ink);border-color:var(--accent)}

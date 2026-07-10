@@ -13,17 +13,16 @@ Die Demo rendert dieselben Funktionen zur Laufzeit — sie braucht keine gebaute
 Hier stehen nur **Texte und Seiteninhalt**. Kopf, Navigation und Fußzeile kommen aus `web/ui.py`,
 damit Website, Demo und die eingebauten TinySesam-Seiten denselben Rumpf tragen.
 """
+from .demo import DEMO_CSS, demo_body, static_src
 from .flows import CSS as FLOW_CSS, render as render_flow_list
 from .ui import Ctx, Labels, Nav, LANGS, codeblock, icon, shell, static_document
 
 REPO = "https://github.com/Ollornog/TinySesam"
 
-INDEX, FLOWS, LEGAL = "index.html", "flows.html", "legal.html"
+INDEX, FLOWS, LEGAL, DEMO = "index.html", "flows.html", "legal.html", "demo.html"
 
-# ────────────────────────────────────────────────────────────────────────────────
-# HIER DEINE DATEN EINTRAGEN. Ohne sie ist das Impressum wertlos.
-# § 5 DDG (seit 14.05.2025, löste § 5 TMG ab) verlangt Name, ladungsfähige Anschrift
-# und einen schnellen elektronischen Kontakt.
+# Anbieterkennzeichnung der Projektseite. § 5 DDG (seit 14.05.2025, löste § 5 TMG ab) verlangt
+# Name, ladungsfähige Anschrift und einen schnellen elektronischen Kontakt.
 OWNER = {
     "name": "Daniel Brunthaler",
     "street": "Hebbelstraße 22",
@@ -151,6 +150,10 @@ T = {
                        "operators; at the time of linking nothing unlawful was apparent.",
         "credits": '<a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">'
                    'Wizard icons created by max.icons — Flaticon</a>',
+        # Demo-Seite
+        "demo_title": "TinySesam — demo",
+        "demo_desc": "The login page, the account page and the admin panel of TinySesam, "
+                     "rendered from the library itself.",
         # Flow-Seite
         "flows_title": "TinySesam — sign-in flows",
         "flows_desc": "Every TinySesam sign-in flow as a diagram: password, PIN, TOTP, step-up, "
@@ -162,7 +165,7 @@ T = {
         "flows_outro": ('Curious how it feels? The showcase in '
                         f'<a href="{REPO}/blob/main/examples/showcase.py"><code>examples/showcase.py</code></a> '
                         'renders these same diagrams — but marks what its own config actually has on.'),
-        "nav_overview": "Overview", "nav_flows": "Sign-in flows",
+        "nav_overview": "Overview", "nav_flows": "Sign-in flows", "nav_demo": "Demo",
         "l_account": "Account", "l_admin": "Admin panel", "l_logout": "Sign out",
         "l_login": "Sign in", "l_register": "Register", "l_light": "Light", "l_dark": "Dark",
     },
@@ -280,6 +283,9 @@ T = {
                        "verantwortlich; zum Zeitpunkt der Verlinkung war nichts Rechtswidriges erkennbar.",
         "credits": '<a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">'
                    'Wizard icons created by max.icons — Flaticon</a>',
+        "demo_title": "TinySesam — Demo",
+        "demo_desc": "Die Anmeldeseite, die Konto-Seite und das Admin-Panel von TinySesam, "
+                     "gerendert aus der Bibliothek selbst.",
         "flows_title": "TinySesam — Login-Flows",
         "flows_desc": "Jeder Login-Weg von TinySesam als Diagramm: Passwort, PIN, TOTP, Step-up, "
                       "Faktor-Ketten, geteilte Geheimnisse, Magic-Link, OIDC/SAML und Forward-Auth.",
@@ -290,7 +296,7 @@ T = {
         "flows_outro": ('Wie fühlt sich das an? Das Showcase in '
                         f'<a href="{REPO}/blob/main/examples/showcase.py"><code>examples/showcase.py</code></a> '
                         'rendert dieselben Diagramme — markiert dort aber, was seine eigene Config anhat.'),
-        "nav_overview": "Überblick", "nav_flows": "Login-Flows",
+        "nav_overview": "Überblick", "nav_flows": "Login-Flows", "nav_demo": "Demo",
         "l_account": "Konto", "l_admin": "Admin-Panel", "l_logout": "Abmelden",
         "l_login": "Anmelden", "l_register": "Registrieren", "l_light": "Hell", "l_dark": "Dunkel",
     },
@@ -311,7 +317,8 @@ LABELS = {
 def site_nav(lang: str) -> Nav:
     t = T[lang]
     return Nav(brand_href=INDEX, icon_url="wizard.png", repo=REPO, flows_href=FLOWS,
-               legal_href=LEGAL, pages=((INDEX, t["nav_overview"]), (FLOWS, t["nav_flows"])))
+               legal_href=LEGAL,
+               pages=((INDEX, t["nav_overview"]), (DEMO, t["nav_demo"]), (FLOWS, t["nav_flows"])))
 
 
 def site_ctx(page: str, lang: str, **kw) -> Ctx:
@@ -352,10 +359,12 @@ INDEX_CSS = """
   .solves span{color:var(--muted)}
   /* Grid auf der Liste, `li{display:contents}` — sonst ist jedes li sein eigenes Raster
      und die Beschreibungen fluchten nicht. */
+  /* Eine Schriftgröße für den ganzen Block: `code` schrumpft global auf .86em, die Beschreibung
+     nicht — nebeneinander sähen sie ungleich aus. Beide auf die kleinere Größe (wie `.note`). */
   .extras{list-style:none;padding:0;margin:12px 0;display:grid;
-          grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:15px}
+          grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:13.5px}
   .extras li{display:contents}
-  .extras code{justify-self:start}
+  .extras code{justify-self:start;font-size:1em}
   .extras span{color:var(--muted)}
   .feat{display:grid;grid-template-columns:1fr 1fr;gap:14px 26px}
   .feat div{font-size:15px}
@@ -491,12 +500,18 @@ def render_legal(lang: str, ctx: Ctx, nav: Nav) -> str:
     return shell(ctx, nav, legal_body(lang))
 
 
+def demo_page_body(lang: str) -> str:
+    """Die Demo-Seite, statisch: die Frames zeigen auf die zur Bauzeit gerenderten Panels."""
+    return demo_body(lang, src=static_src(lang))
+
+
 def build_pages() -> dict:
-    """Zwei Dateien, beide zweisprachig. Die Sprache wählt `?lang=`/Cookie — nicht der Dateiname."""
+    """Vier Dateien, alle zweisprachig. Die Sprache wählt `?lang=`/Cookie — nicht der Dateiname."""
     nav = site_nav(LANGS[0])
     out = {}
     for name, page, css, body_of, title_key, desc_key in (
             (INDEX, "index", INDEX_CSS, lambda l: index_body(l, nav), "title", "desc"),
+            (DEMO, "demo", _FLOWS_CSS + DEMO_CSS, demo_page_body, "demo_title", "demo_desc"),
             (FLOWS, "flows", _FLOWS_CSS + FLOW_CSS, flows_body, "flows_title", "flows_desc"),
             (LEGAL, "legal", LEGAL_CSS, legal_body, "legal_title", "legal_desc")):
         variants = {}
