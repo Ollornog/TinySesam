@@ -14,13 +14,21 @@
 ### Auslieferung
 - **Erstes echtes Release erzeugen:** `git tag v0.12.0 && git push --tags`. Tags gibt es seit
   `v0.2.0`, **Releases bisher keine** — also nie ein Wheel. `release.yml` baut es beim Tag-Push.
-- **PyPI: Entscheidung offen.** Ohne PyPI gibt es kein `pip install tinysesam`; wer die Bibliothek
-  nutzen will, braucht die Git-URL, und Renovate/Dependabot finden Updates nicht ohne Weiteres.
-  Mit PyPI ist der Name dauerhaft vergeben und Versionen sind unwiderruflich. Der saubere Weg wäre
-  **Trusted Publishing** (OIDC statt API-Token im Repo).
+- **PyPI: vertagt bis 1.0** (entschieden 2026-07-10). Bis dahin ist der gepinnte Git-Tag das
+  ehrlichere Artefakt: Jede PyPI-Version ist unwiderruflich, und die API bewegt sich noch —
+  0.12.0 hat gerade das Selbst-Update ersatzlos entfernt. Dazu ist ein Auth-Paket auf PyPI ein
+  Supply-Chain-Ziel: wer das Konto übernimmt, schiebt Code in fremde Anmeldevorgänge.
+  Wenn: dann mit **Trusted Publishing** (PyPI vertraut dem Workflow per OIDC, kein Token im Repo).
+  Die Namen `tinysesam` und `tiny-sesam` sind Stand 2026-07-10 beide frei.
 - **Gateway-Image** (`Dockerfile` + GHCR): nicht-root, `HEALTHCHECK`, nur das `[oidc]`-Extra.
   `[all]` zöge `python3-saml` → `libxmlsec1` und damit lange qemu-Builds für arm64.
   Bis dahin installiert `deploy/forward-auth/docker-compose.yml` den gepinnten Git-Tag.
+
+### Tests
+- **Freien Port nicht selbst suchen.** `tests/test_browser.py: free_port()` bindet einen Port,
+  schließt ihn und gibt die Nummer zurück — dazwischen kann ein anderer Prozess ihn belegen.
+  Robuster: Chrome mit `--remote-debugging-port=0` starten und die tatsächliche Nummer aus
+  `DevToolsActivePort` im Profilverzeichnis lesen. (Aus dem DashMyBoard-Bau; dort bewährt.)
 
 ### Funktion
 - **Passkey/OIDC/SAML end-to-end** gegen echte Domain und echten Provider verifizieren
