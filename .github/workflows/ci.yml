@@ -98,11 +98,8 @@ jobs:
         run: scripts/check.sh
       - name: Zweiter Lauf (muss ebenfalls grün sein)
         run: scripts/check.sh
+      # Dieselbe Prüfung, die der pre-push-Hook fährt. Vorher stand hier ein roher
+      # `git status --porcelain`, der `.ci-allow-dirty` nicht kannte — das verbindliche
+      # Gate widersprach damit dem lokalen Netz.
       - name: Baum muss unverändert sein
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Die Suite hat Rückstände hinterlassen — sie ist nicht wiederholbar."
-            git status --porcelain
-            exit 1
-          fi
-          echo "Baum sauber."
+        run: scripts/_residue_check.sh check
