@@ -1,12 +1,12 @@
-<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="104" height="104"></p>
+<p align="center"><img src="../docs/wizard.png" alt="TinySesam" width="250" height="250"></p>
 
 <h1 align="center">TinySesam</h1>
 
-<p align="center"><a href="README.md">English</a> · <b>Deutsch</b></p>
+<p align="center"><a href="../README.md">English</a> · <b>Deutsch</b></p>
 
 <p align="right">
 <a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
+<a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
 </p>
 
@@ -183,7 +183,7 @@ CSS-Variablen** — kein Selektor muss je Seite nachgebaut werden. In `brand_css
 TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#2b2a3a;--ts-accent:#b0566f}")
 ```
 
-Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](tinysesam/theme.py); `brand_head` hängt
+Die Tokens (und ihre Defaults) stehen in [`tinysesam/theme.py`](../tinysesam/theme.py); `brand_head` hängt
 zusätzliches `<head>`-Markup ein, `brand_icon` setzt das Favicon auf jeder eingebauten Seite.
 
 **Eigene Navigation und Fußzeile drumherum?** `brand_header` und `brand_footer` umschließen *jede*
@@ -254,7 +254,7 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
-  (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+  (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
 - **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in
   `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn ohne `--proxy-headers` starten.**
   Mit dem Flag ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP; TinySesams
@@ -381,11 +381,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
 - **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
 - **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
-  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik).
+  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik).
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
   `trusted_redirect_hosts`). `cookie_domain` für SSO über Subdomains.
 
-Vollständige Demo: [`examples/showcase.py`](examples/showcase.py) — `/` ist die Projekt-Website selbst,
+Vollständige Demo: [`examples/showcase.py`](../examples/showcase.py) — `/` ist die Projekt-Website selbst,
 `/demo` ein Frontend, dessen Login-/Konto-/Admin-Panels **read-only Live-Vorschauen** der echten Seiten sind (`uvicorn examples.showcase:app`).
 
 **Die Live-Demo ist ein Beispiel-Frontend, das mitgeliefert wird** — kein Bestandteil der Bibliothek
@@ -454,7 +454,7 @@ python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app
 
 Der Reverse-Proxy ruft je Request `GET /auth/forward`; alle anderen Methoden/Routen sind aus.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
-Fertiges [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (Gateway + Caddy) liegt bei.
+Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
 ## Tests & CI
 

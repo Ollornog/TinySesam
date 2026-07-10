@@ -1,8 +1,8 @@
-<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="48" height="48"></p>
+<p align="center"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
 
 <h1 align="center">Sicherheit</h1>
 
-<p align="center"><a href="SECURITY.md">English</a> · <b>Deutsch</b></p>
+<p align="center"><a href="../SECURITY.md">English</a> · <b>Deutsch</b></p>
 
 ## Schwachstellen melden
 

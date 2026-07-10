@@ -38,14 +38,14 @@ assert not fehler, fehler
 print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 
 # ---------- Pflichtdateien ----------
-PFLICHT = ["LICENSE", "SECURITY.md", "SECURITY.de.md", "CHANGELOG.md", "README.md", "README.de.md",
+PFLICHT = ["LICENSE", "SECURITY.md", "i18n/SECURITY.de.md", "CHANGELOG.md", "README.md", "i18n/README.de.md",
            "TODO.md", "tinysesam/py.typed", ".gitignore",
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
            "scripts/_residue_check.sh", "tests/_kit/hygiene.py",
            ".github/dependabot.yml",
-           "CODE_OF_CONDUCT.md", "CODE_OF_CONDUCT.de.md",
-           "CONTRIBUTING.md", "CONTRIBUTING.de.md"]
+           "CODE_OF_CONDUCT.md", "i18n/CODE_OF_CONDUCT.de.md",
+           "CONTRIBUTING.md", "i18n/CONTRIBUTING.de.md"]
 fehlend = hygiene.pruefe_pflichtdateien(ROOT, PFLICHT)
 assert not fehlend, f"Pflichtdateien fehlen: {fehlend}"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
@@ -125,16 +125,18 @@ kategorien = hygiene.pruefe_changelog_kategorien(ROOT, POLICY)
 assert not kategorien, "CHANGELOG:\n  " + "\n  ".join(kategorien[:5])
 
 # GitHub wählt die README nach ORT aus, nicht nach Sprache — eine Übersetzung veraltet still.
-uebersetzung = hygiene.pruefe_uebersetzungs_struktur(ROOT, [("README.md", "README.de.md")])
+# Die Übersetzungen liegen unter i18n/, damit GitHubs Health-File-Detektor (CODE_OF_CONDUCT,
+# SECURITY, …) die englischen Root-Dateien wählt und nicht die alphabetisch erste .de-Fassung.
+uebersetzung = hygiene.pruefe_uebersetzungs_struktur(ROOT, [("README.md", "i18n/README.de.md")])
 assert not uebersetzung, "Übersetzung weicht ab:\n  " + "\n  ".join(uebersetzung)
-print("  CHANGELOG-Kategorien gültig; README.de.md folgt der Struktur von README.md")
+print("  CHANGELOG-Kategorien gültig; i18n/README.de.md folgt der Struktur von README.md")
 
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
 # Sonst empfiehlt die Doku still eine alte Version weiter: Der Pin im Compose und die
 # `pip install`-Zeilen im README altern nicht mit, weil sie niemand ausführt.
 PINS = (re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)"),  # Git-Tag, Wheel
         re.compile(r"tinysesam:v(\d+\.\d+\.\d+)"))                                     # Abbild-Tag
-for f in ("README.md", "README.de.md", "deploy/forward-auth/docker-compose.yml"):
+for f in ("README.md", "i18n/README.de.md", "deploy/forward-auth/docker-compose.yml"):
     body = read(f)
     for pat in PINS:
         for found in pat.findall(body):
@@ -218,7 +220,7 @@ print("  check.sh + pre-push da; CI fährt Browser-, Hygiene- und Website-Test; 
 # ---------- Doku wandert mit: der Changelog kennt den aktuellen Stand ----------
 changelog = read("CHANGELOG.md")
 assert "## [Unreleased]" in changelog or f"## [{pv}]" in changelog
-for readme in ("README.md", "README.de.md"):
+for readme in ("README.md", "i18n/README.de.md"):
     body = read(readme)
     assert "tests/test_browser.py" in body, f"{readme} erklärt den Browser-Test nicht"
     assert "tests/test_repo.py" in body, f"{readme} erklärt den Hygiene-Test nicht"
