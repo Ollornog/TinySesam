@@ -63,7 +63,7 @@ Straight from GitHub (not on PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # core: password + TOTP
 pip install "tinysesam[all] @ $GH"     # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.13.1
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.14.0
 ```
 
 ## Quickstart
@@ -283,7 +283,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.13.1
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.14.0
 ```
 
 A tag can be moved. If you need immutability, pin the commit instead (`@a1b2c3d…`). Updating then
@@ -293,7 +293,7 @@ Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To 
 take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.1/tinysesam-0.13.1-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.14.0/tinysesam-0.14.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -301,7 +301,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.1/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.13.1
+ghcr.io/ollornog/tinysesam:v0.14.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
