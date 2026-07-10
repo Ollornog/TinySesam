@@ -1,0 +1,7 @@
+# Nur, was das Gateway braucht. Ein kleiner Build-Kontext ist auch ein sicherer:
+# was nicht mitkommt, kann nicht versehentlich ins Abbild geraten (Datenbanken, .env, .git).
+*
+!pyproject.toml
+!README.md
+!tinysesam/
+tinysesam/**/__pycache__/

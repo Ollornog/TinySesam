@@ -2,10 +2,25 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.13.0] — 2026-07-10
+
+### Hinzugefügt — Gateway als Container-Abbild
+- **`Dockerfile`** für das OIDC-Forward-Auth-Gateway. Mehrstufig: die Bau-Stufe installiert
+  `.[oidc]` **aus dem Build-Kontext** (nicht aus dem Netz) in ein venv, die Laufzeit-Stufe kopiert
+  nur dieses venv. Endabbild **ohne `pip` und ohne `git`**, Lauf als **Nicht-root** (uid 1000),
+  `HEALTHCHECK` auf `/healthz`, Daten unter `/data`.
+  Nur das `[oidc]`-Extra: `[all]` zöge `python3-saml` und damit `libxmlsec1` nach, das für arm64
+  unter Emulation kompiliert werden müsste — für ein Extra, das das Gateway nicht benutzt.
+- **`release.yml` baut und schiebt das Abbild** nach `ghcr.io/ollornog/tinysesam:<tag>`, für
+  `linux/amd64` und `linux/arm64`, und gibt den **Digest** aus. Bewusst **kein `latest`**: ein
+  wandernder Tag macht jeden Neustart zum Glücksspiel.
+- **`GET /healthz`** im Gateway — ohne Anmeldung, meldet Status und laufende Version. Bei
+  `https_mode=force` ist er von der HTTPS-Umleitung ausgenommen: Der Health-Check spricht den
+  Prozess von innen über HTTP an, und ein Check, der einen Redirect zurückbekommt, prüft nichts.
 
 ### Geändert
-
+- **`deploy/forward-auth/docker-compose.yml` nutzt das Abbild** statt zur Laufzeit zu installieren.
+  Kein `pip install` beim Containerstart mehr, kein `command:`. Update per `docker compose pull`.
 - Der Browser-Test lässt Chrome seinen Debug-Port selbst wählen und liest ihn aus
   `DevToolsActivePort`. Ein vorab reservierter Port war ein Wettlauf: zwischen dem
   Schließen des Probe-Sockets und dem Start von Chrome konnte ihn ein anderer Prozess
