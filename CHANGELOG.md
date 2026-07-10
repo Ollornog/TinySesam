@@ -104,6 +104,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
 ### Geändert — CI und lokale Prüfung
+- **`pre-push`: shellcheck-Direktive repariert.** `# shellcheck disable=SC2053  -- Grund` ist keine
+  gültige Direktive — der Parser bricht daran ab (`SC1072/SC1073`) und prüft **den Rest der Datei nicht
+  mehr**. Der Hook galt dadurch als geprüft, war es aber nicht. Der Grund steht jetzt in einer eigenen
+  Zeile darüber; shellcheck meldet den Hook nun sauber (0 Fundstellen).
 - **`pre-push` prüft auch nativ auf Rückstände.** Den Rückstands-Check macht sonst nur `ci-local`,
   nicht `check.sh` — wer ohne Container pusht, bekam die Wiederholbarkeits-Prüfung also nicht.
   Der Hook vergleicht jetzt `git status --porcelain` vor und nach dem Lauf und bricht ab, wenn die
