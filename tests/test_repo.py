@@ -145,8 +145,8 @@ assert not hits, "private Infrastruktur im öffentlichen Repo:\n  " + "\n  ".joi
 print(f"  keine private Infrastruktur ({len(PRIVATE)} Muster + {len(PRIVATE_HASHED)} Namen)")
 
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
-# Sonst empfiehlt die Doku eine Version, die es nie gab: `pip install …@v0.11.0` bricht ab,
-# weil der Tag nie gepusht wurde. Genau das stand hier — unbemerkt, weil niemand es nachbaut.
+# Sonst empfiehlt die Doku still eine alte Version weiter: Der Pin im Compose und die
+# `pip install`-Zeilen im README altern nicht mit, weil sie niemand ausführt.
 PIN = re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)")
 for f in ("README.md", "README.de.md", "deploy/forward-auth/docker-compose.yml"):
     for found in PIN.findall(read(f)):
