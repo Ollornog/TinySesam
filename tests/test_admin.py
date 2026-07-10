@@ -62,11 +62,12 @@ c.post("/auth/admin/api/security", json={"max_login_attempts": 7})
 assert auth.sec("max_login_attempts") == 7
 print("  ✓ Härtungs-Schwellen im Panel setzbar")
 
-# Update-Panel
-assert "status" in c.get("/auth/admin/api/update").json()
-c.post("/auth/admin/api/update/settings", json={"mode": "auto", "pin": "v0.3.0"})
-assert auth.update_settings() == {"mode": "auto", "pin": "v0.3.0"}
-print("  ✓ Update-Panel: Modus + Version-Pin")
+# Version — nur anzeigen. Die früheren Update-Routen sind bewusst weg: über sie konnte ein
+# übernommener Admin-Zugang auf eine alte, lückenhafte Version zurückschalten.
+assert c.get("/auth/admin/api/version").json()["version"][0].isdigit()
+for gone in ("/auth/admin/api/update", "/auth/admin/api/update/run"):
+    assert c.get(gone).status_code == 404, f"{gone} lebt noch"
+print("  ✓ Version wird angezeigt; kein Update-Endpunkt mehr")
 
 # Audit + HTML
 assert len(c.get("/auth/admin/api/audit").json()) >= 1

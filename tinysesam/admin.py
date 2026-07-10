@@ -184,7 +184,7 @@ def build_admin_router(auth) -> APIRouter:
             auth.audit("resource_delete", detail=name)
             return {"ok": True}
 
-    # ---------- Härtung / Update / Audit ----------
+    # ---------- Härtung / Audit ----------
     @ar.get("/api/security")
     def security_get(request: Request):
         guard(request)
@@ -198,25 +198,10 @@ def build_admin_router(auth) -> APIRouter:
         auth.audit("security_update")
         return auth.all_security()
 
-    @ar.get("/api/update")
-    def update_get(request: Request):
+    @ar.get("/api/version")
+    def version_get(request: Request):
         guard(request)
-        return {"settings": auth.update_settings(), "status": auth.update_status()}
-
-    @ar.post("/api/update/settings")
-    async def update_set(request: Request):
-        guard(request)
-        b = await auth.json_body(request)
-        if "mode" in b:
-            auth.set_update_setting("mode", b["mode"])
-        if "pin" in b:
-            auth.set_update_setting("pin", b["pin"])
-        return auth.update_settings()
-
-    @ar.post("/api/update/run")
-    def update_run(request: Request):
-        guard(request)
-        return auth.run_update()
+        return {"version": auth.version()}
 
     @ar.get("/api/audit")
     def audit(request: Request, limit: int = 100):
@@ -315,7 +300,7 @@ __WARN__
 const B="__BASE__";                                    // Mountpunkt (frei wählbar) → relative API-Aufrufe
 const ROLES=__ROLES__;                                 // bekannte Rollen/Gruppen (config.available_roles)
 const REQMAIL=__REQMAIL__;                             // config.signup_require_email (E-Mail Pflicht)
-const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["update","Update"],["audit","Audit"]];
+const TABS=[["users","Benutzer"],["sessions","Sitzungen"],["security","Härtung"],["audit","Audit"]];
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
@@ -323,7 +308,7 @@ const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/jso
 const esc=s=>(s??"").toString().replace(/</g,"&lt;");
 const dt=t=>t?new Date(t*1000).toLocaleString("de-DE"):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${l}</div>`).join("")}
-function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,update:update,audit:audit})[k]()}
+function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
 async function users(){
@@ -386,23 +371,15 @@ async function sessions(){const ss=await g("/api/sessions");
       <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs('${s.full}')">Beenden</button></td></tr>`).join("")+`</table>`)}
 async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
 
-async function security(){const s=await g("/api/security");
+async function security(){const s=await g("/api/security");const v=await g("/api/version");
   V(`<div class=card><h2>Härtung (Brute-Force / Rate-Limit)</h2>`+
     Object.entries(s).map(([k,v])=>`<div class=row><label style=width:230px>${k}</label><input id=s_${k} value=${v} type=number style=width:120px></div>`).join("")+
-    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>Speichern</button></div></div>`)}
+    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>Speichern</button></div></div>`+
+    `<div class=card><h2>Version</h2><div class=row>Installiert: <code>${esc(v.version)}</code></div>
+     <div class=muted style=font-size:12px>TinySesam aktualisiert sich nicht selbst. Neue Version:
+     gepinnten Tag hochziehen, neu installieren, Dienst neu starten.</div></div>`)}
 async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert("gespeichert")}
 
-async function update(){const u=await g("/api/update");const st=u.status,se=u.settings;
-  V(`<div class=card><h2>Update</h2>
-    <div class=row>Installiert: <code>${esc(st.current)}</code> · Neueste: <code>${esc(st.latest||'?')}</code>
-      ${st.available?'<span class="badge grn">Update verfügbar</span>':'<span class=badge>aktuell</span>'}</div>
-    <div class=row><label style=width:120px>Modus</label><select id=um><option value=manual ${se.mode=='manual'?'selected':''}>manuell</option><option value=auto ${se.mode=='auto'?'selected':''}>automatisch</option></select></div>
-    <div class=row><label style=width:120px>Version-Pin</label><input id=up value="${esc(se.pin)}" placeholder="z.B. v0.3.0 (leer=neueste)"></div>
-    <div class=row><button onclick=saveupd()>Einstellungen speichern</button>
-      <button class="${st.available?'ok':'sec'}" onclick=runupd()>Jetzt aktualisieren</button></div>
-    <div class=muted style=font-size:12px>${st.available?'Update verfügbar. ':''}Zieht die gepinnte bzw. neueste Version. Nach dem Update die App neu starten.</div></div>`)}
-async function saveupd(){await p("/api/update/settings",{mode:um.value,pin:up.value});update()}
-async function runupd(){if(!confirm("Update jetzt ziehen?"))return;const r=await p("/api/update/run");alert(r.ok?"OK — App neu starten":"Fehlgeschlagen:\n"+(r.output||"").slice(-400))}
 
 async function audit(){const a=await g("/api/audit?limit=120");
   V(`<table><tr><th>Zeit</th><th>Event</th><th>User</th><th>IP</th><th>Detail</th></tr>`+

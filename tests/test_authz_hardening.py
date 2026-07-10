@@ -1,4 +1,4 @@
-"""Rechte-Fallen, die beim Bau von app.example.com auffielen:
+"""Rechte-Fallen, die beim Bau einer echten App auffielen:
 Admin erfüllt jede Rolle · Bootstrap-Token ohne lokale Admins · Gruppen-Match per Teilstring.
 """
 import os

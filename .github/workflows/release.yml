@@ -1,0 +1,57 @@
+name: release
+
+# Ein Git-Tag `vX.Y.Z` erzeugt ein GitHub-Release mit Wheel, sdist und Prüfsummen.
+# Das ist der einzige Verteilweg: TinySesam aktualisiert sich nicht selbst, es wird
+# installiert — per gepinntem Tag oder per Wheel aus genau diesem Release.
+#
+# Vorher prüft der Job, dass der Tag zur Version im Paket passt. Ein Release mit
+# falscher Versionsnummer ist schlimmer als keins: es ist unauffällig falsch.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write        # Release anlegen und Dateien anhängen
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag gegen die Paketversion prüfen
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(python -c 'import tomllib,pathlib;
+          print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Tag $GITHUB_REF_NAME passt nicht zu pyproject-Version $pkg" >&2
+            exit 1
+          fi
+          echo "Tag und Paketversion stimmen überein: $pkg"
+
+      - name: Suite fahren, bevor irgendetwas veröffentlicht wird
+        run: |
+          sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+          pip install -e ".[all]" uvicorn httpx
+          python tests/run_all.py --no-browser
+
+      - name: Pakete bauen
+        run: |
+          pip install build
+          python -m build                       # erzeugt dist/*.whl und dist/*.tar.gz
+
+      - name: Prüfsummen
+        run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+
+      # Bewusst `gh` statt einer Dritt-Action: die bräuchte `contents: write` auf dieses Repo,
+      # und ihr Tag liesse sich umhängen. `gh` ist auf den Runnern vorinstalliert.
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag

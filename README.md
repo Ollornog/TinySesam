@@ -63,7 +63,7 @@ Straight from GitHub (not on PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # core: password + TOTP
 pip install "tinysesam[all] @ $GH"     # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.5.0
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.12.0
 ```
 
 ## Quickstart
@@ -114,7 +114,7 @@ and refuses to register otherwise instead of silently skipping the check.
 ## Guards
 
 ```python
-Depends(auth.require_user)             # logged in (this is what paperlaiss needs)
+Depends(auth.require_user)             # logged in — all the simplest case needs
 Depends(auth.require_admin)            # logged in + is_admin
 Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has all)
 ```
@@ -271,19 +271,44 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Housekeeping:** `auth.gc()` deletes expired sessions/flows/magic tokens/resource unlocks + old
   login attempts (the audit log stays). Call it regularly (cron/startup/scheduler) — otherwise the tables grow.
 
-## Update (from GitHub, versioned)
+## Installing and updating
 
-Even embedded in another app, TinySesam can update itself from GitHub:
+**TinySesam does not update itself.** You decide the version, in exactly one place: where you
+install the library. An auth module that pulls code from the internet at runtime is a backdoor
+with a manual — whoever takes over the admin panel could roll back to an old version with a known
+hole. Established auth projects don't ship such a button, and as of `v0.12.0` neither does TinySesam.
 
-- **Programmatically** (for the admin panel): `tinysesam.update_available()` → `{current, latest, available}`;
-  via the manager `auth.update_status()` / `auth.run_update()`.
-- **CLI:** `python -m tinysesam check` · `python -m tinysesam update [ref]` (after install also `tinysesam …`).
-- **In the settings** (store, panel-editable):
-  - **Mode** `manual` | `auto` (`auth.set_update_setting("mode", …)`) — `auth.auto_update()` at startup/via cron
-    pulls an available update in auto mode.
-  - **Version pin** (`auth.set_update_setting("pin", "v0.2.0")`) — stays exactly on this version; empty = latest.
-- Source: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (public). Private/SSH: `TINYSESAM_GIT_URL`
-  or `scheme="ssh"`. **Restart the host app after an update** (Python does not reload code at runtime).
+### As a library (inside your own app)
+
+Put a **fixed version** in your app's dependencies — never a branch:
+
+```
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.12.0
+```
+
+A tag can be moved. If you need immutability, pin the commit instead (`@a1b2c3d…`). Updating then
+means: bump the line, reinstall, restart the service. Python does not reload code at runtime.
+
+Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without git,
+take the file directly:
+
+```
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.12.0/tinysesam-0.12.0-py3-none-any.whl
+```
+
+### As a gateway (its own container)
+
+The forward-auth gateway runs as its own image with a **fixed tag**, see
+`deploy/forward-auth/docker-compose.yml`. Update: bump the tag, `docker compose pull && up -d`.
+Rollback: put the old tag back. If you're serious, pin the digest (`@sha256:…`) — a tag can be
+moved, a digest cannot.
+
+### How do you learn there is something new?
+
+From the [releases feed](https://github.com/Ollornog/TinySesam/releases) — via watch, RSS
+(`releases.atom`), or a bot like Renovate/Dependabot that bumps the pin in a pull request. Then your
+CI runs against the new version and you decide whether to merge. The running version is shown by
+`python -m tinysesam version` and in the admin panel under "Hardening".
 
 ## API keys & service/daemon accounts
 
@@ -344,6 +369,10 @@ All optional (on/off by config), usable individually and combined, front end rep
 
 Full demo: [`examples/showcase.py`](examples/showcase.py) — `/` is the project website itself,
 `/demo` a front end whose login/account/admin panels are **live read-only previews** of the real pages (`uvicorn examples.showcase:app`).
+
+**The live demo is an example front end that ships with the project** — not part of the library and
+not a prescription. It shows one way to wire up the built-in pages; look and structure are yours to
+replace. Bring your own front end, or take this one as a starting point.
 
 ## LDAP / lldap
 

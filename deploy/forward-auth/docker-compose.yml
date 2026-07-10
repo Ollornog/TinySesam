@@ -4,14 +4,22 @@
 #
 # Caddy ruft je Request GET /auth/forward beim Gateway (siehe ./Caddyfile). Der Gateway macht
 # ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nur [oidc]-Extra nötig.
+#
+# Die Version ist GEPINNT. Vorher stand hier ein `pip install` ohne Ref: damit zog jeder
+# Neustart den aktuellen Hauptzweig — zwei Container derselben Datei konnten verschiedene
+# Versionen fahren, ohne Netz startete gar nichts, und ein Rollback gab es nicht.
+# Aktualisieren = Version unten hochziehen, `docker compose up -d --force-recreate`.
 
 services:
   tinysesam:
     image: python:3.12-slim
     working_dir: /app
-    # Installiert TinySesam mit OIDC-Extra direkt von GitHub und startet das Gateway.
+    # Installiert die gepinnte TinySesam-Version mit OIDC-Extra und startet das Gateway.
+    # Die Version steht bewusst wörtlich hier — `${VAR}` würde Compose selbst ersetzen
+    # (aus der Shell bzw. .env), nicht die Shell im Container, und wäre lautlos leer.
     command: >
-      sh -c "pip install --no-cache-dir 'tinysesam[oidc]@git+https://github.com/Ollornog/TinySesam.git' uvicorn
+      sh -c "pip install --no-cache-dir
+      'tinysesam[oidc]@git+https://github.com/Ollornog/TinySesam.git@v0.12.0' uvicorn
       && python -m tinysesam.gateway"
     environment:
       TINYSESAM_OIDC_ISSUER: "https://id.example.com"

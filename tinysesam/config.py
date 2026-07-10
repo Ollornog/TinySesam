@@ -179,7 +179,7 @@ class TinySesamConfig:
     saml_auto_create: bool = True
 
     # --- WebAuthn / Passkey ---
-    rp_id: str = "localhost"              # Registrable Domain (z.B. paperlaiss.example.com) — OHNE Schema/Port
+    rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
     origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers
 
