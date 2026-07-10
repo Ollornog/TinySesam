@@ -50,6 +50,24 @@ assert not any(f.endswith(".html") for f in FILES), "generiertes HTML gehört ni
 assert "_site/" in read(".gitignore")
 print("  docs/: nur theme.css, wizard.png, .nojekyll — kein generiertes HTML im Repo")
 
+# ---------- Generierte Artefakte gehören nicht ins Repo ----------
+# `pip install -e .` schreibt <paket>.egg-info/ bei JEDEM Lauf neu. Ist das Verzeichnis
+# versioniert, hinterlässt jeder Testlauf eine geänderte Datei — die Suite ist dann nicht
+# wiederholbar. Der Fehler bleibt lange unsichtbar, weil PKG-INFO sich nur ändert, wenn
+# sich Metadaten ändern (Version, Beschreibung, Abhängigkeiten): der Baum bleibt zufällig
+# sauber, bis die Version steigt. Genau so überlebte er in einem Schwesterprojekt sechs
+# grüne Läufe. Keine Testsuite fand ihn — nur der Rückstands-Check.
+ARTEFAKTE = [
+    f for f in FILES
+    if ".egg-info" in f
+    or ".dist-info" in f
+    or f.startswith(("build/", "dist/"))
+    or "__pycache__" in f
+    or f.endswith(".pyc")
+]
+assert not ARTEFAKTE, f"generierte Artefakte sind versioniert: {ARTEFAKTE[:5]}"
+print(f"  keine generierten Artefakte unter {len(FILES)} getrackten Dateien")
+
 # ---------- Farbwerte nur an den zwei erlaubten Stellen ----------
 HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
 allowed = {"tinysesam/theme.py"}

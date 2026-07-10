@@ -2,6 +2,35 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+Zwei Dinge am Sicherheitsnetz, beide unsichtbar für alle, die nur die Bibliothek einbinden.
+
+### Behoben — der `pre-push`-Hook riet zum falschen Befehl
+
+War Docker nicht erreichbar, nannte der Hook `docker info` als Prüfung und `git push --no-verify`
+als Ausweg. `docker info` beantwortet aber drei verschiedene Ursachen gleich: die Gruppe `docker`
+fehlt wirklich; die Shell ist älter als das `usermod`, die Mitgliedschaft also längst erteilt und
+nur diesem Prozess unbekannt; oder der Daemon läuft nicht. Wer aus dem zweiten Fall „die Gruppe
+fehlt" schließt, vergibt ein root-äquivalentes Recht ein zweites Mal, obwohl `sg docker -c '…'`
+sofort hilft — und ein Ratschlag, der zum Abschalten der Prüfung führt, ist kein Sicherheitsnetz.
+
+Der Hook fragt jetzt die Gruppen-Datenbank (`id -nG "$benutzer"`) und die Prozess-Credentials
+(`id -nG`) getrennt ab und nennt zu jedem Fall den Befehl, der ihn behebt. Als *Funktionstest*
+bleibt `docker info` richtig: dort ist nur „Container startbar, ja oder nein" gefragt.
+
+### Hinzugefügt — generierte Artefakte dürfen nicht im Repo liegen
+
+`pip install -e .` schreibt `<paket>.egg-info/` bei jedem Lauf neu. Ist das Verzeichnis versioniert,
+hinterlässt jeder Testlauf eine geänderte Datei, und die Suite ist nicht mehr wiederholbar. Der
+Fehler bleibt lange unsichtbar: `PKG-INFO` ändert sich nur, wenn sich Metadaten ändern — Version,
+Beschreibung, Abhängigkeiten. Bis dahin ist der Baum *zufällig* sauber. In einem Schwesterprojekt
+überlebte er so sechs grüne Läufe und kippte erst beim Versionssprung; keine Testsuite fand ihn.
+
+`tests/test_repo.py` verbietet nun `*.egg-info`, `*.dist-info`, `build/`, `dist/`, `__pycache__`
+und `*.pyc` unter `git ls-files`. Die `.gitignore` allein genügt nicht: sie schützt nur, was noch
+nicht eingecheckt ist.
+
 ## [0.14.0] — 2026-07-10
 
 Die Projekt-Website, das Demo-Frontend — und die letzte Seite, die noch nicht übersetzt war.
