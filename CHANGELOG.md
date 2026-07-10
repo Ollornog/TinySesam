@@ -71,6 +71,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
 ### Geändert — CI und lokale Prüfung
+- **`pre-push` prüft auch nativ auf Rückstände.** Den Rückstands-Check macht sonst nur `ci-local`,
+  nicht `check.sh` — wer ohne Container pusht, bekam die Wiederholbarkeits-Prüfung also nicht.
+  Der Hook vergleicht jetzt `git status --porcelain` vor und nach dem Lauf und bricht ab, wenn die
+  Suite etwas hinterlassen hat. Ein bereits schmutziger Arbeitsbaum gilt nicht als Rückstand;
+  Ausnahmen kommen wie bei `ci-local` in `.ci-allow-dirty`.
 - **Browser-Test war flaky** — auf kalten CI-Runnern startete Chrome mitunter länger als die 10 s,
   die der Test wartete, und seine Ausgabe landete in `DEVNULL`: Die Meldung lautete stets
   „Chrome antwortet nicht", ohne Grund. Jetzt 30 s (per `CHROME_START_TIMEOUT` überschreibbar),
