@@ -20,7 +20,7 @@ verlinkt die zur Anzeigesprache passende Datei, `tests/test_repo.py` erzwingt da
 und `TODO` bleiben bewusst einsprachig deutsch.
 
 Zum Feinschliff: die README-Badges (Tests, Lizenz, Python) stehen jetzt rechtsbündig, und die
-Doku-Unterseiten tragen das Wizard-Icon über der Überschrift — dasselbe Bild wie die README
+Doku-Unterseiten tragen das Wizard-Icon rechtsbündig am Fuß — dasselbe Bild wie die README
 (250 px), auf den Unterseiten in klein (60 px).
 
 Die Übersetzungen liegen jetzt unter `i18n/` (`i18n/README.de.md`, `i18n/CODE_OF_CONDUCT.de.md`,
@@ -36,8 +36,8 @@ Für den *Contributor Covenant* zählt aber mehr: GitHubs Vorlagen-Abgleich vert
 Fremdinhalt in der Datei — auch keinen am Ende. Die englische `CODE_OF_CONDUCT.md` bleibt deshalb
 **pur** (nur Überschrift und Vorlagentext), damit GitHub sie als Contributor Covenant erkennt und
 nicht als „Other". Die übrigen Unterseiten (deutsche CoC-Fassung, `CONTRIBUTING`, `SECURITY`, je
-zweisprachig) tragen den Sprachwechsler linksbündig und das Logo rechtsbündig direkt unter der
-Überschrift.
+zweisprachig) tragen den Sprachwechsler direkt unter der Überschrift und das Logo rechtsbündig am
+Fuß der Seite — dasselbe Muster in allen eigenen Repos.
 
 Die Kontaktadressen (Verhaltenskodex, Beitrag, Impressum) laufen jetzt einheitlich über
 `tinysesam-github@ollornog.de` statt `admin@`/`tinysesam@` — eine repo-eigene Adresse pro Projekt.
