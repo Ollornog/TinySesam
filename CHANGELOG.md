@@ -4,7 +4,57 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
-Zwei Dinge am Sicherheitsnetz, beide unsichtbar für alle, die nur die Bibliothek einbinden.
+Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
+
+### Geändert — die Testbasis ist geteilt, nicht mehr kopiert
+
+Die allgemeinen Hygiene-Prüfungen, die Sperrlisten und der Rückstands-Check standen in jedem
+Projekt als eigene Kopie — und liefen auseinander. Diese Suite kannte sieben verbotene Namen,
+das Schwesterprojekt dreizehn; die Muster für private Netze hatten nur in einem von beiden die
+Ausnahme für CIDR-Masken in der Doku. Gleiche Absicht, verschiedene Wirkung.
+
+Jetzt liegen sie unter `tests/_kit/` als **eingecheckte, geteilte Basis**: die Regeln als reine
+Daten (`hygiene_policy.json`), die Prüfungen als stdlib-only Funktionen (`hygiene.py`). Sie werden
+erzeugt, nicht von Hand geschrieben.
+
+Wichtig für alle, die das Projekt klonen: **es kommt nichts hinzu, was geladen werden müsste.**
+Kein pip-Paket, kein Submodul, kein Netz zur Testzeit. `tests/_kit/` liegt in jedem `git clone`,
+jedem ZIP und jedem Release-Tarball. Käme der Wächter, der „keine private Infrastruktur" erzwingt,
+selbst aus dem Netz, wäre er das Leck, das er verhindern soll.
+
+Die Prüffunktionen geben Listen von Verstößen zurück, statt zu werfen. Deshalb bleibt diese Suite
+bei ihrem `assert`-Stil, während das Schwesterprojekt sammelnd berichtet — derselbe Code, zwei
+Idiome.
+
+### Behoben — die CI ignorierte `.ci-allow-dirty`
+
+Der Rückstands-Check existierte fünffach. Der `pre-push`-Hook und `ci-local` lasen `.ci-allow-dirty`;
+die beiden CI-Fassungen prüften rohes `git status --porcelain` und kannten die Datei nicht. Das
+verbindliche Gate widersprach damit dem lokalen Netz — auf der strengeren Seite, was den Fehler
+lange harmlos aussehen ließ. Hook und CI fahren jetzt dieselbe Datei, `scripts/_residue_check.sh`.
+
+### Behoben — der eigene Name stand auf der Sperrliste
+
+Die vereinigte Namens-Sperrliste enthielt den GitHub-Owner. Der ist aber ausdrücklich erlaubt:
+Repo-URL, Copyright-Zeile, Impressumsadresse und Pages-Adresse müssen ihn nennen dürfen. Im
+Schwesterprojekt fiel das nie auf, weil dessen Identitäts-Maskierung die URL-Zeilen zufällig traf;
+hier, mit Impressum und Pages-URL, schlug er sofort an. Der Eintrag ist entfernt. Die eigentliche
+Gefahr bleibt gefangen: eine Dienst-Subdomain trifft weiterhin das Subdomain-Muster, die nackte
+Domain nicht.
+
+### Hinzugefügt — belegte Standards werden jetzt maschinell erzwungen
+
+Vier Regeln aus einer Standards-Recherche (mit Primärquellen) prüft die Hygiene-Suite jetzt selbst:
+
+- **Actions per vollem Commit-SHA gepinnt**, nicht per Tag. GitHub nennt den SHA „the only way to
+  use an action as an immutable release" — ein Tag lässt sich verschieben. Die Version steht als
+  Kommentar dahinter, und `.github/dependabot.yml` hält sie aktuell, damit der Pin nicht still veraltet.
+- **`permissions:` auf oberster Ebene jedes Workflows.** Es gibt keinen sicheren Default.
+- **CHANGELOG-Kategorien aus Keep a Changelog** (eine Sprache je Repo).
+- **`README.de.md` folgt der Überschriften-Struktur von `README.md`** — GitHub wählt die README nach
+  Ort aus, nicht nach Sprache, eine Übersetzung veraltet also unbemerkt.
+
+Dazu aktiviert: Private Vulnerability Reporting und Dependabot Security Updates.
 
 ### Behoben — der `pre-push`-Hook riet zum falschen Befehl
 
@@ -500,8 +550,7 @@ zweisprachige Website — plus die Rechte-Fallen aus dem ersten Produktiveinsatz
   und `TinySesamConfig.entra_id(...)` (Azure AD/Entra via OIDC).
 - README/Website: problem-orientierter Pitch (Login-Layer für selbstgebaute Apps).
 
-### Hinweis
-Kerberos/NTLM/GSSAPI-SSO bleibt bewusst außen vor (LAN-/domänengebunden, schwere Ops-Kopplung,
+**Hinweis:** Kerberos/NTLM/GSSAPI-SSO bleibt bewusst außen vor (LAN-/domänengebunden, schwere Ops-Kopplung,
 redundant zu OIDC/SAML für AD).
 
 ## [0.7.0] — 2026-07-08
@@ -527,7 +576,7 @@ redundant zu OIDC/SAML für AD).
 - **Optionaler OIDC-RP-Logout** (`oidc_rp_logout`) — Abmelden auch beim Provider (`end_session`).
 - `auth.gc()` (DB-Housekeeping), `py.typed` (Typinfos werden mitgeliefert).
 
-### Härtung
+### Sicherheit
 - Sessions werden nach Passwortwechsel invalidiert (Self: außer aktueller; Admin-Reset: alle).
 - Dummy-Hash-Verify gegen **User-Enumeration** per Timing (Login & PIN).
 - Ungültiger JSON-Body → **400** statt 500. Test-Runner `tests/run_all.py` + CI (Py 3.10–3.13).
@@ -552,7 +601,7 @@ TOTP falls eingerichtet) bleibt unverändert.
 - **OIDC-Gateway-Preset** — `TinySesamConfig.oidc_gateway(...)`, `python -m tinysesam.gateway`, docker-compose.
 - **Test-Runner** `tests/run_all.py` + **GitHub-Actions-CI** (Py 3.10–3.13, voll + Minimal-Lauf).
 
-### Geändert / Härtung
+### Geändert
 - Zentraler **Open-Redirect-Schutz** `safe_next` auf allen `?next=`-Zielen; `cookie_domain` für Subdomain-SSO.
 - Ungültiger JSON-Body → **400** statt 500 (`TinySesam.json_body`).
 - Store-Auto-Migration (`session.mfa_at`/`remember`/`factors_done`), neues Modul `mailer.py`.
