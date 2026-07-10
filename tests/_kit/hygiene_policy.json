@@ -1,0 +1,116 @@
+{
+  "_kommentar": [
+    "Die gemeinsame Hygiene-Policy aller oeffentlichen Repos. EINE Quelle.",
+    "Wird per 'repokit sync' nach tests/_kit/hygiene_policy.json kopiert.",
+    "Reine Daten, kein Code: minimale Angriffsflaeche, kein Import zur Testzeit.",
+    "Die Trennlinie ist Identitaet gegen Infrastruktur: 'admin@example.de' ist harmlos,",
+    "'paperless.example.de' verraet, wo ein Paperless laeuft."
+  ],
+  "version": 1,
+  "private_muster": [
+    "(?<![\\w.])/home/[a-z_][a-z0-9_-]*",
+    "\\b[a-z0-9-]+\\.(?!example\\b)[a-z0-9-]{3,}\\.(?:de|at|ch|eu)\\b",
+    "\\b10\\.\\d+\\.\\d+\\.\\d+(?!/)",
+    "\\b192\\.168\\.\\d+\\.\\d+(?!/)",
+    "\\b172\\.(?:1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+(?!/)",
+    "\\b100\\.(?:6[4-9]|[7-9]\\d|1[01]\\d|12[0-7])\\.\\d+\\.\\d+",
+    "\\bCT ?\\d{3}\\b",
+    "[a-z0-9_-]+@pve![a-z0-9_-]+"
+  ],
+  "_private_muster_bedeutung": [
+    "Heimatverzeichnis des Betreibers",
+    "Dienst-Subdomain",
+    "privates Netz 10/8 (ohne CIDR-Maske)",
+    "privates Netz 192.168/16 (ohne Maske)",
+    "privates Netz 172.16/12 (ohne Maske)",
+    "CGNAT / Overlay-Netz",
+    "Container-Nummern",
+    "Hypervisor-API-Token"
+  ],
+  "_namen_kommentar": [
+    "Der GitHub-Owner steht hier BEWUSST NICHT. Er ist Identitaet, nicht Infrastruktur:",
+    "Repo-URL, Copyright-Zeile, Impressums-Mail und die Pages-Adresse muessen ihn nennen",
+    "duerfen. Eine Dienst-Subdomain darunter faengt das Subdomain-Muster ohnehin",
+    "('paperless.<domain>.de' trifft, '<domain>.de' allein nicht).",
+    "Er stand einmal in der Liste und fiel nur deshalb nicht auf, weil die",
+    "Identitaets-Maskierung die URL-Zeilen zufaellig traf - in einem Repo mit Impressum",
+    "und Pages-URL schlug er sofort an."
+  ],
+  "private_namen_sha256_16": [
+    "061429fadd2701e3",
+    "252a8452a103b022",
+    "3e2559984ba426c0",
+    "41b8e6744905305f",
+    "5b41917ea3e5cd80",
+    "6bb8c80cfa0e95ae",
+    "84ef0efe0a878ba1",
+    "a227c36a926bd7f6",
+    "a994ffcab684f9e2",
+    "cb034381b0eee532",
+    "e177ac5b0aa46203",
+    "e71b5222584b6528"
+  ],
+  "erlaubte_identitaet": "github\\.com/[A-Za-z0-9-]+/(?:{projekte})|ghcr\\.io/[a-z0-9-]+/[a-z0-9-]+|GITHUB_REPOSITORY_OWNER|github\\.repository_owner|OWNER_LC",
+  "erlaubte_hosts": [
+    "example\\.(?:com|org|net|de)",
+    "localhost",
+    "127\\.0\\.0\\.1",
+    "github\\.com",
+    "keepachangelog\\.com",
+    "semver\\.org",
+    "www\\.w3\\.org"
+  ],
+  "geheimnis_muster": [
+    "ghp_[A-Za-z0-9]{20,}",
+    "-----BEGIN [A-Z ]*PRIVATE KEY",
+    "AKIA[0-9A-Z]{16}",
+    "(?:client_secret|password|token|api[_-]?key)\\s*[:=]\\s*['\\\"][A-Za-z0-9/+_-]{16,}"
+  ],
+  "artefakt_teile": [
+    ".egg-info",
+    ".dist-info"
+  ],
+  "artefakt_verzeichnisse": [
+    "build",
+    "dist",
+    "__pycache__"
+  ],
+  "artefakt_endungen": [
+    ".pyc"
+  ],
+  "selbst_ausnahmen": [
+    "tests/_kit/hygiene_policy.json",
+    "tests/_kit/hygiene.py",
+    "tests/test_repo.py"
+  ],
+  "binaer_endungen": [
+    ".png",
+    ".ico",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".pdf",
+    ".woff",
+    ".woff2"
+  ],
+  "changelog_kategorien": {
+    "en": [
+      "Added",
+      "Changed",
+      "Deprecated",
+      "Removed",
+      "Fixed",
+      "Security"
+    ],
+    "de": [
+      "Hinzugefügt",
+      "Geändert",
+      "Veraltet",
+      "Entfernt",
+      "Behoben",
+      "Sicherheit"
+    ]
+  },
+  "_changelog_quelle": "https://keepachangelog.com/en/1.1.0/",
+  "_actions_quelle": "GitHub Docs, Security hardening for GitHub Actions"
+}

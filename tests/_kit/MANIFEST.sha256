@@ -1,0 +1,9 @@
+# Von `repokit sync` erzeugt. Ein Stolperdraht gegen Vergessen,
+# kein Schloss gegen Absicht: wer die Dateien ändert, kann auch
+# dieses Manifest neu schreiben. Er tut es dann wenigstens sichtbar.
+efb99eb18f49b3a9b612ff8f5e287fdc75995f236bbdbc728f17498cb43d8770  .githooks/pre-push
+433c893692a5737fa9f96ba71c3bc89de3ddb79a54f3f461a0adfd507501be84  scripts/_residue_check.sh
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  tests/_kit/__init__.py
+512f0e8ed0c9e0f8d8488741185db2d164fb55a2d28f39ba9c18c28db06c97a9  tests/_kit/hygiene.py
+dff53a884460f7fa675e9364a915404073769cf8390d9eab5d15069f883a09e9  tests/_kit/hygiene_policy.json
+b5f9045bfb95a21699b67180ce825175cc232cf2078a857aa0e340a51ecb11eb  tests/_kit/report.py
