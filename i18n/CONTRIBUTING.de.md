@@ -1,8 +1,7 @@
 # Mitwirken
 
-<p align="left"><a href="../CONTRIBUTING.md">English</a> · <b>Deutsch</b></p>
-
-<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+<a href="../CONTRIBUTING.md">English</a> · <b>Deutsch</b>
+<br /><br />
 
 Danke, dass du dir die Zeit nimmst. TinySesam ist eine Authentifizierungs-Bibliothek — eine kleine
 Fläche, der andere Projekte ihre Eingangstür anvertrauen. Eine Änderung, die diese Fläche klein und
@@ -50,3 +49,6 @@ Deutsch; Bezeichner bleiben englisch.
 Für Sicherheitsprobleme **kein** öffentliches Issue öffnen. Nutze GitHubs privates
 Schwachstellen-Reporting (den Knopf *Report a vulnerability* unter *Security*) oder schreib an
 tinysesam-github@ollornog.de. Siehe [`SECURITY.de.md`](SECURITY.de.md).
+
+<br /><br />
+<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>

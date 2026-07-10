@@ -1,8 +1,7 @@
 # Security
 
-<p align="left"><b>English</b> · <a href="i18n/SECURITY.de.md">Deutsch</a></p>
-
-<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+<b>English</b> · <a href="i18n/SECURITY.de.md">Deutsch</a>
+<br /><br />
 
 ## Reporting a vulnerability
 
@@ -28,3 +27,6 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 ## Supported versions
 
 Security fixes land on the latest minor version (currently `0.5.x`).
+
+<br /><br />
+<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
