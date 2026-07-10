@@ -2,6 +2,32 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+Nur die Projekt-Website (`web/`), keine Änderung an der Bibliothek.
+
+### Behoben
+- **Die Website war offline (404).** Nicht der Baujob war schuld, sondern das Ziel: Die
+  Pages-Quelle des Repos stand auf *„Deploy from a branch"* (`main`, Pfad `/docs`). In `docs/`
+  liegen aber nur `theme.css` und `wizard.png` — die Seiten entstehen aus `web/site.py` und
+  werden von `pages.yml` als Artefakt hochgeladen. Pages lieferte also einen Ordner ohne
+  `index.html` aus. Derselbe Automatik-Build belegte zusätzlich das Deployment, woran
+  `actions/deploy-pages` mit *„in progress deployment"* scheiterte. Der Workflow sagt es im
+  Kopfkommentar: Source muss **GitHub Actions** sein. Kein Code-Fix, eine Einstellung:
+  `gh api -X PUT repos/<owner>/<repo>/pages -f build_type=workflow`.
+
+### Geändert
+- **Englisch ist der Standard der Website.** `LANG_JS` wertete bisher `navigator.language` aus,
+  ein deutscher Browser bekam also ungefragt die deutsche Fassung. Jetzt gilt `?lang=` vor
+  Cookie vor `LANGS[0]` (= `en`); die aktive Wahl bleibt in `ts_lang` erhalten. `tests/test_site.py`
+  friert das ein — der Test verbietet `navigator.language` ausdrücklich.
+- **Die Extras stehen als Liste**, nicht mehr als Fließtext mit Mittelpunkten: `[argon2]`,
+  `[oidc]`, `[saml]`, `[ldap]`, `[passkey]`, `[qr]`, `[redis]` je in einer Zeile mit ihrer
+  Wirkung. Sie sind jetzt **Daten** (`extras` als Paarliste, `extras_intro`/`extras_outro`), das
+  Layout steht einmal im Renderer. Das Raster liegt auf der `<ul>`, die `<li>` sind
+  `display:contents` — läge es auf dem `li`, wäre jede Zeile ihr eigenes Raster und die
+  Beschreibungen flüchteten nicht.
+
 ## [0.13.1] — 2026-07-10
 
 ### Behoben

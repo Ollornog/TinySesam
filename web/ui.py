@@ -225,8 +225,10 @@ def static_document(nav: Nav, css: str, variants: dict) -> str:
     """Eine Datei, beide Sprachen — für GitHub Pages, das kein `?lang=` auswerten kann.
 
     `variants` = {lang: (title, desc, shell_html)} — `shell_html` kommt aus `shell(ctx, nav, body)`.
-    `LANG_JS` wählt beim Laden: `?lang=` schlägt Cookie schlägt Browsersprache. **Derselbe Parameter,
-    dasselbe Cookie wie in der App** — es gibt genau ein Sprachsystem, keine Sprach-Dateinamen.
+    `LANG_JS` wählt beim Laden: `?lang=` schlägt Cookie schlägt `LANGS[0]` (Englisch). Die
+    **Browsersprache zählt bewusst nicht** — die Projektsprache ist Englisch, sonst bekäme ein
+    deutscher Browser eine deutsche Seite, ohne dass jemand darum gebeten hat. **Derselbe
+    Parameter, dasselbe Cookie wie in der App** — ein Sprachsystem, keine Sprach-Dateinamen.
     """
     first = LANGS[0]
     title, desc, _ = variants[first]
@@ -248,7 +250,7 @@ LANG_JS = """<script>
   var LANGS = %s;
   function cookie(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)')); return m?m[1]:null;}
   var q = new URLSearchParams(location.search).get('lang');
-  var l = q || cookie('%s') || (navigator.language||'en').slice(0,2);
+  var l = q || cookie('%s') || LANGS[0];
   if(LANGS.indexOf(l) < 0) l = LANGS[0];
   document.cookie = '%s=' + l + ';path=/;max-age=31536000;samesite=lax';
   var r = document.documentElement;

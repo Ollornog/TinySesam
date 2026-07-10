@@ -83,13 +83,18 @@ T = {
         ],
         "h_install": "Install", "h_use": "Use",
         "copy": "Copy", "copied": "Copied",
-        "extras": ("<code>[all]</code> pulls every optional dependency. Take only what you need: "
-                   "<code>[argon2]</code> stronger hashing · <code>[oidc]</code> OIDC login · "
-                   "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
-                   "<code>[passkey]</code> WebAuthn · <code>[qr]</code> TOTP&nbsp;QR code · "
-                   "<code>[redis]</code> rate limit across workers. Combine them: "
-                   "<code>[oidc,argon2]</code>. Without any extra you still get password + TOTP "
-                   "(stdlib scrypt)."),
+        "extras_intro": "<code>[all]</code> pulls every optional dependency. Take only what you need:",
+        "extras": [
+            ("argon2", "stronger hashing"),
+            ("oidc", "OIDC login"),
+            ("saml", "SAML&nbsp;2.0"),
+            ("ldap", "LDAP/AD"),
+            ("passkey", "WebAuthn"),
+            ("qr", "TOTP&nbsp;QR code"),
+            ("redis", "rate limit across workers"),
+        ],
+        "extras_outro": ("Combine them: <code>[oidc,argon2]</code>. Without any extra you still "
+                         "get password + TOTP (stdlib scrypt)."),
         "use_comment_router": "# /auth/* + login UI", "use_comment_guard": "# protected",
         "gateway": ('Want just SSO in front of existing apps? Run it as an '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC forward-auth gateway</a>.'),
@@ -205,13 +210,18 @@ T = {
         ],
         "h_install": "Installation", "h_use": "Benutzung",
         "copy": "Kopieren", "copied": "Kopiert",
-        "extras": ("<code>[all]</code> zieht alle optionalen Abhängigkeiten. Nimm nur, was du brauchst: "
-                   "<code>[argon2]</code> stärkeres Hashing · <code>[oidc]</code> OIDC-Login · "
-                   "<code>[saml]</code> SAML&nbsp;2.0 · <code>[ldap]</code> LDAP/AD · "
-                   "<code>[passkey]</code> WebAuthn · <code>[qr]</code> TOTP-QR-Code · "
-                   "<code>[redis]</code> Rate-Limit über mehrere Worker. Kombinierbar: "
-                   "<code>[oidc,argon2]</code>. Ganz ohne Extra bleiben Passwort + TOTP "
-                   "(stdlib-scrypt)."),
+        "extras_intro": "<code>[all]</code> zieht alle optionalen Abhängigkeiten. Nimm nur, was du brauchst:",
+        "extras": [
+            ("argon2", "stärkeres Hashing"),
+            ("oidc", "OIDC-Login"),
+            ("saml", "SAML&nbsp;2.0"),
+            ("ldap", "LDAP/AD"),
+            ("passkey", "WebAuthn"),
+            ("qr", "TOTP-QR-Code"),
+            ("redis", "Rate-Limit über mehrere Worker"),
+        ],
+        "extras_outro": ("Kombinierbar: <code>[oidc,argon2]</code>. Ganz ohne Extra bleiben "
+                         "Passwort + TOTP (stdlib-scrypt)."),
         "use_comment_router": "# /auth/* + Login-UI", "use_comment_guard": "# geschützt",
         "gateway": ('Nur SSO vor bestehende Apps? Dann als '
                     f'<a href="{REPO}#as-a-pure-oidc-gateway-preset">OIDC-Forward-Auth-Gateway</a> betreiben.'),
@@ -340,6 +350,13 @@ INDEX_CSS = """
   .solves .yes{color:var(--accent);font-weight:700;font-family:var(--ts-serif)}
   .solves b{font-weight:600}
   .solves span{color:var(--muted)}
+  /* Grid auf der Liste, `li{display:contents}` — sonst ist jedes li sein eigenes Raster
+     und die Beschreibungen fluchten nicht. */
+  .extras{list-style:none;padding:0;margin:12px 0;display:grid;
+          grid-template-columns:auto 1fr;gap:8px 14px;align-items:baseline;font-size:15px}
+  .extras li{display:contents}
+  .extras code{justify-self:start}
+  .extras span{color:var(--muted)}
   .feat{display:grid;grid-template-columns:1fr 1fr;gap:14px 26px}
   .feat div{font-size:15px}
   .feat b{display:block;font-size:15px}
@@ -377,6 +394,7 @@ def index_body(lang: str, nav: Nav) -> str:
                      for q, a in t["solves"])
     chips = "".join(f'<span class="chip">{c}</span>' for c in t["chips"])
     feat = "".join(f"<div><b>{h}</b><span>{d}</span></div>" for h, d in t["feat"])
+    extras = "".join(f'<li><code>[{name}]</code><span>{desc}</span></li>' for name, desc in t["extras"])
     code = lambda inner: codeblock(inner, copy=t["copy"], copied=t["copied"])  # noqa: E731
 
     install = code(f'pip install <span class="s">"tinysesam[all] @ git+{REPO}.git"</span>')
@@ -400,7 +418,9 @@ def index_body(lang: str, nav: Nav) -> str:
 
   <section><h2>{t["h_install"]}</h2>
     {install}
-    <p class="note" style="margin-top:14px">{t["extras"]}</p>
+    <p class="note" style="margin-top:14px">{t["extras_intro"]}</p>
+    <ul class="extras">{extras}</ul>
+    <p class="note">{t["extras_outro"]}</p>
   </section>
 
   <section><h2>{t["h_use"]}</h2>

@@ -69,7 +69,11 @@ for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauch
         assert f"href='?lang={code}'" in html, (name, code)
     assert ".de.html" not in html and "index.de" not in html
     # und dasselbe Cookie wie die App
-    assert LANG_COOKIE in html and "navigator.language" in html
+    assert LANG_COOKIE in html
+    # Standard ist Englisch: `?lang=` > Cookie > LANGS[0]. Die Browsersprache zählt NICHT —
+    # sonst sähe ein deutscher Browser ungefragt die deutsche Fassung.
+    assert "navigator.language" not in html, "Browsersprache darf den Standard nicht überschreiben"
+    assert "cookie('ts_lang') || LANGS[0]" in html
     assert 'href="theme.css"' in html and 'href="wizard.png"' in html
     assert "flaticon.com/free-icons/wizard" in html, "Icon-Attribution"
 print("  2 Dateien, beide Sprachen, ein `?lang=`-Parameter + ein Cookie")
