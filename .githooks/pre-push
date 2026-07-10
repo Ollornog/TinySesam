@@ -90,10 +90,48 @@ done || true
 # Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo.
 # Ein interaktiver sudo-Prompt wäre hier falsch — der Hook darf nicht nach einem
 # Passwort fragen, deshalb nur 'sudo -n'.
+#
+# Als FUNKTIONSTEST ist `docker info` richtig: gefragt ist nur „Container startbar?".
+# Für die MELDUNG danach siehe docker_diagnose().
 docker_ok() {
     command -v docker >/dev/null 2>&1 || return 1
     docker info >/dev/null 2>&1 && return 0
     sudo -n docker info >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# Warum antwortet Docker nicht? Die Frage beantworten, statt zu raten.
+#
+# `docker info` taugt als DIAGNOSE nicht: es scheitert, wenn die Gruppe fehlt, UND
+# in einer Shell, die älter ist als das `usermod` — dort ist die Mitgliedschaft längst
+# erteilt, nur dieser Prozess kennt sie nicht. Wer daraus „Gruppe fehlt" schließt,
+# vergibt ein root-äquivalentes Recht ein zweites Mal, ohne dass es nötig wäre.
+#
+#   id -nG "$me"  fragt die Gruppen-Datenbank   -> „darf der Benutzer?"
+#   id -nG        fragt diesen Prozess          -> „weiß diese Shell davon?"
+#
+# Kein `cmd | grep -q`: unter `set -o pipefail` kann SIGPIPE die Pipeline auf 141
+# setzen, obwohl grep 0 lieferte.
+# ---------------------------------------------------------------------------
+docker_diagnose() {
+    local me; me="$(id -un)"
+    if [[ " $(id -nG "$me") " == *" docker "* ]]; then
+        if [[ " $(id -nG) " == *" docker "* ]]; then
+            echo "Die Gruppe 'docker' ist aktiv — also antwortet der Daemon selbst nicht:"
+            echo "    systemctl status docker"
+        else
+            echo "'$me' ist in der Gruppe 'docker', aber DIESE Shell kennt sie noch nicht"
+            echo "(sie ist älter als das 'usermod'). Es fehlt kein Recht — nicht neu vergeben."
+            echo "Denselben Push mit aktiver Gruppe fahren:"
+            echo "    sg docker -c 'git push …'"
+            echo "oder einmal ab- und wieder anmelden."
+        fi
+    else
+        echo "'$me' ist nicht in der Gruppe 'docker':"
+        echo "    sudo usermod -aG docker \"$me\"   (danach neu anmelden)"
+    fi
+    echo
+    echo "Prüfen mit 'getent group docker' bzw. 'id -nG' — nie mit 'docker info'."
 }
 
 if command -v ci-local >/dev/null 2>&1; then
@@ -102,15 +140,15 @@ if command -v ci-local >/dev/null 2>&1; then
         exec ci-local
     fi
     if [[ "$pushes_main" -eq 0 ]]; then
-        cat >&2 <<'EOF'
-pre-push: ABGEBROCHEN — ci-local ist eingerichtet, aber Docker antwortet nicht.
-
-Auf Feature-Branches läuft keine GitHub-CI. Der Container-Lauf ist hier die
-einzige Prüfung; ein Rückfall auf den Host würde ungeprüften Code durchlassen.
-
-Prüfen:  docker info          (Gruppe aktiv? ggf. neu einloggen)
-Notfall: git push --no-verify (auf eigene Gefahr, ungeprüft)
-EOF
+        {
+            echo
+            echo "pre-push: ABGEBROCHEN — ci-local ist eingerichtet, aber Docker antwortet nicht."
+            echo
+            echo "Auf Feature-Branches läuft keine GitHub-CI. Der Container-Lauf ist hier die"
+            echo "einzige Prüfung; ein Rückfall auf den Host würde ungeprüften Code durchlassen."
+            echo
+            docker_diagnose
+        } >&2
         exit 1
     fi
     echo "pre-push: Docker antwortet nicht → nativer Lauf." >&2
