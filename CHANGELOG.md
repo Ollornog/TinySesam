@@ -42,6 +42,16 @@ hier, mit Impressum und Pages-URL, schlug er sofort an. Der Eintrag ist entfernt
 Gefahr bleibt gefangen: eine Dienst-Subdomain trifft weiterhin das Subdomain-Muster, die nackte
 Domain nicht.
 
+### Hinzugefügt — Community-Dateien
+
+- **`CODE_OF_CONDUCT.md`** (+ deutsche Fassung): der Contributor Covenant 2.1, Kontakt
+  `admin@ollornog.de`. Er gilt für die Leute, die Issues und PRs öffnen — nicht für den Code.
+- **`CONTRIBUTING.md`** (+ deutsche Fassung): Grundregeln (Tests gehören zur Änderung,
+  wiederholbare Suite, Sicherheitsänderungen sind nicht kosmetisch, keine private Infrastruktur,
+  Optionales bleibt optional) und der Feature-Branch-Workflow.
+
+Beide stehen auf GitHubs *community profile checklist*; sie fehlten bisher.
+
 ### Hinzugefügt — belegte Standards werden jetzt maschinell erzwungen
 
 Vier Regeln aus einer Standards-Recherche (mit Primärquellen) prüft die Hygiene-Suite jetzt selbst:
