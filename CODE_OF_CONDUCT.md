@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="48" height="48"></p>
+
 <h1 align="center">Contributor Covenant Code of Conduct</h1>
 
 <p align="center"><b>English</b> · <a href="CODE_OF_CONDUCT.de.md">Deutsch</a></p>

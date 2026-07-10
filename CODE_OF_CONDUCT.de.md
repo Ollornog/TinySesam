@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="48" height="48"></p>
+
 <h1 align="center">Vereinbarung über Verhaltenskodex für Mitwirkende</h1>
 
 <p align="center"><a href="CODE_OF_CONDUCT.md">English</a> · <b>Deutsch</b></p>

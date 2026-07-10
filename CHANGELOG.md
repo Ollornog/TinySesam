@@ -19,6 +19,10 @@ steht `SECURITY.md` auf Englisch; beide sind über denselben Kopf verbunden. Die
 verlinkt die zur Anzeigesprache passende Datei, `tests/test_repo.py` erzwingt das Paar. `CHANGELOG`
 und `TODO` bleiben bewusst einsprachig deutsch.
 
+Zum Feinschliff: die README-Badges (Tests, Lizenz, Python) stehen jetzt rechtsbündig, und die
+Doku-Unterseiten tragen das Wizard-Icon in klein über der Überschrift — dasselbe Bild wie die
+README, nur kleiner.
+
 ### Geändert — die Testbasis ist geteilt, nicht mehr kopiert
 
 Die allgemeinen Hygiene-Prüfungen, die Sperrlisten und der Rückstands-Check standen in jedem

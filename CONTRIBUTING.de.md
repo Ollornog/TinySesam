@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="48" height="48"></p>
+
 <h1 align="center">Mitwirken</h1>
 
 <p align="center"><a href="CONTRIBUTING.md">English</a> · <b>Deutsch</b></p>
