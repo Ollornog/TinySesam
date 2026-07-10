@@ -4,6 +4,7 @@ Prüft, was man beim Aufräumen zuverlässig vergisst — Versionen, die auseina
 Repo; Geheimnisse; vergessene Debug-Ausgaben; Suiten, die niemand mehr ausführt. Kein Netz, keine
 Abhängigkeiten, läuft überall.
 """
+import hashlib
 import os
 import re
 import subprocess
@@ -93,36 +94,55 @@ runner = read("tests", "run_all.py")
 assert 'glob.glob(os.path.join(HERE, "test_*.py"))' in runner, "run_all sammelt nicht mehr automatisch"
 print(f"  {len(suites)} Suiten, alle vom Sammellauf erfasst")
 
-# ---------- Keine privaten Namen im öffentlichen Repo ----------
-# Das Repo kann jeder lesen. Hostnamen, Kundennamen und Namen anderer Projekte des Autors
-# gehören deshalb nicht hinein — weder in Code noch in Beispiele, Tests oder Kommentare.
-# Konfiguriert wird über Umgebungsvariablen, nicht über Vorgabewerte im Quelltext.
+# ---------- Keine private Infrastruktur im öffentlichen Repo ----------
+# Die Trennlinie ist **Identität gegen Infrastruktur**, nicht „mein Name kommt vor".
 #
-# Vier Stellen dürfen echte Namen tragen, weil sie ohne sie sinnlos wären: LICENSE und
-# pyproject.toml (Urheberschaft), der OWNER-Block in web/site.py (Impressumspflicht) — und
-# diese Datei selbst, die die verbotene Wortliste ja enthalten muss.
-PRIVATE = ("drog", "drog-tower", "specdoor", "brunpower", "paperlaiss", "hetz", "backmox",
-           "loco", "rasbox", "drogbox", "ollornog")
-# Die eigene Repo- und Pages-Adresse ist keine private Spur, sondern die Anschrift des Projekts.
-PUBLIC_REFS = ("github.com/Ollornog/TinySesam", "Ollornog/TinySesam",
-               "ollornog.github.io/TinySesam", "github-tinysesam")
-NAME_EXEMPT = {"LICENSE", "pyproject.toml", "web/site.py", "tests/test_repo.py"}
+# Erlaubt und teils rechtlich nötig: Autor, Kontakt- und Impressumsadresse, Lizenz,
+# Repo-URL, Projektname. Verboten ist alles, was jemandem hilft, die Systeme dahinter
+# zu finden: Dienst-Subdomains, interne Hostnamen, IPs aus privaten Netzen,
+# Container-Nummern, Heimatverzeichnisse, Kundennamen, API-Token-Kennungen.
+#
+# `admin@example.de` ist harmlos — `paperless.example.de` verrät, wo ein Paperless läuft.
+#
+# Die Muster sind bewusst **generisch**: Eine wörtliche Verbotsliste („kunde-x", „mein-server")
+# würde in einem öffentlichen Repo genau das veröffentlichen, was sie schützen soll. Für die
+# Handvoll Eigennamen, die sich nicht generisch fassen lassen, steht deshalb nur der
+# SHA256-Anfang im Repo — er verrät den Namen nicht, erkennt ihn aber wieder.
+PRIVATE = (
+    r"(?<![\w.])/home/[a-z_][a-z0-9_-]*",       # Heimatverzeichnis des Betreibers
+    # Dienst-Subdomain. `admin@…` trifft es nicht (kein Punkt davor); `example.*` ist die für
+    # Doku reservierte Domain aus RFC 2606 und bleibt erlaubt — sonst kann man die Regel nicht
+    # einmal erklären, ohne sie zu verletzen.
+    r"\b[a-z0-9-]+\.(?!example\b)[a-z0-9-]{3,}\.(?:de|at|ch|eu)\b",
+    r"\b10\.\d+\.\d+\.\d+", r"\b192\.168\.\d+\.\d+",     # private Netze
+    r"\b172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+",
+    r"\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+",   # CGNAT/NetBird
+    r"\bCT ?\d{3}\b",                           # Container-Nummern
+    r"[a-z0-9_-]+@pve![a-z0-9_-]+",             # Proxmox-API-Token
+)
+# Interne Hostnamen und Kundennamen — nur als Prüfsumme, nie im Klartext.
+PRIVATE_HASHED = frozenset((
+    "6bb8c80cfa0e95ae", "cb034381b0eee532", "41b8e6744905305f",
+    "a994ffcab684f9e2", "252a8452a103b022", "e177ac5b0aa46203", "a227c36a926bd7f6",
+))
+WORD = re.compile(r"[a-z][a-z0-9-]{3,}")
 hits = []
 for f in FILES:
-    if f in NAME_EXEMPT or f.endswith((".png", ".ico")):
+    if f == "tests/test_repo.py" or f.endswith((".png", ".ico")):
         continue
     try:
         body = read(f)
     except (UnicodeDecodeError, IsADirectoryError):
         continue
     for n, line in enumerate(body.splitlines(), 1):
-        for ref in PUBLIC_REFS:                      # erlaubte Adressen ausblenden …
-            line = line.replace(ref, "")
-        for word in PRIVATE:                         # … und erst dann suchen
-            if re.search(rf"\b{re.escape(word)}\b", line, re.I):
+        for pat in PRIVATE:
+            if re.search(pat, line, re.I):
                 hits.append(f"{f}:{n}: {line.strip()[:70]}")
-assert not hits, "private Namen im öffentlichen Repo:\n  " + "\n  ".join(hits[:8])
-print(f"  keine privaten Namen ({len(PRIVATE)} Begriffe geprüft, {len(NAME_EXEMPT)} Ausnahmen)")
+        for word in WORD.findall(line.lower()):
+            if hashlib.sha256(word.encode()).hexdigest()[:16] in PRIVATE_HASHED:
+                hits.append(f"{f}:{n}: verbotener Name — {line.strip()[:60]}")
+assert not hits, "private Infrastruktur im öffentlichen Repo:\n  " + "\n  ".join(hits[:8])
+print(f"  keine private Infrastruktur ({len(PRIVATE)} Muster + {len(PRIVATE_HASHED)} Namen)")
 
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
 # Sonst empfiehlt die Doku eine Version, die es nie gab: `pip install …@v0.11.0` bricht ab,

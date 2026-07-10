@@ -174,7 +174,7 @@ TEXTS = {
                     "Zugangsdaten ein — und warnt, dass er produktiv aus gehört."),
         "p_account": ("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, PIN, "
                       "2FA + Recovery-Codes, Passkeys, API-Keys und die eigenen Sitzungen."),
-        "p_admin": ("Admin-Panel", "Benutzer &amp; Rollen, Sitzungen, Härtungs-Schwellen, Update, "
+        "p_admin": ("Admin-Panel", "Benutzer &amp; Rollen, Sitzungen, Härtungs-Schwellen, "
                     "Audit-Log. Wahlweise nur als JSON-API für dein eigenes Panel."),
         "open": "Öffnen →", "ro": "read-only", "ro_fake": "read-only · Beispieldaten",
         "flows_h1": "Login-Flows",
@@ -212,7 +212,7 @@ TEXTS = {
                     "it must be off in production."),
         "p_account": ("Account panel", "Self-service at <code>/auth/account</code>: password, PIN, "
                       "2FA + recovery codes, passkeys, API keys and your own sessions."),
-        "p_admin": ("Admin panel", "Users &amp; roles, sessions, hardening thresholds, update, audit log. "
+        "p_admin": ("Admin panel", "Users &amp; roles, sessions, hardening thresholds, audit log. "
                     "Or just the JSON API, for your own panel."),
         "open": "Open →", "ro": "read-only", "ro_fake": "read-only · sample data",
         "flows_h1": "Sign-in flows",
@@ -400,11 +400,11 @@ _FAKE = {
         {"id": 3, "username": "martin", "is_admin": False, "is_service": False, "roles": ["viewer"], "disabled": True},
         {"id": 4, "username": "backup-daemon", "is_admin": False, "is_service": True, "roles": ["reader"], "disabled": False},
     ],
-    "/api/sessions": [{"id": 1, "username": "demoadmin", "method": "password", "ip": "10.0.0.7",
+    "/api/sessions": [{"id": 1, "username": "demoadmin", "method": "password", "ip": "203.0.113.7",
                        "created": 1_770_000_000, "expires": 1_770_600_000}],
     "/api/security": {"max_login_attempts": 5, "lockout_window_sec": 900, "rate_limit_max": 30},
-    "/api/update": {"current": "0.10.0", "latest": "0.10.0", "available": False, "mode": "manual", "pin": ""},
-    "/api/audit": [{"ts": 1_770_000_000, "event": "login", "username": "demoadmin", "ip": "10.0.0.7", "detail": ""}],
+    "/api/version": {"version": "0.12.0"},
+    "/api/audit": [{"ts": 1_770_000_000, "event": "login", "username": "demoadmin", "ip": "203.0.113.7", "detail": ""}],
     "/api/resources": [{"name": "gaeste", "kind": "pin", "label": "Gäste-Bereich"}],
 }
 
