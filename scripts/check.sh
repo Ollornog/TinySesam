@@ -43,7 +43,7 @@ fi
 step "Website bauen — genau das, was die Pages-Action ausliefert"
 "$PY" -m web.build _site >/dev/null || fail "web.build"
 for f in index.html demo.html flows.html legal.html theme.css wizard.png \
-         demo/login.en.html demo/account.de.html demo/admin.html demo/adminapi/api/users; do
+         demo/login.en.html demo/account.de.html demo/admin.de.html demo/adminapi/api/users; do
     test -f "_site/$f" || fail "_site/$f fehlt"
 done
 rm -rf _site

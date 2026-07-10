@@ -226,6 +226,23 @@ async def run():
             assert await p.js("document.documentElement.lang") == "de", path
         print("  Sprache: `?lang=` schaltet auf allen Seiten, `<html lang>` folgt")
 
+        # ---------- 4b) …und bis in die Panels hinein ----------
+        # Das Admin-Panel baut seine Oberfläche im Browser. Nur hier sieht man, ob die Texte
+        # wirklich ankommen — im Quelltext stehen sie als JSON, nicht als Markup.
+        panel = """(function(){const f=[...document.querySelectorAll('.frame iframe')]
+            .find(f=>f.src.includes('admin'));
+            const d=f&&f.contentDocument; if(!d||!d.body) return '';
+            return d.documentElement.lang + '|' + d.body.innerText;})()"""
+        for lang, want, nope in (("en", "Hardening", "Härtung"), ("de", "Härtung", "Hardening")):
+            await p.cmd("Network.clearBrowserCookies")
+            await p.go(f"/demo?lang={lang}", wait=2.4)
+            got = await p.js(panel)
+            assert got, f"Admin-Vorschau nicht lesbar ({lang})"
+            head, text = got.split("|", 1)
+            assert head == lang, (lang, head)
+            assert want in text and nope not in text, (lang, text[:120])
+        print("  Admin-Panel folgt `?lang=` wie jede andere Seite (Reiter, Karten, `<html lang>`)")
+
         # ---------- 5) Hell/Dunkel bis in die Vorschau-iframes ----------
         await p.go("/demo")
         await p.js("localStorage.setItem('ts-theme','dark')")

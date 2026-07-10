@@ -4,7 +4,27 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
-Die Projekt-Website und das Demo-Frontend. Die Bibliothek selbst ist unverändert.
+Die Projekt-Website, das Demo-Frontend — und die letzte Seite, die noch nicht übersetzt war.
+
+### Hinzugefügt — das Admin-Panel spricht beide Sprachen
+- **`/auth/admin` folgt `cfg.lang`**, wie Login-, Konto- und Fehlerseite. Vorher trug
+  `tinysesam/admin.py` sein Deutsch fest im Template: `<html lang=de>`, die Reiter
+  „Benutzer / Sitzungen / Härtung / Audit", jede Feldbeschriftung, jede Rückfrage. Ein
+  englisch konfiguriertes TinySesam zeigte seinen Administratoren ein deutsches Panel.
+- Das Panel baut seine Oberfläche im Browser, deshalb reisen die Texte als JSON mit
+  (`const L`) statt in den Vorlagentext eingesetzt zu werden. Sie kommen aus derselben
+  Tabelle wie alle anderen Seiten (`messages.py`, Vorsatz `admin.`) und lassen sich damit
+  auch wie alle anderen überschreiben — `auth.add_messages("fr", {"admin.tab.users": …})`.
+  `neue Sprache` heißt jetzt: eine Tabelle, nicht ein Fork des Panels.
+- **`admin.locale`** (`en-GB` / `de-DE`) steuert `toLocaleString()` — sonst stünden englische
+  Datumsangaben im deutschen Panel.
+- Zwei Absicherungen: `json.dumps(..., ensure_ascii=False)`, damit „Härtung" auch als
+  „Härtung" in der UTF-8-Seite steht, und `<` wird zu `<` maskiert — eine eigene
+  Übersetzung mit `</script>` hätte sonst den Skriptblock beendet.
+- `tests/test_i18n.py` prüft jetzt, dass **beide Tabellen dieselben Schlüssel** tragen (170).
+  Ein fehlender Eintrag fiele stumm auf Englisch zurück: die Seite wirkt übersetzt, einzelne
+  Wörter sind es nicht. Genau so blieb das Panel unbemerkt deutsch. Der Browser-Test fährt
+  `?lang=` durch die Vorschau-iframes bis in den Reiter hinein.
 
 ### Hinzugefügt — die Demo-Seite gibt es jetzt auch gebaut
 - **`demo.html` auf der Website.** GitHub Pages liefert nur Dateien aus, kein Serverprozess —
@@ -16,6 +36,9 @@ Die Projekt-Website und das Demo-Frontend. Die Bibliothek selbst ist unveränder
     File, nichts aufzuräumen, kein Konto angelegt. Was das Admin-Panel zeigt, sind die
     hartkodierten Beispieldaten aus `MOCK` — die es per `fetch` aus daneben abgelegten
     JSON-Dateien holt, genau wie live aus der Attrappen-Route.
+  - Jedes Panel entsteht **je Sprache einmal** (`login.de.html`, `admin.en.html`, …); die
+    Seite blendet den passenden Rahmen per `l-en`/`l-de` ein — dasselbe Sprachsystem wie
+    überall, keine Sprach-Dateinamen in der URL.
   - **`web/demo.py` ist die einzige Quelle** für Config, Beispieldaten, Panel-Texte und
     Rahmen-CSS. `examples/showcase.py` benutzt sie ebenfalls, statt sie zu duplizieren.
     Vorher lagen dieselben Sätze und dieselbe Config an zwei Stellen — und liefen
@@ -32,11 +55,6 @@ Die Projekt-Website und das Demo-Frontend. Die Bibliothek selbst ist unveränder
   der kleineren Größe, wie die Sätze darüber und darunter.
 - **Auch die Live-Demo startet auf Englisch.** `lang_of()` fiel auf `"de"` zurück, die Website
   längst nicht mehr.
-
-### Bekannt
-- **Das Admin-Panel ist nicht übersetzt** (`tinysesam/admin.py` trägt sein Deutsch fest im
-  Template). Auf der englischen Demo-Seite steht deshalb ein deutsches Panel. Die gebaute Seite
-  legt es folgerichtig nur **einmal** an statt zweimal identisch. Siehe `TODO.md`.
 
 ### Behoben
 - **Die Website war offline (404).** Nicht der Baujob war schuld, sondern das Ziel: Die
