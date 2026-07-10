@@ -37,9 +37,10 @@ print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 # ---------- Pflichtdateien ----------
 for name in ("LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md",
              "TODO.md", "tinysesam/py.typed", ".gitignore",
-             ".github/workflows/ci.yml", ".github/workflows/pages.yml"):
+             ".github/workflows/ci.yml", ".github/workflows/pages.yml",
+             ".github/workflows/release.yml"):
     assert name in FILES, f"{name} fehlt im Repo"
-print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, beide Workflows vorhanden")
+print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
 
 # ---------- docs/ enthält nur noch Beilagen; die Seiten baut die Action ----------
 docs = [f for f in FILES if f.startswith("docs/")]
@@ -92,6 +93,59 @@ runner = read("tests", "run_all.py")
 assert 'glob.glob(os.path.join(HERE, "test_*.py"))' in runner, "run_all sammelt nicht mehr automatisch"
 print(f"  {len(suites)} Suiten, alle vom Sammellauf erfasst")
 
+# ---------- Keine privaten Namen im öffentlichen Repo ----------
+# Das Repo kann jeder lesen. Hostnamen, Kundennamen und Namen anderer Projekte des Autors
+# gehören deshalb nicht hinein — weder in Code noch in Beispiele, Tests oder Kommentare.
+# Konfiguriert wird über Umgebungsvariablen, nicht über Vorgabewerte im Quelltext.
+#
+# Vier Stellen dürfen echte Namen tragen, weil sie ohne sie sinnlos wären: LICENSE und
+# pyproject.toml (Urheberschaft), der OWNER-Block in web/site.py (Impressumspflicht) — und
+# diese Datei selbst, die die verbotene Wortliste ja enthalten muss.
+PRIVATE = ("drog", "drog-tower", "specdoor", "brunpower", "paperlaiss", "hetz", "backmox",
+           "loco", "rasbox", "drogbox", "ollornog")
+# Die eigene Repo- und Pages-Adresse ist keine private Spur, sondern die Anschrift des Projekts.
+PUBLIC_REFS = ("github.com/Ollornog/TinySesam", "Ollornog/TinySesam",
+               "ollornog.github.io/TinySesam", "github-tinysesam")
+NAME_EXEMPT = {"LICENSE", "pyproject.toml", "web/site.py", "tests/test_repo.py"}
+hits = []
+for f in FILES:
+    if f in NAME_EXEMPT or f.endswith((".png", ".ico")):
+        continue
+    try:
+        body = read(f)
+    except (UnicodeDecodeError, IsADirectoryError):
+        continue
+    for n, line in enumerate(body.splitlines(), 1):
+        for ref in PUBLIC_REFS:                      # erlaubte Adressen ausblenden …
+            line = line.replace(ref, "")
+        for word in PRIVATE:                         # … und erst dann suchen
+            if re.search(rf"\b{re.escape(word)}\b", line, re.I):
+                hits.append(f"{f}:{n}: {line.strip()[:70]}")
+assert not hits, "private Namen im öffentlichen Repo:\n  " + "\n  ".join(hits[:8])
+print(f"  keine privaten Namen ({len(PRIVATE)} Begriffe geprüft, {len(NAME_EXEMPT)} Ausnahmen)")
+
+# ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
+# Sonst empfiehlt die Doku eine Version, die es nie gab: `pip install …@v0.11.0` bricht ab,
+# weil der Tag nie gepusht wurde. Genau das stand hier — unbemerkt, weil niemand es nachbaut.
+PIN = re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)")
+for f in ("README.md", "README.de.md", "deploy/forward-auth/docker-compose.yml"):
+    for found in PIN.findall(read(f)):
+        assert found == pv, f"{f} pinnt v{found}, aktuell ist v{pv}"
+print(f"  alle Beispiel-Pins zeigen auf v{pv}")
+
+# ---------- Kein Selbst-Update: die Bibliothek lädt keinen Code nach ----------
+# Wer das Admin-Panel übernimmt, könnte sonst auf eine alte, lückenhafte Version zurückschalten.
+# Eine Auth-Bibliothek startet keine Prozesse. `sys.executable`/`subprocess` wären der Weg,
+# auf dem ein Selbst-Update zurückkäme — deshalb hier die Grenze, nicht beim Wort „pip"
+# (das steht harmlos in Docstrings, die Installationshinweise geben).
+for f in LIB:
+    body = read(f)
+    assert "self_update" not in body, f"Selbst-Update wieder eingebaut: {f}"
+    assert "sys.executable" not in body, f"{f} startet einen Interpreter"
+    assert not re.search(r"^\s*import subprocess|\bsubprocess\.\w+\(", body, re.M), \
+        f"{f} startet einen Prozess"
+print("  kein Selbst-Update, kein Prozessstart in der Bibliothek")
+
 # ---------- Der Website-Generator schreibt genau das, was die Action deployt ----------
 action = read(".github", "workflows", "pages.yml")
 assert "python -m web.build _site" in action
@@ -115,7 +169,7 @@ assert "@" in OWNER["email"] and SITE_URL
 print("  Impressum: alle Pflichtangaben gesetzt")
 
 # ---------- Die Automatik selbst: Skripte, Hook, CI-Jobs ----------
-for f in ("scripts/check.sh", "scripts/ci-status.sh", ".githooks/pre-push"):
+for f in ("scripts/check.sh", ".githooks/pre-push"):
     assert f in FILES, f"{f} fehlt — ohne das Tor läuft niemand die Suite"
     assert os.access(os.path.join(ROOT, f), os.X_OK), f"{f} ist nicht ausführbar"
 
@@ -129,7 +183,14 @@ ci = read(".github", "workflows", "ci.yml")
 for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.py",
                "python -m web.build", "setup-chrome"):
     assert needed in ci, f"CI fährt {needed} nicht"
-print("  check.sh, ci-status.sh, pre-push-Hook da; CI fährt Browser-, Hygiene- und Website-Test")
+
+# Öffentliches Repo → niemals self-hosted Runner: ein Fork-PR liefe sonst auf fremder Hardware.
+for wf in (f for f in FILES if f.startswith(".github/workflows/")):
+    assert "self-hosted" not in read(wf), f"{wf} nutzt einen self-hosted Runner"
+
+rel = read(".github", "workflows", "release.yml")
+assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
+print("  check.sh + pre-push da; CI fährt Browser-, Hygiene- und Website-Test; Release signiert Prüfsummen")
 
 # ---------- Doku wandert mit: der Changelog kennt den aktuellen Stand ----------
 changelog = read("CHANGELOG.md")

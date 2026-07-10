@@ -18,13 +18,11 @@
 - **Forward-Auth**: optionale Feinsteuerung, welche `Remote-*`-Header gesetzt werden.
 - **E-Mail-Verifikation/Invite ohne Magic-Link-Endpoint** (aktuell nutzen sie `/auth/magic/{token}`).
 
-## CI auf eigener Hardware (offen)
-- Runner registrieren: GitHub → Settings → Actions → Runners → New self-hosted runner;
-  Compose-Service in `/home/drog/ci-runner/compose.yml` ergänzen (siehe Tower-Doku
-  `context/servers/ci-runner.md`). **Chrome muss ins Runner-Image** — `tests/test_browser.py`
-  fährt headless Chrome über das DevTools-Protokoll.
-- Danach in `.github/workflows/ci.yml`: `runs-on: ubuntu-latest` → `runs-on: [self-hosted, linux, x64]`.
-- Falle bei parallelen Runnern: Service-Container ohne feste Host-Ports (`ports: ['5432']`).
+## CI — erledigt: bleibt auf `ubuntu-latest`
+Self-hosted Runner sind für dieses Repo **ausgeschlossen**, nicht aufgeschoben. Bei einem
+öffentlichen Repo kann jeder einen Fork-PR öffnen, dessen Workflow dann auf fremder Hardware
+liefe; nicht-ephemere Runner sind damit dauerhaft kompromittierbar — GitHub rät ausdrücklich ab.
+Kosten sind kein Gegenargument: öffentliche Repos haben unbegrenzte Minuten.
 
 ## Continuous Deployment — entschieden: nein (2026-07-09)
 Kein automatisches Ausrollen. Die Website deployt GitHub Pages selbst (`pages.yml`), das ist

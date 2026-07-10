@@ -2,14 +2,15 @@
 # Letzte Bremse vor dem Push. Aktivieren: git config core.hooksPath .githooks
 # Notausgang (nur mit gutem Grund): git push --no-verify
 #
-# Die Suite läuft im Container (`ci-local` -> ci-python-web): dieselbe Toolchain wie
-# die CI, unabhängig davon, was auf diesem Rechner zufällig installiert ist.
+# Standardfall: `scripts/check.sh` läuft nativ. Wer die Suite lieber in einem Container
+# fährt (gleiche Toolchain wie die CI, unabhängig vom Rechner), legt sich ein `ci-local`
+# in den PATH — dann benutzt der Hook es von selbst.
 #
-# Ist Docker/ci-local nicht verfügbar, wird der Push ABGEBROCHEN — mit einer Ausnahme:
-# beim Push auf `main` genügt der native Host-Lauf, weil dort anschließend die
-# GitHub-CI als verbindliches Gate greift. Auf Feature-Branches läuft KEINE CI
-# (on.push.branches: [main]) — der Container-Lauf ist dort die einzige Prüfung, und
-# ein stiller Rückfall auf den Host würde genau dieses Netz entfernen.
+# Ist `ci-local` vorhanden, aber Docker nicht ansprechbar, wird der Push auf
+# Feature-Branches ABGEBROCHEN: Wer den Container-Lauf eingerichtet hat, verlässt sich
+# darauf, und auf Feature-Branches läuft keine GitHub-CI (on.push.branches: [main]).
+# Ein stiller Rückfall auf den Host würde genau dieses Netz entfernen. Beim Push auf
+# `main` genügt der native Lauf, weil dort anschließend die CI als Gate greift.
 #
 # Kein Schleifenrisiko: ci-local setzt CI_LOCAL_INSIDE=1 im Container und ruft dort
 # check.sh direkt auf, nicht diesen Hook.
@@ -39,25 +40,25 @@ docker_ok() {
     sudo -n docker info >/dev/null 2>&1
 }
 
-if command -v ci-local >/dev/null 2>&1 && docker_ok; then
-    echo "pre-push: Testsuite läuft im Container (ci-local) — das dauert, und das ist gut so."
-    exec ci-local
-fi
-
-if [[ "$pushes_main" -eq 1 ]]; then
-    echo "pre-push: Docker/ci-local nicht verfügbar → nativer Host-Lauf." >&2
-    echo "          Erlaubt, weil auf main anschließend die GitHub-CI greift." >&2
-    exec "$ROOT/scripts/check.sh"
-fi
-
-cat >&2 <<'EOF'
-pre-push: ABGEBROCHEN — Docker bzw. ci-local ist nicht verfügbar.
+if command -v ci-local >/dev/null 2>&1; then
+    if docker_ok; then
+        echo "pre-push: Testsuite läuft im Container (ci-local) — das dauert, und das ist gut so."
+        exec ci-local
+    fi
+    if [[ "$pushes_main" -eq 0 ]]; then
+        cat >&2 <<'EOF'
+pre-push: ABGEBROCHEN — ci-local ist eingerichtet, aber Docker antwortet nicht.
 
 Auf Feature-Branches läuft keine GitHub-CI. Der Container-Lauf ist hier die
 einzige Prüfung; ein Rückfall auf den Host würde ungeprüften Code durchlassen.
 
 Prüfen:  docker info          (Gruppe aktiv? ggf. neu einloggen)
-Bauen:   /home/drog/ci-images/build.sh
 Notfall: git push --no-verify (auf eigene Gefahr, ungeprüft)
 EOF
-exit 1
+        exit 1
+    fi
+    echo "pre-push: Docker antwortet nicht → nativer Lauf." >&2
+    echo "          Erlaubt, weil auf main anschließend die GitHub-CI greift." >&2
+fi
+
+exec "$ROOT/scripts/check.sh"

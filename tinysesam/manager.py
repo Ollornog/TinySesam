@@ -89,7 +89,7 @@ class TinySesam:
             self.store.set_password_hash(uid, hash_password(password))
         return uid
 
-    # Rollen (optional). paperlaiss braucht das NICHT — dort reicht require_user (eingeloggt/nicht).
+    # Rollen (optional). Wer nur „eingeloggt oder nicht" braucht, nimmt require_user.
     # Andere Projekte differenzieren User über is_admin + frei definierbare roles.
     def user_roles(self, user) -> list:
         import json
@@ -874,39 +874,11 @@ class TinySesam:
             "login_attempts": self.store.gc_attempts(older),
         }
 
-    # ---------- Update (Panel-editierbar: manuell/automatisch + Version-Pin) ----------
-    def update_settings(self) -> dict:
-        return {"mode": self.store.get_setting("update_mode") or "manual",   # manual | auto
-                "pin": self.store.get_setting("update_pin") or ""}           # z.B. 'v0.2.0'; leer = neueste
-
-    def set_update_setting(self, key, value):
-        if key == "mode" and value in ("manual", "auto"):
-            self.store.set_setting("update_mode", value)
-        elif key == "pin":
-            self.store.set_setting("update_pin", str(value or ""))
-
-    def update_status(self) -> dict:
-        from . import updater
-        pin = self.store.get_setting("update_pin") or None
-        st = updater.update_available(pin=pin)
-        st["mode"] = self.store.get_setting("update_mode") or "manual"
-        return st
-
-    def run_update(self) -> dict:
-        """Update anstoßen (auf gepinnte Version oder neueste). Host-App muss danach neu starten."""
-        from . import updater
-        pin = self.store.get_setting("update_pin") or None
-        ref = pin or (updater.latest_version() or {}).get("ref")
-        r = updater.self_update(ref=ref)
-        self.audit("update", detail=f"pin={pin} ref={ref} ok={r.get('ok')}")
-        return r
-
-    def auto_update(self) -> dict:
-        """Für Startup/Cron: nur im Modus 'auto' und nur wenn ein Update verfügbar ist."""
-        if (self.store.get_setting("update_mode") or "manual") != "auto":
-            return {"skipped": "manueller Modus"}
-        st = self.update_status()
-        return self.run_update() if st.get("available") else {"up_to_date": True, **st}
+    def version(self) -> str:
+        """Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst;
+        das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases)."""
+        from . import current_version
+        return current_version()
 
     # ---------- Forward-Auth (Reverse-Proxy) ----------
     def forwarded_url(self, request: Request) -> str:
@@ -1122,7 +1094,7 @@ class TinySesam:
 
     def require_user(self, request: Request) -> dict:
         """FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User.
-        paperlaiss: `Depends(auth.require_user)` — mehr braucht es dort nicht."""
+        Wer keine Rollen braucht: `Depends(auth.require_user)` genügt."""
         return self._enforce(request)
 
     def require_admin(self, request: Request) -> dict:

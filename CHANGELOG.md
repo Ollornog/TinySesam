@@ -2,7 +2,49 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.12.0] — 2026-07-10
+
+### Entfernt — Selbst-Update (Bruch der öffentlichen API)
+- **`tinysesam/updater.py` ist weg**, samt `self_update()`, `update_available()`, `latest_version()`
+  und `pip_url()`. Ebenso die Manager-Methoden `update_settings/set_update_setting/update_status/
+  run_update/auto_update`, die Panel-Routen `/api/update*`, der Reiter „Update" und die
+  Store-Einstellungen `update_mode`/`update_pin`.
+  **Grund:** Die Ziel-Version war über das Admin-Panel frei setzbar. Wer eine Admin-Sitzung
+  übernimmt, konnte auf eine alte Version mit bekannter Lücke zurückschalten und die Instanz so
+  dauerhaft verwundbar machen — ausgerechnet in der Komponente, die alles andere schützt. In einem
+  Container ist ein Selbst-Update ohnehin sinnlos: der nächste Neustart verwirft es. Kein
+  etabliertes Auth-Projekt hat so einen Knopf.
+  **Ersatz:** Die Version bestimmt, wer installiert — gepinnter Git-Tag oder Wheel aus dem Release.
+  `python -m tinysesam version` und das Panel unter „Härtung" zeigen die laufende Version.
+  Ein Hygiene-Test hält den Knopf draußen.
+- **CLI abgespeckt:** `python -m tinysesam version` bleibt, `check` und `update` sind weg.
+
+### Hinzugefügt — Auslieferung
+- **`.github/workflows/release.yml`** — ein Tag `vX.Y.Z` baut Wheel + sdist, prüft vorher, dass der
+  Tag zur Version in `pyproject.toml` passt, fährt die Suite und hängt die Dateien samt
+  `SHA256SUMS` an das GitHub-Release.
+- **README: „Installation und Updates"** (beide Sprachen) — die zwei Betriebsarten, der Pin je
+  Betriebsart und woher man von einer neuen Version erfährt.
+- **`deploy/forward-auth/docker-compose.yml` pinnt die Version.** Vorher lief dort ein
+  `pip install …@main` beim Containerstart: jeder Neustart zog den aktuellen Hauptzweig, zwei
+  Container derselben Datei konnten verschiedene Versionen fahren, ohne Netz startete nichts,
+  und ein Rollback gab es nicht.
+
+### Geändert — Hygiene
+- **Keine privaten Namen mehr im Repo** (Hostnamen, Kundennamen, Namen anderer Projekte des
+  Autors). Ein Hygiene-Test prüft eine Wortliste gegen `git ls-files`; erlaubt bleiben nur die
+  Projekt-Adresse, `LICENSE` (Urheberrecht) und der `OWNER`-Block (Impressumspflicht).
+- **README:** die Live-Demo ist ausdrücklich ein **mitgeliefertes Beispiel-Frontend**, kein
+  Bestandteil der Bibliothek und keine Vorgabe.
+- **`.githooks/pre-push` läuft auch ohne `ci-local`.** Der Hook verlangte einen Container-Wrapper,
+  den nur der Rechner des Autors kennt, und brach bei allen anderen auf Feature-Branches ab.
+  Jetzt: nativer Lauf als Standard; nur wer `ci-local` eingerichtet hat, muss auch Docker laufen
+  haben. Der Pfad zu einem privaten Verzeichnis ist raus.
+- **`scripts/ci-status.sh` und `scripts/ci_status.py` entfernt** — Behelf für Rechner ohne `gh`.
+  Mit installiertem `gh` erledigt `gh run watch --exit-status` dasselbe, kennt das Repo aus dem
+  Remote und liefert im Gegensatz zum anonymen API-Weg auch die Logs.
+- Hygiene-Test bewacht zusätzlich: kein `self-hosted`-Runner in den Workflows (bei einem
+  öffentlichen Repo liefe ein Fork-PR sonst auf fremder Hardware) und kein `pip`-Aufruf zur Laufzeit.
 
 ### Hinzugefügt — Absicherung
 - **`tests/test_browser.py`** — headless Chrome über das DevTools-Protokoll gegen das laufende Showcase:
@@ -14,8 +56,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - CI: neuer Job **`browser`**, der zusätzlich die Website baut.
 - **`scripts/check.sh`** — ein Tor vor jedem Push (Suiten + Browser + Hygiene + Website-Build),
   gefahren vom **`.githooks/pre-push`**-Hook (`git config core.hooksPath .githooks`).
-  **`scripts/ci-status.sh`** holt nach dem Push das CI-Ergebnis ab (`gh run watch --exit-status`) —
-  ein Push ohne Rückmeldung gilt als nicht verifiziert.
+  Nach dem Push wird das CI-Ergebnis aktiv abgeholt (`gh run watch --exit-status`) — ein Push
+  ohne Rückmeldung gilt als nicht verifiziert.
 - `tests/run_all.py --no-browser` für Zwischenläufe; `tests/test_repo.py` bewacht jetzt auch, dass
   Tor, Hook und CI-Jobs existieren und dass beide READMEs die Tests erklären.
 
@@ -40,10 +82,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - **Feature-Branches lösen keine CI mehr aus** (`on.push.branches: [main]` statt `["**"]`).
   Volle CI läuft beim Pull Request und auf `main`; dazwischen prüft der lokale Container-Lauf.
   Notausgang für WIP auf `main`: `[skip ci]` in der Commit-Message.
-- **`.githooks/pre-push` läuft im Container** (`ci-local`) — dieselbe Toolchain wie die CI, unabhängig
-  davon, was auf dem Rechner zufällig installiert ist. Fehlt Docker, **bricht der Push ab**; nur beim
-  Push auf `main` genügt der native Host-Lauf, weil dort anschließend die GitHub-CI greift. Auf
-  Feature-Branches läuft keine CI — dort wäre ein stiller Rückfall auf den Host ein Loch im Netz.
+- **`.githooks/pre-push` nutzt den Container, wenn es ihn gibt.** Liegt ein `ci-local` im `PATH`,
+  läuft die Suite dort — dieselbe Toolchain wie die CI. Wer ihn eingerichtet hat, aber dessen Docker
+  nicht antwortet, bekommt auf Feature-Branches einen **Abbruch** (dort läuft keine GitHub-CI, ein
+  stiller Rückfall wäre ein Loch im Netz); auf `main` genügt der native Lauf, weil die CI folgt.
+  Ohne `ci-local` läuft die Suite schlicht nativ — sonst könnte niemand außer dem Autor pushen.
 
 ### Geändert
 - **Codeblöcke folgen dem Thema** — bisher waren sie in beiden Themen dunkel, weil `--code-bg` auch
@@ -152,7 +195,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [0.11.0] — 2026-07-09
 
 Großer Sammelrelease: Login-Kennung, PIN als Zusatzfaktor, Erst-Admin-Bootstrap, Demo-Modus,
-zweisprachige Website — plus die Rechte-Fallen aus dem ersten Produktiveinsatz (`go.ollornog.de`).
+zweisprachige Website — plus die Rechte-Fallen aus dem ersten Produktiveinsatz.
 
 ### Sicherheit
 - **`has_role()` verlieh Admins jede Rolle.** Das bleibt der Default (`admin_implies_roles=True`),

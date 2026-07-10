@@ -63,7 +63,7 @@ Direkt von GitHub (nicht auf PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
 pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.5.0
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.12.0
 ```
 
 ## Quickstart
@@ -114,7 +114,7 @@ oder SMTP-Config) und verweigert sonst die Registrierung, statt die Prüfung sti
 ## Guards
 
 ```python
-Depends(auth.require_user)             # eingeloggt (das braucht paperlaiss)
+Depends(auth.require_user)             # eingeloggt — mehr braucht der einfachste Fall nicht
 Depends(auth.require_admin)            # eingeloggt + is_admin
 Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit alle)
 ```
@@ -274,19 +274,46 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Housekeeping:** `auth.gc()` löscht abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
   Login-Versuche (Audit-Log bleibt). Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
 
-## Update (von GitHub, versioniert)
+## Installation und Updates
 
-Auch eingebettet in eine andere App kann TinySesam sich von GitHub aktualisieren:
+**TinySesam aktualisiert sich nicht selbst.** Die Version bestimmst du, und zwar an genau einer
+Stelle: dort, wo du die Bibliothek installierst. Ein Auth-Modul, das zur Laufzeit Code aus dem
+Internet nachlädt, ist eine Hintertür mit Bedienungsanleitung — wer das Admin-Panel übernimmt,
+könnte auf eine alte Version mit bekannter Lücke zurückschalten. Etablierte Auth-Projekte haben
+so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 
-- **Programmatisch** (fürs Admin-Panel): `tinysesam.update_available()` → `{current, latest, available}`;
-  über den Manager `auth.update_status()` / `auth.run_update()`.
-- **CLI:** `python -m tinysesam check` · `python -m tinysesam update [ref]` (nach Install auch `tinysesam …`).
-- **In den Einstellungen** (Store, Panel-editierbar):
-  - **Modus** `manual` | `auto` (`auth.set_update_setting("mode", …)`) — `auth.auto_update()` beim Start/per Cron
-    zieht im Auto-Modus ein verfügbares Update.
-  - **Version-Pin** (`auth.set_update_setting("pin", "v0.2.0")`) — hält exakt auf dieser Version; leer = neueste.
-- Quelle: `git+https://github.com/Ollornog/TinySesam.git@<ref>` (öffentlich). Privat/SSH: `TINYSESAM_GIT_URL`
-  bzw. `scheme="ssh"`. **Nach dem Update Host-App neu starten** (Python lädt Code nicht zur Laufzeit neu).
+### Als Bibliothek (in deiner eigenen App)
+
+Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
+
+```
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.12.0
+```
+
+Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
+(`@a1b2c3d…`). Aktualisieren heißt dann: Version in der Zeile hochziehen, neu installieren, Dienst
+neu starten. Python lädt Code nicht zur Laufzeit nach.
+
+Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
+installieren will, nimmt die Datei direkt:
+
+```
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.12.0/tinysesam-0.12.0-py3-none-any.whl
+```
+
+### Als Gateway (eigener Container)
+
+Das Forward-Auth-Gateway läuft als eigenes Image mit **festem Tag**, siehe
+`deploy/forward-auth/docker-compose.yml`. Update: Tag hochziehen, `docker compose pull && up -d`.
+Rollback: Tag zurücksetzen. Wer es ernst meint, pinnt den Digest (`@sha256:…`) — ein Tag lässt
+sich umhängen, ein Digest nicht.
+
+### Woher weißt du, dass es etwas Neues gibt?
+
+Aus dem [Releases-Feed](https://github.com/Ollornog/TinySesam/releases) — per Watch, RSS
+(`releases.atom`) oder einem Bot wie Renovate/Dependabot, der den Pin in einem Pull Request
+hochzieht. Dann läuft deine CI gegen die neue Version, und du entscheidest, ob du mergst.
+Die laufende Version zeigt `python -m tinysesam version` und das Admin-Panel unter „Härtung".
 
 ## API-Keys & Service-/Daemon-Accounts
 
@@ -347,6 +374,10 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
 
 Vollständige Demo: [`examples/showcase.py`](examples/showcase.py) — `/` ist die Projekt-Website selbst,
 `/demo` ein Frontend, dessen Login-/Konto-/Admin-Panels **read-only Live-Vorschauen** der echten Seiten sind (`uvicorn examples.showcase:app`).
+
+**Die Live-Demo ist ein Beispiel-Frontend, das mitgeliefert wird** — kein Bestandteil der Bibliothek
+und keine Vorgabe. Sie zeigt einen Weg, die eingebauten Seiten einzubinden; Aussehen und Aufbau sind
+frei ersetzbar. Wer TinySesam einbaut, bringt sein eigenes Frontend mit oder nimmt dieses als Vorlage.
 
 ## LDAP / lldap
 
