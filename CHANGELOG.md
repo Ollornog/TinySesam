@@ -31,9 +31,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   und ein Rollback gab es nicht.
 
 ### Geändert — Hygiene
-- **Keine privaten Namen mehr im Repo** (Hostnamen, Kundennamen, Namen anderer Projekte des
-  Autors). Ein Hygiene-Test prüft eine Wortliste gegen `git ls-files`; erlaubt bleiben nur die
-  Projekt-Adresse, `LICENSE` (Urheberrecht) und der `OWNER`-Block (Impressumspflicht).
+- **Keine private Infrastruktur mehr im Repo.** Die Trennlinie ist Identität gegen Infrastruktur:
+  Autor, Impressum, Lizenz und Repo-URL sind erlaubt (und teils rechtlich nötig) — Dienst-Subdomains,
+  interne Hostnamen, private IPs, Container-Nummern, Heimatverzeichnisse, Kundennamen und
+  API-Token-Kennungen nicht. `admin@example.de` ist harmlos, `paperless.example.de` verrät, wo ein
+  Paperless läuft.
+  Die Muster sind **generisch**, die verbliebenen Eigennamen stehen nur als **SHA256-Anfang** im
+  Test: Eine wörtliche Verbotsliste würde in einem öffentlichen Repo genau das veröffentlichen, was
+  sie schützen soll. Elf Köder-Zeilen belegen, dass der Wächter greift.
+- Beispieldaten des Showcase nutzen jetzt **RFC-5737-Adressen** (`203.0.113.7`) statt einer
+  erfundenen Adresse aus einem echten privaten Bereich. Eine solche lässt den eigenen Hygiene-Test
+  anschlagen und verleitet dazu, ihn aufzuweichen.
+- Die Attrappen-API des Showcase bediente noch `/api/update`, obwohl es die Route nicht mehr gibt.
 - **README:** die Live-Demo ist ausdrücklich ein **mitgeliefertes Beispiel-Frontend**, kein
   Bestandteil der Bibliothek und keine Vorgabe.
 - **`.githooks/pre-push` läuft auch ohne `ci-local`.** Der Hook verlangte einen Container-Wrapper,
