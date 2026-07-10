@@ -2,9 +2,11 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.14.0] — 2026-07-10
 
 Die Projekt-Website, das Demo-Frontend — und die letzte Seite, die noch nicht übersetzt war.
+Keine Änderung an Guards, Sessions oder Anmeldewegen; wer nur die Bibliothek einbindet, merkt
+von diesem Release nur die neuen `admin.*`-Schlüssel in `messages.py`.
 
 ### Hinzugefügt — das Admin-Panel spricht beide Sprachen
 - **`/auth/admin` folgt `cfg.lang`**, wie Login-, Konto- und Fehlerseite. Vorher trug
