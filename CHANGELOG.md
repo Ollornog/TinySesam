@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+### Geändert
+
+- Der Browser-Test lässt Chrome seinen Debug-Port selbst wählen und liest ihn aus
+  `DevToolsActivePort`. Ein vorab reservierter Port war ein Wettlauf: zwischen dem
+  Schließen des Probe-Sockets und dem Start von Chrome konnte ihn ein anderer Prozess
+  belegen — auf einem Runner mit parallelen Jobs kein Gedankenspiel.
+
 ## [0.12.0] — 2026-07-10
 
 ### Entfernt — Selbst-Update (Bruch der öffentlichen API)
