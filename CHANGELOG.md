@@ -4,7 +4,43 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
-Zwei Dinge am Sicherheitsnetz, beide unsichtbar für alle, die nur die Bibliothek einbinden.
+Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
+
+### Geändert — die Testbasis ist geteilt, nicht mehr kopiert
+
+Die allgemeinen Hygiene-Prüfungen, die Sperrlisten und der Rückstands-Check standen in jedem
+Projekt als eigene Kopie — und liefen auseinander. Diese Suite kannte sieben verbotene Namen,
+das Schwesterprojekt dreizehn; die Muster für private Netze hatten nur in einem von beiden die
+Ausnahme für CIDR-Masken in der Doku. Gleiche Absicht, verschiedene Wirkung.
+
+Jetzt liegen sie unter `tests/_kit/` als **eingecheckte, geteilte Basis**: die Regeln als reine
+Daten (`hygiene_policy.json`), die Prüfungen als stdlib-only Funktionen (`hygiene.py`). Sie werden
+erzeugt, nicht von Hand geschrieben.
+
+Wichtig für alle, die das Projekt klonen: **es kommt nichts hinzu, was geladen werden müsste.**
+Kein pip-Paket, kein Submodul, kein Netz zur Testzeit. `tests/_kit/` liegt in jedem `git clone`,
+jedem ZIP und jedem Release-Tarball. Käme der Wächter, der „keine private Infrastruktur" erzwingt,
+selbst aus dem Netz, wäre er das Leck, das er verhindern soll.
+
+Die Prüffunktionen geben Listen von Verstößen zurück, statt zu werfen. Deshalb bleibt diese Suite
+bei ihrem `assert`-Stil, während das Schwesterprojekt sammelnd berichtet — derselbe Code, zwei
+Idiome.
+
+### Behoben — die CI ignorierte `.ci-allow-dirty`
+
+Der Rückstands-Check existierte fünffach. Der `pre-push`-Hook und `ci-local` lasen `.ci-allow-dirty`;
+die beiden CI-Fassungen prüften rohes `git status --porcelain` und kannten die Datei nicht. Das
+verbindliche Gate widersprach damit dem lokalen Netz — auf der strengeren Seite, was den Fehler
+lange harmlos aussehen ließ. Hook und CI fahren jetzt dieselbe Datei, `scripts/_residue_check.sh`.
+
+### Behoben — der eigene Name stand auf der Sperrliste
+
+Die vereinigte Namens-Sperrliste enthielt den GitHub-Owner. Der ist aber ausdrücklich erlaubt:
+Repo-URL, Copyright-Zeile, Impressumsadresse und Pages-Adresse müssen ihn nennen dürfen. Im
+Schwesterprojekt fiel das nie auf, weil dessen Identitäts-Maskierung die URL-Zeilen zufällig traf;
+hier, mit Impressum und Pages-URL, schlug er sofort an. Der Eintrag ist entfernt. Die eigentliche
+Gefahr bleibt gefangen: eine Dienst-Subdomain trifft weiterhin das Subdomain-Muster, die nackte
+Domain nicht.
 
 ### Behoben — der `pre-push`-Hook riet zum falschen Befehl
 
