@@ -4,9 +4,11 @@
 
 <p align="center"><b>English</b> · <a href="README.de.md">Deutsch</a></p>
 
-[![tests](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg)](https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+<p align="right">
+<a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
+<img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
+</p>
 
 ### The login layer for your self-built apps.
 
