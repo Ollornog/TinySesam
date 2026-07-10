@@ -12,11 +12,66 @@
 # Ein stiller Rückfall auf den Host würde genau dieses Netz entfernen. Beim Push auf
 # `main` genügt der native Lauf, weil dort anschließend die CI als Gate greift.
 #
+# Der native Pfad prüft anschließend selbst, ob die Suite Rückstände hinterlassen hat
+# (das macht sonst `ci-local`, nicht `check.sh`). Ein Test, der schreibt, ist beim
+# zweiten Lauf nicht mehr wiederholbar — siehe testing-policy.md.
+#
 # Kein Schleifenrisiko: ci-local setzt CI_LOCAL_INSIDE=1 im Container und ruft dort
 # check.sh direkt auf, nicht diesen Hook.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+
+# ---------------------------------------------------------------------------
+# Nativer Lauf + Rückstands-Check.
+#
+# `exec check.sh` wäre kürzer, ersetzt aber den Prozess — danach lässt sich nichts
+# mehr prüfen. Verglichen wird gegen den Zustand VOR dem Lauf, damit ein bereits
+# schmutziger Arbeitsbaum nicht fälschlich als Rückstand gilt.
+# Ausnahmen: eine Zeile je Pfadmuster in `.ci-allow-dirty` (wie bei ci-local).
+# ---------------------------------------------------------------------------
+run_native_with_residue_check() {
+    local before after rc=0
+    before="$(git -C "$ROOT" status --porcelain || true)"
+
+    "$ROOT/scripts/check.sh" || rc=$?
+    [[ $rc -ne 0 ]] && return "$rc"
+
+    after="$(git -C "$ROOT" status --porcelain || true)"
+
+    local allow=() leftovers=() line path pat skip
+    if [[ -r "$ROOT/.ci-allow-dirty" ]]; then
+        while IFS= read -r pat; do
+            [[ -z "$pat" || "$pat" == \#* ]] && continue
+            allow+=("$pat")
+        done < "$ROOT/.ci-allow-dirty"
+    fi
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        # Schon vor dem Lauf vorhanden? Dann kein Rückstand.
+        [[ -n "$before" ]] && grep -qxF -- "$line" <<<"$before" && continue
+        path="${line:3}"
+        skip=0
+        for pat in ${allow[@]+"${allow[@]}"}; do
+            # shellcheck disable=SC2053  -- Glob-Vergleich ist gewollt
+            [[ "$path" == $pat ]] && { skip=1; break; }
+        done
+        [[ $skip -eq 0 ]] && leftovers+=("$line")
+    done <<<"$after"
+
+    if [[ ${#leftovers[@]} -gt 0 ]]; then
+        echo >&2
+        echo "pre-push: ABGEBROCHEN — die Suite hat Rückstände hinterlassen:" >&2
+        printf '  %s\n' "${leftovers[@]}" >&2
+        echo >&2
+        echo "Ein Test, der schreibt, ist beim zweiten Lauf nicht mehr wiederholbar." >&2
+        echo "Erlaubte Ausnahmen: eine Zeile je Pfadmuster in .ci-allow-dirty" >&2
+        return 1
+    fi
+    echo "pre-push: Rückstands-Check — Baum sauber."
+    return 0
+}
 
 # Läuft der Hook bereits im Container, nie erneut eskalieren.
 if [[ "${CI_LOCAL_INSIDE:-}" == "1" ]]; then
@@ -61,4 +116,4 @@ EOF
     echo "          Erlaubt, weil auf main anschließend die GitHub-CI greift." >&2
 fi
 
-exec "$ROOT/scripts/check.sh"
+run_native_with_residue_check
