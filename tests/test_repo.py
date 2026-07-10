@@ -38,7 +38,7 @@ assert not fehler, fehler
 print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 
 # ---------- Pflichtdateien ----------
-PFLICHT = ["LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md",
+PFLICHT = ["LICENSE", "SECURITY.md", "SECURITY.de.md", "CHANGELOG.md", "README.md", "README.de.md",
            "TODO.md", "tinysesam/py.typed", ".gitignore",
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",

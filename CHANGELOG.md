@@ -6,6 +6,19 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Geändert — die Doku spricht durchgängig beide Sprachen
+
+Der Sprachwechsler war Flickwerk. Die README trug ihn zentriert im Kopf (aktuelle Sprache fett,
+die andere als Link); `CONTRIBUTING` verwies kursiv und linksbündig auf die Gegenfassung; der
+`CODE_OF_CONDUCT` lag zwar in beiden Sprachen vor, verlinkte sie aber gar nicht miteinander.
+Jetzt tragen `CODE_OF_CONDUCT` und `CONTRIBUTING` denselben Kopf wie die README — zentrierte
+Überschrift, zentrierter Wechsler.
+
+`SECURITY` gab es nur auf Deutsch. Die deutsche Fassung heißt jetzt `SECURITY.de.md`, daneben
+steht `SECURITY.md` auf Englisch; beide sind über denselben Kopf verbunden. Die In-App-Fußzeile
+verlinkt die zur Anzeigesprache passende Datei, `tests/test_repo.py` erzwingt das Paar. `CHANGELOG`
+und `TODO` bleiben bewusst einsprachig deutsch.
+
 ### Geändert — die Testbasis ist geteilt, nicht mehr kopiert
 
 Die allgemeinen Hygiene-Prüfungen, die Sperrlisten und der Rückstands-Check standen in jedem

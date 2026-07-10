@@ -192,9 +192,10 @@ def header(ctx: Ctx, nav: Nav) -> str:
 def footer(ctx: Ctx, nav: Nav) -> str:
     """Fußzeile — auf jeder Seite dieselbe."""
     lb = ctx.labels
+    security_doc = "SECURITY.de.md" if ctx.lang == "de" else "SECURITY.md"
     return (f'<footer><div class=inner><a href="{nav.repo}">GitHub</a>·'
             f'<a href="{nav.repo}/blob/main/CHANGELOG.md">{lb.changelog}</a>·'
-            f'<a href="{nav.repo}/blob/main/SECURITY.md">{lb.security}</a>·'
+            f'<a href="{nav.repo}/blob/main/{security_doc}">{lb.security}</a>·'
             f'<a href="{nav.repo}/blob/main/LICENSE">{lb.license}</a>·'
             f'<a href="{nav.legal_href}">{lb.legal}</a>'
             f'<div class=credits>{lb.credits}</div></div></footer>')
