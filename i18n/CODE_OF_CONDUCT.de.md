@@ -1,5 +1,9 @@
 # Vereinbarung über Verhaltenskodex für Mitwirkende
 
+<p align="left"><a href="../CODE_OF_CONDUCT.md">English</a> · <b>Deutsch</b></p>
+
+<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+
 ## Unsere Verpflichtung
 
 Wir als Mitglieder, Teilnehmende und Verantwortliche unserer Gemeinschaft verpflichten uns, allen Teilnehmenden an dem Projekt und unserer Gemeinschaft eine belästigungsfreie Beteiligung, unabhängig von Alter, Körpergröße, Behinderung, ethnischer Zuordnung, Geschlechtermerkmalen, -identität und -ausdruck, Grad der Erfahrung, Bildung, sozialem Status, Nationalität, persönlicher Erscheinung, Rasse, Kaste, Hautfarbe, Religion oder sexueller Identität und Orientierung zu ermöglichen.
@@ -79,9 +83,3 @@ Antworten auf häufig gestellte Fragen zu diesem Verhaltenskodex finden Sie in d
 [homepage]: https://www.contributor-covenant.org
 [v2.1]: https://www.contributor-covenant.org/version/2/1/code_of_conduct.html
 [mozilla]: https://github.com/mozilla/inclusion
-
----
-
-<p align="right"><a href="../CODE_OF_CONDUCT.md">English</a> · <b>Deutsch</b></p>
-
-<p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>

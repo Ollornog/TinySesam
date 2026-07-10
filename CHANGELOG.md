@@ -31,10 +31,13 @@ Grund: GitHubs Health-File-Detektor sucht `CODE_OF_CONDUCT`/`SECURITY`/… in Ro
 Contributor Covenant. Aus `i18n/` heraus sieht der Detektor nur noch die englischen Root-Dateien.
 Die In-App-Fußzeile und `tests/test_repo.py` folgen dem neuen Ort; der Sprachwechsler bleibt.
 
-Damit GitHub die englische `CODE_OF_CONDUCT.md` nicht nur wählt, sondern auch als *Contributor
-Covenant* erkennt, tragen die Unterseiten jetzt eine Standard-Markdown-Überschrift statt eines
-zentrierten HTML-Kopfes — der Vorlagen-Abgleich verträgt keinen Vorspann. Logo und Sprachwechsler
-stehen dafür rechtsbündig unter dem Pflichttext, einheitlich auf allen Unterseiten.
+Die Unterseiten tragen jetzt eine Standard-Markdown-Überschrift statt eines zentrierten HTML-Kopfes.
+Für den *Contributor Covenant* zählt aber mehr: GitHubs Vorlagen-Abgleich verträgt **gar keinen**
+Fremdinhalt in der Datei — auch keinen am Ende. Die englische `CODE_OF_CONDUCT.md` bleibt deshalb
+**pur** (nur Überschrift und Vorlagentext), damit GitHub sie als Contributor Covenant erkennt und
+nicht als „Other". Die übrigen Unterseiten (deutsche CoC-Fassung, `CONTRIBUTING`, `SECURITY`, je
+zweisprachig) tragen den Sprachwechsler linksbündig und das Logo rechtsbündig direkt unter der
+Überschrift.
 
 Die Kontaktadressen (Verhaltenskodex, Beitrag, Impressum) laufen jetzt einheitlich über
 `tinysesam-github@ollornog.de` statt `admin@`/`tinysesam@` — eine repo-eigene Adresse pro Projekt.

@@ -1,5 +1,9 @@
 # Security
 
+<p align="left"><b>English</b> · <a href="i18n/SECURITY.de.md">Deutsch</a></p>
+
+<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+
 ## Reporting a vulnerability
 
 Please do **not** report security issues via public issues. Report them privately through this repo's
@@ -24,9 +28,3 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 ## Supported versions
 
 Security fixes land on the latest minor version (currently `0.5.x`).
-
----
-
-<p align="right"><b>English</b> · <a href="i18n/SECURITY.de.md">Deutsch</a></p>
-
-<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
