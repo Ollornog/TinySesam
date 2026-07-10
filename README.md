@@ -63,7 +63,7 @@ Straight from GitHub (not on PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # core: password + TOTP
 pip install "tinysesam[all] @ $GH"     # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.12.0
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.13.0
 ```
 
 ## Quickstart
@@ -283,7 +283,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.12.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.13.0
 ```
 
 A tag can be moved. If you need immutability, pin the commit instead (`@a1b2c3d…`). Updating then
@@ -293,15 +293,25 @@ Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To 
 take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.12.0/tinysesam-0.12.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.0/tinysesam-0.13.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
 
-The forward-auth gateway runs as its own image with a **fixed tag**, see
-`deploy/forward-auth/docker-compose.yml`. Update: bump the tag, `docker compose pull && up -d`.
-Rollback: put the old tag back. If you're serious, pin the digest (`@sha256:…`) — a tag can be
-moved, a digest cannot.
+Every release builds an image for `linux/amd64` and `linux/arm64`:
+
+```
+ghcr.io/ollornog/tinysesam:v0.13.0
+```
+
+It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
+`/healthz` and starts the gateway directly — no `command:` needed. A full example with Caddy
+lives in `deploy/forward-auth/docker-compose.yml`.
+
+Update: bump the tag, `docker compose pull && docker compose up -d`. Rollback: put the old tag
+back. **There is deliberately no `latest`** — a moving tag turns every restart into a gamble.
+If you're serious, pin the digest (`ghcr.io/ollornog/tinysesam@sha256:…`, printed in the release
+workflow log): a tag can be moved, a digest cannot.
 
 ### How do you learn there is something new?
 

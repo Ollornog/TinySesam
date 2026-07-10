@@ -59,5 +59,21 @@ try:
 except SystemExit:
     ok("fehlende Pflicht-Env → SystemExit (klare Fehlermeldung)")
 
+# ---------- /healthz: ohne Anmeldung, auch wenn HTTPS erzwungen wird ----------
+# Der Container-HEALTHCHECK spricht den Prozess von innen über HTTP an. Würde die
+# Redirect-Middleware auch ihn umleiten, prüfte der Check nur noch den Redirect.
+hdb = tempfile.mktemp(suffix=".db")
+happ = gateway.build_app(TinySesamConfig.oidc_gateway(
+    issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
+    base_url="https://auth.example.com", db_path=hdb, https_mode="force"))
+r = TestClient(happ, base_url="http://auth.example.com").get("/healthz", follow_redirects=False)
+assert r.status_code == 200, f"/healthz → {r.status_code} (Redirect statt Antwort?)"
+assert r.json()["status"] == "ok" and r.json()["version"][0].isdigit(), r.json()
+# Gegenprobe: jeder andere Pfad wird bei force sehr wohl auf HTTPS umgeleitet.
+r2 = TestClient(happ, base_url="http://auth.example.com").get("/auth/login", follow_redirects=False)
+assert r2.status_code in (301, 307, 308), f"HTTPS-Zwang greift nicht mehr: {r2.status_code}"
+ok("/healthz: ohne Auth, 200 auch bei https_mode=force; andere Pfade werden umgeleitet")
+os.remove(hdb)
+
 os.remove(db)
 print("\nOIDC-GATEWAY OK ✅")

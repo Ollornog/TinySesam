@@ -63,7 +63,7 @@ Direkt von GitHub (nicht auf PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
 pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.12.0
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.13.0
 ```
 
 ## Quickstart
@@ -287,7 +287,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.12.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.13.0
 ```
 
 Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
@@ -298,14 +298,25 @@ Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256
 installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.12.0/tinysesam-0.12.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.13.0/tinysesam-0.13.0-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
 
-Das Forward-Auth-Gateway läuft als eigenes Image mit **festem Tag**, siehe
-`deploy/forward-auth/docker-compose.yml`. Update: Tag hochziehen, `docker compose pull && up -d`.
-Rollback: Tag zurücksetzen. Wer es ernst meint, pinnt den Digest (`@sha256:…`) — ein Tag lässt
+Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
+
+```
+ghcr.io/ollornog/tinysesam:v0.13.0
+```
+
+Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen
+`HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
+Ein vollständiges Beispiel mit Caddy liegt in `deploy/forward-auth/docker-compose.yml`.
+
+Update: Tag hochziehen, `docker compose pull && docker compose up -d`. Rollback: alten Tag
+zurückschreiben. **Ein `latest` gibt es bewusst nicht** — ein wandernder Tag macht jeden
+Neustart zum Glücksspiel. Wer es ernst meint, pinnt den Digest
+(`ghcr.io/ollornog/tinysesam@sha256:…`, steht im Log des Release-Workflows): ein Tag lässt
 sich umhängen, ein Digest nicht.
 
 ### Woher weißt du, dass es etwas Neues gibt?

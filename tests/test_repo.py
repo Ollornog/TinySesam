@@ -39,7 +39,7 @@ print(f"  Version {pv}: pyproject = __init__ = CHANGELOG")
 for name in ("LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md",
              "TODO.md", "tinysesam/py.typed", ".gitignore",
              ".github/workflows/ci.yml", ".github/workflows/pages.yml",
-             ".github/workflows/release.yml"):
+             ".github/workflows/release.yml", "Dockerfile", ".dockerignore"):
     assert name in FILES, f"{name} fehlt im Repo"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
 
@@ -147,11 +147,14 @@ print(f"  keine private Infrastruktur ({len(PRIVATE)} Muster + {len(PRIVATE_HASH
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
 # Sonst empfiehlt die Doku still eine alte Version weiter: Der Pin im Compose und die
 # `pip install`-Zeilen im README altern nicht mit, weil sie niemand ausführt.
-PIN = re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)")
+PINS = (re.compile(r"TinySesam(?:\.git)?[@/](?:releases/download/)?v(\d+\.\d+\.\d+)"),  # Git-Tag, Wheel
+        re.compile(r"tinysesam:v(\d+\.\d+\.\d+)"))                                     # Abbild-Tag
 for f in ("README.md", "README.de.md", "deploy/forward-auth/docker-compose.yml"):
-    for found in PIN.findall(read(f)):
-        assert found == pv, f"{f} pinnt v{found}, aktuell ist v{pv}"
-print(f"  alle Beispiel-Pins zeigen auf v{pv}")
+    body = read(f)
+    for pat in PINS:
+        for found in pat.findall(body):
+            assert found == pv, f"{f} pinnt v{found}, aktuell ist v{pv}"
+print(f"  alle Beispiel-Pins (Git-Tag, Wheel, Abbild) zeigen auf v{pv}")
 
 # ---------- Kein Selbst-Update: die Bibliothek lädt keinen Code nach ----------
 # Wer das Admin-Panel übernimmt, könnte sonst auf eine alte, lückenhafte Version zurückschalten.
@@ -210,6 +213,16 @@ for wf in (f for f in FILES if f.startswith(".github/workflows/")):
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
+assert "linux/amd64,linux/arm64" in rel, "Abbild ist nicht multi-arch"
+assert ":latest" not in rel, "ein wandernder `latest`-Tag gehört nicht ins Release"
+
+# Das Abbild darf keinen Weg zum Nachladen von Code enthalten — sonst käme das Selbst-Update
+# durch die Hintertür zurück. Und es läuft nicht als root.
+dockerfile = read("Dockerfile")
+assert "USER tinysesam" in dockerfile, "Abbild läuft als root"
+assert "HEALTHCHECK" in dockerfile, "Abbild ohne Health-Check"
+for weg in ("/opt/venv/bin/pip", "/usr/local/bin/pip"):
+    assert weg in dockerfile, f"{weg} wird nicht entfernt — das venv bringt ein eigenes pip mit"
 print("  check.sh + pre-push da; CI fährt Browser-, Hygiene- und Website-Test; Release signiert Prüfsummen")
 
 # ---------- Doku wandert mit: der Changelog kennt den aktuellen Stand ----------
