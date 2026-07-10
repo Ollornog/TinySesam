@@ -1,4 +1,5 @@
 """Die Projekt-Website: eine Quelle, zwei Sprachen — und der Rumpf aus web/ui.py."""
+import json
 import os
 import re
 import subprocess
@@ -8,8 +9,10 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+from tinysesam import __version__ as TS_VERSION  # noqa: E402
+
 from web.flows import FLOWS, render                       # noqa: E402
-from web.site import FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
+from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
 from web.ui import LANG_COOKIE, LANGS, Ctx, Nav, footer, header  # noqa: E402
 
 # ---------- Flow-Daten ----------
@@ -50,12 +53,13 @@ assert live.count("pill on") == 5 and live.count("pill off") == 4
 assert "Benutzername</b>" in live, "note(cfg) wird ausgewertet"
 print("  render(): statisch = Config-Schalter, mit cfg = aktiv/aus")
 
-# ---------- Zwei Dateien, jede zweisprachig — EIN Sprachsystem ----------
+# ---------- Vier Dateien, jede zweisprachig — EIN Sprachsystem ----------
 pages = build_pages()
-assert set(pages) == {INDEX, FLOWS_FILE, LEGAL}, sorted(pages)
+assert set(pages) == {INDEX, DEMO, FLOWS_FILE, LEGAL}, sorted(pages)
 assert not any(".de.html" in k for k in pages), "keine Sprach-Dateinamen"
 
 for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauchst")),
+                    (DEMO, ("Live demo", "Live-Demo")),
                     (FLOWS_FILE, ("Sign-in flows", "Login-Flows")),
                     (LEGAL, ("Legal notice", "Impressum & Datenschutz"))):
     html = pages[name]
@@ -67,7 +71,10 @@ for name, marks in ((INDEX, ("Use only what you need", "Nutze nur, was du brauch
     # der Wechsler benutzt überall denselben Parameter
     for code in LANGS:
         assert f"href='?lang={code}'" in html, (name, code)
-    assert ".de.html" not in html and "index.de" not in html
+    # Keine Sprach-Dateinamen für SEITEN. Die Panel-Vorschauen der Demo sind keine Seiten,
+    # sondern iframe-Inhalte — sie heißen `demo/login.de.html`, und das ist Absicht.
+    for page_name in ("index", "flows", "legal"):
+        assert f"{page_name}.de" not in html, (name, page_name)
     # und dasselbe Cookie wie die App
     assert LANG_COOKIE in html
     # Standard ist Englisch: `?lang=` > Cookie > LANGS[0]. Die Browsersprache zählt NICHT —
@@ -151,8 +158,36 @@ print("  Sprachwechsler: überall `?lang=`, keine Sprach-Dateinamen")
 with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([sys.executable, "-m", "web.build", tmp], cwd=ROOT, check=True, capture_output=True)
     have = sorted(os.listdir(tmp))
-    assert have == sorted([".nojekyll", "flows.html", "index.html", "legal.html",
-                           "theme.css", "wizard.png"]), have
-print("  web.build schreibt Seiten + Assets + .nojekyll")
+    assert have == sorted([".nojekyll", "demo", "demo.html", "flows.html", "index.html",
+                           "legal.html", "theme.css", "wizard.png"]), have
+
+    # Die Vorschauen der Demo-Seite: je Sprache eine für Login und Konto, das Admin-Panel
+    # einmal (es ist nicht übersetzt, s. web/demo.py). Dazu die Attrappen-API als Dateien.
+    demo = sorted(os.listdir(os.path.join(tmp, "demo")))
+    assert demo == sorted(["adminapi", "admin.html",
+                           "login.en.html", "login.de.html",
+                           "account.en.html", "account.de.html"]), demo
+
+    api = os.path.join(tmp, "demo", "adminapi", "api")
+    assert sorted(os.listdir(api)) == sorted(["users", "sessions", "security", "audit",
+                                              "resources", "version"])
+    # Ohne Endung, aber JSON: `fetch(...).json()` prüft keinen Content-Type, und Pages
+    # liefert die Datei unverändert aus.
+    users = json.loads(open(os.path.join(api, "users"), encoding="utf-8").read())
+    assert [u["username"] for u in users] == ["demoadmin", "demo", "martin", "backup-daemon"]
+    version = json.loads(open(os.path.join(api, "version"), encoding="utf-8").read())
+    assert version["version"] == TS_VERSION, "das Panel zeigt die gebaute Version"
+
+    # Die Panels sind echte Seiten, aber gesperrt — und die Demo-Seite bindet genau sie ein.
+    admin = open(os.path.join(tmp, "demo", "admin.html"), encoding="utf-8").read()
+    assert "pointer-events:none" in admin, "Vorschau muss read-only sein"
+    login = open(os.path.join(tmp, "demo", "login.en.html"), encoding="utf-8").read()
+    assert "pointer-events:none" in login and "<form" in login
+    page = open(os.path.join(tmp, "demo.html"), encoding="utf-8").read()
+    for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.html"):
+        assert f"src='{src}'" in page, src
+    # Auf Pages läuft nichts — ein „Öffnen"-Knopf hätte kein Ziel.
+    assert "/auth/login" not in page, "die gebaute Seite verlinkt keine laufende App"
+print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
 
 print("OK test_site")

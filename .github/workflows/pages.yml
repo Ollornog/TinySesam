@@ -2,13 +2,22 @@ name: pages
 
 # Baut die Projekt-Website aus web/site.py und veröffentlicht sie auf GitHub Pages.
 # Die HTML-Dateien liegen deshalb nicht im Repo — geändert wird nur die Quelle.
-# Einmalig nötig: Settings → Pages → Source = "GitHub Actions".
+#
+# Einmalig nötig: Settings → Pages → Source = "GitHub Actions", per API:
+#   gh api -X PUT repos/<owner>/<repo>/pages -f build_type=workflow
+# Steht die Quelle auf "Deploy from a branch", liefert Pages den Ordner `docs/` aus — der hat
+# kein index.html, also 404; zusätzlich belegt der Automatik-Build das Deployment, woran dieser
+# Workflow mit "in progress deployment" scheitert. Prüfen:
+#   gh api repos/<owner>/<repo>/pages --jq '{build_type,source}'
 
 on:
   push:
     branches: [main]
     paths:
       - "web/**"
+      # Die Demo-Seite rendert Login-, Konto- und Admin-Panel aus der Bibliothek. Ändert die
+      # sich, ändert sich die Website — auch ohne Anfassen von `web/`.
+      - "tinysesam/**"
       - "docs/theme.css"
       - "docs/wizard.png"
       - ".github/workflows/pages.yml"
@@ -31,6 +40,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Die Demo-Seite rendert ihre Panels aus der Bibliothek selbst — dafür muss sie
+      # importierbar sein. Ohne Extras: die Vorschauen brauchen weder OIDC noch SAML.
+      - name: Bibliothek installieren
+        run: pip install .
+
       - name: Website bauen
         run: python -m web.build _site
       - uses: actions/configure-pages@v5

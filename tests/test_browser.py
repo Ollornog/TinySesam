@@ -244,14 +244,22 @@ async def run():
         # ---------- 5b) Codeblöcke folgen dem Thema und lassen sich kopieren ----------
         # Der Knopf braucht `navigator.clipboard`; wir ersetzen es, um zu sehen, WAS ankommt.
         # Kopiert gehört der reine Text — ohne die Spans der Syntaxfarbe.
+        # Gemessen wird an `.cw`: der Kasten (Hintergrund, Rahmen) sitzt dort, `.code` ist
+        # transparent — nur so kann der Kopierknopf in einer eigenen Zeile im Block stehen.
         lum = """(function(s){const m=getComputedStyle(document.querySelector(s)).backgroundColor
-            .match(/\\d+/g).map(Number); return (m[0]*.299+m[1]*.587+m[2]*.114)/255;})('.cw .code')"""
+            .match(/\\d+/g).map(Number); return (m[0]*.299+m[1]*.587+m[2]*.114)/255;})('.cw')"""
         for theme, hell in (("light", True), ("dark", False)):
             await p.js(f"localStorage.setItem('ts-theme','{theme}')")
             await p.go("/", wait=1.6)
             assert await p.js("document.querySelectorAll('.cw .copy').length") == 2, theme
             l = await p.js(lum)
             assert (l > 0.85 if hell else l < 0.2), f"Codeblock im {theme}-Thema: Helligkeit {l:.2f}"
+            # Der Knopf steht in einer eigenen Zeile über dem Code — er überlappt ihn nicht.
+            over = await p.js("""(function(){
+                const b=document.querySelector('.cw .copy').getBoundingClientRect(),
+                      c=document.querySelector('.cw .code').getBoundingClientRect();
+                return b.bottom <= c.top + 1;})()""")
+            assert over, f"Kopierknopf überlappt den Code ({theme})"
         # Der Klick — im dunklen Thema, egal, es geht um die Zwischenablage.
         await p.js("window.__copied=null;"
                    "navigator.clipboard.writeText=t=>{window.__copied=t;return Promise.resolve();}")
