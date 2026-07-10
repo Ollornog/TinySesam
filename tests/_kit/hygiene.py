@@ -220,3 +220,146 @@ def pruefe_ausfuehrbar(root: str, pfade: list[str]) -> list[str]:
 
 def pruefe_pflichtdateien(root: str, namen: list[str]) -> list[str]:
     return [n for n in namen if not os.path.exists(os.path.join(root, n))]
+
+
+# ---------------------------------------------------------------------------
+# Belegte Standards, hier maschinell erzwungen. Quellen: context/repo-standards.md
+# ---------------------------------------------------------------------------
+_SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_USES = re.compile(r"^\s*-?\s*uses:\s*['\"]?([^'\"\s#]+)")
+
+
+def pruefe_actions_sha_gepinnt(root: str, dateien: list[str]) -> list[str]:
+    """Fremde Actions müssen auf einen vollen Commit-SHA gepinnt sein, nicht auf einen Tag.
+
+    GitHub: „Pinning an action to a full-length commit SHA is currently the only way to use
+    an action as an immutable release." Ein Tag lässt sich verschieben — wer Zugriff auf das
+    Action-Repo erlangt, zieht unbemerkt fremden Code in jeden Workflow.
+
+    Ausgenommen: lokale Actions (`./…`) und `docker://`-Referenzen.
+    """
+    treffer = []
+    for rel in dateien:
+        if not rel.startswith(".github/workflows/") or not rel.endswith((".yml", ".yaml")):
+            continue
+        inhalt = _lies(root, rel) or ""
+        for n, zeile in enumerate(inhalt.splitlines(), 1):
+            m = _USES.match(zeile)
+            if not m:
+                continue
+            ref = m.group(1)
+            if ref.startswith("./") or ref.startswith("docker://"):
+                continue
+            if "@" not in ref:
+                treffer.append(f"{rel}:{n}: {ref} — ohne Ref")
+                continue
+            pin = ref.rsplit("@", 1)[1]
+            if not _SHA40.match(pin):
+                treffer.append(f"{rel}:{n}: {ref} — Tag statt Commit-SHA")
+    return treffer
+
+
+def pruefe_workflow_permissions(root: str, dateien: list[str]) -> list[str]:
+    """Jeder Workflow setzt `permissions:` — mindestens auf oberster Ebene.
+
+    Es gibt keinen sicheren Default: die Ausgangsberechtigung des GITHUB_TOKEN kommt aus der
+    Repo-Einstellung. Sobald EINE Berechtigung explizit gesetzt ist, fallen alle übrigen auf
+    `none`. Ein Workflow ohne `permissions:` erbt also, was auch immer eingestellt ist.
+    """
+    treffer = []
+    for rel in dateien:
+        if not rel.startswith(".github/workflows/") or not rel.endswith((".yml", ".yaml")):
+            continue
+        inhalt = _lies(root, rel) or ""
+        # Auf oberster Ebene = ohne Einrückung.
+        if not re.search(r"^permissions:", inhalt, re.M):
+            treffer.append(f"{rel}: kein `permissions:` auf oberster Ebene")
+    return treffer
+
+
+def pruefe_changelog_kategorien(root: str, policy: dict, datei: str = "CHANGELOG.md") -> list[str]:
+    """Keep a Changelog 1.1.0: fester Satz Kategorien, innerhalb eines Repos eine Sprache.
+
+    Eine Überschrift darf einen erklärenden Zusatz tragen — nach Gedankenstrich
+    („### Behoben — der Hook riet …") oder in Klammern („### Geändert (Website)").
+    Geprüft wird nur der Kategoriename davor.
+    """
+    inhalt = _lies(root, datei)
+    if inhalt is None:
+        return [f"{datei} fehlt"]
+
+    erlaubt = policy["changelog_kategorien"]
+    treffer, gesehen = [], set()
+    innerhalb_code = False
+    for n, zeile in enumerate(inhalt.splitlines(), 1):
+        if zeile.lstrip().startswith("```"):
+            innerhalb_code = not innerhalb_code
+            continue
+        if innerhalb_code:
+            continue
+        m = re.match(r"^###\s+(.+)", zeile)
+        if not m:
+            continue
+        # "Behoben — der Hook …" -> "Behoben";  "Geändert (Website)" -> "Geändert"
+        kopf = re.split(r"\s+[—–-]\s+|\s*\(", m.group(1).strip(), maxsplit=1)[0].strip()
+        sprachen = [s for s, worte in erlaubt.items() if kopf in worte]
+        if not sprachen:
+            gueltig = sorted({w for worte in erlaubt.values() for w in worte})
+            treffer.append(f"{datei}:{n}: unbekannte Kategorie {kopf!r} (erlaubt: {', '.join(gueltig)})")
+        else:
+            gesehen.update(sprachen)
+
+    if len(gesehen) > 1:
+        treffer.append(f"{datei}: Kategorien mischen die Sprachen {sorted(gesehen)}")
+    return treffer
+
+
+def _ueberschriften(text: str) -> list[tuple[int, str]]:
+    """(Ebene, Titel) je Überschrift. Code-Blöcke bleiben außen vor — `# ...` darin ist ein Kommentar."""
+    aus, innerhalb_code = [], False
+    for zeile in text.splitlines():
+        if zeile.lstrip().startswith("```"):
+            innerhalb_code = not innerhalb_code
+            continue
+        if innerhalb_code:
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)", zeile)
+        if m:
+            aus.append((len(m.group(1)), m.group(2).strip()))
+    return aus
+
+
+def pruefe_uebersetzungs_struktur(root: str, paare: list[tuple[str, str]]) -> list[str]:
+    """Übersetzung und Original haben dieselbe Überschriften-Struktur.
+
+    Für mehrsprachige Doku gibt es keinen Standard, und GitHub wählt die README nach **Ort**
+    aus, nicht nach Sprache — eine Übersetzung veraltet also still. Verglichen wird die Folge
+    der Überschriften-EBENEN, nicht ihr Text: fügt jemand im Original einen Abschnitt hinzu und
+    vergisst die Übersetzung, weichen die Folgen ab.
+
+    Bewusst kein Vergleich der Commit-Historie: `actions/checkout` holt standardmäßig genau
+    einen Commit, und `ci-local` committet den tmp-Baum neu. Ein Historien-Check wäre dort
+    immer grün — also wertlos.
+    """
+    treffer = []
+    for original, uebersetzung in paare:
+        o, u = _lies(root, original), _lies(root, uebersetzung)
+        if o is None:
+            treffer.append(f"{original} fehlt")
+            continue
+        if u is None:
+            treffer.append(f"{uebersetzung} fehlt")
+            continue
+        oh, uh = _ueberschriften(o), _ueberschriften(u)
+        if [e for e, _ in oh] == [e for e, _ in uh]:
+            continue
+        for i, (a, b) in enumerate(zip(oh, uh)):
+            if a[0] != b[0]:
+                treffer.append(f"{uebersetzung}: Struktur weicht ab bei Überschrift {i + 1} "
+                               f"(Original H{a[0]} {a[1]!r}, Übersetzung H{b[0]} {b[1]!r})")
+                break
+        else:
+            fehlt = [t for _, t in oh[len(uh):]] or [t for _, t in uh[len(oh):]]
+            wo = uebersetzung if len(oh) > len(uh) else original
+            treffer.append(f"{wo}: {abs(len(oh) - len(uh))} Überschrift(en) fehlen — {fehlt[:3]}")
+    return treffer

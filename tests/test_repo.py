@@ -42,7 +42,8 @@ PFLICHT = ["LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md"
            "TODO.md", "tinysesam/py.typed", ".gitignore",
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
-           "scripts/_residue_check.sh", "tests/_kit/hygiene.py"]
+           "scripts/_residue_check.sh", "tests/_kit/hygiene.py",
+           ".github/dependabot.yml"]
 fehlend = hygiene.pruefe_pflichtdateien(ROOT, PFLICHT)
 assert not fehlend, f"Pflichtdateien fehlen: {fehlend}"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
@@ -106,6 +107,25 @@ hits = hygiene.pruefe_private_infrastruktur(ROOT, FILES, POLICY, PROJEKTE)
 assert not hits, "private Infrastruktur im öffentlichen Repo:\n  " + "\n  ".join(hits[:8])
 print(f"  keine private Infrastruktur ({len(POLICY['private_muster'])} Muster"
       f" + {len(POLICY['private_namen_sha256_16'])} Namen)")
+
+# ---------- Belegte Standards, maschinell erzwungen (context/repo-standards.md) ----------
+# Ein Tag lässt sich verschieben; ein Commit-SHA ist die einzige unveränderliche Referenz.
+ungepinnt = hygiene.pruefe_actions_sha_gepinnt(ROOT, FILES)
+assert not ungepinnt, "Actions nicht auf Commit-SHA gepinnt:\n  " + "\n  ".join(ungepinnt)
+
+# Es gibt keinen sicheren Default: die Ausgangsberechtigung kommt aus der Repo-Einstellung.
+ohne_rechte = hygiene.pruefe_workflow_permissions(ROOT, FILES)
+assert not ohne_rechte, "Workflow ohne `permissions:`:\n  " + "\n  ".join(ohne_rechte)
+print(f"  alle Actions per Commit-SHA gepinnt, jeder Workflow setzt `permissions:`")
+
+# Keep a Changelog 1.1.0 — fester Satz Kategorien, eine Sprache je Repo.
+kategorien = hygiene.pruefe_changelog_kategorien(ROOT, POLICY)
+assert not kategorien, "CHANGELOG:\n  " + "\n  ".join(kategorien[:5])
+
+# GitHub wählt die README nach ORT aus, nicht nach Sprache — eine Übersetzung veraltet still.
+uebersetzung = hygiene.pruefe_uebersetzungs_struktur(ROOT, [("README.md", "README.de.md")])
+assert not uebersetzung, "Übersetzung weicht ab:\n  " + "\n  ".join(uebersetzung)
+print("  CHANGELOG-Kategorien gültig; README.de.md folgt der Struktur von README.md")
 
 # ---------- Jeder gepinnte Beispiel-Tag zeigt auf die aktuelle Version ----------
 # Sonst empfiehlt die Doku still eine alte Version weiter: Der Pin im Compose und die
