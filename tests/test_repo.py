@@ -43,7 +43,9 @@ PFLICHT = ["LICENSE", "SECURITY.md", "CHANGELOG.md", "README.md", "README.de.md"
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
            "scripts/_residue_check.sh", "tests/_kit/hygiene.py",
-           ".github/dependabot.yml"]
+           ".github/dependabot.yml",
+           "CODE_OF_CONDUCT.md", "CODE_OF_CONDUCT.de.md",
+           "CONTRIBUTING.md", "CONTRIBUTING.de.md"]
 fehlend = hygiene.pruefe_pflichtdateien(ROOT, PFLICHT)
 assert not fehlend, f"Pflichtdateien fehlen: {fehlend}"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
