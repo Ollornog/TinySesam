@@ -42,11 +42,12 @@ fi
 
 step "Website bauen — genau das, was die Pages-Action ausliefert"
 "$PY" -m web.build _site >/dev/null || fail "web.build"
-for f in index.html flows.html legal.html theme.css wizard.png; do
+for f in index.html demo.html flows.html legal.html theme.css wizard.png \
+         demo/login.en.html demo/account.de.html demo/admin.html demo/adminapi/api/users; do
     test -f "_site/$f" || fail "_site/$f fehlt"
 done
 rm -rf _site
-echo "  index.html · flows.html · legal.html · Beilagen"
+echo "  index.html · demo.html (+ Vorschau-Panels) · flows.html · legal.html · Beilagen"
 
 if [[ $FAST -eq 1 ]]; then
     printf '\n\033[33m! Browser-Test übersprungen. Vor dem Push einmal ohne --fast laufen lassen.\033[0m\n'

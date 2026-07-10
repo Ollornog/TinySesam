@@ -27,9 +27,10 @@ from fastapi import FastAPI, Depends, Request, HTTPException            # noqa: 
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse  # noqa: E402
 from starlette.datastructures import MutableHeaders                     # noqa: E402
 
-from tinysesam import TinySesam, TinySesamConfig                        # noqa: E402
-from tinysesam.admin import render_panel                                # noqa: E402
+from tinysesam import TinySesam, __version__                            # noqa: E402
 
+from web.demo import (DEMO_CSS, FIT_JS, PANEL_T, brand_css,             # noqa: E402
+                      demo_body, demo_config, mock_api, render_previews)
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
 from web.site import (INDEX_CSS, LABELS, LEGAL_CSS, T as SITE_T,         # noqa: E402
                       flows_body, hero, index_body, legal_body)
@@ -42,31 +43,18 @@ ICON_URL = "/wizard.png"
 
 THEME = (DOCS / "theme.css").read_text(encoding="utf-8")
 
-BRAND = THEME + UI_CSS + """
-body{font-family:var(--ts-font)}
-h1{font-family:var(--ts-serif);font-weight:600}
-.card{box-shadow:0 14px 44px rgba(90,60,70,.10)}
-input:focus{outline:2px solid var(--ts-accent);border-color:var(--ts-accent)}
-button:hover,.btn2:hover{filter:brightness(1.05)}
-"""
+BRAND = brand_css(THEME)
 
-auth = TinySesam(TinySesamConfig.local_accounts(   # nur Benutzername + Passwort, keine E-Mail
+# Dieselbe Config, die `web.demo.build()` für die statische Fassung benutzt — sonst zeigt die
+# Website andere Anmeldemethoden als die laufende Demo. Nur was die Live-App zusätzlich braucht,
+# steht hier: eine echte Datei-DB und der Demo-Modus mit seinen Beispielkonten.
+auth = TinySesam(demo_config(
     db_path=os.environ.get("TINYSESAM_SHOWCASE_DB", "/tmp/tinysesam-showcase.db"),
-    rp_name="TinySesam",
-    lang="de",
-    brand_css=BRAND,
-    brand_icon=ICON_URL,
-    passkey_enabled=False,
-    pin_enabled=True,                # PIN gibt es …
-    pin_login=False,                 # … aber nicht als Login-Methode
-    stepup_methods=["totp", "pin"],  # … sondern als Bestätigung für sensible Bereiche:
-                                     # TOTP, wenn eingerichtet — sonst die PIN
+    brand=BRAND,
+    icon=ICON_URL,
+    lang="en",
     demo_mode=True,                  # legt `demo` + `demoadmin` an und zeigt die Zugangsdaten
     demo_pin="1234",
-    allow_signup=True,
-    resource_locks_enabled=True,
-    available_roles=["editor", "viewer"],
-    cookie_secure=False,
 ))
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
 
@@ -82,8 +70,10 @@ auth.install_error_pages(app)
 
 # ---------------------------------------------------------------- Sprache
 def lang_of(request: Request) -> str:
-    lang = request.query_params.get("lang") or request.cookies.get(LANG_COOKIE) or "de"
-    return lang if lang in UI_LANGS else "de"
+    # Dieselbe Reihenfolge wie auf der Website: `?lang=` vor Cookie vor Projektsprache (Englisch).
+    # Die Browsersprache zählt bewusst nicht.
+    lang = request.query_params.get("lang") or request.cookies.get(LANG_COOKIE) or UI_LANGS[0]
+    return lang if lang in UI_LANGS else UI_LANGS[0]
 
 
 # Der Rumpf der eingebauten Seiten hängt vom Request ab (Sprache, Login-Status, Pfad).
@@ -165,18 +155,8 @@ TEXTS = {
                      ("/gaeste", "<code>/gaeste</code>", "geteilte PIN, ganz ohne Konto"),
                      ("/gibtsnicht", "404", "gebrandete Fehlerseite"),
                      ("/boom", "500", "gebrandete Fehlerseite")],
-        "demo_h1": "Live-Demo",
-        "demo_hello": "Angemeldet als <b>{u}</b> — die Beispielseiten oben sind jetzt begehbar.",
-        "demo_lead": "Alles, was TinySesam mitbringt, in einem Frontend. Die Panels unten sind "
-                     "<b>echte Seiten</b>, live gerendert — nur die Bedienung ist gesperrt.",
-        "p_login": ("Login-Panel", "Die Anmeldeseite zeigt <b>genau die Methoden, die die Config "
-                    "aktiviert</b>. Hier: Benutzername und Passwort. Der Demo-Modus blendet die "
-                    "Zugangsdaten ein — und warnt, dass er produktiv aus gehört."),
-        "p_account": ("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, PIN, "
-                      "2FA + Recovery-Codes, Passkeys, API-Keys und die eigenen Sitzungen."),
-        "p_admin": ("Admin-Panel", "Benutzer &amp; Rollen, Sitzungen, Härtungs-Schwellen, "
-                    "Audit-Log. Wahlweise nur als JSON-API für dein eigenes Panel."),
-        "open": "Öffnen →", "ro": "read-only", "ro_fake": "read-only · Beispieldaten",
+        # Panel-Überschriften, „read-only"-Marken und der Demo-Vorspann stehen in `web/demo.py`
+        # (PANEL_T) — die gebaute Seite benutzt dieselben Sätze.
         "flows_h1": "Login-Flows",
         "flows_lead": 'Jeder Weg ist ein eigener Schalter. Diese Demo läuft mit '
                       '<code>login_identifier="{ident}"</code> und <code>pin_login={pin}</code> — '
@@ -203,18 +183,7 @@ TEXTS = {
                      ("/gaeste", "<code>/gaeste</code>", "shared PIN, no account at all"),
                      ("/gibtsnicht", "404", "branded error page"),
                      ("/boom", "500", "branded error page")],
-        "demo_h1": "Live demo",
-        "demo_hello": "Signed in as <b>{u}</b> — the example pages above are open now.",
-        "demo_lead": "Everything TinySesam brings, in one front end. The panels below are "
-                     "<b>real pages</b>, rendered live — only the interaction is locked.",
-        "p_login": ("Login panel", "The sign-in page shows <b>exactly the methods the config enables</b>. "
-                    "Here: username and password. Demo mode reveals the credentials — and warns that "
-                    "it must be off in production."),
-        "p_account": ("Account panel", "Self-service at <code>/auth/account</code>: password, PIN, "
-                      "2FA + recovery codes, passkeys, API keys and your own sessions."),
-        "p_admin": ("Admin panel", "Users &amp; roles, sessions, hardening thresholds, audit log. "
-                    "Or just the JSON API, for your own panel."),
-        "open": "Open →", "ro": "read-only", "ro_fake": "read-only · sample data",
+        # s.o.: die Panel-Texte kommen aus `web/demo.py`.
         "flows_h1": "Sign-in flows",
         "flows_lead": 'Every way in is its own switch. This demo runs with '
                       '<code>login_identifier="{ident}"</code> and <code>pin_login={pin}</code> — '
@@ -237,6 +206,8 @@ TEXTS = {
 
 
 # ---------------------------------------------------------------- Seitengerüst der Demo
+# `DEMO_CSS` (Rahmen, Glasscheibe, Marke) kommt aus `web/demo.py` — dieselbe Quelle wie für die
+# gebaute Seite. Hier steht nur, was allein die laufende App braucht.
 _DEMO_CSS = FLOW_CSS + """
 h1{font-family:var(--ts-serif);font-size:48px;letter-spacing:-.01em;margin:.2em 0 .2em;text-wrap:balance}
 h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
@@ -245,19 +216,8 @@ h2{font-size:18px;text-transform:uppercase;letter-spacing:.08em;color:var(--mute
 .bar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
 .btn.s{padding:6px 13px;font-size:14px}
 .muted{color:var(--muted);font-size:14px}
-hr.rule{height:1px;background:var(--line);border:0;margin:80px 0}
-.shot{margin:0 0 96px}
-.shot .head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
-  flex-wrap:wrap;margin-bottom:12px}
-.shot .head p{margin:4px 0 0;color:var(--muted);font-size:15px;max-width:60ch}
-.frame{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
-  background:var(--card);box-shadow:0 12px 36px rgba(90,60,70,.09);transition:height .2s}
-.frame iframe{display:block;border:0;transform-origin:top left}
-.frame .glass{position:absolute;inset:0;cursor:default}
-.frame .tag{position:absolute;right:10px;top:10px;background:var(--chip);border:1px solid var(--line);
-  border-radius:999px;padding:3px 10px;font-size:12px;color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){main{animation:rise .5s ease both}}
-"""
+""" + DEMO_CSS
 
 
 def page(title: str, body: str, request: Request) -> HTMLResponse:
@@ -298,52 +258,18 @@ def landing(request: Request):
 
 
 # ---------------------------------------------------------------- Demo
-def shot(title, blurb, src, open_url, height, scale, tag, open_label):
-    return (f"<section class=shot><div class=head><div><h2>{title}</h2><p>{blurb}</p></div>"
-            f"<a class='btn ghost s' href='{open_url}'>{open_label}</a></div>"
-            f"<div class=frame data-scale='{scale}' style='height:{height}px'>"
-            f"<iframe src='{src}' tabindex=-1 scrolling=no title='{title}'"
-            f" style='width:{100 / scale:.0f}%;height:{height / scale:.0f}px;transform:scale({scale})'></iframe>"
-            f"<span class=glass></span><span class=tag>{tag}</span></div></section>")
-
-
-# Der Rahmen wächst auf die echte Inhaltshöhe. Das Admin-Panel lädt seine Tabelle per fetch NACH
-# dem load-Event — einmaliges Messen schneidet sie ab. Daher ResizeObserver + Nachzügler-Timer.
-_FIT_JS = """<script>
-function tsFit(frame){
-  const f = frame.querySelector('iframe'), s = parseFloat(frame.dataset.scale) || 1;
-  try{
-    const d = f.contentDocument;
-    if(!d || !d.body) return;
-    const h = Math.max(d.body.scrollHeight, d.body.offsetHeight);
-    if(Math.abs(h - (frame._h || 0)) < 2) return;
-    frame._h = h;
-    f.style.height = h + 'px';
-    frame.style.height = Math.ceil(h * s) + 'px';
-  }catch(e){}
-}
-document.querySelectorAll('.frame').forEach(fr => {
-  const f = fr.querySelector('iframe');
-  f.addEventListener('load', () => {
-    tsFit(fr);
-    try{ new ResizeObserver(() => tsFit(fr)).observe(f.contentDocument.body); }catch(e){}
-    [120, 400, 1000].forEach(ms => setTimeout(() => tsFit(fr), ms));
-  });
-});
-addEventListener('resize', () => document.querySelectorAll('.frame').forEach(fr => { fr._h = 0; tsFit(fr); }));
-</script>"""
+#: Die laufende App liefert ihre Vorschauen aus eigenen Routen; die gebaute Seite zeigt Dateien.
+#: `demo_body` kennt beides — nur die Quellen unterscheiden sich.
+_LIVE_SRC = {k: f"/demo/preview/{k}" for k in ("login", "account", "admin")}
+_LIVE_OPEN = {"login": "/auth/login", "account": "/auth/account", "admin": "/auth/admin"}
 
 
 @app.get("/demo", response_class=HTMLResponse)
 def demo(request: Request):
     lang, user = lang_of(request), auth.current_user(request)
-    t = TEXTS[lang]
-    hello = (f"<p class=lead>{t['demo_hello'].format(u=user['username'])}</p>" if user
-             else f"<p class=lead>{t['demo_lead']}</p>")
-    panels = (shot(*t["p_login"], "/demo/preview/login", "/auth/login", 470, 0.86, t["ro"], t["open"])
-              + shot(*t["p_account"], "/demo/preview/account", "/auth/account", 470, 0.8, t["ro"], t["open"])
-              + shot(*t["p_admin"], "/demo/preview/admin", "/auth/admin", 520, 0.66, t["ro_fake"], t["open"]))
-    body = f"<h1>{t['demo_h1']}</h1>{hello}<hr class=rule>{panels}{_FIT_JS}"
+    t = PANEL_T[lang]
+    lead = t["demo_hello"].format(u=user["username"]) if user else t["demo_lead"]
+    body = demo_body(lang, src=_LIVE_SRC, open_urls=_LIVE_OPEN, lead=lead)
     return page(t["demo_h1"], body, request)
 
 
@@ -361,57 +287,26 @@ def flows(request: Request):
 
 
 # ---------------------------------------------------------------- Read-only Vorschauen
-_LOCK = ("<style>html{pointer-events:none;user-select:none}"
-         "html,body{min-height:0!important}.tsmain{padding:0}"
-         "::-webkit-scrollbar{display:none}</style>")
-_LOCK_CARD = _LOCK + "<style>.tsmain{justify-content:flex-start!important;padding:26px 0}</style>"
+# Gerendert wird in `web/demo.py` — dieselben drei Panels, die auch die gebaute Seite zeigt.
+# Hier hängen sie nur an Routen statt an Dateien.
+#
+# Bewusst **pro Request**, nicht einmal beim Import: `auth.cfg.lang` setzt die Middleware je
+# Anfrage. Ein zwischengespeichertes Panel bliebe für immer in der Sprache des ersten Aufrufs.
+@app.get("/demo/preview/{name}", include_in_schema=False)
+def prev_panel(name: str):
+    previews = render_previews(auth, "/demo/preview/adminapi")
+    if name not in previews:
+        raise HTTPException(status_code=404)
+    return HTMLResponse(previews[name])
 
 
-def _readonly(html: str, lock: str = _LOCK) -> HTMLResponse:
-    return HTMLResponse(html.replace("</body>", lock + "</body>", 1))
-
-
-@app.get("/demo/preview/login", include_in_schema=False)
-def prev_login():
-    # In der Vorschau stört der Demo-Hinweis — er gehört auf die echte Login-Seite.
-    resp = auth.render_page("login", next="/demo", csrf="", demo_hint=False)
-    return _readonly(resp.body.decode(), _LOCK_CARD)
-
-
-@app.get("/demo/preview/account", include_in_schema=False)
-def prev_account():
-    demo_user = {"id": 0, "username": "demo", "display_name": "", "is_admin": 0}
-    # `static=True`: die Vorschau lädt nichts nach — sonst fetch't sie ins 401 und wirft JS-Fehler.
-    resp = auth.render_page("account", user=demo_user, methods=auth.cfg.enabled_methods(),
-                            has_totp=True, has_pin=True, is_admin=False, static=True,
-                            admin_path=auth.cfg.admin_path, csrf="")
-    return _readonly(resp.body.decode())
-
-
-@app.get("/demo/preview/admin", include_in_schema=False)
-def prev_admin():
-    return _readonly(render_panel(auth, "/demo/preview/adminapi"))
-
-
-_FAKE = {
-    "/api/users": [
-        {"id": 1, "username": "demoadmin", "is_admin": True, "is_service": False, "roles": [], "disabled": False},
-        {"id": 2, "username": "demo", "is_admin": False, "is_service": False, "roles": ["editor"], "disabled": False},
-        {"id": 3, "username": "martin", "is_admin": False, "is_service": False, "roles": ["viewer"], "disabled": True},
-        {"id": 4, "username": "backup-daemon", "is_admin": False, "is_service": True, "roles": ["reader"], "disabled": False},
-    ],
-    "/api/sessions": [{"id": 1, "username": "demoadmin", "method": "password", "ip": "203.0.113.7",
-                       "created": 1_770_000_000, "expires": 1_770_600_000}],
-    "/api/security": {"max_login_attempts": 5, "lockout_window_sec": 900, "rate_limit_max": 30},
-    "/api/version": {"version": "0.12.0"},
-    "/api/audit": [{"ts": 1_770_000_000, "event": "login", "username": "demoadmin", "ip": "203.0.113.7", "detail": ""}],
-    "/api/resources": [{"name": "gaeste", "kind": "pin", "label": "Gäste-Bereich"}],
-}
+#: Die Beispieldaten des Admin-Panels — dieselben, die der Bauschritt als Dateien ablegt.
+_FAKE = mock_api(__version__)
 
 
 @app.get("/demo/preview/adminapi/api/{path:path}", include_in_schema=False)
 def prev_api(path: str):
-    return JSONResponse(_FAKE.get(f"/api/{path}", []))
+    return JSONResponse(_FAKE.get(path, []))
 
 
 @app.post("/demo/preview/adminapi/api/{path:path}", include_in_schema=False)
