@@ -1,5 +1,9 @@
 # Contributing
 
+<p align="left"><b>English</b> · <a href="i18n/CONTRIBUTING.de.md">Deutsch</a></p>
+
+<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
+
 Thanks for taking the time. TinySesam is an authentication library — a small surface that other
 projects trust with their front door. A change that keeps that surface small and obvious is usually
 the better change.
@@ -44,9 +48,3 @@ comments; identifiers stay in English.
 Do **not** open a public issue for security problems. Use GitHub's private vulnerability reporting
 (the *Report a vulnerability* button under *Security*), or write to tinysesam-github@ollornog.de. See
 [`SECURITY.md`](SECURITY.md).
-
----
-
-<p align="right"><b>English</b> · <a href="i18n/CONTRIBUTING.de.md">Deutsch</a></p>
-
-<p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>
