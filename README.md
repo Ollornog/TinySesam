@@ -501,6 +501,6 @@ MIT license.
 
 ## Credits
 
-Icon: <a href="https://www.flaticon.com/free-icons/wizard" title="wizard icons">Wizard icons created by max.icons - Flaticon</a>
+Icon: <a href="https://www.flaticon.com/authors/maxicons" target="_blank" rel="noopener">Wizard PNG Image by max.icons - flaticon.com</a>
 </content>
 </invoke>

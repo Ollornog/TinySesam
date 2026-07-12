@@ -23,6 +23,12 @@ Zum Feinschliff: die README-Badges (Tests, Lizenz, Python) stehen jetzt rechtsb�
 Doku-Unterseiten tragen das Wizard-Icon rechtsbündig am Fuß — dasselbe Bild wie die README
 (250 px), auf den Unterseiten in klein (60 px).
 
+### Geändert — Bildnachweis verweist direkt auf die Autorenseite
+
+Der Flaticon-Link im Fuß der README zeigte auf die Suchseite. Er führt jetzt direkt zur
+Autorenseite (max.icons) und öffnet in neuem Tab; das Format ist mit den übrigen Repos
+vereinheitlicht: `Icon: … PNG Image by … - flaticon.com`.
+
 Die Übersetzungen liegen jetzt unter `i18n/` (`i18n/README.de.md`, `i18n/CODE_OF_CONDUCT.de.md`,
 `i18n/CONTRIBUTING.de.md`, `i18n/SECURITY.de.md`), im Root nur noch die englischen Fassungen.
 Grund: GitHubs Health-File-Detektor sucht `CODE_OF_CONDUCT`/`SECURITY`/… in Root, `.github/` und
