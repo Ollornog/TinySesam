@@ -6,6 +6,27 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Geändert — widersprüchliche HTTPS-Konfiguration wird beim Bau abgelehnt
+
+Zwei Löcher, beide still:
+
+`https_mode` wurde **gar nicht geprüft**. Ausgewertet wird nur `== "force"` — alles andere heißt
+„kein Redirect". Ein Tippfehler (`"forse"`) schaltete den HTTPS-Zwang also wortlos ab, ohne Fehler,
+ohne Hinweis. Jetzt sind nur noch `off`/`warn`/`force` erlaubt, wie schon bei `login_identifier`.
+
+`https_mode="force"` zusammen mit `cookie_secure=False` widerspricht sich: Die App leitet jeden
+Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne `Secure`-Flag heraus — ein einziger
+HTTP-Aufruf reicht, damit es im Klartext mitgeht. Diese Kombination wird abgelehnt.
+`cookie_secure=False` bleibt für lokale Aufbauten ohne Zertifikat richtig und erlaubt.
+
+Geprüft wird **nur, was die App über ihr eigenes Verhalten sagt**, nicht, was sie über die Außenwelt
+behauptet. Eine erste Fassung schlug auch bei `base_url="https://…"` + `cookie_secure=False` an. Das
+klang nach demselben Fehler, war aber keiner: `base_url` ist die öffentliche Adresse, aus der SAML
+und OIDC ihre Callbacks bauen — sie sagt nichts über den Transport zwischen Browser und App. Vier
+eigene Suiten brauchen genau diese Kombination (öffentliche HTTPS-URL, `TestClient` auf `http://`),
+und ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht. Die
+Regel ist deshalb wieder raus.
+
 ### Hinzugefügt — die Cookie-Flags stehen jetzt unter Aufsicht
 
 Die Flags standen im Code richtig, aber kein Test hielt sie fest: `grep -rln "httponly" tests/`

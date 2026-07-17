@@ -204,4 +204,43 @@ assert sess is not None, "Logout muss das Session-Cookie überschreiben, nicht n
 assert sess["_wert"] in ("", '""'), f"Logout muss den Cookie-Wert leeren, ist: {sess['_wert']!r}"
 ok("Logout leert das Session-Cookie beim Browser")
 
+# ---------- E. Widersprüchliche Config wird beim Bau abgelehnt ----------
+# `cookie_secure=False` ist für lokale Aufbauten ohne Zertifikat richtig und bleibt erlaubt.
+# Zusammen mit `https_mode='force'` widerspricht es sich: Die App leitet dann jeden Request
+# auf HTTPS um und gibt das Session-Cookie trotzdem ohne Secure-Flag heraus.
+#
+# Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über die
+# Außenwelt behauptet. `base_url='https://…' + cookie_secure=False` sieht nach demselben
+# Fehler aus, ist aber keiner: `base_url` ist die öffentliche Adresse (SAML/OIDC bauen daraus
+# Callbacks), nicht der Transport zwischen Browser und App. Genau diese Kombination brauchen
+# test_saml, test_matrix, test_forward_auth und test_sessions_logout.
+
+
+def baut(**kw) -> bool:
+    """True, wenn die Config angenommen wird; False bei ValueError."""
+    try:
+        baue(**kw)
+        return True
+    except ValueError:
+        return False
+
+
+assert baut(cookie_secure=False), "cookie_secure=False muss lokal erlaubt bleiben"
+assert baut(cookie_secure=True, https_mode="force"), "die saubere Prod-Kombination muss gehen"
+assert baut(cookie_secure=False, base_url="https://app.example.com"), \
+    "HTTPS-base_url + cookie_secure=False ist KEIN Widerspruch — vier Suiten brauchen das"
+ok("erlaubt: cookie_secure=False lokal, cookie_secure=True + https_mode='force' in Prod")
+
+assert not baut(cookie_secure=False, https_mode="force"), \
+    "https_mode='force' + cookie_secure=False muss abgelehnt werden"
+ok("abgelehnt: die App leitet auf HTTPS um, gibt das Cookie aber ohne Secure heraus")
+
+# Ein Tippfehler in https_mode schaltete den HTTPS-Zwang bisher STILL ab: Ausgewertet wird
+# nur `== "force"`, alles andere heißt „kein Redirect". Kein Fehler, kein Hinweis.
+assert not baut(https_mode="forse"), "Tippfehler in https_mode muss auffallen"
+assert not baut(https_mode=""), "leeres https_mode muss auffallen"
+assert baut(https_mode="off") and baut(https_mode="warn")
+ok("https_mode wird validiert — ein Tippfehler schaltet den Redirect nicht mehr still ab")
+
+
 print("\ntest_cookies: alle Prüfungen grün")
