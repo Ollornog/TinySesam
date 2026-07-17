@@ -6,6 +6,30 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Hinzugefügt — die Cookie-Flags stehen jetzt unter Aufsicht
+
+Die Flags standen im Code richtig, aber kein Test hielt sie fest: `grep -rln "httponly" tests/`
+kam leer zurück. Ein Refactor, der am Session-Cookie `httponly=True` verliert, wäre grün durch
+die Suite gegangen — eine Auth-Bibliothek, die ihre Sitzung an jedes XSS weiterreicht, ohne dass
+irgendwo etwas rot wird. `tests/test_cookies.py` nagelt das fest: HttpOnly, Secure, SameSite,
+Path, Max-Age, für jedes Cookie einzeln, am rohen `Set-Cookie`-Header statt am Cookie-Jar des
+Clients (der verschluckt Attribute und legt Secure-Cookies über `http://` gar nicht erst ab).
+
+Die Erwartung steht **je Cookie**, nicht als eine Regel für alle. `tinysesam_csrf` darf gerade
+**kein** HttpOnly haben — Double-Submit braucht den JS-Lesezugriff. Ein pauschales „alle Cookies
+HttpOnly" hätte ausgerechnet das richtige Cookie angemeckert, und wer den Test daraufhin
+aufweicht, verliert ihn für die Cookies, die zählen. Ein Cookie, das gesetzt wird und in der
+Erwartungsliste fehlt, gilt als Verstoß: Wer eins einführt, muss seine Flags erklären.
+
+Dabei fiel auf, dass es **drei** CSRF-Setzer gibt. `issue_csrf()` — die öffentliche API für
+fremde Templates — wird jetzt mitgeprüft; täte sie es nicht, wäre ausgerechnet die
+Fremd-Integration die schwächste Stelle. Der dritte Setzer sitzt im Admin-Panel und gehört zu
+`test_adminmount.py`; das steht als Lücke im Kopf der Suite, nicht stillschweigend übergangen.
+
+Parser und Prüfregel kommen aus dem geteilten Kit (`_kit/headers.py`, ab repokit 0.7.0) — sie
+sind nicht TinySesam-eigen, und jede App mit Cookies braucht sie. Hier steht nur noch, welche
+Cookies es gibt und was jedes mitbringen muss.
+
 ### Geändert — die Doku spricht durchgängig beide Sprachen
 
 Der Sprachwechsler war Flickwerk. Die README trug ihn zentriert im Kopf (aktuelle Sprache fett,
