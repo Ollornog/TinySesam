@@ -359,6 +359,13 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
 - **In bestehendes Panel einbetten:** `admin_ui_enabled=False` → nur die JSON-API, eigene UI davor.
 - **HTTPS** (`config.https_mode` + `auth.install_https(app)`): `force` = HTTP→HTTPS-Redirect;
   `warn` = läuft auch **ohne Zertifikat**, zeigt aber einen Warnhinweis im Panel; `off` = aus.
+  Ein Tippfehler fliegt beim Bau auf — alles außer `force` heißt stillschweigend „kein Redirect",
+  `https_mode="forse"` hätte den HTTPS-Zwang also wortlos abgeschaltet.
+- **`https_mode="force"` verlangt `cookie_secure=True`.** Die Kombination mit `cookie_secure=False`
+  wird beim Bau abgelehnt: Eine App, die jeden Request auf HTTPS umleitet, das Session-Cookie aber
+  ohne `Secure`-Flag herausgibt, widerspricht sich — ein einziger HTTP-Aufruf reicht, damit es im
+  Klartext mitgeht. `cookie_secure=False` bleibt für lokale Aufbauten ohne Zertifikat richtig
+  (`https_mode="warn"`).
 
 ## Neu in 0.5 — Kurzreferenz
 

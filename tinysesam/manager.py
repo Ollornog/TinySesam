@@ -35,6 +35,28 @@ class TinySesam:
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
             raise ValueError("login_identifier='email' braucht signup_require_email=True — "
                              "sonst entstehen Konten, die sich nicht anmelden können")
+        if config.https_mode not in ("off", "warn", "force"):
+            raise ValueError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
+                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
+                             "also still ab")
+        # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
+        # erlaubt. Zusammen mit https_mode='force' widerspricht es sich aber: Die App leitet
+        # dann jeden Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne
+        # Secure-Flag heraus.
+        #
+        # Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über
+        # die Außenwelt behauptet. Eine frühere Fassung schlug auch bei
+        # `base_url='https://…' + cookie_secure=False` an; das klang plausibel, war aber falsch:
+        # `base_url` ist eine Zusage über die öffentliche Adresse (SAML/OIDC bauen daraus
+        # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
+        # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
+        # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
+        if not config.cookie_secure and config.https_mode == "force":
+            raise ValueError(
+                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
+                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
+                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
+                "(lokal/ohne Zertifikat).")
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
