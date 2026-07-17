@@ -36,7 +36,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
@@ -47,10 +47,16 @@ jobs:
 
       - name: Website bauen
         run: python -m web.build _site
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6.0.0
+      # include-hidden-files: seit v4 werden Dotfiles standardmäßig WEGGELASSEN.
+      # web/build.py legt `.nojekyll` an — ohne den Schalter fiele die Datei still
+      # aus dem Artefakt: CI grün, Artefakt hochgeladen, Deploy erfolgreich, nur der
+      # Inhalt wäre ein anderer als bisher. Der Schalter hält das Artefakt exakt so,
+      # wie es vor dem Node-24-Sprung war — der Bump hebt die Laufzeit, nicht das Verhalten.
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: _site
+          include-hidden-files: true
 
   deploy:
     needs: build
