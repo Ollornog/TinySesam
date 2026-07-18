@@ -183,6 +183,14 @@ async def run():
         await p.cmd("Runtime.enable")
         await p.cmd("Network.enable")
 
+        # CSP-Verstoesse laufen NICHT ueber die JS-Konsole (Runtime), sondern muessen im
+        # Dokument abgefangen werden. Der Listener wird bei JEDEM neuen Dokument frisch
+        # installiert (window.__csp startet leer) → nach dem Laden ist er der Beleg, ob
+        # die strenge nonce-CSP der eingebauten Seiten ein <script>/<style> geblockt hat.
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source=(
+            "window.__csp=[];addEventListener('securitypolicyviolation',function(e){"
+            "window.__csp.push(e.effectiveDirective+' blockte '+(e.blockedURI||'inline'))})"))
+
         # ---------- 1) Jede Seite lädt, ohne Konsolenfehler und ohne kaputte Anfragen ----------
         for path in PAGES:
             await p.go(path)
@@ -192,6 +200,15 @@ async def run():
         assert not p.console, f"Konsolenfehler: {p.console[:2]}"
         assert not p.failed, f"kaputte Anfragen: {p.failed[:3]}"
         print("  jede Seite: ein Kopf, zwei Navreihen, eine Fußzeile; keine Konsolenfehler")
+
+        # ---------- CSP: die eingebauten Auth-Seiten laufen unter strenger nonce-CSP ----------
+        # Kein Verstoss = der Browser hat jedes <script>/<style> per Nonce akzeptiert; ein
+        # falscher/fehlender Nonce haette sie geblockt und hier einen Eintrag erzeugt.
+        for path in ("/auth/login", "/auth/register"):
+            await p.go(path)
+            viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
+            assert viol == "[]", f"CSP-Verstoss auf {path}: {viol}"
+        print("  Auth-Seiten unter strenger CSP: kein Verstoss (Nonce akzeptiert)")
 
         # ---------- 2) Kopf, Inhalt und Fußzeile sind gleich breit ----------
         for path in ("/demo", "/legal", "/demo/flows"):
