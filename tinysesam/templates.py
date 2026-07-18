@@ -81,6 +81,10 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .demowarn{margin-top:6px;color:var(--ts-warn-ink);background:var(--ts-warn-bg);padding:6px 8px;
      border-radius:6px;font-size:11.5px}
 .tsmain .demowarn code{background:none;border:0;padding:0}
+/* Fehlerseite (_error): ersetzt frueheres Inline-Styling — ein CSP-Nonce deckt
+   Attribut-Styles nicht ab, nur <style>-Bloecke. */
+.tsmain .errcode{font-size:52px;margin:.1em 0}
+.tsmain .errhint{font-size:14px;margin-top:0}
 """
 
 
@@ -290,7 +294,7 @@ def _account(auth, ctx) -> str:
             f"<div class=sec><h2>{_e(t('acc.password'))}</h2>"
             f"<input id=pw_cur type=password placeholder='{_e(t('acc.pw_cur'))}'>"
             f"<input id=pw_new type=password placeholder='{_e(t('acc.pw_new'))}'>"
-            f"<button onclick=changepw()>{_e(t('acc.pw_change'))}</button><span id=pw_msg class=msg></span></div>")
+            f"<button data-act=changepw>{_e(t('acc.pw_change'))}</button><span id=pw_msg class=msg></span></div>")
 
     # PIN
     if "pin" in methods:
@@ -298,37 +302,37 @@ def _account(auth, ctx) -> str:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.pin'))} <small>({_e(state)})</small></h2>"
             f"<input id=pin_new type=password inputmode=numeric placeholder='{_e(t('acc.pin_new'))}'>"
-            f"<button onclick=setpin()>{_e(t('acc.pin_set'))}</button> "
-            f"<button class=warn onclick=delpin()>{_e(t('acc.pin_remove'))}</button><span id=pin_msg class=msg></span></div>")
+            f"<button data-act=setpin>{_e(t('acc.pin_set'))}</button> "
+            f"<button class=warn data-act=delpin>{_e(t('acc.pin_remove'))}</button><span id=pin_msg class=msg></span></div>")
 
     # TOTP / 2FA
     if auth.cfg.totp_enabled:
         if ctx.get("has_totp"):
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
-                    f"<button class=warn onclick=deltotp()>{_e(t('acc.totp_off'))}</button> "
-                    f"<button onclick=recovery()>{_e(t('acc.recovery'))}</button>")
+                    f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
+                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
         else:
             totp = f"<a class=btnlink href='/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
-                        "<pre id=rc_out style='white-space:pre-wrap;margin-top:10px'></pre></div>")
+                        "<pre id=rc_out class=rcout></pre></div>")
 
     # Passkeys
     if "passkey" in methods:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.passkeys'))}</h2><ul id=pklist></ul>"
-            f"<button onclick=addpk()>{_e(t('acc.passkey_add'))}</button><span id=pk_msg class=msg></span></div>")
+            f"<button data-act=addpk>{_e(t('acc.passkey_add'))}</button><span id=pk_msg class=msg></span></div>")
 
     # API-Keys
     if auth.cfg.apikey_enabled:
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.keys'))}</h2><ul id=keylist></ul>"
             f"<input id=key_name placeholder='{_e(t('acc.key_name'))}'>"
-            f"<button onclick=mkkey()>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
+            f"<button data-act=mkkey>{_e(t('acc.key_create'))}</button><span id=key_msg class=msg></span></div>")
 
     # Aktive Sitzungen (immer)
     sections.append(
         f"<div class=sec><h2>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
-        f"<button class=warn onclick=revokeothers()>{_e(t('acc.sessions_revoke'))}</button>"
+        f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
 
     admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
@@ -354,6 +358,7 @@ def _account(auth, ctx) -> str:
     .tsmain ul{list-style:none;padding:0;margin:0 0 8px}
     .tsmain li{padding:4px 0;font-size:13px;border-bottom:1px solid var(--ts-line-soft)}
     .tsmain a{color:var(--ts-link)}
+    .tsmain .rcout{white-space:pre-wrap;margin-top:10px}
     """
     # `static=True`: nur die Seite zeigen, nichts nachladen (Vorschau/Screenshot).
     static = bool(ctx.get("static"))
@@ -382,13 +387,13 @@ async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn onclick=revk(${k.id})>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn data-act=revk data-id=${k.id}>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
 async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
   if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
 async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('/auth/passkey/list')).json();
-  el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn onclick=delpk(${p.id})>löschen</button></li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn data-act=delpk data-id=${p.id}>löschen</button></li>`).join('')||'<li>keine</li>'}
 async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('/auth/sessions')).json().catch(()=>[]);
@@ -397,6 +402,10 @@ async function loadsess(){const el=document.getElementById('sesslist');if(!el)re
 function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
   await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
+// Ein delegierter Listener statt Inline-Klick-Handlern — sonst blockt die strenge CSP
+// die Buttons. Auch die per JS nachgeladenen Buttons (data-act=revk/delpk) werden erreicht.
+document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
+  var f=window[b.dataset.act];if(typeof f==='function'){e.preventDefault();f(b.dataset.id)}});
 loadkeys();loadpk();loadsess();
 </script>
 """
@@ -517,8 +526,8 @@ def _error(auth, ctx) -> str:
     t = auth.t
     code = ctx.get("code", 500)
     msg = ctx.get("message") or t("error.oops")
-    body = (f"<h1 style='font-size:52px;margin:.1em 0'>{_e(code)}</h1>"
-            f"<div class=hint style='font-size:14px;margin-top:0'>{_e(msg)}</div>"
+    body = (f"<h1 class=errcode>{_e(code)}</h1>"
+            f"<div class='hint errhint'>{_e(msg)}</div>"
             f"<a class=btn2 href='/'>{_e(t('error.home'))}</a>")
     return _page(auth, str(code), body)
 
@@ -613,7 +622,7 @@ def _totp_setup(auth, ctx) -> str:
             f"<div class=hint>{_e(t('setup.scan'))}</div>"
             f"{qr}"
             f"<div class=hint>{_e(t('setup.manual'))}</div><div class=mono>{_e(data['secret'])}</div>"
-            f"<form onsubmit='return conf(event)'>"
+            f"<form id=tstotp>"
             f"<label>{_e(t('setup.code'))}</label>"
             f"<input name=code class=code inputmode=numeric maxlength=6 autofocus>"
             f"<button type=submit>{_e(t('setup.activate'))}</button></form>"
@@ -622,7 +631,8 @@ def _totp_setup(auth, ctx) -> str:
             "async function conf(e){e.preventDefault();const c=e.target.code.value;"
             "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
             "body:'code='+encodeURIComponent(c)});const j=await r.json();"
-            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';return false}}</script>")
+            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';return false}}"
+            "document.getElementById('tstotp').addEventListener('submit',conf)</script>")
     return _page(auth, t("setup.title"), body)
 
 

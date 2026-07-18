@@ -133,6 +133,16 @@ class TinySesamConfig:
     cookie_path: str = "/"
     cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
 
+    # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---
+    # Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=);
+    # pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert.
+    #   "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce
+    #   "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt)
+    #   eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt
+    # Gilt NUR für die von TinySesam gerenderten String-Seiten, nicht für eigene
+    # Response-Overrides (die setzen ihre CSP selbst).
+    csp: str = "strict"
+
     # --- CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax) ---
     csrf_enabled: bool = True             # State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token)
     csrf_cookie: str = "tinysesam_csrf"

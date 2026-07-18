@@ -10,6 +10,7 @@ Einbindung:
         return {"hi": user["username"]}
 """
 from __future__ import annotations
+import re
 import time
 import json
 import hashlib
@@ -28,6 +29,16 @@ from . import totp as _totp
 from . import security
 
 
+# Setzt nonce="…" in jedes <script>/<style>, das noch keins hat. Zentral, statt den Nonce
+# durch jede Template-Funktion zu faedeln. Sicher, weil keine der eingebauten Seiten den
+# String "<script"/"<style" INNERHALB eines JS-Strings ausgibt (geprueft) — nur echte Tags.
+_NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
+
+
+def _inject_nonce(html_str: str, nonce: str) -> str:
+    return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
+
+
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
         if config.login_identifier not in ("username", "email", "both"):
@@ -35,6 +46,8 @@ class TinySesam:
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
             raise ValueError("login_identifier='email' braucht signup_require_email=True — "
                              "sonst entstehen Konten, die sich nicht anmelden können")
+        if not isinstance(config.csp, str):
+            raise ValueError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
         if config.https_mode not in ("off", "warn", "force"):
             raise ValueError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
                              "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
@@ -963,13 +976,38 @@ class TinySesam:
             tok = cur or secrets.token_urlsafe(24)
             fresh = cur is None
             ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
+        # Ein Nonce je Antwort. Die eingebauten Seiten kommen ohne Inline-Handler/style= aus;
+        # der Nonce wandert zentral in jedes <script>/<style> (kein Faedeln durch die Templates)
+        # und in den CSP-Header. Ein Override, das eine Response liefert, bleibt unberuehrt —
+        # es setzt seine CSP selbst; ctx['nonce'] steht ihm zur Verfuegung.
+        nonce = secrets.token_urlsafe(16)
+        ctx.setdefault("nonce", nonce)
         out = self.templates.render(template, self, ctx)
-        resp = out if isinstance(out, Response) else HTMLResponse(out, status_code=status)
+        if isinstance(out, Response):
+            resp = out
+        else:
+            resp = HTMLResponse(_inject_nonce(out, nonce), status_code=status)
+            policy = self._csp_header(nonce)
+            if policy:
+                resp.headers.setdefault("Content-Security-Policy", policy)
         if tok is not None and fresh:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
             resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
                             samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
         return resp
+
+    def _csp_header(self, nonce: str) -> str:
+        """Die CSP fuer die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per
+        Nonce (kein 'unsafe-inline'); 'off' = kein Header; sonst der eigene String mit {nonce}."""
+        csp = (self.cfg.csp or "").strip()
+        if not csp or csp == "off":
+            return ""
+        if csp == "strict":
+            return ("default-src 'self'; "
+                    f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+                    "img-src 'self' data:; base-uri 'none'; "
+                    "frame-ancestors 'self'; object-src 'none'")
+        return csp.replace("{nonce}", nonce)
 
     def safe_next(self, next_: str) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts)."""
