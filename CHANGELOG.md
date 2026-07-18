@@ -6,6 +6,26 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Hinzugefügt — nonce-basierte Content-Security-Policy für die eingebauten Seiten
+
+Die eingebauten Seiten (Login, Account, TOTP-Setup, Fehler) liefern jetzt eine **strenge,
+nonce-basierte CSP** aus — ohne `unsafe-inline`. Pro Antwort entsteht ein Nonce; er wandert zentral
+in jedes `<script>`/`<style>` und in den `Content-Security-Policy`-Header. Möglich wurde das, weil die
+Seiten **inline-frei** umgebaut sind: kein `onclick`/`onsubmit` mehr (ein delegierter Click-Listener
+statt Inline-Handlern, `data-act`-Attribute), keine `style=`-Attribute (in Klassen ausgelagert). Ein
+CSP-Nonce deckt genau `<script>`/`<style>`-Blöcke ab — Inline-Handler und `style=` **nicht**, deshalb
+mussten sie weg.
+
+Der Schalter ist **`config.csp`**: `"strict"` (Vorgabe), `"off"` (kein Header — z.B. wenn ein Proxy
+oder die App die CSP zentral setzt) oder eine **eigene Policy** (ein enthaltenes `{nonce}` wird pro
+Antwort ersetzt). Ein Template-Override, das eine `Response` liefert, bleibt unberührt — es setzt seine
+CSP selbst; `ctx["nonce"]` steht ihm zur Verfügung.
+
+Warum das zählt: Wer TinySesam einbettet, kann seine App jetzt unter eine strenge CSP stellen, ohne
+dass die Login-/Account-Seite bricht — sie bringt ihre eigene, passende CSP mit. Bewiesen im Browser
+(`test_browser.py`): unter der strengen CSP feuert **kein** `securitypolicyviolation`; mit absichtlich
+falschem Nonce blockt Chrome jedes Skript/Style (Negativtest). Fachtest: `test_csp.py`.
+
 ### Geändert — widersprüchliche HTTPS-Konfiguration wird beim Bau abgelehnt
 
 Zwei Löcher, beide still:

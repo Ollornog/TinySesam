@@ -359,6 +359,12 @@ JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation)
   is refused at construction: an app that redirects every request to HTTPS but hands out its session
   cookie without the `Secure` flag contradicts itself — one plain HTTP call is enough to leak it.
   `cookie_secure=False` stays valid for local setups without a certificate (`https_mode="warn"`).
+- **Content-Security-Policy** (`config.csp`): the built-in pages (login, account, TOTP setup, error)
+  ship a **strict, nonce-based CSP** — no `unsafe-inline`. A fresh nonce per response goes into every
+  `<script>`/`<style>` and the header; the pages are built inline-free (no `onclick`/`onsubmit`, no
+  `style=`) so the nonce covers everything. `"strict"` (default), `"off"` (no header — e.g. a proxy
+  sets the CSP), or your own policy string (a `{nonce}` in it is substituted per response). A template
+  override returning a `Response` is left untouched and gets `ctx["nonce"]` to build its own.
 
 ## New in 0.5 — quick reference
 
