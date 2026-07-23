@@ -14,7 +14,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _kit import hygiene  # noqa: E402
+from _kit import backlog, hygiene  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POLICY = hygiene.lade_policy()
@@ -43,6 +43,8 @@ PFLICHT = ["LICENSE", "SECURITY.md", "i18n/SECURITY.de.md", "CHANGELOG.md", "REA
            ".github/workflows/ci.yml", ".github/workflows/pages.yml",
            ".github/workflows/release.yml", "Dockerfile", ".dockerignore",
            "scripts/_residue_check.sh", "tests/_kit/hygiene.py",
+           "scripts/_backlog.py", "tests/_kit/backlog.py",
+           "backlog/README-KONVENTION.md",
            ".github/dependabot.yml",
            "CODE_OF_CONDUCT.md", "i18n/CODE_OF_CONDUCT.de.md",
            "CONTRIBUTING.md", "i18n/CONTRIBUTING.de.md"]
@@ -225,5 +227,23 @@ for readme in ("README.md", "i18n/README.de.md"):
     assert "tests/test_browser.py" in body, f"{readme} erklärt den Browser-Test nicht"
     assert "tests/test_repo.py" in body, f"{readme} erklärt den Hygiene-Test nicht"
 print("  beide READMEs erklären Browser- und Hygiene-Test; CHANGELOG gepflegt")
+
+# ---------- Backlog: Struktur, Verweise, generierter Index ----------
+# Der Backlog ist Teil des Repos, also prueft ihn die Suite wie jede andere Datei.
+# Ein Backlog, der nur "meistens stimmt", wird nicht geglaubt und dann nicht gepflegt.
+verstoesse = backlog.alle_pruefungen(ROOT)
+assert not verstoesse, "Backlog-Verstoesse:\n  " + "\n  ".join(verstoesse)
+
+eintraege = backlog.lade(ROOT)
+assert eintraege, "backlog/ ist leer — mindestens ein Meilenstein gehoert hinein"
+
+# Der Index ist generiert: weicht er ab, hat jemand ihn von Hand gepflegt
+# oder vergessen, ihn neu zu bauen.
+import subprocess  # noqa: E402
+_r = subprocess.run([sys.executable, "scripts/_backlog.py", "index", "--dry-run"],
+                    cwd=ROOT, capture_output=True, text=True)
+assert _r.returncode == 0, ("backlog/README.md ist veraltet — "
+                            "`python3 scripts/_backlog.py index` fahren")
+print(f"  Backlog: {len(eintraege)} Eintraege, Struktur sauber, Index aktuell")
 
 print("OK test_repo")
