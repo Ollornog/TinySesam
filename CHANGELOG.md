@@ -6,6 +6,23 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Hinzugefügt — Backlog im Repo (`backlog/`)
+
+Meilensteine, Aufgaben und **Architekturentscheidungen (ADR)** liegen jetzt als Markdown mit
+Frontmatter unter `backlog/` — eine Datei je Vorgang, geprüft von der Testsuite
+(`python3 scripts/_backlog.py list|check|index`).
+
+GitHub Issues bleiben der Posteingang; was angenommen wird, bekommt hier einen Eintrag. Der
+Vorteil: Ein Task schließt **in dem PR, der ihn erledigt** — im Diff sichtbar. Und der
+Hygiene-Test liest den Backlog mit, was bei einem öffentlichen Repo den Unterschied macht.
+
+Vier bereits getroffene Entscheidungen sind als ADR nachgetragen: PyPI bis 1.0 vertagt,
+kein Selbst-Update, Schutz in der App statt am Proxy, keine self-hosted Runner.
+Verworfene Entscheidungen werden nicht gelöscht, sondern bekommen `status: verworfen` **und**
+`superseded_by` — ein Wächter erzwingt den Verweis.
+
+`TODO.md` behält die Historie der erledigten Versionen und verweist auf den Backlog.
+
 ### Hinzugefügt — nonce-basierte Content-Security-Policy für die eingebauten Seiten
 
 Die eingebauten Seiten (Login, Account, TOTP-Setup, Fehler) liefern jetzt eine **strenge,
