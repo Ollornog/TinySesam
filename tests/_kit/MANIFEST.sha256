@@ -2,8 +2,10 @@
 # kein Schloss gegen Absicht: wer die Dateien ändert, kann auch
 # dieses Manifest neu schreiben. Er tut es dann wenigstens sichtbar.
 efb99eb18f49b3a9b612ff8f5e287fdc75995f236bbdbc728f17498cb43d8770  .githooks/pre-push
+c090d5b363baff99fbbc93220d84c1a80be42dfb825c9070c4504cfb96834cde  scripts/_backlog.py
 433c893692a5737fa9f96ba71c3bc89de3ddb79a54f3f461a0adfd507501be84  scripts/_residue_check.sh
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  tests/_kit/__init__.py
+4bde500f5b445508da46767f56146390d54332b63ce77d0bb337c2be65a06c19  tests/_kit/backlog.py
 acfc3e12e6b2ecb4e0a95c6c76e190fdf079bea4080482da23d9fd1de479b9a3  tests/_kit/headers.py
 512f0e8ed0c9e0f8d8488741185db2d164fb55a2d28f39ba9c18c28db06c97a9  tests/_kit/hygiene.py
 0c24cd8eee6b89851733394d0f7f5ced1484dd891e654625ac6de35c17024543  tests/_kit/hygiene_policy.json

@@ -1,5 +1,17 @@
 # TinySesam — TODO
 
+> **Umgezogen (2026-07-23):** Offene Punkte, Meilensteine und Architekturentscheidungen leben
+> jetzt als Einzeldateien unter **[`backlog/`](backlog/README.md)** — mit Struktur,
+> Verweisen und einer Pruefung in der Testsuite. Diese Datei bleibt als **Historie** der
+> erledigten Versionen stehen.
+>
+> ```bash
+> python3 scripts/_backlog.py list      # was ist offen
+> python3 scripts/_backlog.py list --type Decision
+> ```
+>
+> Konventionen: [`backlog/README-KONVENTION.md`](backlog/README-KONVENTION.md).
+
 ## Erledigt in 0.5
 - **Forward-Auth-Modus** (Reverse-Proxy, für fremde/nicht-änderbare Apps): `/auth/forward` +
   `/auth/verify` (200 + `Remote-*` bzw. 401 + `X-TinySesam-Location`), `cookie_domain`,
@@ -8,40 +20,6 @@
   persönliche PIN, geteiltes Ressourcen-Geheimnis (PIN/Passphrase), Magic-Link + Mailer-Hook,
   Registrierung + Einladung, eingebaute Konto-Seite, austauschbares Frontend (Template-Registry),
   Open-Redirect-Härtung (`safe_next`).
-
-## Offen
-
-### Auslieferung
-- **PyPI: vertagt bis 1.0** (entschieden 2026-07-10). Bis dahin ist der gepinnte Git-Tag das
-  ehrlichere Artefakt: Jede PyPI-Version ist unwiderruflich, und die API bewegt sich noch —
-  0.12.0 hat gerade das Selbst-Update ersatzlos entfernt. Dazu ist ein Auth-Paket auf PyPI ein
-  Supply-Chain-Ziel: wer das Konto übernimmt, schiebt Code in fremde Anmeldevorgänge.
-  Wenn: dann mit **Trusted Publishing** (PyPI vertraut dem Workflow per OIDC, kein Token im Repo).
-  Die Namen `tinysesam` und `tiny-sesam` sind Stand 2026-07-10 beide frei.
-- **Abbild-Signatur / SBOM** erwägen (`cosign`, `provenance`) — ein Digest belegt Unverändertheit,
-  aber nicht Herkunft. Erst sinnvoll, wenn Fremde das Abbild produktiv einsetzen.
-
-### Tests
-- **Freien Port nicht selbst suchen.** `tests/test_browser.py: free_port()` bindet einen Port,
-  schließt ihn und gibt die Nummer zurück — dazwischen kann ein anderer Prozess ihn belegen.
-  Robuster: Chrome mit `--remote-debugging-port=0` starten und die tatsächliche Nummer aus
-  `DevToolsActivePort` im Profilverzeichnis lesen. (Aus dem DashMyBoard-Bau; dort bewährt.)
-
-### Funktion
-- **End-to-End-Test gegen einen echten Identity Provider** — der größte verbliebene blinde Fleck.
-  Passkey/WebAuthn, OIDC und SAML sind bisher nur **struktur-getestet**: Die Ceremony gegen einen
-  echten Browser auf einer echten HTTPS-Domain, gegen einen echten IdP, hat nie stattgefunden.
-  Ein Fehler dort fiele erst im Betrieb auf.
-  - **Was fehlt:** öffentlich erreichbare Domain mit gültigem Zertifikat (WebAuthn verlangt eine
-    echte `rp_id` und HTTPS), ein IdP mit registriertem Client, ein Passkey-fähiger Browser.
-  - **Wie:** dieselbe CDP-Suite wie `tests/test_browser.py`, aber mit `BASE_URL=https://…` gegen
-    die deployte Instanz — also ein **Smoke-Test nach dem Deploy**, kein CI-Test. WebAuthn lässt
-    sich über CDP mit `WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator` fahren, ohne echten
-    Sicherheitsschlüssel.
-  - **Warum kein CI-Test:** Die CI hat keine Domain, kein Zertifikat und keinen IdP. Ein Test, der
-    das vortäuscht, prüft die Attrappe.
-- **Forward-Auth**: optionale Feinsteuerung, welche `Remote-*`-Header gesetzt werden.
-- **E-Mail-Verifikation/Invite ohne Magic-Link-Endpoint** (aktuell nutzen sie `/auth/magic/{token}`).
 
 ## Erledigt in 0.13
 - **Gateway als Container-Abbild**: `Dockerfile` (nicht-root, ohne pip/git, `HEALTHCHECK`),
