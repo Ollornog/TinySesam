@@ -2,6 +2,31 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+### Hinzugefügt — die öffentliche API wird gemessen, nicht behauptet
+
+Beide letzten Releases haben die API gebrochen, und beide Male fiel es erst beim Schreiben des
+CHANGELOG auf. `tests/test_api_surface.py` hält die Oberfläche jetzt fest (Manager-Methoden,
+Config-Felder, Presets, Exporte — 231 Namen) und meldet jede Abweichung. Er verbietet nichts, er
+erzwingt eine bewusste Entscheidung: `python tests/test_api_surface.py --update`, dann committen.
+
+Wichtig dabei ist die Unterscheidung: **Bruch** (entfernt, umbenannt, Signatur unverträglich) ist
+etwas anderes als **Erweiterung** (Parameter mit Vorgabewert angehängt — bestehende Aufrufe laufen
+weiter). Ein Wächter, der bei Harmlosem schreit, wird weggeklickt, und dann übersieht man den
+echten. Gegenprobe mit den zwei echten Fällen: `require_role` (keyword-only) wird als Bruch
+gemeldet, `magic_url` (neuer Parameter mit Vorgabewert) als Erweiterung.
+
+### Hinzugefügt — `scripts/_release.py`: die Handgriffe vor einem Release
+
+Die Version steht an sechs Stellen und im CHANGELOG. Das von Hand zu pflegen hat funktioniert,
+weil ein Test schimpft, wenn man eine vergisst — aber „funktioniert, weil ein Test schimpft" ist
+eine Schleife aus Fehler und Korrektur, kein Verfahren. `python3 scripts/_release.py 0.17.0` setzt
+alles und schliesst den CHANGELOG-Abschnitt; `--pruefen` kontrolliert nur.
+
+Bewusst **nicht** dabei: taggen und pushen. Den Knopf drückt ein Mensch — dieselbe Trennung wie
+beim Ausrollen. Beides zahlt auf [M-1](backlog/M-1-api-stabil-1-0.md) ein.
+
 ## [0.16.0] — 2026-09-19
 
 > ⚠️ **Breaking Change.** Bereits verschickte `/auth/magic/…`-Bestätigungs- und Einladungslinks
