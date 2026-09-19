@@ -491,14 +491,8 @@ def build_router(auth) -> APIRouter:
                     auth.audit("forward_role_denied", u["username"], auth.client_ip(request),
                                f"url={orig} fehlt={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
-                groups = auth.user_roles(u) + (["admin"] if u["is_admin"] else [])
-                headers = {
-                    "Remote-User": str(u["username"] or ""),
-                    "Remote-Name": str(u["display_name"] or u["username"] or ""),
-                    "Remote-Email": str(u["email"] or ""),
-                    "Remote-Groups": ",".join(groups),
-                }
-                return Response(status_code=200, headers=headers)
+                # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
+                return Response(status_code=200, headers=auth.forward_response_headers(u))
             login = auth.forward_login_url(orig, request)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
