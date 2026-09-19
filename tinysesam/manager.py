@@ -580,7 +580,7 @@ class TinySesam:
         if not u or u["disabled"] or u["is_service"]:
             return False
         raw = self.create_magic_token("reset_password", user_id=u["id"], email=email)
-        url = self.magic_url(raw, base_url)
+        url = self.magic_url(raw, base_url, "reset_password")
         mins = self.cfg.magiclink_ttl_min
         self.send_mail(email, "Passwort zurücksetzen",
                        f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
@@ -699,8 +699,21 @@ class TinySesam:
         self.store.add_magic_token(h, purpose, int(time.time()) + ttl, user_id, email, payload)
         return raw
 
-    def magic_url(self, raw, base_url) -> str:
-        return f"{str(base_url).rstrip('/')}/auth/magic/{raw}"
+    #: Wo ein Token eingelöst wird — je Zweck ein eigener Endpunkt. Bis 0.15 liefen alle vier
+    #: über /auth/magic/{token}: wer den Magic-Link abschaltete, verlor damit auch E-Mail-
+    #: Bestätigung und Einladung, die damit nichts zu tun haben.
+    TOKEN_PATHS = {
+        "login": "/auth/magic/{t}",
+        "verify_email": "/auth/verify/{t}",
+        "invite": "/auth/invite/{t}",
+        "reset_password": "/auth/reset?token={t}",
+    }
+
+    def magic_url(self, raw, base_url, purpose="login") -> str:
+        """Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`)."""
+        from urllib.parse import quote
+        pfad = self.TOKEN_PATHS[purpose].format(t=quote(str(raw), safe=""))
+        return f"{str(base_url).rstrip('/')}{pfad}"
 
     def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
         """Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt)."""
@@ -732,7 +745,7 @@ class TinySesam:
         vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung."""
         raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
-        url = self.magic_url(raw, base_url)
+        url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
             self.send_mail(email, "Deine Einladung",
                            f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
@@ -744,7 +757,7 @@ class TinySesam:
         if not (email and self.mail_configured()):
             return False
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
-        url = self.magic_url(raw, base_url)
+        url = self.magic_url(raw, base_url, "verify_email")
         self.send_mail(email, "E-Mail bestätigen",
                        f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
                        html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')

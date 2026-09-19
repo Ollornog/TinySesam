@@ -156,8 +156,8 @@ u = auth.store.get_user_by_name("verify")
 assert u["disabled"], "Konto bis zur Bestätigung gesperrt"
 assert login(c, "v@example.com").status_code != 303, "gesperrtes Konto darf nicht rein"
 assert sent and sent[0][0] == "v@example.com"
-link = re.search(r"https?://\S+/auth/magic/(\S+)", sent[0][1]).group(1).rstrip(".,)")
-c.get(f"/auth/magic/{link}", follow_redirects=False)
+link = re.search(r"https?://\S+/auth/verify/(\S+)", sent[0][1]).group(1).rstrip(".,)")
+c.get(f"/auth/verify/{link}", follow_redirects=False)
 assert not auth.store.get_user_by_name("verify")["disabled"], "nach Bestätigung entsperrt"
 assert login(c, "v@example.com").status_code == 303
 os.unlink(db)
