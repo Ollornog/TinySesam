@@ -339,7 +339,21 @@ ghcr.io/ollornog/tinysesam:v0.15.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
-`/healthz` and starts the gateway directly — no `command:` needed. A full example with Caddy
+`/healthz` and starts the gateway directly — no `command:` needed.
+
+**Check where it came from.** A digest proves an artifact hasn't changed since it was built — not
+who built it. Every release therefore carries a Sigstore-signed provenance attestation and an SBOM,
+both also stored next to the image in the registry:
+
+```bash
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog
+gh attestation verify tinysesam-0.15.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog \
+    --predicate-type https://spdx.dev/Document                             # the SBOM
+```
+
+A pass means: built by this repository's release workflow, from the commit the attestation names.
+No key to hand out and none to lose — the signature is tied to the workflow's own identity. A full example with Caddy
 lives in `deploy/forward-auth/docker-compose.yml`.
 
 Update: bump the tag, `docker compose pull && docker compose up -d`. Rollback: put the old tag

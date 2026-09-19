@@ -7,6 +7,15 @@ name: release
 # Das ist der einzige Verteilweg: TinySesam aktualisiert sich nicht selbst, es wird
 # installiert — per gepinntem Tag, Wheel oder Abbild-Tag aus genau diesem Release.
 #
+# Beides wird zusätzlich BEGLAUBIGT: Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht
+# verändert hat — nicht, WOHER es kommt. Wer Zugang zur Registry erbeutet, kann ein eigenes Abbild
+# unter denselben Tag schieben. Deshalb entsteht hier zu jedem Artefakt eine über Sigstore
+# signierte Herkunfts-Attestation (wer hat wann aus welchem Commit gebaut) und eine SBOM (was
+# steckt drin). Ohne eigene Schlüssel: signiert wird mit der OIDC-Identität dieses Workflows.
+#
+#   gh attestation verify oci://ghcr.io/ollornog/tinysesam:vX.Y.Z --owner Ollornog
+#   gh attestation verify tinysesam-X.Y.Z-py3-none-any.whl        --owner Ollornog
+#
 # Vorher prüft der Job, dass der Tag zur Version im Paket passt. Ein Release mit
 # falscher Versionsnummer ist schlimmer als keins: es ist unauffällig falsch.
 
@@ -16,12 +25,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write        # Release anlegen und Dateien anhängen
-  packages: write        # Abbild nach GHCR schieben
+  contents: read         # Grundrechte knapp halten; jeder Job holt sich, was er braucht
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # Release anlegen und Dateien anhängen
+      id-token: write      # Sigstore-Identität für die Attestation
+      attestations: write  # die Attestation an GitHub übergeben
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
@@ -53,6 +65,12 @@ jobs:
       - name: Prüfsummen
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
+      # Herkunft der Pakete beglaubigen, BEVOR sie veröffentlicht werden.
+      - name: Herkunft von Wheel und sdist beglaubigen
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+
       # Bewusst `gh` statt einer Dritt-Action: die bräuchte `contents: write` auf dieses Repo,
       # und ihr Tag liesse sich umhängen. `gh` ist auf den Runnern vorinstalliert.
       - name: Release anlegen
@@ -65,6 +83,10 @@ jobs:
   image:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      packages: write      # Abbild nach GHCR schieben
+      id-token: write      # Sigstore-Identität für die Attestation
+      attestations: write  # Attestation an GitHub übergeben (und in die Registry legen)
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
@@ -99,6 +121,36 @@ jobs:
           # andere Version, ohne dass jemand etwas geändert hätte.
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
           provenance: false
+
+      # BuildKits eigene Provenance bleibt aus (`provenance: false` oben): Sie ist UNSIGNIERT und
+      # belegt damit genau das nicht, worum es hier geht. Stattdessen eine über Sigstore signierte
+      # Attestation, die auch in der Registry neben dem Abbild landet — wer es zieht, kann die
+      # Herkunft prüfen, ohne dieses Repo zu kennen.
+      - name: Herkunft des Abbilds beglaubigen
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      # Die SBOM beantwortet die Frage, die nach jeder CVE-Meldung kommt: steckt das Paket drin?
+      # Erzeugt wird sie aus dem GESCHOBENEN Abbild (per Digest), nicht aus dem Bauverzeichnis —
+      # sonst beschriebe sie etwas anderes als das, was ausgeliefert wurde.
+      - name: SBOM aus dem geschobenen Abbild erzeugen
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
+        with:
+          image: ghcr.io/${{ env.OWNER_LC }}/tinysesam@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: SBOM beglaubigen
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
 
       - name: Digest ausgeben (für einen unveränderlichen Pin)
         run: |

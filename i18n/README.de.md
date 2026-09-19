@@ -344,6 +344,21 @@ Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 ghcr.io/ollornog/tinysesam:v0.15.0
 ```
 
+**Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
+hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigstore signierte
+Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
+
+```bash
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog
+gh attestation verify tinysesam-0.15.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog \
+    --predicate-type https://spdx.dev/Document                             # die SBOM
+```
+
+Geht das durch, heisst das: gebaut vom Release-Workflow dieses Repos, aus dem Commit, den die
+Attestation nennt. Kein Schlüssel, den man herausgeben — und keiner, den man verlieren kann: Die
+Signatur hängt an der Identität des Workflows.
+
 Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt einen
 `HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
 Ein vollständiges Beispiel mit Caddy liegt in `deploy/forward-auth/docker-compose.yml`.
