@@ -79,6 +79,8 @@ class TinySesam:
         self.webauthn = None
         self.ldap = None
         self.saml = None
+        if config.security_log:
+            security.attach_security_log(config.security_log)
         self.rl = security.RateLimiter()
         if config.redis_url:
             try:
@@ -107,6 +109,22 @@ class TinySesam:
             n = self.purge_demo()                       # Demo-Modus abgeschaltet → Konten sind weg
             if n:
                 security.seclog.warning("Demo-Modus aus: %d Beispielkonto(en) gelöscht.", n)
+        # Forward-Auth über mehrere Hosts, aber ohne cookie_domain: Das Session-Cookie ist
+        # host-only, also gibt es KEIN geteiltes SSO — jeder Host verlangt eine eigene Anmeldung.
+        # Die Login-URL wird pro Host gebaut (siehe forward_login_url), damit daraus wenigstens
+        # keine stille Redirect-Schleife wird. Das ist vorab beweisbar, ohne über die Außenwelt
+        # zu raten: die Hosts stehen in der eigenen Konfiguration.
+        if config.forward_auth_enabled and config.base_url and not config.cookie_domain:
+            from urllib.parse import urlsplit
+            own = urlsplit(config.base_url).hostname or ""
+            fremd = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]
+            if fremd:
+                security.seclog.warning(
+                    "Forward-Auth ohne cookie_domain: Das Session-Cookie gilt nur host-only auf %s, "
+                    "nicht auf %s. Diese Hosts verlangen je eine eigene Anmeldung (die Login-Seite "
+                    "wird dort gebaut). Für gemeinsames SSO über Subdomains cookie_domain setzen, "
+                    "z.B. '.%s'.", own or "?", ", ".join(fremd),
+                    ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
         tok = self.admin_claim_token()
         if tok:
             security.seclog.warning(
@@ -931,14 +949,36 @@ class TinySesam:
         return h.get("referer") or "/"
 
     def forward_login_url(self, orig_url: str, request: Request = None) -> str:
-        """Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>."""
-        from urllib.parse import quote
+        """Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>.
+
+        Ausnahme gegen eine stille Endlosschleife: **ohne `cookie_domain` gilt das Session-Cookie
+        host-only.** Zeigt die Login-URL dann auf einen anderen Host als den angefragten, setzt
+        TinySesam das Cookie auf Host A und schickt den Browser nach Host B, wo es nicht
+        mitgeschickt wird — der Proxy fragt erneut, es geht wieder zum Login, ohne Fehlermeldung
+        und ohne Logzeile. Steht der angefragte Host in `trusted_redirect_hosts`, bauen wir die
+        Login-URL deshalb dort: derselbe Host, auf dem das Cookie gilt.
+
+        `base_url` bleibt davon unberührt — OIDC-/SAML-Callbacks brauchen weiter die eine feste
+        Adresse, die beim IdP hinterlegt ist. Betroffen ist nur die eigene Login-Seite.
+        Der echte Fix für SSO über mehrere Subdomains bleibt `cookie_domain=".example.com"`.
+        """
+        from urllib.parse import quote, urlsplit
         base = self.cfg.base_url
         if not base and request is not None:
             h = request.headers
             proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
             host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc).split(",")[0].strip()
             base = f"{proto}://{host}"
+        if base and not self.cfg.cookie_domain:
+            # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
+            # und X-Forwarded-* bereits ausgewertet. Die Whitelist trusted_redirect_hosts ist
+            # zugleich der Schutz — ein gefälschter X-Forwarded-Host kann die Login-URL nicht
+            # auf einen fremden Host umbiegen.
+            o = urlsplit(orig_url or "")
+            if (o.scheme in ("http", "https") and o.hostname
+                    and o.hostname != (urlsplit(base).hostname or "")
+                    and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
+                base = f"{o.scheme}://{o.netloc}"
         return f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
 
     # ---------- i18n ----------
@@ -997,7 +1037,7 @@ class TinySesam:
         return resp
 
     def _csp_header(self, nonce: str) -> str:
-        """Die CSP fuer die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per
+        """Die CSP für die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per
         Nonce (kein 'unsafe-inline'); 'off' = kein Header; sonst der eigene String mit {nonce}."""
         csp = (self.cfg.csp or "").strip()
         if not csp or csp == "off":
@@ -1010,8 +1050,21 @@ class TinySesam:
         return csp.replace("{nonce}", nonce)
 
     def safe_next(self, next_: str) -> str:
-        """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts)."""
-        return security.safe_next(next_, self.cfg.login_redirect, self.cfg.trusted_redirect_hosts or None)
+        """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
+
+        Der Host der eigenen `base_url` zählt immer mit: ein Redirect auf die eigene öffentliche
+        Adresse ist per Definition kein Open Redirect. Sonst müsste man beim Forward-Auth auf
+        EINEM Host (App und TinySesam unter demselben Namen) den eigenen Host in
+        `trusted_redirect_hosts` wiederholen — vergisst man das, wird das absolute `next=`
+        stillschweigend verworfen und man landet nach dem Login auf `login_redirect`.
+        """
+        hosts = list(self.cfg.trusted_redirect_hosts or [])
+        if self.cfg.base_url:
+            from urllib.parse import urlsplit
+            own = urlsplit(self.cfg.base_url).hostname or ""
+            if own and own not in hosts:
+                hosts.append(own)
+        return security.safe_next(next_, self.cfg.login_redirect, hosts or None)
 
     # ---------- FastAPI-Integration ----------
     def router(self):

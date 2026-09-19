@@ -209,7 +209,12 @@ class TinySesamConfig:
     # Prozessübergreifendes Rate-Limit über Redis (Multi-Worker); leer = In-Memory pro Prozess. Extra [redis].
     redis_url: str = ""                   # z.B. redis://localhost:6379/0
     # Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade).
+    # Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden.
     trusted_redirect_hosts: list[str] = field(default_factory=list)
+    # Datei, in die der Logger "tinysesam.security" zusätzlich schreibt — das Lesefutter für
+    # fail2ban (deploy/fail2ban/). Leer = nur an den Logger; wer das Logging selbst einrichtet,
+    # lässt es leer. Ist die Datei nicht schreibbar, warnt TinySesam und läuft weiter.
+    security_log: str = ""                # z.B. /var/log/tinysesam/security.log
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 
