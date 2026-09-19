@@ -4,6 +4,26 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Hinzugefügt — Herkunft und Inhalt der Artefakte sind jetzt beglaubigt
+
+Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert hat — **nicht, wer es
+gebaut hat**. Wer Zugang zur Registry erbeutet, kann ein eigenes Abbild unter denselben Tag
+schieben; wer nur den Tag zieht, merkt nichts.
+
+Jedes Release trägt deshalb jetzt eine über **Sigstore** signierte Herkunfts-Attestation und eine
+**SBOM** — für das Gateway-Abbild wie für Wheel und sdist. Signiert wird mit der OIDC-Identität
+des Release-Workflows: kein Schlüssel, den man herausgeben, und keiner, den man verlieren kann.
+Die Attestation des Abbilds liegt zusätzlich in der Registry und ist damit auch ohne dieses Repo
+prüfbar.
+
+```bash
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:vX.Y.Z --owner Ollornog
+```
+
+Die SBOM entsteht aus dem **geschobenen** Abbild, nicht aus dem Bauverzeichnis — sonst beschriebe
+sie etwas anderes als das Ausgelieferte. Erledigt
+[T-5](backlog/T-5-abbild-signatur-pruefen.md).
+
 ### Behoben — eine abgelehnte SAML-Assertion war nicht diagnostizierbar
 
 `SAMLClient.process()` warf `get_errors()` und `get_last_error_reason()` weg und gab nur `None`
