@@ -88,5 +88,14 @@ except MailNotConfigured:
     ok("ohne SMTP/Mailer: send_mail wirft MailNotConfigured")
 os.remove(db2)
 
+# ---------- /auth/magic/{token} ist seit 0.16 NUR der Anmelde-Link ----------
+# Vorher war es der Eingang für vier Zwecke; wer den Magic-Link abschaltete, verlor Bestätigung
+# und Einladung gleich mit. Ein Token anderen Zwecks wird hier jetzt abgewiesen.
+fremd = auth.create_magic_token("verify_email", user_id=uid, email="admin@example.com")
+r = c.get(f"/auth/magic/{fremd}", follow_redirects=False)
+assert r.status_code == 400, r.status_code
+assert auth.peek_magic(fremd, purpose="verify_email"), "und bleibt dabei unverbraucht"
+ok("/auth/magic/{token} nimmt nur noch login-Token (eigene Endpunkte für den Rest)")
+
 os.remove(db)
 print("\nMAGIC-LINK OK ✅")

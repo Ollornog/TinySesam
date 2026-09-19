@@ -69,12 +69,12 @@ assert sent == []
 # bekannte Adresse → Reset-Mail
 c.post("/auth/forgot", data={"email": "admin@example.com"})
 assert len(sent) == 1
-token = re.search(r"/auth/magic/([\w\-]+)", sent[0]["text"]).group(1)
+# Der Reset-Link zeigt direkt auf die Reset-Seite — bis 0.15 lief er über /auth/magic/ und
+# nahm damit den Umweg über einen Endpunkt, der mit dem Reset nichts zu tun hat.
+token = re.search(r"/auth/reset\?token=([\w\-]+)", sent[0]["text"]).group(1)
+assert "/auth/magic/" not in sent[0]["text"]
 ok("Forgot: Reset-Link nur für existierendes Konto (keine Enumeration)")
 
-# Link öffnen → Weiterleitung zur Reset-Seite (Token nicht verbraucht)
-r = c.get(f"/auth/magic/{token}", follow_redirects=False)
-assert r.status_code == 303 and "/auth/reset?token=" in r.headers["location"]
 assert "Neues Passwort" in c.get(f"/auth/reset?token={token}").text
 # zu kurzes Passwort → 400
 assert c.post("/auth/reset", data={"token": token, "password": "x"}).status_code == 400
@@ -83,6 +83,29 @@ r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw"}, foll
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
 assert auth.peek_magic(token, purpose="reset_password") is None
 ok("Reset: neues Passwort gesetzt, Token verbraucht")
+
+# Der Reset hängt am Mailer, nicht am Magic-Link. Bis 0.15 verlangte die Route beides
+# (password_reset_enabled AND magiclink_enabled) — zwei Dinge, die nichts miteinander zu tun haben.
+db_x = tempfile.mktemp(suffix=".db")
+post_x = []
+ax = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_x, cookie_secure=False,
+                               passkey_enabled=False, password_reset_enabled=True,
+                               magiclink_enabled=False))
+ax.set_mailer(lambda to, subject, text, html=None: post_x.append(text))
+ax.create_user("ohne", "altes-geheim", email="ohne@example.com")
+appx = FastAPI()
+appx.include_router(ax.router())
+cx = TestClient(appx, headers={"Accept": "text/html"})
+assert cx.get("/auth/magic/request").status_code == 404, "Magic-Link ist aus"
+assert cx.get("/auth/forgot").status_code == 200, "Passwort-vergessen bleibt trotzdem erreichbar"
+cx.post("/auth/forgot", data={"email": "ohne@example.com"})
+tok_x = re.search(r"/auth/reset\?token=([\w\-]+)", post_x[0]).group(1)
+r = cx.post("/auth/reset", data={"token": tok_x, "password": "frisches-passwort"},
+            follow_redirects=False)
+assert r.status_code == 303
+assert ax.check_password("ohne", "frisches-passwort")
+os.remove(db_x)
+ok("Passwort-Reset funktioniert ohne Magic-Link (Kopplung gelöst)")
 
 # altes Passwort weg, neues geht
 c2 = TestClient(app)
