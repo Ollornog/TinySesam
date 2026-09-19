@@ -4,6 +4,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Geändert — alle GitHub-Actions auf den neuesten Stand
+
+Acht Actions aktualisiert, darunter ein Major (`setup-python` 6 → 7: entfernt den `pip-install`-Input,
+den wir nie genutzt haben). Bei jeder wurde die **Laufzeit am neuen SHA** nachgesehen — alle acht
+laufen auf `node24`. Das ist der Punkt, den ein SHA-Pin allein nicht abdeckt: Er friert die Action
+ein, nicht die Node-Version, auf der sie läuft; eine veraltete Laufzeit fällt erst auf, wenn GitHub
+sie abschaltet.
+
+Fünf der Updates kamen als einzelne Vorschläge, drei hatte noch niemand gemeldet. Zusammengefasst,
+weil `main` „aktuell sein" verlangt: Jeder einzelne Merge hätte die übrigen vier veraltet gemacht
+und sechs CI-Läufe nach sich gezogen.
+
 ### Hinzugefügt — die öffentliche API wird gemessen, nicht behauptet
 
 Beide letzten Releases haben die API gebrochen, und beide Male fiel es erst beim Schreiben des
