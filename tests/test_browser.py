@@ -31,18 +31,27 @@ if not CHROME:
     raise ImportError("kein Chrome gefunden")   # run_all wertet das als „übersprungen"
 
 
-def free_port() -> int:
-    """Nur für den Testserver: er bindet sofort danach.
+def _server_socket():
+    """Lauschenden Socket für den Testserver aufmachen — und **gebunden lassen**.
 
-    Für Chrome taugt das nicht — zwischen Schließen und Start kann ein anderer Prozess
-    den Port nehmen. Chrome wählt ihn deshalb selbst (siehe _cdp_port).
+    Die naheliegende Fassung (binden, schließen, Nummer merken, uvicorn damit starten) hat ein
+    Fenster: zwischen Schließen und erneutem Binden kann ein anderer Prozess denselben Port
+    nehmen. Auf einem Runner mit parallelen Jobs ist das kein Gedankenspiel, und rot wird der
+    Test dann selten und unerklärlich. uvicorn nimmt fertige Sockets entgegen (`run(sockets=…)`),
+    also geben wir diesen hier nie wieder her — damit gibt es das Fenster nicht.
+
+    Chrome löst dasselbe Problem auf seinem Weg: `--remote-debugging-port=0` und die tatsächliche
+    Nummer aus `DevToolsActivePort` (siehe `_cdp_port`).
     """
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    s.listen(128)
+    return s
 
 
-APP_PORT = free_port()
+_app_sock = _server_socket()
+APP_PORT = _app_sock.getsockname()[1]
 BASE = f"http://127.0.0.1:{APP_PORT}"
 
 # Eigene DB, damit ein laufendes Demo-Showcase nicht dazwischenfunkt
@@ -50,9 +59,10 @@ _db = tempfile.mktemp(suffix=".db")
 os.environ["TINYSESAM_SHOWCASE_DB"] = _db
 import examples.showcase as showcase   # noqa: E402
 
-_server = uvicorn.Server(uvicorn.Config(showcase.app, host="127.0.0.1", port=APP_PORT,
-                                        log_level="critical"))
-threading.Thread(target=_server.run, daemon=True).start()
+_server = uvicorn.Server(uvicorn.Config(showcase.app, log_level="critical"))
+# Den bereits gebundenen Socket übergeben, nicht host/port — sonst bindet uvicorn neu und die
+# Lücke von oben wäre wieder da (dann sogar als "Address already in use").
+threading.Thread(target=lambda: _server.run(sockets=[_app_sock]), daemon=True).start()
 for _ in range(100):
     try:
         urllib.request.urlopen(f"{BASE}/demo", timeout=1)
