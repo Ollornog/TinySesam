@@ -147,11 +147,36 @@ def pruefe_adressen(root: str, dateien: list[str], policy: dict,
     return treffer
 
 
+def ohne_yaml_kommentar(zeile: str) -> str:
+    """Schneidet den YAML-Kommentar ab und gibt nur den Code-Teil zurück.
+
+    Ein `#` beginnt einen Kommentar nur, wenn ihm Zeilenanfang oder Leerraum vorausgeht
+    und er nicht in Anführungszeichen steht (`run: echo "a # b"` ist kein Kommentar).
+    """
+    quote = ""
+    for i, c in enumerate(zeile):
+        if quote:
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c == "#" and (i == 0 or zeile[i - 1] in " \t"):
+            return zeile[:i]
+    return zeile
+
+
 def pruefe_kein_self_hosted_runner(root: str, dateien: list[str]) -> list[str]:
     """Öffentliche Repos laufen auf `ubuntu-latest`.
 
     Ein self-hosted Runner führt bei einem Fork-PR fremden Code auf eigener Hardware aus,
     und die Runner sind nicht ephemer. GitHub rät ausdrücklich ab.
+
+    Geprüft wird der **Code** jeder Zeile, der Kommentar dahinter nicht: sonst schlug
+    `runs-on: ubuntu-latest  # niemals self-hosted (Fork-PRs)` an — eine Zeile, die die
+    Regel *befolgt* und *begründet* (Fehlalarm, gefunden 2026-09-19). Der Kommentar ist
+    die **einzige** Ausnahme; das Label bleibt überall sonst verboten, auch in Listenform
+    (`runs-on: [self-hosted, linux]`), als mehrzeilige Liste und in einer Matrix, aus der
+    `runs-on` sich bedient. Ein Wert soll nie erlaubt werden, nur weil er woanders steht.
     """
     treffer = []
     for rel in dateien:
@@ -159,7 +184,7 @@ def pruefe_kein_self_hosted_runner(root: str, dateien: list[str]) -> list[str]:
             continue
         inhalt = _lies(root, rel) or ""
         for n, zeile in enumerate(inhalt.splitlines(), 1):
-            if "self-hosted" in zeile:
+            if "self-hosted" in ohne_yaml_kommentar(zeile):
                 treffer.append(f"{rel}:{n}")
     return treffer
 

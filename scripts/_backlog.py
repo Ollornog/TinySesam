@@ -87,10 +87,13 @@ def cmd_index(args) -> int:
         for m in ms:
             aufgaben = [e for e in eintraege if e.get("milestone") == m.get("id")]
             fertig = [e for e in aufgaben if e.get("status") == "erledigt"]
-            quote = f"{len(fertig)}/{len(aufgaben)}" if aufgaben else "—"
+            # „erledigt" nur anhängen, wenn es überhaupt Aufgaben gibt. Sonst stand in
+            # jedem frischen Repo „☐ M-1 Titel — — erledigt": Kästchen und Text
+            # widersprachen sich (gefunden 2026-09-19).
+            quote = f"{len(fertig)}/{len(aufgaben)} erledigt" if aufgaben else "noch keine Aufgaben"
             s = SYMBOL.get(str(m.get("status")), "?")
             zeilen.append(f"* {s} **[{m.get('id')}]({os.path.basename(m['_datei'])})** "
-                          f"{m.get('title')} — {quote} erledigt")
+                          f"{m.get('title')} — {quote}")
         zeilen.append("")
 
     for typ, titel in (("Task", "Aufgaben"), ("Bug", "Fehler"), ("Decision", "Entscheidungen (ADR)")):
