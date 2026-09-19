@@ -4,6 +4,32 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Geändert — E-Mail-Bestätigung, Einladung und Passwort-Reset haben eigene Endpunkte
+
+> ⚠️ **Breaking Change.** Bereits verschickte `/auth/magic/…`-Bestätigungs- und Einladungslinks
+> werden ungültig.
+
+Alle vier Token-Zwecke liefen über `/auth/magic/{token}`, und diese Route gab es nur bei
+`magiclink_enabled=True`. Wer den Anmelde-Link per E-Mail abschaltete — naheliegend, sobald man
+Passwörter oder SSO nutzt — verlor damit **auch E-Mail-Bestätigung und Einladung**, zwei Dinge,
+die damit nichts zu tun haben. Beim Umbau kam ein dritter Fall dazu: die Reset-Route verlangte
+`password_reset_enabled AND magiclink_enabled`, obwohl sie ihren eigenen Endpunkt längst hatte.
+
+| Zweck | vorher | jetzt |
+|---|---|---|
+| Anmelde-Link | `/auth/magic/{token}` | unverändert |
+| Adresse bestätigen | `/auth/magic/{token}` | `/auth/verify/{token}` (hängt an `signup_verify_email`) |
+| Einladung | `/auth/magic/{token}` | `/auth/invite/{token}` (hängt an `allow_signup`) |
+| Passwort-Reset | `/auth/magic/{token}` → Umweg | `/auth/reset?token=…` direkt (hängt an `password_reset_enabled`) |
+
+**Breaking:** Bereits verschickte Bestätigungs- und Einladungslinks auf `/auth/magic/…` sind
+ungültig. Wer solche Mails im Umlauf hat, verschickt sie nach dem Update neu. `/auth/magic/{token}`
+nimmt nur noch `login`-Token an und weist andere ab, **ohne sie zu verbrauchen**.
+
+Wer die Links selbst baut: `auth.magic_url(raw, base_url, purpose)` wählt den Pfad je Zweck
+(`TinySesam.TOKEN_PATHS`). Erledigt
+[T-4](backlog/T-4-verifikation-ohne-magic-endpoint.md).
+
 ### Behoben — Browser-Test: der Testserver-Port war ein Wettlauf
 
 `tests/test_browser.py` suchte sich den Port für den uvicorn-Testserver, indem es einen Socket

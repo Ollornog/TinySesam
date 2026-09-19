@@ -61,11 +61,28 @@ assert "Bestätigung" in r.text or "bestätig" in r.text.lower()
 uid = auth.store.get_user_by_name("verify")["id"]
 assert auth.store.get_user(uid)["disabled"] == 1     # noch gesperrt
 assert len(sent) == 1
-token = re.search(r"/auth/magic/([\w\-]+)", sent[0]["text"]).group(1)
-r = c.get(f"/auth/magic/{token}", follow_redirects=False)
+# Der Bestätigungslink zeigt auf den EIGENEN Endpunkt, nicht mehr auf /auth/magic/ —
+# sonst nimmt magiclink_enabled=False die E-Mail-Bestätigung mit (siehe unten).
+token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
+assert "/auth/magic/" not in sent[0]["text"]
+r = c.get(f"/auth/verify/{token}", follow_redirects=False)
 assert r.status_code == 303
 assert auth.store.get_user(uid)["disabled"] == 0     # aktiviert
-ok("signup_verify_email: Konto erst nach E-Mail-Bestätigung aktiv")
+assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 400   # one-shot
+ok("signup_verify_email: eigener Endpunkt /auth/verify/{token}, einmal einlösbar")
+os.remove(db)
+
+# … und der funktioniert OHNE Magic-Link. Das war der eigentliche Fehler: beides hing am selben
+# Endpunkt, also verlor man mit dem Anmelde-Link auch die Bestätigung.
+db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=False)
+c.post("/auth/register", data={"username": "ohne", "password": "supergeheim",
+                               "email": "o@example.com", "next": "/"})
+uid = auth.store.get_user_by_name("ohne")["id"]
+token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
+assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 303
+assert auth.store.get_user(uid)["disabled"] == 0
+assert c.get("/auth/magic/request").status_code == 404     # Magic-Link ist wirklich aus
+ok("E-Mail-Bestätigung funktioniert ohne Magic-Link")
 os.remove(db)
 
 # ---------- Invite-only: ohne Einladung kein Zugang, mit Einladung ok ----------
@@ -74,7 +91,8 @@ assert c.get("/auth/register").status_code == 403        # ohne Einladung
 inv = auth.create_invite("gast@example.com", "http://testserver", roles=["editor"])
 token = inv["token"]
 # Link öffnen → Weiterleitung zur Registrierung (Token NICHT verbraucht)
-r = c.get(f"/auth/magic/{token}", follow_redirects=False)
+assert "/auth/invite/" in inv["url"] and "/auth/magic/" not in inv["url"]
+r = c.get(f"/auth/invite/{token}", follow_redirects=False)
 assert r.status_code == 303 and "/auth/register?invite=" in r.headers["location"]
 # Registrierungsseite mit Einladung erreichbar, E-Mail vorbefüllt
 page = c.get(f"/auth/register?invite={token}").text
