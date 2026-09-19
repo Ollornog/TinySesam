@@ -50,10 +50,23 @@ class SAMLClient:
         return self._auth(req, base_url).login(return_to=return_to)
 
     def process(self, req: dict, base_url: str):
-        """ACS-Response prüfen. Gibt {nameid, attrs} oder None (ungültig/nicht authentifiziert)."""
+        """ACS-Response prüfen. Gibt {nameid, attrs} oder None (ungültig/nicht authentifiziert).
+
+        Der **Grund** einer Ablehnung geht an den Logger `tinysesam.security`, nicht an den
+        Browser: Wer die Antwort schickt, soll nicht erfahren, woran sie scheiterte (Audience?
+        Signatur? Uhrzeit?) — der Betreiber schon. Vorher verschwand er ersatzlos, und eine
+        fehlgeschlagene Anmeldung war von aussen wie von innen nicht unterscheidbar von
+        „irgendwas ist kaputt". Gefunden 2026-09 beim ersten Lauf gegen einen echten IdP:
+        Keycloaks Entity-ID ist `…/realms/<realm>`, nicht die SSO-URL — ohne
+        `saml_idp_entity_id` lehnt die Prüfung jede Assertion ab, schweigend.
+        """
+        from . import security
         auth = self._auth(req, base_url)
         auth.process_response()
         if auth.get_errors() or not auth.is_authenticated():
+            security.seclog.warning("SAML-Antwort abgelehnt: errors=%s reason=%s authenticated=%s",
+                                    auth.get_errors(), auth.get_last_error_reason(),
+                                    auth.is_authenticated())
             return None
         return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {}}
 

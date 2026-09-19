@@ -95,4 +95,60 @@ assert TestClient(app).get("/auth/saml/metadata").status_code == 200
 ok("SP-Metadata (onelogin) enthält ACS-URL + ist über /auth/saml/metadata abrufbar")
 os.remove(db)
 
+# ---------- Abgelehnte Assertion: diagnostizierbar und nicht als „Link ungültig" ----------
+# Beim ersten Lauf gegen einen echten IdP (Keycloak) endete eine abgelehnte Assertion in der
+# Magic-Link-Fehlerseite, und der Grund stand nirgends. Beides ist jetzt Teil des Vertrags.
+import io
+import logging
+
+db, auth, app = build()
+auth.saml = FakeSAML(valid=False)
+c = TestClient(app, headers={"Accept": "text/html"})
+
+puffer = io.StringIO()
+h = logging.StreamHandler(puffer)
+seclog = logging.getLogger("tinysesam.security")
+seclog.addHandler(h)
+try:
+    r = c.post("/auth/saml/acs", data={"SAMLResponse": "kaputt"})
+finally:
+    seclog.removeHandler(h)
+
+assert r.status_code == 400, r.status_code
+assert "link" not in r.text.lower(), "SAML-Fehler darf nicht als Link-Problem erscheinen"
+ok("abgelehnte Assertion → 400 ohne irreführende Magic-Link-Seite")
+
+# Der echte Client (nicht die Attrappe) schreibt den Grund ins Sicherheits-Log — ohne ihn ist eine
+# fehlgeschlagene Anmeldung von aussen wie von innen nicht erklärbar.
+from tinysesam.saml_ import SAMLClient
+
+
+class KaputtesAuth:
+    def process_response(self):
+        pass
+
+    def get_errors(self):
+        return ["invalid_response"]
+
+    def get_last_error_reason(self):
+        return "Invalid issuer in the Assertion/Response"
+
+    def is_authenticated(self):
+        return False
+
+
+client = SAMLClient(auth.cfg)
+client._auth = lambda req, base: KaputtesAuth()
+puffer = io.StringIO()
+h = logging.StreamHandler(puffer)
+seclog.addHandler(h)
+try:
+    assert client.process({}, "https://app.example.com") is None
+finally:
+    seclog.removeHandler(h)
+zeile = puffer.getvalue()
+assert "invalid_response" in zeile and "Invalid issuer" in zeile, zeile
+ok("Grund der Ablehnung steht im Logger tinysesam.security (errors + reason)")
+os.remove(db)
+
 print("\nSAML OK ✅")
