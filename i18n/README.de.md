@@ -65,7 +65,7 @@ Direkt von GitHub (nicht auf PyPI):
 GH="git+https://github.com/Ollornog/TinySesam.git"
 pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
 pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.15.0
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.16.0
 ```
 
 ## Quickstart
@@ -322,7 +322,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.15.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.16.0
 ```
 
 Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
@@ -333,7 +333,7 @@ Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256
 installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.15.0/tinysesam-0.15.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.16.0/tinysesam-0.16.0-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -341,7 +341,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.15.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.15.0
+ghcr.io/ollornog/tinysesam:v0.16.0
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -349,9 +349,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog
-gh attestation verify tinysesam-0.15.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.15.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.16.0 --owner Ollornog
+gh attestation verify tinysesam-0.16.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.16.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 

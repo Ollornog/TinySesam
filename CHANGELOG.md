@@ -2,7 +2,23 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.16.0] — 2026-09-19
+
+> ⚠️ **Breaking Change.** Bereits verschickte `/auth/magic/…`-Bestätigungs- und Einladungslinks
+> werden ungültig — wer solche Mails im Umlauf hat, verschickt sie nach dem Update neu.
+
+Das Release aus dem Praxiseinsatz. Wer TinySesam als **Forward-Auth vor fremde Apps** hängt, sollte
+es einspielen: Dort lag eine stille Redirect-Schleife, Rollen liessen sich am Proxy gar nicht
+prüfen, und welche Header hinausgehen, war nicht einstellbar. Wer es **in** seiner App einbindet,
+bekommt eigene Endpunkte für E-Mail-Bestätigung, Einladung und Passwort-Reset (die hingen bis
+hierher alle am Magic-Link), `require_role()` mit mehreren Rollen und ein Wartungskommando für den
+Fall, dass das Admin-Passwort weg ist.
+
+Dazu zwei Dinge, die man nicht sieht und trotzdem zählen: Die drei Anmelde-Zeremonien
+(Passkey, OIDC, SAML) sind erstmals **gegen echte Gegenstellen** gelaufen — und haben dabei gleich
+einen Fehler gefunden. Und jedes Artefakt dieses Releases trägt eine signierte Herkunfts-Attestation
+samt SBOM.
+
 
 ### Geändert — die E2E-Bühne entsteht per Playbook, nicht mehr von Hand
 
