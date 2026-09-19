@@ -10,6 +10,36 @@ from collections import defaultdict, deque
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
 
+def attach_security_log(path: str) -> bool:
+    """Den Security-Logger zusätzlich in eine Datei schreiben lassen — das, was die fail2ban-Jail
+    liest (`deploy/fail2ban/`). Ohne diesen Handler zeigt die mitgelieferte Jail auf eine Datei,
+    die nie entsteht: sie wäre still wirkungslos.
+
+    Idempotent (derselbe Pfad wird nicht zweimal angehängt — mehrere TinySesam-Instanzen im selben
+    Prozess sind erlaubt) und nicht start-verhindernd: ein nicht schreibbarer Pfad ist ein Grund
+    zu warnen, aber keiner, die Anmeldung stillzulegen. Das Format trägt den Zeitstempel vorn,
+    den fail2ban zum Datieren der Treffer braucht.
+    """
+    path = str(path)
+    for h in seclog.handlers:
+        if getattr(h, "_tinysesam_path", None) == path:
+            return True
+    try:
+        h = logging.FileHandler(path, encoding="utf-8")
+    except OSError as e:
+        seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
+                       path, e)
+        return False
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    h._tinysesam_path = path
+    seclog.addHandler(h)
+    # Ohne eigenen Level erbt der Logger den der Wurzel; steht der auf ERROR, fehlen genau die
+    # WARNING-Zeilen mit den Fehlversuchen.
+    if seclog.level == logging.NOTSET or seclog.level > logging.WARNING:
+        seclog.setLevel(logging.WARNING)
+    return True
+
+
 # Härtungs-Defaults — im Admin-Panel überschreibbar (store.setting). Nur diese Keys sind einstellbar.
 SECURITY_DEFAULTS = {
     "max_login_attempts": 5,        # Fehlversuche pro User im Fenster → Lockout

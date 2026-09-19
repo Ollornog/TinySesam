@@ -15,6 +15,8 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_TRUSTED_PROXIES                  Komma-Liste; Default 127.0.0.1/32,::1/128
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
+    TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
+                                               /var/log/tinysesam/security.log (leer = aus)
     TINYSESAM_HOST / TINYSESAM_PORT            Default 0.0.0.0 / 8000
 
 Der Reverse-Proxy ruft dann `GET /auth/forward` je Request (siehe deploy/forward-auth/).
@@ -47,6 +49,7 @@ def config_from_env() -> TinySesamConfig:
         allowed_groups=_split("TINYSESAM_ALLOWED_GROUPS"),
         db_path=os.environ.get("TINYSESAM_DB", "tinysesam-gateway.db"),
         https_mode=os.environ.get("TINYSESAM_HTTPS_MODE", "warn"),
+        security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),
         trusted_proxies=_split("TINYSESAM_TRUSTED_PROXIES") or ["127.0.0.1/32", "::1/128"],
     )
 
