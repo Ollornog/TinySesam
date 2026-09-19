@@ -2,9 +2,16 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.15.0] — 2026-09-19
 
-Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
+Forward-Auth aus dem Praxiseinsatz — vier Befunde aus einem Fremd-Deployment, das TinySesam vor
+eine gewachsene Site gehängt hat, plus der Nachzug in der App. Wer TinySesam **in** seiner App
+einbindet, bekommt `require_role()` mit mehreren Rollen (siehe Bruchstelle unten) und mit
+`security_log` eine fail2ban-Jail, die ohne Handarbeit funktioniert. Wer es als **Forward-Auth vor
+fremde Apps** hängt, sollte dieses Release einspielen: dort lag eine stille Redirect-Schleife.
+
+Dazu, wie im vorigen Zyklus begonnen, die Arbeiten am Sicherheitsnetz (Backlog im Repo,
+nonce-basierte CSP) — die sind für Einbindende unsichtbar.
 
 ### Behoben — Forward-Auth schickte in eine stille Endlosschleife
 
