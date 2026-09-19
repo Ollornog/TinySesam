@@ -23,3 +23,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-2](ADR-2-kein-selbst-update.md)** Kein Selbst-Update — die Version bestimmt, wer installiert
 * ☑ **[ADR-3](ADR-3-in-app-statt-proxy.md)** Schutz in der App pro Route, nicht auf Proxy-Ebene
 * ☑ **[ADR-4](ADR-4-keine-self-hosted-runner.md)** CI bleibt auf gehosteten Runnern — self-hosted ausgeschlossen
+* ☑ **[ADR-5](ADR-5-rollen-im-forward-auth.md)** Rollen im Forward-Auth kommen vom Proxy, nicht aus einer Regeltabelle

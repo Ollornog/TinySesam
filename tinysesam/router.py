@@ -458,9 +458,39 @@ def build_router(auth) -> APIRouter:
     if cfg.forward_auth_enabled:
         from fastapi.responses import Response
 
+        def _required_roles(request: Request) -> list:
+            """Rollen, die der **Proxy** für diese Route verlangt: `?roles=a,b` (mehrfach erlaubt)
+            oder Header `X-TinySesam-Roles`. Ohne Angabe bleibt /auth/forward binär wie bisher.
+
+            Gelesen wird die Angabe aus dem Sub-Request, den der Proxy stellt — sie steht in
+            dessen Konfiguration, nicht beim Client. Trotzdem ist die Auswertung absichtlich
+            **fail-closed**: mehrere Angaben werden UND-verknüpft, Kommas innerhalb einer Angabe
+            ODER. Hängt ein Client also selbst ein `roles=` oder den Header an (weil ein Setup den
+            Client-Query durchreicht), kann er die Prüfung nur verschärfen — nie aufweichen.
+            """
+            groups = []
+            for raw in list(request.query_params.getlist("roles")) + \
+                       [request.headers.get("x-tinysesam-roles") or ""]:
+                rs = [r.strip() for r in str(raw).split(",") if r.strip()]
+                if rs:
+                    groups.append(rs)
+            return groups
+
         def _forward(request: Request):
             u = auth.current_user(request)   # Session ODER API-Key
+            orig = auth.forwarded_url(request)
             if u:
+                # Rollenprüfung im Proxy-Modus. Fehlt die Rolle, ist das **403, nicht 401**:
+                # ein 401 schickte den bereits Angemeldeten zurück zum Login, der ihn sofort
+                # wieder hierher schickt — eine Schleife, an deren Ende dieselbe Rolle fehlt.
+                fehlend = [g for g in _required_roles(request)
+                           if not any(auth.has_role(u, r) for r in g)]
+                if fehlend:
+                    # Eine 403 im Proxy-Log sagt nicht, wer woran gescheitert ist. Das Panel hat
+                    # das Audit-Log ohnehin — also dorthin, wo man später nachsieht.
+                    auth.audit("forward_role_denied", u["username"], auth.client_ip(request),
+                               f"url={orig} fehlt={';'.join(','.join(g) for g in fehlend)}")
+                    return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
                 groups = auth.user_roles(u) + (["admin"] if u["is_admin"] else [])
                 headers = {
                     "Remote-User": str(u["username"] or ""),
@@ -469,7 +499,6 @@ def build_router(auth) -> APIRouter:
                     "Remote-Groups": ",".join(groups),
                 }
                 return Response(status_code=200, headers=headers)
-            orig = auth.forwarded_url(request)
             login = auth.forward_login_url(orig, request)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
