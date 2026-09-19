@@ -4,6 +4,22 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Behoben — eine abgelehnte SAML-Assertion war nicht diagnostizierbar
+
+`SAMLClient.process()` warf `get_errors()` und `get_last_error_reason()` weg und gab nur `None`
+zurück; der ACS zeigte daraufhin die **Magic-Link**-Fehlerseite („dieser Link ist ungültig,
+abgelaufen oder schon benutzt"). Wer eine SAML-Anmeldung debuggte, sah also eine Meldung über
+einen Link, den es nie gab, und im Log stand nichts.
+
+Der Grund geht jetzt an den Logger `tinysesam.security` — und nur dorthin: Wer die Antwort
+schickt, soll nicht erfahren, woran sie scheiterte. Der ACS antwortet mit 400 und einer Meldung,
+die vom Identity Provider spricht.
+
+Gefunden beim ersten Lauf gegen einen **echten** IdP: Keycloaks Entity-ID ist `…/realms/<realm>`,
+nicht die SSO-URL. Ohne `saml_idp_entity_id` lehnt die Prüfung deshalb jede Assertion ab — vorher
+schweigend. Das Feld gab es bereits; an der Config und in beiden READMEs steht jetzt, wann man es
+setzen muss.
+
 ### Hinzugefügt — `tests/e2e_stage.py`: die Ceremony gegen eine echte Instanz
 
 Passkey, SAML und OIDC waren bisher nur **struktur**-getestet: geprüft wurde, dass die richtigen
