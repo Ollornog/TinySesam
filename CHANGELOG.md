@@ -4,6 +4,29 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Hinzugefügt — `tests/e2e_stage.py`: die Ceremony gegen eine echte Instanz
+
+Passkey, SAML und OIDC waren bisher nur **struktur**-getestet: geprüft wurde, dass die richtigen
+Felder gesetzt und die richtigen Weichen gestellt werden — nie die Ceremony selbst gegen einen
+echten Provider auf einer echten HTTPS-Domain.
+
+Der neue Lauf tut genau das, im echten Browser über das DevTools-Protokoll: Passkey registrieren
+und sich danach passwortlos anmelden (virtueller Authenticator, aber echte `rp_id`), SAML gegen
+einen echten IdP, OIDC gegen einen echten Provider. Bedient wird die **eingebaute** Oberfläche,
+nicht nachgebautes JS — sonst prüfte der Test seinen eigenen Code.
+
+Bewusst **kein** CI-Test und bewusst nicht `test_*.py` benannt (sonst sammelt `run_all.py` ihn
+ein): Die CI hat keine Domain, kein Zertifikat und keinen IdP; ein Test, der das nachbaut, prüft
+die Attrappe. Gedacht als Smoke-Test nach dem Deploy. Adressen und Zugangsdaten kommen aus der
+Umgebung, nie aus dem Repo; jeder Teil ohne Konfiguration wird **übersprungen** und als solcher
+gemeldet, nie still als bestanden.
+
+Zwei Dinge, die der Lauf beim Bauen selbst gelernt hat: Er wartet auf **Zustände** statt auf die
+Uhr (feste Wartezeiten machten ihn launisch), und er **räumt hinter sich auf** — sonst sammelt das
+Konto bei jedem Durchgang einen weiteren Passkey an. Ein Rate-Limit oder Lockout meldet er als
+solchen, statt „Anmeldung fehlgeschlagen" zu sagen und die Suche in die falsche Richtung zu
+schicken. Erledigt Teile von [T-1](backlog/T-1-e2e-gegen-echten-idp.md).
+
 ### Geändert — geteilte Testbasis auf repokit 0.9.0
 
 `repokit sync`. Zwei Fixes, beide aus einem frischen Bootstrap gemeldet: Der Hygiene-Test schlug
