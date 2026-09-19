@@ -4,6 +4,16 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Behoben — Browser-Test: der Testserver-Port war ein Wettlauf
+
+`tests/test_browser.py` suchte sich den Port für den uvicorn-Testserver, indem es einen Socket
+band, wieder schloss und die Nummer weitergab. Dazwischen konnte ihn ein anderer Prozess belegen —
+auf einem Runner mit parallelen Jobs kein Gedankenspiel, und rot wird der Test dann selten und
+unerklärlich. Der Socket bleibt jetzt gebunden und wird an `uvicorn.Server.run(sockets=[...])`
+übergeben; das Fenster gibt es nicht mehr. Chrome löste dasselbe Problem schon länger auf seinem
+Weg (`--remote-debugging-port=0` + `DevToolsActivePort`). Erledigt
+[T-2](backlog/T-2-freien-port-nicht-selbst-suchen.md).
+
 ### Hinzugefügt — `forward_headers`: welche Header die Forward-Auth-Antwort setzt
 
 Der Satz war fest: `Remote-User/-Name/-Email/-Groups`, die Authelia-Konvention. Nicht jede
