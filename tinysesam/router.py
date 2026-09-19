@@ -261,24 +261,33 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str):
-            info = auth.peek_magic(token)
-            if not info:
+            """Nur noch der Anmelde-Link. E-Mail-Bestätigung und Einladung haben seit 0.16 eigene
+            Endpunkte — sonst nahm das Abschalten des Magic-Links beides mit."""
+            data = auth.redeem_magic(token, purpose="login")
+            if not data or not data.get("user_id"):
                 return auth.render_page("magic_invalid", request=request, status=400)
-            # Einladung: NICHT hier verbrauchen → zur Registrierung weiterreichen
-            if info["purpose"] == "invite":
-                if not cfg.allow_signup:
-                    return auth.render_page("magic_invalid", request=request, status=400)
-                return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
-            # Passwort-Reset: NICHT hier verbrauchen → zur Reset-Seite weiterreichen
-            if info["purpose"] == "reset_password":
-                return RedirectResponse(f"/auth/reset?token={_q(token)}", 303)
-            data = auth.redeem_magic(token)
-            if not data:
+            return _login_nach_token(auth, request, data["user_id"],
+                                     auth.safe_next((data.get("payload") or {}).get("next") or "/"))
+
+    # ---------- E-Mail-Bestätigung (eigener Endpunkt, unabhängig vom Magic-Link) ----------
+    if cfg.signup_verify_email:
+        @r.get("/auth/verify/{token}")
+        def verify_email(request: Request, token: str):
+            data = auth.redeem_magic(token, purpose="verify_email")
+            if not data or not data.get("user_id"):
                 return auth.render_page("magic_invalid", request=request, status=400)
-            handled = _magic_dispatch(auth, request, data)
-            if handled is not None:
-                return handled
-            raise HTTPException(400, "nicht unterstützter Token-Zweck")
+            uid = data["user_id"]
+            auth.store.set_disabled(uid, False)          # Konto aktivieren
+            auth.audit("email_verified", detail=data.get("email"))
+            return _login_nach_token(auth, request, uid, "/")
+
+    # ---------- Einladung (eigener Endpunkt; verbraucht wird der Token erst bei der Registrierung) ----------
+    if cfg.allow_signup:
+        @r.get("/auth/invite/{token}")
+        def invite_redeem(request: Request, token: str):
+            if not auth.peek_magic(token, purpose="invite"):
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
 
     # ---------- Erst-Admin per Einmal-Token (nur solange es keinen Admin gibt) ----------
     @r.get("/auth/claim-admin", response_class=HTMLResponse)
@@ -333,8 +342,8 @@ def build_router(auth) -> APIRouter:
         auth.audit("stepup", u["username"], ip)
         return RedirectResponse(nxt, 303)
 
-    # ---------- Passwort vergessen / zurücksetzen (braucht magiclink_enabled + Mailer) ----------
-    if cfg.password_reset_enabled and cfg.magiclink_enabled:
+    # ---------- Passwort vergessen / zurücksetzen (braucht einen Mailer, NICHT den Magic-Link) ----------
+    if cfg.password_reset_enabled:
         @r.get("/auth/forgot", response_class=HTMLResponse)
         def forgot_page(request: Request):
             return auth.render_page("forgot", request=request, sent=False, error="")
@@ -690,29 +699,21 @@ def key_view(k) -> dict:
             "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
 
 
-def _magic_dispatch(auth, request, data):
-    """Einen eingelösten Magic-Token nach Zweck behandeln. Gibt eine Response oder None (unbehandelt)."""
+def _login_nach_token(auth, request, uid, nxt):
+    """Nach einem eingelösten E-Mail-Token anmelden (Faktor `magic`) und weiterleiten.
+
+    Gemeinsam für Anmelde-Link und E-Mail-Bestätigung: Beide belegen dasselbe — der Empfänger
+    hat Zugriff auf das Postfach. Eine globale Faktor-Kette kann trotzdem einen weiteren Schritt
+    verlangen; darum geht der Weg über `apply_factor`/`login_redirect_after` statt direkt in
+    eine Sitzung.
+    """
     from fastapi.responses import RedirectResponse
-    if data["purpose"] == "login" and data.get("user_id"):
-        uid = data["user_id"]
-        nxt = auth.safe_next((data.get("payload") or {}).get("next") or "/")
-        token, ok, is_new = auth.apply_factor(request, uid, "magic",
-                                              auth.client_ip(request), request.headers.get("user-agent"))
-        resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
-        if is_new:
-            auth.set_cookie(resp, token)
-        return resp
-    if data["purpose"] == "verify_email" and data.get("user_id"):
-        uid = data["user_id"]
-        auth.store.set_disabled(uid, False)   # Konto aktivieren
-        auth.audit("email_verified", detail=data.get("email"))
-        token, ok, is_new = auth.apply_factor(request, uid, "magic",
-                                              auth.client_ip(request), request.headers.get("user-agent"))
-        resp = RedirectResponse(auth.login_redirect_after(request, token, uid, "/"), 303)
-        if is_new:
-            auth.set_cookie(resp, token)
-        return resp
-    return None
+    token, ok, is_new = auth.apply_factor(request, uid, "magic",
+                                          auth.client_ip(request), request.headers.get("user-agent"))
+    resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+    if is_new:
+        auth.set_cookie(resp, token)
+    return resp
 
 
 def _remember(cfg, val) -> bool:

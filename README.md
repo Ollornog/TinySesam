@@ -148,6 +148,8 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 | `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC flow *(when enabled)* |
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(when enabled)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | manage passkeys |
+| `GET /auth/magic/{token}` | redeem a sign-in link *(when magic links are on)* |
+| `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | confirm an address · accept an invitation |
 | `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
 ## Configuration (`TinySesamConfig`, excerpt)
@@ -412,9 +414,13 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **PIN per user:** `pin_enabled` — user+PIN, its own strict lockout, combinable with TOTP.
 - **Shared resource secret:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
   kind="pin"|"password")`, guard `Depends(auth.require_resource(name))`, with no user account at all.
-- **Magic-link:** `magiclink_enabled` + SMTP config **or** `auth.set_mailer(fn)`; `/auth/magic/request`.
+- **Magic-link:** `magiclink_enabled` + SMTP config **or** `auth.set_mailer(fn)`; `/auth/magic/request`,
+  redeemed at `/auth/magic/{token}` — **that endpoint is the sign-in link and nothing else.**
 - **Registration + invitation:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
-  admin invite `auth.create_invite(email, base_url, roles=…)`.
+  admin invite `auth.create_invite(email, base_url, roles=…)`. Each mailed link has **its own
+  endpoint**: `/auth/verify/{token}` (address confirmation), `/auth/invite/{token}` (invitation),
+  `/auth/reset?token=…` (password reset). They depend on their own feature, not on the magic link —
+  turning `magiclink_enabled` off no longer takes confirmation and invitation with it.
 - **Account page:** built in at `/auth/account` (`account_enabled`) — password/PIN/2FA/passkeys/keys.
 - **Forward-auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` or
   401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik;
