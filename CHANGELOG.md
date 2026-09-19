@@ -2,7 +2,16 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unreleased]
+## [0.17.0] — 2026-09-20
+
+Ein Release **ohne Änderung an der Bibliothek**: Wer TinySesam einbindet, bekommt denselben Code
+wie mit 0.16.0 — das Wheel unterscheidet sich nur in der Versionsnummer. Es lohnt trotzdem, weil
+das Abbild mit aktualisierten Werkzeugen gebaut wird und weil ab hier die **Uhr für 1.0 läuft**:
+`tests/test_api_surface.py` hält die öffentliche Oberfläche fest, und M-1 verlangt zwei
+Minor-Versionen ohne Bruch. 0.17.0 ist die erste davon.
+
+Wer auf 0.16.0 steht und nichts davon braucht, kann es überspringen.
+
 
 ### Geändert — alle GitHub-Actions auf den neuesten Stand
 
