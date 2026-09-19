@@ -16,6 +16,13 @@ auth.example.com {
     reverse_proxy 127.0.0.1:8000
 }
 
+# Rollen verlangen (optional): dem Sub-Request `header_up X-TinySesam-Roles redaktion,admin`
+# mitgeben — eine der genannten Rollen genügt. TinySesam antwortet dann 403 statt 200, wenn
+# jemand angemeldet ist, aber die Rolle fehlt; ohne die Angabe bleibt /auth/forward binär.
+# Der Header gehört in DIESE Datei: `header_up` überschreibt einen gleichnamigen Header des
+# Clients. (Selbst wenn nicht, käme ein Client damit nicht weiter — mehrere Angaben werden
+# UND-verknüpft, er könnte die Prüfung also nur verschärfen.)
+
 # Geschützte App (kann eine beliebige Fremd-App / statische Site sein)
 app.example.com {
     route {
@@ -24,6 +31,7 @@ app.example.com {
             header_up X-Forwarded-Uri {uri}
             header_up X-Forwarded-Host {host}
             header_up X-Forwarded-Proto {scheme}
+            # header_up X-TinySesam-Roles redaktion,admin   # nur mit einer dieser Rollen durch
             # nur die Auth-Antwort-Header übernehmen
             @ok status 200
             handle_response @ok {
@@ -36,6 +44,12 @@ app.example.com {
             @denied status 401
             handle_response @denied {
                 redir {rp.header.X-TinySesam-Location} 302
+            }
+            # angemeldet, aber Rolle fehlt → 403 stehen lassen. NICHT zum Login schicken:
+            # der schickt denselben Benutzer sofort zurück, dem dieselbe Rolle fehlt.
+            @norole status 403
+            handle_response @norole {
+                respond "Kein Zugriff: fehlende Rolle." 403
             }
         }
         reverse_proxy 127.0.0.1:9000   # die eigentliche Upstream-App

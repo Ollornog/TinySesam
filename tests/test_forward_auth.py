@@ -25,13 +25,18 @@ c = TestClient(app)
 
 PROXY = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app.example.com", "X-Forwarded-Uri": "/geheim"}
 
-# nicht eingeloggt → 401 + Login-URL mit next zurück auf die App
+# nicht eingeloggt → 401 + Login-URL mit next zurück auf die App.
+# Diese Instanz hat KEIN cookie_domain, das Session-Cookie ist also host-only. Die Login-Seite
+# wird deshalb auf dem angefragten Host gebaut, nicht auf base_url — sonst setzte TinySesam das
+# Cookie auf auth.example.com und schickte den Browser nach app.example.com, wo es nicht gilt:
+# eine stille Endlosschleife. (Bis 2026-09 stand hier base_url und der Test schrieb genau die
+# Schleife fest. Mit cookie_domain gilt weiter der zentrale Login — siehe unten.)
 r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 401
 loc = r.headers.get("X-TinySesam-Location")
-assert loc and loc.startswith("https://auth.example.com/auth/login?next=")
+assert loc and loc.startswith("https://app.example.com/auth/login?next="), loc
 assert "app.example.com" in loc
-ok("nicht eingeloggt → 401 + X-TinySesam-Location (zentraler Login, next=App-URL)")
+ok("nicht eingeloggt → 401 + X-TinySesam-Location (host-only: Login auf dem angefragten Host)")
 
 # eingeloggt (Session) → 200 + Remote-*-Header
 c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
@@ -58,5 +63,73 @@ assert auth.safe_next("https://app.example.com/geheim") == "https://app.example.
 assert auth.safe_next("https://evil.com/x") == "/"
 ok("safe_next: App-Host erlaubt (trusted_redirect_hosts), Fremd-Host blockiert")
 
+# ---------- Rollenprüfung im Proxy-Modus (?roles= / X-TinySesam-Roles) ----------
+auth.create_user("anna", "geheim123", roles=["redaktion"])
+ca = TestClient(app)
+ca.post("/auth/login", data={"username": "anna", "password": "geheim123", "next": "/"},
+        follow_redirects=False)
+
+assert ca.get("/auth/forward", headers=PROXY).status_code == 200
+ok("ohne roles= bleibt /auth/forward binär (unverändertes Verhalten)")
+
+assert ca.get("/auth/forward?roles=redaktion", headers=PROXY).status_code == 200
+assert ca.get("/auth/forward?roles=chef,redaktion", headers=PROXY).status_code == 200
+ok("?roles=a,b — eine der Rollen genügt")
+
+r = ca.get("/auth/forward?roles=chef", headers=PROXY)
+assert r.status_code == 403, r.status_code
+assert r.headers.get("X-TinySesam-Reason") == "role"
+assert "Remote-User" not in r.headers        # bei 403 fliesst nichts an die App
+ok("fehlende Rolle → 403 (nicht 401: sonst Login-Schleife), ohne Remote-*-Header")
+
+assert ca.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "redaktion"}).status_code == 200
+assert ca.get("/auth/forward", headers={**PROXY, "X-TinySesam-Roles": "chef"}).status_code == 403
+ok("Header X-TinySesam-Roles wirkt wie der Query-Parameter")
+
+# fail-closed: mehrere Angaben werden UND-verknüpft — ein Client kann nur verschärfen
+assert ca.get("/auth/forward?roles=chef&roles=redaktion", headers=PROXY).status_code == 403
+assert ca.get("/auth/forward?roles=redaktion",
+              headers={**PROXY, "X-TinySesam-Roles": "chef"}).status_code == 403
+ok("mehrere Angaben = UND (fail-closed: selbst angehängte roles können nur verschärfen)")
+
+# Admin erfüllt die Rolle mit (admin_implies_roles), Anonyme bleiben bei 401
+assert c.get("/auth/forward?roles=chef", headers=PROXY).status_code == 200
+assert TestClient(app).get("/auth/forward?roles=chef", headers=PROXY).status_code == 401
+ok("Admin erfüllt die Rolle mit; nicht angemeldet bleibt 401 (Login, nicht 403)")
+
+assert any(a["event"] == "forward_role_denied" and a["username"] == "anna"
+           for a in auth.store.recent_audit(50))
+ok("Abweisung steht im Audit-Log (eine 403 im Proxy-Log sagt nicht, wer woran scheiterte)")
+
+# ---------- Login-URL: host-only Cookie darf nicht auf einen fremden Host zeigen ----------
+# Ohne cookie_domain gilt das Cookie nur auf dem Host, auf dem der Login stattfand. Zeigte die
+# Login-URL dann auf base_url, entstünde eine stille Endlosschleife.
+assert auth.forward_login_url("https://app.example.com/geheim").startswith(
+    "https://app.example.com/auth/login?next=")
+ok("ohne cookie_domain: Login-URL auf dem angefragten Host (keine Redirect-Schleife)")
+
+assert auth.forward_login_url("https://auth.example.com/x").startswith("https://auth.example.com/auth/login")
+ok("derselbe Host wie base_url → unverändert")
+
+# Ein gefälschter X-Forwarded-Host kann die Login-URL nicht umbiegen: nur Hosts aus
+# trusted_redirect_hosts kommen infrage.
+assert auth.forward_login_url("https://evil.example/x").startswith("https://auth.example.com/auth/login")
+ok("fremder Host ausserhalb trusted_redirect_hosts → bleibt bei base_url")
+
+db2 = tempfile.mktemp(suffix=".db")
+sso = TinySesam(TinySesamConfig(db_path=db2, csrf_enabled=False, cookie_secure=False,
+                                passkey_enabled=False, forward_auth_enabled=True,
+                                base_url="https://auth.example.com", cookie_domain=".example.com",
+                                trusted_redirect_hosts=["app.example.com"]))
+assert sso.forward_login_url("https://app.example.com/geheim").startswith(
+    "https://auth.example.com/auth/login?next=")
+ok("mit cookie_domain: zentraler Login auf base_url (echtes SSO über Subdomains)")
+
+# ---------- next= auf den eigenen Host (Ein-Host-Betrieb) ----------
+assert auth.safe_next("https://auth.example.com/tief/drin") == "https://auth.example.com/tief/drin"
+assert auth.safe_next("https://evil.example/x") == "/"
+ok("safe_next: der Host der eigenen base_url ist immer erlaubt, fremde nicht")
+
 os.remove(db)
+os.remove(db2)
 print("\nFORWARD-AUTH OK ✅")

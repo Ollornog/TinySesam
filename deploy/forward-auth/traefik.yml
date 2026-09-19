@@ -19,6 +19,20 @@ http:
           - "Remote-Email"
           - "Remote-Name"
 
+    # Dieselbe Prüfung, aber mit Rollenzwang: eine zweite Middleware, die den Query-Parameter
+    # mitbringt (eine der genannten Rollen genügt). TinySesam antwortet 403 statt 200, wenn
+    # jemand angemeldet ist, aber die Rolle fehlt — bewusst kein 401, der schickte ihn zum
+    # Login und von dort mit derselben fehlenden Rolle wieder hierher.
+    tinysesam-auth-redaktion:
+      forwardAuth:
+        address: "http://tinysesam:8000/auth/forward?roles=redaktion,admin"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - "Remote-User"
+          - "Remote-Groups"
+          - "Remote-Email"
+          - "Remote-Name"
+
   routers:
     app:
       rule: "Host(`app.example.com`)"

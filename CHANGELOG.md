@@ -6,6 +6,65 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Arbeiten am Sicherheitsnetz, alle unsichtbar für alle, die nur die Bibliothek einbinden.
 
+### Behoben — Forward-Auth schickte in eine stille Endlosschleife
+
+Ohne `cookie_domain` ist das Session-Cookie **host-only**. Die Login-URL wurde trotzdem immer auf
+`base_url` gebaut: TinySesam setzte das Cookie auf Host A und schickte den Browser nach Host B, wo
+es nicht mitgeschickt wird — der Proxy fragte erneut, es ging wieder zum Login. Keine Fehlermeldung,
+keine Logzeile, nur eine Schleife. Aus einem Fremd-Deployment gemeldet.
+
+Ohne `cookie_domain` entsteht die Login-URL jetzt **auf dem angefragten Host**, sofern der in
+`trusted_redirect_hosts` steht — dieselbe Whitelist verhindert, dass ein gefälschter
+`X-Forwarded-Host` jemanden umbiegt. `base_url` bleibt unangetastet: OIDC-/SAML-Callbacks brauchen
+weiter die eine feste Adresse. Beim Start sagt TinySesam außerdem, dass mehrere Hosts ohne
+`cookie_domain` **kein** gemeinsames SSO ergeben — das ist vorab beweisbar, die Hosts stehen in der
+eigenen Konfiguration.
+
+Dazu: Der Host der eigenen `base_url` zählt jetzt immer als erlaubtes `?next=`-Ziel und muss nicht
+mehr in `trusted_redirect_hosts` wiederholt werden. Vergaß man das beim Ein-Host-Betrieb, wurde das
+absolute `next=` stillschweigend verworfen und man landete nach dem Login auf `login_redirect`.
+
+### Hinzugefügt — Rollen im Forward-Auth (`?roles=` / `X-TinySesam-Roles`)
+
+`/auth/forward` war binär: angemeldet oder nicht. Rollen reisten nur als `Remote-Groups`-Header mit,
+womit ein Reverse-Proxy nichts anfangen kann — `require_role` existierte faktisch nur im In-App-Modus.
+
+Jetzt sagt der Proxy, was er verlangt: `GET /auth/forward?roles=redaktion,admin` oder der Header
+`X-TinySesam-Roles`. Eine der genannten Rollen genügt, `admin_implies_roles` gilt wie sonst auch.
+Fehlt sie, antwortet TinySesam **403** — kein 401, der schickte den Angemeldeten zum Login und von
+dort mit derselben fehlenden Rolle zurück. Die Abweisung steht als `forward_role_denied` im
+Audit-Log; eine 403 im Proxy-Log sagt nicht, wer woran gescheitert ist. Ohne die Angabe bleibt alles
+wie bisher. Mehrere Angaben werden UND-verknüpft, damit ein selbst angehängter Parameter die Prüfung
+nur verschärfen kann. Begründung und die verworfene Alternative (Regeltabelle im Authelia-Stil):
+[ADR-5](backlog/ADR-5-rollen-im-forward-auth.md).
+
+### Hinzugefügt — `security_log`: die fail2ban-Jail funktioniert ohne Handarbeit
+
+`deploy/fail2ban/tinysesam-jail.conf` zeigte auf `/var/log/tinysesam/security.log`, aber dorthin
+schrieb nichts — die Verdrahtung stand als auskommentierter Python-Schnipsel in der Jail-Datei.
+Wer sie übernahm, bekam eine Jail, die still eine Datei bewachte, die nie entstand.
+`TinySesamConfig(security_log="…")` hängt den Handler jetzt selbst an (idempotent, mit Zeitstempel
+im Format, das fail2ban datiert). Ein nicht schreibbarer Pfad warnt beim Start — eine Logdatei ist
+kein Grund, die Anmeldung stillzulegen.
+
+### Hinzugefügt — `tinysesam passwd`: der Weg zurück ohne Mailserver
+
+Mit `local_accounts()` sind „Passwort vergessen" und Magic-Link aus (es gibt keinen Mailer), und die
+Erst-Admin-Wege greifen nur, solange kein Admin existiert. Wer sein Admin-Passwort verlor, hatte
+keinen dokumentierten Weg zurück. Neu: `python -m tinysesam passwd --db auth.db admin` — offline auf
+der Datenbankdatei, beendet die offenen Sitzungen des Kontos und schreibt einen Audit-Eintrag.
+Das widerspricht „kein Selbst-Update" nicht; die Grenze dort ist *Code nachladen*, nicht *offline
+warten* ([ADR-2](backlog/ADR-2-kein-selbst-update.md)).
+
+### Hinzugefügt — `deploy/forward-auth/nginx-pfad.conf`
+
+Zweites nginx-Beispiel für den anderen verbreiteten Zuschnitt: ein Host, nur einzelne Pfade
+geschützt, dahinter statische Dateien und PHP. Es stellt drei Fallen aus, die alle nachgestellt
+wurden: `location ^~` schaltet die Regex-Locations ab (`.env` wird ausgerechnet im geschützten
+Ordner ausgeliefert), `proxy_set_header Remote-User` erreicht PHP-FPM nicht (es braucht
+`fastcgi_param HTTP_REMOTE_USER`), und die `Remote-*`-Header müssen in den offenen Locations
+geleert werden, sonst schickt ein Client sie einfach selbst mit.
+
 ### Hinzugefügt — Backlog im Repo (`backlog/`)
 
 Meilensteine, Aufgaben und **Architekturentscheidungen (ADR)** liegen jetzt als Markdown mit

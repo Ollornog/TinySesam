@@ -28,3 +28,9 @@ installiert — über die Paketverwaltung oder das Container-Abbild.
 
 - `update_mode` und `update_pin` sind fort und dürfen nicht zurückkommen; ein Test erzwingt das.
 - Wer aktualisiert, tauscht Tag oder Abbild-Digest.
+- Die CLI bleibt mager — aber **mager heisst nicht leer**. Ergänzt 2026-09 um
+  `tinysesam passwd --db <datei> <benutzer>`: Das Kommando lädt nichts nach und spricht keinen
+  laufenden Dienst an, sondern öffnet eine Datenbankdatei, auf die man ohnehin Dateizugriff
+  braucht. Es ist der Ausweg aus der Sackgasse, in die ein Preset ohne Mailer führt (kein
+  „Passwort vergessen", kein Magic-Link, Erst-Admin-Wege nur solange kein Admin existiert).
+  Die Grenze dieser Entscheidung ist **Code nachladen**, nicht **offline warten**.
