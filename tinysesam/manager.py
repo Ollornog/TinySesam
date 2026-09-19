@@ -1197,8 +1197,12 @@ class TinySesam:
                 self._redirect_factor(request, self.next_login_step(usr["id"], done))
         if admin and not self.is_admin(u):
             raise HTTPException(403, "Adminrechte nötig")
-        if role and not self.has_role(u, role, admin_implies):
-            raise HTTPException(403, f"Rolle '{role}' nötig")
+        if role:
+            # Eine Rolle oder mehrere (dann genügt EINE davon — dieselbe ODER-Bedeutung wie
+            # ?roles=a,b im Forward-Auth). Wer ALLE verlangt, stapelt zwei Guards.
+            noetig = [role] if isinstance(role, str) else list(role)
+            if not any(self.has_role(u, r, admin_implies) for r in noetig):
+                raise HTTPException(403, "Rolle %s nötig" % " oder ".join(f"'{r}'" for r in noetig))
         if mfa and not self.stepup_fresh(request, u):
             if u.get("_via") == "apikey":
                 raise HTTPException(403, "Step-up-MFA nötig — nur per interaktiver Sitzung")
@@ -1214,18 +1218,45 @@ class TinySesam:
         """FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa)."""
         return self._enforce(request, admin=True, mfa=self.cfg.admin_require_mfa)
 
-    def require_role(self, role: str, mfa: bool = False, admin_implies: bool = None):
+    def require_role(self, *roles, mfa: bool = False, admin_implies: bool = None):
         """FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
+
+        **Mehrere Rollen: eine davon genügt** — `auth.require_role('redaktion', 'lektorat')`.
+        Das ist dieselbe ODER-Bedeutung wie `?roles=a,b` im Forward-Auth; sonst hiesse dieselbe
+        Frage je nach Betriebsmodus etwas anderes. Eine Liste geht auch
+        (`require_role(['redaktion', 'lektorat'])`), praktisch für Rollen aus der Konfiguration.
+
+        Wer **alle** verlangt, stapelt zwei Guards — `Depends`-Abhängigkeiten laufen alle:
+        `@app.get(..., dependencies=[Depends(auth.require_role('a')), Depends(auth.require_role('b'))])`.
+
         Ein Admin erfüllt die Rolle standardmäßig mit — `admin_implies=False` verlangt sie wirklich.
-        mfa=True verlangt zusätzlich Step-up-Frische."""
+        mfa=True verlangt zusätzlich Step-up-Frische.
+        """
+        flach = []
+        for r in roles:
+            if isinstance(r, str):
+                flach.append(r)
+                continue
+            try:
+                flach.extend(r)
+            except TypeError:
+                # Fängt den einen Aufruf, der sich durch die variadische Signatur ändert:
+                # require_role("editor", True) meinte früher mfa=True. mfa und admin_implies
+                # sind jetzt keyword-only — laut statt still falsch.
+                raise TypeError(f"require_role(): {r!r} ist keine Rolle. "
+                                "mfa/admin_implies nur noch als Schlüsselwort übergeben.") from None
+        if not flach:
+            raise ValueError("require_role() braucht mindestens eine Rolle")
+
         def dep(request: Request) -> dict:
-            return self._enforce(request, role=role, mfa=mfa, admin_implies=admin_implies)
+            return self._enforce(request, role=flach, mfa=mfa, admin_implies=admin_implies)
         return dep
 
-    def require(self, mfa: bool = False, admin: bool = False, role: str = None,
+    def require(self, mfa: bool = False, admin: bool = False, role=None,
                 factors: list = None, strict: bool = None, admin_implies: bool = None):
         """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
         `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
+        `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt).
         factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale),
         strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`."""
         def dep(request: Request) -> dict:

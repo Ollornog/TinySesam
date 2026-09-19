@@ -119,11 +119,16 @@ and refuses to register otherwise instead of silently skipping the check.
 Depends(auth.require_user)             # logged in — all the simplest case needs
 Depends(auth.require_admin)            # logged in + is_admin
 Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has all)
+Depends(auth.require_role("a", "b"))   # one of the two is enough
 ```
 
 ## Roles & groups
 
 **Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
+Name several and **one of them is enough** — `require_role("editorial", "proofing")`, or from config
+`require_role(cfg.roles_allowed)`. That is the same OR as `?roles=a,b` in forward-auth, so the question
+“who may pass?” means the same thing in both modes. Need **all** of them? Stack the guards:
+`@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 An admin satisfies **every** role. If you don't want that (e.g. because permissions come from an IdP
 group): `admin_implies_roles=False` globally, or `require_role("editor", admin_implies=False)` per route.
 - **Local user/password:** assign roles per user in the **admin panel**. `available_roles=[…]` defines known
