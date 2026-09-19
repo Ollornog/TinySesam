@@ -164,6 +164,7 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 | `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | app integration |
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO across subdomains · allowed absolute `?next=` targets |
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
+| `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
 
 ## Language (i18n)
 
@@ -423,6 +424,11 @@ All optional (on/off by config), usable individually and combined, front end rep
   (not 401 — that would bounce the user to the login and straight back). Without the parameter the endpoint
   stays binary, exactly as before. Several specifications are AND-ed, so a client that adds one itself can
   only tighten the check, never loosen it.
+  **Which headers go out** is `forward_headers` — default `Remote-User/-Name/-Email/-Groups` (the
+  Authelia set). Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
+  header and nothing else (Grafana style), a list sends the same value under several names. The mapping
+  is the complete list, so leaving `email` out is how you stop handing the address to the app. Rename
+  something? Pull the new name through in your proxy config too.
 - **Open-redirect protection:** every `?next=` runs through `safe_next` (relative paths only, or
   `trusted_redirect_hosts`; the host of your own `base_url` always counts and needs no repeating).
   **`cookie_domain` for SSO across subdomains** — and note what happens without it: the session cookie

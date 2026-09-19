@@ -130,6 +130,50 @@ assert auth.safe_next("https://auth.example.com/tief/drin") == "https://auth.exa
 assert auth.safe_next("https://evil.example/x") == "/"
 ok("safe_next: der Host der eigenen base_url ist immer erlaubt, fremde nicht")
 
+# ---------- Welche Header hinausgehen (config.forward_headers) ----------
+# Vorgabe ist der Authelia-Satz; nicht jede nachgelagerte App will alle davon, und manche
+# erwarten andere Namen (Grafana: X-WEBAUTH-USER, oauth2-proxy-Stil: X-Auth-Request-*).
+db3 = tempfile.mktemp(suffix=".db")
+eigen = TinySesam(TinySesamConfig(
+    db_path=db3, csrf_enabled=False, cookie_secure=False, passkey_enabled=False,
+    forward_auth_enabled=True, base_url="https://auth.example.com",
+    forward_headers={"user": ["X-WEBAUTH-USER", "Remote-User"], "groups": "X-Auth-Request-Groups"}))
+eigen.create_user("carla", "geheim123", roles=["redaktion"])
+app3 = FastAPI()
+app3.include_router(eigen.router())
+c3 = TestClient(app3)
+c3.post("/auth/login", data={"username": "carla", "password": "geheim123", "next": "/"},
+        follow_redirects=False)
+r = c3.get("/auth/forward", headers={"X-Forwarded-Proto": "https",
+                                     "X-Forwarded-Host": "auth.example.com",
+                                     "X-Forwarded-Uri": "/x"})
+assert r.status_code == 200
+assert r.headers["X-WEBAUTH-USER"] == "carla" and r.headers["Remote-User"] == "carla"
+assert r.headers["X-Auth-Request-Groups"] == "redaktion"
+ok("forward_headers: eigene Namen, ein Feld darf auf mehrere Header zeigen")
+
+assert "Remote-Email" not in r.headers and "Remote-Name" not in r.headers
+ok("die Liste ist vollständig, nicht ergänzend — Weglassen gibt die E-Mail nicht heraus")
+
+# Ohne das Feld bleibt es beim bisherigen Satz
+vorgabe = auth.forward_response_headers(auth.store.get_user_by_name("admin"))
+assert sorted(vorgabe) == ["Remote-Email", "Remote-Groups", "Remote-Name", "Remote-User"]
+ok("Vorgabe unverändert (keine stille Änderung für Bestandsnutzer)")
+
+# Ein Tippfehler im Feldnamen liesse den Header still weg — deshalb Abbruch beim Start.
+# Ein Header-Name mit Zeilenumbruch wäre Header-Injection.
+for kaputt in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Cookie: a=b"},
+               {"user": ["Remote-User", ""]}):
+    try:
+        TinySesam(TinySesamConfig(db_path=tempfile.mktemp(suffix=".db"), cookie_secure=False,
+                                  passkey_enabled=False, forward_auth_enabled=True,
+                                  forward_headers=kaputt))
+        raise AssertionError(f"forward_headers={kaputt} hätte abgelehnt werden müssen")
+    except ValueError:
+        pass
+ok("unbekanntes Feld und ungültiger Header-Name brechen beim Start ab, nicht still zur Laufzeit")
+
 os.remove(db)
 os.remove(db2)
+os.remove(db3)
 print("\nFORWARD-AUTH OK ✅")
