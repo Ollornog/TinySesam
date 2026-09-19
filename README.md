@@ -482,6 +482,13 @@ TinySesamConfig(
 Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-checked — exempt from CSRF),
 `/auth/saml/metadata` (SP metadata for the IdP). Factor `saml`, combinable in chains.
 
+> **Set `saml_idp_entity_id` unless you know it equals the SSO URL.** Left empty, TinySesam assumes
+> the IdP calls itself by its SSO URL. Keycloak (and others) don't: it is
+> `https://…/realms/<realm>`, while the SSO URL ends in `/protocol/saml`. Get it wrong and **every**
+> assertion is rejected with `Invalid issuer`. Copy it from the IdP's metadata (`entityID=`).
+> Whenever an assertion is rejected, the reason goes to the `tinysesam.security` logger — never to
+> the browser.
+
 ## Presets
 
 Ready-made config presets for common cases (the rest via `**overrides`, e.g. `db_path=`):
