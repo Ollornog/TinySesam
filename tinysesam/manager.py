@@ -70,6 +70,20 @@ class TinySesam:
                 "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
                 "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
                 "(lokal/ohne Zertifikat).")
+        # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
+        # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
+        # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
+        if config.forward_headers:
+            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
+            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
+            if unbekannt:
+                raise ValueError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
+                                 f"{sorted(erlaubt)}")
+            for feld, namen in config.forward_headers.items():
+                for name in ([namen] if isinstance(namen, str) else namen or []):
+                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
+                        raise ValueError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
+                                         "Header-Name")
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
@@ -934,6 +948,30 @@ class TinySesam:
         return current_version()
 
     # ---------- Forward-Auth (Reverse-Proxy) ----------
+    #: Vorgabe: der Satz, den Authelia/Traefik-Aufbauten erwarten.
+    FORWARD_HEADERS_DEFAULT = {"user": "Remote-User", "name": "Remote-Name",
+                               "email": "Remote-Email", "groups": "Remote-Groups"}
+
+    def forward_response_headers(self, user) -> dict:
+        """Die Header, die der Proxy bei einer erfolgreichen Prüfung an die App weiterreicht.
+
+        `config.forward_headers` ist die **vollständige** Liste, nicht eine Ergänzung: Wer nur
+        `{"user": "X-WEBAUTH-USER"}` setzt, verschickt auch nur den einen Header — so ist „ich will
+        die E-Mail-Adresse nicht rausgeben" eine Weglassung und kein zweiter Schalter. Ein Feld darf
+        auf mehrere Namen zeigen, wenn eine App den einen und ein Zwischenstück den anderen liest.
+        """
+        werte = {
+            "user": str(user["username"] or ""),
+            "name": str(user["display_name"] or user["username"] or ""),
+            "email": str(user["email"] or ""),
+            "groups": ",".join(self.user_roles(user) + (["admin"] if user["is_admin"] else [])),
+        }
+        out = {}
+        for feld, namen in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
+            for name in ([namen] if isinstance(namen, str) else namen):
+                out[name] = werte[feld]
+        return out
+
     def forwarded_url(self, request: Request) -> str:
         """Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forwarded-*,
         nginx: X-Original-URL). Fallback: Referer bzw. '/'."""

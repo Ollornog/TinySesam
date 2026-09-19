@@ -60,6 +60,13 @@ class TinySesamConfig:
     admin_ui_enabled: bool = True         # eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel)
     account_enabled: bool = True          # eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar)
     forward_auth_enabled: bool = False    # /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik)
+    # Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz
+    # Remote-User/-Name/-Email/-Groups. Sonst **Feld → Headername** (oder Liste von Namen); was hier
+    # nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups.
+    #   {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts
+    #   {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"}
+    # Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders).
+    forward_headers: dict = field(default_factory=dict)
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     # Womit meldet man sich an? "username" | "email" | "both" (beides im selben Feld erlaubt)

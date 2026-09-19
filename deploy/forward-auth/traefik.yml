@@ -3,6 +3,10 @@
 # Voraussetzung in TinySesamConfig: forward_auth_enabled=True, base_url, cookie_domain,
 # trusted_redirect_hosts, trusted_proxies (siehe Caddyfile-Kommentar).
 #
+# Andere Header-Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
+# setzen — und die Namen hier unter authResponseHeaders MITZIEHEN. Traefik reicht nur durch, was
+# dort steht; ein umbenannter Header, der hier fehlt, kommt bei der App nie an.
+#
 # Hinweis: Traefik folgt der 401 nicht automatisch. Damit Browser zum Login umgeleitet werden,
 # entweder im Client den Header X-TinySesam-Location auswerten oder einen 401-Errorpage-Router
 # ergänzen. Die Remote-*-Header werden via authResponseHeaders an die App durchgereicht.
