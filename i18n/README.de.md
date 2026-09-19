@@ -119,11 +119,16 @@ oder SMTP-Config) und verweigert sonst die Registrierung, statt die Prüfung sti
 Depends(auth.require_user)             # eingeloggt — mehr braucht der einfachste Fall nicht
 Depends(auth.require_admin)            # eingeloggt + is_admin
 Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit alle)
+Depends(auth.require_role("a", "b"))   # eine der beiden genügt
 ```
 
 ## Rollen & Gruppen
 
 **Rollen sind die Gruppen** — pro User eine Liste (`roles`) + `is_admin`; Guard `require_role("…")`.
+Mehrere nennen und **eine davon genügt** — `require_role("redaktion", "lektorat")`, oder aus der Config
+`require_role(cfg.erlaubte_rollen)`. Das ist dasselbe ODER wie `?roles=a,b` im Forward-Auth; die Frage
+„wer darf durch?" bedeutet damit in beiden Betriebsmodi dasselbe. Wer **alle** verlangt, stapelt die
+Guards: `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 Ein Admin erfüllt dabei **jede** Rolle. Wer das nicht will (z.B. weil die Rechte an einer IdP-Gruppe
 hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_implies=False)` je Route.
 - **Lokale User/Passwort:** Rollen im **Admin-Panel** je User zuweisen. `available_roles=[…]` definiert bekannte

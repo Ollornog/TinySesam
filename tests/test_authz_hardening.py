@@ -69,6 +69,59 @@ os.unlink(db)
 print("  has_role: Admin-Implikation per Config UND per Guard abschaltbar ok")
 
 
+# ---------- 1b) require_role mit mehreren Rollen: eine davon genügt ----------
+# Dieselbe ODER-Bedeutung wie ?roles=a,b im Forward-Auth — sonst hiesse dieselbe Frage je nach
+# Betriebsmodus etwas anderes. Bis 2026-09 nahm require_role genau eine Rolle.
+auth, db = build(admin_implies_roles=False)
+auth.create_user("anna", password="geheim12345", roles=["lektorat"])
+auth.create_user("bob", password="geheim12345", roles=["vertrieb"])
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.get("/eine-von")
+def eine_von(u=Depends(auth.require_role("redaktion", "lektorat"))):
+    return {"ok": True}
+
+
+@app.get("/aus-liste")
+def aus_liste(u=Depends(auth.require_role(["redaktion", "lektorat"]))):
+    return {"ok": True}
+
+
+@app.get("/beide", dependencies=[Depends(auth.require_role("lektorat")),
+                                 Depends(auth.require_role("vertrieb"))])
+def beide():
+    return {"ok": True}
+
+
+ca = TestClient(app, headers=JSON)
+assert login(ca, "anna").status_code == 303
+assert ca.get("/eine-von").status_code == 200, "eine der genannten Rollen genügt"
+assert ca.get("/aus-liste").status_code == 200, "Liste statt Einzelargumenten geht auch"
+assert ca.get("/beide").status_code == 403, "gestapelte Guards verlangen ALLE Rollen"
+
+cb = TestClient(app, headers=JSON)
+assert login(cb, "bob").status_code == 303
+r = cb.get("/eine-von")
+assert r.status_code == 403, "keine der Rollen → 403"
+assert "redaktion" in r.text and "lektorat" in r.text, "die Meldung nennt beide Rollen"
+
+# require(role=[...]) versteht dasselbe
+assert auth.require(role=["redaktion", "lektorat"]) and auth.require(role="lektorat")
+
+# Ein alter positionaler Aufruf require_role("x", True) meinte mfa=True — jetzt keyword-only.
+# Laut scheitern statt True stillschweigend als Rolle zu behandeln.
+for kaputt in ((), ("editor", True)):
+    try:
+        auth.require_role(*kaputt)
+        raise AssertionError(f"require_role{kaputt} hätte scheitern müssen")
+    except (ValueError, TypeError):
+        pass
+os.unlink(db)
+print("  require_role: mehrere Rollen = eine genügt; stapeln verlangt alle ok")
+
+
 # ---------- 2) Bootstrap-Token nur, wenn lokale Admins vorgesehen sind ----------
 auth, db = build()                       # admin_enabled Default True
 assert auth.admin_claim_token(), "mit Panel: Token existiert"

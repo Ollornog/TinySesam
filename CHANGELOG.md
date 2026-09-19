@@ -24,6 +24,23 @@ Dazu: Der Host der eigenen `base_url` zählt jetzt immer als erlaubtes `?next=`-
 mehr in `trusted_redirect_hosts` wiederholt werden. Vergaß man das beim Ein-Host-Betrieb, wurde das
 absolute `next=` stillschweigend verworfen und man landete nach dem Login auf `login_redirect`.
 
+### Geändert — `require_role()` nimmt mehrere Rollen, eine davon genügt
+
+Nachzug zur Rollenprüfung im Forward-Auth: Dort konnte man seit dem vorigen Eintrag
+`?roles=redaktion,lektorat` sagen, in der App aber nicht — `require_role()` nahm genau eine Rolle,
+für ein ODER musste man sich eine eigene Dependency schreiben. Dieselbe Frage („wer darf durch?")
+bedeutete also je nach Betriebsmodus etwas anderes, ausgerechnet zulasten des Grundmodells
+([ADR-3](backlog/ADR-3-in-app-statt-proxy.md)).
+
+Jetzt: `require_role("redaktion", "lektorat")` oder `require_role(liste_aus_der_config)`, ebenso
+`require(role=[...])`. Wer **alle** Rollen verlangt, stapelt zwei Guards — `Depends`-Abhängigkeiten
+laufen ohnehin alle. Die 403-Meldung nennt jetzt alle geprüften Rollen.
+
+Der Aufruf mit einer Rolle bleibt unverändert. **Einzige Bruchstelle:** `mfa` und `admin_implies`
+sind keyword-only geworden. Ein positionales `require_role("editor", True)` meinte früher
+`mfa=True` und wäre jetzt eine zweite Rolle namens `True` — das bricht laut mit einer Erklärung,
+statt still etwas anderes zu prüfen.
+
 ### Hinzugefügt — Rollen im Forward-Auth (`?roles=` / `X-TinySesam-Roles`)
 
 `/auth/forward` war binär: angemeldet oder nicht. Rollen reisten nur als `Remote-Groups`-Header mit,
