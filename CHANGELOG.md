@@ -4,6 +4,15 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Geändert — die E2E-Bühne entsteht per Playbook, nicht mehr von Hand
+
+`tests/e2e_stage.py` braucht eine Instanz mit echter Domain, echtem Zertifikat und einem
+Identity Provider daneben. Die gab es bisher nur, weil jemand sie eingerichtet hatte — was genau
+lief, wusste nur, wer dabei war. Jetzt baut ein Lauf sie aus einem frischen Wegwerf-Container,
+und der zweite Lauf ändert nichts mehr. Das Playbook liegt im Deploy-Repo: Adressen und
+Zugangsdaten gehören nicht in ein öffentliches Repo; von hier führt nur der Aufruf hin. Erledigt
+[T-6](backlog/T-6-stage-per-playbook.md).
+
 ### Hinzugefügt — Herkunft und Inhalt der Artefakte sind jetzt beglaubigt
 
 Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert hat — **nicht, wer es
