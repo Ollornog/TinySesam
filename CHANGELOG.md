@@ -25,7 +25,9 @@ Zwei Dinge, die der Lauf beim Bauen selbst gelernt hat: Er wartet auf **Zuständ
 Uhr (feste Wartezeiten machten ihn launisch), und er **räumt hinter sich auf** — sonst sammelt das
 Konto bei jedem Durchgang einen weiteren Passkey an. Ein Rate-Limit oder Lockout meldet er als
 solchen, statt „Anmeldung fehlgeschlagen" zu sagen und die Suche in die falsche Richtung zu
-schicken. Erledigt Teile von [T-1](backlog/T-1-e2e-gegen-echten-idp.md).
+schicken. Alle drei Wege laufen gegen echte Gegenstellen durch, und der Lauf wird rot, wenn man ihn
+bricht (falsches Passwort am IdP, unbekanntes Credential: Exit 1). Erledigt
+[T-1](backlog/T-1-e2e-gegen-echten-idp.md).
 
 ### Geändert — geteilte Testbasis auf repokit 0.9.0
 

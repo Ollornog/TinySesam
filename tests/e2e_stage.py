@@ -281,10 +281,25 @@ async def teil_oidc():
         assert BASE not in wohin, f"kein Redirect zum Provider: {wohin}"
         ok("Authorization-Request: zum Provider weitergeleitet")
 
-        await b.js("""[...document.querySelectorAll('button')]
-            .find(e => /anmelden|sign in|continue/i.test(e.innerText))?.click(); true""")
+        # Der Provider führt durch mehrere Schritte: erst anmelden (der Passkey kommt aus dem
+        # eingespielten Credential), dann der Freigabe zustimmen. Wie viele Seiten das sind, hängt
+        # am Provider und daran, ob er die Zustimmung schon kennt — deshalb klicken wir weiter,
+        # solange wir noch bei ihm sind, statt eine feste Zahl Schritte anzunehmen.
+        for _ in range(4):
+            if BASE.startswith(await b.js("location.origin") or "x"):
+                break
+            geklickt = await b.js("""(() => {
+                const b = [...document.querySelectorAll('button')].find(e =>
+                    /anmelden|sign in|authorize|autorisieren|zustimmen|erlauben|allow|continue|weiter|akzeptieren/i
+                        .test(e.innerText) && !/abbrechen|cancel|deny|ablehnen/i.test(e.innerText));
+                if (!b) return null; b.click(); return b.innerText.trim(); })()""")
+            if not geklickt:
+                break
+            ok(f"beim Provider bestätigt: {geklickt!r}")
+            await asyncio.sleep(4)
         wer = await b.angemeldet_als(25)
-        assert wer, "kein Zugangstoken eingelöst"
+        assert wer, ("kein Zugangstoken eingelöst — letzte Seite: "
+                     + ((await b.js("document.body.innerText")) or "")[:120].replace(chr(10), " | "))
         ok(f"Code eingelöst, angemeldet als {wer}")
     return "grün"
 
