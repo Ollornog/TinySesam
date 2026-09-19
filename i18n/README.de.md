@@ -164,6 +164,7 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 | `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
+| `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
 
 ## Sprache (i18n)
 
@@ -426,6 +427,11 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   (kein 401, der schickte den Benutzer zum Login und von dort sofort zurück). Ohne die Angabe bleibt
   der Endpunkt binär wie bisher. Mehrere Angaben werden UND-verknüpft: ein Client, der selbst eine
   anhängt, kann die Prüfung nur verschärfen, nie aufweichen.
+  **Welche Header hinausgehen**, steuert `forward_headers` — Vorgabe `Remote-User/-Name/-Email/-Groups`
+  (der Authelia-Satz). Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
+  verschickt genau diesen einen Header (Grafana-Stil), eine Liste denselben Wert unter mehreren Namen.
+  Die Zuordnung ist die **vollständige** Liste — `email` wegzulassen ist der Weg, der App die Adresse
+  nicht mehr zu geben. Beim Umbenennen den neuen Namen in der Proxy-Konfiguration mitziehen.
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
   `trusted_redirect_hosts`; der Host der eigenen `base_url` zählt immer mit und muss dort nicht
   wiederholt werden). **`cookie_domain` für SSO über Subdomains** — und ohne das Feld gilt: Das

@@ -2,6 +2,24 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unreleased]
+
+### Hinzugefügt — `forward_headers`: welche Header die Forward-Auth-Antwort setzt
+
+Der Satz war fest: `Remote-User/-Name/-Email/-Groups`, die Authelia-Konvention. Nicht jede
+nachgelagerte App versteht diese Namen (Grafana will `X-WEBAUTH-USER`, oauth2-proxy-geprägte
+Anwendungen `X-Auth-Request-*`), und nicht jeder Betreiber will alle vier herausgeben — die
+E-Mail-Adresse etwa. Beides ging bisher nur, indem man es im Proxy umbog.
+
+`forward_headers` bildet **Feld → Headername** ab (`user` · `name` · `email` · `groups`), ein Feld
+darf auf mehrere Namen zeigen. Die Zuordnung ist die **vollständige** Liste, keine Ergänzung:
+`{"user": "X-WEBAUTH-USER"}` verschickt genau diesen einen Header. Weglassen ist damit der Weg,
+etwas nicht herauszugeben. Leer = unverändert der bisherige Satz.
+
+Geprüft wird beim Start: ein Tippfehler im Feldnamen liesse den Header sonst still weg, und ein
+Header-Name mit Zeilenumbruch wäre Header-Injection. Erledigt
+[T-3](backlog/T-3-forward-auth-header-feinsteuerung.md).
+
 ## [0.15.0] — 2026-09-19
 
 Forward-Auth aus dem Praxiseinsatz — vier Befunde aus einem Fremd-Deployment, das TinySesam vor

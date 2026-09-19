@@ -33,6 +33,8 @@ app.example.com {
             header_up X-Forwarded-Proto {scheme}
             # header_up X-TinySesam-Roles redaktion,admin   # nur mit einer dieser Rollen durch
             # nur die Auth-Antwort-Header übernehmen
+            # Andere Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
+            # setzen und sie hier mitziehen — übernommen wird nur, was hier steht.
             @ok status 200
             handle_response @ok {
                 request_header Remote-User {rp.header.Remote-User}
