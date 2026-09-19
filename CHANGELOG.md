@@ -4,6 +4,14 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unreleased]
 
+### Geändert — geteilte Testbasis auf repokit 0.9.0
+
+`repokit sync`. Zwei Fixes, beide aus einem frischen Bootstrap gemeldet: Der Hygiene-Test schlug
+bei `runs-on: ubuntu-latest  # niemals self-hosted` an — also ausgerechnet bei einer Zeile, die
+die Regel befolgt und begründet (er liest jetzt den Code ohne den Kommentar dahinter, und nur
+den). Und `_backlog.py index` schrieb für einen Meilenstein ohne Aufgaben „— — erledigt", wo
+Kästchen und Text sich widersprachen.
+
 ### Geändert — E-Mail-Bestätigung, Einladung und Passwort-Reset haben eigene Endpunkte
 
 > ⚠️ **Breaking Change.** Bereits verschickte `/auth/magic/…`-Bestätigungs- und Einladungslinks
