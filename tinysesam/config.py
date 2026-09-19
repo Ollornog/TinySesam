@@ -185,6 +185,11 @@ class TinySesamConfig:
     saml_name: str = "SAML"               # Anzeigename des Buttons
     saml_sp_entity_id: str = ""           # eigene SP-Entity-ID; leer = base_url + /auth/saml/metadata
     saml_acs_url: str = ""                # Assertion Consumer Service; leer = base_url + /auth/saml/acs
+    # IdP-Entity-ID. Leer = es wird die SSO-URL angenommen — das stimmt bei manchen IdPs, bei
+    # anderen NICHT: Keycloak etwa nennt sich `https://…/realms/<realm>`, während die SSO-URL auf
+    # `/protocol/saml` endet. Passt es nicht, wird jede Assertion abgelehnt („Invalid issuer");
+    # der Grund steht dann im Logger `tinysesam.security`. Im Zweifel aus dem IdP-Descriptor
+    # abschreiben (`entityID=` im Metadata-XML).
     saml_idp_entity_id: str = ""
     saml_idp_sso_url: str = ""            # IdP Single-Sign-On-URL (Redirect-Binding)
     saml_idp_x509cert: str = ""           # IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END)

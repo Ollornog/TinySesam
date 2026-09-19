@@ -644,7 +644,10 @@ def build_router(auth) -> APIRouter:
             base = cfg.base_url or _saml_base(request)
             data = auth.saml.process(_saml_req(request, form), base)
             if not data:
-                return auth.render_page("magic_invalid", request=request, status=400)
+                # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
+                # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
+                # Lauf gegen einen echten IdP in die falsche Richtung. Der Grund steht im Log.
+                raise HTTPException(400, auth.t("err.saml"))
             u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
             if not u:
                 raise HTTPException(403, "SAML: kein Zugriff")
