@@ -157,6 +157,8 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
 | `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | Auto-Anlage + Gruppen-Gate |
 | `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
+| `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
+| `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 
 ## Sprache (i18n)
 
@@ -229,6 +231,26 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
 
+### Admin-Passwort weg, und kein Mailer da?
+
+Ein Preset für interne Werkzeuge (`local_accounts()`) hat bewusst kein „Passwort vergessen" und keinen
+Magic-Link — beides bräuchte einen Mailserver. Und die beiden Bootstrap-Wege oben greifen nur,
+**solange kein Admin existiert**. Mit genau einem Admin-Konto und ohne zweites, das aushelfen könnte,
+ist das eine Sackgasse. Der Weg zurück führt über die Datenbankdatei, die dir ohnehin gehört:
+
+```bash
+python -m tinysesam passwd --db auth.db admin     # fragt zweimal, dann ist es gesetzt
+```
+
+Das Kommando beendet die offenen Sitzungen des Kontos (`--keep-sessions` lässt sie stehen) und
+schreibt einen Audit-Eintrag. `--stdin` liest das Passwort von der Standardeingabe, für Skripte.
+Dasselbe aus Python:
+
+```python
+auth = TinySesam(TinySesamConfig(db_path="auth.db"))
+auth.set_password(auth.store.get_user_by_name("admin")["id"], "neues-passwort")
+```
+
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der
@@ -255,6 +277,9 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
   (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+  Mit `security_log="/var/log/tinysesam/security.log"` schreibt TinySesam die Datei selbst — die
+  mitgelieferte Jail zeigt darauf und bewachte sonst eine Datei, die nie entsteht. Leer lassen, wer sein
+  Logging selbst einrichtet; ein nicht schreibbarer Pfad warnt beim Start, statt ihn zu verhindern.
 - **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in
   `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn ohne `--proxy-headers` starten.**
   Mit dem Flag ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP; TinySesams
@@ -388,9 +413,22 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
 - **Konto-Seite:** eingebaut unter `/auth/account` (`account_enabled`) — Passwort/PIN/2FA/Passkeys/Keys.
 - **Forward-Auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` bzw.
-  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik).
+  401 + `X-TinySesam-Location`). Beispiele: [`deploy/forward-auth/`](../deploy/forward-auth/) (Caddy/nginx/Traefik;
+  `nginx-pfad.conf` deckt den anderen häufigen Zuschnitt ab — ein Host, nur einzelne Pfade geschützt,
+  dahinter statische Dateien und PHP).
+  **Rollen am Proxy:** der Proxy sagt, was er verlangt — `GET /auth/forward?roles=redaktion,admin` oder
+  Header `X-TinySesam-Roles`. Eine der genannten Rollen genügt; angemeldet, aber Rolle fehlt → **403**
+  (kein 401, der schickte den Benutzer zum Login und von dort sofort zurück). Ohne die Angabe bleibt
+  der Endpunkt binär wie bisher. Mehrere Angaben werden UND-verknüpft: ein Client, der selbst eine
+  anhängt, kann die Prüfung nur verschärfen, nie aufweichen.
 - **Open-Redirect-Schutz:** alle `?next=` laufen über `safe_next` (nur relative Pfade bzw.
-  `trusted_redirect_hosts`). `cookie_domain` für SSO über Subdomains.
+  `trusted_redirect_hosts`; der Host der eigenen `base_url` zählt immer mit und muss dort nicht
+  wiederholt werden). **`cookie_domain` für SSO über Subdomains** — und ohne das Feld gilt: Das
+  Session-Cookie ist host-only, deshalb wird die Login-Seite **auf dem angefragten Host** gebaut
+  statt auf `base_url`. Sonst setzte TinySesam das Cookie auf Host A und schickte den Browser nach
+  Host B, wo es nicht mitgeschickt wird — eine Endlosschleife ohne Fehlermeldung. Dafür kommen nur
+  Hosts aus `trusted_redirect_hosts` infrage, ein gefälschter `X-Forwarded-Host` biegt also
+  niemanden um. `base_url` selbst bleibt unangetastet: OIDC-/SAML-Callbacks behalten ihre feste Adresse.
 
 Vollständige Demo: [`examples/showcase.py`](../examples/showcase.py) — `/` ist die Projekt-Website selbst,
 `/demo` ein Frontend, dessen Login-/Konto-/Admin-Panels **read-only Live-Vorschauen** der echten Seiten sind (`uvicorn examples.showcase:app`).
