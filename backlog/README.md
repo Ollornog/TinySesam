@@ -7,7 +7,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Meilensteine
 
-* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 5/6 erledigt
+* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 6/6 erledigt
 
 ## Aufgaben
 
@@ -16,7 +16,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-3](T-3-forward-auth-header-feinsteuerung.md)** Forward-Auth — welche Remote-Header gesetzt werden, konfigurierbar machen · M-1
 * ☑ **[T-4](T-4-verifikation-ohne-magic-endpoint.md)** E-Mail-Verifikation und Einladung ohne Magic-Link-Endpunkt · M-1
 * ☑ **[T-5](T-5-abbild-signatur-pruefen.md)** Abbild-Signatur und SBOM erwägen · M-1
-* ☐ **[T-6](T-6-stage-per-playbook.md)** Die E2E-Bühne per Playbook aufbauen statt von Hand · M-1
+* ☑ **[T-6](T-6-stage-per-playbook.md)** Die E2E-Bühne per Playbook aufbauen statt von Hand · M-1
 
 ## Entscheidungen (ADR)
 
