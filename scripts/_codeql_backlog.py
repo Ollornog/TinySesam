@@ -24,6 +24,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZIEL = os.path.join(ROOT, "backlog", "T-12-codeql-bestand.md")
 START, ENDE = "<!-- CODEQL:START -->", "<!-- CODEQL:END -->"
 RANG = {"error": 0, "warning": 1, "note": 2}
+JQ = (".[] | {n:.number, rule:.rule.id, sev:.rule.severity, path:.most_recent_instance.location.path,"
+      " line:.most_recent_instance.location.start_line, url:.html_url}")
 
 
 def hole_alerts() -> list[dict]:
@@ -31,8 +33,7 @@ def hole_alerts() -> list[dict]:
                           capture_output=True, text=True, check=True, cwd=ROOT).stdout.strip()
     raw = subprocess.run(
         ["gh", "api", "--paginate", f"repos/{repo}/code-scanning/alerts?state=open&per_page=100",
-         "--jq", ".[] | {n:.number, rule:.rule.id, sev:.rule.severity, path:.most_recent_instance.location.path,"
-                 " line:.most_recent_instance.location.start_line, url:.html_url}"],
+         "--jq", JQ],
         capture_output=True, text=True, check=True, cwd=ROOT).stdout
     alerts = [json.loads(z) for z in raw.splitlines() if z.strip()]
     return sorted(alerts, key=lambda a: (RANG.get(a["sev"], 9), a["path"], a["line"]))

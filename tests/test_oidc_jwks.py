@@ -117,7 +117,6 @@ class FakeClaims(dict):
 
 def baue_exchange_umgebung(c, versuche):
     """httpx.post liefert ein id_token; jwt.decode scheitert beim ersten Set und klappt beim zweiten."""
-    modul = sys.modules["tinysesam.oidc"]
 
     class FakeAntwort:
         def json(self):

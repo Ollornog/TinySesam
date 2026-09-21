@@ -69,7 +69,7 @@ ok("csp='off' → kein Header")
 # 4) Eigene Policy: {nonce} wird ersetzt, der Rest 1:1
 cust = TinySesam(_cfg(csp="default-src 'self'; script-src 'nonce-{nonce}' https://cdn.example"))
 csp = cust.render_page("login", request=None).headers["content-security-policy"]
-assert "{nonce}" not in csp and "https://cdn.example" in csp.split() and "nonce-" in csp, csp
+assert "{nonce}" not in csp and csp.split().count("https://cdn.example") == 1 and "nonce-" in csp, csp
 ok("eigene Policy: {nonce} ersetzt, Rest 1:1")
 
 # 5) Ungültige csp (kein String) → klare Ablehnung beim Bau
