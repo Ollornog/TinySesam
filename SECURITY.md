@@ -26,7 +26,10 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 
 ## Supported versions
 
-Security fixes land on the latest minor version (currently `0.5.x`).
+Security fixes land on the latest released minor version — see the top of
+[CHANGELOG.md](CHANGELOG.md). Older lines get no backports: pin a tag, and move the pin
+when a release fixes something. (This used to name a fixed version here, and it was
+thirteen minors out of date — a promise nobody was measuring.)
 
 <br /><br />
 <p align="right"><img src="docs/wizard.png" alt="TinySesam" width="60" height="60"></p>

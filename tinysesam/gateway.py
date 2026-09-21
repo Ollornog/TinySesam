@@ -23,6 +23,8 @@ Der Reverse-Proxy ruft dann `GET /auth/forward` je Request (siehe deploy/forward
 Braucht nur `pip install 'tinysesam[oidc]'`.
 """
 from __future__ import annotations
+
+from typing import Optional
 import os
 
 from .config import TinySesamConfig
@@ -79,7 +81,7 @@ def _install_https_except_health(auth, app):
     return "force"
 
 
-def build_app(cfg: TinySesamConfig = None):
+def build_app(cfg: Optional[TinySesamConfig] = None):
     """FastAPI-App für das Gateway bauen (cfg optional; sonst aus Env)."""
     from fastapi import FastAPI
     auth = TinySesam(cfg or config_from_env())

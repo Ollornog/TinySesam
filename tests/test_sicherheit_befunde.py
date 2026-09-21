@@ -690,4 +690,104 @@ r.check("das Compose-Beispiel setzt trusted_proxies nicht auf 0.0.0.0/0",
         'TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"' not in compose,
         "das Beispiel macht jede Client-IP zur Proxy-IP")
 
+
+# ── Forward-Auth: der Anzeigename ging roh in einen HTTP-Header ───────────────
+# Der Name kommt bei OIDC/SAML vom fremden IdP. Zwei Dinge brachen daran: ein Zeilenumbruch
+# (Header-Injection — h11 fängt sie ab, aber mit Abbruch, also Selbstsperre) und ein Name
+# jenseits von Latin-1 (500, ganz ohne Angreifer).
+auth_h, _ = _app(forward_auth_enabled=True)
+uid_h = auth_h.create_user("intl", password="geheim12345")
+
+
+def _kopfwert(roh):
+    auth_h.store._exec("UPDATE users SET display_name=? WHERE id=?", (roh, uid_h))
+    kopf = auth_h.forward_response_headers(auth_h.store.get_user(uid_h))
+    return kopf["Remote-Name"]
+
+
+boes = _kopfwert("Bose\r\nX-Remote-Groups: admin")
+r.check("Zeilenumbrüche fliegen aus dem Header-Wert",
+        "\r" not in boes and "\n" not in boes, f"{boes!r}")
+
+# Der Wert muss durch einen ECHTEN HTTP-Serialisierer gehen, nicht nur durch den TestClient:
+# der In-Process-Client reicht auch durch, was auf der Leitung nie ankäme.
+import h11  # noqa: E402
+
+
+def _geht_raus(wert):
+    try:
+        h11.Response(status_code=200, headers=[("Remote-Name", wert.encode("latin-1"))])
+        return True, ""
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+for roh, was in (("Bose\r\nX-Remote-Groups: admin", "Zeilenumbruch"),
+                 ("Müller", "Umlaut"), ("Иван", "Kyrillisch"), ("测试 Wang", "Chinesisch")):
+    wert = _kopfwert(roh)
+    geht, fehler = _geht_raus(wert)
+    r.check(f"{was} im Anzeigenamen kommt durch den HTTP-Serialisierer", geht, fehler)
+
+# Und verlustfrei: die App liest den Header als UTF-8 und hat den Namen zurück.
+for roh in ("Müller", "Иван", "测试 Wang", "alice"):
+    zurueck = _kopfwert(roh).encode("latin-1").decode("utf-8")
+    r.check(f"{roh!r} kommt beim Empfänger unverändert an", zurueck == roh,
+            f"wurde {zurueck!r}")
+
+# Die Kodierung ist EINHEITLICH — sonst wüsste keine App, was sie gerade hat.
+r.check("auch ein Latin-1-fähiger Name geht als UTF-8 über die Leitung",
+        _kopfwert("Müller").encode("latin-1") == "Müller".encode("utf-8"),
+        "mal Latin-1, mal UTF-8 — die App kann es nicht auseinanderhalten")
+
+
+# ── Ein Sicherheitsschalter, der nie etwas tat ───────────────────────────────
+# `totp_required` stand in der Config, in beiden READMEs („2FA erzwingen") und auf der Website —
+# und wurde an keiner Stelle im Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor
+# erzwungen zu haben und hatte ihn nicht.
+gebaut, text = _baut(totp_required=True)
+r.check("totp_required=True wird abgewiesen statt stumm ignoriert", not gebaut,
+        "die Instanz baut — der Betreiber glaubt weiter an einen Schutz, den es nicht gibt")
+r.check("und die Meldung nennt den Weg, der wirklich greift", "login_chain" in text,
+        f"ohne Hinweis: {text[:90]!r}")
+
+# Der Schalter darf auch nirgends mehr beworben werden.
+wurzel = Path(__file__).resolve().parent.parent
+for datei in ("README.md", "i18n/README.de.md", "web/flows.py"):
+    inhalt = (wurzel / datei).read_text(encoding="utf-8")
+    r.check(f"{datei} bewirbt totp_required nicht mehr", "totp_required" not in inhalt,
+            "der tote Schalter wird weiter als 2FA angepriesen")
+
+# Die Faktor-Kette ist der beworbene Weg — sie muss also gehen.
+gebaut, text = _baut(login_chain=["password", "totp"], login_chain_strict=True)
+r.check("die empfohlene Faktor-Kette baut", gebaut, f"empfohlen und kaputt: {text[:110]}")
+
+
+# ── set_template nahm Namen an, die es nicht gab ─────────────────────────────
+# Der Docstring nannte 'magic_sent' und 'resource_pin' — beide hat es nie gegeben — und liess
+# sieben echte Seiten weg. Ein Tippfehler blieb folgenlos-still: eingetragen, nie aufgerufen.
+auth_tpl, _ = _app()
+try:
+    auth_tpl.set_template("magic_sent", lambda *a, **k: "x")
+    still = True
+except ValueError:
+    still = False
+r.check("ein unbekannter Seitenname fliegt auf", not still,
+        "wird angenommen und nie aufgerufen — man sucht den Fehler woanders")
+
+try:
+    auth_tpl.set_template("login", lambda *a, **k: "x")
+    echte_geht = True
+except ValueError:
+    echte_geht = False
+r.check("ein echter Seitenname geht weiterhin", echte_geht, "die Liste ist zu eng")
+
+# Die Liste im Code muss zu den Seiten passen, die render_page wirklich bedient — sonst
+# veraltet sie wieder still.
+quelle = "\n".join((wurzel / "tinysesam" / f).read_text(encoding="utf-8")
+                    for f in ("router.py", "manager.py", "admin.py"))
+gerendert = set(re.findall(r'render_page\(\s*"([a-z_]+)"', quelle))
+fehlend = sorted(gerendert - set(auth_tpl.SEITEN))
+r.check("jede gerenderte Seite steht in TinySesam.SEITEN", not fehlend,
+        f"nicht ersetzbar, obwohl es sie gibt: {fehlend}")
+
 sys.exit(r.done())

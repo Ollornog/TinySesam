@@ -162,7 +162,8 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 |---|---|---|
 | `db_path` | `tinysesam.db` | SQLite store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | active methods |
-| `totp_enabled` / `totp_required` | `True/False` | allow / enforce 2FA |
+| `totp_enabled` | `True/False` | allow 2FA (required as soon as a user has set it up) |
+| `login_chain` | `["password","totp"]` | **enforce** an ordered factor chain — this is how you make 2FA mandatory |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | sessions/cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (real domain required, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC provider |

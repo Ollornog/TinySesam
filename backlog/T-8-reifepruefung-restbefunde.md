@@ -37,8 +37,10 @@ dasteht" umgebaut.
       Netz mit festem Subnetz statt `0.0.0.0/0`, plus Prüfung
 - [x] SSO- und Passkey-Logins schreiben die Proxy-IP statt der Client-IP — behoben: beide
       nehmen `client_ip()`
-- [ ] Forward-Auth: Header-*Namen* werden geprüft, Header-*Werte* nicht (IdP-Anzeigename)
-- [ ] OIDC: Der JWKS wird einmal geholt und nie erneuert
+- [x] Forward-Auth: Header-*Namen* werden geprüft, Header-*Werte* nicht — behoben; dabei fiel
+      auf, dass ein Name wie „Иван" die Forward-Auth mit 500 brach, ganz ohne Angreifer
+- [x] OIDC: Der JWKS wird einmal geholt und nie erneuert — behoben: Lebensdauer + ein
+      gedrosselter Neu-Abruf bei Signaturfehler (`tests/test_oidc_jwks.py`)
 - [ ] Es gibt keine Konfigurationsprüfung — Widersprüche fallen erst beim Login auf
       (teilweise angegangen: die Kombinations-Wächter im Konstruktor)
 
@@ -65,25 +67,29 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 - [x] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
       — behoben: Matrix auf alle fünf, plus Hygiene-Prüfung Classifier ↔ Matrix
 - [ ] Das sdist enthält keine Tests — wer neu paketiert, kann den Bau nicht prüfen
-- [ ] SECURITY.md nennt 0.5.x als die Reihe, die Sicherheitsfixes bekommt
+- [x] SECURITY.md nennt 0.5.x als die Reihe, die Sicherheitsfixes bekommt — behoben: verweist
+      jetzt auf den CHANGELOG-Kopf statt auf eine Zahl
 - [ ] Ein fehlendes Extra meldet sich als 500 oder gar nicht, statt als Klartext
       (für `[passkey]` behoben; die übrigen offen)
 
 ## Der API-Vertrag
 
-- [ ] `Typing :: Typed` und `py.typed` sind eine Zusage, die nie geprüft wurde
-- [ ] `check_password` & Co. sind als `Optional[dict]` annotiert, liefern aber `sqlite3.Row`
+- [x] `Typing :: Typed` und `py.typed` sind eine Zusage, die nie geprüft wurde — behoben:
+      30 Typfehler bereinigt, mypy in CI und Abbild, `tests/test_typen.py`
+- [x] `check_password` & Co. sind als `Optional[dict]` annotiert, liefern aber `sqlite3.Row`
+      — behoben: sie liefern jetzt dicts
 - [ ] Es gibt keine Fehlertypen, auf die ein Nutzer reagieren kann
 - [ ] `complete_mfa` heißt im eigenen Docstring „rückwärtskompatibler Name" und wird trotzdem geführt
 - [ ] Die öffentliche Oberfläche wurde gemessen, nicht entschieden: 62 der 104 eingefrorenen Namen
 - [ ] Der API-Wächter friert weniger ein, als „231 Namen" nahelegt: keine Vorgabewerte, keine Typen
-- [ ] `set_template` nennt im Docstring zwei Seitennamen, die es nicht gibt
+- [x] `set_template` nennt im Docstring zwei Seitennamen, die es nicht gibt — behoben:
+      `TinySesam.SEITEN`, unbekannter Name wirft, Prüfung gegen `render_page`
 
 ## Doku, Website, Sprache
 
 - [ ] 31 harte deutsche Fehlertexte in HTTP-Antworten — auch bei `lang="en"`
       (in der Prüfung dreifach gemeldet, ist ein Befund)
-- [ ] `totp_required` ist ein toter Schalter — in beiden READMEs und auf der Website als 2FA beworben
+- [x] `totp_required` ist ein toter Schalter — behoben: wird abgewiesen, Doku nennt `login_chain`
 - [ ] Beide READMEs bewerben einen Update-Knopf, den es seit 0.12.0 bewusst nicht gibt
 - [ ] Kein vollständiger Konfigurations-Nachschlag: 36 von 119 Feldern kommen in keiner Doku vor
 - [ ] Die PyPI-Projektseite zeigt ein kaputtes Logo und sieben tote Links

@@ -440,7 +440,7 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.email_taken"), 409)
             # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
             if cfg.login_identifier == "email":
-                username = email_final
+                username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
             if auth.store.get_user_by_name(username):
@@ -598,7 +598,7 @@ def build_router(auth) -> APIRouter:
         oidc_logout_url = None
         if cfg.oidc_rp_logout and auth.oidc:
             s = auth.session_from_request(request)
-            factors = []
+            factors: list = []
             try:
                 factors = __import__("json").loads(s["factors_done"] or "[]") if s else []
             except Exception:

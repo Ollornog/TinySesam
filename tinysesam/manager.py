@@ -15,7 +15,7 @@ import time
 import json
 import hashlib
 import secrets
-from typing import Optional
+from typing import Any, Literal, NoReturn, Optional, cast
 
 from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
@@ -39,6 +39,12 @@ def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
 
+def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
+    """Der Konstruktor lässt nur diese drei Werte zu (s. TinySesam.__init__); hier steht es
+    noch einmal für den Typprüfer, dem die Zusage von dort nicht folgt."""
+    return cast(Literal["lax", "strict", "none"], wert)
+
+
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
         if config.login_identifier not in ("username", "email", "both"):
@@ -46,6 +52,15 @@ class TinySesam:
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
             raise ValueError("login_identifier='email' braucht signup_require_email=True — "
                              "sonst entstehen Konten, die sich nicht anmelden können")
+        if config.cookie_samesite not in ("lax", "strict", "none"):
+            raise ValueError(
+                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
+                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
+                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
+        if config.cookie_samesite == "none" and not config.cookie_secure:
+            raise ValueError(
+                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
+                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
         if not isinstance(config.csp, str):
             raise ValueError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
         if config.https_mode not in ("off", "warn", "force"):
@@ -64,6 +79,18 @@ class TinySesam:
         # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
         # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
         # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
+        # `totp_required` war seit jeher ein Schalter ohne Draht: Er stand in der Config, in
+        # beiden READMEs („2FA erzwingen") und auf der Website — und wurde an keiner Stelle im
+        # Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor erzwungen zu haben und hatte
+        # ihn nicht. Ein wirkungsloser Sicherheitsschalter ist gefährlicher als gar keiner, denn
+        # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
+        # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
+        if getattr(config, "totp_required", False):
+            raise ValueError(
+                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
+                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
+                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
+                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
         if not config.cookie_secure and config.https_mode == "force":
             raise ValueError(
                 "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
@@ -117,7 +144,7 @@ class TinySesam:
         self.cfg = config
         self.store = Store(config.db_path)
         self.templates = Templates()
-        self._messages = {}
+        self._messages: dict = {}
         self._mailer_override = None
         self.oidc = None
         self.webauthn = None
@@ -125,7 +152,9 @@ class TinySesam:
         self.saml = None
         if config.security_log:
             security.attach_security_log(config.security_log)
-        self.rl = security.RateLimiter()
+        # Beide Limiter haben dieselbe `allow()`-Schnittstelle; `Any` sagt das, ohne für zwei
+        # Implementierungen ein Protocol einzuführen.
+        self.rl: Any = security.RateLimiter()
         if config.redis_url:
             try:
                 self.rl = security.RedisRateLimiter(config.redis_url)
@@ -211,7 +240,7 @@ class TinySesam:
     def set_roles(self, user_id, roles):
         self.store.set_roles(user_id, roles)
 
-    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: bool = None):
+    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None):
         """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
         nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
         entfernt), manuell vergebene Rollen bleiben.
@@ -408,8 +437,21 @@ class TinySesam:
         self.store.set_setting("demo_users", "")
         return n
 
-    def get_user(self, user_id):
-        return self.store.get_user(user_id)
+    @staticmethod
+    def _als_dict(zeile) -> Optional[dict]:
+        """Eine Datenbankzeile als das zurückgeben, was die Signatur verspricht.
+
+        Die nutzerseitigen Methoden sind seit jeher `-> Optional[dict]` annotiert und lieferten
+        eine `sqlite3.Row`. Das Paket trägt `Typing :: Typed` und eine `py.typed` — die Zusage
+        wurde nur nie gemessen. Praktisch fällt es auf, sobald jemand der Annotation glaubt:
+        `u.get("email")` gibt es auf einer Row nicht, und der `AttributeError` kommt aus einer
+        Zeile, die laut Typ nicht falsch sein kann. Auf der Store-Ebene bleibt die Row — dort
+        ist sie dokumentiert und gewollt.
+        """
+        return dict(zeile) if zeile is not None else None
+
+    def get_user(self, user_id) -> Optional[dict]:
+        return self._als_dict(self.store.get_user(user_id))
 
     # ---------- Passwort-Login ----------
     def find_user(self, identifier) -> Optional[dict]:
@@ -423,12 +465,14 @@ class TinySesam:
             return None
         mode = getattr(self.cfg, "login_identifier", "both")
         if mode == "username":
-            return self.store.get_user_by_name(ident)
-        if mode == "email":
-            return self.store.get_user_by_email(ident)
-        if "@" in ident:
-            return self.store.get_user_by_email(ident) or self.store.get_user_by_name(ident)
-        return self.store.get_user_by_name(ident) or self.store.get_user_by_email(ident)
+            gefunden = self.store.get_user_by_name(ident)
+        elif mode == "email":
+            gefunden = self.store.get_user_by_email(ident)
+        elif "@" in ident:
+            gefunden = self.store.get_user_by_email(ident) or self.store.get_user_by_name(ident)
+        else:
+            gefunden = self.store.get_user_by_name(ident) or self.store.get_user_by_email(ident)
+        return self._als_dict(gefunden)
 
     def check_password(self, username, password) -> Optional[dict]:
         u = self.find_user(username)
@@ -466,11 +510,13 @@ class TinySesam:
                 return None
             uid = self.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
             u = self.store.get_user(uid)
+            if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
+                return None
         elif u["disabled"]:
             return None
         self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map,
                               substring=True)   # memberOf liefert ganze DNs
-        return self.store.get_user(u["id"])   # frisch (gemappte Rollen)
+        return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
     # ---------- SAML (Attribute → lokaler User) ----------
     def check_saml(self, nameid, attrs) -> Optional[dict]:
@@ -492,10 +538,12 @@ class TinySesam:
             uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
                                    email=first(attrs, cfg.saml_attr_email))
             u = self.store.get_user(uid)
+            if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
+                return None
         elif u["disabled"]:
             return None
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
-        return self.store.get_user(u["id"])   # frisch (gemappte Rollen)
+        return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
     # ---------- PIN-Login (persönliche PIN pro User) ----------
     def set_pin(self, user_id, pin):
@@ -722,7 +770,7 @@ class TinySesam:
             return ""
         token = secrets.token_urlsafe(24)
         response.set_cookie(self.cfg.csrf_cookie, token, secure=self.cfg.cookie_secure,
-                            samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+                            samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         return token
 
     def verify_csrf(self, request: Request, submitted) -> bool:
@@ -938,17 +986,17 @@ class TinySesam:
         s = self.session_from_request(request)
         if not s or s["mfa_ok"]:
             return None
-        return self.store.get_user(s["user_id"])
+        return self._als_dict(self.store.get_user(s["user_id"]))
 
     def set_cookie(self, response, token, remember: bool = True):
         """Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL);
         remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen)."""
         kw = dict(httponly=True, secure=self.cfg.cookie_secure,
-                  samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+                  samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain
         if remember:
-            kw["max_age"] = self._ttl(True)
+            kw["max_age"] = self._ttl(True)   # type: ignore[assignment]  # kw trägt gemischte Typen
         response.set_cookie(self.cfg.session_cookie, token, **kw)
 
     def logout(self, request, response):
@@ -1070,8 +1118,36 @@ class TinySesam:
         out = {}
         for feld, namen in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
             for name in ([namen] if isinstance(namen, str) else namen):
-                out[name] = werte[feld]
+                out[name] = self._header_wert(werte[feld])
         return out
+
+    @staticmethod
+    def _header_wert(wert: str) -> str:
+        """Einen Wert so herrichten, dass er als HTTP-Header durchgeht.
+
+        Bis 0.18.0 ging er roh hinaus, und zwei Dinge brachen daran:
+
+        1. **Zeilenumbrüche.** Ein Anzeigename wie `"Bose\r\nX-Remote-Groups: admin"` — bei OIDC
+           oder SAML kommt der Name vom fremden IdP — wäre Header-Injection. `h11` fängt das
+           zwar ab, aber mit `LocalProtocolError`: Die Antwort bricht ab, und der Betroffene
+           kommt gar nicht mehr durch die Forward-Auth. Aus einer Injection wird so eine
+           Selbstsperre mit kryptischer Meldung.
+        2. **Namen jenseits von Latin-1.** HTTP-Header sind Latin-1; `"Иван"` oder `"测试"` sind
+           nicht kodierbar, und der ASGI-Server antwortet mit 500. Das ist kein Angriff, das ist
+           ein Dienstag in einem internationalen Unternehmen — der Nutzer kann die geschützte
+           App schlicht nicht benutzen.
+
+        Steuerzeichen fliegen raus. Der Rest geht **immer als UTF-8 über die Leitung** (die Bytes
+        werden Latin-1-transparent durchgereicht) — verlustfrei, und die nachgelagerte App liest
+        den Header als UTF-8.
+
+        Bewusst *immer*, nicht nur im Notfall: Ein Wechsel je nach Inhalt wäre die schlimmere
+        Lösung. „Müller" käme dann als Latin-1 an und „Иван" als UTF-8, und keine App könnte
+        wissen, was sie gerade hat. Für reines ASCII — den Normalfall — ändert sich nichts, weil
+        ASCII in beiden Kodierungen dieselben Bytes hat.
+        """
+        sauber = "".join(z for z in str(wert or "") if z >= " " and z != "\x7f")
+        return sauber.encode("utf-8").decode("latin-1")
 
     def forwarded_url(self, request: Request) -> str:
         """Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forwarded-*,
@@ -1087,7 +1163,7 @@ class TinySesam:
             return f"{proto}://{host}{uri}"
         return h.get("referer") or "/"
 
-    def forward_login_url(self, orig_url: str, request: Request = None) -> str:
+    def forward_login_url(self, orig_url: str, request: Optional[Request] = None) -> str:
         """Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>.
 
         Ausnahme gegen eine stille Endlosschleife: **ohne `cookie_domain` gilt das Session-Cookie
@@ -1131,13 +1207,25 @@ class TinySesam:
         self._messages.setdefault(lang, {}).update(mapping)
 
     # ---------- Views / Redirect-Sicherheit ----------
+    #: Die Seiten, die sich ersetzen lassen — dieselbe Liste, die `render_page()` bedient.
+    #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
+    #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
+    #: wurde eingetragen und nie aufgerufen.
+    SEITEN = ("account", "error", "forgot", "login", "magic_invalid", "magic_request", "pin",
+              "reauth", "register", "reset", "resource_unlock", "totp", "totp_setup")
+
     def set_template(self, name, fn):
         """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.
-        Namen: 'login', 'totp', 'totp_setup', 'account', 'register', 'magic_request', 'magic_sent',
-        'resource_pin' (je nach aktivierten Features). String → HTML mit Status; Response → 1:1."""
+
+        Namen: siehe `TinySesam.SEITEN` (je nach aktivierten Features erscheinen nicht alle).
+        String → HTML mit Status; Response → 1:1. Ein unbekannter Name ist ein Fehler, kein
+        stilles Nichts.
+        """
+        if name not in self.SEITEN:
+            raise ValueError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.SEITEN)}")
         self.templates.set(name, fn)
 
-    def csrf_token(self, request: Request = None) -> str:
+    def csrf_token(self, request: Optional[Request] = None) -> str:
         """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln."""
         if request is not None and self.cfg.csrf_enabled:
             cur = request.cookies.get(self.cfg.csrf_cookie)
@@ -1145,7 +1233,7 @@ class TinySesam:
                 return cur
         return secrets.token_urlsafe(24)
 
-    def render_page(self, template, status=200, request: Request = None, **ctx) -> Response:
+    def render_page(self, template, status=200, request: Optional[Request] = None, **ctx) -> Response:
         """`request` mitgeben, wo es eins gibt: dann bleibt ein bereits gesetztes CSRF-Token gültig.
         Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene
         Formulare ungültig (klassische „Formular abgelaufen"-Falle)."""
@@ -1172,7 +1260,7 @@ class TinySesam:
         if tok is not None and fresh:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
             resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
-                            samesite=self.cfg.cookie_samesite, path=self.cfg.cookie_path)
+                            samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         return resp
 
     def _csp_header(self, nonce: str) -> str:
@@ -1260,7 +1348,7 @@ class TinySesam:
             app.add_middleware(HTTPSRedirectMiddleware)
         return self.cfg.https_mode
 
-    def _deny(self, request: Request):
+    def _deny(self, request: Request) -> NoReturn:
         # HTML-Browser → Redirect zum Login; sonst (API/JSON) → 401
         if "text/html" in request.headers.get("accept", ""):
             from urllib.parse import quote
@@ -1268,7 +1356,7 @@ class TinySesam:
             raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={nxt}"})
         raise HTTPException(401, "nicht eingeloggt")
 
-    def _deny_stepup(self, request: Request):
+    def _deny_stepup(self, request: Request) -> NoReturn:
         # eingeloggt, aber Faktor nicht frisch. Browser → Redirect zu /auth/reauth; sonst 403 + Hinweis-Header.
         if "text/html" in request.headers.get("accept", ""):
             from urllib.parse import quote
@@ -1277,7 +1365,7 @@ class TinySesam:
         raise HTTPException(403, "Step-up-Bestätigung nötig", headers={"X-TinySesam-Reauth": "/auth/reauth"})
 
     # ---------- Step-up-Frische ----------
-    def stepup_fresh(self, request: Request, user: dict = None) -> bool:
+    def stepup_fresh(self, request: Request, user: Optional[dict] = None) -> bool:
         """True, wenn die aktuelle Sitzung frisch einen Faktor bestätigt hat (Sudo-Frische)."""
         user = user or self.current_user(request)
         if not user or user.get("_via") == "apikey":
@@ -1290,7 +1378,7 @@ class TinySesam:
                 return False
         return True
 
-    def _redirect_factor(self, request: Request, step):
+    def _redirect_factor(self, request: Request, step) -> NoReturn:
         # Browser → Redirect zur Eingabeseite des nächsten Faktors; JSON → 401 + X-TinySesam-Factor.
         if step is None:
             self._deny(request)
@@ -1301,7 +1389,7 @@ class TinySesam:
     def _enforce_route_chain(self, request: Request, factors, strict) -> dict:
         strict = self.cfg.login_chain_strict if strict is None else strict
         s = self.session_from_request(request)
-        usr = self.store.get_user(s["user_id"]) if s else None
+        usr = self._als_dict(self.store.get_user(s["user_id"])) if s else None
         if usr and usr["disabled"]:
             usr = None
         done = json.loads(s["factors_done"] or "[]") if s else []
@@ -1313,9 +1401,13 @@ class TinySesam:
             return d
         self._redirect_factor(request, self._next_factor(factors, strict, done))
 
-    def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None, strict=None,
-                 admin_implies=None) -> dict:
+    def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None,
+                 strict: Optional[bool] = None, admin_implies: Optional[bool] = None) -> dict:
         gchain, _ = self._global_chain()
+        # Der erste Zweig liefert immer ein dict, die beiden anderen können None liefern und
+        # brechen dann über `_deny`/`_redirect_factor` ab. Ohne diese Deklaration nimmt ein
+        # Typprüfer den Typ des ersten Zweigs für den ganzen Rest an.
+        u: Optional[dict]
         if factors is not None:
             # explizite Route-Kette: nie per API-Key erfüllbar, treibt eigene Faktor-Schritte
             u = self._enforce_route_chain(request, factors, strict)
@@ -1329,7 +1421,7 @@ class TinySesam:
             u = self.current_user(request)
             if not u:
                 s = self.session_from_request(request)
-                usr = self.store.get_user(s["user_id"]) if s else None
+                usr = self._als_dict(self.store.get_user(s["user_id"])) if s else None
                 if not usr or usr["disabled"]:
                     self._deny(request)   # keine Identität → Login (erster Faktor)
                 done = json.loads(s["factors_done"] or "[]")
@@ -1357,7 +1449,7 @@ class TinySesam:
         """FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa)."""
         return self._enforce(request, admin=True, mfa=self.cfg.admin_require_mfa)
 
-    def require_role(self, *roles, mfa: bool = False, admin_implies: bool = None):
+    def require_role(self, *roles, mfa: bool = False, admin_implies: Optional[bool] = None):
         """FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
 
         **Mehrere Rollen: eine davon genügt** — `auth.require_role('redaktion', 'lektorat')`.
@@ -1392,7 +1484,8 @@ class TinySesam:
         return dep
 
     def require(self, mfa: bool = False, admin: bool = False, role=None,
-                factors: list = None, strict: bool = None, admin_implies: bool = None):
+                factors: Optional[list] = None, strict: Optional[bool] = None,
+                admin_implies: Optional[bool] = None):
         """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
         `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
         `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt).
@@ -1433,7 +1526,7 @@ class TinySesam:
         token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
         self.store.add_resource_unlock(token, name, int(time.time()) + ttl)
-        kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=self.cfg.cookie_samesite,
+        kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=_samesite(self.cfg.cookie_samesite),
                   path=self.cfg.cookie_path, max_age=ttl)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain

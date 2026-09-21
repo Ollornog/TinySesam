@@ -39,7 +39,7 @@ jobs:
       - name: Systempaket für SAML (xmlsec)
         run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
-        run: pip install -e '.[all]' setuptools wheel
+        run: pip install -e '.[all]' setuptools wheel mypy
       - name: Tests
         run: python tests/run_all.py
 
@@ -102,7 +102,7 @@ jobs:
       - name: Systempaket für SAML (xmlsec)
         run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
-        run: pip install -e '.[all]' uvicorn websockets setuptools wheel
+        run: pip install -e '.[all]' uvicorn websockets setuptools wheel mypy
       - name: Erster Lauf
         run: scripts/check.sh
       - name: Zweiter Lauf (muss ebenfalls grün sein)

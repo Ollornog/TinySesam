@@ -29,7 +29,9 @@ if [[ -z "$PY" ]]; then
     uv venv .venv >/dev/null || fail "uv venv"
     # setuptools/wheel: tests/test_packaging.py BAUT das Paket (offline, ohne Isolierung).
     # Ein uv-venv bringt beides nicht mit, und ohne Bau-Backend prüfte die Suite nichts.
-    VIRTUAL_ENV=".venv" uv pip install -q -e ".[all]" uvicorn websockets httpx setuptools wheel \
+    # mypy gehört dazu: `Typing :: Typed` ist eine Zusage an jeden Nutzer, und ohne den Prüfer
+    # überspringt tests/test_typen.py sich selbst — dann misst sie niemand (s. „Skip ist kein Grün").
+    VIRTUAL_ENV=".venv" uv pip install -q -e ".[all]" uvicorn websockets httpx setuptools wheel mypy \
         || fail "uv pip install"
     PY=".venv/bin/python"
 fi

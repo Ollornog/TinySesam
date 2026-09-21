@@ -5,6 +5,8 @@ komplette Frontend per auth.set_template(...) ersetzen. Platzhalter im {name}-St
 """
 from __future__ import annotations
 
+from typing import Optional
+
 MESSAGES = {
     "en": {
         # --- generic / errors ---
@@ -372,7 +374,7 @@ MESSAGES = {
 }
 
 
-def translate(lang: str, key: str, custom: dict = None, **fmt) -> str:
+def translate(lang: str, key: str, custom: Optional[dict] = None, **fmt) -> str:
     """Text für key in lang; Fallback: custom → lang → en → key selbst. Platzhalter via str.format."""
     for table in ((custom or {}).get(lang), MESSAGES.get(lang), MESSAGES.get("en")):
         if table and key in table:

@@ -162,7 +162,8 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 |---|---|---|
 | `db_path` | `tinysesam.db` | SQLite-Store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | aktive Methoden |
-| `totp_enabled` / `totp_required` | `True/False` | 2FA erlauben / erzwingen |
+| `totp_enabled` | `True/False` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
+| `login_chain` | `["password","totp"]` | 2FA **erzwingen** — über die Faktor-Kette, nicht über einen Schalter |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |

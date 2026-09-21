@@ -57,7 +57,7 @@ class LDAPClient:
             attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
             conn.search(user_dn, "(objectClass=*)", search_scope=ldap3.BASE, attributes=attrs)
             entry = conn.entries[0] if conn.entries else None
-            info = {"username": username, "email": None, "name": username, "groups": []}
+            info: dict = {"username": username, "email": None, "name": username, "groups": []}
             if entry is not None:
                 info["email"] = _first(entry, cfg.ldap_attr_email)
                 info["name"] = _first(entry, cfg.ldap_attr_name) or username

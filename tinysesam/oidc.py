@@ -5,6 +5,8 @@ iss/aud/exp). state & nonce liegen kurzlebig im Store (flow), nicht im Client �
 Beide Libs sind optional-Extra `[oidc]`.
 """
 from __future__ import annotations
+
+import time
 import secrets
 from urllib.parse import urlencode
 
@@ -27,21 +29,48 @@ class OIDCClient:
         self.client_secret = client_secret
         self.scopes = scopes
         self._meta = None
+        self._meta_zeit = 0.0
         self._jwks = None
+        self._jwks_zeit = 0.0
 
-    def meta(self):
-        if self._meta is None:
+    #: Höchstalter der gecachten Metadaten. Ein Provider verschiebt gelegentlich Endpunkte;
+    #: ein Tag ist lange genug, um nicht bei jedem Login zu fragen, und kurz genug, um eine
+    #: Änderung nicht bis zum nächsten Neustart auszusitzen.
+    META_TTL = 24 * 3600
+    #: Höchstalter des JWKS. Provider rotieren ihre Signaturschlüssel regelmässig (Keycloak,
+    #: Entra, Auth0); bis 0.18.0 wurde das Set EINMAL geholt und nie wieder — nach einer
+    #: Rotation scheiterte jeder Login an der Signatur, bis jemand den Prozess neu startete.
+    JWKS_TTL = 3600
+    #: Kürzester Abstand zwischen zwei ausserplanmässigen JWKS-Abrufen. Ohne diese Bremse löst
+    #: jedes kaputte id_token einen Abruf beim Provider aus — ein bequemer Weg, ihn von hier aus
+    #: zu belasten.
+    JWKS_MIN_ABSTAND = 60
+
+    def meta(self, erzwingen: bool = False):
+        # `self._meta_zeit and …`: Wer die Metadaten von aussen setzt (Tests ohne Netz, oder ein
+        # Aufbau, der sie aus einer Datei nimmt), hinterlässt keinen Zeitstempel. Ohne diese
+        # Bedingung wäre so ein Satz sofort „älter als die Lebensdauer" und würde beim ersten
+        # Zugriff überschrieben — inklusive des Netzzugriffs, den man gerade vermeiden wollte.
+        veraltet = self._meta_zeit and (time.time() - self._meta_zeit) > self.META_TTL
+        if self._meta is None or erzwingen or veraltet:
             import httpx
             self._meta = httpx.get(self.issuer + "/.well-known/openid-configuration",
                                    timeout=10, follow_redirects=True).json()
+            self._meta_zeit = time.time()
         return self._meta
 
-    def _jwkset(self):
-        if self._jwks is None:
+    def _jwkset(self, erzwingen: bool = False):
+        alt_genug = self._jwks_zeit and (time.time() - self._jwks_zeit) > self.JWKS_TTL
+        if self._jwks is None or alt_genug or erzwingen:
             import httpx
             from authlib.jose import JsonWebKey
             self._jwks = JsonWebKey.import_key_set(httpx.get(self.meta()["jwks_uri"], timeout=10).json())
+            self._jwks_zeit = time.time()
         return self._jwks
+
+    def _jwks_auffrischbar(self) -> bool:
+        """Darf jetzt ausserplanmässig neu geholt werden? (Drosselung gegen Fremdlast.)"""
+        return (time.time() - self._jwks_zeit) > self.JWKS_MIN_ABSTAND
 
     def auth_url(self, redirect_uri, state, nonce):
         q = urlencode({"response_type": "code", "client_id": self.client_id, "redirect_uri": redirect_uri,
@@ -56,9 +85,20 @@ class OIDCClient:
             "client_id": self.client_id, "client_secret": self.client_secret}).json()
         if "id_token" not in tok:
             raise HTTPException(502, f"OIDC-Token-Fehler: {tok.get('error', 'unbekannt')}")
-        claims = jwt.decode(tok["id_token"], self._jwkset(),
-                            claims_options={"iss": {"essential": True, "value": self.meta()["issuer"]},
-                                            "aud": {"essential": True, "value": self.client_id}})
+        optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
+                    "aud": {"essential": True, "value": self.client_id}}
+        try:
+            claims = jwt.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
+        except Exception:
+            # Scheitert die Signatur, ist der wahrscheinlichste Grund eine Schlüsselrotation
+            # beim Provider: Das Token nennt eine `kid`, die unser Set noch nicht kennt. Einmal
+            # neu holen und erneut versuchen — gedrosselt, damit ein Strom gefälschter Tokens
+            # den Provider nicht über uns belastet. Klappt es wieder nicht, gilt der Fehler.
+            if not self._jwks_auffrischbar():
+                raise
+            security.seclog.warning(
+                "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
+            claims = jwt.decode(tok["id_token"], self._jwkset(erzwingen=True), claims_options=optionen)
         claims.validate()  # exp/iat/nbf
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, "OIDC nonce mismatch")

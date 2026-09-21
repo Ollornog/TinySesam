@@ -39,7 +39,10 @@ def attach_security_log(path: str) -> bool:
                        path, e)
         return False
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    h._tinysesam_path = path
+    # Eigene Markierung am Handler, damit derselbe Pfad nicht zweimal angehängt wird. `setattr`
+    # statt direkter Zuweisung: Das Attribut ist unseres, nicht das der Klasse — ein Typprüfer
+    # meldete hier sonst zu Recht einen Fehler.
+    setattr(h, "_tinysesam_path", path)
     seclog.addHandler(h)
     # Ohne eigenen Level erbt der Logger den der Wurzel; steht der auf ERROR, fehlen genau die
     # WARNING-Zeilen mit den Fehlversuchen.

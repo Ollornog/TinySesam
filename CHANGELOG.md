@@ -68,6 +68,54 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Behoben — `Typing :: Typed` war eine Zusage, die niemand gemessen hat
+
+Das Paket trägt den Classifier und eine `py.typed`: die Zusage an jeden Nutzer, dass die
+Annotationen stimmen und sein Typprüfer sich darauf verlassen darf. Bei der ersten Messung
+standen **30 Fehler in 6 Dateien**.
+
+Der greifbarste davon: Sechs nutzerseitige Methoden waren `-> Optional[dict]` annotiert und
+lieferten eine `sqlite3.Row`. Wer der Zusage glaubte und `user.get("email")` schrieb, bekam
+einen `AttributeError` aus einer Zeile, die laut Typ nicht falsch sein konnte. `get_user`,
+`find_user`, `check_password`, `check_ldap`, `check_saml` und `pending_user` liefern jetzt
+wirklich ein `dict` — auf der Store-Ebene bleibt die Row, dort ist sie dokumentiert und gewollt.
+
+Die übrigen 24 waren Annotationsfehler ohne Laufzeitwirkung (vor allem `x: bool = None` statt
+`Optional[bool]`), plus zwei Stellen, an denen ein Abbruchpfad nicht als solcher annotiert war
+(`_deny`, `_redirect_factor` sind jetzt `NoReturn`).
+
+**Dabei fiel ein echter Fehler auf:** `cookie_samesite` wurde nie geprüft. Starlette lehnt einen
+falschen Wert per `assert` ab — also erst beim ersten Cookie, und unter `python -O` gar nicht;
+dann stünde der Tippfehler im `Set-Cookie`-Header. Der Konstruktor prüft ihn jetzt, samt der
+Kombination `samesite='none'` ohne `cookie_secure` (die ein Browser verwirft).
+
+Damit die Zusage gemessen **bleibt**: `tests/test_typen.py` fährt mypy über die Bibliothek und
+prüft zusätzlich am echten Rückgabewert, was die Signaturen versprechen. mypy läuft in der CI und
+ist ins `ci-python-web`-Abbild aufgenommen — ohne das übersprang sich die Suite selbst, und der
+Lauf sah trotzdem grün aus.
+
+**Zur API-Oberfläche:** `tests/api_surface.json` verzeichnet die neuen Annotationen als „Bruch".
+Das ist er nicht: `x: bool = None` und `x: Optional[bool] = None` verhalten sich zur Laufzeit
+gleich, die Signatur ist nur ehrlicher geworden. Kein Aufrufer muss etwas ändern.
+
+### Behoben — ein Sicherheitsschalter, der nie etwas tat, und eine Seitenliste, die nicht stimmte
+
+**`totp_required` hatte keinen Draht.** Der Schalter stand in der Config, in beiden READMEs
+(„2FA erzwingen") und auf der Website — und wurde an keiner Stelle gelesen. Wer ihn setzte,
+glaubte den zweiten Faktor erzwungen zu haben und hatte ihn nicht. Ein wirkungsloser
+Sicherheitsschalter ist gefährlicher als gar keiner, weil er die Suche nach dem richtigen Weg
+beendet. Der Konstruktor weist ihn jetzt ab und nennt den Weg, der greift:
+`login_chain=['password', 'totp']`. Die Doku nennt ihn ebenfalls.
+
+**`set_template` nahm Namen an, die es nicht gab.** Der Docstring führte `'magic_sent'` und
+`'resource_pin'` auf — beide hat es nie gegeben — und ließ sieben echte Seiten weg. Ein
+Tippfehler blieb folgenlos-still: Die eigene Seite wurde eingetragen und nie aufgerufen. Die
+Liste steht jetzt als `TinySesam.SEITEN` im Code, ein unbekannter Name ist ein Fehler, und eine
+Prüfung vergleicht sie gegen die Seiten, die `render_page()` wirklich bedient.
+
+**SECURITY.md nannte `0.5.x`** als die Reihe, die Sicherheitsfixes bekommt — dreizehn
+Minor-Versionen alt. Es verweist jetzt auf den CHANGELOG-Kopf statt auf eine Zahl, die veraltet.
+
 ### Behoben — hinter einem Proxy erschienen alle Nutzer unter einer IP
 
 Vier Befunde, ein Thema. Gemeinsame Folge: Sperre, Rate-Limit und fail2ban wirkten **kollektiv**
