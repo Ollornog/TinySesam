@@ -7,8 +7,8 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Meilensteine
 
-* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 8/8 erledigt
-* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 0/2 erledigt
+* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 9/9 erledigt
+* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 0/1 erledigt
 
 ## Aufgaben
 
@@ -24,7 +24,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Fehler
 
-* ☐ **[B-1](B-1-admin-panel-rotiert-csrf.md)** Das Admin-Panel würfelt bei jedem Aufruf ein neues CSRF-Token · M-2
+* ☑ **[B-1](B-1-admin-panel-rotiert-csrf.md)** Das Admin-Panel würfelt bei jedem Aufruf ein neues CSRF-Token · M-1
 
 ## Entscheidungen (ADR)
 

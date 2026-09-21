@@ -2,8 +2,8 @@
 id: B-1
 type: Bug
 title: Das Admin-Panel würfelt bei jedem Aufruf ein neues CSRF-Token
-status: offen
-milestone: M-2
+status: erledigt
+milestone: M-1
 tags: [csrf, admin, sicherheit]
 created: 2026-09-21
 ---
@@ -38,3 +38,18 @@ zwei Reiter offen, einer davon das Panel — das Formular im anderen scheitert s
   verweist auf `tests/test_adminmount.py` als richtigen Ort — dort steht sie noch nicht.
 - Der Regressionstest prüft den **rohen** `Set-Cookie`-Header, nicht den Cookie-Jar: Der verschluckt
   Attribute und legt Secure-Cookies über `http://` gar nicht erst ab.
+
+## Erledigt (2026-09-21, mit [T-9](T-9-audit-2026-09-21-runde-2.md))
+
+Vorgezogen von M-2 nach M-1: Der Eintrag trägt `tags: [csrf, admin, sicherheit]`, und M-1
+verlangt seit der Reifeprüfung ausdrücklich *keine offenen Sicherheitsbefunde*. Ein
+Sicherheitsbefund auf „nach 1.0" zu legen, während 1.0 keine offenen verlangt, widerspricht sich.
+
+Dazu war die Lage inzwischen schlechter als bei der Meldung: Die Sicherheitsfixes von T-8 haben
+vier weitere Routen und **jede** nicht-lesende Methode des Panels unter CSRF gestellt — die
+Token-Rotation traf damit mehr Wege als vorher.
+
+`admin.py` übernimmt jetzt ein vorhandenes Cookie, statt bei jedem Aufruf eines zu würfeln —
+dieselbe Behandlung wie in `render_page`. Gemessen: Login-Seite setzt Token A, Panel-Aufruf
+setzt **kein** neues Cookie mehr, und der POST aus dem anderen Reiter antwortet wieder mit 200
+statt 403.
