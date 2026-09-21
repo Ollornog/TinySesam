@@ -78,7 +78,7 @@ Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der
 
 Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht.
 
-### `complete_totp(token)`
+### `complete_totp(token) -> 'Optional[str]'`
 
 Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
 
@@ -105,6 +105,10 @@ Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-
 ### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
+
+### `csrf_rotieren(response) -> 'str'`
+
+Ein frisches CSRF-Token setzen — beim Login.
 
 ### `csrf_token(request: 'Optional[Request]' = None) -> 'str'`
 
@@ -460,6 +464,10 @@ Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
 
 Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
 
+### `TinySesamConfig.pruefen() -> 'list[str]'`
+
+Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
+
 ---
 
-105 Methoden, 5 Presets — erzeugt aus den Docstrings.
+106 Methoden, 6 Presets — erzeugt aus den Docstrings.

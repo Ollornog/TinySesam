@@ -186,6 +186,13 @@ def register_oidc_routes(router, auth):
 
     @router.get("/auth/oidc/start")
     def oidc_start(request: Request, next: str = "/"):
+        # Jeder Aufruf hinterlässt eine `flow`-Zeile (600 s), gelöscht wird sie nur beim
+        # erfolgreichen Rückweg oder von `gc`. Im Gateway-Betrieb ist das genau der Einstieg,
+        # auf den der Proxy jeden nicht angemeldeten Besucher schickt — jeder Abbruch, jeder
+        # Scanner, jeder Bot liess die Datenbank wachsen, und als einzige flow-erzeugende Route
+        # war sie nicht ratenbegrenzt.
+        if not auth.rate_ok(auth.client_ip(request)):
+            raise HTTPException(429, auth.t("err.rate"))
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
         # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.
         # Wer den `state` aus der Redirect-URL abliest, hat damit noch nichts.
@@ -215,12 +222,21 @@ def register_oidc_routes(router, auth):
         if cfg.oidc_allowed_groups:
             groups = info.get(cfg.oidc_group_claim) or []
             if not (set(cfg.oidc_allowed_groups) & set(groups if isinstance(groups, list) else [groups])):
+                # Ins Protokoll, nicht nur an den Browser: „ich komme nicht rein" ist im
+                # Gateway-Betrieb der häufigste Supportfall, und ohne diese Zeile hinterliess
+                # er serverseitig gar nichts. Das Muster gibt es im Projekt schon
+                # (`forward_role_denied` in router.py).
+                auth.audit("oidc_group_denied", str(info.get("email") or info.get("sub") or "?"),
+                           auth.client_ip(request),
+                           f"verlangt={sorted(cfg.oidc_allowed_groups)}")
                 raise HTTPException(403, auth.t("api.oidc_group"))
 
         issuer, sub = oidc.meta()["issuer"], claims["sub"]
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
             if not cfg.oidc_auto_create:
+                auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
+                           auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
             username = info.get("preferred_username") or info.get("email") or ("oidc-" + sub[:8])
             base_un, i = username, 1

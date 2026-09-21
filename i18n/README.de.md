@@ -288,8 +288,41 @@ python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegr
 > `auth.store.backup(pfad)`.
 
 `gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
-bleibt bewusst unangetastet. **Von selbst läuft das nicht** — in einen Cronjob oder
-systemd-Timer legen. Aus Python: `auth.gc()` liefert dieselben Zahlen als Dict.
+bleibt bewusst unangetastet. **Von selbst läuft das nicht** — fertige Unit-Dateien liegen in
+[`deploy/systemd/`](../deploy/systemd/). Aus Python: `auth.gc()` liefert dieselben Zahlen als
+Dict. `gc` gibt allerdings keinen Plattenplatz an das Dateisystem zurück; nach einem grossen
+Aufräumen einmalig `sqlite3 auth.db 'VACUUM;'` bei gestopptem Dienst.
+
+### Eine Sicherung zurückspielen
+
+```bash
+systemctl stop tinysesam                                  # der Dienst muss stehen
+python -m tinysesam restore --db auth.db sicherung-2026-09-21.db
+systemctl start tinysesam
+```
+
+> **Auch zurück nicht einfach kopieren.** Nach einem Absturz liegen `auth.db-wal` und
+> `auth.db-shm` neben der Datenbank. SQLite spielt sie beim Start auf die eben zurückgespielte
+> Datei — der alte Stand ist wieder da, ohne Fehlermeldung, und `PRAGMA integrity_check` sagt
+> `ok`. `restore` räumt beide vorher weg, prüft die Sicherung, bevor es irgendetwas überschreibt
+> (Integrität, Kontenzahl, Schema-Version), und setzt danach `0600`.
+
+> **Ein Rückschritt auf ≤ 0.17.x braucht eine Sicherung im alten Schema.** 0.18.0 migriert die
+> Datenbank beim ersten Start. Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt
+> grün und Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem
+> Update ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die
+> zurückspielen.
+
+### „Ich komme nicht rein" — nachsehen
+
+```bash
+python -m tinysesam audit  --db auth.db --user alice    # ins Protokoll, von der Kommandozeile
+python -m tinysesam unlock --db auth.db alice           # eine Brute-Force-Sperre aufheben
+```
+
+Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`kein_konto`, `konto_gesperrt`,
+`falsches_geheimnis`) — die HTTP-Antwort tut das bewusst nicht, sonst liesse sich damit nach
+Konten suchen. Im Protokoll liest nur der Betreiber mit.
 
 ## Demo-Modus
 

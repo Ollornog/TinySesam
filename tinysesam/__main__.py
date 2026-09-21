@@ -3,7 +3,10 @@
     version                          die installierte Version
     passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung)
     backup --db auth.db <ziel>       konsistente Kopie ziehen (NICHT die Datei kopieren!)
+    restore --db auth.db <quelle>    eine Sicherung zurückspielen (Dienst vorher stoppen!)
     gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
+    audit --db auth.db [--user X]    ins Protokoll sehen (auch wenn niemand hereinkommt)
+    unlock --db auth.db <benutzer>   eine Brute-Force-Sperre aufheben
 
 Bewusst mager. TinySesam installiert sich nicht selbst — ein Auth-Modul, das zur Laufzeit
 Code nachlädt, ist eine Hintertür mit Bedienungsanleitung. Aktualisiert wird von außen:
@@ -121,6 +124,67 @@ def _backup(argv) -> int:
     return 0
 
 
+def _restore(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam restore",
+        description="Eine Sicherung zurückspielen — mit der Reihenfolge, auf die es ankommt.",
+        epilog="Den Dienst VORHER stoppen. Ein blosses `cp sicherung.db auth.db` genügt nicht: "
+               "Nach einem Absturz liegen `auth.db-wal` und `auth.db-shm` daneben, und SQLite "
+               "spielt sie beim nächsten Start auf die frisch zurückgespielte Datei — der alte "
+               "Stand ist wieder da, ohne Fehlermeldung, und `PRAGMA integrity_check` sagt `ok`. "
+               "Dieses Kommando räumt beide Dateien weg, bevor es ersetzt.")
+    ap.add_argument("quelle", help="die Sicherungsdatei")
+    ap.add_argument("--db", required=True, help="Ziel: die Datenbank des Dienstes")
+    ap.add_argument("--ja", action="store_true", help="nicht nachfragen (für Skripte)")
+    a = ap.parse_args(argv)
+    import os
+    import shutil
+    import sqlite3
+
+    if not os.path.exists(a.quelle):
+        print(f"Keine Sicherung unter {a.quelle}.", file=sys.stderr)
+        return 1
+    # Erst prüfen, ob die Sicherung überhaupt taugt — nicht erst nach dem Überschreiben.
+    try:
+        pruef = sqlite3.connect(f"file:{a.quelle}?mode=ro", uri=True)
+        heil = pruef.execute("PRAGMA integrity_check").fetchone()[0]
+        konten = pruef.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        stand = pruef.execute("PRAGMA user_version").fetchone()[0]
+        pruef.close()
+    except Exception as e:
+        print(f"{a.quelle} ist keine lesbare TinySesam-Datenbank: {e}", file=sys.stderr)
+        return 1
+    if heil != "ok":
+        print(f"Die Sicherung ist beschädigt (integrity_check: {heil}).", file=sys.stderr)
+        return 1
+
+    from .store import Store
+    if stand > Store.SCHEMA_VERSION:
+        print(f"Die Sicherung trägt Schema-Version {stand}, diese Fassung kennt {Store.SCHEMA_VERSION}. "
+              "Sie stammt aus einer neueren TinySesam-Version — passende Version installieren.",
+              file=sys.stderr)
+        return 1
+
+    print(f"Sicherung: {a.quelle} — {konten} Konten, Schema {stand}, integrity_check ok")
+    if os.path.exists(a.db) and not a.ja:
+        print(f"Das überschreibt {a.db}. Der Dienst muss GESTOPPT sein.")
+        if input("Weiter? [j/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
+            print("Abgebrochen.")
+            return 1
+
+    # Die Reihenfolge ist der eigentliche Inhalt dieses Kommandos.
+    for rest in ("-wal", "-shm"):
+        if os.path.exists(a.db + rest):
+            os.remove(a.db + rest)
+    shutil.copyfile(a.quelle, a.db)
+    try:
+        os.chmod(a.db, Store.DATEIRECHTE)
+    except OSError:
+        pass
+    print(f"Zurückgespielt: {a.db} (Rechte 0600). Dienst wieder starten.")
+    return 0
+
+
 def _gc(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gc",
@@ -146,6 +210,55 @@ def _gc(argv) -> int:
     return 0
 
 
+def _audit(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam audit",
+        description="Ins Audit-Log sehen — von der Kommandozeile.",
+        epilog="Gelesen wurde es bisher nur über das Admin-Panel, also nur als angemeldeter "
+               "Admin — ausgerechnet dann unerreichbar, wenn die Anmeldung das Problem ist.")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+    ap.add_argument("--user", default="", help="nur Einträge zu diesem Konto")
+    ap.add_argument("-n", type=int, default=30, help="wie viele Zeilen (Vorgabe: 30)")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    import datetime as _dt
+    zeilen = [z for z in store.recent_audit(max(a.n * 4, 100))
+              if not a.user or (z["username"] or "").lower() == a.user.lower()][:a.n]
+    if not zeilen:
+        print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
+        return 0
+    for z in reversed(zeilen):
+        zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{zeit}  {z['event']:22} {(z['username'] or '-'):16} "
+              f"{(z['ip'] or '-'):18} {z['detail'] or ''}")
+    return 0
+
+
+def _unlock(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam unlock",
+        description="Die Brute-Force-Sperre eines Kontos aufheben.",
+        epilog="Bisher gab es dafür keinen Weg: `clear_fails` lief nur intern nach einer "
+               "erfolgreichen Anmeldung — und genau die ist ja gesperrt. Übrig blieb `gc "
+               "--attempts-older-than 0`, das die Fehlversuche ALLER Konten wegräumt.")
+    ap.add_argument("username", help="Benutzername des Kontos")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    if not store.get_user_by_name(a.username):
+        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        return 1
+    offen = store.count_fails(0, username=a.username)
+    store.clear_fails(username=a.username)
+    store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen}")
+    print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
@@ -155,8 +268,14 @@ def main(argv=None):
         sys.exit(_passwd(argv[1:]))
     elif cmd == "backup":
         sys.exit(_backup(argv[1:]))
+    elif cmd == "restore":
+        sys.exit(_restore(argv[1:]))
     elif cmd == "gc":
         sys.exit(_gc(argv[1:]))
+    elif cmd == "audit":
+        sys.exit(_audit(argv[1:]))
+    elif cmd == "unlock":
+        sys.exit(_unlock(argv[1:]))
     else:
         # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
         # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
@@ -164,7 +283,10 @@ def main(argv=None):
         print("usage: python -m tinysesam version\n"
               "       python -m tinysesam passwd --db <datei> <benutzer>\n"
               "       python -m tinysesam backup --db <datei> <ziel>\n"
-              "       python -m tinysesam gc     --db <datei>",
+              "       python -m tinysesam restore --db <datei> <sicherung>\n"
+              "       python -m tinysesam gc     --db <datei>\n"
+              "       python -m tinysesam audit  --db <datei> [--user X]\n"
+              "       python -m tinysesam unlock --db <datei> <benutzer>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
 

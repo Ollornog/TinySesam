@@ -11,6 +11,24 @@ from collections import defaultdict, deque
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
 
+def fuer_log(wert) -> str:
+    """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
+
+    Der Benutzername kommt roh aus einem Formularfeld und landete ungefiltert in der Zeile, die
+    fail2ban liest. Ein `\n` darin erzeugt eine **zusätzliche Zeile** — und wer vorn und hinten
+    einen Umbruch setzt, schiebt die echte `ip=`-Angabe auf eine Folgezeile, die der Filter nicht
+    mehr matcht, und lässt dazwischen eine frei erfundene stehen. fail2ban zählt dann die
+    Fehlversuche einer **vom Angreifer gewählten** IP, während die echte null Treffer erzeugt.
+    Bei `maxretry = 6` genügen sechs Anfragen, um eine beliebige Adresse auszusperren — die des
+    Admins, eines Partners, einer Überwachungssonde.
+
+    Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
+    keine Anmeldung, sondern ein Versuch, das Log zu fluten).
+    """
+    text = "".join(z for z in str(wert if wert is not None else "") if z >= " " and z != "\x7f")
+    return (text[:64] + "…") if len(text) > 64 else text
+
+
 def attach_security_log(path: str) -> bool:
     """Den Security-Logger zusätzlich in eine Datei schreiben lassen — das, was die fail2ban-Jail
     liest (`deploy/fail2ban/`). Ohne diesen Handler zeigt die mitgelieferte Jail auf eine Datei,

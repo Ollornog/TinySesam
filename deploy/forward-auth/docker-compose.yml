@@ -35,9 +35,17 @@ services:
       TINYSESAM_TRUSTED_PROXIES: "172.28.0.0/16"
       TINYSESAM_HTTPS_MODE: "warn"                     # TLS terminiert Caddy davor
       TINYSESAM_DB: "/data/gateway.db"
+      # Das Lesefutter für fail2ban. Ohne diese Zeile UND den Mount unten zeigt die
+      # mitgelieferte Jail (deploy/fail2ban/) auf eine Datei, die es nie gibt — sie meldet sich
+      # nicht, sie läuft still leer. Zwei mitgelieferte Bausteine, die zusammen nichts tun.
+      TINYSESAM_SECURITY_LOG: "/var/log/tinysesam/security.log"
       TINYSESAM_PORT: "8000"
     volumes:
       - tinysesam-data:/data
+      # Auf den HOST, nicht in ein Volume: fail2ban läuft dort und muss die Datei lesen können.
+      # Das Verzeichnis vorher anlegen und dem Dienstbenutzer geben:
+      #   sudo install -d -o 1000 -g 1000 /var/log/tinysesam
+      - /var/log/tinysesam:/var/log/tinysesam
     networks: [intern]
     restart: unless-stopped
 

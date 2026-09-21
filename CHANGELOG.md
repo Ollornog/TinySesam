@@ -23,6 +23,132 @@ zuerst repariert worden — alles andere wäre auf Sand gebaut.
 `MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
 über den gepinnten Git-Tag.
 
+### Sicherheit — zweites Audit: die Reparaturen der Reparaturen
+
+Vier unabhängige Blickwinkel, diesmal auf den frischen Code selbst gerichtet. **43 Befunde, 5
+Blocker** — und drei davon waren Löcher, die beim Schliessen der ersten sechs entstanden sind.
+Das ist der eigentliche Ertrag dieser Runde: Wer eine Lücke schliesst, prüft seinen eigenen
+Verschluss nicht. Belege in `tests/test_audit_runde2.py` ([T-9](backlog/T-9-audit-2026-09-21-runde-2.md)).
+
+**Der Erst-Admin liess sich weiterhin kapern — über den Benutzernamen.** Der neue Wächter
+verlangt bei offener Registrierung eine *E-Mail* in `admin_identifiers`, mit der Begründung „den
+Namen hat, wer das Postfach hat". `maybe_promote_admin` verglich aber weiter *Name ODER E-Mail*,
+und ein Benutzername ist ein freies Textfeld: Wer sich als `username="chef@example.com"`
+registrierte und sein eigenes Postfach bestätigte, wurde Erst-Admin. Die Lücke war nur
+verschoben. Jetzt gilt: Eintrag mit `@` nur gegen die E-Mail, ohne `@` nur gegen den Namen.
+
+**Ein API-Key-Scope, der zu nichts zusammenschrumpfte, wurde zu „erbt alles".** `["lagre"]` — ein
+Tippfehler — beschnitt auf `[]`, und `[]` heisst in der Datenbank „kein Scope". Die Beschneidung,
+die begrenzen sollte, machte den Key **mächtiger**. Ein solcher Key entsteht jetzt gar nicht
+erst; was gemeint war, weiss nur der Aufrufer.
+
+**Die CSRF-Prüfung hatte einen vom Client gewählten Ausschalter.** `require_csrf` übersprang,
+sobald irgendein `X-API-Key`-Header dastand — ungeprüft, auch bei `apikey_enabled=False`, und
+danach lief die Anmeldung über das Sitzungs-Cookie weiter. Übersprungen wird jetzt nur bei einem
+**echten** Key ohne Sitzung.
+
+**Ein gescopter Key stellte sich selbst einen mächtigeren aus.** Schlüsselverwaltung verlangt
+jetzt eine interaktive Sitzung: Schlüssel gibt ein Mensch aus, kein Schlüssel.
+
+**Ein TOTP-Code galt 90 Sekunden lang beliebig oft** — zwei getrennte Clients konnten sich mit
+demselben Code voll anmelden. NIST SP 800-63B ist eindeutig: „Verifiers SHALL accept a given OTP
+only once while it is valid." Der verbrauchte Zeitschritt wird jetzt gebucht (Schema 3).
+
+**Der Freigabe-Token für gesperrte Ressourcen lag im Klartext** in der Datenbank und war
+identisch mit dem Cookie — dasselbe Bedrohungsmodell, das die Sitzungs-Umstellung begründet, nur
+eine Tabelle weiter (Schema 4).
+
+**Die Migration war nicht atomar.** `ALTER TABLE` committet für sich; ein Abbruch davor
+hinterliess Klartext-Token in der Spalte `token_hash` — dauerhaft, weil die Erkennung danach nie
+wieder greift. Jetzt läuft alles in einer Transaktion (`BEGIN IMMEDIATE`), und die Erkennung
+sucht Zeilen, die nicht wie ein Hash aussehen: Das **heilt** eine bereits beschädigte Datei.
+Nebenbei gelöst: Bei mehreren Workern starb einer beim Start mit `no such column: "token"`.
+
+**Der Erst-Admin-Wächter, `POST /auth/magic/request`** (einzige zustandsändernde Route ohne
+CSRF) und **[B-1](backlog/B-1-admin-panel-rotiert-csrf.md)** (das Panel würfelte bei jedem
+Aufruf ein neues CSRF-Token) sind ebenfalls zu — B-1 lag auf „nach 1.0" und traf durch die neuen
+CSRF-Prüfungen inzwischen mehr Wege.
+
+**Weiteres:** Recovery-Codes 64 → **112 Bit** (die NIST-Schwelle für ungesalzenes Hashing);
+scrypt-Fallback auf eine zugelassene OWASP-Kombination; scrypt-Hashes steigen jetzt auf argon2
+auf, wenn das Extra nachinstalliert wird (vorher blieben Bestandskonten für immer auf dem
+schwächeren Verfahren); das Sitzungs-Token wird beim Rechtewechsel erneuert und das CSRF-Token
+beim Login rotiert (beides OWASP); `/auth/oidc/start` ist ratenbegrenzt (vorher die einzige
+flow-erzeugende Route ohne).
+
+### Behoben — `tinysesam backup` veränderte die Datei, die es sichern sollte
+
+`_oeffne()` nahm den vollen `Store`-Konstruktor — der setzt `journal_mode=WAL`, legt Tabellen an
+und **migriert**, alles bevor eine Kopie existiert. Wer vor einem Update das einzig Richtige tat
+und sicherte, hob damit die laufende Installation auf das neue Schema, während noch der alte Code
+lief. Der Rückweg war zu, und eine Datei im alten Schema gab es danach nirgends mehr.
+
+`Store.sichere_datei()` öffnet jetzt read-only. Gemessen an einer echten 0.17.0-Datei: Quelle
+unverändert, Kopie vollständig und im alten Schema.
+
+**Und das Zurückspielen war nicht dokumentiert** — mit derselben WAL-Falle spiegelverkehrt: Nach
+einem Absturz liegen `-wal`/`-shm` daneben, SQLite spielt sie auf die frisch zurückgespielte
+Datei, der alte Stand ist zurück, und `integrity_check` sagt `ok`. Neu: **`tinysesam restore`**,
+das die Reihenfolge erzwingt und die Sicherung prüft, bevor es irgendetwas überschreibt.
+
+### Hinzugefügt — Werkzeuge für den Störfall
+
+**`tinysesam audit`** und **`tinysesam unlock`**. Das Audit-Log war nur über das Admin-Panel
+lesbar, also nur als angemeldeter Admin — ausgerechnet dann unerreichbar, wenn die Anmeldung das
+Problem ist. Und eine Brute-Force-Sperre liess sich gar nicht gezielt aufheben; übrig blieb
+`gc --attempts-older-than 0`, das die Fehlversuche **aller** Konten wegräumt.
+
+Dazu hält das Protokoll jetzt fest, **warum** eine Anmeldung scheiterte (`kein_konto`,
+`konto_gesperrt`, `falsches_geheimnis`). Die HTTP-Antwort tut das bewusst weiterhin nicht — im
+Protokoll liest nur der Betreiber mit, und dort waren die drei häufigsten Ursachen bisher
+byte-identisch.
+
+**Der Healthcheck fragt die Datenbank** (`SELECT 1`, 503 bei Defekt). Vorher meldete er nur, dass
+der Prozess lebt: Nach einem Rollback oder bei vollem Volume lieferte der Dienst allen
+angemeldeten Nutzern 500, während Docker den Container dauerhaft als `healthy` führte.
+
+**`deploy/systemd/`** bringt Timer und Service für `gc` mit — die README verwies darauf, ohne
+dass eine Vorlage dabei lag — samt einem Wort zur Aufbewahrung des Audit-Logs (es speichert
+IP-Adressen) und dem `VACUUM`, ohne das `gc` keinen Plattenplatz zurückgibt.
+
+**Das mitgelieferte Compose und die mitgelieferte fail2ban-Jail passten nicht zusammen:** Das
+Compose setzte kein `TINYSESAM_SECURITY_LOG` und mountete kein Logverzeichnis, die Jail zeigte
+also auf eine Datei, die es nie gab. Zwei Bausteine, die einzeln richtig aussahen und zusammen
+nichts taten.
+
+### Behoben — fail2ban liess sich gegen Dritte richten
+
+Der Benutzername ging **ungefiltert** in die Logzeile, die fail2ban liest. Ein `\n` darin erzeugt
+eine zusätzliche Zeile; mit einem Umbruch vorn und hinten schiebt man die echte `ip=`-Angabe auf
+eine Folgezeile, die der Filter nicht mehr matcht, und lässt dazwischen eine frei erfundene
+stehen. fail2ban zählt dann die Fehlversuche einer **vom Angreifer gewählten** IP, während die
+echte null Treffer erzeugt — bei `maxretry = 6` genügen sechs Anfragen, um eine beliebige Adresse
+auszusperren. Gegen echtes fail2ban 1.1.1 belegt.
+
+Steuerzeichen fliegen jetzt raus, die Länge ist gedeckelt, und der mitgelieferte Filter ist auf
+die ganze Zeile verankert (`^…$`) — wer eine ältere Fassung fährt, sollte den Filter übernehmen.
+
+### Behoben — die eigenen Prüfungen behaupteten mehr, als sie messen
+
+Jede Zusage wurde per Mutation gegengeprüft; sieben hielten nicht:
+
+- **Im git-worktree wand sich die gesamte Repo-Hygiene ab** — dort ist `.git` eine *Datei*, und
+  die Prüfung fragte `.is_dir()`. Privat­e Infrastruktur, Geheimnisse, SHA-Pins: alles weg, Lauf
+  grün.
+- **`run_all.py` kannte keinen Boden:** Exit 0 auch bei „0 grün, alles übersprungen".
+- Der **PyPI-Geheimnis-Check** liess sich mit einem `name:` über dem Schritt aushebeln.
+- **`test_repo`** fing `import subprocess`, aber nicht `from subprocess import run` und nicht
+  `os.system` — daneben steht eine Sicherheitsaussage. Läuft jetzt über den Syntaxbaum, inklusive
+  Alias-Auflösung.
+- **`test_api_surface`** fror Klassenattribute nicht ein (`FORWARD_HEADERS_DEFAULT` ist in der
+  Doku eine Zusage und liesse sich still ändern).
+- **`test_kern_install`** mass an zwei Stellen Textvorkommen statt Verhalten.
+- **`test_typen`** fuhr mypy ohne `--check-untyped-defs`: 120 von 410 Funktionen ungeprüft,
+  darunter alle vier Presets. Mit der Tiefe fielen sofort sechs echte Fehler an.
+
+Zwei Suiten hatten ausserdem den **TOTP-Replay festgeschrieben** (derselbe Code zweimal). Ein
+Test, der ein kaputtes Verhalten absichert, ist selbst ein Fund.
+
 ### Geändert — ⚠️ beim Update beachten: was sich im Verhalten ändert
 
 **Die öffentliche Oberfläche bricht nicht:** Keine Methode wurde entfernt oder umbenannt, kein
@@ -77,6 +203,27 @@ Methode. Eine eigene UI, die diese Endpunkte ohne `X-CSRF-Token` aufruft, bekomm
   geprüft hat, muss auf den Statuscode umstellen.
 - **Eine neu angelegte Datenbank bekommt `0600`.** Bestehende Dateien werden nicht umgestellt —
   aber ein zweiter Prozess unter anderer Kennung kann eine neue Datei nicht mehr lesen.
+
+**Aus dem zweiten Audit kamen weitere Verhaltensänderungen dazu:**
+
+- **Ein TOTP-Code gilt genau einmal.** Wer denselben Code zweimal einreicht — eine Automatik, ein
+  Test, ein Doppelklick auf „Absenden" —, bekommt beim zweiten Mal eine Ablehnung. Zwei eigene
+  Suiten hatten genau das getan.
+- **API-Keys werden aus einer Sitzung ausgestellt, nicht mit einem API-Key.**
+  `POST /auth/apikeys` und `…/revoke` antworten mit 403, wenn der Aufrufer per Key angemeldet ist.
+- **Ein API-Key-Scope, der keine Rolle des Besitzers trifft, wird abgewiesen** statt beschnitten
+  (`ConfigError`). Vorher entstand daraus ein Key, der *alle* Rollen erbte.
+- **Die CSRF-Ausnahme gilt nur noch bei einem echten API-Key ohne Sitzung.** Wer bisher einen
+  beliebigen `X-API-Key`-Header mitschickte und sich per Cookie anmeldete, bekommt jetzt 403.
+- **`POST /auth/magic/request` verlangt ein CSRF-Token.**
+- **Das Sitzungs-Token wird beim zweiten Faktor erneuert.** Wer das Token selbst festhält (statt
+  dem Cookie zu folgen), muss den neuen Wert übernehmen; `complete_totp()` gibt ihn zurück.
+- **`admin_identifiers` unterscheidet jetzt:** Ein Eintrag mit `@` gilt nur für die E-Mail, einer
+  ohne nur für den Benutzernamen. Wer beides gemeint hat, trägt beides ein.
+- **Freigaben für gesperrte Ressourcen aus der Zeit vor dem Update werden verworfen** — sie sind
+  nicht umrechenbar. Betroffene öffnen die Ressource mit ihrem Geheimnis neu.
+- **`forward_headers` verlangt Strings oder Listen davon**; `None` und Zahlen werden jetzt beim
+  Aufbau abgewiesen statt später ein 500 zu erzeugen.
 
 **Nicht betroffen:** `complete_mfa()` bleibt als Alias von `complete_totp()` erhalten, alle
 bisherigen Exporte bleiben, und die vier neuen Fehlertypen erben von dem eingebauten Typ, den sie

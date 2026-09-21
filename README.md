@@ -287,8 +287,40 @@ python -m tinysesam gc     --db auth.db                      # expired sessions/
 > its own, with the same tight permissions as the source. From Python: `auth.store.backup(path)`.
 
 `gc` deletes expired sessions, flows, one-time tokens and old login attempts; the audit log is
-left alone on purpose. **Nothing runs it for you** — put it in a cron job or systemd timer. From
-Python: `auth.gc()` returns the same counts as a dict.
+left alone on purpose. **Nothing runs it for you** — ready-made unit files are in
+[`deploy/systemd/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/systemd). From Python:
+`auth.gc()` returns the same counts as a dict. Note that `gc` does not hand disk space back to the
+filesystem; after a large cleanup, run `sqlite3 auth.db 'VACUUM;'` once with the service stopped.
+
+### Restoring a backup
+
+```bash
+systemctl stop tinysesam                                  # the service must be down
+python -m tinysesam restore --db auth.db backup-2026-09-21.db
+systemctl start tinysesam
+```
+
+> **Do not just copy the file back either.** After a crash, `auth.db-wal` and `auth.db-shm` are
+> still lying next to the database. SQLite replays them onto the file you just restored — the old
+> state is back, with no error, and `PRAGMA integrity_check` says `ok`. `restore` removes both
+> first, checks the backup before overwriting anything (integrity, account count, schema version),
+> and sets `0600` afterwards.
+
+> **Rolling back to ≤ 0.17.x needs a backup in the old schema.** 0.18.0 migrates the database on
+> first start. Older code then opens the file without complaining, `/healthz` stays green and
+> accounts are readable — but every session operation raises. Take a backup *before* the update
+> (`tinysesam backup` leaves the source untouched) and restore that one.
+
+### Diagnosing "I can't get in"
+
+```bash
+python -m tinysesam audit  --db auth.db --user alice    # the audit log, from the command line
+python -m tinysesam unlock --db auth.db alice           # lift a brute-force lockout
+```
+
+The audit log records *why* a sign-in failed (`kein_konto`, `konto_gesperrt`,
+`falsches_geheimnis`) — the HTTP response deliberately does not, so it cannot be used to probe for
+accounts. The log is only read by the operator.
 
 ## Demo mode
 

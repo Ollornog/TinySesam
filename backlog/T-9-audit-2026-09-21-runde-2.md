@@ -2,7 +2,7 @@
 id: T-9
 type: Task
 title: Befunde des zweiten Audits (vier Blickwinkel) abarbeiten
-status: in-arbeit
+status: erledigt
 milestone: M-1
 tags: [sicherheit, betrieb, tests, audit]
 created: 2026-09-21
@@ -28,7 +28,7 @@ Jeder Punkt wird wie in T-8 erst am Code nachgestellt, bevor er angefasst wird.
       das einzig Richtige tut und sichert, hebt damit die laufende Installation auf das neue
       Schema, während der alte Code läuft. Der Rückweg ist danach zu, und eine Datei im alten
       Schema existiert nirgends mehr. Gilt für `gc` genauso.
-- [ ] **Rücksicherung ist nicht dokumentiert und schlägt still fehl.** Nach einem Absturz liegen
+- [x] **Rücksicherung ist nicht dokumentiert und schlägt still fehl.** Nach einem Absturz liegen
       `-wal`/`-shm` herum; ein `cp sicherung.db auth.db` wird beim Start von der liegengebliebenen
       WAL überschrieben — der alte Stand ist zurück, `integrity_check` sagt `ok`.
 - [x] **`konfigpruefung.py` prüft ein Feld, das es nicht gibt** (`ldap_server` statt `ldap_url`).
@@ -69,27 +69,27 @@ Jeder Punkt wird wie in T-8 erst am Code nachgestellt, bevor er angefasst wird.
       Passwort-Hashverfahren.
 - [x] scrypt-Fallback unter den OWASP-Parametern (`N=2^15, p=1` ist keine zugelassene Kombination).
 - [x] scrypt-Hashes werden **nie** auf argon2 gehoben, auch wenn das Extra nachinstalliert wird.
-- [ ] Sitzungs-Token wird beim Rechtewechsel (zweiter Faktor) nicht erneuert.
-- [ ] CSRF-Token wird beim Login nicht rotiert (naives Double-Submit).
+- [x] Sitzungs-Token wird beim Rechtewechsel (zweiter Faktor) nicht erneuert.
+- [x] CSRF-Token wird beim Login nicht rotiert (naives Double-Submit).
 
 ## Betrieb
 
-- [ ] **fail2ban lässt sich gegen Dritte richten:** Der Benutzername geht ungefiltert ins Log;
+- [x] **fail2ban lässt sich gegen Dritte richten:** Der Benutzername geht ungefiltert ins Log;
       ein `\n` darin erzeugt eine gefälschte Zeile mit fremder IP, während die echte unsichtbar
       wird. Gegen echtes fail2ban 1.1.1 belegt.
-- [ ] Die mitgelieferte **fail2ban-Jail kann im mitgelieferten Compose nichts lesen** — dort wird
+- [x] Die mitgelieferte **fail2ban-Jail kann im mitgelieferten Compose nichts lesen** — dort wird
       weder `TINYSESAM_SECURITY_LOG` gesetzt noch ein Logverzeichnis gemountet.
-- [ ] `/auth/oidc/start` ist die einzige flow-erzeugende Route **ohne Rate-Limit**; jeder Abbruch
+- [x] `/auth/oidc/start` ist die einzige flow-erzeugende Route **ohne Rate-Limit**; jeder Abbruch
       hinterlässt eine Zeile. `gc` gibt den Platz nicht zurück (kein `VACUUM`).
-- [ ] **Störfall-Diagnose:** falsches Passwort, deaktiviertes Konto und Tippfehler im Namen sind
+- [x] **Störfall-Diagnose:** falsches Passwort, deaktiviertes Konto und Tippfehler im Namen sind
       im Protokoll byte-identisch; eine aktive Sperre steht gar nicht im Audit; OIDC-Abweisungen
       (Gruppe fehlt / kein Konto) hinterlassen nichts. Es gibt keinen CLI-Weg ans Audit-Log.
-- [ ] Der **Healthcheck merkt einen Datenbankschaden nicht** — `/healthz` bleibt 200, während
+- [x] Der **Healthcheck merkt einen Datenbankschaden nicht** — `/healthz` bleibt 200, während
       jede angemeldete Anfrage 500 liefert.
-- [ ] **Rollback-Falle:** Alter Code auf neuer Datei startet, `/healthz` grün, Konten lesbar,
+- [x] **Rollback-Falle:** Alter Code auf neuer Datei startet, `/healthz` grün, Konten lesbar,
       jede Sitzungsoperation wirft. Nirgends dokumentiert.
-- [ ] Keine Timer-/Cron-Vorlage für `gc`, obwohl die README darauf verweist.
-- [ ] Kein Wort zur Aufbewahrung des Audit-Logs (speichert IP-Adressen).
+- [x] Keine Timer-/Cron-Vorlage für `gc`, obwohl die README darauf verweist.
+- [x] Kein Wort zur Aufbewahrung des Audit-Logs (speichert IP-Adressen).
 
 ## Die eigenen Prüfungen
 
@@ -103,14 +103,26 @@ Jeder Punkt wird wie in T-8 erst am Code nachgestellt, bevor er angefasst wird.
 - [x] `test_kern_install.py` misst an zwei Stellen **Textvorkommen statt Verhalten**.
 - [x] `test_typen.py` fährt mypy ohne `--check-untyped-defs`: 120 von 410 Funktionen werden nie
       geprüft, darunter alle vier Presets (Nutzer sehen dort `Any`).
-- [ ] Die Konstruktor-Wächter sind durch Ändern der Config **nach** dem Bau umgehbar — das
+- [x] Die Konstruktor-Wächter sind durch Ändern der Config **nach** dem Bau umgehbar — das
       eigene `examples/showcase.py` tut genau das.
-- [ ] `forward_headers={"user": None}` passiert den Wächter und kippt jeden Forward-Auth-Request
+- [x] `forward_headers={"user": None}` passiert den Wächter und kippt jeden Forward-Auth-Request
       in ein 500; `{"user": 123}` tötet den Konstruktor mit rohem `TypeError`.
 - [x] `_fehlt_extra` in `webauthn_.py` ist toter Code; der Passkey-Fall wirft `RuntimeError`
       statt `MissingExtra`.
-- [ ] `ldap_.authenticate()` **verschluckt** das fehlende Extra und antwortet wie bei einem
+- [x] `ldap_.authenticate()` **verschluckt** das fehlende Extra und antwortet wie bei einem
       falschen Passwort; `saml_.metadata()` importiert ungeschützt → 500.
+
+## Stand: abgearbeitet (2026-09-21)
+
+**Alle 43 Befunde bearbeitet.** Jeder wurde erst am Code nachgestellt, bevor er angefasst wurde;
+die Belege stecken in `tests/test_audit_runde2.py` (36 Prüfungen) und in der bestehenden
+Sicherheits-Suite.
+
+Die drei Regressionen von heute früh sind der eigentliche Ertrag dieser Runde: Der
+Erst-Admin-Wächter prüfte die *Konfiguration* und liess den *Vergleich* unverändert; die
+API-Key-Beschneidung machte aus „keine passende Rolle" ein „erbt alles"; und `tinysesam backup`
+migrierte die Datei, die es sichern sollte. Alle drei entstanden beim Schliessen einer Lücke —
+keiner davon wäre ohne einen zweiten, unabhängigen Blick aufgefallen.
 
 ## Widerlegt
 

@@ -83,8 +83,15 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
         sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
-        auth.complete_totp(sitzungs_token)
-        return RedirectResponse(auth.login_redirect_after(request, sitzungs_token, pu["id"], nxt), 303)
+        # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
+        # Rechtewechsel. Dann muss das Cookie mit.
+        erneuert = auth.complete_totp(sitzungs_token)
+        weiter = erneuert or sitzungs_token
+        antwort = RedirectResponse(auth.login_redirect_after(request, weiter, pu["id"], nxt), 303)
+        if erneuert:
+            auth.set_cookie(antwort, erneuert)
+            auth.csrf_rotieren(antwort)      # beim Login ein frisches CSRF-Token
+        return antwort
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)

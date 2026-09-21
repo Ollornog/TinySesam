@@ -114,7 +114,10 @@ class SAMLClient:
         return {"nameid": auth.get_nameid(), "attrs": auth.get_attributes() or {}}
 
     def metadata(self, base_url: str) -> str:
-        from onelogin.saml2.settings import OneLogin_Saml2_Settings
+        try:
+            from onelogin.saml2.settings import OneLogin_Saml2_Settings
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
         st = OneLogin_Saml2_Settings(self.settings(base_url), sp_validation_only=True)
         return st.get_sp_metadata()
 

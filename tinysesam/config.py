@@ -316,6 +316,34 @@ class TinySesamConfig:
         # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
         return cls(**base)   # type: ignore[arg-type]
 
+    def pruefen(self) -> list[str]:
+        """Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
+
+        `TinySesam` prüft im Konstruktor und hält danach eine **Referenz** auf dieses Objekt:
+        Wer Felder nachträglich setzt (`auth.cfg.cookie_samesite = "Strict"`), umgeht damit jeden
+        Wächter, und die Werte werden zur Request-Zeit gelesen. Das ist kein theoretischer Fall —
+        `examples/showcase.py` ändert `auth.cfg` nach dem Aufbau, und für Sprache oder Branding
+        ist das auch völlig in Ordnung.
+
+        Heikel sind nur die Felder, aus denen Cookies und Header entstehen. Wer zur Laufzeit an
+        der Konfiguration dreht, ruft danach diese Methode und bekommt eine Liste der Befunde
+        (leer = in Ordnung). Ein Einfrieren der Dataclass wäre die härtere Lösung — sie würde
+        aber auch das Erlaubte verbieten.
+        """
+        from .konfigpruefung import pruefe
+        fehler, warnungen = pruefe(self)
+        if self.cookie_samesite not in ("lax", "strict", "none"):
+            fehler.append(f"cookie_samesite={self.cookie_samesite!r} — erlaubt sind 'lax', "
+                          "'strict', 'none' (klein geschrieben)")
+        if self.cookie_samesite == "none" and not self.cookie_secure:
+            fehler.append("cookie_samesite='none' ohne cookie_secure=True — der Browser "
+                          "verwirft so ein Cookie")
+        if self.https_mode not in ("off", "warn", "force"):
+            fehler.append(f"https_mode={self.https_mode!r} — erlaubt sind 'off', 'warn', 'force'")
+        if not isinstance(self.csp, str):
+            fehler.append(f"csp muss ein String sein, ist {type(self.csp).__name__}")
+        return fehler + warnungen
+
     def enabled_methods(self) -> list[str]:
         """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier
         bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar."""

@@ -44,6 +44,12 @@ class LDAPClient:
             import ldap3
             from ldap3.utils.conv import escape_filter_chars
             from ldap3.utils.dn import escape_rdn
+        except ModuleNotFoundError as e:
+            # NICHT verschlucken. Diese Stelle ist der Weg, den ein Login nimmt: Ohne `ldap3`
+            # gab `authenticate()` einfach `None` zurück, die App antwortete 401, und das sah
+            # aus wie ein falsches Passwort. Der Betreiber sucht dann tagelang am falschen Ende
+            # — während anderswo (`_server()`) korrekt ein `MissingExtra` flog.
+            raise _fehlt_extra(e) from e
         except Exception:
             return None
         cfg = self.cfg

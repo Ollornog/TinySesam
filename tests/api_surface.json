@@ -15,13 +15,14 @@
     "check_saml": "(nameid, attrs) -> 'Optional[dict]'",
     "client_ip": "(request: 'Request') -> 'str'",
     "complete_mfa": "(token)",
-    "complete_totp": "(token)",
+    "complete_totp": "(token) -> 'Optional[str]'",
     "consume_admin_claim": "(token, user) -> 'bool'",
     "create_api_key": "(user_id, name=None, expires_days=None, roles=None) -> 'dict'",
     "create_invite": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
     "create_magic_token": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
     "create_service": "(username, roles=None, display_name=None) -> 'int'",
     "create_user": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False) -> 'int'",
+    "csrf_rotieren": "(response) -> 'str'",
     "csrf_token": "(request: 'Optional[Request]' = None) -> 'str'",
     "current_user": "(request) -> 'Optional[dict]'",
     "disable_pin": "(user_id)",
@@ -240,7 +241,8 @@
     "enabled_methods": "() -> 'list[str]'",
     "entra_id": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
     "local_accounts": "(**overrides)",
-    "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, **overrides)"
+    "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, **overrides)",
+    "pruefen": "() -> 'list[str]'"
   },
   "exporte": [
     "ConfigError",

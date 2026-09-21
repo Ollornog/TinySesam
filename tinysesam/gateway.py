@@ -28,6 +28,7 @@ from typing import Optional
 import os
 import sys
 
+from . import security
 from .config import TinySesamConfig
 from .manager import TinySesam
 
@@ -92,8 +93,25 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     @app.get(HEALTH_PATH, include_in_schema=False)
     def healthz():
         """Ohne Anmeldung erreichbar — sonst könnte kein Orchestrator ihn benutzen.
-        Verrät nur, dass der Prozess lebt und welche Version läuft."""
+
+        Fragt die Datenbank mit einem `SELECT 1`. Vorher meldete er nur, dass der Prozess lebt:
+        Nach einem Rollback, bei vollem Volume oder falschen Dateirechten lieferte der Dienst
+        allen angemeldeten Nutzern 500, während Docker den Container dauerhaft als `healthy`
+        führte — kein Neustart, kein Alarm. Ein Wächter, der den wahrscheinlichsten Ausfall
+        nicht sehen kann, ist keiner.
+
+        Verraten wird trotzdem nichts: bei einem Defekt nur `status: "degraded"` und 503, nie
+        die Fehlermeldung (die stünde sonst unauthentifiziert im Netz).
+        """
+        from fastapi.responses import JSONResponse
+
         from . import current_version
+        try:
+            auth.store._one("SELECT 1 AS eins")
+        except Exception as e:
+            security.seclog.error("Healthcheck: Datenbank nicht erreichbar (%s)", type(e).__name__)
+            return JSONResponse({"status": "degraded", "version": current_version()},
+                                status_code=503)
         return {"status": "ok", "version": current_version()}
 
     _install_https_except_health(auth, app)
