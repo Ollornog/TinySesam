@@ -86,9 +86,15 @@ def build_admin_router(auth) -> APIRouter:
         if disabled and uid == me["id"]:
             raise HTTPException(400, "sich selbst nicht sperren")
         auth.store.set_disabled(uid, disabled)
+        keys = 0
         if disabled:
             auth.store.delete_user_sessions(uid)
-        auth.audit("user_disable" if disabled else "user_enable", detail=f"uid={uid}")
+            # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
+            # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
+            # niemand mehr weiss.
+            keys = auth.store.revoke_user_api_keys(uid)
+        auth.audit("user_disable" if disabled else "user_enable",
+                   detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/password")
@@ -99,8 +105,12 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, "password nötig")
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
-        auth.audit("user_password_reset", detail=f"uid={uid}")
-        return {"ok": True}
+        # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
+        # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
+        # der Key ist eine zweite, gleichwertige Anmeldung.
+        keys = auth.store.revoke_user_api_keys(uid)
+        auth.audit("user_password_reset", detail=f"uid={uid} api_keys_revoked={keys}")
+        return {"ok": True, "api_keys_revoked": keys}
 
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
@@ -135,7 +145,10 @@ def build_admin_router(auth) -> APIRouter:
     def sessions(request: Request):
         guard(request)
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
-        return [{"full": s["token"], "user": names.get(s["user_id"], s["user_id"]), "method": s["method"],
+        # `full` ist das HANDLE (sha256 des Tokens), nicht das Token: Es benennt die Sitzung zum
+        # Beenden und taugt nicht zum Anmelden. Vorher stand hier das echte Sitzungstoken jedes
+        # Nutzers — wer die Panel-Antwort sah, konnte jede fremde Sitzung übernehmen.
+        return [{"full": s["token_hash"], "user": names.get(s["user_id"], s["user_id"]), "method": s["method"],
                  "ip": s["ip"], "created_at": s["created_at"], "mfa_ok": bool(s["mfa_ok"])}
                 for s in auth.store.list_sessions()]
 
@@ -144,7 +157,7 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         b = await auth.json_body(request)
         if b.get("token"):
-            auth.store.delete_session(b["token"])
+            auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
             auth.store.delete_user_sessions(int(b["user_id"]))
         auth.audit("session_revoke")

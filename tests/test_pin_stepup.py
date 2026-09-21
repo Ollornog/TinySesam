@@ -104,8 +104,8 @@ assert auth.stepup_options(u) == ["pin"], auth.stepup_options(u)
 
 # Frische künstlich abgelaufen lassen → Step-up wird verlangt
 s = auth.store.list_sessions()[0]
-auth.store.set_session_mfa(s["token"], True)
-auth.store.db.execute("UPDATE session SET mfa_at=0 WHERE token=?", (s["token"],))
+auth.store.set_session_mfa(s["token_hash"], True)
+auth.store.db.execute("UPDATE session SET mfa_at=0 WHERE token_hash=?", (s["token_hash"],))
 auth.store.db.commit()
 
 r = c.get("/sensibel", follow_redirects=False)

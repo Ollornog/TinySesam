@@ -869,12 +869,14 @@ class TinySesam:
             if factor not in done:
                 done.append(factor)
             ok = self._session_ok(user_id, done)
-            self.store.set_session_factors(s["token"], done, mfa_ok=ok)
+            self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
             self.maybe_promote_admin(self.store.get_user(user_id))
             if ok and not was_ok:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
-            return s["token"], ok, False
+            # Zurück geht das Klartext-Token aus dem Cookie — der Aufrufer baut daraus
+            # Redirects und Cookies. In der Sitzungs-Zeile steht nur noch das Handle.
+            return request.cookies.get(self.cfg.session_cookie), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id))
         return token, ok, True
@@ -897,7 +899,7 @@ class TinySesam:
         if "totp" not in done:
             done.append("totp")
         ok = self._session_ok(s["user_id"], done)
-        self.store.set_session_factors(token, done, mfa_ok=ok)
+        self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
         if ok:
             u = self.store.get_user(s["user_id"])
             self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
@@ -952,7 +954,7 @@ class TinySesam:
     def logout(self, request, response):
         s = self.session_from_request(request)
         if s:
-            self.store.delete_session(s["token"])
+            self.store.delete_session_by_handle(s["token_hash"])
         kw = dict(path=self.cfg.cookie_path)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain

@@ -395,6 +395,12 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 - **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
 - **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.
 - **Disable instead of delete:** `auth.revoke_api_key(id)` (key disabled, stays in the list). Self-service routes: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- **A key is a second front door, so locking an account out takes it along.** An admin password
+  reset and disabling an account revoke that user's keys; so does the user's own "end **all**
+  sessions" (`scope=all`). A user's own password change deliberately does **not** — a routine
+  change shouldn't silently kill their integrations — but the response and the audit entry say
+  how many keys are still live (`api_keys_active`). Keys of a disabled account never
+  authenticated in the first place.
 
 ## Admin panel
 

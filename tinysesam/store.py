@@ -4,7 +4,7 @@ Bewusst stdlib-`sqlite3` (kein ORM): leichtgewichtig, keine zusätzliche Abhäng
 Thread-safe über ein Lock + `check_same_thread=False` (FastAPI-Worker teilen sich die Instanz).
 """
 from __future__ import annotations
-import sqlite3, threading, time, secrets, json, logging
+import sqlite3, threading, time, secrets, json, logging, hashlib, os, stat
 from typing import Optional
 
 SCHEMA = """
@@ -72,7 +72,10 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
     PRIMARY KEY (issuer, subject)
 );
 CREATE TABLE IF NOT EXISTS session (
-    token      TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
+                                               -- Cookie des Browsers. Wer die Datei liest, bekommt
+                                               -- damit keine übernehmbare Sitzung (s. magic_token,
+                                               -- das es von Anfang an so hält).
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
@@ -161,7 +164,22 @@ def _now() -> int:
 
 
 class Store:
+    #: Rechte für eine NEU angelegte Datenbank. Hier stehen Passwort-Hashes, TOTP-Geheimnisse
+    #: und E-Mail-Adressen; auf einem geteilten Host konnte sie bis 0.18.0 jeder lesen (0644,
+    #: je nach umask). Bei einer bestehenden Datei wird nichts umgestellt — wer bewusst eine
+    #: Gruppe freigegeben hat, soll das behalten —, aber es gibt eine Warnung.
+    DATEIRECHTE = 0o600
+
     def __init__(self, db_path: str):
+        neu = db_path not in (":memory:", "") and not os.path.exists(db_path)
+        if neu:
+            # Die Datei entsteht direkt mit engen Rechten. Ein chmod NACH dem Verbinden hätte
+            # ein Zeitfenster, in dem sie offen dasteht — und genau in dem Moment schreibt
+            # SQLite das Schema hinein.
+            try:
+                os.close(os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
+            except OSError:
+                neu = False                      # Verzeichnis fehlt o.ä. — sqlite3 meldet es gleich
         self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -171,6 +189,31 @@ class Store:
             self.db.executescript(SCHEMA)
             self.db.commit()
         self._migrate()
+        self._dateirechte_pruefen(db_path, neu)
+
+    def _dateirechte_pruefen(self, db_path: str, neu: bool):
+        """WAL und SHM tragen dieselben Daten wie die Datenbank — sie bekommen dieselben Rechte.
+
+        Die Hauptdatei selbst wird nur bei einer bestehenden Installation beurteilt, nicht
+        umgeschrieben: eine bewusste Gruppenfreigabe ist eine Entscheidung des Betreibers, keine
+        Lücke. Still bleibt sie trotzdem nicht."""
+        if db_path in (":memory:", ""):
+            return
+        try:
+            modus = stat.S_IMODE(os.stat(db_path).st_mode)
+        except OSError:
+            return
+        for anhang in ("-wal", "-shm"):
+            pfad = db_path + anhang
+            try:
+                if os.path.exists(pfad) and stat.S_IMODE(os.stat(pfad).st_mode) != modus:
+                    os.chmod(pfad, modus)
+            except OSError:
+                pass                              # Dateisystem ohne Rechte (Windows, manche Mounts)
+        if not neu and modus & 0o077:
+            logging.getLogger("tinysesam").warning(
+                "Die Datenbank %s ist für andere Konten lesbar (%o). Darin stehen Passwort-Hashes "
+                "und TOTP-Geheimnisse. Enger stellen: chmod 600 %s", db_path, modus, db_path)
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent)."""
@@ -184,6 +227,21 @@ class Store:
                 for name, decl in cols:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+            # Sitzungs-Tokens lagen bis 0.18.0 im Klartext in der Datei. Der Hash lässt sich aus
+            # dem Klartext ausrechnen — bestehende Anmeldungen überleben die Umstellung also, die
+            # Cookies bleiben gültig. Läuft genau einmal: danach heisst die Spalte anders.
+            spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
+            if "token" in spalten and "token_hash" not in spalten:
+                self.db.execute("ALTER TABLE session RENAME COLUMN token TO token_hash")
+                zeilen = self.db.execute("SELECT token_hash FROM session").fetchall()
+                self.db.executemany(
+                    "UPDATE session SET token_hash=? WHERE token_hash=?",
+                    [(hashlib.sha256(z["token_hash"].encode()).hexdigest(), z["token_hash"])
+                     for z in zeilen if z["token_hash"]])
+                logging.getLogger("tinysesam").info(
+                    "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
+                    len(zeilen))
             # E-Mail eindeutig (Login-Kennung) — partiell, damit Konten ohne E-Mail erlaubt bleiben.
             # Bestandsdaten mit Dubletten: Index kann nicht angelegt werden → laut sagen, nicht crashen.
             try:
@@ -366,47 +424,74 @@ class Store:
         return r["user_id"] if r else None
 
     # ---------- Sessions ----------
+    # Gespeichert wird der sha256 des Tokens, nie das Token selbst. Alles, was aus einer
+    # Sitzungs-Zeile kommt (`row["token_hash"]`), ist deshalb ein Handle: Es benennt eine Sitzung
+    # und taugt nicht zum Anmelden. Der Klartext lebt zwischen `create_session()` und dem Cookie.
+    @staticmethod
+    def session_hash(token: str) -> str:
+        return hashlib.sha256((token or "").encode()).hexdigest()
+
     def create_session(self, user_id, ttl_seconds, mfa_ok, method, ip=None, ua=None, remember=True,
                        factors=None) -> str:
         token = secrets.token_urlsafe(32)
         now = _now()
-        self._exec("INSERT INTO session(token, user_id, created_at, expires_at, mfa_ok, mfa_at, method, "
-                   "factors_done, remember, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                   (token, user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
+        self._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, "
+                   "method, factors_done, remember, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   (self.session_hash(token), user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
                     (now if mfa_ok else None), method, json.dumps(list(factors or [])),
                     1 if remember else 0, ip, ua))
         return token
 
-    def set_session_factors(self, token, factors, mfa_ok=None):
+    @staticmethod
+    def _handle(wert) -> str:
+        """Ein Handle ist ein sha256-Hexdigest. Wer hier versehentlich ein Klartext-Token
+        hereinreicht, bekommt einen Fehler — sonst liefe das UPDATE ins Leere und die Sitzung
+        behielte still ihren alten Stand (ein zweiter Faktor, der nicht ankommt, fällt niemandem
+        auf, bis er fehlt)."""
+        h = str(wert or "")
+        if len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
+            raise ValueError("Sitzungs-Handle erwartet (token_hash aus der Sitzungs-Zeile), "
+                             f"kein Klartext-Token: {h[:12]!r}…")
+        return h
+
+    def set_session_factors(self, handle, factors, mfa_ok=None):
+        h = self._handle(handle)
         if mfa_ok is None:
-            self._exec("UPDATE session SET factors_done=?, mfa_at=? WHERE token=?",
-                       (json.dumps(list(factors)), _now(), token))
+            self._exec("UPDATE session SET factors_done=?, mfa_at=? WHERE token_hash=?",
+                       (json.dumps(list(factors)), _now(), h))
         else:
-            self._exec("UPDATE session SET factors_done=?, mfa_ok=?, mfa_at=? WHERE token=?",
-                       (json.dumps(list(factors)), 1 if mfa_ok else 0, _now(), token))
+            self._exec("UPDATE session SET factors_done=?, mfa_ok=?, mfa_at=? WHERE token_hash=?",
+                       (json.dumps(list(factors)), 1 if mfa_ok else 0, _now(), h))
 
     def get_session(self, token) -> Optional[sqlite3.Row]:
         if not token:
             return None
-        r = self._one("SELECT * FROM session WHERE token=?", (token,))
+        r = self._one("SELECT * FROM session WHERE token_hash=?", (self.session_hash(token),))
         if r and r["expires_at"] < _now():
             self.delete_session(token)
             return None
         return r
 
-    def set_session_mfa(self, token, ok=True):
-        self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token=?",
-                   (1 if ok else 0, (_now() if ok else None), token))
+    def set_session_mfa(self, handle, ok=True):
+        self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
+                   (1 if ok else 0, (_now() if ok else None), self._handle(handle)))
 
     def delete_session(self, token):
-        self._exec("DELETE FROM session WHERE token=?", (token,))
+        """Klartext-Token (aus dem Cookie) — für Logout."""
+        self._exec("DELETE FROM session WHERE token_hash=?", (self.session_hash(token),))
+
+    def delete_session_by_handle(self, handle):
+        """Handle aus einer Sitzungs-Zeile — für Admin-Panel und „andere Sitzungen beenden"."""
+        self._exec("DELETE FROM session WHERE token_hash=?", (self._handle(handle),))
 
     def delete_user_sessions(self, user_id):
         self._exec("DELETE FROM session WHERE user_id=?", (user_id,))
 
-    def delete_user_sessions_except(self, user_id, keep_token):
-        """Alle Sitzungen eines Users beenden AUSSER einer (z.B. die aktuelle bei Selbst-PW-Änderung)."""
-        self._exec("DELETE FROM session WHERE user_id=? AND token!=?", (user_id, keep_token or ""))
+    def delete_user_sessions_except(self, user_id, keep_handle):
+        """Alle Sitzungen eines Users beenden AUSSER einer (z.B. die aktuelle bei Selbst-PW-Änderung).
+
+        `keep_handle` ist das `token_hash` aus der Sitzungs-Zeile, nicht das Cookie."""
+        self._exec("DELETE FROM session WHERE user_id=? AND token_hash!=?", (user_id, keep_handle or ""))
 
     def gc_sessions(self) -> int:
         return self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),)).rowcount
@@ -566,6 +651,17 @@ class Store:
 
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
+
+    def revoke_user_api_keys(self, user_id) -> int:
+        """Alle noch gültigen Keys eines Kontos entwerten. Gibt zurück, wie viele es waren —
+        die Zahl gehört ins Protokoll und in die Antwort, sonst merkt niemand, was still
+        weggefallen ist (oder eben weiterläuft)."""
+        return self._exec("UPDATE api_key SET revoked=1 WHERE user_id=? AND revoked=0",
+                          (user_id,)).rowcount
+
+    def count_active_api_keys(self, user_id) -> int:
+        r = self._one("SELECT COUNT(*) AS n FROM api_key WHERE user_id=? AND revoked=0", (user_id,))
+        return r["n"] if r else 0
 
     def revoke_api_key(self, key_id, user_id=None):
         if user_id is not None:

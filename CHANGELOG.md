@@ -68,6 +68,41 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Sicherheit — vier Befunde aus der zweiten Runde ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+
+Die Reifeprüfung meldete 35 weitere Befunde, die niemand einzeln nachgestellt hatte. Sie werden
+der Reihe nach geprüft — bestätigt, widerlegt oder als Geschmacksfrage abgelegt. Diese vier waren
+bestätigt:
+
+**Sitzungs-Token lagen im Klartext in der Datenbank.** Jetzt steht dort nur ihr sha256; der
+Klartext lebt zwischen `create_session()` und dem Cookie. Alles, was aus einer Sitzungs-Zeile
+kommt (`token_hash`), ist damit ein Handle: Es benennt eine Sitzung zum Beenden und taugt nicht
+zum Anmelden. Das Muster gab es im selben Haus schon — `magic_token` hält es von Anfang an so.
+**Bestehende Anmeldungen überleben die Umstellung:** Der Hash ist aus dem Klartext berechenbar,
+die Migration rechnet ihn beim ersten Start aus. Wer die Store-API direkt nutzt, liest
+`row["token_hash"]` statt `row["token"]`; die Schreibwege (`set_session_mfa`,
+`set_session_factors`, `delete_session_by_handle`) nehmen dieses Handle und **werfen** bei einem
+Klartext-Token, statt still ins Leere zu laufen.
+
+**Das Admin-Panel gab die Sitzungstoken aller Nutzer heraus.** `GET /admin/api/sessions` lieferte
+das echte Token jeder fremden Sitzung an den Browser — zum Beenden gedacht, zum Übernehmen
+geeignet. Es liefert jetzt das Handle.
+
+**Die Datenbank wurde welt-lesbar angelegt (0644).** Darin stehen Passwort-Hashes,
+TOTP-Geheimnisse und E-Mail-Adressen. Eine neue Datei entsteht jetzt direkt mit `0600` — nicht
+per `chmod` danach, das hätte ein Zeitfenster, in dem sie offen dasteht, und genau darin schreibt
+SQLite das Schema hinein. WAL und SHM tragen dieselben Daten und bekommen dieselben Rechte. Eine
+**bestehende** Datenbank wird nicht umgeschrieben (eine bewusste Gruppenfreigabe ist die
+Entscheidung des Betreibers), aber sie wird mit dem nötigen Befehl im Log benannt.
+
+**API-Keys überlebten das Aussperren.** Ein Key hängt an keiner Sitzung; wer ein Konto
+zurücksetzte, schloss nur die Haustür. Jetzt gilt: Der **Admin-Reset** und das **Sperren** eines
+Kontos widerrufen die Keys (dort ist die Absicht eindeutig). Der **eigene** Passwortwechsel lässt
+sie absichtlich stehen — ein Routine-Wechsel soll keine Automatiken stilllegen —, nennt aber ihre
+Zahl in der Antwort (`api_keys_active`) und im Protokoll. „Alle Sitzungen beenden" (`scope=all`)
+nimmt sie mit, „andere beenden" nicht. (Der Key eines **deaktivierten** Kontos war nie gültig —
+`verify_api_key` prüft das Flag; der gemeldete Befund reichte hier weiter, als er trug.)
+
 ### Hinzugefügt — die Veröffentlichung auf PyPI ist vorbereitet (noch nicht vollzogen)
 
 Metadaten, `MANIFEST.in`, ein Packaging-Test und der Release-Workflow stehen bereit. **Installiert

@@ -9,6 +9,9 @@ wählt, wäre keiner gewesen.
 """
 from __future__ import annotations
 
+import hashlib
+import io
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -312,5 +315,197 @@ cr.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
 r.check("die ACS reicht die abgelegte Request-ID an die Prüfung weiter",
         auth_r.saml.gesehene_request_id == "_authnreq-4711",
         f"sie sah {auth_r.saml.gesehene_request_id!r} — der Anker hängt an keinem Draht")
+
+
+# ── Sitzungen übernehmen: aus der Datei oder aus dem Admin-Panel ───────────────
+# Sitzungs-Token lagen im Klartext in der Datenbank, und `GET /admin/api/sessions` gab sie
+# obendrein an den Browser. Beides zusammen heisst: Wer die Datei liest (sie lag bei 0644) oder
+# eine Panel-Antwort sieht, meldet sich als beliebiger Nutzer an. Gespeichert wird jetzt nur der
+# sha256; das Panel bekommt dieses Handle, mit dem man beenden, aber nicht anmelden kann.
+auth_t, app_t = _app()
+auth_t.create_user("opfer", password="geheim12345")
+opfer_id = auth_t.store.get_user_by_name("opfer")["id"]
+# `create_session` gibt zurück, was ins Cookie geht — genau der Wert, um den es geht.
+cookie_wert = auth_t.store.create_session(opfer_id, 3600, True, "password")
+
+gespeichert = [z["token_hash"] for z in auth_t.store._all("SELECT token_hash FROM session")]
+# sha256 hier selbst rechnen: ein Test, der `store.session_hash()` fragt, misst gegen dieselbe
+# Funktion, die er prüft — und bliebe grün, wenn die zur Identität mutiert.
+erwartet = hashlib.sha256(cookie_wert.encode()).hexdigest()
+r.check("in der Datenbank steht kein Klartext-Token", gespeichert == [erwartet],
+        f"gespeichert: {gespeichert[:1]} — erwartet war der sha256 des Cookies")
+r.check("das Cookie ist NICHT der gespeicherte Wert",
+        bool(cookie_wert) and cookie_wert not in gespeichert,
+        "wer die Datei liest, hat das Anmelde-Token")
+
+# Das Handle darf sich nicht als Cookie einsetzen lassen.
+handle = gespeichert[0]
+r.check("das Handle taugt nicht als Sitzungs-Cookie",
+        auth_t.store.get_session(handle) is None,
+        "der gespeicherte Wert meldet an — dann ist das Hashen wirkungslos")
+r.check("das echte Cookie meldet weiterhin an",
+        auth_t.store.get_session(cookie_wert) is not None,
+        "die Sitzung ist gar nicht auffindbar — dann misst der Test nichts")
+
+# Und das Panel gibt genau dieses Handle heraus, nicht das Token.
+panel = [z["token_hash"] for z in auth_t.store.list_sessions()]
+r.check("das Admin-Panel bekommt nur Handles zu sehen", panel == [handle],
+        f"list_sessions liefert {panel[:1]}")
+
+# ... aber sehr wohl zum Beenden, sonst wäre das Panel kaputt.
+auth_t.store.delete_session_by_handle(handle)
+r.check("das Handle beendet die Sitzung weiterhin",
+        auth_t.store.get_session(cookie_wert) is None,
+        "das Panel kann keine Sitzung mehr beenden")
+
+# Und ein Klartext-Token an einer Handle-Stelle ist ein Fehler, kein stiller No-Op:
+# ein UPDATE, das keine Zeile trifft, liesse einen bestätigten Faktor lautlos verschwinden.
+try:
+    auth_t.store.set_session_mfa("nicht-ein-hash", True)
+    lautlos = True
+except ValueError:
+    lautlos = False
+r.check("ein Klartext-Token an einer Handle-Stelle fliegt auf", not lautlos,
+        "läuft ins Leere — die Sitzung behielte still ihren alten Stand")
+
+
+# Die Umstellung darf niemanden auswerfen: der Hash ist aus dem Klartext berechenbar, also lassen
+# sich bestehende Zeilen migrieren. Eine Datenbank im alten Format nachbauen und öffnen.
+import sqlite3 as _sq  # noqa: E402
+
+from tinysesam.store import Store  # noqa: E402
+
+alt_pfad = str(Path(tempfile.mkdtemp()) / "alt.db")
+auth_alt, _ = _app(db_path=alt_pfad)
+auth_alt.create_user("bestand", password="geheim12345")
+altes_token = auth_alt.store.create_session(
+    auth_alt.store.get_user_by_name("bestand")["id"], 3600, True, "password")
+altes_handle = hashlib.sha256(altes_token.encode()).hexdigest()
+auth_alt.store.db.close()
+
+# zurück ins Format vor 0.18.0: Spalte heisst `token` und trägt den Klartext
+roh = _sq.connect(alt_pfad)
+roh.execute("ALTER TABLE session RENAME COLUMN token_hash TO token")
+roh.execute("UPDATE session SET token=?", (altes_token,))
+roh.commit()
+roh.close()
+
+neu_store = Store(alt_pfad)
+spalten = {z[1] for z in neu_store.db.execute("PRAGMA table_info(session)")}
+r.check("die alte Spalte `token` wird auf `token_hash` migriert",
+        "token_hash" in spalten and "token" not in spalten,
+        f"Spalten: {sorted(spalten)}")
+r.check("bestehende Anmeldungen überleben die Umstellung",
+        neu_store.get_session(altes_token) is not None,
+        "das alte Cookie gilt nicht mehr — ein Update hätte alle Nutzer ausgeloggt")
+r.check("und der Klartext ist danach aus der Datei verschwunden",
+        [z["token_hash"] for z in neu_store._all("SELECT token_hash FROM session")] == [altes_handle],
+        "der Klartext steht weiterhin in der Datenbank")
+
+
+# ── Die Auth-Datenbank lag offen (0644) ───────────────────────────────────────
+# Darin stehen Passwort-Hashes, TOTP-Geheimnisse und E-Mail-Adressen. Auf einem geteilten Host
+# konnte sie jedes andere Konto lesen — WAL und SHM mit denselben Daten ebenso.
+import os as _os  # noqa: E402
+import stat as _stat  # noqa: E402
+
+ordner = tempfile.mkdtemp()
+pfad = str(Path(ordner) / "rechte.db")
+auth_d, _ = _app(db_path=pfad)
+auth_d.create_user("wer", password="geheim12345")
+auth_d.store.create_session(auth_d.store.get_user_by_name("wer")["id"], 3600, True, "password")
+
+
+def _modus(datei):
+    return _stat.S_IMODE(_os.stat(datei).st_mode)
+
+
+offen = {f: oct(_modus(Path(ordner) / f)) for f in sorted(_os.listdir(ordner))
+         if _modus(Path(ordner) / f) & 0o077}
+r.check("Datenbank, WAL und SHM sind nur für den eigenen Benutzer lesbar", not offen,
+        f"für andere lesbar: {offen}")
+r.check("die Prüfung sah überhaupt eine WAL-Datei",
+        any(f.endswith("-wal") for f in _os.listdir(ordner)),
+        f"nur {_os.listdir(ordner)} — dann sagt der Test über WAL/SHM nichts aus")
+
+# Eine bestehende, zu offene Datenbank wird NICHT umgeschrieben (eine bewusste Gruppenfreigabe
+# ist die Entscheidung des Betreibers) — aber sie wird laut benannt.
+auth_d.store.db.close()
+_os.chmod(pfad, 0o644)
+puffer = io.StringIO()
+haken = logging.StreamHandler(puffer)
+log_ts = logging.getLogger("tinysesam")
+log_ts.addHandler(haken)
+try:
+    Store(pfad)
+finally:
+    log_ts.removeHandler(haken)
+r.check("eine bestehende, offene Datenbank wird gemeldet", "chmod 600" in puffer.getvalue(),
+        f"keine Warnung: {puffer.getvalue()[:100]!r}")
+r.check("und dabei nicht hinter dem Rücken umgestellt", _modus(pfad) == 0o644,
+        f"auf {oct(_modus(pfad))} geändert — das überfährt eine bewusste Freigabe")
+
+
+# ── API-Keys als zweite Tür: Aussperren sperrte sie nicht aus ─────────────────
+# Ein Key hängt an keiner Sitzung. Wer ein Konto zurücksetzt oder sperrt, schloss bis 0.18.0 nur
+# die Haustür. (Der Key eines DEAKTIVIERTEN Kontos war schon immer wertlos — `verify_api_key`
+# prüft das Flag; hier geht es um Reset, Sperre und die Panik-Taste des Nutzers.)
+auth_k, app_k = _app(apikey_enabled=True)
+uid_k = auth_k.create_user("bot-halter", password="geheim12345")
+
+
+def _key_gilt(auth_obj, schluessel):
+    # verify_api_key gibt (user, roles) zurück — ein Tupel ist IMMER truthy. Nur [0] zählt.
+    return auth_obj.verify_api_key(schluessel)[0] is not None
+
+
+schluessel = auth_k.create_api_key(uid_k, "bot")["key"]
+r.check("ein frischer API-Key gilt", _key_gilt(auth_k, schluessel), "schon der Ausgangspunkt fehlt")
+
+# Selbst-Passwortwechsel lässt ihn absichtlich stehen — sonst legt jede Routine die Automatiken
+# still. Aber der Zustand muss abfragbar sein, sonst ist „absichtlich" nur „unbemerkt".
+auth_k.set_password(uid_k, "nochgeheimer99")
+r.check("der eigene Passwortwechsel lässt Automatiken laufen", _key_gilt(auth_k, schluessel),
+        "der Key ist tot — jede Passwort-Routine legt die Integrationen still")
+r.check("und die Zahl der weiter gültigen Keys ist abfragbar",
+        auth_k.store.count_active_api_keys(uid_k) == 1,
+        f"gezählt: {auth_k.store.count_active_api_keys(uid_k)}")
+
+# Der Massenwiderruf entwertet, und er sagt wie viele.
+anzahl = auth_k.store.revoke_user_api_keys(uid_k)
+r.check("der Massenwiderruf nennt die Zahl", anzahl == 1, f"meldete {anzahl}")
+r.check("danach gilt der Key nicht mehr", not _key_gilt(auth_k, schluessel),
+        "widerrufen und trotzdem gültig")
+r.check("ein zweiter Widerruf zählt nichts doppelt",
+        auth_k.store.revoke_user_api_keys(uid_k) == 0,
+        "zählt schon widerrufene Keys erneut")
+
+# Admin-Passwort-Reset: dort ist die Absicht Aussperren. CSRF ist für diesen Block abgeschaltet
+# — der Schutz des Panels hat seine eigene Prüfung weiter oben, hier geht es um die Keys.
+auth_a, _ = _app(apikey_enabled=True, csrf_enabled=False)
+uid_a = auth_a.create_user("bot-halter", password="geheim12345")
+zweit = auth_a.create_api_key(uid_a, "bot2")["key"]
+admin_a = auth_a.create_user("chefin", password="geheim12345", is_admin=True)
+app_a = FastAPI()
+app_a.include_router(auth_a.router())          # Admin-Panel hängt per Auto-Mount unter /auth/admin
+ca = TestClient(app_a)
+ca.cookies.set(auth_a.cfg.session_cookie,
+               auth_a.store.create_session(admin_a, 3600, True, "password"))
+
+antwort = ca.post(f"/auth/admin/api/users/{uid_a}/password", json={"password": "ganzneu12345"})
+r.check("der Admin-Reset läuft überhaupt durch", antwort.status_code == 200,
+        f"HTTP {antwort.status_code}: {antwort.text[:120]}")
+r.check("der Admin-Reset entwertet die API-Keys des Kontos", not _key_gilt(auth_a, zweit),
+        "Key gilt weiter — Aussperren schloss nur die Haustür")
+r.check("und sagt, wie viele es waren", antwort.json().get("api_keys_revoked") == 1,
+        f"Antwort: {antwort.text[:120]}")
+
+# Konto sperren: Keys sind über das `disabled`-Flag ohnehin tot — aber sie müssen auch
+# widerrufen SEIN, sonst leben sie beim Entsperren wieder auf.
+dritt = auth_a.create_api_key(uid_a, "bot3")["key"]
+ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": True})
+ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": False})
+r.check("ein Key lebt nach Sperren und Entsperren nicht wieder auf", not _key_gilt(auth_a, dritt),
+        "der Key gilt wieder — gesperrt und entsperrt ist kein Freifahrtschein")
 
 sys.exit(r.done())

@@ -36,7 +36,8 @@ uid = auth.store.get_user_by_name("admin")["id"]
 def stale():
     """mfa_at der aktuellen Sitzung künstlich altern lassen."""
     tok = c.cookies.get("tinysesam_session")
-    auth.store._exec("UPDATE session SET mfa_at=? WHERE token=?", (int(time.time()) - 100000, tok))
+    auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                     (int(time.time()) - 100000, auth.store.session_hash(tok)))
 
 
 # ---------- frisch nach Login → sudo erreichbar ----------
@@ -87,7 +88,8 @@ r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=Fals
 assert r.status_code == 200, r.status_code
 # altern → Admin-Panel verlangt Reauth
 tok = c3.cookies.get("tinysesam_session")
-auth.store._exec("UPDATE session SET mfa_at=? WHERE token=?", (int(time.time()) - 100000, tok))
+auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                     (int(time.time()) - 100000, auth.store.session_hash(tok)))
 r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=False)
 assert r.status_code == 307 and "/auth/reauth" in r.headers["location"], r.headers.get("location")
 # Reauth verlangt jetzt TOTP (nicht Passwort)

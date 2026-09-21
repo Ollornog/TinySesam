@@ -404,6 +404,12 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
 - **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- **Ein Key ist eine zweite Haustür — Aussperren nimmt ihn mit.** Der Admin-Passwort-Reset und
+  das Sperren eines Kontos widerrufen dessen Keys, ebenso „**alle** Sitzungen beenden"
+  (`scope=all`) durch den Nutzer selbst. Der **eigene** Passwortwechsel tut es bewusst nicht —
+  ein Routine-Wechsel soll die Automatiken nicht reihenweise stilllegen —, nennt aber in der
+  Antwort und im Protokoll, wie viele Keys weiter gelten (`api_keys_active`). Keys eines
+  deaktivierten Kontos haben ohnehin nie angemeldet.
 
 ## Admin-Panel
 

@@ -85,8 +85,9 @@ def build_router(auth) -> APIRouter:
             auth.record_login(pu["username"], ip, False, "totp")
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
-        auth.complete_mfa(s["token"])
-        return RedirectResponse(auth.login_redirect_after(request, s["token"], pu["id"], nxt), 303)
+        sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
+        auth.complete_mfa(sitzungs_token)
+        return RedirectResponse(auth.login_redirect_after(request, sitzungs_token, pu["id"], nxt), 303)
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -343,7 +344,7 @@ def build_router(auth) -> APIRouter:
                                     methods=methods, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
         if s:
-            auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
+            auth.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
         auth.audit("stepup", u["username"], ip)
         return RedirectResponse(nxt, 303)
 
@@ -535,9 +536,15 @@ def build_router(auth) -> APIRouter:
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
-        auth.store.delete_user_sessions_except(u["id"], s["token"] if s else None)
-        auth.audit("password_change", u["username"], auth.client_ip(request))
-        return {"ok": True}
+        auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
+        # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
+        # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
+        # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
+        # Einbruch das Passwort ändert, muss wissen, dass da noch eine Tür offen ist.
+        aktiv = auth.store.count_active_api_keys(u["id"])
+        auth.audit("password_change", u["username"], auth.client_ip(request),
+                   f"api_keys_active={aktiv}" if aktiv else None)
+        return {"ok": True, "api_keys_active": aktiv}
 
     if cfg.account_enabled:
         @r.get("/auth/account", response_class=HTMLResponse)
@@ -557,11 +564,11 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         cur = auth.session_from_request(request)
-        cur_tok = cur["token"] if cur else None
+        cur_tok = cur["token_hash"] if cur else None
         out = []
         for s in auth.store.list_sessions(u["id"]):
             out.append({"created_at": s["created_at"], "ip": s["ip"], "method": s["method"],
-                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token"] == cur_tok})
+                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token_hash"] == cur_tok})
         return out
 
     @r.post("/auth/sessions/revoke")
@@ -570,13 +577,21 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         scope = (await auth.json_body(request)).get("scope", "others")
+        # Ein API-Key ist eine zweite, gleichwertige Anmeldung — er hängt an keiner Sitzung.
+        # „alle beenden" ist die Panik-Taste (Konto vermutlich übernommen): da gehört er dazu.
+        # „andere beenden" ist Aufräumen: da bleibt er, und die Antwort sagt, wie viele weiter
+        # gelten. Stillschweigend weiterlaufen lassen ist das Einzige, was nicht geht.
+        keys_widerrufen = 0
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
+            keys_widerrufen = auth.store.revoke_user_api_keys(u["id"])
         else:
             cur = auth.session_from_request(request)
-            auth.store.delete_user_sessions_except(u["id"], cur["token"] if cur else None)
-        auth.audit("sessions_revoke", u["username"], auth.client_ip(request), scope)
-        return {"ok": True}
+            auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
+        auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
+                   scope + (f" api_keys_revoked={keys_widerrufen}" if keys_widerrufen else ""))
+        return {"ok": True, "api_keys_revoked": keys_widerrufen,
+                "api_keys_active": auth.store.count_active_api_keys(u["id"])}
 
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
