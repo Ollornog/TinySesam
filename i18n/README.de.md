@@ -7,7 +7,7 @@
 <p align="right">
 <a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
 <a href="../LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
-<img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
+<img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python">
 </p>
 
 ### Der Login-Mechanismus für deine selbstgebauten Apps.
@@ -821,7 +821,7 @@ gh run watch --exit-status            # nach dem Push: CI-Ergebnis abholen, Exit
 
 **GitHub Actions** fährt das bei **Push auf `main`, bei Pull Requests und auf Zuruf**
 (`workflow_dispatch`) — ein Push auf einen Feature-Branch löst bewusst nichts aus; dafür ist
-`scripts/check.sh` da. Die CI fährt den vollen Lauf (Python 3.10–3.14 mit `[all]`), einen
+`scripts/check.sh` da. Die CI fährt den vollen Lauf (Python 3.12–3.14 mit `[all]`), einen
 Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der
 zusätzlich die Website baut.
 
