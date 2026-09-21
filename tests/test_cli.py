@@ -34,7 +34,7 @@ def cli(*argv, stdin=None):
     return code, aus.getvalue()
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, cookie_secure=False, passkey_enabled=False))
 auth.create_user("admin", "altes-geheim", is_admin=True)
 uid = auth.store.get_user_by_name("admin")["id"]
@@ -90,7 +90,7 @@ ok("--help → usage, Exit 0 (nicht 2 wie ein Tippfehler)")
 # ---------- backup: eine Datei-Kopie taugt im WAL-Modus nicht ----------
 import sqlite3
 
-nackt = tempfile.mktemp(suffix=".db")
+nackt = os.path.join(tempfile.mkdtemp(), "t.db")
 code, aus = cli("backup", "--db", db, nackt)
 assert code == 0 and "Sicherung geschrieben" in aus, (code, aus)
 namen = {z[0] for z in sqlite3.connect(nackt).execute("SELECT username FROM users")}
@@ -105,7 +105,7 @@ ok("die Sicherung trägt dieselben engen Rechte wie die Quelle")
 # Das naive Backup zur Gegenprobe — es ist genau der Fehler, den das Kommando abnimmt.
 import shutil
 
-roh = tempfile.mktemp(suffix=".db")
+roh = os.path.join(tempfile.mkdtemp(), "t.db")
 shutil.copy(db, roh)
 try:
     sqlite3.connect(roh).execute("SELECT COUNT(*) FROM users").fetchone()
@@ -119,7 +119,7 @@ code, aus = cli("backup", "--db", db, nackt)
 assert code == 1 and "gibt es schon" in aus, (code, aus)
 ok("backup überschreibt keine bestehende Datei")
 
-code, aus = cli("backup", "--db", tempfile.mktemp(suffix=".db"), tempfile.mktemp())
+code, aus = cli("backup", "--db", os.path.join(tempfile.mkdtemp(), "t.db"), os.path.join(tempfile.mkdtemp(), "datei"))
 assert code == 1 and "Keine Datenbank" in aus, (code, aus)
 ok("backup auf eine fehlende Datenbank → Exit 1, keine leere Datei angelegt")
 

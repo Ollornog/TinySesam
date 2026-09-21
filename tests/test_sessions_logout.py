@@ -1,4 +1,5 @@
 """Batch D: eigene Sitzungen verwalten (+ „überall abmelden") und optionaler OIDC-RP-Logout."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
 auth.ensure_admin("admin", "geheim123")
@@ -48,7 +49,7 @@ ok("revoke scope=all: auch die eigene Sitzung beendet")
 os.remove(db)
 
 # ---------- OIDC-RP-Logout: end_session_url + Logout-Redirect zum Provider ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=True,
                                  oidc_issuer="https://id.example.invalid", oidc_client_id="cid",
                                  oidc_client_secret="sec", cookie_secure=False, oidc_rp_logout=True,

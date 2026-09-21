@@ -14,7 +14,7 @@ from tinysesam.store import norm_email, valid_email
 
 
 def build(**over):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     cfg = TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
                           passkey_enabled=False, **over)
     auth = TinySesam(cfg)
@@ -175,12 +175,12 @@ print("  verify ohne Mailer: 500, kein Konto ok")
 # ---------- Config-Sanity ----------
 for bad in ("mail", "", "Username"):
     try:
-        TinySesam(TinySesamConfig(db_path=tempfile.mktemp(), login_identifier=bad))
+        TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier=bad))
         raise AssertionError(f"login_identifier={bad!r} akzeptiert")
     except ValueError:
         pass
 try:
-    TinySesam(TinySesamConfig(db_path=tempfile.mktemp(), login_identifier="email",
+    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), login_identifier="email",
                               allow_signup=True, signup_require_email=False))
     raise AssertionError("email-only ohne E-Mail-Pflicht akzeptiert")
 except ValueError:

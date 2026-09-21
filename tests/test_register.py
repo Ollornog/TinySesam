@@ -1,4 +1,5 @@
 """Phase 6: Registrierung (deaktivierbar) + E-Mail-Verifikation + Einladung (invite-only)."""
+import os
 import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ def ok(name):
 
 def build(**cfgkw):
     sent = []
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, **cfgkw))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))

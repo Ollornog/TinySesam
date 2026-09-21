@@ -1,5 +1,6 @@
 """Admin-Panel: frei wählbarer Pfad, an eigenem Prefix montierbar, nur-JSON (für eigenes Panel),
 HTTPS-Modi (warn = ohne Zertifikat mit Hinweis, force = HTTP→HTTPS-Redirect)."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -7,7 +8,7 @@ from tinysesam import TinySesam, TinySesamConfig
 
 
 def fresh(**cfg):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     # cookie_secure=False ist der Normalfall dieser Suite (TestClient spricht http://),
     # muss aber überschreibbar sein: Fall 5 fährt https_mode='force', und force zusammen
     # mit einem unsicheren Cookie lehnt der Konstruktor zu Recht ab.

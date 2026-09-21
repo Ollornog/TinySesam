@@ -1,4 +1,5 @@
 """OIDC-Forward-Auth-Gateway-Preset: TinySesamConfig.oidc_gateway + tinysesam.gateway."""
+import os
 import tempfile, os
 from fastapi.testclient import TestClient
 from tinysesam import TinySesamConfig
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 cfg = TinySesamConfig.oidc_gateway(csrf_enabled=False, 
     issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
     base_url="https://auth.example.com", cookie_domain=".example.com",
@@ -62,7 +63,7 @@ except SystemExit:
 # ---------- /healthz: ohne Anmeldung, auch wenn HTTPS erzwungen wird ----------
 # Der Container-HEALTHCHECK spricht den Prozess von innen über HTTP an. Würde die
 # Redirect-Middleware auch ihn umleiten, prüfte der Check nur noch den Redirect.
-hdb = tempfile.mktemp(suffix=".db")
+hdb = os.path.join(tempfile.mkdtemp(), "t.db")
 happ = gateway.build_app(TinySesamConfig.oidc_gateway(
     issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
     base_url="https://auth.example.com", db_path=hdb, https_mode="force"))

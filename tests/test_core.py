@@ -1,11 +1,12 @@
 """End-to-End-Test des Passwort- + TOTP-Kerns via FastAPI-TestClient (ohne Browser)."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
 from tinysesam import TinySesam, TinySesamConfig
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False))
 assert auth.ensure_admin("admin", "geheim123"), "admin sollte angelegt werden"

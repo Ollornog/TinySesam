@@ -66,7 +66,7 @@ def baue(**cfg_kw):
     gar nicht erst ab (RFC 6265) — der Login-Flow bräche dann am CSRF-Cookie, nicht am
     Prüfgegenstand.
     """
-    kw = dict(db_path=tempfile.mktemp(suffix=".db"), rp_name="Test",
+    kw = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), rp_name="Test",
               passkey_enabled=False, oidc_enabled=False)
     kw.update(cfg_kw)
     auth = TinySesam(TinySesamConfig(**kw))

@@ -2,6 +2,7 @@
 
 Prüft die Leitlinie: jede Fähigkeit funktioniert allein, ist abschaltbar (dann keine Route/kein
 Verhalten) und lässt sich mit den anderen kombinieren."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ def absent(c, path):
 
 
 # ---------- ALLES AUS: nur Basis-Routen, keine optionalen ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False,
                               pin_enabled=False, magiclink_enabled=False, allow_signup=False,
                               resource_locks_enabled=False, forward_auth_enabled=False,
@@ -35,7 +36,7 @@ os.remove(db)
 ok("alle optionalen Features aus → zugehörige Routen fehlen (404), Basis bleibt")
 
 # ---------- ALLES AN: Routen vorhanden, keine Kollision ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", 
     db_path=db, passkey_enabled=False, oidc_enabled=False,
     pin_enabled=True, magiclink_enabled=True, allow_signup=True, resource_locks_enabled=True,
@@ -72,7 +73,7 @@ ok("PIN+TOTP-Login, Konto-Seite, Forward-Auth und Ressourcen-PIN gleichzeitig nu
 os.remove(db)
 
 # ---------- Feature einzeln: nur Magic-Link (kein Passwort) ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 sent = []
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, password_enabled=False, passkey_enabled=False,
                               oidc_enabled=False, magiclink_enabled=True, cookie_secure=False))

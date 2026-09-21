@@ -1,4 +1,5 @@
 """E1: Multi-Worker-Rate-Limit — RedisRateLimiter (Fake-Client), Fallback, eigenes Backend."""
+import os
 import tempfile, os
 from tinysesam import TinySesam, TinySesamConfig
 from tinysesam import security
@@ -53,7 +54,7 @@ ok("RedisRateLimiter: Redis-Fehler → fail-open (erlauben)")
 # ---------- redis_url gesetzt: mit redis-Paket → RedisRateLimiter, ohne → In-Memory-Fallback ----------
 # (kein Crash in beiden Fällen; ohne laufenden Redis → fail-open, rate_ok True)
 import importlib.util
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
 if importlib.util.find_spec("redis"):
     assert isinstance(auth.rl, security.RedisRateLimiter)

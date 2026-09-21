@@ -1,4 +1,5 @@
 """E2: CSRF-Schutz (double-submit). CSRF ist hier AN (Default)."""
+import os
 import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))   # csrf_enabled default True
 auth.ensure_admin("admin", "geheim123")
@@ -81,7 +82,7 @@ print("\nCSRF OK ✅")
 # Sonst macht jede andere gerenderte Seite ein offenes Formular ungültig ("Formular abgelaufen").
 import re as _re
 
-_db = tempfile.mktemp(suffix=".db")
+_db = os.path.join(tempfile.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
                                allow_signup=True, signup_require_email=False,
                                login_identifier="username"))

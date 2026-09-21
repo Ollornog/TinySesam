@@ -68,7 +68,7 @@ APP_PORT = _app_sock.getsockname()[1]
 BASE = f"http://127.0.0.1:{APP_PORT}"
 
 # Eigene DB, damit ein laufendes Demo-Showcase nicht dazwischenfunkt
-_db = tempfile.mktemp(suffix=".db")
+_db = os.path.join(tempfile.mkdtemp(), "t.db")
 os.environ["TINYSESAM_SHOWCASE_DB"] = _db
 import examples.showcase as showcase   # noqa: E402
 

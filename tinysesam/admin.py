@@ -380,7 +380,15 @@ let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
 const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
-const esc=s=>(s??"").toString().replace(/</g,"&lt;");
+const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// Ein Wert, der als JS-ARGUMENT in ein onclick-Attribut geht. HTML-Escaping allein genuegt dort
+// NICHT: Der Browser dekodiert das Attribut zuerst und laesst den JS-Parser danach ueber das
+// Ergebnis laufen — aus &#39; wird wieder ein Apostroph, der den String schliesst. Ein Nutzer,
+// der sich als  bob');alert(document.cookie);//  registriert, fuehrte damit Code im Browser der
+// angemeldeten Administratorin aus, sobald sie das Panel oeffnet.
+// JSON.stringify baut ein gueltiges JS-Literal (samt Anfuehrungszeichen), esc() macht es
+// attribut-sicher. Deshalb stehen an den Aufrufstellen KEINE eigenen Anfuehrungszeichen mehr.
+const jsarg=v=>esc(JSON.stringify(v??""));
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
 function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${esc(l)}</div>`).join("")}
 function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
@@ -403,8 +411,8 @@ async function users(){
       <td>
         <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${esc(u.disabled?L.enable:L.disable)}</button>
         <button class=sec onclick="pw(${u.id})">${esc(L["btn.pw"])}</button>
-        <button class=sec onclick="roles(${u.id},'${esc((u.roles||[]).join(','))}',${u.is_admin?1:0})">${esc(L["btn.roles"])}</button>
-        <button class=sec onclick="keys(${u.id},'${esc(u.username)}')">${esc(L["btn.keys"])}</button>
+        <button class=sec onclick="roles(${u.id},${jsarg((u.roles||[]).join(','))},${u.is_admin?1:0})">${esc(L["btn.roles"])}</button>
+        <button class=sec onclick="keys(${u.id},${jsarg(u.username)})">${esc(L["btn.keys"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
@@ -435,7 +443,7 @@ async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
     <button onclick="mkkey(${id})">${esc(L.create_key)}</button></div>
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},'${esc(name)}')">${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
+      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},${jsarg(name)})">${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   if(r.key)prompt(L.key_once,r.key);keys(id,"")}
 async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
@@ -443,7 +451,7 @@ async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
-      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs('${s.full}')">${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
+      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs(${jsarg(s.full)})">${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
 async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
