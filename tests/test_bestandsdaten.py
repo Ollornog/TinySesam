@@ -237,9 +237,16 @@ r.check("ein zweiter Panel-Aufruf setzt KEIN neues CSRF-Cookie", not gesetzt,
 # ---------------------------------------------------------------- Proxy-Vorlagen
 # Ein in der Vorlage nicht gesetzter Remote-Header wird nicht weggelassen, sondern der des CLIENTS
 # durchgereicht. Die Vorlagen müssen FORWARD_HEADERS_DEFAULT deshalb vollständig abdecken.
-for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/Caddyfile"):
+def fehlende_header(datei: str) -> list[str]:
+    """Welche Remote-Header nennt diese Vorlage nicht? (In einer Funktion, damit der Text nicht
+    im Modul-Scope steht — dort läse ihn nur die Comprehension, und CodeQL zählt das nicht als
+    Nutzung: `py/unused-global-variable`.)"""
     text = (ROOT / datei).read_text(encoding="utf-8").lower()
-    fehlt = [h for h in TinySesam.FORWARD_HEADERS_DEFAULT.values() if h.lower() not in text]
+    return [h for h in TinySesam.FORWARD_HEADERS_DEFAULT.values() if h.lower() not in text]
+
+
+for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/Caddyfile"):
+    fehlt = fehlende_header(datei)
     r.check(f"{datei} setzt alle Remote-Header", not fehlt, f"fehlt: {fehlt}")
 
 raise SystemExit(r.done())
