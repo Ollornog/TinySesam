@@ -9,10 +9,10 @@ Deshalb bricht kein Entwickler-Setup, aber die CI führt es aus.
 """
 import asyncio
 import json
-import os
 import shutil
 import socket
 import subprocess
+import os
 import sys
 import tempfile
 import threading
@@ -21,6 +21,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pathlib  # noqa: E402
 from voraussetzung import braucht, braucht_modul  # noqa: E402
 
 # Drei Voraussetzungen, alle drei als Zusage DIESER Suite — nicht als Rateaufgabe für den Runner.
@@ -36,6 +37,11 @@ import uvicorn               # noqa: E402
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
 braucht(CHROME, "kein Chrome gefunden")
+# Das Showcase liegt im Repo, nicht im sdist — dort absagen statt rot werden.
+braucht((pathlib.Path(__file__).resolve().parent.parent / "examples").is_dir(),
+        "kein `examples/` — der Browser-Test fährt das Showcase aus dem Repo")
+braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
+        "kein `web/` — das Showcase rendert die Seiten des Website-Generators")
 
 
 def _server_socket():

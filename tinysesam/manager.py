@@ -21,6 +21,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
+from .errors import ConfigError, MissingExtra
 from .config import TinySesamConfig
 from .store import Store, norm_email
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
@@ -45,26 +46,56 @@ def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
     return cast(Literal["lax", "strict", "none"], wert)
 
 
+#: Welcher Schalter welches Extra braucht — Schalter → (Modul, Extra).
+#: Steht hier, nicht im Test: Eine Kopie in tests/ wäre beim nächsten neuen Verfahren still
+#: veraltet. Der Test prüft jetzt GEGEN diese Tabelle.
+SCHALTER_BRAUCHT_EXTRA = {
+    "passkey_enabled": ("webauthn", "passkey"),
+    "oidc_enabled": ("authlib", "oidc"),
+    "saml_enabled": ("onelogin", "saml"),
+    "ldap_enabled": ("ldap3", "ldap"),
+}
+
+
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
         if config.login_identifier not in ("username", "email", "both"):
-            raise ValueError("login_identifier muss 'username', 'email' oder 'both' sein")
+            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
-            raise ValueError("login_identifier='email' braucht signup_require_email=True — "
+            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
                              "sonst entstehen Konten, die sich nicht anmelden können")
+        # Ein eingeschalteter Schalter ohne sein Extra: Bis 0.18.0 fiel das je nach Methode
+        # unterschiedlich auf — bei Passkey mit einer verständlichen Meldung, sonst als
+        # ModuleNotFoundError aus dem Innern der Bibliothek oder erst beim ersten Login als 500.
+        # Hier steht es an einer Stelle, scheitert beim Aufbau und sagt, welche Zeile fehlt.
+        import importlib.util as _ilu
+
+        for schalter, (modul, extra) in SCHALTER_BRAUCHT_EXTRA.items():
+            if not getattr(config, schalter, False):
+                continue
+            try:
+                da = _ilu.find_spec(modul) is not None
+            except (ImportError, ValueError):
+                da = False
+            if not da:
+                raise MissingExtra(
+                    f"{schalter}=True, aber das Extra [{extra}] ist nicht installiert "
+                    f"(pip install 'tinysesam[{extra}]'). Ohne es fehlt das Modul '{modul}'; "
+                    f"{schalter}=False schaltet die Methode ab.", extra=extra)
+
         if config.cookie_samesite not in ("lax", "strict", "none"):
-            raise ValueError(
+            raise ConfigError(
                 "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
                 "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
                 "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
         if config.cookie_samesite == "none" and not config.cookie_secure:
-            raise ValueError(
+            raise ConfigError(
                 "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
                 "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
         if not isinstance(config.csp, str):
-            raise ValueError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
+            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
         if config.https_mode not in ("off", "warn", "force"):
-            raise ValueError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
+            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
                              "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
                              "also still ab")
         # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
@@ -86,13 +117,13 @@ class TinySesam:
         # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
         # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
         if getattr(config, "totp_required", False):
-            raise ValueError(
+            raise ConfigError(
                 "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
                 "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
                 "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
                 "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
         if not config.cookie_secure and config.https_mode == "force":
-            raise ValueError(
+            raise ConfigError(
                 "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
                 "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
                 "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
@@ -113,7 +144,7 @@ class TinySesam:
             ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
             namen = [i for i in ids if "@" not in i]
             if namen:
-                raise ValueError(
+                raise ConfigError(
                     f"admin_identifiers={namen} sind Benutzernamen und allow_signup=True: Ein "
                     "Benutzername wird bei der Registrierung von niemandem bestätigt — wer sich "
                     "als Erster so anmeldet, wird Erst-Admin. Entweder eine E-Mail-Adresse "
@@ -121,7 +152,7 @@ class TinySesam:
                     "oder allow_signup=False, oder den Einmal-Token-Weg nutzen "
                     "(/auth/claim-admin, s. admin_claim_ttl_min).")
             if not (config.signup_require_email and config.signup_verify_email):
-                raise ValueError(
+                raise ConfigError(
                     "admin_identifiers zusammen mit allow_signup=True verlangt "
                     "signup_require_email=True UND signup_verify_email=True — sonst trägt "
                     "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
@@ -134,12 +165,12 @@ class TinySesam:
             erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
             unbekannt = [k for k in config.forward_headers if k not in erlaubt]
             if unbekannt:
-                raise ValueError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
+                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
                                  f"{sorted(erlaubt)}")
             for feld, namen in config.forward_headers.items():
                 for name in ([namen] if isinstance(namen, str) else namen or []):
                     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
-                        raise ValueError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
+                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
                                          "Header-Name")
         self.cfg = config
         self.store = Store(config.db_path)
@@ -209,7 +240,7 @@ class TinySesam:
                     display_name=None, email=None, is_service=False) -> int:
         email = norm_email(email)
         if email and self.store.email_taken(email):
-            raise ValueError("E-Mail-Adresse ist bereits vergeben")
+            raise ConfigError("E-Mail-Adresse ist bereits vergeben")
         uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service)
         if password:
             self.store.set_password_hash(uid, hash_password(password))
@@ -550,7 +581,7 @@ class TinySesam:
         """PIN setzen/ändern. Mindestlänge aus cfg.pin_min_length."""
         pin = str(pin or "")
         if len(pin) < self.cfg.pin_min_length:
-            raise ValueError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
+            raise ConfigError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
         self.store.set_pin_hash(user_id, hash_password(pin))
 
     def has_pin(self, user_id) -> bool:
@@ -658,10 +689,18 @@ class TinySesam:
         self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
+    #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 4 Byte = **64 Bit**.
+    #: Vorher waren es 3 Byte (48 Bit). Das ist für einen Code, der den zweiten Faktor ERSETZT
+    #: und unbegrenzt gültig bleibt, zu knapp: Ein TOTP-Code hat zwar nur eine Million
+    #: Möglichkeiten, gilt aber 30 Sekunden — ein Recovery-Code gilt, bis er benutzt wird.
+    #: Bestehende Codes bleiben gültig (gespeichert wird ohnehin nur der Hash); neu erzeugte
+    #: sind länger.
+    RECOVERY_BYTES = 4
+
     def generate_recovery_codes(self, user_id, n=None) -> list:
         """Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL."""
         n = int(n or self.cfg.recovery_code_count)
-        codes = ["-".join(secrets.token_hex(3) for _ in range(2)) for _ in range(n)]
+        codes = ["-".join(secrets.token_hex(self.RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
         self.audit("recovery_generate", detail=f"user={user_id} n={n}")
@@ -1222,7 +1261,7 @@ class TinySesam:
         stilles Nichts.
         """
         if name not in self.SEITEN:
-            raise ValueError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.SEITEN)}")
+            raise ConfigError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.SEITEN)}")
         self.templates.set(name, fn)
 
     def csrf_token(self, request: Optional[Request] = None) -> str:
@@ -1477,7 +1516,7 @@ class TinySesam:
                 raise TypeError(f"require_role(): {r!r} ist keine Rolle. "
                                 "mfa/admin_implies nur noch als Schlüsselwort übergeben.") from None
         if not flach:
-            raise ValueError("require_role() braucht mindestens eine Rolle")
+            raise ConfigError("require_role() braucht mindestens eine Rolle")
 
         def dep(request: Request) -> dict:
             return self._enforce(request, role=flach, mfa=mfa, admin_implies=admin_implies)
@@ -1504,9 +1543,9 @@ class TinySesam:
     def set_resource_secret(self, name, secret, kind="pin", label=None):
         """Geheimnis für einen Bereich setzen/ändern. kind='pin' (numerisch) | 'password' (Passphrase)."""
         if not secret:
-            raise ValueError("leeres Geheimnis")
+            raise ConfigError("leeres Geheimnis")
         if kind not in ("pin", "password"):
-            raise ValueError("kind muss 'pin' oder 'password' sein")
+            raise ConfigError("kind muss 'pin' oder 'password' sein")
         self.store.set_resource_secret(name, hash_password(str(secret)), kind, label)
 
     def remove_resource_secret(self, name):

@@ -750,12 +750,20 @@ r.check("totp_required=True wird abgewiesen statt stumm ignoriert", not gebaut,
 r.check("und die Meldung nennt den Weg, der wirklich greift", "login_chain" in text,
         f"ohne Hinweis: {text[:90]!r}")
 
-# Der Schalter darf auch nirgends mehr beworben werden.
+# Der Schalter darf auch nirgends mehr beworben werden. `web/` gibt es nur im Repo, nicht im
+# Quellpaket — geprüft wird, was da ist, und die Prüfung sagt, was sie gesehen hat.
 wurzel = Path(__file__).resolve().parent.parent
+gesehen = []
 for datei in ("README.md", "i18n/README.de.md", "web/flows.py"):
-    inhalt = (wurzel / datei).read_text(encoding="utf-8")
-    r.check(f"{datei} bewirbt totp_required nicht mehr", "totp_required" not in inhalt,
+    pfad = wurzel / datei
+    if not pfad.exists():
+        continue
+    gesehen.append(datei)
+    r.check(f"{datei} bewirbt totp_required nicht mehr",
+            "totp_required" not in pfad.read_text(encoding="utf-8"),
             "der tote Schalter wird weiter als 2FA angepriesen")
+r.check("dabei waren mindestens beide READMEs",
+        {"README.md", "i18n/README.de.md"} <= set(gesehen), f"nur gesehen: {gesehen}")
 
 # Die Faktor-Kette ist der beworbene Weg — sie muss also gehen.
 gebaut, text = _baut(login_chain=["password", "totp"], login_chain_strict=True)
@@ -841,5 +849,100 @@ for modul in ("manager.py", "router.py", "admin.py", "oidc.py", "webauthn_.py", 
         if re.search(r'HTTPException\(\s*\d+\s*,\s*[fr]?"', zeile):
             roh.append(f"{modul}:{nr}")
 r.check("keine HTTPException mit festem Text mehr", not roh, ", ".join(roh[:5]))
+
+
+# ── Recovery-Codes trugen 48 Bit ─────────────────────────────────────────────
+# Ein Recovery-Code ERSETZT den zweiten Faktor und gilt, bis er benutzt wird. Ein TOTP-Code hat
+# nur eine Million Möglichkeiten, ist aber nach 30 Sekunden wertlos — der Vergleich trägt nicht.
+auth_rc, _ = _app()
+uid_rc = auth_rc.create_user("rc", password="geheim12345")
+codes = auth_rc.generate_recovery_codes(uid_rc)
+hexzeichen = sum(1 for z in codes[0] if z in "0123456789abcdef")
+r.check("ein Recovery-Code trägt mindestens 64 Bit", hexzeichen * 4 >= 64,
+        f"{codes[0]} = {hexzeichen * 4} Bit")
+r.check("die Codes sind untereinander verschieden", len(set(codes)) == len(codes),
+        f"{len(codes)} Codes, {len(set(codes))} verschiedene")
+r.check("und ein frisch erzeugter Code löst den zweiten Faktor aus",
+        auth_rc.verify_recovery_code(uid_rc, codes[0]),
+        "der Code wird nicht angenommen — dann misst der Test nur Zeichen")
+r.check("ein Code gilt genau einmal", not auth_rc.verify_recovery_code(uid_rc, codes[0]),
+        "derselbe Code geht ein zweites Mal")
+
+
+# ── Es gab keine Fehlertypen, auf die man reagieren kann ─────────────────────
+# Geworfen wurde `ValueError` (Konfiguration) und `RuntimeError` (fehlendes Extra). Wer beim
+# Starten unterscheiden wollte, ob die Konfiguration falsch ist oder ein Paket fehlt, musste den
+# Meldungstext lesen — und der ist seit dieser Version übersetzt.
+from tinysesam import ConfigError, MissingExtra, TinySesamError  # noqa: E402
+
+try:
+    _app(totp_required=True)
+    art = None
+except Exception as e:
+    art = e
+r.check("ein Konfigurationsfehler ist ein ConfigError", isinstance(art, ConfigError),
+        f"{type(art).__name__}")
+r.check("...und weiterhin ein ValueError (bestehender Code fängt ihn)",
+        isinstance(art, ValueError), "bestehendes `except ValueError` bricht")
+r.check("...und ein TinySesamError", isinstance(art, TinySesamError), f"{type(art).__mro__}")
+
+# Der Extra-Wächter: gemessen wird ein Modul, das es sicher nicht gibt.
+from tinysesam.manager import SCHALTER_BRAUCHT_EXTRA  # noqa: E402
+
+echt = dict(SCHALTER_BRAUCHT_EXTRA)
+SCHALTER_BRAUCHT_EXTRA["password_enabled"] = ("gibtsnichtmodul", "phantom")
+try:
+    _app()
+    fehlt = None
+except Exception as e:
+    fehlt = e
+finally:
+    SCHALTER_BRAUCHT_EXTRA.clear()
+    SCHALTER_BRAUCHT_EXTRA.update(echt)
+r.check("ein fehlendes Extra ist ein MissingExtra", isinstance(fehlt, MissingExtra),
+        f"{type(fehlt).__name__}: {str(fehlt)[:70]}")
+r.check("...und nennt das Extra maschinenlesbar", getattr(fehlt, "extra", None) == "phantom",
+        f"extra={getattr(fehlt, 'extra', None)!r} — sonst muss man den Text lesen")
+r.check("...und ist weiterhin ein RuntimeError", isinstance(fehlt, RuntimeError),
+        "bestehendes `except RuntimeError` bricht")
+
+# Nach der Gegenprobe muss der Normalfall wieder bauen — sonst hätte der Test die Tabelle
+# kaputt zurückgegeben und alles Folgende wäre Unsinn.
+gebaut, _ = _baut()
+r.check("die Tabelle ist nach der Gegenprobe wieder heil", gebaut,
+        "der Test hat den Zustand nicht sauber zurückgesetzt")
+
+
+# ── Die Datenbank trug keinen Schema-Stempel ─────────────────────────────────
+# Welchen Stand eine Datei hat, war nur an ihren Spaltennamen zu erraten. Eine Datei aus einer
+# NEUEREN Fassung öffnete eine ältere Version stillschweigend — mit Tabellen, die sie nicht
+# kennt, und Schreibvorgängen, die Lücken hinterlassen.
+stempel_pfad = str(Path(tempfile.mkdtemp()) / "stempel.db")
+st = Store(stempel_pfad)
+gestempelt = int(st.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+r.check("eine frische Datenbank trägt die Schema-Version",
+        gestempelt == Store.SCHEMA_VERSION and gestempelt > 0,
+        f"user_version={gestempelt}, erwartet {Store.SCHEMA_VERSION}")
+st.db.close()
+
+# Eine Datei aus der Zukunft muss sich melden.
+roh_st = _sq.connect(stempel_pfad)
+roh_st.execute(f"PRAGMA user_version = {Store.SCHEMA_VERSION + 50}")
+roh_st.commit()
+roh_st.close()
+puffer_st = io.StringIO()
+haken_st = logging.StreamHandler(puffer_st)
+log_st = logging.getLogger("tinysesam")
+log_st.addHandler(haken_st)
+try:
+    zukunft = Store(stempel_pfad)
+finally:
+    log_st.removeHandler(haken_st)
+r.check("eine Datei aus einer neueren Version wird gemeldet",
+        "neueren Version" in puffer_st.getvalue(),
+        f"schweigt: {puffer_st.getvalue()[:80]!r}")
+r.check("...und der höhere Stempel wird NICHT zurückgesetzt",
+        int(zukunft.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION + 50,
+        "die Version wurde heruntergestempelt — beim nächsten Öffnen fehlt die Warnung")
 
 sys.exit(r.done())

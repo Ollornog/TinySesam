@@ -20,11 +20,17 @@ nicht starten lässt. Siehe `MANIFEST.in`.
 # eine fehlende Voraussetzung, kein Fehlschlag.
 import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
+import pathlib  # noqa: E402
+
 braucht(shutil.which("git"), "git fehlt")
+# git im PATH genügt nicht: Gemessen wird gegen `git ls-files`, und das braucht ein
+# Repo. Im ausgepackten sdist gibt es keins — dort absagen statt rot werden.
+braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").is_dir(),
+        "kein Git-Repo (z.B. ausgepacktes sdist) — der Paket-Test vergleicht gegen `git ls-files`")
 import email.parser
-import os
 import re
 import shutil
+import os
 import sys
 import tarfile
 import tempfile
@@ -182,13 +188,30 @@ try:
     fehlend = [f for f in paketdateien if f not in sdist_dateien]
     assert not fehlend, f"diese Paketdateien fehlen im sdist: {fehlend}"
 
-    # setuptools zieht nach einer alten Heuristik `tests/test_*.py` hinein — ohne `run_all.py`,
-    # ohne `_kit/`, ohne `api_surface.json`. Eine halbe Suite ist schlimmer als keine: Sie
-    # behauptet, man könne das Quellpaket prüfen, und scheitert am Import. `MANIFEST.in` prunt
-    # sie deshalb. Bleibt es dabei, muss hier nichts liegen.
-    tests_drin = sorted(f for f in sdist_dateien if f.startswith("tests/"))
-    assert not tests_drin, ("das sdist enthält eine unvollständige Testsuite: "
-                            f"{tests_drin[:3]}… — `prune tests` in MANIFEST.in prüfen")
+    # Die Testsuite liegt im sdist — VOLLSTÄNDIG oder gar nicht. setuptools zieht nach einer
+    # alten Heuristik nur `tests/test_*.py` hinein, ohne `run_all.py`, ohne `_kit/`, ohne
+    # `api_surface.json`: Eine halbe Suite ist schlimmer als keine, weil sie behauptet, man
+    # könne das Quellpaket prüfen, und am Import scheitert. `MANIFEST.in` nimmt deshalb `graft
+    # tests`. Wer TinySesam neu paketiert, soll den Bau prüfen können — das ist der Sinn eines
+    # Quellpakets; die repo-gebundenen Suiten sagen dort von selbst ab (Exit 77).
+    tests_drin = {f for f in sdist_dateien if f.startswith("tests/")}
+    assert tests_drin, "das sdist enthält keine Testsuite — `graft tests` in MANIFEST.in prüfen"
+    for pflicht in ("tests/run_all.py", "tests/voraussetzung.py", "tests/api_surface.json",
+                    "tests/_kit/report.py", "tests/_kit/hygiene.py"):
+        assert pflicht in tests_drin, (f"{pflicht} fehlt im sdist — ohne diese Datei startet die "
+                                       "Suite dort nicht, und eine halbe Suite ist schlimmer als keine")
+    # Jede Suite, die der Sammellauf im Repo kennt, muss auch im Quellpaket liegen.
+    im_repo = {f"tests/{n}" for n in os.listdir(os.path.join(str(ROOT), "tests"))
+              if n.startswith("test_") and n.endswith(".py")}
+    fehlende_suiten = sorted(im_repo - tests_drin)
+    assert not fehlende_suiten, f"diese Suiten fehlen im sdist: {fehlende_suiten}"
+    ok(f"sdist trägt die vollständige Suite ({len(tests_drin)} Dateien, {len(im_repo)} Suiten)")
+
+    # Was die README verlinkt, soll im Quellpaket auch liegen — ein toter Verweis ist in einem
+    # Tarball ärgerlicher als im Web, dort gibt es kein GitHub daneben.
+    for pflicht in ("examples/showcase.py", "deploy/forward-auth/docker-compose.yml",
+                    "deploy/fail2ban/tinysesam-jail.conf"):
+        assert pflicht in sdist_dateien, f"{pflicht} fehlt im sdist (in der README verlinkt)"
     muell = sorted(f for f in sdist_dateien | wheel_dateien
                    if "__pycache__" in f or f.endswith((".pyc", ".pyo")))
     assert not muell, f"Bauartefakte im Paket: {muell[:3]}"

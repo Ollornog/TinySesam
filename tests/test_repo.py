@@ -15,6 +15,12 @@ nur für dieses Projekt gilt.
 import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 braucht(shutil.which("git"), "git fehlt")
+# git im PATH genügt nicht: Gemessen wird gegen `git ls-files`, und das braucht ein
+# Repo. Im ausgepackten sdist gibt es keins — dort absagen statt rot werden.
+import pathlib  # noqa: E402
+
+braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").is_dir(),
+        "kein Git-Repo (z.B. ausgepacktes sdist) — die Hygiene misst gegen `git ls-files`")
 import os
 import re
 import sys
@@ -86,21 +92,28 @@ print("  Farbwerte: nur in tinysesam/theme.py (App) bzw. docs/theme.css (Website
 # dasselbe, aber NUR für `main()`: Der Rest der Datei ist Bibliothek und darf nichts ausgeben.
 # (Die Grenze steht hier, weil eine Ausnahme für die ganze Datei genau das durchgehen liesse,
 # was die Prüfung sucht.)
+#
+# Gelesen wird der SYNTAXBAUM, nicht der Zeilentext: Ein `print(...)` in einem Docstring — etwa
+# ein Beispiel, wie man einen Fehler abfängt — ist keine vergessene Debug-Ausgabe. Die
+# Textsuche hielt eines für eine und schlug Alarm; ein Fehlalarm kostet dasselbe Vertrauen wie
+# ein übersehener Fund.
 import ast as _ast  # noqa: E402
 
 for f in LIB:
     if f == "tinysesam/__main__.py":
         continue
-    quelle = read(f)
+    baum = _ast.parse(read(f))
     erlaubt = set()
     if f == "tinysesam/gateway.py":
-        for knoten in _ast.walk(_ast.parse(quelle)):
+        for knoten in _ast.walk(baum):
             if isinstance(knoten, _ast.FunctionDef) and knoten.name == "main":
                 erlaubt = set(range(knoten.lineno, (knoten.end_lineno or knoten.lineno) + 1))
-    for n, line in enumerate(quelle.splitlines(), 1):
-        s = line.strip()
-        if (s.startswith("print(") or s.startswith("breakpoint(")) and n not in erlaubt:
-            raise AssertionError(f"Debug-Ausgabe in der Bibliothek: {f}:{n}: {s[:60]}")
+    for knoten in _ast.walk(baum):
+        if not isinstance(knoten, _ast.Call) or not isinstance(knoten.func, _ast.Name):
+            continue
+        if knoten.func.id in ("print", "breakpoint") and knoten.lineno not in erlaubt:
+            raise AssertionError(f"Debug-Ausgabe in der Bibliothek: {f}:{knoten.lineno}: "
+                                 f"{knoten.func.id}(...)")
 print("  keine print()/breakpoint() in tinysesam/")
 
 # ---------- Keine offensichtlichen Geheimnisse ----------

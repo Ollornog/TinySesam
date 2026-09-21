@@ -215,8 +215,20 @@ class Store:
                 "Die Datenbank %s ist für andere Konten lesbar (%o). Darin stehen Passwort-Hashes "
                 "und TOTP-Geheimnisse. Enger stellen: chmod 600 %s", db_path, modus, db_path)
 
+    #: Stand des Schemas. Wird bei jeder Änderung an SCHEMA/_migrate() um eins erhöht.
+    #:
+    #: 1 — bis 0.17.x (kein Stempel; wird beim ersten Öffnen nachgetragen)
+    #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 statt Klartext)
+    SCHEMA_VERSION = 2
+
     def _migrate(self):
-        """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent)."""
+        """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
+
+        Am Ende steht `PRAGMA user_version` auf `SCHEMA_VERSION`. Bis 0.18.0 gab es diesen
+        Stempel nicht: Welchen Stand eine Datei hat, war nur an ihren Spaltennamen zu erraten —
+        und eine Datei aus einer NEUEREN Fassung öffnete eine ältere TinySesam-Version
+        stillschweigend, mit Tabellen, die sie nicht kennt. Der Stempel macht daraus eine
+        Ansage statt eines rätselhaften Verhaltens."""
         adds = {
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
@@ -242,6 +254,19 @@ class Store:
                 logging.getLogger("tinysesam").info(
                     "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
                     len(zeilen))
+
+            # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
+            # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
+            # aber ein sehr guter, es laut zu sagen.
+            vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+            if vorhanden > self.SCHEMA_VERSION:
+                logging.getLogger("tinysesam").warning(
+                    "Die Datenbank trägt Schema-Version %d, diese TinySesam-Fassung kennt nur %d. "
+                    "Sie stammt aus einer neueren Version — mit dieser hier zu schreiben kann "
+                    "Daten unvollständig lassen. Passende Version installieren oder die Datei "
+                    "aus einer Sicherung zurückspielen.", vorhanden, self.SCHEMA_VERSION)
+            elif vorhanden != self.SCHEMA_VERSION:
+                self.db.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
             # E-Mail eindeutig (Login-Kennung) — partiell, damit Konten ohne E-Mail erlaubt bleiben.
             # Bestandsdaten mit Dubletten: Index kann nicht angelegt werden → laut sagen, nicht crashen.
             try:

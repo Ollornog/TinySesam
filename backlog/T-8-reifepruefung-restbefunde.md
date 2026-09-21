@@ -28,7 +28,7 @@ dasteht" umgebaut.
 - [x] Das Admin-Panel gibt die Sitzungstoken aller Nutzer im Klartext heraus
 - [x] Sitzungs-Token liegen im Klartext in der Datenbank — behoben: gespeichert wird der sha256,
       bestehende Anmeldungen wurden migriert
-- [ ] Recovery-Codes tragen nur 48 Bit (zweite Hälfte desselben Befunds, noch offen)
+- [x] Recovery-Codes tragen nur 48 Bit — behoben: 64 Bit, bestehende bleiben gültig
 - [x] Die Datenbank wird welt-lesbar angelegt (0644)
 - [x] API-Keys überleben Passwortwechsel und „alle Sitzungen beenden"
 - [x] Die `trusted_proxies`-Vorgabe ist fälschungssicher, kippt hinter einem Container-Proxy aber
@@ -49,7 +49,8 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 ## Betrieb, Protokoll, Datenhaltung
 
 - [x] Ein naives Backup der Datenbank liefert eine LEERE Datenbank (WAL)
-- [ ] `_migrate()` rüstet nur `session`-Spalten nach — es gibt keinen Schema-Stempel
+- [x] `_migrate()` rüstet nur `session`-Spalten nach — behoben: `PRAGMA user_version`, und
+      eine Datei aus einer neueren Fassung meldet sich
 - [x] Das Aufräumen läuft nie von selbst, und im Gateway-Abbild gibt es keinen Weg, es anzustoßen
       — behoben: `tinysesam gc --db …` für Cron/Timer
 - [x] Nach der ersten Logrotation schreibt TinySesam in die umbenannte Datei — die fail2ban-Jail
@@ -67,11 +68,12 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
       Exit 0; ein unbekanntes Argument endet mit 2
 - [x] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
       — behoben: Matrix auf alle fünf, plus Hygiene-Prüfung Classifier ↔ Matrix
-- [ ] Das sdist enthält keine Tests — wer neu paketiert, kann den Bau nicht prüfen
+- [x] Das sdist enthält keine Tests — behoben: `graft tests`, im ausgepackten sdist
+      40/44 grün bei 4 sauberen Absagen; `examples/` und `deploy/` sind mit dabei
 - [x] SECURITY.md nennt 0.5.x als die Reihe, die Sicherheitsfixes bekommt — behoben: verweist
       jetzt auf den CHANGELOG-Kopf statt auf eine Zahl
-- [ ] Ein fehlendes Extra meldet sich als 500 oder gar nicht, statt als Klartext
-      (für `[passkey]` behoben; die übrigen offen)
+- [x] Ein fehlendes Extra meldet sich als 500 oder gar nicht — behoben: ein Wächter für alle
+      vier Verfahren, `MissingExtra` mit maschinenlesbarem `extra`-Feld
 
 ## Der API-Vertrag
 
@@ -79,7 +81,7 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
       30 Typfehler bereinigt, mypy in CI und Abbild, `tests/test_typen.py`
 - [x] `check_password` & Co. sind als `Optional[dict]` annotiert, liefern aber `sqlite3.Row`
       — behoben: sie liefern jetzt dicts
-- [ ] Es gibt keine Fehlertypen, auf die ein Nutzer reagieren kann
+- [x] Es gibt keine Fehlertypen, auf die ein Nutzer reagieren kann — behoben: `tinysesam/errors.py`
 - [ ] `complete_mfa` heißt im eigenen Docstring „rückwärtskompatibler Name" und wird trotzdem geführt
 - [ ] Die öffentliche Oberfläche wurde gemessen, nicht entschieden: 62 der 104 eingefrorenen Namen
 - [ ] Der API-Wächter friert weniger ein, als „231 Namen" nahelegt: keine Vorgabewerte, keine Typen

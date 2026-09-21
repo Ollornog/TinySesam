@@ -68,6 +68,47 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Geändert — das Quellpaket trägt die Testsuite, vollständig
+
+Bis 0.18.0 stand `prune tests` in `MANIFEST.in`, mit dieser Begründung: setuptools zieht nach
+einer alten Heuristik nur `tests/test_*.py` hinein (ohne `run_all.py`, ohne `_kit/`), und zwei
+Suiten brauchen ohnehin, was ein sdist nie enthält. Die Begründung trägt nicht mehr. Seit dieser
+Version sagt eine Suite **selbst ab**, wenn ihr eine Voraussetzung fehlt (`tests/voraussetzung.py`,
+Exit 77) — die repo-gebundenen überspringen sich im Quellpaket also sauber und nennen den Grund.
+
+Wer TinySesam neu paketiert (eine Distribution, conda, ein internes Rad), kann den Bau damit
+prüfen, und das ist der Sinn eines Quellpakets. Gemessen im ausgepackten sdist:
+
+```
+40/44 grün, 4 übersprungen, 0 fehlgeschlagen
+```
+
+Mit dabei sind jetzt auch `examples/showcase.py` und `deploy/` — beide sind in der README
+verlinkt, und ein toter Verweis ist in einem Tarball ärgerlicher als im Web, wo GitHub danebensteht.
+`web/` bleibt draußen: der Generator der Projektseite ist Repo-Sache, nicht Quelle der Bibliothek.
+
+### Behoben — Fehlertypen, Schema-Stempel, Recovery-Codes
+
+**Es gab keine Fehlertypen, auf die man reagieren kann.** Geworfen wurden `ValueError`
+(Konfiguration) und `RuntimeError` (fehlendes Extra); wer beim Starten unterscheiden wollte, ob
+die Konfiguration falsch ist oder ein Paket fehlt, musste den Meldungstext lesen — und der ist
+seit dieser Version übersetzt. Neu und exportiert: `TinySesamError`, `ConfigError`, `MissingExtra`
+(trägt den Namen des Extras als Feld), `MailNotConfigured`. Jeder erbt zusätzlich von dem
+eingebauten Typ, den er ersetzt — `except ValueError` fängt weiter, nichts bricht.
+
+**Ein fehlendes Extra meldete sich je nach Methode anders**: bei Passkey verständlich, sonst als
+`ModuleNotFoundError` aus dem Innern der Bibliothek oder erst beim ersten Login als 500. Jetzt
+prüft der Konstruktor alle aktivierten Verfahren an einer Stelle und sagt, welche Zeile fehlt.
+Die Tabelle Schalter → Extra steht im Code (`SCHALTER_BRAUCHT_EXTRA`), nicht als Kopie im Test.
+
+**Die Datenbank trug keinen Schema-Stempel.** Welchen Stand eine Datei hat, war nur an ihren
+Spaltennamen zu erraten, und eine Datei aus einer *neueren* Fassung öffnete eine ältere Version
+stillschweigend. Jetzt steht `PRAGMA user_version`, und eine Datei aus der Zukunft meldet sich.
+
+**Recovery-Codes trugen 48 Bit.** Sie ersetzen den zweiten Faktor und gelten, bis sie benutzt
+werden — anders als ein TOTP-Code, der nach 30 Sekunden wertlos ist. Neu erzeugte tragen 64 Bit;
+bestehende bleiben gültig (gespeichert wird ohnehin nur der Hash).
+
 ### Behoben — die Antworten sprachen Deutsch, auch auf Englisch
 
 **32 HTTP-Antworten trugen festen deutschen Text** — CSRF-Fehler, „Adminrechte nötig", OIDC- und

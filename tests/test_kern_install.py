@@ -24,16 +24,24 @@ from _kit.report import Report  # noqa: E402
 
 r = Report("Kern-Install — was ohne Extras gehen muss")
 
-# Welcher Vorgabe-Schalter zieht welches Extra nach sich. Steht einer davon per Vorgabe auf True,
-# ist der Kern-Install kaputt — unabhängig davon, was gerade installiert ist.
-SCHALTER_BRAUCHT_EXTRA = {
-    "passkey_enabled": ("webauthn", "passkey"),
-    "oidc_enabled": ("authlib", "oidc"),
-    "saml_enabled": ("onelogin", "saml"),
-    "ldap_enabled": ("ldap3", "ldap"),
-}
+# Welcher Schalter welches Extra braucht — aus dem CODE, nicht als Kopie. Eine Tabelle hier
+# wäre beim nächsten neuen Verfahren still veraltet und der Test dann grün, ohne es zu prüfen.
+from tinysesam.manager import SCHALTER_BRAUCHT_EXTRA  # noqa: E402
 
+r.check("die Tabelle Schalter→Extra ist nicht leer", bool(SCHALTER_BRAUCHT_EXTRA),
+        "leer — dann prüft die Schleife darunter nichts")
+
+# Jeder Schalter muss es auch geben: Ein Tippfehler in der Tabelle träfe sonst nie zu und
+# fiele niemandem auf.
 vorgabe = TinySesamConfig(db_path=":memory:")
+unbekannt = [k for k in SCHALTER_BRAUCHT_EXTRA if not hasattr(vorgabe, k)]
+r.check("jeder Schalter aus der Tabelle existiert in der Config", not unbekannt, f"{unbekannt}")
+
+# Und jedes genannte Extra muss im pyproject stehen.
+_roh_vorab = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+fehlende_extras = [e for _, e in SCHALTER_BRAUCHT_EXTRA.values()
+                   if f"\n{e} = [" not in _roh_vorab]
+r.check("jedes genannte Extra gibt es im pyproject", not fehlende_extras, f"{fehlende_extras}")
 
 for schalter, (modul, extra) in sorted(SCHALTER_BRAUCHT_EXTRA.items()):
     an = bool(getattr(vorgabe, schalter, False))
