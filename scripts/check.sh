@@ -27,7 +27,10 @@ if [[ -z "$PY" ]]; then
     command -v uv >/dev/null || fail "Kein Python mit FastAPI und kein uv. → pip install -e '.[all]'"
     step "Kein Python mit FastAPI gefunden — lege .venv an (einmalig)"
     uv venv .venv >/dev/null || fail "uv venv"
-    VIRTUAL_ENV=".venv" uv pip install -q -e ".[all]" uvicorn websockets httpx || fail "uv pip install"
+    # setuptools/wheel: tests/test_packaging.py BAUT das Paket (offline, ohne Isolierung).
+    # Ein uv-venv bringt beides nicht mit, und ohne Bau-Backend prüfte die Suite nichts.
+    VIRTUAL_ENV=".venv" uv pip install -q -e ".[all]" uvicorn websockets httpx setuptools wheel \
+        || fail "uv pip install"
     PY=".venv/bin/python"
 fi
 step "Interpreter: $("$PY" -c 'import sys;print(sys.executable)')"

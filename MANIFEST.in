@@ -1,0 +1,24 @@
+# Was ins sdist gehört — und was bewusst NICHT.
+#
+# Das Wheel entsteht aus `[tool.setuptools.packages.find]` und braucht diese Datei nicht.
+# Das sdist dagegen nimmt per Vorgabe mehr mit, als jemand vermutet, und weniger, als er
+# braucht: setuptools zieht nach einer alten Heuristik `tests/test_*.py` hinein, aber weder
+# `tests/run_all.py` noch `tests/_kit/` noch `tests/api_surface.json`. Ausgeliefert wurde damit
+# eine Suite, die sich nicht starten lässt — schlimmer als keine, weil sie eine Zusage vortäuscht.
+#
+# Deshalb: das sdist ist die **Quelle der Bibliothek**, nicht ein Abzug des Repos. Getestet wird
+# im Repo — zwei Suiten brauchen ohnehin, was ein sdist nie enthält (`git ls-files` für die
+# Hygiene, `web/` für die Website). `tests/test_packaging.py` hält beide Enden fest.
+prune tests
+
+# Was ein Mensch im Quellpaket sucht: die Lizenz (nimmt setuptools selbst mit), die
+# Versionsgeschichte, den Meldeweg für Lücken und die deutsche Fassung der README.
+include CHANGELOG.md
+include SECURITY.md
+include i18n/README.de.md
+include i18n/SECURITY.de.md
+
+# Bauartefakte eines fremden Arbeitsbaums haben in einem Quellpaket nichts verloren.
+recursive-exclude * __pycache__
+recursive-exclude * *.py[cod]
+global-exclude .DS_Store

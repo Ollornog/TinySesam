@@ -59,13 +59,17 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ## Installation
 
-Direkt von GitHub (nicht auf PyPI):
+```bash
+pip install tinysesam                  # Kern: Passwort + TOTP
+pip install "tinysesam[all]"           # alles: + argon2, QR, OIDC, Passkey
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: tinysesam==1.0.0
+```
+
+Direkt von GitHub geht es genauso — dieser Weg lohnt, wenn du einen **Commit** willst statt
+einer veröffentlichten Version:
 
 ```bash
-GH="git+https://github.com/Ollornog/TinySesam.git"
-pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
-pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.17.0
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0"
 ```
 
 ## Quickstart
@@ -322,18 +326,25 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.17.0
+tinysesam[oidc]==1.0.0
 ```
 
-Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
-(`@a1b2c3d…`). Aktualisieren heißt dann: Version in der Zeile hochziehen, neu installieren, Dienst
-neu starten. Python lädt Code nicht zur Laufzeit nach.
+Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
+denselben Code. Aktualisieren heißt dann: Version in der Zeile hochziehen, neu installieren,
+Dienst neu starten. Python lädt Code nicht zur Laufzeit nach.
+
+Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag umhängen lässt**;
+für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
+
+```
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0
+```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
-installieren will, nimmt die Datei direkt:
+und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tinysesam-0.17.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v1.0.0/tinysesam-1.0.0-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -341,7 +352,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.17.0
+ghcr.io/ollornog/tinysesam:v1.0.0
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -349,9 +360,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog
-gh attestation verify tinysesam-0.17.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog
+gh attestation verify tinysesam-1.0.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 
@@ -544,7 +555,7 @@ Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Ga
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'                    # + httpx für den FastAPI-TestClient (in [all] enthalten)
+pip install -e '.[all]' setuptools         # + httpx für den FastAPI-TestClient (in [all] enthalten)
 python tests/run_all.py                    # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
 python tests/run_all.py core pin chain     # gezielt einzelne
 ```
@@ -562,6 +573,9 @@ Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantwor
   Farbwerte nur in `theme.py`/`theme.css`; jede Suite läuft im Sammellauf mit.
 - **`tests/test_site.py`** prüft die erzeugte Website: beide Sprachen je Datei, ein `?lang=`-Mechanismus,
   überall derselbe Rumpf, Impressum vollständig.
+- **`tests/test_packaging.py`** baut Wheel und sdist und sieht hinein: Alles, was das Paket braucht,
+  ist wirklich drin, die Metadaten sind die, die PyPI erwartet, und veröffentlicht wird ohne Geheimnis.
+  (`setuptools` muss installiert sein — ohne Bau-Backend prüfte die Suite nichts.)
 
 **Vor jedem Push** — ein Tor, lokal:
 

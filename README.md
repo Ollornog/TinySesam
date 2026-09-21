@@ -59,13 +59,17 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 
 ## Installation
 
-Straight from GitHub (not on PyPI):
+```bash
+pip install tinysesam                  # core: password + TOTP
+pip install "tinysesam[all]"           # everything: + argon2, QR, OIDC, passkey
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: tinysesam==1.0.0
+```
+
+It installs straight from GitHub just as well — take this route when you want a **commit**
+rather than a released version:
 
 ```bash
-GH="git+https://github.com/Ollornog/TinySesam.git"
-pip install "tinysesam @ $GH"          # core: password + TOTP
-pip install "tinysesam[all] @ $GH"     # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: …@git+…@v0.17.0
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0"
 ```
 
 ## Quickstart
@@ -317,17 +321,24 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.17.0
+tinysesam[oidc]==1.0.0
 ```
 
-A tag can be moved. If you need immutability, pin the commit instead (`@a1b2c3d…`). Updating then
+A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
 means: bump the line, reinstall, restart the service. Python does not reload code at runtime.
 
-Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without git,
-take the file directly:
+The same pin from git, if you install that way — note that a **tag can be moved**, so for real
+immutability pin the commit (`@a1b2c3d…`):
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tinysesam-0.17.0-py3-none-any.whl
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0
+```
+
+Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
+git and without an index, take the file directly:
+
+```
+pip install https://github.com/Ollornog/TinySesam/releases/download/v1.0.0/tinysesam-1.0.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -335,7 +346,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.17.0
+ghcr.io/ollornog/tinysesam:v1.0.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -346,9 +357,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog
-gh attestation verify tinysesam-0.17.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog
+gh attestation verify tinysesam-1.0.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
@@ -539,7 +550,7 @@ A ready-made [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (g
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'                    # + httpx for the FastAPI TestClient (included in [all])
+pip install -e '.[all]' setuptools         # + httpx for the FastAPI TestClient (included in [all])
 python tests/run_all.py                    # every suite; exit 0 = green, 1 = failure
 python tests/run_all.py core pin chain     # only some
 ```
@@ -557,6 +568,9 @@ The suites are standalone assert scripts (no pytest). Three of them answer the q
   `theme.py`/`theme.css`; every suite is picked up by the runner.
 - **`tests/test_site.py`** checks the generated site: both languages per file, one `?lang=` mechanism,
   the shell identical everywhere, imprint complete.
+- **`tests/test_packaging.py`** builds the wheel and the sdist and looks inside: everything the package
+  needs is really in there, the metadata is the one PyPI expects, and publishing needs no secret.
+  (`setuptools` must be installed — without a build backend the suite would check nothing.)
 
 **Before every push** — one gate, locally:
 

@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+# `setuptools`/`wheel` stehen bei jedem Install dabei: `tests/test_packaging.py` baut Wheel und
+# sdist und sieht hinein. Seit Python 3.12 bringt eine frische Umgebung setuptools nicht mehr mit,
+# und `pip install -e .` legt es nur in seine eigene Bau-Isolierung, nicht in die Umgebung.
 jobs:
   # Voller Lauf mit allen Extras über die Matrix min + prod + max (siehe testing-policy.md):
   #   3.10 = Untergrenze aus requires-python  (ohne sie ist die Zusage unbelegt)
@@ -36,7 +39,7 @@ jobs:
       - name: Systempaket für SAML (xmlsec)
         run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
-        run: pip install -e '.[all]'
+        run: pip install -e '.[all]' setuptools wheel
       - name: Tests
         run: python tests/run_all.py
 
@@ -50,7 +53,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install (nur Kern + httpx fürs TestClient-Werkzeug)
-        run: pip install -e . httpx
+        run: pip install -e . httpx setuptools wheel
       - name: Tests (Kern / scrypt-Fallback; Passkey/OIDC-Suiten werden übersprungen)
         run: python tests/run_all.py
 
@@ -70,7 +73,7 @@ jobs:
       - name: Chrome vorhanden?
         run: which chrome || which google-chrome; chrome --version || google-chrome --version
       - name: Abhängigkeiten
-        run: pip install -e . uvicorn websockets httpx
+        run: pip install -e . uvicorn websockets httpx setuptools wheel
       - name: Website bauen (muss durchlaufen)
         run: python -m web.build _site
       - name: Browser-Test
@@ -99,7 +102,7 @@ jobs:
       - name: Systempaket für SAML (xmlsec)
         run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
-        run: pip install -e '.[all]' uvicorn websockets
+        run: pip install -e '.[all]' uvicorn websockets setuptools wheel
       - name: Erster Lauf
         run: scripts/check.sh
       - name: Zweiter Lauf (muss ebenfalls grün sein)

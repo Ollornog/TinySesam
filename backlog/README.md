@@ -7,7 +7,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Meilensteine
 
-* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 6/6 erledigt
+* ☑ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 6/6 erledigt
 
 ## Aufgaben
 
@@ -20,8 +20,9 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Entscheidungen (ADR)
 
-* ☑ **[ADR-1](ADR-1-pypi-vertagt.md)** PyPI-Veröffentlichung bis 1.0 vertagt
+* ✗ **[ADR-1](ADR-1-pypi-vertagt.md)** PyPI-Veröffentlichung bis 1.0 vertagt · abgelöst durch ADR-6
 * ☑ **[ADR-2](ADR-2-kein-selbst-update.md)** Kein Selbst-Update — die Version bestimmt, wer installiert
 * ☑ **[ADR-3](ADR-3-in-app-statt-proxy.md)** Schutz in der App pro Route, nicht auf Proxy-Ebene
 * ☑ **[ADR-4](ADR-4-keine-self-hosted-runner.md)** CI bleibt auf gehosteten Runnern — self-hosted ausgeschlossen
 * ☑ **[ADR-5](ADR-5-rollen-im-forward-auth.md)** Rollen im Forward-Auth kommen vom Proxy, nicht aus einer Regeltabelle
+* ☑ **[ADR-6](ADR-6-pypi-veroeffentlichen.md)** TinySesam wird ab 1.0 auf PyPI veröffentlicht

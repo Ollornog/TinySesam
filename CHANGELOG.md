@@ -2,6 +2,95 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [1.0.0] — 2026-09-21
+
+**TinySesam liegt ab jetzt auf PyPI:** `pip install tinysesam`. Das ist die einzige Änderung, die
+alle betrifft — an der Bibliothek selbst ändert sich nichts. Wer per Git-Tag installiert, kann
+genau so weitermachen; der Weg bleibt bestehen und ist weiterhin der richtige, wenn ein **Commit**
+gepinnt werden soll statt einer Version.
+
+Die Versionsnummer springt von 0.17.0 auf 1.0.0. Was das bedeutet, steht unten — und was es
+**nicht** bedeutet, ebenfalls: Der Meilenstein verlangte zwei Minor-Versionen ohne API-Bruch,
+erreicht ist eine. Die dritte Bedingung wurde vom Projektinhaber vorzeitig abgehakt, nicht erfüllt.
+
+### Hinzugefügt — Installation aus dem Paketindex
+
+```bash
+pip install tinysesam                  # Kern
+pip install "tinysesam[all]==1.0.0"    # alles, auf eine Version festgelegt
+```
+
+Der Weg über Git bleibt unverändert gültig und ist für Commit-Pins weiterhin der einzige. Neu ist,
+was vorher fehlte: `git` muss auf dem Bau-Rechner nicht mehr vorhanden sein, Werkzeuge sehen eine
+neue Version, und eine veröffentlichte Version ändert sich nie wieder.
+
+**Veröffentlicht wird ohne Geheimnis.** Der Release-Workflow weist sich gegenüber PyPI über seine
+eigene OIDC-Identität aus (Trusted Publishing) — kein Token im Repo, keins zum Rotieren, keins, das
+sich aus einem Lauf herausziehen liesse. Jede Datei trägt zusätzlich eine PEP-740-Attestation:
+prüfbar, aus welchem Commit sie gebaut wurde. Ausgelöst wird das allein von einem Tag, den ein
+Mensch setzt. Begründung und die einmalige Einrichtung: [ADR-6](backlog/ADR-6-pypi-veroeffentlichen.md),
+Felder im Kopf von `.github/workflows/release.yml`.
+
+[ADR-1](backlog/ADR-1-pypi-vertagt.md) („bis 1.0 vertagt") steht damit auf `verworfen` — mit
+Verweis auf den Nachfolger und unverändertem Text. Die Entscheidung war nicht falsch, sie ist
+eingelöst.
+
+### Geändert — was 1.0 verspricht
+
+Ab hier gilt SemVer ohne Sonderregel: **Ein Bruch der öffentlichen API bedeutet 2.0.0.** Bisher
+setzte ein Bruch nur eine Uhr zurück; jetzt kostet er eine Hauptversion. Gemessen wird das nicht
+nach Gefühl — `tests/test_api_surface.py` hält 231 Namen fest und trennt Bruch von Erweiterung.
+
+Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen.** Die Oberfläche ist Zeichen für
+Zeichen dieselbe.
+
+Was 1.0 **nicht** heisst: dass die Zusage über mehrere Versionen unter Änderungen gehalten hätte.
+0.17.0 hat die Bibliothek nicht angefasst. [M-1](backlog/M-1-api-stabil-1-0.md) sagt offen, was
+erfüllt war und was erlassen wurde.
+
+### Hinzugefügt — `tests/test_packaging.py`: das Paket, wie es ankommt
+
+Bis hierher wurde geprüft, was im Repo liegt. Auf PyPI zählt, was im Wheel liegt — und das sind
+zwei verschiedene Listen. Ein Wheel, dem eine Datei fehlt, installiert sauber und fällt erst auf
+einem fremden Rechner auf; eine Version im Index lässt sich nicht zurückholen.
+
+Die Suite **baut** deshalb Wheel und sdist (offline, aus den versionierten Dateien, ausserhalb des
+Arbeitsbaums) und sieht hinein: Jede versionierte Datei unter `tinysesam/` ist im Wheel — heute ist
+das nur `py.typed`, aber die erste Vorlage, die jemand dazulegt, fehlt ohne Eintrag unter
+`[tool.setuptools.package-data]` stillschweigend. Dazu die Metadaten, an denen der Index hängt:
+kein `Private :: Do Not Upload` mehr, Reifegrad passend zur Version, jede von der CI gefahrene
+Python-Fassung auch als Classifier ausgewiesen, Untergrenze gleich `requires-python`, alle fünf
+Projekt-Links gesetzt, README als Markdown im Paket. Und dass der Release-Workflow ohne Geheimnis
+veröffentlicht.
+
+`setuptools` gehört damit zur Testumgebung — seit Python 3.12 bringt eine frische Umgebung es nicht
+mehr mit. Die CI-Jobs und `scripts/check.sh` installieren es ausdrücklich; fehlt es, ist die Suite
+rot statt übersprungen. Ein Test ohne Voraussetzungen darf nicht grün aussehen.
+
+### Behoben — das sdist enthielt eine Testsuite, die sich nicht starten liess
+
+Gefunden vom neuen Packaging-Test, beim ersten Lauf. setuptools zieht nach einer alten Heuristik
+`tests/test_*.py` ins Quellpaket — aber weder `tests/run_all.py` noch `tests/_kit/` noch
+`tests/api_surface.json`. Wer das sdist auspackte, fand eine Suite vor, die beim Import scheitert.
+Das ist schlimmer als keine: Sie behauptet eine Prüfbarkeit, die es nicht gibt.
+
+Ein `MANIFEST.in` entscheidet die Frage jetzt ausdrücklich. Das sdist ist die **Quelle der
+Bibliothek**, kein Abzug des Repos: Paket, README (beide Sprachen), Lizenz, CHANGELOG und
+SECURITY — keine Tests. Zwei Suiten brauchen ohnehin, was ein sdist nie enthält (`git ls-files`
+für die Hygiene, `web/` für die Website); geprüft wird im Repo.
+
+### Geändert — Paket-Metadaten vervollständigt
+
+`Development Status` auf `5 - Production/Stable`, die unterstützten Python-Fassungen (3.10–3.14)
+als Classifier, dazu `Typing :: Typed`, `Topic :: Security` und die Zielgruppe der Administratoren.
+`[project.urls]` nennt jetzt alle fünf Ziele, die ein Besucher der Index-Seite sucht: Website,
+Doku, Repo, CHANGELOG, Issues. Die Kurzbeschreibung ist englisch wie README und Website, statt
+deutsch und dreimal so lang.
+
+Bewusst **nicht** umgestellt: `license` bleibt die Tabellenform statt des SPDX-Ausdrucks aus
+PEP 639. Der verlangt setuptools ≥ 77, und gebaut wird auch mit älteren — der Grund steht im
+`pyproject.toml` daneben, damit er beim nächsten Anlauf nicht neu erarbeitet werden muss.
+
 ## [0.17.0] — 2026-09-20
 
 Ein Release **ohne Änderung an der Bibliothek**: Wer TinySesam einbindet, bekommt denselben Code

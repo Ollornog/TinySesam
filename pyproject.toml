@@ -4,24 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tinysesam"
-version = "0.17.0"
-description = "Kleines, wiederverwendbares Multi-Methoden-Auth für FastAPI (Passwort, PIN, Passkey/WebAuthn, OIDC, SAML, LDAP/AD, TOTP, Magic-Link; Faktor-Ketten, Step-up, Recovery-Codes, Forward-Auth)"
+version = "1.0.0"
+# Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
+description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
 requires-python = ">=3.10"
+# Bewusst die Tabellenform statt des SPDX-Ausdrucks aus PEP 639: der verlangt setuptools>=77,
+# und gebaut wird auch mit älteren (das CI-Abbild bringt 68 mit). Umstellen, sobald überall
+# eine neuere Fassung liegt — dann `license = "MIT"` + `license-files = ["LICENSE"]`.
 license = { text = "MIT" }
 authors = [{ name = "ollornog" }]
 keywords = ["fastapi", "authentication", "auth", "oidc", "webauthn", "passkey", "totp", "2fa",
             "magic-link", "forward-auth", "sso", "session"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    # Jede hier genannte Fassung wird von der CI auch gefahren — `tests/test_packaging.py`
+    # hält beides zusammen. Ein Classifier ist ein Versprechen, keine Hoffnung.
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: Session",
+    "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Topic :: System :: Systems Administration :: Authentication/Directory",
-    "Private :: Do Not Upload",   # Schutz gegen versehentlichen PyPI-Upload (Installation via GitHub)
+    "Typing :: Typed",
 ]
 dependencies = [
     "fastapi>=0.110",
@@ -40,9 +56,13 @@ saml = ["python3-saml>=1.15"]       # braucht System-libxmlsec1
 all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.3", "webauthn>=2.0",
        "ldap3>=2.9", "redis>=5", "python3-saml>=1.15"]
 
+# Die Leiste neben der Projektseite im Index. Wer dort landet, sucht meist eines von
+# fünf Zielen — fehlt eines, sucht er es auf GitHub und findet vielleicht ein anderes Projekt.
 [project.urls]
-Homepage = "https://github.com/Ollornog/TinySesam"
+Homepage = "https://ollornog.github.io/TinySesam/"
+Documentation = "https://ollornog.github.io/TinySesam/"
 Repository = "https://github.com/Ollornog/TinySesam"
+Changelog = "https://github.com/Ollornog/TinySesam/blob/main/CHANGELOG.md"
 Issues = "https://github.com/Ollornog/TinySesam/issues"
 
 [project.scripts]
@@ -51,5 +71,8 @@ tinysesam = "tinysesam.__main__:main"
 [tool.setuptools.packages.find]
 include = ["tinysesam*"]
 
+# Alles, was NICHT `.py` ist und trotzdem zur Laufzeit gebraucht wird, muss hier stehen —
+# sonst fehlt es im Wheel und fällt erst beim Nutzer auf. `tests/test_packaging.py` prüft
+# gegen die versionierten Dateien, damit die Liste nicht hinter dem Paket zurückbleibt.
 [tool.setuptools.package-data]
 tinysesam = ["py.typed"]
