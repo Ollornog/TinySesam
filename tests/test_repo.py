@@ -261,8 +261,15 @@ for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.p
     assert needed in ci, f"CI fährt {needed} nicht"
 
 # Öffentliches Repo → niemals self-hosted Runner: ein Fork-PR liefe sonst auf fremder Hardware.
-for wf in (f for f in FILES if f.startswith(".github/workflows/")):
-    assert "self-hosted" not in read(wf), f"{wf} nutzt einen self-hosted Runner"
+#
+# Über `hygiene.pruefe_kein_self_hosted_runner`, nicht über eine eigene Textsuche: Die Funktion
+# im Kit schneidet YAML-Kommentare ab, die Textsuche hier tat es nicht. Ein Workflow, der die
+# Regel im Kommentar ERKLÄRT („keine self-hosted Runner, weil …"), schlug damit an — ein
+# Fehlalarm, der ausgerechnet das gute Verhalten bestraft. Zwei Prüfungen für dieselbe Sache
+# sind ohnehin eine zu viel.
+self_hosted = hygiene.pruefe_kein_self_hosted_runner(ROOT, FILES)
+assert not self_hosted, ("self-hosted Runner in einem öffentlichen Repo:\n  "
+                         + "\n  ".join(self_hosted))
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"

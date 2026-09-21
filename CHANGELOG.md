@@ -23,6 +23,26 @@ zuerst repariert worden — alles andere wäre auf Sand gebaut.
 `MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
 über den gepinnten Git-Tag.
 
+### Hinzugefügt — Lieferketten-Hygiene (CodeQL, Dependabot für pip, Digest-Pin)
+
+Aus einer Recherche dazu, was ein quelloffenes Auth-Paket vor 1.0 haben sollte:
+
+- **Statische Analyse** lief bisher gar keine. Neu: `.github/workflows/codeql.yml`
+  (`security-and-quality`, wöchentlich und bei jedem PR). Für ein Auth-Paket war das die
+  auffälligste Lücke — der OpenSSF-Scorecard-Check `SAST` hätte 0 ergeben.
+- **Dependabot deckte nur `github-actions` ab**, nicht `pip`: Für `fastapi`, `authlib`,
+  `python3-saml` & Co. gab es keine regulären Versions-PRs. Sicherheitslücken meldet Dependabot
+  ohnehin repo-weit — aber ein Auth-Paket sollte nicht auf der Version von vorgestern sitzen
+  bleiben, bis jemand eine findet. Gruppiert zu einem PR je Monat, damit ein Solo-Projekt nicht
+  in Rauschen ertrinkt. Das Basis-Abbild wird ebenfalls beobachtet.
+- **Das Docker-Basis-Abbild ist per Digest gepinnt** statt per Tag. `python:3.12-slim` zeigt
+  heute hierhin und morgen woanders; zwei Bauläufe desselben Commits ergaben verschiedene
+  Abbilder.
+
+Bereits erfüllt und deshalb nur der Vollständigkeit halber: **Private Vulnerability Reporting**
+ist im Repo eingeschaltet (nachgeprüft, nicht angenommen) — SECURITY.md verspricht den Weg, und
+er existiert auch.
+
 ### Sicherheit — zweites Audit: die Reparaturen der Reparaturen
 
 Vier unabhängige Blickwinkel, diesmal auf den frischen Code selbst gerichtet. **43 Befunde, 5
