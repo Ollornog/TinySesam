@@ -5,9 +5,14 @@
     python tests/run_all.py test_core.py   # nur bestimmte
 
 Exit-Code 0 = alles grün, 1 = mind. ein Fehlschlag. Kein pytest nötig (Suiten sind
-eigenständige assert-Skripte). Suiten, die nur wegen einer FEHLENDEN OPTIONALEN
-Abhängigkeit nicht importieren (z.B. webauthn/authlib bei Minimal-Install), werden
-als „skip" gewertet, nicht als Fehler — so läuft der Runner auch ohne Extras sinnvoll.
+eigenständige assert-Skripte).
+
+Eine Suite, der eine optionale Abhängigkeit fehlt, beendet sich SELBST mit Exit 77
+(`tests/_kit/voraussetzung.py`) — dann gilt sie als übersprungen. Jeder andere
+Fehlschlag ist ein Fehlschlag. Diese Unterscheidung ist wichtiger, als sie aussieht:
+Vorher riet der Runner am stderr, und konnte „der Test braucht ein Extra" nicht von
+„die Bibliothek stürzt ohne ein Extra ab" trennen — der zweite Fall blieb dadurch
+monatelang unsichtbar.
 
 Jede Suite läuft in einem EIGENEN Wegwerf-Verzeichnis (TMPDIR/HOME/XDG_* zeigen
 dorthin, danach wird es gelöscht). So kann kein Zustand aus einem Lauf den nächsten
@@ -23,9 +28,21 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-OPTIONAL = ("webauthn", "authlib", "httpx", "argon2", "qrcode",   # Extras: [passkey]/[oidc]/[argon2]/[qr]
-            "onelogin", "xmlsec", "ldap3", "redis",               # [saml]/[ldap]/[redis]
-            "websockets", "uvicorn", "kein Chrome gefunden")      # der Browser-Test
+# Exit-Code, mit dem eine Suite SELBST sagt: "mir fehlt eine Voraussetzung, wertet mich nicht".
+# 77 ist die Konvention aus automake. Warum ein Code und keine Textsuche im stderr:
+#
+# Bis 2026-09-21 riet der Runner anhand von `ModuleNotFoundError` + einer Namensliste, ob ein
+# Fehlschlag "nur" eine fehlende optionale Abhaengigkeit war. Das kann zwei Faelle nicht
+# unterscheiden, die voellig verschieden sind:
+#   (a) Die SUITE braucht ein Extra, das nicht da ist  -> ueberspringen ist richtig.
+#   (b) Die BIBLIOTHEK stuerzt ab, weil sie ein Extra braucht, das sie nicht haben duerfte
+#       -> das ist ein Fehler, und zwar ein schwerer.
+# Fall (b) trat real ein: `pip install tinysesam` + Vorgabe-Konfiguration endete mit
+# `ModuleNotFoundError: webauthn` (passkey_enabled stand auf True), und der Runner verbuchte
+# das als "uebersprungen". Die Suite war gruen, weil sie nicht gemessen hat.
+#
+# Jetzt ist "uebersprungen" eine ZUSAGE der Suite, kein Ratespiel ueber fremdes stderr.
+SKIP_EXIT = 77
 
 
 def main(argv):
@@ -68,9 +85,10 @@ def main(argv):
         if r.returncode == 0:
             print(f"  ok   {name}")
             ok.append(name)
-        elif ("ModuleNotFoundError" in r.stderr or "ImportError" in r.stderr) \
-                and any(m in r.stderr for m in OPTIONAL):
-            print(f"  skip {name} (optionale Abhängigkeit fehlt)")
+        elif r.returncode == SKIP_EXIT:
+            # Die Suite hat selbst abgewunken — der Grund steht in ihrer eigenen Ausgabe.
+            grund = (r.stdout or r.stderr or "").strip().splitlines()
+            print(f"  skip {name}" + (f" ({grund[-1][:70]})" if grund else ""))
             skipped.append(name)
         else:
             print(f"  FAIL {name}")
@@ -79,7 +97,27 @@ def main(argv):
             failed.append(name)
     total = len(files)
     print(f"\n{len(ok)}/{total} grün, {len(skipped)} übersprungen, {len(failed)} fehlgeschlagen")
-    return 1 if failed else 0
+    if failed:
+        return 1
+
+    # Ein Boden gegen „grün, weil nichts gemessen wurde".
+    #
+    # Bis hierher genügte „nichts fehlgeschlagen" für Exit 0 — auch bei „0 grün, alles
+    # übersprungen". Genau so sah der Lauf in einem git-worktree aus: Die Hygiene-Suiten hielten
+    # `.git` (dort eine Datei) für „kein Repo", wanden ab, und `scripts/check.sh` druckte
+    # darüber „✓ alles grün". Dieselbe Klasse Fehler, gegen die Exit 77 eingeführt wurde, nur
+    # eine Ebene höher.
+    if not ok:
+        print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",
+              file=sys.stderr)
+        return 1
+    anteil = len(skipped) / total if total else 0
+    if anteil > 0.5:
+        print(f"\nFEHLER: {len(skipped)} von {total} Suiten übersprungen ({anteil:.0%}). "
+              "Ein Lauf, der mehr abwinkt als misst, ist keine Aussage — fehlende Voraussetzungen "
+              "nachinstallieren oder die Auswahl einschränken.", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

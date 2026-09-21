@@ -27,7 +27,25 @@ def build_admin_router(auth) -> APIRouter:
     def guard(request: Request):
         # Admin + (optional) Step-up-MFA. Browser-Seitenaufruf → Redirect zu Login/Reauth;
         # JSON-/fetch-Aufrufe → 401/403 (Panel-UI lädt nach Reauth neu).
+        #
+        # CSRF wird HIER geprüft, nicht je Route: Zwei Panel-Routen hatten die Prüfung nicht
+        # (Key sperren, Ressource löschen), weil sie keinen JSON-Body lesen und json_body damit
+        # nie zum Zug kam. Eine Klasse zu schliessen ist verlässlicher, als sie Route für Route
+        # zu flicken — die nächste neue Route ist sonst wieder offen.
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
         return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
+
+    def protokoll(request: Request, ereignis: str, detail=None):
+        """Eine Admin-Aktion protokollieren — mit Akteur und IP.
+
+        Ohne beides ist das Audit-Log für die Aufarbeitung wertlos: Es hielt fest, DASS ein
+        Konto gesperrt oder ein Passwort zurückgesetzt wurde, nicht von wem und von wo. Bei
+        mehreren Admins ist das genau die Frage, die man hinterher stellt. Wie bei CSRF steht
+        das hier an einer Stelle und nicht in jeder Route — die nächste neue Route erbt es.
+        """
+        wer = auth.current_user(request)
+        auth.audit(ereignis, wer["username"] if wer else None, auth.client_ip(request), detail)
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -51,16 +69,16 @@ def build_admin_router(auth) -> APIRouter:
         username = (b.get("username") or "").strip()
         email = norm_email(b.get("email"))
         if email and not valid_email(email):
-            raise HTTPException(400, "E-Mail ungültig")
+            raise HTTPException(400, auth.t("api.email_invalid"))
         if email and auth.store.email_taken(email):
-            raise HTTPException(409, "E-Mail bereits vergeben")
+            raise HTTPException(409, auth.t("api.email_taken"))
         # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
         if not username and cfg.login_identifier == "email" and not b.get("is_service"):
             username = email or ""
         if not username:
-            raise HTTPException(400, "username nötig")
+            raise HTTPException(400, auth.t("api.username_req"))
         if auth.store.get_user_by_name(username):
-            raise HTTPException(409, "existiert schon")
+            raise HTTPException(409, auth.t("api.user_exists"))
         roles = b.get("roles") or []
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
@@ -68,7 +86,7 @@ def build_admin_router(auth) -> APIRouter:
             uid = auth.create_user(username, password=b.get("password") or None,
                                    is_admin=bool(b.get("is_admin")), roles=roles,
                                    display_name=b.get("display_name"), email=email)
-        auth.audit("user_create", detail=f"{username} service={bool(b.get('is_service'))}")
+        protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
     @ar.post("/api/users/{uid}/disable")
@@ -77,11 +95,17 @@ def build_admin_router(auth) -> APIRouter:
         b = await auth.json_body(request)
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
-            raise HTTPException(400, "sich selbst nicht sperren")
+            raise HTTPException(400, auth.t("api.no_self_lock"))
         auth.store.set_disabled(uid, disabled)
+        keys = 0
         if disabled:
             auth.store.delete_user_sessions(uid)
-        auth.audit("user_disable" if disabled else "user_enable", detail=f"uid={uid}")
+            # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
+            # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
+            # niemand mehr weiss.
+            keys = auth.store.revoke_user_api_keys(uid)
+        protokoll(request, "user_disable" if disabled else "user_enable",
+              f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/password")
@@ -89,11 +113,15 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         b = await auth.json_body(request)
         if not b.get("password"):
-            raise HTTPException(400, "password nötig")
+            raise HTTPException(400, auth.t("api.password_req"))
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
-        auth.audit("user_password_reset", detail=f"uid={uid}")
-        return {"ok": True}
+        # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
+        # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
+        # der Key ist eine zweite, gleichwertige Anmeldung.
+        keys = auth.store.revoke_user_api_keys(uid)
+        protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
+        return {"ok": True, "api_keys_revoked": keys}
 
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
@@ -102,7 +130,7 @@ def build_admin_router(auth) -> APIRouter:
         auth.set_roles(uid, b.get("roles") or [])
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
-        auth.audit("user_roles", detail=f"uid={uid}")
+        protokoll(request, "user_roles", f"uid={uid}")
         return {"ok": True}
 
     # ---------- API-Keys (je User) ----------
@@ -128,7 +156,10 @@ def build_admin_router(auth) -> APIRouter:
     def sessions(request: Request):
         guard(request)
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
-        return [{"full": s["token"], "user": names.get(s["user_id"], s["user_id"]), "method": s["method"],
+        # `full` ist das HANDLE (sha256 des Tokens), nicht das Token: Es benennt die Sitzung zum
+        # Beenden und taugt nicht zum Anmelden. Vorher stand hier das echte Sitzungstoken jedes
+        # Nutzers — wer die Panel-Antwort sah, konnte jede fremde Sitzung übernehmen.
+        return [{"full": s["token_hash"], "user": names.get(s["user_id"], s["user_id"]), "method": s["method"],
                  "ip": s["ip"], "created_at": s["created_at"], "mfa_ok": bool(s["mfa_ok"])}
                 for s in auth.store.list_sessions()]
 
@@ -137,10 +168,10 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         b = await auth.json_body(request)
         if b.get("token"):
-            auth.store.delete_session(b["token"])
+            auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
             auth.store.delete_user_sessions(int(b["user_id"]))
-        auth.audit("session_revoke")
+        protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "eine Sitzung")
         return {"ok": True}
 
     # ---------- Einladungen (Magic-Invite) ----------
@@ -169,19 +200,19 @@ def build_admin_router(auth) -> APIRouter:
             b = await auth.json_body(request)
             name = (b.get("name") or "").strip()
             if not name or not b.get("secret"):
-                raise HTTPException(400, "name + secret nötig")
+                raise HTTPException(400, auth.t("api.name_secret_req"))
             try:
                 auth.set_resource_secret(name, b["secret"], kind=b.get("kind") or "pin", label=b.get("label"))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            auth.audit("resource_set", detail=name)
+            protokoll(request, "resource_set", name)
             return {"ok": True}
 
         @ar.post("/api/resources/{name}/delete")
         def resource_delete(request: Request, name: str):
             guard(request)
             auth.remove_resource_secret(name)
-            auth.audit("resource_delete", detail=name)
+            protokoll(request, "resource_delete", name)
             return {"ok": True}
 
     # ---------- Härtung / Audit ----------
@@ -195,7 +226,7 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         for k, v in (await auth.json_body(request)).items():
             auth.set_security(k, v)
-        auth.audit("security_update")
+        protokoll(request, "security_update")
         return auth.all_security()
 
     @ar.get("/api/version")
@@ -220,9 +251,15 @@ def build_admin_router(auth) -> APIRouter:
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis
             resp = HTMLResponse(render_panel(auth, request.url.path.rstrip("/"), warn=warn))
-            if cfg.csrf_enabled:
-                import secrets as _s
-                resp.set_cookie(cfg.csrf_cookie, _s.token_urlsafe(24), secure=cfg.cookie_secure,
+            # Ein VORHANDENES Cookie übernehmen, nicht überschreiben — dieselbe Behandlung wie
+            # in `render_page`. Diese Stelle war der dritte Setzer und der letzte, der bei jedem
+            # Aufruf neu würfelte: Wer das Panel in einem zweiten Reiter öffnete, machte damit
+            # das Formular im ersten ungültig, und der POST dort antwortete mit 403 ohne
+            # Erklärung. Gegen einen Angreifer schützte das nie — getroffen wurde der eigene
+            # Nutzer. (War als B-1 auf „nach 1.0" vertagt; durch die neuen CSRF-Prüfungen im
+            # Panel trifft es inzwischen mehr Wege als bei der Meldung.)
+            if cfg.csrf_enabled and not request.cookies.get(cfg.csrf_cookie):
+                resp.set_cookie(cfg.csrf_cookie, auth.csrf_token(request), secure=cfg.cookie_secure,
                                 samesite=cfg.cookie_samesite, path=cfg.cookie_path)
             return resp
 

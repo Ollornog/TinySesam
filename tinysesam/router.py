@@ -11,9 +11,6 @@ def build_router(auth) -> APIRouter:
     cfg = auth.cfg
     r = APIRouter(tags=["auth"])
 
-    def _client(request: Request):
-        return (request.client.host if request.client else None), request.headers.get("user-agent")
-
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = "/", error: str = ""):
@@ -27,7 +24,7 @@ def build_router(auth) -> APIRouter:
                      next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
         if not cfg.password_enabled:
-            raise HTTPException(404, "Passwort-Login deaktiviert")
+            raise HTTPException(404, auth.t("api.password_off"))
         nxt = auth.safe_next(next)
         if not username or not password:
             # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
@@ -85,8 +82,16 @@ def build_router(auth) -> APIRouter:
             auth.record_login(pu["username"], ip, False, "totp")
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
-        auth.complete_mfa(s["token"])
-        return RedirectResponse(auth.login_redirect_after(request, s["token"], pu["id"], nxt), 303)
+        sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
+        # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
+        # Rechtewechsel. Dann muss das Cookie mit.
+        erneuert = auth.complete_totp(sitzungs_token)
+        weiter = erneuert or sitzungs_token
+        antwort = RedirectResponse(auth.login_redirect_after(request, weiter, pu["id"], nxt), 303)
+        if erneuert:
+            auth.set_cookie(antwort, erneuert)
+            auth.csrf_rotieren(antwort)      # beim Login ein frisches CSRF-Token
+        return antwort
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -106,6 +111,9 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
+        # Ohne diese Zeile genügte ein <form method=POST> ohne Body von einer fremden Seite,
+        # um TOTP UND alle Recovery-Codes zu löschen — der zweite Faktor spurlos weg.
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
@@ -115,11 +123,12 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
         """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
         if not auth.store.has_confirmed_totp(u["id"]):
-            raise HTTPException(400, "erst 2FA einrichten")
+            raise HTTPException(400, auth.t("api.totp_first"))
         return {"codes": auth.generate_recovery_codes(u["id"])}
 
     # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
@@ -194,6 +203,7 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
@@ -210,7 +220,7 @@ def build_router(auth) -> APIRouter:
         def resource_page(request: Request, name: str, next: str = "/", error: str = ""):
             row = auth.store.get_resource_secret(name)
             if not row:
-                raise HTTPException(404, "unbekannte Ressource")
+                raise HTTPException(404, auth.t("api.resource_unknown"))
             nxt = auth.safe_next(next)
             if auth.resource_unlocked(request, name):
                 return RedirectResponse(nxt, 303)
@@ -222,7 +232,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             row = auth.store.get_resource_secret(name)
             if not row:
-                raise HTTPException(404, "unbekannte Ressource")
+                raise HTTPException(404, auth.t("api.resource_unknown"))
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
@@ -245,7 +255,12 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("magic_request", request=request, next=auth.safe_next(next), sent=False, error="")
 
         @r.post("/auth/magic/request", response_class=HTMLResponse)
-        def magic_request(request: Request, email: str = Form(""), next: str = Form("/")):
+        def magic_request(request: Request, email: str = Form(""), next: str = Form("/"),
+                          csrf_tok: str = Form("", alias="_csrf")):
+            # Ohne diese Prüfung konnte eine fremde Seite über den Browser des Opfers
+            # Anmeldelinks an beliebige Adressen verschicken lassen — die einzige
+            # zustandsändernde Route, die ohne Token durchkam.
+            auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
@@ -338,7 +353,7 @@ def build_router(auth) -> APIRouter:
                                     methods=methods, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
         if s:
-            auth.store.set_session_mfa(s["token"], True)   # setzt mfa_at=now → wieder frisch
+            auth.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
         auth.audit("stepup", u["username"], ip)
         return RedirectResponse(nxt, 303)
 
@@ -437,7 +452,7 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.email_taken"), 409)
             # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
             if cfg.login_identifier == "email":
-                username = email_final
+                username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
             if auth.store.get_user_by_name(username):
@@ -523,16 +538,22 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(401)
         b = await auth.json_body(request)
         if not auth.check_password(u["username"], b.get("current") or ""):
-            raise HTTPException(403, "aktuelles Passwort falsch")
+            raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
         if len(new) < auth.sec("password_min_length"):
-            raise HTTPException(400, f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+            raise HTTPException(400, auth.t("api.password_short", n=auth.sec("password_min_length")))
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
-        auth.store.delete_user_sessions_except(u["id"], s["token"] if s else None)
-        auth.audit("password_change", u["username"], auth.client_ip(request))
-        return {"ok": True}
+        auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
+        # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
+        # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
+        # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
+        # Einbruch das Passwort ändert, muss wissen, dass da noch eine Tür offen ist.
+        aktiv = auth.store.count_active_api_keys(u["id"])
+        auth.audit("password_change", u["username"], auth.client_ip(request),
+                   f"api_keys_active={aktiv}" if aktiv else None)
+        return {"ok": True, "api_keys_active": aktiv}
 
     if cfg.account_enabled:
         @r.get("/auth/account", response_class=HTMLResponse)
@@ -552,11 +573,11 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         cur = auth.session_from_request(request)
-        cur_tok = cur["token"] if cur else None
+        cur_tok = cur["token_hash"] if cur else None
         out = []
         for s in auth.store.list_sessions(u["id"]):
             out.append({"created_at": s["created_at"], "ip": s["ip"], "method": s["method"],
-                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token"] == cur_tok})
+                        "user_agent": (s["user_agent"] or "")[:120], "current": s["token_hash"] == cur_tok})
         return out
 
     @r.post("/auth/sessions/revoke")
@@ -565,13 +586,21 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         scope = (await auth.json_body(request)).get("scope", "others")
+        # Ein API-Key ist eine zweite, gleichwertige Anmeldung — er hängt an keiner Sitzung.
+        # „alle beenden" ist die Panik-Taste (Konto vermutlich übernommen): da gehört er dazu.
+        # „andere beenden" ist Aufräumen: da bleibt er, und die Antwort sagt, wie viele weiter
+        # gelten. Stillschweigend weiterlaufen lassen ist das Einzige, was nicht geht.
+        keys_widerrufen = 0
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
+            keys_widerrufen = auth.store.revoke_user_api_keys(u["id"])
         else:
             cur = auth.session_from_request(request)
-            auth.store.delete_user_sessions_except(u["id"], cur["token"] if cur else None)
-        auth.audit("sessions_revoke", u["username"], auth.client_ip(request), scope)
-        return {"ok": True}
+            auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
+        auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
+                   scope + (f" api_keys_revoked={keys_widerrufen}" if keys_widerrufen else ""))
+        return {"ok": True, "api_keys_revoked": keys_widerrufen,
+                "api_keys_active": auth.store.count_active_api_keys(u["id"])}
 
     # ---------- Logout / me ----------
     @r.get("/auth/logout")
@@ -581,7 +610,7 @@ def build_router(auth) -> APIRouter:
         oidc_logout_url = None
         if cfg.oidc_rp_logout and auth.oidc:
             s = auth.session_from_request(request)
-            factors = []
+            factors: list = []
             try:
                 factors = __import__("json").loads(s["factors_done"] or "[]") if s else []
             except Exception:
@@ -612,7 +641,21 @@ def build_router(auth) -> APIRouter:
     # ---------- Passkey / WebAuthn (nur wenn aktiviert) ----------
     if auth.webauthn:
         from .webauthn_ import register_passkey_routes
-        register_passkey_routes(r, auth)
+        try:
+            register_passkey_routes(r, auth)
+        except ModuleNotFoundError as e:
+            # Wer passkey_enabled bewusst einschaltet, soll lesen koennen, was fehlt — statt
+            # einen ModuleNotFoundError aus dem Innern der Bibliothek zu bekommen.
+            #
+            # `MissingExtra`, nicht `RuntimeError`: Die Doku zeigt `except MissingExtra as e:
+            # … e.extra` als Muster, und für den Passkey-Fall griff das ins Leere — als
+            # einziges Verfahren warf er einen anderen Typ. (`MissingExtra` erbt von
+            # `RuntimeError`, bestehender Code fängt also weiter.)
+            from .errors import MissingExtra
+            raise MissingExtra(
+                "passkey_enabled=True, aber das Extra [passkey] ist nicht installiert "
+                "(pip install 'tinysesam[passkey]'). Ohne es gibt es keine Passkey-Routen; "
+                "passkey_enabled=False schaltet sie ab.", extra="passkey") from e
 
     # ---------- SAML 2.0 SP (nur wenn aktiviert) ----------
     if auth.saml:
@@ -632,17 +675,34 @@ def build_router(auth) -> APIRouter:
                     "script_name": request.url.path, "get_data": dict(request.query_params),
                     "post_data": {k: v for k, v in (form or {}).items()}}
 
+        # Anker gegen untergeschobene Assertions: Die ID des AuthnRequests liegt bis zur ACS in
+        # einem eigenen, kurzlebigen Cookie.
+        #
+        # SameSite ist hier NICHT aus der Config: Die ACS ist ein Cross-Site-POST (der IdP lässt
+        # den Browser ein Formular abschicken), und dabei sendet der Browser ein Lax-Cookie
+        # nicht mit — der Vorgabewert `cookie_samesite="lax"` würde den Anker also bei jedem
+        # echten Login verlieren. Mitkommen kann nur `SameSite=None`, und das verlangt `Secure`.
+        # Ohne `cookie_secure` bleibt es deshalb beim Config-Wert: lokal/im TestClient ist der
+        # POST same-site und kommt durch, für einen echten IdP ist dieser Aufbau ohnehin keiner.
+        _SAMLFLOW = "tinysesam_saml_flow"
+
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "/"):
             base = cfg.base_url or _saml_base(request)
-            url = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
-            return RedirectResponse(url, 303)
+            url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
+            resp = RedirectResponse(url, 303)
+            resp.set_cookie(_SAMLFLOW, rid or "", max_age=600, httponly=True,
+                            secure=cfg.cookie_secure,
+                            samesite="none" if cfg.cookie_secure else cfg.cookie_samesite,
+                            path=cfg.cookie_path)
+            return resp
 
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
         async def saml_acs(request: Request):
             form = await request.form()
             base = cfg.base_url or _saml_base(request)
-            data = auth.saml.process(_saml_req(request, form), base)
+            data = auth.saml.process(_saml_req(request, form), base,
+                                     request_id=request.cookies.get(_SAMLFLOW) or "")
             if not data:
                 # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
                 # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
@@ -650,13 +710,14 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, auth.t("err.saml"))
             u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
             if not u:
-                raise HTTPException(403, "SAML: kein Zugriff")
+                raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request), request.headers.get("user-agent"))
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
+            resp.delete_cookie(_SAMLFLOW, path=cfg.cookie_path)   # einmal angefordert, einmal eingelöst
             return resp
 
         @r.get("/auth/saml/metadata")
@@ -673,20 +734,33 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(401)
             return [key_view(k) for k in auth.list_api_keys(u["id"])]
 
-        @r.post("/auth/apikeys")
-        async def apikeys_create(request: Request):
+        def _nur_mit_sitzung(request: Request):
+            """Verwaltung von Schlüsseln setzt eine interaktive Sitzung voraus.
+
+            `create_api_key` schneidet den Scope gegen die **Konto**-Rollen — nicht gegen die
+            des Aufrufers. Ein auf `["lager"]` beschränkter Key konnte sich damit selbst einen
+            Key mit allen Rollen des Kontos ausstellen und so seine eigene Begrenzung aufheben.
+            Statt die Schnittmenge durch den ganzen Aufrufpfad zu fädeln, gilt die einfachere
+            Regel: Schlüssel gibt ein Mensch aus, kein Schlüssel.
+            """
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
+            if u.get("_via") != "session":
+                raise HTTPException(403, auth.t("api.key_needs_session"))
+            return u
+
+        @r.post("/auth/apikeys")
+        async def apikeys_create(request: Request):
+            u = _nur_mit_sitzung(request)
             b = await auth.json_body(request)
             return auth.create_api_key(u["id"], name=b.get("name"),
                                        expires_days=b.get("expires_days"), roles=b.get("roles"))
 
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
+            u = _nur_mit_sitzung(request)
             auth.revoke_api_key(key_id, u["id"])   # sperren, nicht löschen
             return {"ok": True}
 

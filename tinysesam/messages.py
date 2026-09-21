@@ -5,8 +5,48 @@ komplette Frontend per auth.set_template(...) ersetzen. Platzhalter im {name}-St
 """
 from __future__ import annotations
 
+from typing import Optional
+
 MESSAGES = {
     "en": {
+        # --- Antworten an Maschinen (HTTPException-Detail). Getrennt von `err.*`,
+        # das die UI-Seiten tragen: Diese hier gehen in JSON-Antworten und an Proxys,
+        # und sie waren bis 0.18.0 durchweg deutsch — auch bei lang="en".
+        "api.passkey_reg_expired": 'Registration expired',
+        "api.passkey_login_expired": 'Sign-in expired',
+        "api.passkey_unknown": 'Unknown passkey',
+        "api.key_needs_session": 'API keys are issued from an interactive session, not with an API key',
+        "api.oidc_token": 'OIDC token error: {grund}',
+        "api.oidc_nonce": 'OIDC nonce mismatch',
+        "api.oidc_error": 'OIDC error: {grund}',
+        "api.oidc_state": 'OIDC state invalid or expired',
+        "api.oidc_browser": 'This sign-in was not started in this browser',
+        "api.oidc_group": 'No access — required group missing',
+        "api.oidc_nolink": 'No account linked to this SSO identity',
+        "api.email_invalid": 'Invalid email address',
+        "api.email_taken": 'Email already registered',
+        "api.username_req": 'username required',
+        "api.user_exists": 'Account already exists',
+        "api.no_self_lock": 'You cannot lock your own account',
+        "api.password_req": 'password required',
+        "api.name_secret_req": 'name and secret required',
+        "api.json_invalid": 'Invalid JSON body',
+        "api.json_object": 'JSON object expected',
+        "api.csrf": 'CSRF token invalid',
+        "api.not_signed_in": 'Not signed in',
+        "api.stepup": 'Step-up confirmation required',
+        "api.factor": 'Another factor required',
+        "api.admin": 'Admin rights required',
+        "api.role": 'Role {rollen} required',
+        "api.stepup_session": 'Step-up MFA requires an interactive session',
+        "api.resource_locked": 'Resource locked',
+        "api.password_off": 'Password sign-in disabled',
+        "api.totp_first": 'Set up 2FA first',
+        "api.resource_unknown": 'Unknown resource',
+        "api.password_wrong": 'Current password is wrong',
+        "api.password_short": 'Password too short (min. {n})',
+        "api.saml_denied": 'SAML: no access',
+
         # --- generic / errors ---
         "or": "or",
         "back": "Back",
@@ -194,6 +234,44 @@ MESSAGES = {
                              "tag up, reinstall, restart the service.",
     },
     "de": {
+        # --- Antworten an Maschinen (HTTPException-Detail). Getrennt von `err.*`,
+        # das die UI-Seiten tragen: Diese hier gehen in JSON-Antworten und an Proxys,
+        # und sie waren bis 0.18.0 durchweg deutsch — auch bei lang="en".
+        "api.passkey_reg_expired": 'Registrierung abgelaufen',
+        "api.passkey_login_expired": 'Login abgelaufen',
+        "api.passkey_unknown": 'Unbekannter Passkey',
+        "api.key_needs_session": 'API-Keys werden aus einer angemeldeten Sitzung ausgestellt, nicht mit einem API-Key',
+        "api.oidc_token": 'OIDC-Token-Fehler: {grund}',
+        "api.oidc_nonce": 'OIDC-Nonce passt nicht',
+        "api.oidc_error": 'OIDC-Fehler: {grund}',
+        "api.oidc_state": 'OIDC-state ungültig oder abgelaufen',
+        "api.oidc_browser": 'OIDC-Anmeldung wurde nicht in diesem Browser begonnen',
+        "api.oidc_group": 'Kein Zugriff — erforderliche Gruppe fehlt',
+        "api.oidc_nolink": 'Kein mit diesem SSO-Konto verknüpfter Account',
+        "api.email_invalid": 'E-Mail ungültig',
+        "api.email_taken": 'E-Mail bereits vergeben',
+        "api.username_req": 'username nötig',
+        "api.user_exists": 'existiert schon',
+        "api.no_self_lock": 'sich selbst nicht sperren',
+        "api.password_req": 'password nötig',
+        "api.name_secret_req": 'name + secret nötig',
+        "api.json_invalid": 'ungültiger JSON-Body',
+        "api.json_object": 'JSON-Objekt erwartet',
+        "api.csrf": 'CSRF-Token ungültig',
+        "api.not_signed_in": 'nicht eingeloggt',
+        "api.stepup": 'Step-up-Bestätigung nötig',
+        "api.factor": 'weiterer Faktor nötig',
+        "api.admin": 'Adminrechte nötig',
+        "api.role": 'Rolle {rollen} nötig',
+        "api.stepup_session": 'Step-up-MFA nötig — nur per interaktiver Sitzung',
+        "api.resource_locked": 'Ressource gesperrt',
+        "api.password_off": 'Passwort-Login deaktiviert',
+        "api.totp_first": 'erst 2FA einrichten',
+        "api.resource_unknown": 'unbekannte Ressource',
+        "api.password_wrong": 'aktuelles Passwort falsch',
+        "api.password_short": 'Passwort zu kurz (min. {n})',
+        "api.saml_denied": 'SAML: kein Zugriff',
+
         "or": "oder",
         "back": "Zurück",
         "error.home": "Zur Startseite",
@@ -372,7 +450,7 @@ MESSAGES = {
 }
 
 
-def translate(lang: str, key: str, custom: dict = None, **fmt) -> str:
+def translate(lang: str, key: str, custom: Optional[dict] = None, **fmt) -> str:
     """Text für key in lang; Fallback: custom → lang → en → key selbst. Platzhalter via str.format."""
     for table in ((custom or {}).get(lang), MESSAGES.get(lang), MESSAGES.get("en")):
         if table and key in table:

@@ -1,0 +1,11 @@
+[Unit]
+Description=TinySesam täglich aufräumen
+
+[Timer]
+# Nachts, mit Streuung — und `Persistent`, damit ein verpasster Lauf nachgeholt wird.
+OnCalendar=*-*-* 03:30:00 Europe/Berlin
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

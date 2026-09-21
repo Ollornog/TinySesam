@@ -65,7 +65,7 @@ FLOWS = [
             "steps": [("do", "Erstfaktor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-stelliger Code"),
                       ("end", "Sitzung <i>mfa_ok</i>")],
             "note": "Wer keine 2FA eingerichtet hat, überspringt den Schritt. Recovery-Codes gehen ebenso. "
-                    "<code>totp_required=True</code> macht ihn zur Pflicht.",
+                    "<code>login_chain=['password','totp']</code> macht ihn zur Pflicht.",
         },
         "en": {
             "title": "Second factor (TOTP)",
@@ -73,7 +73,7 @@ FLOWS = [
             "steps": [("do", "first factor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-digit code"),
                       ("end", "session <i>mfa_ok</i>")],
             "note": "Users without 2FA skip the step; recovery codes work too. "
-                    "<code>totp_required=True</code> makes it mandatory.",
+                    "<code>login_chain=['password','totp']</code> makes it mandatory.",
         },
     },
     {

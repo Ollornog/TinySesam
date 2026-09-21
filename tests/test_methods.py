@@ -1,5 +1,12 @@
 """Struktur-Test für OIDC + Passkey: Module laden, Routen antworten, Passkey-Options generierbar
 (ohne Browser), Login-Seite zeigt alle aktiven Methoden. (Browser-/Provider-Pfad hier nicht prüfbar.)"""
+
+# Diese Suite baut absichtlich eine App MIT Passkey und OIDC — ohne die Extras gibt es nichts
+# zu pruefen. Das ist eine fehlende Voraussetzung dieser Suite, kein Fehler der Bibliothek:
+# genau diese Unterscheidung hat der Runner frueher nicht getroffen.
+from voraussetzung import braucht_modul  # noqa: E402
+braucht_modul("webauthn", extra="passkey")
+braucht_modul("authlib", extra="oidc")
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

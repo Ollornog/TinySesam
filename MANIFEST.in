@@ -1,0 +1,43 @@
+# Was ins sdist gehört — und was bewusst NICHT.
+#
+# Das Wheel entsteht aus `[tool.setuptools.packages.find]` und braucht diese Datei nicht.
+# Das sdist dagegen nimmt per Vorgabe mehr mit, als jemand vermutet, und weniger, als er
+# braucht: setuptools zieht nach einer alten Heuristik `tests/test_*.py` hinein, aber weder
+# `tests/run_all.py` noch `tests/_kit/` noch `tests/api_surface.json`. Ausgeliefert wurde damit
+# eine Suite, die sich nicht starten lässt — schlimmer als keine, weil sie eine Zusage vortäuscht.
+#
+# Bis 0.18.0 stand hier deshalb `prune tests`, mit der Begründung: zwei Suiten brauchen ohnehin,
+# was ein sdist nie enthält (`git ls-files` für die Hygiene, `web/` für die Website). Diese
+# Begründung trägt nicht mehr. Seit 0.18.0 sagt eine Suite selbst ab, wenn ihr eine Voraussetzung
+# fehlt (`tests/voraussetzung.py`, Exit 77) — die repo-gebundenen überspringen sich im sdist also
+# sauber und nennen den Grund, statt rot zu werden. Wer TinySesam neu paketiert (Distributionen,
+# conda, ein internes Rad), kann den Bau damit prüfen, und das ist der Sinn eines Quellpakets.
+#
+# Also VOLLSTÄNDIG statt halb: `run_all.py`, `_kit/`, `voraussetzung.py`, `api_surface.json`
+# gehören dazu, sonst startet nichts. `tests/test_packaging.py` misst genau das.
+graft tests
+recursive-exclude tests __pycache__
+recursive-exclude tests *.py[cod]
+
+# Was die README dem Leser zeigt, soll auch im Quellpaket liegen: `examples/showcase.py` und die
+# fertigen Aufbauten unter `deploy/` sind dort verlinkt, und ein Verweis ins Leere ist in einem
+# Tarball ärgerlicher als im Web — dort gibt es kein GitHub daneben. `web/` bleibt draussen: Das
+# ist der Generator der Projektseite, Repo-Sache, nicht Quelle der Bibliothek.
+graft examples
+graft deploy
+recursive-exclude examples __pycache__
+recursive-exclude deploy __pycache__
+
+# Was ein Mensch im Quellpaket sucht: die Lizenz (nimmt setuptools selbst mit), die
+# Versionsgeschichte, den Meldeweg für Lücken und die deutsche Fassung der README.
+include CHANGELOG.md
+include KONFIGURATION.md
+include API.md
+include SECURITY.md
+include i18n/README.de.md
+include i18n/SECURITY.de.md
+
+# Bauartefakte eines fremden Arbeitsbaums haben in einem Quellpaket nichts verloren.
+recursive-exclude * __pycache__
+recursive-exclude * *.py[cod]
+global-exclude .DS_Store

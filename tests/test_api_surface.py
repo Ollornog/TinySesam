@@ -13,6 +13,7 @@ Was als Bruch gilt, steht unten in `beurteile()`: Entfernt oder umbenannt ist ei
 eine geänderte Signatur meistens auch, etwas Neues ist eine Erweiterung. Die Unterscheidung
 steht im Bericht, damit man nicht jede Zeile selbst nachschlagen muss.
 """
+import dataclasses
 import inspect
 import json
 import os
@@ -41,7 +42,11 @@ def signatur(fn) -> str:
     except (TypeError, ValueError):
         return "?"
     teile = [str(p) for name, p in s.parameters.items() if name != "self"]
-    return "(" + ", ".join(teile) + ")"
+    # Der Rückgabetyp gehört dazu. Ohne ihn liesse sich `-> dict` still zu `-> str` ändern:
+    # Jeder Aufruf bricht, und der Wächter schwiege — er erfasste nur die Eingänge.
+    zurueck = "" if s.return_annotation is inspect.Signature.empty else \
+        f" -> {inspect.formatannotation(s.return_annotation)}"
+    return "(" + ", ".join(teile) + ")" + zurueck
 
 
 def oberflaeche() -> dict:
@@ -49,13 +54,35 @@ def oberflaeche() -> dict:
     manager = {name: signatur(fn)
                for name, fn in inspect.getmembers(TinySesam, callable)
                if not name.startswith("_")}
-    felder = {f.name: str(f.type) for f in TinySesamConfig.__dataclass_fields__.values()}
+    # Mit VORGABEWERT. Ohne ihn liesse sich `session_ttl_hours` still von 168 auf 1 ändern —
+    # ein Verhaltensbruch für jeden, der das Feld nie angefasst hat, und genau die Sorte, die
+    # niemand im CHANGELOG sucht. Der Wächter deckte bis 0.18.0 nur Name und Typ ab.
+    felder = {}
+    for f in TinySesamConfig.__dataclass_fields__.values():
+        if f.default is not dataclasses.MISSING:
+            vorgabe = repr(f.default)
+        elif f.default_factory is not dataclasses.MISSING:   # type: ignore[misc]
+            try:
+                vorgabe = repr(f.default_factory())          # type: ignore[misc]
+            except Exception:
+                vorgabe = "<factory>"
+        else:
+            vorgabe = "<pflicht>"
+        felder[f.name] = f"{f.type} = {vorgabe}"
     presets = {name: signatur(fn)
                for name, fn in inspect.getmembers(TinySesamConfig, callable)
                if not name.startswith("_")}
     exporte = sorted(getattr(tinysesam, "__all__", None)
                      or [n for n in dir(tinysesam) if not n.startswith("_")])
-    return {"TinySesam": manager, "TinySesamConfig.felder": felder,
+    # Öffentliche Klassenattribute gehören dazu. `inspect.getmembers(…, callable)` erfasst nur
+    # Aufrufbares — `FORWARD_HEADERS_DEFAULT` liess sich damit still ändern, obwohl die Doku es
+    # als Zusage führt („der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups"). Eine
+    # Änderung bricht jede Caddy-/Traefik-Installation, ohne dass eine Zeile Code anders aussieht.
+    konstanten = {name: repr(wert) for name, wert in vars(TinySesam).items()
+                  if not name.startswith("_") and not callable(wert)
+                  and not isinstance(wert, (property, staticmethod, classmethod))}
+    return {"TinySesam": manager, "TinySesam.konstanten": konstanten,
+            "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte}
 
 

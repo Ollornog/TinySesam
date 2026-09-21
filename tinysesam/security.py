@@ -3,12 +3,31 @@ Die Brute-Force-Regulation selbst lebt im Manager (DB-basiert, Panel-konfigurier
 from __future__ import annotations
 import time
 import logging
+import logging.handlers
 import ipaddress
 from urllib.parse import urlsplit
 from collections import defaultdict, deque
 
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
+
+def fuer_log(wert) -> str:
+    """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
+
+    Der Benutzername kommt roh aus einem Formularfeld und landete ungefiltert in der Zeile, die
+    fail2ban liest. Ein `\n` darin erzeugt eine **zusätzliche Zeile** — und wer vorn und hinten
+    einen Umbruch setzt, schiebt die echte `ip=`-Angabe auf eine Folgezeile, die der Filter nicht
+    mehr matcht, und lässt dazwischen eine frei erfundene stehen. fail2ban zählt dann die
+    Fehlversuche einer **vom Angreifer gewählten** IP, während die echte null Treffer erzeugt.
+    Bei `maxretry = 6` genügen sechs Anfragen, um eine beliebige Adresse auszusperren — die des
+    Admins, eines Partners, einer Überwachungssonde.
+
+    Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
+    keine Anmeldung, sondern ein Versuch, das Log zu fluten).
+    """
+    text = "".join(z for z in str(wert if wert is not None else "") if z >= " " and z != "\x7f")
+    return (text[:64] + "…") if len(text) > 64 else text
+
 
 def attach_security_log(path: str) -> bool:
     """Den Security-Logger zusätzlich in eine Datei schreiben lassen — das, was die fail2ban-Jail
@@ -25,13 +44,23 @@ def attach_security_log(path: str) -> bool:
         if getattr(h, "_tinysesam_path", None) == path:
             return True
     try:
-        h = logging.FileHandler(path, encoding="utf-8")
+        # WatchedFileHandler, nicht FileHandler: logrotate benennt die Datei um und legt eine
+        # neue an — ein FileHandler hält den alten Inode offen und schreibt ab da in die
+        # umbenannte Datei weiter. Die neue bliebe leer, und die fail2ban-Jail läse ab der
+        # ERSTEN Rotation nichts mehr: kein Fehler, keine Meldung, nur ein Wächter, der nicht
+        # mehr wacht. Der Watched-Handler prüft vor jeder Zeile Inode und Gerät und öffnet neu.
+        # (Unter Windows ohne Wirkung — dort lässt sich eine offene Datei ohnehin nicht
+        # umbenennen, und `copytruncate` ist der Weg.)
+        h = logging.handlers.WatchedFileHandler(path, encoding="utf-8")
     except OSError as e:
         seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
                        path, e)
         return False
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    h._tinysesam_path = path
+    # Eigene Markierung am Handler, damit derselbe Pfad nicht zweimal angehängt wird. `setattr`
+    # statt direkter Zuweisung: Das Attribut ist unseres, nicht das der Klasse — ein Typprüfer
+    # meldete hier sonst zu Recht einen Fehler.
+    setattr(h, "_tinysesam_path", path)
     seclog.addHandler(h)
     # Ohne eigenen Level erbt der Logger den der Wurzel; steht der auf ERROR, fehlen genau die
     # WARNING-Zeilen mit den Fehlversuchen.
@@ -84,15 +113,45 @@ def is_trusted(ip: str, trusted_nets) -> bool:
         return False
 
 
+# Peers, über die schon geklagt wurde — eine Fehlkonfiguration meldet sich einmal, nicht pro
+# Request. Ein Log-Sturm wird weggefiltert und hilft niemandem.
+_GEMELDETE_PEERS: set = set()
+
+
 def client_ip(request, trusted_nets) -> str:
     """Echte Client-IP. Nur wenn der direkte Peer vertrauenswürdig ist, wird X-Forwarded-For ausgewertet
-    (rechteste NICHT-vertrauenswürdige Adresse) — sonst ist XFF fälschbar."""
+    (rechteste NICHT-vertrauenswürdige Adresse) — sonst ist XFF fälschbar.
+
+    **Der häufigste Fehlbetrieb ist still**: Im Container ist der Proxy ein anderer Container,
+    also nicht `127.0.0.1`. Die Vorgabe passt dann nicht, XFF wird verworfen, und JEDER Nutzer
+    erscheint unter der Proxy-IP — Rate-Limit und IP-Sperre gelten ab da kollektiv, und fail2ban
+    bannt im Ernstfall den Proxy, also alle. Nichts davon sieht nach einem Fehler aus. Deshalb
+    sagt diese Funktion einmal je Peer Bescheid.
+    """
     peer = request.client.host if request.client else "?"
     xff = request.headers.get("x-forwarded-for")
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
                 return ip
+    if xff and peer not in _GEMELDETE_PEERS:
+        _GEMELDETE_PEERS.add(peer)
+        if not is_trusted(peer, trusted_nets):
+            seclog.warning(
+                "X-Forwarded-For von %s wird ignoriert: Der Peer steht nicht in trusted_proxies "
+                "(%s). Alle Nutzer erscheinen jetzt unter dieser einen IP — Rate-Limit und "
+                "IP-Sperre wirken kollektiv. Im Container ist der Proxy KEIN 127.0.0.1: das "
+                "Netz des Proxys eintragen, z.B. trusted_proxies=['172.28.0.0/16'].",
+                peer, list(trusted_nets or []))
+        else:
+            # Peer vertraut, aber KEINE nicht-vertrauenswürdige Adresse im XFF gefunden — das
+            # ist der Fall `trusted_proxies=['0.0.0.0/0']`: Wenn jede Adresse als Proxy gilt,
+            # bleibt keine als Client übrig, und XFF ist wirkungslos statt großzügig.
+            seclog.warning(
+                "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
+                "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
+                "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
+                xff, list(trusted_nets or []), peer)
     return peer
 
 

@@ -9,10 +9,10 @@ Deshalb bricht kein Entwickler-Setup, aber die CI führt es aus.
 """
 import asyncio
 import json
-import os
 import shutil
 import socket
 import subprocess
+import os
 import sys
 import tempfile
 import threading
@@ -21,14 +21,27 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import websockets            # noqa: E402  (optional — run_all überspringt sonst)
+import pathlib  # noqa: E402
+from voraussetzung import braucht, braucht_modul  # noqa: E402
+
+# Drei Voraussetzungen, alle drei als Zusage DIESER Suite — nicht als Rateaufgabe für den Runner.
+# Der raubte sich das früher aus dem stderr zusammen und konnte „dem Test fehlt etwas" nicht von
+# „die Bibliothek stürzt ab" unterscheiden.
+braucht_modul("websockets")
+braucht_modul("uvicorn")
+
+import websockets            # noqa: E402
 import uvicorn               # noqa: E402
 
 # `browser-actions/setup-chrome` legt die Binärdatei als `chrome` ab, Debian als `chromium`.
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
-if not CHROME:
-    raise ImportError("kein Chrome gefunden")   # run_all wertet das als „übersprungen"
+braucht(CHROME, "kein Chrome gefunden")
+# Das Showcase liegt im Repo, nicht im sdist — dort absagen statt rot werden.
+braucht((pathlib.Path(__file__).resolve().parent.parent / "examples").is_dir(),
+        "kein `examples/` — der Browser-Test fährt das Showcase aus dem Repo")
+braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
+        "kein `web/` — das Showcase rendert die Seiten des Website-Generators")
 
 
 def _server_socket():

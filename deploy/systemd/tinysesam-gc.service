@@ -1,0 +1,16 @@
+[Unit]
+Description=TinySesam aufräumen (abgelaufene Sitzungen, Flows, Einmal-Token)
+Documentation=https://github.com/Ollornog/TinySesam#sicherungen-und-aufräumen
+
+[Service]
+Type=oneshot
+# Anpassen: Benutzer des Dienstes und Pfad der Datenbank.
+User=tinysesam
+ExecStart=/opt/tinysesam/venv/bin/python -m tinysesam gc --db /var/lib/tinysesam/auth.db
+
+# Das Aufräumen braucht nichts ausser seiner Datenbank.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/tinysesam
