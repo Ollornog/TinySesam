@@ -97,7 +97,27 @@ def main(argv):
             failed.append(name)
     total = len(files)
     print(f"\n{len(ok)}/{total} grün, {len(skipped)} übersprungen, {len(failed)} fehlgeschlagen")
-    return 1 if failed else 0
+    if failed:
+        return 1
+
+    # Ein Boden gegen „grün, weil nichts gemessen wurde".
+    #
+    # Bis hierher genügte „nichts fehlgeschlagen" für Exit 0 — auch bei „0 grün, alles
+    # übersprungen". Genau so sah der Lauf in einem git-worktree aus: Die Hygiene-Suiten hielten
+    # `.git` (dort eine Datei) für „kein Repo", wanden ab, und `scripts/check.sh` druckte
+    # darüber „✓ alles grün". Dieselbe Klasse Fehler, gegen die Exit 77 eingeführt wurde, nur
+    # eine Ebene höher.
+    if not ok:
+        print("\nFEHLER: keine einzige Suite ist gelaufen — das ist kein grüner Lauf.",
+              file=sys.stderr)
+        return 1
+    anteil = len(skipped) / total if total else 0
+    if anteil > 0.5:
+        print(f"\nFEHLER: {len(skipped)} von {total} Suiten übersprungen ({anteil:.0%}). "
+              "Ein Lauf, der mehr abwinkt als misst, ist keine Aussage — fehlende Voraussetzungen "
+              "nachinstallieren oder die Auswahl einschränken.", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

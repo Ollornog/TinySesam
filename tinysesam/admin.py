@@ -251,9 +251,15 @@ def build_admin_router(auth) -> APIRouter:
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis
             resp = HTMLResponse(render_panel(auth, request.url.path.rstrip("/"), warn=warn))
-            if cfg.csrf_enabled:
-                import secrets as _s
-                resp.set_cookie(cfg.csrf_cookie, _s.token_urlsafe(24), secure=cfg.cookie_secure,
+            # Ein VORHANDENES Cookie übernehmen, nicht überschreiben — dieselbe Behandlung wie
+            # in `render_page`. Diese Stelle war der dritte Setzer und der letzte, der bei jedem
+            # Aufruf neu würfelte: Wer das Panel in einem zweiten Reiter öffnete, machte damit
+            # das Formular im ersten ungültig, und der POST dort antwortete mit 403 ohne
+            # Erklärung. Gegen einen Angreifer schützte das nie — getroffen wurde der eigene
+            # Nutzer. (War als B-1 auf „nach 1.0" vertagt; durch die neuen CSRF-Prüfungen im
+            # Panel trifft es inzwischen mehr Wege als bei der Meldung.)
+            if cfg.csrf_enabled and not request.cookies.get(cfg.csrf_cookie):
+                resp.set_cookie(cfg.csrf_cookie, auth.csrf_token(request), secure=cfg.cookie_secure,
                                 samesite=cfg.cookie_samesite, path=cfg.cookie_path)
             return resp
 

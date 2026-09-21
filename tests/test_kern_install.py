@@ -88,10 +88,60 @@ r.check("webauthn gehört NICHT zum Kern (sonst wäre der Schalter oben harmlos)
 
 # Ein aktivierter Schalter ohne sein Extra muss eine LESBARE Meldung geben, keinen
 # ModuleNotFoundError aus dem Innern der Bibliothek.
-router_py = (ROOT / "tinysesam" / "router.py").read_text(encoding="utf-8")
+# Gemessen wird das VERHALTEN, nicht ob zwei Wörter in der Quelldatei stehen. Die frühere
+# Fassung prüfte `"tinysesam[passkey]" in router_py` — wer den Schutz entfernt und die Wörter
+# als Kommentar stehen lässt, kam damit durch, während der echte Aufruf einen nackten
+# ModuleNotFoundError wirft.
+import importlib  # noqa: E402
+
+
+class _Blockiert:
+    def __init__(self, name):
+        self.name = name
+
+    def find_spec(self, fullname, pfad=None, ziel=None):
+        if fullname == self.name or fullname.startswith(self.name + "."):
+            raise ModuleNotFoundError(f"No module named '{fullname}'", name=fullname)
+        return None
+
+
+def _ohne(name, fn):
+    blocker = _Blockiert(name)
+    sys.meta_path.insert(0, blocker)
+    weg = {n: m for n, m in list(sys.modules.items()) if n == name or n.startswith(name + ".")}
+    for n in weg:
+        del sys.modules[n]
+    try:
+        return fn()
+    finally:
+        sys.meta_path.remove(blocker)
+        sys.modules.update(weg)
+        importlib.invalidate_caches()
+
+
+import tempfile  # noqa: E402
+
+from tinysesam import MissingExtra, TinySesam  # noqa: E402
+
+
+def _mit_passkey():
+    # Der Router-Bau ist die Stelle, an der die Passkey-Routen entstehen — dort fällt das
+    # fehlende Extra auf. Der Konstruktor warnt nur (ein Client liesse sich ersetzen).
+    pfad = str(Path(tempfile.mkdtemp()) / "t.db")
+    auth = TinySesam(TinySesamConfig(db_path=pfad, cookie_secure=False, passkey_enabled=True))
+    return auth.router()
+
+
+try:
+    _ohne("webauthn", _mit_passkey)
+    fehler = None
+except Exception as e:
+    fehler = e
 r.check("passkey ohne Extra meldet sich verständlich statt mit ModuleNotFoundError",
-        "tinysesam[passkey]" in router_py and "ModuleNotFoundError" in router_py,
-        "router.py fängt den Importfehler nicht ab")
+        isinstance(fehler, MissingExtra),
+        f"{type(fehler).__name__}: {str(fehler)[:70]}")
+r.check("...und nennt das Extra maschinenlesbar", getattr(fehler, "extra", None) == "passkey",
+        f"extra={getattr(fehler, 'extra', None)!r}")
 
 # Und der Runner darf „übersprungen" nicht mehr raten.
 runner = (ROOT / "tests" / "run_all.py").read_text(encoding="utf-8")

@@ -18,6 +18,7 @@ nicht starten lässt. Siehe `MANIFEST.in`.
 
 # Diese Suite liest den Repo-Zustand ueber git. Ohne git ist sie nicht aussagekraeftig —
 # eine fehlende Voraussetzung, kein Fehlschlag.
+import re as _re_pkg
 import shutil  # noqa: E402
 from voraussetzung import braucht  # noqa: E402
 import pathlib  # noqa: E402
@@ -25,7 +26,7 @@ import pathlib  # noqa: E402
 braucht(shutil.which("git"), "git fehlt")
 # git im PATH genügt nicht: Gemessen wird gegen `git ls-files`, und das braucht ein
 # Repo. Im ausgepackten sdist gibt es keins — dort absagen statt rot werden.
-braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").is_dir(),
+braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
         "kein Git-Repo (z.B. ausgepacktes sdist) — der Paket-Test vergleicht gegen `git ls-files`")
 import email.parser
 import re
@@ -234,16 +235,28 @@ try:
     # legitim — beim Anmelden an der Container-Registry. Nur der PyPI-Schritt darf keins haben.
     i = next((n for n, z in enumerate(zeilen) if "pypa/gh-action-pypi-publish" in z), None)
     assert i is not None, "das Release veröffentlicht nicht nach PyPI"
-    einzug = len(zeilen[i]) - len(zeilen[i].lstrip())
-    schritt = []
-    for z in zeilen[i + 1:]:
-        if z.strip() and (len(z) - len(z.lstrip())) <= einzug:
-            break
-        schritt.append(z)
-    for verboten in ("password", "PYPI_API_TOKEN", "TWINE_"):
-        treffer = [z.strip() for z in schritt if verboten in z]
-        assert not treffer, (f"'{verboten}' im PyPI-Schritt: {treffer} — Trusted Publishing "
+
+    # Geprüft wird die GANZE Datei, nicht nur „der Block unter der uses-Zeile".
+    #
+    # Die erste Fassung schnitt den Schritt an der Einrückung der `uses:`-Zeile ab. Steht dort
+    # wie üblich ein `name:` davor, rückt `uses:` eine Ebene tiefer — und alles darunter,
+    # inklusive eines `password: ${{ secrets.PYPI_API_TOKEN }}`, galt als „nicht mehr im
+    # Schritt". Der gewöhnlichste YAML-Umbau schaltete die Prüfung also stumm ab. Vor einer
+    # Erstveröffentlichung ist das der teuerste denkbare Fehlalarm-in-Gegenrichtung: Sie meldet
+    # grün, während ein Token im Workflow steht.
+    #
+    # Ein Token gehört nirgends in diese Datei, also braucht es die Abgrenzung gar nicht.
+    for verboten in ("PYPI_API_TOKEN", "TWINE_", "TWINE_PASSWORD", "twine upload"):
+        treffer = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(zeilen) if verboten in z]
+        assert not treffer, (f"'{verboten}' im Release-Workflow: {treffer} — Trusted Publishing "
                              "braucht kein Geheimnis")
+    # `password:` kommt in Kommentaren vor (die Datei erklärt, warum es keins gibt) — deshalb
+    # nur echte YAML-Zuweisungen. Ausgenommen ist `secrets.GITHUB_TOKEN`: Der wird von GitHub
+    # je Lauf erzeugt, ist kein gepflegtes Geheimnis und meldet hier das Abbild an GHCR an.
+    pw_zeilen = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(zeilen)
+                 if _re_pkg.match(r"^\s*password\s*:", z) and "secrets.GITHUB_TOKEN" not in z]
+    assert not pw_zeilen, (f"`password:` im Release-Workflow: {pw_zeilen} — Trusted Publishing "
+                           "braucht kein Geheimnis")
     ok("Release veröffentlicht per Trusted Publishing, nur auf einen Tag hin, ohne Geheimnis")
 
 finally:

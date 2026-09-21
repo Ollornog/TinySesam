@@ -248,7 +248,12 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("magic_request", request=request, next=auth.safe_next(next), sent=False, error="")
 
         @r.post("/auth/magic/request", response_class=HTMLResponse)
-        def magic_request(request: Request, email: str = Form(""), next: str = Form("/")):
+        def magic_request(request: Request, email: str = Form(""), next: str = Form("/"),
+                          csrf_tok: str = Form("", alias="_csrf")):
+            # Ohne diese Prüfung konnte eine fremde Seite über den Browser des Opfers
+            # Anmeldelinks an beliebige Adressen verschicken lassen — die einzige
+            # zustandsändernde Route, die ohne Token durchkam.
+            auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
@@ -634,11 +639,16 @@ def build_router(auth) -> APIRouter:
         except ModuleNotFoundError as e:
             # Wer passkey_enabled bewusst einschaltet, soll lesen koennen, was fehlt — statt
             # einen ModuleNotFoundError aus dem Innern der Bibliothek zu bekommen.
-            raise RuntimeError(
+            #
+            # `MissingExtra`, nicht `RuntimeError`: Die Doku zeigt `except MissingExtra as e:
+            # … e.extra` als Muster, und für den Passkey-Fall griff das ins Leere — als
+            # einziges Verfahren warf er einen anderen Typ. (`MissingExtra` erbt von
+            # `RuntimeError`, bestehender Code fängt also weiter.)
+            from .errors import MissingExtra
+            raise MissingExtra(
                 "passkey_enabled=True, aber das Extra [passkey] ist nicht installiert "
                 "(pip install 'tinysesam[passkey]'). Ohne es gibt es keine Passkey-Routen; "
-                "passkey_enabled=False schaltet sie ab."
-            ) from e
+                "passkey_enabled=False schaltet sie ab.", extra="passkey") from e
 
     # ---------- SAML 2.0 SP (nur wenn aktiviert) ----------
     if auth.saml:
@@ -717,11 +727,25 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(401)
             return [key_view(k) for k in auth.list_api_keys(u["id"])]
 
-        @r.post("/auth/apikeys")
-        async def apikeys_create(request: Request):
+        def _nur_mit_sitzung(request: Request):
+            """Verwaltung von Schlüsseln setzt eine interaktive Sitzung voraus.
+
+            `create_api_key` schneidet den Scope gegen die **Konto**-Rollen — nicht gegen die
+            des Aufrufers. Ein auf `["lager"]` beschränkter Key konnte sich damit selbst einen
+            Key mit allen Rollen des Kontos ausstellen und so seine eigene Begrenzung aufheben.
+            Statt die Schnittmenge durch den ganzen Aufrufpfad zu fädeln, gilt die einfachere
+            Regel: Schlüssel gibt ein Mensch aus, kein Schlüssel.
+            """
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
+            if u.get("_via") != "session":
+                raise HTTPException(403, auth.t("api.key_needs_session"))
+            return u
+
+        @r.post("/auth/apikeys")
+        async def apikeys_create(request: Request):
+            u = _nur_mit_sitzung(request)
             b = await auth.json_body(request)
             return auth.create_api_key(u["id"], name=b.get("name"),
                                        expires_days=b.get("expires_days"), roles=b.get("roles"))
@@ -729,9 +753,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            u = _nur_mit_sitzung(request)
             auth.revoke_api_key(key_id, u["id"])   # sperren, nicht löschen
             return {"ok": True}
 

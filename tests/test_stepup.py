@@ -94,7 +94,9 @@ r = c3.get("/auth/admin", headers={"Accept": "text/html"}, follow_redirects=Fals
 assert r.status_code == 307 and "/auth/reauth" in r.headers["location"], r.headers.get("location")
 # Reauth verlangt jetzt TOTP (nicht Passwort)
 assert "Authenticator" in c3.get("/auth/reauth").text
-r = c3.post("/auth/reauth", data={"code": pyotp.TOTP(secret).now(), "next": "/auth/admin"}, follow_redirects=False)
+# Frischer Zeitschritt: Der Code vom Login ist verbraucht (ein TOTP-Code gilt genau einmal).
+r = c3.post("/auth/reauth", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30),
+                                  "next": "/auth/admin"}, follow_redirects=False)
 assert r.status_code == 303
 assert c3.get("/auth/admin", headers={"Accept": "text/html"}).status_code == 200
 ok("admin_require_mfa: Panel altert → Reauth per TOTP → wieder frei")

@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS totp_cred (
     user_id   INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     secret    TEXT NOT NULL,
     confirmed INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    last_step INTEGER                          -- zuletzt verbrauchter Zeitschritt; ein Code gilt
+                                               -- genau einmal (NIST SP 800-63B: „SHALL accept a
+                                               -- given OTP only once while it is valid")
 );
 CREATE TABLE IF NOT EXISTS recovery_code (   -- Einmal-Codes als 2FA-Ersatz (verlorener Authenticator)
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -219,7 +222,9 @@ class Store:
     #:
     #: 1 — bis 0.17.x (kein Stempel; wird beim ersten Öffnen nachgetragen)
     #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 statt Klartext)
-    SCHEMA_VERSION = 2
+    #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
+    #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
+    SCHEMA_VERSION = 4
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -232,6 +237,7 @@ class Store:
         adds = {
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
+            "totp_cred": [("last_step", "INTEGER")],
         }
         with self._lock:
             for table, cols in adds.items():
@@ -242,15 +248,37 @@ class Store:
 
             # Sitzungs-Tokens lagen bis 0.18.0 im Klartext in der Datei. Der Hash lässt sich aus
             # dem Klartext ausrechnen — bestehende Anmeldungen überleben die Umstellung also, die
-            # Cookies bleiben gültig. Läuft genau einmal: danach heisst die Spalte anders.
-            spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
-            if "token" in spalten and "token_hash" not in spalten:
-                self.db.execute("ALTER TABLE session RENAME COLUMN token TO token_hash")
-                zeilen = self.db.execute("SELECT token_hash FROM session").fetchall()
+            # Cookies bleiben gültig.
+            #
+            # **In EINER Transaktion, mit BEGIN IMMEDIATE.** Die erste Fassung fuhr das
+            # `ALTER TABLE` allein: Pythons sqlite3 öffnet vor DDL keine Transaktion, der
+            # Umbenennung folgte also sofort ein Commit, und das Nachhashen lief getrennt. Ein
+            # Abbruch dazwischen (SIGKILL, OOM, Container-Neustart mitten im Upgrade) hinterliess
+            # eine Spalte `token_hash` **mit Klartext darin** — dauerhaft, denn die Bedingung
+            # unten wird nie wieder wahr, und der Stempel sagt danach „migriert". Genau das, was
+            # die Umstellung beseitigen soll, wäre für immer geblieben.
+            #
+            # `BEGIN IMMEDIATE` nimmt die Schreibsperre sofort. Das löst zugleich den zweiten
+            # Fall: Bei mehreren Prozessen (`uvicorn --workers N`) las Worker A die Spaltenliste,
+            # B migrierte fertig, A fuhr sein ALTER — und starb mit `no such column: "token"`.
+            # Jetzt wartet A auf die Sperre und sieht danach den fertigen Zustand.
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(session)")}
+                if "token" in spalten and "token_hash" not in spalten:
+                    self.db.execute("ALTER TABLE session RENAME COLUMN token TO token_hash")
+                zeilen = self.db.execute(
+                    "SELECT token_hash FROM session WHERE length(token_hash) <> 64"
+                    " OR token_hash GLOB '*[^0-9a-f]*'").fetchall()
                 self.db.executemany(
                     "UPDATE session SET token_hash=? WHERE token_hash=?",
                     [(hashlib.sha256(z["token_hash"].encode()).hexdigest(), z["token_hash"])
                      for z in zeilen if z["token_hash"]])
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            if zeilen:
                 logging.getLogger("tinysesam").info(
                     "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
                     len(zeilen))
@@ -258,6 +286,17 @@ class Store:
             # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
             # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
             # aber ein sehr guter, es laut zu sagen.
+            # Freischaltungen aus der Zeit vor der Umstellung lassen sich nicht umrechnen: Aus
+            # dem Klartext wird der Hash, aus dem Hash nichts. Sie werden verworfen — betroffen
+            # sind nur offene Ressourcen-Freigaben, und die holt man sich mit dem Geheimnis in
+            # Sekunden zurück. Eine halb gehashte Tabelle wäre schlimmer.
+            vorhanden_vorab = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
+            if 0 < vorhanden_vorab < 4:
+                weg = self.db.execute("DELETE FROM resource_unlock").rowcount
+                if weg:
+                    logging.getLogger("tinysesam").info(
+                        "%d Ressourcen-Freigaben verworfen (Token werden jetzt gehasht abgelegt).", weg)
+
             vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
             if vorhanden > self.SCHEMA_VERSION:
                 logging.getLogger("tinysesam").warning(
@@ -518,8 +557,59 @@ class Store:
         `keep_handle` ist das `token_hash` aus der Sitzungs-Zeile, nicht das Cookie."""
         self._exec("DELETE FROM session WHERE user_id=? AND token_hash!=?", (user_id, keep_handle or ""))
 
+    def totp_step_verbrauchen(self, user_id, step: int) -> bool:
+        """Einen TOTP-Zeitschritt als verbraucht buchen. True, wenn er noch frei war.
+
+        Der Vergleich und das Schreiben stecken in EINEM `UPDATE … WHERE`: Zwei gleichzeitige
+        Anfragen mit demselben Code können so nicht beide gewinnen — SQLite serialisiert die
+        Schreiber, und der zweite trifft keine Zeile mehr.
+        """
+        cur = self._exec(
+            "UPDATE totp_cred SET last_step=? WHERE user_id=? AND (last_step IS NULL OR last_step < ?)",
+            (int(step), user_id, int(step)))
+        return cur.rowcount == 1
+
     def gc_sessions(self) -> int:
         return self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),)).rowcount
+
+    @classmethod
+    def sichere_datei(cls, quelle: str, ziel: str) -> str:
+        """Eine Datenbankdatei sichern, OHNE sie anzufassen — der Weg für `tinysesam backup`.
+
+        Warum nicht einfach `Store(quelle).backup(ziel)`: Der Konstruktor setzt
+        `PRAGMA journal_mode=WAL`, legt fehlende Tabellen an und fährt `_migrate()`. Er
+        **schreibt** also, und zwar bevor irgendetwas kopiert ist. Wer vor einem Update das
+        einzig Richtige tut und sichert, hätte damit die laufende Installation auf das neue
+        Schema gehoben, während noch der alte Code läuft — der Rückweg wäre zu, und eine Datei
+        im alten Schema gäbe es danach nirgends mehr. Das Sicherheitsnetz hätte zerstört, was es
+        sichern soll.
+
+        Deshalb hier eine eigene Verbindung im Modus `ro`: Sie migriert nicht, legt nichts an
+        und braucht kein schreibbares Verzeichnis. Die Online-Backup-API liest darüber trotzdem
+        einen konsistenten Stand samt WAL.
+        """
+        if not os.path.exists(quelle):
+            raise FileNotFoundError(quelle)
+        neu_angelegt = not os.path.exists(ziel)
+        if neu_angelegt:
+            try:
+                os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, cls.DATEIRECHTE))
+            except OSError:
+                neu_angelegt = False
+        quell_db = sqlite3.connect(f"file:{quelle}?mode=ro", uri=True)
+        ziel_db = sqlite3.connect(ziel)
+        try:
+            quell_db.backup(ziel_db)
+        finally:
+            ziel_db.close()
+            quell_db.close()
+        for anhang in ("", "-wal", "-shm"):
+            try:
+                if os.path.exists(ziel + anhang):
+                    os.chmod(ziel + anhang, cls.DATEIRECHTE)
+            except OSError:
+                pass
+        return ziel
 
     def backup(self, ziel: str) -> str:
         """Eine konsistente Kopie der Datenbank schreiben, im laufenden Betrieb.
@@ -668,18 +758,23 @@ class Store:
         self._exec("DELETE FROM resource_secret WHERE name=?", (name,))
         self._exec("DELETE FROM resource_unlock WHERE resource=?", (name,))
 
+    # Auch hier nur der Hash. Der Token stand im Klartext in der Datei und war identisch mit dem
+    # Cookie: Wer die Datei las, hängte sich den Wert in den Browser und war zwölf Stunden in
+    # jedem freigeschalteten Bereich — dasselbe Bedrohungsmodell, das die Sitzungs-Umstellung
+    # begründet, nur eine Tabelle weiter. Der Token hat 256 Bit, sha256 genügt also.
     def add_resource_unlock(self, token, resource, expires_at):
         self._exec("INSERT OR REPLACE INTO resource_unlock(token, resource, expires_at) VALUES (?,?,?)",
-                   (token, resource, expires_at))
+                   (self.session_hash(token), resource, expires_at))
 
     def is_resource_unlocked(self, token, resource) -> bool:
         if not token:
             return False
-        r = self._one("SELECT expires_at FROM resource_unlock WHERE token=? AND resource=?", (token, resource))
+        h = self.session_hash(token)
+        r = self._one("SELECT expires_at FROM resource_unlock WHERE token=? AND resource=?", (h, resource))
         if not r:
             return False
         if r["expires_at"] < _now():
-            self._exec("DELETE FROM resource_unlock WHERE token=? AND resource=?", (token, resource))
+            self._exec("DELETE FROM resource_unlock WHERE token=? AND resource=?", (h, resource))
             return False
         return True
 

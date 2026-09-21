@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Sicherheit — nachgestellte Angriffe")
@@ -57,17 +57,28 @@ def _geschuetzt(u=Depends(auth.require_role("buchhaltung"))):
 
 r.check("Ausgangslage: das Konto hat keine Rollen", auth.user_roles(nutzer) == [])
 
-key = auth.create_api_key(nutzer["id"], name="probe", roles=["buchhaltung"])
-r.check("ein Key kann keine Rolle tragen, die sein Besitzer nicht hat",
-        key.get("roles") == [],
-        f"der Key trägt {key.get('roles')}")
-r.check("der Versuch wird nicht stillschweigend verworfen, sondern vermerkt",
-        key.get("verworfene_rollen") == ["buchhaltung"])
+# Seit dem zweiten Audit wird der Versuch schon beim AUSSTELLEN abgewiesen, nicht erst beim
+# Prüfen. Grund: Ein auf `[]` zusammengeschrumpfter Scope hiess in der Datenbank „kein Scope,
+# erbt alles" — die Beschneidung hätte den Key also mächtiger gemacht statt schwächer. Ein
+# Fehler ist hier die einzige ehrliche Antwort; was gemeint war, weiss nur der Aufrufer.
+try:
+    auth.create_api_key(nutzer["id"], name="probe", roles=["buchhaltung"])
+    abgewiesen = None
+except ConfigError as e:
+    abgewiesen = e
+r.check("ein Key mit einer Rolle, die der Besitzer nicht hat, entsteht gar nicht erst",
+        abgewiesen is not None,
+        "der Key wurde ausgestellt — und ein leerer Scope erbt in der Datenbank ALLE Rollen")
+r.check("und die Meldung nennt die verlangte Rolle", "buchhaltung" in str(abgewiesen or ""),
+        f"{str(abgewiesen)[:80]!r}")
 
+# Der Key darf auch über die HTTP-Route nicht entstehen — dort kommt der Wunsch her.
 with TestClient(app) as c:
-    antwort = c.get("/nur-buchhaltung", headers={"Authorization": f"Bearer {key['key']}"})
-r.check("und der Key öffnet die geschützte Route NICHT", antwort.status_code == 403,
-        f"HTTP {antwort.status_code} — die Rollen-Eskalation ist zurück")
+    c.cookies.set(auth.cfg.session_cookie,
+                  auth.store.create_session(nutzer["id"], 3600, True, "password"))
+    ueber_http = c.post("/auth/apikeys", json={"name": "probe", "roles": ["buchhaltung"]})
+r.check("auch über POST /auth/apikeys entsteht er nicht", ueber_http.status_code >= 400,
+        f"HTTP {ueber_http.status_code} — der Weg, über den der Angriff lief")
 
 # Gegenprobe: Wer die Rolle wirklich hat, bekommt sie auch im Key — sonst wäre der Fix
 # eine Funktionsbremse statt einer Absicherung.
@@ -923,8 +934,11 @@ puffer_x = io.StringIO()
 haken_x = logging.StreamHandler(puffer_x)
 _sec.seclog.addHandler(haken_x)
 try:
+    # `password_enabled` bleibt an: LDAP prüft Passwörter und erfüllt den Faktor `password` —
+    # ohne den Schalter gäbe es keine einzige Anmelde-Methode, und die Konfigurationsprüfung
+    # bricht (zu Recht) vorher ab. Hier geht es um das fehlende Extra, nicht um das.
     auth_x, _ = _ohne_modul("ldap3", lambda: _app(
-        ldap_enabled=True, ldap_url="ldap://ldap.example.com", password_enabled=False))
+        ldap_enabled=True, ldap_url="ldap://ldap.example.com"))
     gebaut_x = True
 except Exception as e:
     auth_x, gebaut_x = None, e

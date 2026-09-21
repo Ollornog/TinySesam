@@ -106,6 +106,14 @@
     "verify_user_pin": "(user_id, pin) -> 'bool'",
     "version": "() -> 'str'"
   },
+  "TinySesam.konstanten": {
+    "DEMO_USERS": "('demo', 'demoadmin')",
+    "FORWARD_HEADERS_DEFAULT": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups'}",
+    "IDENTIFYING": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
+    "RECOVERY_BYTES": "7",
+    "SEITEN": "('account', 'error', 'forgot', 'login', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')",
+    "TOKEN_PATHS": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}'}"
+  },
   "TinySesamConfig.felder": {
     "account_enabled": "bool = True",
     "admin_claim_ttl_min": "int = 60",

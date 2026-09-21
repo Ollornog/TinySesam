@@ -251,7 +251,8 @@ class TinySesamConfig:
         base = dict(login_identifier="username", signup_require_email=False,
                     signup_verify_email=False, magiclink_enabled=False, password_reset_enabled=False)
         base.update(overrides)
-        return cls(**base)
+        # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
+        return cls(**base)   # type: ignore[arg-type]
 
     @classmethod
     def oidc_gateway(cls, *, issuer, client_id, client_secret, base_url,
@@ -279,7 +280,8 @@ class TinySesamConfig:
             trusted_proxies=list(trusted_proxies or ["127.0.0.1/32", "::1/128"]),
         )
         base.update(overrides)
-        return cls(**base)
+        # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
+        return cls(**base)   # type: ignore[arg-type]
 
     @classmethod
     def active_directory(cls, *, ldap_url, upn_suffix=None, base_dn=None, bind_dn="", bind_password="",
@@ -298,7 +300,8 @@ class TinySesamConfig:
             base.update(ldap_bind_dn=bind_dn, ldap_bind_password=bind_password,
                         ldap_user_base=base_dn or "", ldap_user_filter="(sAMAccountName={username})")
         base.update(overrides)
-        return cls(**base)
+        # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
+        return cls(**base)   # type: ignore[arg-type]
 
     @classmethod
     def entra_id(cls, *, tenant_id, client_id, client_secret, oidc_name="Microsoft", **overrides):
@@ -310,7 +313,8 @@ class TinySesamConfig:
             oidc_name=oidc_name, oidc_scopes="openid profile email",
         )
         base.update(overrides)
-        return cls(**base)
+        # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
+        return cls(**base)   # type: ignore[arg-type]
 
     def enabled_methods(self) -> list[str]:
         """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier

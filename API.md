@@ -220,7 +220,7 @@ Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
 ### `maybe_promote_admin(user) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht (Name ODER E-Mail), wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
 
 ### `mfa_pending(user_id) -> 'bool'`
 
@@ -276,7 +276,7 @@ FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_m
 
 ### `require_csrf(request: 'Request', submitted)`
 
-Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt (API-Key ausgenommen).
+Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
 
 ### `require_mfa(request: 'Request') -> 'dict'`
 
@@ -424,7 +424,7 @@ Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal.
 
 ### `verify_totp(user_id, code) -> 'bool'`
 
-Einen TOTP-Code gegen das Geheimnis dieses Kontos prüfen.
+Einen TOTP-Code prüfen — und ihn dabei verbrauchen.
 
 ### `verify_user_password(user_id, password) -> 'bool'`
 

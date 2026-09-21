@@ -19,7 +19,10 @@ braucht(shutil.which("git"), "git fehlt")
 # Repo. Im ausgepackten sdist gibt es keins — dort absagen statt rot werden.
 import pathlib  # noqa: E402
 
-braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").is_dir(),
+# `.exists()`, nicht `.is_dir()`: In einem git-worktree und in einem Submodul ist `.git`
+# eine DATEI mit einem Verweis. Mit `.is_dir()` wand sich die gesamte Repo-Hygiene dort ab
+# — private Infrastruktur, Geheimnisse, SHA-Pins, alles — und der Lauf meldete grün.
+braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
         "kein Git-Repo (z.B. ausgepacktes sdist) — die Hygiene misst gegen `git ls-files`")
 import os
 import re
@@ -180,13 +183,44 @@ print(f"  alle Beispiel-Pins (Git-Tag, Wheel, Abbild) zeigen auf v{pv}")
 # Eine Auth-Bibliothek startet keine Prozesse. `sys.executable`/`subprocess` wären der Weg,
 # auf dem ein Selbst-Update zurückkäme — deshalb hier die Grenze, nicht beim Wort „pip"
 # (das steht harmlos in Docstrings, die Installationshinweise geben).
+# Gelesen wird der SYNTAXBAUM, nicht der Zeilentext. Die Textsuche kannte nur
+# `import subprocess` und `subprocess.foo(` — `from subprocess import run` und `os.system(...)`
+# gingen glatt durch, obwohl daneben eine Sicherheitsaussage steht. Beides sind keine exotischen
+# Schreibweisen.
+PROZESS_MODULE = {"subprocess", "multiprocessing", "pty"}
+PROZESS_AUFRUFE = {("os", "system"), ("os", "popen"), ("os", "execv"), ("os", "execve"),
+                   ("os", "execvp"), ("os", "spawnv"), ("os", "spawnl"), ("os", "fork")}
+
 for f in LIB:
     body = read(f)
     assert "self_update" not in body, f"Selbst-Update wieder eingebaut: {f}"
     assert "sys.executable" not in body, f"{f} startet einen Interpreter"
-    assert not re.search(r"^\s*import subprocess|\bsubprocess\.\w+\(", body, re.M), \
-        f"{f} startet einen Prozess"
-print("  kein Selbst-Update, kein Prozessstart in der Bibliothek")
+    baum = _ast.parse(body)
+    # Erst die Aliase auflösen: `import os as _o` macht `_o.system(...)` zu `os.system(...)`,
+    # und eine Prüfung, die nur auf den Namen „os" sieht, übersieht das.
+    alias = {}
+    for knoten in _ast.walk(baum):
+        if isinstance(knoten, _ast.Import):
+            for a in knoten.names:
+                alias[a.asname or a.name.split(".")[0]] = a.name.split(".")[0]
+    for knoten in _ast.walk(baum):
+        if isinstance(knoten, _ast.Import):
+            treffer = [a.name.split(".")[0] for a in knoten.names
+                       if a.name.split(".")[0] in PROZESS_MODULE]
+            assert not treffer, f"{f}:{knoten.lineno} importiert {treffer[0]} — startet Prozesse"
+        elif isinstance(knoten, _ast.ImportFrom):
+            wurzel = (knoten.module or "").split(".")[0]
+            assert wurzel not in PROZESS_MODULE, \
+                f"{f}:{knoten.lineno} importiert aus {wurzel} — startet Prozesse"
+        elif isinstance(knoten, _ast.Call) and isinstance(knoten.func, _ast.Attribute):
+            wert = knoten.func.value
+            if isinstance(wert, _ast.Name):
+                modul = alias.get(wert.id, wert.id)
+                if (modul, knoten.func.attr) in PROZESS_AUFRUFE:
+                    raise AssertionError(f"{f}:{knoten.lineno} ruft {modul}.{knoten.func.attr}() "
+                                         "— startet einen Prozess")
+print(f"  kein Selbst-Update, kein Prozessstart in der Bibliothek "
+      f"({len(PROZESS_MODULE)} Module, {len(PROZESS_AUFRUFE)} Aufrufe geprüft)")
 
 # ---------- Der Website-Generator schreibt genau das, was die Action deployt ----------
 action = read(".github", "workflows", "pages.yml")

@@ -32,6 +32,11 @@ VERFAHREN = {
     "apikey": "apikey_enabled",
 }
 
+#: Was in einer `login_chain` stehen darf: die Faktoren, die eine Sitzung wirklich bekommen
+#: kann (`TinySesam.IDENTIFYING`) plus `totp`. Bewusst NICHT `VERFAHREN` — dort stehen auch
+#: `ldap` (schreibt den Faktor `password`) und `apikey` (wird nie zum Faktor).
+KETTENSCHRITTE = frozenset({"password", "pin", "oidc", "passkey", "magic", "saml", "totp"})
+
 #: Verfahren, mit dem sich ein Mensch ANMELDEN kann. `apikey` zählt nicht: Ein Schlüssel wird
 #: von einem Konto ausgestellt, das es erst geben muss.
 ANMELDEND = ("password", "pin", "passkey", "oidc", "saml", "ldap", "magic")
@@ -40,7 +45,7 @@ ANMELDEND = ("password", "pin", "passkey", "oidc", "saml", "ldap", "magic")
 PFLICHTFELDER = {
     "oidc": ("oidc_issuer", "oidc_client_id"),
     "saml": ("saml_idp_sso_url", "saml_idp_x509cert"),
-    "ldap": ("ldap_server",),
+    "ldap": ("ldap_url",),
 }
 
 #: Was einen Mailer braucht. Kein Fehler — `set_mailer` kommt oft später.
@@ -60,17 +65,39 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     fehler: list[str] = []
     warnungen: list[str] = []
 
-    aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
+    # Gefragt wird `enabled_methods()` — dieselbe Liste, aus der die Login-Seite ihre Felder
+    # baut. Eine zweite, eigene Liste hier hatte genau den Fehler, den sie fangen soll: Sie sah
+    # `pin_enabled=True` und übersah `pin_login=False`, und liess damit eine leere Login-Seite
+    # durchgehen (PIN nur als Step-up ist der dokumentierte Weg, kein exotischer Wert).
+    try:
+        aktive = list(config.enabled_methods())
+    except Exception:
+        aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
     if not aktive:
         fehler.append(
-            "Keine einzige Anmelde-Methode ist eingeschaltet — niemand kann sich anmelden. "
-            "Mindestens eines von: " + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND))
+            "Keine einzige Anmelde-Methode ist eingeschaltet — die Login-Seite hätte kein "
+            "einziges Feld, niemand kann sich anmelden. Mindestens eines von: "
+            + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND)
+            + " (bei PIN zusätzlich pin_login=True, sonst ist sie nur Step-up).")
 
     # Warnung, nicht Fehler: Die Clients für OIDC, SAML und LDAP lassen sich ersetzen
     # (`auth.ldap = eigener_client`), und genau so arbeiten auch die eigenen Suiten. Ein harter
     # Wächter verböte damit einen legitimen Aufbau. Still bleibt es trotzdem nicht — der
     # Normalfall „eingeschaltet und vergessen zu konfigurieren" scheiterte sonst erst beim
     # ersten Klick auf „Anmelden".
+    # Ein Feldname, den es gar nicht gibt, wäre die schlimmste Sorte Fehlalarm: Er feuert bei
+    # JEDER Konfiguration des Verfahrens und prüft gleichzeitig nie das, was gemeint war. Genau
+    # das ist passiert (`ldap_server` statt `ldap_url`, und das Feld kam im ganzen Repo nur in
+    # dieser Zeile vor). Deshalb hier eine Zusicherung statt Vertrauen.
+    unbekannt = sorted({f for felder in PFLICHTFELDER.values() for f in felder
+                        if not hasattr(config, f)}
+                       | {v for v in VERFAHREN.values() if not hasattr(config, v)}
+                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)})
+    if unbekannt:
+        fehler.append(
+            f"Die Konfigurationsprüfung nennt Felder, die es in TinySesamConfig nicht gibt: "
+            f"{unbekannt}. Das ist ein Fehler in TinySesam selbst — bitte melden.")
+
     for name, felder in PFLICHTFELDER.items():
         if not _an(config, VERFAHREN[name]):
             continue
@@ -81,11 +108,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "nicht arbeiten und scheitert beim ersten Anmeldeversuch — es sei denn, der "
                 "Client wird zur Laufzeit ersetzt.")
 
+    # Ein Kettenschritt muss ein Faktor sein, den eine Sitzung auch bekommen kann. `ldap` ist
+    # keiner (es schreibt den Faktor `password`), `apikey` ebenso wenig — beide standen trotzdem
+    # in der Whitelist, und `login_chain=["ldap","totp"]` ist für einen LDAP-Betreiber die
+    # naheliegendste Schreibweise. Sie führte in genau die Schleife, vor der dieses Modul warnt.
     kette = list(getattr(config, "login_chain", None) or [])
-    unbekannt = [s for s in kette if s not in VERFAHREN and s != "totp"]
+    unbekannt = [s for s in kette if s not in KETTENSCHRITTE]
     if unbekannt:
-        fehler.append(f"login_chain nennt unbekannte Schritte {unbekannt} — erlaubt sind "
-                      f"{sorted(VERFAHREN)} und 'totp'.")
+        hinweis = ""
+        if "ldap" in unbekannt:
+            hinweis = " — LDAP erfüllt den Schritt 'password', nicht 'ldap'"
+        fehler.append(f"login_chain nennt Schritte, die kein Faktor sind: {unbekannt}{hinweis}. "
+                      f"Erlaubt sind {sorted(KETTENSCHRITTE)}.")
     aus = [s for s in kette if s in VERFAHREN and not _an(config, VERFAHREN[s])]
     if aus:
         fehler.append(
@@ -100,6 +134,16 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     # Geheimnis freigegeben (`store.get_resource_secret`), nicht mit der Login-PIN. Ein
     # Fehlalarm kostet dasselbe Vertrauen wie ein übersehener Fund — deshalb steht die Notiz
     # hier statt der Prüfung.
+
+    if _an(config, "password_reset_enabled") and not _an(config, "magiclink_enabled"):
+        warnungen.append(
+            "password_reset_enabled=True, aber magiclink_enabled=False. Die Routen sind montiert, "
+            "der Link „Passwort vergessen?\" erscheint auf der Login-Seite aber nicht — die "
+            "Funktion ist an und für niemanden erreichbar.")
+    if _an(config, "allow_signup") and not _an(config, "password_enabled"):
+        fehler.append(
+            "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
+            "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():

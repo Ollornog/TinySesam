@@ -359,6 +359,23 @@ class TinySesam:
             gewuenscht = [str(x) for x in roles]
             abgeschnitten = sorted(set(gewuenscht) - erlaubt)
             roles = sorted(set(gewuenscht) & erlaubt)
+            # Bleibt nach dem Beschneiden NICHTS übrig, darf der Key nicht entstehen.
+            #
+            # Die Spalte `api_key.roles` kennt nur einen leeren Wert, und der bedeutet „kein
+            # Scope, erbt die Rollen des Besitzers". Ein zu `[]` zusammengeschrumpfter Scope
+            # würde damit zu seinem Gegenteil: Wer einen Key auf `["lagre"]` scopen will (ein
+            # Tippfehler), bekäme einen Key mit ALLEN Rollen des Kontos. Diese Beschneidung war
+            # als Rechte-Begrenzung gedacht und wäre so eine Rechte-Erweiterung geworden —
+            # schlimmer als vor dem Fix.
+            #
+            # Deshalb ein Fehler statt einer Annahme: Was gemeint war, weiß nur der Aufrufer.
+            if not roles:
+                raise ConfigError(
+                    f"API-Key-Scope {sorted(set(gewuenscht))} enthält keine Rolle, die das Konto "
+                    f"hat ({sorted(erlaubt) or 'keine'}). Ein Key kann nur weniger können als "
+                    "sein Besitzer, nie mehr - und ein leerer Scope hiesse in der Datenbank "
+                    "'erbt alles'. Entweder eine vorhandene Rolle nennen oder `roles` weglassen "
+                    "(dann erbt der Key die Rollen des Kontos).")
 
         kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at)
         detail = f"user={user_id} key={kid} name={name}"
@@ -428,13 +445,25 @@ class TinySesam:
         return any(u["is_admin"] for u in self.store.list_users())
 
     def maybe_promote_admin(self, user) -> bool:
-        """Weg 1: Allowlist. Wer in `admin_identifiers` steht (Name ODER E-Mail), wird beim Login
-        Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder."""
+        """Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über
+        welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
+
+        **Ein Eintrag mit `@` wird NUR gegen die E-Mail geprüft, einer ohne NUR gegen den
+        Benutzernamen.** Vorher galt „Name ODER E-Mail" für jeden Eintrag, und das machte den
+        Konstruktor-Wächter wirkungslos: Der verlangt bei offener Registrierung eine
+        *E-Mail-Adresse* in der Allowlist, mit der Begründung „den Namen hat, wer das Postfach
+        hat". Ein Benutzername ist aber ein freies Textfeld — wer sich als
+        `username="chef@example.com"` registriert und SEIN eigenes Postfach bestätigt, wurde
+        damit Erst-Admin. Der Wächter prüfte die Konfiguration, der Vergleich hier aber etwas
+        anderes; die Lücke war nur verschoben.
+        """
         ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
         if not ids or not user or user["is_admin"] or self.admin_exists():
             return False
-        cand = {str(user["username"] or "").lower(), str(user["email"] or "").lower()} - {""}
-        if not (cand & ids):
+        adressen = {i for i in ids if "@" in i}
+        namen = ids - adressen
+        if not ((str(user["email"] or "").lower() in adressen)
+                or (str(user["username"] or "").lower() in namen)):
             return False
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
@@ -706,15 +735,29 @@ class TinySesam:
         return self.store.has_confirmed_totp(user_id)
 
     def verify_totp(self, user_id, code) -> bool:
-        """Einen TOTP-Code gegen das Geheimnis dieses Kontos prüfen."""
+        """Einen TOTP-Code prüfen — und ihn dabei verbrauchen.
+
+        Ein Code gilt **genau einmal**. Vorher galt er 90 Sekunden lang beliebig oft
+        (`valid_window=1` = vorheriger + aktueller + nächster Schritt), und zwei getrennte
+        Clients konnten sich mit demselben Code voll anmelden. NIST SP 800-63B ist an der Stelle
+        eindeutig: „Verifiers SHALL accept a given OTP only once while it is valid."
+        """
         t = self.store.get_totp(user_id)
-        return bool(t and t["confirmed"] and _totp.verify(t["secret"], code))
+        if not t or not t["confirmed"]:
+            return False
+        schritt = _totp.passender_schritt(t["secret"], code)
+        if schritt is None:
+            return False
+        # Buchen, bevor der Faktor gilt: Wer den Schritt nicht mehr bekommt, war der Zweite.
+        return self.store.totp_step_verbrauchen(user_id, schritt)
 
     def totp_begin(self, user_id):
         """Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator."""
         secret = _totp.new_secret()
         self.store.set_totp(user_id, secret, confirmed=False)
         u = self.store.get_user(user_id)
+        if u is None:
+            raise ConfigError(f"Kein Konto mit der ID {user_id} — TOTP lässt sich nicht einrichten.")
         uri = _totp.provisioning_uri(secret, u["username"], self.cfg.rp_name)
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 
@@ -737,13 +780,16 @@ class TinySesam:
         self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
-    #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 4 Byte = **64 Bit**.
-    #: Vorher waren es 3 Byte (48 Bit). Das ist für einen Code, der den zweiten Faktor ERSETZT
-    #: und unbegrenzt gültig bleibt, zu knapp: Ein TOTP-Code hat zwar nur eine Million
-    #: Möglichkeiten, gilt aber 30 Sekunden — ein Recovery-Code gilt, bis er benutzt wird.
+    #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 7 Byte = **112 Bit**.
+    #: Vorher waren es 3 Byte (48 Bit), dann 4 (64). Beides ist für einen Code zu knapp, der den
+    #: zweiten Faktor ERSETZT und unbegrenzt gültig bleibt: Ein TOTP-Code hat zwar nur eine
+    #: Million Möglichkeiten, gilt aber 30 Sekunden — ein Recovery-Code gilt, bis er benutzt wird.
+    #: 112 Bit ist die Schwelle, ab der NIST SP 800-63B für ein „look-up secret" einen einfachen
+    #: Einweg-Hash genügen lässt; darunter verlangt es Salt und ein Passwort-Hashverfahren. Da
+    #: die Codes hier mit sha256 liegen, ist die Schwelle die richtige Wahl.
     #: Bestehende Codes bleiben gültig (gespeichert wird ohnehin nur der Hash); neu erzeugte
     #: sind länger.
-    RECOVERY_BYTES = 4
+    RECOVERY_BYTES = 7
 
     def generate_recovery_codes(self, user_id, n=None) -> list:
         """Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL."""
@@ -845,7 +891,7 @@ class TinySesam:
             raise HTTPException(400, self.t("api.json_invalid"))
         if not isinstance(data, dict):
             raise HTTPException(400, self.t("api.json_object"))
-        if self.cfg.csrf_enabled and not self._extract_api_key(request):
+        if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request):
             token = request.headers.get("x-csrf-token") or data.get("_csrf")
             if not self.verify_csrf(request, token):
                 raise HTTPException(403, self.t("api.csrf"))
@@ -871,9 +917,37 @@ class TinySesam:
         cookie = request.cookies.get(self.cfg.csrf_cookie)
         return bool(cookie) and bool(submitted) and hmac.compare_digest(str(cookie), str(submitted))
 
+    def _csrf_entbehrlich(self, request: Request) -> bool:
+        """Darf dieser Request die CSRF-Prüfung überspringen?
+
+        Nur dann, wenn er **tatsächlich per API-Key** angemeldet ist. Bis zum zweiten Audit
+        genügte dafür, dass `_extract_api_key()` irgendetwas zurückgab — der Wert wurde nicht
+        geprüft, und ob überhaupt ein Key benutzt wurde, auch nicht. Ein beliebiger Header
+        `X-API-Key: erfunden` schaltete die Prüfung also ab, die Anmeldung lief danach über das
+        **Sitzungs-Cookie** weiter (`current_user` fragt die Sitzung zuerst), und das sogar bei
+        `apikey_enabled=False`. Der Mechanismus, auf dem der CSRF-Schutz ruht, war damit vom
+        Aufrufer abschaltbar.
+
+        Der Grund für die Ausnahme bleibt richtig: Eine fremde Seite kann ohne CORS-Freigabe
+        keinen eigenen Header setzen, und ein Daemon hat kein Cookie. Nur muss der Key echt
+        sein — und wo eine Sitzung mitläuft, zählt die Sitzung.
+        """
+        if not self.cfg.apikey_enabled:
+            return False
+        key = self._extract_api_key(request)
+        if not key:
+            return False
+        if self.store.get_session(request.cookies.get(self.cfg.session_cookie) or ""):
+            return False        # Cookie im Spiel → CSRF gilt, egal was im Header steht
+        return self.verify_api_key(key)[0] is not None
+
     def require_csrf(self, request: Request, submitted):
-        """Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt (API-Key ausgenommen)."""
-        if self.cfg.csrf_enabled and not self._extract_api_key(request) and not self.verify_csrf(request, submitted):
+        """Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
+
+        Ausgenommen sind nur Requests, die wirklich per API-Key angemeldet sind — s.
+        `_csrf_entbehrlich`."""
+        if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request) \
+                and not self.verify_csrf(request, submitted):
             raise HTTPException(403, self.t("api.csrf"))
 
     # ---------- E-Mail-Versand ----------

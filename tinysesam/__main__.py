@@ -97,14 +97,26 @@ def _backup(argv) -> int:
     ap.add_argument("ziel", help="Pfad der Sicherungsdatei (wird angelegt)")
     ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
     a = ap.parse_args(argv)
-    store = _oeffne(a.db)
-    if store is None:
-        return 1
     import os
+
+    from .store import Store
+    if not os.path.exists(a.db):
+        print(f"Keine Datenbank unter {a.db}.", file=sys.stderr)
+        return 1
     if os.path.exists(a.ziel):
         print(f"{a.ziel} gibt es schon — nichts überschrieben.", file=sys.stderr)
         return 1
-    store.backup(a.ziel)
+    # NICHT über `_oeffne()`: Der Store-Konstruktor migriert die Datei, bevor eine Kopie
+    # existiert — eine Sicherung, die die Quelle verändert, ist keine. `sichere_datei` öffnet
+    # read-only.
+    try:
+        Store.sichere_datei(a.db, a.ziel)
+    except Exception as e:
+        print(f"Sicherung fehlgeschlagen: {type(e).__name__}: {e}", file=sys.stderr)
+        for rest in ("", "-wal", "-shm"):
+            if os.path.exists(a.ziel + rest):
+                os.remove(a.ziel + rest)      # keine halbe Datei zurücklassen
+        return 1
     print(f"Sicherung geschrieben: {a.ziel} ({os.path.getsize(a.ziel)} Bytes, Rechte 0600).")
     return 0
 

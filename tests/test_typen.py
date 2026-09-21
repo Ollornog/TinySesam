@@ -31,7 +31,12 @@ from _kit.report import Report  # noqa: E402
 r = Report("Typen — die Zusage `Typing :: Typed`")
 
 # ---------- 1) Der Typprüfer selbst ----------
-lauf = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignore-missing-imports"],
+# `--check-untyped-defs`: Ohne das prüft mypy die RÜMPFE unannotierter Funktionen gar nicht —
+# 120 von 410 blieben damit ungesehen, darunter alle vier Config-Presets (ein Nutzer bekommt
+# dort `Any` und verliert ab da jede Typprüfung). mypy weist im Lauf selbst darauf hin; der
+# Filter auf ": error:" warf den Hinweis weg, der Test war also blind für seine eigene Lücke.
+lauf = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignore-missing-imports",
+                       "--check-untyped-defs"],
                       cwd=ROOT, capture_output=True, text=True)
 fehler = [z for z in lauf.stdout.splitlines() if ": error:" in z]
 r.check("mypy findet keinen Fehler in tinysesam/", not fehler,

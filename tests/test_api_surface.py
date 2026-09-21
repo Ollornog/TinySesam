@@ -74,7 +74,15 @@ def oberflaeche() -> dict:
                if not name.startswith("_")}
     exporte = sorted(getattr(tinysesam, "__all__", None)
                      or [n for n in dir(tinysesam) if not n.startswith("_")])
-    return {"TinySesam": manager, "TinySesamConfig.felder": felder,
+    # Öffentliche Klassenattribute gehören dazu. `inspect.getmembers(…, callable)` erfasst nur
+    # Aufrufbares — `FORWARD_HEADERS_DEFAULT` liess sich damit still ändern, obwohl die Doku es
+    # als Zusage führt („der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups"). Eine
+    # Änderung bricht jede Caddy-/Traefik-Installation, ohne dass eine Zeile Code anders aussieht.
+    konstanten = {name: repr(wert) for name, wert in vars(TinySesam).items()
+                  if not name.startswith("_") and not callable(wert)
+                  and not isinstance(wert, (property, staticmethod, classmethod))}
+    return {"TinySesam": manager, "TinySesam.konstanten": konstanten,
+            "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte}
 
 
