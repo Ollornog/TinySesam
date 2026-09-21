@@ -23,6 +23,65 @@ zuerst repariert worden — alles andere wäre auf Sand gebaut.
 `MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
 über den gepinnten Git-Tag.
 
+### Geändert — ⚠️ beim Update beachten: was sich im Verhalten ändert
+
+**Die öffentliche Oberfläche bricht nicht:** Keine Methode wurde entfernt oder umbenannt, kein
+Parameter ist weggefallen, kein Config-Feld hat seinen Typ oder seinen Vorgabewert geändert. Die
+sieben Signaturen, die `tests/api_surface.json` als geändert verzeichnet, sind ausschließlich
+`x: bool = None` → `x: Optional[bool] = None` — zur Laufzeit identisch, nur ehrlicher annotiert.
+
+**Das Verhalten ändert sich trotzdem**, und zwar dort, wo ein Sicherheitsfix es verlangt. Das
+sieht kein API-Wächter. Die Liste, nach Auswirkung sortiert:
+
+**Der Start bricht ab, wenn die Konfiguration sich widerspricht** (neu, vorher lief sie):
+
+| Konfiguration | Warum jetzt `ConfigError` |
+|---|---|
+| `totp_required=True` | Der Schalter wurde nie gelesen — er versprach 2FA und lieferte keine. Ersatz: `login_chain=['password','totp']` |
+| `admin_identifiers=[…]` + `allow_signup=True` | Wer die Adresse errät, registriert sich darunter und wird Admin. Erlaubt mit bestätigter E-Mail |
+| `cookie_samesite` außerhalb `lax/strict/none` | Starlette prüfte erst beim ersten Cookie — und unter `python -O` gar nicht |
+| `cookie_samesite='none'` ohne `cookie_secure` | Der Browser verwirft so ein Cookie; die Anmeldung käme nie an |
+| keine aktive Anmelde-Methode | Niemand kann sich anmelden, und nichts sagte es |
+| `login_chain` mit abgeschaltetem oder unbekanntem Schritt | Die Kette ist unerfüllbar, der Nutzer landet in einer Schleife |
+
+**Wer die Store-API direkt benutzt**, liest `row["token_hash"]` statt `row["token"]` —
+Sitzungs-Token stehen nur noch als sha256 in der Datenbank. Die Schreibwege
+(`set_session_mfa`, `set_session_factors`, `delete_session_by_handle`) nehmen dieses Handle und
+**werfen** bei einem Klartext-Token, statt still ins Leere zu laufen. Die Datenbank migriert sich
+beim ersten Start selbst; **bestehende Anmeldungen bleiben gültig**.
+
+**Sechs nutzerseitige Methoden liefern jetzt ein `dict`** statt einer `sqlite3.Row` (`get_user`,
+`find_user`, `check_password`, `check_ldap`, `check_saml`, `pending_user`). Zugriffe per
+`u["name"]` funktionieren unverändert; `.get()` geht jetzt zusätzlich. Wer auf `sqlite3.Row`
+typprüft, muss anpassen.
+
+**Vier Routen verlangen jetzt ein CSRF-Token** — `POST /auth/totp/off`, `/auth/totp/recovery`,
+`/auth/pin/off`, `/auth/apikeys/{id}/revoke` —, im Admin-Panel gilt es für **jede** nicht-lesende
+Methode. Eine eigene UI, die diese Endpunkte ohne `X-CSRF-Token` aufruft, bekommt 403.
+
+**Weitere Verhaltensänderungen:**
+
+- **SAML ist jetzt ausschließlich SP-initiiert.** IdP-initiierte Logins funktionieren nicht mehr
+  (Einstieg ist `/auth/saml/login`), und das Flow-Cookie übersteht den Cross-Site-POST des IdP nur
+  mit `cookie_secure=True`.
+- **Forward-Auth-Header gehen immer als UTF-8 über die Leitung.** Eine nachgelagerte App, die
+  `Remote-Name` als Latin-1 liest, sieht bei Umlauten verstellte Zeichen — dafür funktionieren
+  Namen wie „Иван" überhaupt erst.
+- **API-Keys werden beim Aussperren mitgenommen:** Admin-Passwort-Reset, Konto sperren und
+  „**alle** Sitzungen beenden" (`scope=all`) widerrufen sie. Der eigene Passwortwechsel nicht.
+- **Ein API-Key kann nie mehr Rollen haben als sein Besitzer.** Keys, die bisher erfundene Rollen
+  trugen, verlieren sie beim nächsten Gebrauch.
+- **Ein erfolgreicher Login räumt nur noch die Fehlversuche derselben Methode.** Wer sich auf das
+  frühere Verhalten verließ, sieht länger bestehende Sperren auf anderen Faktoren.
+- **HTTP-Fehlertexte sind übersetzt.** Wer auf den deutschen Wortlaut einer `detail`-Meldung
+  geprüft hat, muss auf den Statuscode umstellen.
+- **Eine neu angelegte Datenbank bekommt `0600`.** Bestehende Dateien werden nicht umgestellt —
+  aber ein zweiter Prozess unter anderer Kennung kann eine neue Datei nicht mehr lesen.
+
+**Nicht betroffen:** `complete_mfa()` bleibt als Alias von `complete_totp()` erhalten, alle
+bisherigen Exporte bleiben, und die vier neuen Fehlertypen erben von dem eingebauten Typ, den sie
+ersetzen — `except ValueError` und `except RuntimeError` fangen weiter.
+
 ### Sicherheit — sechs Lücken geschlossen, jede mit ihrem Angriff festgehalten
 
 Gefunden bei der Reifeprüfung vor dem geplanten 1.0. Jede der sechs ist einzeln nachgestellt
