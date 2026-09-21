@@ -5,7 +5,6 @@ auf eine Datei, die nie entstand, und lief still ins Leere.
 """
 import os
 import re
-import logging
 import tempfile
 
 from tinysesam import TinySesam, TinySesamConfig, security
@@ -36,7 +35,8 @@ ok("security_log gesetzt → Datei wird angelegt")
 # ein Fehlversuch — genau die Zeile, die deploy/fail2ban/tinysesam-filter.conf matcht
 auth.check_password("anna", "falsch")
 auth.record_login("anna", "203.0.113.7", False, "password")
-inhalt = open(logdatei, encoding="utf-8").read()
+with open(logdatei, encoding="utf-8") as fh:
+    inhalt = fh.read()
 assert "failed login user=anna ip=203.0.113.7" in inhalt, inhalt
 ok("Fehlversuch landet in der Datei")
 

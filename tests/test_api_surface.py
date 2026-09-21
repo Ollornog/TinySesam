@@ -21,8 +21,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import tinysesam
+import importlib
 from tinysesam import TinySesam, TinySesamConfig
+
+_paket = importlib.import_module("tinysesam")
 
 ABLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.json")
 
@@ -72,8 +74,8 @@ def oberflaeche() -> dict:
     presets = {name: signatur(fn)
                for name, fn in inspect.getmembers(TinySesamConfig, callable)
                if not name.startswith("_")}
-    exporte = sorted(getattr(tinysesam, "__all__", None)
-                     or [n for n in dir(tinysesam) if not n.startswith("_")])
+    exporte = sorted(getattr(_paket, "__all__", None)
+                     or [n for n in dir(_paket) if not n.startswith("_")])
     # Öffentliche Klassenattribute gehören dazu. `inspect.getmembers(…, callable)` erfasst nur
     # Aufrufbares — `FORWARD_HEADERS_DEFAULT` liess sich damit still ändern, obwohl die Doku es
     # als Zusage führt („der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups"). Eine

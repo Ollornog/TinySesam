@@ -89,7 +89,7 @@ def dummy_verify(pw: str) -> bool:
     try:
         verify_password(pw or "", _DUMMY)
     except Exception:
-        pass
+        pass  # nur die Rechenzeit zählt; das Ergebnis ist immer False
     return False
 
 

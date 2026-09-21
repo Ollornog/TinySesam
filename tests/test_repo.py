@@ -278,7 +278,7 @@ assert ":latest" not in rel, "ein wandernder `latest`-Tag gehört nicht ins Rele
 # Registries verlangen kleingeschriebene Namen; `github.repository_owner` liefert die
 # Schreibweise des Kontos und brach den Build ab („repository name must be lowercase").
 for line in rel.splitlines():
-    if line.strip().startswith("tags:") and "ghcr.io" in line:
+    if line.strip().startswith("tags:") and re.search(r"\bghcr\.io/", line):
         assert "repository_owner" not in line, "Abbild-Tag nutzt die Groß-/Kleinschreibung des Kontos"
 
 # Das Abbild darf keinen Weg zum Nachladen von Code enthalten — sonst käme das Selbst-Update
@@ -324,7 +324,7 @@ print(f"  Backlog: {len(eintraege)} Eintraege, Struktur sauber, Index aktuell")
 # erst in der GitHub-Matrix auf. Beides faengt diese Pruefung.
 import re as _re  # noqa: E402
 
-_lies = lambda *teile: open(os.path.join(ROOT, *teile), encoding="utf-8", errors="replace").read()
+_lies = lambda *teile: pathlib.Path(ROOT, *teile).read_text(encoding="utf-8", errors="replace")
 _pp = _lies("pyproject.toml")
 versprochen = set(_re.findall(r"Programming Language :: Python :: (\d+\.\d+)", _pp))
 _ci = _lies(".github", "workflows", "ci.yml")

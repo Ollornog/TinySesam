@@ -65,7 +65,7 @@ ok("OIDCClient.end_session_url baut Provider-Logout-URL (client_id + post_logout
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app)
 # eine OIDC-Sitzung simulieren (method='oidc') und Logout → Redirect zum Provider
-uid = auth.ensure_admin("admin", "pw") or auth.store.get_user_by_name("admin")["id"]
+auth.ensure_admin("admin", "pw")
 uid = auth.store.get_user_by_name("admin")["id"]
 tok, _ = auth.start_session(uid, "oidc")
 c.cookies.set("tinysesam_session", tok)

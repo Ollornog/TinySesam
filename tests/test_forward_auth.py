@@ -3,6 +3,7 @@ import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from urllib.parse import urlparse
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -36,7 +37,7 @@ r = c.get("/auth/forward", headers=PROXY)
 assert r.status_code == 401
 loc = r.headers.get("X-TinySesam-Location")
 assert loc and loc.startswith("https://app.example.com/auth/login?next="), loc
-assert "app.example.com" in loc
+assert urlparse(loc).netloc == "app.example.com"
 ok("nicht eingeloggt → 401 + X-TinySesam-Location (host-only: Login auf dem angefragten Host)")
 
 # eingeloggt (Session) → 200 + Remote-*-Header

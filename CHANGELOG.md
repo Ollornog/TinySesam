@@ -54,6 +54,15 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **CodeQL-Bestand bereinigt.** 61 offene Alerts lagen auf `main`, unbewertet. Sie tun nichts — bis ein Pull Request eine
+  ihrer Zeilen berührt und der Merge an einem `note`-Thread hängt. Durchgesehen ([T-12](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-12-codeql-bestand.md)):
+  **ein echter Fund** — `examples/showcase.py` setzte den Benutzernamen unescaped in die Demo-Seiten
+  `/app` und `/sensibel` (behoben mit `html.escape`); **neun Fehlalarme** mit Begründung abgewiesen
+  (feste Redirect-Pfade, geloggte IPs statt Geheimnisse, sha256 für zufällige API-Keys, eine
+  absichtlich 0644-Datei im Test); der Rest mechanisch bereinigt (nicht geschlossene Dateien in Tests,
+  URL-Substring-Prüfungen, ungenutzte Importe, leere `except` mit Begründung). Neu:
+  `scripts/_codeql_backlog.py` schreibt die offene Liste in den Backlog, damit neue Alerts im Repo
+  landen und nicht nur im Postfach.
 - **`auth.seed_demo()` prüft jetzt selbst, ob `demo_mode` an ist.** Der Docstring versprach das seit
   jeher, der Rumpf hielt es nicht: Ein direkter Aufruf legte `demo` und `demoadmin` an — letzteres
   mit `is_admin=1` und dem dokumentierten Standardpasswort, beide sofort anmeldefähig, ohne die

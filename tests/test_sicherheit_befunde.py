@@ -568,10 +568,10 @@ open(log_datei, "w").close()
 seclog.warning("failed login user=nachher ip=203.0.113.2 method=password")
 
 r.check("nach einer Logrotation landet die nächste Zeile in der NEUEN Datei",
-        "nachher" in open(log_datei, encoding="utf-8").read(),
+        "nachher" in Path(log_datei).read_text(encoding="utf-8"),
         "sie steht in der umbenannten Datei — die Jail liest ab jetzt ins Leere")
 r.check("und nicht mehr in der rotierten",
-        "nachher" not in open(log_datei + ".1", encoding="utf-8").read(),
+        "nachher" not in Path(log_datei + ".1").read_text(encoding="utf-8"),
         "der alte Inode bekommt weiter Zeilen")
 
 
