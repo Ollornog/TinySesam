@@ -182,4 +182,68 @@ finally:
     else:
         sys.modules.pop("authlib.jose", None)
 
+# ---------- 5) Discovery: Issuer-Vergleich, keine Umleitung ----------
+# Aus dem Discovery-Dokument kommen token_endpoint, jwks_uri und der Issuer, gegen den jedes
+# ID-Token geprüft wird. Bis 0.18.0 wurde es mit follow_redirects=True geholt und nie mit
+# oidc_issuer verglichen: Ein 3xx auf dem Well-Known-Pfad hätte den ganzen Login ersetzt (RB-03).
+from tinysesam import errors as _errors  # noqa: E402
+
+
+def discovery_client(status, dokument):
+    aufrufe = []
+
+    class Antwort:
+        status_code = status
+
+        @staticmethod
+        def json():
+            return dokument
+
+    def fake_get(url, **kw):
+        aufrufe.append((url, kw))
+        return Antwort()
+
+    sys.modules["httpx"] = types.SimpleNamespace(get=fake_get)
+    return OIDCClient("https://id.example.com", "cid", "geheim", "openid"), aufrufe
+
+
+def meta_fehler(c):
+    try:
+        c.meta()
+    except _errors.ConfigError as e:
+        return str(e)
+    return None
+
+
+echtes_httpx5 = sys.modules.get("httpx")
+try:
+    c5, auf = discovery_client(200, dict(META))
+    r.check("passendes Dokument wird angenommen", meta_fehler(c5) is None and c5.meta()["issuer"] == META["issuer"])
+    r.check("Discovery wird OHNE Umleitung abgerufen",
+            auf and auf[0][1].get("follow_redirects") is False, f"Aufruf: {auf}")
+
+    c5b, _ = discovery_client(200, {**META, "issuer": "https://id.example.com/"})
+    r.check("Schrägstrich am Ende des issuer zählt nicht als Abweichung", meta_fehler(c5b) is None)
+
+    c5c, _ = discovery_client(200, {**META, "issuer": "https://attacker.example"})
+    f = meta_fehler(c5c)
+    r.check("fremder issuer im Dokument → ConfigError, beide Werte in der Meldung",
+            f is not None and "attacker.example" in f and "id.example.com" in f, f"Fehler: {f}")
+
+    c5d, _ = discovery_client(302, {})
+    f = meta_fehler(c5d)
+    r.check("302 auf dem Well-Known-Pfad wird nicht gefolgt, sondern abgewiesen",
+            f is not None and "302" in f, f"Fehler: {f}")
+
+    # Vorbedingung, damit die Prüfung oben nicht aus Versehen grün ist: Ohne den Vergleich
+    # ginge das fremde Dokument durch — genau das war der Befund.
+    c5e, _ = discovery_client(200, {**META, "issuer": "https://attacker.example"})
+    c5e._pruefe_issuer = lambda meta: None
+    r.check("Vorbedingung: ohne den Vergleich ginge das fremde Dokument durch", meta_fehler(c5e) is None)
+finally:
+    if echtes_httpx5 is not None:
+        sys.modules["httpx"] = echtes_httpx5
+    else:
+        sys.modules.pop("httpx", None)
+
 sys.exit(r.done())
