@@ -17,6 +17,20 @@ from fastapi.responses import Response, JSONResponse
 _WAFLOW = "tinysesam_waflow"
 
 
+from . import errors
+
+
+def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+
+    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
+    bis 0.18.0 ein `ModuleNotFoundError: webauthn` mitten im Anmeldevorgang — für den Betreiber
+    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    return errors.MissingExtra(
+        "Das Extra [passkey] ist nicht installiert (pip install 'tinysesam[passkey]') — "
+        f"es fehlt: {e.name or 'webauthn'}.", extra="passkey")
+
+
 def register_passkey_routes(router, auth):
     cfg = auth.cfg
     from webauthn import (generate_registration_options, verify_registration_response,

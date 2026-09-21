@@ -17,6 +17,20 @@ from . import security
 from .messages import translate
 
 
+from . import errors
+
+
+def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+
+    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
+    bis 0.18.0 ein `ModuleNotFoundError: authlib` mitten im Anmeldevorgang — für den Betreiber
+    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    return errors.MissingExtra(
+        "Das Extra [oidc] ist nicht installiert (pip install 'tinysesam[oidc]') — "
+        f"es fehlt: {e.name or 'authlib'}.", extra="oidc")
+
+
 def _hash(wert: str) -> str:
     """Flow-Geheimnisse liegen nur als Hash im Speicher — wie Sitzungs-Token auch."""
     import hashlib
@@ -54,7 +68,10 @@ class OIDCClient:
         # Zugriff überschrieben — inklusive des Netzzugriffs, den man gerade vermeiden wollte.
         veraltet = self._meta_zeit and (time.time() - self._meta_zeit) > self.META_TTL
         if self._meta is None or erzwingen or veraltet:
-            import httpx
+            try:
+                import httpx
+            except ModuleNotFoundError as e:
+                raise _fehlt_extra(e) from e
             self._meta = httpx.get(self.issuer + "/.well-known/openid-configuration",
                                    timeout=10, follow_redirects=True).json()
             self._meta_zeit = time.time()
@@ -63,8 +80,11 @@ class OIDCClient:
     def _jwkset(self, erzwingen: bool = False):
         alt_genug = self._jwks_zeit and (time.time() - self._jwks_zeit) > self.JWKS_TTL
         if self._jwks is None or alt_genug or erzwingen:
-            import httpx
-            from authlib.jose import JsonWebKey
+            try:
+                import httpx
+                from authlib.jose import JsonWebKey
+            except ModuleNotFoundError as e:
+                raise _fehlt_extra(e) from e
             self._jwks = JsonWebKey.import_key_set(httpx.get(self.meta()["jwks_uri"], timeout=10).json())
             self._jwks_zeit = time.time()
         return self._jwks
@@ -86,8 +106,11 @@ class OIDCClient:
         Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch unterzuschieben.
         """
         t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
-        import httpx
-        from authlib.jose import jwt
+        try:
+            import httpx
+            from authlib.jose import jwt
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data={
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "client_id": self.client_id, "client_secret": self.client_secret}).json()

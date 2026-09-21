@@ -12,12 +12,29 @@ Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz).
 from __future__ import annotations
 
 
+from . import errors
+
+
+def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+
+    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
+    bis 0.18.0 ein `ModuleNotFoundError: ldap3` mitten im Anmeldevorgang — für den Betreiber
+    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    return errors.MissingExtra(
+        "Das Extra [ldap] ist nicht installiert (pip install 'tinysesam[ldap]') — "
+        f"es fehlt: {e.name or 'ldap3'}.", extra="ldap")
+
+
 class LDAPClient:
     def __init__(self, cfg):
         self.cfg = cfg
 
     def _server(self):
-        import ldap3
+        try:
+            import ldap3
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
         return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE)
 
     def authenticate(self, username: str, password: str):

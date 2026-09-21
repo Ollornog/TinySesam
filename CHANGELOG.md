@@ -142,8 +142,17 @@ eingebauten Typ, den er ersetzt — `except ValueError` fängt weiter, nichts br
 
 **Ein fehlendes Extra meldete sich je nach Methode anders**: bei Passkey verständlich, sonst als
 `ModuleNotFoundError` aus dem Innern der Bibliothek oder erst beim ersten Login als 500. Jetzt
-prüft der Konstruktor alle aktivierten Verfahren an einer Stelle und sagt, welche Zeile fehlt.
-Die Tabelle Schalter → Extra steht im Code (`SCHALTER_BRAUCHT_EXTRA`), nicht als Kopie im Test.
+zweistufig:
+
+* **Beim Aufbau** warnt TinySesam, wenn ein vollständig konfiguriertes Verfahren sein Modul
+  nicht findet — im Log, mit der fehlenden Installationszeile.
+* **Beim ersten echten Gebrauch** fliegt ein lesbarer `MissingExtra` (mit dem Extra-Namen als
+  Feld) statt eines nackten `ModuleNotFoundError`.
+
+Warum nicht einfach beim Aufbau abbrechen: Ein Client ist ersetzbar — `auth.ldap = eigener_client`
+ist ein legitimer Weg, und vier eigene Suiten gehen ihn. Ein Wächter, der schon am Schalter
+anschlägt, verbietet ihn. Die erste Fassung tat genau das und legte den `minimal`-Job der CI
+lahm; geworfen wird jetzt nur dort, wo es nie falsch sein kann.
 
 **Die Datenbank trug keinen Schema-Stempel.** Welchen Stand eine Datei hat, war nur an ihren
 Spaltennamen zu erraten, und eine Datei aus einer *neueren* Fassung öffnete eine ältere Version

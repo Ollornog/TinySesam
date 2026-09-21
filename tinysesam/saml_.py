@@ -13,6 +13,20 @@ _POST = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 _REDIRECT = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 
 
+from . import errors
+
+
+def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+
+    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
+    bis 0.18.0 ein `ModuleNotFoundError: onelogin` mitten im Anmeldevorgang — für den Betreiber
+    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    return errors.MissingExtra(
+        "Das Extra [saml] ist nicht installiert (pip install 'tinysesam[saml]') — "
+        f"es fehlt: {e.name or 'onelogin'}.", extra="saml")
+
+
 class SAMLClient:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -43,7 +57,10 @@ class SAMLClient:
         }
 
     def _auth(self, req: dict, base_url: str):
-        from onelogin.saml2.auth import OneLogin_Saml2_Auth
+        try:
+            from onelogin.saml2.auth import OneLogin_Saml2_Auth
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
         return OneLogin_Saml2_Auth(req, old_settings=self.settings(base_url))
 
     def login_url(self, req: dict, base_url: str, return_to: str = "/"):

@@ -75,25 +75,6 @@ class TinySesam:
         if befunde:
             raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
 
-        # Ein eingeschalteter Schalter ohne sein Extra: Bis 0.18.0 fiel das je nach Methode
-        # unterschiedlich auf — bei Passkey mit einer verständlichen Meldung, sonst als
-        # ModuleNotFoundError aus dem Innern der Bibliothek oder erst beim ersten Login als 500.
-        # Hier steht es an einer Stelle, scheitert beim Aufbau und sagt, welche Zeile fehlt.
-        import importlib.util as _ilu
-
-        for schalter, (modul, extra) in SCHALTER_BRAUCHT_EXTRA.items():
-            if not getattr(config, schalter, False):
-                continue
-            try:
-                da = _ilu.find_spec(modul) is not None
-            except (ImportError, ValueError):
-                da = False
-            if not da:
-                raise MissingExtra(
-                    f"{schalter}=True, aber das Extra [{extra}] ist nicht installiert "
-                    f"(pip install 'tinysesam[{extra}]'). Ohne es fehlt das Modul '{modul}'; "
-                    f"{schalter}=False schaltet die Methode ab.", extra=extra)
-
         if config.cookie_samesite not in ("lax", "strict", "none"):
             raise ConfigError(
                 "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
@@ -202,17 +183,53 @@ class TinySesam:
                 self.rl = security.RedisRateLimiter(config.redis_url)
             except Exception:
                 security.seclog.warning("Redis-Rate-Limit nicht verfügbar → In-Memory-Fallback")
+        # Fehlt hier ein Extra, ist das ein Betriebsfehler und keine Feinheit: Der Aufbau
+        # scheitert mit dem Namen des Pakets statt mit einem ModuleNotFoundError aus der Tiefe
+        # oder — schlimmer — erst beim ersten Anmeldeversuch als 500.
+        #
+        # Geprüft wird hier und nicht im Konstruktor-Kopf, und zwar an der Bedingung „ist das
+        # Verfahren VOLLSTÄNDIG konfiguriert": Wer `oidc_enabled=True` setzt, aber keinen
+        # `issuer`, will den Client offensichtlich selbst mitbringen (`auth.oidc = …`) — so
+        # arbeiten vier eigene Suiten. Ein Wächter, der schon am Schalter anschlägt, verbietet
+        # diesen Weg. Dass ein halb konfiguriertes Verfahren auffällt, erledigt konfigpruefung.
+        # `find_spec` statt eines Import-Versuchs: Die Extras werden überall LAZY importiert
+        # (erst beim Verbinden, beim Token-Tausch, beim Prüfen einer Assertion). Ein fehlendes
+        # Paket fiel deshalb nicht beim Aufbau auf, sondern beim ersten Anmeldeversuch — als
+        # 500 aus dem Innern der Bibliothek.
+        # Warnen, nicht werfen. Ein Client lässt sich ersetzen (`auth.ldap = eigener_client`),
+        # und genau so arbeiten vier eigene Suiten — ein Wächter, der hier abbricht, verbietet
+        # das. Geworfen wird an der Stelle, an der es nie falsch sein kann: am lazy Import im
+        # jeweiligen Modul. Der Betreiber sieht es also beim Start im Log und, falls er das
+        # übersieht, beim ersten Anmeldeversuch als lesbaren `MissingExtra` statt als 500.
+        def _verlange(modul, schalter, extra):
+            import importlib.util as _ilu
+            try:
+                da = _ilu.find_spec(modul) is not None
+            except (ImportError, ValueError):
+                da = False
+            if not da:
+                security.seclog.warning(
+                    "%s=True, aber das Extra [%s] ist nicht installiert (pip install "
+                    "'tinysesam[%s]') — das Modul '%s' fehlt. Sofern der Client nicht selbst "
+                    "gesetzt wird, scheitert die Anmeldung über dieses Verfahren.",
+                    schalter, extra, extra, modul)
+
         if config.ldap_enabled and config.ldap_url:
+            _verlange("ldap3", "ldap_enabled", "ldap")
             from .ldap_ import LDAPClient
             self.ldap = LDAPClient(config)
         if config.saml_enabled and config.saml_idp_sso_url and config.saml_idp_x509cert:
+            _verlange("onelogin", "saml_enabled", "saml")
             from .saml_ import SAMLClient
             self.saml = SAMLClient(config)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
+            _verlange("authlib", "oidc_enabled", "oidc")
             from .oidc import OIDCClient
             self.oidc = OIDCClient(config.oidc_issuer, config.oidc_client_id,
                                    config.oidc_client_secret, config.oidc_scopes)
         if config.passkey_enabled:
+            # Passkey kennt keine unvollständige Konfiguration: Wer den Schalter umlegt, will es.
+            _verlange("webauthn", "passkey_enabled", "passkey")
             from . import webauthn_ as wa
             self.webauthn = wa
         if config.demo_mode:

@@ -886,25 +886,76 @@ r.check("...und weiterhin ein ValueError (bestehender Code fängt ihn)",
         isinstance(art, ValueError), "bestehendes `except ValueError` bricht")
 r.check("...und ein TinySesamError", isinstance(art, TinySesamError), f"{type(art).__mro__}")
 
-# Der Extra-Wächter: gemessen wird ein Modul, das es sicher nicht gibt.
-from tinysesam.manager import SCHALTER_BRAUCHT_EXTRA  # noqa: E402
+# Der Extra-Wächter, zweistufig. Werfen darf nur, wo es nie falsch sein kann: Ein Client ist
+# ersetzbar (`auth.ldap = eigener_client`, so arbeiten vier eigene Suiten), also bricht der
+# Aufbau NICHT ab — er warnt. Geworfen wird am lazy Import, also beim ersten echten Gebrauch.
+import importlib  # noqa: E402
 
-echt = dict(SCHALTER_BRAUCHT_EXTRA)
-SCHALTER_BRAUCHT_EXTRA["password_enabled"] = ("gibtsnichtmodul", "phantom")
+
+class _Blockiert:
+    """Ein Import-Finder, der genau ein Modul „nicht findet"."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def find_spec(self, fullname, pfad=None, ziel=None):
+        if fullname == self.name or fullname.startswith(self.name + "."):
+            raise ModuleNotFoundError(f"No module named '{fullname}'", name=fullname)
+        return None
+
+
+def _ohne_modul(name, fn):
+    """`fn()` ausführen, als wäre `name` nicht installiert."""
+    blocker = _Blockiert(name)
+    sys.meta_path.insert(0, blocker)
+    weg = {n: m for n, m in list(sys.modules.items()) if n == name or n.startswith(name + ".")}
+    for n in weg:
+        del sys.modules[n]
+    try:
+        return fn()
+    finally:
+        sys.meta_path.remove(blocker)
+        sys.modules.update(weg)
+        importlib.invalidate_caches()
+
+
+puffer_x = io.StringIO()
+haken_x = logging.StreamHandler(puffer_x)
+_sec.seclog.addHandler(haken_x)
 try:
-    _app()
-    fehlt = None
+    auth_x, _ = _ohne_modul("ldap3", lambda: _app(
+        ldap_enabled=True, ldap_url="ldap://ldap.example.com", password_enabled=False))
+    gebaut_x = True
 except Exception as e:
-    fehlt = e
+    auth_x, gebaut_x = None, e
 finally:
-    SCHALTER_BRAUCHT_EXTRA.clear()
-    SCHALTER_BRAUCHT_EXTRA.update(echt)
-r.check("ein fehlendes Extra ist ein MissingExtra", isinstance(fehlt, MissingExtra),
-        f"{type(fehlt).__name__}: {str(fehlt)[:70]}")
-r.check("...und nennt das Extra maschinenlesbar", getattr(fehlt, "extra", None) == "phantom",
-        f"extra={getattr(fehlt, 'extra', None)!r} — sonst muss man den Text lesen")
-r.check("...und ist weiterhin ein RuntimeError", isinstance(fehlt, RuntimeError),
+    _sec.seclog.removeHandler(haken_x)
+
+r.check("ein fehlendes Extra bricht den Aufbau NICHT ab", gebaut_x is True,
+        f"{type(gebaut_x).__name__} — dann kann niemand mehr seinen eigenen Client setzen")
+r.check("...wird aber beim Start gemeldet", "tinysesam[ldap]" in puffer_x.getvalue(),
+        f"schweigt: {puffer_x.getvalue()[:90]!r}")
+
+# Und beim ersten echten Gebrauch ein lesbarer Fehler statt eines nackten ModuleNotFoundError.
+from tinysesam.ldap_ import LDAPClient  # noqa: E402
+
+klient = LDAPClient(auth_x.cfg if auth_x else None)
+try:
+    _ohne_modul("ldap3", klient._server)
+    gebrauch = None
+except Exception as e:
+    gebrauch = e
+r.check("beim Gebrauch fliegt ein MissingExtra", isinstance(gebrauch, MissingExtra),
+        f"{type(gebrauch).__name__}: {str(gebrauch)[:70]}")
+r.check("...mit maschinenlesbarem Extra-Namen", getattr(gebrauch, "extra", None) == "ldap",
+        f"extra={getattr(gebrauch, 'extra', None)!r}")
+r.check("...und weiterhin ein RuntimeError", isinstance(gebrauch, RuntimeError),
         "bestehendes `except RuntimeError` bricht")
+
+# Gegenprobe: Wer das Verfahren unvollständig lässt, bringt den Client selbst mit.
+gebaut, text = _baut(ldap_enabled=True)
+r.check("ein halb konfiguriertes Verfahren bleibt baubar (eigener Client)", gebaut,
+        f"abgewiesen: {text[:110]}")
 
 # Nach der Gegenprobe muss der Normalfall wieder bauen — sonst hätte der Test die Tabelle
 # kaputt zurückgegeben und alles Folgende wäre Unsinn.
