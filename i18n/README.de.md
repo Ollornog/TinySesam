@@ -271,6 +271,25 @@ auth = TinySesam(TinySesamConfig(db_path="auth.db"))
 auth.set_password(auth.store.get_user_by_name("admin")["id"], "neues-passwort")
 ```
 
+## Sicherungen und Aufräumen
+
+```bash
+python -m tinysesam backup --db auth.db auth-2026-09-21.db   # konsistente Kopie, im Betrieb
+python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegräumen
+```
+
+> **Die Datenbank nicht durch Kopieren der Datei sichern.** Sie läuft im WAL-Modus: Alles seit
+> dem letzten Checkpoint steht in `auth.db-wal`, nicht in `auth.db`. Ein `cp`/`rsync` der `.db`
+> allein liefert einen Torso — gemessen an einer frischen Instanz mit fünf Konten enthielt die
+> Kopie nicht einmal die Tabelle `users`, und das merkt man erst beim Zurückspielen. `backup`
+> nutzt SQLites Online-Backup: Es nimmt die nötigen Sperren, zieht das WAL mit und schreibt eine
+> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Aus Python:
+> `auth.store.backup(pfad)`.
+
+`gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
+bleibt bewusst unangetastet. **Von selbst läuft das nicht** — in einen Cronjob oder
+systemd-Timer legen. Aus Python: `auth.gc()` liefert dieselben Zahlen als Dict.
+
 ## Demo-Modus
 
 `demo_mode=True` legt die Konten `demo` und `demoadmin` an, zeigt ihre Zugangsdaten auf der

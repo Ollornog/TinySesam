@@ -68,6 +68,34 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Behoben — Betrieb: Sicherung, Aufräumen, Protokoll ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+
+**Eine Datei-Kopie der Datenbank war wertlos.** Sie läuft im WAL-Modus; wer nur die `.db` sichert,
+bekommt einen Torso — gemessen enthielt die Kopie einer Instanz mit fünf Konten nicht einmal die
+Tabelle `users`, und das merkt man erst beim Zurückspielen. Neu: `tinysesam backup --db … <ziel>`
+und `store.backup(pfad)` über SQLites Online-Backup, im laufenden Betrieb, mit denselben engen
+Rechten wie die Quelle.
+
+**Das Aufräumen hatte keinen Weg von aussen.** `auth.gc()` gab es, aber nichts rief es, und im
+Gateway-Abbild kam man nicht heran. Neu: `tinysesam gc --db …` für Cron oder systemd-Timer.
+Nebenbei: `python -m tinysesam --help` endet jetzt mit 0 statt 2 — eine Frage ist kein Tippfehler.
+
+**Ab der ersten Logrotation wachte der Wächter nicht mehr.** Das Sicherheits-Log lief über einen
+`FileHandler`, der den Inode offen hält: logrotate benennt um, legt neu an, und ab da schrieb
+TinySesam in die *umbenannte* Datei. Die fail2ban-Jail las die leere neue — ohne Fehler, ohne
+Meldung. Jetzt ein `WatchedFileHandler`, der vor jeder Zeile Inode und Gerät prüft.
+
+**Der App-Lockout blendete fail2ban aus.** Solange ein Konto gesperrt war, antwortete die App 429,
+ohne einen Versuch zu protokollieren — das Log verstummte genau in dem Moment, in dem die IP
+hätte gebannt werden sollen. Abweisungen wegen Sperre oder Rate-Limit schreiben jetzt eine Zeile,
+**im selben Format wie ein echter Fehlversuch**, damit der mitgelieferte Filter sofort greift,
+auch in Installationen, die ihre Filterdatei nie anfassen. Der Grund steht als `reason=` dabei
+(`lockout_user`, `lockout_ip`, `ratelimit`).
+
+**Admin-Aktionen standen ohne Akteur und ohne IP im Protokoll.** Es hielt fest, *dass* ein Konto
+gesperrt wurde, nicht von wem — bei mehreren Admins genau die Frage, die man hinterher stellt.
+Alle acht Panel-Aktionen laufen jetzt über einen gemeinsamen Weg, der beides mitschreibt.
+
 ### Sicherheit — vier Befunde aus der zweiten Runde ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
 
 Die Reifeprüfung meldete 35 weitere Befunde, die niemand einzeln nachgestellt hatte. Sie werden

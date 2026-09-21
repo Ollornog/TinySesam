@@ -2,6 +2,8 @@
 
     version                          die installierte Version
     passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung)
+    backup --db auth.db <ziel>       konsistente Kopie ziehen (NICHT die Datei kopieren!)
+    gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
 
 Bewusst mager. TinySesam installiert sich nicht selbst — ein Auth-Modul, das zur Laufzeit
 Code nachlädt, ist eine Hintertür mit Bedienungsanleitung. Aktualisiert wird von außen:
@@ -74,6 +76,64 @@ def _passwd(argv) -> int:
     return 0
 
 
+def _oeffne(pfad: str):
+    """Store auf einer BESTEHENDEN Datei. Wie bei `passwd`: kein TinySesam, damit ein
+    Wartungsbefehl kein Demo-Seeding und kein Erst-Admin-Token auslöst."""
+    import os
+    from .store import Store
+    if not os.path.exists(pfad):
+        print(f"Keine Datenbank unter {pfad}.", file=sys.stderr)
+        return None
+    return Store(pfad)
+
+
+def _backup(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam backup",
+        description="Konsistente Kopie der Datenbank ziehen, auch im laufenden Betrieb.",
+        epilog="Eine Datei-Kopie (cp/rsync) taugt NICHT: Die Datenbank läuft im WAL-Modus, alles "
+               "seit dem letzten Checkpoint steht in der -wal-Datei. Wer nur die .db sichert, "
+               "bekommt einen Torso — und merkt es erst beim Zurückspielen.")
+    ap.add_argument("ziel", help="Pfad der Sicherungsdatei (wird angelegt)")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    import os
+    if os.path.exists(a.ziel):
+        print(f"{a.ziel} gibt es schon — nichts überschrieben.", file=sys.stderr)
+        return 1
+    store.backup(a.ziel)
+    print(f"Sicherung geschrieben: {a.ziel} ({os.path.getsize(a.ziel)} Bytes, Rechte 0600).")
+    return 0
+
+
+def _gc(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam gc",
+        description="Abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche löschen.",
+        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht — das Audit-Log bleibt "
+               "bewusst unangetastet.")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
+    ap.add_argument("--attempts-older-than", type=int, default=86400, metavar="SEK",
+                    help="Login-Versuche älter als N Sekunden löschen (Vorgabe: 86400)")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    import time as _t
+    zahlen = {
+        "sessions": store.gc_sessions(),
+        "flow": store.gc_flow(),
+        "magic_tokens": store.gc_magic_tokens(),
+        "resource_unlocks": store.gc_resource_unlocks(),
+        "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
+    }
+    print(" ".join(f"{k}={v}" for k, v in zahlen.items()))
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
@@ -81,10 +141,20 @@ def main(argv=None):
         print(current_version())
     elif cmd == "passwd":
         sys.exit(_passwd(argv[1:]))
+    elif cmd == "backup":
+        sys.exit(_backup(argv[1:]))
+    elif cmd == "gc":
+        sys.exit(_gc(argv[1:]))
     else:
+        # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
+        # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
+        hilfe = cmd in ("--help", "-h", "help")
         print("usage: python -m tinysesam version\n"
-              "       python -m tinysesam passwd --db <datei> <benutzer>")
-        sys.exit(2)
+              "       python -m tinysesam passwd --db <datei> <benutzer>\n"
+              "       python -m tinysesam backup --db <datei> <ziel>\n"
+              "       python -m tinysesam gc     --db <datei>",
+              file=sys.stdout if hilfe else sys.stderr)
+        sys.exit(0 if hilfe else 2)
 
 
 if __name__ == "__main__":

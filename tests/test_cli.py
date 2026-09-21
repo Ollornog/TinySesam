@@ -81,5 +81,54 @@ code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
 ok("unbekanntes Kommando → usage, Exit 2")
 
+# `--help` ist eine Frage, kein Fehler: Exit 0, damit ein Skript den Unterschied zum Tippfehler
+# sieht. (Der Prüfbericht hatte das für das Gateway gemeldet — hier ist die Gegenprobe.)
+code, aus = cli("--help")
+assert code == 0 and "usage" in aus, (code, aus)
+ok("--help → usage, Exit 0 (nicht 2 wie ein Tippfehler)")
+
+# ---------- backup: eine Datei-Kopie taugt im WAL-Modus nicht ----------
+import sqlite3
+
+nackt = tempfile.mktemp(suffix=".db")
+code, aus = cli("backup", "--db", db, nackt)
+assert code == 0 and "Sicherung geschrieben" in aus, (code, aus)
+namen = {z[0] for z in sqlite3.connect(nackt).execute("SELECT username FROM users")}
+assert namen, "Sicherung ohne Konten"
+ok(f"backup zieht eine Kopie, die für sich allein stimmt ({len(namen)} Konten)")
+
+import stat as _stat
+
+assert _stat.S_IMODE(os.stat(nackt).st_mode) == 0o600, oct(_stat.S_IMODE(os.stat(nackt).st_mode))
+ok("die Sicherung trägt dieselben engen Rechte wie die Quelle")
+
+# Das naive Backup zur Gegenprobe — es ist genau der Fehler, den das Kommando abnimmt.
+import shutil
+
+roh = tempfile.mktemp(suffix=".db")
+shutil.copy(db, roh)
+try:
+    sqlite3.connect(roh).execute("SELECT COUNT(*) FROM users").fetchone()
+    naiv_ok = True
+except sqlite3.DatabaseError:
+    naiv_ok = False
+assert not naiv_ok, "die blosse Datei-Kopie war brauchbar — dann misst der Test nichts"
+ok("eine blosse Datei-Kopie ist unbrauchbar (WAL) — deshalb gibt es das Kommando")
+
+code, aus = cli("backup", "--db", db, nackt)
+assert code == 1 and "gibt es schon" in aus, (code, aus)
+ok("backup überschreibt keine bestehende Datei")
+
+code, aus = cli("backup", "--db", tempfile.mktemp(suffix=".db"), tempfile.mktemp())
+assert code == 1 and "Keine Datenbank" in aus, (code, aus)
+ok("backup auf eine fehlende Datenbank → Exit 1, keine leere Datei angelegt")
+
+# ---------- gc: das Aufräumen braucht einen Weg von aussen ----------
+code, aus = cli("gc", "--db", db)
+assert code == 0 and "sessions=" in aus and "login_attempts=" in aus, (code, aus)
+ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer)")
+
+os.remove(nackt)
+os.remove(roh)
 os.remove(db)
 print("\nCLI OK ✅")

@@ -36,6 +36,17 @@ def build_admin_router(auth) -> APIRouter:
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
         return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
 
+    def protokoll(request: Request, ereignis: str, detail=None):
+        """Eine Admin-Aktion protokollieren — mit Akteur und IP.
+
+        Ohne beides ist das Audit-Log für die Aufarbeitung wertlos: Es hielt fest, DASS ein
+        Konto gesperrt oder ein Passwort zurückgesetzt wurde, nicht von wem und von wo. Bei
+        mehreren Admins ist das genau die Frage, die man hinterher stellt. Wie bei CSRF steht
+        das hier an einer Stelle und nicht in jeder Route — die nächste neue Route erbt es.
+        """
+        wer = auth.current_user(request)
+        auth.audit(ereignis, wer["username"] if wer else None, auth.client_ip(request), detail)
+
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
                 "email": u["email"], "is_admin": bool(u["is_admin"]), "is_service": bool(u["is_service"]),
@@ -75,7 +86,7 @@ def build_admin_router(auth) -> APIRouter:
             uid = auth.create_user(username, password=b.get("password") or None,
                                    is_admin=bool(b.get("is_admin")), roles=roles,
                                    display_name=b.get("display_name"), email=email)
-        auth.audit("user_create", detail=f"{username} service={bool(b.get('is_service'))}")
+        protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 
     @ar.post("/api/users/{uid}/disable")
@@ -93,8 +104,8 @@ def build_admin_router(auth) -> APIRouter:
             # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
             # niemand mehr weiss.
             keys = auth.store.revoke_user_api_keys(uid)
-        auth.audit("user_disable" if disabled else "user_enable",
-                   detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
+        protokoll(request, "user_disable" if disabled else "user_enable",
+              f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/password")
@@ -109,7 +120,7 @@ def build_admin_router(auth) -> APIRouter:
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
         keys = auth.store.revoke_user_api_keys(uid)
-        auth.audit("user_password_reset", detail=f"uid={uid} api_keys_revoked={keys}")
+        protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
         return {"ok": True, "api_keys_revoked": keys}
 
     @ar.post("/api/users/{uid}/roles")
@@ -119,7 +130,7 @@ def build_admin_router(auth) -> APIRouter:
         auth.set_roles(uid, b.get("roles") or [])
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
-        auth.audit("user_roles", detail=f"uid={uid}")
+        protokoll(request, "user_roles", f"uid={uid}")
         return {"ok": True}
 
     # ---------- API-Keys (je User) ----------
@@ -160,7 +171,7 @@ def build_admin_router(auth) -> APIRouter:
             auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
             auth.store.delete_user_sessions(int(b["user_id"]))
-        auth.audit("session_revoke")
+        protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "eine Sitzung")
         return {"ok": True}
 
     # ---------- Einladungen (Magic-Invite) ----------
@@ -194,14 +205,14 @@ def build_admin_router(auth) -> APIRouter:
                 auth.set_resource_secret(name, b["secret"], kind=b.get("kind") or "pin", label=b.get("label"))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            auth.audit("resource_set", detail=name)
+            protokoll(request, "resource_set", name)
             return {"ok": True}
 
         @ar.post("/api/resources/{name}/delete")
         def resource_delete(request: Request, name: str):
             guard(request)
             auth.remove_resource_secret(name)
-            auth.audit("resource_delete", detail=name)
+            protokoll(request, "resource_delete", name)
             return {"ok": True}
 
     # ---------- Härtung / Audit ----------
@@ -215,7 +226,7 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         for k, v in (await auth.json_body(request)).items():
             auth.set_security(k, v)
-        auth.audit("security_update")
+        protokoll(request, "security_update")
         return auth.all_security()
 
     @ar.get("/api/version")

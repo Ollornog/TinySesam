@@ -43,19 +43,22 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 
 ## Betrieb, Protokoll, Datenhaltung
 
-- [ ] Ein naives Backup der Datenbank liefert eine LEERE Datenbank (WAL)
+- [x] Ein naives Backup der Datenbank liefert eine LEERE Datenbank (WAL)
 - [ ] `_migrate()` rüstet nur `session`-Spalten nach — es gibt keinen Schema-Stempel
-- [ ] Das Aufräumen läuft nie von selbst, und im Gateway-Abbild gibt es keinen Weg, es anzustoßen
-- [ ] Nach der ersten Logrotation schreibt TinySesam in die umbenannte Datei — die fail2ban-Jail
-      läuft danach blind
-- [ ] Das Sicherheits-Log nennt keinen Grund und schweigt beim Lockout; die mitgelieferte
-      fail2ban-Regel passt dazu nicht
-- [ ] Admin-Aktionen werden ohne Akteur und ohne IP protokolliert
+- [x] Das Aufräumen läuft nie von selbst, und im Gateway-Abbild gibt es keinen Weg, es anzustoßen
+      — behoben: `tinysesam gc --db …` für Cron/Timer
+- [x] Nach der ersten Logrotation schreibt TinySesam in die umbenannte Datei — die fail2ban-Jail
+      läuft danach blind — behoben: `WatchedFileHandler`
+- [x] Das Sicherheits-Log nennt keinen Grund und schweigt beim Lockout — behoben: Abweisungen
+      melden sich mit `reason=`, im Format des vorhandenen Filters (die Regel passte also doch,
+      es fehlten die Zeilen)
+- [x] Admin-Aktionen werden ohne Akteur und ohne IP protokolliert
 
 ## Paket und Installation
 
 - [ ] `python -m tinysesam.gateway` läuft nach dem dokumentierten pip-Install nicht (uvicorn)
-- [ ] `--help` gibt es nicht: Beim Gateway startet es stattdessen einen Server auf `0.0.0.0:8000`
+- [ ] `--help` beim **Gateway** startet einen Server auf `0.0.0.0:8000` (für `python -m tinysesam`
+      erledigt: Exit 0 statt 2; der Gateway-Einstieg steht noch aus)
 - [ ] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
 - [ ] Das sdist enthält keine Tests — wer neu paketiert, kann den Bau nicht prüfen
 - [ ] SECURITY.md nennt 0.5.x als die Reihe, die Sicherheitsfixes bekommt

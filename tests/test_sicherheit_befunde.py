@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -507,5 +508,98 @@ ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": True})
 ca.post(f"/auth/admin/api/users/{uid_a}/disable", json={"disabled": False})
 r.check("ein Key lebt nach Sperren und Entsperren nicht wieder auf", not _key_gilt(auth_a, dritt),
         "der Key gilt wieder — gesperrt und entsperrt ist kein Freifahrtschein")
+
+
+# ── Admin-Aktionen ohne Akteur und ohne IP ────────────────────────────────────
+# Das Protokoll hielt fest, DASS ein Konto gesperrt wurde — nicht von wem und von wo. Bei
+# mehreren Admins ist das genau die Frage, die man hinterher stellt.
+auth_p, _ = _app(csrf_enabled=False)
+opfer_p = auth_p.create_user("betroffen", password="geheim12345")
+chef_p = auth_p.create_user("chefin2", password="geheim12345", is_admin=True)
+app_p = FastAPI()
+app_p.include_router(auth_p.router())
+cp = TestClient(app_p)
+cp.cookies.set(auth_p.cfg.session_cookie,
+               auth_p.store.create_session(chef_p, 3600, True, "password"))
+
+cp.post(f"/auth/admin/api/users/{opfer_p}/disable", json={"disabled": True},
+        headers={"X-Forwarded-For": "203.0.113.42"})
+eintrag = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_disable"), None)
+r.check("das Sperren steht überhaupt im Protokoll", eintrag is not None,
+        "keine Zeile — dann sagt der Test über den Rest nichts")
+r.check("und nennt den Admin, der es getan hat",
+        bool(eintrag) and eintrag["username"] == "chefin2",
+        f"username={eintrag['username'] if eintrag else None!r}")
+r.check("und die IP, von der aus", bool(eintrag) and bool(eintrag["ip"]),
+        f"ip={eintrag['ip'] if eintrag else None!r}")
+
+# Nicht nur diese eine Route: auch der Passwort-Reset.
+cp.post(f"/auth/admin/api/users/{opfer_p}/password", json={"password": "ganzneu12345"})
+reset = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_password_reset"), None)
+r.check("auch der Admin-Passwort-Reset nennt Akteur und IP",
+        bool(reset) and reset["username"] == "chefin2" and bool(reset["ip"]),
+        f"{dict(reset) if reset else None}")
+
+
+# ── Der Wächter, der ab der ersten Logrotation nicht mehr wacht ───────────────
+# `logging.FileHandler` hält den Inode offen. logrotate benennt um und legt neu an — ab da
+# schreibt der Prozess in die UMBENANNTE Datei, die fail2ban-Jail liest die leere neue.
+import os as _os2  # noqa: E402
+
+from tinysesam.security import attach_security_log, seclog  # noqa: E402
+
+log_ordner = tempfile.mkdtemp()
+log_datei = str(Path(log_ordner) / "security.log")
+attach_security_log(log_datei)
+seclog.warning("failed login user=vorher ip=203.0.113.1 method=password")
+_os2.rename(log_datei, log_datei + ".1")          # genau das macht logrotate
+open(log_datei, "w").close()
+seclog.warning("failed login user=nachher ip=203.0.113.2 method=password")
+
+r.check("nach einer Logrotation landet die nächste Zeile in der NEUEN Datei",
+        "nachher" in open(log_datei, encoding="utf-8").read(),
+        "sie steht in der umbenannten Datei — die Jail liest ab jetzt ins Leere")
+r.check("und nicht mehr in der rotierten",
+        "nachher" not in open(log_datei + ".1", encoding="utf-8").read(),
+        "der alte Inode bekommt weiter Zeilen")
+
+
+# ── Der App-Lockout blendete fail2ban aus ────────────────────────────────────
+# Solange gesperrt war, rief niemand mehr `record_login()`: Die App antwortete 429 und schrieb
+# keine Zeile. Das Log verstummte genau dann, wenn die IP hätte gebannt werden sollen.
+auth_l, _ = _app()
+auth_l.create_user("ziel3", password="geheim12345")
+for _ in range(10):
+    auth_l.record_login("ziel3", "203.0.113.77", success=False, method="password")
+
+puffer_l = io.StringIO()
+haken_l = logging.StreamHandler(puffer_l)
+seclog.addHandler(haken_l)
+try:
+    gesperrt = auth_l.is_locked("ziel3", "203.0.113.77")
+finally:
+    seclog.removeHandler(haken_l)
+zeile_l = puffer_l.getvalue()
+
+r.check("das Konto ist überhaupt gesperrt", gesperrt, "kein Lockout — dann misst der Test nichts")
+r.check("die Abweisung schreibt eine Zeile ins Sicherheits-Log", "failed login" in zeile_l,
+        f"Log schweigt: {zeile_l[:80]!r} — fail2ban sieht keinen Grund zu bannen")
+r.check("und nennt den Grund", "reason=lockout" in zeile_l, f"ohne Grund: {zeile_l[:100]!r}")
+r.check("die Zeile passt auf den mitgelieferten fail2ban-Filter",
+        bool(re.search(r"failed login user=.* ip=(\S+) method=.*", zeile_l)),
+        f"Filter greift nicht: {zeile_l[:100]!r}")
+
+# Auch das Rate-Limit darf nicht stumm abweisen.
+puffer_r = io.StringIO()
+haken_r = logging.StreamHandler(puffer_r)
+seclog.addHandler(haken_r)
+try:
+    for _ in range(int(auth_l.sec("rate_limit_max")) + 2):
+        auth_l.rate_ok("203.0.113.78")
+finally:
+    seclog.removeHandler(haken_r)
+r.check("auch ein Rate-Limit-Treffer steht im Log",
+        "reason=ratelimit" in puffer_r.getvalue(),
+        f"stumm: {puffer_r.getvalue()[:80]!r}")
 
 sys.exit(r.done())

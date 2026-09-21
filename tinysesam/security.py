@@ -3,6 +3,7 @@ Die Brute-Force-Regulation selbst lebt im Manager (DB-basiert, Panel-konfigurier
 from __future__ import annotations
 import time
 import logging
+import logging.handlers
 import ipaddress
 from urllib.parse import urlsplit
 from collections import defaultdict, deque
@@ -25,7 +26,14 @@ def attach_security_log(path: str) -> bool:
         if getattr(h, "_tinysesam_path", None) == path:
             return True
     try:
-        h = logging.FileHandler(path, encoding="utf-8")
+        # WatchedFileHandler, nicht FileHandler: logrotate benennt die Datei um und legt eine
+        # neue an — ein FileHandler hält den alten Inode offen und schreibt ab da in die
+        # umbenannte Datei weiter. Die neue bliebe leer, und die fail2ban-Jail läse ab der
+        # ERSTEN Rotation nichts mehr: kein Fehler, keine Meldung, nur ein Wächter, der nicht
+        # mehr wacht. Der Watched-Handler prüft vor jeder Zeile Inode und Gerät und öffnet neu.
+        # (Unter Windows ohne Wirkung — dort lässt sich eine offene Datei ohnehin nicht
+        # umbenennen, und `copytruncate` ist der Weg.)
+        h = logging.handlers.WatchedFileHandler(path, encoding="utf-8")
     except OSError as e:
         seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
                        path, e)

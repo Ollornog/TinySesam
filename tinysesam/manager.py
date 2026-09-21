@@ -983,15 +983,34 @@ class TinySesam:
         """Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool."""
         self.rl = limiter
 
+    # Abgewiesen wird an elf Stellen im Router; gemeldet wird HIER, in der Prüfung selbst.
+    # Grund: Solange der App-Lockout griff, rief niemand mehr `record_login()` — die App
+    # antwortete 429 und schrieb keine Zeile. Damit verstummte das Sicherheits-Log genau in dem
+    # Moment, in dem fail2ban die IP hätte bannen sollen: Der App-Lockout blendete den Wächter
+    # aus, der ihn ablösen soll. Die elf Aufrufstellen einzeln zu flicken hiesse, dass die
+    # nächste neue Route wieder stumm ist.
+    #
+    # Das Format ist bewusst dasselbe wie bei einem echten Fehlversuch — der mitgelieferte
+    # fail2ban-Filter (`failed login user=… ip=<HOST> method=.*`) greift dadurch sofort, auch
+    # in Installationen, die ihre Filterdatei nie anfassen. `reason=` sagt, warum.
+    def _abgewiesen(self, username, ip, grund: str):
+        security.seclog.warning("failed login user=%s ip=%s method=blocked reason=%s",
+                                username or "-", ip, grund)
+
     def rate_ok(self, ip) -> bool:
-        return self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
+        erlaubt = self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
+        if not erlaubt:
+            self._abgewiesen(None, ip, "ratelimit")
+        return erlaubt
 
     def is_locked(self, username, ip) -> bool:
         """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT)."""
         since = int(time.time()) - self.sec("lockout_window_sec")
         if username and self.store.count_fails(since, username=username) >= self.sec("max_login_attempts"):
+            self._abgewiesen(username, ip, "lockout_user")
             return True
         if ip and self.store.count_fails(since, ip=ip) >= self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
+            self._abgewiesen(username, ip, "lockout_ip")
             return True
         return False
 

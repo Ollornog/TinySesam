@@ -496,6 +496,39 @@ class Store:
     def gc_sessions(self) -> int:
         return self._exec("DELETE FROM session WHERE expires_at < ?", (_now(),)).rowcount
 
+    def backup(self, ziel: str) -> str:
+        """Eine konsistente Kopie der Datenbank schreiben, im laufenden Betrieb.
+
+        **Eine Datei-Kopie taugt nicht.** Die Datenbank läuft im WAL-Modus: Alles seit dem
+        letzten Checkpoint steht in `…-wal`, nicht in der `.db`. Wer nur die `.db` kopiert (cp,
+        rsync, ein Backup-Agent, der Muster kennt), bekommt einen Torso — gemessen: eine frische
+        Instanz mit fünf Konten ergab eine Kopie ohne auch nur die Tabelle `users`. Der Fehler
+        fällt erst beim Zurückspielen auf.
+
+        Hier läuft SQLites Online-Backup: Es nimmt die Sperren, die es braucht, zieht WAL mit und
+        liefert eine Datei, die für sich allein stimmt. Die Kopie bekommt dieselben engen Rechte
+        wie das Original — ein Backup mit Passwort-Hashes ist so schützenswert wie die Quelle.
+        """
+        neu_angelegt = not os.path.exists(ziel)
+        if neu_angelegt:
+            try:
+                os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
+            except OSError:
+                neu_angelegt = False
+        ziel_db = sqlite3.connect(ziel)
+        try:
+            with self._lock:
+                self.db.backup(ziel_db)
+        finally:
+            ziel_db.close()
+        for anhang in ("", "-wal", "-shm"):
+            try:
+                if os.path.exists(ziel + anhang):
+                    os.chmod(ziel + anhang, self.DATEIRECHTE)
+            except OSError:
+                pass
+        return ziel
+
     def gc_flow(self) -> int:
         return self._exec("DELETE FROM flow WHERE expires_at < ?", (_now(),)).rowcount
 
