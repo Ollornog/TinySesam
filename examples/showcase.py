@@ -16,6 +16,7 @@ Alles hängt an je einer Quelle:
 Der **Demo-Modus** (`demo_mode=True`) legt die Konten `demo` und `demoadmin` an und zeigt die
 Zugangsdaten auf der Login-Seite — samt Warnung, dass er produktiv aus gehört.
 """
+import html
 import os
 import sys
 from contextvars import ContextVar
@@ -29,13 +30,13 @@ from starlette.datastructures import MutableHeaders                     # noqa: 
 
 from tinysesam import TinySesam, __version__                            # noqa: E402
 
-from web.demo import (DEMO_CSS, FIT_JS, PANEL_T, brand_css,             # noqa: E402
+from web.demo import (DEMO_CSS, PANEL_T, brand_css,                     # noqa: E402
                       demo_body, demo_config, mock_api, render_previews)
 from web.flows import CSS as FLOW_CSS, render as flow_html              # noqa: E402
 from web.site import (INDEX_CSS, LABELS, LEGAL_CSS, T as SITE_T,         # noqa: E402
-                      flows_body, hero, index_body, legal_body)
-from web.ui import (Ctx, LANG_COOKIE, LANGS as UI_LANGS, Nav, UI_CSS,   # noqa: E402
-                    UI_JS, document, footer, header, shell)
+                      hero, index_body, legal_body)
+from web.ui import (Ctx, LANG_COOKIE, LANGS as UI_LANGS, Nav,           # noqa: E402
+                    UI_JS, document, footer, header)
 
 REPO = "https://github.com/Ollornog/TinySesam"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
@@ -58,10 +59,6 @@ auth = TinySesam(demo_config(
 ))
 auth.set_resource_secret("gaeste", "2468", kind="pin", label="Gäste-Bereich")
 
-# Die eingebauten Seiten (Login, Konto, Admin, Fehlerseiten) bekommen denselben Rumpf wie der Rest.
-auth.cfg.brand_header = lambda _a: shell_header(_a)
-auth.cfg.brand_footer = lambda _a: shell_footer(_a)
-auth.cfg.brand_head = UI_JS       # Theme-Pille + „Aufklapper schließen" auch dort
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -113,6 +110,13 @@ def shell_footer(_auth) -> str:
     return "" if _bare(c) else footer(c, nav_of(c.lang))
 
 
+# Die eingebauten Seiten (Login, Konto, Admin, Fehlerseiten) bekommen denselben Rumpf wie der Rest.
+# Steht bewusst NACH den beiden Funktionen: Vorher hielt ein Lambda den Namen nur bis zum Aufruf offen.
+auth.cfg.brand_header = shell_header
+auth.cfg.brand_footer = shell_footer
+auth.cfg.brand_head = UI_JS       # Theme-Pille + „Aufklapper schließen" auch dort
+
+
 class ShellMiddleware:
     """Sprache und Seiten-Kontext für diesen Request bereitstellen.
 
@@ -140,7 +144,7 @@ class ShellMiddleware:
                     "set-cookie", f"{LANG_COOKIE}={lang}; Path=/; Max-Age=31536000; SameSite=lax")
             await send(message)
 
-        await self.app(scope, receive, send_with_cookie)
+        return await self.app(scope, receive, send_with_cookie)
 
 
 app.add_middleware(ShellMiddleware)
@@ -319,7 +323,7 @@ def prev_api_ro(path: str):
 def protected(request: Request, user=Depends(auth.require_user)):
     lang = lang_of(request)
     t = TEXTS[lang]
-    return page("/app", f"<h1>{t['app_h1'].format(u=user['username'])}</h1>"
+    return page("/app", f"<h1>{t['app_h1'].format(u=html.escape(user['username']))}</h1>"
                         f"<p class=lead>{t['app_lead']}</p>"
                         f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
                         f"<a class='btn ghost' href='/sensibel'>{t['try_stepup']}</a></div>", request)
@@ -331,7 +335,7 @@ def sensitive(request: Request, user=Depends(auth.require(mfa=True))):
     t = TEXTS[lang]
     method = ", ".join(auth.stepup_options(user)) or "—"
     return page("/sensibel", f"<h1>{t['sens_h1']}</h1>"
-                             f"<p class=lead>{t['sens_lead'].format(u=user['username'])}</p>"
+                             f"<p class=lead>{t['sens_lead'].format(u=html.escape(user['username']))}</p>"
                              f"<p class=muted style='max-width:60ch'>{t['sens_hint'].format(m=method)}</p>"
                              f"<div class=bar><a class='btn primary' href='/demo'>{t['back_demo']}</a>"
                              f"<a class='btn ghost' href='/auth/account'>{t['nav_account']}</a></div>", request)

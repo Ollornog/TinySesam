@@ -79,7 +79,7 @@ def _install_https_except_health(auth, app):
         async def __call__(self, scope, receive, send):
             if scope.get("type") == "http" and scope.get("path") == HEALTH_PATH:
                 return await self.app(scope, receive, send)
-            await super().__call__(scope, receive, send)
+            return await super().__call__(scope, receive, send)
 
     app.add_middleware(_ExceptHealth)
     return "force"

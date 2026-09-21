@@ -603,12 +603,11 @@ class Store:
         """
         if not os.path.exists(quelle):
             raise FileNotFoundError(quelle)
-        neu_angelegt = not os.path.exists(ziel)
-        if neu_angelegt:
+        if not os.path.exists(ziel):
             try:
                 os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, cls.DATEIRECHTE))
             except OSError:
-                neu_angelegt = False
+                pass  # inzwischen angelegt oder nicht anlegbar — die Rechte setzt der chmod unten
         quell_db = sqlite3.connect(f"file:{quelle}?mode=ro", uri=True)
         ziel_db = sqlite3.connect(ziel)
         try:
@@ -621,7 +620,7 @@ class Store:
                 if os.path.exists(ziel + anhang):
                     os.chmod(ziel + anhang, cls.DATEIRECHTE)
             except OSError:
-                pass
+                pass  # Rechte nicht setzbar (fremdes Dateisystem) — die Kopie selbst ist vollständig
         return ziel
 
     def backup(self, ziel: str) -> str:
@@ -637,12 +636,11 @@ class Store:
         liefert eine Datei, die für sich allein stimmt. Die Kopie bekommt dieselben engen Rechte
         wie das Original — ein Backup mit Passwort-Hashes ist so schützenswert wie die Quelle.
         """
-        neu_angelegt = not os.path.exists(ziel)
-        if neu_angelegt:
+        if not os.path.exists(ziel):
             try:
                 os.close(os.open(ziel, os.O_CREAT | os.O_EXCL | os.O_WRONLY, self.DATEIRECHTE))
             except OSError:
-                neu_angelegt = False
+                pass  # inzwischen angelegt oder nicht anlegbar — die Rechte setzt der chmod unten
         ziel_db = sqlite3.connect(ziel)
         try:
             with self._lock:
@@ -654,7 +652,7 @@ class Store:
                 if os.path.exists(ziel + anhang):
                     os.chmod(ziel + anhang, self.DATEIRECHTE)
             except OSError:
-                pass
+                pass  # Rechte nicht setzbar (fremdes Dateisystem) — die Kopie selbst ist vollständig
         return ziel
 
     def gc_flow(self) -> int:

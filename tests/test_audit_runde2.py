@@ -10,7 +10,6 @@ der Funktion. Wer eine Zeile hier rot sieht, weiss sofort, was wieder möglich i
 """
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 import os

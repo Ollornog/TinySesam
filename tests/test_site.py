@@ -1,10 +1,15 @@
 """Die Projekt-Website: eine Quelle, zwei Sprachen — und der Rumpf aus web/ui.py."""
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+
+
+def _lies(*teile: str) -> str:
+    return Path(*teile).read_text(encoding="utf-8")
+
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -200,14 +205,14 @@ with tempfile.TemporaryDirectory() as tmp:
                                               "resources", "version"])
     # Ohne Endung, aber JSON: `fetch(...).json()` prüft keinen Content-Type, und Pages
     # liefert die Datei unverändert aus.
-    users = json.loads(open(os.path.join(api, "users"), encoding="utf-8").read())
+    users = json.loads(_lies(api, "users"))
     assert [u["username"] for u in users] == ["demoadmin", "demo", "martin", "backup-daemon"]
-    version = json.loads(open(os.path.join(api, "version"), encoding="utf-8").read())
+    version = json.loads(_lies(api, "version"))
     assert version["version"] == TS_VERSION, "das Panel zeigt die gebaute Version"
 
     # Die Panels sind echte Seiten, aber gesperrt — und die Demo-Seite bindet genau sie ein.
     def panel(name):
-        return open(os.path.join(tmp, "demo", name), encoding="utf-8").read()
+        return _lies(tmp, "demo", name)
 
     for name in ("admin.en.html", "admin.de.html", "login.en.html", "account.de.html"):
         assert "pointer-events:none" in panel(name), f"{name} muss read-only sein"
@@ -222,7 +227,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert f"lang={lang}" in html or f'lang="{lang}"' in html, name
         assert want in html and nope not in html, (name, want, nope)
 
-    page = open(os.path.join(tmp, "demo.html"), encoding="utf-8").read()
+    page = _lies(tmp, "demo.html")
     for src in ("demo/login.en.html", "demo/account.de.html", "demo/admin.en.html",
                 "demo/admin.de.html"):
         assert f"src='{src}'" in page, src

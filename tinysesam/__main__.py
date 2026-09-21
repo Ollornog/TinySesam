@@ -180,7 +180,7 @@ def _restore(argv) -> int:
     try:
         os.chmod(a.db, Store.DATEIRECHTE)
     except OSError:
-        pass
+        pass  # Dateisystem ohne Unix-Rechte — die Kopie selbst ist vollständig
     print(f"Zurückgespielt: {a.db} (Rechte 0600). Dienst wieder starten.")
     return 0
 

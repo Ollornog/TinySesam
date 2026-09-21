@@ -125,7 +125,7 @@ try:
 
     # ---------- Version: eine Zahl, überall dieselbe ----------
     modul = re.search(r'^__version__ = "([^"]+)"',
-                      open(os.path.join(ROOT, "tinysesam/__init__.py"), encoding="utf-8").read(),
+                      pathlib.Path(ROOT, "tinysesam/__init__.py").read_text(encoding="utf-8"),
                       re.M).group(1)
     assert VERSION == modul == PKG["Version"], (VERSION, modul, PKG["Version"])
     ok(f"Version {VERSION}: Wheel = sdist = tinysesam.__version__")
@@ -145,7 +145,7 @@ try:
 
     # ---------- Python-Versionen: Zusage und Prüflauf sind dasselbe ----------
     # Ein Classifier ist ein Versprechen. Eines, das die CI nicht fährt, ist geraten.
-    ci = open(os.path.join(ROOT, ".github/workflows/ci.yml"), encoding="utf-8").read()
+    ci = pathlib.Path(ROOT, ".github/workflows/ci.yml").read_text(encoding="utf-8")
     matrix = re.search(r"python-version:\s*\[([^\]]+)\]", ci)
     assert matrix, "ci.yml hat keine python-version-Matrix mehr — dann prüft hier niemand mehr mit"
     gefahren = re.findall(r'"(\d+\.\d+)"', matrix.group(1))
@@ -222,8 +222,7 @@ try:
     # ---------- Veröffentlicht wird ohne Geheimnis ----------
     # Trusted Publishing (OIDC) statt API-Token: kein Wert im Repo, keiner, der rotiert werden
     # muss, und keiner, den ein Fork-PR abgreifen könnte.
-    zeilen = open(os.path.join(ROOT, ".github/workflows/release.yml"),
-                  encoding="utf-8").read().splitlines()
+    zeilen = pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8").splitlines()
     rel = "\n".join(zeilen)
     assert 'tags: ["v*"]' in rel, "veröffentlicht würde ohne Tag — den Knopf drückt ein Mensch"
     assert "id-token: write" in rel, "ohne id-token-Recht gibt es keine OIDC-Identität"

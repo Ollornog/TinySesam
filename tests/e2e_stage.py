@@ -65,11 +65,12 @@ class Browser:
             if self.proc.poll() is not None:
                 raise RuntimeError("Chrome ist beim Start gestorben")
             try:
-                erste = open(datei, encoding="utf-8").readline().strip()
+                with open(datei, encoding="utf-8") as fh:
+                    erste = fh.readline().strip()
                 if erste.isdigit():
                     return int(erste)
             except OSError:
-                pass
+                pass  # Datei fehlt noch oder ist halb geschrieben — nächste Runde
             time.sleep(0.1)
         raise RuntimeError("Chrome meldet keinen Debug-Port")
 
@@ -267,7 +268,8 @@ async def teil_oidc():
     cred_datei = os.environ.get("STAGE_OIDC_CRED")
     if not cred_datei or not os.path.exists(cred_datei):
         return "übersprungen (STAGE_OIDC_CRED fehlt)"
-    cred = json.load(open(cred_datei, encoding="utf-8"))
+    with open(cred_datei, encoding="utf-8") as fh:
+        cred = json.load(fh)
     async with Browser() as b:
         await b.cmd("WebAuthn.enable")
         auth_id = (await b.cmd("WebAuthn.addVirtualAuthenticator", {"options": {

@@ -46,7 +46,7 @@ abrufe = []
 
 def zaehlende_holung(c):
     """`_jwkset` mit einem Zähler unterlegen, ohne die Cache-Logik nachzubauen."""
-    import tinysesam.oidc as modul
+    modul = sys.modules["tinysesam.oidc"]
 
     class FakeJWK:
         @staticmethod
@@ -117,7 +117,6 @@ class FakeClaims(dict):
 
 def baue_exchange_umgebung(c, versuche):
     """httpx.post liefert ein id_token; jwt.decode scheitert beim ersten Set und klappt beim zweiten."""
-    import tinysesam.oidc as modul
 
     class FakeAntwort:
         def json(self):

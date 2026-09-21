@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from . import konfigpruefung
-from .errors import ConfigError, MissingExtra
+from .errors import ConfigError
 from .config import TinySesamConfig
 from .store import Store, norm_email
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
@@ -292,7 +292,6 @@ class TinySesam:
     # Andere Projekte differenzieren User über is_admin + frei definierbare roles.
     def user_roles(self, user) -> list:
         """Die Rollen eines Kontos als Liste."""
-        import json
         try:
             return json.loads(user["roles"] or "[]")
         except Exception:
@@ -1709,11 +1708,11 @@ class TinySesam:
         done = json.loads(s["factors_done"] or "[]") if s else []
         if usr is None:
             self._redirect_factor(request, factors[0] if factors else "password")
-        if self._chain_satisfied(factors, strict, done):
-            d = dict(usr)
-            d["_via"] = "session"
-            return d
-        self._redirect_factor(request, self._next_factor(factors, strict, done))
+        if not self._chain_satisfied(factors, strict, done):
+            self._redirect_factor(request, self._next_factor(factors, strict, done))
+        d = dict(usr)
+        d["_via"] = "session"
+        return d
 
     def _enforce(self, request: Request, mfa=False, admin=False, role=None, factors=None,
                  strict: Optional[bool] = None, admin_implies: Optional[bool] = None) -> dict:
