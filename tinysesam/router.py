@@ -83,7 +83,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
         sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
-        auth.complete_mfa(sitzungs_token)
+        auth.complete_totp(sitzungs_token)
         return RedirectResponse(auth.login_redirect_after(request, sitzungs_token, pu["id"], nxt), 303)
 
     # ---------- TOTP einrichten (eingeloggter User) ----------

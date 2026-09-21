@@ -16,6 +16,22 @@ ohne Handgriffe durchläuft.
 Erst dann ist PyPI vertretbar — siehe [ADR-1](ADR-1-pypi-vertagt.md). Bis dahin ist der gepinnte
 Git-Tag das ehrlichere Artefakt.
 
+## Offen: die Oberfläche ist gemessen, nicht ausgewählt (2026-09-21)
+
+`tests/api_surface.json` friert **alles ein, was keinen führenden Unterstrich trägt** — 105
+Methoden. 68 davon kamen in keiner Doku vor; sie sind eingefroren, weil sie so aussehen, nicht
+weil jemand entschieden hätte, dass sie zur öffentlichen Oberfläche gehören.
+
+Seit 0.18.0 ist die Lage wenigstens sichtbar: Jede dieser Methoden hat einen Docstring, und
+[API.md](../API.md) führt sie vollständig auf (generiert, mit Prüfung). Der Wächter erfasst
+seither auch Rückgabetypen und die **Vorgabewerte** der Config-Felder — ohne die liesse sich
+`session_ttl_hours` still von 168 auf 1 setzen.
+
+**Was offen bleibt und vor 1.0 entschieden werden muss:** Welche dieser 105 Namen sollen auf
+Dauer öffentlich sein? Alles einzufrieren ist die sichere, aber teure Antwort — jede interne
+Umbenennung wird dann zum Bruch. Die Entscheidung ist inhaltlich (was verspricht TinySesam?)
+und gehört nicht in einen Reparaturlauf.
+
 ## Stand: wieder offen (2026-09-21, nach der Reifeprüfung)
 
 Der Meilenstein war für einen Tag geschlossen und ist es nicht mehr. Eine Reifeprüfung mit vier

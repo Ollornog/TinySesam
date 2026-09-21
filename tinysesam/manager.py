@@ -21,6 +21,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
+from . import konfigpruefung
 from .errors import ConfigError, MissingExtra
 from .config import TinySesamConfig
 from .store import Store, norm_email
@@ -64,6 +65,16 @@ class TinySesam:
         if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
             raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
                              "sonst entstehen Konten, die sich nicht anmelden können")
+        # Alle übrigen Widersprüche auf einmal — beim Aufbau, nicht beim ersten Login. Die
+        # Prüfungen oben werfen einzeln, weil jede für sich eine eigene Geschichte erzählt;
+        # was danach kommt, sammelt konfigpruefung.py und meldet es gemeinsam. Wer drei Dinge
+        # falsch hat, soll sie einmal lesen und nicht dreimal starten.
+        befunde, hinweise = konfigpruefung.pruefe(config)
+        for hinweis in hinweise:
+            security.seclog.warning("Konfiguration: %s", hinweis)
+        if befunde:
+            raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
+
         # Ein eingeschalteter Schalter ohne sein Extra: Bis 0.18.0 fiel das je nach Methode
         # unterschiedlich auf — bei Passkey mit einer verständlichen Meldung, sonst als
         # ModuleNotFoundError aus dem Innern der Bibliothek oder erst beim ersten Login als 500.
@@ -238,6 +249,7 @@ class TinySesam:
     # ---------- User-Verwaltung ----------
     def create_user(self, username, password=None, is_admin=False, roles=None,
                     display_name=None, email=None, is_service=False) -> int:
+        """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys."""
         email = norm_email(email)
         if email and self.store.email_taken(email):
             raise ConfigError("E-Mail-Adresse ist bereits vergeben")
@@ -249,6 +261,7 @@ class TinySesam:
     # Rollen (optional). Wer nur „eingeloggt oder nicht" braucht, nimmt require_user.
     # Andere Projekte differenzieren User über is_admin + frei definierbare roles.
     def user_roles(self, user) -> list:
+        """Die Rollen eines Kontos als Liste."""
         import json
         try:
             return json.loads(user["roles"] or "[]")
@@ -256,6 +269,7 @@ class TinySesam:
             return []
 
     def is_admin(self, user) -> bool:
+        """Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request."""
         return bool(user["is_admin"])
 
     def has_role(self, user, role, admin_implies=None) -> bool:
@@ -269,6 +283,7 @@ class TinySesam:
         return role in self.user_roles(user)
 
     def set_roles(self, user_id, roles):
+        """Die Rollen eines Kontos ersetzen."""
         self.store.set_roles(user_id, roles)
 
     def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None):
@@ -368,13 +383,16 @@ class TinySesam:
         return None
 
     def list_api_keys(self, user_id):
+        """Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe."""
         return self.store.list_api_keys(user_id)
 
     def revoke_api_key(self, key_id, user_id=None):
+        """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
         self.store.revoke_api_key(key_id, user_id)
         self.audit("apikey_revoke", detail=f"key={key_id}")
 
     def set_password(self, user_id, password):
+        """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers)."""
         self.store.set_password_hash(user_id, hash_password(password))
 
     def ensure_admin(self, username, password) -> bool:
@@ -389,6 +407,7 @@ class TinySesam:
     # wer als Erstes da ist — auch ein Fremder, der die frische Instanz findet. Stattdessen zwei
     # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt.
     def admin_exists(self) -> bool:
+        """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
         return any(u["is_admin"] for u in self.store.list_users())
 
     def maybe_promote_admin(self, user) -> bool:
@@ -424,6 +443,7 @@ class TinySesam:
         return token
 
     def consume_admin_claim(self, token, user) -> bool:
+        """Das Einmal-Token einlösen und dieses Konto zum Admin machen. Gilt genau einmal."""
         if not token or not user or not self.cfg.admin_enabled or self.admin_exists():
             return False
         raw = self.store.get_setting("admin_claim")
@@ -482,6 +502,7 @@ class TinySesam:
         return dict(zeile) if zeile is not None else None
 
     def get_user(self, user_id) -> Optional[dict]:
+        """Ein Konto per ID lesen, oder None."""
         return self._als_dict(self.store.get_user(user_id))
 
     # ---------- Passwort-Login ----------
@@ -506,6 +527,7 @@ class TinySesam:
         return self._als_dict(gefunden)
 
     def check_password(self, username, password) -> Optional[dict]:
+        """Benutzername/E-Mail + Passwort prüfen. Gibt das Konto zurück oder None — und braucht bei beiden Ausgängen gleich lange (keine Konto-Erkundung)."""
         u = self.find_user(username)
         if not u or u["disabled"]:
             dummy_verify(password)   # Timing angleichen (keine User-Enumeration)
@@ -585,13 +607,16 @@ class TinySesam:
         self.store.set_pin_hash(user_id, hash_password(pin))
 
     def has_pin(self, user_id) -> bool:
+        """Hat dieses Konto eine PIN eingerichtet?"""
         return self.store.has_pin(user_id)
 
     def disable_pin(self, user_id):
+        """Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt)."""
         self.store.delete_pin(user_id)
         self.audit("pin_disable", detail=f"user={user_id}")
 
     def check_pin(self, username, pin) -> Optional[dict]:
+        """Wie `check_password`, nur mit der persönlichen PIN."""
         u = self.find_user(username)
         if not u or u["disabled"]:
             dummy_verify(str(pin or ""))
@@ -608,6 +633,7 @@ class TinySesam:
 
     # Faktoren gegen eine bekannte Identität prüfen (Step-up: der User steht schon fest).
     def verify_user_password(self, user_id, password) -> bool:
+        """Das Passwort eines BEKANNTEN Kontos prüfen (Step-up: die Identität steht schon fest)."""
         h = self.store.get_password_hash(user_id)
         if not h:
             dummy_verify(password or "")
@@ -619,6 +645,7 @@ class TinySesam:
         return True
 
     def verify_user_pin(self, user_id, pin) -> bool:
+        """Wie `verify_user_password`, nur mit der PIN."""
         h = self.store.get_pin_hash(user_id)
         if not h:
             dummy_verify(str(pin or ""))
@@ -662,10 +689,12 @@ class TinySesam:
         return self.store.has_confirmed_totp(user_id)
 
     def verify_totp(self, user_id, code) -> bool:
+        """Einen TOTP-Code gegen das Geheimnis dieses Kontos prüfen."""
         t = self.store.get_totp(user_id)
         return bool(t and t["confirmed"] and _totp.verify(t["secret"], code))
 
     def totp_begin(self, user_id):
+        """Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator."""
         secret = _totp.new_secret()
         self.store.set_totp(user_id, secret, confirmed=False)
         u = self.store.get_user(user_id)
@@ -673,6 +702,7 @@ class TinySesam:
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 
     def totp_confirm(self, user_id, code) -> bool:
+        """Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an."""
         t = self.store.get_totp(user_id)
         if t and _totp.verify(t["secret"], code):
             self.store.confirm_totp(user_id)
@@ -680,6 +710,7 @@ class TinySesam:
         return False
 
     def totp_disable(self, user_id):
+        """TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert)."""
         offen = self.store.count_recovery_codes(user_id)   # vor dem Löschen zählen
         self.store.delete_totp(user_id)
         self.store.delete_recovery_codes(user_id)   # ohne TOTP sind Recovery-Codes gegenstandslos
@@ -712,11 +743,13 @@ class TinySesam:
         return hashlib.sha256(norm.encode()).hexdigest()
 
     def verify_recovery_code(self, user_id, code) -> bool:
+        """Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal."""
         if not code:
             return False
         return self.store.consume_recovery_code(user_id, self._rc_hash(code))
 
     def recovery_codes_remaining(self, user_id) -> int:
+        """Wie viele Einmal-Codes dieses Konto noch hat."""
         return self.store.count_recovery_codes(user_id)
 
     # ---------- Passwort-Reset (Forgot-Password) ----------
@@ -779,6 +812,7 @@ class TinySesam:
         return None if self._default_satisfied(user_id, done) else "totp"
 
     def factor_entry(self, step, nxt="/") -> str:
+        """Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran."""
         from urllib.parse import quote
         base = {"password": self.cfg.login_path, "pin": "/auth/pin", "oidc": "/auth/oidc/start",
                 "passkey": self.cfg.login_path, "totp": "/auth/totp",
@@ -813,6 +847,7 @@ class TinySesam:
         return token
 
     def verify_csrf(self, request: Request, submitted) -> bool:
+        """Passt das mitgeschickte CSRF-Token zum Cookie? Vergleich in konstanter Zeit."""
         if not self.cfg.csrf_enabled:
             return True
         import hmac
@@ -830,9 +865,11 @@ class TinySesam:
         self._mailer_override = fn
 
     def mail_configured(self) -> bool:
+        """Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?"""
         return bool(self._mailer_override or self.cfg.smtp_host)
 
     def send_mail(self, to, subject, text, html=None):
+        """Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg."""
         from .mailer import SMTPMailer
         fn = self._mailer_override or SMTPMailer(self.cfg)
         fn(to, subject, text, html)
@@ -901,6 +938,7 @@ class TinySesam:
         return {"url": url, "token": raw}
 
     def send_verify_email(self, user_id, email, base_url) -> bool:
+        """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist."""
         if not (email and self.mail_configured()):
             return False
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
@@ -977,8 +1015,14 @@ class TinySesam:
         step = self.next_login_step(user_id, done)
         return self.factor_entry(step, nxt) if step else nxt
 
-    def complete_mfa(self, token):
-        """TOTP-Schritt abschließen (Faktor 'totp' anhängen). Rückwärtskompatibler Name."""
+    def complete_totp(self, token):
+        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+
+        Heißt seit 0.18.0 so, weil der alte Name `complete_mfa` mehr versprach, als die Methode
+        tut — MFA ist die ganze Kette, hier geht es um genau einen Faktor. `complete_mfa` bleibt
+        als Alias bestehen und wird nicht entfernt; ein Umbenennen, das bestehende Aufrufe
+        bricht, wäre den Gewinn nicht wert.
+        """
         s = self.store.get_session(token)
         if not s:
             return
@@ -991,10 +1035,16 @@ class TinySesam:
             u = self.store.get_user(s["user_id"])
             self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
 
+    def complete_mfa(self, token):
+        """Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht."""
+        return self.complete_totp(token)
+
     def session_from_request(self, request):
+        """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle."""
         return self.store.get_session(request.cookies.get(self.cfg.session_cookie))
 
     def current_user(self, request) -> Optional[dict]:
+        """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist."""
         # 1) Session (Mensch, inkl. MFA)
         s = self.session_from_request(request)
         if s and s["mfa_ok"]:
@@ -1039,6 +1089,7 @@ class TinySesam:
         response.set_cookie(self.cfg.session_cookie, token, **kw)
 
     def logout(self, request, response):
+        """Die Sitzung dieses Requests beenden und das Cookie löschen."""
         s = self.session_from_request(request)
         if s:
             self.store.delete_session_by_handle(s["token_hash"])
@@ -1049,6 +1100,7 @@ class TinySesam:
 
     # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
     def client_ip(self, request: Request) -> str:
+        """Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der Peer in `trusted_proxies` steht — sonst wäre der Header fälschbar."""
         return security.client_ip(request, self.cfg.trusted_proxies)
 
     def sec(self, key) -> int:
@@ -1060,9 +1112,11 @@ class TinySesam:
             return security.SECURITY_DEFAULTS[key]
 
     def all_security(self) -> dict:
+        """Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht)."""
         return {k: self.sec(k) for k in security.SECURITY_DEFAULTS}
 
     def set_security(self, key, value):
+        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank."""
         if key in security.SECURITY_DEFAULTS:
             self.store.set_setting(key, int(value))
 
@@ -1085,6 +1139,7 @@ class TinySesam:
                                 username or "-", ip, grund)
 
     def rate_ok(self, ip) -> bool:
+        """Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit)."""
         erlaubt = self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
         if not erlaubt:
             self._abgewiesen(None, ip, "ratelimit")
@@ -1102,6 +1157,7 @@ class TinySesam:
         return False
 
     def record_login(self, username, ip, success, method):
+        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg."""
         self.store.record_attempt(username, ip, success, method)
         if success:
             # NUR die Fehlversuche derselben Methode: Ein Passwort-Erfolg sagt nichts darueber,
@@ -1114,6 +1170,7 @@ class TinySesam:
             security.seclog.warning("failed login user=%s ip=%s method=%s", username, ip, method)
 
     def audit(self, event, username=None, ip=None, detail=None):
+        """Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet."""
         self.store.audit_log(event, username, ip, detail)
 
     def gc(self, attempts_older_than_sec: int = 86400) -> dict:
@@ -1334,6 +1391,7 @@ class TinySesam:
 
     # ---------- FastAPI-Integration ----------
     def router(self):
+        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig."""
         from .router import build_router
         return build_router(self)
 
@@ -1549,19 +1607,24 @@ class TinySesam:
         self.store.set_resource_secret(name, hash_password(str(secret)), kind, label)
 
     def remove_resource_secret(self, name):
+        """Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperren)."""
         self.store.delete_resource_secret(name)
 
     def list_resource_secrets(self):
+        """Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse)."""
         return self.store.list_resource_secrets()
 
     def check_resource(self, name, secret) -> bool:
+        """Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`)."""
         row = self.store.get_resource_secret(name)
         return bool(row and verify_password(str(secret or ""), row["hash"]))
 
     def resource_unlocked(self, request: Request, name) -> bool:
+        """Ist diese Ressource für diesen Browser gerade freigeschaltet?"""
         return self.store.is_resource_unlocked(request.cookies.get(self.cfg.resource_cookie), name)
 
     def unlock_resource(self, request: Request, response, name):
+        """Eine Ressource für diesen Browser freischalten und das Cookie setzen."""
         token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
         self.store.add_resource_unlock(token, name, int(time.time()) + ttl)

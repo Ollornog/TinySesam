@@ -1,0 +1,252 @@
+# Konfiguration — alle Felder von `TinySesamConfig`
+
+<!-- GENERIERT von scripts/_config_doku.py — nicht von Hand pflegen.
+     Neu bauen: `python3 scripts/_config_doku.py` -->
+
+Die Quelle ist `tinysesam/config.py`; diese Seite ist ihr Abzug. Was ein Feld *bedeutet*, steht
+dort als Kommentar — hier in derselben Reihenfolge, nach Themen gegliedert.
+
+Die READMEs erklären die **Wege** (welche Methode wofür, wie man sie kombiniert). Dieses
+Nachschlagewerk beantwortet die andere Frage: *„Es gibt da ein Feld — was tut es?"*
+
+Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) setzen Bündel dieser Felder;
+einzelne lassen sich per `**overrides` überschreiben.
+
+
+## Store
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `db_path` | `str` | `"tinysesam.db"` | Store |
+
+## Sprache der eingebauten Texte (en|de; eigene via auth.add_messages)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `lang` | `str` | `"en"` | Sprache der eingebauten Texte (en\|de; eigene via auth.add_messages) |
+
+## Branding/Theme: einmal setzen → re-skinnt ALLE eingebauten Seiten (+ Fehlerseiten)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `brand_css` | `str` | `""` | zusätzliches CSS (nach dem Default → überschreibt es) |
+| `brand_head` | `str` | `""` | zusätzliches <head>-HTML (z.B. Logo-Font, Meta) |
+| `brand_icon` | `str` | `""` | Favicon-URL für ALLE eingebauten Seiten (leer = keins) |
+| `brand_header` | `object` | `""` | Rumpf der Host-App um JEDE eingebaute Seite (Login/PIN/TOTP/Konto/Admin/Fehler): eigene Navigation oben, Fußzeile unten. Entweder HTML-String oder `fn(auth) -> str`, wenn der Inhalt vom Request abhängt (Login-Status, Sprache) — dann pro Aufruf ausgewertet. |
+| `brand_footer` | `object` | `""` | Fußzeile unter jeder eingebauten Seite; HTML-String oder `fn(auth) -> str` |
+
+## Rollen/Gruppen
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `admin_implies_roles` | `bool` | `True` | Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten). ACHTUNG: hängen die Rechte einer App allein an einer IdP-Gruppe, ist das eine stille Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`. |
+| `group_match` | `str` | `"exact"` | Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen? "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs). LDAP nutzt automatisch substring, weil dort ganze DNs ankommen. |
+| `available_roles` | `list[str]` | `list` | Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback). |
+| `oidc_group_role_map` | `dict` | `dict` | IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant). Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert. |
+| `saml_group_role_map` | `dict` | `dict` | SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}` |
+| `ldap_group_role_map` | `dict` | `dict` | LDAP-Gruppe (DN oder Name) → lokale Rolle |
+
+## Aktive Login-Methoden (alle parallel möglich)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `password_enabled` | `bool` | `True` | Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN) |
+| `passkey_enabled` | `bool` | `False` | WebAuthn / Passkeys (passwortlos) — braucht [passkey] |
+| `pin_enabled` | `bool` | `False` | persönliche PIN pro User (Benutzer + PIN) |
+| `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. |
+| `pin_min_length` | `int` | `4` | Mindestlänge beim Setzen einer PIN |
+| `stepup_methods` | `list[str]` | `list` | Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche. Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren. |
+| `oidc_enabled` | `bool` | `False` | externer IdProvider (PocketID …) |
+| `oidc_callback_path` | `str` | `"/auth/oidc/callback"` | Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad). Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf. |
+| `apikey_enabled` | `bool` | `True` | Zugang per API-Key (maschinell/Daemons, an User/Service-Account) |
+| `admin_enabled` | `bool` | `True` | Admin-Panel automatisch unter admin_path mounten |
+| `admin_path` | `str` | `"/auth/admin"` | Standard-Mountpunkt; auth.admin_router() lässt es auch woanders montieren |
+| `admin_ui_enabled` | `bool` | `True` | eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel) |
+| `account_enabled` | `bool` | `True` | eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar) |
+| `forward_auth_enabled` | `bool` | `False` | /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik) |
+| `forward_headers` | `dict` | `dict` | Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups. Sonst **Feld → Headername** (oder Liste von Namen); was hier nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups. {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"} Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders). |
+| `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; |
+| `login_identifier` | `str` | `"both"` | warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
+
+## Erst-Admin (Bootstrap) — bewusst NICHT "der erste registrierte User wird Admin"
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login |
+| `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
+
+## Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv.
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `demo_mode` | `bool` | `False` | Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv |
+| `demo_password` | `str` | `"demo1234"` | Passwort der Demo-Konten (nur bei demo_mode) |
+| `demo_pin` | `str` | `"1234"` | PIN der Demo-Konten (nur bei demo_mode) |
+| `allow_signup` | `bool` | `False` | Selbst-Registrierung (lokaler User+Passwort) |
+| `signup_require_email` | `bool` | `True` | E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier) |
+| `signup_verify_email` | `bool` | `False` | Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer |
+| `signup_invite_only` | `bool` | `False` | Registrierung nur mit gültigem Einladungs-Token |
+| `signup_default_roles` | `list[str]` | `list` | Rollen für neue Selbst-Registrierte |
+
+## Geteilte Ressourcen-Geheimnisse (ohne Benutzerkonto: eine PIN/Passphrase schützt einen Bereich)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `resource_locks_enabled` | `bool` | `False` | Einzelne Routen/Ressourcen zusätzlich per PIN sperren |
+| `resource_unlock_ttl_hours` | `int` | `12` | wie lange eine freigeschaltete Ressource offen bleibt |
+| `resource_cookie` | `str` | `"tinysesam_runlock"` | Cookie-Name für entsperrte Ressourcen |
+
+## Magic-Link (Einmal-Login/-Zugang per E-Mail)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `magiclink_enabled` | `bool` | `False` | Anmeldung per Einmal-Link — braucht einen Mailer |
+| `magiclink_ttl_min` | `int` | `15` | Gültigkeit eines Einmal-Links |
+
+## E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `smtp_host` | `str` | `""` | leer + kein set_mailer → Versand deaktiviert |
+| `smtp_port` | `int` | `587` | 587 = STARTTLS, 465 = SMTPS (dann smtp_ssl=True) |
+| `smtp_user` | `str` | `""` | SMTP-Benutzername; leer = ohne Anmeldung senden |
+| `smtp_password` | `str` | `""` | SMTP-Passwort — gehört in eine Umgebungsvariable, nicht in den Quelltext |
+| `smtp_from` | `str` | `""` | Absender; leer = smtp_user |
+| `smtp_starttls` | `bool` | `True` | 587 = STARTTLS; für 465 smtp_ssl=True setzen |
+| `smtp_ssl` | `bool` | `False` | SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS |
+| `smtp_timeout` | `int` | `15` | Sekunden, bis ein hängender Mailserver aufgibt |
+| `mail_subject_prefix` | `str` | `""` | optionaler Betreff-Präfix, z.B. "[MeineApp] " |
+
+## TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `totp_enabled` | `bool` | `True` | User dürfen TOTP einrichten |
+| `totp_required` | `bool` | `False` | ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
+| `recovery_code_count` | `int` | `10` | Anzahl Einmal-Recovery-Codes je Erzeugung (verlorener Authenticator) |
+
+## Passwort-Reset (Forgot-Password per E-Mail; braucht magiclink_enabled + Mailer)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `password_reset_enabled` | `bool` | `False` | Passwort-Reset (Forgot-Password per E-Mail; braucht magiclink_enabled + Mailer) |
+
+## Faktor-Ketten (geordnete Kombinationen)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `login_chain` | `list[str]` | `list` | Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B. ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)). Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User. |
+| `login_chain_strict` | `bool` | `True` | Reihenfolge erzwingen (True) oder beliebig (False) |
+
+## Step-up / per-Route-MFA (Sudo-Frische)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `stepup_max_age_sec` | `int` | `900` | 15 min |
+| `admin_require_mfa` | `bool` | `False` | Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA |
+
+## Sessions (server-side, revozierbar)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `session_cookie` | `str` | `"tinysesam_session"` | Name des Sitzungs-Cookies (bei mehreren Apps auf einer Domain unterscheiden) |
+| `session_ttl_hours` | `int` | `24 * 7` | TTL bei „Angemeldet bleiben" (persistentes Cookie) |
+| `session_ttl_transient_hours` | `int` | `12` | TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen) |
+| `remember_me_enabled` | `bool` | `True` | „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent) |
+| `cookie_secure` | `bool` | `True` | nur über HTTPS senden |
+| `cookie_samesite` | `str` | `"lax"` | lax\|strict\|none |
+| `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
+| `cookie_domain` | `str` | `""` | leer = Host-only; für SSO über Subdomains z.B. ".example.com" |
+
+## Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `csp` | `str` | `"strict"` | Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=); pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert. "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt) eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt Gilt NUR für die von TinySesam gerenderten String-Seiten, nicht für eigene Response-Overrides (die setzen ihre CSP selbst). |
+
+## CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `csrf_enabled` | `bool` | `True` | State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token) |
+| `csrf_cookie` | `str` | `"tinysesam_csrf"` | Name des CSRF-Cookies |
+
+## LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password')
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `ldap_enabled` | `bool` | `False` | Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap] |
+| `ldap_url` | `str` | `""` | ldap://host:389 oder ldaps://host:636 |
+| `ldap_start_tls` | `bool` | `False` | Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL |
+| `ldap_user_dn_template` | `str` | `""` | Direkt-Bind, z.B. "uid={username},ou=people,dc=example,dc=com" (lldap) |
+| `ldap_bind_dn` | `str` | `""` | ODER Service-Account für Search-then-Bind |
+| `ldap_bind_password` | `str` | `""` | Passwort des Service-Accounts — gehört in eine Umgebungsvariable |
+| `ldap_user_base` | `str` | `""` | Suchbasis (bei Search-then-Bind) |
+| `ldap_user_filter` | `str` | `"(uid={username})"` | Suchfilter für das Konto; `{username}` wird eingesetzt |
+| `ldap_attr_email` | `str` | `"mail"` | LDAP-Attribut mit der E-Mail-Adresse |
+| `ldap_attr_name` | `str` | `"cn"` | LDAP-Attribut mit dem Anzeigenamen |
+| `ldap_group_attr` | `str` | `"memberOf"` | Attribut mit Gruppen-Zugehörigkeit |
+| `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (Teilstring-Match) |
+| `ldap_auto_create` | `bool` | `True` | unbekannten LDAP-User lokal anlegen (ohne lokales Passwort) |
+
+## OIDC
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `oidc_name` | `str` | `"SSO"` | Anzeigename des Buttons |
+| `oidc_issuer` | `str` | `""` | z.B. https://id.example.com  (…/.well-known/openid-configuration) |
+| `oidc_client_id` | `str` | `""` | Client-ID beim Provider |
+| `oidc_client_secret` | `str` | `""` | Client-Secret — gehört in eine Umgebungsvariable, nicht in den Quelltext |
+| `oidc_scopes` | `str` | `"openid profile email"` | Angeforderte Scopes; `openid` ist Pflicht, `email`/`profile` füllen das Konto |
+| `oidc_auto_create` | `bool` | `True` | unbekannten OIDC-User automatisch anlegen |
+| `oidc_rp_logout` | `bool` | `False` | beim Abmelden auch den OIDC-Provider abmelden (end_session), optional |
+| `oidc_group_claim` | `str` | `"groups"` | Claim mit den Gruppen |
+| `oidc_allowed_groups` | `list[str]` | `list` | leer = alle erlaubt |
+
+## SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `saml_enabled` | `bool` | `False` | SAML-2.0-Anmeldung gegen einen IdP — braucht [saml] und libxmlsec1 |
+| `saml_name` | `str` | `"SAML"` | Anzeigename des Buttons |
+| `saml_sp_entity_id` | `str` | `""` | eigene SP-Entity-ID; leer = base_url + /auth/saml/metadata |
+| `saml_acs_url` | `str` | `""` | Assertion Consumer Service; leer = base_url + /auth/saml/acs |
+| `saml_idp_entity_id` | `str` | `""` | IdP-Entity-ID. Leer = es wird die SSO-URL angenommen — das stimmt bei manchen IdPs, bei anderen NICHT: Keycloak etwa nennt sich `https://…/realms/<realm>`, während die SSO-URL auf `/protocol/saml` endet. Passt es nicht, wird jede Assertion abgelehnt („Invalid issuer"); der Grund steht dann im Logger `tinysesam.security`. Im Zweifel aus dem IdP-Descriptor abschreiben (`entityID=` im Metadata-XML). |
+| `saml_idp_sso_url` | `str` | `""` | IdP Single-Sign-On-URL (Redirect-Binding) |
+| `saml_idp_x509cert` | `str` | `""` | IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END) |
+| `saml_attr_username` | `str` | `""` | Attribut mit dem Benutzernamen; leer = NameID |
+| `saml_attr_email` | `str` | `"email"` | SAML-Attribut mit der E-Mail-Adresse |
+| `saml_attr_name` | `str` | `"displayName"` | SAML-Attribut mit dem Anzeigenamen |
+| `saml_attr_groups` | `str` | `"groups"` | SAML-Attribut mit den Gruppen (für saml_group_role_map) |
+| `saml_allowed_groups` | `list[str]` | `list` | leer = alle |
+| `saml_auto_create` | `bool` | `True` | Unbekannte Nutzer beim ersten erfolgreichen SAML-Login anlegen |
+
+## WebAuthn / Passkey
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `rp_id` | `str` | `"localhost"` | Registrable Domain (z.B. app.example.com) — OHNE Schema/Port |
+| `rp_name` | `str` | `"TinySesam"` | Anzeigename der Relying Party |
+| `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers |
+
+## App-Integration
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `base_url` | `str` | `""` | öffentliche Base-URL (für OIDC-Callback); leer = aus Request abgeleitet |
+| `login_path` | `str` | `"/auth/login"` | Login-Seite |
+| `login_redirect` | `str` | `"/"` | Ziel nach erfolgreichem Login |
+| `logout_redirect` | `str` | `"/auth/login"` | Ziel nach Logout |
+
+## Härtung
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `trusted_proxies` | `list[str]` | `["127.0.0.1/32", "::1/128"]` | Reverse-Proxies, deren X-Forwarded-For vertraut werden darf (sonst ist die echte Client-IP fälschbar). Nur von diesen Peers wird X-Forwarded-For geglaubt — sonst ist die Client-IP fälschbar (Rate-Limit, Lockout, fail2ban). WICHTIG: uvicorn **ohne** `--proxy-headers` starten. Sonst ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP und diese Prüfung läuft ins Leere. |
+| `redis_url` | `str` | `""` | z.B. redis://localhost:6379/0 |
+| `trusted_redirect_hosts` | `list[str]` | `list` | Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade). Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden. |
+| `security_log` | `str` | `""` | z.B. /var/log/tinysesam/security.log |
+
+---
+
+119 Felder, erzeugt aus `tinysesam/config.py`.

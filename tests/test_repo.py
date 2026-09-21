@@ -330,4 +330,40 @@ assert not _rel, ("Relative Verweise in README.md — auf der PyPI-Seite tot:\n 
                   "\n  ".join(sorted(set(_rel))))
 print(f"  README.md ohne relative Verweise (PyPI-tauglich)")
 
+# ---------- Konfigurations-Nachschlag: jedes Feld erklärt, Abzug aktuell ----------
+# Von 119 Feldern kamen 39 in keiner README vor. Ein Nachschlagewerk von Hand zu pflegen heisst,
+# dass es beim nächsten neuen Feld wieder unvollständig ist — deshalb generiert, aus den
+# Kommentaren in config.py. Zwei Zusagen: die Datei ist aktuell, und kein Feld schweigt.
+_gen = subprocess.run([sys.executable, "scripts/_config_doku.py", "--dry-run"],
+                      cwd=ROOT, capture_output=True, text=True)
+assert _gen.returncode == 0, ("KONFIGURATION.md ist veraltet — "
+                              "`python3 scripts/_config_doku.py` fahren")
+_konf = _lies("KONFIGURATION.md")
+_stumm = _re.findall(r"^\| `([a-z0-9_]+)` .* \| — \|$", _konf, _re.M)
+assert not _stumm, ("Diese Config-Felder haben keinen erklärenden Kommentar in config.py:\n  " +
+                    "\n  ".join(_stumm[:8]) +
+                    "\n  (Kommentar hinter das Feld schreiben, dann neu generieren.)")
+# Zeichenklasse mit Ziffern: `saml_idp_x509cert` fiel sonst durch, und der Test
+# meldete 118 statt 119 — ein Regex, der fast passt, zählt falsch statt gar nicht.
+_zahl = len(_re.findall(r"^\| `[a-z0-9_]+` \|", _konf, _re.M))
+from dataclasses import fields as _dc_fields  # noqa: E402
+import sys as _sys2  # noqa: E402
+_sys2.path.insert(0, ROOT)
+from tinysesam import TinySesamConfig as _TSC  # noqa: E402
+assert _zahl == len(_dc_fields(_TSC)), (f"KONFIGURATION.md führt {_zahl} Felder, "
+                                        f"TinySesamConfig hat {len(_dc_fields(_TSC))}")
+print(f"  Konfigurations-Nachschlag: {_zahl} Felder, jedes erklärt, Abzug aktuell")
+
+# ---------- API-Nachschlag: jede eingefrorene Methode erklärt, Abzug aktuell ----------
+# 68 der 105 eingefrorenen Methoden kamen in keiner Doku vor. Wer TinySesam einbettet, sah eine
+# Zusage („diese Oberfläche bleibt stabil") ohne eine Stelle, an der steht, was sie enthält.
+_api = subprocess.run([sys.executable, "scripts/_api_doku.py", "--dry-run"],
+                      cwd=ROOT, capture_output=True, text=True)
+assert _api.returncode == 0, "API.md ist veraltet — `python3 scripts/_api_doku.py` fahren"
+_apidoc = _lies("API.md")
+_leer = _re.findall(r"^### `([a-z_][a-z0-9_]*)\(.*\n\n—$", _apidoc, _re.M)
+assert not _leer, ("Diese Methoden haben keinen Docstring:\n  " + "\n  ".join(_leer[:8]) +
+                   "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
+print(f"  API-Nachschlag: {_apidoc.count(chr(10) + '### ')} Einträge, jeder erklärt, Abzug aktuell")
+
 print("OK test_repo")

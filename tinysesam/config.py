@@ -19,7 +19,7 @@ class TinySesamConfig:
     # Navigation oben, Fußzeile unten. Entweder HTML-String oder `fn(auth) -> str`, wenn der
     # Inhalt vom Request abhängt (Login-Status, Sprache) — dann pro Aufruf ausgewertet.
     brand_header: object = ""
-    brand_footer: object = ""
+    brand_footer: object = ""         # Fußzeile unter jeder eingebauten Seite; HTML-String oder `fn(auth) -> str`
 
     # --- Rollen/Gruppen ---
     # Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten).
@@ -35,11 +35,11 @@ class TinySesamConfig:
     # IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant).
     # Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert.
     oidc_group_role_map: dict = field(default_factory=dict)
-    saml_group_role_map: dict = field(default_factory=dict)
-    ldap_group_role_map: dict = field(default_factory=dict)
+    saml_group_role_map: dict = field(default_factory=dict) # SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}`
+    ldap_group_role_map: dict = field(default_factory=dict) # LDAP-Gruppe (DN oder Name) → lokale Rolle
 
     # --- Aktive Login-Methoden (alle parallel möglich) ---
-    password_enabled: bool = True
+    password_enabled: bool = True     # Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN)
     # Vorgabe AUS, weil `webauthn` nicht im Kern steckt, sondern im Extra [passkey].
     # Stand bis 2026-09-21 auf True — damit stuerzte `pip install tinysesam` mit
     # Vorgabe-Konfiguration beim Bau des Routers ab (ModuleNotFoundError: webauthn).
@@ -82,9 +82,9 @@ class TinySesamConfig:
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
 
     # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
-    demo_mode: bool = False
-    demo_password: str = "demo1234"
-    demo_pin: str = "1234"
+    demo_mode: bool = False           # Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv
+    demo_password: str = "demo1234"   # Passwort der Demo-Konten (nur bei demo_mode)
+    demo_pin: str = "1234"            # PIN der Demo-Konten (nur bei demo_mode)
 
     allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
     signup_require_email: bool = True     # E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier)
@@ -93,23 +93,23 @@ class TinySesamConfig:
     signup_default_roles: list[str] = field(default_factory=list)  # Rollen für neue Selbst-Registrierte
 
     # --- Geteilte Ressourcen-Geheimnisse (ohne Benutzerkonto: eine PIN/Passphrase schützt einen Bereich) ---
-    resource_locks_enabled: bool = False
+    resource_locks_enabled: bool = False # Einzelne Routen/Ressourcen zusätzlich per PIN sperren
     resource_unlock_ttl_hours: int = 12   # wie lange eine freigeschaltete Ressource offen bleibt
-    resource_cookie: str = "tinysesam_runlock"
+    resource_cookie: str = "tinysesam_runlock" # Cookie-Name für entsperrte Ressourcen
 
     # --- Magic-Link (Einmal-Login/-Zugang per E-Mail) ---
-    magiclink_enabled: bool = False
+    magiclink_enabled: bool = False   # Anmeldung per Einmal-Link — braucht einen Mailer
     magiclink_ttl_min: int = 15           # Gültigkeit eines Einmal-Links
 
     # --- E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar) ---
     smtp_host: str = ""                   # leer + kein set_mailer → Versand deaktiviert
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
+    smtp_port: int = 587              # 587 = STARTTLS, 465 = SMTPS (dann smtp_ssl=True)
+    smtp_user: str = ""               # SMTP-Benutzername; leer = ohne Anmeldung senden
+    smtp_password: str = ""           # SMTP-Passwort — gehört in eine Umgebungsvariable, nicht in den Quelltext
     smtp_from: str = ""                   # Absender; leer = smtp_user
     smtp_starttls: bool = True            # 587 = STARTTLS; für 465 smtp_ssl=True setzen
-    smtp_ssl: bool = False
-    smtp_timeout: int = 15
+    smtp_ssl: bool = False            # SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS
+    smtp_timeout: int = 15            # Sekunden, bis ein hängender Mailserver aufgibt
     mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
@@ -140,13 +140,13 @@ class TinySesamConfig:
     admin_require_mfa: bool = False        # Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA
 
     # --- Sessions (server-side, revozierbar) ---
-    session_cookie: str = "tinysesam_session"
+    session_cookie: str = "tinysesam_session" # Name des Sitzungs-Cookies (bei mehreren Apps auf einer Domain unterscheiden)
     session_ttl_hours: int = 24 * 7       # TTL bei „Angemeldet bleiben" (persistentes Cookie)
     session_ttl_transient_hours: int = 12 # TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen)
     remember_me_enabled: bool = True      # „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent)
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
-    cookie_path: str = "/"
+    cookie_path: str = "/"            # Pfad, für den die Cookies gelten
     cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
 
     # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---
@@ -161,19 +161,19 @@ class TinySesamConfig:
 
     # --- CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax) ---
     csrf_enabled: bool = True             # State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token)
-    csrf_cookie: str = "tinysesam_csrf"
+    csrf_cookie: str = "tinysesam_csrf" # Name des CSRF-Cookies
 
     # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---
-    ldap_enabled: bool = False
+    ldap_enabled: bool = False        # Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap]
     ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636
-    ldap_start_tls: bool = False
+    ldap_start_tls: bool = False      # Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL
     ldap_user_dn_template: str = ""       # Direkt-Bind, z.B. "uid={username},ou=people,dc=example,dc=com" (lldap)
     ldap_bind_dn: str = ""                # ODER Service-Account für Search-then-Bind
-    ldap_bind_password: str = ""
+    ldap_bind_password: str = ""      # Passwort des Service-Accounts — gehört in eine Umgebungsvariable
     ldap_user_base: str = ""              # Suchbasis (bei Search-then-Bind)
-    ldap_user_filter: str = "(uid={username})"
-    ldap_attr_email: str = "mail"
-    ldap_attr_name: str = "cn"
+    ldap_user_filter: str = "(uid={username})" # Suchfilter für das Konto; `{username}` wird eingesetzt
+    ldap_attr_email: str = "mail"     # LDAP-Attribut mit der E-Mail-Adresse
+    ldap_attr_name: str = "cn"        # LDAP-Attribut mit dem Anzeigenamen
     ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
     ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (Teilstring-Match)
     ldap_auto_create: bool = True         # unbekannten LDAP-User lokal anlegen (ohne lokales Passwort)
@@ -181,16 +181,16 @@ class TinySesamConfig:
     # --- OIDC ---
     oidc_name: str = "SSO"                # Anzeigename des Buttons
     oidc_issuer: str = ""                 # z.B. https://id.example.com  (…/.well-known/openid-configuration)
-    oidc_client_id: str = ""
-    oidc_client_secret: str = ""
-    oidc_scopes: str = "openid profile email"
+    oidc_client_id: str = ""          # Client-ID beim Provider
+    oidc_client_secret: str = ""      # Client-Secret — gehört in eine Umgebungsvariable, nicht in den Quelltext
+    oidc_scopes: str = "openid profile email" # Angeforderte Scopes; `openid` ist Pflicht, `email`/`profile` füllen das Konto
     oidc_auto_create: bool = True         # unbekannten OIDC-User automatisch anlegen
     oidc_rp_logout: bool = False          # beim Abmelden auch den OIDC-Provider abmelden (end_session), optional
     oidc_group_claim: str = "groups"      # Claim mit den Gruppen
     oidc_allowed_groups: list[str] = field(default_factory=list)  # leer = alle erlaubt
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
-    saml_enabled: bool = False
+    saml_enabled: bool = False        # SAML-2.0-Anmeldung gegen einen IdP — braucht [saml] und libxmlsec1
     saml_name: str = "SAML"               # Anzeigename des Buttons
     saml_sp_entity_id: str = ""           # eigene SP-Entity-ID; leer = base_url + /auth/saml/metadata
     saml_acs_url: str = ""                # Assertion Consumer Service; leer = base_url + /auth/saml/acs
@@ -203,11 +203,11 @@ class TinySesamConfig:
     saml_idp_sso_url: str = ""            # IdP Single-Sign-On-URL (Redirect-Binding)
     saml_idp_x509cert: str = ""           # IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END)
     saml_attr_username: str = ""          # Attribut mit dem Benutzernamen; leer = NameID
-    saml_attr_email: str = "email"
-    saml_attr_name: str = "displayName"
-    saml_attr_groups: str = "groups"
+    saml_attr_email: str = "email"    # SAML-Attribut mit der E-Mail-Adresse
+    saml_attr_name: str = "displayName" # SAML-Attribut mit dem Anzeigenamen
+    saml_attr_groups: str = "groups"  # SAML-Attribut mit den Gruppen (für saml_group_role_map)
     saml_allowed_groups: list[str] = field(default_factory=list)  # leer = alle
-    saml_auto_create: bool = True
+    saml_auto_create: bool = True     # Unbekannte Nutzer beim ersten erfolgreichen SAML-Login anlegen
 
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port

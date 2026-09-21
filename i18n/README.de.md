@@ -568,6 +568,11 @@ Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgepr�
 > `cookie_samesite`, den ein Browser bei diesem POST nicht mitschickt — für lokale Läufe und den
 > TestClient in Ordnung, gegen einen echten IdP nicht. Der Grund steht im Log
 > `tinysesam.security`.
+> **Alle Felder auf einen Blick:** [`KONFIGURATION.md`](../KONFIGURATION.md) führt alle 119
+> Config-Felder mit Typ, Vorgabe und Bedeutung — erzeugt aus `config.py`, kann also nicht
+> auseinanderlaufen. Diese README erklärt die *Wege*; jene Seite beantwortet *„es gibt da ein
+> Feld — was tut es?"*
+
 ## Presets
 
 Fertige Config-Presets für gängige Fälle (Rest via `**overrides`, z. B. `db_path=`):

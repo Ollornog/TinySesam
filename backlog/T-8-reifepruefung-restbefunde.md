@@ -2,7 +2,7 @@
 id: T-8
 type: Task
 title: Die 35 nicht einzeln nachgestellten Befunde der Reifeprüfung abarbeiten
-status: in-arbeit
+status: erledigt
 milestone: M-1
 tags: [sicherheit, betrieb, paket, api, doku]
 created: 2026-09-21
@@ -21,7 +21,24 @@ widerlegt → hier mit Begründung streichen; Geschmacksfrage → ADR. Kein Punk
 dasteht" umgebaut.
 
 **Fertig, wenn** jeder Punkt eine dieser drei Markierungen trägt und die bestätigten behoben sind.
-[M-1](M-1-api-stabil-1-0.md) bleibt bis dahin offen.
+
+## Stand: abgearbeitet (2026-09-21)
+
+**35 behoben, 1 als Produktentscheidung an [M-1](M-1-api-stabil-1-0.md) übergeben.** Jeder Punkt
+wurde erst am Code geprüft. Drei Befunde trugen weiter, als sie gemeldet waren (die Datei-Kopie
+der Datenbank enthielt nicht einmal die Tabelle `users`; ein Anzeigename wie „Иван" brach die
+Forward-Auth mit 500, ganz ohne Angreifer; der App-Lockout blendete fail2ban aus). Zwei
+widerlegten sich beim Nachmessen:
+
+* **„API-Keys überleben die Deaktivierung"** — tun sie nicht. `verify_api_key` prüft das Flag;
+  die erste Messung war falsch, weil die Methode `(user, roles)` zurückgibt und ein nicht-leeres
+  Tupel immer wahr ist.
+* **„`resource_locks_enabled` braucht `pin_enabled`"** — eine daraus gebaute Prüfung war ein
+  Fehlalarm, den eine eigene Suite sofort widerlegte: Eine gesperrte Ressource wird mit ihrem
+  eigenen Geheimnis freigegeben, nicht mit der Login-PIN.
+
+[M-1](M-1-api-stabil-1-0.md) bleibt offen — jetzt aber aus einem benannten Grund und nicht
+wegen eines Stapels ungeprüfter Meldungen.
 
 ## Sicherheit und Härtung
 
@@ -41,8 +58,8 @@ dasteht" umgebaut.
       auf, dass ein Name wie „Иван" die Forward-Auth mit 500 brach, ganz ohne Angreifer
 - [x] OIDC: Der JWKS wird einmal geholt und nie erneuert — behoben: Lebensdauer + ein
       gedrosselter Neu-Abruf bei Signaturfehler (`tests/test_oidc_jwks.py`)
-- [ ] Es gibt keine Konfigurationsprüfung — Widersprüche fallen erst beim Login auf
-      (teilweise angegangen: die Kombinations-Wächter im Konstruktor)
+- [x] Es gibt keine Konfigurationsprüfung — behoben: `konfigpruefung.py` meldet alle
+      Widersprüche gemeinsam beim Aufbau; Fehler brechen ab, Reparierbares warnt
 
 Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csrf.md) erfasst.
 
@@ -82,9 +99,13 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 - [x] `check_password` & Co. sind als `Optional[dict]` annotiert, liefern aber `sqlite3.Row`
       — behoben: sie liefern jetzt dicts
 - [x] Es gibt keine Fehlertypen, auf die ein Nutzer reagieren kann — behoben: `tinysesam/errors.py`
-- [ ] `complete_mfa` heißt im eigenen Docstring „rückwärtskompatibler Name" und wird trotzdem geführt
-- [ ] Die öffentliche Oberfläche wurde gemessen, nicht entschieden: 62 der 104 eingefrorenen Namen
-- [ ] Der API-Wächter friert weniger ein, als „231 Namen" nahelegt: keine Vorgabewerte, keine Typen
+- [x] `complete_mfa` heißt im eigenen Docstring „rückwärtskompatibler Name" — behoben:
+      `complete_totp` ist der klare Name, `complete_mfa` bleibt als Alias
+- [~] Die öffentliche Oberfläche wurde gemessen, nicht entschieden — **sichtbar gemacht**:
+      jede der 105 Methoden hat einen Docstring, `API.md` führt sie auf. Die Auswahl selbst
+      ist eine Produktentscheidung und steht in [M-1](M-1-api-stabil-1-0.md)
+- [x] Der API-Wächter friert weniger ein, als „231 Namen" nahelegt — behoben: Vorgabewerte
+      der Config-Felder und Rückgabetypen werden jetzt mit erfasst
 - [x] `set_template` nennt im Docstring zwei Seitennamen, die es nicht gibt — behoben:
       `TinySesam.SEITEN`, unbekannter Name wirft, Prüfung gegen `render_page`
 
@@ -95,7 +116,8 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
       (in der Prüfung dreifach gemeldet, ist ein Befund)
 - [x] `totp_required` ist ein toter Schalter — behoben: wird abgewiesen, Doku nennt `login_chain`
 - [x] Beide READMEs bewerben einen Update-Knopf, den es seit 0.12.0 bewusst nicht gibt — behoben
-- [ ] Kein vollständiger Konfigurations-Nachschlag: 36 von 119 Feldern kommen in keiner Doku vor
+- [x] Kein vollständiger Konfigurations-Nachschlag — behoben: `KONFIGURATION.md`, generiert,
+      alle 119 Felder erklärt, mit Prüfung
 - [x] Die PyPI-Projektseite zeigt ein kaputtes Logo und sieben tote Links — behoben
 - [x] Die README wird zur PyPI-Beschreibung, enthält aber sieben relative Verweise — behoben:
       absolute URLs, plus Prüfung in `test_repo.py`

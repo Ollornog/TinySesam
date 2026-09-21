@@ -945,4 +945,78 @@ r.check("...und der höhere Stempel wird NICHT zurückgesetzt",
         int(zukunft.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION + 50,
         "die Version wurde heruntergestempelt — beim nächsten Öffnen fehlt die Warnung")
 
+
+# ── Widersprüche fielen erst beim Login auf ──────────────────────────────────
+# Eine App ohne eine einzige Anmelde-Methode startete klaglos; eine `login_chain`, die ein
+# abgeschaltetes Verfahren nennt, ist unerfüllbar und schickt den Nutzer im Kreis.
+gebaut, text = _baut(password_enabled=False)
+r.check("eine Instanz ohne jede Anmelde-Methode wird abgewiesen", not gebaut,
+        "baut — niemand kann sich anmelden, und nichts sagt es")
+r.check("...mit dem Hinweis, welche Schalter es gäbe", "password_enabled=True" in text,
+        f"{text[:90]!r}")
+
+gebaut, text = _baut(login_chain=["password", "pin"], pin_enabled=False)
+r.check("eine unerfüllbare Faktor-Kette wird abgewiesen", not gebaut,
+        "baut — der Nutzer landet in einer Schleife")
+r.check("...und nennt den blockierenden Schritt", "pin_enabled=False" in text, f"{text[:90]!r}")
+
+gebaut, text = _baut(login_chain=["password", "gibtsnicht"])
+r.check("ein unbekannter Schritt in der Kette wird abgewiesen", not gebaut,
+        "ein Tippfehler in der Kette bliebe folgenlos-still")
+
+# Alle Befunde auf einmal — wer drei Dinge falsch hat, soll sie einmal lesen.
+gebaut, text = _baut(password_enabled=False, login_chain=["password", "pin"], pin_enabled=False)
+r.check("mehrere Widersprüche werden zusammen gemeldet", text.count("\n  - ") >= 2,
+        f"nur einer: {text[:120]!r}")
+
+# Was später noch kommen kann, ist eine Warnung — kein Abbruch. `set_mailer` nach dem
+# Konstruktor ist eine völlig übliche Reihenfolge.
+puffer_k = io.StringIO()
+haken_k = logging.StreamHandler(puffer_k)
+_sec.seclog.addHandler(haken_k)
+try:
+    gebaut, text = _baut(magiclink_enabled=True)
+finally:
+    _sec.seclog.removeHandler(haken_k)
+r.check("ein fehlender Mailer verhindert den Start NICHT", gebaut,
+        f"bricht ab: {text[:90]} — set_mailer() kommt oft erst danach")
+r.check("...wird aber gemeldet", "smtp_host" in puffer_k.getvalue(),
+        f"schweigt: {puffer_k.getvalue()[:80]!r}")
+
+# Und der Normalfall darf weder brechen noch lärmen.
+puffer_n = io.StringIO()
+haken_n = logging.StreamHandler(puffer_n)
+_sec.seclog.addHandler(haken_n)
+try:
+    gebaut, text = _baut()
+finally:
+    _sec.seclog.removeHandler(haken_n)
+r.check("die Vorgabe-Konfiguration baut ohne Befund", gebaut, text[:110])
+r.check("...und ohne Konfigurations-Warnung", "Konfiguration:" not in puffer_n.getvalue(),
+        f"warnt ohne Anlass: {puffer_n.getvalue()[:90]!r}")
+
+
+# ── complete_mfa versprach mehr, als die Methode tut ─────────────────────────
+# Der Docstring nannte den Namen selbst „rückwärtskompatibel" — und er blieb trotzdem der
+# einzige. MFA ist die ganze Kette; die Methode hängt genau einen Faktor an.
+auth_cm, _ = _app()
+r.check("es gibt den klaren Namen complete_totp", hasattr(auth_cm, "complete_totp"),
+        "nur der alte Name — dann ist nichts gewonnen")
+r.check("der alte Name complete_mfa bleibt erhalten", hasattr(auth_cm, "complete_mfa"),
+        "entfernt — das bricht bestehende Aufrufe für einen Namen")
+
+# Und der Alias muss wirklich dasselbe tun, nicht nur existieren.
+uid_cm = auth_cm.create_user("cm", password="geheim12345")
+tok_alt = auth_cm.store.create_session(uid_cm, 3600, False, "password")
+auth_cm.complete_mfa(tok_alt)
+tok_neu = auth_cm.store.create_session(uid_cm, 3600, False, "password")
+auth_cm.complete_totp(tok_neu)
+import json as _json  # noqa: E402
+
+faktoren = [sorted(_json.loads(auth_cm.store.get_session(t)["factors_done"] or "[]"))
+            for t in (tok_alt, tok_neu)]
+r.check("beide Namen hängen denselben Faktor an", faktoren[0] == faktoren[1] == ["totp"],
+        f"alt={faktoren[0]} neu={faktoren[1]} — ein Alias, der etwas anderes tut, ist schlimmer "
+        "als zwei Methoden")
+
 sys.exit(r.done())

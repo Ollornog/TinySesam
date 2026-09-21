@@ -31,6 +31,8 @@ recursive-exclude deploy __pycache__
 # Was ein Mensch im Quellpaket sucht: die Lizenz (nimmt setuptools selbst mit), die
 # Versionsgeschichte, den Meldeweg für Lücken und die deutsche Fassung der README.
 include CHANGELOG.md
+include KONFIGURATION.md
+include API.md
 include SECURITY.md
 include i18n/README.de.md
 include i18n/SECURITY.de.md

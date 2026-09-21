@@ -564,6 +564,11 @@ Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-che
 > POST — fine for local runs and the test client, broken against a real IdP. The reason is in the
 > `tinysesam.security` log.
 
+> **Every field, in one place:** [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md)
+> lists all 119 config fields with type, default and meaning — generated from `config.py`, so it
+> cannot drift. This README explains the *ways*; that page answers *“there's a field — what does
+> it do?”*
+
 ## Presets
 
 Ready-made config presets for common cases (the rest via `**overrides`, e.g. `db_path=`):

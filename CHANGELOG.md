@@ -68,6 +68,50 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Hinzugefügt — zwei Nachschlagewerke, beide generiert
+
+**[`KONFIGURATION.md`](KONFIGURATION.md)** führt alle **119** Config-Felder mit Typ, Vorgabe und
+Bedeutung. 39 davon kamen vorher in keiner Doku vor. Erzeugt aus den Kommentaren in `config.py`
+(`scripts/_config_doku.py`), damit es nicht wieder auseinanderläuft — und 32 Felder, die gar
+keinen Kommentar hatten, haben jetzt einen. Eine Prüfung verlangt beides: Abzug aktuell, kein
+Feld ohne Erklärung.
+
+**[`API.md`](API.md)** führt die **105** eingefrorenen Methoden mit Signatur und erstem Satz.
+68 davon kamen in keiner Doku vor: Wer TinySesam einbettet, sah die Zusage „diese Oberfläche
+bleibt stabil" ohne eine Stelle, an der steht, was sie enthält. Alle 105 haben jetzt einen
+Docstring.
+
+**Offen und bewusst nicht nebenbei entschieden:** *welche* dieser Methoden auf Dauer öffentlich
+sein sollen. Die Oberfläche ist gemessen (alles ohne führenden Unterstrich), nicht ausgewählt —
+das ist eine Produktentscheidung und steht in [M-1](backlog/M-1-api-stabil-1-0.md).
+
+### Behoben — Widersprüche in der Konfiguration fielen erst beim Login auf
+
+Eine App **ohne eine einzige aktive Anmelde-Methode** startete klaglos. Eine `login_chain`, die
+ein abgeschaltetes Verfahren nennt, ist unerfüllbar und schickt den Nutzer im Kreis. OIDC ohne
+`issuer` scheiterte erst beim Klick auf „Anmelden". `tinysesam/konfigpruefung.py` prüft das jetzt
+beim Aufbau und meldet **alle** Funde gemeinsam — wer drei Dinge falsch hat, soll sie einmal
+lesen und nicht dreimal starten.
+
+Die Grenze zwischen Fehler und Warnung ist nicht Strenge, sondern Reparierbarkeit: Was aus sich
+heraus unerfüllbar ist, bricht den Aufbau ab; was später noch kommen kann — ein Mailer wird
+typischerweise nach dem Konstruktor gesetzt — wird geloggt. Dazu ein Wächter für
+`cookie_samesite`, den Starlette bisher erst beim ersten Cookie prüfte (und unter `python -O`
+gar nicht).
+
+### Geändert — `complete_totp()` statt `complete_mfa()`
+
+Der alte Name versprach mehr, als die Methode tut: MFA ist die ganze Kette, hier geht es um genau
+einen Faktor — und der Docstring nannte ihn selbst „rückwärtskompatibel", ohne dass es einen
+anderen gegeben hätte. `complete_mfa` bleibt als Alias und wird nicht entfernt.
+
+### Geändert — der API-Wächter erfasst mehr
+
+Er verzeichnete Name und Typ der Config-Felder, aber **nicht die Vorgabewerte**: `session_ttl_hours`
+liess sich still von 168 auf 1 setzen — ein Verhaltensbruch für jeden, der das Feld nie angefasst
+hat. Ebenso fehlten die **Rückgabetypen** der Methoden; `-> dict` zu `-> str` wäre unbemerkt
+durchgegangen. Beides wird jetzt mitgemessen.
+
 ### Geändert — das Quellpaket trägt die Testsuite, vollständig
 
 Bis 0.18.0 stand `prune tests` in `MANIFEST.in`, mit dieser Begründung: setuptools zieht nach
