@@ -1,8 +1,9 @@
 """Die Login-Wege als Diagramm — EINE Quelle für zwei Ausgaben.
 
 * Die Demo rendert sie unter `/demo/flows` und markiert, was in ihrer Config aktiv ist.
-* `tools/build_flows.py` backt daraus `docs/flows.html` für GitHub Pages (statisch, ohne Server);
-  dort steht statt der Markierung der Config-Schalter, mit dem man den Weg einschaltet.
+* `python -m web.build <ziel>` backt daraus `<ziel>/flows.html` für GitHub Pages (statisch, ohne
+  Server); dort steht statt der Markierung der Config-Schalter, mit dem man den Weg einschaltet.
+  Gebaut wird das von `.github/workflows/pages.yml`.
 
 Kein FastAPI-Import — deshalb kann der Generator die Datei ohne laufende App benutzen.
 """
@@ -65,7 +66,8 @@ FLOWS = [
             "steps": [("do", "Erstfaktor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-stelliger Code"),
                       ("end", "Sitzung <i>mfa_ok</i>")],
             "note": "Wer keine 2FA eingerichtet hat, überspringt den Schritt. Recovery-Codes gehen ebenso. "
-                    "<code>login_chain=['password','totp']</code> macht ihn zur Pflicht.",
+                    "<code>login_chain=['password','totp']</code> macht ihn zur Pflicht — Konten ohne "
+                    "TOTP werden dann beim nächsten Login zur Einrichtung geführt.",
         },
         "en": {
             "title": "Second factor (TOTP)",
@@ -73,7 +75,8 @@ FLOWS = [
             "steps": [("do", "first factor"), ("srv", "<code>/auth/totp</code>"), ("do", "6-digit code"),
                       ("end", "session <i>mfa_ok</i>")],
             "note": "Users without 2FA skip the step; recovery codes work too. "
-                    "<code>login_chain=['password','totp']</code> makes it mandatory.",
+                    "<code>login_chain=['password','totp']</code> makes it mandatory — accounts without "
+                    "TOTP are then walked through setup on their next sign-in.",
         },
     },
     {
@@ -87,8 +90,10 @@ FLOWS = [
                       ("srv", "<code>/auth/reauth</code>"), ("do", "PIN / TOTP / Passwort"),
                       ("end", "Bereich offen")],
             "note": lambda c: (
-                "<code>stepup_methods</code> schränkt ein, womit bestätigt werden darf. Leer = das stärkste "
-                "Verfahren, das der Nutzer eingerichtet hat (TOTP → PIN → Passwort). Nach "
+                "<code>stepup_methods</code> nennt, womit bestätigt werden soll. Leer = das stärkste "
+                "Verfahren, das der Nutzer eingerichtet hat (TOTP → PIN → Passwort). Hat er keines der "
+                "genannten, gilt ebenfalls sein bestes — es ist also ein Wunsch, keine Schranke. Wer die "
+                "Schranke will, setzt <code>stepup_strict=True</code> dazu. Nach "
                 "<code>stepup_max_age_sec</code> wird erneut gefragt."
                 if c is None else
                 f"Hier: <code>stepup_methods={c.stepup_methods}</code>. Leer wäre: das stärkste Verfahren, "
@@ -102,8 +107,10 @@ FLOWS = [
                       ("srv", "<code>/auth/reauth</code>"), ("do", "PIN / TOTP / password"),
                       ("end", "area unlocked")],
             "note": lambda c: (
-                "<code>stepup_methods</code> restricts what may confirm. Empty = the strongest method the "
-                "user has set up (TOTP → PIN → password). Asked again after <code>stepup_max_age_sec</code>."
+                "<code>stepup_methods</code> names what should confirm. Empty = the strongest method the "
+                "user has set up (TOTP → PIN → password). A user with none of the listed methods also falls "
+                "back to their best one — so it is a wish, not a barrier. Add <code>stepup_strict=True</code> "
+                "for the barrier. Asked again after <code>stepup_max_age_sec</code>."
                 if c is None else
                 f"Here: <code>stepup_methods={c.stepup_methods}</code>. Empty would mean the strongest "
                 f"method the user has. Asked again after "
@@ -173,8 +180,8 @@ FLOWS = [
     },
     {
         "key": "idp",
-        "config": "oidc_enabled=True / saml_enabled=True",
-        "active": lambda c: c.oidc_enabled or c.saml_enabled,
+        "config": "oidc_enabled=True / saml_enabled=True / ldap_enabled=True",
+        "active": lambda c: c.oidc_enabled or c.saml_enabled or c.ldap_enabled,
         "de": {
             "title": "Externer IdProvider",
             "why": "OIDC, SAML oder LDAP/AD. TinySesam ist der Client — nicht der Provider.",

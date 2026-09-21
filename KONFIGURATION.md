@@ -56,6 +56,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. |
 | `pin_min_length` | `int` | `4` | Mindestlänge beim Setzen einer PIN |
 | `stepup_methods` | `list[str]` | `list` | Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche. Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren. |
+| `stepup_strict` | `bool` | `False` | Aus dem Wunsch eine Schranke machen: True = wer keines der genannten Verfahren eingerichtet hat, kommt NICHT herein (statt mit dem Passwort zu bestätigen, mit dem er sich gerade angemeldet hat — das ist kein Step-up). Vorgabe False, weil der Bereich sonst für Bestands- konten über Nacht verschlossen wäre; wer `stepup_methods` setzt, um etwas zu erzwingen, will in aller Regel True dazu. |
 | `oidc_enabled` | `bool` | `False` | externer IdProvider (PocketID …) |
 | `oidc_callback_path` | `str` | `"/auth/oidc/callback"` | Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad). Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf. |
 | `apikey_enabled` | `bool` | `True` | Zugang per API-Key (maschinell/Daemons, an User/Service-Account) |
@@ -249,4 +250,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-119 Felder, erzeugt aus `tinysesam/config.py`.
+120 Felder, erzeugt aus `tinysesam/config.py`.

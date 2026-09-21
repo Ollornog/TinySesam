@@ -17,6 +17,8 @@ from .demo import DEMO_CSS, demo_body, static_src
 from .flows import CSS as FLOW_CSS, render as render_flow_list
 from .ui import Ctx, Labels, Nav, LANGS, codeblock, icon, shell, static_document
 
+from tinysesam import __version__ as VERSION
+
 REPO = "https://github.com/Ollornog/TinySesam"
 
 INDEX, FLOWS, LEGAL, DEMO = "index.html", "flows.html", "legal.html", "demo.html"
@@ -91,6 +93,7 @@ T = {
             ("passkey", "WebAuthn"),
             ("qr", "TOTP&nbsp;QR code"),
             ("redis", "rate limit across workers"),
+            ("gateway", "forward-auth gateway (OIDC + server)"),
         ],
         "extras_outro": ("Combine them: <code>[oidc,argon2]</code>. Without any extra you still "
                          "get password + TOTP (stdlib scrypt)."),
@@ -222,6 +225,7 @@ T = {
             ("passkey", "WebAuthn"),
             ("qr", "TOTP-QR-Code"),
             ("redis", "Rate-Limit über mehrere Worker"),
+            ("gateway", "Forward-Auth-Gateway (OIDC + Server)"),
         ],
         "extras_outro": ("Kombinierbar: <code>[oidc,argon2]</code>. Ganz ohne Extra bleiben "
                          "Passwort + TOTP (stdlib-scrypt)."),
@@ -406,7 +410,10 @@ def index_body(lang: str, nav: Nav) -> str:
     extras = "".join(f'<li><code>[{name}]</code><span>{desc}</span></li>' for name, desc in t["extras"])
     code = lambda inner: codeblock(inner, copy=t["copy"], copied=t["copied"])  # noqa: E731
 
-    install = code(f'pip install <span class="s">"tinysesam[all] @ git+{REPO}.git"</span>')
+    # MIT Pin: ohne `@v…` zöge das den beweglichen Hauptzweig statt einer freigegebenen Fassung —
+    # zwei Installationen am selben Tag könnten verschiedene Stände sein. Die Version kommt aus
+    # dem Paket, damit die Seite nicht beim nächsten Release veraltet.
+    install = code(f'pip install <span class="s">"tinysesam[all] @ git+{REPO}.git@v{VERSION}"</span>')
     use = code(
         f'<span class="k">auth</span> = TinySesam(TinySesamConfig(db_path=<span class="s">"app.db"</span>))\n'
         f'app.include_router(<span class="k">auth</span>.router())'

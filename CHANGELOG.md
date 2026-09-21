@@ -2,6 +2,101 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+**Doku-Abgleich: 70 Stellen, an denen die Doku etwas anderes sagte als der Code.** Sieben Flächen
+wurden gegen die Wirklichkeit gemessen — beide READMEs, CHANGELOG, Docstrings, `deploy/`, `web/`,
+Backlog. Der Befund war nicht, dass Sätze veraltet klangen: **Zehn der Stellen waren Mängel im
+Code oder in einer ausgelieferten Vorlage**, die nur deshalb sichtbar wurden, weil jemand die
+Zusage daneben gelesen hat. Die stehen unter „Behoben" und „Sicherheit".
+
+### Behoben — 0.18.0 hätte jede scrypt-Installation ausgesperrt
+
+**Wer TinySesam ohne das Extra `[argon2]` betreibt, konnte sich nach dem Update auf 0.18.0 nicht
+mehr anmelden.** Das Hash-Format `scrypt$salt$dk` trug seine Parameter nicht mit, und 0.18.0 hob
+`p` von 1 auf 3 (OWASP): `verify_password` rechnete jeden Bestandshash mit dem neuen Wert nach und
+kam auf ein anderes Ergebnis. Kein Fehler, keine Meldung — nur „Passwort stimmt nicht", für jedes
+Konto gleichzeitig. Das neue Format `scrypt$n$r$p$salt$dk` nennt die Parameter; das alte wird mit
+den Werten von damals nachgerechnet und beim nächsten Login still auf die heutigen gehoben.
+Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
+
+### Behoben
+
+- **`login_chain=["password","totp"]` war für Konten ohne TOTP eine Sackgasse.** Das richtige
+  Passwort führte auf `/auth/totp`, das mangels Geheimnis auf die Login-Seite zurückleitete — und
+  die Einrichtungsseite verlangte einen voll angemeldeten Nutzer, den es unter dieser Kette nie
+  geben kann. Weder herein noch an die Einrichtung; der Betreiber musste an die Datenbank. Jetzt
+  führt der Weg zur Einrichtung (neu: `auth.totp_enrollment_user(request)`). Wer dort steht, hat
+  seinen Erstfaktor bereits erbracht; angemeldet ist er erst nach einem Code aus dem neuen Geheimnis.
+- **Die Migration liess Klartext-Freigaben liegen.** Die Bereinigung von `resource_unlock` hing an
+  `0 < PRAGMA user_version < 4` — der Stempel kam selbst erst mit 0.18.0, eine Bestandsdatei trägt
+  dort die 0. Die Bedingung war also in genau dem Fall falsch, für den sie geschrieben war. Erkannt
+  wird jetzt am Wert, nicht am Stempel.
+- **`tinysesam audit --user NAME` fand die Einträge oft nicht.** Gefiltert wurde nicht in SQL,
+  sondern in den jüngsten Zeilen nachgesiebt: Eine Brute-Force-Welle schob das Gesuchte aus dem
+  Fenster, und das Kommando meldete „Keine Einträge zu 'X'." samt Exit 0 — im Anlassfall.
+- **Die mitgelieferte Caddy-Vorlage schützte nichts.** `reverse_proxy /auth/forward <upstream>`
+  ist in Caddy ein **Pfad-Matcher**, kein Rewrite: Die Auth-Prüfung lief nur für Anfragen auf
+  `/auth/forward`, jeder andere Pfad fiel direkt auf die App durch. Jetzt `rewrite /auth/forward`
+  im Block, wie in Caddys eigener Expansion von `forward_auth`.
+- **Der Login-Redirect der Caddy-Vorlage zeigte ins Leere.** `{rp.header.X-TinySesam-Location}`
+  fand nichts: Caddy legt Antwort-Header unter dem Go-kanonischen Namen ab
+  (`X-Tinysesam-Location`), und der Platzhalter wird Zeichen für Zeichen gesucht. Ergebnis war eine
+  302 mit leerem `Location`.
+- **`deploy/forward-auth/docker-compose.yml` ergab einen Stack, der nicht läuft.** Die eingehängte
+  Caddyfile zeigte auf `127.0.0.1:8000` — im Caddy-Container lauscht dort nichts. Die Upstreams
+  kommen jetzt aus der Umgebung; das Compose setzt die Service-Namen.
+- **Der `HEALTHCHECK` des Abbilds folgte Redirects**, obwohl der Kommentar daneben das Gegenteil
+  behauptete: `urlopen` bringt den Redirect-Handler im Standard-Opener mit und meldete den Status
+  des Umleitungsziels. Jetzt über `http.client`, das von sich aus nie umleitet.
+- **`Documentation=` in `tinysesam-gc.service` verwarf systemd still** — der Umlaut im URL-Anker
+  machte die Zeile ungültig.
+
+### Sicherheit
+
+- **`auth.seed_demo()` prüft jetzt selbst, ob `demo_mode` an ist.** Der Docstring versprach das seit
+  jeher, der Rumpf hielt es nicht: Ein direkter Aufruf legte `demo` und `demoadmin` an — letzteres
+  mit `is_admin=1` und dem dokumentierten Standardpasswort, beide sofort anmeldefähig, ohne die
+  Warnung im Log, die der Demo-Modus sonst ausgibt.
+- **`deploy/forward-auth/nginx.conf` reichte einen Client-Header an die App durch.** `Remote-Name`
+  fehlte in der Vorlage, und ein nicht gesetzter Header wird von nginx nicht weggelassen, sondern
+  unverändert weitergereicht: Wer `Remote-Name: chef` mitschickte, bekam ihn hinter der
+  Auth-Prüfung zugestellt, als käme er von TinySesam. Alle vier Header werden jetzt gesetzt.
+- **Der fail2ban-Filter versprach einen Schutz, den er nicht leistet.** Die Verankerung `^…$` hält
+  Fragmente heraus, aber eine eingeschobene Zeile aus einem manipulierten Benutzernamen ist
+  vollständig und wohlgeformt — sie matcht genauso. Der Schutz ist allein die Bereinigung in
+  0.18.0; der Kommentar sagt das jetzt.
+
+### Hinzugefügt
+
+- **`stepup_strict`** (Vorgabe `False`): macht aus `stepup_methods` eine Schranke. Bisher war die
+  Liste nur ein Wunsch — wer keines der genannten Verfahren eingerichtet hatte, bestätigte mit
+  allem, was er hatte, inklusive des Passworts, mit dem er sich gerade angemeldet hatte. Das ist
+  kein Step-up. Mit `True` bleibt der Bereich verschlossen, bis das Verfahren eingerichtet ist;
+  die Seite sagt das jetzt auch, statt ein Formular ohne Felder zu zeigen.
+- **`recent_audit(limit, username=…)`** filtert in SQL (siehe `audit --user` oben).
+- **Drei Wächter in `tests/test_repo.py`**: Die in beiden READMEs genannte Zahl der Testdateien und
+  die Python-Spanne werden gegen die Wirklichkeit gemessen, und solange die Version unter 1.0 liegt,
+  darf keine README eine PyPI-Installation zeigen. Genau diese drei Zahlen waren falsch — Zahlen,
+  die niemand nachmisst, veralten beim nächsten Commit.
+- **`tests/test_bestandsdaten.py`** — 28 Prüfungen zu dem, was ein Upgrade überleben muss.
+
+### Geändert
+
+- **Die Installationsanleitung führt mit dem Git-Tag.** Beide READMEs begannen mit
+  `pip install tinysesam` — der Name ist auf PyPI nicht registriert, der Befehl endet mit
+  `No matching distribution found`. Die erste Zeile, die jemand ausprobiert, war die erste, die
+  fehlschlug. Veröffentlicht wird mit 1.0 ([ADR-6](backlog/ADR-6-pypi-veroeffentlichen.md)).
+- **Der Status-Abschnitt beider READMEs** beschrieb den Stand 0.5/0.6 (»17 bzw. 22 Testdateien«)
+  in einem Paket mit zwei Sicherheitsaudits, SAML, Gateway und Kommandozeile hinter sich.
+- **`web/flows.py` nennt `ldap_enabled`** beim Abschnitt „Externer IdProvider". Die Seite
+  verspricht im Vorspann, neben jeder Überschrift stehe die Config, die sie einschaltet — für
+  eines der drei genannten Verfahren stand sie nicht da.
+- **Docstrings**, die nicht mehr stimmten: `mailer` (es gibt kein `send()`, der Mailer wird
+  aufgerufen), `gateway` (`[gateway]`, nicht `[oidc]` — das ist die Bibliothek ohne Server),
+  `router` (14 bedingte Blöcke, nicht zwei), `mfa_pending` (kein „global erzwungen" mehr),
+  `create_api_key` (wirft bei leerem Scope).
+
 ## [0.18.0] — 2026-09-21
 
 **Sicherheits-Release. Wer TinySesam einsetzt, sollte aktualisieren** — sechs Lücken, jede mit
@@ -171,10 +266,18 @@ Test, der ein kaputtes Verhalten absichert, ist selbst ein Fund.
 
 ### Geändert — ⚠️ beim Update beachten: was sich im Verhalten ändert
 
-**Die öffentliche Oberfläche bricht nicht:** Keine Methode wurde entfernt oder umbenannt, kein
-Parameter ist weggefallen, kein Config-Feld hat seinen Typ oder seinen Vorgabewert geändert. Die
-sieben Signaturen, die `tests/api_surface.json` als geändert verzeichnet, sind ausschließlich
-`x: bool = None` → `x: Optional[bool] = None` — zur Laufzeit identisch, nur ehrlicher annotiert.
+**Die öffentliche Oberfläche bricht fast nicht:** Keine Methode wurde entfernt oder umbenannt, kein
+Parameter ist weggefallen, kein Config-Feld hat seinen Typ geändert. Die sieben Signaturen, die
+`tests/api_surface.json` als geändert verzeichnet, sind ausschließlich `x: bool = None` →
+`x: Optional[bool] = None` — zur Laufzeit identisch, nur ehrlicher annotiert.
+
+**Eine Ausnahme: `passkey_enabled` steht jetzt auf `False`** (vorher `True`) — der einzige
+Vorgabewert, der sich geändert hat. Er stand auf `True`, obwohl `webauthn` nicht im Kern liegt,
+sondern im Extra `[passkey]`: Der allererste Schritt einer Installation ohne Extras stürzte damit
+mit `ModuleNotFoundError: webauthn` ab. Wer Passkeys nutzt und den Schalter **nie gesetzt hat**,
+muss ihn jetzt setzen (`passkey_enabled=True` plus das Extra) — sonst verschwinden nach dem Update
+die Passkey-Routen und der Knopf auf der Login-Seite. Hinterlegte Credentials bleiben in der
+Datenbank und sind sofort wieder nutzbar, sobald der Schalter steht.
 
 **Das Verhalten ändert sich trotzdem**, und zwar dort, wo ein Sicherheitsfix es verlangt. Das
 sieht kein API-Wächter. Die Liste, nach Auswirkung sortiert:
@@ -201,8 +304,8 @@ beim ersten Start selbst; **bestehende Anmeldungen bleiben gültig**.
 `u["name"]` funktionieren unverändert; `.get()` geht jetzt zusätzlich. Wer auf `sqlite3.Row`
 typprüft, muss anpassen.
 
-**Vier Routen verlangen jetzt ein CSRF-Token** — `POST /auth/totp/off`, `/auth/totp/recovery`,
-`/auth/pin/off`, `/auth/apikeys/{id}/revoke` —, im Admin-Panel gilt es für **jede** nicht-lesende
+**Vier Routen verlangen jetzt ein CSRF-Token** — `POST /auth/totp/disable`, `/auth/totp/recovery`,
+`/auth/pin/disable`, `/auth/apikeys/{id}/revoke` —, im Admin-Panel gilt es für **jede** nicht-lesende
 Methode. Eine eigene UI, die diese Endpunkte ohne `X-CSRF-Token` aufruft, bekommt 403.
 
 **Weitere Verhaltensänderungen:**
@@ -302,10 +405,12 @@ Bedeutung. 39 davon kamen vorher in keiner Doku vor. Erzeugt aus den Kommentaren
 keinen Kommentar hatten, haben jetzt einen. Eine Prüfung verlangt beides: Abzug aktuell, kein
 Feld ohne Erklärung.
 
-**[`API.md`](API.md)** führt die **105** eingefrorenen Methoden mit Signatur und erstem Satz.
+**[`API.md`](API.md)** führt die eingefrorene Oberfläche mit Signatur und erstem Satz: **106
+Methoden** von `TinySesam` plus die 6 Presets von `TinySesamConfig`, zusammen 112 Einträge.
 68 davon kamen in keiner Doku vor: Wer TinySesam einbettet, sah die Zusage „diese Oberfläche
-bleibt stabil" ohne eine Stelle, an der steht, was sie enthält. Alle 105 haben jetzt einen
-Docstring.
+bleibt stabil" ohne eine Stelle, an der steht, was sie enthält. Alle haben jetzt einen Docstring.
+(Erzeugt wie `KONFIGURATION.md` — die Zahl in diesem Absatz ist der Stand dieses Release, die
+aktuelle steht in der Datei selbst.)
 
 **Offen und bewusst nicht nebenbei entschieden:** *welche* dieser Methoden auf Dauer öffentlich
 sein sollen. Die Oberfläche ist gemessen (alles ohne führenden Unterstrich), nicht ausgewählt —
@@ -347,10 +452,12 @@ Version sagt eine Suite **selbst ab**, wenn ihr eine Voraussetzung fehlt (`tests
 Exit 77) — die repo-gebundenen überspringen sich im Quellpaket also sauber und nennen den Grund.
 
 Wer TinySesam neu paketiert (eine Distribution, conda, ein internes Rad), kann den Bau damit
-prüfen, und das ist der Sinn eines Quellpakets. Gemessen im ausgepackten sdist:
+prüfen, und das ist der Sinn eines Quellpakets. Gemessen im ausgepackten sdist dieses Release
+(die Zahlen wachsen mit jeder neuen Suite, der Satz dahinter bleibt: nichts fällt um, und was
+absagt, sagt ab):
 
 ```
-40/44 grün, 4 übersprungen, 0 fehlgeschlagen
+41/45 grün, 4 übersprungen, 0 fehlgeschlagen
 ```
 
 Mit dabei sind jetzt auch `examples/showcase.py` und `deploy/` — beide sind in der README
@@ -385,8 +492,10 @@ Spaltennamen zu erraten, und eine Datei aus einer *neueren* Fassung öffnete ein
 stillschweigend. Jetzt steht `PRAGMA user_version`, und eine Datei aus der Zukunft meldet sich.
 
 **Recovery-Codes trugen 48 Bit.** Sie ersetzen den zweiten Faktor und gelten, bis sie benutzt
-werden — anders als ein TOTP-Code, der nach 30 Sekunden wertlos ist. Neu erzeugte tragen 64 Bit;
-bestehende bleiben gültig (gespeichert wird ohnehin nur der Hash).
+werden — anders als ein TOTP-Code, der nach 30 Sekunden wertlos ist. Neu erzeugte tragen
+**112 Bit** (`RECOVERY_BYTES = 7`, zwei Hälften je Code); bestehende bleiben gültig (gespeichert
+wird ohnehin nur der Hash). Oben im selben Abschnitt steht der Wert richtig — hier stand bis
+2026-09-21 die 64 aus einem Zwischenstand.
 
 ### Behoben — die Antworten sprachen Deutsch, auch auf Englisch
 
@@ -598,8 +707,12 @@ Felder im Kopf von `.github/workflows/release.yml`.
 Verweis auf den Nachfolger und unverändertem Text. Die Entscheidung war nicht falsch, sie ist
 eingelöst.
 
-**Zur API-Oberfläche.** Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen** — die Oberfläche ist Zeichen für
-Zeichen dieselbe. Das war die dritte Bedingung für 1.0 und ist für den erreichten Zeitraum belegt.
+**Zur API-Oberfläche.** Für das Fenster `v0.16.0` → `v0.17.0` gemessen: **null Brüche, null
+Erweiterungen** — dort ist die Oberfläche Zeichen für Zeichen dieselbe. Das war die dritte
+Bedingung für 1.0 und ist für diesen Zeitraum belegt. **Für 0.18.0 gilt das nicht mehr**: Dieses
+Release bringt neue Methoden (`complete_totp`, `csrf_rotieren`), neue Exporte (`TinySesamError`,
+`ConfigError`, `MissingExtra`, `MailNotConfigured`) und den geänderten Vorgabewert von
+`passkey_enabled` — die Uhr für „zwei Minor-Versionen ohne Bruch" startet damit neu.
 
 Sie trägt 1.0 trotzdem nicht: Die Zusage musste nie unter Änderungen halten, weil 0.17.0 die
 Bibliothek gar nicht angefasst hat. Und die Sicherheitsfixes dieser Version ändern **Verhalten**,
@@ -632,14 +745,19 @@ Gefunden vom neuen Packaging-Test, beim ersten Lauf. setuptools zieht nach einer
 `tests/api_surface.json`. Wer das sdist auspackte, fand eine Suite vor, die beim Import scheitert.
 Das ist schlimmer als keine: Sie behauptet eine Prüfbarkeit, die es nicht gibt.
 
-Ein `MANIFEST.in` entscheidet die Frage jetzt ausdrücklich. Das sdist ist die **Quelle der
-Bibliothek**, kein Abzug des Repos: Paket, README (beide Sprachen), Lizenz, CHANGELOG und
-SECURITY — keine Tests. Zwei Suiten brauchen ohnehin, was ein sdist nie enthält (`git ls-files`
-für die Hygiene, `web/` für die Website); geprüft wird im Repo.
+Ein `MANIFEST.in` entscheidet die Frage jetzt ausdrücklich. Die erste Antwort darauf war
+`prune tests` — das sdist als **Quelle der Bibliothek**, ohne Testsuite, weil zwei Suiten ohnehin
+brauchen, was ein Quellpaket nie enthält. Diese Antwort hat **im selben Release nicht gehalten**
+und wurde ersetzt: Seit dieser Version sagt eine Suite selbst ab, wenn ihr eine Voraussetzung
+fehlt (Exit 77), und damit trägt das sdist die **vollständige** Suite (`graft tests`, dazu
+`examples/` und `deploy/`). Der Abschnitt weiter oben — „das Quellpaket trägt die Testsuite,
+vollständig" — ist der Stand, der ausgeliefert wird.
 
 ### Geändert — Paket-Metadaten vervollständigt
 
-`Development Status` auf `5 - Production/Stable`, die unterstützten Python-Fassungen (3.10–3.14)
+`Development Status` auf `4 - Beta` (im ersten Anlauf stand hier `5 - Production/Stable` — mit dem
+Rückzug von 1.0 zurückgenommen, die Begründung steht im Kopf dieses Release), die unterstützten
+Python-Fassungen (3.10–3.14)
 als Classifier, dazu `Typing :: Typed`, `Topic :: Security` und die Zielgruppe der Administratoren.
 `[project.urls]` nennt jetzt alle fünf Ziele, die ein Besucher der Index-Seite sucht: Website,
 Doku, Repo, CHANGELOG, Issues. Die Kurzbeschreibung ist englisch wie README und Website, statt

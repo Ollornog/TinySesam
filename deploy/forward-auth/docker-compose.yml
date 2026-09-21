@@ -3,7 +3,10 @@
 #   docker compose up -d
 #
 # Caddy ruft je Request GET /auth/forward beim Gateway (siehe ./Caddyfile). Der Gateway macht
-# ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nur [oidc]-Extra nötig.
+# ausschließlich OIDC-Login + Forward-Auth (keine Passwörter/PIN/Konten). Nötig ist das Extra
+# [gateway] — das ist [oidc] PLUS einen ASGI-Server. Wer nur [oidc] nimmt, bekommt die Bibliothek
+# ohne Server und der Start endet in `ModuleNotFoundError: uvicorn`. Im Abbild unten ist das
+# erledigt; die Zeile zählt für alle, die den Gateway ohne Container fahren.
 #
 # Das Abbild ist GEPINNT. Vorher stand hier ein `pip install` ohne Ref: damit zog jeder
 # Neustart den aktuellen Hauptzweig — zwei Container derselben Datei konnten verschiedene
@@ -54,6 +57,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      # Die Caddyfile zeigt ohne diese beiden auf 127.0.0.1 — im Caddy-CONTAINER wäre das der
+      # Container selbst, wo nichts lauscht. Hier gelten die Service-Namen des Compose-Netzes.
+      # (Die App unten ist ein Platzhalter: eigenen Service eintragen.)
+      TS_AUTH_UPSTREAM: "tinysesam:8000"
+      TS_APP_UPSTREAM: "app:9000"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

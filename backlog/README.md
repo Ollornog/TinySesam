@@ -7,7 +7,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 ## Meilensteine
 
-* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 9/9 erledigt
+* ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 10/10 erledigt
 * ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 0/1 erledigt
 
 ## Aufgaben
@@ -21,6 +21,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☐ **[T-7](T-7-spdx-lizenzausdruck.md)** Lizenzangabe auf den SPDX-Ausdruck umstellen (Frist: 18.02.2027) · M-2
 * ☑ **[T-8](T-8-reifepruefung-restbefunde.md)** Die 35 nicht einzeln nachgestellten Befunde der Reifeprüfung abarbeiten · M-1
 * ☑ **[T-9](T-9-audit-2026-09-21-runde-2.md)** Befunde des zweiten Audits (vier Blickwinkel) abarbeiten · M-1
+* ☑ **[T-10](T-10-doku-abgleich-2026-09-21.md)** Doku gegen den Code gemessen — 70 Stellen, 10 echte Mängel · M-1
 
 ## Fehler
 

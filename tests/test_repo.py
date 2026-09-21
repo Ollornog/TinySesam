@@ -407,4 +407,50 @@ assert not _leer, ("Diese Methoden haben keinen Docstring:\n  " + "\n  ".join(_l
                    "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
 print(f"  API-Nachschlag: {_apidoc.count(chr(10) + '### ')} Einträge, jeder erklärt, Abzug aktuell")
 
+# ---------- Zahlen in den READMEs: nachgemessen statt nachgepflegt ----------
+# Der Doku-Abgleich vom 2026-09-21 fand in beiden READMEs Zahlen aus alten Ständen: „17 bzw. 22
+# Testdateien" bei tatsächlich 45, „Python 3.10–3.13" bei einer Matrix bis 3.14, „119 Config-Felder"
+# nach dem 120. Feld. Eine Zahl, die niemand nachmisst, ist nach dem nächsten Commit falsch — und
+# sie steht ausgerechnet im Abschnitt, an dem ein Interessent den Reifegrad abliest.
+import glob as _glob  # noqa: E402
+
+_readmes = {"README.md": _lies("README.md"), "i18n/README.de.md": _lies("i18n/README.de.md")}
+
+_soll_tests = len(_glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
+for _datei, _text in _readmes.items():
+    _genannt = {int(n) for n in _re.findall(r"\*?\*?(\d+)\*?\*? (?:test files|Testdateien)", _text)}
+    assert _genannt, f"{_datei} nennt keine Testdateizahl mehr — Muster im Wächter anpassen"
+    assert _genannt == {_soll_tests}, (
+        f"{_datei} nennt {sorted(_genannt)} Testdateien, es sind {_soll_tests}")
+print(f"  READMEs: Testdateizahl stimmt ({_soll_tests})")
+
+# Die Python-Matrix: die READMEs nennen eine Spanne, ci.yml die Liste. Beide müssen dasselbe meinen.
+_ci = _lies(".github/workflows/ci.yml")
+_matrix = _re.search(r'python-version:\s*\[([^\]]+)\]', _ci)
+assert _matrix, "python-version-Matrix in ci.yml nicht gefunden"
+_versionen = _re.findall(r'"([\d.]+)"', _matrix.group(1))
+_spanne = f"{_versionen[0]}–{_versionen[-1]}"
+for _datei, _text in _readmes.items():
+    _gefunden = _re.findall(r"Python (\d+\.\d+[–-]\d+\.\d+)", _text)
+    assert _gefunden, f"{_datei} nennt keine Python-Spanne mehr — Muster im Wächter anpassen"
+    assert set(_gefunden) == {_spanne}, (
+        f"{_datei} nennt Python {sorted(set(_gefunden))}, die CI fährt {_spanne}")
+print(f"  READMEs: Python-Spanne stimmt ({_spanne})")
+
+# ---------- Kein `pip install tinysesam` vor der Veröffentlichung ----------
+# Beide READMEs führten mit `pip install tinysesam` — der Name ist auf PyPI nicht registriert, der
+# Befehl endet mit „No matching distribution found". Die erste Zeile, die jemand ausprobiert, darf
+# nicht die erste sein, die fehlschlägt. Veröffentlicht wird laut ADR-6 mit 1.0; bis dahin gilt
+# ausschliesslich der gepinnte Git-Tag, und dieser Wächter fällt mit dem Sprung auf 1.0 von selbst weg.
+from tinysesam import __version__ as _ver  # noqa: E402
+if int(_ver.split(".")[0]) < 1:
+    for _datei, _text in _readmes.items():
+        _pypi = [z.strip() for z in _text.splitlines()
+                 if _re.match(r'^\s*pip install ["\']?tinysesam[\[\]a-z,]*["\']?\s*(#.*)?$', z)
+                 or _re.match(r'^\s*pip install ["\']?tinysesam[\[\]a-z,]*==', z)]
+        assert not _pypi, (
+            f"{_datei} zeigt eine PyPI-Installation, TinySesam ist dort aber nicht (bis 1.0):\n  "
+            + "\n  ".join(_pypi))
+    print("  READMEs installieren über den Git-Tag (PyPI erst ab 1.0)")
+
 print("OK test_repo")

@@ -54,6 +54,12 @@ class TinySesamConfig:
     # (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche.
     # Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren.
     stepup_methods: list[str] = field(default_factory=list)
+    # Aus dem Wunsch eine Schranke machen: True = wer keines der genannten Verfahren eingerichtet
+    # hat, kommt NICHT herein (statt mit dem Passwort zu bestätigen, mit dem er sich gerade
+    # angemeldet hat — das ist kein Step-up). Vorgabe False, weil der Bereich sonst für Bestands-
+    # konten über Nacht verschlossen wäre; wer `stepup_methods` setzt, um etwas zu erzwingen,
+    # will in aller Regel True dazu.
+    stepup_strict: bool = False
     oidc_enabled: bool = False            # externer IdProvider (PocketID …)
     # Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad).
     # Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf.

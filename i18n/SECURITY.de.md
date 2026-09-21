@@ -26,7 +26,10 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 
 ## Unterstützte Versionen
 
-Sicherheitsfixes landen auf der jeweils neuesten Minor-Version (aktuell `0.5.x`).
+Sicherheitsfixes landen auf der jeweils neuesten veröffentlichten Minor-Version — welche das ist,
+steht oben in [CHANGELOG.md](../CHANGELOG.md). Ältere Linien bekommen keine Rückportierung: einen
+Tag pinnen und den Pin weiterziehen, wenn ein Release etwas behebt. (Hier stand früher eine feste
+Version, und sie war dreizehn Minor-Versionen alt — ein Versprechen, das niemand nachgemessen hat.)
 
 <br /><br />
 <p align="right"><img src="../docs/wizard.png" alt="TinySesam" width="60" height="60"></p>

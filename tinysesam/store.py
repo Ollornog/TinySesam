@@ -283,20 +283,33 @@ class Store:
                     "Sitzungstabelle migriert: %d Token gehasht, Anmeldungen bleiben gültig.",
                     len(zeilen))
 
-            # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
-            # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
-            # aber ein sehr guter, es laut zu sagen.
             # Freischaltungen aus der Zeit vor der Umstellung lassen sich nicht umrechnen: Aus
             # dem Klartext wird der Hash, aus dem Hash nichts. Sie werden verworfen — betroffen
             # sind nur offene Ressourcen-Freigaben, und die holt man sich mit dem Geheimnis in
             # Sekunden zurück. Eine halb gehashte Tabelle wäre schlimmer.
+            #
+            # Erkannt wird das am WERT, nicht am Schema-Stempel. Die erste Fassung fragte
+            # `0 < user_version < 4` — und traf damit genau den Fall nicht, für den sie
+            # geschrieben war: `user_version` kam selbst erst mit 0.18.0, eine Bestandsdatei aus
+            # 0.17.0 trägt dort die 0, und `0 < 0` ist falsch. Die Klartext-Einträge wären also
+            # liegengeblieben; sie hätten nie wieder gematcht (gesucht wird seitdem der Hash)
+            # und unbemerkt bis zu ihrem Ablauf Platz belegt. Der Test dazu steht in
+            # tests/test_bestandsdaten.py.
+            # Zwei Bedingungen, beide nötig: der Stempel sagt „diese Datei ist noch nicht durch"
+            # (und hält den Scan aus jedem weiteren Start heraus), der WERT sagt, welche Zeile
+            # wirklich Klartext ist. Der Stempel allein reichte nicht — siehe oben.
             vorhanden_vorab = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
-            if 0 < vorhanden_vorab < 4:
-                weg = self.db.execute("DELETE FROM resource_unlock").rowcount
+            if vorhanden_vorab < self.SCHEMA_VERSION:
+                weg = self.db.execute(
+                    "DELETE FROM resource_unlock WHERE length(token) <> 64"
+                    " OR token GLOB '*[^0-9a-f]*'").rowcount
                 if weg:
                     logging.getLogger("tinysesam").info(
                         "%d Ressourcen-Freigaben verworfen (Token werden jetzt gehasht abgelegt).", weg)
 
+            # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
+            # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
+            # aber ein sehr guter, es laut zu sagen.
             vorhanden = int(self.db.execute("PRAGMA user_version").fetchone()[0] or 0)
             if vorhanden > self.SCHEMA_VERSION:
                 logging.getLogger("tinysesam").warning(
@@ -786,7 +799,18 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def recent_audit(self, limit=100):
+    def recent_audit(self, limit=100, username: str | None = None):
+        """Die jüngsten Audit-Einträge, neueste zuerst.
+
+        `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
+        letzten N Einträge dieses Kontos" und „die Einträge dieses Kontos unter den letzten N" —
+        und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
+        Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster.
+        """
+        if username:
+            return self._all(
+                "SELECT * FROM audit WHERE lower(username)=lower(?) ORDER BY id DESC LIMIT ?",
+                (username, limit))
         return self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
 
     # ---------- API-Keys ----------

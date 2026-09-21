@@ -42,6 +42,15 @@ assert static.count("<section class=flow>") == len(FLOWS)
 
 
 class _Cfg:
+    """Eine Config-Attrappe: gesetzt ist, was diese Prüfung braucht — alles andere kommt aus den
+    Vorgaben von `TinySesamConfig`.
+
+    Der Rückfall über `__getattr__` ist der eigentliche Punkt. Vorher zählte die Attrappe ihre
+    Felder einzeln auf und brach, sobald ein Flow ein weiteres Feld las (zuletzt `ldap_enabled`).
+    Das machte eine Erweiterung der Seite zu einem Fehlschlag in einer ganz anderen Datei — und
+    verführt dazu, das Feld dort nachzutragen, statt es in `flows.py` zu benutzen.
+    """
+
     login_identifier = "username"
     pin_login = False
     stepup_methods = ["pin"]
@@ -55,6 +64,13 @@ class _Cfg:
 
     def enabled_methods(self):
         return ["password"]
+
+    def __getattr__(self, name):
+        from tinysesam import TinySesamConfig
+        vorgabe = TinySesamConfig(db_path=":memory:")
+        if not hasattr(vorgabe, name):
+            raise AttributeError(f"weder in der Attrappe noch in TinySesamConfig: {name}")
+        return getattr(vorgabe, name)
 
 
 live = render("de", cfg=_Cfg())
