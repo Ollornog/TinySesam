@@ -92,15 +92,45 @@ def is_trusted(ip: str, trusted_nets) -> bool:
         return False
 
 
+# Peers, über die schon geklagt wurde — eine Fehlkonfiguration meldet sich einmal, nicht pro
+# Request. Ein Log-Sturm wird weggefiltert und hilft niemandem.
+_GEMELDETE_PEERS: set = set()
+
+
 def client_ip(request, trusted_nets) -> str:
     """Echte Client-IP. Nur wenn der direkte Peer vertrauenswürdig ist, wird X-Forwarded-For ausgewertet
-    (rechteste NICHT-vertrauenswürdige Adresse) — sonst ist XFF fälschbar."""
+    (rechteste NICHT-vertrauenswürdige Adresse) — sonst ist XFF fälschbar.
+
+    **Der häufigste Fehlbetrieb ist still**: Im Container ist der Proxy ein anderer Container,
+    also nicht `127.0.0.1`. Die Vorgabe passt dann nicht, XFF wird verworfen, und JEDER Nutzer
+    erscheint unter der Proxy-IP — Rate-Limit und IP-Sperre gelten ab da kollektiv, und fail2ban
+    bannt im Ernstfall den Proxy, also alle. Nichts davon sieht nach einem Fehler aus. Deshalb
+    sagt diese Funktion einmal je Peer Bescheid.
+    """
     peer = request.client.host if request.client else "?"
     xff = request.headers.get("x-forwarded-for")
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
                 return ip
+    if xff and peer not in _GEMELDETE_PEERS:
+        _GEMELDETE_PEERS.add(peer)
+        if not is_trusted(peer, trusted_nets):
+            seclog.warning(
+                "X-Forwarded-For von %s wird ignoriert: Der Peer steht nicht in trusted_proxies "
+                "(%s). Alle Nutzer erscheinen jetzt unter dieser einen IP — Rate-Limit und "
+                "IP-Sperre wirken kollektiv. Im Container ist der Proxy KEIN 127.0.0.1: das "
+                "Netz des Proxys eintragen, z.B. trusted_proxies=['172.28.0.0/16'].",
+                peer, list(trusted_nets or []))
+        else:
+            # Peer vertraut, aber KEINE nicht-vertrauenswürdige Adresse im XFF gefunden — das
+            # ist der Fall `trusted_proxies=['0.0.0.0/0']`: Wenn jede Adresse als Proxy gilt,
+            # bleibt keine als Client übrig, und XFF ist wirkungslos statt großzügig.
+            seclog.warning(
+                "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
+                "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
+                "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
+                xff, list(trusted_nets or []), peer)
     return peer
 
 

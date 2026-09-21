@@ -602,4 +602,92 @@ r.check("auch ein Rate-Limit-Treffer steht im Log",
         "reason=ratelimit" in puffer_r.getvalue(),
         f"stumm: {puffer_r.getvalue()[:80]!r}")
 
+
+# ── Hinter dem Proxy: alle Nutzer unter einer IP ──────────────────────────────
+# Im Container ist der Proxy ein anderer Container, also nicht 127.0.0.1. Die Vorgabe passt
+# dann nicht, X-Forwarded-For wird verworfen, und JEDER erscheint unter der Proxy-IP: Sperre
+# und Rate-Limit wirken ab da kollektiv. Nichts davon sieht nach einem Fehler aus.
+#
+# Als Proxy-Adresse steht hier 192.0.2.x (RFC 5737, für Dokumentation) statt einer echten
+# Docker-Bridge-Adresse: Das Verhalten hängt allein daran, ob der Peer in `trusted_proxies`
+# steht, nicht am Adressbereich — und der Hygiene-Test fängt nackte RFC1918-Hostadressen, zu
+# Recht. In einem echten Compose steht dort das Netz des Proxys (s. deploy/forward-auth/).
+from tinysesam import security as _sec  # noqa: E402
+
+
+class _Anfrage:
+    def __init__(self, peer, xff=None):
+        self.client = type("C", (), {"host": peer})()
+        self.headers = {"x-forwarded-for": xff} if xff else {}
+
+
+def _mit_log(fn):
+    """(Rückgabe, Log-Text) — und der Merker wird vorher geleert, damit die Prüfungen sich
+    nicht gegenseitig die Meldung wegnehmen (jede Warnung kommt nur einmal je Peer)."""
+    _sec._GEMELDETE_PEERS.clear()
+    puffer = io.StringIO()
+    haken = logging.StreamHandler(puffer)
+    _sec.seclog.addHandler(haken)
+    try:
+        return fn(), puffer.getvalue()
+    finally:
+        _sec.seclog.removeHandler(haken)
+
+
+echte_ip, log_a = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.5", "203.0.113.9"),
+                                                  ["127.0.0.1/32"]))
+r.check("mit der Vorgabe hinter einem Container-Proxy bleibt es bei der Proxy-IP",
+        echte_ip == "192.0.2.5", f"ergab {echte_ip} — dann misst der Test das Falsche")
+r.check("...und das wird gemeldet statt still hingenommen",
+        "trusted_proxies" in log_a and "ignoriert" in log_a,
+        f"kein Hinweis: {log_a[:90]!r}")
+
+# 0.0.0.0/0 klingt großzügig und entwertet XFF vollständig: Gilt jede Adresse als Proxy,
+# bleibt keine als Client übrig.
+alles, log_b = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.7", "203.0.113.9"),
+                                               ["0.0.0.0/0"]))
+r.check("0.0.0.0/0 liefert NICHT die Client-IP", alles == "192.0.2.7",
+        f"ergab {alles} — dann wäre XFF fälschbar")
+r.check("...und auch das wird gemeldet", "entwertet" in log_b,
+        f"kein Hinweis: {log_b[:90]!r}")
+
+# Richtig konfiguriert kommt die echte Adresse durch — und dann gibt es nichts zu melden.
+richtig, log_c = _mit_log(lambda: _sec.client_ip(_Anfrage("192.0.2.5", "203.0.113.9"),
+                                                 ["192.0.2.0/24"]))
+r.check("mit dem Netz des Proxys kommt die echte Client-IP an", richtig == "203.0.113.9",
+        f"ergab {richtig}")
+r.check("und der Normalbetrieb schweigt", log_c.strip() == "",
+        f"warnt ohne Anlass: {log_c[:90]!r}")
+
+# Die Meldung kommt einmal je Peer, nicht pro Request — sonst erschlägt sie das Log.
+_sec._GEMELDETE_PEERS.clear()
+puffer_w = io.StringIO()
+haken_w = logging.StreamHandler(puffer_w)
+_sec.seclog.addHandler(haken_w)
+try:
+    for _ in range(5):
+        _sec.client_ip(_Anfrage("192.0.2.9", "203.0.113.9"), ["127.0.0.1/32"])
+finally:
+    _sec.seclog.removeHandler(haken_w)
+# Gezählt werden MELDUNGEN, nicht Wörter: Die Meldung nennt `trusted_proxies` selbst zweimal
+# (einmal als Befund, einmal im Rat), ein Wort-Zähler stünde also immer auf 2.
+_zeilen = [z for z in puffer_w.getvalue().splitlines() if "X-Forwarded-For" in z]
+r.check("die Warnung kommt einmal je Peer, nicht bei jedem Request", len(_zeilen) == 1,
+        f"{len(_zeilen)} Meldungen für 5 Anfragen")
+
+# SSO- und Passkey-Login schrieben die rohe Peer-IP in die Sitzung und ins Protokoll.
+for modul in ("oidc.py", "webauthn_.py"):
+    quelle = (Path(__file__).resolve().parent.parent / "tinysesam" / modul).read_text(encoding="utf-8")
+    code = "\n".join(z for z in quelle.splitlines() if not z.lstrip().startswith("#"))
+    r.check(f"{modul} nimmt client_ip, nicht die rohe Peer-IP",
+            "request.client.host" not in code and "client_ip(request)" in code,
+            "greift wieder direkt auf request.client zu — hinter einem Proxy ist das der Proxy")
+
+# Und das mitgelieferte Compose darf nicht vormachen, was hier gerade widerlegt wurde.
+compose = (Path(__file__).resolve().parent.parent / "deploy" / "forward-auth"
+           / "docker-compose.yml").read_text(encoding="utf-8")
+r.check("das Compose-Beispiel setzt trusted_proxies nicht auf 0.0.0.0/0",
+        'TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"' not in compose,
+        "das Beispiel macht jede Client-IP zur Proxy-IP")
+
 sys.exit(r.done())

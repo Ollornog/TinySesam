@@ -163,7 +163,8 @@ def register_oidc_routes(router, auth):
         _grp = info.get(cfg.oidc_group_claim) or []
         auth.apply_idp_groups(uid, _grp if isinstance(_grp, list) else [_grp], cfg.oidc_group_role_map)
 
-        ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
+        # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
+        ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua)
         target = auth.login_redirect_after(request, token, uid,
                                            auth.safe_next(flow.get("next") or cfg.login_redirect))

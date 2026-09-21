@@ -27,12 +27,18 @@ services:
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
       # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
-      TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"          # hier vertrauen wir dem internen Caddy
+      # Das Netz unten, NICHT 0.0.0.0/0: Gilt jede Adresse als Proxy, bleibt keine als Client
+      # übrig — X-Forwarded-For wird dann wirkungslos statt großzügig, und alle Nutzer erscheinen
+      # unter der Caddy-IP. Rate-Limit und IP-Sperre wirken ab da kollektiv, und fail2ban bannt
+      # im Ernstfall den Proxy, also alle. Deshalb hat dieses Compose ein festes Subnetz: eine
+      # vom Docker-Daemon vergebene Bridge-Adresse könnte man hier gar nicht eintragen.
+      TINYSESAM_TRUSTED_PROXIES: "172.28.0.0/16"
       TINYSESAM_HTTPS_MODE: "warn"                     # TLS terminiert Caddy davor
       TINYSESAM_DB: "/data/gateway.db"
       TINYSESAM_PORT: "8000"
     volumes:
       - tinysesam-data:/data
+    networks: [intern]
     restart: unless-stopped
 
   caddy:
@@ -46,7 +52,14 @@ services:
       - caddy-config:/config
     depends_on:
       - tinysesam
+    networks: [intern]
     restart: unless-stopped
+
+networks:
+  intern:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   tinysesam-data:

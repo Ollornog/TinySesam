@@ -103,7 +103,10 @@ def register_passkey_routes(router, auth):
             credential_public_key=base64url_to_bytes(row["public_key"]),
             credential_current_sign_count=row["sign_count"], require_user_verification=False)
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
-        ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
+        # client_ip, nicht request.client.host: Hinter einem Reverse-Proxy ist der Peer der
+        # Proxy. Die rohe Peer-IP landete sonst in der Sitzungsliste und im Protokoll — und
+        # die IP-Sperre haette alle Nutzer hinter demselben Proxy in einen Topf geworfen.
+        ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
         target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next))
         resp = JSONResponse({"ok": True, "redirect": target})

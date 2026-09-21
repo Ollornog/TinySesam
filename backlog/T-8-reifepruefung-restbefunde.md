@@ -31,9 +31,12 @@ dasteht" umgebaut.
 - [ ] Recovery-Codes tragen nur 48 Bit (zweite Hälfte desselben Befunds, noch offen)
 - [x] Die Datenbank wird welt-lesbar angelegt (0644)
 - [x] API-Keys überleben Passwortwechsel und „alle Sitzungen beenden"
-- [ ] Die `trusted_proxies`-Vorgabe ist fälschungssicher, kippt hinter einem Container-Proxy aber
-- [ ] Das mitgelieferte Compose-Beispiel macht jede Client-IP zur Proxy-IP
-- [ ] SSO- und Passkey-Logins schreiben die Proxy-IP statt der Client-IP
+- [x] Die `trusted_proxies`-Vorgabe ist fälschungssicher, kippt hinter einem Container-Proxy aber
+      — behoben: `client_ip()` meldet den Fehlbetrieb einmal je Peer
+- [x] Das mitgelieferte Compose-Beispiel macht jede Client-IP zur Proxy-IP — behoben: eigenes
+      Netz mit festem Subnetz statt `0.0.0.0/0`, plus Prüfung
+- [x] SSO- und Passkey-Logins schreiben die Proxy-IP statt der Client-IP — behoben: beide
+      nehmen `client_ip()`
 - [ ] Forward-Auth: Header-*Namen* werden geprüft, Header-*Werte* nicht (IdP-Anzeigename)
 - [ ] OIDC: Der JWKS wird einmal geholt und nie erneuert
 - [ ] Es gibt keine Konfigurationsprüfung — Widersprüche fallen erst beim Login auf

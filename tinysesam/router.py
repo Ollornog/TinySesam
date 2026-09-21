@@ -11,9 +11,6 @@ def build_router(auth) -> APIRouter:
     cfg = auth.cfg
     r = APIRouter(tags=["auth"])
 
-    def _client(request: Request):
-        return (request.client.host if request.client else None), request.headers.get("user-agent")
-
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
     def login_page(request: Request, next: str = "/", error: str = ""):

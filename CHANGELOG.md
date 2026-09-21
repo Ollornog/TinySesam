@@ -68,6 +68,32 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Behoben — hinter einem Proxy erschienen alle Nutzer unter einer IP
+
+Vier Befunde, ein Thema. Gemeinsame Folge: Sperre, Rate-Limit und fail2ban wirkten **kollektiv**
+statt pro Nutzer — und im Ernstfall bannt fail2ban den Proxy, also alle. Nichts davon sah nach
+einem Fehler aus.
+
+**SSO- und Passkey-Logins schrieben die rohe Peer-IP.** `oidc.py` und `webauthn_.py` griffen
+direkt auf `request.client.host` zu und umgingen damit `trusted_proxies`; hinter einem Proxy
+landete dessen Adresse in der Sitzungsliste, im Protokoll und in der IP-Sperre. Beide nehmen
+jetzt `client_ip()`. Ein ungenutzter Helfer in `router.py`, der dasselbe falsch vormachte, ist
+weg.
+
+**Die Vorgabe passt im Container nicht — und das blieb still.** `trusted_proxies` steht auf
+`127.0.0.1/32`; im Container ist der Proxy aber ein anderer Container. X-Forwarded-For wird dann
+verworfen, ohne dass irgendetwas davon berichtet. `client_ip()` sagt jetzt einmal je Peer
+Bescheid, mit dem konkreten Rat (`trusted_proxies=['<Netz des Proxys>']`).
+
+**`0.0.0.0/0` entwertet X-Forwarded-For, statt ihm zu vertrauen.** Gilt jede Adresse als Proxy,
+bleibt keine als Client übrig — `client_ip()` fällt auf die Peer-IP zurück. Das klingt großzügig
+und ist das Gegenteil. Auch dieser Fall meldet sich jetzt.
+
+**Das mitgelieferte Compose machte genau diesen Fehler.** `TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"`
+ist ersetzt: Das Beispiel bringt ein eigenes Netz mit festem Subnetz mit und trägt dieses ein —
+eine vom Docker-Daemon vergebene Bridge-Adresse ließe sich gar nicht eintragen. Eine Prüfung
+hält das fest.
+
 ### Behoben — zugesagte Python-Versionen werden jetzt gemessen
 
 Die Classifier versprachen 3.10 bis 3.14, die CI-Matrix fuhr **3.10, 3.12 und 3.14** — 3.11 und
