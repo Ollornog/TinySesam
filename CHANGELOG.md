@@ -13,6 +13,18 @@ Die Versionsnummer springt von 0.17.0 auf 1.0.0. Was das bedeutet, steht unten �
 **nicht** bedeutet, ebenfalls: Der Meilenstein verlangte zwei Minor-Versionen ohne API-Bruch,
 erreicht ist eine. Die dritte Bedingung wurde vom Projektinhaber vorzeitig abgehakt, nicht erfüllt.
 
+> **Bekannt und offen, beim Herrichten gefunden:** Zwei Punkte kamen nicht mit, weil dieses
+> Release die Bibliothek nicht anfasst. Sie stehen im Backlog unter
+> [M-2](backlog/M-2-nach-1-0.md), nicht in einem Nebensatz.
+>
+> - **[B-1](backlog/B-1-admin-panel-rotiert-csrf.md) — das Admin-Panel würfelt bei jedem Aufruf
+>   ein neues CSRF-Token.** Derselbe Fehler, der für `render_page` längst behoben ist, an der
+>   dritten, nie geprüften Stelle. Wer das Panel in einem zweiten Reiter öffnet, macht ein offenes
+>   Formular im ersten ungültig — **403, ohne Meldung**. Nachgestellt, nicht vermutet. Der Schutz
+>   gegen Angreifer bleibt; getroffen wird der eigene Nutzer.
+> - **[T-7](backlog/T-7-spdx-lizenzausdruck.md) — die Lizenzangabe hat eine Frist.** setuptools
+>   nennt sie beim Bau: Ab dem **18.02.2027** wird die Tabellenform nicht mehr unterstützt.
+
 ### Hinzugefügt — Installation aus dem Paketindex
 
 ```bash

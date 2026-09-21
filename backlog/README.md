@@ -8,6 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☑ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 6/6 erledigt
+* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 0/2 erledigt
 
 ## Aufgaben
 
@@ -17,6 +18,11 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-4](T-4-verifikation-ohne-magic-endpoint.md)** E-Mail-Verifikation und Einladung ohne Magic-Link-Endpunkt · M-1
 * ☑ **[T-5](T-5-abbild-signatur-pruefen.md)** Abbild-Signatur und SBOM erwägen · M-1
 * ☑ **[T-6](T-6-stage-per-playbook.md)** Die E2E-Bühne per Playbook aufbauen statt von Hand · M-1
+* ☐ **[T-7](T-7-spdx-lizenzausdruck.md)** Lizenzangabe auf den SPDX-Ausdruck umstellen (Frist: 18.02.2027) · M-2
+
+## Fehler
+
+* ☐ **[B-1](B-1-admin-panel-rotiert-csrf.md)** Das Admin-Panel würfelt bei jedem Aufruf ein neues CSRF-Token · M-2
 
 ## Entscheidungen (ADR)
 
