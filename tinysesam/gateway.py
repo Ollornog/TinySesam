@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Optional
 import os
+import sys
 
 from .config import TinySesamConfig
 from .manager import TinySesam
@@ -108,12 +109,56 @@ def __getattr__(name):
     raise AttributeError(name)
 
 
-def main():
-    import uvicorn
+HILFE = """tinysesam.gateway — TinySesam als OIDC-Forward-Auth-Gateway
+
+  python -m tinysesam.gateway          startet den Dienst
+  uvicorn tinysesam.gateway:app        dasselbe über einen eigenen Server-Aufruf
+
+Installation:  pip install 'tinysesam[gateway]'   (nicht [oidc] — das ist die Bibliothek
+                                                   ohne Server)
+
+Konfiguriert wird über Umgebungsvariablen:
+  TINYSESAM_OIDC_ISSUER          Adresse des Providers            (Pflicht)
+  TINYSESAM_OIDC_CLIENT_ID       Client-ID                        (Pflicht)
+  TINYSESAM_OIDC_CLIENT_SECRET   Client-Secret                    (Pflicht)
+  TINYSESAM_BASE_URL             eigene öffentliche Adresse       (Pflicht)
+  TINYSESAM_PROTECTED_HOSTS      Hosts hinter dem Proxy, kommagetrennt
+  TINYSESAM_COOKIE_DOMAIN        z.B. .example.com — für mehrere Hosts
+  TINYSESAM_TRUSTED_PROXIES      Netz des Proxys, z.B. 172.28.0.0/16
+  TINYSESAM_DB                   Pfad der Datenbank
+  TINYSESAM_HOST / _PORT         Bindeadresse (Vorgabe 0.0.0.0:8000)
+
+Beispielaufbau mit Caddy: deploy/forward-auth/
+"""
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # `--help` VOR allem anderen: Vorher landete die Frage im uvicorn-Import und danach in
+    # einem Server auf 0.0.0.0:8000 — wer wissen wollte, wie das Ding heisst, hatte es laufen.
+    if argv and argv[0] in ("--help", "-h", "help"):
+        print(HILFE)
+        return 0
+    if argv:
+        print(f"Unbekanntes Argument: {argv[0]}\n", file=sys.stderr)
+        print(HILFE, file=sys.stderr)
+        return 2
+    try:
+        import uvicorn
+    except ModuleNotFoundError:
+        # Die README nannte `pip install 'tinysesam[oidc]'` und diesen Startbefehl in einem
+        # Atemzug — dabei bringt [oidc] keinen Server mit. Der nackte ModuleNotFoundError liess
+        # das wie einen Defekt aussehen statt wie eine fehlende Zeile im Install-Befehl.
+        print("Zum Starten fehlt ein ASGI-Server.\n"
+              "  pip install 'tinysesam[gateway]'\n"
+              "Oder einen eigenen mitbringen:  uvicorn tinysesam.gateway:app --host 0.0.0.0 --port 8000",
+              file=sys.stderr)
+        return 1
     host = os.environ.get("TINYSESAM_HOST", "0.0.0.0")
     port = int(os.environ.get("TINYSESAM_PORT", "8000"))
     uvicorn.run(build_app(), host=host, port=port)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

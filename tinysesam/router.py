@@ -24,7 +24,7 @@ def build_router(auth) -> APIRouter:
                      next: str = Form("/"), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
         if not cfg.password_enabled:
-            raise HTTPException(404, "Passwort-Login deaktiviert")
+            raise HTTPException(404, auth.t("api.password_off"))
         nxt = auth.safe_next(next)
         if not username or not password:
             # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
@@ -121,7 +121,7 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         if not auth.store.has_confirmed_totp(u["id"]):
-            raise HTTPException(400, "erst 2FA einrichten")
+            raise HTTPException(400, auth.t("api.totp_first"))
         return {"codes": auth.generate_recovery_codes(u["id"])}
 
     # ---------- PIN-Login (persönliche PIN, nur wenn aktiviert) ----------
@@ -213,7 +213,7 @@ def build_router(auth) -> APIRouter:
         def resource_page(request: Request, name: str, next: str = "/", error: str = ""):
             row = auth.store.get_resource_secret(name)
             if not row:
-                raise HTTPException(404, "unbekannte Ressource")
+                raise HTTPException(404, auth.t("api.resource_unknown"))
             nxt = auth.safe_next(next)
             if auth.resource_unlocked(request, name):
                 return RedirectResponse(nxt, 303)
@@ -225,7 +225,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             row = auth.store.get_resource_secret(name)
             if not row:
-                raise HTTPException(404, "unbekannte Ressource")
+                raise HTTPException(404, auth.t("api.resource_unknown"))
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
@@ -526,10 +526,10 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(401)
         b = await auth.json_body(request)
         if not auth.check_password(u["username"], b.get("current") or ""):
-            raise HTTPException(403, "aktuelles Passwort falsch")
+            raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
         if len(new) < auth.sec("password_min_length"):
-            raise HTTPException(400, f"Passwort zu kurz (min. {auth.sec('password_min_length')})")
+            raise HTTPException(400, auth.t("api.password_short", n=auth.sec("password_min_length")))
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
@@ -693,7 +693,7 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, auth.t("err.saml"))
             u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
             if not u:
-                raise HTTPException(403, "SAML: kein Zugriff")
+                raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request), request.headers.get("user-agent"))

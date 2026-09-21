@@ -82,13 +82,24 @@ for f in LIB:
 print("  Farbwerte: nur in tinysesam/theme.py (App) bzw. docs/theme.css (Website)")
 
 # ---------- Keine vergessenen Debug-Ausgaben in der Bibliothek ----------
-# __main__.py ist die CLI — dort ist print die Ausgabe, kein Überbleibsel.
+# __main__.py ist die CLI — dort ist print die Ausgabe, kein Überbleibsel. In gateway.py gilt
+# dasselbe, aber NUR für `main()`: Der Rest der Datei ist Bibliothek und darf nichts ausgeben.
+# (Die Grenze steht hier, weil eine Ausnahme für die ganze Datei genau das durchgehen liesse,
+# was die Prüfung sucht.)
+import ast as _ast  # noqa: E402
+
 for f in LIB:
     if f == "tinysesam/__main__.py":
         continue
-    for n, line in enumerate(read(f).splitlines(), 1):
+    quelle = read(f)
+    erlaubt = set()
+    if f == "tinysesam/gateway.py":
+        for knoten in _ast.walk(_ast.parse(quelle)):
+            if isinstance(knoten, _ast.FunctionDef) and knoten.name == "main":
+                erlaubt = set(range(knoten.lineno, (knoten.end_lineno or knoten.lineno) + 1))
+    for n, line in enumerate(quelle.splitlines(), 1):
         s = line.strip()
-        if s.startswith("print(") or s.startswith("breakpoint("):
+        if (s.startswith("print(") or s.startswith("breakpoint(")) and n not in erlaubt:
             raise AssertionError(f"Debug-Ausgabe in der Bibliothek: {f}:{n}: {s[:60]}")
 print("  keine print()/breakpoint() in tinysesam/")
 
@@ -290,5 +301,20 @@ for pfad in FILES:
             zu_neu.append(f"{pfad}: {name} gibt es erst ab Python {ab[0]}.{ab[1]}")
 assert not zu_neu, ("Zugesagt ist ab Python %d.%d:\n  " % _min) + "\n  ".join(zu_neu)
 print(f"  keine Standardbibliothek jenseits von Python {_min[0]}.{_min[1]} ({len(ZU_NEU)} Muster)")
+
+# ---------- README.md ist zugleich die PyPI-Beschreibung ----------
+# Dort löst nichts relative Repo-Pfade auf: Bis 0.18.0 waren auf der Paketseite das Logo und
+# sieben Verweise tot — die erste Seite, die ein Interessent sieht. Die deutsche Fassung unter
+# i18n/ wird nur auf GitHub gelesen und darf relativ bleiben.
+_readme = _lies("pyproject.toml")
+assert 'readme = "README.md"' in _readme, ("pyproject verweist nicht mehr auf README.md — "
+                                           "diese Prüfung gehört dann auf die andere Datei")
+_r = _lies("README.md")
+_rel = _re.findall(r"!?\[[^\]]*\]\((?!https?://|#)([^)]+)\)", _r)
+_rel += _re.findall(r'<img src="(?!https?://)([^"]+)"', _r)
+_rel += _re.findall(r'<a href="(?!https?://|#)([^"]+)"', _r)
+assert not _rel, ("Relative Verweise in README.md — auf der PyPI-Seite tot:\n  " +
+                  "\n  ".join(sorted(set(_rel))))
+print(f"  README.md ohne relative Verweise (PyPI-tauglich)")
 
 print("OK test_repo")

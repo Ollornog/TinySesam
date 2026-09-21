@@ -1,12 +1,16 @@
-<p align="center"><img src="docs/wizard.png" alt="TinySesam" width="250" height="250"></p>
+<!-- Links hier ABSOLUT: Diese Datei ist zugleich die Projektbeschreibung auf PyPI
+     (pyproject.toml: readme = "README.md"), und dort löst nichts relative Repo-Pfade auf —
+     Logo und sieben Verweise waren auf der Paketseite tot. tests/test_repo.py hält das fest.
+     Die deutsche Fassung unter i18n/ wird nur auf GitHub gelesen und darf relativ bleiben. -->
+<p align="center"><img src="https://raw.githubusercontent.com/Ollornog/TinySesam/main/docs/wizard.png" alt="TinySesam" width="250" height="250"></p>
 
 <h1 align="center">TinySesam</h1>
 
-<p align="center"><b>English</b> · <a href="i18n/README.de.md">Deutsch</a></p>
+<p align="center"><b>English</b> · <a href="https://github.com/Ollornog/TinySesam/blob/main/i18n/README.de.md">Deutsch</a></p>
 
 <p align="right">
 <a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
-<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
+<a href="https://github.com/Ollornog/TinySesam/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
 <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
 </p>
 
@@ -198,7 +202,7 @@ CSS variables** — no per-page selectors to rebuild. Override them in `brand_cs
 TinySesamConfig(brand_css=":root{--ts-bg:#f6f1ec;--ts-surface:#fbf8f4;--ts-ink:#2b2a3a;--ts-accent:#b0566f}")
 ```
 
-The tokens (and their defaults) live in [`tinysesam/theme.py`](tinysesam/theme.py); `brand_head` injects
+The tokens (and their defaults) live in [`tinysesam/theme.py`](https://github.com/Ollornog/TinySesam/blob/main/tinysesam/theme.py); `brand_head` injects
 extra `<head>` markup and `brand_icon` sets the favicon on every built-in page.
 
 **Want your own nav and footer around them?** `brand_header` and `brand_footer` wrap *every* built-in
@@ -310,7 +314,7 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
 - **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
-  (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](deploy/fail2ban/) → IP ban at the firewall level.
+  (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
   Set `security_log="/var/log/tinysesam/security.log"` and TinySesam writes that file itself — the shipped
   jail points at it and would otherwise watch a file that never appears. Leave it empty if you wire up
   logging yourself; an unwritable path warns at startup instead of stopping it.
@@ -429,7 +433,11 @@ Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra 
 - **API keys** per user: generate (shown once) / revoke.
 - **Sessions:** view active ones + end them.
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
-- **Update:** version/status, mode manual/auto, version pin, “update now”.
+- **Version:** the running version plus a note on how updates work — there is **no “update
+  now” button**, and deliberately so ([ADR-2](https://github.com/Ollornog/TinySesam/blob/main/backlog/ADR-2-kein-selbst-update.md)):
+  an auth module that loads code at runtime is a back door with a manual. You update where you
+  installed it. (This line used to promise a button, a manual/auto mode and a version pin —
+  none of which has existed since 0.12.0.)
 - **Audit log** view.
 
 JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation).
@@ -480,7 +488,7 @@ All optional (on/off by config), usable individually and combined, front end rep
   turning `magiclink_enabled` off no longer takes confirmation and invitation with it.
 - **Account page:** built in at `/auth/account` (`account_enabled`) — password/PIN/2FA/passkeys/keys.
 - **Forward-auth:** `forward_auth_enabled` → `GET /auth/forward` (200 + `Remote-User/Groups/Email` or
-  401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](deploy/forward-auth/) (Caddy/nginx/Traefik;
+  401 + `X-TinySesam-Location`). Examples: [`deploy/forward-auth/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (Caddy/nginx/Traefik;
   `nginx-pfad.conf` covers the other common shape — one host, individual paths protected, static files + PHP behind it).
   **Roles at the proxy:** have the proxy ask for them — `GET /auth/forward?roles=editor,admin` or the header
   `X-TinySesam-Roles`. One of the listed roles is enough; signed in but missing the role answers **403**
@@ -501,7 +509,7 @@ All optional (on/off by config), usable individually and combined, front end rep
   `trusted_redirect_hosts` are never used for this, so a forged `X-Forwarded-Host` cannot redirect
   anyone. `base_url` itself stays untouched; OIDC/SAML callbacks keep the one fixed address.
 
-Full demo: [`examples/showcase.py`](examples/showcase.py) — `/` is the project website itself,
+Full demo: [`examples/showcase.py`](https://github.com/Ollornog/TinySesam/blob/main/examples/showcase.py) — `/` is the project website itself,
 `/demo` a front end whose login/account/admin panels are **live read-only previews** of the real pages (`uvicorn examples.showcase:app`).
 
 **The live demo is an example front end that ships with the project** — not part of the library and
@@ -574,7 +582,10 @@ TinySesamConfig.oidc_gateway(issuer="…", client_id="…", client_secret="…",
 ## As a pure OIDC gateway (preset)
 
 If you only want **OIDC SSO in front of arbitrary apps** (Authelia/oauth2-proxy style), run TinySesam as a
-forward-auth **gateway** — no app of your own, just `pip install 'tinysesam[oidc]'`:
+forward-auth **gateway** — no app of your own, just `pip install 'tinysesam[gateway]'`:
+(`[gateway]` = `[oidc]` **plus an ASGI server**. With `[oidc]` alone the start command below
+ends in `ModuleNotFoundError: uvicorn` — that combination used to be what this page told you
+to run.)
 
 ```bash
 export TINYSESAM_OIDC_ISSUER=https://id.example.com \
@@ -587,7 +598,7 @@ python -m tinysesam.gateway          # or: uvicorn tinysesam.gateway:app
 
 The reverse proxy calls `GET /auth/forward` per request; all other methods/routes are off.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
-A ready-made [`deploy/forward-auth/docker-compose.yml`](deploy/forward-auth/) (gateway + Caddy) ships with it.
+A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
 ## Tests & CI
 

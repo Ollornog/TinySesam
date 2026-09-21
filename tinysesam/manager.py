@@ -752,13 +752,13 @@ class TinySesam:
         try:
             data = await request.json()
         except Exception:
-            raise HTTPException(400, "ungültiger JSON-Body")
+            raise HTTPException(400, self.t("api.json_invalid"))
         if not isinstance(data, dict):
-            raise HTTPException(400, "JSON-Objekt erwartet")
+            raise HTTPException(400, self.t("api.json_object"))
         if self.cfg.csrf_enabled and not self._extract_api_key(request):
             token = request.headers.get("x-csrf-token") or data.get("_csrf")
             if not self.verify_csrf(request, token):
-                raise HTTPException(403, "CSRF-Token ungültig")
+                raise HTTPException(403, self.t("api.csrf"))
         return data
 
     # ---------- CSRF (Double-Submit) ----------
@@ -783,7 +783,7 @@ class TinySesam:
     def require_csrf(self, request: Request, submitted):
         """Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt (API-Key ausgenommen)."""
         if self.cfg.csrf_enabled and not self._extract_api_key(request) and not self.verify_csrf(request, submitted):
-            raise HTTPException(403, "CSRF-Token ungültig")
+            raise HTTPException(403, self.t("api.csrf"))
 
     # ---------- E-Mail-Versand ----------
     def set_mailer(self, fn):
@@ -1354,7 +1354,7 @@ class TinySesam:
             from urllib.parse import quote
             nxt = quote(request.url.path, safe="/")
             raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={nxt}"})
-        raise HTTPException(401, "nicht eingeloggt")
+        raise HTTPException(401, self.t("api.not_signed_in"))
 
     def _deny_stepup(self, request: Request) -> NoReturn:
         # eingeloggt, aber Faktor nicht frisch. Browser → Redirect zu /auth/reauth; sonst 403 + Hinweis-Header.
@@ -1362,7 +1362,7 @@ class TinySesam:
             from urllib.parse import quote
             nxt = quote(request.url.path, safe="/")
             raise HTTPException(307, headers={"Location": f"/auth/reauth?next={nxt}"})
-        raise HTTPException(403, "Step-up-Bestätigung nötig", headers={"X-TinySesam-Reauth": "/auth/reauth"})
+        raise HTTPException(403, self.t("api.stepup"), headers={"X-TinySesam-Reauth": "/auth/reauth"})
 
     # ---------- Step-up-Frische ----------
     def stepup_fresh(self, request: Request, user: Optional[dict] = None) -> bool:
@@ -1384,7 +1384,7 @@ class TinySesam:
             self._deny(request)
         if "text/html" in request.headers.get("accept", ""):
             raise HTTPException(307, headers={"Location": self.factor_entry(step, request.url.path)})
-        raise HTTPException(401, "weiterer Faktor nötig", headers={"X-TinySesam-Factor": step})
+        raise HTTPException(401, self.t("api.factor"), headers={"X-TinySesam-Factor": step})
 
     def _enforce_route_chain(self, request: Request, factors, strict) -> dict:
         strict = self.cfg.login_chain_strict if strict is None else strict
@@ -1427,16 +1427,16 @@ class TinySesam:
                 done = json.loads(s["factors_done"] or "[]")
                 self._redirect_factor(request, self.next_login_step(usr["id"], done))
         if admin and not self.is_admin(u):
-            raise HTTPException(403, "Adminrechte nötig")
+            raise HTTPException(403, self.t("api.admin"))
         if role:
             # Eine Rolle oder mehrere (dann genügt EINE davon — dieselbe ODER-Bedeutung wie
             # ?roles=a,b im Forward-Auth). Wer ALLE verlangt, stapelt zwei Guards.
             noetig = [role] if isinstance(role, str) else list(role)
             if not any(self.has_role(u, r, admin_implies) for r in noetig):
-                raise HTTPException(403, "Rolle %s nötig" % " oder ".join(f"'{r}'" for r in noetig))
+                raise HTTPException(403, self.t("api.role", rollen=", ".join(f"'{r}'" for r in noetig)))
         if mfa and not self.stepup_fresh(request, u):
             if u.get("_via") == "apikey":
-                raise HTTPException(403, "Step-up-MFA nötig — nur per interaktiver Sitzung")
+                raise HTTPException(403, self.t("api.stepup_session"))
             self._deny_stepup(request)
         return u
 
@@ -1541,6 +1541,6 @@ class TinySesam:
                     from urllib.parse import quote
                     nxt = quote(request.url.path, safe="/")
                     raise HTTPException(307, headers={"Location": f"/auth/resource/{name}?next={nxt}"})
-                raise HTTPException(401, "Ressource gesperrt")
+                raise HTTPException(401, self.t("api.resource_locked"))
             return True
         return dep

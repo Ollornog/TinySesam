@@ -69,16 +69,16 @@ def build_admin_router(auth) -> APIRouter:
         username = (b.get("username") or "").strip()
         email = norm_email(b.get("email"))
         if email and not valid_email(email):
-            raise HTTPException(400, "E-Mail ungültig")
+            raise HTTPException(400, auth.t("api.email_invalid"))
         if email and auth.store.email_taken(email):
-            raise HTTPException(409, "E-Mail bereits vergeben")
+            raise HTTPException(409, auth.t("api.email_taken"))
         # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
         if not username and cfg.login_identifier == "email" and not b.get("is_service"):
             username = email or ""
         if not username:
-            raise HTTPException(400, "username nötig")
+            raise HTTPException(400, auth.t("api.username_req"))
         if auth.store.get_user_by_name(username):
-            raise HTTPException(409, "existiert schon")
+            raise HTTPException(409, auth.t("api.user_exists"))
         roles = b.get("roles") or []
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
@@ -95,7 +95,7 @@ def build_admin_router(auth) -> APIRouter:
         b = await auth.json_body(request)
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
-            raise HTTPException(400, "sich selbst nicht sperren")
+            raise HTTPException(400, auth.t("api.no_self_lock"))
         auth.store.set_disabled(uid, disabled)
         keys = 0
         if disabled:
@@ -113,7 +113,7 @@ def build_admin_router(auth) -> APIRouter:
         guard(request)
         b = await auth.json_body(request)
         if not b.get("password"):
-            raise HTTPException(400, "password nötig")
+            raise HTTPException(400, auth.t("api.password_req"))
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
@@ -200,7 +200,7 @@ def build_admin_router(auth) -> APIRouter:
             b = await auth.json_body(request)
             name = (b.get("name") or "").strip()
             if not name or not b.get("secret"):
-                raise HTTPException(400, "name + secret nötig")
+                raise HTTPException(400, auth.t("api.name_secret_req"))
             try:
                 auth.set_resource_secret(name, b["secret"], kind=b.get("kind") or "pin", label=b.get("label"))
             except ValueError as e:

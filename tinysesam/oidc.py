@@ -14,6 +14,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import RedirectResponse
 
 from . import security
+from .messages import translate
 
 
 def _hash(wert: str) -> str:
@@ -77,14 +78,21 @@ class OIDCClient:
                        "scope": self.scopes, "state": state, "nonce": nonce})
         return self.meta()["authorization_endpoint"] + "?" + q
 
-    def exchange(self, code, redirect_uri, nonce):
+    def exchange(self, code, redirect_uri, nonce, t=None):
+        """Code gegen Tokens tauschen und das ID-Token verifizieren.
+
+        `t` ist die Übersetzungsfunktion des Aufrufers (`auth.t`). Der Client selbst kennt keine
+        Sprache — er spricht das Protokoll, nicht mit dem Nutzer. Ohne `t` bleiben die beiden
+        Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch unterzuschieben.
+        """
+        t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
         import httpx
         from authlib.jose import jwt
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data={
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "client_id": self.client_id, "client_secret": self.client_secret}).json()
         if "id_token" not in tok:
-            raise HTTPException(502, f"OIDC-Token-Fehler: {tok.get('error', 'unbekannt')}")
+            raise HTTPException(502, t("api.oidc_token", grund=tok.get("error", "?")))
         optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
                     "aud": {"essential": True, "value": self.client_id}}
         try:
@@ -101,7 +109,7 @@ class OIDCClient:
             claims = jwt.decode(tok["id_token"], self._jwkset(erzwingen=True), claims_options=optionen)
         claims.validate()  # exp/iat/nbf
         if nonce and claims.get("nonce") != nonce:
-            raise HTTPException(400, "OIDC nonce mismatch")
+            raise HTTPException(400, t("api.oidc_nonce"))
         return claims, tok
 
     def end_session_url(self, post_logout_redirect_uri=None):
@@ -168,29 +176,29 @@ def register_oidc_routes(router, auth):
     @router.get(cfg.oidc_callback_path)
     def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
         if error:
-            raise HTTPException(400, f"OIDC-Fehler: {error}")
+            raise HTTPException(400, auth.t("api.oidc_error", grund=error))
         flow = auth.store.pop_flow("oidc:" + state)
         if not flow:
-            raise HTTPException(400, "OIDC-state ungültig oder abgelaufen")
+            raise HTTPException(400, auth.t("api.oidc_state"))
         # Der Rückweg muss aus DEMSELBEN Browser kommen, der den Flow begonnen hat.
         erwartet = flow.get("fk")
         mitgebracht = request.cookies.get(_OIDCFLOW) or ""
         if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
-            raise HTTPException(400, "OIDC-Anmeldung wurde nicht in diesem Browser begonnen")
-        claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"])
+            raise HTTPException(400, auth.t("api.oidc_browser"))
+        claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
         info = {**oidc.userinfo(tok.get("access_token")), **dict(claims)}
 
         if cfg.oidc_allowed_groups:
             groups = info.get(cfg.oidc_group_claim) or []
             if not (set(cfg.oidc_allowed_groups) & set(groups if isinstance(groups, list) else [groups])):
-                raise HTTPException(403, "Kein Zugriff — erforderliche Gruppe fehlt")
+                raise HTTPException(403, auth.t("api.oidc_group"))
 
         issuer, sub = oidc.meta()["issuer"], claims["sub"]
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
             if not cfg.oidc_auto_create:
-                raise HTTPException(403, "Kein mit diesem SSO-Konto verknüpfter Account")
+                raise HTTPException(403, auth.t("api.oidc_nolink"))
             username = info.get("preferred_username") or info.get("email") or ("oidc-" + sub[:8])
             base_un, i = username, 1
             while auth.store.get_user_by_name(username):

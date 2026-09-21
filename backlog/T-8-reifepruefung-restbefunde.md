@@ -61,9 +61,10 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 
 ## Paket und Installation
 
-- [ ] `python -m tinysesam.gateway` läuft nach dem dokumentierten pip-Install nicht (uvicorn)
-- [ ] `--help` beim **Gateway** startet einen Server auf `0.0.0.0:8000` (für `python -m tinysesam`
-      erledigt: Exit 0 statt 2; der Gateway-Einstieg steht noch aus)
+- [x] `python -m tinysesam.gateway` läuft nach dem dokumentierten pip-Install nicht — behoben:
+      Extra `[gateway]`, verständliche Meldung, Doku und Dockerfile nachgezogen
+- [x] `--help` beim Gateway startete einen Server auf `0.0.0.0:8000` — behoben: Hilfe und
+      Exit 0; ein unbekanntes Argument endet mit 2
 - [x] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
       — behoben: Matrix auf alle fünf, plus Hygiene-Prüfung Classifier ↔ Matrix
 - [ ] Das sdist enthält keine Tests — wer neu paketiert, kann den Bau nicht prüfen
@@ -87,13 +88,15 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 
 ## Doku, Website, Sprache
 
-- [ ] 31 harte deutsche Fehlertexte in HTTP-Antworten — auch bei `lang="en"`
+- [x] 31 harte deutsche Fehlertexte in HTTP-Antworten — behoben: 35 Meldungen über `api.*`
+      zweisprachig, Hygiene-Prüfung verbietet festen Text in `HTTPException`
       (in der Prüfung dreifach gemeldet, ist ein Befund)
 - [x] `totp_required` ist ein toter Schalter — behoben: wird abgewiesen, Doku nennt `login_chain`
-- [ ] Beide READMEs bewerben einen Update-Knopf, den es seit 0.12.0 bewusst nicht gibt
+- [x] Beide READMEs bewerben einen Update-Knopf, den es seit 0.12.0 bewusst nicht gibt — behoben
 - [ ] Kein vollständiger Konfigurations-Nachschlag: 36 von 119 Feldern kommen in keiner Doku vor
-- [ ] Die PyPI-Projektseite zeigt ein kaputtes Logo und sieben tote Links
-- [ ] Die README wird zur PyPI-Beschreibung, enthält aber sieben relative Verweise
+- [x] Die PyPI-Projektseite zeigt ein kaputtes Logo und sieben tote Links — behoben
+- [x] Die README wird zur PyPI-Beschreibung, enthält aber sieben relative Verweise — behoben:
+      absolute URLs, plus Prüfung in `test_repo.py`
 
 ## Herkunft
 

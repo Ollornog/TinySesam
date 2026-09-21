@@ -68,6 +68,43 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Behoben — die Antworten sprachen Deutsch, auch auf Englisch
+
+**32 HTTP-Antworten trugen festen deutschen Text** — CSRF-Fehler, „Adminrechte nötig", OIDC- und
+Passkey-Meldungen —, auch in einer Installation mit `lang="en"`. Die UI war zweisprachig, die
+Antworten an Maschinen und Proxys nicht. Sie laufen jetzt über die Übersetzungstabelle
+(Präfix `api.*`, getrennt von den `err.*` der UI-Seiten). Eine Hygiene-Prüfung verbietet festen
+Text in einer `HTTPException`, damit die Lücke nicht von selbst nachwächst.
+
+`OIDCClient.exchange()` nimmt dafür die Übersetzungsfunktion des Aufrufers entgegen (`t=auth.t`).
+Der Client selbst kennt keine Sprache — er spricht das Protokoll, nicht mit dem Nutzer; ohne `t`
+bleiben seine beiden Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch
+unterzuschieben.
+
+### Behoben — das Gateway startete nach der eigenen Anleitung nicht
+
+Die README nannte `pip install 'tinysesam[oidc]'` und `python -m tinysesam.gateway` in einem
+Atemzug. `[oidc]` bringt aber keinen ASGI-Server mit: Der Startbefehl endete in einem
+`ModuleNotFoundError: uvicorn`, was wie ein Defekt aussah statt wie eine fehlende Zeile im
+Install-Befehl. Dass das Docker-Abbild lief, lag an einem Flicken im `Dockerfile`, das `uvicorn`
+von Hand danebeninstallierte — er verdeckte die Lücke im Extra.
+
+Neu: **`pip install 'tinysesam[gateway]'`** (= `[oidc]` plus Server). Fehlt der Server trotzdem,
+sagt das Gateway, welche Zeile fehlt, statt einen Stacktrace zu zeigen. `--help` gibt jetzt eine
+Hilfe aus und endet mit 0 — vorher landete die Frage im uvicorn-Import und danach in einem Server
+auf `0.0.0.0:8000`: Wer wissen wollte, wie das Ding heißt, hatte es laufen. Ein unbekanntes
+Argument endet mit 2.
+
+### Behoben — die PyPI-Seite zeigte ein totes Logo und sieben tote Verweise
+
+`README.md` ist zugleich die Projektbeschreibung auf PyPI, und dort löst nichts relative
+Repo-Pfade auf. Alle Verweise in dieser Datei sind jetzt absolut; eine Prüfung hält es fest. Die
+deutsche Fassung unter `i18n/` wird nur auf GitHub gelesen und darf relativ bleiben.
+
+Im selben Zug: Beide READMEs bewarben einen **Update-Knopf** im Admin-Panel („Modus manual/auto,
+Version-Pin, jetzt aktualisieren"). Den gibt es seit 0.12.0 bewusst nicht mehr
+([ADR-2](backlog/ADR-2-kein-selbst-update.md)) — das Panel zeigt die Version und einen Hinweis.
+
 ### Behoben — `Typing :: Typed` war eine Zusage, die niemand gemessen hat
 
 Das Paket trägt den Classifier und eine `py.typed`: die Zusage an jeden Nutzer, dass die

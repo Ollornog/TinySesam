@@ -790,4 +790,56 @@ fehlend = sorted(gerendert - set(auth_tpl.SEITEN))
 r.check("jede gerenderte Seite steht in TinySesam.SEITEN", not fehlend,
         f"nicht ersetzbar, obwohl es sie gibt: {fehlend}")
 
+
+# ── Deutsche Fehlertexte bei lang="en" ───────────────────────────────────────
+# 32 HTTP-Antworten trugen festen deutschen Text — auch in einer Installation, die auf Englisch
+# steht. Die UI war zweisprachig, die Antworten an Maschinen und Proxys nicht.
+auth_en, app_en = _app(lang="en")
+auth_en.create_user("someone", password="geheim12345")
+cen = TestClient(app_en)
+
+# Echte Antworten messen, nicht die Übersetzungstabelle abfragen. Dafür braucht es eine
+# angemeldete Sitzung: Ohne sie antwortet jeder Endpunkt mit 401 „Unauthorized", und der Test
+# sähe grün aus, ohne je eine übersetzte Meldung gesehen zu haben.
+def _antworten(auth_obj, app_obj, benutzer):
+    klient = TestClient(app_obj)
+    uid = auth_obj.store.get_user_by_name(benutzer)["id"]
+    klient.cookies.set(auth_obj.cfg.session_cookie,
+                       auth_obj.store.create_session(uid, 3600, True, "password"))
+    return [
+        ("CSRF fehlt", klient.post("/auth/apikeys", json={"name": "x"})),
+        ("Ressource unbekannt", klient.get("/auth/resource/gibtsnicht")),
+    ]
+
+
+antworten = _antworten(auth_en, app_en, "someone")
+umlaute = "äöüßÄÖÜ"
+deutsch = [f"{was}: {a.text[:70]}" for was, a in antworten
+           if any(z in (a.text or "") for z in umlaute)
+           or "nötig" in (a.text or "") or "ungültig" in (a.text or "")]
+r.check("bei lang='en' kommt kein deutscher Text aus den Endpunkten", not deutsch,
+        " | ".join(deutsch))
+r.check("und die Antworten tragen überhaupt eine eigene Meldung",
+        all(a.status_code >= 400 for _, a in antworten)
+        and any("Unauthorized" not in (a.text or "") for _, a in antworten),
+        f"Status {[a.status_code for _, a in antworten]}, Texte "
+        f"{[(a.text or '')[:40] for _, a in antworten]} — misst sonst nichts")
+
+# Und auf Deutsch muss weiterhin Deutsch kommen, sonst wäre die Übersetzung nur verschoben.
+auth_de, app_de = _app(lang="de")
+auth_de.create_user("jemand", password="geheim12345")
+deutsche = " ".join((a.text or "") for _, a in _antworten(auth_de, app_de, "jemand"))
+r.check("bei lang='de' kommt weiterhin Deutsch",
+        any(z in deutsche for z in umlaute) or "nötig" in deutsche,
+        f"{deutsche[:100]!r}")
+
+# Hygiene: kein roher Text mehr in einer HTTPException — sonst wächst die Lücke von selbst nach.
+roh = []
+for modul in ("manager.py", "router.py", "admin.py", "oidc.py", "webauthn_.py", "saml_.py"):
+    quelle = (Path(__file__).resolve().parent.parent / "tinysesam" / modul).read_text(encoding="utf-8")
+    for nr, zeile in enumerate(quelle.splitlines(), 1):
+        if re.search(r'HTTPException\(\s*\d+\s*,\s*[fr]?"', zeile):
+            roh.append(f"{modul}:{nr}")
+r.check("keine HTTPException mit festem Text mehr", not roh, ", ".join(roh[:5]))
+
 sys.exit(r.done())

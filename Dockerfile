@@ -5,9 +5,14 @@
 #
 # Fertige Abbilder: ghcr.io/ollornog/tinysesam:<version>  (siehe .github/workflows/release.yml)
 #
-# Nur das `[oidc]`-Extra. `[all]` zöge `python3-saml` und damit die C-Bibliothek `libxmlsec1`
-# nach — die müsste für arm64 unter Emulation kompiliert werden, für ein Extra, das das
-# Gateway gar nicht benutzt. Wer SAML will, baut sich TinySesam als Bibliothek in eine App.
+# Nur das `[gateway]`-Extra (= `[oidc]` plus ASGI-Server). `[all]` zöge `python3-saml` und damit
+# die C-Bibliothek `libxmlsec1` nach — die müsste für arm64 unter Emulation kompiliert werden,
+# für ein Extra, das das Gateway gar nicht benutzt. Wer SAML will, baut sich TinySesam als
+# Bibliothek in eine App.
+#
+# Bis 0.18.0 stand hier `.[oidc]` plus ein von Hand angehängtes `uvicorn>=0.30`. Dieser Flicken
+# war der Grund, warum das Abbild lief und ein `pip install 'tinysesam[oidc]'` nach Anleitung
+# nicht: Der Server fehlte im Extra, nicht im Abbild.
 
 # ---------- Bauen ----------
 FROM python:3.12-slim AS build
@@ -20,7 +25,7 @@ COPY tinysesam ./tinysesam
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir ".[oidc]" "uvicorn>=0.30"
+    && /opt/venv/bin/pip install --no-cache-dir ".[gateway]"
 
 # ---------- Laufen ----------
 FROM python:3.12-slim

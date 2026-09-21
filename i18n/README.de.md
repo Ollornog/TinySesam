@@ -439,7 +439,11 @@ Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extr
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
-- **Update:** Version/Status, Modus manual/auto, Version-Pin, „jetzt aktualisieren".
+- **Version:** die laufende Version plus ein Hinweis, wie Updates laufen — es gibt **keinen
+  „jetzt aktualisieren"-Knopf**, und zwar mit Absicht ([ADR-2](../backlog/ADR-2-kein-selbst-update.md)):
+  Ein Auth-Modul, das zur Laufzeit Code nachlädt, ist eine Hintertür mit Bedienungsanleitung.
+  Aktualisiert wird dort, wo installiert wurde. (Hier stand bis 0.18.0 ein Knopf, ein
+  manual/auto-Modus und ein Version-Pin — nichts davon gibt es seit 0.12.0.)
 - **Audit-Log** einsehen.
 
 JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automation).
@@ -582,7 +586,9 @@ TinySesamConfig.oidc_gateway(issuer="…", client_id="…", client_secret="…",
 ## Als reines OIDC-Gateway (Preset)
 
 Wer nur **OIDC-SSO vor beliebige Apps** will (Authelia-/oauth2-proxy-Stil), betreibt TinySesam als
-Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[oidc]'`:
+Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[gateway]'`:
+(`[gateway]` = `[oidc]` **plus ASGI-Server**. Mit `[oidc]` allein endet der Startbefehl unten
+in `ModuleNotFoundError: uvicorn` — genau diese Kombination stand hier vorher.)
 
 ```bash
 export TINYSESAM_OIDC_ISSUER=https://id.example.com \

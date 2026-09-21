@@ -59,7 +59,7 @@ def register_passkey_routes(router, auth):
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
-            raise HTTPException(400, "Registrierung abgelaufen")
+            raise HTTPException(400, auth.t("api.passkey_reg_expired"))
         body = await request.body()
         v = verify_registration_response(credential=body.decode(),
                                          expected_challenge=base64url_to_bytes(flow["challenge"]),
@@ -91,12 +91,12 @@ def register_passkey_routes(router, auth):
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
-            raise HTTPException(400, "Login abgelaufen")
+            raise HTTPException(400, auth.t("api.passkey_login_expired"))
         body = await request.body()
         data = _json.loads(body)
         row = auth.store.get_webauthn_by_credid(data.get("id") or data.get("rawId"))
         if not row:
-            raise HTTPException(400, "Unbekannter Passkey")
+            raise HTTPException(400, auth.t("api.passkey_unknown"))
         v = verify_authentication_response(
             credential=body.decode(), expected_challenge=base64url_to_bytes(flow["challenge"]),
             expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,

@@ -42,25 +42,38 @@ for schalter, (modul, extra) in sorted(SCHALTER_BRAUCHT_EXTRA.items()):
 
 # Die Kern-Abhängigkeiten sind das, was `pip install tinysesam` wirklich mitbringt.
 # Was per Vorgabe an ist, darf nur daraus schöpfen.
-# Über die Paket-Metadaten, nicht über pyproject.toml: Das misst, was beim Nutzer nach
-# `pip install tinysesam` tatsächlich landet — und es läuft auf jeder unterstützten Version.
-# (`tomllib` gibt es erst ab 3.11; der Test starb auf 3.10 mit ModuleNotFoundError, und weil
-# ci-local nur EINE Version fährt, fiel das erst in der GitHub-Matrix auf.)
-from importlib.metadata import PackageNotFoundError, requires  # noqa: E402
+# Gelesen wird `pyproject.toml` — die Datei, aus der das Paket gebaut wird.
+#
+# Zwischendurch lief das über `importlib.metadata.requires()`, mit dem Argument „misst näher am
+# Gegenstand: was nach `pip install tinysesam` wirklich da ist". Das stimmte und war trotzdem
+# falsch: Die Metadaten einer `pip install -e .`-Installation werden EINMAL geschrieben. Im
+# CI-Abbild liegt eine solche Installation, der Arbeitsstand wird daneben gemountet — der Test
+# maß also den Stand von vorgestern und meldete ein Extra als fehlend, das seit einer Stunde
+# im pyproject steht. Für die Frage „was verspricht das Paket" ist die Quelldatei richtig.
+#
+# (`tomllib` gibt es erst ab Python 3.11, und zugesagt ist ab 3.10 — deshalb von Hand gelesen
+# statt geparst. Für zwei Listen reicht das.)
+import re as _re  # noqa: E402
 
-try:
-    anforderungen = requires("tinysesam") or []
-except PackageNotFoundError:                     # aus dem Quellbaum importiert, nicht installiert
-    import re as _re
-    roh = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    block = _re.search(r"^dependencies\s*=\s*\[(.*?)\]", roh, _re.S | _re.M)
-    anforderungen = _re.findall(r'"([^"]+)"', block.group(1)) if block else []
-    r.check("die Kern-Abhängigkeiten sind überhaupt ablesbar", bool(anforderungen),
-            "weder Paket-Metadaten noch pyproject lieferten eine Liste")
+_roh = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-# Was hinter einem Extra hängt, gehört nicht zum Kern.
+
+def _liste(name: str, quelle: str = "") -> list:
+    """Den Inhalt einer `name = [...]`-Zuweisung als Liste von Zeichenketten."""
+    treffer = _re.search(rf"^{_re.escape(name)}\s*=\s*\[(.*?)\]", quelle or _roh, _re.S | _re.M)
+    return _re.findall(r'"([^"]+)"', treffer.group(1)) if treffer else []
+
+
+anforderungen = _liste("dependencies")
+r.check("die Kern-Abhängigkeiten sind überhaupt ablesbar", bool(anforderungen),
+        "pyproject.toml lieferte keine `dependencies`-Liste — dann prüft der Rest nichts")
+
+_extras_block = _roh[_roh.index("[project.optional-dependencies]"):]
+_extras_block = _extras_block[:_extras_block.index("\n[", 1)]
+
+# `dependencies` ist per Definition der Kern — Extras stehen in einem eigenen Abschnitt.
 kern = {_d.split(";")[0].split(">")[0].split("=")[0].split("[")[0].strip().lower()
-        for _d in anforderungen if "extra ==" not in _d}
+        for _d in anforderungen}
 r.check("fastapi gehört zum Kern", "fastapi" in kern)
 r.check("webauthn gehört NICHT zum Kern (sonst wäre der Schalter oben harmlos)",
         "webauthn" not in kern)
@@ -80,5 +93,52 @@ r.check("run_all rät nicht mehr am stderr herum",
         'ModuleNotFoundError" in r.stderr' not in runner,
         "die alte Heuristik ist zurück — sie kann 'Test braucht Extra' nicht von "
         "'Bibliothek stürzt ab' unterscheiden")
+
+
+# ── Das Gateway startete nach der eigenen Anleitung nicht ────────────────────
+# Die README nannte `pip install 'tinysesam[oidc]'` und `python -m tinysesam.gateway` in einem
+# Atemzug. `[oidc]` bringt aber keinen ASGI-Server mit: Der Startbefehl endete in einem
+# ModuleNotFoundError für uvicorn, was wie ein Defekt aussah statt wie eine fehlende Zeile im
+# Install-Befehl. Das Docker-Abbild lief, weil es `uvicorn` von Hand danebeninstallierte — der
+# Flicken verdeckte die Lücke im Extra.
+gateway_extra = _liste("gateway", _extras_block)
+r.check("es gibt ein Extra [gateway]", bool(gateway_extra),
+        "nur [oidc] — dann startet die dokumentierte Zeile nicht")
+r.check("und es enthält einen ASGI-Server",
+        any("uvicorn" in d for d in gateway_extra), f"{gateway_extra}")
+
+# Die Anleitung muss auf dieses Extra zeigen, nicht mehr auf [oidc]. Gesucht wird der
+# Gateway-Abschnitt selbst (die Überschrift mit „gateway"/„Gateway"), nicht eine Formulierung —
+# der deutsche und der englische Text sind verschieden gebaut.
+import re as _re2  # noqa: E402
+
+for datei in ("README.md", "i18n/README.de.md"):
+    text = (ROOT / datei).read_text(encoding="utf-8")
+    abschnitte = _re2.split(r"^## ", text, flags=_re2.M)
+    passend = [a for a in abschnitte if _re2.search(r"[Gg]ateway", a.splitlines()[0] if a else "")]
+    r.check(f"{datei} hat einen Gateway-Abschnitt", bool(passend),
+            "nicht gefunden — dann prüft der Test darunter nichts")
+    zusammen = "\n".join(passend)
+    r.check(f"{datei} nennt fürs Gateway das Extra [gateway]",
+            "tinysesam[gateway]" in zusammen, "verweist weiter auf [oidc]")
+    r.check(f"{datei} nennt dort NICHT mehr [oidc] als Installationsweg",
+            "pip install 'tinysesam[oidc]'" not in zusammen,
+            "die alte, nicht startfähige Zeile steht noch da")
+
+# `--help` ist eine Frage, kein Startbefehl: vorher lief der Server auf 0.0.0.0:8000.
+import subprocess  # noqa: E402
+
+lauf = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--help"],
+                      cwd=ROOT, capture_output=True, text=True, timeout=30)
+r.check("`python -m tinysesam.gateway --help` beendet sich mit 0", lauf.returncode == 0,
+        f"Exit {lauf.returncode}: {(lauf.stderr or lauf.stdout)[:100]}")
+r.check("...und gibt eine Hilfe aus, statt einen Server zu starten",
+        "TINYSESAM_OIDC_ISSUER" in lauf.stdout and "0.0.0.0" not in lauf.stdout.split("Bindeadresse")[0],
+        f"Ausgabe: {lauf.stdout[:120]!r}")
+
+fehl = subprocess.run([sys.executable, "-m", "tinysesam.gateway", "--quatsch"],
+                      cwd=ROOT, capture_output=True, text=True, timeout=30)
+r.check("ein unbekanntes Argument endet mit 2, nicht mit einem laufenden Server",
+        fehl.returncode == 2, f"Exit {fehl.returncode}")
 
 sys.exit(r.done())
