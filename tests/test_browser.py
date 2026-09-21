@@ -21,14 +21,21 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import websockets            # noqa: E402  (optional — run_all überspringt sonst)
+from voraussetzung import braucht, braucht_modul  # noqa: E402
+
+# Drei Voraussetzungen, alle drei als Zusage DIESER Suite — nicht als Rateaufgabe für den Runner.
+# Der raubte sich das früher aus dem stderr zusammen und konnte „dem Test fehlt etwas" nicht von
+# „die Bibliothek stürzt ab" unterscheiden.
+braucht_modul("websockets")
+braucht_modul("uvicorn")
+
+import websockets            # noqa: E402
 import uvicorn               # noqa: E402
 
 # `browser-actions/setup-chrome` legt die Binärdatei als `chrome` ab, Debian als `chromium`.
 CHROME = next((b for b in ("google-chrome", "chrome", "chromium", "chromium-browser")
                if shutil.which(b)), None)
-if not CHROME:
-    raise ImportError("kein Chrome gefunden")   # run_all wertet das als „übersprungen"
+braucht(CHROME, "kein Chrome gefunden")
 
 
 def _server_socket():

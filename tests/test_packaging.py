@@ -15,6 +15,12 @@ Gefunden hat dieser Test gleich beim ersten Lauf, wofür er gedacht war: Das sdi
 `tests/test_*.py`, aber weder `tests/run_all.py` noch `tests/_kit/` — eine Suite, die sich
 nicht starten lässt. Siehe `MANIFEST.in`.
 """
+
+# Diese Suite liest den Repo-Zustand ueber git. Ohne git ist sie nicht aussagekraeftig —
+# eine fehlende Voraussetzung, kein Fehlschlag.
+import shutil  # noqa: E402
+from voraussetzung import braucht  # noqa: E402
+braucht(shutil.which("git"), "git fehlt")
 import email.parser
 import os
 import re

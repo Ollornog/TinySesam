@@ -40,7 +40,11 @@ class TinySesamConfig:
 
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True
-    passkey_enabled: bool = True          # WebAuthn / Passkeys (passwortlos)
+    # Vorgabe AUS, weil `webauthn` nicht im Kern steckt, sondern im Extra [passkey].
+    # Stand bis 2026-09-21 auf True — damit stuerzte `pip install tinysesam` mit
+    # Vorgabe-Konfiguration beim Bau des Routers ab (ModuleNotFoundError: webauthn).
+    # Der allererste Schritt jedes neuen Nutzers, und die Testsuite konnte es nicht sehen.
+    passkey_enabled: bool = False         # WebAuthn / Passkeys (passwortlos) — braucht [passkey]
     pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
     pin_login: bool = True                # PIN als Erstfaktor auf der Login-Seite anbieten.
                                           # False = PIN existiert, dient aber NUR als Zusatzfaktor

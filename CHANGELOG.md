@@ -2,39 +2,36 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [1.0.0] — 2026-09-21
+## [0.18.0] — 2026-09-21
 
-**TinySesam liegt ab jetzt auf PyPI:** `pip install tinysesam`. Das ist die einzige Änderung, die
-alle betrifft — an der Bibliothek selbst ändert sich nichts. Wer per Git-Tag installiert, kann
-genau so weitermachen; der Weg bleibt bestehen und ist weiterhin der richtige, wenn ein **Commit**
-gepinnt werden soll statt einer Version.
+**Sicherheits-Release. Wer TinySesam einsetzt, sollte aktualisieren** — sechs Lücken, jede mit
+einem eigenen Nachstellungs-Skript belegt, darunter Rollen-Eskalation und Konto-Unterschiebung.
+Die Einzelheiten stehen unter „Behoben"; die Tests dazu halten jeden nachgestellten Angriff fest,
+damit er nicht zurückkommt.
 
-Die Versionsnummer springt von 0.17.0 auf 1.0.0. Was das bedeutet, steht unten — und was es
-**nicht** bedeutet, ebenfalls: Der Meilenstein verlangte zwei Minor-Versionen ohne API-Bruch,
-erreicht ist eine. Die dritte Bedingung wurde vom Projektinhaber vorzeitig abgehakt, nicht erfüllt.
+**Diese Version ist bewusst NICHT 1.0.** Der Sprung war vorbereitet und wurde zurückgenommen:
+Eine Reifeprüfung mit vier unabhängigen Blickwinkeln fand 47 Befunde, von denen 12 einzeln
+nachgestellt wurden — **12 haltbar, 11 davon Blocker**. Ein Paket mit Rollen-Eskalation trägt kein
+„Production/Stable", und eine PyPI-Version ist unwiderruflich. Der Reifegrad steht deshalb weiter
+auf `4 - Beta`.
 
-> **Bekannt und offen, beim Herrichten gefunden:** Zwei Punkte kamen nicht mit, weil dieses
-> Release die Bibliothek nicht anfasst. Sie stehen im Backlog unter
-> [M-2](backlog/M-2-nach-1-0.md), nicht in einem Nebensatz.
->
-> - **[B-1](backlog/B-1-admin-panel-rotiert-csrf.md) — das Admin-Panel würfelt bei jedem Aufruf
->   ein neues CSRF-Token.** Derselbe Fehler, der für `render_page` längst behoben ist, an der
->   dritten, nie geprüften Stelle. Wer das Panel in einem zweiten Reiter öffnet, macht ein offenes
->   Formular im ersten ungültig — **403, ohne Meldung**. Nachgestellt, nicht vermutet. Der Schutz
->   gegen Angreifer bleibt; getroffen wird der eigene Nutzer.
-> - **[T-7](backlog/T-7-spdx-lizenzausdruck.md) — die Lizenzangabe hat eine Frist.** setuptools
->   nennt sie beim Bau: Ab dem **18.02.2027** wird die Tabellenform nicht mehr unterstützt.
+**Warum das niemandem auffiel, ist der eigentliche Befund:** `tests/run_all.py` hat echte
+Fehlschläge als „übersprungen" verbucht. Die Suite war grün, weil sie nicht gemessen hat. Das ist
+zuerst repariert worden — alles andere wäre auf Sand gebaut.
 
-### Hinzugefügt — Installation aus dem Paketindex
+**Die Vorbereitung für PyPI bleibt drin** (Metadaten, Trusted Publishing, Packaging-Test,
+`MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
+über den gepinnten Git-Tag.
 
-```bash
-pip install tinysesam                  # Kern
-pip install "tinysesam[all]==1.0.0"    # alles, auf eine Version festgelegt
-```
+### Hinzugefügt — die Veröffentlichung auf PyPI ist vorbereitet (noch nicht vollzogen)
 
-Der Weg über Git bleibt unverändert gültig und ist für Commit-Pins weiterhin der einzige. Neu ist,
-was vorher fehlte: `git` muss auf dem Bau-Rechner nicht mehr vorhanden sein, Werkzeuge sehen eine
-neue Version, und eine veröffentlichte Version ändert sich nie wieder.
+Metadaten, `MANIFEST.in`, ein Packaging-Test und der Release-Workflow stehen bereit. **Installiert
+wird weiterhin über den gepinnten Git-Tag** — der Upload erfolgt erst mit 1.0, und 1.0 kommt erst,
+wenn die Befunde aus der Reifeprüfung abgearbeitet sind.
+
+Der Packaging-Test hat sich sofort bezahlt gemacht: Das sdist enthielt eine **halbe Testsuite**
+(setuptools zog `tests/test_*.py` nach einer alten Heuristik hinein, ohne `run_all.py` und ohne
+`_kit/`) — ausgeliefert worden wäre eine Suite, die beim Import scheitert.
 
 **Veröffentlicht wird ohne Geheimnis.** Der Release-Workflow weist sich gegenüber PyPI über seine
 eigene OIDC-Identität aus (Trusted Publishing) — kein Token im Repo, keins zum Rotieren, keins, das
@@ -47,18 +44,15 @@ Felder im Kopf von `.github/workflows/release.yml`.
 Verweis auf den Nachfolger und unverändertem Text. Die Entscheidung war nicht falsch, sie ist
 eingelöst.
 
-### Geändert — was 1.0 verspricht
+### Zur API-Oberfläche
 
-Ab hier gilt SemVer ohne Sonderregel: **Ein Bruch der öffentlichen API bedeutet 2.0.0.** Bisher
-setzte ein Bruch nur eine Uhr zurück; jetzt kostet er eine Hauptversion. Gemessen wird das nicht
-nach Gefühl — `tests/test_api_surface.py` hält 231 Namen fest und trennt Bruch von Erweiterung.
+Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen** — die Oberfläche ist Zeichen für
+Zeichen dieselbe. Das war die dritte Bedingung für 1.0 und ist für den erreichten Zeitraum belegt.
 
-Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen.** Die Oberfläche ist Zeichen für
-Zeichen dieselbe.
-
-Was 1.0 **nicht** heisst: dass die Zusage über mehrere Versionen unter Änderungen gehalten hätte.
-0.17.0 hat die Bibliothek nicht angefasst. [M-1](backlog/M-1-api-stabil-1-0.md) sagt offen, was
-erfüllt war und was erlassen wurde.
+Sie trägt 1.0 trotzdem nicht: Die Zusage musste nie unter Änderungen halten, weil 0.17.0 die
+Bibliothek gar nicht angefasst hat. Und die Sicherheitsfixes dieser Version ändern **Verhalten**,
+das Nutzer bisher (falsch) voraussetzen konnten — eine gemessene Oberfläche sagt darüber nichts.
+[M-1](backlog/M-1-api-stabil-1-0.md) bleibt offen.
 
 ### Hinzugefügt — `tests/test_packaging.py`: das Paket, wie es ankommt
 

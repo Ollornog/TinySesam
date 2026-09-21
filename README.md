@@ -62,14 +62,14 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 ```bash
 pip install tinysesam                  # core: password + TOTP
 pip install "tinysesam[all]"           # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: tinysesam==1.0.0
+# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: tinysesam==0.18.0
 ```
 
 It installs straight from GitHub just as well — take this route when you want a **commit**
 rather than a released version:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
 ```
 
 ## Quickstart
@@ -321,7 +321,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==1.0.0
+tinysesam[oidc]==0.18.0
 ```
 
 A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
@@ -331,14 +331,14 @@ The same pin from git, if you install that way — note that a **tag can be move
 immutability pin the commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v1.0.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0
 ```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v1.0.0/tinysesam-1.0.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.18.0/tinysesam-0.18.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -346,7 +346,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v1.0.0/tinys
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v1.0.0
+ghcr.io/ollornog/tinysesam:v0.18.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -357,9 +357,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog
-gh attestation verify tinysesam-1.0.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v1.0.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog
+gh attestation verify tinysesam-0.18.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 

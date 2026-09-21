@@ -2,7 +2,7 @@
 id: M-1
 type: Milestone
 title: 1.0 — API stabil genug für PyPI
-status: erledigt
+status: offen
 tags: [release, api]
 created: 2026-07-23
 ---
@@ -16,42 +16,40 @@ ohne Handgriffe durchläuft.
 Erst dann ist PyPI vertretbar — siehe [ADR-1](ADR-1-pypi-vertagt.md). Bis dahin ist der gepinnte
 Git-Tag das ehrlichere Artefakt.
 
-## Stand: geschlossen mit 1.0.0 (2026-09-21)
+## Stand: wieder offen (2026-09-21, nach der Reifeprüfung)
+
+Der Meilenstein war für einen Tag geschlossen und ist es nicht mehr. Eine Reifeprüfung mit vier
+unabhängigen Blickwinkeln (Sicherheit, Paket/Installation, API-Vertrag, Betrieb) fand **47 Befunde**;
+12 davon wurden einzeln nachgestellt — **12 haltbar, 11 als Blocker bestätigt**.
+
+Darunter sechs Sicherheitslücken, jede mit eigenem Nachstellungs-Skript belegt: Rollen-Eskalation
+über selbst ausgestellte API-Keys, Konto-Unterschiebung über OIDC (`state` ohne Browser-Bindung)
+und SAML (`InResponseTo` ungeprüft), sechs schreibende Routen ohne CSRF-Prüfung (darunter
+„2FA abschalten", ohne Audit-Eintrag), eine zurücksetzbare Brute-Force-Sperre und ein
+Admin-Bootstrap, bei dem der Erste gewinnt, der die Adresse eintippt.
+
+**Ein Auth-Paket mit Rollen-Eskalation trägt kein „Production/Stable", und eine PyPI-Version ist
+unwiderruflich.** Deshalb 0.18.0 statt 1.0.0.
+
+### Warum es niemandem auffiel — der Befund hinter den Befunden
+
+`tests/run_all.py` hat echte Fehlschläge als **„übersprungen"** verbucht. Die Suite war grün, weil
+sie nicht gemessen hat. Selbst der schlimmste Fall blieb dadurch unsichtbar: `pip install tinysesam`
+mit Vorgabe-Konfiguration startet nicht (`ModuleNotFoundError: webauthn`) — der allererste Schritt
+jedes neuen Nutzers, und die CI konnte es nicht sehen.
+
+Das ist zuerst repariert worden. Alles andere wäre auf Sand gebaut.
+
+### Die Bedingungen, Stand jetzt
 
 | Bedingung | Stand |
 |---|---|
-| Zeremonien gegen echte Gegenstellen | **erfüllt** — [T-1](T-1-e2e-gegen-echten-idp.md), Bühne per [T-6](T-6-stage-per-playbook.md) reproduzierbar |
-| Release ohne Handgriffe | **erfüllt** — `scripts/_release.py` setzt alle Versionsstellen und schliesst den CHANGELOG-Abschnitt; Tag und Push bleiben bewusst beim Menschen |
-| zwei Minor-Versionen ohne Bruch | **eine erreicht, nicht zwei** — vorzeitig abgehakt, Entscheidung des Projektinhabers |
+| Zeremonien gegen echte Gegenstellen | erfüllt |
+| Release ohne Handgriffe | erfüllt |
+| zwei Minor-Versionen ohne API-Bruch | **Uhr startet mit 0.18.0 neu** |
+| **keine offenen Sicherheitsbefunde** | **neu — siehe M-2** |
 
-**Die dritte Bedingung ist nicht erfüllt, sondern erlassen.** Das gehört hier hin, weil ein
-Meilenstein, der sich seine Kriterien im Nachhinein passend macht, keiner mehr ist. Die Uhr lief
-seit 0.16.0; 0.17.0 war die erste der beiden Minor-Versionen, 0.18.0 hätte die zweite werden
-müssen. Stattdessen folgt auf 0.17.0 direkt 1.0.0.
+Die vierte Bedingung stand vorher nicht da, weil niemand danach gesucht hatte. Sie gehört dazu:
+Eine stabile Oberfläche über einem Paket mit Rollen-Eskalation misst das Falsche.
 
-Was **gemessen** wurde statt behauptet: Zwischen `v0.16.0` und dem Stand vor 1.0.0 meldet
-`tests/test_api_surface.py` **null Brüche und null Erweiterungen** — 231 Namen, Zeichen für
-Zeichen dieselben. Gegengeprüft wurde nicht mit dem festgeschriebenen `api_surface.json` (das
-entstand erst in 0.17.0 und wäre ein Zirkelschluss), sondern mit der Oberfläche, die derselbe
-Code aus dem Baum bei `v0.16.0` berechnet.
-
-Die Zusage, die 1.0 trägt, ist damit belegt — nur eben über eine Minor-Version statt über zwei.
-Der Unterschied ist nicht nichts: Zwei Versionen zeigen, dass die Oberfläche **auch unter
-Änderungen** hält; 0.17.0 hat die Bibliothek gar nicht angefasst. Wer das nachliest, soll es
-wissen und nicht aus einem Häkchen schliessen, es sei durchgestanden worden.
-
-Was sich erarbeiten liess, ist die **Messbarkeit**: `tests/test_api_surface.py` hält die
-öffentliche Oberfläche (231 Namen: Manager-Methoden, Config-Felder, Presets, Exporte) in
-`tests/api_surface.json` fest und meldet jede Abweichung. Der Test unterscheidet dabei **Bruch**
-(entfernt, umbenannt, Signatur unverträglich geändert) von **Erweiterung** (Parameter mit
-Vorgabewert angehängt) — ein Wächter, der bei Harmlosem schreit, wird weggeklickt, und dann
-übersieht man den echten.
-
-Gegenprobe mit den beiden Brüchen, die tatsächlich passiert sind: Die keyword-only gewordene
-Signatur von `require_role` meldet er als **BRUCH**, den zusätzlichen `purpose`-Parameter von
-`magic_url` als **Erweiterung**. Beide Male fiel der Unterschied vorher erst beim Schreiben des
-CHANGELOG auf — seitdem fällt er beim Testlauf auf.
-
-**Was ab 1.0 gilt:** Ein Bruch ist jetzt keine zurückgesetzte Uhr mehr, sondern eine neue
-Hauptversion. Das ist die eigentliche Zusage von 1.0 — und sie gilt ab dem ersten Tag, unabhängig
-davon, wie viele Minor-Versionen ihr vorausgingen.
+<!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->

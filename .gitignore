@@ -12,3 +12,4 @@ dist/
 
 # Generierte Website (web/build.py + GitHub-Action "pages")
 _site/
+.befunde-*/

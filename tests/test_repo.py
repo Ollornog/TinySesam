@@ -9,6 +9,12 @@ eingecheckten Basis, die `repokit sync` hierher schreibt. Sie ist stdlib-only un
 Testzeit nichts nach; die Zusage oben bleibt wörtlich wahr. Was hier steht, ist das, was
 nur für dieses Projekt gilt.
 """
+
+# Diese Suite liest den Repo-Zustand ueber git. Ohne git ist sie nicht aussagekraeftig —
+# eine fehlende Voraussetzung, kein Fehlschlag.
+import shutil  # noqa: E402
+from voraussetzung import braucht  # noqa: E402
+braucht(shutil.which("git"), "git fehlt")
 import os
 import re
 import sys

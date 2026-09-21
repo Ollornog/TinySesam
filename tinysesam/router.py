@@ -612,7 +612,16 @@ def build_router(auth) -> APIRouter:
     # ---------- Passkey / WebAuthn (nur wenn aktiviert) ----------
     if auth.webauthn:
         from .webauthn_ import register_passkey_routes
-        register_passkey_routes(r, auth)
+        try:
+            register_passkey_routes(r, auth)
+        except ModuleNotFoundError as e:
+            # Wer passkey_enabled bewusst einschaltet, soll lesen koennen, was fehlt — statt
+            # einen ModuleNotFoundError aus dem Innern der Bibliothek zu bekommen.
+            raise RuntimeError(
+                "passkey_enabled=True, aber das Extra [passkey] ist nicht installiert "
+                "(pip install 'tinysesam[passkey]'). Ohne es gibt es keine Passkey-Routen; "
+                "passkey_enabled=False schaltet sie ab."
+            ) from e
 
     # ---------- SAML 2.0 SP (nur wenn aktiviert) ----------
     if auth.saml:

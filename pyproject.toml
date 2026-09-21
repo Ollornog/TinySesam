@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tinysesam"
-version = "1.0.0"
+version = "0.18.0"
 # Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
@@ -17,7 +17,7 @@ authors = [{ name = "ollornog" }]
 keywords = ["fastapi", "authentication", "auth", "oidc", "webauthn", "passkey", "totp", "2fa",
             "magic-link", "forward-auth", "sso", "session"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",

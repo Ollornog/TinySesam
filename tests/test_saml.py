@@ -1,5 +1,10 @@
 """F1: SAML 2.0 SP — Login-Redirect, ACS→User/Session, Gruppen-Gate, Metadata.
 ACS-Flow mit gefälschtem Client (keine echte signierte Assertion nötig); Metadata mit echtem onelogin."""
+
+# Diese Suite prueft den SAML-Weg — ohne python3-saml gibt es nichts zu pruefen. Die Zusage
+# steht hier und nicht im Runner: nur die Suite selbst weiss, was sie braucht.
+from voraussetzung import braucht_modul  # noqa: E402
+braucht_modul("onelogin", extra="saml")
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
