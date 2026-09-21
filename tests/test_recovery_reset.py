@@ -1,4 +1,5 @@
 """Batch C: TOTP-Recovery-Codes (one-shot) + Forgot-Password (Reset per E-Mail)."""
+import os
 import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ def ok(name):
 
 
 sent = []
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, magiclink_enabled=True, password_reset_enabled=True,
                                  recovery_code_count=6))
@@ -86,7 +87,7 @@ ok("Reset: neues Passwort gesetzt, Token verbraucht")
 
 # Der Reset hängt am Mailer, nicht am Magic-Link. Bis 0.15 verlangte die Route beides
 # (password_reset_enabled AND magiclink_enabled) — zwei Dinge, die nichts miteinander zu tun haben.
-db_x = tempfile.mktemp(suffix=".db")
+db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 post_x = []
 ax = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_x, cookie_secure=False,
                                passkey_enabled=False, password_reset_enabled=True,

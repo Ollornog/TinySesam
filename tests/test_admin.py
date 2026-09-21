@@ -1,11 +1,12 @@
 """Admin-Panel: Zugriffsschutz, User-/Service-/Key-Verwaltung, User sperren/entsperren,
 Sitzungen, Härtung, Update, Audit."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False))
 auth.ensure_admin("admin", "pw12345")
 auth.create_user("bob", password="bobpw", is_admin=False)

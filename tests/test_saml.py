@@ -5,6 +5,7 @@ ACS-Flow mit gefälschtem Client (keine echte signierte Assertion nötig); Metad
 # steht hier und nicht im Runner: nur die Suite selbst weiss, was sie braucht.
 from voraussetzung import braucht_modul  # noqa: E402
 braucht_modul("onelogin", extra="saml")
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -37,7 +38,7 @@ class FakeSAML:
 
 
 def build(**cfgkw):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(
         db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
         csrf_enabled=False, base_url="https://app.example.com",

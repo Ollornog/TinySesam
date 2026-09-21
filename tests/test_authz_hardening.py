@@ -18,7 +18,7 @@ JSON = {"accept": "application/json"}
 
 
 def build(**over):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     base = dict(db_path=db, csrf_enabled=False, lang="de", passkey_enabled=False, cookie_secure=False)
     base.update(over)
     return TinySesam(TinySesamConfig(**base)), db
@@ -181,9 +181,9 @@ print("  issue_csrf: setzt Cookie + gibt Token, no-op wenn CSRF aus ok")
 
 
 # ---------- 5) OIDC-Callback-Pfad konfigurierbar ----------
-cfg = TinySesamConfig(db_path=tempfile.mktemp(), oidc_callback_path="/sso/cb")
+cfg = TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei"), oidc_callback_path="/sso/cb")
 assert cfg.oidc_callback_path == "/sso/cb"
-assert TinySesamConfig(db_path=tempfile.mktemp()).oidc_callback_path == "/auth/oidc/callback"
+assert TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "datei")).oidc_callback_path == "/auth/oidc/callback"
 print("  oidc_callback_path: konfigurierbar, Default unverändert ok")
 
 print("OK test_authz_hardening")

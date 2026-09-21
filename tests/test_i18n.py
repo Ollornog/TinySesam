@@ -1,4 +1,5 @@
 """E3: i18n — englische Default-Texte, Umschaltung auf de, auth.t()/add_messages."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ def ok(name):
 
 
 def build(**kw):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, csrf_enabled=False, **kw))
     auth.ensure_admin("admin", "geheim123")

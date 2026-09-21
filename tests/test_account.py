@@ -1,4 +1,5 @@
 """Phase 7: Eingebaute Account-Seite (Selbstverwaltung) + Selbst-Passwortänderung + Override."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, pin_enabled=True))
 auth.ensure_admin("admin", "geheim123")

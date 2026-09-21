@@ -1,4 +1,5 @@
 """Phase 2: Step-up / per-Route-MFA (Flag am Guard), Reauth-Frische, admin_require_mfa."""
+import os
 import tempfile, os, time
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, stepup_max_age_sec=900))
 auth.ensure_admin("admin", "geheim123")

@@ -373,4 +373,79 @@ f_p, w_p = pruefe(preset)
 r.check("das eigene active_directory-Preset löst keine Warnung aus", not f_p and not w_p,
         f"Fehler={f_p} Warnungen={w_p}")
 
+
+# ── Gespeichertes XSS im Admin-Panel über den Benutzernamen ──────────────────
+# Das Panel-JS baute Daten in `onclick`-Attribute, und `esc()` ersetzte nur `<`. HTML-Escaping
+# genügt dort ohnehin nicht: Der Browser dekodiert das Attribut ZUERST und lässt den JS-Parser
+# danach über das Ergebnis laufen — aus `&#39;` wird wieder ein Apostroph, der den String
+# schliesst. Ein Nutzer, der sich passend registriert, führte damit Code im Browser der
+# angemeldeten Administratorin aus. (CodeQL fand das nicht: Es sieht Python, nicht das
+# JavaScript in einem Python-String.)
+panel_js = (ROOT / "tinysesam" / "admin.py").read_text(encoding="utf-8")
+
+r.check("esc() ersetzt alle HTML-Sonderzeichen, nicht nur '<'",
+        all(z in panel_js for z in ('"&":"&amp;"', "'\"':\"&quot;\"", '"\'":"&#39;"')),
+        "esc() deckt nicht alle Zeichen ab — in einem Attribut reicht `<` nicht")
+
+# Kein `'${esc(...)}'` mehr: ein JS-String, den ein HTML-escapter Wert füllt, ist ausbrechbar.
+ausbrechbar = re.findall(r"onclick=\"[^\"]*'\$\{esc\([^\"]*\"", panel_js)
+r.check("kein JS-String-Argument mehr, das nur HTML-escaped ist", not ausbrechbar,
+        f"{ausbrechbar[:2]} — dort bricht ein Apostroph aus")
+
+r.check("Daten in onclick laufen über jsarg() (JSON.stringify + Attribut-Escaping)",
+        "const jsarg=" in panel_js and panel_js.count("${jsarg(") >= 4,
+        f"{panel_js.count('${jsarg(')} Verwendungen")
+
+# Die Wirkung messen, nicht im Quelltext raten.
+#
+# Der Kern ist prüfbar ohne JS-Laufzeit: `jsarg` = JSON-Literal + HTML-Escaping. Ein Wert, der
+# so behandelt wird, darf im erzeugten Attribut KEIN rohes Anführungszeichen mehr enthalten —
+# sonst schliesst er den JS-String, sobald der Browser das Attribut dekodiert hat.
+ZEICHEN = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
+
+
+def _esc(w):
+    return "".join(ZEICHEN.get(z, z) for z in str(w))
+
+
+def _jsarg(w):
+    import json as _j
+    return _esc(_j.dumps(str(w)))
+
+
+angriff = "bob');alert(document.cookie);//"
+attribut = f'onclick="keys(1,{_jsarg(angriff)})"'
+r.check("ein präparierter Benutzername lässt kein rohes Anführungszeichen im Attribut",
+        "'" not in attribut.split("keys(1,")[1] and '"' not in attribut.split("keys(1,")[1][:-2],
+        f"{attribut}")
+# Und nach der Attribut-Dekodierung durch den Browser muss ein gültiges JS-Literal dastehen,
+# nicht ein geschlossener String plus Code.
+import html as _html  # noqa: E402
+
+dekodiert = _html.unescape(attribut.split("keys(1,")[1].rsplit(")", 1)[0])
+r.check("nach der HTML-Dekodierung steht ein einzelnes JS-String-Literal da",
+        dekodiert.startswith('"') and dekodiert.endswith('"')
+        and dekodiert.count('"') == 2 + dekodiert.count('\\"'),
+        f"{dekodiert!r} — hier bricht der String auf")
+
+# Wenn node da ist, dasselbe gegen die ECHTEN Helfer aus dem Panel — die stärkere Messung.
+import shutil as _sh2  # noqa: E402
+
+node = _sh2.which("node")
+if node:
+    import json as _json2
+
+    defs = re.search(r"const esc=.*?const jsarg=v=>esc\(JSON\.stringify\(v\?\?\"\"\)\);",
+                     panel_js, re.S)
+    r.check("die JS-Helfer sind im Panel auffindbar", defs is not None, "esc/jsarg nicht gefunden")
+    if defs:
+        probe = defs.group(0) + (
+            f"\nprocess.stdout.write(`<button onclick=\"keys(1,${{jsarg({_json2.dumps(angriff)})}})\">x</button>`);")
+        aus = subprocess.run([node, "-e", probe], capture_output=True, text=True).stdout
+        r.check("auch das echte Panel-JS bricht nicht aus dem onclick aus",
+                "');alert" not in aus and "&#39;" in aus, f"erzeugt: {aus[:110]}")
+        r.check("und der Nachbau oben stimmt mit dem echten JS überein",
+                _jsarg(angriff) in aus,
+                f"Nachbau: {_jsarg(angriff)!r} — dann misst die Prüfung ohne node etwas anderes")
+
 sys.exit(r.done())

@@ -1,4 +1,5 @@
 """Phase 0/1: Template-Override-Schicht, next-Redirect-Härtung (Open-Redirect), Remember-me."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -21,7 +22,7 @@ assert safe_next("https://app.example.com/x", allowed_hosts=["app.example.com"])
 assert safe_next("https://evil.com/x", allowed_hosts=["app.example.com"]) == "/"
 ok("safe_next: relative erlaubt, fremde/protokoll-relative Ziele → /")
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
                                  oidc_enabled=False, cookie_secure=False,
                                  session_ttl_transient_hours=6))

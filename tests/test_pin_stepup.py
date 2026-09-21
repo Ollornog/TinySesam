@@ -18,7 +18,7 @@ def login(c, u="max", pw="geheim12345"):
 
 
 # ---------- 1) Nur Benutzername + Passwort, keine E-Mail im Spiel ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, allow_signup=True,
                                                 cookie_secure=False))
@@ -49,7 +49,7 @@ print("  local_accounts(): User+Passwort, keine E-Mail-Wege ok")
 
 
 # ---------- 2) PIN als Zusatzfaktor einer Route (schon eingeloggt) ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 cookie_secure=False))
@@ -81,7 +81,7 @@ print("  require(factors=[password,pin]): PIN ohne Benutzerfeld, Route danach of
 
 
 # ---------- 3) PIN als Step-up für sensible Bereiche ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], stepup_max_age_sec=1,
@@ -126,7 +126,7 @@ print("  stepup_methods=['pin']: sensibler Bereich verlangt PIN trotz Login ok")
 
 
 # ---------- 4) Fallback: gewünschte Methode nicht eingerichtet ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], cookie_secure=False))
@@ -137,7 +137,7 @@ os.unlink(db)
 print("  Fallback ohne eingerichtete PIN → Passwort ok")
 
 # ---------- 5) pin_login=False: PIN ist kein Erstfaktor ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 pin_login=False, cookie_secure=False))
@@ -162,7 +162,7 @@ print("  pin_login=False: PIN nur noch als Zusatzfaktor ok")
 
 
 # ---------- 6) Demo-Modus + Erst-Admin-Bootstrap ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 kw = dict(db_path=db, csrf_enabled=False, lang="de", passkey_enabled=False,
           cookie_secure=False, pin_enabled=True, demo_mode=True)
 auth = TinySesam(TinySesamConfig.local_accounts(**kw))
@@ -181,7 +181,7 @@ os.unlink(db)
 print("  demo_mode: Konten + Hinweis, beim Abschalten gelöscht ok")
 
 # Allowlist: nur wer draufsteht wird Admin — und nur solange keiner existiert
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False,
                                                 admin_identifiers=["chef"]))
@@ -196,7 +196,7 @@ assert auth.store.get_user_by_name("chef")["is_admin"]
 os.unlink(db)
 
 # Einmal-Token: genau einmal, danach ist die Route weg
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False))
 tok = auth.admin_claim_token()

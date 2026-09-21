@@ -1,10 +1,11 @@
 """Härtung: Brute-Force-Lockout (pro User), Attempt-Tracking, Audit-Log, Panel-Settings."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, trusted_proxies=["127.0.0.1/32"]))
 auth.ensure_admin("admin", "geheim123")

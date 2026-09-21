@@ -1,4 +1,5 @@
 """Group→Role-Mapping (IdP-Gruppen → lokale Rollen) + available_roles im Admin-Panel."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ def ok(name):
 
 
 # ---------- apply_idp_groups: sync gemappter Rollen, manuelle bleiben, __admin__ grant-only ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False))
 uid = auth.create_user("bob", roles=["manual"])   # manuell vergebene Rolle
 mapping = {"editors": "editor", "admins": "__admin__", "viewers": "viewer"}
@@ -46,7 +47,7 @@ ok("substring=True: DN-Teiltreffer greift (so nutzt LDAP es)")
 os.remove(db)
 
 # ---------- LDAP-Login wendet ldap_group_role_map an ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False,
                                  ldap_enabled=True, ldap_url="ldap://x",
                                  ldap_group_role_map={"staff": "editor"}))
@@ -61,7 +62,7 @@ ok("LDAP-Login: memberOf 'staff' → Rolle 'editor' (Teilstring-Match)")
 os.remove(db)
 
 # ---------- Admin-Panel: available_roles landen als ROLES im Panel-HTML ----------
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False,
                                  available_roles=["editor", "viewer"]))
 auth.ensure_admin("admin", "geheim123")

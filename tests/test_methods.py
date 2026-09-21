@@ -7,12 +7,13 @@
 from voraussetzung import braucht_modul  # noqa: E402
 braucht_modul("webauthn", extra="passkey")
 braucht_modul("authlib", extra="oidc")
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", 
     db_path=db, rp_name="Test", rp_id="localhost", origin="http://localhost:8000",
     password_enabled=True, passkey_enabled=True, oidc_enabled=True,

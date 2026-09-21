@@ -1,4 +1,5 @@
 """Phase 8: Forward-Auth (Reverse-Proxy-Verify-Endpoint) + next zurück auf die App."""
+import os
 import tempfile, os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", 
     db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
@@ -116,7 +117,7 @@ ok("derselbe Host wie base_url → unverändert")
 assert auth.forward_login_url("https://evil.example/x").startswith("https://auth.example.com/auth/login")
 ok("fremder Host ausserhalb trusted_redirect_hosts → bleibt bei base_url")
 
-db2 = tempfile.mktemp(suffix=".db")
+db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 sso = TinySesam(TinySesamConfig(db_path=db2, csrf_enabled=False, cookie_secure=False,
                                 passkey_enabled=False, forward_auth_enabled=True,
                                 base_url="https://auth.example.com", cookie_domain=".example.com",
@@ -133,7 +134,7 @@ ok("safe_next: der Host der eigenen base_url ist immer erlaubt, fremde nicht")
 # ---------- Welche Header hinausgehen (config.forward_headers) ----------
 # Vorgabe ist der Authelia-Satz; nicht jede nachgelagerte App will alle davon, und manche
 # erwarten andere Namen (Grafana: X-WEBAUTH-USER, oauth2-proxy-Stil: X-Auth-Request-*).
-db3 = tempfile.mktemp(suffix=".db")
+db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 eigen = TinySesam(TinySesamConfig(
     db_path=db3, csrf_enabled=False, cookie_secure=False, passkey_enabled=False,
     forward_auth_enabled=True, base_url="https://auth.example.com",
@@ -165,7 +166,7 @@ ok("Vorgabe unverändert (keine stille Änderung für Bestandsnutzer)")
 for kaputt in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Cookie: a=b"},
                {"user": ["Remote-User", ""]}):
     try:
-        TinySesam(TinySesamConfig(db_path=tempfile.mktemp(suffix=".db"), cookie_secure=False,
+        TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), cookie_secure=False,
                                   passkey_enabled=False, forward_auth_enabled=True,
                                   forward_headers=kaputt))
         raise AssertionError(f"forward_headers={kaputt} hätte abgelehnt werden müssen")

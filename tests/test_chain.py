@@ -1,4 +1,5 @@
 """Phase 4.5: Faktor-Ketten-Engine — geordnete Kombinationen, global + per-Route, strict-Flag."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ def ok(name):
 
 
 def fresh(chain=None, strict=True, **kw):
-    db = tempfile.mktemp(suffix=".db")
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
     cfg = TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                           cookie_secure=False, login_chain=chain or [], login_chain_strict=strict,
                           pin_enabled=True, **kw)

@@ -1,10 +1,11 @@
 """API-Keys + Service-/Daemon-Accounts: Zugang per Key, Rollen-Scope, Widerruf (sperren), Ablauf."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 from tinysesam import TinySesam, TinySesamConfig
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False))
 auth.ensure_admin("admin", "pw")
 

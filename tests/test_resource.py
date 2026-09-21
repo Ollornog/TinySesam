@@ -1,4 +1,5 @@
 """Phase 4: Geteiltes Ressourcen-Geheimnis (PIN ODER Passphrase) — ohne Benutzerkonto."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, resource_locks_enabled=True))
 # zwei Bereiche: einer PIN, einer Passphrase

@@ -1,4 +1,5 @@
 """G1/G2: zentraler Theming-Hook (brand_css) + themed Fehlerseiten (install_error_pages)."""
+import os
 import tempfile, os
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ def ok(name):
 
 
 BRAND = "body{background:#123456}.card{border-color:#abcdef}"
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", lang="de", brand_css=BRAND,
                                  passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
                                  csrf_enabled=False, pin_enabled=True, allow_signup=True))
@@ -77,10 +78,11 @@ print("\nTHEME + ERROR-PAGES OK ✅")
 
 
 # ---------- brand_icon: ein Wert, Favicon auf allen eingebauten Seiten ----------
+import os as _os
 import tempfile as _tf
 from tinysesam.admin import render_panel as _rp
 
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
                                allow_signup=True, magiclink_enabled=True, brand_icon="/logo.png"))
 _app = FastAPI(); _app.include_router(_a.router()); _a.install_error_pages(_app)
@@ -90,7 +92,7 @@ for _p in ("/auth/login", "/auth/register", "/auth/magic/request", "/gibtsnicht"
 assert "rel=icon href='/logo.png'" in _rp(_a, "/auth/admin"), "Admin-Panel"
 os.unlink(_db)
 
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 assert "rel=icon" not in TestClient(_app).get("/auth/login").text, "ohne brand_icon kein Link"
@@ -99,7 +101,7 @@ print("OK brand_icon: Favicon zentral auf allen eingebauten Seiten")
 
 
 # ---------- Demo-Hinweis steht außerhalb der Login-Karte ----------
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
                                pin_enabled=True, demo_mode=True, cookie_secure=False))
 _app = FastAPI(); _app.include_router(_a.router())
@@ -111,7 +113,7 @@ assert "demo_mode" in _lp, "Warnung, dass er produktiv aus gehört"
 os.unlink(_db)
 
 # ohne demo_mode kein Hinweis
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 assert "class=demobar" not in TestClient(_app).get("/auth/login").text
@@ -119,7 +121,7 @@ os.unlink(_db)
 print("OK Demo-Hinweis: außerhalb der Karte, nur bei demo_mode")
 
 # ---------- brand_header / brand_footer: Rumpf der Host-App um JEDE eingebaute Seite ----------
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _calls = []
 
 
@@ -153,7 +155,7 @@ assert "<div class=card>" in _c.get("/auth/login").text
 os.unlink(_db)
 
 # ohne brand_header/-footer bleibt alles wie bisher
-_db = _tf.mktemp(suffix=".db")
+_db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
 _t = TestClient(_app).get("/auth/login").text

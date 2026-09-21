@@ -25,7 +25,7 @@ def _abraeumen():
 _abraeumen()
 tmp = tempfile.mkdtemp()
 logdatei = os.path.join(tmp, "security.log")
-db = tempfile.mktemp(suffix=".db")
+db = os.path.join(tempfile.mkdtemp(), "t.db")
 
 auth = TinySesam(TinySesamConfig(db_path=db, security_log=logdatei, cookie_secure=False,
                                  passkey_enabled=False, csrf_enabled=False))
@@ -55,14 +55,14 @@ ok("idempotent: derselbe Pfad wird nicht zweimal angehängt")
 
 # nicht schreibbarer Pfad: warnen, aber weiterlaufen — eine Logdatei legt keine Anmeldung still
 assert security.attach_security_log(os.path.join(tmp, "gibtsnicht", "x.log")) is False
-db2 = tempfile.mktemp(suffix=".db")
+db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 TinySesam(TinySesamConfig(db_path=db2, security_log="/proc/darf/ich/nicht.log",
                           cookie_secure=False, passkey_enabled=False))
 ok("nicht schreibbarer Pfad → False + Warnung, Start läuft weiter")
 
 # ohne security_log bleibt alles wie bisher: kein Datei-Handler
 _abraeumen()
-db3 = tempfile.mktemp(suffix=".db")
+db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 TinySesam(TinySesamConfig(db_path=db3, cookie_secure=False, passkey_enabled=False))
 assert not [h for h in security.seclog.handlers if getattr(h, "_tinysesam_path", None)]
 ok("ohne security_log kein Handler (wer sein Logging selbst einrichtet, behält es)")

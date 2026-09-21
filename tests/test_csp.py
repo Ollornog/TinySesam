@@ -5,6 +5,7 @@ läuft unter einer strengen, nonce-basierten CSP — kein 'unsafe-inline'. Der z
 Browser-Beweis (Chrome blockt bei falschem Nonce) steht in test_browser.py.
 """
 import re
+import os
 import tempfile
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ _TAG = re.compile(r'<(script|style)\b')
 
 
 def _cfg(**kw):
-    return TinySesamConfig(db_path=tempfile.mktemp(suffix=".db"), csrf_enabled=False,
+    return TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), csrf_enabled=False,
                            cookie_secure=False, pin_enabled=True, apikey_enabled=True, **kw)
 
 
