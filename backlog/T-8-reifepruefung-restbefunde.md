@@ -59,7 +59,8 @@ Der CSRF-Umlauf des Admin-Panels ist schon als [B-1](B-1-admin-panel-rotiert-csr
 - [ ] `python -m tinysesam.gateway` läuft nach dem dokumentierten pip-Install nicht (uvicorn)
 - [ ] `--help` beim **Gateway** startet einen Server auf `0.0.0.0:8000` (für `python -m tinysesam`
       erledigt: Exit 0 statt 2; der Gateway-Einstieg steht noch aus)
-- [ ] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
+- [x] Die Classifier versprechen Python 3.11 und 3.13, die CI fährt beide nicht
+      — behoben: Matrix auf alle fünf, plus Hygiene-Prüfung Classifier ↔ Matrix
 - [ ] Das sdist enthält keine Tests — wer neu paketiert, kann den Bau nicht prüfen
 - [ ] SECURITY.md nennt 0.5.x als die Reihe, die Sicherheitsfixes bekommt
 - [ ] Ein fehlendes Extra meldet sich als 500 oder gar nicht, statt als Klartext

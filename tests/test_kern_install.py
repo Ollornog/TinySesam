@@ -42,11 +42,25 @@ for schalter, (modul, extra) in sorted(SCHALTER_BRAUCHT_EXTRA.items()):
 
 # Die Kern-Abhängigkeiten sind das, was `pip install tinysesam` wirklich mitbringt.
 # Was per Vorgabe an ist, darf nur daraus schöpfen.
-import tomllib  # noqa: E402
+# Über die Paket-Metadaten, nicht über pyproject.toml: Das misst, was beim Nutzer nach
+# `pip install tinysesam` tatsächlich landet — und es läuft auf jeder unterstützten Version.
+# (`tomllib` gibt es erst ab 3.11; der Test starb auf 3.10 mit ModuleNotFoundError, und weil
+# ci-local nur EINE Version fährt, fiel das erst in der GitHub-Matrix auf.)
+from importlib.metadata import PackageNotFoundError, requires  # noqa: E402
 
-pp = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-kern = {d.split(">")[0].split("=")[0].split("[")[0].strip().lower()
-        for d in pp["project"]["dependencies"]}
+try:
+    anforderungen = requires("tinysesam") or []
+except PackageNotFoundError:                     # aus dem Quellbaum importiert, nicht installiert
+    import re as _re
+    roh = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    block = _re.search(r"^dependencies\s*=\s*\[(.*?)\]", roh, _re.S | _re.M)
+    anforderungen = _re.findall(r'"([^"]+)"', block.group(1)) if block else []
+    r.check("die Kern-Abhängigkeiten sind überhaupt ablesbar", bool(anforderungen),
+            "weder Paket-Metadaten noch pyproject lieferten eine Liste")
+
+# Was hinter einem Extra hängt, gehört nicht zum Kern.
+kern = {_d.split(";")[0].split(">")[0].split("=")[0].split("[")[0].strip().lower()
+        for _d in anforderungen if "extra ==" not in _d}
 r.check("fastapi gehört zum Kern", "fastapi" in kern)
 r.check("webauthn gehört NICHT zum Kern (sonst wäre der Schalter oben harmlos)",
         "webauthn" not in kern)

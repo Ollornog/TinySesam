@@ -68,6 +68,21 @@ sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist
 Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
 Einmal-Token unter `/auth/claim-admin`).
 
+### Behoben — zugesagte Python-Versionen werden jetzt gemessen
+
+Die Classifier versprachen 3.10 bis 3.14, die CI-Matrix fuhr **3.10, 3.12 und 3.14** — 3.11 und
+3.13 waren eine Behauptung. Die Matrix fährt jetzt alle fünf, und eine Hygiene-Prüfung vergleicht
+Classifier gegen Matrix: Wer künftig eine Version verspricht, muss sie auch fahren (oder den
+Classifier streichen).
+
+Der Anlass war ein eigener Fehlschlag: `tests/test_kern_install.py` importierte `tomllib`, das es
+erst ab 3.11 gibt — auf 3.10 starb der Test. Weil `ci-local` nur **eine** Python-Version fährt,
+fiel das erst in der GitHub-Matrix auf; das Gate hat getan, wofür es da ist. Der Test liest die
+Kern-Abhängigkeiten jetzt aus den **Paket-Metadaten** (`importlib.metadata.requires`) statt aus
+`pyproject.toml` — das läuft auf jeder Version und misst obendrein näher am Gegenstand: was nach
+`pip install tinysesam` wirklich da ist. Eine zweite Hygiene-Prüfung fängt Standardbibliotheks-
+Namen, die jünger sind als die älteste zugesagte Version.
+
 ### Behoben — Betrieb: Sicherung, Aufräumen, Protokoll ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
 
 **Eine Datei-Kopie der Datenbank war wertlos.** Sie läuft im WAL-Modus; wer nur die `.db` sichert,

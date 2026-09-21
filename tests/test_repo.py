@@ -252,4 +252,43 @@ assert _r.returncode == 0, ("backlog/README.md ist veraltet — "
                             "`python3 scripts/_backlog.py index` fahren")
 print(f"  Backlog: {len(eintraege)} Eintraege, Struktur sauber, Index aktuell")
 
+# ---------- Zugesagte Python-Versionen: gemessen, nicht behauptet ----------
+# Ein Classifier ist eine Zusage an den Nutzer. Bis 0.18.0 versprach TinySesam 3.11 und 3.13,
+# und die CI fuhr beide nicht — die Zusage war nie gemessen. Umgekehrt starb ein Test auf 3.10
+# an `tomllib` (gibt es erst ab 3.11), und weil `ci-local` nur EINE Version faehrt, fiel das
+# erst in der GitHub-Matrix auf. Beides faengt diese Pruefung.
+import re as _re  # noqa: E402
+
+_lies = lambda *teile: open(os.path.join(ROOT, *teile), encoding="utf-8", errors="replace").read()
+_pp = _lies("pyproject.toml")
+versprochen = set(_re.findall(r"Programming Language :: Python :: (\d+\.\d+)", _pp))
+_ci = _lies(".github", "workflows", "ci.yml")
+_m = _re.search(r"python-version:\s*\[([^\]]+)\]", _ci)
+gefahren = set(_re.findall(r"[\"']([\d.]+)[\"']", _m.group(1))) if _m else set()
+fehlt = sorted(versprochen - gefahren, key=lambda v: [int(t) for t in v.split(".")])
+assert not fehlt, ("Classifier versprechen Python " + ", ".join(fehlt) +
+                   ", die CI-Matrix faehrt sie nicht — entweder Matrix erweitern "
+                   "oder den Classifier streichen. Eine ungemessene Zusage ist eine Behauptung.")
+print(f"  Python {', '.join(sorted(versprochen))} zugesagt UND in der CI-Matrix")
+
+# Standardbibliotheks-Namen, die es in der aeltesten zugesagten Version noch nicht gibt.
+# Der Import steht oft mitten in einer Datei und faellt lokal nie auf.
+ZU_NEU = {"tomllib": (3, 11), "typing.Self": (3, 11), "datetime.UTC": (3, 11),
+          "itertools.batched": (3, 12), "typing.override": (3, 12)}
+_min = tuple(int(t) for t in min(versprochen, key=lambda v: [int(t) for t in v.split(".")]).split("."))
+zu_neu = []
+for pfad in FILES:
+    if not pfad.endswith(".py"):
+        continue
+    text = _lies(pfad)
+    for name, ab in ZU_NEU.items():
+        if ab <= _min:
+            continue
+        kurz = name.split(".")[-1]
+        if _re.search(rf"^\s*import {_re.escape(name)}\b", text, _re.M) or \
+           _re.search(rf"^\s*from {_re.escape(name.rsplit('.', 1)[0])} import .*\b{kurz}\b", text, _re.M):
+            zu_neu.append(f"{pfad}: {name} gibt es erst ab Python {ab[0]}.{ab[1]}")
+assert not zu_neu, ("Zugesagt ist ab Python %d.%d:\n  " % _min) + "\n  ".join(zu_neu)
+print(f"  keine Standardbibliothek jenseits von Python {_min[0]}.{_min[1]} ({len(ZU_NEU)} Muster)")
+
 print("OK test_repo")
