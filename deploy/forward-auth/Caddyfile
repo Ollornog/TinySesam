@@ -4,6 +4,11 @@
 # automatisch zum Login um. Für den Redirect braucht es die expandierte reverse_proxy-Form mit
 # handle_response, die den vom Auth-Dienst gesetzten Header X-TinySesam-Location auswertet.
 #
+# Upstreams kommen aus der Umgebung, damit dieselbe Datei auf dem Blech und im Compose stimmt:
+# ohne gesetzte Variablen gilt 127.0.0.1 (Dienste auf demselben Host), `docker-compose.yml`
+# setzt die Service-Namen. Im Caddy-CONTAINER ist 127.0.0.1 der Container selbst — dort lauscht
+# nichts auf 8000, und ein `docker compose up -d` ergäbe einen Stack, der nicht funktioniert.
+#
 # Voraussetzung in TinySesamConfig:
 #   forward_auth_enabled=True
 #   base_url="https://auth.example.com"          # zentrale Login-Domain
@@ -13,7 +18,7 @@
 
 # Zentraler Auth-Dienst (TinySesam) — eigene Subdomain
 auth.example.com {
-    reverse_proxy 127.0.0.1:8000
+	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 }
 
 # Rollen verlangen (optional): dem Sub-Request `header_up X-TinySesam-Roles redaktion,admin`
@@ -25,35 +30,52 @@ auth.example.com {
 
 # Geschützte App (kann eine beliebige Fremd-App / statische Site sein)
 app.example.com {
-    route {
-        reverse_proxy /auth/forward 127.0.0.1:8000 {
-            method GET
-            header_up X-Forwarded-Uri {uri}
-            header_up X-Forwarded-Host {host}
-            header_up X-Forwarded-Proto {scheme}
-            # header_up X-TinySesam-Roles redaktion,admin   # nur mit einer dieser Rollen durch
-            # nur die Auth-Antwort-Header übernehmen
-            # Andere Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
-            # setzen und sie hier mitziehen — übernommen wird nur, was hier steht.
-            @ok status 200
-            handle_response @ok {
-                request_header Remote-User {rp.header.Remote-User}
-                request_header Remote-Groups {rp.header.Remote-Groups}
-                request_header Remote-Email {rp.header.Remote-Email}
-                request_header Remote-Name {rp.header.Remote-Name}
-            }
-            # nicht eingeloggt → Redirect zur Login-URL aus dem Header
-            @denied status 401
-            handle_response @denied {
-                redir {rp.header.X-TinySesam-Location} 302
-            }
-            # angemeldet, aber Rolle fehlt → 403 stehen lassen. NICHT zum Login schicken:
-            # der schickt denselben Benutzer sofort zurück, dem dieselbe Rolle fehlt.
-            @norole status 403
-            handle_response @norole {
-                respond "Kein Zugriff: fehlende Rolle." 403
-            }
-        }
-        reverse_proxy 127.0.0.1:9000   # die eigentliche Upstream-App
-    }
+	route {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
+			method GET
+			# Der Sub-Request geht an /auth/forward — als `rewrite` IM Block, nicht als Pfad vor
+			# dem Upstream. Dort stand bis 2026-09-21 `reverse_proxy /auth/forward <upstream>`:
+			# Ein führender Pfad ist in Caddy ein MATCHER, kein Rewrite. Die Prüfung lief damit
+			# nur für Anfragen, deren eigener Pfad /auth/forward lautet — jeder andere Pfad fiel
+			# direkt auf die App durch. Die Vorlage schützte nichts und sah dabei aus wie SSO.
+			# (Form wie in Caddys eigener Expansion von `forward_auth`.)
+			rewrite /auth/forward
+			# Methode und Pfad der ECHTEN Anfrage — der rewrite oben hat beide überschrieben.
+			# X-Forwarded-Host/-Proto stehen hier bewusst nicht: die setzt Caddy von sich aus,
+			# und `caddy validate` weist die Doppelung als unnötig aus.
+			header_up X-Forwarded-Method {method}
+			header_up X-Forwarded-Uri {uri}
+			# header_up X-TinySesam-Roles redaktion,admin   # nur mit einer dieser Rollen durch
+			# nur die Auth-Antwort-Header übernehmen
+			# Andere Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
+			# setzen und sie hier mitziehen — übernommen wird nur, was hier steht.
+			@ok status 200
+			handle_response @ok {
+				request_header Remote-User {rp.header.Remote-User}
+				request_header Remote-Groups {rp.header.Remote-Groups}
+				request_header Remote-Email {rp.header.Remote-Email}
+				request_header Remote-Name {rp.header.Remote-Name}
+			}
+			# nicht eingeloggt → Redirect zur Login-URL aus dem Header
+			#
+			# `X-Tinysesam-Location` mit kleinem s: Caddy legt die Antwort-Header unter dem
+			# Namen ab, den Gos HTTP-Client daraus macht (textproto-Kanonisierung — jedes Wort
+			# gross, der Rest klein), und der Platzhalter wird Zeichen für Zeichen gesucht. Mit
+			# der Repo-Schreibweise X-TinySesam-Location traf er nichts: eine 302 mit LEEREM
+			# Location-Header, der Browser blieb stehen statt zum Login zu gehen. Auf der
+			# Leitung ist der Name weiterhin case-insensitiv — nur dieser Platzhalter ist es
+			# nicht. nginx (lowercase) und Traefik sind davon nicht betroffen.
+			@denied status 401
+			handle_response @denied {
+				redir {rp.header.X-Tinysesam-Location} 302
+			}
+			# angemeldet, aber Rolle fehlt → 403 stehen lassen. NICHT zum Login schicken:
+			# der schickt denselben Benutzer sofort zurück, dem dieselbe Rolle fehlt.
+			@norole status 403
+			handle_response @norole {
+				respond "Kein Zugriff: fehlende Rolle." 403
+			}
+		}
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} # die eigentliche Upstream-App
+	}
 }

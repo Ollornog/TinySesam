@@ -1,5 +1,14 @@
 """FastAPI-Router: /auth/* — Login (Passwort), TOTP-2FA + -Einrichtung, Logout, /me.
-OIDC- und Passkey-Routen werden nur registriert, wenn in der Config aktiviert."""
+
+Der Router ist **durchgehend bedingt**: Fast jede Route hängt an einem Config-Schalter — PIN,
+Ressourcen-Sperren, Magic-Link, Registrierung und E-Mail-Bestätigung, Passwort-Reset,
+Forward-Auth, Konto-Seite, API-Keys, Admin-Panel und die Verfahren OIDC/Passkey/SAML. Was eine
+konkrete Konfiguration daraus macht, sagt `[r.path for r in app.routes]` verlässlicher als jede
+Aufzählung hier.
+
+Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufgebauten** Verfahren
+(`auth.oidc`, `auth.webauthn`, `auth.saml`): Ein gesetzter Schalter, dessen Extra oder Pflichtfeld
+fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -57,8 +66,10 @@ def build_router(auth) -> APIRouter:
         if not user:
             return RedirectResponse(cfg.login_path, 303)
         if not auth.store.has_confirmed_totp(user["id"]):
-            # Faktor totp verlangt, aber nicht eingerichtet → Einrichtung (nur wenn schon eingeloggt)
-            if auth.current_user(request):
+            # Faktor totp verlangt, aber nicht eingerichtet → zur Einrichtung. Erlaubt ist das
+            # für voll Angemeldete und für den Ketten-Fall (siehe totp_enrollment_user) — sonst
+            # wäre login_chain=["password","totp"] für jedes Konto ohne TOTP eine Sackgasse.
+            if auth.current_user(request) or auth.totp_enrollment_user(request):
                 return RedirectResponse(f"/auth/totp/setup?next={_q(nxt)}", 303)
             return RedirectResponse(cfg.login_path, 303)
         return auth.render_page("totp", request=request, next=nxt, error=error)
@@ -96,7 +107,7 @@ def build_router(auth) -> APIRouter:
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
     def totp_setup(request: Request):
-        u = auth.current_user(request)
+        u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
@@ -104,7 +115,7 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...)):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
+        u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             raise HTTPException(401)
         return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
@@ -322,8 +333,13 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
-        return auth.render_page("reauth", request=request, next=auth.safe_next(next), error=error,
-                                username=u["username"], methods=auth.stepup_options(u))
+        methods = auth.stepup_options(u)
+        # Leere Liste heisst `stepup_strict=True` und nichts Passendes eingerichtet. Ohne eigene
+        # Meldung stünde hier eine Seite ohne einziges Eingabefeld — der Nutzer sähe nicht, was
+        # von ihm erwartet wird.
+        return auth.render_page("reauth", request=request, next=auth.safe_next(next),
+                                error=error or ("" if methods else auth.t("err.stepup_none")),
+                                username=u["username"], methods=methods)
 
     @r.post("/auth/reauth")
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),

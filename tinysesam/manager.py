@@ -354,6 +354,13 @@ class TinySesam:
         `roles` ist ein **Scope**, kein Rechtezuwachs: Die Liste wird auf die Rollen des Besitzers
         beschnitten. Ein Key kann damit weniger können als sein Besitzer, nie mehr.
 
+        **Bleibt nach dem Schnitt nichts übrig, wirft die Methode `ConfigError` und legt keinen
+        Key an** — ein Tippfehler in `roles` gibt also eine Ausnahme, keinen Key. Warum kein
+        leerer Scope: Der Grund steht unten am Code, er kehrte die Wirkung ins Gegenteil.
+
+        Zurück kommt `{"id", "key", "prefix", "expires_at", "roles", "verworfene_rollen"}`.
+        `key` ist der Klartext und hier das einzige Mal zu sehen; `verworfene_rollen` nennt, was
+        der Schnitt entfernt hat (dieselbe Angabe steht im Audit-Eintrag).
         Bis 2026-09-21 wurde die Liste ungeprüft übernommen, und beim Prüfen überschrieb sie die
         Rollen des Kontos. Jeder angemeldete Nutzer konnte sich damit über die Selbstbedienungs-Route
         `POST /auth/apikeys` beliebige Rollen ausstellen — unsichtbar, weil das Konto in der
@@ -521,7 +528,18 @@ class TinySesam:
     DEMO_USERS = ("demo", "demoadmin")
 
     def seed_demo(self) -> None:
-        """Beispielkonten anlegen (idempotent). Nur bei `demo_mode=True`."""
+        """Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
+
+        Die Prüfung sitzt seit 2026-09-21 **hier** und nicht mehr nur beim Aufrufer im Konstruktor.
+        Der Docstring versprach sie vorher schon — der Rumpf hielt sie nicht: Ein direkter Aufruf
+        bei `demo_mode=False` legte `demo` und `demoadmin` an, letzteres mit `is_admin=1` und dem
+        dokumentierten Standardpasswort, beide sofort anmeldefähig und ohne Warnung im Log.
+        """
+        if not self.cfg.demo_mode:
+            raise ConfigError(
+                "seed_demo() verlangt demo_mode=True. Ohne den Schalter entstünden sonst zwei "
+                "anmeldefähige Konten mit bekanntem Passwort — eines davon Admin — und der "
+                "Warnhinweis im Log bliebe aus.")
         ids = []
         for name in self.DEMO_USERS:
             u = self.store.get_user_by_name(name)
@@ -718,9 +736,15 @@ class TinySesam:
     def stepup_options(self, user) -> list[str]:
         """Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschlag.
 
-        `config.stepup_methods` schränkt ein (z.B. `["pin"]`). Hat der User keine der gewünschten
-        Methoden eingerichtet, fällt es auf seine verfügbaren zurück — sonst wäre der Bereich
-        für ihn unerreichbar, ohne dass er etwas dagegen tun könnte."""
+        `config.stepup_methods` ist ein **Wunsch, keine Schranke**: Hat der Nutzer keines der
+        genannten Verfahren eingerichtet, fällt die Bestätigung auf alles zurück, was er hat —
+        sonst wäre der Bereich für ihn unerreichbar, ohne dass er etwas dagegen tun könnte.
+        Das schliesst das Passwort ein, mit dem er sich gerade angemeldet hat; `["totp"]` allein
+        garantiert also nicht, dass vor dem sensiblen Bereich wirklich ein zweiter Faktor steht.
+
+        Wer die Schranke will, setzt `stepup_strict=True`: Dann bleibt die Liste leer, wenn nichts
+        Gewünschtes eingerichtet ist, und der Bereich bleibt verschlossen, bis der Nutzer das
+        Verfahren einrichtet."""
         cfg = self.cfg
         avail = []
         if cfg.totp_enabled and self.store.has_confirmed_totp(user["id"]):
@@ -730,7 +754,11 @@ class TinySesam:
         if cfg.password_enabled and self.store.get_password_hash(user["id"]):
             avail.append("password")
         wanted = [m for m in (cfg.stepup_methods or []) if m in avail]
-        return wanted or avail
+        if wanted:
+            return wanted
+        if cfg.stepup_methods and cfg.stepup_strict:
+            return []              # gewünscht, aber nichts davon eingerichtet → verschlossen
+        return avail               # der alte Weg: das beste, was der Nutzer hat
 
     def is_pin_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
@@ -744,7 +772,12 @@ class TinySesam:
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
-        """TOTP verlangt? Ja wenn confirmed-TOTP existiert (oder global erzwungen + eingerichtet)."""
+        """TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
+
+        Eine globale Erzwingung gibt es hier nicht (mehr): Der Schalter `totp_required`, auf den
+        der frühere Klammerzusatz zielte, wird seit 0.18.0 im Konstruktor mit `ConfigError`
+        abgewiesen. Erzwungen wird über `login_chain` — und die wertet `_session_ok` aus, nicht
+        diese Methode."""
         return self.store.has_confirmed_totp(user_id)
 
     def verify_totp(self, user_id, code) -> bool:
@@ -1205,6 +1238,29 @@ class TinySesam:
         if not s or s["mfa_ok"]:
             return None
         return self._als_dict(self.store.get_user(s["user_id"]))
+
+    def totp_enrollment_user(self, request) -> Optional[dict]:
+        """Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
+
+        Genau eine Lage: Die globale `login_chain` verlangt `totp`, der Nutzer hat seinen
+        Erstfaktor erbracht (die Sitzung hängt im MFA-Schritt) und noch kein bestätigtes TOTP.
+
+        Ohne diesen Weg ist `login_chain=["password","totp"]` für jedes Konto ohne eingerichtetes
+        TOTP eine **Sackgasse**: Das richtige Passwort führt auf `/auth/totp`, das mangels
+        Geheimnis auf die Login-Seite zurückleitet — und die Einrichtungsseite verlangte einen
+        voll angemeldeten Nutzer, den es unter dieser Kette nie geben kann. Das Konto kam weder
+        herein noch an die Einrichtung; der Betreiber musste an die Datenbank.
+
+        Sicherheitlich ist das kein Nachlass: Wer hier steht, hat den Erstfaktor bereits erbracht,
+        und ohne die Kette (klassischer Modus) hätte ihn dasselbe Passwort ohnehin vollständig
+        angemeldet. Die Einrichtung allein meldet niemanden an — der Faktor gilt erst, wenn im
+        nächsten Schritt ein Code aus dem frischen Geheimnis stimmt.
+        """
+        u = self.pending_user(request)
+        if not u or self.store.has_confirmed_totp(u["id"]):
+            return None
+        req, _ = self._global_chain()
+        return u if req and "totp" in req else None
 
     def csrf_rotieren(self, response) -> str:
         """Ein frisches CSRF-Token setzen — beim Login.

@@ -59,18 +59,23 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ## Installation
 
-```bash
-pip install tinysesam                  # Kern: Passwort + TOTP
-pip install "tinysesam[all]"           # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: tinysesam==0.18.0
-```
-
-Direkt von GitHub geht es genauso — dieser Weg lohnt, wenn du einen **Commit** willst statt
-einer veröffentlichten Version:
+TinySesam wird über seinen **Git-Tag** installiert — auf PyPI liegt es noch nicht (siehe unten):
 
 ```bash
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+# Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
 pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+# gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
+
+Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
+Experiment, nicht in einen Betrieb.
+
+> **Noch nicht auf PyPI.** `pip install tinysesam` funktioniert **nicht**: Der Name ist dort nicht
+> registriert. Das Packaging steht (Metadaten, Trusted Publishing, ein Packaging-Test);
+> veröffentlicht wird mit **1.0**, bis dahin gilt der gepinnte Git-Tag oben. Bis 2026-09-21 stand
+> hier das Gegenteil — der allererste Befehl, den jemand ausprobierte, endete mit
+> `No matching distribution found for tinysesam`.
 
 ## Quickstart
 
@@ -161,9 +166,9 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 | Feld | Default | |
 |---|---|---|
 | `db_path` | `tinysesam.db` | SQLite-Store |
-| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | aktive Methoden |
-| `totp_enabled` | `True/False` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
-| `login_chain` | `["password","totp"]` | 2FA **erzwingen** — über die Faktor-Kette, nicht über einen Schalter |
+| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | aktive Methoden (Passkey ab Werk aus: `webauthn` steckt im Extra `[passkey]`) |
+| `totp_enabled` | `True` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
+| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **erzwingt** 2FA über die Faktor-Kette. Leer = klassisch: ein Erstfaktor, dazu TOTP, wo eingerichtet |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
@@ -186,8 +191,19 @@ Einzelne Texte oder ganze Seiten lassen sich zusätzlich per `auth.set_template(
 ## Eigene Login-Seite
 
 TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentlich:
-`auth.check_password(u,p)`, `auth.start_session(uid, "password")`, `auth.set_cookie(resp, token)`,
-`auth.verify_totp(uid, code)`, `auth.complete_mfa(token)`.
+
+```python
+user = auth.check_password(username, password)
+token, fertig = auth.start_session(user["id"], "password")   # Tupel, nicht nur ein Token
+auth.set_cookie(resp, token)
+if not fertig:                    # es fehlt noch ein zweiter Faktor
+    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+```
+
+`start_session` gibt `(token, session_ok)` zurück. Auspacken — wer das Tupel direkt in
+`set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie, und es fliegt keine
+Ausnahme: Die Anmeldung ist still kaputt. `session_ok=False` heisst: Die Sitzung existiert, ist
+aber noch nicht vollständig.
 
 ## Look & Feel
 
@@ -246,8 +262,8 @@ Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen 
 diese Kombination weist der Konstruktor deshalb ab. Erlaubt ist sie wieder, sobald die Identität
 aus der Registrierung selbst belegt ist: eine E-Mail-Adresse (kein blosser Benutzername, den
 niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
-`signup_verify_email=True`). Sonst die Registrierung zulassen und den Einmal-Token nehmen — der
-verlässt das Server-Log nie.
+`signup_verify_email=True`). Sonst die Registrierung **geschlossen lassen** — oder den
+Einmal-Token nehmen, der verlässt das Server-Log nie.
 
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
@@ -496,14 +512,22 @@ JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automat
   ohne `Secure`-Flag herausgibt, widerspricht sich — ein einziger HTTP-Aufruf reicht, damit es im
   Klartext mitgeht. `cookie_secure=False` bleibt für lokale Aufbauten ohne Zertifikat richtig
   (`https_mode="warn"`).
+- **Content-Security-Policy** (`config.csp`): Die eingebauten Seiten (Login, Konto, TOTP-Einrichtung,
+  Fehlerseiten) tragen eine **strikte, nonce-basierte CSP** — ohne `unsafe-inline`. Je Antwort
+  entsteht ein frischer Nonce und wandert in jedes `<script>`/`<style>` und in den Header; die Seiten
+  sind inline-frei gebaut (kein `onclick`/`onsubmit`, kein `style=`), deshalb deckt der Nonce alles
+  ab. `"strict"` (Vorgabe), `"off"` (kein Header — z.B. weil ein Proxy die CSP setzt) oder eine
+  eigene Policy (ein `{nonce}` darin wird je Antwort ersetzt). Ein Template-Override, das ein
+  `Response` zurückgibt, bleibt unangetastet und bekommt `ctx["nonce"]` für seine eigene.
 
 ## Neu in 0.5 — Kurzreferenz
 
 Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend überall ersetzbar.
 
 - **Frontend austauschbar:** `auth.set_template(name, fn)` — `fn(auth, ctx)` gibt HTML-String **oder**
-  eine eigene `Response` zurück; Namen: `login`, `totp`, `reauth`, `resource_unlock`, `magic_request`,
-  `magic_invalid`, `register`, `account`, `totp_setup`. Eingebaute Renderer sind Fallback.
+  eine eigene `Response` zurück. Alle 13 Namen: `login`, `pin`, `totp`, `totp_setup`, `reauth`,
+  `account`, `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`,
+  `error`. Eingebaute Renderer sind Fallback; `tinysesam.templates.DEFAULTS` führt die aktuelle Liste.
 - **Angemeldet bleiben:** `remember_me_enabled` — Checkbox → persistentes Cookie; ohne Haken reines
   Session-Cookie + kurze `session_ttl_transient_hours`.
 - **Step-up / per-Route-MFA:** `Depends(auth.require(mfa=True))` (Sudo-Frische `stepup_max_age_sec`,
@@ -601,7 +625,8 @@ Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgepr�
 > `cookie_samesite`, den ein Browser bei diesem POST nicht mitschickt — für lokale Läufe und den
 > TestClient in Ordnung, gegen einen echten IdP nicht. Der Grund steht im Log
 > `tinysesam.security`.
-> **Alle Felder auf einen Blick:** [`KONFIGURATION.md`](../KONFIGURATION.md) führt alle 119
+
+> **Alle Felder auf einen Blick:** [`KONFIGURATION.md`](../KONFIGURATION.md) führt alle 120
 > Config-Felder mit Typ, Vorgabe und Bedeutung — erzeugt aus `config.py`, kann also nicht
 > auseinanderlaufen. Diese README erklärt die *Wege*; jene Seite beantwortet *„es gibt da ein
 > Feld — was tut es?"*
@@ -637,7 +662,10 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
 python -m tinysesam.gateway          # oder: uvicorn tinysesam.gateway:app
 ```
 
-Der Reverse-Proxy ruft je Request `GET /auth/forward`; alle anderen Methoden/Routen sind aus.
+Der Reverse-Proxy ruft je Request `GET /auth/forward`. Der Gateway hängt den vollen
+`/auth/*`-Router ein — mit `password_enabled=False` und OIDC als einziger Methode bleiben davon
+der OIDC-Login, der Forward-Auth-Endpunkt, Logout und `/me`. Eine schmale Konfiguration also,
+keine Ein-Routen-App.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
@@ -672,24 +700,34 @@ Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantwor
 git config core.hooksPath .githooks   # einmal pro Klon: der pre-push-Hook fährt das Tor
 scripts/check.sh                      # Suiten + Browser + Hygiene + Website-Build
 scripts/check.sh --fast               # ohne Browser-Test (nur wenn es eilt)
-scripts/ci-status.sh                  # nach dem Push: CI-Ergebnis abholen, Exit != 0 bei Rot
+gh run watch --exit-status            # nach dem Push: CI-Ergebnis abholen, Exit != 0 bei Rot
 ```
 
-**GitHub Actions** fährt das bei **jedem Push**: den vollen Lauf (Python 3.10–3.13 mit `[all]`), einen
-Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der zusätzlich die
-Website baut. Also: pushen, und die CI sagt dir Bescheid.
+**GitHub Actions** fährt das bei **Push auf `main`, bei Pull Requests und auf Zuruf**
+(`workflow_dispatch`) — ein Push auf einen Feature-Branch löst bewusst nichts aus; dafür ist
+`scripts/check.sh` da. Die CI fährt den vollen Lauf (Python 3.10–3.14 mit `[all]`), einen
+Minimal-Lauf ohne Extras (sichert den stdlib-scrypt-Fallback) und einen Browser-Job, der
+zusätzlich die Website baut.
 
 ## Status
 
-Kern (Passwort/TOTP/Sessions/Rollen), Härtung, API-Keys/Service-Accounts, Admin-Panel und
-Update-Mechanismus: implementiert & getestet. **Neu in 0.5** — Remember-me, Step-up/per-Route-MFA,
-Faktor-Ketten, persönliche PIN, geteiltes Ressourcen-Geheimnis, Magic-Link + Mailer-Hook,
-Registrierung + Einladung, Konto-Seite, Forward-Auth: je mit eigenem Test (`tests/test_*.py`),
-plus Kombinations-Matrix (`tests/test_matrix.py`). 17 Testdateien, alle grün.
-OIDC + Passkey: implementiert, struktur-getestet; der Browser-/Provider-abhängige End-to-End-Pfad
-ist gegen echte Domain/echten Provider zu prüfen. **0.6** ergänzt LDAP/lldap-Backend, TOTP-Recovery-Codes,
-Passwort-vergessen, eigene Sitzungsverwaltung, optionalen OIDC-RP-Logout sowie Härtung (Session-Invalidierung
-nach PW-Wechsel, Anti-Enumeration, `auth.gc()`, `py.typed`). Insgesamt **22 Testdateien, alle grün**.
+**46 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+(`tests/test_matrix.py`).
+
+Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
+Faktor-Ketten, persönliche PIN, geteilte Ressourcen-Geheimnisse, Magic-Links + Mailer-Hook,
+Registrierung und Einladung, Konto-Seite, Passwort-vergessen und TOTP-Recovery-Codes,
+Sitzungsverwaltung, API-Keys und Service-Konten, Admin-Panel (oder nur dessen JSON-API),
+Forward-Auth samt OIDC-Gateway, eine nonce-basierte CSP und die Kommandozeile (`backup`,
+`restore`, `gc`, `audit`, `unlock`).
+
+Externe Identitätsanbieter — OIDC, SAML 2.0, LDAP/AD — und Passkeys sind gebaut und gegen einen
+echten Provider auf einer Bühne geprüft (`tests/e2e_stage.py`); die mitgelieferten Tests decken
+sie strukturell ab, weil sie nicht nach draussen telefonieren können.
+
+Zwei Sicherheitsaudits sind im September 2026 durch den Code gegangen (siehe `CHANGELOG`). Die
+Version ist bewusst noch **nicht** 1.0: Die API-Oberfläche muss dafür zwei Minor-Versionen
+stillhalten.
 
 MIT-Lizenz.
 

@@ -228,7 +228,7 @@ Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — eg
 
 ### `mfa_pending(user_id) -> 'bool'`
 
-TOTP verlangt? Ja wenn confirmed-TOTP existiert (oder global erzwungen + eingerichtet).
+TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
 ### `next_login_step(user_id, done)`
 
@@ -320,7 +320,7 @@ Härtungs-Wert: Store-Setting (Panel) ODER Default.
 
 ### `seed_demo() -> 'None'`
 
-Beispielkonten anlegen (idempotent). Nur bei `demo_mode=True`.
+Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
 
 ### `send_login_link(email, base_url, next='/') -> 'bool'`
 
@@ -406,6 +406,10 @@ Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich
 
 TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert).
 
+### `totp_enrollment_user(request) -> 'Optional[dict]'`
+
+Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
+
 ### `unlock_resource(request: 'Request', response, name)`
 
 Eine Ressource für diesen Browser freischalten und das Cookie setzen.
@@ -470,4 +474,4 @@ Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau ge�
 
 ---
 
-106 Methoden, 6 Presets — erzeugt aus den Docstrings.
+107 Methoden, 6 Presets — erzeugt aus den Docstrings.

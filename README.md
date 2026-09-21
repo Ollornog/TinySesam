@@ -63,18 +63,23 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 
 ## Installation
 
-```bash
-pip install tinysesam                  # core: password + TOTP
-pip install "tinysesam[all]"           # everything: + argon2, QR, OIDC, passkey
-# selective: [argon2] [qr] [oidc] [passkey]  ·  pin a version: tinysesam==0.18.0
-```
-
-It installs straight from GitHub just as well — take this route when you want a **commit**
-rather than a released version:
+TinySesam installs from its **git tag** — it is not on PyPI yet (see below):
 
 ```bash
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+# core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
 pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+# selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
+
+Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
+default branch, so it belongs in an experiment, not in a deployment.
+
+> **Not on PyPI yet.** `pip install tinysesam` does **not** work: the name is not registered there.
+> The packaging is ready (metadata, trusted publishing, a packaging test) and publishing happens
+> with **1.0** — until then the pinned git tag above is the way. This page said otherwise until
+> 2026-09-21, which made the very first command anyone tried fail with
+> `No matching distribution found for tinysesam`.
 
 ## Quickstart
 
@@ -133,8 +138,8 @@ Depends(auth.require_role("a", "b"))   # one of the two is enough
 ## Roles & groups
 
 **Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
-Name several and **one of them is enough** — `require_role("editorial", "proofing")`, or from config
-`require_role(cfg.roles_allowed)`. That is the same OR as `?roles=a,b` in forward-auth, so the question
+Name several and **one of them is enough** — `require_role("editorial", "proofing")`, or from a list
+of your own (`require_role(*ROLES_ALLOWED)`). That is the same OR as `?roles=a,b` in forward-auth, so the question
 “who may pass?” means the same thing in both modes. Need **all** of them? Stack the guards:
 `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 An admin satisfies **every** role. If you don't want that (e.g. because permissions come from an IdP
@@ -165,9 +170,9 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 | Field | Default | |
 |---|---|---|
 | `db_path` | `tinysesam.db` | SQLite store |
-| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | active methods |
-| `totp_enabled` | `True/False` | allow 2FA (required as soon as a user has set it up) |
-| `login_chain` | `["password","totp"]` | **enforce** an ordered factor chain — this is how you make 2FA mandatory |
+| `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/False/False` | active methods (passkey is off by default: `webauthn` lives in the extra `[passkey]`) |
+| `totp_enabled` | `True` | allow 2FA (required as soon as a user has set it up) |
+| `login_chain` · `stepup_strict` | `[]` · `False` | `["password","totp"]` **enforces** an ordered factor chain — this is how you make 2FA mandatory. Empty = classic: one first factor, plus TOTP where set up |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | sessions/cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (real domain required, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC provider |
@@ -190,8 +195,18 @@ Individual texts or whole pages can additionally be freely replaced via `auth.se
 ## Your own login page
 
 Use TinySesam as a pure backend (your own UI) — the building blocks are public:
-`auth.check_password(u,p)`, `auth.start_session(uid, "password")`, `auth.set_cookie(resp, token)`,
-`auth.verify_totp(uid, code)`, `auth.complete_mfa(token)`.
+
+```python
+user = auth.check_password(username, password)
+token, done = auth.start_session(user["id"], "password")   # tuple, not just a token
+auth.set_cookie(resp, token)
+if not done:                      # a second factor is still missing
+    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+```
+
+`start_session` returns `(token, session_ok)`. Unpack it — passing the tuple straight into
+`set_cookie` writes the string `"('abc…', True)"` into the cookie, and nothing raises: the sign-in
+is quietly broken. `session_ok=False` means the session exists but is not complete yet.
 
 ## Look & feel
 
@@ -383,18 +398,15 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==0.18.0
-```
-
-A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
-means: bump the line, reinstall, restart the service. Python does not reload code at runtime.
-
-The same pin from git, if you install that way — note that a **tag can be moved**, so for real
-immutability pin the commit (`@a1b2c3d…`):
-
-```
 tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0
 ```
+
+The same line installs the same code tomorrow, and updating means: bump the line, reinstall,
+restart the service. Python does not reload code at runtime.
+
+Note that a **tag can be moved**. For real immutability pin the commit instead (`@a1b2c3d…`) —
+that one cannot be rewritten. Once TinySesam is on PyPI (with 1.0), `tinysesam[oidc]==1.0.0`
+becomes the shorter way to the same guarantee: a released version there never changes at all.
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
@@ -500,8 +512,9 @@ JSON API at `<mount>/api/*` (the same actions — for your own UIs / automation)
 All optional (on/off by config), usable individually and combined, front end replaceable everywhere.
 
 - **Replaceable front end:** `auth.set_template(name, fn)` — `fn(auth, ctx)` returns an HTML string **or**
-  its own `Response`; names: `login`, `totp`, `reauth`, `resource_unlock`, `magic_request`,
-  `magic_invalid`, `register`, `account`, `totp_setup`. Built-in renderers are the fallback.
+  its own `Response`. All 13 names: `login`, `pin`, `totp`, `totp_setup`, `reauth`, `account`,
+  `register`, `forgot`, `reset`, `magic_request`, `magic_invalid`, `resource_unlock`, `error`.
+  Built-in renderers are the fallback; `tinysesam.templates.DEFAULTS` holds the current list.
 - **Stay signed in:** `remember_me_enabled` — checkbox → persistent cookie; unchecked = pure
   session cookie + short `session_ttl_transient_hours`.
 - **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
@@ -597,7 +610,7 @@ Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-che
 > `tinysesam.security` log.
 
 > **Every field, in one place:** [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md)
-> lists all 119 config fields with type, default and meaning — generated from `config.py`, so it
+> lists all 120 config fields with type, default and meaning — generated from `config.py`, so it
 > cannot drift. This README explains the *ways*; that page answers *“there's a field — what does
 > it do?”*
 
@@ -633,7 +646,10 @@ export TINYSESAM_OIDC_ISSUER=https://id.example.com \
 python -m tinysesam.gateway          # or: uvicorn tinysesam.gateway:app
 ```
 
-The reverse proxy calls `GET /auth/forward` per request; all other methods/routes are off.
+The reverse proxy calls `GET /auth/forward` per request. The gateway mounts the full `/auth/*`
+router — with `password_enabled=False` and OIDC as the only method, what remains is the OIDC
+sign-in, the forward-auth endpoint, logout and `/me`. It is a narrow configuration, not a
+single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
@@ -668,24 +684,31 @@ The suites are standalone assert scripts (no pytest). Three of them answer the q
 git config core.hooksPath .githooks   # once per clone: the pre-push hook runs the gate
 scripts/check.sh                      # suites + browser + hygiene + website build
 scripts/check.sh --fast               # without the browser test (only when in a hurry)
-scripts/ci-status.sh                  # after pushing: fetch the CI result, exit != 0 when red
+gh run watch --exit-status            # after pushing: fetch the CI result, exit != 0 when red
 ```
 
-**GitHub Actions** runs all of it on every push: the full matrix (Python 3.10–3.13 with `[all]`), a
-minimal run without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the
-website. So: push, and CI tells you.
+**GitHub Actions** runs all of it on **pushes to `main`, on pull requests and on demand**
+(`workflow_dispatch`) — a push to a feature branch deliberately triggers nothing; that is what
+`scripts/check.sh` is for. CI runs the full matrix (Python 3.10–3.14 with `[all]`), a minimal run
+without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the website.
 
 ## Status
 
-Core (password/TOTP/sessions/roles), hardening, API keys/service accounts, admin panel and
-update mechanism: implemented & tested. **New in 0.5** — remember-me, step-up/per-route MFA,
-factor chains, personal PIN, shared resource secret, magic-link + mailer hook,
-registration + invitation, account page, forward-auth: each with its own test (`tests/test_*.py`),
-plus a combination matrix (`tests/test_matrix.py`). 17 test files, all green.
-OIDC + passkey: implemented, structurally tested; the browser-/provider-dependent end-to-end path
-is to be verified against a real domain/real provider. **0.6** adds the LDAP/lldap backend, TOTP recovery codes,
-forgot-password, your own session management, optional OIDC RP logout, plus hardening (session invalidation
-after a password change, anti-enumeration, `auth.gc()`, `py.typed`). In total **22 test files, all green**.
+**46 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+
+Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
+factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
+invitation, the account page, forgot-password and TOTP recovery codes, session management,
+API keys and service accounts, the admin panel (or just its JSON API), forward-auth plus the
+OIDC gateway, a nonce-based CSP, and the command line (`backup`, `restore`, `gc`, `audit`,
+`unlock`).
+
+External identity providers — OIDC, SAML 2.0, LDAP/AD — and passkeys are implemented and tested
+against a real provider on a staging host (`tests/e2e_stage.py`); the tests that ship with the
+package cover them structurally, because they cannot dial out.
+
+Two security audits went through the code in 2026-09 (see the `CHANGELOG`). The version is
+deliberately **not** 1.0 yet: the API surface has to hold still for two minor releases first.
 
 MIT license.
 
