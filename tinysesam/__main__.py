@@ -224,8 +224,10 @@ def _audit(argv) -> int:
     if store is None:
         return 1
     import datetime as _dt
-    zeilen = [z for z in store.recent_audit(max(a.n * 4, 100))
-              if not a.user or (z["username"] or "").lower() == a.user.lower()][:a.n]
+    # In SQL filtern, nicht hier: Ein Nachsieben der jüngsten Zeilen fand die Einträge eines
+    # Kontos nur, wenn sie zufällig ins Fenster fielen — bei einer Brute-Force-Welle also gerade
+    # nicht. Das Kommando meldete dann „Keine Einträge zu 'X'." und Exit 0, obwohl sie dastanden.
+    zeilen = store.recent_audit(a.n, username=a.user or None)
     if not zeilen:
         print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
         return 0

@@ -35,7 +35,10 @@ zwei Reiter offen, einer davon das Panel — das Formular im anderen scheitert s
 - Das Panel ein vorhandenes, gültiges CSRF-Cookie übernimmt, statt es zu ersetzen (dieselbe
   Behandlung wie in `render_page`).
 - Eine Suite deckt den dritten Setzer ab. `tests/test_cookies.py` nennt die Lücke bereits und
-  verweist auf `tests/test_adminmount.py` als richtigen Ort — dort steht sie noch nicht.
+  verweist auf `tests/test_adminmount.py` als richtigen Ort. Steht seit 2026-09-21 in
+  `tests/test_bestandsdaten.py` statt dort: `test_adminmount.py` fährt durchgehend
+  `csrf_enabled=False` — eine CSRF-Prüfung darin hätte entweder die ganze Suite umgestellt oder
+  als einzelner Fremdkörper mit eigener Config dagestanden.
 - Der Regressionstest prüft den **rohen** `Set-Cookie`-Header, nicht den Cookie-Jar: Der verschluckt
   Attribute und legt Secure-Cookies über `http://` gar nicht erst ab.
 

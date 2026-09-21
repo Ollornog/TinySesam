@@ -20,7 +20,9 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_HOST / TINYSESAM_PORT            Default 0.0.0.0 / 8000
 
 Der Reverse-Proxy ruft dann `GET /auth/forward` je Request (siehe deploy/forward-auth/).
-Braucht nur `pip install 'tinysesam[oidc]'`.
+Braucht `pip install 'tinysesam[gateway]'` — das ist `[oidc]` **plus einen ASGI-Server**. Mit
+`[oidc]` allein endet der Startbefehl unten in `ModuleNotFoundError: uvicorn`; genau diese
+Zeile stand hier früher und schickte die Leserschaft in den Fehler.
 """
 from __future__ import annotations
 

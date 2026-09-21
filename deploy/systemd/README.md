@@ -6,11 +6,18 @@ eine Zeile; das summiert sich.
 
 ```bash
 sudo cp tinysesam-gc.service tinysesam-gc.timer /etc/systemd/system/
-sudoedit /etc/systemd/system/tinysesam-gc.service     # User und --db anpassen
+sudoedit /etc/systemd/system/tinysesam-gc.service     # User, --db UND ReadWritePaths anpassen
 sudo systemctl daemon-reload
 sudo systemctl enable --now tinysesam-gc.timer
 systemctl list-timers tinysesam-gc.timer              # nachsehen, wann er läuft
 ```
+
+**`ReadWritePaths` gehört mit angepasst.** Die Unit fährt `ProtectSystem=strict` — das ganze
+Dateisystem ist schreibgeschützt, bis auf die dort genannten Pfade. Wer nur `--db` umstellt und
+die Datenbank ausserhalb von `/var/lib/tinysesam` liegen hat, bekommt einen Dienst, der sie nicht
+öffnen kann: SQLite scheitert beim Schreiben (und braucht daneben Platz für `-wal`/`-shm`).
+Liegt sie unter `/home`, muss zusätzlich `ProtectHome=` weichen — `yes` blendet `/home` komplett
+aus, `read-only` reicht ebenfalls nicht.
 
 Ein Cronjob tut es genauso:
 

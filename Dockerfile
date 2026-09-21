@@ -62,10 +62,20 @@ VOLUME ["/data"]
 EXPOSE 8000
 
 # `/healthz` ist der einzige Pfad ohne Anmeldung und ohne HTTPS-Zwang — der Check spricht den
-# Prozess von innen über HTTP an. Redirects werden bewusst NICHT verfolgt.
+# Prozess von innen über HTTP an.
+#
+# Redirects werden NICHT verfolgt — deshalb `http.client` und nicht `urllib.request.urlopen`.
+# Letzteres bringt den HTTPRedirectHandler im Standard-Opener mit, folgt einer 302 und meldet
+# danach den Status des UMLEITUNGSZIELS. Eine Umleitung auf /healthz — genau der Fall, den
+# `_install_https_except_health` abwehrt — ginge damit als "healthy" durch. Bis 2026-09-21
+# behauptete der Kommentar hier das Gegenteil dessen, was der Code tat. (Ein eigener Opener
+# reicht dafür nicht: `build_opener` lässt Default-Handler nur weg, wenn eine SUBKLASSE genau
+# dieses Handlers übergeben wird — ein mitgegebener HTTPHandler ersetzt den Redirect-Handler
+# nicht.) `http.client` leitet von sich aus nie um.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import os,urllib.request,sys;\
-u=f\"http://127.0.0.1:{os.environ.get('TINYSESAM_PORT','8000')}/healthz\";\
-sys.exit(0 if urllib.request.urlopen(u,timeout=4).status==200 else 1)"]
+    CMD ["python", "-c", "import os,http.client,sys;\
+c=http.client.HTTPConnection('127.0.0.1',int(os.environ.get('TINYSESAM_PORT','8000')),timeout=4);\
+c.request('GET','/healthz');\
+sys.exit(0 if c.getresponse().status==200 else 1)"]
 
 ENTRYPOINT ["python", "-m", "tinysesam.gateway"]

@@ -131,8 +131,10 @@ PANEL_T = {
         "p_login": ("Login panel", "The sign-in page shows <b>exactly the methods the config enables</b>. "
                     "Here: username and password. Demo mode reveals the credentials — and warns that "
                     "it must be off in production."),
-        "p_account": ("Account panel", "Self-service at <code>/auth/account</code>: password, PIN, "
-                      "2FA + recovery codes, passkeys, API keys and your own sessions."),
+        "p_account": ("Account panel", "Self-service at <code>/auth/account</code>: password, "
+                      "2FA + recovery codes, API keys and your own sessions. The page follows the "
+                      "config — this demo runs without PIN and without passkeys, so those two "
+                      "sections are absent here."),
         "p_admin": ("Admin panel", "Users &amp; roles, sessions, hardening thresholds, audit log. "
                     "Or just the JSON API, for your own panel."),
         "open": "Open →", "ro": "read-only", "ro_fake": "read-only · sample data",
@@ -148,8 +150,10 @@ PANEL_T = {
         "p_login": ("Login-Panel", "Die Anmeldeseite zeigt <b>genau die Methoden, die die Config "
                     "aktiviert</b>. Hier: Benutzername und Passwort. Der Demo-Modus blendet die "
                     "Zugangsdaten ein — und warnt, dass er produktiv aus gehört."),
-        "p_account": ("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, PIN, "
-                      "2FA + Recovery-Codes, Passkeys, API-Keys und die eigenen Sitzungen."),
+        "p_account": ("Konto-Panel", "Selbstverwaltung unter <code>/auth/account</code>: Passwort, "
+                      "2FA + Recovery-Codes, API-Keys und die eigenen Sitzungen. Die Seite folgt der "
+                      "Config — diese Demo läuft ohne PIN und ohne Passkeys, deshalb fehlen die "
+                      "beiden Abschnitte hier."),
         "p_admin": ("Admin-Panel", "Benutzer &amp; Rollen, Sitzungen, Härtungs-Schwellen, "
                     "Audit-Log. Wahlweise nur als JSON-API für dein eigenes Panel."),
         "open": "Öffnen →", "ro": "read-only", "ro_fake": "read-only · Beispieldaten",

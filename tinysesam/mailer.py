@@ -1,8 +1,11 @@
 """E-Mail-Versand für TinySesam. Standard: stdlib-smtplib (STARTTLS/SSL). Komplett ersetzbar
 über auth.set_mailer(fn): fn(to, subject, text, html=None) -> None.
 
-Ohne konfigurierten smtp_host UND ohne gesetzten Mailer ist der Versand deaktiviert (send() wirft
-MailNotConfigured — die Aufrufer behandeln das als „E-Mail-Feature nicht verfügbar").
+Ohne konfigurierten smtp_host UND ohne gesetzten Mailer ist der Versand deaktiviert: Der Mailer
+wird AUFGERUFEN wie eine Funktion (`mailer(to, subject, text, html)`) und wirft dann
+MailNotConfigured — die Aufrufer behandeln das als „E-Mail-Feature nicht verfügbar". Eine Methode
+`send()` gibt es nicht; wer einen eigenen Mailer baut, schreibt ein `__call__` oder übergibt
+gleich eine Funktion.
 """
 from __future__ import annotations
 import smtplib
