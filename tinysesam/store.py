@@ -468,11 +468,21 @@ class Store:
             args.append(method)
         return self._one(q, args)["c"]
 
-    def clear_fails(self, username=None, ip=None):
+    def clear_fails(self, username=None, ip=None, method=None):
+        """Fehlversuche loeschen — optional nur die EINER Methode.
+
+        `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
+        Passwort-Login auch die TOTP- und PIN-Fehlversuche weg. Wer das Passwort kannte (Leak,
+        Wiederverwendung, Phishing), meldete sich vor jedem Rateversuch einmal korrekt an und
+        setzte damit die Sperre fuer den ZWEITEN Faktor zurueck — beliebig oft. Die Regulierung,
+        die das Panel als Haertung ausweist, griff fuer den zweiten Faktor nie.
+        """
+        wo_method, args_method = ("", ()) if method is None else (" AND method=?", (method,))
         if username:
-            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE", (username,))
+            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo_method,
+                       (username,) + args_method)
         if ip:
-            self._exec("DELETE FROM login_attempt WHERE ip=?", (ip,))
+            self._exec("DELETE FROM login_attempt WHERE ip=?" + wo_method, (ip,) + args_method)
 
     def gc_attempts(self, older_than) -> int:
         return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount

@@ -70,6 +70,36 @@ class TinySesam:
                 "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
                 "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
                 "(lokal/ohne Zertifikat).")
+
+        # Erst-Admin per Allowlist + offene Selbst-Registrierung: Die Allowlist verbürgt nur,
+        # WELCHER Name Admin wird — nicht, WER diesen Namen bekommt. Steht `admin_identifiers`
+        # auf einer frischen Instanz mit `allow_signup=True`, registriert sich der Erste, der
+        # die Adresse errät, genau darunter und ist beim ersten Login Admin. Das ist derselbe
+        # Fehler, den der Bootstrap eigentlich vermeiden soll ("der Erste gewinnt") — nur eine
+        # Stufe später.
+        #
+        # Tragfähig ist die Kombination nur, wenn die Identität aus der Registrierung selbst
+        # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
+        # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
+        # Namen, wer das Postfach hat.
+        if config.admin_identifiers and config.allow_signup:
+            ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
+            namen = [i for i in ids if "@" not in i]
+            if namen:
+                raise ValueError(
+                    f"admin_identifiers={namen} sind Benutzernamen und allow_signup=True: Ein "
+                    "Benutzername wird bei der Registrierung von niemandem bestätigt — wer sich "
+                    "als Erster so anmeldet, wird Erst-Admin. Entweder eine E-Mail-Adresse "
+                    "eintragen (mit signup_require_email=True und signup_verify_email=True), "
+                    "oder allow_signup=False, oder den Einmal-Token-Weg nutzen "
+                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
+            if not (config.signup_require_email and config.signup_verify_email):
+                raise ValueError(
+                    "admin_identifiers zusammen mit allow_signup=True verlangt "
+                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
+                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
+                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
+                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
         # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
         # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
         # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
@@ -214,14 +244,38 @@ class TinySesam:
         return self.create_user(username, is_service=True, roles=roles, display_name=display_name or username)
 
     def create_api_key(self, user_id, name=None, expires_days=None, roles=None) -> dict:
-        """Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash)."""
+        """Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
+
+        `roles` ist ein **Scope**, kein Rechtezuwachs: Die Liste wird auf die Rollen des Besitzers
+        beschnitten. Ein Key kann damit weniger können als sein Besitzer, nie mehr.
+
+        Bis 2026-09-21 wurde die Liste ungeprüft übernommen, und beim Prüfen überschrieb sie die
+        Rollen des Kontos. Jeder angemeldete Nutzer konnte sich damit über die Selbstbedienungs-Route
+        `POST /auth/apikeys` beliebige Rollen ausstellen — unsichtbar, weil das Konto in der
+        Datenbank rollenlos blieb. Im Forward-Auth-Betrieb ging die erfundene Rolle als Remote-Group
+        an die nachgelagerte App.
+        """
         raw = "tsk_" + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
         prefix = raw[:12] + "…"
         expires_at = (int(time.time()) + int(expires_days) * 86400) if expires_days is not None else None
+
+        abgeschnitten = []
+        if roles is not None:
+            besitzer = self.store.get_user(user_id)
+            erlaubt = set(self.user_roles(besitzer)) if besitzer else set()
+            gewuenscht = [str(x) for x in roles]
+            abgeschnitten = sorted(set(gewuenscht) - erlaubt)
+            roles = sorted(set(gewuenscht) & erlaubt)
+
         kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at)
-        self.audit("apikey_create", detail=f"user={user_id} key={kid} name={name}")
-        return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at}
+        detail = f"user={user_id} key={kid} name={name}"
+        if abgeschnitten:
+            # In den Audit-Eintrag, nicht nur verwerfen: Wer das versucht, soll sichtbar sein.
+            detail += f" verworfene_rollen={','.join(abgeschnitten)}"
+        self.audit("apikey_create", detail=detail)
+        return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
+                "roles": roles, "verworfene_rollen": abgeschnitten}
 
     def verify_api_key(self, key):
         """(user, key_roles|None) bei gültigem Key, sonst (None, None)."""
@@ -456,6 +510,7 @@ class TinySesam:
 
     def disable_pin(self, user_id):
         self.store.delete_pin(user_id)
+        self.audit("pin_disable", detail=f"user={user_id}")
 
     def check_pin(self, username, pin) -> Optional[dict]:
         u = self.find_user(username)
@@ -546,8 +601,13 @@ class TinySesam:
         return False
 
     def totp_disable(self, user_id):
+        offen = self.store.count_recovery_codes(user_id)   # vor dem Löschen zählen
         self.store.delete_totp(user_id)
         self.store.delete_recovery_codes(user_id)   # ohne TOTP sind Recovery-Codes gegenstandslos
+        # Das Abschalten eines zweiten Faktors ist das, was ein Angreifer als Erstes tut, wenn er
+        # eine Sitzung hat. Ohne Eintrag ist es hinterher nicht nachvollziehbar — bis 2026-09-21
+        # hinterliess es keine Spur, obwohl dabei TOTP UND alle Recovery-Codes fallen.
+        self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
     def generate_recovery_codes(self, user_id, n=None) -> list:
@@ -862,8 +922,12 @@ class TinySesam:
                 if u:
                     d = dict(u)
                     d["_via"] = "apikey"
-                    if key_roles is not None:      # Key-Scope überschreibt die User-Rollen
-                        d["roles"] = json.dumps(key_roles)
+                    if key_roles is not None:
+                        # SCHNITTMENGE, nicht Überschreibung: Der Scope verengt, er erweitert nie.
+                        # Zweite Schicht neben der Begrenzung in create_api_key — sie greift auch
+                        # für Keys, die vor dem Fix angelegt wurden oder direkt in der Datenbank
+                        # stehen. `is_admin` bleibt unberührt, das kommt aus der Nutzerzeile.
+                        d["roles"] = json.dumps(sorted(set(key_roles) & set(self.user_roles(u))))
                     return d
         return None
 
@@ -932,7 +996,10 @@ class TinySesam:
     def record_login(self, username, ip, success, method):
         self.store.record_attempt(username, ip, success, method)
         if success:
-            self.store.clear_fails(username=username)   # 'login'-Audit erst beim vollen Abschluss (start_session/complete_mfa)
+            # NUR die Fehlversuche derselben Methode: Ein Passwort-Erfolg sagt nichts darueber,
+            # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
+            # den zweiten Faktor ratbar.
+            self.store.clear_fails(username=username, method=method)   # 'login'-Audit erst beim vollen Abschluss
         else:
             self.store.audit_log("login_fail", username, ip, method)
             # fail2ban parst diese Zeile (ip=…)

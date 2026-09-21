@@ -23,6 +23,51 @@ zuerst repariert worden — alles andere wäre auf Sand gebaut.
 `MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
 über den gepinnten Git-Tag.
 
+### Sicherheit — sechs Lücken geschlossen, jede mit ihrem Angriff festgehalten
+
+Gefunden bei der Reifeprüfung vor dem geplanten 1.0. Jede der sechs ist einzeln nachgestellt
+worden, bevor sie repariert wurde, und jede hat jetzt eine Prüfung in
+`tests/test_sicherheit_befunde.py` — benannt nach dem **Angriff**, nicht nach der Funktion: Wer
+eine davon rot sieht, weiss sofort, was wieder möglich ist. Jeder Fix wurde zusätzlich durch
+Abschalten gegengeprüft (Mutation): ohne ihn wird die Prüfung rot, mit ihm grün.
+
+**Rollen-Eskalation über selbst ausgestellte API-Keys.** Ein Nutzer konnte einem eigenen Key
+beliebige Rollen mitgeben — auch `admin`. `create_api_key` beschneidet sie jetzt auf die Rollen
+des Besitzers und meldet die verworfenen zurück. Und weil ein Key den Besitzer überdauert: beim
+Prüfen wird erneut mit dessen aktuellen Rollen geschnitten, ein entzogenes Recht lebt im Key
+nicht weiter.
+
+**OIDC-Callback war an keinen Anmeldeversuch gebunden.** Wer einen gültigen Autorisierungs-Code
+besass, konnte ihn im Browser eines Fremden einlösen (Login-CSRF). Der Flow hängt jetzt an einem
+kurzlebigen, httponly gesetzten Cookie; der Callback verlangt es, vergleicht in konstanter Zeit
+und löscht es danach.
+
+**SAML nahm Assertions an, die nie angefordert wurden.** `InResponseTo` band die Antwort an
+nichts — python3-saml prüft das Feld nur, wenn es überhaupt dasteht, eine Antwort ganz ohne es
+ging durch. Die ID des AuthnRequests wird jetzt aufbewahrt und beim Einlösen hart verlangt.
+Damit ist diese Fassung ausdrücklich **SP-initiiert**: IdP-initiierte Logins gibt es nicht mehr.
+Beachten: Das Flow-Cookie muss den Cross-Site-POST des IdP überleben, was nur mit
+`SameSite=None; Secure` geht — bei `cookie_secure=False` bleibt es beim Config-Wert und ein
+echter IdP-Login scheitert (der Grund steht dann im Log `tinysesam.security`).
+
+**Vier zustandsändernde Routen ohne CSRF-Schutz.** Das Abschalten von TOTP, das Neuausgeben der
+Wiederherstellungs-Codes, das Abschalten der PIN und das Widerrufen von API-Keys liessen sich
+von fremden Seiten aus auslösen — der zweite Faktor war per Formular abschaltbar. Alle vier
+verlangen jetzt ein Token; im Admin-Panel gilt das für **jede** nicht-lesende Methode. Ausserdem
+stand das Abschalten von TOTP und PIN in keinem Protokoll: Wer den zweiten Faktor verliert, soll
+das nachlesen können.
+
+**Ein erfolgreiches Passwort löschte die Sperre des zweiten Faktors.** `record_login` räumte
+beim Erfolg *alle* Fehlversuche eines Kontos weg, auch die des TOTP — wer das Passwort hatte,
+setzte damit den Zähler zurück und konnte den zweiten Faktor weiter raten. Geräumt wird jetzt
+nur noch die Methode, die tatsächlich geklappt hat.
+
+**Der Erst-Admin liess sich per Registrierung kapern.** `admin_identifiers` verbürgt, welcher
+*Name* Admin wird — nicht, wer ihn bekommt. Zusammen mit offener Selbst-Registrierung meldete
+sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist diese
+Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
+Einmal-Token unter `/auth/claim-admin`).
+
 ### Hinzugefügt — die Veröffentlichung auf PyPI ist vorbereitet (noch nicht vollzogen)
 
 Metadaten, `MANIFEST.in`, ein Packaging-Test und der Release-Workflow stehen bereit. **Installiert
@@ -44,9 +89,7 @@ Felder im Kopf von `.github/workflows/release.yml`.
 Verweis auf den Nachfolger und unverändertem Text. Die Entscheidung war nicht falsch, sie ist
 eingelöst.
 
-### Zur API-Oberfläche
-
-Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen** — die Oberfläche ist Zeichen für
+**Zur API-Oberfläche.** Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen** — die Oberfläche ist Zeichen für
 Zeichen dieselbe. Das war die dritte Bedingung für 1.0 und ist für den erreichten Zeitraum belegt.
 
 Sie trägt 1.0 trotzdem nicht: Die Zusage musste nie unter Änderungen halten, weil 0.17.0 die

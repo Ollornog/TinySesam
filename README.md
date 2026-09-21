@@ -238,6 +238,13 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
   `/auth/claim-admin?token=…`, and that account becomes admin. The token is single-use and expires
   after `admin_claim_ttl_min`; once an admin exists the route answers 404.
 
+The allowlist says **which name** becomes admin, not **who** gets that name. With
+`allow_signup=True` a stranger can simply register under it and be admin on first sign-in — so that
+combination is refused at construction time. It is allowed again once the identity is backed by the
+signup itself: an email address (not a bare username, which nobody confirms), required and verified
+(`signup_require_email=True`, `signup_verify_email=True`). Otherwise keep signup closed, or use the
+one-time token — that one never leaves the server's log.
+
 Alternatively `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` seeds an admin before the app
 ever serves a request — best when you deploy from a script.
 
@@ -513,6 +520,16 @@ Routes: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (assertion, signature-che
 > assertion is rejected with `Invalid issuer`. Copy it from the IdP's metadata (`entityID=`).
 > Whenever an assertion is rejected, the reason goes to the `tinysesam.security` logger — never to
 > the browser.
+
+> **SP-initiated only, and it needs `cookie_secure=True`.** Every assertion must answer an
+> `AuthnRequest` this app actually sent: `/auth/saml/login` stores the request ID in a short-lived
+> cookie and the ACS rejects anything whose `InResponseTo` doesn't match. That closes login-CSRF —
+> without it, anyone holding a valid assertion could post it into someone else's browser. Two
+> consequences: **IdP-initiated logins no longer work** (start at `/auth/saml/login`), and the
+> cookie only survives the IdP's cross-site POST as `SameSite=None; Secure`. With
+> `cookie_secure=False` it falls back to `cookie_samesite`, which a browser won't send on that
+> POST — fine for local runs and the test client, broken against a real IdP. The reason is in the
+> `tinysesam.security` log.
 
 ## Presets
 

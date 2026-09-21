@@ -23,9 +23,13 @@ class FakeSAML:
         self.nameid, self.attrs, self.valid = nameid, (attrs or {}), valid
 
     def login_url(self, req, base, return_to="/"):
-        return f"https://idp.example.com/sso?SAMLRequest=abc&RelayState={return_to}"
+        return (f"https://idp.example.com/sso?SAMLRequest=abc&RelayState={return_to}",
+                "_authnreq-id-4711")
 
-    def process(self, req, base):
+    def process(self, req, base, request_id=""):
+        # Die Attrappe steht für den echten Client NACH bestandener Prüfung — den Abgleich von
+        # InResponseTo stellt tests/test_sicherheit_befunde.py nach.
+        self.gesehene_request_id = request_id
         return {"nameid": self.nameid, "attrs": self.attrs} if self.valid else None
 
     def metadata(self, base):
@@ -129,7 +133,7 @@ from tinysesam.saml_ import SAMLClient
 
 
 class KaputtesAuth:
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
 
     def get_errors(self):

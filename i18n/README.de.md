@@ -240,6 +240,14 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   Anmelden, `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
   `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404.
 
+Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen bekommt. Mit
+`allow_signup=True` registriert sich ein Fremder einfach darunter und ist beim ersten Login Admin;
+diese Kombination weist der Konstruktor deshalb ab. Erlaubt ist sie wieder, sobald die Identität
+aus der Registrierung selbst belegt ist: eine E-Mail-Adresse (kein blosser Benutzername, den
+niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
+`signup_verify_email=True`). Sonst die Registrierung zulassen und den Einmal-Token nehmen — der
+verlässt das Server-Log nie.
+
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
 
@@ -519,6 +527,17 @@ Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgepr�
 > Passt es nicht, wird **jede** Assertion mit `Invalid issuer` abgelehnt. Aus den IdP-Metadaten
 > abschreiben (`entityID=`). Der Grund einer Ablehnung geht immer an den Logger
 > `tinysesam.security` — nie an den Browser.
+
+> **Nur SP-initiiert, und dafür braucht es `cookie_secure=True`.** Jede Assertion muss einen
+> `AuthnRequest` beantworten, den diese App auch geschickt hat: `/auth/saml/login` legt die
+> Request-ID in ein kurzlebiges Cookie, die ACS weist alles ab, dessen `InResponseTo` nicht dazu
+> passt. Das schliesst Login-CSRF — ohne die Bindung konnte jeder mit einer gültigen Assertion
+> sie in den Browser eines Fremden POSTen. Zwei Folgen: **IdP-initiierte Logins gibt es nicht
+> mehr** (Einstieg ist `/auth/saml/login`), und das Cookie übersteht den Cross-Site-POST des IdP
+> nur als `SameSite=None; Secure`. Mit `cookie_secure=False` bleibt es beim Wert aus
+> `cookie_samesite`, den ein Browser bei diesem POST nicht mitschickt — für lokale Läufe und den
+> TestClient in Ordnung, gegen einen echten IdP nicht. Der Grund steht im Log
+> `tinysesam.security`.
 ## Presets
 
 Fertige Config-Presets für gängige Fälle (Rest via `**overrides`, z. B. `db_path=`):

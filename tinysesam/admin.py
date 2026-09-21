@@ -27,6 +27,13 @@ def build_admin_router(auth) -> APIRouter:
     def guard(request: Request):
         # Admin + (optional) Step-up-MFA. Browser-Seitenaufruf → Redirect zu Login/Reauth;
         # JSON-/fetch-Aufrufe → 401/403 (Panel-UI lädt nach Reauth neu).
+        #
+        # CSRF wird HIER geprüft, nicht je Route: Zwei Panel-Routen hatten die Prüfung nicht
+        # (Key sperren, Ressource löschen), weil sie keinen JSON-Body lesen und json_body damit
+        # nie zum Zug kam. Eine Klasse zu schliessen ist verlässlicher, als sie Route für Route
+        # zu flicken — die nächste neue Route ist sonst wieder offen.
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
         return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
 
     def uview(u):

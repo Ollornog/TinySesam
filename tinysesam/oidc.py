@@ -14,6 +14,12 @@ from fastapi.responses import RedirectResponse
 from . import security
 
 
+def _hash(wert: str) -> str:
+    """Flow-Geheimnisse liegen nur als Hash im Speicher — wie Sitzungs-Token auch."""
+    import hashlib
+    return hashlib.sha256((wert or "").encode()).hexdigest()
+
+
 class OIDCClient:
     def __init__(self, issuer, client_id, client_secret, scopes):
         self.issuer = issuer.rstrip("/")
@@ -95,11 +101,29 @@ def register_oidc_routes(router, auth):
         base = cfg.base_url or str(request.base_url).rstrip("/")
         return base.rstrip("/") + cfg.oidc_callback_path
 
+    # Der Flow wird an den BROWSER gebunden, nicht nur an den `state`. Ohne das kann ein
+    # Angreifer den Flow bei sich starten, sich beim IdP als er selbst anmelden und das Opfer
+    # dann auf die Callback-URL locken — das Opfer landet still im Konto des Angreifers und
+    # arbeitet dort weiter. Ein gewöhnlicher Top-Level-GET genügt dafür; SameSite hilft nicht,
+    # weil gar kein Cookie gebraucht wird. Dasselbe Muster nutzt webauthn_.py schon
+    # (`_set_flow_cookie`) — hier fehlte es.
+    _OIDCFLOW = "tinysesam_oidc_flow"
+
+    def _flow_cookie_setzen(resp, wert):
+        resp.set_cookie(_OIDCFLOW, wert, max_age=600, httponly=True, secure=cfg.cookie_secure,
+                        samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+
     @router.get("/auth/oidc/start")
     def oidc_start(request: Request, next: str = "/"):
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-        auth.store.put_flow("oidc:" + state, {"nonce": nonce, "next": next}, ttl=600)
-        return RedirectResponse(oidc.auth_url(_redirect_uri(request), state, nonce), 303)
+        # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.
+        # Wer den `state` aus der Redirect-URL abliest, hat damit noch nichts.
+        flow_key = secrets.token_urlsafe(24)
+        auth.store.put_flow("oidc:" + state,
+                            {"nonce": nonce, "next": next, "fk": _hash(flow_key)}, ttl=600)
+        resp = RedirectResponse(oidc.auth_url(_redirect_uri(request), state, nonce), 303)
+        _flow_cookie_setzen(resp, flow_key)
+        return resp
 
     @router.get(cfg.oidc_callback_path)
     def oidc_callback(request: Request, code: str = "", state: str = "", error: str = ""):
@@ -108,6 +132,12 @@ def register_oidc_routes(router, auth):
         flow = auth.store.pop_flow("oidc:" + state)
         if not flow:
             raise HTTPException(400, "OIDC-state ungültig oder abgelaufen")
+        # Der Rückweg muss aus DEMSELBEN Browser kommen, der den Flow begonnen hat.
+        erwartet = flow.get("fk")
+        mitgebracht = request.cookies.get(_OIDCFLOW) or ""
+        if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
+            security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
+            raise HTTPException(400, "OIDC-Anmeldung wurde nicht in diesem Browser begonnen")
         claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"])
         info = {**oidc.userinfo(tok.get("access_token")), **dict(claims)}
 
@@ -140,4 +170,7 @@ def register_oidc_routes(router, auth):
         resp = RedirectResponse(target, 303)
         if is_new:
             auth.set_cookie(resp, token)
+        # Das Flow-Cookie hat seinen Zweck erfüllt — es liegen zu lassen wäre ein Rest,
+        # der nichts mehr schützt und nur noch verrät, dass hier ein Flow lief.
+        resp.delete_cookie(_OIDCFLOW, path=cfg.cookie_path)
         return resp

@@ -106,6 +106,9 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
+        # Ohne diese Zeile genügte ein <form method=POST> ohne Body von einer fremden Seite,
+        # um TOTP UND alle Recovery-Codes zu löschen — der zweite Faktor spurlos weg.
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
@@ -115,6 +118,7 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
         """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
+        auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
@@ -194,6 +198,7 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
@@ -641,17 +646,34 @@ def build_router(auth) -> APIRouter:
                     "script_name": request.url.path, "get_data": dict(request.query_params),
                     "post_data": {k: v for k, v in (form or {}).items()}}
 
+        # Anker gegen untergeschobene Assertions: Die ID des AuthnRequests liegt bis zur ACS in
+        # einem eigenen, kurzlebigen Cookie.
+        #
+        # SameSite ist hier NICHT aus der Config: Die ACS ist ein Cross-Site-POST (der IdP lässt
+        # den Browser ein Formular abschicken), und dabei sendet der Browser ein Lax-Cookie
+        # nicht mit — der Vorgabewert `cookie_samesite="lax"` würde den Anker also bei jedem
+        # echten Login verlieren. Mitkommen kann nur `SameSite=None`, und das verlangt `Secure`.
+        # Ohne `cookie_secure` bleibt es deshalb beim Config-Wert: lokal/im TestClient ist der
+        # POST same-site und kommt durch, für einen echten IdP ist dieser Aufbau ohnehin keiner.
+        _SAMLFLOW = "tinysesam_saml_flow"
+
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "/"):
             base = cfg.base_url or _saml_base(request)
-            url = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
-            return RedirectResponse(url, 303)
+            url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
+            resp = RedirectResponse(url, 303)
+            resp.set_cookie(_SAMLFLOW, rid or "", max_age=600, httponly=True,
+                            secure=cfg.cookie_secure,
+                            samesite="none" if cfg.cookie_secure else cfg.cookie_samesite,
+                            path=cfg.cookie_path)
+            return resp
 
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
         async def saml_acs(request: Request):
             form = await request.form()
             base = cfg.base_url or _saml_base(request)
-            data = auth.saml.process(_saml_req(request, form), base)
+            data = auth.saml.process(_saml_req(request, form), base,
+                                     request_id=request.cookies.get(_SAMLFLOW) or "")
             if not data:
                 # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
                 # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
@@ -666,6 +688,7 @@ def build_router(auth) -> APIRouter:
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
+            resp.delete_cookie(_SAMLFLOW, path=cfg.cookie_path)   # einmal angefordert, einmal eingelöst
             return resp
 
         @r.get("/auth/saml/metadata")
@@ -693,6 +716,7 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):
+            auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = auth.current_user(request)
             if not u:
                 raise HTTPException(401)
