@@ -58,8 +58,8 @@ assert t_unknown > t_known * 0.3, (t_known, t_unknown)
 ok(f"Dummy-Verify: unbekannter User nicht instant (known={t_known*1000:.1f}ms, unknown={t_unknown*1000:.1f}ms)")
 
 # ---------- py.typed vorhanden ----------
-import tinysesam, os.path as osp
-assert osp.exists(osp.join(osp.dirname(tinysesam.__file__), "py.typed"))
+import importlib.util as _ilu, os.path as osp
+assert osp.exists(osp.join(osp.dirname(_ilu.find_spec("tinysesam").origin), "py.typed"))
 ok("py.typed ausgeliefert")
 
 os.remove(db)

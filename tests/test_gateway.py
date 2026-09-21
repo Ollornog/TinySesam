@@ -2,6 +2,7 @@
 import os
 import tempfile, os
 from fastapi.testclient import TestClient
+from urllib.parse import parse_qs, urlparse
 from tinysesam import TinySesamConfig
 from tinysesam import gateway
 
@@ -41,7 +42,7 @@ r = c.get("/auth/forward", headers={"X-Forwarded-Proto": "https", "X-Forwarded-H
                                     "X-Forwarded-Uri": "/geheim"})
 assert r.status_code == 401
 loc = r.headers.get("X-TinySesam-Location")
-assert loc and loc.startswith("https://auth.example.com/auth/login?next=") and "app.example.com" in loc
+assert loc and loc.startswith("https://auth.example.com/auth/login?next=") and urlparse(parse_qs(urlparse(loc).query)["next"][0]).netloc == "app.example.com"
 ok("Forward-Auth: 401 + X-TinySesam-Location (zentraler Login, next=App-URL)")
 
 # ---------- Config aus Env ----------

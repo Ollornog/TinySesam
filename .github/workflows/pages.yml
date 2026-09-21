@@ -23,10 +23,9 @@ on:
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
+# Schreibrechte nur dort, wo sie gebraucht werden: im Deploy-Job. Der Build-Job liest nur.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -61,6 +60,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

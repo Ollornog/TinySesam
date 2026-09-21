@@ -434,7 +434,6 @@ async function addpk(){
 def _register(auth, ctx) -> str:
     """ctx: next, invite, email, error, invite_only, sent_verify(optional)."""
     t = auth.t
-    lang = auth.cfg.lang
     if ctx.get("sent_verify"):
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
                 f"<div class=ok>{_e(t('reg.verify'))}</div>"
@@ -470,7 +469,6 @@ def _register(auth, ctx) -> str:
 def _magic_request(auth, ctx) -> str:
     """ctx: next, sent (bool), error. E-Mail-Adresse für den Login-Link."""
     t = auth.t
-    lang = auth.cfg.lang
     if ctx.get("sent"):
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
                 f"<div class=ok>{_e(t('magic.sent'))}</div>"
@@ -492,7 +490,6 @@ def _magic_request(auth, ctx) -> str:
 def _forgot(auth, ctx) -> str:
     """ctx: sent (bool), error. E-Mail für den Reset-Link."""
     t = auth.t
-    lang = auth.cfg.lang
     if ctx.get("sent"):
         return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"

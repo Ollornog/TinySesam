@@ -3,8 +3,8 @@
 Prüft die Leitlinie: jede Fähigkeit funktioniert allein, ist abschaltbar (dann keine Route/kein
 Verhalten) und lässt sich mit den anderen kombinieren."""
 import os
-import tempfile, os
-from fastapi import FastAPI, Depends
+import tempfile
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pyotp
 from tinysesam import TinySesam, TinySesamConfig

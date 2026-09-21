@@ -74,8 +74,8 @@ def cmd_index(args) -> int:
     zeilen = [
         "# Backlog",
         "",
-        "<!-- GENERIERT von scripts/_backlog.py — nicht von Hand pflegen. Neu bauen: "
-        "`python3 scripts/_backlog.py index` -->",
+        ("<!-- GENERIERT von scripts/_backlog.py — nicht von Hand pflegen. Neu bauen: "
+         "`python3 scripts/_backlog.py index` -->"),
         "",
         "Die Wahrheit sind die Einzeldateien in diesem Verzeichnis; diese Seite ist ihr Abzug.",
         "Konventionen: [README-KONVENTION.md](README-KONVENTION.md).",

@@ -133,7 +133,7 @@ def _cdp_port():
             if erste.isdigit():
                 return int(erste)
         except OSError:
-            pass
+            pass  # Port-Datei noch nicht da — Chrome startet noch
         time.sleep(0.1)
     raise RuntimeError(
         f"Chrome schrieb keinen DevTools-Port (nach {CHROME_START_TIMEOUT:.0f}s).\n"
@@ -389,9 +389,9 @@ finally:
         _chrome_log.close()
         os.unlink(_chrome_log.name)
     except OSError:
-        pass
+        pass  # Log schon weg — nichts aufzuräumen
     for suffix in ("", "-wal", "-shm"):
         try:
             os.unlink(_db + suffix)
         except OSError:
-            pass
+            pass  # Datei gab es nicht — beim Aufräumen kein Fehler
