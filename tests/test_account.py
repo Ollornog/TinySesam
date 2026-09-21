@@ -34,7 +34,11 @@ assert c.post("/auth/password", json={"current": "falsch", "new": "neuespasswort
 # zu kurz → 400
 assert c.post("/auth/password", json={"current": "geheim123", "new": "x"}).status_code == 400
 # korrekt → 200, danach neuer Login funktioniert
-assert c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).json() == {"ok": True}
+_pw = c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).json()
+# Die Antwort trägt seit 0.18.0 zusätzlich `api_keys_active`: API-Keys überleben den eigenen
+# Passwortwechsel mit Absicht, und wer nach einem Einbruch das Passwort tauscht, soll sehen,
+# dass da noch eine zweite Tür offen ist. Deshalb kein Gleichheitsvergleich mehr.
+assert _pw["ok"] is True and _pw["api_keys_active"] == 0, _pw
 c.get("/auth/logout")
 assert c.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False).status_code == 401
 assert c.post("/auth/login", data={"username": "admin", "password": "neuespasswort"}, follow_redirects=False).status_code == 303

@@ -2,6 +2,8 @@
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
+import time
+
 import pyotp
 from tinysesam import TinySesam, TinySesamConfig
 
@@ -81,7 +83,10 @@ ok("PIN + TOTP kombinierbar (PIN → 2. Faktor)")
 # entfernen
 c3 = TestClient(app)
 c3.post("/auth/pin", data={"username": "admin", "pin": "13579"}, follow_redirects=False)
-c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).now()}, follow_redirects=False)
+# Ein TOTP-Code gilt seit 0.18.0 genau EINMAL. Derselbe Code wurde oben schon verbraucht —
+# hier also der nächste Zeitschritt (liegt im erlaubten Fenster).
+c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30)},
+        follow_redirects=False)
 assert c3.post("/auth/pin/disable").json() == {"ok": True}
 assert not auth.has_pin(uid)
 ok("PIN entfernen")

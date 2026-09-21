@@ -12,7 +12,11 @@ except Exception:
     _ARGON = False
 
 _MAXMEM = 132 * 1024 * 1024  # scrypt n=2^15,r=8 braucht ~32 MiB → OpenSSL-Default-Limit anheben
-_SCRYPT = dict(n=2 ** 15, r=8, p=1, dklen=32, maxmem=_MAXMEM)
+#: scrypt-Parameter für den Fallback ohne `[argon2]`. `p=3` statt `p=1`: Das OWASP Password
+#: Storage Cheat Sheet listet `N=2^15` nur zusammen mit `p=3` als gleichwertige Konfiguration
+#: (die übrigen sind `N=2^17/p=1`, `N=2^16/p=2`, `N=2^14/p=5`, `N=2^13/p=10`). `N=2^15, p=1` war
+#: keine davon und lag messbar darunter — 52 ms gegen 122 ms auf demselben Rechner.
+_SCRYPT = dict(n=2 ** 15, r=8, p=3, dklen=32, maxmem=_MAXMEM)
 
 
 def hash_password(pw: str) -> str:
@@ -63,7 +67,19 @@ def dummy_verify(pw: str) -> bool:
 
 
 def needs_rehash(stored: str) -> bool:
-    if _ARGON and not stored.startswith("scrypt$"):
+    """Sollte dieser Hash beim nächsten erfolgreichen Login neu gerechnet werden?
+
+    Ein **scrypt**-Hash sagt hier `True`, sobald argon2 verfügbar ist: Wer das Extra `[argon2]`
+    nachinstalliert, soll seine Bestandskonten auch wirklich auf das stärkere Verfahren heben.
+    Vorher gab diese Funktion für jeden `scrypt$`-Hash `False` zurück — die Login-Pfade riefen
+    sie zwar korrekt auf, bekamen aber nie ein `True`, und die Konten blieben für immer auf dem
+    Fallback. Zusammen mit den zu schwachen scrypt-Parametern war das doppelt ärgerlich.
+    """
+    if not stored:
+        return False
+    if stored.startswith("scrypt$"):
+        return _ARGON          # argon2 da → beim nächsten Login aufsteigen
+    if _ARGON:
         try:
             return _PH.check_needs_rehash(stored)
         except Exception:

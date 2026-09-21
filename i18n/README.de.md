@@ -59,13 +59,17 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ## Installation
 
-Direkt von GitHub (nicht auf PyPI):
+```bash
+pip install tinysesam                  # Kern: Passwort + TOTP
+pip install "tinysesam[all]"           # alles: + argon2, QR, OIDC, Passkey
+# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: tinysesam==0.18.0
+```
+
+Direkt von GitHub geht es genauso — dieser Weg lohnt, wenn du einen **Commit** willst statt
+einer veröffentlichten Version:
 
 ```bash
-GH="git+https://github.com/Ollornog/TinySesam.git"
-pip install "tinysesam @ $GH"          # Kern: Passwort + TOTP
-pip install "tinysesam[all] @ $GH"     # alles: + argon2, QR, OIDC, Passkey
-# gezielt: [argon2] [qr] [oidc] [passkey]  ·  Version pinnen: …@git+…@v0.17.0
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
 ```
 
 ## Quickstart
@@ -158,7 +162,8 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 |---|---|---|
 | `db_path` | `tinysesam.db` | SQLite-Store |
 | `password_enabled` / `passkey_enabled` / `oidc_enabled` | `True/True/False` | aktive Methoden |
-| `totp_enabled` / `totp_required` | `True/False` | 2FA erlauben / erzwingen |
+| `totp_enabled` | `True/False` | 2FA erlauben (verlangt, sobald ein Nutzer es eingerichtet hat) |
+| `login_chain` | `["password","totp"]` | 2FA **erzwingen** — über die Faktor-Kette, nicht über einen Schalter |
 | `session_ttl_hours` · `cookie_secure` · `cookie_samesite` | `168` · `True` · `lax` | Sessions/Cookie |
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
@@ -236,6 +241,14 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   Anmelden, `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
   `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404.
 
+Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen bekommt. Mit
+`allow_signup=True` registriert sich ein Fremder einfach darunter und ist beim ersten Login Admin;
+diese Kombination weist der Konstruktor deshalb ab. Erlaubt ist sie wieder, sobald die Identität
+aus der Registrierung selbst belegt ist: eine E-Mail-Adresse (kein blosser Benutzername, den
+niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
+`signup_verify_email=True`). Sonst die Registrierung zulassen und den Einmal-Token nehmen — der
+verlässt das Server-Log nie.
+
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
 
@@ -258,6 +271,58 @@ Dasselbe aus Python:
 auth = TinySesam(TinySesamConfig(db_path="auth.db"))
 auth.set_password(auth.store.get_user_by_name("admin")["id"], "neues-passwort")
 ```
+
+## Sicherungen und Aufräumen
+
+```bash
+python -m tinysesam backup --db auth.db auth-2026-09-21.db   # konsistente Kopie, im Betrieb
+python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegräumen
+```
+
+> **Die Datenbank nicht durch Kopieren der Datei sichern.** Sie läuft im WAL-Modus: Alles seit
+> dem letzten Checkpoint steht in `auth.db-wal`, nicht in `auth.db`. Ein `cp`/`rsync` der `.db`
+> allein liefert einen Torso — gemessen an einer frischen Instanz mit fünf Konten enthielt die
+> Kopie nicht einmal die Tabelle `users`, und das merkt man erst beim Zurückspielen. `backup`
+> nutzt SQLites Online-Backup: Es nimmt die nötigen Sperren, zieht das WAL mit und schreibt eine
+> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Aus Python:
+> `auth.store.backup(pfad)`.
+
+`gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
+bleibt bewusst unangetastet. **Von selbst läuft das nicht** — fertige Unit-Dateien liegen in
+[`deploy/systemd/`](../deploy/systemd/). Aus Python: `auth.gc()` liefert dieselben Zahlen als
+Dict. `gc` gibt allerdings keinen Plattenplatz an das Dateisystem zurück; nach einem grossen
+Aufräumen einmalig `sqlite3 auth.db 'VACUUM;'` bei gestopptem Dienst.
+
+### Eine Sicherung zurückspielen
+
+```bash
+systemctl stop tinysesam                                  # der Dienst muss stehen
+python -m tinysesam restore --db auth.db sicherung-2026-09-21.db
+systemctl start tinysesam
+```
+
+> **Auch zurück nicht einfach kopieren.** Nach einem Absturz liegen `auth.db-wal` und
+> `auth.db-shm` neben der Datenbank. SQLite spielt sie beim Start auf die eben zurückgespielte
+> Datei — der alte Stand ist wieder da, ohne Fehlermeldung, und `PRAGMA integrity_check` sagt
+> `ok`. `restore` räumt beide vorher weg, prüft die Sicherung, bevor es irgendetwas überschreibt
+> (Integrität, Kontenzahl, Schema-Version), und setzt danach `0600`.
+
+> **Ein Rückschritt auf ≤ 0.17.x braucht eine Sicherung im alten Schema.** 0.18.0 migriert die
+> Datenbank beim ersten Start. Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt
+> grün und Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem
+> Update ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die
+> zurückspielen.
+
+### „Ich komme nicht rein" — nachsehen
+
+```bash
+python -m tinysesam audit  --db auth.db --user alice    # ins Protokoll, von der Kommandozeile
+python -m tinysesam unlock --db auth.db alice           # eine Brute-Force-Sperre aufheben
+```
+
+Das Audit-Log hält fest, *warum* eine Anmeldung scheiterte (`kein_konto`, `konto_gesperrt`,
+`falsches_geheimnis`) — die HTTP-Antwort tut das bewusst nicht, sonst liesse sich damit nach
+Konten suchen. Im Protokoll liest nur der Betreiber mit.
 
 ## Demo-Modus
 
@@ -322,18 +387,25 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.17.0
+tinysesam[oidc]==0.18.0
 ```
 
-Ein Tag lässt sich umhängen. Wenn du Unveränderlichkeit brauchst, pinne den Commit statt des Tags
-(`@a1b2c3d…`). Aktualisieren heißt dann: Version in der Zeile hochziehen, neu installieren, Dienst
-neu starten. Python lädt Code nicht zur Laufzeit nach.
+Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
+denselben Code. Aktualisieren heißt dann: Version in der Zeile hochziehen, neu installieren,
+Dienst neu starten. Python lädt Code nicht zur Laufzeit nach.
+
+Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag umhängen lässt**;
+für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
+
+```
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0
+```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
-installieren will, nimmt die Datei direkt:
+und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tinysesam-0.17.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.18.0/tinysesam-0.18.0-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -341,7 +413,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.17.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.17.0
+ghcr.io/ollornog/tinysesam:v0.18.0
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -349,9 +421,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog
-gh attestation verify tinysesam-0.17.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.17.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog
+gh attestation verify tinysesam-0.18.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 
@@ -385,6 +457,12 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
 - **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- **Ein Key ist eine zweite Haustür — Aussperren nimmt ihn mit.** Der Admin-Passwort-Reset und
+  das Sperren eines Kontos widerrufen dessen Keys, ebenso „**alle** Sitzungen beenden"
+  (`scope=all`) durch den Nutzer selbst. Der **eigene** Passwortwechsel tut es bewusst nicht —
+  ein Routine-Wechsel soll die Automatiken nicht reihenweise stilllegen —, nennt aber in der
+  Antwort und im Protokoll, wie viele Keys weiter gelten (`api_keys_active`). Keys eines
+  deaktivierten Kontos haben ohnehin nie angemeldet.
 
 ## Admin-Panel
 
@@ -394,7 +472,11 @@ Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extr
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
-- **Update:** Version/Status, Modus manual/auto, Version-Pin, „jetzt aktualisieren".
+- **Version:** die laufende Version plus ein Hinweis, wie Updates laufen — es gibt **keinen
+  „jetzt aktualisieren"-Knopf**, und zwar mit Absicht ([ADR-2](../backlog/ADR-2-kein-selbst-update.md)):
+  Ein Auth-Modul, das zur Laufzeit Code nachlädt, ist eine Hintertür mit Bedienungsanleitung.
+  Aktualisiert wird dort, wo installiert wurde. (Hier stand bis 0.18.0 ein Knopf, ein
+  manual/auto-Modus und ein Version-Pin — nichts davon gibt es seit 0.12.0.)
 - **Audit-Log** einsehen.
 
 JSON-API unter `<mount>/api/*` (dieselben Aktionen — für eigene UIs / Automation).
@@ -508,6 +590,22 @@ Routen: `/auth/saml/login` (→ IdP), `/auth/saml/acs` (Assertion, signaturgepr�
 > Passt es nicht, wird **jede** Assertion mit `Invalid issuer` abgelehnt. Aus den IdP-Metadaten
 > abschreiben (`entityID=`). Der Grund einer Ablehnung geht immer an den Logger
 > `tinysesam.security` — nie an den Browser.
+
+> **Nur SP-initiiert, und dafür braucht es `cookie_secure=True`.** Jede Assertion muss einen
+> `AuthnRequest` beantworten, den diese App auch geschickt hat: `/auth/saml/login` legt die
+> Request-ID in ein kurzlebiges Cookie, die ACS weist alles ab, dessen `InResponseTo` nicht dazu
+> passt. Das schliesst Login-CSRF — ohne die Bindung konnte jeder mit einer gültigen Assertion
+> sie in den Browser eines Fremden POSTen. Zwei Folgen: **IdP-initiierte Logins gibt es nicht
+> mehr** (Einstieg ist `/auth/saml/login`), und das Cookie übersteht den Cross-Site-POST des IdP
+> nur als `SameSite=None; Secure`. Mit `cookie_secure=False` bleibt es beim Wert aus
+> `cookie_samesite`, den ein Browser bei diesem POST nicht mitschickt — für lokale Läufe und den
+> TestClient in Ordnung, gegen einen echten IdP nicht. Der Grund steht im Log
+> `tinysesam.security`.
+> **Alle Felder auf einen Blick:** [`KONFIGURATION.md`](../KONFIGURATION.md) führt alle 119
+> Config-Felder mit Typ, Vorgabe und Bedeutung — erzeugt aus `config.py`, kann also nicht
+> auseinanderlaufen. Diese README erklärt die *Wege*; jene Seite beantwortet *„es gibt da ein
+> Feld — was tut es?"*
+
 ## Presets
 
 Fertige Config-Presets für gängige Fälle (Rest via `**overrides`, z. B. `db_path=`):
@@ -526,7 +624,9 @@ TinySesamConfig.oidc_gateway(issuer="…", client_id="…", client_secret="…",
 ## Als reines OIDC-Gateway (Preset)
 
 Wer nur **OIDC-SSO vor beliebige Apps** will (Authelia-/oauth2-proxy-Stil), betreibt TinySesam als
-Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[oidc]'`:
+Forward-Auth-**Gateway** — ohne eigene App, nur `pip install 'tinysesam[gateway]'`:
+(`[gateway]` = `[oidc]` **plus ASGI-Server**. Mit `[oidc]` allein endet der Startbefehl unten
+in `ModuleNotFoundError: uvicorn` — genau diese Kombination stand hier vorher.)
 
 ```bash
 export TINYSESAM_OIDC_ISSUER=https://id.example.com \
@@ -544,7 +644,7 @@ Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Ga
 ## Tests & CI
 
 ```bash
-pip install -e '.[all]'                    # + httpx für den FastAPI-TestClient (in [all] enthalten)
+pip install -e '.[all]' setuptools         # + httpx für den FastAPI-TestClient (in [all] enthalten)
 python tests/run_all.py                    # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
 python tests/run_all.py core pin chain     # gezielt einzelne
 ```
@@ -562,6 +662,9 @@ Die Suiten sind eigenständige assert-Skripte (kein pytest). Drei davon beantwor
   Farbwerte nur in `theme.py`/`theme.css`; jede Suite läuft im Sammellauf mit.
 - **`tests/test_site.py`** prüft die erzeugte Website: beide Sprachen je Datei, ein `?lang=`-Mechanismus,
   überall derselbe Rumpf, Impressum vollständig.
+- **`tests/test_packaging.py`** baut Wheel und sdist und sieht hinein: Alles, was das Paket braucht,
+  ist wirklich drin, die Metadaten sind die, die PyPI erwartet, und veröffentlicht wird ohne Geheimnis.
+  (`setuptools` muss installiert sein — ohne Bau-Backend prüfte die Suite nichts.)
 
 **Vor jedem Push** — ein Tor, lokal:
 

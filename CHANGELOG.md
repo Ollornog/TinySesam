@@ -2,6 +2,653 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.18.0] — 2026-09-21
+
+**Sicherheits-Release. Wer TinySesam einsetzt, sollte aktualisieren** — sechs Lücken, jede mit
+einem eigenen Nachstellungs-Skript belegt, darunter Rollen-Eskalation und Konto-Unterschiebung.
+Die Einzelheiten stehen unter „Behoben"; die Tests dazu halten jeden nachgestellten Angriff fest,
+damit er nicht zurückkommt.
+
+**Diese Version ist bewusst NICHT 1.0.** Der Sprung war vorbereitet und wurde zurückgenommen:
+Eine Reifeprüfung mit vier unabhängigen Blickwinkeln fand 47 Befunde, von denen 12 einzeln
+nachgestellt wurden — **12 haltbar, 11 davon Blocker**. Ein Paket mit Rollen-Eskalation trägt kein
+„Production/Stable", und eine PyPI-Version ist unwiderruflich. Der Reifegrad steht deshalb weiter
+auf `4 - Beta`.
+
+**Warum das niemandem auffiel, ist der eigentliche Befund:** `tests/run_all.py` hat echte
+Fehlschläge als „übersprungen" verbucht. Die Suite war grün, weil sie nicht gemessen hat. Das ist
+zuerst repariert worden — alles andere wäre auf Sand gebaut.
+
+**Die Vorbereitung für PyPI bleibt drin** (Metadaten, Trusted Publishing, Packaging-Test,
+`MANIFEST.in`) — veröffentlicht wird sie erst mit 1.0. Bis dahin gilt weiter die Installation
+über den gepinnten Git-Tag.
+
+### Hinzugefügt — Lieferketten-Hygiene (CodeQL, Dependabot für pip, Digest-Pin)
+
+Aus einer Recherche dazu, was ein quelloffenes Auth-Paket vor 1.0 haben sollte:
+
+- **Statische Analyse** lief bisher gar keine. Neu: `.github/workflows/codeql.yml`
+  (`security-and-quality`, wöchentlich und bei jedem PR). Für ein Auth-Paket war das die
+  auffälligste Lücke — der OpenSSF-Scorecard-Check `SAST` hätte 0 ergeben.
+- **Dependabot deckte nur `github-actions` ab**, nicht `pip`: Für `fastapi`, `authlib`,
+  `python3-saml` & Co. gab es keine regulären Versions-PRs. Sicherheitslücken meldet Dependabot
+  ohnehin repo-weit — aber ein Auth-Paket sollte nicht auf der Version von vorgestern sitzen
+  bleiben, bis jemand eine findet. Gruppiert zu einem PR je Monat, damit ein Solo-Projekt nicht
+  in Rauschen ertrinkt. Das Basis-Abbild wird ebenfalls beobachtet.
+- **Das Docker-Basis-Abbild ist per Digest gepinnt** statt per Tag. `python:3.12-slim` zeigt
+  heute hierhin und morgen woanders; zwei Bauläufe desselben Commits ergaben verschiedene
+  Abbilder.
+
+Bereits erfüllt und deshalb nur der Vollständigkeit halber: **Private Vulnerability Reporting**
+ist im Repo eingeschaltet (nachgeprüft, nicht angenommen) — SECURITY.md verspricht den Weg, und
+er existiert auch.
+
+### Sicherheit — zweites Audit: die Reparaturen der Reparaturen
+
+Vier unabhängige Blickwinkel, diesmal auf den frischen Code selbst gerichtet. **43 Befunde, 5
+Blocker** — und drei davon waren Löcher, die beim Schliessen der ersten sechs entstanden sind.
+Das ist der eigentliche Ertrag dieser Runde: Wer eine Lücke schliesst, prüft seinen eigenen
+Verschluss nicht. Belege in `tests/test_audit_runde2.py` ([T-9](backlog/T-9-audit-2026-09-21-runde-2.md)).
+
+**Der Erst-Admin liess sich weiterhin kapern — über den Benutzernamen.** Der neue Wächter
+verlangt bei offener Registrierung eine *E-Mail* in `admin_identifiers`, mit der Begründung „den
+Namen hat, wer das Postfach hat". `maybe_promote_admin` verglich aber weiter *Name ODER E-Mail*,
+und ein Benutzername ist ein freies Textfeld: Wer sich als `username="chef@example.com"`
+registrierte und sein eigenes Postfach bestätigte, wurde Erst-Admin. Die Lücke war nur
+verschoben. Jetzt gilt: Eintrag mit `@` nur gegen die E-Mail, ohne `@` nur gegen den Namen.
+
+**Ein API-Key-Scope, der zu nichts zusammenschrumpfte, wurde zu „erbt alles".** `["lagre"]` — ein
+Tippfehler — beschnitt auf `[]`, und `[]` heisst in der Datenbank „kein Scope". Die Beschneidung,
+die begrenzen sollte, machte den Key **mächtiger**. Ein solcher Key entsteht jetzt gar nicht
+erst; was gemeint war, weiss nur der Aufrufer.
+
+**Die CSRF-Prüfung hatte einen vom Client gewählten Ausschalter.** `require_csrf` übersprang,
+sobald irgendein `X-API-Key`-Header dastand — ungeprüft, auch bei `apikey_enabled=False`, und
+danach lief die Anmeldung über das Sitzungs-Cookie weiter. Übersprungen wird jetzt nur bei einem
+**echten** Key ohne Sitzung.
+
+**Ein gescopter Key stellte sich selbst einen mächtigeren aus.** Schlüsselverwaltung verlangt
+jetzt eine interaktive Sitzung: Schlüssel gibt ein Mensch aus, kein Schlüssel.
+
+**Ein TOTP-Code galt 90 Sekunden lang beliebig oft** — zwei getrennte Clients konnten sich mit
+demselben Code voll anmelden. NIST SP 800-63B ist eindeutig: „Verifiers SHALL accept a given OTP
+only once while it is valid." Der verbrauchte Zeitschritt wird jetzt gebucht (Schema 3).
+
+**Der Freigabe-Token für gesperrte Ressourcen lag im Klartext** in der Datenbank und war
+identisch mit dem Cookie — dasselbe Bedrohungsmodell, das die Sitzungs-Umstellung begründet, nur
+eine Tabelle weiter (Schema 4).
+
+**Die Migration war nicht atomar.** `ALTER TABLE` committet für sich; ein Abbruch davor
+hinterliess Klartext-Token in der Spalte `token_hash` — dauerhaft, weil die Erkennung danach nie
+wieder greift. Jetzt läuft alles in einer Transaktion (`BEGIN IMMEDIATE`), und die Erkennung
+sucht Zeilen, die nicht wie ein Hash aussehen: Das **heilt** eine bereits beschädigte Datei.
+Nebenbei gelöst: Bei mehreren Workern starb einer beim Start mit `no such column: "token"`.
+
+**Der Erst-Admin-Wächter, `POST /auth/magic/request`** (einzige zustandsändernde Route ohne
+CSRF) und **[B-1](backlog/B-1-admin-panel-rotiert-csrf.md)** (das Panel würfelte bei jedem
+Aufruf ein neues CSRF-Token) sind ebenfalls zu — B-1 lag auf „nach 1.0" und traf durch die neuen
+CSRF-Prüfungen inzwischen mehr Wege.
+
+**Weiteres:** Recovery-Codes 64 → **112 Bit** (die NIST-Schwelle für ungesalzenes Hashing);
+scrypt-Fallback auf eine zugelassene OWASP-Kombination; scrypt-Hashes steigen jetzt auf argon2
+auf, wenn das Extra nachinstalliert wird (vorher blieben Bestandskonten für immer auf dem
+schwächeren Verfahren); das Sitzungs-Token wird beim Rechtewechsel erneuert und das CSRF-Token
+beim Login rotiert (beides OWASP); `/auth/oidc/start` ist ratenbegrenzt (vorher die einzige
+flow-erzeugende Route ohne).
+
+### Behoben — `tinysesam backup` veränderte die Datei, die es sichern sollte
+
+`_oeffne()` nahm den vollen `Store`-Konstruktor — der setzt `journal_mode=WAL`, legt Tabellen an
+und **migriert**, alles bevor eine Kopie existiert. Wer vor einem Update das einzig Richtige tat
+und sicherte, hob damit die laufende Installation auf das neue Schema, während noch der alte Code
+lief. Der Rückweg war zu, und eine Datei im alten Schema gab es danach nirgends mehr.
+
+`Store.sichere_datei()` öffnet jetzt read-only. Gemessen an einer echten 0.17.0-Datei: Quelle
+unverändert, Kopie vollständig und im alten Schema.
+
+**Und das Zurückspielen war nicht dokumentiert** — mit derselben WAL-Falle spiegelverkehrt: Nach
+einem Absturz liegen `-wal`/`-shm` daneben, SQLite spielt sie auf die frisch zurückgespielte
+Datei, der alte Stand ist zurück, und `integrity_check` sagt `ok`. Neu: **`tinysesam restore`**,
+das die Reihenfolge erzwingt und die Sicherung prüft, bevor es irgendetwas überschreibt.
+
+### Hinzugefügt — Werkzeuge für den Störfall
+
+**`tinysesam audit`** und **`tinysesam unlock`**. Das Audit-Log war nur über das Admin-Panel
+lesbar, also nur als angemeldeter Admin — ausgerechnet dann unerreichbar, wenn die Anmeldung das
+Problem ist. Und eine Brute-Force-Sperre liess sich gar nicht gezielt aufheben; übrig blieb
+`gc --attempts-older-than 0`, das die Fehlversuche **aller** Konten wegräumt.
+
+Dazu hält das Protokoll jetzt fest, **warum** eine Anmeldung scheiterte (`kein_konto`,
+`konto_gesperrt`, `falsches_geheimnis`). Die HTTP-Antwort tut das bewusst weiterhin nicht — im
+Protokoll liest nur der Betreiber mit, und dort waren die drei häufigsten Ursachen bisher
+byte-identisch.
+
+**Der Healthcheck fragt die Datenbank** (`SELECT 1`, 503 bei Defekt). Vorher meldete er nur, dass
+der Prozess lebt: Nach einem Rollback oder bei vollem Volume lieferte der Dienst allen
+angemeldeten Nutzern 500, während Docker den Container dauerhaft als `healthy` führte.
+
+**`deploy/systemd/`** bringt Timer und Service für `gc` mit — die README verwies darauf, ohne
+dass eine Vorlage dabei lag — samt einem Wort zur Aufbewahrung des Audit-Logs (es speichert
+IP-Adressen) und dem `VACUUM`, ohne das `gc` keinen Plattenplatz zurückgibt.
+
+**Das mitgelieferte Compose und die mitgelieferte fail2ban-Jail passten nicht zusammen:** Das
+Compose setzte kein `TINYSESAM_SECURITY_LOG` und mountete kein Logverzeichnis, die Jail zeigte
+also auf eine Datei, die es nie gab. Zwei Bausteine, die einzeln richtig aussahen und zusammen
+nichts taten.
+
+### Behoben — fail2ban liess sich gegen Dritte richten
+
+Der Benutzername ging **ungefiltert** in die Logzeile, die fail2ban liest. Ein `\n` darin erzeugt
+eine zusätzliche Zeile; mit einem Umbruch vorn und hinten schiebt man die echte `ip=`-Angabe auf
+eine Folgezeile, die der Filter nicht mehr matcht, und lässt dazwischen eine frei erfundene
+stehen. fail2ban zählt dann die Fehlversuche einer **vom Angreifer gewählten** IP, während die
+echte null Treffer erzeugt — bei `maxretry = 6` genügen sechs Anfragen, um eine beliebige Adresse
+auszusperren. Gegen echtes fail2ban 1.1.1 belegt.
+
+Steuerzeichen fliegen jetzt raus, die Länge ist gedeckelt, und der mitgelieferte Filter ist auf
+die ganze Zeile verankert (`^…$`) — wer eine ältere Fassung fährt, sollte den Filter übernehmen.
+
+### Behoben — die eigenen Prüfungen behaupteten mehr, als sie messen
+
+Jede Zusage wurde per Mutation gegengeprüft; sieben hielten nicht:
+
+- **Im git-worktree wand sich die gesamte Repo-Hygiene ab** — dort ist `.git` eine *Datei*, und
+  die Prüfung fragte `.is_dir()`. Privat­e Infrastruktur, Geheimnisse, SHA-Pins: alles weg, Lauf
+  grün.
+- **`run_all.py` kannte keinen Boden:** Exit 0 auch bei „0 grün, alles übersprungen".
+- Der **PyPI-Geheimnis-Check** liess sich mit einem `name:` über dem Schritt aushebeln.
+- **`test_repo`** fing `import subprocess`, aber nicht `from subprocess import run` und nicht
+  `os.system` — daneben steht eine Sicherheitsaussage. Läuft jetzt über den Syntaxbaum, inklusive
+  Alias-Auflösung.
+- **`test_api_surface`** fror Klassenattribute nicht ein (`FORWARD_HEADERS_DEFAULT` ist in der
+  Doku eine Zusage und liesse sich still ändern).
+- **`test_kern_install`** mass an zwei Stellen Textvorkommen statt Verhalten.
+- **`test_typen`** fuhr mypy ohne `--check-untyped-defs`: 120 von 410 Funktionen ungeprüft,
+  darunter alle vier Presets. Mit der Tiefe fielen sofort sechs echte Fehler an.
+
+Zwei Suiten hatten ausserdem den **TOTP-Replay festgeschrieben** (derselbe Code zweimal). Ein
+Test, der ein kaputtes Verhalten absichert, ist selbst ein Fund.
+
+### Geändert — ⚠️ beim Update beachten: was sich im Verhalten ändert
+
+**Die öffentliche Oberfläche bricht nicht:** Keine Methode wurde entfernt oder umbenannt, kein
+Parameter ist weggefallen, kein Config-Feld hat seinen Typ oder seinen Vorgabewert geändert. Die
+sieben Signaturen, die `tests/api_surface.json` als geändert verzeichnet, sind ausschließlich
+`x: bool = None` → `x: Optional[bool] = None` — zur Laufzeit identisch, nur ehrlicher annotiert.
+
+**Das Verhalten ändert sich trotzdem**, und zwar dort, wo ein Sicherheitsfix es verlangt. Das
+sieht kein API-Wächter. Die Liste, nach Auswirkung sortiert:
+
+**Der Start bricht ab, wenn die Konfiguration sich widerspricht** (neu, vorher lief sie):
+
+| Konfiguration | Warum jetzt `ConfigError` |
+|---|---|
+| `totp_required=True` | Der Schalter wurde nie gelesen — er versprach 2FA und lieferte keine. Ersatz: `login_chain=['password','totp']` |
+| `admin_identifiers=[…]` + `allow_signup=True` | Wer die Adresse errät, registriert sich darunter und wird Admin. Erlaubt mit bestätigter E-Mail |
+| `cookie_samesite` außerhalb `lax/strict/none` | Starlette prüfte erst beim ersten Cookie — und unter `python -O` gar nicht |
+| `cookie_samesite='none'` ohne `cookie_secure` | Der Browser verwirft so ein Cookie; die Anmeldung käme nie an |
+| keine aktive Anmelde-Methode | Niemand kann sich anmelden, und nichts sagte es |
+| `login_chain` mit abgeschaltetem oder unbekanntem Schritt | Die Kette ist unerfüllbar, der Nutzer landet in einer Schleife |
+
+**Wer die Store-API direkt benutzt**, liest `row["token_hash"]` statt `row["token"]` —
+Sitzungs-Token stehen nur noch als sha256 in der Datenbank. Die Schreibwege
+(`set_session_mfa`, `set_session_factors`, `delete_session_by_handle`) nehmen dieses Handle und
+**werfen** bei einem Klartext-Token, statt still ins Leere zu laufen. Die Datenbank migriert sich
+beim ersten Start selbst; **bestehende Anmeldungen bleiben gültig**.
+
+**Sechs nutzerseitige Methoden liefern jetzt ein `dict`** statt einer `sqlite3.Row` (`get_user`,
+`find_user`, `check_password`, `check_ldap`, `check_saml`, `pending_user`). Zugriffe per
+`u["name"]` funktionieren unverändert; `.get()` geht jetzt zusätzlich. Wer auf `sqlite3.Row`
+typprüft, muss anpassen.
+
+**Vier Routen verlangen jetzt ein CSRF-Token** — `POST /auth/totp/off`, `/auth/totp/recovery`,
+`/auth/pin/off`, `/auth/apikeys/{id}/revoke` —, im Admin-Panel gilt es für **jede** nicht-lesende
+Methode. Eine eigene UI, die diese Endpunkte ohne `X-CSRF-Token` aufruft, bekommt 403.
+
+**Weitere Verhaltensänderungen:**
+
+- **SAML ist jetzt ausschließlich SP-initiiert.** IdP-initiierte Logins funktionieren nicht mehr
+  (Einstieg ist `/auth/saml/login`), und das Flow-Cookie übersteht den Cross-Site-POST des IdP nur
+  mit `cookie_secure=True`.
+- **Forward-Auth-Header gehen immer als UTF-8 über die Leitung.** Eine nachgelagerte App, die
+  `Remote-Name` als Latin-1 liest, sieht bei Umlauten verstellte Zeichen — dafür funktionieren
+  Namen wie „Иван" überhaupt erst.
+- **API-Keys werden beim Aussperren mitgenommen:** Admin-Passwort-Reset, Konto sperren und
+  „**alle** Sitzungen beenden" (`scope=all`) widerrufen sie. Der eigene Passwortwechsel nicht.
+- **Ein API-Key kann nie mehr Rollen haben als sein Besitzer.** Keys, die bisher erfundene Rollen
+  trugen, verlieren sie beim nächsten Gebrauch.
+- **Ein erfolgreicher Login räumt nur noch die Fehlversuche derselben Methode.** Wer sich auf das
+  frühere Verhalten verließ, sieht länger bestehende Sperren auf anderen Faktoren.
+- **HTTP-Fehlertexte sind übersetzt.** Wer auf den deutschen Wortlaut einer `detail`-Meldung
+  geprüft hat, muss auf den Statuscode umstellen.
+- **Eine neu angelegte Datenbank bekommt `0600`.** Bestehende Dateien werden nicht umgestellt —
+  aber ein zweiter Prozess unter anderer Kennung kann eine neue Datei nicht mehr lesen.
+
+**Aus dem zweiten Audit kamen weitere Verhaltensänderungen dazu:**
+
+- **Ein TOTP-Code gilt genau einmal.** Wer denselben Code zweimal einreicht — eine Automatik, ein
+  Test, ein Doppelklick auf „Absenden" —, bekommt beim zweiten Mal eine Ablehnung. Zwei eigene
+  Suiten hatten genau das getan.
+- **API-Keys werden aus einer Sitzung ausgestellt, nicht mit einem API-Key.**
+  `POST /auth/apikeys` und `…/revoke` antworten mit 403, wenn der Aufrufer per Key angemeldet ist.
+- **Ein API-Key-Scope, der keine Rolle des Besitzers trifft, wird abgewiesen** statt beschnitten
+  (`ConfigError`). Vorher entstand daraus ein Key, der *alle* Rollen erbte.
+- **Die CSRF-Ausnahme gilt nur noch bei einem echten API-Key ohne Sitzung.** Wer bisher einen
+  beliebigen `X-API-Key`-Header mitschickte und sich per Cookie anmeldete, bekommt jetzt 403.
+- **`POST /auth/magic/request` verlangt ein CSRF-Token.**
+- **Das Sitzungs-Token wird beim zweiten Faktor erneuert.** Wer das Token selbst festhält (statt
+  dem Cookie zu folgen), muss den neuen Wert übernehmen; `complete_totp()` gibt ihn zurück.
+- **`admin_identifiers` unterscheidet jetzt:** Ein Eintrag mit `@` gilt nur für die E-Mail, einer
+  ohne nur für den Benutzernamen. Wer beides gemeint hat, trägt beides ein.
+- **Freigaben für gesperrte Ressourcen aus der Zeit vor dem Update werden verworfen** — sie sind
+  nicht umrechenbar. Betroffene öffnen die Ressource mit ihrem Geheimnis neu.
+- **`forward_headers` verlangt Strings oder Listen davon**; `None` und Zahlen werden jetzt beim
+  Aufbau abgewiesen statt später ein 500 zu erzeugen.
+
+**Nicht betroffen:** `complete_mfa()` bleibt als Alias von `complete_totp()` erhalten, alle
+bisherigen Exporte bleiben, und die vier neuen Fehlertypen erben von dem eingebauten Typ, den sie
+ersetzen — `except ValueError` und `except RuntimeError` fangen weiter.
+
+### Sicherheit — sechs Lücken geschlossen, jede mit ihrem Angriff festgehalten
+
+Gefunden bei der Reifeprüfung vor dem geplanten 1.0. Jede der sechs ist einzeln nachgestellt
+worden, bevor sie repariert wurde, und jede hat jetzt eine Prüfung in
+`tests/test_sicherheit_befunde.py` — benannt nach dem **Angriff**, nicht nach der Funktion: Wer
+eine davon rot sieht, weiss sofort, was wieder möglich ist. Jeder Fix wurde zusätzlich durch
+Abschalten gegengeprüft (Mutation): ohne ihn wird die Prüfung rot, mit ihm grün.
+
+**Rollen-Eskalation über selbst ausgestellte API-Keys.** Ein Nutzer konnte einem eigenen Key
+beliebige Rollen mitgeben — auch `admin`. `create_api_key` beschneidet sie jetzt auf die Rollen
+des Besitzers und meldet die verworfenen zurück. Und weil ein Key den Besitzer überdauert: beim
+Prüfen wird erneut mit dessen aktuellen Rollen geschnitten, ein entzogenes Recht lebt im Key
+nicht weiter.
+
+**OIDC-Callback war an keinen Anmeldeversuch gebunden.** Wer einen gültigen Autorisierungs-Code
+besass, konnte ihn im Browser eines Fremden einlösen (Login-CSRF). Der Flow hängt jetzt an einem
+kurzlebigen, httponly gesetzten Cookie; der Callback verlangt es, vergleicht in konstanter Zeit
+und löscht es danach.
+
+**SAML nahm Assertions an, die nie angefordert wurden.** `InResponseTo` band die Antwort an
+nichts — python3-saml prüft das Feld nur, wenn es überhaupt dasteht, eine Antwort ganz ohne es
+ging durch. Die ID des AuthnRequests wird jetzt aufbewahrt und beim Einlösen hart verlangt.
+Damit ist diese Fassung ausdrücklich **SP-initiiert**: IdP-initiierte Logins gibt es nicht mehr.
+Beachten: Das Flow-Cookie muss den Cross-Site-POST des IdP überleben, was nur mit
+`SameSite=None; Secure` geht — bei `cookie_secure=False` bleibt es beim Config-Wert und ein
+echter IdP-Login scheitert (der Grund steht dann im Log `tinysesam.security`).
+
+**Vier zustandsändernde Routen ohne CSRF-Schutz.** Das Abschalten von TOTP, das Neuausgeben der
+Wiederherstellungs-Codes, das Abschalten der PIN und das Widerrufen von API-Keys liessen sich
+von fremden Seiten aus auslösen — der zweite Faktor war per Formular abschaltbar. Alle vier
+verlangen jetzt ein Token; im Admin-Panel gilt das für **jede** nicht-lesende Methode. Ausserdem
+stand das Abschalten von TOTP und PIN in keinem Protokoll: Wer den zweiten Faktor verliert, soll
+das nachlesen können.
+
+**Ein erfolgreiches Passwort löschte die Sperre des zweiten Faktors.** `record_login` räumte
+beim Erfolg *alle* Fehlversuche eines Kontos weg, auch die des TOTP — wer das Passwort hatte,
+setzte damit den Zähler zurück und konnte den zweiten Faktor weiter raten. Geräumt wird jetzt
+nur noch die Methode, die tatsächlich geklappt hat.
+
+**Der Erst-Admin liess sich per Registrierung kapern.** `admin_identifiers` verbürgt, welcher
+*Name* Admin wird — nicht, wer ihn bekommt. Zusammen mit offener Selbst-Registrierung meldete
+sich der Erste, der die Adresse erriet, genau darunter an. Der Konstruktor weist diese
+Kombination jetzt ab und nennt die tragfähigen Wege (bestätigte E-Mail-Adresse, oder der
+Einmal-Token unter `/auth/claim-admin`).
+
+### Hinzugefügt — zwei Nachschlagewerke, beide generiert
+
+**[`KONFIGURATION.md`](KONFIGURATION.md)** führt alle **119** Config-Felder mit Typ, Vorgabe und
+Bedeutung. 39 davon kamen vorher in keiner Doku vor. Erzeugt aus den Kommentaren in `config.py`
+(`scripts/_config_doku.py`), damit es nicht wieder auseinanderläuft — und 32 Felder, die gar
+keinen Kommentar hatten, haben jetzt einen. Eine Prüfung verlangt beides: Abzug aktuell, kein
+Feld ohne Erklärung.
+
+**[`API.md`](API.md)** führt die **105** eingefrorenen Methoden mit Signatur und erstem Satz.
+68 davon kamen in keiner Doku vor: Wer TinySesam einbettet, sah die Zusage „diese Oberfläche
+bleibt stabil" ohne eine Stelle, an der steht, was sie enthält. Alle 105 haben jetzt einen
+Docstring.
+
+**Offen und bewusst nicht nebenbei entschieden:** *welche* dieser Methoden auf Dauer öffentlich
+sein sollen. Die Oberfläche ist gemessen (alles ohne führenden Unterstrich), nicht ausgewählt —
+das ist eine Produktentscheidung und steht in [M-1](backlog/M-1-api-stabil-1-0.md).
+
+### Behoben — Widersprüche in der Konfiguration fielen erst beim Login auf
+
+Eine App **ohne eine einzige aktive Anmelde-Methode** startete klaglos. Eine `login_chain`, die
+ein abgeschaltetes Verfahren nennt, ist unerfüllbar und schickt den Nutzer im Kreis. OIDC ohne
+`issuer` scheiterte erst beim Klick auf „Anmelden". `tinysesam/konfigpruefung.py` prüft das jetzt
+beim Aufbau und meldet **alle** Funde gemeinsam — wer drei Dinge falsch hat, soll sie einmal
+lesen und nicht dreimal starten.
+
+Die Grenze zwischen Fehler und Warnung ist nicht Strenge, sondern Reparierbarkeit: Was aus sich
+heraus unerfüllbar ist, bricht den Aufbau ab; was später noch kommen kann — ein Mailer wird
+typischerweise nach dem Konstruktor gesetzt — wird geloggt. Dazu ein Wächter für
+`cookie_samesite`, den Starlette bisher erst beim ersten Cookie prüfte (und unter `python -O`
+gar nicht).
+
+### Geändert — `complete_totp()` statt `complete_mfa()`
+
+Der alte Name versprach mehr, als die Methode tut: MFA ist die ganze Kette, hier geht es um genau
+einen Faktor — und der Docstring nannte ihn selbst „rückwärtskompatibel", ohne dass es einen
+anderen gegeben hätte. `complete_mfa` bleibt als Alias und wird nicht entfernt.
+
+### Geändert — der API-Wächter erfasst mehr
+
+Er verzeichnete Name und Typ der Config-Felder, aber **nicht die Vorgabewerte**: `session_ttl_hours`
+liess sich still von 168 auf 1 setzen — ein Verhaltensbruch für jeden, der das Feld nie angefasst
+hat. Ebenso fehlten die **Rückgabetypen** der Methoden; `-> dict` zu `-> str` wäre unbemerkt
+durchgegangen. Beides wird jetzt mitgemessen.
+
+### Geändert — das Quellpaket trägt die Testsuite, vollständig
+
+Bis 0.18.0 stand `prune tests` in `MANIFEST.in`, mit dieser Begründung: setuptools zieht nach
+einer alten Heuristik nur `tests/test_*.py` hinein (ohne `run_all.py`, ohne `_kit/`), und zwei
+Suiten brauchen ohnehin, was ein sdist nie enthält. Die Begründung trägt nicht mehr. Seit dieser
+Version sagt eine Suite **selbst ab**, wenn ihr eine Voraussetzung fehlt (`tests/voraussetzung.py`,
+Exit 77) — die repo-gebundenen überspringen sich im Quellpaket also sauber und nennen den Grund.
+
+Wer TinySesam neu paketiert (eine Distribution, conda, ein internes Rad), kann den Bau damit
+prüfen, und das ist der Sinn eines Quellpakets. Gemessen im ausgepackten sdist:
+
+```
+40/44 grün, 4 übersprungen, 0 fehlgeschlagen
+```
+
+Mit dabei sind jetzt auch `examples/showcase.py` und `deploy/` — beide sind in der README
+verlinkt, und ein toter Verweis ist in einem Tarball ärgerlicher als im Web, wo GitHub danebensteht.
+`web/` bleibt draußen: der Generator der Projektseite ist Repo-Sache, nicht Quelle der Bibliothek.
+
+### Behoben — Fehlertypen, Schema-Stempel, Recovery-Codes
+
+**Es gab keine Fehlertypen, auf die man reagieren kann.** Geworfen wurden `ValueError`
+(Konfiguration) und `RuntimeError` (fehlendes Extra); wer beim Starten unterscheiden wollte, ob
+die Konfiguration falsch ist oder ein Paket fehlt, musste den Meldungstext lesen — und der ist
+seit dieser Version übersetzt. Neu und exportiert: `TinySesamError`, `ConfigError`, `MissingExtra`
+(trägt den Namen des Extras als Feld), `MailNotConfigured`. Jeder erbt zusätzlich von dem
+eingebauten Typ, den er ersetzt — `except ValueError` fängt weiter, nichts bricht.
+
+**Ein fehlendes Extra meldete sich je nach Methode anders**: bei Passkey verständlich, sonst als
+`ModuleNotFoundError` aus dem Innern der Bibliothek oder erst beim ersten Login als 500. Jetzt
+zweistufig:
+
+* **Beim Aufbau** warnt TinySesam, wenn ein vollständig konfiguriertes Verfahren sein Modul
+  nicht findet — im Log, mit der fehlenden Installationszeile.
+* **Beim ersten echten Gebrauch** fliegt ein lesbarer `MissingExtra` (mit dem Extra-Namen als
+  Feld) statt eines nackten `ModuleNotFoundError`.
+
+Warum nicht einfach beim Aufbau abbrechen: Ein Client ist ersetzbar — `auth.ldap = eigener_client`
+ist ein legitimer Weg, und vier eigene Suiten gehen ihn. Ein Wächter, der schon am Schalter
+anschlägt, verbietet ihn. Die erste Fassung tat genau das und legte den `minimal`-Job der CI
+lahm; geworfen wird jetzt nur dort, wo es nie falsch sein kann.
+
+**Die Datenbank trug keinen Schema-Stempel.** Welchen Stand eine Datei hat, war nur an ihren
+Spaltennamen zu erraten, und eine Datei aus einer *neueren* Fassung öffnete eine ältere Version
+stillschweigend. Jetzt steht `PRAGMA user_version`, und eine Datei aus der Zukunft meldet sich.
+
+**Recovery-Codes trugen 48 Bit.** Sie ersetzen den zweiten Faktor und gelten, bis sie benutzt
+werden — anders als ein TOTP-Code, der nach 30 Sekunden wertlos ist. Neu erzeugte tragen 64 Bit;
+bestehende bleiben gültig (gespeichert wird ohnehin nur der Hash).
+
+### Behoben — die Antworten sprachen Deutsch, auch auf Englisch
+
+**32 HTTP-Antworten trugen festen deutschen Text** — CSRF-Fehler, „Adminrechte nötig", OIDC- und
+Passkey-Meldungen —, auch in einer Installation mit `lang="en"`. Die UI war zweisprachig, die
+Antworten an Maschinen und Proxys nicht. Sie laufen jetzt über die Übersetzungstabelle
+(Präfix `api.*`, getrennt von den `err.*` der UI-Seiten). Eine Hygiene-Prüfung verbietet festen
+Text in einer `HTTPException`, damit die Lücke nicht von selbst nachwächst.
+
+`OIDCClient.exchange()` nimmt dafür die Übersetzungsfunktion des Aufrufers entgegen (`t=auth.t`).
+Der Client selbst kennt keine Sprache — er spricht das Protokoll, nicht mit dem Nutzer; ohne `t`
+bleiben seine beiden Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch
+unterzuschieben.
+
+### Behoben — das Gateway startete nach der eigenen Anleitung nicht
+
+Die README nannte `pip install 'tinysesam[oidc]'` und `python -m tinysesam.gateway` in einem
+Atemzug. `[oidc]` bringt aber keinen ASGI-Server mit: Der Startbefehl endete in einem
+`ModuleNotFoundError: uvicorn`, was wie ein Defekt aussah statt wie eine fehlende Zeile im
+Install-Befehl. Dass das Docker-Abbild lief, lag an einem Flicken im `Dockerfile`, das `uvicorn`
+von Hand danebeninstallierte — er verdeckte die Lücke im Extra.
+
+Neu: **`pip install 'tinysesam[gateway]'`** (= `[oidc]` plus Server). Fehlt der Server trotzdem,
+sagt das Gateway, welche Zeile fehlt, statt einen Stacktrace zu zeigen. `--help` gibt jetzt eine
+Hilfe aus und endet mit 0 — vorher landete die Frage im uvicorn-Import und danach in einem Server
+auf `0.0.0.0:8000`: Wer wissen wollte, wie das Ding heißt, hatte es laufen. Ein unbekanntes
+Argument endet mit 2.
+
+### Behoben — die PyPI-Seite zeigte ein totes Logo und sieben tote Verweise
+
+`README.md` ist zugleich die Projektbeschreibung auf PyPI, und dort löst nichts relative
+Repo-Pfade auf. Alle Verweise in dieser Datei sind jetzt absolut; eine Prüfung hält es fest. Die
+deutsche Fassung unter `i18n/` wird nur auf GitHub gelesen und darf relativ bleiben.
+
+Im selben Zug: Beide READMEs bewarben einen **Update-Knopf** im Admin-Panel („Modus manual/auto,
+Version-Pin, jetzt aktualisieren"). Den gibt es seit 0.12.0 bewusst nicht mehr
+([ADR-2](backlog/ADR-2-kein-selbst-update.md)) — das Panel zeigt die Version und einen Hinweis.
+
+### Behoben — `Typing :: Typed` war eine Zusage, die niemand gemessen hat
+
+Das Paket trägt den Classifier und eine `py.typed`: die Zusage an jeden Nutzer, dass die
+Annotationen stimmen und sein Typprüfer sich darauf verlassen darf. Bei der ersten Messung
+standen **30 Fehler in 6 Dateien**.
+
+Der greifbarste davon: Sechs nutzerseitige Methoden waren `-> Optional[dict]` annotiert und
+lieferten eine `sqlite3.Row`. Wer der Zusage glaubte und `user.get("email")` schrieb, bekam
+einen `AttributeError` aus einer Zeile, die laut Typ nicht falsch sein konnte. `get_user`,
+`find_user`, `check_password`, `check_ldap`, `check_saml` und `pending_user` liefern jetzt
+wirklich ein `dict` — auf der Store-Ebene bleibt die Row, dort ist sie dokumentiert und gewollt.
+
+Die übrigen 24 waren Annotationsfehler ohne Laufzeitwirkung (vor allem `x: bool = None` statt
+`Optional[bool]`), plus zwei Stellen, an denen ein Abbruchpfad nicht als solcher annotiert war
+(`_deny`, `_redirect_factor` sind jetzt `NoReturn`).
+
+**Dabei fiel ein echter Fehler auf:** `cookie_samesite` wurde nie geprüft. Starlette lehnt einen
+falschen Wert per `assert` ab — also erst beim ersten Cookie, und unter `python -O` gar nicht;
+dann stünde der Tippfehler im `Set-Cookie`-Header. Der Konstruktor prüft ihn jetzt, samt der
+Kombination `samesite='none'` ohne `cookie_secure` (die ein Browser verwirft).
+
+Damit die Zusage gemessen **bleibt**: `tests/test_typen.py` fährt mypy über die Bibliothek und
+prüft zusätzlich am echten Rückgabewert, was die Signaturen versprechen. mypy läuft in der CI und
+ist ins `ci-python-web`-Abbild aufgenommen — ohne das übersprang sich die Suite selbst, und der
+Lauf sah trotzdem grün aus.
+
+**Zur API-Oberfläche:** `tests/api_surface.json` verzeichnet die neuen Annotationen als „Bruch".
+Das ist er nicht: `x: bool = None` und `x: Optional[bool] = None` verhalten sich zur Laufzeit
+gleich, die Signatur ist nur ehrlicher geworden. Kein Aufrufer muss etwas ändern.
+
+### Behoben — ein Sicherheitsschalter, der nie etwas tat, und eine Seitenliste, die nicht stimmte
+
+**`totp_required` hatte keinen Draht.** Der Schalter stand in der Config, in beiden READMEs
+(„2FA erzwingen") und auf der Website — und wurde an keiner Stelle gelesen. Wer ihn setzte,
+glaubte den zweiten Faktor erzwungen zu haben und hatte ihn nicht. Ein wirkungsloser
+Sicherheitsschalter ist gefährlicher als gar keiner, weil er die Suche nach dem richtigen Weg
+beendet. Der Konstruktor weist ihn jetzt ab und nennt den Weg, der greift:
+`login_chain=['password', 'totp']`. Die Doku nennt ihn ebenfalls.
+
+**`set_template` nahm Namen an, die es nicht gab.** Der Docstring führte `'magic_sent'` und
+`'resource_pin'` auf — beide hat es nie gegeben — und ließ sieben echte Seiten weg. Ein
+Tippfehler blieb folgenlos-still: Die eigene Seite wurde eingetragen und nie aufgerufen. Die
+Liste steht jetzt als `TinySesam.SEITEN` im Code, ein unbekannter Name ist ein Fehler, und eine
+Prüfung vergleicht sie gegen die Seiten, die `render_page()` wirklich bedient.
+
+**SECURITY.md nannte `0.5.x`** als die Reihe, die Sicherheitsfixes bekommt — dreizehn
+Minor-Versionen alt. Es verweist jetzt auf den CHANGELOG-Kopf statt auf eine Zahl, die veraltet.
+
+### Behoben — hinter einem Proxy erschienen alle Nutzer unter einer IP
+
+Vier Befunde, ein Thema. Gemeinsame Folge: Sperre, Rate-Limit und fail2ban wirkten **kollektiv**
+statt pro Nutzer — und im Ernstfall bannt fail2ban den Proxy, also alle. Nichts davon sah nach
+einem Fehler aus.
+
+**SSO- und Passkey-Logins schrieben die rohe Peer-IP.** `oidc.py` und `webauthn_.py` griffen
+direkt auf `request.client.host` zu und umgingen damit `trusted_proxies`; hinter einem Proxy
+landete dessen Adresse in der Sitzungsliste, im Protokoll und in der IP-Sperre. Beide nehmen
+jetzt `client_ip()`. Ein ungenutzter Helfer in `router.py`, der dasselbe falsch vormachte, ist
+weg.
+
+**Die Vorgabe passt im Container nicht — und das blieb still.** `trusted_proxies` steht auf
+`127.0.0.1/32`; im Container ist der Proxy aber ein anderer Container. X-Forwarded-For wird dann
+verworfen, ohne dass irgendetwas davon berichtet. `client_ip()` sagt jetzt einmal je Peer
+Bescheid, mit dem konkreten Rat (`trusted_proxies=['<Netz des Proxys>']`).
+
+**`0.0.0.0/0` entwertet X-Forwarded-For, statt ihm zu vertrauen.** Gilt jede Adresse als Proxy,
+bleibt keine als Client übrig — `client_ip()` fällt auf die Peer-IP zurück. Das klingt großzügig
+und ist das Gegenteil. Auch dieser Fall meldet sich jetzt.
+
+**Das mitgelieferte Compose machte genau diesen Fehler.** `TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"`
+ist ersetzt: Das Beispiel bringt ein eigenes Netz mit festem Subnetz mit und trägt dieses ein —
+eine vom Docker-Daemon vergebene Bridge-Adresse ließe sich gar nicht eintragen. Eine Prüfung
+hält das fest.
+
+### Behoben — zugesagte Python-Versionen werden jetzt gemessen
+
+Die Classifier versprachen 3.10 bis 3.14, die CI-Matrix fuhr **3.10, 3.12 und 3.14** — 3.11 und
+3.13 waren eine Behauptung. Die Matrix fährt jetzt alle fünf, und eine Hygiene-Prüfung vergleicht
+Classifier gegen Matrix: Wer künftig eine Version verspricht, muss sie auch fahren (oder den
+Classifier streichen).
+
+Der Anlass war ein eigener Fehlschlag: `tests/test_kern_install.py` importierte `tomllib`, das es
+erst ab 3.11 gibt — auf 3.10 starb der Test. Weil `ci-local` nur **eine** Python-Version fährt,
+fiel das erst in der GitHub-Matrix auf; das Gate hat getan, wofür es da ist. Der Test liest die
+Kern-Abhängigkeiten jetzt aus den **Paket-Metadaten** (`importlib.metadata.requires`) statt aus
+`pyproject.toml` — das läuft auf jeder Version und misst obendrein näher am Gegenstand: was nach
+`pip install tinysesam` wirklich da ist. Eine zweite Hygiene-Prüfung fängt Standardbibliotheks-
+Namen, die jünger sind als die älteste zugesagte Version.
+
+### Behoben — Betrieb: Sicherung, Aufräumen, Protokoll ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+
+**Eine Datei-Kopie der Datenbank war wertlos.** Sie läuft im WAL-Modus; wer nur die `.db` sichert,
+bekommt einen Torso — gemessen enthielt die Kopie einer Instanz mit fünf Konten nicht einmal die
+Tabelle `users`, und das merkt man erst beim Zurückspielen. Neu: `tinysesam backup --db … <ziel>`
+und `store.backup(pfad)` über SQLites Online-Backup, im laufenden Betrieb, mit denselben engen
+Rechten wie die Quelle.
+
+**Das Aufräumen hatte keinen Weg von aussen.** `auth.gc()` gab es, aber nichts rief es, und im
+Gateway-Abbild kam man nicht heran. Neu: `tinysesam gc --db …` für Cron oder systemd-Timer.
+Nebenbei: `python -m tinysesam --help` endet jetzt mit 0 statt 2 — eine Frage ist kein Tippfehler.
+
+**Ab der ersten Logrotation wachte der Wächter nicht mehr.** Das Sicherheits-Log lief über einen
+`FileHandler`, der den Inode offen hält: logrotate benennt um, legt neu an, und ab da schrieb
+TinySesam in die *umbenannte* Datei. Die fail2ban-Jail las die leere neue — ohne Fehler, ohne
+Meldung. Jetzt ein `WatchedFileHandler`, der vor jeder Zeile Inode und Gerät prüft.
+
+**Der App-Lockout blendete fail2ban aus.** Solange ein Konto gesperrt war, antwortete die App 429,
+ohne einen Versuch zu protokollieren — das Log verstummte genau in dem Moment, in dem die IP
+hätte gebannt werden sollen. Abweisungen wegen Sperre oder Rate-Limit schreiben jetzt eine Zeile,
+**im selben Format wie ein echter Fehlversuch**, damit der mitgelieferte Filter sofort greift,
+auch in Installationen, die ihre Filterdatei nie anfassen. Der Grund steht als `reason=` dabei
+(`lockout_user`, `lockout_ip`, `ratelimit`).
+
+**Admin-Aktionen standen ohne Akteur und ohne IP im Protokoll.** Es hielt fest, *dass* ein Konto
+gesperrt wurde, nicht von wem — bei mehreren Admins genau die Frage, die man hinterher stellt.
+Alle acht Panel-Aktionen laufen jetzt über einen gemeinsamen Weg, der beides mitschreibt.
+
+### Sicherheit — vier Befunde aus der zweiten Runde ([T-8](backlog/T-8-reifepruefung-restbefunde.md))
+
+Die Reifeprüfung meldete 35 weitere Befunde, die niemand einzeln nachgestellt hatte. Sie werden
+der Reihe nach geprüft — bestätigt, widerlegt oder als Geschmacksfrage abgelegt. Diese vier waren
+bestätigt:
+
+**Sitzungs-Token lagen im Klartext in der Datenbank.** Jetzt steht dort nur ihr sha256; der
+Klartext lebt zwischen `create_session()` und dem Cookie. Alles, was aus einer Sitzungs-Zeile
+kommt (`token_hash`), ist damit ein Handle: Es benennt eine Sitzung zum Beenden und taugt nicht
+zum Anmelden. Das Muster gab es im selben Haus schon — `magic_token` hält es von Anfang an so.
+**Bestehende Anmeldungen überleben die Umstellung:** Der Hash ist aus dem Klartext berechenbar,
+die Migration rechnet ihn beim ersten Start aus. Wer die Store-API direkt nutzt, liest
+`row["token_hash"]` statt `row["token"]`; die Schreibwege (`set_session_mfa`,
+`set_session_factors`, `delete_session_by_handle`) nehmen dieses Handle und **werfen** bei einem
+Klartext-Token, statt still ins Leere zu laufen.
+
+**Das Admin-Panel gab die Sitzungstoken aller Nutzer heraus.** `GET /admin/api/sessions` lieferte
+das echte Token jeder fremden Sitzung an den Browser — zum Beenden gedacht, zum Übernehmen
+geeignet. Es liefert jetzt das Handle.
+
+**Die Datenbank wurde welt-lesbar angelegt (0644).** Darin stehen Passwort-Hashes,
+TOTP-Geheimnisse und E-Mail-Adressen. Eine neue Datei entsteht jetzt direkt mit `0600` — nicht
+per `chmod` danach, das hätte ein Zeitfenster, in dem sie offen dasteht, und genau darin schreibt
+SQLite das Schema hinein. WAL und SHM tragen dieselben Daten und bekommen dieselben Rechte. Eine
+**bestehende** Datenbank wird nicht umgeschrieben (eine bewusste Gruppenfreigabe ist die
+Entscheidung des Betreibers), aber sie wird mit dem nötigen Befehl im Log benannt.
+
+**API-Keys überlebten das Aussperren.** Ein Key hängt an keiner Sitzung; wer ein Konto
+zurücksetzte, schloss nur die Haustür. Jetzt gilt: Der **Admin-Reset** und das **Sperren** eines
+Kontos widerrufen die Keys (dort ist die Absicht eindeutig). Der **eigene** Passwortwechsel lässt
+sie absichtlich stehen — ein Routine-Wechsel soll keine Automatiken stilllegen —, nennt aber ihre
+Zahl in der Antwort (`api_keys_active`) und im Protokoll. „Alle Sitzungen beenden" (`scope=all`)
+nimmt sie mit, „andere beenden" nicht. (Der Key eines **deaktivierten** Kontos war nie gültig —
+`verify_api_key` prüft das Flag; der gemeldete Befund reichte hier weiter, als er trug.)
+
+### Hinzugefügt — die Veröffentlichung auf PyPI ist vorbereitet (noch nicht vollzogen)
+
+Metadaten, `MANIFEST.in`, ein Packaging-Test und der Release-Workflow stehen bereit. **Installiert
+wird weiterhin über den gepinnten Git-Tag** — der Upload erfolgt erst mit 1.0, und 1.0 kommt erst,
+wenn die Befunde aus der Reifeprüfung abgearbeitet sind.
+
+Der Packaging-Test hat sich sofort bezahlt gemacht: Das sdist enthielt eine **halbe Testsuite**
+(setuptools zog `tests/test_*.py` nach einer alten Heuristik hinein, ohne `run_all.py` und ohne
+`_kit/`) — ausgeliefert worden wäre eine Suite, die beim Import scheitert.
+
+**Veröffentlicht wird ohne Geheimnis.** Der Release-Workflow weist sich gegenüber PyPI über seine
+eigene OIDC-Identität aus (Trusted Publishing) — kein Token im Repo, keins zum Rotieren, keins, das
+sich aus einem Lauf herausziehen liesse. Jede Datei trägt zusätzlich eine PEP-740-Attestation:
+prüfbar, aus welchem Commit sie gebaut wurde. Ausgelöst wird das allein von einem Tag, den ein
+Mensch setzt. Begründung und die einmalige Einrichtung: [ADR-6](backlog/ADR-6-pypi-veroeffentlichen.md),
+Felder im Kopf von `.github/workflows/release.yml`.
+
+[ADR-1](backlog/ADR-1-pypi-vertagt.md) („bis 1.0 vertagt") steht damit auf `verworfen` — mit
+Verweis auf den Nachfolger und unverändertem Text. Die Entscheidung war nicht falsch, sie ist
+eingelöst.
+
+**Zur API-Oberfläche.** Gegen `v0.16.0` gemessen: **null Brüche, null Erweiterungen** — die Oberfläche ist Zeichen für
+Zeichen dieselbe. Das war die dritte Bedingung für 1.0 und ist für den erreichten Zeitraum belegt.
+
+Sie trägt 1.0 trotzdem nicht: Die Zusage musste nie unter Änderungen halten, weil 0.17.0 die
+Bibliothek gar nicht angefasst hat. Und die Sicherheitsfixes dieser Version ändern **Verhalten**,
+das Nutzer bisher (falsch) voraussetzen konnten — eine gemessene Oberfläche sagt darüber nichts.
+[M-1](backlog/M-1-api-stabil-1-0.md) bleibt offen.
+
+### Hinzugefügt — `tests/test_packaging.py`: das Paket, wie es ankommt
+
+Bis hierher wurde geprüft, was im Repo liegt. Auf PyPI zählt, was im Wheel liegt — und das sind
+zwei verschiedene Listen. Ein Wheel, dem eine Datei fehlt, installiert sauber und fällt erst auf
+einem fremden Rechner auf; eine Version im Index lässt sich nicht zurückholen.
+
+Die Suite **baut** deshalb Wheel und sdist (offline, aus den versionierten Dateien, ausserhalb des
+Arbeitsbaums) und sieht hinein: Jede versionierte Datei unter `tinysesam/` ist im Wheel — heute ist
+das nur `py.typed`, aber die erste Vorlage, die jemand dazulegt, fehlt ohne Eintrag unter
+`[tool.setuptools.package-data]` stillschweigend. Dazu die Metadaten, an denen der Index hängt:
+kein `Private :: Do Not Upload` mehr, Reifegrad passend zur Version, jede von der CI gefahrene
+Python-Fassung auch als Classifier ausgewiesen, Untergrenze gleich `requires-python`, alle fünf
+Projekt-Links gesetzt, README als Markdown im Paket. Und dass der Release-Workflow ohne Geheimnis
+veröffentlicht.
+
+`setuptools` gehört damit zur Testumgebung — seit Python 3.12 bringt eine frische Umgebung es nicht
+mehr mit. Die CI-Jobs und `scripts/check.sh` installieren es ausdrücklich; fehlt es, ist die Suite
+rot statt übersprungen. Ein Test ohne Voraussetzungen darf nicht grün aussehen.
+
+### Behoben — das sdist enthielt eine Testsuite, die sich nicht starten liess
+
+Gefunden vom neuen Packaging-Test, beim ersten Lauf. setuptools zieht nach einer alten Heuristik
+`tests/test_*.py` ins Quellpaket — aber weder `tests/run_all.py` noch `tests/_kit/` noch
+`tests/api_surface.json`. Wer das sdist auspackte, fand eine Suite vor, die beim Import scheitert.
+Das ist schlimmer als keine: Sie behauptet eine Prüfbarkeit, die es nicht gibt.
+
+Ein `MANIFEST.in` entscheidet die Frage jetzt ausdrücklich. Das sdist ist die **Quelle der
+Bibliothek**, kein Abzug des Repos: Paket, README (beide Sprachen), Lizenz, CHANGELOG und
+SECURITY — keine Tests. Zwei Suiten brauchen ohnehin, was ein sdist nie enthält (`git ls-files`
+für die Hygiene, `web/` für die Website); geprüft wird im Repo.
+
+### Geändert — Paket-Metadaten vervollständigt
+
+`Development Status` auf `5 - Production/Stable`, die unterstützten Python-Fassungen (3.10–3.14)
+als Classifier, dazu `Typing :: Typed`, `Topic :: Security` und die Zielgruppe der Administratoren.
+`[project.urls]` nennt jetzt alle fünf Ziele, die ein Besucher der Index-Seite sucht: Website,
+Doku, Repo, CHANGELOG, Issues. Die Kurzbeschreibung ist englisch wie README und Website, statt
+deutsch und dreimal so lang.
+
+Bewusst **nicht** umgestellt: `license` bleibt die Tabellenform statt des SPDX-Ausdrucks aus
+PEP 639. Der verlangt setuptools ≥ 77, und gebaut wird auch mit älteren — der Grund steht im
+`pyproject.toml` daneben, damit er beim nächsten Anlauf nicht neu erarbeitet werden muss.
+
 ## [0.17.0] — 2026-09-20
 
 Ein Release **ohne Änderung an der Bibliothek**: Wer TinySesam einbindet, bekommt denselben Code

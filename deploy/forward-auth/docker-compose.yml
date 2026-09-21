@@ -16,7 +16,7 @@
 
 services:
   tinysesam:
-    image: ghcr.io/ollornog/tinysesam:v0.17.0
+    image: ghcr.io/ollornog/tinysesam:v0.18.0
     # Kein `command:` nötig — der Entrypoint startet das Gateway. Es läuft als Nicht-root
     # (uid 1000) und bringt einen HEALTHCHECK auf /healthz mit.
     environment:
@@ -27,12 +27,26 @@ services:
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
       # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
-      TINYSESAM_TRUSTED_PROXIES: "0.0.0.0/0"          # hier vertrauen wir dem internen Caddy
+      # Das Netz unten, NICHT 0.0.0.0/0: Gilt jede Adresse als Proxy, bleibt keine als Client
+      # übrig — X-Forwarded-For wird dann wirkungslos statt großzügig, und alle Nutzer erscheinen
+      # unter der Caddy-IP. Rate-Limit und IP-Sperre wirken ab da kollektiv, und fail2ban bannt
+      # im Ernstfall den Proxy, also alle. Deshalb hat dieses Compose ein festes Subnetz: eine
+      # vom Docker-Daemon vergebene Bridge-Adresse könnte man hier gar nicht eintragen.
+      TINYSESAM_TRUSTED_PROXIES: "172.28.0.0/16"
       TINYSESAM_HTTPS_MODE: "warn"                     # TLS terminiert Caddy davor
       TINYSESAM_DB: "/data/gateway.db"
+      # Das Lesefutter für fail2ban. Ohne diese Zeile UND den Mount unten zeigt die
+      # mitgelieferte Jail (deploy/fail2ban/) auf eine Datei, die es nie gibt — sie meldet sich
+      # nicht, sie läuft still leer. Zwei mitgelieferte Bausteine, die zusammen nichts tun.
+      TINYSESAM_SECURITY_LOG: "/var/log/tinysesam/security.log"
       TINYSESAM_PORT: "8000"
     volumes:
       - tinysesam-data:/data
+      # Auf den HOST, nicht in ein Volume: fail2ban läuft dort und muss die Datei lesen können.
+      # Das Verzeichnis vorher anlegen und dem Dienstbenutzer geben:
+      #   sudo install -d -o 1000 -g 1000 /var/log/tinysesam
+      - /var/log/tinysesam:/var/log/tinysesam
+    networks: [intern]
     restart: unless-stopped
 
   caddy:
@@ -46,7 +60,14 @@ services:
       - caddy-config:/config
     depends_on:
       - tinysesam
+    networks: [intern]
     restart: unless-stopped
+
+networks:
+  intern:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   tinysesam-data:

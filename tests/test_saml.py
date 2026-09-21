@@ -1,5 +1,10 @@
 """F1: SAML 2.0 SP — Login-Redirect, ACS→User/Session, Gruppen-Gate, Metadata.
 ACS-Flow mit gefälschtem Client (keine echte signierte Assertion nötig); Metadata mit echtem onelogin."""
+
+# Diese Suite prueft den SAML-Weg — ohne python3-saml gibt es nichts zu pruefen. Die Zusage
+# steht hier und nicht im Runner: nur die Suite selbst weiss, was sie braucht.
+from voraussetzung import braucht_modul  # noqa: E402
+braucht_modul("onelogin", extra="saml")
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -18,9 +23,13 @@ class FakeSAML:
         self.nameid, self.attrs, self.valid = nameid, (attrs or {}), valid
 
     def login_url(self, req, base, return_to="/"):
-        return f"https://idp.example.com/sso?SAMLRequest=abc&RelayState={return_to}"
+        return (f"https://idp.example.com/sso?SAMLRequest=abc&RelayState={return_to}",
+                "_authnreq-id-4711")
 
-    def process(self, req, base):
+    def process(self, req, base, request_id=""):
+        # Die Attrappe steht für den echten Client NACH bestandener Prüfung — den Abgleich von
+        # InResponseTo stellt tests/test_sicherheit_befunde.py nach.
+        self.gesehene_request_id = request_id
         return {"nameid": self.nameid, "attrs": self.attrs} if self.valid else None
 
     def metadata(self, base):
@@ -124,7 +133,7 @@ from tinysesam.saml_ import SAMLClient
 
 
 class KaputtesAuth:
-    def process_response(self):
+    def process_response(self, request_id=None):
         pass
 
     def get_errors(self):

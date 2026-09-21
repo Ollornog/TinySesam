@@ -17,6 +17,20 @@ from fastapi.responses import Response, JSONResponse
 _WAFLOW = "tinysesam_waflow"
 
 
+from . import errors
+
+
+def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
+    """Aus einem nackten Importfehler eine Meldung machen, die sagt, was zu tun ist.
+
+    Die Extras werden hier bewusst LAZY importiert (erst beim Benutzen). Der Preis dafür war
+    bis 0.18.0 ein `ModuleNotFoundError: webauthn` mitten im Anmeldevorgang — für den Betreiber
+    ein Defekt, dabei fehlte nur eine Zeile im Install-Befehl."""
+    return errors.MissingExtra(
+        "Das Extra [passkey] ist nicht installiert (pip install 'tinysesam[passkey]') — "
+        f"es fehlt: {e.name or 'webauthn'}.", extra="passkey")
+
+
 def register_passkey_routes(router, auth):
     cfg = auth.cfg
     from webauthn import (generate_registration_options, verify_registration_response,
@@ -59,7 +73,7 @@ def register_passkey_routes(router, auth):
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
-            raise HTTPException(400, "Registrierung abgelaufen")
+            raise HTTPException(400, auth.t("api.passkey_reg_expired"))
         body = await request.body()
         v = verify_registration_response(credential=body.decode(),
                                          expected_challenge=base64url_to_bytes(flow["challenge"]),
@@ -91,19 +105,22 @@ def register_passkey_routes(router, auth):
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
-            raise HTTPException(400, "Login abgelaufen")
+            raise HTTPException(400, auth.t("api.passkey_login_expired"))
         body = await request.body()
         data = _json.loads(body)
         row = auth.store.get_webauthn_by_credid(data.get("id") or data.get("rawId"))
         if not row:
-            raise HTTPException(400, "Unbekannter Passkey")
+            raise HTTPException(400, auth.t("api.passkey_unknown"))
         v = verify_authentication_response(
             credential=body.decode(), expected_challenge=base64url_to_bytes(flow["challenge"]),
             expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,
             credential_public_key=base64url_to_bytes(row["public_key"]),
             credential_current_sign_count=row["sign_count"], require_user_verification=False)
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
-        ip, ua = (request.client.host if request.client else None), request.headers.get("user-agent")
+        # client_ip, nicht request.client.host: Hinter einem Reverse-Proxy ist der Peer der
+        # Proxy. Die rohe Peer-IP landete sonst in der Sitzungsliste und im Protokoll — und
+        # die IP-Sperre haette alle Nutzer hinter demselben Proxy in einen Topf geworfen.
+        ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
         target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next))
         resp = JSONResponse({"ok": True, "redirect": target})

@@ -11,5 +11,24 @@ updates:
     directory: /
     schedule:
       interval: monthly
+
+  # Die Bibliotheks-Abhängigkeiten selbst. Bis 0.18.0 fehlten sie hier: Dependabot meldete
+  # zwar Sicherheitslücken (das tut es repo-weit), aber es gab keine regulären Versions-PRs
+  # für fastapi, authlib, python3-saml & Co. — ein Auth-Paket sollte nicht auf der Version von
+  # vorgestern sitzen bleiben, bis jemand eine Lücke findet.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      # Ein PR je Monat statt einem je Paket — sonst ertrinkt ein Solo-Projekt in Rauschen.
+      alle:
+        patterns: ["*"]
+
+  # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
     commit-message:
       prefix: "ci"

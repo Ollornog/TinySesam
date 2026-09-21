@@ -9,8 +9,9 @@ import smtplib
 from email.message import EmailMessage
 
 
-class MailNotConfigured(RuntimeError):
-    pass
+# Der Typ lebt jetzt in errors.py, damit ihn eine App importieren kann; hier bleibt der Name
+# stehen, damit `from .mailer import MailNotConfigured` weiter geht.
+from .errors import MailNotConfigured  # noqa: F401
 
 
 class SMTPMailer:

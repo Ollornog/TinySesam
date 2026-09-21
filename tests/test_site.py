@@ -11,9 +11,19 @@ sys.path.insert(0, ROOT)
 
 from tinysesam import __version__ as TS_VERSION  # noqa: E402
 
+# Vor dem ersten web-Import: Der Website-Generator liegt nur im Repo, nicht im sdist.
+# Eine Voraussetzung, die NACH dem Import steht, kommt zu spät — dann ist der
+# ModuleNotFoundError schon geflogen.
+import pathlib  # noqa: E402
+from voraussetzung import braucht  # noqa: E402
+
+braucht((pathlib.Path(__file__).resolve().parent.parent / "web").is_dir(),
+        "kein `web/` — der Website-Generator liegt nur im Repo, nicht im sdist")
+
 from web.flows import FLOWS, render                       # noqa: E402
 from web.site import DEMO, FLOWS as FLOWS_FILE, INDEX, LEGAL, OWNER, LABELS, build_pages  # noqa: E402
 from web.ui import LANG_COOKIE, LANGS, Ctx, Nav, footer, header  # noqa: E402
+
 
 # ---------- Flow-Daten ----------
 for f in FLOWS:
