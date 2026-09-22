@@ -1215,6 +1215,30 @@ for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "P
             _hart and not post_l,
             f"{_ergebnis} — 200 mit Erfolgsseite verdeckt den Totalausfall (A-regression-1)")
 
+# Und was der Betreiber dabei WIRKLICH zu sehen bekommt. Die Prüfung darüber fängt den
+# `ConfigError` selbst ab (TestClient reicht ihn durch); im Betrieb tut das niemand — keine Route
+# fängt ihn, also macht der ASGI-Server daraus einen HTTP 500. Der CHANGELOG versprach an dieser
+# Stelle zunächst mehr: „wo bisher eine Erfolgsseite oder ein 500 stand". Der stille 200 ist weg
+# (das ist der Gewinn), der 500 nicht. Beides steht deshalb hier: die Zusage, und die Messung
+# dessen, was stattdessen herauskommt. Fängt eine Route die Ausnahme künftig ab und rendert eine
+# Fehlerseite, wird die zweite Zeile rot — dann gehört der CHANGELOG-Satz mitgeändert.
+auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
+                         passkey_enabled=False, base_url=ECHT)
+_post_500: list = []
+auth_500.set_mailer(lambda to, betreff, text, html=None: _post_500.append(text))
+auth_500.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+auth_500.cfg.base_url = ""              # die Lage, für die das zweite Schloss gebaut ist
+_c500 = TestClient(app_500, raise_server_exceptions=False)
+_antwort_500 = _c500.post("/auth/forgot", data={"email": "opfer@example.com"})
+r.check("kein stiller Erfolg: ohne Basis meldet /auth/forgot nicht „Mail ist unterwegs\"",
+        _antwort_500.status_code != 200 and not _post_500,
+        f"HTTP {_antwort_500.status_code}, Mails={len(_post_500)} — dieselbe Antwort verhindert "
+        "die Benutzer-Enumeration und verdeckte deshalb den Totalausfall (A-regression-1)")
+r.check("...und ungefangen endet der Abbruch als HTTP 500 (so steht es im CHANGELOG)",
+        _antwort_500.status_code == 500,
+        f"HTTP {_antwort_500.status_code} — keine Route fängt den ConfigError; wenn doch, ist der "
+        "CHANGELOG-Satz zu diesem Punkt zu aktualisieren")
+
 # Befund A-regression-4: Dieselben Stellen antworteten sonst mit 500 mitten im Anmeldeversuch —
 # `/auth/oidc/start` ist der Einstieg, auf den ein Gateway jeden Besucher schickt. Jetzt steht
 # der Abbruch beim Aufbau, also bevor ein Nutzer klickt.
@@ -1860,6 +1884,25 @@ r.check("der Start meldet eine Kennungs-Kollision im Bestand", "Kennungs-Kollisi
 r.check("...und nennt beide beteiligten Konten",
         f"user_id={eve_alt}" in _text_k and f"user_id={opfer_alt}" in _text_k,
         f"ohne IDs ist die Meldung nicht abarbeitbar: {_text_k[:200]!r}")
+# B-regression-7: Bis zu dieser Runde riet dieselbe Meldung „Eine der beiden Kennungen ändern
+# (Admin-Panel oder CLI)" — und keins von beiden kann das. Die Admin-API kennt Anlegen, Sperren,
+# Rollen, Passwort und Keys, aber keine Route zum Umbenennen; das CLI legt überhaupt keine Konten
+# an. Der Betreiber, dem der Start gerade eine Kollision gemeldet hat, lief damit gegen zwei
+# Türen, die es nicht gibt. Gemessen wird deshalb nicht der Wortlaut, sondern dass die genannten
+# Wege existieren — und dass für den Benutzernamen wirklich nur die Datenbank bleibt.
+r.check("...und nennt Wege, die es wirklich gibt (store.set_email, sonst die Datenbank)",
+        "store.set_email" in _text_k and hasattr(auth_alt.store, "set_email")
+        and "UPDATE users" in _text_k,
+        f"{_text_k[:320]!r}")
+r.check("...und keine Methode macht das UPDATE überflüssig",
+        not any(hasattr(_o, _n) for _o in (auth_alt, auth_alt.store)
+                for _n in ("set_username", "rename_user", "change_identifier")),
+        "es gibt jetzt eine Umbenennungs-Methode — dann gehört sie in die Meldung statt des UPDATE")
+r.check("...und verspricht dafür weder Admin-Panel noch CLI",
+        "Kennungen ändern (Admin-Panel oder CLI)" not in _text_k
+        and "weder im Admin-Panel noch im CLI" in _text_k,
+        f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
+
 # Gegenprobe, sonst wäre die Meldung Rauschen: In auth_n2 trägt EIN Konto denselben Wert in
 # beiden eigenen Spalten (chef / chef@example.com) — das ist der vorgesehene Weg, keine Kollision.
 r.check("eine Datenbank ohne Kreuz-Kollision schweigt",

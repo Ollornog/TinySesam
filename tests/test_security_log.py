@@ -243,6 +243,28 @@ _f7, _w7 = pruefe(TinySesamConfig(**_gemeinsam7))          # Weg an → still
 assert not any("admin_claim_token_file ist gesetzt" in w for w in _w7), _w7
 ok("admin_claim_token_file ohne Token-Weg wird beim Aufbau gemeldet (mit Weg: still)")
 
+# (3b) …und diese Warnung muss einen Weg nennen, den es GIBT. Sie riet „Der Erst-Admin kommt
+#      dann nur über admin_identifiers oder die CLI zustande" — dieselbe falsche CLI-Zusage, die
+#      der CHANGELOG an anderer Stelle ausdrücklich zurückgenommen hat („Das CLI stand hier
+#      zunächst mit in der Liste — es kann gar keine Konten anlegen"), diesmal in einem Text, den
+#      der Betreiber zu lesen bekommt. Wer ihr folgte, suchte ein Kommando, das nicht existiert.
+_f8, _w8 = pruefe(TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7))
+_zeile8 = next(w for w in _w8 if "admin_claim_token_file ist gesetzt" in w)
+assert "ensure_admin" in _zeile8 and hasattr(TinySesam, "ensure_admin"), \
+    f"die Warnung nennt keinen Weg, den es gibt: {_zeile8!r}"
+assert "oder die CLI zustande" not in _zeile8, \
+    f"das CLI legt keine Konten an — es darf hier nicht als Weg stehen: {_zeile8!r}"
+# Gegenprobe: Das CLI kann es wirklich nicht. `main()` kennt genau diese sieben Kommandos;
+# käme eines dazu, das Konten anlegt, wäre die Zeile oben zu ändern statt zu behalten.
+import inspect as _inspect  # noqa: E402
+from tinysesam.__main__ import main as _cli_main  # noqa: E402
+
+_kommandos = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_main)))
+assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock"}, \
+    (f"CLI-Kommandos geändert: {sorted(_kommandos)} — kann eines davon jetzt Konten anlegen "
+     "oder Kennungen ändern, gehören die Betreiber-Meldungen mitgeändert")
+ok("Erst-Admin-Warnung nennt ensure_admin statt des CLI (das keine Konten anlegt)")
+
 # (4) Befund B-regression-6: Der Hinweis „Kein vertrauenswürdiger öffentlicher Host" kam bei
 #     JEDER anonymen Forward-Auth-Anfrage. `forward_login_url()` fragt seit N1 `public_base()`,
 #     und ohne `base_url` (erlaubt: forward_auth_enabled ist nur eine Warnung) hält die

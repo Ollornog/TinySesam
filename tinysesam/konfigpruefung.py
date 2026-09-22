@@ -247,7 +247,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         warnungen.append(
             "admin_claim_token_file ist gesetzt, aber der Token-Weg ist aus "
             "(admin_claim_ttl_min=0 oder admin_enabled=False) — die Datei wird nie geschrieben. "
-            "Der Erst-Admin kommt dann nur über admin_identifiers oder die CLI zustande.")
+            "Der Erst-Admin kommt dann nur über admin_identifiers oder einen eigenen Aufruf "
+            "von auth.ensure_admin(…) zustande — das CLI kann keine Konten anlegen.")
 
     # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
     # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine

@@ -349,8 +349,11 @@ class TinySesam:
                 "%d Kennungs-Kollision(en) im Bestand: Benutzername und E-Mail sind EIN "
                 "Kennungs-Raum (find_user sucht in beiden Spalten), die Datenbank erzwingt das "
                 "aber nur je Spalte. Die Anmeldung mit dieser Kennung ist mehrdeutig, der "
-                "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Eine der beiden "
-                "Kennungen ändern (Admin-Panel oder CLI).",
+                "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Zu ändern ist "
+                "eine der beiden Kennungen — dafür gibt es weder im Admin-Panel noch im CLI "
+                "einen Weg: die E-Mail über store.set_email(user_id, adresse) aus dem "
+                "einbettenden Dienst, den Benutzernamen nur direkt in der Datenbank "
+                "(UPDATE users SET username=… WHERE id=…).",
                 len(kollisionen), beispiele,
                 " (weitere folgen)" if len(kollisionen) > 3 else "")
         tok = self.admin_claim_token()

@@ -85,6 +85,11 @@ from tinysesam import TinySesam, TinySesamConfig
 
 auth = TinySesam(TinySesamConfig(
     db_path="app.db",
+    # Öffentliche Adresse dieser App. Pflicht, sobald ein Link sie verlässt —
+    # die OIDC-Redirect-URI unten ist so einer. Sonst bliebe als Quelle nur der
+    # Host-Header der Anfrage, und den setzt der Anfragende: Der Konstruktor
+    # bricht lieber ab, als zu raten.
+    base_url="https://app.example.com",
     rp_id="app.example.com",           # Domain (WebAuthn), ohne Schema/Port
     origin="https://app.example.com",  # exaktes Browser-Origin
     passkey_enabled=True,

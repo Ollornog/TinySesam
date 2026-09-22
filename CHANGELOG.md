@@ -51,6 +51,22 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   des Umleitungsziels. Jetzt über `http.client`, das von sich aus nie umleitet.
 - **`Documentation=` in `tinysesam-gc.service` verwarf systemd still** — der Umlaut im URL-Anker
   machte die Zeile ungültig.
+- **Der Quickstart beider READMEs baute nicht mehr.** Der erste Block, den ein neuer Nutzer
+  kopiert, schaltet `oidc_enabled=True` und setzte kein `base_url` — seit der Verschärfung weiter
+  unten ist genau das ein `ConfigError` im Konstruktor. Die Regel kam, das Beispiel blieb stehen:
+  dieselbe Klasse Fehler wie `pip install tinysesam`, die erste Zeile, die jemand ausprobiert,
+  war die erste, die fehlschlug. `base_url` steht jetzt in beiden Beispielen, mit dem Satz warum.
+  Damit das nicht wieder passiert, **baut die Hygiene jedes Konfig-Beispiel beider READMEs** und
+  führt die vollständigen Blöcke in einem Wegwerf-Verzeichnis aus (`tests/test_repo.py`) — bisher
+  maß sie nur Zahlen im Text, nicht, ob ein Beispiel läuft.
+- **Zwei Betreiber-Meldungen nannten Wege, die es nicht gibt.** Der neue Kollisions-Wächter beim
+  Start riet „Eine der beiden Kennungen ändern (Admin-Panel oder CLI)" — keins von beiden kann
+  das: Die Admin-API kennt Anlegen, Sperren, Rollen, Passwort und Keys, aber kein Umbenennen, und
+  das CLI legt überhaupt keine Konten an. Genannt wird jetzt, was existiert
+  (`store.set_email(…)`, sonst die Datenbank). Ebenso in der Konfigurationsprüfung: „Der
+  Erst-Admin kommt dann nur über `admin_identifiers` oder die CLI zustande" → `ensure_admin()`
+  im eigenen Dienst. Es ist dieselbe falsche CLI-Zusage, die dieser Eintrag an anderer Stelle
+  schon einmal zurückgenommen hat.
 
 ### Sicherheit
 
@@ -228,12 +244,19 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
   Zur Laufzeit gibt es keinen stillen Erfolg: die neue Methode
   `TinySesam.require_public_base()` wirft `ConfigError` mit klarer Meldung, wo bisher eine
-  Erfolgsseite oder ein 500 stand (`forward_auth_enabled` bleibt eine Warnung — seine Umleitung
-  bleibt ohne Basis relativ und trifft denselben Browser; wo vorher der `Host`-Header eine absolute
-  Adresse in `X-TinySesam-Location` schrieb, steht jetzt ein Pfad). Der Hinweis auf die fehlende
-  Basis steht **einmal je Prozess und Host** im Security-Log, nicht je Anfrage: Der Forward-Auth
-  fragt bei jeder anonymen Anfrage nach, ein Seitenaufruf sind zwanzig Unterressourcen — genau die
-  Datei, auf die die fail2ban-Jail zeigt, lief sonst voll.
+  Erfolgsseite stand („Mail ist unterwegs", HTTP 200, keine Mail — dieselbe Antwort, die die
+  Benutzer-Enumeration verhindert, verdeckte damit den Totalausfall). `forward_auth_enabled`
+  bleibt eine Warnung — seine Umleitung bleibt ohne Basis relativ und trifft denselben Browser;
+  wo vorher der `Host`-Header eine absolute Adresse in `X-TinySesam-Location` schrieb, steht jetzt
+  ein Pfad. **Der 500 bleibt.** Hier stand zunächst „wo bisher eine Erfolgsseite oder ein 500
+  stand"; das versprach mehr, als gemessen ist. Den `ConfigError` fängt keine Route ab, ein
+  ASGI-Server macht daraus einen Serverfehler — für den regulären Aufbau ist das bedeutungslos,
+  weil `konfigpruefung` ihn gar nicht mehr entstehen lässt, es trifft nur eine Config, die NACH dem
+  Konstruktor geändert wurde. Beides ist gemessen (`tests/test_sicherheit_befunde.py`): kein 200,
+  kein Mailversand, und die 500 als das, was heute herauskommt. Der Hinweis auf die fehlende Basis
+  steht **einmal je Prozess und Host** im Security-Log, nicht je Anfrage: Der Forward-Auth fragt
+  bei jeder anonymen Anfrage nach, ein Seitenaufruf sind zwanzig Unterressourcen — genau die Datei,
+  auf die die fail2ban-Jail zeigt, lief sonst voll.
 
   Zusätzlich kommt der **`root_path`** mit — **für die verschickten Links**:
   `base_url="https://example.com/sso"` behält ihr Präfix, eine abgeleitete Basis übernimmt den
@@ -504,6 +527,15 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   darf keine README eine PyPI-Installation zeigen. Genau diese drei Zahlen waren falsch — Zahlen,
   die niemand nachmisst, veralten beim nächsten Commit.
 - **`tests/test_bestandsdaten.py`** — 28 Prüfungen zu dem, was ein Upgrade überleben muss.
+- **Zusagen dieses Zyklus, die niemand gemessen hat, haben jetzt einen Test** — jede per
+  Mutationsprobe belegt (Rückbau → rot, sonst grün), nachdem sich alle mit voller Suite 46/46
+  zurückbauen liessen: `ConfigError.feld`/`.besitzer_id` **und** der unveränderte Meldungstext
+  „… ist bereits vergeben" (`tests/test_identifier.py`); der **PIN**-Lösch-Knopf der Konto-Seite,
+  der Erfolg erst nach `r.ok` meldet — gedeckt war nur der 2FA-Knopf, und zwar im Browser-Test,
+  der die PIN-Sektion gar nicht zu sehen bekommt (`tests/test_account.py`); die Bindung von
+  `passkey/register/finish` an das angemeldete Konto, gegen einen untergeschobenen fremden Flow
+  (`tests/test_methods.py`); und dass die beiden Betreiber-Meldungen nur Wege nennen, die es gibt
+  (`tests/test_security_log.py`, `tests/test_sicherheit_befunde.py`).
 
 ### Geändert
 

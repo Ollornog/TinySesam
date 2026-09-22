@@ -190,4 +190,37 @@ except ValueError:
     pass
 print("  Config-Sanity ok")
 
+# ---------- Kreuz-Kollision: der ConfigError trägt Feld und Besitzer (R4-12) ----------
+# Zugesagt im CHANGELOG unter „Für einbettende Apps": Der Meldungstext bleibt der von 0.18.x
+# („… ist bereits vergeben"), damit ein Aufrufer, der den Text prüft, an diesem Fix nicht bricht
+# — und unterscheiden lässt sich der Fall jetzt OHNE Textvergleich an `e.feld` und
+# `e.besitzer_id`. Beide Hälften der Zusage waren von keiner einzigen Zeile gedeckt: Mutation
+# M25 (die Attribute nicht mehr setzen) und M34 (Wortlaut zurück auf „… ist bereits als
+# Login-Kennung vergeben") liefen je mit 46/46 grün durch. `grep -rn "besitzer_id" tests/` fand
+# nichts. Genau die Zusage, die den Textvergleich ersetzen sollte, und genau der Textvergleich,
+# den sie retten sollte.
+from tinysesam import ConfigError  # noqa: E402
+
+auth, c, db = build(login_identifier="both")
+opfer_id = auth.create_user("opfer", password="geheim12345", email="chef@example.com")
+for kennung, mail, feld in (("chef@example.com", None, "username"),   # Name == fremde E-Mail
+                            ("neu", "chef@example.com", "email")):    # E-Mail == fremde E-Mail
+    try:
+        auth.create_user(kennung, email=mail)
+        raise AssertionError(f"{feld}: die Kreuzprüfung greift nicht, das Konto entstand")
+    except ConfigError as e:
+        assert "bereits vergeben" in str(e), (
+            f"{feld}: Wortlaut geändert ({str(e)!r}) — Aufrufer aus 0.18.x prüfen genau diesen "
+            "Text, und der CHANGELOG sagt ihnen zu, dass er bleibt")
+        assert getattr(e, "feld", None) == feld, (
+            f"e.feld ist {getattr(e, 'feld', '<fehlt>')!r}, erwartet {feld!r} — ohne das Attribut "
+            "bleibt der Textvergleich der einzige Weg, die beiden Fälle zu trennen")
+        assert getattr(e, "besitzer_id", None) == opfer_id, (
+            f"e.besitzer_id ist {getattr(e, 'besitzer_id', '<fehlt>')!r}, erwartet {opfer_id}")
+# Gegenprobe: eine freie Kennung wirft nicht — sonst wäre „wirft immer" auch grün.
+frei_id = auth.create_user("frei", email="frei@example.com")
+assert frei_id and auth.store.get_user(frei_id)["username"] == "frei"
+os.unlink(db)
+print("  Kreuz-Kollision: Wortlaut bleibt, e.feld/e.besitzer_id benennen den Fall ok")
+
 print("OK test_identifier")
