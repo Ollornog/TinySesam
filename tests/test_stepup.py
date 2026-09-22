@@ -261,6 +261,11 @@ assert auth4.store.get_totp(uid4) is None, "der Aufruf darf nicht einmal ein Geh
 r = c6.post("/auth/totp/setup", data={"code": "000000"}, headers=KEY4)
 assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
 assert not auth4.store.has_confirmed_totp(uid4), "per API-Key darf kein TOTP scharf werden"
+# Seit N7 entsteht das Geheimnis in einer EIGENEN Route. Sie ist der Weg, den der Riegel oben
+# eigentlich meint — ohne diese Zeile wäre er nach dem Umbau umgehbar geblieben.
+r = c6.post("/auth/totp/setup/start", data={}, headers=KEY4)
+assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
+assert auth4.store.get_totp(uid4) is None, "auch der neue Start darf per Key kein Geheimnis anlegen"
 for pfad in ("/auth/passkey/register/begin", "/auth/passkey/register/finish"):
     r = c6.post(pfad, json={}, headers=KEY4)
     assert r.status_code == 403, (pfad, r.status_code, r.text[:90])
@@ -277,6 +282,12 @@ assert c7.post("/auth/login", data={"username": "opfer", "password": "geheim123"
                                     "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
                follow_redirects=False).status_code == 303
 seite = c7.get("/auth/totp/setup", headers={"Accept": "text/html"})
+assert seite.status_code == 200, seite.status_code
+# Seit N7 zeigt der GET nur den Knopf; das Geheimnis entsteht erst im CSRF-geschützten POST.
+assert "/auth/totp/setup/start" in seite.text, seite.text[:200]
+seite = c7.post("/auth/totp/setup/start",
+                data={"_csrf": c7.cookies.get("tinysesam_csrf") or ""},
+                headers={"Accept": "text/html"})
 assert seite.status_code == 200, seite.status_code
 geheim = re.search(r"<div class=mono>([A-Z2-7]+)</div>", seite.text)
 assert geheim, seite.text[:200]
