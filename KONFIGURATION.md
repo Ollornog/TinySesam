@@ -140,6 +140,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `login_chain` | `list[str]` | `list` | Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B. ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)). Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User. |
+| `mfa_enrollment` | `str` | `"first_login"` | : Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1) : : `login_chain=["password", "totp"]` liest sich wie „ohne zweiten Faktor kommt niemand : rein". Bis 0.18.x stimmte das nicht: Ein Konto ohne TOTP durfte es an genau dieser Stelle : selbst einrichten — wer also nur das Passwort hatte, band seinen eigenen Authenticator ein : und war voll drin. Die Kette schützte damit alle ausser denen, für die sie gedacht war. : : * ``"first_login"`` (Vorgabe): erlaubt, solange das Konto noch **nie** vollständig :   angemeldet war. Ein frisch angelegtes Konto richtet sich beim ersten Mal ein — danach :   nie wieder. Ohne Frist: Wer sein neues Konto erst in drei Wochen benutzt, soll nicht vor :   einer verschlossenen Tür stehen. : * ``"grace"``: erlaubt innerhalb von `mfa_enrollment_grace_days` nach der Kontoanlage. : * ``"strict"``: nie. Die Einrichtung kommt dann vom Betreiber :   (`auth.grant_mfa_enrollment(uid)`, Admin-Panel oder Einladung). : : Verlangt die Kette gar keinen zweiten Faktor, greift nichts davon — ein freiwilliges TOTP : richtet jeder Angemeldete jederzeit selbst ein, wie bisher. |
+| `mfa_enrollment_grace_days` | `int` | `7` | : Nur für `mfa_enrollment="grace"`: Tage ab Kontoanlage. |
 | `login_chain_strict` | `bool` | `True` | Reihenfolge erzwingen (True) oder beliebig (False) |
 
 ## Step-up / per-Route-MFA (Sudo-Frische)
@@ -261,4 +263,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-126 Felder, erzeugt aus `tinysesam/config.py`.
+128 Felder, erzeugt aus `tinysesam/config.py`.

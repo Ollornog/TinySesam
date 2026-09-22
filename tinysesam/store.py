@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS users (
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
     is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
     disabled      INTEGER NOT NULL DEFAULT 0,
+    -- Wann war dieses Konto zum ERSTEN Mal vollständig angemeldet? NULL = noch nie (R3-1).
+    -- Daran hängt das Selbst-Enrollment: Verlangt die Kette einen zweiten Faktor, darf ein
+    -- Konto ihn selbst einrichten, solange es noch nie benutzt wurde — danach nicht mehr.
+    -- Sonst genügt das Passwort eines BESTEHENDEN Kontos, um sich den zweiten Faktor selbst
+    -- zu geben, und die Kette schützt genau die nicht, für die sie gedacht war.
+    first_login_at INTEGER,
+    -- Ein vom Betreiber geöffnetes Zeitfenster für die Einrichtung (Admin-Panel, Einladung).
+    -- NULL/abgelaufen = zu. Der Weg für jedes Konto, dem die Betriebsart es sonst verwehrt.
+    mfa_enroll_until INTEGER,
     created_at    INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS api_key (
@@ -255,7 +264,7 @@ class Store:
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
     #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    SCHEMA_VERSION = 7
+    SCHEMA_VERSION = 8
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -276,7 +285,10 @@ class Store:
             # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
             # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
             # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
-            "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1")],
+            "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1"),
+                      # Beide NULL für Bestandskonten: Wer noch kein TOTP hat, soll es beim
+                      # nächsten Login einrichten können — der Riegel greift ab da (R3-1).
+                      ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER")],
         }
         with self._lock:
             for table, cols in adds.items():
@@ -588,6 +600,20 @@ class Store:
     def link_oidc(self, issuer, subject, user_id):
         self._exec("INSERT OR REPLACE INTO oidc_identity(issuer, subject, user_id) VALUES (?,?,?)",
                    (issuer, subject, user_id))
+
+    # ---------- Erst-Login und Enrollment-Fenster (R3-1) ----------
+    def mark_first_login(self, user_id: int, jetzt: int) -> bool:
+        """Den ersten vollständigen Login festhalten — nur beim ersten Mal (idempotent).
+
+        Rückgabe: True, wenn dieser Aufruf ihn gesetzt hat. Die Bedingung steht im SQL, nicht
+        davor: Zwei gleichzeitige Anmeldungen desselben Kontos (zwei Geräte, zwei Worker)
+        würden sonst beide lesen, beide schreiben, und der Zeitpunkt wäre der spätere."""
+        return self._exec("UPDATE users SET first_login_at=? WHERE id=? AND first_login_at IS NULL",
+                          (jetzt, user_id)).rowcount > 0
+
+    def set_mfa_enroll_until(self, user_id: int, bis: Optional[int]) -> None:
+        """Das Einrichtungsfenster öffnen (Zeitstempel) oder schliessen (None)."""
+        self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (bis, user_id))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
