@@ -45,6 +45,20 @@ class TinySesamConfig:
     # Vorgabe-Konfiguration beim Bau des Routers ab (ModuleNotFoundError: webauthn).
     # Der allererste Schritt jedes neuen Nutzers, und die Testsuite konnte es nicht sehen.
     passkey_enabled: bool = False         # WebAuthn / Passkeys (passwortlos) — braucht [passkey]
+    #: Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er
+    #: signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch
+    #: ein Nein (B2-10).
+    #:
+    #: Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter
+    #: Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz**
+    #: des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand
+    #: gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person
+    #: kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein
+    #: Authenticator konnte also nein sagen und galt trotzdem.
+    #:
+    #: `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und
+    #: meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`.
+    passkey_user_verification: str = "required"
     pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
     pin_login: bool = True                # PIN als Erstfaktor auf der Login-Seite anbieten.
                                           # False = PIN existiert, dient aber NUR als Zusatzfaktor

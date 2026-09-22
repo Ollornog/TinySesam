@@ -212,6 +212,7 @@
     "oidc_scopes": "str = 'openid profile email'",
     "origin": "str = 'http://localhost:8000'",
     "passkey_enabled": "bool = False",
+    "passkey_user_verification": "str = 'required'",
     "password_enabled": "bool = True",
     "password_reset_enabled": "bool = False",
     "pin_enabled": "bool = False",
