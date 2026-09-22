@@ -72,6 +72,174 @@ r.check("ein Allowlist-Name ohne @ wird nicht gegen die E-Mail geprüft",
         "eine E-Mail, die zufällig wie der Name aussieht, befördert")
 
 
+# ── Erst-Admin über eine IdP-Adresse, die niemand bestätigt hat (Runde 3, F-14) ──
+# Der T-9-Fix oben reparierte den VERGLEICH (Adresse gegen Adresse) — der BELEG fehlte weiter.
+# `oidc.py` las `email` bedingungslos und übersah den Standard-Claim `email_verified` (OIDC
+# Core 5.1): Wer sich bei einem IdP mit Selbstregistrierung oder in einem zweiten Mandanten
+# die Admin-Adresse einträgt, war beim ersten Login Erst-Admin. Und der Wächter, der
+# Allowlist-BENUTZERNAMEN verbietet, hing allein an `allow_signup` — beim Auto-Anlegen durch
+# einen IdP griff er gar nicht, obwohl auch dort der Name aus fremder Hand kommt.
+from urllib.parse import parse_qs, urlparse  # noqa: E402
+
+IDP = "https://idp.example.invalid"
+
+
+class _Claims(dict):
+    """Was `exchange()` zurückgibt. Die Signaturprüfung selbst prüft test_oidc_jwks.py —
+    hier geht es um das, was TinySesam MIT den Claims macht."""
+
+    def validate(self, *a, **k):
+        pass
+
+
+def _oidc_app(claims, nutzerinfo=None, **cfg):
+    """Eine App mit OIDC, aber ohne Netz: Discovery vorbefüllt, Token-Tausch als Attrappe.
+
+    `nutzerinfo` ist das, was der /userinfo-Endpunkt zurückgibt — getrennt vom ID-Token,
+    weil genau diese Trennung geprüft wird."""
+    auth, app = _app(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
+                     oidc_client_secret="geheim", base_url="http://testserver",
+                     csrf_enabled=False, **cfg)
+    auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
+                       "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
+                       "jwks_uri": IDP + "/jwks"}
+    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None: (
+        _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
+    auth.oidc.userinfo = lambda at: dict(nutzerinfo or {})
+    return auth, app
+
+
+def _oidc_login(app):
+    """Einmal durch den echten Flow — Start, state, Callback aus demselben Browser."""
+    c = TestClient(app)
+    start = c.get("/auth/oidc/start", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    return c.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
+
+
+ANGRIFF = {"sub": "angreifer-123", "preferred_username": "angreifer", "name": "Angreifer",
+           "email": "chef@example.com", "email_verified": False}
+
+auth_f, app_f = _oidc_app(ANGRIFF, admin_identifiers=["chef@example.com"])
+antwort = _oidc_login(app_f)
+konto = auth_f.store.get_user_by_name("angreifer")
+r.check("der Angreifer kommt herein (die Anmeldung selbst bleibt erlaubt)",
+        antwort.status_code == 303 and konto is not None,
+        f"HTTP {antwort.status_code} — dann misst der Rest nichts")
+r.check("wer eine UNBESTÄTIGTE IdP-Adresse mitbringt, wird nicht Erst-Admin",
+        konto is not None and not konto["is_admin"],
+        "er ist Admin — email_verified wird wieder ignoriert")
+r.check("und die unbestätigte Adresse landet gar nicht erst im Konto",
+        konto is not None and not konto["email"],
+        f"gespeichert: {konto['email'] if konto else '—'} — sie ginge als Remote-Email weiter")
+r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exists(),
+        "irgendein Weg hat doch befördert")
+
+# Gegenprobe — ohne sie wäre die Prüfung oben auch dann grün, wenn OIDC gar nichts täte.
+auth_g, app_g = _oidc_app({**ANGRIFF, "sub": "chefin-1", "preferred_username": "chefin",
+                           "email_verified": True},
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_g)
+chefin = auth_g.store.get_user_by_name("chefin")
+r.check("mit email_verified=true wird der vorgesehene Erst-Admin weiterhin vergeben",
+        chefin is not None and chefin["is_admin"] == 1,
+        "der dokumentierte Bootstrap-Weg ist zu")
+r.check("und die bestätigte Adresse steht im Konto",
+        chefin is not None and chefin["email"] == "chef@example.com",
+        f"gespeichert: {chefin['email'] if chefin else '—'}")
+
+# Bestandskonto: Die Adresse steht schon in der Datenbank (vor dem Fix angelegt, oder
+# `oidc_require_verified_email=False`). Auch dann darf ein Login ohne Beleg nicht befördern —
+# sonst hinge der Schutz allein am Nicht-Übernehmen der Adresse.
+auth_b3, app_b3 = _oidc_app({"sub": "alt-1", "preferred_username": "altkonto",
+                             "email": "chef@example.com"},   # Claim fehlt ganz
+                            admin_identifiers=["chef@example.com"],
+                            oidc_require_verified_email=False)
+alt_uid = auth_b3.create_user("altkonto", email="chef@example.com")
+auth_b3.store.link_oidc(IDP, "alt-1", alt_uid)
+_oidc_login(app_b3)
+r.check("ein Bestandskonto mit der Adresse wird ohne Beleg nicht nachträglich befördert",
+        not auth_b3.get_user(alt_uid)["is_admin"],
+        "der fehlende Claim gilt wieder als bestätigt")
+# Dieselbe Entscheidung direkt an der Quelle — zeigt, dass der Beleg sie trägt und nicht
+# irgendein Nebeneffekt des Flows: dieselbe Zeile, einmal ohne und einmal mit Beleg.
+r.check("maybe_promote_admin verweigert bei email_bestaetigt=False",
+        not auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid), email_bestaetigt=False))
+r.check("und befördert bei einem lokalen Login (kein IdP im Spiel) weiterhin",
+        auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid)),
+        "der lokale Weg ist zu — dort verbürgt der Konstruktor-Wächter die Bestätigungsmail")
+
+
+# Der Beleg gehört zu SEINER Adresse — nicht zu der aus dem anderen Dokument.
+# Der Callback legt userinfo-Dokument und ID-Token zusammen (`{**nutzerinfo, **claims}`), und
+# beim Mischen gewann bis hierher die Adresse aus dem ID-Token, der Beleg aber konnte aus dem
+# userinfo-Dokument stammen: `email_verified=true` für eine ANDERE Adresse hätte die ungeprüfte
+# mit durchgetragen. OIDC Core 5.1 meint mit `email_verified` immer die `email` DERSELBEN Antwort.
+auth_m, app_m = _oidc_app({"sub": "misch-1", "preferred_username": "mischer",
+                           "email": "chef@example.com"},              # ID-Token: ohne Beleg
+                          nutzerinfo={"email": "mischer@fremd.example",
+                                      "email_verified": True},        # Beleg gehört HIERHIN
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_m)
+mischer = auth_m.store.get_user_by_name("mischer")
+r.check("ein Beleg aus dem userinfo-Dokument trägt nicht die Adresse aus dem ID-Token",
+        mischer is not None and not mischer["is_admin"],
+        "Admin — der fremde email_verified wurde auf die ungeprüfte Adresse gemünzt")
+r.check("und diese Adresse landet auch nicht im Konto",
+        mischer is not None and not mischer["email"],
+        f"gespeichert: {mischer['email'] if mischer else '—'}")
+
+# Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
+# muss der dortige Beleg ganz normal zählen — sonst wäre der Schutz eine Sperre für alle.
+auth_n, app_n = _oidc_app({"sub": "nur-ui-1", "preferred_username": "nurui"},
+                          nutzerinfo={"email": "chef@example.com", "email_verified": True},
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_n)
+nurui = auth_n.store.get_user_by_name("nurui")
+r.check("eine bestätigte Adresse aus dem userinfo-Dokument zählt weiterhin",
+        nurui is not None and nurui["is_admin"] == 1 and nurui["email"] == "chef@example.com",
+        f"Konto: {dict(nurui) if nurui else None}")
+
+
+# ── Allowlist-BENUTZERNAME, während ein IdP Konten von selbst anlegt (F-14 b) ──
+# Der Name eines auto-angelegten Kontos kommt aus `preferred_username` bzw. dem
+# SAML-/LDAP-Feld — von niemandem bestätigt, genau wie bei der offenen Registrierung.
+def _baut_f14(**cfg):
+    tmp = tempfile.mkdtemp()
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
+    grund.update(cfg)
+    try:
+        TinySesam(TinySesamConfig(**grund))
+        return True, ""
+    except ConfigError as e:
+        return False, str(e)
+
+
+OIDC_AN = dict(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="c", oidc_client_secret="s")
+gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **OIDC_AN)
+r.check("Allowlist-BENUTZERNAME + oidc_auto_create wird abgewiesen", not gebaut,
+        "die Instanz baut — wer beim IdP 'chef' heisst, wird Erst-Admin")
+r.check("die Abweisung nennt die offene Tür", "oidc_auto_create" in text,
+        f"Meldung nennt sie nicht: {text[:110]!r}")
+for feld, an in (("saml_auto_create", dict(saml_enabled=True,
+                                           saml_idp_sso_url=IDP + "/sso",
+                                           saml_idp_x509cert="PEM")),
+                 ("ldap_auto_create", dict(ldap_enabled=True,
+                                           ldap_url="ldaps://dir.example.invalid"))):
+    gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **an)
+    r.check(f"dasselbe für {feld}", not gebaut and feld in text,
+            f"gebaut={gebaut}, Meldung: {text[:110]!r}")
+
+# Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
+gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False,
+                         oidc_auto_create=False, **OIDC_AN)
+r.check("ohne Auto-Anlegen bleibt der Allowlist-Name erlaubt", gebaut,
+        f"zu streng: {text[:120]}")
+gebaut, text = _baut_f14(admin_identifiers=["chef@example.com"], allow_signup=False, **OIDC_AN)
+r.check("eine Allowlist-ADRESSE bleibt mit OIDC erlaubt (sie braucht den Claim, nicht ein Verbot)",
+        gebaut, f"zu streng, der dokumentierte Bootstrap ist zu: {text[:120]}")
+
+
 # ── Ein API-Key-Scope, der zu nichts zusammenschrumpft ───────────────────────
 # `["tippfehler"]` wurde zu `[]`, und `[]` heisst in der Datenbank „kein Scope, erbt alles".
 # Die Beschneidung, die begrenzen sollte, machte den Key mächtiger.

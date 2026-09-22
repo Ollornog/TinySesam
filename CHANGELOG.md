@@ -70,6 +70,23 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Bibliothek blockiert genau die Aktualisierung, die den nächsten Fix bringt.
   `tests/test_packaging.py` misst die Grenzen gegen eine eingefrorene Tabelle mit, damit der Boden
   nicht wieder altert. Gefunden im dritten Audit (B4-1 aus [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
+- **Eine unbestätigte IdP-Adresse konnte den ersten Admin bestimmen.** `admin_identifiers` ist der
+  dokumentierte Bootstrap-Weg. Für die offene Registrierung verlangt TinySesam dafür eine bestätigte
+  Adresse — der OIDC-Weg las `email` dagegen bedingungslos und übersah den Standard-Claim
+  `email_verified` (OIDC Core 5.1). Wer sich bei einem IdP mit Selbstregistrierung oder in einem
+  zweiten Mandanten die Admin-Adresse eintrug, war beim ersten Login Erst-Admin. Jetzt gilt ein
+  fehlender Claim als *unbestätigt* (fail-closed, mit Protokoll- und Audit-Zeile): Die Adresse kommt
+  gar nicht erst ins Konto (neu: `oidc_require_verified_email`, Vorgabe `True` — sie ginge sonst auch
+  als `Remote-Email` an die geschützte App weiter) und trägt in keinem Fall die
+  Erst-Admin-Entscheidung, auch nicht bei einem Bestandskonto, das sie schon führt
+  (`maybe_promote_admin(user, email_bestaetigt=…)`, durchgereicht von `apply_factor`). Adresse und
+  Beleg werden dabei immer aus DEMSELBEN Dokument genommen: Der Callback legt ID-Token und
+  userinfo-Dokument zusammen, und beim Mischen konnte ein `email_verified=true` aus dem einen an die
+  Adresse aus dem anderen geraten. Zweitens hing der Wächter, der Allowlist-**Benutzernamen**
+  verbietet, allein an `allow_signup` — beim Auto-Anlegen durch einen IdP (`oidc_auto_create`,
+  `saml_auto_create`, `ldap_auto_create`) griff er nicht, obwohl der Name auch dort aus fremder
+  Hand kommt (`preferred_username`); er fasst jetzt alle vier Türen. Gefunden im dritten Audit
+  (F-14 aus T-13).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

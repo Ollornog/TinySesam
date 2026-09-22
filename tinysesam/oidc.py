@@ -37,6 +37,38 @@ def _hash(wert: str) -> str:
     return hashlib.sha256((wert or "").encode()).hexdigest()
 
 
+def _flag_wahr(wert) -> bool:
+    """`email_verified` als Ja/Nein. Manche Provider schicken den Wert als Zeichenkette
+    ("true"), deshalb beide Schreibweisen — alles andere, auch ein fehlender Wert, ist Nein."""
+    if isinstance(wert, bool):
+        return wert
+    if wert is None:
+        return False
+    return str(wert).strip().lower() in ("true", "1")
+
+
+def _email_mit_beleg(claims, nutzerinfo) -> tuple:
+    """Adresse UND Beleg immer aus demselben Dokument.
+
+    OpenID Connect Core 5.1 kennt für die Adresse den Claim `email_verified` („True if the
+    End-User's e-mail address has been verified"). **Fehlt er, lautet die Antwort Nein** —
+    nicht „vielleicht": Ohne Beleg ist `email` ein Textfeld, das der Anmeldende beim IdP
+    selbst gefüllt hat (Selbstregistrierung, zweiter Mandant, öffentlicher Provider).
+
+    Entscheidend ist das Wort *derselben*: Der Callback legt userinfo-Dokument und ID-Token
+    zu einem Wörterbuch zusammen, und beim Mischen kann der Beleg des einen an die Adresse
+    des anderen geraten — liefert das ID-Token nur `email` und das userinfo-Dokument eine
+    ANDERE Adresse mit `email_verified=true`, trüge die ungeprüfte Adresse den fremden Beleg.
+    Darum wird das Paar hier an der Quelle gebildet, mit Vorrang für das signierte ID-Token
+    (das gewinnt auch beim Mischen).
+    """
+    for quelle in (claims, nutzerinfo):
+        mail = (quelle or {}).get("email")
+        if mail:
+            return mail, _flag_wahr((quelle or {}).get("email_verified"))
+    return None, False
+
+
 class OIDCClient:
     def __init__(self, issuer, client_id, client_secret, scopes):
         self.issuer = issuer.rstrip("/")
@@ -274,7 +306,8 @@ def register_oidc_routes(router, auth):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
             raise HTTPException(400, auth.t("api.oidc_browser"))
         claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
-        info = {**oidc.userinfo(tok.get("access_token")), **dict(claims)}
+        nutzerinfo = oidc.userinfo(tok.get("access_token")) or {}
+        info = {**nutzerinfo, **dict(claims)}
 
         if cfg.oidc_allowed_groups:
             groups = info.get(cfg.oidc_group_claim) or []
@@ -289,18 +322,40 @@ def register_oidc_routes(router, auth):
                 raise HTTPException(403, auth.t("api.oidc_group"))
 
         issuer, sub = oidc.meta()["issuer"], claims["sub"]
+
+        # Die E-Mail aus dem ID-Token trägt in TinySesam Entscheidungen: `admin_identifiers`
+        # macht ihren Träger beim ersten Login zum Admin, und `Remote-Email` reicht sie an die
+        # geschützte App weiter, die daran ihrerseits Rechte hängt. Beides setzt voraus, dass
+        # die Adresse dem Anmeldenden wirklich gehört — belegt ist das allein durch
+        # `email_verified`. Wer sich bei einem IdP mit Selbstregistrierung eine beliebige
+        # Adresse einträgt, wurde sonst mit ihr zum Erst-Admin.
+        mail, mail_bestaetigt = _email_mit_beleg(claims, nutzerinfo)
+        if mail and not mail_bestaetigt:
+            security.seclog.warning(
+                "OIDC: Der Provider meldet %s ohne email_verified — die Adresse gilt als "
+                "unbestätigt%s. Das Admin-Recht aus admin_identifiers hängt in keinem Fall "
+                "daran; der belegte Bootstrap-Weg ist /auth/claim-admin.",
+                mail, " und wird nicht ins Konto übernommen"
+                if cfg.oidc_require_verified_email else "")
+            auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
+                       "übernommen=%s" % (not cfg.oidc_require_verified_email))
+            if cfg.oidc_require_verified_email:
+                mail = None
+
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
             if not cfg.oidc_auto_create:
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
                            auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
-            username = info.get("preferred_username") or info.get("email") or ("oidc-" + sub[:8])
+            # Ersatzname aus der geprüften Adresse, nicht aus der rohen: Sonst hiesse das
+            # Konto wie eine Adresse, die niemand bestätigt hat.
+            username = info.get("preferred_username") or mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
             while auth.store.get_user_by_name(username):
                 i += 1
                 username = f"{base_un}{i}"
-            uid = auth.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
+            uid = auth.create_user(username, display_name=info.get("name") or username, email=mail)
             auth.store.link_oidc(issuer, sub, uid)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt)
@@ -309,7 +364,8 @@ def register_oidc_routes(router, auth):
 
         # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
-        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua)
+        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
+                                              email_bestaetigt=mail_bestaetigt)
         target = auth.login_redirect_after(request, token, uid,
                                            auth.safe_next(flow.get("next") or cfg.login_redirect))
         resp = RedirectResponse(target, 303)

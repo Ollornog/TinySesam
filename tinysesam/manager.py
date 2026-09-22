@@ -132,17 +132,35 @@ class TinySesam:
         # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
         # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
         # Namen, wer das Postfach hat.
-        if config.admin_identifiers and config.allow_signup:
+        #
+        # Offen ist diese Tür nicht nur bei `allow_signup`. Jedes Verfahren, das beim ersten
+        # Login selbst ein Konto anlegt, legt es unter einem Namen an, den der fremde IdP
+        # liefert: `oidc.py` nimmt `preferred_username`, SAML das NameID-/Attributfeld, LDAP
+        # den Anmeldenamen. Das ist dieselbe Lage wie bei der offenen Registrierung — nur
+        # bestimmt den Namen dort der Besucher und hier der IdP, und bei einem IdP mit
+        # Selbstregistrierung ist das dieselbe Person.
+        offene_tueren = []
+        if config.allow_signup:
+            offene_tueren.append("allow_signup=True")
+        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
+                                  ("saml_enabled", "saml_auto_create", "SAML"),
+                                  ("ldap_enabled", "ldap_auto_create", "LDAP")):
+            if getattr(config, an, False) and getattr(config, anlegen, False):
+                offene_tueren.append(f"{anlegen}=True ({name})")
+        if config.admin_identifiers and offene_tueren:
             ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
             namen = [i for i in ids if "@" not in i]
             if namen:
                 raise ConfigError(
-                    f"admin_identifiers={namen} sind Benutzernamen und allow_signup=True: Ein "
-                    "Benutzername wird bei der Registrierung von niemandem bestätigt — wer sich "
-                    "als Erster so anmeldet, wird Erst-Admin. Entweder eine E-Mail-Adresse "
-                    "eintragen (mit signup_require_email=True und signup_verify_email=True), "
-                    "oder allow_signup=False, oder den Einmal-Token-Weg nutzen "
-                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
+                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
+                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
+                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
+                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
+                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
+                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
+                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
+                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
+        if config.admin_identifiers and config.allow_signup:
             if not (config.signup_require_email and config.signup_verify_email):
                 raise ConfigError(
                     "admin_identifiers zusammen mit allow_signup=True verlangt "
@@ -463,7 +481,7 @@ class TinySesam:
         """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
         return any(u["is_admin"] for u in self.store.list_users())
 
-    def maybe_promote_admin(self, user) -> bool:
+    def maybe_promote_admin(self, user, email_bestaetigt: Optional[bool] = None) -> bool:
         """Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über
         welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
 
@@ -475,14 +493,31 @@ class TinySesam:
         `username="chef@example.com"` registriert und SEIN eigenes Postfach bestätigt, wurde
         damit Erst-Admin. Der Wächter prüfte die Konfiguration, der Vergleich hier aber etwas
         anderes; die Lücke war nur verschoben.
+
+        `email_bestaetigt` ist der **Beleg für die Adresse**, mit dem der Aufrufer anreist:
+        `True`/`False` sagt ein föderierter Anmeldeweg über den Claim `email_verified`,
+        `None` heisst „kommt nicht von einem fremden IdP" (lokaler Login — dort verbürgt der
+        Konstruktor-Wächter die Bestätigungsmail). Ohne Beleg zählt eine Treffer-Adresse
+        nicht: Sonst genügte ein IdP mit Selbstregistrierung, um sich die Admin-Adresse
+        einzutragen und beim ersten Login Erst-Admin zu werden. Der Benutzername bleibt davon
+        unberührt — für ihn ist der Konstruktor-Wächter zuständig, der Allowlist-Namen
+        verbietet, sobald Konten von selbst entstehen.
         """
         ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
         if not ids or not user or user["is_admin"] or self.admin_exists():
             return False
         adressen = {i for i in ids if "@" in i}
         namen = ids - adressen
-        if not ((str(user["email"] or "").lower() in adressen)
-                or (str(user["username"] or "").lower() in namen)):
+        trifft_adresse = str(user["email"] or "").lower() in adressen
+        trifft_name = str(user["username"] or "").lower() in namen
+        if trifft_adresse and not trifft_name and email_bestaetigt is False:
+            security.seclog.warning(
+                "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, der Anbieter "
+                "hat sie aber nicht als bestätigt gemeldet (email_verified). Belegter Weg: "
+                "/auth/claim-admin.", user["username"], user["email"])
+            self.audit("admin_bootstrap_denied", user["username"], detail="email_unbestaetigt")
+            return False
+        if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
@@ -1117,10 +1152,14 @@ class TinySesam:
             self.store.audit_log("login", u["username"] if u else None, ip, method)
         return token, mfa_ok
 
-    def apply_factor(self, request, user_id, factor, ip=None, ua=None, remember=True) -> tuple[str, bool, bool]:
+    def apply_factor(self, request, user_id, factor, ip=None, ua=None, remember=True,
+                     email_bestaetigt: Optional[bool] = None) -> tuple[str, bool, bool]:
         """Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen
         (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel).
-        Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen."""
+        Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
+
+        `email_bestaetigt` reicht ein föderierter Weg durch (OIDC: Claim `email_verified`) —
+        hier entscheidet sich der Erst-Admin, und eine unbelegte Adresse darf ihn nicht tragen."""
         s = self.session_from_request(request)
         if s and s["user_id"] == user_id:
             # gleiche Identität → Faktor an laufende Sitzung anhängen (Ketten-/Route-Schritt).
@@ -1131,7 +1170,7 @@ class TinySesam:
                 done.append(factor)
             ok = self._session_ok(user_id, done)
             self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
-            self.maybe_promote_admin(self.store.get_user(user_id))
+            self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt)
             if ok and not was_ok:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
@@ -1150,7 +1189,7 @@ class TinySesam:
             # Redirects und Cookies. In der Sitzungs-Zeile steht nur noch das Handle.
             return request.cookies.get(self.cfg.session_cookie), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
-        self.maybe_promote_admin(self.store.get_user(user_id))
+        self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt)
         return token, ok, True
 
     def login_redirect_after(self, request, token, user_id, nxt):

@@ -38,7 +38,7 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
-### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True) -> 'tuple[str, bool, bool]'`
+### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
@@ -222,7 +222,7 @@ Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `maybe_promote_admin(user) -> 'bool'`
+### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None) -> 'bool'`
 
 Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
 

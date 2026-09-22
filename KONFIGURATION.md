@@ -200,6 +200,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `oidc_client_secret` | `str` | `""` | Client-Secret — gehört in eine Umgebungsvariable, nicht in den Quelltext |
 | `oidc_scopes` | `str` | `"openid profile email"` | Angeforderte Scopes; `openid` ist Pflicht, `email`/`profile` füllen das Konto |
 | `oidc_auto_create` | `bool` | `True` | unbekannten OIDC-User automatisch anlegen |
+| `oidc_require_verified_email` | `bool` | `True` | Die E-Mail aus dem ID-Token ist eine Behauptung des Providers über ein fremdes Postfach. Belegt ist sie nur mit dem Standard-Claim `email_verified` (OIDC Core 5.1); fehlt er, gilt sie als unbestätigt. Mit True (Vorgabe) wird eine unbelegte Adresse gar nicht erst ins Konto übernommen — sonst trägt sie über `admin_identifiers` und den Header `Remote-Email` Entscheidungen, die niemand geprüft hat. False nur für IdPs, die den Claim nicht schicken (z.B. Entra ID) UND deren Adressen der Betreiber selbst verantwortet; das Admin-Recht aus `admin_identifiers` bleibt auch dann an den Beleg gebunden. |
 | `oidc_rp_logout` | `bool` | `False` | beim Abmelden auch den OIDC-Provider abmelden (end_session), optional |
 | `oidc_group_claim` | `str` | `"groups"` | Claim mit den Gruppen |
 | `oidc_allowed_groups` | `list[str]` | `list` | leer = alle erlaubt |
@@ -250,4 +251,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-120 Felder, erzeugt aus `tinysesam/config.py`.
+121 Felder, erzeugt aus `tinysesam/config.py`.

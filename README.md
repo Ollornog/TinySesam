@@ -265,6 +265,13 @@ signup itself: an email address (not a bare username, which nobody confirms), re
 (`signup_require_email=True`, `signup_verify_email=True`). Otherwise keep signup closed, or use the
 one-time token — that one never leaves the server's log.
 
+The same applies when an IdP creates the accounts (`oidc_auto_create`, `saml_auto_create`,
+`ldap_auto_create`): the username comes from someone else there too, so an allowlist **name** is
+refused in that setup. An allowlist **address** stays allowed, but with OIDC it only counts when
+the claim `email_verified` says so — without it the address is unconfirmed and (with
+`oidc_require_verified_email=True`, the default) is not written to the account at all. For IdPs
+that never send the claim, the one-time token is the path with proof.
+
 Alternatively `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` seeds an admin before the app
 ever serves a request — best when you deploy from a script.
 

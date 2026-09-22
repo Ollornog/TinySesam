@@ -265,6 +265,13 @@ niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
 `signup_verify_email=True`). Sonst die Registrierung **geschlossen lassen** — oder den
 Einmal-Token nehmen, der verlässt das Server-Log nie.
 
+Dasselbe gilt, wenn ein IdP die Konten anlegt (`oidc_auto_create`, `saml_auto_create`,
+`ldap_auto_create`): Auch dort kommt der Benutzername aus fremder Hand, ein Allowlist-**Name**
+wird in dieser Lage abgewiesen. Eine Allowlist-**Adresse** bleibt erlaubt, zählt bei OIDC aber
+nur mit dem Claim `email_verified` — fehlt er, gilt die Adresse als unbestätigt und wird (mit
+`oidc_require_verified_email=True`, Vorgabe) gar nicht erst ins Konto übernommen. Für IdPs ohne
+diesen Claim ist der Einmal-Token der belegte Weg.
+
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
 
