@@ -115,7 +115,14 @@ def _oidc_app(claims, nutzerinfo=None, **cfg):
                        "jwks_uri": IDP + "/jwks"}
     auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None: (
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
-    auth.oidc.userinfo = lambda at: dict(nutzerinfo or {})
+    # Ersetzt wird nur der HTTP-Abruf; der `sub`-Abgleich aus F-18 läuft über die ECHTE
+    # Funktion. Eine Attrappe, die ihn nachbaut, prüft sonst den Nachbau statt den Code —
+    # eine entfernte Prüfung fiele dann hier nicht auf.
+    def _userinfo(at, erwartetes_sub=""):
+        from tinysesam.oidc import OIDCClient
+        return OIDCClient.userinfo_pruefen(dict(nutzerinfo or {}) or {}, erwartetes_sub)
+
+    auth.oidc.userinfo = _userinfo
     return auth, app
 
 
@@ -266,7 +273,8 @@ for wert, erwartet in [(True, True), ("true", True), ("True", True), (" TRUE ", 
 # mit durchgetragen. OIDC Core 5.1 meint mit `email_verified` immer die `email` DERSELBEN Antwort.
 auth_m, app_m = _oidc_app({"sub": "misch-1", "preferred_username": "mischer",
                            "email": "chef@example.com"},              # ID-Token: ohne Beleg
-                          nutzerinfo={"email": "mischer@fremd.example",
+                          nutzerinfo={"sub": "misch-1",            # Pflicht seit F-18
+                                      "email": "mischer@fremd.example",
                                       "email_verified": True},        # Beleg gehört HIERHIN
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_m)
@@ -281,8 +289,11 @@ r.check("… und sie steht im Konto als unbestätigt, nicht als belegt",
 
 # Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
 # muss der dortige Beleg ganz normal zählen — sonst wäre der Schutz eine Sperre für alle.
+# Seit F-18 trägt die Antwort ihr `sub`: Ohne passendes wird sie verworfen (OIDC Core 5.3.2),
+# was der Abschnitt unten gesondert misst.
 auth_n, app_n = _oidc_app({"sub": "nur-ui-1", "preferred_username": "nurui"},
-                          nutzerinfo={"email": "chef@example.com", "email_verified": True},
+                          nutzerinfo={"sub": "nur-ui-1",           # Pflicht seit F-18
+                                      "email": "chef@example.com", "email_verified": True},
                           admin_identifiers=["chef@example.com"])
 _oidc_login(app_n)
 nurui = auth_n.store.get_user_by_name("nurui")
@@ -858,5 +869,51 @@ if node:
         r.check("und der Nachbau oben stimmt mit dem echten JS überein",
                 _jsarg(angriff) in aus,
                 f"Nachbau: {_jsarg(angriff)!r} — dann misst die Prüfung ohne node etwas anderes")
+
+# ---------- F-17: ein gesperrtes Konto bekommt beim SSO-Login gar nichts mehr ----------
+# Bis 0.18.x lief der Callback für ein `disabled=1`-Konto vollständig durch: Gruppen wurden
+# übernommen, das Admin-Flag konnte gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung
+# blieb aus. Sperren heisst aber „diese Person soll nichts mehr können"; dass ihre Rollen sich
+# dabei noch ändern, ist das Gegenteil. Im Protokoll sah es zudem aus wie eine Anmeldung.
+auth_d, app_d = _oidc_app({"sub": "gesperrt-1", "preferred_username": "gesperrt",
+                           "email": "gesperrt@example.com", "email_verified": True,
+                           "groups": ["admins"]},
+                          oidc_group_role_map={"admins": "chef"})
+_oidc_login(app_d)                                   # erster Login legt das Konto an
+_uid_d = auth_d.store.get_user_by_name("gesperrt")["id"]
+auth_d.store.set_disabled(_uid_d, True)
+auth_d.store._exec("UPDATE users SET roles='[]' WHERE id=?", (_uid_d,))
+
+_antwort_d = _oidc_login(app_d)
+_konto_d = auth_d.store.get_user(_uid_d)
+r.check("gesperrtes Konto: der SSO-Callback weist ab (403, keine Sitzung)",
+        _antwort_d.status_code == 403, f"HTTP {_antwort_d.status_code}")
+r.check("… und die Rollen aus dem IdP werden NICHT mehr übernommen",
+        _konto_d["roles"] == "[]", f"roles={_konto_d['roles']!r}")
+r.check("… das Konto bleibt gesperrt", bool(_konto_d["disabled"]))
+_ereignisse_d = [e["event"] for e in auth_d.store.recent_audit(limit=20)]
+r.check("… und es gibt eine Audit-Zeile mit dem Grund",
+        "oidc_disabled" in _ereignisse_d, f"Ereignisse: {_ereignisse_d}")
+
+# Gegenprobe: entsperrt läuft derselbe Weg wieder durch — sonst wäre der Riegel eine Sackgasse.
+auth_d.store.set_disabled(_uid_d, False)
+r.check("entsperrt: derselbe Login geht wieder durch",
+        _oidc_login(app_d).status_code == 303)
+
+# ---------- F-18: die UserInfo-Antwort muss zum ID-Token passen ----------
+# Die Antwort ist nicht signiert und wird über die Claims gelegt — sie liefert Gruppen, E-Mail
+# und damit mittelbar Rollen und das Admin-Flag. Passt ihr `sub` nicht, gilt sie gar nicht
+# (OIDC Core 5.3.2). Geprüft wird hier der Weg durch den echten Callback.
+auth_x, app_x = _oidc_app({"sub": "echt-1", "preferred_username": "echt"},
+                          nutzerinfo={"sub": "JEMAND-ANDERS", "email": "chef@example.com",
+                                      "email_verified": True, "groups": ["admins"]},
+                          admin_identifiers=["chef@example.com"],
+                          oidc_group_role_map={"admins": "chef"})
+_oidc_login(app_x)
+_echt = auth_x.store.get_user_by_name("echt")
+r.check("fremdes sub im userinfo-Dokument: weder Adresse noch Rollen wandern ins Konto",
+        _echt is not None and not _echt["is_admin"] and _echt["roles"] == "[]"
+        and (_echt["email"] or "") != "chef@example.com",
+        f"Konto: {dict(_echt) if _echt else None}")
 
 sys.exit(r.done())

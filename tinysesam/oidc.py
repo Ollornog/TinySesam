@@ -239,9 +239,47 @@ class OIDCClient:
             claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
                                     claims_options=optionen)
         claims.validate()  # exp/iat/nbf
+        self._pruefe_publikum(claims, t)
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, t("api.oidc_nonce"))
         return claims, tok
+
+    def _pruefe_publikum(self, claims, t) -> None:
+        """`aud` und `azp` nach OIDC Core 3.1.3.7, Punkt 3 bis 5 (F-15).
+
+        Der Dekoder prüft nur, dass die eigene `client_id` in `aud` **vorkommt**. Ein Token darf
+        aber mehrere Empfänger nennen, und dann sagt erst `azp` (authorized party), für wen es
+        ausgestellt wurde. Ohne diese Prüfung nimmt TinySesam ein Token an, das für eine **andere**
+        Anwendung desselben Providers gemacht wurde und uns nur mitnennt — Token-Substitution.
+        Wer bei irgendeinem Client dieses Providers ein Token bekommt, käme damit auch hier herein.
+
+        Genau drei Regeln, und alle drei fehlten:
+        * mehrere `aud` → `azp` ist Pflicht,
+        * `azp` vorhanden → es muss die eigene `client_id` sein,
+        * die eigene `client_id` muss in `aud` stehen (das deckt der Dekoder ab, hier noch einmal
+          als Boden — `claims_options` lässt sich von aussen setzen).
+
+        Seit T-14 wiegt das schwerer: Bei mehreren Clients **derselben** Installation wäre sonst
+        das Token von App A auch an App B gut, und die Freigabe je Client wäre umgangen.
+        """
+        aud = claims.get("aud")
+        publikum = [str(a) for a in (aud if isinstance(aud, (list, tuple)) else [aud] if aud else [])]
+        azp = claims.get("azp")
+        if self.client_id not in publikum:
+            security.seclog.warning("OIDC: ID-Token nennt aud=%s, erwartet wurde %s",
+                                    security.fuer_log(",".join(publikum)),
+                                    security.fuer_log(self.client_id))
+            raise HTTPException(400, t("api.oidc_audience"))
+        if len(publikum) > 1 and not azp:
+            security.seclog.warning(
+                "OIDC: ID-Token nennt %d Empfänger, aber kein azp — nicht entscheidbar, für wen "
+                "es ausgestellt wurde (OIDC Core 3.1.3.7).", len(publikum))
+            raise HTTPException(400, t("api.oidc_audience"))
+        if azp and str(azp) != self.client_id:
+            security.seclog.warning(
+                "OIDC: ID-Token ist für azp=%s ausgestellt, nicht für %s — abgewiesen.",
+                security.fuer_log(str(azp)), security.fuer_log(self.client_id))
+            raise HTTPException(400, t("api.oidc_audience"))
 
     def end_session_url(self, post_logout_redirect_uri=None):
         """RP-initiated-Logout-URL beim Provider (oder None, wenn nicht unterstützt).
@@ -257,15 +295,51 @@ class OIDCClient:
             params["post_logout_redirect_uri"] = post_logout_redirect_uri
         return ep + ("&" if "?" in ep else "?") + urlencode(params)
 
-    def userinfo(self, access_token):
+    def userinfo(self, access_token, erwartetes_sub: str = ""):
+        """Die UserInfo-Antwort des Providers — **nur**, wenn ihr `sub` zum ID-Token passt (F-18).
+
+        OIDC Core 5.3.2 verlangt den Abgleich ausdrücklich: „The sub Claim in the UserInfo
+        Response MUST be verified to exactly match the sub Claim in the ID Token; if they do not
+        match, the UserInfo Response values MUST NOT be used."
+
+        Warum das zählt: Die Antwort wird im Callback **über** die Claims des ID-Tokens gelegt und
+        liefert Gruppen, E-Mail und damit mittelbar Rollen und das Admin-Flag. Das ID-Token ist
+        signiert, die UserInfo-Antwort ist es nicht — sie ist eine gewöhnliche HTTPS-Antwort auf
+        einen Bearer-Token. Wer einen Access-Token eines **anderen** Kontos vorlegt (oder der
+        Provider bei mehreren Mandanten verwechselt), schob so die Merkmale einer fremden Person
+        in die eigene Sitzung.
+
+        `erwartetes_sub` leer zu lassen ist der Bestandsaufruf und **verwirft dann jede Antwort**
+        mit `sub`, die nicht leer ist — der Aufrufer, der den Abgleich nicht machen kann, soll
+        die Daten nicht bekommen. Fail-closed statt „besser als nichts".
+        """
         try:
             import httpx
             ep = self.meta().get("userinfo_endpoint")
             if not ep or not access_token:
                 return {}
-            return httpx.get(ep, headers={"Authorization": f"Bearer {access_token}"}, timeout=10).json()
+            antwort = httpx.get(ep, headers={"Authorization": f"Bearer {access_token}"},
+                                timeout=10).json()
         except Exception:
             return {}
+        return self.userinfo_pruefen(antwort, erwartetes_sub)
+
+    @staticmethod
+    def userinfo_pruefen(antwort, erwartetes_sub: str = "") -> dict:
+        """Der `sub`-Abgleich aus OIDC Core 5.3.2 — als eigene Funktion, damit ihn auch messen
+        kann, wer den HTTP-Teil durch eine Attrappe ersetzt. Eine Attrappe, die den Abgleich
+        nachbaut, prüft sonst nur den Nachbau."""
+        if not isinstance(antwort, dict):
+            return {}
+        gemeldet = str(antwort.get("sub") or "")
+        if gemeldet != str(erwartetes_sub or ""):
+            security.seclog.warning(
+                "OIDC: UserInfo meldet sub=%s, das ID-Token nennt sub=%s — Antwort verworfen "
+                "(OIDC Core 5.3.2). Gruppen, E-Mail und Admin-Flag stammen damit allein aus dem "
+                "signierten Token.",
+                security.fuer_log(gemeldet or "<leer>"), security.fuer_log(str(erwartetes_sub or "<leer>")))
+            return {}
+        return antwort
 
 
 #: Schlüssel des Einzel-Clients in `oidc_grant` und im Flow. Ein Stern, weil er für **jeden**
@@ -431,7 +505,10 @@ def register_oidc_routes(router, auth):
         ziel = str(flow.get("app") or VORGABE_CLIENT)
         client = clients[ziel]
         claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
-        nutzerinfo = client.userinfo(tok.get("access_token")) or {}
+        # Das `sub` aus dem **signierten** Token ist der Massstab für die UserInfo-Antwort, die
+        # selbst nicht signiert ist (F-18). Deshalb steht es vor dem Abruf, nicht danach.
+        sub_im_token = str(claims.get("sub") or "")
+        nutzerinfo = client.userinfo(tok.get("access_token"), erwartetes_sub=sub_im_token) or {}
         info = {**nutzerinfo, **dict(claims)}
 
         # Gruppenregel je Anwendung: `oidc_clients[host]["allowed_groups"]`, sonst die globale.
@@ -524,6 +601,27 @@ def register_oidc_routes(router, auth):
             if konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)
+
+        # Ein gesperrtes Konto bekommt hier gar nichts mehr (F-17). Bis 0.18.x lief der
+        # Callback für ein `disabled=1`-Konto vollständig durch: Gruppen wurden übernommen, das
+        # Admin-Flag konnte gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung blieb am
+        # Ende aus. Das Sperren eines Kontos ist aber die Antwort auf „diese Person soll nichts
+        # mehr können"; dass ihre Rollen sich dabei noch ändern, ist das Gegenteil davon. Und im
+        # Protokoll sah es aus wie eine erfolgreiche Anmeldung.
+        #
+        # Die Prüfung steht VOR `apply_idp_groups`, `apply_factor` und jedem Schreibzugriff —
+        # jede Zeile danach wäre eine Änderung an einem Konto, das nicht mehr anmelden darf.
+        # Lokaler Passwort-Login und Panel prüfen dasselbe seit jeher; die föderierte Seite war
+        # die Lücke.
+        _konto = auth.store.get_user(uid)
+        if _konto and _konto["disabled"]:
+            auth.audit("oidc_disabled", str(_konto["username"]), auth.client_ip(request),
+                       f"app={ziel} sub={security.fuer_log(sub)}")
+            security.seclog.warning("%s user=%s ip=%s method=oidc grund=konto_gesperrt",
+                                    security.log_ereignis("oidc"),
+                                    security.fuer_log(str(_konto["username"])),
+                                    security.fuer_log(auth.client_ip(request)))
+            raise HTTPException(403, auth.t("api.oidc_disabled"))
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt). Die Zuordnung darf je Anwendung eine
         # andere sein: Dieselbe Verzeichnisgruppe kann in App A „Redakteur" heissen und in App B
