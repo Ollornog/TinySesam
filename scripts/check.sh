@@ -35,7 +35,7 @@ if [[ -z "$PY" ]]; then
         || fail "uv pip install"
     PY=".venv/bin/python"
 fi
-step "Interpreter: $("$PY" -c 'import sys;print(sys.executable)')"
+step "Interpreter: $("$PY" -c 'import sys;print(sys.version.split()[0], "@", sys.executable)')"
 
 if [[ $FAST -eq 1 ]]; then
     step "Suiten ohne Browser-Test (--fast)"
