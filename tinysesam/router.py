@@ -290,12 +290,16 @@ def build_router(auth) -> APIRouter:
             # Ohne vertrauenswürdige öffentliche Adresse geht KEINE Mail hinaus: der Link
             # käme aus dem Host-Header des Anfragenden, und den setzt bei einer Mail an ein
             # fremdes Postfach der Angreifer (R4-01).
-            base = auth.public_base(request)
+            #
+            # `require_public_base` und nicht `public_base`: Hier stand die Prüfung schon, aber
+            # der leere Fall schrieb nur eine Audit-Zeile und fiel unten in die Erfolgsseite —
+            # HTTP 200, „Mail ist unterwegs", keine Mail. Die generische Antwort ist gegen die
+            # Benutzer-Enumeration richtig und verdeckte hier einen Totalausfall. Ein fehlender
+            # `base_url` ist nicht adressbezogen: Der Abbruch verrät nichts über das Postfach,
+            # und `konfigpruefung` verhindert diesen Zustand ohnehin beim Aufbau.
+            base = auth.require_public_base(request)
             try:
-                if not base:
-                    auth.audit("magic_send_no_base", detail=email)
-                else:
-                    auth.send_login_link(email.strip(), base, nxt)
+                auth.send_login_link(email.strip(), base, nxt)
             except Exception:
                 auth.audit("magic_send_error", detail=email)   # Fehler nicht nach außen leaken
             # immer dieselbe Antwort (keine User-Enumeration)
@@ -401,12 +405,9 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
-            base = auth.public_base(request)   # fail closed, siehe /auth/magic/request
+            base = auth.require_public_base(request)   # fail closed, siehe /auth/magic/request
             try:
-                if not base:
-                    auth.audit("reset_send_no_base", detail=email)
-                else:
-                    auth.send_password_reset(email.strip(), base)
+                auth.send_password_reset(email.strip(), base)
             except Exception:
                 auth.audit("reset_send_error", detail=email)
             return auth.render_page("forgot", request=request, sent=True, error="")   # generisch (keine Enumeration)
@@ -501,9 +502,7 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.verify_no_mailer"), 500)
             # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
             # das mangels Bestätigungsmail nie freigeschaltet werden kann.
-            verify_base = auth.public_base(request) if verify else ""
-            if verify and not verify_base:
-                return err(auth.t("err.no_public_base"), 500)
+            verify_base = auth.require_public_base(request) if verify else ""
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
@@ -754,10 +753,7 @@ def build_router(auth) -> APIRouter:
         # Host-Header, wandert ein fremder Name in den AuthnRequest und in die Metadaten —
         # deshalb hier kein Weiterarbeiten ohne geprüfte Basis (R4-01).
         def _saml_basis(request: Request) -> str:
-            basis = auth.public_base(request, _saml_base(request))
-            if not basis:
-                raise HTTPException(500, auth.t("api.no_public_base"))
-            return basis
+            return auth.require_public_base(request, _saml_base(request))
 
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "/"):

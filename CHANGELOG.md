@@ -114,13 +114,43 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Angreifers zeigte; dasselbe für Magic-Link, E-Mail-Bestätigung und Admin-Einladung.
   `trusted_redirect_hosts` schützte nur `?next=`, nicht diesen Weg (CWE-644). Jetzt entscheidet
   überall `TinySesam.public_base()`: `base_url` gewinnt, sonst gilt ein abgeleiteter Host nur,
-  wenn er in `trusted_redirect_hosts` steht oder Loopback ist — andernfalls bricht der Vorgang ab
-  (keine Mail, sichtbarer Fehler statt geratener Adresse). Dieselbe Prüfung deckt
+  wenn er in `trusted_redirect_hosts` steht oder Loopback ist. Dieselbe Prüfung deckt
   OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS und die Forward-Auth-Umleitung.
-  `konfigpruefung` nannte `base_url` bisher mit keinem Wort und warnt jetzt, sobald eine dieser
-  Funktionen ohne sie läuft. **Für Betreiber:** Wer bisher ohne `base_url` fuhr, muss sie setzen —
-  sonst gehen Mail-Links nicht mehr hinaus (fail closed, mit Logzeile und Konfigurations-Warnung).
-  Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+
+  **`base_url` ist jetzt Pflicht — eine bewusste Verhaltensänderung, und die erste Fassung dieses
+  Fixes war zu weich.** Der Absatz hier versprach „sichtbarer Fehler statt geratener Adresse";
+  für die beiden häufigsten Wege stimmte nur die erste Hälfte. `/auth/forgot` und
+  `/auth/magic/request` schrieben bei fehlender Basis eine Audit-Zeile und rendeten
+  **unverändert die Erfolgsseite**: HTTP 200, „Mail ist unterwegs", keine Mail. Dieselbe generische
+  Antwort verhindert die Benutzer-Enumeration und verdeckte hier einen Totalausfall — wer ohne
+  `base_url` aktualisierte, verlor Passwort-Reset und Magic-Link für **alle** Nutzer, sichtbar nur
+  in einer Logzeile. Die übrigen Wege (OIDC-Start, Registrierung mit Bestätigung, Admin-Einladung,
+  SAML) antworteten mit **500** mitten im Anmeldeversuch, obwohl schon beim Aufbau feststand, dass
+  es nicht gehen kann. Und `konfigpruefung` nannte das nur eine **Warnung**: Blieb `base_url` leer
+  und standen — beim Forward-Auth/SSO der Normalfall — mehrere Namen in
+  `trusted_redirect_hosts`, genügte der Laufzeit-Prüfung jeder davon; der Angreifer stieß den
+  Reset für ein fremdes Postfach an, setzte `Host:` auf einen **anderen** mitvertrauten Host und
+  der Token ging dorthin hinaus.
+
+  Beides ist geschlossen: `konfigpruefung` meldet ein leeres `base_url` als **Fehler**, sobald ein
+  Mail-Weg (`magiclink_enabled`, `password_reset_enabled`, `signup_verify_email`), `oidc_enabled`
+  oder `saml_enabled` an ist — der Aufbau scheitert dann mit `ConfigError`, statt einen Betrieb zu
+  erlauben, der still das Falsche tut. Damit gewinnt `base_url` immer und der `Host`-Header hat
+  keine Stimme mehr. Zur Laufzeit gibt es keinen stillen Erfolg: die neue Methode
+  `TinySesam.require_public_base()` wirft `ConfigError` mit klarer Meldung, wo bisher eine
+  Erfolgsseite oder ein 500 stand (`forward_auth_enabled` bleibt eine Warnung — seine Umleitung
+  bleibt ohne Basis relativ und trifft denselben Browser). Zusätzlich kommt der **`root_path`**
+  jetzt mit: `base_url="https://example.com/sso"` behält ihr Präfix, und eine abgeleitete Basis
+  übernimmt den Unterpfad aus dem Request — vorher verschickte eine unter einem Unterpfad
+  montierte App Links ins 404.
+
+  **Für Betreiber — was einzutragen ist:** Wer bisher ohne `base_url` fuhr und einen Mail-Weg,
+  OIDC oder SAML nutzt, muss `base_url` auf die öffentliche Adresse dieser App setzen, sonst
+  startet die Instanz nicht mehr: `base_url="https://auth.example.com"` (lokal
+  `base_url="http://127.0.0.1:8000"`, unter einem Unterpfad montiert mit Präfix,
+  `"https://example.com/sso"`). Die Fehlermeldung beim Start nennt genau das.
+  Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)),
+  nachgeschärft in der Nacharbeitsrunde N1 dazu.
 - **Eine fremde Registrierung konnte die Login-Kennung eines bestehenden Kontos besetzen.** Geprüft
   wurden die beiden Namensräume nur getrennt — die Adresse gegen `users.email`, der Benutzername
   gegen `users.username`. Im Vorgabe-Modus `login_identifier="both"` durchsucht die Anmeldung aber

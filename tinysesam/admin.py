@@ -185,9 +185,7 @@ def build_admin_router(auth) -> APIRouter:
             email = (b.get("email") or "").strip()
             # Der Einladungslink geht per Mail an einen Dritten und trägt ein gültiges
             # Token — er darf nie aus dem Host-Header gebaut werden (R4-01).
-            base = auth.public_base(request)
-            if not base:
-                raise HTTPException(500, auth.t("api.no_public_base"))
+            base = auth.require_public_base(request)
             res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}

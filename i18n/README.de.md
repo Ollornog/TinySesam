@@ -180,7 +180,7 @@ keinen abbauen.
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
 | `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | Auto-Anlage + Gruppen-Gate |
-| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
+| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration (`base_url` bei Mail-Wegen/OIDC/SAML **Pflicht**) |
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
@@ -556,12 +556,16 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   kind="pin"|"password")`, Guard `Depends(auth.require_resource(name))`, ganz ohne Benutzerkonto.
 - **Magic-Link:** `magiclink_enabled` + SMTP-Config **oder** `auth.set_mailer(fn)`; `/auth/magic/request`,
   eingelöst unter `/auth/magic/{token}` — **dieser Endpunkt ist der Anmelde-Link und sonst nichts.**
-- **Jeder verschickte Link braucht `base_url`.** Sie ist die einzige Quelle für die Adresse in
-  Reset-, Magic-, Bestätigungs- und Einladungsmails. Ohne sie bliebe nur der `Host`-Header der
+- **`base_url` ist Pflicht**, sobald ein Mail-Weg (`magiclink_enabled`,
+  `password_reset_enabled`, `signup_verify_email`), `oidc_enabled` oder `saml_enabled` an ist —
+  sonst wirft der Konstruktor `ConfigError` und nennt, was einzutragen ist. Sie ist die einzige
+  Quelle für die Adresse in Reset-, Magic-, Bestätigungs- und Einladungsmails, für die
+  OIDC-Redirect-URI und für die SAML-Entity-ID. Ohne sie bliebe nur der `Host`-Header der
   Anfrage — den setzt der *Anfragende*, und wer einen Reset für ein fremdes Postfach anstößt,
-  könnte den Link so auf seinen eigenen Server zeigen lassen. Ein abgeleiteter Host gilt deshalb
-  nur, wenn er in `trusted_redirect_hosts` steht oder Loopback ist; sonst geht **keine Mail
-  hinaus** (fail closed, mit Logzeile und Konfigurations-Warnung).
+  könnte den Link so auf seinen eigenen Server zeigen lassen. `trusted_redirect_hosts` ist dafür
+  kein Ersatz: Steht dort mehr als ein Host, bestimmte weiterhin der `Host`-Header, welcher davon
+  in den Link kommt. **Unter einem Unterpfad montiert** (`root_path`) gehört das Präfix in
+  `base_url`: `base_url="https://example.com/sso"`.
 - **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
   Jeder verschickte Link hat **seinen eigenen Endpunkt**: `/auth/verify/{token}` (Adresse bestätigen),

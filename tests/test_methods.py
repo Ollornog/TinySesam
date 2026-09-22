@@ -18,7 +18,10 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de",
     db_path=db, rp_name="Test", rp_id="localhost", origin="http://localhost:8000",
     password_enabled=True, passkey_enabled=True, oidc_enabled=True,
     oidc_name="PocketID", oidc_issuer="https://id.example.invalid",
-    oidc_client_id="cid", oidc_client_secret="sec", cookie_secure=False))
+    oidc_client_id="cid", oidc_client_secret="sec", cookie_secure=False,
+    # Pflicht bei oidc_enabled: Die Redirect-URI geht zum IdP und darf nicht aus dem
+    # Host-Header kommen (R4-01).
+    base_url="https://auth.example.com"))
 assert auth.oidc is not None and auth.webauthn is not None, "OIDC/Passkey-Module nicht geladen"
 
 app = FastAPI()

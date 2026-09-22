@@ -1789,6 +1789,18 @@ class TinySesam:
 
         `kandidat` erlaubt einer Route, eine anders abgeleitete Basis prüfen zu lassen (SAML
         wertet `X-Forwarded-Proto/Host` selbst aus) — geprüft wird sie nach derselben Regel.
+
+        **Der Pfadanteil gehört dazu**, aus beiden Quellen: `base_url="https://example.com/sso"`
+        behält ihr Präfix, und eine abgeleitete Basis übernimmt den `root_path` des Servers
+        (`security.sichere_basis`). Ohne das bekam eine unter einem Unterpfad montierte App
+        Mail-Links ohne Präfix.
+
+        Wer eine Basis braucht und ohne sie nicht weiterarbeiten darf, nimmt
+        `require_public_base()` — diese Methode hier gibt "" zurück und überlässt die
+        Entscheidung dem Aufrufer. Genau zwei Stellen dürfen das, weil beide einen tragfähigen
+        Rückweg haben: der OIDC-Post-Logout (ohne Basis entfällt der Provider-Umweg, der lokale
+        Logout läuft trotzdem) und `forward_login_url()` (ohne Basis bleibt die Umleitung
+        relativ, der Browser löst sie gegen den aufgerufenen Host auf).
         """
         if self.cfg.base_url:
             return str(self.cfg.base_url).rstrip("/")
@@ -1803,6 +1815,40 @@ class TinySesam:
                 "steht weder in trusted_redirect_hosts noch ist er Loopback. Der Vorgang bricht "
                 "ab (sonst ginge ein Link auf einen fremden Host hinaus). Abhilfe: base_url setzen.",
                 security.fuer_log(roh))
+        return basis
+
+    def require_public_base(self, request: Optional[Request] = None, kandidat: str = "") -> str:
+        """Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
+
+        Für jeden Weg, der eine absolute Adresse **in fremde Hand** gibt: Link in einer Mail,
+        Redirect-URI beim IdP, Entity-ID in SAML-Metadaten.
+
+        Bis 0.18.x war das an jeder Stelle anders gelöst, und zwei Stellen lösten es falsch:
+        `/auth/forgot` und `/auth/magic/request` schrieben bei fehlender Basis nur eine
+        Audit-Zeile und rendeten **weiter die Erfolgsseite** — HTTP 200, „Mail ist unterwegs",
+        keine Mail. Dieselbe Antwort verhindert die Benutzer-Enumeration, und genau deshalb
+        verdeckte sie hier den Totalausfall: Passwort-Reset und Magic-Link waren für alle Nutzer
+        kaputt, sichtbar nur im Log. Die übrigen Stellen warfen `HTTPException(500)` — richtig
+        im Ergebnis, aber ein Serverfehler mitten im Anmeldeversuch, obwohl schon beim Aufbau
+        feststand, dass es nicht gehen kann.
+
+        Beides ist weg. `konfigpruefung` macht `base_url` zur Pflicht, sobald einer dieser Wege
+        an ist — der Aufbau scheitert also, bevor ein Nutzer auf „Passwort vergessen" klickt.
+        Diese Methode ist das zweite Schloss für den Rest: eine Config, die nach dem Konstruktor
+        geändert wurde (sie wird zur Request-Zeit gelesen). Dann bricht der Vorgang mit einer
+        Meldung ab, die sagt, was einzutragen ist — nicht mit stillem Erfolg.
+        """
+        basis = self.public_base(request, kandidat)
+        if not basis:
+            raise ConfigError(
+                "Keine vertrauenswürdige öffentliche Adresse: base_url ist leer, und der Host "
+                "aus der Anfrage ist nicht als eigener belegt (er steht nicht in "
+                "trusted_redirect_hosts und ist keine Loopback-Adresse). Aus dem Host-Header "
+                "wird hier nichts geraten — er ist eine Eingabe des Anfragenden, und bei einer "
+                "Mail an ein fremdes Postfach ist das der Angreifer (R4-01). Abhilfe: base_url "
+                "auf die öffentliche Adresse dieser App setzen, z.B. "
+                "base_url=\"https://auth.example.com\"; unter einem Unterpfad montiert mit "
+                "Präfix (\"https://example.com/sso\").")
         return basis
 
     def safe_next(self, next_: str) -> str:

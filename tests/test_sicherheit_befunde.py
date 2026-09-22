@@ -220,7 +220,10 @@ r.check("Allowlist-E-MAIL ohne Bestätigungspflicht wird abgewiesen", not gebaut
 
 # Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
 gebaut, text = _baut(admin_identifiers=["chef@example.com"], allow_signup=True,
-                     signup_require_email=True, signup_verify_email=True)
+                     signup_require_email=True, signup_verify_email=True,
+                     # Pflicht seit der base_url-Nacharbeit; ohne sie scheiterte der Aufbau aus
+                     # einem Grund, der mit dem Erst-Admin-Wächter nichts zu tun hat.
+                     base_url="https://auth.example.com")
 r.check("bestätigte E-Mail + offene Registrierung bleibt erlaubt", gebaut,
         f"zu streng, der belegte Weg ist zu: {text[:120]}")
 
@@ -1035,12 +1038,14 @@ r.check("mehrere Widersprüche werden zusammen gemeldet", text.count("\n  - ") >
         f"nur einer: {text[:120]!r}")
 
 # Was später noch kommen kann, ist eine Warnung — kein Abbruch. `set_mailer` nach dem
-# Konstruktor ist eine völlig übliche Reihenfolge.
+# Konstruktor ist eine völlig übliche Reihenfolge. `base_url` ist der Gegenfall und steht
+# deshalb hier: Sie muss beim Aufbau stehen (Fehler, nicht Warnung — s. R4-01-Nacharbeit),
+# sonst liefe „Passwort vergessen" still ins Leere.
 puffer_k = io.StringIO()
 haken_k = logging.StreamHandler(puffer_k)
 _sec.seclog.addHandler(haken_k)
 try:
-    gebaut, text = _baut(magiclink_enabled=True)
+    gebaut, text = _baut(magiclink_enabled=True, base_url="https://auth.example.com")
 finally:
     _sec.seclog.removeHandler(haken_k)
 r.check("ein fehlender Mailer verhindert den Start NICHT", gebaut,
@@ -1097,10 +1102,14 @@ ECHT = "https://auth.example.com"
 
 def _mailapp(**cfg):
     post: list = []
-    auth, app = _app(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
-                     signup_verify_email=True, allow_signup=True, signup_require_email=True,
-                     passkey_enabled=False, trusted_redirect_hosts=["nur-das-hier.example"],
-                     **cfg)
+    # `base_url` steht jetzt in der Grundausstattung: Seit der Nacharbeit ist sie Pflicht, sobald
+    # ein Mail-Weg an ist — eine Instanz ohne sie gibt es nicht mehr (Prüfung dazu weiter unten).
+    grund = dict(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
+                 signup_verify_email=True, allow_signup=True, signup_require_email=True,
+                 passkey_enabled=False, trusted_redirect_hosts=["nur-das-hier.example"],
+                 base_url=ECHT)
+    grund.update(cfg)
+    auth, app = _app(**grund)
     auth.set_mailer(lambda to, betreff, text, html=None: post.append(text))
     auth.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
     return auth, TestClient(app), post
@@ -1110,13 +1119,12 @@ def _links(post) -> list[str]:
     return re.findall(r"https?://[^\s]+", "\n".join(post))
 
 
-# Vorbedingung: Ohne diese Prüfung wäre „keine Mail" auch dann grün, wenn der Mailer gar nicht
-# verdrahtet ist — der Angriff würde dann nichts belegen. Loopback gilt als eigener Host (ein
-# Link dorthin landet beim Empfänger selbst), der lokale Aufbau bleibt also ohne base_url nutzbar.
+# Vorbedingung: Ohne diese Prüfung wäre „keine Mail auf dem Angreifer-Host" auch dann grün,
+# wenn der Mailer gar nicht verdrahtet ist — der Angriff würde dann nichts belegen.
 _a, _c, _post = _mailapp()
-_c.post("/auth/forgot", data={"email": "opfer@example.com"}, headers={"host": "localhost"})
-r.check("Vorbedingung: der Weg funktioniert überhaupt (Loopback-Host → Mail geht raus)",
-        len(_post) == 1 and "localhost" in _links(_post)[0],
+_c.post("/auth/forgot", data={"email": "opfer@example.com"})
+r.check("Vorbedingung: der Weg funktioniert überhaupt (Mail geht raus)",
+        len(_post) == 1 and _links(_post)[0].startswith(ECHT + "/auth/reset"),
         f"{_post!r} — ohne diese Zusage prüft der Angriff unten nichts")
 
 # Der Angriff selbst, an allen drei Stellen, die eine Mail mit Token verschicken.
@@ -1126,18 +1134,98 @@ for pfad, daten, name in (
         ("/auth/register", {"username": "neu", "password": "Geheim12345!",
                             "email": "neu@example.com"}, "Bestätigungslink")):
     auth_x, c_x, post_x = _mailapp()
-    c_x.post(pfad, data=daten, headers={"host": BOESE})
-    r.check(f"{name}: gefälschter Host-Header erzeugt keine Mail mehr",
+    antwort_x = c_x.post(pfad, data=daten, headers={"host": BOESE})
+    r.check(f"{name}: gefälschter Host-Header erzeugt keine Mail auf {BOESE}",
             not any(BOESE in u for u in _links(post_x)),
             f"{_links(post_x)!r} — das Opfer bekäme ein gültiges Token auf {BOESE}")
+    r.check(f"...und der Weg bleibt heil (Mail auf {ECHT}, HTTP {antwort_x.status_code})",
+            len(post_x) == 1 and _links(post_x)[0].startswith(ECHT),
+            f"{_links(post_x)!r} — base_url gewinnt, der Header zählt nicht mit")
 
-# Und das Konto darf dabei nicht als unbestätigte Leiche zurückbleiben.
-auth_reg, c_reg, post_reg = _mailapp()
-antwort = c_reg.post("/auth/register", data={"username": "neu", "password": "Geheim12345!",
-                                             "email": "neu@example.com"}, headers={"host": BOESE})
-r.check("Registrierung ohne baubaren Bestätigungslink scheitert sichtbar (kein totes Konto)",
-        antwort.status_code == 500 and auth_reg.store.get_user_by_name("neu") is None,
-        f"HTTP {antwort.status_code}, Konto={auth_reg.store.get_user_by_name('neu') is not None}")
+# ── Nacharbeit N1: der Host-Header darf nicht einmal unter MEHREREN eigenen Hosts wählen ──
+# Befund A-umgehung-4: `base_url` war nur eine Warnung. Blieb sie leer und standen — beim
+# Forward-Auth/SSO der Normalfall — mehrere Namen in `trusted_redirect_hosts`, dann galt der
+# Laufzeit-Prüfung JEDER davon: Der Angreifer stieß „Passwort vergessen" für ein fremdes Postfach
+# an und setzte `Host:` auf einen anderen mitvertrauten Host. Ist der schwächer (fremdes Team,
+# offener Redirect, mitgeschnittenes Access-Log), leckt der Reset-Token dort. Jetzt ist `base_url`
+# Pflicht und gewinnt immer — der Header hat keine Stimme mehr.
+auth_m, c_m, post_m = _mailapp(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"])
+c_m.post("/auth/forgot", data={"email": "opfer@example.com"},
+         headers={"host": "app-b.example.com"})
+r.check("zweiter mitvertrauter Host im Header gewinnt nicht gegen base_url",
+        len(post_m) == 1 and _links(post_m)[0].startswith(ECHT + "/auth/reset"),
+        f"{_links(post_m)!r} — der Reset-Token ginge auf den vom Angreifer gewählten Host")
+
+# Befund A-regression-1/A-vollstaendigkeit-3: Ohne Basis rendeten `/auth/forgot` und
+# `/auth/magic/request` weiter die ERFOLGSSEITE — HTTP 200, „Mail ist unterwegs", keine Mail.
+# Sichtbar war der Totalausfall nur in einer Logzeile. Zwei Schlösser dagegen:
+#
+# (1) Die Konfigurationsprüfung lässt diesen Aufbau nicht mehr entstehen (Fehler, nicht Warnung).
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+
+for _feld, _zusatz in (("magiclink_enabled", {}),
+                       ("password_reset_enabled", {"magiclink_enabled": True}),
+                       ("signup_verify_email", {"signup_require_email": True}),
+                       ("oidc_enabled", {"oidc_issuer": "https://idp.example.com",
+                                         "oidc_client_id": "c", "oidc_client_secret": "s"}),
+                       ("saml_enabled", {"saml_idp_sso_url": "https://idp.example.com/sso",
+                                         "saml_idp_x509cert": "PEM"})):
+    _f, _w = _kp.pruefe(TinySesamConfig(db_path=":memory:", **{_feld: True}, **_zusatz))
+    r.check(f"ohne base_url ist {_feld} ein FEHLER, keine Warnung",
+            any("base_url ist leer" in x for x in _f),
+            f"nur Warnungen: {[x[:60] for x in _w]!r} — eine Warnung startet durch")
+_f_hosts, _w_hosts = _kp.pruefe(TinySesamConfig(
+    db_path=":memory:", magiclink_enabled=True,
+    trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"]))
+r.check("trusted_redirect_hosts ersetzt base_url NICHT",
+        any("base_url ist leer" in x for x in _f_hosts),
+        "mit mehreren mitvertrauten Hosts wählt sonst der Header aus (A-umgehung-4)")
+_gebaut_ohne, _text_ohne = _baut(magiclink_enabled=True, password_reset_enabled=True)
+r.check("...und der Konstruktor bricht damit ab (ConfigError statt stillem Betrieb)",
+        not _gebaut_ohne and "base_url" in _text_ohne, f"gebaut={_gebaut_ohne}")
+r.check("...die Meldung sagt, was einzutragen ist",
+        "base_url=" in _text_ohne, f"nur Diagnose, keine Abhilfe: {_text_ohne[:160]!r}")
+# Gegenprobe: Der Wächter darf nicht jeden Aufbau treffen. Nur Passwort/PIN braucht keine Basis.
+_f_pw, _w_pw = _kp.pruefe(TinySesamConfig(db_path=":memory:"))
+r.check("ohne linkbauende Funktion verlangt niemand ein base_url",
+        not any("base_url" in x for x in _f_pw + _w_pw), f"{(_f_pw, _w_pw)!r}")
+# Forward-Auth allein bleibt eine Warnung: Die Umleitung bleibt ohne Basis relativ und trifft
+# denselben Browser, es geht nichts an Dritte hinaus.
+_f_fa, _w_fa = _kp.pruefe(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True))
+r.check("forward_auth allein bleibt eine Warnung (die Umleitung bleibt relativ)",
+        not any("base_url" in x for x in _f_fa) and any("base_url" in x for x in _w_fa),
+        f"Fehler={[x[:50] for x in _f_fa]!r} Warnungen={[x[:50] for x in _w_fa]!r}")
+
+# (2) Zweites Schloss für die Config, die NACH dem Konstruktor geändert wurde (sie wird zur
+# Request-Zeit gelesen): kein stiller Erfolg, sondern ein ConfigError mit klarer Meldung.
+from tinysesam import ConfigError as _CfgErr  # noqa: E402
+
+for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "Passwort vergessen"),
+                             ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"},
+                              "Magic-Link")):
+    auth_l, c_l, post_l = _mailapp()
+    auth_l.cfg.base_url = ""            # Mutationsprobe: die Basis fällt zur Laufzeit weg
+    try:
+        _antwort_l = c_l.post(_pfad, data=_daten)
+        _ergebnis = f"HTTP {_antwort_l.status_code}, Erfolgsseite: {'unterwegs' in _antwort_l.text}"
+        _hart = False
+    except _CfgErr as _e:
+        _ergebnis, _hart = str(_e)[:60], True
+    r.check(f"{_name} ohne Basis: ConfigError statt „Mail ist unterwegs\"",
+            _hart and not post_l,
+            f"{_ergebnis} — 200 mit Erfolgsseite verdeckt den Totalausfall (A-regression-1)")
+
+# Befund A-regression-4: Dieselben Stellen antworteten sonst mit 500 mitten im Anmeldeversuch —
+# `/auth/oidc/start` ist der Einstieg, auf den ein Gateway jeden Besucher schickt. Jetzt steht
+# der Abbruch beim Aufbau, also bevor ein Nutzer klickt.
+for _name, _an in (("OIDC", dict(oidc_enabled=True, oidc_issuer="https://idp.example.com",
+                                 oidc_client_id="c", oidc_client_secret="s")),
+                   ("SAML", dict(saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
+                                 saml_idp_x509cert="PEM")),
+                   ("Einladung/Magic", dict(magiclink_enabled=True))):
+    _gebaut, _text = _baut(**_an)
+    r.check(f"{_name} ohne base_url: Abbruch beim Aufbau, kein 500 zur Laufzeit",
+            not _gebaut and "base_url" in _text, f"gebaut={_gebaut}: {_text[:90]!r}")
 
 # Der legitime Weg bleibt: mit zugesagter base_url geht die Mail hinaus, und der gefälschte
 # Host steht nicht drin. Ohne diese Prüfung wäre der Fix „nie wieder eine Mail" auch grün.
@@ -1151,7 +1239,8 @@ r.check("und der gefälschte Host taucht nirgends auf", BOESE not in "\n".join(p
 
 # Der Einladungslink des Admin-Panels geht ebenfalls per Mail an einen Dritten und trägt ein
 # Token — er kam aus derselben Zeile und blieb in einer früheren Runde beim Flicken liegen.
-auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False)
+auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
+                         base_url=ECHT)
 auth_inv.set_mailer(lambda *a, **k: None)
 auth_inv.create_user("chef", password="Geheim12345!", is_admin=True)
 with TestClient(app_inv) as c_inv:
@@ -1160,15 +1249,10 @@ with TestClient(app_inv) as c_inv:
                                                     3600, True, "password"))
     einladung = c_inv.post("/auth/admin/api/invite", json={"email": "gast@example.com"},
                            headers={"host": BOESE})
-    erlaubt = c_inv.post("/auth/admin/api/invite", json={"email": "gast@example.com"},
-                         headers={"host": "localhost"})
-r.check("Admin-Einladung: kein Link aus dem Host-Header",
-        einladung.status_code == 500 and BOESE not in einladung.text,
+r.check("Admin-Einladung: der Link kommt aus base_url, nicht aus dem Host-Header",
+        einladung.status_code == 200 and BOESE not in einladung.text
+        and ECHT + "/auth/invite/" in einladung.text,
         f"HTTP {einladung.status_code}: {einladung.text[:120]!r}")
-r.check("...und mit eigenem Host entsteht die Einladung weiter (die Route lebt)",
-        erlaubt.status_code == 200 and "localhost/auth/invite/" in erlaubt.text,
-        f"HTTP {erlaubt.status_code}: {erlaubt.text[:120]!r} — sonst prüft die Zeile darüber nur, "
-        "dass die Route kaputt ist")
 
 # Die Regel selbst, direkt geprüft — sie entscheidet auch für OIDC-Redirect-URI, SAML-Metadaten
 # und die Forward-Auth-Umleitung, die alle über `public_base()` gehen.
@@ -1184,20 +1268,32 @@ r.check("Benutzerangabe im Host täuscht die Prüfung nicht",
 r.check("und die geprüfte Basis trägt keine Benutzerangabe weiter",
         _sec.sichere_basis("https://wer@a.example.com:8443", ["a.example.com"])
         == "https://a.example.com:8443")
-auth_pb, _app_pb = _app(magiclink_enabled=True, passkey_enabled=False)
+auth_pb, _app_pb = _app(passkey_enabled=False)
 r.check("public_base() liefert leer statt zu raten (fail closed)",
         auth_pb.public_base(kandidat="https://" + BOESE) == "")
+try:
+    auth_pb.require_public_base(kandidat="https://" + BOESE)
+    _pb_hart = False
+except _CfgErr:
+    _pb_hart = True
+r.check("require_public_base() wirft statt zu raten",
+        _pb_hart, "wer eine Basis BRAUCHT, darf keinen leeren String bekommen")
 
-# Zuletzt: Die Konfigurationsprüfung schwieg zu `base_url` komplett — wer die Lücke offen ließ,
-# erfuhr es nirgends.
-from tinysesam import konfigpruefung as _kp  # noqa: E402
-
-_fehler, _warn = _kp.pruefe(auth_pb.cfg)
-r.check("konfigpruefung nennt das fehlende base_url",
-        any("base_url" in w for w in _warn), f"{_warn!r}")
-_fehler2, _warn2 = _kp.pruefe(auth_ok.cfg)
-r.check("mit gesetztem base_url schweigt sie dazu",
-        not any("base_url ist leer" in w for w in _warn2), f"{_warn2!r}")
+# Befund A-regression-12: Der `root_path` des Servers fiel weg — eine unter einem Unterpfad
+# montierte App verschickte Mail-Links ohne Präfix, also 404 statt Reset-Formular.
+_auth_pfad = TinySesam(TinySesamConfig(db_path=":memory:",
+                                      base_url="https://app.example.com/sso/"))
+r.check("der Unterpfad (root_path) kommt aus base_url mit",
+        _auth_pfad.public_base() == "https://app.example.com/sso",
+        f"{_auth_pfad.public_base()!r} — Mail-Links ohne Präfix landen im 404")
+r.check("...und auch aus einer abgeleiteten Basis",
+        _sec.sichere_basis("https://a.example.com/sso/", ["a.example.com"])
+        == "https://a.example.com/sso",
+        "bis 0.18.x warf sichere_basis den Pfad weg")
+r.check("...aber nichts, was wir nicht sauber zusammensetzen können (fail closed)",
+        all(_sec.sichere_basis("https://a.example.com" + _p, ["a.example.com"]) == ""
+            for _p in ("/../etc", "/sso/../x", "/a//b", "/s so", "/a%2fb")),
+        "ein halb geratenes Präfix ginge in jede ausgehende Mail")
 # ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
 # Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
 # `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im

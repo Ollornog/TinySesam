@@ -84,7 +84,8 @@ from tinysesam.admin import render_panel as _rp
 
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False,
-                               allow_signup=True, magiclink_enabled=True, brand_icon="/logo.png"))
+                               allow_signup=True, magiclink_enabled=True, brand_icon="/logo.png",
+                               base_url="https://auth.example.com"))
 _app = FastAPI(); _app.include_router(_a.router()); _a.install_error_pages(_app)
 _c = TestClient(_app, headers={"accept": "text/html"}, raise_server_exceptions=False)
 for _p in ("/auth/login", "/auth/register", "/auth/magic/request", "/gibtsnicht"):

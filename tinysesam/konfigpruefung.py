@@ -57,14 +57,24 @@ BRAUCHT_MAILER = {
     "signup_verify_email": "E-Mail-Bestätigung bei der Registrierung",
 }
 
-#: Was eine **absolute** Adresse nach draußen baut: Mail-Links, Redirect-URIs, SAML-Metadaten.
-#: Fehlt `base_url`, bliebe dafür nur der `Host`-Header — und den setzt der Anfragende (R4-01).
+#: Was eine **absolute** Adresse in fremde Hand gibt — den Link in einer Mail an ein Postfach,
+#: die Redirect-URI beim IdP, die Entity-ID in SAML-Metadaten. Fehlt `base_url`, bliebe dafür
+#: nur der `Host`-Header, und den setzt der Anfragende (R4-01). Diese Schalter machen `base_url`
+#: zur **Pflicht**: ohne sie scheitert der Aufbau, nicht erst der erste Anmeldeversuch.
 BRAUCHT_BASE_URL = {
     "magiclink_enabled": "Magic-Link und Einladung (Link in der Mail)",
     "password_reset_enabled": "„Passwort vergessen\" (Reset-Link in der Mail)",
     "signup_verify_email": "E-Mail-Bestätigung (Bestätigungslink in der Mail)",
     "oidc_enabled": "OIDC (Redirect-URI zum IdP)",
     "saml_enabled": "SAML (Entity-ID und ACS-URL)",
+}
+
+#: Derselbe Gedanke, aber nur eine Warnung: Die Forward-Auth-Umleitung schickt **denselben**
+#: Browser auf die eigene Login-Seite. Ohne geprüfte Basis bleibt sie relativ (`/auth/login?…`)
+#: und der Browser löst sie gegen den aufgerufenen Host auf — das funktioniert, solange App und
+#: TinySesam unter einem Namen liegen. Ein fremder Name kommt so nicht in die Umleitung, es geht
+#: nichts an Dritte hinaus, und deshalb ist das kein Grund, den Start zu verweigern.
+BASE_URL_EMPFOHLEN = {
     "forward_auth_enabled": "Forward-Auth (Umleitung des Proxys auf die Login-Seite)",
 }
 
@@ -107,6 +117,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                        | {v for v in VERFAHREN.values() if not hasattr(config, v)}
                        | {f for f in BRAUCHT_MAILER if not hasattr(config, f)}
                        | {f for f in BRAUCHT_BASE_URL if not hasattr(config, f)}
+                       | {f for f in BASE_URL_EMPFOHLEN if not hasattr(config, f)}
                        | {f for f in ("base_url", "trusted_redirect_hosts")
                           if not hasattr(config, f)})
     if unbekannt:
@@ -176,22 +187,50 @@ def pruefe(config) -> tuple[list[str], list[str]]:
 
     # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
     # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem
-    # `Host`-Header, also aus einer Eingabe des Anfragenden. Seit dieser Fassung lehnt die
-    # Laufzeit einen fremden Host ab (`TinySesam.public_base`) — die Funktion ist damit nicht
-    # unsicher, sondern schlicht aus. Warnung statt Fehler, weil zweierlei legitim bleibt: der
-    # lokale Aufbau (Loopback zählt als eigener Host) und ein `base_url`, das erst nach dem
-    # Konstruktor gesetzt wird (die Config wird zur Request-Zeit gelesen).
+    # `Host`-Header, also aus einer Eingabe des Anfragenden.
+    #
+    # Hier stand eine **Warnung**, mit zwei Begründungen — der lokale Aufbau (Loopback zählt als
+    # eigener Host) und ein `base_url`, das erst nach dem Konstruktor gesetzt wird. Beide haben
+    # nicht getragen, die Nacharbeit hat es gemessen:
+    #
+    # * Eine Warnung startet durch. Wer ohne `base_url` aktualisierte, verlor „Passwort
+    #   vergessen" und Magic-Link für ALLE Nutzer — und zwar still: Die Route rendete weiter die
+    #   Erfolgsseite („Mail ist unterwegs", HTTP 200), weil dieselbe Antwort die
+    #   Benutzer-Enumeration verhindert. Sichtbar war es in einer Logzeile.
+    # * Stehen mehrere Hosts in `trusted_redirect_hosts` — beim Forward-Auth/SSO der Normalfall —
+    #   genügte der Laufzeit-Prüfung JEDER davon. Der Angreifer stieß „Passwort vergessen" für
+    #   ein fremdes Postfach an und setzte `Host:` auf einen anderen mitvertrauten Host; der
+    #   Reset-Link ging dorthin hinaus. `base_url` schließt genau diese Wahlfreiheit: Steht sie,
+    #   kommt gar nichts aus dem Request.
+    #
+    # Deshalb jetzt ein **Fehler**: Der Aufbau scheitert mit `ConfigError`, statt einen Betrieb
+    # zu erlauben, der still das Falsche tut. Der lokale Aufbau trägt seine Adresse einfach ein
+    # (`base_url="http://127.0.0.1:8000"`), und wer sie erst spät kennt, schreibt sie ans
+    # Config-Objekt, BEVOR `TinySesam(config)` läuft — anders als `set_mailer()` gibt es dafür
+    # keinen Nachreich-Weg, denn ohne Basis endet der erste Klick auf „Passwort vergessen"
+    # bereits im Nichts.
     if not str(getattr(config, "base_url", "") or "").strip():
         betroffen = [wofuer for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
         if betroffen:
-            warnungen.append(
-                "base_url ist leer, aber diese Funktionen bauen absolute Adressen: "
-                + "; ".join(betroffen)
+            fehler.append(
+                "base_url ist leer, aber diese Funktionen geben eine absolute Adresse in fremde "
+                "Hand: " + "; ".join(betroffen)
                 + ". Als Quelle bliebe der Host-Header der jeweiligen Anfrage — den setzt der "
-                "Anfragende, und bei einer Mail an ein fremdes Postfach ist das der Angreifer. "
-                "TinySesam lässt deshalb nur Hosts aus trusted_redirect_hosts und Loopback "
-                "durch und bricht sonst ab (es geht keine Mail hinaus, der Flow endet mit "
-                "einem Fehler). Abhilfe: base_url auf die öffentliche Adresse setzen.")
+                "Anfragende (bei einer Mail an ein fremdes Postfach also der Angreifer). "
+                "Abhilfe: base_url auf die öffentliche Adresse dieser App setzen, z.B. "
+                "base_url=\"https://auth.example.com\" (lokal "
+                "base_url=\"http://127.0.0.1:8000\"). Unter einem Unterpfad montiert gehört "
+                "das Präfix mit hinein (\"https://example.com/sso\"). "
+                "trusted_redirect_hosts ist dafür KEIN Ersatz: Steht dort mehr als ein Host, "
+                "bestimmt der Anfragende per Host-Header, welcher davon in den Link kommt.")
+        weich = [wofuer for feld, wofuer in BASE_URL_EMPFOHLEN.items() if _an(config, feld)]
+        if weich and not betroffen:
+            warnungen.append(
+                "base_url ist leer, aber diese Funktion baut absolute Adressen: "
+                + "; ".join(weich)
+                + ". Ohne geprüfte Basis bleibt die Umleitung relativ — das trägt, solange App "
+                "und Login-Seite unter demselben Host liegen. Für SSO über mehrere Hosts "
+                "base_url (und cookie_domain) setzen.")
     # Erst-Admin-Token: Der Wert darf nicht dort landen, wo ihn Fremde lesen. Genau das war
     # B5-03 — er stand in der Datei, die die fail2ban-Jail liest und logrotate archiviert.
     token_datei = str(getattr(config, "admin_claim_token_file", "") or "").strip()

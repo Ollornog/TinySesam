@@ -69,6 +69,7 @@
     "require_admin": "(request: 'Request') -> 'dict'",
     "require_csrf": "(request: 'Request', submitted)",
     "require_mfa": "(request: 'Request') -> 'dict'",
+    "require_public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
     "require_resource": "(name: 'str')",
     "require_role": "(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)",
     "require_user": "(request: 'Request') -> 'dict'",

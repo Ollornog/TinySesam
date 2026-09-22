@@ -83,7 +83,10 @@ ok("abgelaufener Token → ungültig")
 # mail_configured / MailNotConfigured
 assert auth.mail_configured() is True
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
-a2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, magiclink_enabled=True))   # kein smtp_host, kein Mailer
+a2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, magiclink_enabled=True,
+                               # Pflicht seit der base_url-Nacharbeit; geprüft wird hier der
+                               # fehlende MAILER, nicht die fehlende Basis.
+                               base_url="https://auth.example.com"))   # kein smtp_host, kein Mailer
 assert a2.mail_configured() is False
 from tinysesam.mailer import MailNotConfigured
 try:

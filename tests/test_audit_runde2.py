@@ -38,7 +38,11 @@ r = Report("Audit Runde 2 — die Reparaturen der Reparaturen")
 
 def _app(**cfg):
     tmp = tempfile.mkdtemp()
-    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
+    # `base_url` gehört in die Grundausstattung, seit sie bei Mail-Wegen/OIDC/SAML Pflicht ist:
+    # ohne sie scheiterte hier jeder Aufbau — und zwar aus einem Grund, der mit dem geprüften
+    # Befund nichts zu tun hat. Ein einzelner Aufruf überschreibt sie weiterhin.
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
+                 base_url="http://testserver")
     grund.update(cfg)
     auth = TinySesam(TinySesamConfig(**grund))
     app = FastAPI()
@@ -212,7 +216,11 @@ r.check("eine bestätigte Adresse aus dem userinfo-Dokument zählt weiterhin",
 # SAML-/LDAP-Feld — von niemandem bestätigt, genau wie bei der offenen Registrierung.
 def _baut_f14(**cfg):
     tmp = tempfile.mkdtemp()
-    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
+    # `base_url` ist hier nicht Beiwerk, sondern nötig, damit die Probe überhaupt etwas
+    # aussagt: Ohne sie wirft der Konstruktor bei OIDC/SAML wegen der fehlenden Basis —
+    # `gebaut=False` sähe dann aus wie ein Treffer des F-14-Wächters.
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
+                 base_url="http://testserver")
     grund.update(cfg)
     try:
         TinySesam(TinySesamConfig(**grund))

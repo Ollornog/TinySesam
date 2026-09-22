@@ -262,10 +262,11 @@ def register_oidc_routes(router, auth):
         # Host-Header abgeleitet wäre sie durch den Anfragenden bestimmbar; ein IdP mit locker
         # gepflegten Redirect-URIs würde den Code dann an einen fremden Host ausliefern
         # (R4-01). Ohne geprüfte Basis bricht der Flow ab, statt sie zu raten.
-        base = auth.public_base(request)
-        if not base:
-            raise HTTPException(500, auth.t("api.no_public_base"))
-        return base + cfg.oidc_callback_path
+        # `require_public_base`: Ein 500 mitten im Anmeldeversuch war der falsche Ort für
+        # eine Konfigurationslücke — `/auth/oidc/start` ist der Einstieg, auf den ein Gateway
+        # jeden Besucher schickt. Seit dieser Fassung verlangt `konfigpruefung` bei
+        # `oidc_enabled` ein `base_url` und der Aufbau scheitert vorher.
+        return auth.require_public_base(request) + cfg.oidc_callback_path
 
     # Der Flow wird an den BROWSER gebunden, nicht nur an den `state`. Ohne das kann ein
     # Angreifer den Flow bei sich starten, sich beim IdP als er selbst anmelden und das Opfer

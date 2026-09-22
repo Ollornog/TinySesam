@@ -7,6 +7,7 @@ import time
 import logging
 import logging.handlers
 import ipaddress
+import re
 from urllib.parse import urlsplit
 from collections import defaultdict, deque
 
@@ -178,10 +179,25 @@ def eigener_host(host: str, allowed_hosts=None) -> bool:
         return False
 
 
+#: Welcher Pfadanteil aus einer abgeleiteten Basis mit hinausgehen darf. Eng gefasst und
+#: fail-closed: Hier steht ein Mount-Präfix (`/sso`, `/auth/v2`), nichts anderes. Alles mit
+#: Doppel-Schrägstrich, Prozentzeichen oder Leerraum fällt durch, und `.`/`..` als Segment
+#: ebenso (`/../etc` wird nirgends normalisiert und stand sonst genau so in der Mail) — dann
+#: gibt es keine Basis, statt eine halb geratene.
+_PFAD_OK = re.compile(r"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+)+")
+
+
 def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
     """Eine abgeleitete Basis-URL prüfen: Rückgabe ohne Schrägstrich am Ende, oder "" (fail closed).
 
     Leer heißt: es gibt keine vertrauenswürdige öffentliche Adresse. Nicht raten — abbrechen.
+
+    Der **Pfadanteil kommt mit**: `request.base_url` trägt den `root_path` des ASGI-Servers
+    (uvicorn `--root-path`, ein `Mount`), und bis 0.18.x warf diese Funktion ihn weg. Wer die
+    App unter einem Unterpfad montiert hatte, bekam Mail-Links ohne das Präfix — also
+    404 statt Reset-Formular. Der `root_path` ist Serverkonfiguration, keine Client-Eingabe
+    (weder uvicorn noch Starlette leiten ihn aus einem Header ab), er wird aber trotzdem gegen
+    `_PFAD_OK` geprüft: eine Basis, die wir nicht sauber zusammensetzen können, gibt es nicht.
     """
     roh = str(kandidat or "").strip()
     if not roh:
@@ -204,7 +220,10 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
         return ""
     if ":" in host:
         host = f"[{host}]"
-    return f"{teile.scheme}://{host}" + (f":{port}" if port else "")
+    pfad = (teile.path or "").rstrip("/")
+    if pfad and not _PFAD_OK.fullmatch(pfad):
+        return ""
+    return f"{teile.scheme}://{host}" + (f":{port}" if port else "") + pfad
 
 
 def is_trusted(ip: str, trusted_nets) -> bool:

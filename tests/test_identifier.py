@@ -164,7 +164,10 @@ os.unlink(db)
 print("  signup_verify_email: gesperrt → Link → entsperrt → Login ok")
 
 # ---------- Bestätigung an, aber kein Mailer → harter Fehler statt stiller Bypass ----------
-auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True)
+# `base_url` steht hier, weil sie seit dieser Fassung Pflicht ist, sobald ein Mail-Weg an ist
+# (sonst scheitert schon der Konstruktor). Geprüft wird die Lage danach: Basis ja, Mailer nein.
+auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
+                    base_url="http://testserver")
 r = c.post("/auth/register", data={"username": "x", "password": "geheim12345",
                                    "email": "x@example.com", "next": "/"})
 assert r.status_code == 500 and "kein Mailer" in r.text

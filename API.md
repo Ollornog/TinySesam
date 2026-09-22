@@ -294,6 +294,10 @@ Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
 
 FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung.
 
+### `require_public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+
+Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
+
 ### `require_resource(name: 'str')`
 
 FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich. Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`.
@@ -482,4 +486,4 @@ Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau ge�
 
 ---
 
-109 Methoden, 6 Presets — erzeugt aus den Docstrings.
+110 Methoden, 6 Presets — erzeugt aus den Docstrings.
