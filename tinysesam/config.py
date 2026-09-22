@@ -86,6 +86,11 @@ class TinySesamConfig:
                                           # zum Admin befördert werden, SOLANGE es keinen Admin gibt.
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
+    # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
+    # Betreibers). Ein Pfad hier: TinySesam legt die Datei mit Rechten 0600 an und schreibt den
+    # Token hinein — der richtige Weg, wenn stderr im journal/in einer Sammelstelle landet.
+    # Der Token steht NIE im security_log (das liest fail2ban, und logrotate hebt es auf).
+    admin_claim_token_file: str = ""      # z.B. /run/tinysesam/admin-claim.token
 
     # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
     demo_mode: bool = False           # Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv
@@ -142,7 +147,10 @@ class TinySesamConfig:
     # --- Step-up / per-Route-MFA (Sudo-Frische) ---
     # Guards mit mfa=True verlangen eine „frische" Faktor-Bestätigung. Frisch ist eine Sitzung
     # stepup_max_age_sec lang nach Login/Reauth; danach → /auth/reauth. 0 = nie ablaufen (nur „hat 2FA bestanden").
-    stepup_max_age_sec: int = 900         # 15 min
+    # Dieselbe Spanne begrenzt die Anlage des ERSTEN Faktors: Ein Konto ohne Passwort, PIN und TOTP
+    # kann keinen Step-up leisten (`stepup_options()` leer, die Reauth-Seite hat kein Feld), darum
+    # zählt dort das Alter der ANMELDUNG (`login_fresh()`) — danach hilft nur ein neuer Login.
+    stepup_max_age_sec: int = 900         # 15 min; begrenzt auch die Anlage des ERSTEN Faktors (dort ab Login gemessen)
     admin_require_mfa: bool = False        # Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA
 
     # --- Sessions (server-side, revozierbar) ---
@@ -191,6 +199,15 @@ class TinySesamConfig:
     oidc_client_secret: str = ""      # Client-Secret — gehört in eine Umgebungsvariable, nicht in den Quelltext
     oidc_scopes: str = "openid profile email" # Angeforderte Scopes; `openid` ist Pflicht, `email`/`profile` füllen das Konto
     oidc_auto_create: bool = True         # unbekannten OIDC-User automatisch anlegen
+    # Was gilt, wenn der Provider `email_verified` NICHT schickt? Der Claim ist in OIDC Core 5.1
+    # optional (Entra ID etwa lässt ihn weg). Vorgabe False = die Adresse gilt als unbestätigt:
+    # Sie wird ganz normal ins Konto übernommen und weitergereicht (`Remote-Email`), trägt aber
+    # keine Rechte — Erst-Admin über `admin_identifiers` verlangt den Beleg (vermerkt als
+    # `users.email_verified=0`, gilt dann für JEDEN Anmeldeweg dieses Kontos). True nur für IdPs,
+    # die den Claim nicht schicken UND deren Adressen der Betreiber selbst verantwortet (eigenes
+    # Verzeichnis, ein Mandant): dann zählt eine Adresse ohne Claim als belegt und kann den
+    # Erst-Admin tragen. Ein Claim, der ausdrücklich `false` sagt, bleibt in beiden Fällen Nein.
+    oidc_email_verified_default: bool = False
     oidc_rp_logout: bool = False          # beim Abmelden auch den OIDC-Provider abmelden (end_session), optional
     oidc_group_claim: str = "groups"      # Claim mit den Gruppen
     oidc_allowed_groups: list[str] = field(default_factory=list)  # leer = alle erlaubt
@@ -221,7 +238,27 @@ class TinySesamConfig:
     origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers
 
     # --- App-Integration ---
-    base_url: str = ""                    # öffentliche Base-URL (für OIDC-Callback); leer = aus Request abgeleitet
+    # Öffentliche Base-URL — die eine Adresse, unter der die App von außen erreichbar ist.
+    # Quelle für JEDE absolute Adresse: Links in Mails (Reset, Magic, Bestätigung, Einladung),
+    # OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS, Forward-Auth-Umleitung.
+    # PFLICHT, sobald ein Mail-Weg (magiclink_enabled, password_reset_enabled,
+    # signup_verify_email), oidc_enabled oder saml_enabled an ist — sonst scheitert der Aufbau
+    # mit ConfigError. Grund: Als Quelle bliebe der Host-Header, und der ist eine Eingabe des
+    # Anfragenden; ohne base_url konnte ein Angreifer den Reset-Link in der Mail des Opfers auf
+    # seinen Server umbiegen. trusted_redirect_hosts ist dafür kein Ersatz — steht dort mehr als
+    # ein Host, wählt der Anfragende per Host-Header aus.
+    # Mit Unterpfad montiert (root_path) gehört das Präfix HIER hinein:
+    # "https://example.com/sso" — es gilt für die VERSCHICKTEN LINKS, die es genau einmal tragen.
+    # Die eingebauten Seiten tragen es nicht (ihre Ziele stehen wurzel-absolut: /auth/register,
+    # /auth/forgot, ...), hinter einem Proxy, der das Präfix abschneidet, landet die Anmeldung
+    # also im 404, während die Mails funktionieren — backlog/T-15.
+    # Wo base_url leer bleiben darf (nur Passwort/Passkey/PIN/LDAP,
+    # höchstens forward_auth_enabled), wird eine abgeleitete Basis geprüft: nur ein Host aus
+    # trusted_redirect_hosts oder Loopback zählt, und der root_path des Servers kommt mit.
+    # Steht base_url, gewinnt sie IMMER — auch gegen eine von außen übergebene Basis auf einem
+    # zweiten eigenen Host aus trusted_redirect_hosts (sonst wählt der Host-Header aus, welcher
+    # der eigenen Namen in den Reset-Link kommt).
+    base_url: str = ""
     login_path: str = "/auth/login"       # Login-Seite
     login_redirect: str = "/"             # Ziel nach erfolgreichem Login
     logout_redirect: str = "/auth/login"  # Ziel nach Logout
@@ -239,9 +276,17 @@ class TinySesamConfig:
     # Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden.
     trusted_redirect_hosts: list[str] = field(default_factory=list)
     # Datei, in die der Logger "tinysesam.security" zusätzlich schreibt — das Lesefutter für
-    # fail2ban (deploy/fail2ban/). Leer = nur an den Logger; wer das Logging selbst einrichtet,
-    # lässt es leer. Ist die Datei nicht schreibbar, warnt TinySesam und läuft weiter.
-    security_log: str = ""                # z.B. /var/log/tinysesam/security.log
+    # fail2ban (deploy/fail2ban/), z.B. /var/log/tinysesam/security.log. Leer = nur an den
+    # Logger; wer das Logging selbst einrichtet, lässt es leer. Ist die Datei nicht schreibbar,
+    # warnt TinySesam und läuft weiter. NEU angelegt wird sie mit 0640 statt mit der umask (auch
+    # die nach einer Rotation), denn darin stehen Benutzernamen und IP-Adressen; eine schon
+    # vorhandene welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben. Soll ein DRITTER
+    # Benutzer mitlesen (Log-Versand, weder Eigentümer noch in der Gruppe), führt der Weg über
+    # die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` (steht so in
+    # deploy/fail2ban/tinysesam-jail.conf). Ohne sie entsteht die Datei bei der nächsten
+    # Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den
+    # Lesezugriff — nicht beim Update, sondern erst bei der Rotation.
+    security_log: str = ""
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 

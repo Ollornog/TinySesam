@@ -85,6 +85,11 @@ from tinysesam import TinySesam, TinySesamConfig
 
 auth = TinySesam(TinySesamConfig(
     db_path="app.db",
+    # Öffentliche Adresse dieser App. Pflicht, sobald ein Link sie verlässt —
+    # die OIDC-Redirect-URI unten ist so einer. Sonst bliebe als Quelle nur der
+    # Host-Header der Anfrage, und den setzt der Anfragende: Der Konstruktor
+    # bricht lieber ab, als zu raten.
+    base_url="https://app.example.com",
     rp_id="app.example.com",           # Domain (WebAuthn), ohne Schema/Port
     origin="https://app.example.com",  # exaktes Browser-Origin
     passkey_enabled=True,
@@ -153,13 +158,39 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 |---|---|
 | `GET/POST /auth/login` | Passwort-Login + Login-Seite (zeigt aktive Methoden) |
 | `GET/POST /auth/totp` | 2. Faktor nach Passwort/OIDC |
-| `GET/POST /auth/totp/setup` · `POST /auth/totp/disable` | TOTP einrichten/abschalten |
+| `GET/POST /auth/totp/setup` · `POST /auth/totp/setup/start` · `POST /auth/totp/disable` | TOTP einrichten/abschalten (das Geheimnis entsteht erst im `…/start`-POST) |
 | `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC-Flow *(wenn aktiviert)* |
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(wenn aktiviert)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | Passkeys verwalten |
 | `GET /auth/magic/{token}` | Anmelde-Link einlösen *(wenn Magic-Link aktiv)* |
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | Adresse bestätigen · Einladung annehmen |
 | `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
+
+**Wer einen Faktor verwaltet, muss gerade einen erbracht haben.** `POST /auth/totp/disable`,
+`/auth/totp/recovery`, `/auth/pin/set`, `/auth/pin/disable` und `/auth/passkey/delete` verlangen
+eine Step-up-Bestätigung, die nicht älter ist als `stepup_max_age_sec` — sonst 403 samt
+`X-TinySesam-Reauth: /auth/reauth` (Browser werden dorthin geschickt). Ein **API-Key erfüllt das
+nie**: Ein maschinelles Credential erbringt keinen interaktiven Faktor und kann folglich auch
+keinen abbauen.
+
+**Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
+`POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
+bekommt 403 (der Wächter ist `auth.require_session()`). Sonst richtet ein abgeflossener CI-Key
+einen Faktor ein, den **er** kontrolliert: Das TOTP-Geheimnis steht im Rumpf von
+`GET /auth/totp/setup`, und ein selbst registrierter Passkey ist ein vollwertiger Login — darüber
+hätte der Key eine frische interaktive Sitzung und damit doch die Routen von oben.
+
+**Der ERSTE Faktor ist ein Sonderfall.** Ein Konto ohne Passwort, PIN und TOTP (rein föderiert)
+hat nichts, womit es bestätigen könnte — `stepup_options()` ist leer und die Reauth-Seite hat
+kein einziges Feld. Für genau diesen Fall genügt `POST /auth/pin/set` eine **frische Anmeldung**
+(nicht älter als `stepup_max_age_sec`, gemessen ab Login, `auth.login_fresh()`); das *Ersetzen*
+einer PIN und das Abbauen jedes Faktors bleiben hinter `require_mfa()`.
+
+**Kein API-Key-Weg auf diese Routen — und kein Ersatz über HTTP.** Automatik, die mit eigenem
+Schlüssel eine PIN rotiert oder TOTP abschaltet, bekommt 403 mit übersetzter Begründung
+(`api.needs_session` / `api.stepup_session`). Es gibt dafür weder eine Admin-Route noch ein
+CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …)`,
+`auth.totp_disable(uid)`) — derselbe Code-Pfad wie in den Routen, nur ohne HTTP-Fläche.
 
 ## Konfiguration (`TinySesamConfig`, Auszug)
 
@@ -173,7 +204,7 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 | `rp_id` · `origin` | `localhost` · … | WebAuthn (echte Domain nötig, HTTPS) |
 | `oidc_issuer/_client_id/_client_secret/_scopes` | – | OIDC-Provider |
 | `oidc_auto_create` · `oidc_allowed_groups` · `oidc_group_claim` | `True` · `[]` · `groups` | Auto-Anlage + Gruppen-Gate |
-| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration |
+| `base_url` · `login_redirect` · `logout_redirect` | – · `/` · … | App-Integration (`base_url` bei Mail-Wegen/OIDC/SAML **Pflicht**) |
 | `cookie_domain` · `trusted_redirect_hosts` | `""` · `[]` | SSO über Subdomains · erlaubte absolute `?next=`-Ziele |
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
@@ -251,11 +282,20 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 ```
 
 - **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
-  befördert, egal über welche Methode (auch OIDC/SAML/LDAP, wo die Adresse meist die stabile Kennung
-  ist). Danach nie wieder.
-- **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL ins Log.
-  Anmelden, `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
-  `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404.
+  befördert, egal über welche Methode. Eine **Adresse** zählt dabei nur mit einem Beleg, dass sie
+  dem Anmeldenden gehört; über SAML und LDAP gibt es keinen, dort befördert sie nie (s. unten).
+  Danach nie wieder.
+- **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
+  **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
+  Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
+  antwortet die Route mit 404. Der Wert bleibt bewusst aus dem Security-Log heraus — das liest
+  fail2ban, und logrotate hebt es auf. Wird stderr selbst eingesammelt (journal, Container-Logs),
+  nennt `admin_claim_token_file` eine eigene Datei; TinySesam legt sie mit `0600` an.
+  **Bekannte Grenze:** Eingelöst wird der Token über eine URL (`?token=…`, bei nicht angemeldetem
+  Aufruf zusätzlich im `Location` des Login-Redirects) — er läuft damit durch Proxy-Access-Logs,
+  `Referer` und die Browser-History, bevor er verbraucht ist. Also `admin_claim_ttl_min` kurz
+  halten und sofort einlösen. Wo überhaupt kein Token in einer URL stehen soll: den ersten Admin
+  über `auth.ensure_admin(...)` oder die Allowlist setzen. Siehe [SECURITY](SECURITY.de.md).
 
 Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen bekommt. Mit
 `allow_signup=True` registriert sich ein Fremder einfach darunter und ist beim ersten Login Admin;
@@ -263,7 +303,26 @@ diese Kombination weist der Konstruktor deshalb ab. Erlaubt ist sie wieder, soba
 aus der Registrierung selbst belegt ist: eine E-Mail-Adresse (kein blosser Benutzername, den
 niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
 `signup_verify_email=True`). Sonst die Registrierung **geschlossen lassen** — oder den
-Einmal-Token nehmen, der verlässt das Server-Log nie.
+Einmal-Token nehmen, der verlässt die Konsole des Betreibers nie.
+
+Dasselbe gilt, wenn ein IdP die Konten anlegt (`oidc_auto_create`, `saml_auto_create`,
+`ldap_auto_create`): Auch dort kommt der Benutzername aus fremder Hand, ein Allowlist-**Name**
+wird in dieser Lage abgewiesen. Eine Allowlist-**Adresse** bleibt erlaubt, zählt bei OIDC aber
+nur mit dem Claim `email_verified`. Fehlt er, wird die Adresse trotzdem ins Konto übernommen und
+geht weiter als `Remote-Email` hinaus — sie ist nur als unbestätigt vermerkt
+(`users.email_verified`) und trägt keine Rechte, auch nicht über einen späteren Anmeldeweg
+desselben Kontos. Für IdPs ohne diesen Claim (Entra ID): der Einmal-Token ist der belegte Weg —
+oder, wer die Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`. Ein Claim,
+der ausdrücklich `false` sagt, bleibt in beiden Fällen ein Nein.
+
+**SAML und LDAP kennen keinen solchen Beleg**: Kein Standardattribut sagt, dass die Adresse
+geprüft wurde, und ein `mail`-Eintrag im Verzeichnis pflegt vielerorts der Nutzer selbst. Über
+diese beiden Wege wird eine Allowlist-Adresse deshalb **nie** zum Erst-Admin — auch nicht bei
+einem Bestandskonto, das sie schon führt. Die Konfigurationsprüfung sagt das beim Aufbau, und der
+abgewehrte Versuch steht im Sicherheits-Log und im Audit (`admin_bootstrap_denied`). Der belegte
+Weg ist dort der **Einmal-Token**; wer Rechte fortlaufend aus dem IdP steuern will, nimmt danach
+`saml_group_role_map`/`ldap_group_role_map` (Ziel `__admin__`) — das entscheidet der Betreiber in
+der Konfiguration, nicht ein Attribut in der Anmeldung.
 
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
@@ -363,12 +422,38 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
   im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
+- **Methodengebundene Zähler neben dem Login-Lockout:** Die PIN (kurzer Keyspace,
+  `pin_max_attempts`), die Alt-Passwort-Abfrage der Kontoseite (`password_change_max_attempts`),
+  die Step-up-Bestätigung (`reauth_max_attempts`) und die Bereichs-PIN (`resource_max_attempts`)
+  haben je einen **eigenen** Topf. Alles davon ist gedrosselt und protokolliert, aber ein
+  Fehlgriff dort sperrt die **Anmeldung** nicht: Sonst hätten ein paar Tippfehler auf der
+  eigenen Kontoseite den Nutzer ausgeschlossen — hinter NAT auch Kollegen, die nichts damit zu
+  tun hatten, und bei der Bereichs-PIN sogar fremde Besucher, die gar kein Konto haben.
+  Welche Methode kein Anmeldeversuch ist, steht in `security.NICHT_LOGIN_METHODEN` — abgeleitet
+  aus `security.EIGENE_SPERRE`, damit keine Methode ohne Bremse dastehen kann.
+  Die Töpfe der **angemeldeten** Wege (Passwortwechsel, Step-up) zählen bewusst nur pro Konto,
+  nicht pro IP: Wer dort rät, braucht bereits eine Sitzung genau dieses Kontos. Die Bereichs-PIN
+  behält die IP-Schwelle, denn dort rät ein Unangemeldeter.
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
   (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+  **Nur echte Anmeldeversuche tragen `failed login`.** Ein Fehlgriff, der keine Anmeldung war
+  (Passwortwechsel, Step-up-Bestätigung, Bereichs-PIN), wird als `failed verification …`
+  protokolliert und von der mitgelieferten Jail bewusst **nicht** gebannt: Diese Zeilen kommen
+  von jemandem, der bereits angemeldet ist — mit `maxretry = 6` sperrte sich ein legitimer
+  Nutzer nach ein paar Tippfehlern auf der eigenen Kontoseite selbst aus, und zwar für die ganze
+  Instanz. Wer sie trotzdem bannen will (etwa bei öffentlich angebotenen Bereichs-PINs), nimmt
+  `tinysesam-verify-filter.conf` und die zweite, mildere Jail `[tinysesam-verify]` dazu; sie
+  liegt abgeschaltet bei.
   Mit `security_log="/var/log/tinysesam/security.log"` schreibt TinySesam die Datei selbst — die
   mitgelieferte Jail zeigt darauf und bewachte sonst eine Datei, die nie entsteht. Leer lassen, wer sein
   Logging selbst einrichtet; ein nicht schreibbarer Pfad warnt beim Start, statt ihn zu verhindern.
+  Angelegt wird die Datei mit **0640** — auch die nach einer Rotation neu entstandene —, denn darin
+  stehen Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber
+  nicht umgeschrieben. Soll ein **dritter** Benutzer mitlesen (Log-Versand, weder Eigentümer noch in
+  der Gruppe), geht das über die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` — ohne sie
+  entsteht die Datei bei der nächsten Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der
+  Versand verliert den Lesezugriff. Nicht beim Update, sondern erst bei der Rotation.
 - **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in
   `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn ohne `--proxy-headers` starten.**
   Mit dem Flag ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP; TinySesams
@@ -539,6 +624,27 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   kind="pin"|"password")`, Guard `Depends(auth.require_resource(name))`, ganz ohne Benutzerkonto.
 - **Magic-Link:** `magiclink_enabled` + SMTP-Config **oder** `auth.set_mailer(fn)`; `/auth/magic/request`,
   eingelöst unter `/auth/magic/{token}` — **dieser Endpunkt ist der Anmelde-Link und sonst nichts.**
+- **`base_url` ist Pflicht**, sobald ein Mail-Weg (`magiclink_enabled`,
+  `password_reset_enabled`, `signup_verify_email`), `oidc_enabled` oder `saml_enabled` an ist —
+  sonst wirft der Konstruktor `ConfigError` und nennt, was einzutragen ist. Sie ist die einzige
+  Quelle für die Adresse in Reset-, Magic-, Bestätigungs- und Einladungsmails, für die
+  OIDC-Redirect-URI und für die SAML-Entity-ID. Ohne sie bliebe nur der `Host`-Header der
+  Anfrage — den setzt der *Anfragende*, und wer einen Reset für ein fremdes Postfach anstößt,
+  könnte den Link so auf seinen eigenen Server zeigen lassen. `trusted_redirect_hosts` ist dafür
+  kein Ersatz: Steht dort mehr als ein Host, bestimmte weiterhin der `Host`-Header, welcher davon
+  in den Link kommt. **Unter einem Unterpfad montiert** (`root_path`) gehört das Präfix in
+  `base_url`: `base_url="https://example.com/sso"` — und es gilt für die **verschickten Links**,
+  die es genau einmal tragen. Die eingebauten Seiten tragen es *nicht*: Ihre Formularziele und
+  Verweise stehen wurzel-absolut (`/auth/register`, `/auth/forgot`, …), hinter einem Proxy, der
+  `/sso` abschneidet, landet also die Anmeldung im 404, während die Mails funktionieren
+  ([`backlog/T-15`](../backlog/T-15-unterpfad-montage.md)). Dieselbe eine Regel gilt für die
+  Methoden selbst, nicht nur für die eingebauten Routen: `magic_url`, `send_password_reset`,
+  `send_login_link`, `send_verify_email` und `create_invite` gehen alle durch `public_base()`.
+  Steht `base_url`, gewinnt sie — auch gegen einen zweiten eigenen Host aus
+  `trusted_redirect_hosts`. Ohne sie wird eine fremde Basis mit `ConfigError` abgewiesen (kein
+  Token, keine Mail). Wer ein eigenes Formular baut, holt die Basis aus
+  `auth.public_base(request)` — leer heißt „keine vertrauenswürdige Adresse, abbrechen" — und
+  nie aus `str(request.base_url)`.
 - **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
   Jeder verschickte Link hat **seinen eigenen Endpunkt**: `/auth/verify/{token}` (Adresse bestätigen),
@@ -591,6 +697,16 @@ TinySesamConfig(
 )
 ```
 Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ketten gelten wie sonst.
+
+> **Verweisen (Referrals) folgt TinySesam nie** — und das steht jetzt im Log. ldap3 verfolgt einen
+> `SearchResultDone resultCode=10` von sich aus und bindet auf dem Host, den die *Antwort* nennt,
+> mit denselben Zugangsdaten (Fund F-28: DN und Klartext-Passwort des Dienstkontos kamen bei einem
+> fremden Server an). Deshalb steht `auto_referrals=False` auf jeder Verbindung, ohne Schalter
+> zurück. Der Preis: Eine Suche, die ein Verzeichnis per Verweis beantwortet, endet ergebnislos —
+> die Anmeldung scheitert und sieht wie ein falsches Passwort aus. Dieser Fall schreibt jetzt eine
+> Zeile über den Logger `tinysesam.security` und nennt den verwiesenen Host. **Steht sie für jeden
+> Nutzer einer Domäne da, den Global Catalog abfragen** (Port 3268/3269) und `ldap_user_base` auf
+> die Forest-Wurzel setzen, statt einen Domain-Controller zu fragen, der weiterverweist.
 
 ## SAML 2.0
 

@@ -38,7 +38,11 @@ r = Report("Audit Runde 2 — die Reparaturen der Reparaturen")
 
 def _app(**cfg):
     tmp = tempfile.mkdtemp()
-    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False)
+    # `base_url` gehört in die Grundausstattung, seit sie bei Mail-Wegen/OIDC/SAML Pflicht ist:
+    # ohne sie scheiterte hier jeder Aufbau — und zwar aus einem Grund, der mit dem geprüften
+    # Befund nichts zu tun hat. Ein einzelner Aufruf überschreibt sie weiterhin.
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
+                 base_url="http://testserver")
     grund.update(cfg)
     auth = TinySesam(TinySesamConfig(**grund))
     app = FastAPI()
@@ -59,9 +63,15 @@ r.check("wer sich unter der Admin-ADRESSE als Benutzername registriert, wird nic
         not auth_a.maybe_promote_admin(auth_a.get_user(angreifer)),
         "er ist Admin — der Wächter prüft die Konfiguration, der Vergleich etwas anderes")
 
-inhaber = auth_a.create_user("chefin", password="geheim12345", email="chef@example.com")
+# Eigene Instanz: seit R4-12 kann dieselbe Zeichenfolge nicht Benutzername des einen und
+# E-Mail des anderen sein. Der rechtmäßige Inhaber wird deshalb in einem sauberen Bestand
+# geprüft — die Frage hier ist die Beförderung, nicht die Eindeutigkeit.
+auth_a2, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
+                  signup_require_email=True, signup_verify_email=True,
+                  magiclink_enabled=True, smtp_host="mail.example.com")
+inhaber = auth_a2.create_user("chefin", password="geheim12345", email="chef@example.com")
 r.check("wer die Adresse wirklich hat, wird es weiterhin",
-        auth_a.maybe_promote_admin(auth_a.get_user(inhaber)),
+        auth_a2.maybe_promote_admin(auth_a2.get_user(inhaber)),
         "der vorgesehene Weg ist zu")
 
 # Und umgekehrt: Ein Eintrag OHNE @ gilt nur für den Benutzernamen.
@@ -70,6 +80,408 @@ mit_mail = auth_b.create_user("jemand", password="geheim12345", email="chef")
 r.check("ein Allowlist-Name ohne @ wird nicht gegen die E-Mail geprüft",
         not auth_b.maybe_promote_admin(auth_b.get_user(mit_mail)),
         "eine E-Mail, die zufällig wie der Name aussieht, befördert")
+
+
+# ── Erst-Admin über eine IdP-Adresse, die niemand bestätigt hat (Runde 3, F-14) ──
+# Der T-9-Fix oben reparierte den VERGLEICH (Adresse gegen Adresse) — der BELEG fehlte weiter.
+# `oidc.py` las `email` bedingungslos und übersah den Standard-Claim `email_verified` (OIDC
+# Core 5.1): Wer sich bei einem IdP mit Selbstregistrierung oder in einem zweiten Mandanten
+# die Admin-Adresse einträgt, war beim ersten Login Erst-Admin. Und der Wächter, der
+# Allowlist-BENUTZERNAMEN verbietet, hing allein an `allow_signup` — beim Auto-Anlegen durch
+# einen IdP griff er gar nicht, obwohl auch dort der Name aus fremder Hand kommt.
+from urllib.parse import parse_qs, urlparse  # noqa: E402
+
+IDP = "https://idp.example.invalid"
+
+
+class _Claims(dict):
+    """Was `exchange()` zurückgibt. Die Signaturprüfung selbst prüft test_oidc_jwks.py —
+    hier geht es um das, was TinySesam MIT den Claims macht."""
+
+    def validate(self, *a, **k):
+        pass
+
+
+def _oidc_app(claims, nutzerinfo=None, **cfg):
+    """Eine App mit OIDC, aber ohne Netz: Discovery vorbefüllt, Token-Tausch als Attrappe.
+
+    `nutzerinfo` ist das, was der /userinfo-Endpunkt zurückgibt — getrennt vom ID-Token,
+    weil genau diese Trennung geprüft wird."""
+    auth, app = _app(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="probe",
+                     oidc_client_secret="geheim", base_url="http://testserver",
+                     csrf_enabled=False, **cfg)
+    auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
+                       "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
+                       "jwks_uri": IDP + "/jwks"}
+    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None: (
+        _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
+    auth.oidc.userinfo = lambda at: dict(nutzerinfo or {})
+    return auth, app
+
+
+def _oidc_login(app):
+    """Einmal durch den echten Flow — Start, state, Callback aus demselben Browser."""
+    c = TestClient(app)
+    start = c.get("/auth/oidc/start", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    return c.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
+
+
+ANGRIFF = {"sub": "angreifer-123", "preferred_username": "angreifer", "name": "Angreifer",
+           "email": "chef@example.com", "email_verified": False}
+
+auth_f, app_f = _oidc_app(ANGRIFF, admin_identifiers=["chef@example.com"])
+antwort = _oidc_login(app_f)
+konto = auth_f.store.get_user_by_name("angreifer")
+r.check("der Angreifer kommt herein (die Anmeldung selbst bleibt erlaubt)",
+        antwort.status_code == 303 and konto is not None,
+        f"HTTP {antwort.status_code} — dann misst der Rest nichts")
+r.check("wer eine UNBESTÄTIGTE IdP-Adresse mitbringt, wird nicht Erst-Admin",
+        konto is not None and not konto["is_admin"],
+        "er ist Admin — email_verified wird wieder ignoriert")
+r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exists(),
+        "irgendein Weg hat doch befördert")
+# Die Adresse WIRD geführt — sie zu verwerfen war die erste Fassung des Fixes und kostete den
+# Kontonamen und `Remote-Email` (dieselbe Person landete in einem anderen Konto der geschützten
+# App). Getrennt gemerkt wird nur der Beleg; er ist es, der die Rechte trägt.
+r.check("die unbestätigte Adresse bleibt im Konto und geht als Remote-Email weiter",
+        konto is not None and konto["email"] == "chef@example.com"
+        and auth_f.forward_response_headers(konto)["Remote-Email"] == "chef@example.com",
+        f"gespeichert: {konto['email'] if konto else '—'} — ein Gateway verliert die Adresse")
+r.check("… ist aber als unbestätigt vermerkt", konto is not None and not konto["email_verified"],
+        "der Vermerk fehlt — dann trägt sie beim nächsten Login wieder Rechte")
+# Der Vermerk steht in der Datenbank, nicht im Anmeldeweg: Genau hier wäre der Schutz sonst
+# offen. Derselbe Datensatz über einen lokalen Weg (Magic-Link, Passwort) angemeldet reist mit
+# `email_bestaetigt=None` an — vor dem Vermerk hätte das befördert.
+r.check("auch ein Login OHNE Beleg im Gepäck befördert dieses Konto nicht",
+        not auth_f.maybe_promote_admin(auth_f.get_user(konto["id"])),
+        "über einen lokalen Weg ist die unbestätigte Adresse doch Erst-Admin-fähig")
+
+# Gegenprobe — ohne sie wäre die Prüfung oben auch dann grün, wenn OIDC gar nichts täte.
+auth_g, app_g = _oidc_app({**ANGRIFF, "sub": "chefin-1", "preferred_username": "chefin",
+                           "email_verified": True},
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_g)
+chefin = auth_g.store.get_user_by_name("chefin")
+r.check("mit email_verified=true wird der vorgesehene Erst-Admin weiterhin vergeben",
+        chefin is not None and chefin["is_admin"] == 1,
+        "der dokumentierte Bootstrap-Weg ist zu")
+r.check("und die bestätigte Adresse steht im Konto",
+        chefin is not None and chefin["email"] == "chef@example.com"
+        and bool(chefin["email_verified"]),
+        f"gespeichert: {chefin['email'] if chefin else '—'}")
+
+# Der Claim ist in OIDC Core 5.1 OPTIONAL, und manche IdPs schicken ihn nie (Entra ID nennt der
+# Code selbst). Wer seine Adressen selbst verantwortet, dreht das Nein für den FEHLENDEN Claim
+# um — sonst wäre `admin_identifiers` für diese IdPs dauerhaft zu.
+auth_v, app_v = _oidc_app({"sub": "entra-1", "preferred_username": "chefin",
+                           "email": "chef@example.com"},        # Claim fehlt ganz
+                          admin_identifiers=["chef@example.com"],
+                          oidc_email_verified_default=True)
+_oidc_login(app_v)
+entra = auth_v.store.get_user_by_name("chefin")
+r.check("mit oidc_email_verified_default=True zählt eine Adresse ohne Claim als belegt",
+        entra is not None and entra["is_admin"] == 1 and bool(entra["email_verified"]),
+        f"Konto: {dict(entra) if entra else None} — für Entra-IdPs bliebe der Weg zu")
+# Der Schalter gilt nur für das SCHWEIGEN des Providers. Sagt er ausdrücklich „nicht bestätigt",
+# wäre ein Ja daraus eine Umgehung seiner Aussage.
+auth_v2, app_v2 = _oidc_app({"sub": "entra-2", "preferred_username": "luegner",
+                             "email": "chef@example.com", "email_verified": False},
+                            admin_identifiers=["chef@example.com"],
+                            oidc_email_verified_default=True)
+_oidc_login(app_v2)
+luegner = auth_v2.store.get_user_by_name("luegner")
+r.check("der Schalter überschreibt aber kein ausdrückliches email_verified=false",
+        luegner is not None and not luegner["is_admin"] and not luegner["email_verified"],
+        "die Vorgabe schlägt die Aussage des Providers")
+
+# Bestandskonto: Die Adresse steht schon in der Datenbank (vor dem Fix angelegt). Auch dann darf
+# ein Login ohne Beleg nicht befördern — sonst hinge der Schutz allein an der Adresse im Konto.
+auth_b3, app_b3 = _oidc_app({"sub": "alt-1", "preferred_username": "altkonto",
+                             "email": "chef@example.com"},   # Claim fehlt ganz
+                            admin_identifiers=["chef@example.com"])
+alt_uid = auth_b3.create_user("altkonto", email="chef@example.com")
+auth_b3.store.link_oidc(IDP, "alt-1", alt_uid)
+_oidc_login(app_b3)
+r.check("ein Bestandskonto mit der Adresse wird ohne Beleg nicht nachträglich befördert",
+        not auth_b3.get_user(alt_uid)["is_admin"],
+        "der fehlende Claim gilt wieder als bestätigt")
+# Dieselbe Entscheidung direkt an der Quelle — zeigt, dass der Beleg sie trägt und nicht
+# irgendein Nebeneffekt des Flows: dieselbe Zeile, einmal ohne und einmal mit Beleg.
+r.check("maybe_promote_admin verweigert bei email_bestaetigt=False",
+        not auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid), email_bestaetigt=False))
+r.check("und befördert bei einem lokalen Login (kein IdP im Spiel) weiterhin",
+        auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid)),
+        "der lokale Weg ist zu — dort verbürgt der Konstruktor-Wächter die Bestätigungsmail")
+# Dass der Beleg dieses Bestandskontos den OIDC-Login mit FEHLENDEM Claim überlebt hat, ist die
+# zweite Hälfte derselben Regel: Schweigen ist keine Aussage. Wäre es eine, hätte der Login
+# gerade die Bestätigung gelöscht, die der Betreiber beim Anlegen verbürgt hat.
+r.check("ein fehlender Claim löscht den Vermerk eines Bestandskontos nicht",
+        bool(auth_b3.get_user(alt_uid)["email_verified"]),
+        "das Schweigen des Providers hat den lokalen Beleg überschrieben")
+
+# Umgekehrt zählt eine ausdrückliche Aussage — in beide Richtungen, sonst wäre der Vermerk ein
+# Einwegventil: Ein nachgeliefertes `email_verified=true` müsste ewig ohne Wirkung bleiben, und
+# ein zurückgenommener Beleg bliebe für immer stehen.
+def _claims_setzen(auth, claims):
+    auth.oidc.exchange = lambda code, ru, nonce, t=None: (
+        _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
+
+
+NACH = {"sub": "nach-1", "preferred_username": "nachtrag", "email": "nach@example.com"}
+auth_s, app_s = _oidc_app(NACH)                      # erster Login: Claim fehlt → unbestätigt
+_oidc_login(app_s)
+nach = auth_s.store.get_user_by_name("nachtrag")
+vorher = bool(nach["email_verified"])
+_claims_setzen(auth_s, {**NACH, "email_verified": True})
+_oidc_login(app_s)
+nachher = bool(auth_s.get_user(nach["id"])["email_verified"])
+r.check("liefert der Provider den Beleg nach, zieht der Vermerk am Konto nach",
+        not vorher and nachher, f"vorher={vorher} nachher={nachher}")
+_claims_setzen(auth_s, {**NACH, "email_verified": False})
+_oidc_login(app_s)
+r.check("und nimmt er ihn zurück, fällt der Vermerk wieder",
+        not bool(auth_s.get_user(nach["id"])["email_verified"]),
+        "ein einmal erteilter Beleg bleibt für immer stehen")
+
+# `_flag_wahr` ist der einzige Ort, der aus dem Claim ein Ja/Nein macht. Die Formen stammen aus
+# dem, was echte Provider senden. Entscheidend ist die Zeile `"false"` → Nein: Sie ist der
+# Unterschied zu jeder Wahrheitsprüfung auf dem rohen Wert (`bool("false")` ist wahr), und mit
+# so einer Mutation blieb die Suite vorher grün — eine als „false" gemeldete Adresse wäre
+# wieder Erst-Admin-fähig gewesen.
+from tinysesam.oidc import _flag_wahr  # noqa: E402
+
+for wert, erwartet in [(True, True), ("true", True), ("True", True), (" TRUE ", True),
+                       (1, True), ("1", True),
+                       (False, False), ("false", False), ("False", False), (0, False),
+                       ("0", False), ("", False), (None, False), ("ja", False), ([], False)]:
+    r.check(f"_flag_wahr({wert!r}) → {erwartet}", _flag_wahr(wert) is erwartet,
+            f"ergibt {_flag_wahr(wert)!r}")
+
+
+# Der Beleg gehört zu SEINER Adresse — nicht zu der aus dem anderen Dokument.
+# Der Callback legt userinfo-Dokument und ID-Token zusammen (`{**nutzerinfo, **claims}`), und
+# beim Mischen gewann bis hierher die Adresse aus dem ID-Token, der Beleg aber konnte aus dem
+# userinfo-Dokument stammen: `email_verified=true` für eine ANDERE Adresse hätte die ungeprüfte
+# mit durchgetragen. OIDC Core 5.1 meint mit `email_verified` immer die `email` DERSELBEN Antwort.
+auth_m, app_m = _oidc_app({"sub": "misch-1", "preferred_username": "mischer",
+                           "email": "chef@example.com"},              # ID-Token: ohne Beleg
+                          nutzerinfo={"email": "mischer@fremd.example",
+                                      "email_verified": True},        # Beleg gehört HIERHIN
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_m)
+mischer = auth_m.store.get_user_by_name("mischer")
+r.check("ein Beleg aus dem userinfo-Dokument trägt nicht die Adresse aus dem ID-Token",
+        mischer is not None and not mischer["is_admin"],
+        "Admin — der fremde email_verified wurde auf die ungeprüfte Adresse gemünzt")
+r.check("… und sie steht im Konto als unbestätigt, nicht als belegt",
+        mischer is not None and mischer["email"] == "chef@example.com"
+        and not mischer["email_verified"],
+        f"Konto: {dict(mischer) if mischer else None}")
+
+# Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
+# muss der dortige Beleg ganz normal zählen — sonst wäre der Schutz eine Sperre für alle.
+auth_n, app_n = _oidc_app({"sub": "nur-ui-1", "preferred_username": "nurui"},
+                          nutzerinfo={"email": "chef@example.com", "email_verified": True},
+                          admin_identifiers=["chef@example.com"])
+_oidc_login(app_n)
+nurui = auth_n.store.get_user_by_name("nurui")
+r.check("eine bestätigte Adresse aus dem userinfo-Dokument zählt weiterhin",
+        nurui is not None and nurui["is_admin"] == 1 and nurui["email"] == "chef@example.com",
+        f"Konto: {dict(nurui) if nurui else None}")
+
+
+# Der Beleg gibt es aber NUR bei OIDC. SAML kennt kein `email_verified`, und ein LDAP-`mail`
+# pflegt in vielen Verzeichnissen der Nutzer selbst — über diese Wege darf eine
+# Allowlist-ADRESSE deshalb NIE befördern. Bis zur Nacharbeit N4 hing der Riegel allein am
+# OIDC-Callback: SAML und LDAP riefen `apply_factor` ohne das Argument, und `None` hiess
+# „kein IdP im Spiel" — es lief am Riegel vorbei. Jetzt entscheidet der FAKTOR mit: ein
+# föderierter Weg ohne ausdrücklichen Beleg befördert nicht (fail-closed), das Vergessen des
+# Arguments ist also kein Loch mehr.
+def _bootstrap_probe():
+    """Frische Instanz mit Allowlist-ADRESSE und einem Konto, das sie trägt.
+
+    Jede Probe braucht ihre eigene: `maybe_promote_admin` ist nicht folgenlos — ein Erfolg
+    setzt das Admin-Flag, und danach messen alle weiteren Aufrufe nur noch `admin_exists`."""
+    a, _ = _app(admin_identifiers=["chef@example.com"])
+    return a, a.create_user("chefin", email="chef@example.com")
+
+
+for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argument vergessen)"),
+                                 ("oidc", None, False, "OIDC ohne Beleg (Argument vergessen)"),
+                                 ("saml", False, False, "SAML mit ausdrücklichem „kein Beleg\""),
+                                 ("password", None, True, "lokaler Passwort-Login"),
+                                 ("oidc", True, True, "OIDC mit email_verified=true")):
+    a_p, uid_p = _bootstrap_probe()
+    ergebnis = a_p.maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
+    r.check(f"{was} → Erst-Admin {'JA' if soll else 'NEIN'}", ergebnis is soll,
+            f"maybe_promote_admin gab {ergebnis!r} zurück")
+
+
+# Der Riegel muss auch den ZWEITEN Login halten — sonst ist er nur eine Verzögerung.
+# `maybe_promote_admin` fragt ohne ausdrücklichen Beleg den Vermerk am Konto
+# (`users.email_verified`), und genau den legten `check_ldap`/`check_saml` mit der Vorgabe
+# `True` an, obwohl über diese Wege per Definition nichts belegt ist. Der Angreifer meldete
+# sich einmal an (die Beförderung wurde korrekt verweigert), richtete sich in seiner frisch
+# angemeldeten Sitzung eine PIN oder einen Passkey ein — Selbstbedienung — und war beim
+# zweiten Login Erst-Admin, mit einem Faktor, der selbst nichts behauptet (B-umgehung-1 aus T-13).
+# Die vollständigen Wege über die Routen stehen in `test_ldap.py`/`test_saml.py`; hier die
+# Quelle des Fehlers: das frisch angelegte Konto.
+class _FakeLDAP:
+    """Verzeichnis, in dem der Nutzer sein `mail`-Attribut selbst pflegt — der F-14-Fall."""
+
+    @staticmethod
+    def authenticate(username, password):
+        return {"username": username, "email": "chef@example.com", "name": username,
+                "groups": []}
+
+
+for weg, anlegen in (
+        ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a.check_ldap("mallory", "x"))[1]),
+        ("SAML", lambda a: a.check_saml("mallory", {"email": ["chef@example.com"]}))):
+    a_v, _ = _app(admin_identifiers=["chef@example.com"], ldap_enabled=True,
+                  ldap_url="ldaps://dir.example.invalid")
+    konto = anlegen(a_v)
+    r.check(f"ein über {weg} angelegtes Konto trägt die Adresse OHNE Beleg",
+            konto is not None and not konto["email_verified"],
+            f"Konto: {konto} — der Vermerk behauptet, was {weg} nie belegt")
+    # Der zweite Sprung: ein Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey).
+    # Er ist nicht föderiert und reicht keinen Beleg — es entscheidet allein der Vermerk.
+    r.check(f"… und ein zweiter, selbst eingerichteter Faktor befördert sie nach dem {weg}-Login nicht",
+            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is False,
+            "Erst-Admin über einen Umweg — der Riegel hielt nur den ersten Login")
+    # Gegenprobe auf derselben Instanz: Trägt die Adresse einen Beleg (Bestätigungsmail,
+    # Betreiber), befördert genau derselbe Aufruf. Ohne sie wäre oben auch eine kaputte
+    # Beförderung grün.
+    a_v.store.set_email_verified(konto["id"], True)
+    r.check(f"… Gegenprobe: mit Beleg am Konto befördert derselbe Aufruf ({weg})",
+            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
+            "der Bootstrap-Weg ist ganz zu — dann misst die Prüfung darüber nichts")
+
+
+# Ein Adresswechsel überträgt den Beleg der ALTEN Adresse nicht auf die NEUE. Seit der Vermerk
+# über Rechte entscheidet, ist `store.set_email` sonst ein Bootstrap-Weg: Konto mit belegter
+# `eve@example.com` → Adresse auf die Allowlist-Adresse ändern → der alte Beleg trägt sie
+# (B-umgehung-8 aus T-13). Der Docstring nannte das „fail-closed" und meinte nur die andere Richtung.
+a_se, _ = _app(admin_identifiers=["chef@example.com"])
+uid_se = a_se.create_user("eve", email="eve@example.com")          # belegt (Betreiber)
+a_se.store.set_email(uid_se, "chef@example.com")
+r.check("ein Adresswechsel per set_email nimmt den Beleg mit weg",
+        not a_se.get_user(uid_se)["email_verified"],
+        "die neue Adresse trägt den Beleg der alten")
+r.check("… und trägt deshalb auch die Erst-Admin-Entscheidung nicht",
+        a_se.maybe_promote_admin(a_se.get_user(uid_se), faktor="password") is False,
+        "Erst-Admin allein durch das Umschreiben einer Adresse")
+# Gegenprobe: Wer einen Beleg für die NEUE Adresse hat, sagt es — dann zählt sie wie immer.
+a_se2, _ = _app(admin_identifiers=["chef@example.com"])
+uid_se2 = a_se2.create_user("eve", email="eve@example.com")
+a_se2.store.set_email(uid_se2, "chef@example.com", verified=True)
+r.check("… mit ausdrücklichem verified=True bleibt der Beleg an der neuen Adresse",
+        a_se2.get_user(uid_se2)["email_verified"] == 1
+        and a_se2.maybe_promote_admin(a_se2.get_user(uid_se2), faktor="password") is True,
+        "der belegte Weg ist zu")
+
+
+# Der Betreiber soll das beim Aufbau erfahren und nicht beim vergeblichen Warten auf den
+# ersten Admin: Die Konfigurationsprüfung nennt die Kombination und den belegten Weg. Warnung,
+# nicht Fehler — mit einem lokalen Passwort-Login (bestätigte Adresse) ist derselbe Aufbau
+# tragfähig, nur eben nicht über SAML/LDAP.
+from tinysesam import konfigpruefung as _kp_f14  # noqa: E402
+
+OIDC_AN = dict(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="c", oidc_client_secret="s")
+SAML_AN = dict(saml_enabled=True, saml_idp_sso_url=IDP + "/sso", saml_idp_x509cert="PEM")
+LDAP_AN = dict(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid")
+for kurz, an in (("SAML", SAML_AN), ("LDAP", LDAP_AN)):
+    _f14, _w14 = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                                admin_identifiers=["chef@example.com"], **an))
+    treffer = [w for w in _w14 if "/auth/claim-admin" in w and kurz in w]
+    r.check(f"konfigpruefung nennt bei admin_identifiers + {kurz} den Weg über /auth/claim-admin",
+            len(treffer) == 1, f"Warnungen: {_w14!r}")
+    r.check(f"...und macht aus dem {kurz}-Aufbau keinen Fehler", not _f14, f"Fehler: {_f14!r}")
+
+# Gegenproben: OIDC hat den Beleg (dort trägt die Adresse weiterhin), und ohne IdP ist gar
+# nichts zu melden. Eine Warnung, die immer feuert, liest am Ende niemand mehr.
+_f14b, _w14b = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                              admin_identifiers=["chef@example.com"], **OIDC_AN))
+r.check("bei OIDC schweigt sie (der Claim email_verified ist der Beleg)",
+        not any("/auth/claim-admin" in w for w in _w14b), f"{_w14b!r}")
+_f14c, _w14c = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                              admin_identifiers=["chef@example.com"]))
+r.check("und ohne föderierten Weg ebenfalls",
+        not any("/auth/claim-admin" in w for w in _w14c), f"{_w14c!r}")
+
+
+# ── R4-12 über die föderierten Wege: die Login-Kennung ist EIN Raum ──────────
+# Die Kreuzprüfung sitzt in `create_user` und gilt damit auch für das Auto-Anlegen aus
+# OIDC/LDAP/SAML. Gemessen war diese Hälfte nie: Vier Mutationen (Ausweichname → harte 409,
+# saubere Abweisung → roher 500) liessen die volle Suite grün.
+auth_k9, app_k9 = _oidc_app({"sub": "k9", "preferred_username": "chef@example.com",
+                             "email": "neu@example.com", "email_verified": True})
+lokal9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example.com")
+antw9 = _oidc_login(app_k9)
+r.check("ein OIDC-Name, der die E-Mail eines Kontos ist, weicht auf einen freien Namen aus",
+        antw9.status_code == 303, f"HTTP {antw9.status_code} — der Nutzer kommt nicht mehr herein")
+r.check("...das neue Konto heisst anders", auth_k9.store.get_user_by_name("chef@example.com2") is not None,
+        "kein Ausweichname — dann wurde entweder abgewiesen oder eine Kennung besetzt")
+r.check("...und die Kennung zeigt weiter auf das lokale Konto",
+        (auth_k9.find_user("chef@example.com") or {}).get("id") == lokal9,
+        "die fremde Anmeldung hat die Kennung übernommen")
+
+# Was sich NICHT ausweichen lässt: die E-Mail der Identität. Dann bleibt nur fail-closed —
+# und zwar als saubere Abweisung, nicht als 500 mitten im Anmeldevorgang.
+auth_k11, app_k11 = _oidc_app({"sub": "k11", "preferred_username": "fremd",
+                               "email": "kollision@example.com", "email_verified": True})
+lokal11 = auth_k11.create_user("kollision@example.com", password="geheim12345")
+antw11 = _oidc_login(app_k11)
+r.check("eine OIDC-Adresse, die lokal schon Login-Kennung ist, wird mit 409 abgewiesen",
+        antw11.status_code == 409, f"HTTP {antw11.status_code} — 500 wäre ein Defekt, 303 ein Loch")
+r.check("...und legt kein Konto an", auth_k11.store.get_user_by_name("fremd") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+r.check("...der Inhaber behält seine Kennung",
+        (auth_k11.find_user("kollision@example.com") or {}).get("id") == lokal11,
+        "die Kennung wurde besetzt")
+
+
+# ── Allowlist-BENUTZERNAME, während ein IdP Konten von selbst anlegt (F-14 b) ──
+# Der Name eines auto-angelegten Kontos kommt aus `preferred_username` bzw. dem
+# SAML-/LDAP-Feld — von niemandem bestätigt, genau wie bei der offenen Registrierung.
+def _baut_f14(**cfg):
+    tmp = tempfile.mkdtemp()
+    # `base_url` ist hier nicht Beiwerk, sondern nötig, damit die Probe überhaupt etwas
+    # aussagt: Ohne sie wirft der Konstruktor bei OIDC/SAML wegen der fehlenden Basis —
+    # `gebaut=False` sähe dann aus wie ein Treffer des F-14-Wächters.
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False,
+                 base_url="http://testserver")
+    grund.update(cfg)
+    try:
+        TinySesam(TinySesamConfig(**grund))
+        return True, ""
+    except ConfigError as e:
+        return False, str(e)
+
+
+gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **OIDC_AN)
+r.check("Allowlist-BENUTZERNAME + oidc_auto_create wird abgewiesen", not gebaut,
+        "die Instanz baut — wer beim IdP 'chef' heisst, wird Erst-Admin")
+r.check("die Abweisung nennt die offene Tür", "oidc_auto_create" in text,
+        f"Meldung nennt sie nicht: {text[:110]!r}")
+for feld, an in (("saml_auto_create", dict(saml_enabled=True,
+                                           saml_idp_sso_url=IDP + "/sso",
+                                           saml_idp_x509cert="PEM")),
+                 ("ldap_auto_create", dict(ldap_enabled=True,
+                                           ldap_url="ldaps://dir.example.invalid"))):
+    gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **an)
+    r.check(f"dasselbe für {feld}", not gebaut and feld in text,
+            f"gebaut={gebaut}, Meldung: {text[:110]!r}")
+
+# Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
+gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False,
+                         oidc_auto_create=False, **OIDC_AN)
+r.check("ohne Auto-Anlegen bleibt der Allowlist-Name erlaubt", gebaut,
+        f"zu streng: {text[:120]}")
+gebaut, text = _baut_f14(admin_identifiers=["chef@example.com"], allow_signup=False, **OIDC_AN)
+r.check("eine Allowlist-ADRESSE bleibt mit OIDC erlaubt (sie braucht den Claim, nicht ein Verbot)",
+        gebaut, f"zu streng, der dokumentierte Bootstrap ist zu: {text[:120]}")
 
 
 # ── Ein API-Key-Scope, der zu nichts zusammenschrumpft ───────────────────────

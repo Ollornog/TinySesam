@@ -23,6 +23,17 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 - Echte Client-IP nur hinter vertrauenswürdigem Proxy (`trusted_proxies`), sonst ist `X-Forwarded-For` fälschbar.
 - `trusted_redirect_hosts` nur auf tatsächlich eigene Hosts setzen (Open-Redirect/Forward-Auth).
 - Secrets (OIDC-Client-Secret, SMTP-Passwort) über Umgebung/Secret-Store, nicht im Code.
+- **Bekannte Grenze — das Erst-Admin-Einmal-Token reist in einer URL.** Eingelöst wird es mit
+  `GET /auth/claim-admin?token=…`, und bei nicht angemeldetem Aufruf spiegelt der Login-Redirect
+  es in den `Location`-Header. Eine URL ist kein vertraulicher Kanal: Sie steht im Access-Log
+  eines vorgeschalteten Proxys, im `Referer` und in der Browser-History — bevor der Token
+  verbraucht ist. Der Wert geht per Vorgabe zudem auf **stderr**, und das sammeln journald,
+  `docker logs` und jedes Log-Shipping ein. Beides gibt kein dauerhaftes Geheimnis her (genau
+  einmal einlösbar, läuft nach `admin_claim_ttl_min` ab, die Route antwortet 404, sobald es einen
+  Admin gibt) — aber behandelt wird es entsprechend: `admin_claim_ttl_min` kurz halten, wo stderr
+  eingesammelt wird `admin_claim_token_file` (Rechte `0600`) nehmen, sofort einlösen, und wo gar
+  kein Token in einer URL stehen soll, den ersten Admin über `auth.ensure_admin(...)` oder
+  `admin_identifiers` setzen.
 
 ## Unterstützte Versionen
 

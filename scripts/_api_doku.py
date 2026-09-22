@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 ZIEL = ROOT / "API.md"
 
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import errors as fehler_modul  # noqa: E402
 
 KOPF = """# API — die öffentliche Oberfläche von `TinySesam`
 
@@ -76,8 +77,25 @@ def bauen() -> str:
     for name, fn in presets:
         teile.append(f"### `TinySesamConfig.{name}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
 
-    teile.append(f"---\n\n{len(methoden)} Methoden, {len(presets)} Presets — "
-                 "erzeugt aus den Docstrings.\n")
+    # Fehlertypen samt Hierarchie. Warum generiert und nicht bloss in den READMEs erzählt:
+    # `api_surface.json` friert Namen und SIGNATUREN ein — welchen Typ eine Methode WIRFT, sieht
+    # es nicht. Eine Änderung wie „totp_begin wirft jetzt StateError" blieb damit unsichtbar,
+    # obwohl sie jeden Aufrufer trifft, der den alten Typ fängt (Nacharbeit zu B2-1).
+    typen = [(n, k) for n, k in vars(fehler_modul).items()
+             if isinstance(k, type) and issubclass(k, fehler_modul.TinySesamError)]
+    typen.sort(key=lambda kv: (len(kv[1].__mro__), kv[0]))
+    teile.append("## Fehlertypen\n\n"
+                 "Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den "
+                 "er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt "
+                 "weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er "
+                 "ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen "
+                 "sind die Zusage.\n\n")
+    for name, klasse in typen:
+        basen = ", ".join(f"`{b.__name__}`" for b in klasse.__bases__)
+        teile.append(f"### `{name}` (erbt von {basen})\n\n{erster_satz(klasse)}\n\n")
+
+    teile.append(f"---\n\n{len(methoden)} Methoden, {len(presets)} Presets, {len(typen)} "
+                 "Fehlertypen — erzeugt aus den Docstrings.\n")
     return "".join(teile)
 
 

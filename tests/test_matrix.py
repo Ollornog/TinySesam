@@ -76,7 +76,8 @@ os.remove(db)
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 sent = []
 a = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, password_enabled=False, passkey_enabled=False,
-                              oidc_enabled=False, magiclink_enabled=True, cookie_secure=False))
+                              oidc_enabled=False, magiclink_enabled=True, cookie_secure=False,
+                              base_url="https://auth.example.com"))   # Mail-Link, siehe R4-01
 a.set_mailer(lambda to, s, t, html=None: sent.append(t))
 a.create_user("nurmail", email="m@example.com")
 app = FastAPI(); app.include_router(a.router())

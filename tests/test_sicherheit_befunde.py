@@ -1,4 +1,4 @@
-"""Nachgestellte Angriffe aus der Reifeprüfung vom 2026-09-21.
+"""Nachgestellte Angriffe aus der Reifeprüfung vom 2026-09-21 (und den Runden danach).
 
 Jede Prüfung hier hält einen Angriff fest, der einmal funktioniert hat. Sie sind bewusst nach dem
 ANGRIFF benannt, nicht nach der Funktion — wer eine davon rot sieht, soll sofort wissen, was
@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import ConfigError, StateError, TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Sicherheit — nachgestellte Angriffe")
@@ -220,7 +220,10 @@ r.check("Allowlist-E-MAIL ohne Bestätigungspflicht wird abgewiesen", not gebaut
 
 # Gegenproben — der Wächter darf die tragfähigen Aufbauten nicht mitnehmen.
 gebaut, text = _baut(admin_identifiers=["chef@example.com"], allow_signup=True,
-                     signup_require_email=True, signup_verify_email=True)
+                     signup_require_email=True, signup_verify_email=True,
+                     # Pflicht seit der base_url-Nacharbeit; ohne sie scheiterte der Aufbau aus
+                     # einem Grund, der mit dem Erst-Admin-Wächter nichts zu tun hat.
+                     base_url="https://auth.example.com")
 r.check("bestätigte E-Mail + offene Registrierung bleibt erlaubt", gebaut,
         f"zu streng, der belegte Weg ist zu: {text[:120]}")
 
@@ -1035,12 +1038,14 @@ r.check("mehrere Widersprüche werden zusammen gemeldet", text.count("\n  - ") >
         f"nur einer: {text[:120]!r}")
 
 # Was später noch kommen kann, ist eine Warnung — kein Abbruch. `set_mailer` nach dem
-# Konstruktor ist eine völlig übliche Reihenfolge.
+# Konstruktor ist eine völlig übliche Reihenfolge. `base_url` ist der Gegenfall und steht
+# deshalb hier: Sie muss beim Aufbau stehen (Fehler, nicht Warnung — s. R4-01-Nacharbeit),
+# sonst liefe „Passwort vergessen" still ins Leere.
 puffer_k = io.StringIO()
 haken_k = logging.StreamHandler(puffer_k)
 _sec.seclog.addHandler(haken_k)
 try:
-    gebaut, text = _baut(magiclink_enabled=True)
+    gebaut, text = _baut(magiclink_enabled=True, base_url="https://auth.example.com")
 finally:
     _sec.seclog.removeHandler(haken_k)
 r.check("ein fehlender Mailer verhindert den Start NICHT", gebaut,
@@ -1084,4 +1089,988 @@ r.check("beide Namen hängen denselben Faktor an", faktoren[0] == faktoren[1] ==
         f"alt={faktoren[0]} neu={faktoren[1]} — ein Alias, der etwas anderes tut, ist schlimmer "
         "als zwei Methoden")
 
+
+# ── Der Host-Header vergiftete Reset-, Anmelde- und Bestätigungslink (R4-01/R8-4) ──────────
+# Angriff: Der Angreifer stößt „Passwort vergessen" für ein FREMDES Postfach an und setzt dabei
+# den rohen `Host`-Header. TinySesam baute die Mail-Adresse aus `str(request.base_url)`, also aus
+# genau diesem Header — das Opfer bekam eine echte Mail der echten App mit einem gültigen Token
+# in einem Link auf den Server des Angreifers (CWE-644). `trusted_redirect_hosts` schützte nur
+# `?next=`, nicht diesen Weg; `X-Forwarded-Host` braucht es dafür nicht.
+BOESE = "angreifer.example"
+ECHT = "https://auth.example.com"
+
+
+def _mailapp(**cfg):
+    post: list = []
+    # `base_url` steht jetzt in der Grundausstattung: Seit der Nacharbeit ist sie Pflicht, sobald
+    # ein Mail-Weg an ist — eine Instanz ohne sie gibt es nicht mehr (Prüfung dazu weiter unten).
+    grund = dict(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
+                 signup_verify_email=True, allow_signup=True, signup_require_email=True,
+                 passkey_enabled=False, trusted_redirect_hosts=["nur-das-hier.example"],
+                 base_url=ECHT)
+    grund.update(cfg)
+    auth, app = _app(**grund)
+    auth.set_mailer(lambda to, betreff, text, html=None: post.append(text))
+    auth.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+    return auth, TestClient(app), post
+
+
+def _links(post) -> list[str]:
+    return re.findall(r"https?://[^\s]+", "\n".join(post))
+
+
+# Vorbedingung: Ohne diese Prüfung wäre „keine Mail auf dem Angreifer-Host" auch dann grün,
+# wenn der Mailer gar nicht verdrahtet ist — der Angriff würde dann nichts belegen.
+_a, _c, _post = _mailapp()
+_c.post("/auth/forgot", data={"email": "opfer@example.com"})
+r.check("Vorbedingung: der Weg funktioniert überhaupt (Mail geht raus)",
+        len(_post) == 1 and _links(_post)[0].startswith(ECHT + "/auth/reset"),
+        f"{_post!r} — ohne diese Zusage prüft der Angriff unten nichts")
+
+# Der Angriff selbst, an allen drei Stellen, die eine Mail mit Token verschicken.
+for pfad, daten, name in (
+        ("/auth/forgot", {"email": "opfer@example.com"}, "Reset-Link"),
+        ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"}, "Magic-Link"),
+        ("/auth/register", {"username": "neu", "password": "Geheim12345!",
+                            "email": "neu@example.com"}, "Bestätigungslink")):
+    auth_x, c_x, post_x = _mailapp()
+    antwort_x = c_x.post(pfad, data=daten, headers={"host": BOESE})
+    r.check(f"{name}: gefälschter Host-Header erzeugt keine Mail auf {BOESE}",
+            not any(BOESE in u for u in _links(post_x)),
+            f"{_links(post_x)!r} — das Opfer bekäme ein gültiges Token auf {BOESE}")
+    r.check(f"...und der Weg bleibt heil (Mail auf {ECHT}, HTTP {antwort_x.status_code})",
+            len(post_x) == 1 and _links(post_x)[0].startswith(ECHT),
+            f"{_links(post_x)!r} — base_url gewinnt, der Header zählt nicht mit")
+
+# ── Nacharbeit N1: der Host-Header darf nicht einmal unter MEHREREN eigenen Hosts wählen ──
+# Befund A-umgehung-4: `base_url` war nur eine Warnung. Blieb sie leer und standen — beim
+# Forward-Auth/SSO der Normalfall — mehrere Namen in `trusted_redirect_hosts`, dann galt der
+# Laufzeit-Prüfung JEDER davon: Der Angreifer stieß „Passwort vergessen" für ein fremdes Postfach
+# an und setzte `Host:` auf einen anderen mitvertrauten Host. Ist der schwächer (fremdes Team,
+# offener Redirect, mitgeschnittenes Access-Log), leckt der Reset-Token dort. Jetzt ist `base_url`
+# Pflicht und gewinnt immer — der Header hat keine Stimme mehr.
+auth_m, c_m, post_m = _mailapp(trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"])
+c_m.post("/auth/forgot", data={"email": "opfer@example.com"},
+         headers={"host": "app-b.example.com"})
+r.check("zweiter mitvertrauter Host im Header gewinnt nicht gegen base_url",
+        len(post_m) == 1 and _links(post_m)[0].startswith(ECHT + "/auth/reset"),
+        f"{_links(post_m)!r} — der Reset-Token ginge auf den vom Angreifer gewählten Host")
+
+# Befund A-regression-1/A-vollstaendigkeit-3: Ohne Basis rendeten `/auth/forgot` und
+# `/auth/magic/request` weiter die ERFOLGSSEITE — HTTP 200, „Mail ist unterwegs", keine Mail.
+# Sichtbar war der Totalausfall nur in einer Logzeile. Zwei Schlösser dagegen:
+#
+# (1) Die Konfigurationsprüfung lässt diesen Aufbau nicht mehr entstehen (Fehler, nicht Warnung).
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+
+for _feld, _zusatz in (("magiclink_enabled", {}),
+                       ("password_reset_enabled", {"magiclink_enabled": True}),
+                       ("signup_verify_email", {"signup_require_email": True}),
+                       ("oidc_enabled", {"oidc_issuer": "https://idp.example.com",
+                                         "oidc_client_id": "c", "oidc_client_secret": "s"}),
+                       ("saml_enabled", {"saml_idp_sso_url": "https://idp.example.com/sso",
+                                         "saml_idp_x509cert": "PEM"})):
+    _f, _w = _kp.pruefe(TinySesamConfig(db_path=":memory:", **{_feld: True}, **_zusatz))
+    r.check(f"ohne base_url ist {_feld} ein FEHLER, keine Warnung",
+            any("base_url ist leer" in x for x in _f),
+            f"nur Warnungen: {[x[:60] for x in _w]!r} — eine Warnung startet durch")
+_f_hosts, _w_hosts = _kp.pruefe(TinySesamConfig(
+    db_path=":memory:", magiclink_enabled=True,
+    trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"]))
+r.check("trusted_redirect_hosts ersetzt base_url NICHT",
+        any("base_url ist leer" in x for x in _f_hosts),
+        "mit mehreren mitvertrauten Hosts wählt sonst der Header aus (A-umgehung-4)")
+_gebaut_ohne, _text_ohne = _baut(magiclink_enabled=True, password_reset_enabled=True)
+r.check("...und der Konstruktor bricht damit ab (ConfigError statt stillem Betrieb)",
+        not _gebaut_ohne and "base_url" in _text_ohne, f"gebaut={_gebaut_ohne}")
+r.check("...die Meldung sagt, was einzutragen ist",
+        "base_url=" in _text_ohne, f"nur Diagnose, keine Abhilfe: {_text_ohne[:160]!r}")
+# Gegenprobe: Der Wächter darf nicht jeden Aufbau treffen. Nur Passwort/PIN braucht keine Basis.
+_f_pw, _w_pw = _kp.pruefe(TinySesamConfig(db_path=":memory:"))
+r.check("ohne linkbauende Funktion verlangt niemand ein base_url",
+        not any("base_url" in x for x in _f_pw + _w_pw), f"{(_f_pw, _w_pw)!r}")
+# Forward-Auth allein bleibt eine Warnung: Die Umleitung bleibt ohne Basis relativ und trifft
+# denselben Browser, es geht nichts an Dritte hinaus.
+_f_fa, _w_fa = _kp.pruefe(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True))
+r.check("forward_auth allein bleibt eine Warnung (die Umleitung bleibt relativ)",
+        not any("base_url" in x for x in _f_fa) and any("base_url" in x for x in _w_fa),
+        f"Fehler={[x[:50] for x in _f_fa]!r} Warnungen={[x[:50] for x in _w_fa]!r}")
+
+# (2) Zweites Schloss für die Config, die NACH dem Konstruktor geändert wurde (sie wird zur
+# Request-Zeit gelesen): kein stiller Erfolg, sondern ein ConfigError mit klarer Meldung.
+from tinysesam import ConfigError as _CfgErr  # noqa: E402
+
+for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "Passwort vergessen"),
+                             ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"},
+                              "Magic-Link")):
+    auth_l, c_l, post_l = _mailapp()
+    auth_l.cfg.base_url = ""            # Mutationsprobe: die Basis fällt zur Laufzeit weg
+    try:
+        _antwort_l = c_l.post(_pfad, data=_daten)
+        _ergebnis = f"HTTP {_antwort_l.status_code}, Erfolgsseite: {'unterwegs' in _antwort_l.text}"
+        _hart = False
+    except _CfgErr as _e:
+        _ergebnis, _hart = str(_e)[:60], True
+    r.check(f"{_name} ohne Basis: ConfigError statt „Mail ist unterwegs\"",
+            _hart and not post_l,
+            f"{_ergebnis} — 200 mit Erfolgsseite verdeckt den Totalausfall (A-regression-1)")
+
+# Und was der Betreiber dabei WIRKLICH zu sehen bekommt. Die Prüfung darüber fängt den
+# `ConfigError` selbst ab (TestClient reicht ihn durch); im Betrieb tut das niemand — keine Route
+# fängt ihn, also macht der ASGI-Server daraus einen HTTP 500. Der CHANGELOG versprach an dieser
+# Stelle zunächst mehr: „wo bisher eine Erfolgsseite oder ein 500 stand". Der stille 200 ist weg
+# (das ist der Gewinn), der 500 nicht. Beides steht deshalb hier: die Zusage, und die Messung
+# dessen, was stattdessen herauskommt. Fängt eine Route die Ausnahme künftig ab und rendert eine
+# Fehlerseite, wird die zweite Zeile rot — dann gehört der CHANGELOG-Satz mitgeändert.
+auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
+                         passkey_enabled=False, base_url=ECHT)
+_post_500: list = []
+auth_500.set_mailer(lambda to, betreff, text, html=None: _post_500.append(text))
+auth_500.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+auth_500.cfg.base_url = ""              # die Lage, für die das zweite Schloss gebaut ist
+_c500 = TestClient(app_500, raise_server_exceptions=False)
+_antwort_500 = _c500.post("/auth/forgot", data={"email": "opfer@example.com"})
+r.check("kein stiller Erfolg: ohne Basis meldet /auth/forgot nicht „Mail ist unterwegs\"",
+        _antwort_500.status_code != 200 and not _post_500,
+        f"HTTP {_antwort_500.status_code}, Mails={len(_post_500)} — dieselbe Antwort verhindert "
+        "die Benutzer-Enumeration und verdeckte deshalb den Totalausfall (A-regression-1)")
+r.check("...und ungefangen endet der Abbruch als HTTP 500 (so steht es im CHANGELOG)",
+        _antwort_500.status_code == 500,
+        f"HTTP {_antwort_500.status_code} — keine Route fängt den ConfigError; wenn doch, ist der "
+        "CHANGELOG-Satz zu diesem Punkt zu aktualisieren")
+
+# Befund A-regression-4: Dieselben Stellen antworteten sonst mit 500 mitten im Anmeldeversuch —
+# `/auth/oidc/start` ist der Einstieg, auf den ein Gateway jeden Besucher schickt. Jetzt steht
+# der Abbruch beim Aufbau, also bevor ein Nutzer klickt.
+for _name, _an in (("OIDC", dict(oidc_enabled=True, oidc_issuer="https://idp.example.com",
+                                 oidc_client_id="c", oidc_client_secret="s")),
+                   ("SAML", dict(saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
+                                 saml_idp_x509cert="PEM")),
+                   ("Einladung/Magic", dict(magiclink_enabled=True))):
+    _gebaut, _text = _baut(**_an)
+    r.check(f"{_name} ohne base_url: Abbruch beim Aufbau, kein 500 zur Laufzeit",
+            not _gebaut and "base_url" in _text, f"gebaut={_gebaut}: {_text[:90]!r}")
+
+# Der legitime Weg bleibt: mit zugesagter base_url geht die Mail hinaus, und der gefälschte
+# Host steht nicht drin. Ohne diese Prüfung wäre der Fix „nie wieder eine Mail" auch grün.
+auth_ok, c_ok, post_ok = _mailapp(base_url=ECHT)
+c_ok.post("/auth/forgot", data={"email": "opfer@example.com"}, headers={"host": BOESE})
+r.check("legitimer Weg: base_url gesetzt → Mail geht raus und trägt die echte Adresse",
+        len(post_ok) == 1 and _links(post_ok)[0].startswith(ECHT + "/auth/reset"),
+        f"{_links(post_ok)!r}")
+r.check("und der gefälschte Host taucht nirgends auf", BOESE not in "\n".join(post_ok),
+        f"{post_ok!r}")
+
+# Der Einladungslink des Admin-Panels geht ebenfalls per Mail an einen Dritten und trägt ein
+# Token — er kam aus derselben Zeile und blieb in einer früheren Runde beim Flicken liegen.
+auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
+                         base_url=ECHT)
+auth_inv.set_mailer(lambda *a, **k: None)
+auth_inv.create_user("chef", password="Geheim12345!", is_admin=True)
+with TestClient(app_inv) as c_inv:
+    c_inv.cookies.set(auth_inv.cfg.session_cookie,
+                      auth_inv.store.create_session(auth_inv.store.get_user_by_name("chef")["id"],
+                                                    3600, True, "password"))
+    einladung = c_inv.post("/auth/admin/api/invite", json={"email": "gast@example.com"},
+                           headers={"host": BOESE})
+r.check("Admin-Einladung: der Link kommt aus base_url, nicht aus dem Host-Header",
+        einladung.status_code == 200 and BOESE not in einladung.text
+        and ECHT + "/auth/invite/" in einladung.text,
+        f"HTTP {einladung.status_code}: {einladung.text[:120]!r}")
+
+# Die Regel selbst, direkt geprüft — sie entscheidet auch für OIDC-Redirect-URI, SAML-Metadaten
+# und die Forward-Auth-Umleitung, die alle über `public_base()` gehen.
+from tinysesam import security as _sec  # noqa: E402
+
+r.check("fremder Host gilt nicht als eigener", _sec.eigener_host(BOESE, []) is False)
+r.check("Host aus trusted_redirect_hosts gilt", _sec.eigener_host("a.example.com", ["a.example.com"]))
+r.check("Loopback gilt (Link nützt nur dem Empfänger selbst)",
+        _sec.eigener_host("127.0.0.1", []) and _sec.eigener_host("::1", []))
+r.check("Benutzerangabe im Host täuscht die Prüfung nicht",
+        _sec.sichere_basis("https://a.example.com@" + BOESE, ["a.example.com"]) == "",
+        "urlsplit liest hier den Host hinter dem @ — die Prüfung muss genau den sehen")
+r.check("und die geprüfte Basis trägt keine Benutzerangabe weiter",
+        _sec.sichere_basis("https://wer@a.example.com:8443", ["a.example.com"])
+        == "https://a.example.com:8443")
+auth_pb, _app_pb = _app(passkey_enabled=False)
+r.check("public_base() liefert leer statt zu raten (fail closed)",
+        auth_pb.public_base(kandidat="https://" + BOESE) == "")
+try:
+    auth_pb.require_public_base(kandidat="https://" + BOESE)
+    _pb_hart = False
+except _CfgErr:
+    _pb_hart = True
+r.check("require_public_base() wirft statt zu raten",
+        _pb_hart, "wer eine Basis BRAUCHT, darf keinen leeren String bekommen")
+
+# Befund A-regression-12: Der `root_path` des Servers fiel weg — eine unter einem Unterpfad
+# montierte App verschickte Mail-Links ohne Präfix, also 404 statt Reset-Formular.
+_auth_pfad = TinySesam(TinySesamConfig(db_path=":memory:",
+                                      base_url="https://app.example.com/sso/"))
+r.check("der Unterpfad (root_path) kommt aus base_url mit",
+        _auth_pfad.public_base() == "https://app.example.com/sso",
+        f"{_auth_pfad.public_base()!r} — Mail-Links ohne Präfix landen im 404")
+r.check("...und auch aus einer abgeleiteten Basis",
+        _sec.sichere_basis("https://a.example.com/sso/", ["a.example.com"])
+        == "https://a.example.com/sso",
+        "bis 0.18.x warf sichere_basis den Pfad weg")
+r.check("...aber nichts, was wir nicht sauber zusammensetzen können (fail closed)",
+        all(_sec.sichere_basis("https://a.example.com" + _p, ["a.example.com"]) == ""
+            for _p in ("/../etc", "/sso/../x", "/a//b", "/s so", "/a%2fb")),
+        "ein halb geratenes Präfix ginge in jede ausgehende Mail")
+
+# Zuletzt: Die Konfigurationsprüfung schwieg zu `base_url` komplett — wer die Lücke offen ließ,
+# erfuhr es nirgends.
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+
+_fehler, _warn = _kp.pruefe(TinySesamConfig(password_reset_enabled=True))
+r.check("konfigpruefung nennt das fehlende base_url",
+        any("base_url ist leer" in f for f in _fehler), f"{_fehler!r}")
+_fehler2, _warn2 = _kp.pruefe(auth_ok.cfg)
+r.check("mit gesetztem base_url schweigt sie dazu",
+        not any("base_url ist leer" in m for m in _fehler2 + _warn2), f"{_fehler2!r} {_warn2!r}")
+
+# Gemessen wird die Warnung für JEDEN Schalter, der eine absolute Adresse baut — nicht nur für
+# die Mail-Wege. Vorher deckte die Suite drei der sechs Einträge ab: `BRAUCHT_BASE_URL` ließ
+# sich um `oidc_enabled`, `saml_enabled` und `forward_auth_enabled` kürzen, ohne dass eine
+# einzige Prüfung rot wurde (Mutationsprobe N4, volle Suite 46/46 grün).
+#
+# Die sechs Schalter stehen deshalb AUSGESCHRIEBEN, nicht als Schleife über die Tabelle selbst:
+# eine Schleife über `BRAUCHT_BASE_URL` prüfte nur die Einträge, die noch drin sind — wer einen
+# entfernt, nähme sich damit auch die Prüfung weg. (Genau das fiel beim Nachstellen der
+# Mutationsprobe auf.) Gefragt wird eine nackte Config, keine Instanz: `pruefe` liest nur
+# Felder, und so braucht die Zeile weder [oidc] noch [saml].
+#
+# Seit der Nacharbeit N1 ist die Meldung nach Schwere getrennt: Die fünf Wege, die eine absolute
+# Adresse in FREMDE Hand geben (Mail, IdP), sind ein **Fehler** — der Aufbau scheitert, weil eine
+# Warnung durchstartet und `/auth/forgot` sonst weiter die Erfolgsseite ohne Mail rendert.
+# Forward-Auth bleibt eine **Warnung**: Die Umleitung bleibt ohne Basis relativ, trifft denselben
+# Browser und gibt nichts an Dritte. Beide Tabellen werden hier gemessen, jede in ihrer Schwere.
+_BRAUCHT_BASIS = ("magiclink_enabled", "password_reset_enabled", "signup_verify_email",
+                  "oidc_enabled", "saml_enabled")
+_EMPFIEHLT_BASIS = ("forward_auth_enabled",)
+r.check("die Tabelle nennt alle sechs Funktionen, die absolute Adressen bauen",
+        set(_BRAUCHT_BASIS) <= set(_kp.BRAUCHT_BASE_URL)
+        and set(_EMPFIEHLT_BASIS) <= set(_kp.BASE_URL_EMPFOHLEN),
+        f"nicht genannt: {sorted((set(_BRAUCHT_BASIS) - set(_kp.BRAUCHT_BASE_URL)) | (set(_EMPFIEHLT_BASIS) - set(_kp.BASE_URL_EMPFOHLEN)))}")
+for _feld in _BRAUCHT_BASIS:
+    _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
+    r.check(f"konfigpruefung meldet {_feld} ohne base_url als FEHLER",
+            any("base_url ist leer" in f for f in _f3),
+            f"{_f3!r} — dieser Schalter gibt eine absolute Adresse aus der Hand, sagt es aber niemandem")
+for _feld in _EMPFIEHLT_BASIS:
+    _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
+    r.check(f"konfigpruefung warnt bei {_feld} ohne base_url (kein Fehler)",
+            any("base_url ist leer" in w for w in _w3)
+            and not any("base_url ist leer" in f for f in _f3),
+            f"F={_f3!r} W={_w3!r} — die Umleitung bleibt relativ, das darf den Start nicht verweigern")
+
+# ── R4-01, die sechs Stellen ohne Mail: OIDC, SAML, Forward-Auth ───────────────
+# Dieselbe Regel, andere Wege. Getestet waren bis hierher nur die vier Mail-Wege; die übrigen
+# Stellen verhielten sich richtig, aber ungemessen — jede ließ sich auf die alte Form
+# `cfg.base_url or <aus dem Request>` zurückbauen, ohne dass die volle Suite rot wurde
+# (Mutationsproben N5–N8, je 46/46 grün). Genau hier arbeitet F-16 weiter, das die
+# SAML-SP-Identität betrifft: ohne diese Prüfungen reißt ein Umbau R4-01 still wieder auf.
+from urllib.parse import unquote, urlsplit  # noqa: E402
+
+_OIDC_META = {
+    "issuer": "https://idp.example.invalid",
+    "authorization_endpoint": "https://idp.example.invalid/authorize",
+    "token_endpoint": "https://idp.example.invalid/token",
+    "jwks_uri": "https://idp.example.invalid/jwks",
+    "end_session_endpoint": "https://idp.example.invalid/logout",
+}
+
+
+def _oidc_app(**cfg):
+    cfg.setdefault("base_url", ECHT)
+    auth_x, app_x = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
+                         oidc_client_id="probe", oidc_client_secret="geheim",
+                         csrf_enabled=False, passkey_enabled=False, **cfg)
+    auth_x.oidc._meta = dict(_OIDC_META)   # kein Netz nötig: geprüft wird die Basis, nicht Discovery
+    return auth_x, app_x
+
+
+def _oidc_app_ohne_basis(**cfg):
+    """Dieselbe App, aber mit leerer Basis zur REQUEST-Zeit.
+
+    Seit N1 verweigert der Konstruktor `oidc_enabled` ohne `base_url` rundheraus — diese Lage ist
+    also gar nicht mehr aufzubauen. Gemessen wird deshalb das zweite Schloss, das genau dafür da
+    ist: eine Config, die nach dem Konstruktor geändert wurde (sie wird zur Request-Zeit
+    gelesen). Ohne dieses Schloss fiele der Router auf den Host-Header zurück.
+    """
+    auth_x, app_x = _oidc_app(**cfg)
+    auth_x.cfg.base_url = ""
+    return auth_x, app_x
+
+
+# (1) OIDC-Redirect-URI. Sie entscheidet, wohin der IdP den Autorisierungs-Code schickt — aus dem
+# Host-Header abgeleitet würde ein IdP mit locker gepflegten Redirect-URIs den Code an den Host
+# des Angreifers ausliefern.
+def _bricht_ab(ruf):
+    """(brach mit ConfigError ab, Text der Antwort bzw. der Ausnahme).
+
+    Seit N1 werfen diese Wege `ConfigError` statt `HTTPException(500)`: Ein Serverfehler mitten
+    im Anmeldeversuch war der falsche Ort für ein Problem, das schon beim Aufbau feststand.
+    Gemessen wird deshalb der Abbruch, nicht mehr eine Statuszeile — und in beiden Fällen, dass
+    der fremde Host nirgends durchschlägt.
+    """
+    try:
+        antwort = ruf()
+    except _CfgErr as e:
+        return True, str(e)
+    return False, getattr(antwort, "text", "") + str(getattr(antwort, "headers", ""))
+
+
+_a_oi, _app_oi = _oidc_app_ohne_basis()
+with TestClient(_app_oi) as _c:
+    _oi_ab, _oi_text = _bricht_ab(
+        lambda: _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False))
+r.check("OIDC-Start: gefälschter Host baut keine Redirect-URI (fail closed)",
+        _oi_ab and BOESE not in unquote(_oi_text),
+        f"abgebrochen={_oi_ab}: {_oi_text[:160]!r}")
+
+_a_oi2, _app_oi2 = _oidc_app(base_url=ECHT)
+with TestClient(_app_oi2) as _c:
+    _start_gut = _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False)
+_ziel_gut = unquote(_start_gut.headers.get("location", ""))
+r.check("...und mit base_url läuft der Flow weiter, auf der eigenen Adresse",
+        _start_gut.status_code == 303 and ECHT + "/auth/oidc/callback" in _ziel_gut
+        and BOESE not in _ziel_gut,
+        f"HTTP {_start_gut.status_code}: {_ziel_gut[:160]!r} — sonst prüft die Zeile darüber nur, "
+        "dass der Start überhaupt kaputt ist")
+
+# (2) OIDC-Post-Logout. Der `post_logout_redirect_uri` geht an den IdP; aus dem Host-Header
+# abgeleitet schickt der IdP das Opfer nach dem Abmelden auf den Server des Angreifers.
+def _abmelden(auth_x, app_x):
+    uid = auth_x.create_user("wer", password="Geheim12345!")
+    tok = auth_x.store.create_session(uid, 3600, True, "oidc")
+    with TestClient(app_x) as c:
+        c.cookies.set(auth_x.cfg.session_cookie, tok)
+        return c.get("/auth/logout", headers={"host": BOESE}, follow_redirects=False)
+
+
+_a_pl, _app_pl = _oidc_app_ohne_basis(oidc_rp_logout=True)
+_logout_boese = _abmelden(_a_pl, _app_pl)
+_loc_boese = unquote(_logout_boese.headers.get("location", ""))
+r.check("OIDC-Logout: kein post_logout_redirect_uri aus dem Host-Header",
+        BOESE not in _loc_boese and _loc_boese == _a_pl.cfg.logout_redirect,
+        f"{_loc_boese!r} — der IdP schickte das Opfer danach zum Angreifer")
+
+_a_pl2, _app_pl2 = _oidc_app(oidc_rp_logout=True, base_url=ECHT)
+_loc_gut = unquote(_abmelden(_a_pl2, _app_pl2).headers.get("location", ""))
+r.check("...und mit base_url meldet der Provider-Logout weiter ab (der Weg lebt)",
+        _loc_gut.startswith("https://idp.example.invalid/logout")
+        and ECHT + _a_pl2.cfg.logout_redirect in _loc_gut and BOESE not in _loc_gut,
+        f"{_loc_gut!r}")
+
+
+# (3) SAML: Entity-ID und ACS-URL. Beides ist die IDENTITÄT des SP — ein fremder Name darin
+# wandert in den AuthnRequest und in die Metadaten, die der Betreiber beim IdP hinterlegt.
+# Die Attrappe steht für den echten Client: geprüft wird die Basis, die der Router ihm gibt,
+# nicht die Signaturarbeit von python3-saml. So braucht diese Zeile das Extra [saml] nicht —
+# ein Überspringen wäre hier kein Grün.
+class _SamlAttrappe:
+    def login_url(self, req, base, return_to="/"):
+        return f"https://idp.example.invalid/sso?sp={base}&RelayState={return_to}", "rid-1"
+
+    def process(self, req, base, request_id=""):
+        return None      # „Assertion abgelehnt" → 400; ein 500 hieße: es gab gar keine Basis
+
+    def metadata(self, base):
+        return f'<EntityDescriptor entityID="{base}/auth/saml/metadata"/>'
+
+
+def _saml_app(**cfg):
+    tmp = tempfile.mkdtemp()
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False, csrf_enabled=False,
+                 passkey_enabled=False)
+    grund.update(cfg)
+    auth_x = TinySesam(TinySesamConfig(**grund))
+    auth_x.saml = _SamlAttrappe()    # VOR router(): die SAML-Routen hängen an auth.saml
+    app_x = FastAPI()
+    app_x.include_router(auth_x.router())
+    return auth_x, app_x
+
+
+_a_sa, _app_sa = _saml_app()
+with TestClient(_app_sa) as _c:
+    _md_ab, _md_text = _bricht_ab(lambda: _c.get("/auth/saml/metadata", headers={"host": BOESE}))
+    _lg_ab, _lg_text = _bricht_ab(
+        lambda: _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False))
+    _acs_ab, _ = _bricht_ab(
+        lambda: _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE}))
+r.check("SAML-Metadaten: keine Entity-ID aus dem Host-Header",
+        _md_ab and BOESE not in _md_text, f"abgebrochen={_md_ab}: {_md_text[:160]!r}")
+r.check("SAML-Login: kein AuthnRequest mit fremder SP-Adresse",
+        _lg_ab and BOESE not in unquote(_lg_text),
+        f"abgebrochen={_lg_ab}: {_lg_text[:160]!r}")
+r.check("SAML-ACS: bricht ab, bevor eine Assertion gegen eine fremde ACS-URL geprüft wird",
+        _acs_ab, "die Assertion wäre gegen eine fremde ACS-URL geprüft worden")
+
+_a_sa2, _app_sa2 = _saml_app(base_url=ECHT)
+with TestClient(_app_sa2) as _c:
+    _md_gut = _c.get("/auth/saml/metadata", headers={"host": BOESE})
+    _lg_gut = _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False)
+    _acs_gut = _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE})
+r.check("...und mit base_url trägt SAML die eigene Adresse (Metadaten, Login, ACS leben)",
+        _md_gut.status_code == 200 and f'entityID="{ECHT}/auth/saml/metadata"' in _md_gut.text
+        and _lg_gut.status_code == 303 and f"sp={ECHT}" in unquote(_lg_gut.headers["location"])
+        and _acs_gut.status_code == 400 and BOESE not in _md_gut.text,
+        f"Metadaten HTTP {_md_gut.status_code}: {_md_gut.text[:90]!r}; Login HTTP "
+        f"{_lg_gut.status_code}; ACS HTTP {_acs_gut.status_code} (400 = Basis stand, Assertion "
+        "abgelehnt; 500 = keine Basis)")
+
+# (4) Forward-Auth-Umleitung. Der Proxy schickt jeden nicht angemeldeten Besucher auf die
+# Adresse aus `X-TinySesam-Location` — stünde dort ein fremder Host, führte der Proxy das Opfer
+# selbst auf die Anmeldeseite des Angreifers. Geprüft wird der HOST der Umleitung: das `next=`
+# trägt die angefragte URL und darf das auch, `safe_next` verwirft sie später.
+_a_fa, _app_fa = _app(forward_auth_enabled=True, csrf_enabled=False, passkey_enabled=False,
+                      trusted_redirect_hosts=["app.example.com"])
+with TestClient(_app_fa) as _c:
+    _fa_boese = _c.get("/auth/forward", headers={"host": BOESE, "x-forwarded-host": BOESE,
+                                                 "x-forwarded-proto": "https",
+                                                 "x-forwarded-uri": "/geheim"})
+    _fa_gut = _c.get("/auth/forward", headers={"host": "app.example.com",
+                                               "x-forwarded-host": "app.example.com",
+                                               "x-forwarded-proto": "https",
+                                               "x-forwarded-uri": "/geheim"})
+_loc_fa = _fa_boese.headers.get("X-TinySesam-Location", "")
+r.check("Forward-Auth: die 401-Umleitung zeigt auf keinen fremden Host",
+        _fa_boese.status_code == 401 and not (urlsplit(_loc_fa).hostname or "")
+        and _loc_fa.startswith(_a_fa.cfg.login_path + "?next="),
+        f"HTTP {_fa_boese.status_code}: {_loc_fa[:140]!r} — der Proxy selbst führte das Opfer hin")
+_loc_fa_gut = _fa_gut.headers.get("X-TinySesam-Location", "")
+r.check("...und auf einem Host aus trusted_redirect_hosts bleibt sie absolut (Cookie-Host)",
+        _fa_gut.status_code == 401
+        and _loc_fa_gut.startswith("https://app.example.com" + _a_fa.cfg.login_path),
+        f"HTTP {_fa_gut.status_code}: {_loc_fa_gut[:140]!r}")
+
+# ── Dieselbe EINE Regel für die dokumentierten Methoden, nicht nur für die Routen ───
+# `public_base()` sass nur in den Routen. Eine App mit eigenem „Passwort vergessen"-Formular —
+# der in beiden READMEs und in API.md gezeigte Weg — rief `send_password_reset(mail, basis)`
+# selbst auf und war mit `str(request.base_url)` weiter voll angreifbar, während ihr die
+# eingebaute Route längst weggebrochen war. Die Prüfung sitzt jetzt in `magic_url()`, wo alle
+# vier Mail-Wege zusammenlaufen, und zusätzlich vor der Token-Vergabe in jedem Absender.
+#
+# Gemessen wird die REGEL, nicht ihr Mechanismus: Steht `base_url`, gewinnt sie — auch gegen
+# einen zweiten mitvertrauten Namen. Genau das war Befund B-umgehung-3: Hier entschied noch der
+# übergebene Host, solange er in `trusted_redirect_hosts` stand. Der `Host`-Header wählte damit
+# weiter aus, welcher der eigenen Namen in den Reset-Link kommt — der Kern von R4-01, eine Ebene
+# tiefer. Ohne `base_url` — der einzige Aufbau, in dem überhaupt abgeleitet wird — bleibt es
+# beim harten `ConfigError`.
+_a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, passkey_enabled=False,
+                        base_url=ECHT,
+                        trusted_redirect_hosts=["auth.example.com", "app-b.example.com"])
+_mails_api: list = []
+_a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
+_a_api.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+
+
+def _tokenzeilen(auth_x) -> int:
+    return auth_x.store._exec("SELECT COUNT(*) FROM magic_token").fetchone()[0]
+
+
+def _wege(auth_x, basis):
+    """Die fünf dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
+    return (
+        ("magic_url", lambda: auth_x.magic_url("rohtoken", basis, "reset_password")),
+        ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", basis)),
+        ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", basis)),
+        ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", basis)),
+        ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
+    )
+
+
+def _spur(erg, mails) -> str:
+    """Alles, was der Aufruf nach aussen gegeben hat: Rückgabe plus verschickte Mailtexte."""
+    return repr(erg) + " " + " ".join(mails)
+
+
+for _fremd, _was in (("https://" + BOESE, "einen fremden Host"),
+                     ("https://app-b.example.com", "einen ZWEITEN eigenen Namen")):
+    for _name, _ruf in _wege(_a_api, _fremd):
+        _mails_api.clear()
+        try:                            # ein ConfigError wäre auch hier ein Befund, kein Abbruch
+            _s = _spur(_ruf(), _mails_api)
+        except ConfigError as e:
+            _s = f"ConfigError: {e}"[:140]
+        r.check(f"{_name}: base_url gewinnt gegen {_was}",
+                (urlsplit(_fremd).hostname or "") not in _s and ECHT in _s,
+                f"{_s[:140]!r} — sonst wählt der Host-Header aus, was in den Link kommt")
+
+# Ohne `base_url` bleibt es beim harten Abbruch: kein Link, keine Mail, kein Token. Diesen Aufbau
+# lässt `konfigpruefung` als einzigen ohne `base_url` durch (kein Mail-Schalter an), und genau ihn
+# nennt der Befund als Anlass — eine einbettende App mit eigenem Formular.
+_a_ohne, _app_ohne = _app(passkey_enabled=False, trusted_redirect_hosts=["auth.example.com"])
+_mails_ohne: list = []
+_a_ohne.set_mailer(lambda to, betreff, text, html=None: _mails_ohne.append(text))
+_a_ohne.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+for _name, _ruf in _wege(_a_ohne, "https://" + BOESE):
+    try:
+        _abgewiesen, _wie = False, repr(_ruf())
+    except ConfigError as e:
+        _abgewiesen, _wie = True, str(e)[:60]
+    r.check(f"ohne base_url: {_name}(fremde Basis) wird abgewiesen, nicht ausgeliefert",
+            _abgewiesen, f"kam durch: {_wie} — die App mit eigenem Formular bleibt angreifbar")
+
+r.check("dabei geht keine Mail hinaus", _mails_ohne == [], f"{_mails_ohne!r}")
+r.check("und es bleibt kein unbrauchbarer Token in der Datenbank",
+        _tokenzeilen(_a_ohne) == 0,
+        f"{_tokenzeilen(_a_ohne)} Zeilen — geprüft wird vor der Token-Vergabe, nicht danach")
+
+# Der legitime Weg der App: die zugesagte Basis. Ohne diese Zusage wäre „nie wieder ein Link"
+# auch grün. Der Host der eigenen base_url genügt — ein `http://` aus einem TLS-terminierenden
+# Proxy wird dabei auf die konfigurierte Adresse gehoben, statt still unverschlüsselt zu bleiben.
+_mails_api.clear()
+r.check("legitimer Weg: base_url liefert den Link",
+        _a_api.magic_url("rohtoken", ECHT, "reset_password") == ECHT + "/auth/reset?token=rohtoken",
+        _a_api.magic_url("rohtoken", ECHT, "reset_password"))
+r.check("str(request.base_url) auf dem eigenen Host bleibt benutzbar — und wird nicht http",
+        _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password")
+        == ECHT + "/auth/reset?token=rohtoken",
+        _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password"))
+r.check("und der Absender schickt damit wieder (die Methode lebt)",
+        _a_api.send_password_reset("opfer@example.com", ECHT) is True
+        and len(_mails_api) == 1 and ECHT + "/auth/reset" in _mails_api[0],
+        f"{_mails_api!r}")
+r.check("auch ohne base_url trägt der legitime Weg (abgeleitete, belegte Basis)",
+        _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password")
+        == ECHT + "/auth/reset?token=rohtoken",
+        _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password"))
+
+# Befund B-regression-2: Der Pfadanteil stand VIERFACH im verschickten Link. `sichere_basis()`
+# gibt ihn seit N1 selbst zurück, `_gepruefte_basis()` hängte ihn trotzdem noch einmal an — und
+# weil die vier Absender erst selbst prüfen und danach `magic_url()` ein zweites Mal, wuchs
+# `https://portal.example.com/portal` zu `…/portal/portal/portal/portal/auth/reset?token=…`.
+# Die Mail ging hinaus, der Empfänger klickte, der Link war 404: kein Fehler, keine Logzeile.
+# Deshalb wird GEZÄHLT, nicht `startswith` geprüft — genau das hielt den Befund verborgen.
+_UNTER = "https://portal.example.com/portal"
+_a_pfad, _app_pfad = _app(passkey_enabled=False, trusted_redirect_hosts=["portal.example.com"])
+_mails_pfad: list = []
+_a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text))
+_a_pfad.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+def _links(texte) -> list:
+    """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
+    return [g for t in texte for g in re.findall(r"https://portal\.example\.com[^\s'\"]*", t)]
+
+
+for _name, _ruf in _wege(_a_pfad, _UNTER):
+    _mails_pfad.clear()
+    _erg = _ruf()
+    _gefunden = _links([repr(_erg)] + list(_mails_pfad))
+    # Gezählt wird im PFAD, nicht im ganzen String: In "https://portal…" steckt "/portal"
+    # schon durch das "//" — eine Zählung darüber hätte auch den Vierfach-Link durchgelassen.
+    _zaehl = [urlsplit(u).path.count("/portal") for u in _gefunden]
+    r.check(f"{_name}: der Unterpfad steht genau EINMAL im Link",
+            bool(_zaehl) and all(z == 1 for z in _zaehl)
+            and all(u.startswith(_UNTER + "/auth/") for u in _gefunden),
+            f"{_zaehl} Vorkommen in {[u[:90] for u in _gefunden]!r}")
+r.check("die Prüfung ist idempotent (zweimal angewandt wächst der Pfad nicht)",
+        _a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER)) == _UNTER,
+        f"{_a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER))!r} — die vier Absender "
+        "prüfen vor der Token-Vergabe, magic_url danach noch einmal")
+
+# Befund B-regression-3: Was eine Montage unter einem Unterpfad WIRKLICH trägt — gemessen an
+# einer echten Montage (`FastAPI(root_path="/sso")`), nicht an einer nachgebauten URL. Der
+# verschickte Link trägt das Präfix; die eingebauten Seiten tragen es NICHT, ihre Ziele stehen
+# wurzel-absolut in `templates.py`. Genau so steht es seit dieser Runde in README, KONFIGURATION
+# und CHANGELOG. Dieser Test hält die Doku ehrlich: Wird die Grenze verschoben (backlog/T-15),
+# wird er rot — und dann gehört die Einschränkung aus der Doku heraus, nicht der Test weg.
+_a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
+                                   cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
+                                   password_reset_enabled=True,
+                                   base_url="https://example.com/sso"))
+_mails_mnt: list = []
+_a_mnt.set_mailer(lambda to, betreff, text, html=None: _mails_mnt.append(text))
+_a_mnt.create_user("anna", password="Geheim12345!", email="anna@example.com")
+_app_mnt = FastAPI(root_path="/sso")
+_app_mnt.include_router(_a_mnt.router())
+_c_mnt = TestClient(_app_mnt, root_path="/sso", follow_redirects=False)
+_c_mnt.post("/auth/forgot", data={"email": "anna@example.com"}, headers={"accept": "text/html"})
+_link_mnt = [w for w in " ".join(_mails_mnt).split() if w.startswith("http")]
+r.check("echte Montage unter /sso: der Mail-Link trägt das Präfix genau einmal",
+        len(_link_mnt) == 1 and _link_mnt[0].startswith("https://example.com/sso/auth/reset?")
+        and urlsplit(_link_mnt[0]).path.count("/sso") == 1,
+        f"{_link_mnt!r} — ohne Präfix ist es ein 404, mehrfach auch")
+_seite_mnt = _c_mnt.get("/auth/login", headers={"accept": "text/html"}).text
+_ziel_mnt = _c_mnt.get("/auth/account", headers={"accept": "text/html"}).headers.get("location", "")
+r.check("...die eingebauten Seiten bleiben wurzel-absolut (ausgesprochene Grenze, backlog/T-15)",
+        "action='/auth/login'" in _seite_mnt and _ziel_mnt.startswith("/auth/login?next="),
+        f"{_ziel_mnt!r} — trägt die Seite jetzt das Präfix, gehört die Einschränkung aus "
+        "README/KONFIGURATION/CHANGELOG heraus")
+
+# Und die Regel selbst, mechanisch: Wo `public_base()` eine Basis liefert, liefert
+# `_gepruefte_basis()` GENAU dieselbe, und wo sie leer bleibt, wirft die Methode. Zwei Wege,
+# ein Ergebnis — sonst sind es wieder zwei Regeln, und die Lücke sitzt im Unterschied.
+for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
+    for _fall in (ECHT, "http://auth.example.com/", "https://app-b.example.com",
+                  "https://" + BOESE, _UNTER, ""):
+        _pb = _auth_x.public_base(kandidat=_fall)
+        try:
+            _gb, _warf = _auth_x._gepruefte_basis(_fall), False
+        except ConfigError:
+            _gb, _warf = "", True
+        r.check(f"eine Regel ({_lab}): public_base == _gepruefte_basis für {_fall!r}",
+                _gb == _pb and _warf == (not _pb),
+                f"public_base={_pb!r} _gepruefte_basis={_gb!r} warf={_warf}")
+
+# ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
+# Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
+# `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im
+# Vorgabe-Modus "both" aber in BEIDEN Spalten und lässt bei einem @ die E-Mail gewinnen. Damit
+# besetzte ein Fremder die Kennung eines bestehenden Kontos — der Inhaber (auch ein Admin) bekam
+# 401 trotz richtigem Passwort, und /auth/password prüfte fortan ein fremdes Geheimnis.
+
+PW_INHABER, PW_EVE = "Geheim12345!", "Angreifer12345!"
+
+
+def _anmelden(client, kennung, passwort=PW_INHABER):
+    return client.post("/auth/login", data={"username": kennung, "password": passwort, "next": "/"},
+                       follow_redirects=False)
+
+
+# Richtung 1: die E-MAIL des Fremden ist der Benutzername des Inhabers.
+auth_n1, app_n1 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
+chef1 = auth_n1.create_user("chef@example.com", password=PW_INHABER, is_admin=True)
+c_n1 = TestClient(app_n1)
+r.check("Vorbedingung: der Inhaber kommt mit seiner Kennung hinein",
+        _anmelden(c_n1, "chef@example.com").status_code == 303,
+        "ohne diesen Ausgangspunkt sagt der Rest der Prüfung nichts")
+c_n1.cookies.clear()
+
+angriff1 = c_n1.post("/auth/register",
+                     data={"username": "eve", "password": PW_EVE,
+                           "email": "chef@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung, deren E-MAIL der Benutzername eines Kontos ist, wird abgewiesen",
+        angriff1.status_code == 409, f"HTTP {angriff1.status_code} — die Kennung ist vergeben")
+r.check("...und legt kein Konto an", auth_n1.store.get_user_by_name("eve") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+r.check("...die Kennung zeigt weiter auf den Inhaber",
+        (auth_n1.find_user("chef@example.com") or {}).get("id") == chef1,
+        "find_user löst auf ein fremdes Konto auf")
+r.check("...und der Inhaber meldet sich weiter an",
+        _anmelden(c_n1, "chef@example.com").status_code == 303,
+        "ausgesperrt — mit dem richtigen Passwort")
+
+# Richtung 2 (die gefährlichere): der BENUTZERNAME des Fremden ist die E-Mail des Inhabers.
+auth_n2, app_n2 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
+chef2 = auth_n2.create_user("chef", password=PW_INHABER, email="chef@example.com", is_admin=True)
+c_n2 = TestClient(app_n2)
+angriff2 = c_n2.post("/auth/register",
+                     data={"username": "chef@example.com", "password": PW_EVE,
+                           "email": "eve@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung, deren BENUTZERNAME die E-Mail eines Kontos ist, wird abgewiesen",
+        angriff2.status_code == 409, f"HTTP {angriff2.status_code} — die Kennung ist vergeben")
+r.check("...und die E-Mail-Kennung zeigt weiter auf den Inhaber",
+        (auth_n2.find_user("chef@example.com") or {}).get("id") == chef2,
+        "die Kennung wurde übernommen")
+
+# Der legitime Weg bleibt offen — sonst wäre der Wächter nur eine kaputte Registrierung.
+frisch = c_n2.post("/auth/register",
+                   data={"username": "neu", "password": "Neues12345!",
+                         "email": "neu@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung mit freien Kennungen geht weiterhin durch", frisch.status_code == 303,
+        f"HTTP {frisch.status_code}: {frisch.text[:120]}")
+
+# Und dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos ist keine Kollision — im
+# E-Mail-Modus ist die Adresse der Benutzername, das ist der vorgesehene Weg.
+auth_n3, app_n3 = _app(allow_signup=True, signup_require_email=True,
+                       login_identifier="email", csrf_enabled=False)
+solo = TestClient(app_n3).post("/auth/register",
+                               data={"password": "Solo12345!", "email": "solo@example.com",
+                                     "next": "/"}, follow_redirects=False)
+r.check("im E-Mail-Modus bleibt die Adresse zugleich Benutzername", solo.status_code == 303,
+        f"HTTP {solo.status_code}: {solo.text[:120]}")
+
+# Der Wächter sitzt in create_user, nicht nur in der Route: CLI, Einladung und die Anlage aus
+# OIDC/LDAP/SAML kommen hier vorbei.
+for was, ruf in (("einen Benutzernamen, der fremde E-Mail ist",
+                  lambda: auth_n2.create_user("chef@example.com", password=PW_EVE)),
+                 ("eine E-Mail, die fremder Benutzername ist",
+                  lambda: auth_n2.create_user("zweitkonto", password=PW_EVE, email="chef"))):
+    try:
+        ruf()
+        entstanden = True
+    except ConfigError:
+        entstanden = False
+    r.check(f"create_user nimmt {was} nicht an", not entstanden,
+            "das Konto entsteht — dann hilft die Prüfung in der Route allein nichts")
+
+# Auch über das Admin-Panel darf die Kollision nicht entstehen.
+c_adm = TestClient(app_n2)
+c_adm.cookies.set(auth_n2.cfg.session_cookie,
+                  auth_n2.store.create_session(chef2, 3600, True, "password"))
+for feld, koerper in (("E-Mail", {"username": "eve2", "email": "chef@example.com"}),
+                      ("Benutzername", {"username": "chef@example.com", "email": "e2@example.com"})):
+    antwort_adm = c_adm.post("/auth/admin/api/users", json=koerper)
+    r.check(f"die Admin-API weist eine vergebene Kennung im Feld {feld} ab",
+            antwort_adm.status_code == 409,
+            f"HTTP {antwort_adm.status_code}: {antwort_adm.text[:120]}")
+
+# Einladung: Die Adresse kommt dort aus dem Token, nicht aus dem Formular — der Wächter muss
+# auch diesen Weg treffen, sonst legt eine Einladung auf eine vergebene Kennung ein Konto an.
+# Die Basis muss seit N6 selbst belegt sein (`_gepruefte_basis`) — ein frei erfundener Host
+# geht nicht mehr in einen verschickten Link. Hier steht Loopback dafür; geprüft wird ohnehin
+# nur der Token, nicht der Link.
+_einladung = auth_n2.create_invite("chef@example.com", "http://127.0.0.1:8000")["token"]
+antwort_inv = c_n2.post("/auth/register",
+                        data={"username": "eve3", "password": PW_EVE, "invite": _einladung,
+                              "next": "/"}, follow_redirects=False)
+r.check("eine Einladung auf eine vergebene Kennung wird abgewiesen",
+        antwort_inv.status_code == 409,
+        f"HTTP {antwort_inv.status_code}: {antwort_inv.text[:120]}")
+r.check("...und legt kein Konto an", auth_n2.store.get_user_by_name("eve3") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+
+# Und der Maschinen-Weg: ein Dienstkonto hat keinen Login, sein Name ist aber trotzdem eine
+# Kennung im gemeinsamen Raum (`find_user` sucht auch ihn).
+try:
+    auth_n2.create_service("chef@example.com")
+    _dienst_entstand = True
+except ConfigError:
+    _dienst_entstand = False
+r.check("create_service nimmt eine vergebene Kennung nicht an", not _dienst_entstand,
+        "das Dienstkonto entsteht — und besetzt die Kennung des Admins")
+
+# Altbestand: in einer Datenbank von VOR dem Fix steht die Kollision schon. Dann darf
+# /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
+auth_alt, app_alt = _app(csrf_enabled=False)
+opfer_alt = auth_alt.create_user("chef", password=PW_INHABER, email="chef@example.com")
+eve_alt = auth_alt.store.create_user("chef@example.com")      # am Wächter vorbei = Altbestand
+auth_alt.set_password(eve_alt, PW_EVE)
+r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf",
+        (auth_alt.find_user("chef@example.com") or {}).get("id") == opfer_alt,
+        "ohne diese Zweideutigkeit prüft der Test nichts")
+c_alt = TestClient(app_alt)
+c_alt.cookies.set(auth_alt.cfg.session_cookie,
+                  auth_alt.store.create_session(eve_alt, 3600, True, "password"))
+fremd = c_alt.post("/auth/password", json={"current": PW_INHABER, "new": "Neues12345!"})
+r.check("/auth/password nimmt das Passwort eines FREMDEN Kontos nicht an",
+        fremd.status_code == 403,
+        f"HTTP {fremd.status_code} — die Route ist ein Orakel für fremde Passwörter")
+r.check("...und das fremde Passwort gilt unverändert weiter",
+        auth_alt.check_password("chef", PW_INHABER) is not None,
+        "das Geheimnis des Opfers wurde überschrieben")
+eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!"})
+r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
+        f"HTTP {eigen.status_code}: {eigen.text[:120]}")
+
+# Und der Bestand selbst? Die Datenbank kann diese Kollision nicht verhindern: `UNIQUE(username)`
+# und `ux_users_email` gelten je SPALTE, es gibt keinen Index über beide Namensräume — und
+# `create_user` prüft und INSERTet nicht atomar. Der Wächter kann hier also nur MELDEN, und genau
+# das muss er beim Start tun: Ohne Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
+
+
+def _start_log(db_pfad):
+    """Eine Instanz auf dieser Datenbank aufbauen und mitschreiben, was sie beim Start sagt."""
+    puffer = io.StringIO()
+    haken = logging.StreamHandler(puffer)
+    seclog.addHandler(haken)
+    try:
+        TinySesam(TinySesamConfig(db_path=db_pfad, cookie_secure=False))
+    finally:
+        seclog.removeHandler(haken)
+    return puffer.getvalue()
+
+
+r.check("Vorbedingung: die Kreuz-Kollision steht wirklich in der Datenbank",
+        len(auth_alt.store.kennungs_kollisionen()) == 1,
+        f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — dann misst der Test nichts")
+_text_k = _start_log(auth_alt.cfg.db_path)
+r.check("der Start meldet eine Kennungs-Kollision im Bestand", "Kennungs-Kollision" in _text_k,
+        f"stumm: {_text_k[:120]!r} — niemand erfährt, warum ein Konto nicht mehr hereinkommt")
+r.check("...und nennt beide beteiligten Konten",
+        f"user_id={eve_alt}" in _text_k and f"user_id={opfer_alt}" in _text_k,
+        f"ohne IDs ist die Meldung nicht abarbeitbar: {_text_k[:200]!r}")
+# B-regression-7: Bis zu dieser Runde riet dieselbe Meldung „Eine der beiden Kennungen ändern
+# (Admin-Panel oder CLI)" — und keins von beiden kann das. Die Admin-API kennt Anlegen, Sperren,
+# Rollen, Passwort und Keys, aber keine Route zum Umbenennen; das CLI legt überhaupt keine Konten
+# an. Der Betreiber, dem der Start gerade eine Kollision gemeldet hat, lief damit gegen zwei
+# Türen, die es nicht gibt. Gemessen wird deshalb nicht der Wortlaut, sondern dass die genannten
+# Wege existieren — und dass für den Benutzernamen wirklich nur die Datenbank bleibt.
+r.check("...und nennt Wege, die es wirklich gibt (store.set_email, sonst die Datenbank)",
+        "store.set_email" in _text_k and hasattr(auth_alt.store, "set_email")
+        and "UPDATE users" in _text_k,
+        f"{_text_k[:320]!r}")
+r.check("...und keine Methode macht das UPDATE überflüssig",
+        not any(hasattr(_o, _n) for _o in (auth_alt, auth_alt.store)
+                for _n in ("set_username", "rename_user", "change_identifier")),
+        "es gibt jetzt eine Umbenennungs-Methode — dann gehört sie in die Meldung statt des UPDATE")
+r.check("...und verspricht dafür weder Admin-Panel noch CLI",
+        "Kennungen ändern (Admin-Panel oder CLI)" not in _text_k
+        and "weder im Admin-Panel noch im CLI" in _text_k,
+        f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
+
+# Integration der Runde: Die Meldung nennt `store.set_email(...)` — und genau diese Methode nimmt
+# seit B-umgehung-8 den Bestätigungs-Vermerk MIT (Vorgabe: unbestätigt). Wer der Meldung folgt, um
+# eine Kollision am Konto eines Admins aufzulösen, löscht damit nebenbei den Beleg seiner Adresse.
+# Das ist fail-closed und richtig — aber es darf den Betreiber nicht überraschen, und `verified=True`
+# ist der Weg, einen echten Beleg zu behalten. Gemessen wird beides zusammen: der Satz in der
+# Meldung UND das Verhalten dahinter. Fällt eines weg, wird die Prüfung rot.
+r.check("...und sagt, dass store.set_email den Bestätigungs-Vermerk mitnimmt",
+        "email_verified=0" in _text_k and "verified=True" in _text_k,
+        f"{_text_k[:400]!r} — der Betreiber folgt der Meldung und verliert stillschweigend den Beleg")
+auth_alt.store.set_email_verified(opfer_alt, True)
+auth_alt.store.set_email(opfer_alt, "chef-neu@example.com")
+r.check("...und so ist es auch: der genannte Weg legt die neue Adresse unbestätigt ab",
+        auth_alt.store.get_user(opfer_alt)["email_verified"] == 0,
+        "set_email lässt den Beleg der ALTEN Adresse stehen — dann ist die Meldung falsch, "
+        "und ein Adresswechsel ist wieder ein Bootstrap-Weg (B-umgehung-8)")
+auth_alt.store.set_email(opfer_alt, "chef-belegt@example.com", verified=True)
+r.check("...und verified=True behält ihn, wie die Meldung verspricht",
+        auth_alt.store.get_user(opfer_alt)["email_verified"] == 1,
+        "verified=True trägt den Beleg nicht — dann nennt die Meldung einen Weg, den es nicht gibt")
+
+# Gegenprobe, sonst wäre die Meldung Rauschen: In auth_n2 trägt EIN Konto denselben Wert in
+# beiden eigenen Spalten (chef / chef@example.com) — das ist der vorgesehene Weg, keine Kollision.
+r.check("eine Datenbank ohne Kreuz-Kollision schweigt",
+        "Kennungs-Kollision" not in _start_log(auth_n2.cfg.db_path),
+        "dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos wird als Kollision gemeldet")
+# ── Ein GET entfernt den bestätigten zweiten Faktor (B2-1, Audit-Runde 3) ────
+# Angriff: Das Opfer ist voll angemeldet (Passwort + TOTP) und klickt auf einer fremden Seite
+# einen Link auf /auth/totp/setup. Die Seite rief `totp_begin()` unbedingt und schrieb damit ein
+# neues, unbestätigtes Geheimnis über das alte: TOTP fiel auf „unbestätigt", die zehn
+# Recovery-Codes blieben verwaist liegen, es entstand keine Audit-Zeile — und danach genügte das
+# Passwort allein. CSRF schützt hier nichts: Ein GET trägt kein Token, und `SameSite=Lax`
+# (Vorgabe) schickt das Sitzungscookie bei einer Top-Level-Navigation mit.
+import pyotp  # noqa: E402
+
+auth_b21, app_b21 = _app()
+uid_b21 = auth_b21.create_user("nina", password="geheim12345", email="nina@example.com")
+geheim_b21 = auth_b21.totp_begin(uid_b21)["secret"]
+auth_b21.totp_confirm(uid_b21, pyotp.TOTP(geheim_b21).now())
+codes_b21 = auth_b21.generate_recovery_codes(uid_b21)
+c_b21 = TestClient(app_b21, base_url="https://app.example.com")
+c_b21.get("/auth/login")
+c_b21.post("/auth/login", data={"username": "nina", "password": "geheim12345", "next": "/",
+                                "_csrf": c_b21.cookies.get(auth_b21.cfg.csrf_cookie)},
+           follow_redirects=False)
+c_b21.post("/auth/totp", data={"code": pyotp.TOTP(geheim_b21).now(), "next": "/",
+                               "_csrf": c_b21.cookies.get(auth_b21.cfg.csrf_cookie)},
+           follow_redirects=False)
+sitzung_b21 = auth_b21.store.get_session(c_b21.cookies.get(auth_b21.cfg.session_cookie))
+
+# Vorbedingung: Ohne diese drei Zeilen misst der Angriff unten nichts. Sie halten fest, dass
+# hier wirklich ein vollwertiger zweiter Faktor steht, der verloren gehen KÖNNTE.
+r.check("Vorbedingung: der zweite Faktor ist bestätigt",
+        auth_b21.store.has_confirmed_totp(uid_b21), "ohne TOTP prüft der Angriff nichts")
+r.check("Vorbedingung: zehn Recovery-Codes liegen dazu",
+        auth_b21.store.count_recovery_codes(uid_b21) == len(codes_b21) == 10,
+        f"{auth_b21.store.count_recovery_codes(uid_b21)}")
+r.check("Vorbedingung: die Sitzung ist vollwertig (CSRF an, SameSite=Lax)",
+        bool(sitzung_b21 and sitzung_b21["mfa_ok"]) and auth_b21.cfg.csrf_enabled
+        and auth_b21.cfg.cookie_samesite == "lax",
+        f"mfa_ok={sitzung_b21 and sitzung_b21['mfa_ok']} csrf={auth_b21.cfg.csrf_enabled}")
+
+ant_b21 = c_b21.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
+                                                 "Sec-Fetch-Mode": "navigate"})
+r.check("ein GET auf die Einrichtungsseite nimmt kein bestätigtes TOTP zurück",
+        ant_b21.status_code == 409,
+        f"HTTP {ant_b21.status_code} — ein Klick auf einen fremden Link genügt sonst")
+r.check("...der zweite Faktor steht danach noch", auth_b21.store.has_confirmed_totp(uid_b21),
+        "TOTP ist auf unbestätigt zurückgefallen, das Passwort allein reicht wieder")
+r.check("...und die Recovery-Codes gehören weiter zu einem gültigen Faktor",
+        auth_b21.store.count_recovery_codes(uid_b21) == 10
+        and auth_b21.store.has_confirmed_totp(uid_b21)
+        and auth_b21.verify_recovery_code(uid_b21, codes_b21[0]),
+        f"{auth_b21.store.count_recovery_codes(uid_b21)} Codes ohne bestätigtes TOTP = verwaist")
+
+# Nicht nur die Route: Der Wächter sitzt im Manager, damit ihn keine eigene Oberfläche umgeht.
+try:
+    auth_b21.totp_begin(uid_b21)
+    geworfen = ""
+except StateError as exc:
+    geworfen = str(exc)
+r.check("auch totp_begin() selbst verweigert das Überschreiben", bool(geworfen),
+        "die Methode schreibt weiter durch — jede eigene Oberfläche reisst dieselbe Lücke auf")
+r.check("der abgewehrte Versuch steht im Audit-Log",
+        any(z["event"] == "totp_setup_denied" for z in auth_b21.store.recent_audit(50)),
+        "der Versuch hinterlässt keine Spur")
+
+# ── Dieselbe Tür, zweite Hälfte: der GET erzeugte weiter Geheimnisse ─────────
+# Der Fundtext zu B2-1 verlangt ZWEI Dinge: bei bestätigtem TOTP verweigern **und** die
+# Einrichtung nur auf ausdrückliche Anforderung (POST mit CSRF-Token) beginnen. Zunächst war
+# nur das Erste umgesetzt: Für ein Konto OHNE bestätigtes TOTP erzeugte jeder GET auf
+# /auth/totp/setup ein frisches Geheimnis und ersetzte damit einen laufenden
+# Einrichtungsversuch. Kein Faktor-Verlust — aber ein fremder Link entwertete das eben
+# gescannte QR-Bild (die Bestätigung schlug danach unerklärlich fehl) und stiess
+# Audit-Zeilen von aussen an.
+auth_b7, app_b7 = _app()
+uid_b7 = auth_b7.create_user("paul", password="geheim12345")
+c_b7 = TestClient(app_b7, base_url="https://app.example.com")
+c_b7.cookies.set(auth_b7.cfg.session_cookie,
+                 auth_b7.store.create_session(uid_b7, 3600, True, "password"))
+r.check("Vorbedingung: CSRF ist an und das Sitzungscookie ist SameSite=Lax",
+        auth_b7.cfg.csrf_enabled and auth_b7.cfg.cookie_samesite == "lax",
+        "ohne diese Lage trägt ein fremder Link das Cookie nicht mit — der Test misst nichts")
+seite_b7 = c_b7.get("/auth/totp/setup")
+r.check("ein GET auf die Einrichtungsseite erzeugt kein Geheimnis",
+        seite_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7) is None,
+        f"HTTP {seite_b7.status_code}, Geheimnis={auth_b7.store.get_totp(uid_b7) is not None} "
+        "— ein GET, der schreibt, ist von aussen anstossbar")
+r.check("...die Seite zeigt stattdessen den Knopf, der sie ausdrücklich startet",
+        "/auth/totp/setup/start" in seite_b7.text, "ohne Knopf ist die Einrichtung zugemauert")
+r.check("...und hinterlässt keine Audit-Zeile",
+        not any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
+        "Audit-Rauschen, das jeder von aussen erzeugen kann")
+csrf_b7 = c_b7.cookies.get(auth_b7.cfg.csrf_cookie)
+start_b7 = c_b7.post("/auth/totp/setup/start", data={"_csrf": csrf_b7})
+zeile_b7 = auth_b7.store.get_totp(uid_b7)
+r.check("der POST mit CSRF-Token richtet ein", start_b7.status_code == 200 and zeile_b7 is not None,
+        f"HTTP {start_b7.status_code}: {start_b7.text[:120]}")
+# B2-1 hat auch die Audit-Zeile versprochen — bis 0.18.x war die TOTP-Einrichtung unsichtbar.
+r.check("...und die Einrichtung steht im Audit-Log",
+        any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
+        "die Einrichtung eines zweiten Faktors hinterlässt keine Spur")
+vorher_b7 = zeile_b7["secret"]
+fremd_b7 = c_b7.post("/auth/totp/setup/start", data={})           # kein Token = fremde Seite
+r.check("ein POST ohne CSRF-Token ersetzt das laufende Geheimnis nicht",
+        fremd_b7.status_code == 403 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
+        f"HTTP {fremd_b7.status_code} — das gescannte QR-Bild ist von aussen entwertbar")
+quer_b7 = c_b7.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
+                                                "Sec-Fetch-Mode": "navigate"})
+r.check("...und ein Klick auf einen fremden Link genauso wenig",
+        quer_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
+        "der GET hat das Geheimnis ersetzt")
+r.check("...die Bestätigung mit dem Code aus DIESEM Geheimnis schaltet scharf",
+        auth_b7.totp_confirm(uid_b7, pyotp.TOTP(vorher_b7).now())
+        and auth_b7.store.has_confirmed_totp(uid_b7),
+        "der legitime Weg ist unterbrochen")
+
+# Der legitime Weg muss bleiben: einrichten, wo noch nichts ist …
+auth_ok, app_ok = _app(csrf_enabled=False)
+uid_ok = auth_ok.create_user("tom", password="geheim12345")
+c_ok = TestClient(app_ok, follow_redirects=False)
+c_ok.cookies.set(auth_ok.cfg.session_cookie,
+                 auth_ok.store.create_session(uid_ok, 3600, True, "password"))
+r.check("ohne eingerichtetes TOTP ist die Einrichtungsseite weiter erreichbar",
+        c_ok.get("/auth/totp/setup").status_code == 200, "die Einrichtung ist zugemauert")
+r.check("...und der Start-Knopf richtet ein",
+        c_ok.post("/auth/totp/setup/start").status_code == 200
+        and auth_ok.store.get_totp(uid_ok) is not None, "die Einrichtung ist zugemauert")
+neu_ok = auth_ok.store.get_totp(uid_ok)["secret"]
+r.check("...und die Bestätigung schaltet den Faktor scharf",
+        auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).now())
+        and auth_ok.store.has_confirmed_totp(uid_ok))
+
+# … und nach dem regulären Abschalten wieder neu einrichten (sonst wäre der Fix eine Sackgasse).
+auth_ok.totp_disable(uid_ok)
+r.check("nach dem regulären Abschalten ist die Einrichtung wieder offen",
+        c_ok.get("/auth/totp/setup").status_code == 200
+        and c_ok.post("/auth/totp/setup/start").status_code == 200,
+        "der Wechsel des Authenticators wäre unmöglich")
+
+# Verwaiste Recovery-Codes (Geheimnis weg, Codes noch da) räumt die Einrichtung ab.
+auth_v, _ = _app()
+uid_v = auth_v.create_user("vera", password="geheim12345")
+geheim_v = auth_v.totp_begin(uid_v)["secret"]
+auth_v.totp_confirm(uid_v, pyotp.TOTP(geheim_v).now())
+auth_v.generate_recovery_codes(uid_v)
+auth_v.store.delete_totp(uid_v)          # nur das Geheimnis weg — die Codes bleiben zurück
+auth_v.totp_begin(uid_v)
+r.check("eine neue Einrichtung lässt keine verwaisten Recovery-Codes stehen",
+        auth_v.store.count_recovery_codes(uid_v) == 0,
+        f"{auth_v.store.count_recovery_codes(uid_v)} Codes gelten weiter, "
+        "obwohl sie zu keinem Authenticator mehr passen")
 sys.exit(r.done())

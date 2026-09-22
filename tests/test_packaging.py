@@ -163,6 +163,53 @@ try:
     ok(f"Python {META['Requires-Python']}: Classifier {genannt[0]}–{genannt[-1]}, "
        f"CI fährt {', '.join(gefahren)}")
 
+    # ---------- Untergrenzen: der Boden ist gemessen, nicht geraten ----------
+    # Ein `>=` ohne Deckel ist eine Zusage an jeden, der eine Fassung festhält (Lockfile,
+    # Constraints, Distributionspaket): „ab hier wird es unterstützt". Lag der Boden unter einem
+    # Sicherheitsfix, war die Zusage falsch — und niemand merkte es, weil eine Neuinstallation
+    # ohnehin das Neueste zieht. Bis 0.18.0 löste die niedrigste erlaubte Auflösung nach
+    # authlib 1.3.0, python-multipart 0.0.9 und (über FastAPI) starlette 0.36.3 auf, alle drei
+    # mit offenen Advisories (B4-1 aus T-13).
+    #
+    # Gemessen wird gegen eine Tabelle, nicht gegen das Netz: Ein Test, der OSV befragt, ist
+    # weder offline lauffähig noch bei zwei Läufen gleich. Die Tabelle entsteht bei jeder
+    # Abhängigkeitsrunde neu (`uv pip compile --resolution=lowest-direct` + OSV-Batch) und wird
+    # hier eingefroren. Dieser Test hält also NICHT die Welt aktuell — er hält fest, dass der
+    # einmal gemessene Boden nicht wieder abrutscht.
+    GEMESSENER_BODEN = {          # Stand 2026-09-22, Quelle OSV.dev
+        "fastapi": (0, 133, 0),        # erst ab hier ist starlette >= 1.3.1 erlaubt
+        "python-multipart": (0, 0, 31),
+        "authlib": (1, 6, 12),         # GHSA-5357-c2jx-v7qh u.a. (Algorithmen-Konfusion)
+    }
+
+    def _zahlen(text: str) -> tuple:
+        return tuple(int(x) for x in _re_pkg.findall(r"\d+", text))
+
+    gemessen = []
+    for zeile in (META.get_all("Requires-Dist") or []):
+        # "authlib>=1.6.12; extra == \"oidc\"" → Name, Untergrenze
+        anforderung = zeile.split(";", 1)[0].strip()
+        treffer = _re_pkg.match(r"^([A-Za-z0-9._-]+)\s*(?:\[[^\]]*\])?\s*>=\s*([0-9.]+)", anforderung)
+        if not treffer:
+            continue
+        name = treffer.group(1).lower().replace("_", "-")
+        if name not in GEMESSENER_BODEN:
+            continue
+        ist, soll = _zahlen(treffer.group(2)), GEMESSENER_BODEN[name]
+        assert ist >= soll, (
+            f"{name}>={treffer.group(2)} liegt unter dem gemessenen lückenfreien Boden "
+            f"{'.'.join(str(x) for x in soll)} — eine Installation, die die Untergrenze "
+            "festhält, bekommt eine Fassung mit bekannter Lücke")
+        gemessen.append(name)
+    fehlend = sorted(set(GEMESSENER_BODEN) - set(gemessen))
+    assert not fehlend, (f"für {fehlend} steht keine `>=`-Untergrenze im Paket — ohne Boden "
+                         "installiert der Nutzer, was er gerade festhält")
+    # Eine obere Schranke gehört NICHT hierher: Ein Deckel in einer Bibliothek blockiert genau
+    # die Aktualisierung, die den nächsten Sicherheitsfix bringt, und vererbt sich an jede App.
+    deckel = [z for z in (META.get_all("Requires-Dist") or []) if "<" in z.split(";", 1)[0]]
+    assert not deckel, f"obere Schranken im Paket: {deckel} — eine Bibliothek deckelt nicht"
+    ok(f"Untergrenzen über dem gemessenen Boden ({', '.join(sorted(set(gemessen)))}), keine obere Schranke")
+
     # ---------- Die Projektseite im Index ----------
     urls = dict(z.split(", ", 1) for z in (META.get_all("Project-URL") or []))
     for pflicht in ("Homepage", "Documentation", "Repository", "Changelog", "Issues"):

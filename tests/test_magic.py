@@ -14,7 +14,10 @@ sent = []   # abgefangene Mails
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
-                                 cookie_secure=False, magiclink_enabled=True, magiclink_ttl_min=15))
+                                 cookie_secure=False, magiclink_enabled=True, magiclink_ttl_min=15,
+                                 # Seit R4-01 baut TinySesam Mail-Links nur aus einer zugesagten
+                                 # öffentlichen Adresse, nicht mehr aus dem Host-Header.
+                                 base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, subject, text, html=None: sent.append({"to": to, "subject": subject, "text": text}))
 auth.ensure_admin("admin", "geheim123")
 uid = auth.store.get_user_by_name("admin")["id"]
@@ -80,7 +83,10 @@ ok("abgelaufener Token → ungültig")
 # mail_configured / MailNotConfigured
 assert auth.mail_configured() is True
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
-a2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, magiclink_enabled=True))   # kein smtp_host, kein Mailer
+a2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, magiclink_enabled=True,
+                               # Pflicht seit der base_url-Nacharbeit; geprüft wird hier der
+                               # fehlende MAILER, nicht die fehlende Basis.
+                               base_url="https://auth.example.com"))   # kein smtp_host, kein Mailer
 assert a2.mail_configured() is False
 from tinysesam.mailer import MailNotConfigured
 try:
