@@ -108,6 +108,19 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "nicht arbeiten und scheitert beim ersten Anmeldeversuch — es sei denn, der "
                 "Client wird zur Laufzeit ersetzt.")
 
+    # Nebenbefund aus demselben Audit (F-28): Ein Dienstkonto-DN ohne Passwort ist keine
+    # anonyme Suche, sondern eine Kombination, die ldap3 von sich aus ablehnt
+    # (`LDAPPasswordIsMandatoryError`). Der Fehler fliegt mitten im Login und wird dort
+    # verschluckt — der Betreiber sieht für JEDEN Nutzer „Passwort falsch" und sucht am
+    # falschen Ende. Warnung statt Fehler, weil der Client zur Laufzeit ersetzbar ist.
+    if _an(config, "ldap_enabled") and str(getattr(config, "ldap_bind_dn", "") or "").strip() \
+            and not str(getattr(config, "ldap_bind_password", "") or "").strip():
+        warnungen.append(
+            "ldap_bind_dn ist gesetzt, ldap_bind_password ist leer. Das ist keine anonyme Suche: "
+            "ldap3 lehnt DN ohne Passwort ab, der Fehler fällt erst beim Login an und sieht dort "
+            "für jeden Nutzer wie ein falsches Passwort aus. Entweder das Passwort des "
+            "Dienstkontos setzen oder ldap_bind_dn leeren (dann wird wirklich anonym gesucht).")
+
     # Ein Kettenschritt muss ein Faktor sein, den eine Sitzung auch bekommen kann. `ldap` ist
     # keiner (es schreibt den Faktor `password`), `apikey` ebenso wenig — beide standen trotzdem
     # in der Whitelist, und `login_chain=["ldap","totp"]` ist für einen LDAP-Betreiber die

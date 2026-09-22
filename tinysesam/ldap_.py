@@ -7,7 +7,9 @@ Zwei Modi:
   Service-Account sucht den User, dann Re-Bind mit dessen DN + Passwort.
 
 Gibt bei Erfolg {username, email, name, groups} zurück, sonst None. Fehler/Bind-Fehler → None.
-Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz).
+Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz). **Verweisen (Referrals) folgt
+dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben Zugangsdaten
+(s. `_OHNE_REFERRALS`).
 """
 from __future__ import annotations
 
@@ -26,6 +28,23 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
         f"es fehlt: {e.name or 'ldap3'}.", extra="ldap")
 
 
+#: Referrals NICHT verfolgen — auf JEDER Verbindung, die dieses Modul aufmacht.
+#:
+#: ldap3 folgt einem Verweis (`SearchResultDone resultCode=10`) von sich aus und baut dazu eine
+#: neue Verbindung zu dem Host auf, den die ANTWORT nennt — mit denselben Zugangsdaten
+#: (`create_referral_connection` reicht `user`/`password` der Connection weiter). Damit genügt
+#: eine eingeschobene oder von einem übernommenen Verzeichnis gesetzte Referral, um DN und
+#: Passwort des Dienstkontos an einen fremden Server zu schicken; auf der Benutzer-Verbindung
+#: wäre es das Passwort des Anmeldenden. Nachgestellt mit zwei LDAP-Servern auf Loopback: beim
+#: fremden Host kam der vollständige BindRequest samt Klartext-Passwort an (Audit T-13, F-28).
+#:
+#: Bewusst hart und ohne Schalter: Ein Verweis, dem man mit Zugangsdaten folgt, ist kein
+#: Betriebsmodus, den ein Konfigurationsfeld zurückholen sollte. Wer über mehrere AD-Domänen
+#: suchen muss, fragt den Global Catalog (Port 3268/3269) ab, statt Verweisen zu folgen.
+#: Ohne Verfolgung endet die Suche ergebnislos → `authenticate()` gibt `None` zurück (fail-closed).
+_OHNE_REFERRALS = {"auto_referrals": False}
+
+
 class LDAPClient:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -35,7 +54,11 @@ class LDAPClient:
             import ldap3
         except ModuleNotFoundError as e:
             raise _fehlt_extra(e) from e
-        return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE)
+        # `allowed_referral_hosts=[]` ist das zweite Schloss gegen die Referral-Falle (s.
+        # `_OHNE_REFERRALS`): ldap3 vergibt hier per Vorgabe `[('*', True)]` — „jeder Host, und
+        # zwar mit Zugangsdaten". Selbst wenn irgendwann jemand eine Connection ohne
+        # `auto_referrals=False` anlegt, findet ldap3 dann keinen erlaubten Verweis-Host mehr.
+        return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[])
 
     def authenticate(self, username: str, password: str):
         if not username or not password:
@@ -60,7 +83,8 @@ class LDAPClient:
             else:
                 # Search-then-Bind: erst mit Service-Account suchen
                 svc = ldap3.Connection(server, user=cfg.ldap_bind_dn or None,
-                                       password=cfg.ldap_bind_password or None, auto_bind=True)
+                                       password=cfg.ldap_bind_password or None, auto_bind=True,
+                                       **_OHNE_REFERRALS)
                 if cfg.ldap_start_tls:
                     svc.start_tls()
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
@@ -72,7 +96,8 @@ class LDAPClient:
                 user_dn = svc.entries[0].entry_dn
                 svc.unbind()
             # Re-Bind mit dem User-DN + Passwort → prüft das Passwort
-            conn = ldap3.Connection(server, user=user_dn, password=password)
+            conn = ldap3.Connection(server, user=user_dn, password=password,
+                                    **_OHNE_REFERRALS)
             if cfg.ldap_start_tls:
                 conn.start_tls()
             if not conn.bind():

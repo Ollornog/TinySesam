@@ -87,6 +87,22 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   `saml_auto_create`, `ldap_auto_create`) griff er nicht, obwohl der Name auch dort aus fremder
   Hand kommt (`preferred_username`); er fasst jetzt alle vier Türen. Gefunden im dritten Audit
   (F-14 aus T-13).
+- **LDAP folgt keinem Verweis (Referral) mehr — er kostete das Passwort des Dienstkontos.** ldap3
+  verfolgt einen `SearchResultDone resultCode=10` von sich aus und baut dazu eine neue Verbindung
+  zu dem Host auf, den die **Antwort** nennt — mit denselben Zugangsdaten. TinySesam setzte den
+  Parameter nirgends. Mit zwei LDAP-Servern auf Loopback nachgestellt: Server A beantwortete die
+  Suche mit einem Verweis, und beim fremden Server B kam der vollständige BindRequest mit DN und
+  Klartext-Passwort des Dienstkontos an — auf der Benutzer-Verbindung wäre es das Passwort des
+  Anmeldenden gewesen. Eine Referral braucht dafür kein übernommenes Verzeichnis: Auf einer
+  Klartext-Verbindung schiebt sie jeder Zwischenhörer ein. Jetzt `auto_referrals=False` auf
+  **jeder** Verbindung und `allowed_referral_hosts=[]` am Server (zweites Schloss, falls einmal
+  eine Verbindung ohne den Parameter entsteht); ohne Verfolgung endet die Suche ergebnislos und
+  die Anmeldung scheitert, statt Zugangsdaten zu verschenken. Bewusst hart und ohne Schalter —
+  wer über mehrere AD-Domänen sucht, fragt den Global Catalog ab. Fund **F-28** aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md). Nebenbefund derselben Stelle: `ldap_bind_dn`
+  ohne `ldap_bind_password` lehnt ldap3 ab, der Fehler wurde im Login verschluckt und sah für
+  jeden Nutzer wie ein falsches Passwort aus — die Kombination meldet jetzt die
+  Konfigurationsprüfung beim Aufbau.
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die
