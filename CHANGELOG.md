@@ -114,8 +114,37 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   die Kombination Allowlist-**Adresse** + `saml_auto_create`/`ldap_auto_create` und den belegten
   Weg (`/auth/claim-admin`, danach das Gruppen-Mapping). Die Adresse selbst bleibt im Konto
   stehen — sie ist das Attribut, das Verzeichnis oder IdP liefert; sie trägt nur keine
-  Rechte-Entscheidung mehr. Belege in `tests/test_saml.py`, `tests/test_ldap.py` und
-  `tests/test_audit_runde2.py`. Gefunden im dritten Audit (F-14 aus T-13).
+  Rechte-Entscheidung mehr.
+  **Das schloss zunächst nur den ersten Login, und der Angriff brauchte danach genau einen
+  Klick mehr.** Ohne ausdrücklichen Beleg entscheidet der **Vermerk am Konto**
+  (`users.email_verified`) — und den legten `check_ldap`/`check_saml` mit der Vorgabe „belegt"
+  an, obwohl über diese Wege per Definition nichts belegt ist. Der Angreifer meldete sich also
+  einmal über das Verzeichnis an (Beförderung korrekt verweigert), richtete sich in seiner
+  frisch angemeldeten Sitzung eine PIN oder einen Passkey ein — Selbstbedienung, in der
+  eigenen Sitzung gewollt — und war beim zweiten Login Erst-Admin: Dieser Faktor ist nicht
+  föderiert, reicht keinen Beleg mit, und der Vermerk sagte „belegt". Gemessen mit einem
+  Verzeichnis, in dem der Nutzer sein `mail`-Attribut selbst pflegt. **Jetzt legen beide Wege
+  mit `email_verified=False` an**: Die Adresse steht im Konto, der Vermerk behauptet nichts.
+  Damit ist die Regel über alle Anmeldewege dieselbe — eine Adresse trägt eine
+  Rechte-Entscheidung nur, wenn *dieser* Login sie belegt (OIDC-Claim) oder ein eigener
+  Bestätigungsweg sie belegt hat. Die zwei Riegel für SAML (Durchreicher der ACS-Route,
+  `FOEDERIERTE_FAKTOREN`) und der eine für LDAP werden jetzt **einzeln** gemessen: Bisher deckte
+  einer den anderen, ein Umbau hätte den verbleibenden unbemerkt verlieren können.
+  Belege in `tests/test_saml.py`, `tests/test_ldap.py` und `tests/test_audit_runde2.py`.
+  Gefunden im dritten Audit (F-14 aus T-13; die beiden Nachschläge B-umgehung-1 und
+  B-umgehung-10 der zweiten Angriffsrunde).
+- **⚠️ `store.set_email()` nimmt den Bestätigungs-Vermerk jetzt mit — Verhaltensänderung für
+  Einbettende.** Seit `users.email_verified` über Rechte entscheidet, war ein stehengelassener
+  Vermerk der Beleg der **alten** Adresse auf der **neuen**: Ein Konto mit bestätigtem
+  `eve@example.com`, dessen Adresse auf die Allowlist-Adresse umgeschrieben wurde, war beim
+  nächsten Login Erst-Admin, ohne dass jemand etwas bestätigt hat. Der Docstring nannte das
+  Stehenlassen ausdrücklich „fail-closed" und begründete es mit der *anderen* Richtung
+  (unbestätigt bleibt unbestätigt) — diese hier war fail-**open**. Adresse und Vermerk gehen
+  jetzt in EINER Anweisung in die Datenbank, vorgabegemäss als **unbestätigt**; wer einen Beleg
+  für die neue Adresse hat, sagt es (`set_email(uid, mail, verified=True)`). Im Paket selbst
+  hat die Methode keinen Aufrufer — die Falle stand für Einbettende bereit. Beleg in
+  `tests/test_audit_runde2.py`. Gefunden im dritten Audit (B-umgehung-8 aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **LDAP folgt keinem Verweis (Referral) mehr — er kostete das Passwort des Dienstkontos.** ldap3
   verfolgt einen `SearchResultDone resultCode=10` von sich aus und baut dazu eine neue Verbindung
   zu dem Host auf, den die **Antwort** nennt — mit denselben Zugangsdaten. TinySesam setzte den

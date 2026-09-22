@@ -318,6 +318,70 @@ for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argumen
             f"maybe_promote_admin gab {ergebnis!r} zurück")
 
 
+# Der Riegel muss auch den ZWEITEN Login halten — sonst ist er nur eine Verzögerung.
+# `maybe_promote_admin` fragt ohne ausdrücklichen Beleg den Vermerk am Konto
+# (`users.email_verified`), und genau den legten `check_ldap`/`check_saml` mit der Vorgabe
+# `True` an, obwohl über diese Wege per Definition nichts belegt ist. Der Angreifer meldete
+# sich einmal an (die Beförderung wurde korrekt verweigert), richtete sich in seiner frisch
+# angemeldeten Sitzung eine PIN oder einen Passkey ein — Selbstbedienung — und war beim
+# zweiten Login Erst-Admin, mit einem Faktor, der selbst nichts behauptet (B-umgehung-1 aus T-13).
+# Die vollständigen Wege über die Routen stehen in `test_ldap.py`/`test_saml.py`; hier die
+# Quelle des Fehlers: das frisch angelegte Konto.
+class _FakeLDAP:
+    """Verzeichnis, in dem der Nutzer sein `mail`-Attribut selbst pflegt — der F-14-Fall."""
+
+    @staticmethod
+    def authenticate(username, password):
+        return {"username": username, "email": "chef@example.com", "name": username,
+                "groups": []}
+
+
+for weg, anlegen in (
+        ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a.check_ldap("mallory", "x"))[1]),
+        ("SAML", lambda a: a.check_saml("mallory", {"email": ["chef@example.com"]}))):
+    a_v, _ = _app(admin_identifiers=["chef@example.com"], ldap_enabled=True,
+                  ldap_url="ldaps://dir.example.invalid")
+    konto = anlegen(a_v)
+    r.check(f"ein über {weg} angelegtes Konto trägt die Adresse OHNE Beleg",
+            konto is not None and not konto["email_verified"],
+            f"Konto: {konto} — der Vermerk behauptet, was {weg} nie belegt")
+    # Der zweite Sprung: ein Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey).
+    # Er ist nicht föderiert und reicht keinen Beleg — es entscheidet allein der Vermerk.
+    r.check(f"… und ein zweiter, selbst eingerichteter Faktor befördert sie nach dem {weg}-Login nicht",
+            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is False,
+            "Erst-Admin über einen Umweg — der Riegel hielt nur den ersten Login")
+    # Gegenprobe auf derselben Instanz: Trägt die Adresse einen Beleg (Bestätigungsmail,
+    # Betreiber), befördert genau derselbe Aufruf. Ohne sie wäre oben auch eine kaputte
+    # Beförderung grün.
+    a_v.store.set_email_verified(konto["id"], True)
+    r.check(f"… Gegenprobe: mit Beleg am Konto befördert derselbe Aufruf ({weg})",
+            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
+            "der Bootstrap-Weg ist ganz zu — dann misst die Prüfung darüber nichts")
+
+
+# Ein Adresswechsel überträgt den Beleg der ALTEN Adresse nicht auf die NEUE. Seit der Vermerk
+# über Rechte entscheidet, ist `store.set_email` sonst ein Bootstrap-Weg: Konto mit belegter
+# `eve@example.com` → Adresse auf die Allowlist-Adresse ändern → der alte Beleg trägt sie
+# (B-umgehung-8 aus T-13). Der Docstring nannte das „fail-closed" und meinte nur die andere Richtung.
+a_se, _ = _app(admin_identifiers=["chef@example.com"])
+uid_se = a_se.create_user("eve", email="eve@example.com")          # belegt (Betreiber)
+a_se.store.set_email(uid_se, "chef@example.com")
+r.check("ein Adresswechsel per set_email nimmt den Beleg mit weg",
+        not a_se.get_user(uid_se)["email_verified"],
+        "die neue Adresse trägt den Beleg der alten")
+r.check("… und trägt deshalb auch die Erst-Admin-Entscheidung nicht",
+        a_se.maybe_promote_admin(a_se.get_user(uid_se), faktor="password") is False,
+        "Erst-Admin allein durch das Umschreiben einer Adresse")
+# Gegenprobe: Wer einen Beleg für die NEUE Adresse hat, sagt es — dann zählt sie wie immer.
+a_se2, _ = _app(admin_identifiers=["chef@example.com"])
+uid_se2 = a_se2.create_user("eve", email="eve@example.com")
+a_se2.store.set_email(uid_se2, "chef@example.com", verified=True)
+r.check("… mit ausdrücklichem verified=True bleibt der Beleg an der neuen Adresse",
+        a_se2.get_user(uid_se2)["email_verified"] == 1
+        and a_se2.maybe_promote_admin(a_se2.get_user(uid_se2), faktor="password") is True,
+        "der belegte Weg ist zu")
+
+
 # Der Betreiber soll das beim Aufbau erfahren und nicht beim vergeblichen Warten auf den
 # ersten Admin: Die Konfigurationsprüfung nennt die Kombination und den belegten Weg. Warnung,
 # nicht Fehler — mit einem lokalen Passwort-Login (bestätigte Adresse) ist derselbe Aufbau

@@ -369,12 +369,25 @@ class Store:
              json.dumps(list(roles or [])), 1 if is_service else 0, _now()))
         return cur.lastrowid
 
-    def set_email(self, user_id, email):
-        """Die Adresse ersetzen. Den Beleg lässt das **stehen** — wer ihn mitmeint, setzt ihn mit
-        `set_email_verified`. Fail-closed ist das die richtige Richtung: Ein Konto, dessen
-        Adresse als unbestätigt vermerkt ist, bekäme sonst durch einen Adresswechsel einen
-        Beleg, den niemand erbracht hat."""
-        self._exec("UPDATE users SET email=? WHERE id=?", (norm_email(email), user_id))
+    def set_email(self, user_id, email, verified: bool = False):
+        """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
+
+        Der Beleg gehört zur Adresse, nicht zum Konto: Seit `users.email_verified` über
+        Rechte entscheidet (`maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
+        der Beleg der **alten** Adresse auf der **neuen** — gemessen wurde genau das
+        (B-umgehung-8 aus T-13): `eve@example.com` (belegt) → `set_email(uid, "boss@example.com")` →
+        Erst-Admin über die Allowlist, ohne dass jemand etwas bestätigt hat.
+
+        Bis dahin stand hier, der Vermerk bleibe „fail-closed" liegen. Das galt nur für die
+        eine Richtung (unbestätigt bleibt unbestätigt); die andere war fail-**open**. Die
+        Vorgabe ist deshalb `verified=False`: Wer einen Beleg für die NEUE Adresse hat — eine
+        eingelöste Bestätigungsmail, ein IdP-Claim aus demselben Login —, sagt das
+        ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
+        `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
+        damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
+        trägt."""
+        self._exec("UPDATE users SET email=?, email_verified=? WHERE id=?",
+                   (norm_email(email), 1 if verified else 0, user_id))
 
     def set_email_verified(self, user_id, verified: bool):
         """Den Beleg für die Adresse vermerken (`users.email_verified`).

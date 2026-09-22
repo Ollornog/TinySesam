@@ -190,6 +190,64 @@ assert auth.get_user(uid)["is_admin"], "der dokumentierte Bootstrap-Weg über de
 ok("... der Allowlist-NAME eines vorher angelegten Kontos befördert weiterhin")
 os.remove(db)
 
+# ---------- B-umgehung-1: der Riegel hält auch den ZWEITEN Login ----------
+# Das Verweigern oben schliesst nur DIESEN Anmeldeweg. Legte die ACS das Konto mit der Vorgabe
+# `email_verified=1` an, stand am Konto „belegt", obwohl die Assertion nichts belegt — und ein
+# Faktor, den sich der Angreifer in seiner frisch angemeldeten Sitzung selbst einrichtet (PIN,
+# Passkey), reist ohne Beleg an, liest den Vermerk und befördert doch.
+db, auth, app = build(admin_identifiers=["boss@example.com"], pin_enabled=True, pin_login=True)
+auth.saml = FakeSAML(nameid="mallory", attrs={"email": ["boss@example.com"]})
+c = TestClient(app)
+assert c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False).status_code == 303
+mallory = auth.store.get_user_by_name("mallory")
+assert not mallory["email_verified"], "SAML legt mit einem Beleg an, den die Assertion nie trägt"
+assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # eigene Sitzung
+c.get("/auth/logout")
+c.cookies.clear()
+r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code                   # der PIN-Login selbst geht
+assert not auth.get_user(mallory["id"])["is_admin"], "Erst-Admin über den zweiten Sprung"
+assert not auth.admin_exists()
+ok("B-umgehung-1: ... auch ein selbst eingerichteter zweiter Faktor befördert die Adresse nicht")
+os.remove(db)
+
+# ---------- B-umgehung-10: die beiden SAML-Schlösser EINZELN gemessen ----------
+# Denselben Weg sichern zwei Riegel: (1) die ACS-Route reicht ausdrücklich „kein Beleg" durch,
+# (2) `saml` steht in `FOEDERIERTE_FAKTOREN` und verlangt dort ein ausdrückliches `True`.
+# Solange beide stehen, fällt das Entfernen eines einzelnen nirgends auf — wer später einen
+# umbaut, verliert ihn unbemerkt. Jede Probe hängt deshalb den jeweils anderen aus.
+
+# Schloss 1 allein: `FOEDERIERTE_FAKTOREN` leer, Konto mit ECHTEM Beleg (vom Betreiber
+# angelegt). Jetzt hält nur noch der Durchreicher der Route.
+db, auth, app = build(admin_identifiers=["boss@example.com"])
+uid = auth.create_user("angreifer", email="boss@example.com")
+assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
+auth.FOEDERIERTE_FAKTOREN = ()                 # Schloss 2 ausgehängt
+auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
+assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
+                            follow_redirects=False).status_code == 303
+assert not auth.get_user(uid)["is_admin"], \
+    "die ACS-Route reicht „kein Beleg\" nicht mehr durch — SAML befördert wieder"
+ok("B-umgehung-10: Schloss 1 einzeln — die ACS-Route reicht „kein Beleg\" durch (ohne FOEDERIERTE_FAKTOREN)")
+# Gegenprobe: Ohne den Durchreicher befördert derselbe Vermerk sofort — das misst, dass oben
+# WIRKLICH die Route entschieden hat.
+assert auth.maybe_promote_admin(auth.get_user(uid), faktor="saml") is True, \
+    "auch ohne beide Schlösser befördert nichts — dann misst die Prüfung darüber nichts"
+ok("... Gegenprobe: ohne beide Schlösser befördert der Vermerk am Konto sofort")
+os.remove(db)
+
+# Schloss 2 allein: ohne die Route, direkt an der Quelle. Ein Aufrufer, der den Beleg schlicht
+# vergisst (`email_bestaetigt=None`), darf über einen föderierten Faktor nicht befördern.
+db, auth, app = build(admin_identifiers=["boss@example.com"])
+uid = auth.create_user("angreifer", email="boss@example.com")     # Beleg am Konto: ja
+assert auth.maybe_promote_admin(auth.get_user(uid), faktor="saml") is False, \
+    "der Faktor 'saml' verlangt keinen ausdrücklichen Beleg mehr"
+ok("B-umgehung-10: Schloss 2 einzeln — der Faktor 'saml' befördert ohne ausdrücklichen Beleg nicht")
+assert auth.maybe_promote_admin(auth.get_user(uid), email_bestaetigt=True, faktor="saml") is True, \
+    "auch mit Beleg befördert der Faktor nicht — dann misst die Prüfung darüber nichts"
+ok("... Gegenprobe: mit ausdrücklichem Beleg befördert derselbe Aufruf")
+os.remove(db)
+
 # ---------- R4-12: eine SAML-Identität besetzt keine lokale Kennung ----------
 # Benutzername und E-Mail sind EIN Kennungs-Raum. Die Kreuzprüfung in `create_user` trifft
 # auch das Auto-Anlegen aus SAML — und muss als saubere 403 ankommen, nicht als 500.

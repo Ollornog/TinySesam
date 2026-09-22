@@ -129,6 +129,63 @@ assert auth.get_user(uid)["is_admin"], "der dokumentierte Bootstrap-Weg über de
 ok("... der Allowlist-NAME eines vorher angelegten Kontos befördert weiterhin")
 os.remove(db)
 
+# ---------- B-umgehung-1: der Riegel hält auch den ZWEITEN Login ----------
+# Das Verweigern oben schliesst nur DIESEN Anmeldeweg. Legte LDAP das Konto mit der Vorgabe
+# `email_verified=1` an, stand am Konto „belegt", obwohl nichts belegt wurde — und der nächste
+# Faktor, den sich der Angreifer in seiner frisch angemeldeten Sitzung selbst einrichtet (PIN,
+# Passkey: Selbstbedienung), reist ohne Beleg an, liest den Vermerk und befördert doch. Der
+# Bootstrap-Angriff war damit unverändert möglich, nur mit einem Klick mehr.
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"],
+                              pin_enabled=True, pin_login=True)
+auth.ldap = FakeLDAP({"mallory": {"password": "x", "email": "boss@example.com", "groups": []}})
+assert c.post("/auth/login", data={"username": "mallory", "password": "x"},
+              follow_redirects=False).status_code == 303
+mallory = auth.store.get_user_by_name("mallory")
+assert not mallory["email_verified"], "LDAP legt mit einem Beleg an, den niemand erbracht hat"
+assert c.post("/auth/pin/set", json={"pin": "246813"}).status_code == 200   # eigene Sitzung
+c.get("/auth/logout")
+c.cookies.clear()
+r = c.post("/auth/pin", data={"username": "mallory", "pin": "246813"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code                   # der PIN-Login selbst geht
+assert not auth.get_user(mallory["id"])["is_admin"], "Erst-Admin über den zweiten Sprung"
+assert not auth.admin_exists()
+ok("B-umgehung-1: ... auch ein selbst eingerichteter zweiter Faktor befördert die Adresse nicht")
+os.remove(db)
+
+# Gegenprobe: Derselbe zweite Sprung mit einem Konto, dessen Adresse jemand verbürgt hat (hier
+# der Betreiber beim Anlegen), befördert weiterhin — sonst wäre oben auch eine komplett kaputte
+# PIN-Beförderung grün.
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
+                              pin_enabled=True, pin_login=True)
+uid = auth.create_user("chefin", password="lokal12345", email="boss@example.com")
+assert c.post("/auth/login", data={"username": "chefin", "password": "lokal12345"},
+              follow_redirects=False).status_code == 303
+assert auth.get_user(uid)["is_admin"], "der belegte Weg ist zu"
+ok("... die belegte Adresse eines lokal angelegten Kontos befördert weiterhin")
+os.remove(db)
+
+# ---------- B-umgehung-10: das Schloss der LOGIN-ROUTE einzeln gemessen ----------
+# Zwei Schlösser sichern denselben Weg: (1) die Route reicht ausdrücklich „kein Beleg" durch,
+# (2) ein aus dem Verzeichnis angelegtes Konto trägt gar keinen Beleg. Solange beide stehen,
+# fällt das Entfernen von (1) nirgends auf — wer den Durchreicher später umbaut, verliert ihn
+# unbemerkt. Deshalb hier ein Konto, das einen ECHTEN Beleg trägt (der Betreiber hat es
+# angelegt) und dessen Namen das Verzeichnis kennt: Jetzt hängt alles an (1).
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False)
+uid = auth.create_user("chefin", email="boss@example.com")       # Beleg am Konto: ja
+assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
+auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "boss@example.com", "groups": []}})
+assert c.post("/auth/login", data={"username": "chefin", "password": "x"},
+              follow_redirects=False).status_code == 303        # Login über das Verzeichnis
+assert not auth.get_user(uid)["is_admin"], \
+    "die Login-Route reicht „kein Beleg\" nicht mehr durch — LDAP befördert wieder"
+ok("B-umgehung-10: Schloss 1 einzeln — die Login-Route reicht „kein Beleg\" durch, auch bei belegtem Konto")
+# Gegenprobe: Ohne diesen Durchreicher (`email_bestaetigt=None`) befördert derselbe Vermerk
+# sofort — das misst, dass oben WIRKLICH die Route entschieden hat und nicht etwas anderes.
+assert auth.maybe_promote_admin(auth.get_user(uid), faktor="password") is True, \
+    "auch ohne den Durchreicher befördert nichts — dann misst die Prüfung darüber nichts"
+ok("... Gegenprobe: ohne den Durchreicher befördert der Vermerk am Konto sofort")
+os.remove(db)
+
 # ---------- R4-12: eine Verzeichnis-Kennung besetzt keine lokale ----------
 # Benutzername und E-Mail sind EIN Kennungs-Raum (`find_user` sucht in beiden Spalten). Die
 # Kreuzprüfung sitzt in `create_user` und trifft damit auch das Auto-Anlegen aus LDAP — und

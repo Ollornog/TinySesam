@@ -394,7 +394,9 @@ class TinySesam:
 
         `email_verified=False` legt die Adresse als **unbestätigt** ab: geführt und
         weitergereicht wie jede andere, aber ohne Tragkraft für Rechte (Erst-Admin/Allowlist,
-        siehe `maybe_promote_admin`). Das ist der Fall eines IdP ohne den Claim `email_verified`.
+        siehe `maybe_promote_admin`). Das ist der Fall jedes Anmeldewegs, der für die Adresse
+        nicht einsteht: ein IdP ohne den Claim `email_verified`, **und grundsätzlich SAML und
+        LDAP** — dort gibt es gar kein Attribut, das eine Prüfung behauptet.
         Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber oder eine Bestätigungsmail
         für die Adresse einsteht (Admin-API, Erst-Admin, Service-Konten, Einladung, Registrierung
         — dort verlangt der Konstruktor-Wächter `signup_verify_email`, sobald eine
@@ -874,11 +876,21 @@ class TinySesam:
         Zählt wie ein Passwort-Login (Faktor 'password').
 
         Die übernommene Adresse (`info["email"]`) ist ein Verzeichnisattribut ohne Beleg — in
-        vielen Verzeichnissen pflegt sie der Nutzer selbst. Wer diesen Weg selbst einbindet,
-        reicht deshalb `email_bestaetigt=False` an `apply_factor` durch (so macht es die
-        mitgelieferte Login-Route); sonst könnte eine Allowlist-Adresse über LDAP den
-        Erst-Admin bestimmen (F-14). Am Faktornamen ist der Weg nicht erkennbar — `password`
-        steht nicht in `FOEDERIERTE_FAKTOREN`, weil ein lokales Passwort dort auch ankommt."""
+        vielen Verzeichnissen pflegt sie der Nutzer selbst. Das hat **zwei** Folgen, und beide
+        sind nötig:
+
+        * Ein neu angelegtes Konto bekommt die Adresse mit `email_verified=False` — der Vermerk
+          am Konto behauptet nicht, was niemand belegt hat.
+        * Wer diesen Weg selbst einbindet, reicht `email_bestaetigt=False` an `apply_factor`
+          durch (so macht es die mitgelieferte Login-Route). Am Faktornamen ist der Weg nicht
+          erkennbar — `password` steht nicht in `FOEDERIERTE_FAKTOREN`, weil ein lokales
+          Passwort dort auch ankommt.
+
+        Nur das zweite allein schützte bloss DIESEN Login: Der Angreifer richtete sich in der
+        frisch angemeldeten Sitzung eine PIN oder einen Passkey ein, meldete sich damit erneut
+        an — dieser Faktor reist ohne Beleg an —, und der Vermerk am Konto befördert ihn doch
+        (B-umgehung-1 aus T-13). Sonst könnte eine Allowlist-Adresse über LDAP den Erst-Admin
+        bestimmen (F-14)."""
         if not self.ldap:
             return None
         info = self.ldap.authenticate(username, password)
@@ -895,8 +907,13 @@ class TinySesam:
             if not self.cfg.ldap_auto_create:
                 return None
             try:
+                # Adresse UND Beleg gehen zusammen ins Konto: Das `mail`-Attribut belegt
+                # nichts, also darf der Vermerk am Konto es auch nicht behaupten. Stünde hier
+                # die Vorgabe `True`, wäre der Riegel oben nur für DIESEN Login zu — der
+                # nächste Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey),
+                # reist ohne Beleg an, liest den Vermerk und befördert doch (B-umgehung-1 aus T-13).
                 uid = self.create_user(username, display_name=info.get("name") or username,
-                                       email=info.get("email"))
+                                       email=info.get("email"), email_verified=False)
             except ConfigError:
                 # Name oder Adresse gehören lokal schon jemandem (Fund R4-12). Fail-closed:
                 # lieber keine Anmeldung als ein Konto, das eine fremde Kennung besetzt.
@@ -916,8 +933,10 @@ class TinySesam:
         """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
         Die Adresse aus dem Attribut trägt keinen Beleg (SAML kennt kein `email_verified`).
-        Der Faktor `saml` steht darum in `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird
-        über diesen Weg nie zum Erst-Admin, auch wenn ein Aufrufer den Beleg nicht nennt."""
+        Deshalb legt dieser Weg mit `email_verified=False` an, und der Faktor `saml` steht in
+        `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird über diesen Weg nie zum Erst-Admin,
+        auch wenn ein Aufrufer den Beleg nicht nennt — und auch nicht über einen zweiten,
+        selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13)."""
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
@@ -933,8 +952,12 @@ class TinySesam:
             if not cfg.saml_auto_create:
                 return None
             try:
+                # Wie bei LDAP (B-umgehung-1 aus T-13): Die Adresse aus der Assertion kommt ohne
+                # Beleg, also wird sie auch ohne Beleg abgelegt. Sonst trüge der Vermerk am
+                # Konto einen Freifahrtschein für jeden späteren Anmeldeweg, der selbst
+                # nichts belegt.
                 uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
-                                       email=first(attrs, cfg.saml_attr_email))
+                                       email=first(attrs, cfg.saml_attr_email), email_verified=False)
             except ConfigError:
                 # Wie bei LDAP (Fund R4-12): eine schon vergebene Kennung legt kein Konto an.
                 self.audit("saml_ident_taken", username)
