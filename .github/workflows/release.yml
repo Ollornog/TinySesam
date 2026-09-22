@@ -78,7 +78,12 @@ jobs:
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
         run: |
           sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
-          pip install -e ".[all]" uvicorn httpx
+          # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline,
+          # ohne Isolierung) und überspringt sich ohne Bau-Backend nicht etwa, sondern wird ROT.
+          # Genau hier wäre das am teuersten — der Job soll ja prüfen, ob das Paket baut.
+          # Aufgefallen beim ersten Tag überhaupt (v0.19.0): 0.18.0 wurde nie getaggt, also lief
+          # dieser Job noch nie. Dieselbe Zeile steht seit jeher in scripts/check.sh.
+          pip install -e ".[all]" uvicorn httpx setuptools wheel
           python tests/run_all.py --no-browser
 
       - name: Pakete bauen
