@@ -141,7 +141,9 @@ def baue_exchange_umgebung(c, versuche):
         versuche.append(schluessel)
         if schluessel != "neu":
             raise ValueError("bad signature: unknown kid")
-        return FakeClaims({"sub": "u1", "nonce": None})
+        # `aud` gehört dazu, seit `exchange()` das Publikum prüft (F-15): Ein Token ohne
+        # passendes `aud` ist keines für uns, und die Attrappe soll ein gültiges nachstellen.
+        return FakeClaims({"sub": "u1", "nonce": None, "aud": c.client_id})
 
     sys.modules["httpx"] = types.SimpleNamespace(post=lambda *a, **k: FakeAntwort(), get=fake_get)
     # `exchange` baut sich den Dekoder selbst (mit fester Algorithmenliste, s. Abschnitt 4) —
@@ -405,5 +407,73 @@ r.check("alle Clients teilen die Metadaten des einen Providers",
         all(_reg[k]._meta is _reg[VORGABE_CLIENT]._meta for k in _reg.namen()))
 r.check("und denselben Issuer — ein zweiter Provider ist nicht vorgesehen",
         {_reg[k].issuer for k in _reg.namen()} == {"https://id.example.com"})
+
+# ---------- 7) F-15: aud und azp nach OIDC Core 3.1.3.7 ----------
+# Der Dekoder prüft nur, dass die eigene client_id in `aud` VORKOMMT. Ein Token darf mehrere
+# Empfänger nennen — dann sagt erst `azp`, für wen es gemacht wurde. Ohne diese Prüfung nimmt
+# TinySesam ein Token an, das für eine ANDERE Anwendung desselben Providers ausgestellt wurde
+# und uns nur mitnennt (Token-Substitution). Seit T-14 wiegt das doppelt: Bei mehreren Clients
+# derselben Installation wäre das Token von App A auch an App B gut.
+from fastapi import HTTPException as _HTTPException                      # noqa: E402
+
+_c15 = frischer_client()
+
+
+def _publikum_fehler(**claims):
+    try:
+        _c15._pruefe_publikum(FakeClaims(claims), lambda k, **f: k)
+        return None
+    except _HTTPException as e:
+        return e.detail
+
+
+r.check("ein Token nur für uns geht durch", _publikum_fehler(aud="cid") is None)
+r.check("mehrere Empfänger MIT passendem azp gehen durch",
+        _publikum_fehler(aud=["cid", "andere"], azp="cid") is None)
+r.check("mehrere Empfänger OHNE azp werden abgewiesen",
+        _publikum_fehler(aud=["cid", "andere"]) == "api.oidc_audience")
+r.check("ein fremdes azp wird abgewiesen, auch wenn wir in aud stehen",
+        _publikum_fehler(aud=["cid", "andere"], azp="andere") == "api.oidc_audience")
+r.check("ein Token ganz ohne uns wird abgewiesen",
+        _publikum_fehler(aud=["andere"]) == "api.oidc_audience")
+r.check("ein Token ohne aud wird abgewiesen", _publikum_fehler() == "api.oidc_audience")
+r.check("ein einzelnes fremdes azp allein genügt zur Abweisung",
+        _publikum_fehler(aud="cid", azp="andere") == "api.oidc_audience")
+
+# ---------- 8) F-18: die UserInfo-Antwort muss zum ID-Token passen ----------
+# Die Antwort ist NICHT signiert und wird im Callback über die Claims gelegt — sie liefert
+# Gruppen, E-Mail und damit mittelbar Rollen und das Admin-Flag. OIDC Core 5.3.2 verlangt den
+# Abgleich des `sub` ausdrücklich.
+_c18 = frischer_client()
+_echtes_httpx18 = sys.modules.get("httpx")
+
+
+def _userinfo_mit(antwort, erwartet):
+    class A:
+        @staticmethod
+        def json():
+            return antwort
+    sys.modules["httpx"] = types.SimpleNamespace(get=lambda *a, **k: A())
+    try:
+        return _c18.userinfo("at", erwartetes_sub=erwartet)
+    finally:
+        if _echtes_httpx18 is not None:
+            sys.modules["httpx"] = _echtes_httpx18
+        else:
+            sys.modules.pop("httpx", None)
+
+
+_c18._meta = {**META, "userinfo_endpoint": "https://id.example.com/userinfo"}
+_c18._meta_zeit = time.time()
+r.check("passendes sub → die Antwort wird verwertet",
+        _userinfo_mit({"sub": "u1", "groups": ["a"]}, "u1").get("groups") == ["a"])
+r.check("fremdes sub → die Antwort wird verworfen, nicht teilweise übernommen",
+        _userinfo_mit({"sub": "u2", "groups": ["admins"], "email": "wer@example.com"}, "u1") == {})
+r.check("Antwort ohne sub → verworfen (fail-closed statt teilweise übernehmen)",
+        _userinfo_mit({"groups": ["admins"]}, "u1") == {})
+r.check("ohne erwartetes sub bekommt der Aufrufer nichts",
+        _userinfo_mit({"sub": "u1", "groups": ["a"]}, "") == {})
+r.check("eine Antwort, die kein Objekt ist, wird verworfen",
+        _userinfo_mit(["kein", "objekt"], "u1") == {})
 
 sys.exit(r.done())

@@ -117,6 +117,34 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Ein gesperrtes Konto bekommt beim SSO-Login gar nichts mehr** (F-17). Der OIDC-Callback lief
+  für ein `disabled=1`-Konto vollständig durch: Gruppen wurden übernommen, das Admin-Flag konnte
+  gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung blieb am Ende aus. Ein Konto zu
+  sperren ist aber die Antwort auf „diese Person soll nichts mehr können"; dass ihre Rollen sich
+  dabei noch ändern, ist das Gegenteil davon, und im Protokoll sah der Vorgang aus wie eine
+  gelungene Anmeldung. Die Prüfung steht jetzt **vor** jedem Schreibzugriff, mit Audit-Zeile und
+  einer Zeile im Sicherheits-Log. Lokaler Passwort-Login und Panel prüften das seit jeher; die
+  föderierte Seite war die Lücke.
+
+- **Die UserInfo-Antwort muss zum ID-Token gehören** (F-18). Sie wird im Callback über die Claims
+  gelegt und liefert Gruppen, E-Mail und damit mittelbar Rollen und das Admin-Flag — ist aber im
+  Gegensatz zum ID-Token **nicht signiert**, sondern eine gewöhnliche Antwort auf einen
+  Bearer-Token. OIDC Core 5.3.2 verlangt deshalb ausdrücklich, ihr `sub` gegen das des ID-Tokens
+  zu prüfen und die Antwort sonst **nicht zu verwenden**. Genau das fehlte: Wer einen Access-Token
+  eines anderen Kontos vorlegte, schob die Merkmale einer fremden Person in die eigene Sitzung.
+  Passt das `sub` nicht, wird die Antwort jetzt ganz verworfen — nicht teilweise übernommen —,
+  und die Claims des signierten Tokens bleiben die einzige Quelle.
+
+- **Ein ID-Token für eine andere Anwendung wird abgewiesen** (F-15, OIDC Core 3.1.3.7). Geprüft
+  wurde nur, dass die eigene `client_id` in `aud` **vorkommt**. Ein Token darf aber mehrere
+  Empfänger nennen, und dann sagt erst `azp`, für wen es ausgestellt wurde. Ohne diese Prüfung
+  genügte ein Token, das für eine andere Anwendung desselben Providers gemacht wurde und uns nur
+  mitnennt (Token-Substitution): Wer bei irgendeinem Client dieses Providers ein Token bekam, kam
+  damit auch hier herein. Drei Regeln gelten jetzt — mehrere `aud` verlangen ein `azp`, ein
+  vorhandenes `azp` muss die eigene `client_id` sein, und die muss in `aud` stehen. Seit
+  `oidc_clients` (T-14) wiegt das doppelt: Sonst wäre das Token von App A auch an App B gut und
+  die Freigabe je Client umgangen.
+
 - **Ein erfundener `Host` kann keine Warnung mehr abschalten.** `security.einmal_melden()` hält
   fest, worüber schon eine Hinweiszeile im Security-Log steht, damit ein Seitenaufruf mit zwanzig
   Unterressourcen nicht zwanzig gleiche Zeilen schreibt. Der Schlüssel ist der **Host aus der
