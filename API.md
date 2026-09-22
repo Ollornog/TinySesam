@@ -24,7 +24,7 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 
 ### `admin_claim_token() -> 'Optional[str]'`
 
-Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal eingelöst werden kann (`/auth/claim-admin?token=…`). Es steht nur im Log/in der Konsole — wer den Server betreibt, hat es; wer bloß die URL kennt, nicht. Läuft ab.
+Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal eingelöst werden kann (`/auth/claim-admin?token=…`). Der Wert geht beim Start auf stderr bzw. in `admin_claim_token_file` (0600) — wer den Server betreibt, hat ihn; wer bloß die URL kennt oder das Log lesen kann, nicht (B5-03). Läuft ab.
 
 ### `admin_exists() -> 'bool'`
 

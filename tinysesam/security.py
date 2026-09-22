@@ -1,6 +1,8 @@
 """Härtung: echte Client-IP (Trusted-Proxy), Rate-Limiting, fail2ban-Logger.
 Die Brute-Force-Regulation selbst lebt im Manager (DB-basiert, Panel-konfigurierbar)."""
 from __future__ import annotations
+import os
+import stat
 import time
 import logging
 import logging.handlers
@@ -29,6 +31,31 @@ def fuer_log(wert) -> str:
     return (text[:64] + "…") if len(text) > 64 else text
 
 
+#: Rechte, mit denen die Security-Logdatei angelegt wird — bei der ersten Zeile und nach jeder
+#: Rotation. Vorher entstand sie mit der Prozess-umask, in der Praxis `-rw-rw-r--`: welt-lesbar.
+#: In den Zeilen stehen Benutzernamen und IP-Adressen; bis 0.18.x stand dort sogar das
+#: Erst-Admin-Einmal-Token (B5-03). fail2ban liest die Datei als root, ein Log-Versand über die
+#: Gruppe reicht — niemand sonst braucht sie. Gegenstück zu `Store.DATEIRECHTE` (0600).
+LOG_DATEIRECHTE = 0o640
+
+
+class _SicherheitsLogHandler(logging.handlers.WatchedFileHandler):
+    """WatchedFileHandler, der die Datei mit `LOG_DATEIRECHTE` anlegt statt mit der umask.
+
+    Das `mode`-Argument von `os.open` kann Rechte nur **wegnehmen** (die umask wird weiterhin
+    abgezogen), nie hinzufügen — enger als 0640 eingestellte Betriebe bleiben also eng.
+    Der Umweg über `opener` statt eines `chmod` danach vermeidet das Fenster, in dem die Datei
+    offen dasteht, und greift auch dann, wenn logrotate die Datei wegnimmt und der Handler sie
+    beim nächsten Satz **neu** anlegt — genau dort wäre ein einmaliges chmod beim Start wirkungslos.
+    """
+
+    def _open(self):
+        def opener(pfad, flags):
+            return os.open(pfad, flags, LOG_DATEIRECHTE)
+        return open(self.baseFilename, self.mode, encoding=self.encoding,
+                    errors=self.errors, opener=opener)
+
+
 def attach_security_log(path: str) -> bool:
     """Den Security-Logger zusätzlich in eine Datei schreiben lassen — das, was die fail2ban-Jail
     liest (`deploy/fail2ban/`). Ohne diesen Handler zeigt die mitgelieferte Jail auf eine Datei,
@@ -38,11 +65,15 @@ def attach_security_log(path: str) -> bool:
     Prozess sind erlaubt) und nicht start-verhindernd: ein nicht schreibbarer Pfad ist ein Grund
     zu warnen, aber keiner, die Anmeldung stillzulegen. Das Format trägt den Zeitstempel vorn,
     den fail2ban zum Datieren der Treffer braucht.
+
+    Neu angelegt wird die Datei mit `LOG_DATEIRECHTE` (0640), nicht mehr mit der umask; eine
+    schon vorhandene, welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben.
     """
     path = str(path)
     for h in seclog.handlers:
         if getattr(h, "_tinysesam_path", None) == path:
             return True
+    schon_da = os.path.exists(path)
     try:
         # WatchedFileHandler, nicht FileHandler: logrotate benennt die Datei um und legt eine
         # neue an — ein FileHandler hält den alten Inode offen und schreibt ab da in die
@@ -51,7 +82,7 @@ def attach_security_log(path: str) -> bool:
         # mehr wacht. Der Watched-Handler prüft vor jeder Zeile Inode und Gerät und öffnet neu.
         # (Unter Windows ohne Wirkung — dort lässt sich eine offene Datei ohnehin nicht
         # umbenennen, und `copytruncate` ist der Weg.)
-        h = logging.handlers.WatchedFileHandler(path, encoding="utf-8")
+        h = _SicherheitsLogHandler(path, encoding="utf-8")
     except OSError as e:
         seclog.warning("security_log %s nicht schreibbar (%s) — fail2ban bekommt nichts zu lesen.",
                        path, e)
@@ -66,6 +97,19 @@ def attach_security_log(path: str) -> bool:
     # WARNING-Zeilen mit den Fehlversuchen.
     if seclog.level == logging.NOTSET or seclog.level > logging.WARNING:
         seclog.setLevel(logging.WARNING)
+    # Erst hier, nach dem Level: Eine Warnung, die der Logger verwirft, ist keine. Eine
+    # BESTEHENDE Datei wird nicht umgeschrieben — eine bewusste Freigabe an eine Gruppe
+    # (Log-Versand, `adm`) ist eine Entscheidung des Betreibers, keine Lücke. Still bleibt sie
+    # trotzdem nicht: In den Zeilen stehen Benutzernamen und IP-Adressen.
+    if schon_da:
+        try:
+            modus = stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            modus = 0
+        if modus & 0o007:
+            seclog.warning(
+                "security_log %s ist welt-lesbar (%o). Darin stehen Benutzernamen und "
+                "IP-Adressen. Enger stellen: chmod 640 %s", path, modus, path)
     return True
 
 

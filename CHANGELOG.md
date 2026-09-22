@@ -160,6 +160,20 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   (`POST /auth/totp/disable`, CSRF-geschützt und protokolliert); die Einrichtung für Konten
   **ohne** TOTP — auch aus einer `login_chain` heraus — bleibt unverändert offen.
   Fund **B2-1** aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md).
+- **Das Erst-Admin-Einmal-Token stand im Klartext in der `security.log`.** Solange es keinen Admin
+  gibt, schreibt TinySesam beim Start einen Hinweis auf `/auth/claim-admin?token=…` — bis 0.18.x
+  mitsamt dem Wert, und zwar über `security.seclog`. Mit gesetztem `security_log` ist das genau die
+  Datei, auf die die mitgelieferte fail2ban-Jail zeigt: sie entstand ohne Rechtevorgabe (gemessen
+  `-rw-rw-r--`), logrotate hebt sie wochenlang auf, jedes Log-Shipping nimmt sie mit. Wer sie lesen
+  konnte und irgendein Konto auf der Instanz hatte, löste den Token ein und war Admin. Jetzt geht
+  der Wert auf **stderr** — die Konsole des Betreibers, der einzige Empfänger, den der Docstring je
+  gemeint hat — oder, neu, in eine eigene Datei: `admin_claim_token_file` (wird mit **0600**
+  angelegt, Rechte auch bei einer vorhandenen Datei vor dem Schreiben gesetzt). Im Log steht nur
+  noch, *wo* der Token liegt. Dazu legt `attach_security_log()` die Logdatei selbst mit **0640** an
+  statt mit der umask — auch die nach einer Rotation neu entstandene —, denn darin stehen
+  Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber nicht
+  umgeschrieben. Eine Konfigurationsprüfung verweigert `admin_claim_token_file == security_log`.
+  Gefunden im dritten Audit (B5-03 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

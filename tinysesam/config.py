@@ -86,6 +86,11 @@ class TinySesamConfig:
                                           # zum Admin befördert werden, SOLANGE es keinen Admin gibt.
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
+    # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
+    # Betreibers). Ein Pfad hier: TinySesam legt die Datei mit Rechten 0600 an und schreibt den
+    # Token hinein — der richtige Weg, wenn stderr im journal/in einer Sammelstelle landet.
+    # Der Token steht NIE im security_log (das liest fail2ban, und logrotate hebt es auf).
+    admin_claim_token_file: str = ""      # z.B. /run/tinysesam/admin-claim.token
 
     # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
     demo_mode: bool = False           # Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv

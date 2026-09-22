@@ -10,7 +10,9 @@ Einbindung:
         return {"hi": user["username"]}
 """
 from __future__ import annotations
+import os
 import re
+import sys
 import time
 import json
 import hashlib
@@ -39,6 +41,21 @@ _NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
 
 def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
+
+
+def _auf_stderr(zeile: str) -> None:
+    """Eine Zeile an den Betreiber, nicht an das Log.
+
+    Der Weg ist bewusst `sys.stderr` und nicht `seclog`: Was hier steht, ist für den Menschen
+    gedacht, der den Dienst startet — nicht für eine Datei, die fail2ban liest, logrotate
+    archiviert und ein Log-Versand mitnimmt (B5-03). `sys.stderr` wird bei jedem Aufruf frisch
+    nachgeschlagen, damit ein umgelenktes stderr (Tests, Wrapper) wirklich greift.
+    """
+    try:
+        sys.stderr.write(zeile.rstrip("\n") + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass            # kein stderr (pythonw, geschlossener Deskriptor) — kein Grund abzubrechen
 
 
 def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
@@ -290,9 +307,7 @@ class TinySesam:
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
         tok = self.admin_claim_token()
         if tok:
-            security.seclog.warning(
-                "Kein Admin vorhanden. Ersten Admin setzen: anmelden, dann /auth/claim-admin?token=%s "
-                "(gültig %d Minuten, genau einmal einlösbar).", tok, config.admin_claim_ttl_min)
+            self._admin_claim_bekanntgeben(tok)
 
     # ---------- User-Verwaltung ----------
     def kennung_vergeben(self, kennung, exclude_id=None) -> Optional[dict]:
@@ -556,12 +571,62 @@ class TinySesam:
         security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s", user["username"])
         return True
 
+    def _admin_claim_bekanntgeben(self, token: str) -> None:
+        """Den Wert des Erst-Admin-Einmal-Tokens dem **Betreiber** zeigen — nicht dem Log.
+
+        Bis 0.18.x stand der Token im Klartext in der Zeile, die `security.seclog` schreibt. Ist
+        `security_log` gesetzt, ist das genau die Datei, auf die die mitgelieferte fail2ban-Jail
+        zeigt: sie entstand ohne Rechtevorgabe (gemessen `-rw-rw-r--`), logrotate hebt sie
+        wochenlang auf und jedes Log-Shipping nimmt sie mit. Wer sie lesen konnte und irgendein
+        Konto auf der Instanz hatte, rief `/auth/claim-admin?token=…` auf und war Admin (B5-03).
+
+        Der Wert geht deshalb nach **stderr** — die Konsole dessen, der den Dienst startet, und
+        der einzige Empfänger, den der Docstring von `admin_claim_token` je gemeint hat. Wo
+        stderr selbst eingesammelt wird (journal, Container-Logs), nennt der Betreiber mit
+        `admin_claim_token_file` eine Datei; die legt TinySesam mit 0600 an. Ins Log kommt nur
+        noch, **wo** der Token steht.
+        """
+        ttl = self.cfg.admin_claim_ttl_min
+        pfad = str(self.cfg.admin_claim_token_file or "").strip()
+        wohin = "auf stderr (Konsole des Betreibers)"
+        geschrieben = False
+        if pfad:
+            try:
+                # Ohne O_TRUNC öffnen und die Rechte am Deskriptor setzen, BEVOR das Geheimnis
+                # hineingeht: Bei einer schon vorhandenen Datei ignoriert der mode-Parameter von
+                # os.open die Vorgabe, und ein chmod hinterher liesse ein Fenster offen.
+                fd = os.open(pfad, os.O_CREAT | os.O_WRONLY, 0o600)
+                try:
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(fd, 0o600)
+                    os.ftruncate(fd, 0)
+                    os.write(fd, (token + "\n").encode("utf-8"))
+                finally:
+                    os.close(fd)
+                wohin = f"in {pfad} (Rechte 0600)"
+                geschrieben = True
+            except OSError as e:
+                # Kein Grund, den Start zu verweigern — aber der Betreiber muss den Token
+                # bekommen, sonst kommt er nicht an seine eigene Instanz.
+                _auf_stderr(f"TinySesam: admin_claim_token_file {pfad} nicht schreibbar "
+                            f"({type(e).__name__}) — der Token steht stattdessen hier:")
+                wohin = f"auf stderr ({pfad} war nicht schreibbar)"
+        if not geschrieben:
+            _auf_stderr(f"TinySesam: Kein Admin vorhanden. Ersten Admin setzen — anmelden, dann "
+                        f"/auth/claim-admin?token={token} (gültig {ttl} Minuten, genau einmal "
+                        f"einlösbar).")
+        security.seclog.warning(
+            "Kein Admin vorhanden. Ein Einmal-Token für /auth/claim-admin wurde ausgegeben %s "
+            "— gültig %d Minuten, genau einmal einlösbar. Der Wert steht bewusst NICHT im Log.",
+            wohin, ttl)
+
     def admin_claim_token(self) -> Optional[str]:
         """Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal
-        eingelöst werden kann (`/auth/claim-admin?token=…`). Es steht nur im Log/in der Konsole —
-        wer den Server betreibt, hat es; wer bloß die URL kennt, nicht. Läuft ab."""
+        eingelöst werden kann (`/auth/claim-admin?token=…`). Der Wert geht beim Start auf stderr
+        bzw. in `admin_claim_token_file` (0600) — wer den Server betreibt, hat ihn; wer bloß die
+        URL kennt oder das Log lesen kann, nicht (B5-03). Läuft ab."""
         # Kein Panel, keine lokalen Admins → kein Token. Sonst hätte eine reine OIDC-App einen
-        # Weg zum Admin, den sie gar nicht vorgesehen hat (und der im Log stünde).
+        # Weg zum Admin, den sie gar nicht vorgesehen hat.
         if not self.cfg.admin_enabled or self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
             return None
         raw = self.store.get_setting("admin_claim")

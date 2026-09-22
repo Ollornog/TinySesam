@@ -75,6 +75,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
+| `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
 
 ## Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv.
 

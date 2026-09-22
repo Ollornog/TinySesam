@@ -260,16 +260,19 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
 
 - **Allowlist** — the named username or email is promoted on its next successful sign-in, whatever the
   method (also OIDC/SAML/LDAP, where the email is usually the stable handle). After that: never again.
-- **One-time token** — if no admin exists, TinySesam logs a claim URL on startup. Sign in, open
-  `/auth/claim-admin?token=…`, and that account becomes admin. The token is single-use and expires
-  after `admin_claim_ttl_min`; once an admin exists the route answers 404.
+- **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
+  (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
+  admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
+  route answers 404. The value is deliberately kept out of the security log — that file is what
+  fail2ban reads and logrotate keeps. Where stderr itself is collected (journal, container logs),
+  set `admin_claim_token_file` and TinySesam writes the token to that file with mode `0600`.
 
 The allowlist says **which name** becomes admin, not **who** gets that name. With
 `allow_signup=True` a stranger can simply register under it and be admin on first sign-in — so that
 combination is refused at construction time. It is allowed again once the identity is backed by the
 signup itself: an email address (not a bare username, which nobody confirms), required and verified
 (`signup_require_email=True`, `signup_verify_email=True`). Otherwise keep signup closed, or use the
-one-time token — that one never leaves the server's log.
+one-time token — that one never leaves the operator's console.
 
 The same applies when an IdP creates the accounts (`oidc_auto_create`, `saml_auto_create`,
 `ldap_auto_create`): the username comes from someone else there too, so an allowlist **name** is

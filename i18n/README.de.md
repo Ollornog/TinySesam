@@ -260,9 +260,12 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 - **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
   befördert, egal über welche Methode (auch OIDC/SAML/LDAP, wo die Adresse meist die stabile Kennung
   ist). Danach nie wieder.
-- **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL ins Log.
-  Anmelden, `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
-  `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404.
+- **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
+  **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
+  Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
+  antwortet die Route mit 404. Der Wert bleibt bewusst aus dem Security-Log heraus — das liest
+  fail2ban, und logrotate hebt es auf. Wird stderr selbst eingesammelt (journal, Container-Logs),
+  nennt `admin_claim_token_file` eine eigene Datei; TinySesam legt sie mit `0600` an.
 
 Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen bekommt. Mit
 `allow_signup=True` registriert sich ein Fremder einfach darunter und ist beim ersten Login Admin;
@@ -270,7 +273,7 @@ diese Kombination weist der Konstruktor deshalb ab. Erlaubt ist sie wieder, soba
 aus der Registrierung selbst belegt ist: eine E-Mail-Adresse (kein blosser Benutzername, den
 niemand bestätigt), Pflicht und bestätigt (`signup_require_email=True`,
 `signup_verify_email=True`). Sonst die Registrierung **geschlossen lassen** — oder den
-Einmal-Token nehmen, der verlässt das Server-Log nie.
+Einmal-Token nehmen, der verlässt die Konsole des Betreibers nie.
 
 Dasselbe gilt, wenn ein IdP die Konten anlegt (`oidc_auto_create`, `saml_auto_create`,
 `ldap_auto_create`): Auch dort kommt der Benutzername aus fremder Hand, ein Allowlist-**Name**

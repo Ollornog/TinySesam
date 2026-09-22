@@ -120,6 +120,7 @@
   },
   "TinySesamConfig.felder": {
     "account_enabled": "bool = True",
+    "admin_claim_token_file": "str = ''",
     "admin_claim_ttl_min": "int = 60",
     "admin_enabled": "bool = True",
     "admin_identifiers": "list[str] = []",

@@ -20,6 +20,8 @@ nicht dreimal starten.
 """
 from __future__ import annotations
 
+import os
+
 #: Verfahren → welches Config-Feld es einschaltet. Dieselbe Liste bedient die Ketten-Prüfung.
 VERFAHREN = {
     "password": "password_enabled",
@@ -190,6 +192,23 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "TinySesam lässt deshalb nur Hosts aus trusted_redirect_hosts und Loopback "
                 "durch und bricht sonst ab (es geht keine Mail hinaus, der Flow endet mit "
                 "einem Fehler). Abhilfe: base_url auf die öffentliche Adresse setzen.")
+    # Erst-Admin-Token: Der Wert darf nicht dort landen, wo ihn Fremde lesen. Genau das war
+    # B5-03 — er stand in der Datei, die die fail2ban-Jail liest und logrotate archiviert.
+    token_datei = str(getattr(config, "admin_claim_token_file", "") or "").strip()
+    seclog_datei = str(getattr(config, "security_log", "") or "").strip()
+    if token_datei and seclog_datei and os.path.abspath(token_datei) == os.path.abspath(seclog_datei):
+        fehler.append(
+            "admin_claim_token_file und security_log zeigen auf dieselbe Datei. Damit stünde das "
+            "Erst-Admin-Einmal-Token wieder in dem Log, das fail2ban liest, logrotate archiviert "
+            "und ein Log-Versand mitnimmt — wer es liest, wird Admin. Für den Token eine eigene "
+            "Datei nehmen (z.B. /run/<dienst>/admin-claim.token) oder das Feld leer lassen, dann "
+            "geht der Wert auf stderr.")
+    if token_datei and (int(getattr(config, "admin_claim_ttl_min", 0) or 0) <= 0
+                        or not _an(config, "admin_enabled")):
+        warnungen.append(
+            "admin_claim_token_file ist gesetzt, aber der Token-Weg ist aus "
+            "(admin_claim_ttl_min=0 oder admin_enabled=False) — die Datei wird nie geschrieben. "
+            "Der Erst-Admin kommt dann nur über admin_identifiers oder die CLI zustande.")
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
