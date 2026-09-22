@@ -300,9 +300,12 @@ class TinySesam:
             self.saml = SAMLClient(config)
         if config.oidc_enabled and config.oidc_issuer and config.oidc_client_id:
             _verlange("authlib", "oidc_enabled", "oidc")
-            from .oidc import OIDCClient
-            self.oidc = OIDCClient(config.oidc_issuer, config.oidc_client_id,
-                                   config.oidc_client_secret, config.oidc_scopes)
+            from .oidc import OIDCClients, VORGABE_CLIENT
+            # `self.oidc` bleibt der Einzel-Client und damit die öffentliche Fläche von 0.18.0
+            # (Tests und fremder Code greifen darauf zu). `self.oidc_clients` ist die Zuordnung
+            # Host → Client; ohne `cfg.oidc_clients` enthält sie genau diesen einen (T-14).
+            self.oidc_clients = OIDCClients(config)
+            self.oidc = self.oidc_clients[VORGABE_CLIENT]
         if config.passkey_enabled:
             # Passkey kennt keine unvollständige Konfiguration: Wer den Schalter umlegt, will es.
             _verlange("webauthn", "passkey_enabled", "passkey")
@@ -1996,7 +1999,57 @@ class TinySesam:
                     and o.hostname != (urlsplit(base).hostname or "")
                     and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
                 base = f"{o.scheme}://{o.netloc}"
-        return f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
+        ziel = f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
+        # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
+        # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
+        # Ohne die Angabe liefe jede Anmeldung über den Vorgabe-Client, und die Freigabe, die der
+        # Provider je Client vergibt, wäre wirkungslos.
+        anwendung = self.oidc_anwendung(orig_url)
+        if anwendung:
+            ziel += f"&app={quote(anwendung, safe='')}"
+        return ziel
+
+    # ---------- Freigaben je Anwendung (T-14) ----------
+    def oidc_anwendung(self, url_oder_host: str) -> str:
+        """Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
+        Anwendung schützt. Der leere Rückgabewert ist Absicht: Er hält jede Aufrufstelle
+        wortgleich beim Verhalten von 0.18.0, solange `oidc_clients` leer ist."""
+        from urllib.parse import urlsplit
+        registry = getattr(self, "oidc_clients", None)
+        if not registry or not registry.mehrere:
+            return ""
+        roh = str(url_oder_host or "")
+        host = urlsplit(roh).hostname if "://" in roh else roh
+        return registry.schluessel_fuer_host(host or "")
+
+    def vermerke_oidc_freigabe(self, token: str, client: str, rollen=None) -> None:
+        """Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken."""
+        self.store.put_oidc_grant(self.store.session_hash(token), client or "*",
+                                  int(time.time()), rollen)
+
+    def oidc_freigabe_gueltig(self, token_hash: str, client: str) -> tuple:
+        """Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
+
+        `grund` ist "" bei Ja, sonst "fehlt" (der Provider hat für diese Anwendung nie
+        zugestimmt) oder "veraltet" (die Zustimmung ist älter als `oidc_revalidate_minutes`).
+        Der Unterschied zählt: Beim ersten Fall war der Mensch hier noch nie, beim zweiten
+        läuft nur die Frist ab — und der Sprung über den Provider ist dann in aller Regel
+        unsichtbar, weil dessen Sitzung weiterbesteht.
+
+        Ohne mehrere Clients ist die Antwort immer Ja. Eine Installation mit einem Client
+        verhält sich damit exakt wie 0.18.0, auch wenn `oidc_revalidate_minutes` gesetzt ist:
+        Es gibt dort keine Freigabe je Anwendung, die ablaufen könnte.
+        """
+        registry = getattr(self, "oidc_clients", None)
+        if not registry or not registry.mehrere:
+            return True, ""
+        grant = self.store.get_oidc_grant(token_hash, client or "*")
+        if not grant:
+            return False, "fehlt"
+        frist = int(self.cfg.oidc_revalidate_minutes or 0) * 60
+        if frist and (int(time.time()) - int(grant["checked_at"])) > frist:
+            return False, "veraltet"
+        return True, ""
 
     # ---------- i18n ----------
     def t(self, key, **fmt) -> str:

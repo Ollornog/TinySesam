@@ -212,6 +212,32 @@ class TinySesamConfig:
     oidc_group_claim: str = "groups"      # Claim mit den Gruppen
     oidc_allowed_groups: list[str] = field(default_factory=list)  # leer = alle erlaubt
 
+    # --- Mehrere Anwendungen hinter EINER Installation (T-14) ---
+    #: Geschützter Host → eigener OIDC-Client beim selben Provider. Leer = eine Anwendung, der
+    #: Einzel-Client oben gilt für alles (Verhalten bis 0.18.0, unverändert).
+    #:
+    #: Warum überhaupt: Wer in welche Anwendung darf, entscheidet der **Provider** — bei PocketID
+    #: über die Gruppenfreigabe je OIDC-Client. Diese Freigabe hängt am Client, nicht am Benutzer.
+    #: Mit einem einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen: Wer bei
+    #: irgendeiner drin ist, ist bei allen drin. Die bisherige Abhilfe war eine eigene
+    #: TinySesam-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs für
+    #: dieselben Menschen.
+    #:
+    #: Aufbau je Eintrag: ``{"app.example.com": {"client_id": "...", "client_secret": "...",
+    #: "scopes": "openid profile email", "allowed_groups": [...], "group_role_map": {...}}}``.
+    #: Fehlt ein optionaler Schlüssel, gilt der Wert des Einzel-Clients. Der **Issuer ist für
+    #: alle Clients derselbe** — mehrere Provider in einer Instanz sind nicht vorgesehen, und die
+    #: Konfigurationsprüfung sagt das auch.
+    oidc_clients: dict = field(default_factory=dict)
+    #: Nach wie vielen Minuten eine erteilte Freigabe beim Provider nachgeprüft wird. 0 = nie
+    #: (Verhalten bis 0.18.0). Der Provider entscheidet über die Freigabe, also muss ein Entzug
+    #: dort auch ankommen: Ohne Nachprüfung gilt sie bis zum Ablauf der Sitzung — in der Vorgabe
+    #: sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in
+    #: aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab,
+    #: ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt.
+    #: ``oidc_gateway()`` setzt 15; wer es von Hand aufbaut, entscheidet selbst.
+    oidc_revalidate_minutes: int = 0
+
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
     saml_enabled: bool = False        # SAML-2.0-Anmeldung gegen einen IdP — braucht [saml] und libxmlsec1
     saml_name: str = "SAML"               # Anzeigename des Buttons
@@ -310,10 +336,19 @@ class TinySesamConfig:
                      cookie_domain="", trusted_redirect_hosts=None, allowed_groups=None,
                      group_claim="groups", oidc_name="SSO", oidc_scopes="openid profile email",
                      db_path="tinysesam-gateway.db", https_mode="warn", session_ttl_hours=24 * 7,
-                     trusted_proxies=None, **overrides):
+                     trusted_proxies=None, clients=None, revalidate_minutes=15, **overrides):
         """Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil).
         Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`.
-        Einzelne Felder via **overrides überschreibbar."""
+        Einzelne Felder via **overrides überschreibbar.
+
+        `clients` schützt **mehrere Anwendungen** mit einer Installation: Host → eigener Client
+        beim selben Provider (T-14). Ohne die Angabe gilt der Einzel-Client für alles, genau wie
+        bisher.
+
+        `revalidate_minutes` steht hier auf **15**, nicht auf 0 wie im Grundaufbau: Ein Gateway
+        ist der Ort, an dem die Freigabe des Providers die einzige Autorisierung ist. Bliebe sie
+        bis zum Sitzungsende gültig, wirkte ein Gruppenentzug dort bis zu `session_ttl_hours`
+        nicht — in der Vorgabe sieben Tage."""
         base = dict(
             db_path=db_path,
             password_enabled=False, passkey_enabled=False, pin_enabled=False,
@@ -325,6 +360,7 @@ class TinySesamConfig:
             oidc_name=oidc_name, oidc_scopes=oidc_scopes,
             oidc_allowed_groups=list(allowed_groups or []), oidc_group_claim=group_claim,
             oidc_auto_create=True,
+            oidc_clients=dict(clients or {}), oidc_revalidate_minutes=revalidate_minutes,
             base_url=base_url, cookie_domain=cookie_domain,
             trusted_redirect_hosts=list(trusted_redirect_hosts or []),
             session_ttl_hours=session_ttl_hours, https_mode=https_mode,

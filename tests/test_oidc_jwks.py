@@ -373,4 +373,37 @@ finally:
     else:
         sys.modules.pop("httpx", None)
 
+# ---------- 6) T-14: ein Provider, mehrere Clients ----------
+# Discovery-Dokument und JWKS hängen am Provider, nicht am Client. Würde jeder Client einzeln
+# fragen, holte eine Installation mit drei Anwendungen dasselbe Dokument dreifach — und eine
+# Schlüsselrotation wäre dreimal zu bemerken statt einmal. Der Flow-Teil (welcher Client für
+# welchen Host) steht in tests/test_forward_auth.py, wo der TestClient zu Hause ist.
+from tinysesam import TinySesamConfig                                    # noqa: E402
+from tinysesam.oidc import OIDCClients, VORGABE_CLIENT                   # noqa: E402
+
+_cfg14 = TinySesamConfig(
+    db_path="/dev/null", passkey_enabled=False,
+    oidc_enabled=True, oidc_issuer="https://id.example.com",
+    oidc_client_id="haupt", oidc_client_secret="s-haupt",
+    oidc_clients={"app-a.example.com": {"client_id": "a", "client_secret": "s-a"},
+                  "app-b.example.com": {"client_id": "b", "client_secret": "s-b",
+                                        "scopes": "openid profile email groups"}})
+_reg = OIDCClients(_cfg14)
+_reg[VORGABE_CLIENT]._meta, _reg[VORGABE_CLIENT]._meta_zeit = dict(META), time.time()
+_reg._teile_meta()
+
+r.check("jede Anwendung hat ihren eigenen Client beim selben Provider",
+        [_reg.fuer_host(h).client_id for h in ("app-a.example.com", "app-b.example.com")] == ["a", "b"])
+r.check("ein unbekannter Host bekommt den Vorgabe-Client, der Flow bricht nicht ab",
+        _reg.fuer_host("fremd.example.com").client_id == "haupt")
+r.check("der Port gehört nicht zum Namen der Anwendung",
+        _reg.fuer_host("app-b.example.com:8443").client_id == "b")
+r.check("ein eigener Scope je Anwendung wird übernommen",
+        "groups" in _reg["app-b.example.com"].scopes
+        and _reg["app-a.example.com"].scopes == _cfg14.oidc_scopes)
+r.check("alle Clients teilen die Metadaten des einen Providers",
+        all(_reg[k]._meta is _reg[VORGABE_CLIENT]._meta for k in _reg.namen()))
+r.check("und denselben Issuer — ein zweiter Provider ist nicht vorgesehen",
+        {_reg[k].issuer for k in _reg.namen()} == {"https://id.example.com"})
+
 sys.exit(r.done())

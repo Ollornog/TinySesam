@@ -304,6 +304,51 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "admin_claim_ttl_min); danach vergibt der Erst-Admin die Rechte selbst. Ein "
             "lokaler Passwort-Login mit bestätigter Adresse befördert weiterhin.")
 
+    # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
+    _clients = getattr(config, "oidc_clients", None) or {}
+    _revalidate = int(getattr(config, "oidc_revalidate_minutes", 0) or 0)
+    if _clients and not _an(config, "oidc_enabled"):
+        fehler.append(
+            "oidc_clients nennt " + ", ".join(sorted(str(h) for h in _clients)) + ", aber "
+            "oidc_enabled ist False. Die Zuordnung Host→Client wäre wirkungslos: Es gäbe keinen "
+            "OIDC-Weg, über den eine Freigabe entstehen könnte.")
+    if _revalidate and not _clients:
+        warnungen.append(
+            f"oidc_revalidate_minutes={_revalidate}, aber oidc_clients ist leer. Die Nachprüfung "
+            "betrifft die Freigabe je Anwendung — ohne mehrere Clients gibt es keine, und der "
+            "Wert bleibt folgenlos. Gemeint war vermutlich session_ttl_hours (Lebensdauer der "
+            "Sitzung) oder stepup_max_age_sec (Frische für heikle Routen).")
+    if _revalidate < 0:
+        fehler.append(f"oidc_revalidate_minutes={_revalidate} ist negativ. 0 schaltet die "
+                      "Nachprüfung ab, jede positive Zahl ist eine Frist in Minuten.")
+    _vertraute = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
+    for host, eintrag in _clients.items():
+        h = str(host).strip().lower()
+        e = dict(eintrag or {})
+        wo = f"oidc_clients[{host!r}]"
+        if not str(e.get("client_id") or "").strip():
+            fehler.append(f"{wo} hat keine client_id. Ohne sie gibt es für diese Anwendung keinen "
+                          "Client beim Provider — und damit auch keine eigene Freigabe.")
+        if not str(e.get("client_secret") or "").strip():
+            fehler.append(f"{wo} hat kein client_secret. Der Tausch des Autorisierungs-Codes "
+                          "scheitert dann beim Provider, und zwar erst nach der Anmeldung — also "
+                          "an der Stelle, an der niemand mehr eine Konfigurationslücke vermutet.")
+        if e.get("issuer"):
+            fehler.append(f"{wo} nennt einen eigenen issuer. Mehrere Provider in einer Installation "
+                          "sind nicht vorgesehen: Discovery-Dokument, JWKS und die Zuordnung "
+                          "issuer+sub→Konto hängen am einen oidc_issuer. Für einen zweiten Provider "
+                          "braucht es eine zweite Instanz.")
+        if _vertraute and h not in _vertraute:
+            warnungen.append(
+                f"{wo} ist nicht in trusted_redirect_hosts. Die Login-URL für diese Anwendung wird "
+                "dann auf base_url gebaut statt auf den angefragten Host — ohne cookie_domain "
+                "gilt das Sitzungs-Cookie host-only, und die Anmeldung dreht sich im Kreis.")
+    if _clients and not _an(config, "forward_auth_enabled"):
+        warnungen.append(
+            "oidc_clients ist gesetzt, forward_auth_enabled aber False. Die Freigabe je Anwendung "
+            "wird in /auth/forward geprüft — ohne Forward-Auth entsteht sie beim Login, wird "
+            "danach aber von nichts abgefragt.")
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
