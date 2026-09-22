@@ -60,6 +60,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `oidc_enabled` | `bool` | `False` | externer IdProvider (PocketID …) |
 | `oidc_callback_path` | `str` | `"/auth/oidc/callback"` | Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad). Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf. |
 | `apikey_enabled` | `bool` | `True` | Zugang per API-Key (maschinell/Daemons, an User/Service-Account) |
+| `apikey_default_days` | `int` | `90` | : Lebensdauer eines Automaten-Keys in Tagen, wenn der Aufrufer keine nennt. Ein Key ohne : Ablauf ist ein Geheimnis, das niemand mehr zurücknimmt: Er überlebt den Menschen, der ihn : ausgestellt hat, das Projekt, für das er gedacht war, und den Rechner, auf dem er liegt. |
+| `apikey_allow_unlimited` | `bool` | `False` | : Darf ein Automaten-Key ohne Ablauf entstehen (`expires_days=0`)? Vorgabe nein. True ist : eine bewusste Entscheidung des Betreibers und wird beim Anlegen protokolliert — es gibt : Fälle dafür (ein Gerät, das niemand anfassen kann), sie sind nur selten. |
 | `admin_enabled` | `bool` | `True` | Admin-Panel automatisch unter admin_path mounten |
 | `admin_path` | `str` | `"/auth/admin"` | Standard-Mountpunkt; auth.admin_router() lässt es auch woanders montieren |
 | `admin_ui_enabled` | `bool` | `True` | eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel) |
@@ -259,4 +261,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-124 Felder, erzeugt aus `tinysesam/config.py`.
+126 Felder, erzeugt aus `tinysesam/config.py`.

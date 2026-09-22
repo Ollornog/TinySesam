@@ -591,6 +591,16 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 - **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
 - **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.
 - **Disable instead of delete:** `auth.revoke_api_key(id)` (key disabled, stays in the list). Self-service routes: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- **Two kinds of key, and neither one is an admin API.** `kind="automat"` (the default) works
+  on its own but **never carries its owner's admin flag** and satisfies no route that requires
+  admin — the way for services, scripts and CI. `kind="mensch"` is only valid **together with a
+  live session of the same account**, and in return carries full rights — the way for a tool a
+  human drives themselves. On its own, a leaked one is worthless. Until 0.18.x there was one kind,
+  and an admin's key was a complete write API: create users, set `is_admin`, reset passwords — no
+  second factor, no CSRF layer. A leaked CI key was the instance.
+- **Keys expire by themselves.** Without `expires_days` a key used to live forever, and that was
+  the common case. `apikey_default_days` (90) now applies; `expires_days=0` still means
+  "unlimited" but needs `apikey_allow_unlimited=True` and lands in the audit entry.
 - **A key is a second front door, so locking an account out takes it along.** An admin password
   reset and disabling an account revoke that user's keys; so does the user's own "end **all**
   sessions" (`scope=all`). A user's own password change deliberately does **not** — a routine
