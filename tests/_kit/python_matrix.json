@@ -1,0 +1,25 @@
+{
+  "_zweck": "Die EINE Quelle fuer die Python-Matrix aller Repos. Das Abbild ci-python-web fuehrt dieselbe Matrix in /opt/ci-matrix; diese Datei ist die Fassung, die auch auf ubuntu-latest und in einem fremden Klon greift (stdlib-only, offline).",
+  "_regel": "Die Matrix sind die letzten DREI stable Minors, nach oben begrenzt durch 'obergrenze'. Untergrenze wandert also von selbst mit, sobald eine Version EOL geht. Geprueft wird sie in hygiene.pruefe_python_matrix_regel — sie MELDET, sie aendert nichts.",
+  "_stand": "2026-09-22 (PO-Entscheidung)",
+
+  "matrix": ["3.12", "3.13", "3.14"],
+
+  "obergrenze": {
+    "version": "3.14",
+    "begruendung": "3.15 erscheint am 01.10.2026, kommt aber nicht automatisch ins Gate: cp315-Wheels fehlen noch bei PyYAML, aiohttp, PyArrow und PyMongo. Sie rueckt nach, wenn TinySesams nightly-Job zwei Naechte gruen ist.",
+    "naechste_pruefung": "2026-10-15"
+  },
+
+  "_releases_quelle": "python.org/downloads (Release-Termine) + devguide.python.org/versions (EOL). 3.15 nach PEP 790; 3.16 ist der fortgeschriebene Jahresrhythmus und noch nicht durch ein PEP belegt.",
+  "releases": {
+    "3.9":  {"erschienen": "2020-10-05", "eol": "2025-10-31"},
+    "3.10": {"erschienen": "2021-10-04", "eol": "2026-10-31"},
+    "3.11": {"erschienen": "2022-10-24", "eol": "2027-10-31"},
+    "3.12": {"erschienen": "2023-10-02", "eol": "2028-10-31"},
+    "3.13": {"erschienen": "2024-10-07", "eol": "2029-10-31"},
+    "3.14": {"erschienen": "2025-10-07", "eol": "2030-10-31"},
+    "3.15": {"erschienen": "2026-10-01", "eol": "2031-10-31"},
+    "3.16": {"erschienen": "2027-10-01", "eol": "2032-10-31"}
+  }
+}

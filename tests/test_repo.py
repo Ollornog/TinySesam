@@ -271,6 +271,36 @@ self_hosted = hygiene.pruefe_kein_self_hosted_runner(ROOT, FILES)
 assert not self_hosted, ("self-hosted Runner in einem öffentlichen Repo:\n  "
                          + "\n  ".join(self_hosted))
 
+# Kit 0.13.x: jede Kit-Prüfung wird gerufen oder mit Grund ausgenommen — der Wächter darunter meldet,
+# wenn eine neue still liegen bleibt (so lagen drei Matrix-Prüfungen in sieben Repos ungerufen, und
+# jede Suite sah grün aus). Echte öffentliche Dienste sind keine Beispieladressen und stehen deshalb
+# in einer benannten Liste, nicht in einer Ausnahme.
+OEFFENTLICHE_DIENSTE = ["pypi.org", "raw.githubusercontent.com", "img.shields.io", "spdx.dev",
+                        "www.flaticon.com", "ollornog.github.io", "github.com",
+                        # Entra-ID-Endpunkt des mitgelieferten Presets — eine echte, feste
+                        # Adresse von Microsoft, keine Beispieladresse und nichts Eigenes.
+                        "login.microsoftonline.com"]
+adressen = hygiene.pruefe_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=OEFFENTLICHE_DIENSTE)
+assert not adressen, "Adressen ausserhalb RFC 2606 und der Dienstliste:\n  " + "\n  ".join(adressen)
+nicht_ausfuehrbar = hygiene.pruefe_ausfuehrbar(
+    ROOT, ["scripts/check.sh", "scripts/_backlog.py", "scripts/_codeql_backlog.py", "tests/run_all.py"])
+assert not nicht_ausfuehrbar, "\n  ".join(nicht_ausfuehrbar)
+abbruch = hygiene.pruefe_kein_abbruch_auf_default_branch(ROOT, FILES)
+assert not abbruch, "cancel-in-progress auf main:\n  " + "\n  ".join(abbruch)
+matrix_regel = hygiene.pruefe_python_matrix_regel()
+assert not matrix_regel, "\n  ".join(matrix_regel)
+sammelt = hygiene.pruefe_run_all_sammelt_automatisch(ROOT)
+assert not sammelt, "\n  ".join(sammelt)
+KIT_AUSGENOMMEN = {
+    "pruefe_python_matrix": "TinySesam fährt 3.10 bis 3.14 (Zusage in Classifiern und README); die "
+                            "Kit-Matrix 3.12 bis 3.14 kommt erst mit dem Entscheid zu PR #54",
+    "pruefe_requires_python": "requires-python >=3.10 bleibt bis zum Entscheid zu PR #54 "
+                              "(gleiche Sache wie pruefe_python_matrix)",
+}
+ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen=KIT_AUSGENOMMEN)
+assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
+print("  Kit 0.13.2: jede Prüfung gerufen oder mit Grund ausgenommen (2 Ausnahmen, beide PR #54)")
+
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
 assert "linux/amd64,linux/arm64" in rel, "Abbild ist nicht multi-arch"
