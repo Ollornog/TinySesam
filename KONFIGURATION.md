@@ -235,7 +235,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `base_url` | `str` | `""` | öffentliche Base-URL (für OIDC-Callback); leer = aus Request abgeleitet |
+| `base_url` | `str` | `""` | Öffentliche Base-URL — die eine Adresse, unter der die App von außen erreichbar ist. Quelle für JEDE absolute Adresse: Links in Mails (Reset, Magic, Bestätigung, Einladung), OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS, Forward-Auth-Umleitung. Leer = aus dem Request abgeleitet, aber NUR wenn dessen Host in trusted_redirect_hosts steht oder Loopback ist — sonst bricht der jeweilige Vorgang ab (es geht keine Mail hinaus). Grund: Der Host-Header ist eine Eingabe des Anfragenden; ohne diese Prüfung konnte ein Angreifer den Reset-Link in der Mail des Opfers auf seinen Server umbiegen. |
 | `login_path` | `str` | `"/auth/login"` | Login-Seite |
 | `login_redirect` | `str` | `"/"` | Ziel nach erfolgreichem Login |
 | `logout_redirect` | `str` | `"/auth/login"` | Ziel nach Logout |

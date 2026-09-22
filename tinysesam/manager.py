@@ -1534,7 +1534,11 @@ class TinySesam:
             h = request.headers
             proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
             host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc).split(",")[0].strip()
-            base = f"{proto}://{host}"
+            # Auch hier gilt R4-01: Host und X-Forwarded-Host kommen vom Anfragenden. Hält die
+            # abgeleitete Basis der Prüfung nicht stand, bleibt die Login-URL relativ — der
+            # Browser löst sie gegen den aufgerufenen Host auf, ein fremder Name kommt so
+            # nicht in die Umleitung.
+            base = self.public_base(kandidat=f"{proto}://{host}")
         if base and not self.cfg.cookie_domain:
             # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
             # und X-Forwarded-* bereits ausgewertet. Die Whitelist trusted_redirect_hosts ist
@@ -1626,6 +1630,42 @@ class TinySesam:
                     "img-src 'self' data:; base-uri 'none'; "
                     "frame-ancestors 'self'; object-src 'none'")
         return csp.replace("{nonce}", nonce)
+
+    def public_base(self, request: Optional[Request] = None, kandidat: str = "") -> str:
+        """Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links,
+        Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
+
+        Bis 0.18.0 leiteten zehn Stellen diese Adresse selbst aus der Anfrage ab — sechsmal als
+        `cfg.base_url or str(request.base_url)` (Magic-Link, Reset, Bestätigung, OIDC-Post-Logout,
+        OIDC-Redirect-URI, Admin-Einladung), dreimal für SAML und einmal in der Forward-Auth-
+        Umleitung. Der abgeleitete Teil ist der rohe `Host`-Header und damit eine Eingabe des
+        Angreifers: Wer für ein
+        fremdes Postfach „Passwort vergessen" anstößt und dabei `Host: angreifer.example`
+        setzt, ließ TinySesam eine echte Mail mit einem echten Reset-Token verschicken, deren
+        Link auf den Server des Angreifers zeigte (R4-01/R8-4, CWE-644). `trusted_redirect_hosts`
+        schützte nur `?next=`, nicht diesen Weg.
+
+        Jetzt gilt: `base_url` gewinnt immer — steht sie, kommt gar nichts aus dem Request.
+        Sonst wird der abgeleitete Host geprüft (`security.eigener_host`), und nur ein
+        Host aus `trusted_redirect_hosts` oder eine Loopback-Adresse zählt als der eigene.
+
+        `kandidat` erlaubt einer Route, eine anders abgeleitete Basis prüfen zu lassen (SAML
+        wertet `X-Forwarded-Proto/Host` selbst aus) — geprüft wird sie nach derselben Regel.
+        """
+        if self.cfg.base_url:
+            return str(self.cfg.base_url).rstrip("/")
+        roh = kandidat or (str(request.base_url) if request is not None else "")
+        basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
+        if not basis and roh:
+            # Einmal laut sagen, warum nichts passiert — sonst sucht der Betreiber den Fehler
+            # beim Mailer. fail2ban liest diesen Logger mit: ein Sturm gleicher Zeilen wäre
+            # selbst ein Befund, deshalb steht der Hinweis auf base_url in der Zeile.
+            security.seclog.warning(
+                "Kein vertrauenswürdiger öffentlicher Host: %s stammt aus dem Host-Header und "
+                "steht weder in trusted_redirect_hosts noch ist er Loopback. Der Vorgang bricht "
+                "ab (sonst ginge ein Link auf einen fremden Host hinaus). Abhilfe: base_url setzen.",
+                security.fuer_log(roh))
+        return basis
 
     def safe_next(self, next_: str) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).

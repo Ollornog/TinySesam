@@ -546,6 +546,12 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   kind="pin"|"password")`, Guard `Depends(auth.require_resource(name))`, ganz ohne Benutzerkonto.
 - **Magic-Link:** `magiclink_enabled` + SMTP-Config **oder** `auth.set_mailer(fn)`; `/auth/magic/request`,
   eingelöst unter `/auth/magic/{token}` — **dieser Endpunkt ist der Anmelde-Link und sonst nichts.**
+- **Jeder verschickte Link braucht `base_url`.** Sie ist die einzige Quelle für die Adresse in
+  Reset-, Magic-, Bestätigungs- und Einladungsmails. Ohne sie bliebe nur der `Host`-Header der
+  Anfrage — den setzt der *Anfragende*, und wer einen Reset für ein fremdes Postfach anstößt,
+  könnte den Link so auf seinen eigenen Server zeigen lassen. Ein abgeleiteter Host gilt deshalb
+  nur, wenn er in `trusted_redirect_hosts` steht oder Loopback ist; sonst geht **keine Mail
+  hinaus** (fail closed, mit Logzeile und Konfigurations-Warnung).
 - **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
   Jeder verschickte Link hat **seinen eigenen Endpunkt**: `/auth/verify/{token}` (Adresse bestätigen),

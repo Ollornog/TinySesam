@@ -105,6 +105,64 @@ def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:
     return default
 
 
+def eigener_host(host: str, allowed_hosts=None) -> bool:
+    """Darf dieser Host in eine Adresse, die das Haus verlässt (Mail-Link, Redirect-URI)?
+
+    Der Host aus `request.base_url` ist der rohe `Host`-Header, also eine **Eingabe des
+    Clients** — kein Proxy und kein ASGI-Server prüft ihn. Wer eine Reset-Mail für ein fremdes
+    Postfach anstößt und dabei `Host: angreifer.example` setzt, bekam bis 0.18.0 genau diesen
+    Host in den Link, den das Opfer per Mail erhält (R4-01/R8-4). Deshalb gilt ein abgeleiteter
+    Host nur, wenn er beweisbar der eigene ist:
+
+    * er steht in `trusted_redirect_hosts` — derselbe Kreis, dem schon `?next=` trauen darf, oder
+    * er ist eine Loopback-Adresse. Ein Link auf `localhost` nützt keinem Angreifer: er landet
+      beim Empfänger selbst. Damit bleibt der lokale Aufbau ohne `base_url` benutzbar.
+
+    Alles andere ist ein Fremdname. Der Aufrufer bricht dann ab — eine Mail, die gar nicht
+    hinausgeht, ist besser als eine mit einem Link auf den Server des Angreifers.
+    """
+    h = (host or "").strip().strip("[]").lower()
+    if not h:
+        return False
+    if allowed_hosts and h in {str(a).strip().lower() for a in allowed_hosts if a}:
+        return True
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
+    """Eine abgeleitete Basis-URL prüfen: Rückgabe ohne Schrägstrich am Ende, oder "" (fail closed).
+
+    Leer heißt: es gibt keine vertrauenswürdige öffentliche Adresse. Nicht raten — abbrechen.
+    """
+    roh = str(kandidat or "").strip()
+    if not roh:
+        return ""
+    try:
+        teile = urlsplit(roh)
+    except Exception:
+        return ""
+    if teile.scheme not in ("http", "https") or not teile.netloc:
+        return ""
+    host = teile.hostname or ""
+    if not eigener_host(host, allowed_hosts):
+        return ""
+    # Neu zusammengesetzt statt `netloc` übernommen: eine Benutzerangabe im Host
+    # (`https://vertraut.example@…`) wäre sonst Teil jedes ausgehenden Links. Geprüft wird
+    # ohnehin nur `hostname`, also darf auch nur der hinaus.
+    try:
+        port = teile.port
+    except ValueError:
+        return ""
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{teile.scheme}://{host}" + (f":{port}" if port else "")
+
+
 def is_trusted(ip: str, trusted_nets) -> bool:
     try:
         addr = ipaddress.ip_address(ip)

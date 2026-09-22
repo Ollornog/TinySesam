@@ -14,7 +14,10 @@ sent = []   # abgefangene Mails
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
-                                 cookie_secure=False, magiclink_enabled=True, magiclink_ttl_min=15))
+                                 cookie_secure=False, magiclink_enabled=True, magiclink_ttl_min=15,
+                                 # Seit R4-01 baut TinySesam Mail-Links nur aus einer zugesagten
+                                 # öffentlichen Adresse, nicht mehr aus dem Host-Header.
+                                 base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, subject, text, html=None: sent.append({"to": to, "subject": subject, "text": text}))
 auth.ensure_admin("admin", "geheim123")
 uid = auth.store.get_user_by_name("admin")["id"]

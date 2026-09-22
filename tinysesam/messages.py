@@ -46,6 +46,7 @@ MESSAGES = {
         "api.password_wrong": 'Current password is wrong',
         "api.password_short": 'Password too short (min. {n})',
         "api.saml_denied": 'SAML: no access',
+        "api.no_public_base": 'No trusted public address configured (base_url)',
 
         # --- generic / errors ---
         "or": "or",
@@ -70,6 +71,7 @@ MESSAGES = {
         "err.email_invalid": "Please enter a valid email address",
         "err.email_taken": "That email is already registered",
         "err.verify_no_mailer": "Email confirmation is switched on, but no mailer is configured.",
+        "err.no_public_base": "No trusted public address configured — the confirmation link cannot be built. Please set base_url.",
         "err.claim": "Invalid or expired token.",
         "demo.title": "Demo mode",
         "demo.creds": "Sign in as {user} or {admin} — password <b>{pw}</b>. Click a name to fill the form.",
@@ -272,6 +274,7 @@ MESSAGES = {
         "api.password_wrong": 'aktuelles Passwort falsch',
         "api.password_short": 'Passwort zu kurz (min. {n})',
         "api.saml_denied": 'SAML: kein Zugriff',
+        "api.no_public_base": 'keine vertrauenswürdige öffentliche Adresse konfiguriert (base_url)',
 
         "or": "oder",
         "back": "Zurück",
@@ -295,6 +298,7 @@ MESSAGES = {
         "err.email_invalid": "Bitte eine gültige E-Mail-Adresse angeben",
         "err.email_taken": "Diese E-Mail ist bereits registriert",
         "err.verify_no_mailer": "E-Mail-Bestätigung ist aktiv, aber kein Mailer konfiguriert.",
+        "err.no_public_base": "Keine vertrauenswürdige öffentliche Adresse konfiguriert — der Bestätigungslink lässt sich nicht bauen. Bitte base_url setzen.",
         "err.claim": "Token ungültig oder abgelaufen.",
         "demo.title": "Demo-Modus",
         "demo.creds": "Anmelden als {user} oder {admin} — Passwort <b>{pw}</b>. Klick auf einen Namen füllt das Formular.",

@@ -103,6 +103,24 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   ohne `ldap_bind_password` lehnt ldap3 ab, der Fehler wurde im Login verschluckt und sah für
   jeden Nutzer wie ein falsches Passwort aus — die Kombination meldet jetzt die
   Konfigurationsprüfung beim Aufbau.
+- **Der `Host`-Header vergiftete Reset-, Anmelde- und Bestätigungslink.** An zehn Stellen leitete
+  TinySesam die öffentliche Adresse aus der Anfrage selbst ab — sechsmal als
+  `cfg.base_url or str(request.base_url)` (Magic-Link, Reset, Bestätigung, OIDC-Post-Logout,
+  OIDC-Redirect-URI, Admin-Einladung), dreimal für SAML, einmal in der Forward-Auth-Umleitung.
+  Der abgeleitete Teil ist der rohe `Host`-Header, also eine Eingabe des Anfragenden (kein Proxy
+  und kein ASGI-Server prüft ihn). Wer „Passwort vergessen" für ein **fremdes** Postfach
+  anstieß und dabei `Host:` setzte, ließ die echte App
+  eine echte Mail mit einem **gültigen Reset-Token** verschicken, deren Link auf den Server des
+  Angreifers zeigte; dasselbe für Magic-Link, E-Mail-Bestätigung und Admin-Einladung.
+  `trusted_redirect_hosts` schützte nur `?next=`, nicht diesen Weg (CWE-644). Jetzt entscheidet
+  überall `TinySesam.public_base()`: `base_url` gewinnt, sonst gilt ein abgeleiteter Host nur,
+  wenn er in `trusted_redirect_hosts` steht oder Loopback ist — andernfalls bricht der Vorgang ab
+  (keine Mail, sichtbarer Fehler statt geratener Adresse). Dieselbe Prüfung deckt
+  OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS und die Forward-Auth-Umleitung.
+  `konfigpruefung` nannte `base_url` bisher mit keinem Wort und warnt jetzt, sobald eine dieser
+  Funktionen ohne sie läuft. **Für Betreiber:** Wer bisher ohne `base_url` fuhr, muss sie setzen —
+  sonst gehen Mail-Links nicht mehr hinaus (fail closed, mit Logzeile und Konfigurations-Warnung).
+  Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

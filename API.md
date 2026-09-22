@@ -242,6 +242,10 @@ Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrier
 
 User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0).
 
+### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+
+Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
+
 ### `purge_demo() -> 'int'`
 
 Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine gleichnamigen.
@@ -474,4 +478,4 @@ Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau ge�
 
 ---
 
-107 Methoden, 6 Presets — erzeugt aus den Docstrings.
+108 Methoden, 6 Presets — erzeugt aus den Docstrings.

@@ -14,7 +14,10 @@ def build(**cfgkw):
     sent = []
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
-                                     cookie_secure=False, **cfgkw))
+                                     cookie_secure=False,
+                                     # Der Bestätigungslink kommt seit R4-01 aus base_url,
+                                     # nicht mehr aus dem Host-Header (überschreibbar).
+                                     **{"base_url": "https://auth.example.com", **cfgkw}))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
     auth.ensure_admin("admin", "geheim123")
     app = FastAPI()

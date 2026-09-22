@@ -533,6 +533,12 @@ All optional (on/off by config), usable individually and combined, front end rep
   kind="pin"|"password")`, guard `Depends(auth.require_resource(name))`, with no user account at all.
 - **Magic-link:** `magiclink_enabled` + SMTP config **or** `auth.set_mailer(fn)`; `/auth/magic/request`,
   redeemed at `/auth/magic/{token}` — **that endpoint is the sign-in link and nothing else.**
+- **Every mailed link needs `base_url`.** It is the only source for the address in reset, magic,
+  confirmation and invitation mails. Without it TinySesam would have to fall back to the request's
+  `Host` header — which the *requester* sets, so an attacker triggering a reset for someone else's
+  mailbox could point the link at their own server. A derived host is therefore only accepted if
+  it is listed in `trusted_redirect_hosts` or is loopback; otherwise **no mail goes out** (fail
+  closed, with a log line and a config warning).
 - **Registration + invitation:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   admin invite `auth.create_invite(email, base_url, roles=…)`. Each mailed link has **its own
   endpoint**: `/auth/verify/{token}` (address confirmation), `/auth/invite/{token}` (invitation),

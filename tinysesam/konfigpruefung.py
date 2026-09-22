@@ -55,6 +55,17 @@ BRAUCHT_MAILER = {
     "signup_verify_email": "E-Mail-Bestätigung bei der Registrierung",
 }
 
+#: Was eine **absolute** Adresse nach draußen baut: Mail-Links, Redirect-URIs, SAML-Metadaten.
+#: Fehlt `base_url`, bliebe dafür nur der `Host`-Header — und den setzt der Anfragende (R4-01).
+BRAUCHT_BASE_URL = {
+    "magiclink_enabled": "Magic-Link und Einladung (Link in der Mail)",
+    "password_reset_enabled": "„Passwort vergessen\" (Reset-Link in der Mail)",
+    "signup_verify_email": "E-Mail-Bestätigung (Bestätigungslink in der Mail)",
+    "oidc_enabled": "OIDC (Redirect-URI zum IdP)",
+    "saml_enabled": "SAML (Entity-ID und ACS-URL)",
+    "forward_auth_enabled": "Forward-Auth (Umleitung des Proxys auf die Login-Seite)",
+}
+
 
 def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
@@ -92,7 +103,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     unbekannt = sorted({f for felder in PFLICHTFELDER.values() for f in felder
                         if not hasattr(config, f)}
                        | {v for v in VERFAHREN.values() if not hasattr(config, v)}
-                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)})
+                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)}
+                       | {f for f in BRAUCHT_BASE_URL if not hasattr(config, f)}
+                       | {f for f in ("base_url", "trusted_redirect_hosts")
+                          if not hasattr(config, f)})
     if unbekannt:
         fehler.append(
             f"Die Konfigurationsprüfung nennt Felder, die es in TinySesamConfig nicht gibt: "
@@ -157,6 +171,25 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         fehler.append(
             "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
             "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
+
+    # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
+    # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem
+    # `Host`-Header, also aus einer Eingabe des Anfragenden. Seit dieser Fassung lehnt die
+    # Laufzeit einen fremden Host ab (`TinySesam.public_base`) — die Funktion ist damit nicht
+    # unsicher, sondern schlicht aus. Warnung statt Fehler, weil zweierlei legitim bleibt: der
+    # lokale Aufbau (Loopback zählt als eigener Host) und ein `base_url`, das erst nach dem
+    # Konstruktor gesetzt wird (die Config wird zur Request-Zeit gelesen).
+    if not str(getattr(config, "base_url", "") or "").strip():
+        betroffen = [wofuer for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
+        if betroffen:
+            warnungen.append(
+                "base_url ist leer, aber diese Funktionen bauen absolute Adressen: "
+                + "; ".join(betroffen)
+                + ". Als Quelle bliebe der Host-Header der jeweiligen Anfrage — den setzt der "
+                "Anfragende, und bei einer Mail an ein fremdes Postfach ist das der Angreifer. "
+                "TinySesam lässt deshalb nur Hosts aus trusted_redirect_hosts und Loopback "
+                "durch und bricht sonst ab (es geht keine Mail hinaus, der Flow endet mit "
+                "einem Fehler). Abhilfe: base_url auf die öffentliche Adresse setzen.")
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():

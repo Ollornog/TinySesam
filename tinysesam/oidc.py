@@ -258,8 +258,14 @@ def register_oidc_routes(router, auth):
         security.seclog.info("OIDC-Redirect-URI: %s", cfg.base_url.rstrip("/") + cfg.oidc_callback_path)
 
     def _redirect_uri(request: Request):
-        base = cfg.base_url or str(request.base_url).rstrip("/")
-        return base.rstrip("/") + cfg.oidc_callback_path
+        # Die Redirect-URI entscheidet, wohin der IdP den Autorisierungs-Code schickt. Aus dem
+        # Host-Header abgeleitet wäre sie durch den Anfragenden bestimmbar; ein IdP mit locker
+        # gepflegten Redirect-URIs würde den Code dann an einen fremden Host ausliefern
+        # (R4-01). Ohne geprüfte Basis bricht der Flow ab, statt sie zu raten.
+        base = auth.public_base(request)
+        if not base:
+            raise HTTPException(500, auth.t("api.no_public_base"))
+        return base + cfg.oidc_callback_path
 
     # Der Flow wird an den BROWSER gebunden, nicht nur an den `state`. Ohne das kann ein
     # Angreifer den Flow bei sich starten, sich beim IdP als er selbst anmelden und das Opfer

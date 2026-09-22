@@ -277,9 +277,15 @@ def build_router(auth) -> APIRouter:
             if not auth.rate_ok(ip):
                 return auth.render_page("magic_request", request=request, status=429, next=nxt, sent=False,
                                         error=auth.t("err.rate"))
-            base = cfg.base_url or str(request.base_url)
+            # Ohne vertrauenswürdige öffentliche Adresse geht KEINE Mail hinaus: der Link
+            # käme aus dem Host-Header des Anfragenden, und den setzt bei einer Mail an ein
+            # fremdes Postfach der Angreifer (R4-01).
+            base = auth.public_base(request)
             try:
-                auth.send_login_link(email.strip(), base, nxt)
+                if not base:
+                    auth.audit("magic_send_no_base", detail=email)
+                else:
+                    auth.send_login_link(email.strip(), base, nxt)
             except Exception:
                 auth.audit("magic_send_error", detail=email)   # Fehler nicht nach außen leaken
             # immer dieselbe Antwort (keine User-Enumeration)
@@ -385,9 +391,12 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
-            base = cfg.base_url or str(request.base_url)
+            base = auth.public_base(request)   # fail closed, siehe /auth/magic/request
             try:
-                auth.send_password_reset(email.strip(), base)
+                if not base:
+                    auth.audit("reset_send_no_base", detail=email)
+                else:
+                    auth.send_password_reset(email.strip(), base)
             except Exception:
                 auth.audit("reset_send_error", detail=email)
             return auth.render_page("forgot", request=request, sent=True, error="")   # generisch (keine Enumeration)
@@ -477,6 +486,11 @@ def build_router(auth) -> APIRouter:
             verify = cfg.signup_verify_email and not inv
             if verify and not auth.mail_configured():
                 return err(auth.t("err.verify_no_mailer"), 500)
+            # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
+            # das mangels Bestätigungsmail nie freigeschaltet werden kann.
+            verify_base = auth.public_base(request) if verify else ""
+            if verify and not verify_base:
+                return err(auth.t("err.no_public_base"), 500)
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
@@ -485,7 +499,7 @@ def build_router(auth) -> APIRouter:
             # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
-                auth.send_verify_email(uid, email_final, cfg.base_url or str(request.base_url))
+                auth.send_verify_email(uid, email_final, verify_base)
                 return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
@@ -632,8 +646,12 @@ def build_router(auth) -> APIRouter:
             except Exception:
                 factors = []
             if s and (s["method"] == "oidc" or "oidc" in factors):
-                base = (cfg.base_url or str(request.base_url)).rstrip("/")
-                oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
+                # Ohne vertrauenswürdige Basis KEIN post_logout_redirect_uri: sonst schickte
+                # der IdP das Opfer nach dem Logout auf den Host aus dem Host-Header. Der
+                # lokale Logout unten läuft trotzdem, nur eben ohne Provider-Umweg.
+                base = auth.public_base(request)
+                if base:
+                    oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
         if u:
             auth.audit("logout", u["username"], auth.client_ip(request))
         resp = RedirectResponse(oidc_logout_url or cfg.logout_redirect, 303)
@@ -702,9 +720,18 @@ def build_router(auth) -> APIRouter:
         # POST same-site und kommt durch, für einen echten IdP ist dieser Aufbau ohnehin keiner.
         _SAMLFLOW = "tinysesam_saml_flow"
 
+        # SAML baut aus der Basis die eigene Entity-ID und die ACS-URL. Kommt sie aus dem
+        # Host-Header, wandert ein fremder Name in den AuthnRequest und in die Metadaten —
+        # deshalb hier kein Weiterarbeiten ohne geprüfte Basis (R4-01).
+        def _saml_basis(request: Request) -> str:
+            basis = auth.public_base(request, _saml_base(request))
+            if not basis:
+                raise HTTPException(500, auth.t("api.no_public_base"))
+            return basis
+
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "/"):
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
             resp = RedirectResponse(url, 303)
             resp.set_cookie(_SAMLFLOW, rid or "", max_age=600, httponly=True,
@@ -716,7 +743,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
         async def saml_acs(request: Request):
             form = await request.form()
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             data = auth.saml.process(_saml_req(request, form), base,
                                      request_id=request.cookies.get(_SAMLFLOW) or "")
             if not data:
@@ -738,7 +765,7 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/auth/saml/metadata")
         def saml_metadata(request: Request):
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             return _Resp(content=auth.saml.metadata(base), media_type="application/xml")
 
     # ---------- API-Keys: Self-Service für den eingeloggten User ----------

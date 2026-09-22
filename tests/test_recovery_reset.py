@@ -15,7 +15,9 @@ sent = []
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, magiclink_enabled=True, password_reset_enabled=True,
-                                 recovery_code_count=6))
+                                 recovery_code_count=6,
+                                 # Mail-Links brauchen seit R4-01 eine zugesagte Adresse.
+                                 base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
 auth.ensure_admin("admin", "geheim123")
 uid = auth.store.get_user_by_name("admin")["id"]
@@ -91,7 +93,7 @@ db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 post_x = []
 ax = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_x, cookie_secure=False,
                                passkey_enabled=False, password_reset_enabled=True,
-                               magiclink_enabled=False))
+                               magiclink_enabled=False, base_url="https://auth.example.com"))
 ax.set_mailer(lambda to, subject, text, html=None: post_x.append(text))
 ax.create_user("ohne", "altes-geheim", email="ohne@example.com")
 appx = FastAPI()

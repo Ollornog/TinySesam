@@ -56,6 +56,7 @@
     "next_login_step": "(user_id, done)",
     "peek_magic": "(raw, purpose=None) -> 'Optional[dict]'",
     "pending_user": "(request) -> 'Optional[dict]'",
+    "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
     "purge_demo": "() -> 'int'",
     "rate_ok": "(ip) -> 'bool'",
     "record_login": "(username, ip, success, method)",
