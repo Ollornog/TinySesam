@@ -54,6 +54,22 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Das ID-Token bestimmt nicht mehr selbst, wie es geprüft wird.** `authlib.jose.jwt` ist ein
+  Dekoder mit Vorgabesatz, und dieser Satz enthält HS256: Wird beim Dekodieren kein Verfahren
+  genannt, entscheidet der **Header des Tokens** — also der Absender. Bis authlib 1.3.0 liess sich
+  damit ein ID-Token mit dem öffentlichen Schlüssel aus dem JWKS als HMAC-Geheimnis fälschen
+  (GHSA-5357-c2jx-v7qh, Algorithmen-Konfusion); der öffentliche Schlüssel ist per Definition
+  öffentlich, das `sub` hätte der Angreifer sich ausgesucht. Dazu passte der deklarierte Boden:
+  `authlib>=1.3` erlaubte genau diese Fassung, und wer eine Fassung festhält (Lockfile,
+  Constraints, Distributionspaket), bekam sie auch. Jetzt beides — `OIDCClient.ID_TOKEN_ALGS`
+  nennt ausschliesslich asymmetrische Verfahren (RS/PS/ES/EdDSA) und wird beim Dekodieren gesetzt,
+  versionsunabhängig; eine spätere Erweiterung um HS\* oder `none` weist der Client mit
+  `ConfigError` ab. Und die Untergrenzen sind gehoben, auf den gemessenen lückenfreien Boden
+  (OSV, Stand 2026-09-22): `fastapi>=0.133.0` (erst ab da ist starlette >= 1.3.1 erlaubt),
+  `python-multipart>=0.0.31`, `authlib>=1.6.12`. **Keine** oberen Schranken — ein Deckel in einer
+  Bibliothek blockiert genau die Aktualisierung, die den nächsten Fix bringt.
+  `tests/test_packaging.py` misst die Grenzen gegen eine eingefrorene Tabelle mit, damit der Boden
+  nicht wieder altert. Gefunden im dritten Audit (B4-1 aus [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

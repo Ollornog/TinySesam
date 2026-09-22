@@ -60,6 +60,15 @@ class OIDCClient:
     #: jedes kaputte id_token einen Abruf beim Provider aus — ein bequemer Weg, ihn von hier aus
     #: zu belasten.
     JWKS_MIN_ABSTAND = 60
+    #: Signaturverfahren, die für ein ID-Token gelten — bewusst NUR asymmetrische.
+    #: Geprüft wird gegen das **öffentliche** JWKS des Providers; ein HMAC-Verfahren ergäbe hier
+    #: nie einen Sinn, denn das Geheimnis wäre ein öffentlicher Schlüssel. Genau darauf zielt die
+    #: Algorithmen-Konfusion: Der Angreifer setzt `alg: HS256`, signiert mit dem öffentlichen
+    #: Schlüssel aus dem JWKS als HMAC-Geheimnis und schreibt sich ins `sub`, das er will.
+    #: Wer die Liste erweitert, muss beim asymmetrischen Verfahren bleiben — `_dekoder()` weist
+    #: alles andere ab.
+    ID_TOKEN_ALGS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+                     "ES256", "ES384", "ES512", "EdDSA")
 
     def meta(self, erzwingen: bool = False):
         # `self._meta_zeit and …`: Wer die Metadaten von aussen setzt (Tests ohne Netz, oder ein
@@ -112,6 +121,30 @@ class OIDCClient:
             self._jwks_zeit = time.time()
         return self._jwks
 
+    def _dekoder(self):
+        """Der JWT-Dekoder für das ID-Token — mit **fester** Algorithmenliste.
+
+        `authlib.jose.jwt` ist ein fertiger Dekoder mit Vorgabesatz, und dieser Satz enthält
+        HS256. Wird kein Verfahren genannt, sucht sich der **Header des Tokens** aus, wie geprüft
+        wird — die Entscheidung liegt damit beim Absender. Bis authlib 1.3.0 liess sich so mit dem
+        öffentlichen Schlüssel als HMAC-Geheimnis ein gültiges ID-Token fälschen
+        (GHSA-5357-c2jx-v7qh); die Gegenmassnahme dort deckt nur einige Schlüsselformate ab.
+        Die installierte Fassung darf nicht die Frage sein: Hier wird der Satz selbst gesetzt.
+        """
+        try:
+            from authlib.jose import JsonWebToken
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
+        # Fail-closed gegen eine spätere Erweiterung (auch aus einer Unterklasse heraus): Alles,
+        # was kein RSA-, PSS-, ECDSA- oder EdDSA-Verfahren ist, käme ohne privaten Schlüssel aus.
+        fremd = [a for a in self.ID_TOKEN_ALGS if not str(a).startswith(("RS", "PS", "ES", "Ed"))]
+        if fremd:
+            raise errors.ConfigError(
+                f"OIDC: ID_TOKEN_ALGS nennt {fremd}. Das ID-Token wird gegen das öffentliche JWKS "
+                "des Providers geprüft — ein HMAC-Verfahren (HS*) oder 'none' macht damit den "
+                "öffentlichen Schlüssel zum Signaturgeheimnis. Nur asymmetrische Verfahren.")
+        return JsonWebToken(list(self.ID_TOKEN_ALGS))
+
     def _jwks_auffrischbar(self) -> bool:
         """Darf jetzt ausserplanmässig neu geholt werden? (Drosselung gegen Fremdlast.)"""
         return (time.time() - self._jwks_zeit) > self.JWKS_MIN_ABSTAND
@@ -131,9 +164,9 @@ class OIDCClient:
         t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
         try:
             import httpx
-            from authlib.jose import jwt
         except ModuleNotFoundError as e:
             raise _fehlt_extra(e) from e
+        dekoder = self._dekoder()
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data={
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "client_id": self.client_id, "client_secret": self.client_secret}).json()
@@ -142,7 +175,7 @@ class OIDCClient:
         optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
                     "aud": {"essential": True, "value": self.client_id}}
         try:
-            claims = jwt.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
+            claims = dekoder.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
         except Exception:
             # Scheitert die Signatur, ist der wahrscheinlichste Grund eine Schlüsselrotation
             # beim Provider: Das Token nennt eine `kid`, die unser Set noch nicht kennt. Einmal
@@ -152,7 +185,8 @@ class OIDCClient:
                 raise
             security.seclog.warning(
                 "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
-            claims = jwt.decode(tok["id_token"], self._jwkset(erzwingen=True), claims_options=optionen)
+            claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
+                                    claims_options=optionen)
         claims.validate()  # exp/iat/nbf
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, t("api.oidc_nonce"))
