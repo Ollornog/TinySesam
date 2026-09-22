@@ -64,6 +64,20 @@ def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
     return cast(Literal["lax", "strict", "none"], wert)
 
 
+def _beleg_am_konto(user) -> bool:
+    """Der Vermerk `users.email_verified` einer Kontozeile.
+
+    Fehlt die Spalte — eine Zeile aus einer fremden Quelle, ein Testaufbau mit einem
+    Wörterbuch —, gilt „bestätigt": genau der Stand jeder Installation vor dieser Spalte,
+    also keine stille Verschärfung für Bestandsdaten. Wo ein Anmeldeweg es besser weiss,
+    reist der Beleg ohnehin als Parameter mit (`maybe_promote_admin(user, email_bestaetigt=…)`)
+    und gewinnt."""
+    try:
+        return bool(user["email_verified"])
+    except (IndexError, KeyError, TypeError):
+        return True
+
+
 #: Welcher Schalter welches Extra braucht — Schalter → (Modul, Extra).
 #: Steht hier, nicht im Test: Eine Kopie in tests/ wäre beim nächsten neuen Verfahren still
 #: veraltet. Der Test prüft jetzt GEGEN diese Tabelle.
@@ -333,7 +347,8 @@ class TinySesam:
         return None
 
     def create_user(self, username, password=None, is_admin=False, roles=None,
-                    display_name=None, email=None, is_service=False) -> int:
+                    display_name=None, email=None, is_service=False,
+                    email_verified: bool = True) -> int:
         """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
 
         Benutzername und E-Mail müssen **kreuzweise** frei sein (`kennung_vergeben`) — sonst
@@ -341,7 +356,15 @@ class TinySesam:
         damit sie für JEDEN Weg gilt: Selbst-Registrierung, Admin-API, Einladung, Erst-Admin
         (`ensure_admin`), Service-Konten (`create_service`) und die automatische Anlage aus
         OIDC/LDAP/SAML. Das CLI ist bewusst nicht dabei: Es kann keine Konten anlegen
-        (`version`, `passwd`, `backup`, `restore`, `gc`, `audit`, `unlock`)."""
+        (`version`, `passwd`, `backup`, `restore`, `gc`, `audit`, `unlock`).
+
+        `email_verified=False` legt die Adresse als **unbestätigt** ab: geführt und
+        weitergereicht wie jede andere, aber ohne Tragkraft für Rechte (Erst-Admin/Allowlist,
+        siehe `maybe_promote_admin`). Das ist der Fall eines IdP ohne den Claim `email_verified`.
+        Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber oder eine Bestätigungsmail
+        für die Adresse einsteht (Admin-API, Erst-Admin, Service-Konten, Einladung, Registrierung
+        — dort verlangt der Konstruktor-Wächter `signup_verify_email`, sobald eine
+        Allowlist-Adresse im Spiel ist)."""
         username = (username or "").strip()
         email = norm_email(email)
         for feld, kennung in (("Benutzername", username), ("E-Mail-Adresse", email)):
@@ -350,7 +373,8 @@ class TinySesam:
                 security.seclog.warning(
                     "Konto nicht angelegt: %s ist bereits Login-Kennung von user_id=%s", feld, besitzer["id"])
                 raise ConfigError(f"{feld} ist bereits als Login-Kennung vergeben")
-        uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service)
+        uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
+                                     email_verified=email_verified)
         if password:
             self.store.set_password_hash(uid, hash_password(password))
         return uid
@@ -545,12 +569,20 @@ class TinySesam:
 
         `email_bestaetigt` ist der **Beleg für die Adresse**, mit dem der Aufrufer anreist:
         `True`/`False` sagt ein föderierter Anmeldeweg über den Claim `email_verified`,
-        `None` heisst „kommt nicht von einem fremden IdP" (lokaler Login — dort verbürgt der
-        Konstruktor-Wächter die Bestätigungsmail). Ohne Beleg zählt eine Treffer-Adresse
-        nicht: Sonst genügte ein IdP mit Selbstregistrierung, um sich die Admin-Adresse
-        einzutragen und beim ersten Login Erst-Admin zu werden. Der Benutzername bleibt davon
-        unberührt — für ihn ist der Konstruktor-Wächter zuständig, der Allowlist-Namen
-        verbietet, sobald Konten von selbst entstehen.
+        `None` heisst „dieser Anmeldeweg weiss es nicht" — dann gilt der Vermerk am Konto
+        (`users.email_verified`, gelesen von `_beleg_am_konto`). Ohne Beleg zählt eine
+        Treffer-Adresse nicht: Sonst genügte ein IdP mit Selbstregistrierung, um sich die
+        Admin-Adresse einzutragen und beim ersten Login Erst-Admin zu werden.
+
+        **Warum der Vermerk und nicht nur der Parameter:** Die Adresse eines IdP ohne den Claim
+        wird seit dieser Fassung ganz normal ins Konto geschrieben (sonst verlöre eine bestehende
+        Installation Kontoname und `Remote-Email`) — sie darf nur nichts tragen. Hinge das allein
+        am Parameter, wäre der Schutz eine Frage des Anmeldewegs: derselbe Datensatz, einmal über
+        einen lokalen Weg (Magic-Link, Passwort) angemeldet, käme mit `None` herein und wäre
+        befördert worden. Der Vermerk steht in der Datenbank und gilt deshalb für jeden Weg.
+
+        Der Benutzername bleibt davon unberührt — für ihn ist der Konstruktor-Wächter zuständig,
+        der Allowlist-Namen verbietet, sobald Konten von selbst entstehen.
         """
         ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
         if not ids or not user or user["is_admin"] or self.admin_exists():
@@ -559,11 +591,14 @@ class TinySesam:
         namen = ids - adressen
         trifft_adresse = str(user["email"] or "").lower() in adressen
         trifft_name = str(user["username"] or "").lower() in namen
-        if trifft_adresse and not trifft_name and email_bestaetigt is False:
+        beleg = email_bestaetigt if email_bestaetigt is not None else _beleg_am_konto(user)
+        if trifft_adresse and not trifft_name and beleg is False:
             security.seclog.warning(
-                "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, der Anbieter "
-                "hat sie aber nicht als bestätigt gemeldet (email_verified). Belegter Weg: "
-                "/auth/claim-admin.", user["username"], user["email"])
+                "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, für die kein "
+                "Beleg vorliegt (der Claim email_verified fehlt oder steht auf false; am Konto "
+                "vermerkt als unbestätigt). Die Adresse bleibt am Konto, sie trägt nur diese "
+                "Entscheidung nicht. Belegter Weg: /auth/claim-admin.",
+                user["username"], user["email"])
             self.audit("admin_bootstrap_denied", user["username"], detail="email_unbestaetigt")
             return False
         if not (trifft_adresse or trifft_name):

@@ -75,12 +75,26 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Adresse — der OIDC-Weg las `email` dagegen bedingungslos und übersah den Standard-Claim
   `email_verified` (OIDC Core 5.1). Wer sich bei einem IdP mit Selbstregistrierung oder in einem
   zweiten Mandanten die Admin-Adresse eintrug, war beim ersten Login Erst-Admin. Jetzt gilt ein
-  fehlender Claim als *unbestätigt* (fail-closed, mit Protokoll- und Audit-Zeile): Die Adresse kommt
-  gar nicht erst ins Konto (neu: `oidc_require_verified_email`, Vorgabe `True` — sie ginge sonst auch
-  als `Remote-Email` an die geschützte App weiter) und trägt in keinem Fall die
-  Erst-Admin-Entscheidung, auch nicht bei einem Bestandskonto, das sie schon führt
-  (`maybe_promote_admin(user, email_bestaetigt=…)`, durchgereicht von `apply_factor`). Adresse und
-  Beleg werden dabei immer aus DEMSELBEN Dokument genommen: Der Callback legt ID-Token und
+  fehlender Claim als *unbestätigt* (fail-closed, mit Protokoll- und Audit-Zeile), und diese
+  Adresse trägt in keinem Fall die Erst-Admin-Entscheidung — auch nicht bei einem Bestandskonto,
+  das sie schon führt, und auch nicht über einen späteren Login, der selbst keinen Beleg
+  mitbringt (`maybe_promote_admin(user, email_bestaetigt=…)`, durchgereicht von `apply_factor`;
+  ohne diesen Parameter entscheidet der Vermerk am Konto). **Geführt wird die Adresse
+  trotzdem:** Getrennt gemerkt wird nur der Beleg, in der neuen Spalte `users.email_verified`
+  (Schema-Version 5; ein `ALTER TABLE` mit `DEFAULT 1` lässt jedes Bestandskonto genau so
+  wirken wie bisher). Die Adresse zu *verwerfen* war die erste Fassung dieses Fixes, und sie
+  kostete mehr, als sie schützte: Ein IdP, der den optionalen Claim nie schickt (Entra ID),
+  liess damit jedes neu angelegte Konto `oidc-<sub>` heissen statt wie die Adresse, und
+  `Remote-Email` ging leer an die geschützte App — dieselbe Person landete nach dem Update in
+  einem *anderen* Konto der App, und Reset wie Magic-Link waren für sie zu. Weil der Claim
+  optional ist, entscheidet neu `oidc_email_verified_default` (Vorgabe `False`), was das
+  **Schweigen** eines Providers bedeutet; wer seine Adressen selbst verantwortet, stellt es auf
+  `True` und kann `admin_identifiers` auch mit so einem IdP nutzen. Ein Claim, der ausdrücklich
+  `false` sagt, bleibt in beiden Fällen ein Nein — und `_flag_wahr` liest ihn in den Formen, die
+  echte Provider senden (`True`, `"true"`, `"True"`, `1`, `"1"`; alles andere, auch die
+  Zeichenkette `"false"`, ist Nein — eine Wahrheitsprüfung auf dem rohen Wert hätte sie
+  durchgelassen, und kein Test hielt das fest). Adresse und
+  Beleg werden immer aus DEMSELBEN Dokument genommen: Der Callback legt ID-Token und
   userinfo-Dokument zusammen, und beim Mischen konnte ein `email_verified=true` aus dem einen an die
   Adresse aus dem anderen geraten. Zweitens hing der Wächter, der Allowlist-**Benutzernamen**
   verbietet, allein an `allow_signup` — beim Auto-Anlegen durch einen IdP (`oidc_auto_create`,

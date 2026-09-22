@@ -277,9 +277,12 @@ one-time token — that one never leaves the operator's console.
 The same applies when an IdP creates the accounts (`oidc_auto_create`, `saml_auto_create`,
 `ldap_auto_create`): the username comes from someone else there too, so an allowlist **name** is
 refused in that setup. An allowlist **address** stays allowed, but with OIDC it only counts when
-the claim `email_verified` says so — without it the address is unconfirmed and (with
-`oidc_require_verified_email=True`, the default) is not written to the account at all. For IdPs
-that never send the claim, the one-time token is the path with proof.
+the claim `email_verified` says so. Without it the address is still stored on the account and
+still goes out as `Remote-Email` — it is merely noted as unconfirmed (`users.email_verified`) and
+carries no rights, on any sign-in path that account uses later. For an IdP that never sends the
+claim (Entra ID): use the one-time token, the path with proof — or, if you vouch for those
+addresses yourself, set `oidc_email_verified_default=True`. A claim that explicitly says `false`
+stays a no either way.
 
 Alternatively `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` seeds an admin before the app
 ever serves a request — best when you deploy from a script.

@@ -102,7 +102,7 @@ Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
 

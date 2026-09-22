@@ -139,11 +139,23 @@ r.check("der Angreifer kommt herein (die Anmeldung selbst bleibt erlaubt)",
 r.check("wer eine UNBESTÄTIGTE IdP-Adresse mitbringt, wird nicht Erst-Admin",
         konto is not None and not konto["is_admin"],
         "er ist Admin — email_verified wird wieder ignoriert")
-r.check("und die unbestätigte Adresse landet gar nicht erst im Konto",
-        konto is not None and not konto["email"],
-        f"gespeichert: {konto['email'] if konto else '—'} — sie ginge als Remote-Email weiter")
 r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exists(),
         "irgendein Weg hat doch befördert")
+# Die Adresse WIRD geführt — sie zu verwerfen war die erste Fassung des Fixes und kostete den
+# Kontonamen und `Remote-Email` (dieselbe Person landete in einem anderen Konto der geschützten
+# App). Getrennt gemerkt wird nur der Beleg; er ist es, der die Rechte trägt.
+r.check("die unbestätigte Adresse bleibt im Konto und geht als Remote-Email weiter",
+        konto is not None and konto["email"] == "chef@example.com"
+        and auth_f.forward_response_headers(konto)["Remote-Email"] == "chef@example.com",
+        f"gespeichert: {konto['email'] if konto else '—'} — ein Gateway verliert die Adresse")
+r.check("… ist aber als unbestätigt vermerkt", konto is not None and not konto["email_verified"],
+        "der Vermerk fehlt — dann trägt sie beim nächsten Login wieder Rechte")
+# Der Vermerk steht in der Datenbank, nicht im Anmeldeweg: Genau hier wäre der Schutz sonst
+# offen. Derselbe Datensatz über einen lokalen Weg (Magic-Link, Passwort) angemeldet reist mit
+# `email_bestaetigt=None` an — vor dem Vermerk hätte das befördert.
+r.check("auch ein Login OHNE Beleg im Gepäck befördert dieses Konto nicht",
+        not auth_f.maybe_promote_admin(auth_f.get_user(konto["id"])),
+        "über einen lokalen Weg ist die unbestätigte Adresse doch Erst-Admin-fähig")
 
 # Gegenprobe — ohne sie wäre die Prüfung oben auch dann grün, wenn OIDC gar nichts täte.
 auth_g, app_g = _oidc_app({**ANGRIFF, "sub": "chefin-1", "preferred_username": "chefin",
@@ -155,16 +167,39 @@ r.check("mit email_verified=true wird der vorgesehene Erst-Admin weiterhin verge
         chefin is not None and chefin["is_admin"] == 1,
         "der dokumentierte Bootstrap-Weg ist zu")
 r.check("und die bestätigte Adresse steht im Konto",
-        chefin is not None and chefin["email"] == "chef@example.com",
+        chefin is not None and chefin["email"] == "chef@example.com"
+        and bool(chefin["email_verified"]),
         f"gespeichert: {chefin['email'] if chefin else '—'}")
 
-# Bestandskonto: Die Adresse steht schon in der Datenbank (vor dem Fix angelegt, oder
-# `oidc_require_verified_email=False`). Auch dann darf ein Login ohne Beleg nicht befördern —
-# sonst hinge der Schutz allein am Nicht-Übernehmen der Adresse.
+# Der Claim ist in OIDC Core 5.1 OPTIONAL, und manche IdPs schicken ihn nie (Entra ID nennt der
+# Code selbst). Wer seine Adressen selbst verantwortet, dreht das Nein für den FEHLENDEN Claim
+# um — sonst wäre `admin_identifiers` für diese IdPs dauerhaft zu.
+auth_v, app_v = _oidc_app({"sub": "entra-1", "preferred_username": "chefin",
+                           "email": "chef@example.com"},        # Claim fehlt ganz
+                          admin_identifiers=["chef@example.com"],
+                          oidc_email_verified_default=True)
+_oidc_login(app_v)
+entra = auth_v.store.get_user_by_name("chefin")
+r.check("mit oidc_email_verified_default=True zählt eine Adresse ohne Claim als belegt",
+        entra is not None and entra["is_admin"] == 1 and bool(entra["email_verified"]),
+        f"Konto: {dict(entra) if entra else None} — für Entra-IdPs bliebe der Weg zu")
+# Der Schalter gilt nur für das SCHWEIGEN des Providers. Sagt er ausdrücklich „nicht bestätigt",
+# wäre ein Ja daraus eine Umgehung seiner Aussage.
+auth_v2, app_v2 = _oidc_app({"sub": "entra-2", "preferred_username": "luegner",
+                             "email": "chef@example.com", "email_verified": False},
+                            admin_identifiers=["chef@example.com"],
+                            oidc_email_verified_default=True)
+_oidc_login(app_v2)
+luegner = auth_v2.store.get_user_by_name("luegner")
+r.check("der Schalter überschreibt aber kein ausdrückliches email_verified=false",
+        luegner is not None and not luegner["is_admin"] and not luegner["email_verified"],
+        "die Vorgabe schlägt die Aussage des Providers")
+
+# Bestandskonto: Die Adresse steht schon in der Datenbank (vor dem Fix angelegt). Auch dann darf
+# ein Login ohne Beleg nicht befördern — sonst hinge der Schutz allein an der Adresse im Konto.
 auth_b3, app_b3 = _oidc_app({"sub": "alt-1", "preferred_username": "altkonto",
                              "email": "chef@example.com"},   # Claim fehlt ganz
-                            admin_identifiers=["chef@example.com"],
-                            oidc_require_verified_email=False)
+                            admin_identifiers=["chef@example.com"])
 alt_uid = auth_b3.create_user("altkonto", email="chef@example.com")
 auth_b3.store.link_oidc(IDP, "alt-1", alt_uid)
 _oidc_login(app_b3)
@@ -178,6 +213,50 @@ r.check("maybe_promote_admin verweigert bei email_bestaetigt=False",
 r.check("und befördert bei einem lokalen Login (kein IdP im Spiel) weiterhin",
         auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid)),
         "der lokale Weg ist zu — dort verbürgt der Konstruktor-Wächter die Bestätigungsmail")
+# Dass der Beleg dieses Bestandskontos den OIDC-Login mit FEHLENDEM Claim überlebt hat, ist die
+# zweite Hälfte derselben Regel: Schweigen ist keine Aussage. Wäre es eine, hätte der Login
+# gerade die Bestätigung gelöscht, die der Betreiber beim Anlegen verbürgt hat.
+r.check("ein fehlender Claim löscht den Vermerk eines Bestandskontos nicht",
+        bool(auth_b3.get_user(alt_uid)["email_verified"]),
+        "das Schweigen des Providers hat den lokalen Beleg überschrieben")
+
+# Umgekehrt zählt eine ausdrückliche Aussage — in beide Richtungen, sonst wäre der Vermerk ein
+# Einwegventil: Ein nachgeliefertes `email_verified=true` müsste ewig ohne Wirkung bleiben, und
+# ein zurückgenommener Beleg bliebe für immer stehen.
+def _claims_setzen(auth, claims):
+    auth.oidc.exchange = lambda code, ru, nonce, t=None: (
+        _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
+
+
+NACH = {"sub": "nach-1", "preferred_username": "nachtrag", "email": "nach@example.com"}
+auth_s, app_s = _oidc_app(NACH)                      # erster Login: Claim fehlt → unbestätigt
+_oidc_login(app_s)
+nach = auth_s.store.get_user_by_name("nachtrag")
+vorher = bool(nach["email_verified"])
+_claims_setzen(auth_s, {**NACH, "email_verified": True})
+_oidc_login(app_s)
+nachher = bool(auth_s.get_user(nach["id"])["email_verified"])
+r.check("liefert der Provider den Beleg nach, zieht der Vermerk am Konto nach",
+        not vorher and nachher, f"vorher={vorher} nachher={nachher}")
+_claims_setzen(auth_s, {**NACH, "email_verified": False})
+_oidc_login(app_s)
+r.check("und nimmt er ihn zurück, fällt der Vermerk wieder",
+        not bool(auth_s.get_user(nach["id"])["email_verified"]),
+        "ein einmal erteilter Beleg bleibt für immer stehen")
+
+# `_flag_wahr` ist der einzige Ort, der aus dem Claim ein Ja/Nein macht. Die Formen stammen aus
+# dem, was echte Provider senden. Entscheidend ist die Zeile `"false"` → Nein: Sie ist der
+# Unterschied zu jeder Wahrheitsprüfung auf dem rohen Wert (`bool("false")` ist wahr), und mit
+# so einer Mutation blieb die Suite vorher grün — eine als „false" gemeldete Adresse wäre
+# wieder Erst-Admin-fähig gewesen.
+from tinysesam.oidc import _flag_wahr  # noqa: E402
+
+for wert, erwartet in [(True, True), ("true", True), ("True", True), (" TRUE ", True),
+                       (1, True), ("1", True),
+                       (False, False), ("false", False), ("False", False), (0, False),
+                       ("0", False), ("", False), (None, False), ("ja", False), ([], False)]:
+    r.check(f"_flag_wahr({wert!r}) → {erwartet}", _flag_wahr(wert) is erwartet,
+            f"ergibt {_flag_wahr(wert)!r}")
 
 
 # Der Beleg gehört zu SEINER Adresse — nicht zu der aus dem anderen Dokument.
@@ -195,9 +274,10 @@ mischer = auth_m.store.get_user_by_name("mischer")
 r.check("ein Beleg aus dem userinfo-Dokument trägt nicht die Adresse aus dem ID-Token",
         mischer is not None and not mischer["is_admin"],
         "Admin — der fremde email_verified wurde auf die ungeprüfte Adresse gemünzt")
-r.check("und diese Adresse landet auch nicht im Konto",
-        mischer is not None and not mischer["email"],
-        f"gespeichert: {mischer['email'] if mischer else '—'}")
+r.check("… und sie steht im Konto als unbestätigt, nicht als belegt",
+        mischer is not None and mischer["email"] == "chef@example.com"
+        and not mischer["email_verified"],
+        f"Konto: {dict(mischer) if mischer else None}")
 
 # Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
 # muss der dortige Beleg ganz normal zählen — sonst wäre der Schutz eine Sperre für alle.

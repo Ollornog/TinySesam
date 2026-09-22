@@ -38,8 +38,15 @@ def _hash(wert: str) -> str:
 
 
 def _flag_wahr(wert) -> bool:
-    """`email_verified` als Ja/Nein. Manche Provider schicken den Wert als Zeichenkette
-    ("true"), deshalb beide Schreibweisen — alles andere, auch ein fehlender Wert, ist Nein."""
+    """`email_verified` als Ja/Nein — für einen Wert, der **da ist**. Ob er fehlt, entscheidet
+    der Aufrufer (`_email_mit_beleg`): Ein fehlender Claim heisst etwas anderes als ein Claim,
+    der `false` sagt.
+
+    Gemessen an dem, was echte Provider senden: `True` (JSON-Boolean, der Standard),
+    `"true"`/`"True"` (als Zeichenkette — verbreitete Abweichung) und `1`/`"1"`. Alles andere
+    ist **Nein**, ausdrücklich auch `"false"` als Zeichenkette: Sie ist nicht leer und wäre für
+    jede Wahrheitsprüfung auf dem rohen Wert (`bool("false")`) ein Ja — genau die Verwechslung,
+    mit der eine unbestätigte Adresse wieder Erst-Admin-fähig würde."""
     if isinstance(wert, bool):
         return wert
     if wert is None:
@@ -47,13 +54,21 @@ def _flag_wahr(wert) -> bool:
     return str(wert).strip().lower() in ("true", "1")
 
 
-def _email_mit_beleg(claims, nutzerinfo) -> tuple:
-    """Adresse UND Beleg immer aus demselben Dokument.
+def _email_mit_beleg(claims, nutzerinfo, vorgabe_wenn_claim_fehlt: bool = False) -> tuple:
+    """Adresse UND Beleg immer aus demselben Dokument. Gibt
+    `(adresse, bestaetigt, ausdruecklich)` — `ausdruecklich` sagt, ob der Provider sich zur
+    Adresse **geäussert** hat oder ob nur die Vorgabe des Betreibers gilt (Schweigen).
 
     OpenID Connect Core 5.1 kennt für die Adresse den Claim `email_verified` („True if the
     End-User's e-mail address has been verified"). **Fehlt er, lautet die Antwort Nein** —
     nicht „vielleicht": Ohne Beleg ist `email` ein Textfeld, das der Anmeldende beim IdP
     selbst gefüllt hat (Selbstregistrierung, zweiter Mandant, öffentlicher Provider).
+
+    Weil der Claim optional ist, darf der Betreiber dieses Nein für seinen IdP umdrehen
+    (`oidc_email_verified_default`, hier `vorgabe_wenn_claim_fehlt`) — er verantwortet die
+    Adressen dann selbst. Das gilt nur für den **fehlenden** Claim: Steht er da und sagt
+    `false`, bleibt die Antwort Nein, sonst wäre der Schalter eine Umgehung der Aussage des
+    Providers.
 
     Entscheidend ist das Wort *derselben*: Der Callback legt userinfo-Dokument und ID-Token
     zu einem Wörterbuch zusammen, und beim Mischen kann der Beleg des einen an die Adresse
@@ -65,8 +80,12 @@ def _email_mit_beleg(claims, nutzerinfo) -> tuple:
     for quelle in (claims, nutzerinfo):
         mail = (quelle or {}).get("email")
         if mail:
-            return mail, _flag_wahr((quelle or {}).get("email_verified"))
-    return None, False
+            # `in` statt `.get()`: Der fehlende Claim ist ein eigener Fall (dann gilt die
+            # Vorgabe des Betreibers), ein vorhandener wird immer gemessen — auch `"false"`.
+            if "email_verified" in (quelle or {}):
+                return mail, _flag_wahr((quelle or {}).get("email_verified")), True
+            return mail, bool(vorgabe_wenn_claim_fehlt), False
+    return None, False, False
 
 
 class OIDCClient:
@@ -331,23 +350,30 @@ def register_oidc_routes(router, auth):
         issuer, sub = oidc.meta()["issuer"], claims["sub"]
 
         # Die E-Mail aus dem ID-Token trägt in TinySesam Entscheidungen: `admin_identifiers`
-        # macht ihren Träger beim ersten Login zum Admin, und `Remote-Email` reicht sie an die
-        # geschützte App weiter, die daran ihrerseits Rechte hängt. Beides setzt voraus, dass
-        # die Adresse dem Anmeldenden wirklich gehört — belegt ist das allein durch
-        # `email_verified`. Wer sich bei einem IdP mit Selbstregistrierung eine beliebige
-        # Adresse einträgt, wurde sonst mit ihr zum Erst-Admin.
-        mail, mail_bestaetigt = _email_mit_beleg(claims, nutzerinfo)
+        # macht ihren Träger beim ersten Login zum Admin. Das setzt voraus, dass die Adresse dem
+        # Anmeldenden wirklich gehört — belegt ist das allein durch `email_verified`. Wer sich
+        # bei einem IdP mit Selbstregistrierung eine beliebige Adresse einträgt, wurde sonst mit
+        # ihr zum Erst-Admin. Adresse und Beleg werden deshalb als Paar geführt: die Adresse wie
+        # bisher ins Konto und in `Remote-Email`, der Beleg als Vermerk daneben.
+        mail, mail_bestaetigt, beleg_ausdruecklich = _email_mit_beleg(
+            claims, nutzerinfo, cfg.oidc_email_verified_default)
         if mail and not mail_bestaetigt:
+            # Die Adresse wird trotzdem geführt. Sie zu verwerfen war die erste Fassung dieses
+            # Fixes, und sie kostete mehr, als sie schützte: Ein IdP ohne den optionalen Claim
+            # (Entra ID) liess damit jedes neu angelegte Konto `oidc-<sub>` heissen statt wie die
+            # Adresse, und `Remote-Email` ging leer an die geschützte App — dieselbe Person
+            # landete nach dem Update in einem anderen Konto der App. Was die Adresse nicht mehr
+            # darf, ist Rechte tragen: Der fehlende Beleg wird am Konto vermerkt
+            # (`email_verified=0`) und gilt von dort für jeden Anmeldeweg dieses Kontos.
             security.seclog.warning(
-                "OIDC: Der Provider meldet %s ohne email_verified — die Adresse gilt als "
-                "unbestätigt%s. Das Admin-Recht aus admin_identifiers hängt in keinem Fall "
-                "daran; der belegte Bootstrap-Weg ist /auth/claim-admin.",
-                mail, " und wird nicht ins Konto übernommen"
-                if cfg.oidc_require_verified_email else "")
+                "OIDC: Der Provider meldet %s ohne Beleg (email_verified fehlt oder ist nicht "
+                "wahr) — die Adresse wird als unbestätigt übernommen und trägt keine Rechte. "
+                "Das Admin-Recht aus admin_identifiers hängt in keinem Fall daran; der belegte "
+                "Bootstrap-Weg ist /auth/claim-admin. Schickt dieser IdP den Claim nie und "
+                "verantwortet der Betreiber die Adressen selbst: "
+                "oidc_email_verified_default=True.", mail)
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
-                       "übernommen=%s" % (not cfg.oidc_require_verified_email))
-            if cfg.oidc_require_verified_email:
-                mail = None
+                       "übernommen=1 rechte=0")
 
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
@@ -355,8 +381,9 @@ def register_oidc_routes(router, auth):
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
                            auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
-            # Ersatzname aus der geprüften Adresse, nicht aus der rohen: Sonst hiesse das
-            # Konto wie eine Adresse, die niemand bestätigt hat.
+            # Ersatzname notfalls aus der Adresse — auch aus einer unbestätigten: **ein Name ist
+            # keine Berechtigung.** Ein Allowlist-Name aus fremder Hand ist hier ohnehin
+            # unmöglich, den verbietet der Konstruktor-Wächter, sobald ein IdP Konten anlegt.
             username = info.get("preferred_username") or mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
@@ -365,10 +392,11 @@ def register_oidc_routes(router, auth):
                 i += 1
                 username = f"{base_un}{i}"
             try:
-                # `mail` ist die belegte Adresse (F-14), nicht die rohe aus dem Dokument:
-                # eine unbestätigte wird oben verworfen und darf auch hier nicht ins Konto.
+                # Adresse UND Beleg gehen zusammen ins Konto (F-14): Der Vermerk entscheidet
+                # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
+                # Konto sich das nächste Mal anmeldet.
                 uid = auth.create_user(username, display_name=info.get("name") or username,
-                                       email=mail)
+                                       email=mail, email_verified=mail_bestaetigt)
             except errors.ConfigError:
                 # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
                 # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
@@ -376,6 +404,21 @@ def register_oidc_routes(router, auth):
                            auth.client_ip(request))
                 raise HTTPException(409, auth.t("api.idp_ident_taken"))
             auth.store.link_oidc(issuer, sub, uid)
+        elif mail and beleg_ausdruecklich:
+            # Bestandskonto: Was der Provider HEUTE über SEINE Adresse SAGT, ersetzt den Vermerk.
+            # Sonst bliebe ein „unbestätigt" von früher stehen, nachdem der IdP die Adresse
+            # geprüft hat — und umgekehrt bliebe ein alter Beleg gültig, obwohl der Provider ihn
+            # zurückgenommen hat.
+            #
+            # Zwei Grenzen: nur bei DERSELBEN Adresse (über eine andere sagt der Claim nichts —
+            # dieselbe Regel wie in `_email_mit_beleg`), und nur bei einer ausdrücklichen
+            # Aussage. **Schweigen überschreibt nichts:** Ein Konto, dessen Adresse der Betreiber
+            # selbst gesetzt hat (Admin, CLI, Registrierung mit Bestätigungsmail), verlöre sonst
+            # seinen Beleg, nur weil ein IdP den optionalen Claim nicht mitschickt.
+            konto = auth.store.get_user(uid)
+            if konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
+                    and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
+                auth.store.set_email_verified(uid, mail_bestaetigt)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt)
         _grp = info.get(cfg.oidc_group_claim) or []

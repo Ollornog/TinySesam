@@ -278,9 +278,12 @@ Einmal-Token nehmen, der verlässt die Konsole des Betreibers nie.
 Dasselbe gilt, wenn ein IdP die Konten anlegt (`oidc_auto_create`, `saml_auto_create`,
 `ldap_auto_create`): Auch dort kommt der Benutzername aus fremder Hand, ein Allowlist-**Name**
 wird in dieser Lage abgewiesen. Eine Allowlist-**Adresse** bleibt erlaubt, zählt bei OIDC aber
-nur mit dem Claim `email_verified` — fehlt er, gilt die Adresse als unbestätigt und wird (mit
-`oidc_require_verified_email=True`, Vorgabe) gar nicht erst ins Konto übernommen. Für IdPs ohne
-diesen Claim ist der Einmal-Token der belegte Weg.
+nur mit dem Claim `email_verified`. Fehlt er, wird die Adresse trotzdem ins Konto übernommen und
+geht weiter als `Remote-Email` hinaus — sie ist nur als unbestätigt vermerkt
+(`users.email_verified`) und trägt keine Rechte, auch nicht über einen späteren Anmeldeweg
+desselben Kontos. Für IdPs ohne diesen Claim (Entra ID): der Einmal-Token ist der belegte Weg —
+oder, wer die Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`. Ein Claim,
+der ausdrücklich `false` sagt, bleibt in beiden Fällen ein Nein.
 
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.
