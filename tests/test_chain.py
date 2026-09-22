@@ -161,6 +161,27 @@ assert not _ziel.startswith("/auth/totp/setup"), f"Einrichtung offen geblieben: 
 assert auth_a.store.get_user(uid_a)["first_login_at"] is not None
 ok("R3-1: nach dem ersten vollständigen Login ist die Selbst-Einrichtung zu")
 
+# Und die Meldung darüber ist KEIN Fehlversuch: Wer hier scheitert, hat sein richtiges Passwort
+# eingegeben. Trüge die Zeile das Ereigniswort der Login-Jail, sperrte fail2ban genau den, der
+# sich gerade korrekt angemeldet hat. (Gefunden, weil CodeQL die Zeile als Passwort-Logging
+# meldete — der Fehlalarm zeigte auf einen echten Fehler daneben.)
+import io as _io, logging as _logging                                     # noqa: E402
+from tinysesam import security as _security                               # noqa: E402
+
+_puffer = _io.StringIO()
+_haken = _logging.StreamHandler(_puffer)
+_security.seclog.addHandler(_haken)
+try:
+    _bis_zum_zweiten_faktor(app_a).get("/auth/totp", headers={"Accept": "text/html"},
+                                       follow_redirects=False)
+finally:
+    _security.seclog.removeHandler(_haken)
+_text = _puffer.getvalue()
+assert "mfa enrollment denied" in _text, f"keine Meldung: {_text[:200]!r}"
+assert _security.log_ereignis("totp") not in _text, \
+    f"die gesperrte Einrichtung trägt das Wort der Login-Jail: {_text[:200]!r}"
+ok("R3-1: …die Meldung darüber trifft die fail2ban-Jail nicht (es ist kein Fehlversuch)")
+
 # Der Betreiber kann ein Fenster öffnen — der Weg für „Gerät verloren" und für strict.
 _bis = auth_a.grant_mfa_enrollment(uid_a, minutes=30)
 assert _bis > int(_zeit.time())

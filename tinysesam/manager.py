@@ -1819,12 +1819,19 @@ class TinySesam:
         if not self.darf_mfa_einrichten(u["id"]):
             # Kein stilles Nein: Wer hier scheitert, hat das richtige Passwort und steht vor
             # einer Tür, die sich nicht öffnet. Die Zeile sagt dem Betreiber, welcher Weg bleibt.
+            #
+            # **Ohne `log_ereignis`**, also ohne das Wort, auf das die fail2ban-Jail matcht: Das
+            # hier ist kein Fehlversuch. Wer bis hierher kommt, hat sein richtiges Passwort
+            # eingegeben — ihn dafür auch noch sperren zu lassen wäre genau verkehrt herum. Der
+            # Name kommt aus der frisch geholten Kontozeile, nicht aus dem Request.
+            konto = self.store.get_user(u["id"])
             security.seclog.warning(
-                "%s user=%s grund=enrollment_gesperrt art=%s — der zweite Faktor fehlt und darf "
-                "hier nicht mehr eingerichtet werden. Weg: auth.grant_mfa_enrollment(uid) oder "
-                "das Admin-Panel.", security.log_ereignis("totp"),
-                security.fuer_log(str(u["username"])), self.cfg.mfa_enrollment)
-            self.audit("mfa_enrollment_denied", str(u["username"]),
+                "mfa enrollment denied user=%s art=%s — der zweite Faktor fehlt und darf hier "
+                "nicht mehr eingerichtet werden. Weg: auth.grant_mfa_enrollment(uid) oder das "
+                "Admin-Panel.",
+                security.fuer_log(str(konto["username"]) if konto else "?"),
+                self.cfg.mfa_enrollment)
+            self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
                        detail=f"art={self.cfg.mfa_enrollment}")
             return None
         return u
