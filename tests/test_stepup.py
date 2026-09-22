@@ -5,7 +5,13 @@ import tempfile, os, time
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+import importlib.util
 from tinysesam import TinySesam, TinySesamConfig
+
+#: Ohne das Extra [passkey] gibt es keine Passkey-Routen — `build_router` wirft dann
+#: `MissingExtra`. Die Suite prüft hier Step-up und Faktor-Abbau, nicht WebAuthn selbst:
+#: Sie läuft deshalb auch im Kern-Betrieb und lässt nur die Passkey-Route aus.
+HAT_PASSKEY = importlib.util.find_spec("webauthn") is not None
 
 
 def ok(name):
@@ -113,7 +119,7 @@ ok("admin_require_mfa: Panel altert → Reauth per TOTP → wieder frei")
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
                                   cookie_secure=False, oidc_enabled=False, pin_enabled=True,
-                                  apikey_enabled=True, passkey_enabled=True,
+                                  apikey_enabled=True, passkey_enabled=HAT_PASSKEY,
                                   stepup_max_age_sec=900))
 uid2 = auth2.create_user("opfer", password="geheim123")
 sec2 = auth2.totp_begin(uid2)["secret"]
@@ -146,7 +152,7 @@ def koerper(pfad, pin="9876", pk=None):
 
 #: Die fünf Routen, die einen Anmeldefaktor abbauen oder ersetzen.
 VERWALTUNG = ("/auth/totp/recovery", "/auth/totp/disable", "/auth/pin/set",
-              "/auth/pin/disable", "/auth/passkey/delete")
+              "/auth/pin/disable") + (("/auth/passkey/delete",) if HAT_PASSKEY else ())
 
 
 def faktoren(a, uid):
@@ -178,15 +184,19 @@ for pfad in VERWALTUNG:
     assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
     assert antwort.headers.get("X-TinySesam-Reauth") == "/auth/reauth", (pfad, dict(antwort.headers))
 assert faktoren(auth2, uid2) == vorher2, "aus einer veralteten Sitzung darf sich kein Faktor ändern"
-ok("veraltete Sitzung: alle fünf Faktor-Routen → 403 + Reauth-Hinweis, nichts geändert")
+ok(f"veraltete Sitzung: alle {len(VERWALTUNG)} Faktor-Routen → 403 + Reauth-Hinweis, nichts geändert")
 
 # Frischer Zeitschritt: der Code vom Login ist verbraucht (ein TOTP-Code gilt genau einmal).
 r = c4.post("/auth/reauth", data={"code": pyotp.TOTP(sec2).at(int(time.time()) + 30), "next": "/"},
             follow_redirects=False)
 assert r.status_code == 303, r.status_code
-assert c4.post("/auth/passkey/delete", json={"id": pk2}, headers=JSON).status_code == 200
-assert auth2.store.list_webauthn(uid2) == [], "nach dem Step-up muss der legitime Weg offen sein"
-ok("nach Reauth: derselbe Aufruf geht wieder durch (Passkey gelöscht)")
+if HAT_PASSKEY:
+    assert c4.post("/auth/passkey/delete", json={"id": pk2}, headers=JSON).status_code == 200
+    assert auth2.store.list_webauthn(uid2) == [], "nach dem Step-up muss der legitime Weg offen sein"
+else:
+    assert c4.post("/auth/pin/disable", json={}, headers=JSON).status_code == 200
+    assert not auth2.has_pin(uid2), "nach dem Step-up muss der legitime Weg offen sein"
+ok("nach Reauth: derselbe Aufruf geht wieder durch (Faktor abgebaut)")
 
 # ---------- Derselbe Angriff per API-Key, mit eingeschaltetem CSRF ----------
 # CSRF bleibt hier AN (Vorgabe): Für einen echten API-Key greift `_csrf_entbehrlich`, die
@@ -194,7 +204,7 @@ ok("nach Reauth: derselbe Aufruf geht wieder durch (Passkey gelöscht)")
 db3 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
-                                  passkey_enabled=True))
+                                  passkey_enabled=HAT_PASSKEY))
 uid3 = auth3.create_user("opfer", password="geheim123")
 sec3 = auth3.totp_begin(uid3)["secret"]
 assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).now())
@@ -229,7 +239,7 @@ for pfad in VERWALTUNG:
     assert antwort.json().get("detail") == erwartet, (pfad, antwort.text[:90])
 assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
 assert auth3.verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
-ok("API-Key (CSRF an): alle fünf Faktor-Routen → 403, jede mit ihrem Grund")
+ok(f"API-Key (CSRF an): alle {len(VERWALTUNG)} Faktor-Routen → 403, jede mit ihrem Grund")
 
 # ---------- A-umgehung-2: derselbe Riegel gilt für die ANLAGE eines Faktors ----------
 # Der R3-3-Fix deckte nur den ABBAU. Die Anlage hing weiter an `current_user()`, und das
@@ -246,7 +256,7 @@ ok("API-Key (CSRF an): alle fünf Faktor-Routen → 403, jede mit ihrem Grund")
 db4 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth4 = TinySesam(TinySesamConfig(lang="de", db_path=db4, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
-                                  passkey_enabled=True))
+                                  passkey_enabled=HAT_PASSKEY))
 uid4 = auth4.create_user("opfer", password="geheim123")      # KEIN TOTP, KEINE PIN
 app4 = FastAPI()
 app4.include_router(auth4.router())
@@ -266,14 +276,16 @@ assert not auth4.store.has_confirmed_totp(uid4), "per API-Key darf kein TOTP sch
 r = c6.post("/auth/totp/setup/start", data={}, headers=KEY4)
 assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
 assert auth4.store.get_totp(uid4) is None, "auch der neue Start darf per Key kein Geheimnis anlegen"
-for pfad in ("/auth/passkey/register/begin", "/auth/passkey/register/finish"):
+for pfad in (("/auth/passkey/register/begin", "/auth/passkey/register/finish")
+             if HAT_PASSKEY else ()):
     r = c6.post(pfad, json={}, headers=KEY4)
     assert r.status_code == 403, (pfad, r.status_code, r.text[:90])
     assert r.json().get("detail") == auth4.t("api.needs_session"), (pfad, r.text[:120])
     assert "tinysesam_waflow" not in r.cookies, pfad
 assert auth4.store.list_webauthn(uid4) == [], "per API-Key darf kein Passkey dazukommen"
 assert auth4.list_api_keys(uid4), "Vorbedingung: der Key ist ausgestellt und gültig"
-ok("API-Key: auch die ANLAGE (totp/setup, passkey/register) → 403 'nur mit Sitzung'")
+ok("API-Key: auch die ANLAGE (totp/setup" + (", passkey/register" if HAT_PASSKEY else "")
+   + ") → 403 'nur mit Sitzung'")
 
 # Und der legitime Weg desselben Kontos läuft weiter — sonst wäre der Riegel eine Sackgasse.
 c7 = TestClient(app4)

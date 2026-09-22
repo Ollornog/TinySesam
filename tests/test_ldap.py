@@ -516,7 +516,12 @@ finally:
             sys.modules[name] = mod
 
 assert "VERWEIS" in _text and "referral" in _text, f"kein Hinweis auf den Verweis: {_text[:200]!r}"
-assert "fremd.example.com" in _text, f"der verwiesene Host fehlt: {_text[:200]!r}"
+# Auf den Host wird mit Wortgrenzen geprüft, nicht per Teilzeichenkette: `x-fremd.example.com.evil`
+# enthielte den Namen ebenfalls, wäre aber ein anderer Host (CodeQL py/incomplete-url-substring-
+# sanitization — hier eine Testzusage, aber dieselbe Falle).
+import re as _re_verweis  # noqa: E402
+assert _re_verweis.search(r"(?<![\w.-])fremd\.example\.com(?![\w.-])", _text), \
+    f"der verwiesene Host fehlt: {_text[:200]!r}"
 assert "Global Catalog" in _text and "3268" in _text, f"kein Betriebs-Hinweis: {_text[:200]!r}"
 assert "user=alice" in _text, _text[:200]
 assert len(_text.strip().splitlines()) == 1, f"der Verweis hat eine Zeile eingeschoben: {_text!r}"

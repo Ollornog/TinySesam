@@ -1652,7 +1652,6 @@ _a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text)
 _a_pfad.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
 def _links(texte) -> list:
     """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
-    import re
     return [g for t in texte for g in re.findall(r"https://portal\.example\.com[^\s'\"]*", t)]
 
 

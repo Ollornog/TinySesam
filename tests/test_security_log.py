@@ -18,6 +18,18 @@ from tinysesam import TinySesam, TinySesamConfig, security
 from tinysesam.errors import ConfigError
 
 
+def _lies(pfad):
+    """Eine Datei ganz lesen und den Griff wieder schließen.
+
+    `open(...).read()` lässt den Griff bis zur nächsten Sammlung offen; CodeQL meldet das
+    (py/file-not-closed) zu Recht, und in einem `assert` wäre das Lesen zudem eine
+    Nebenwirkung, die unter `python -O` mitsamt der Prüfung verschwindet.
+    """
+    with open(pfad, encoding="utf-8") as fh:
+        return fh.read()
+
+
+
 def ok(name):
     print(f"  ✓ {name}")
 
@@ -94,7 +106,7 @@ try:
         auth2 = TinySesam(TinySesamConfig(db_path=db4, security_log=log2, cookie_secure=False,
                                           passkey_enabled=False, allow_signup=True,
                                           signup_require_email=False))
-    inhalt2 = open(log2, encoding="utf-8").read()
+    inhalt2 = _lies(log2)
 
     # Vorbedingung: Es GIBT ein Token zu verraten. Ohne diese Prüfung wäre alles Folgende auch
     # dann grün, wenn der Bootstrap-Weg schlicht abgeschaltet wäre — der Test misst dann nichts.
@@ -138,11 +150,12 @@ try:
                                           passkey_enabled=False, csrf_enabled=False,
                                           allow_signup=True, signup_require_email=False,
                                           admin_claim_token_file=tokdatei))
-    tok3 = open(tokdatei, encoding="utf-8").read().strip()
+    tok3 = _lies(tokdatei).strip()
     assert tok3 == auth3.admin_claim_token(), tok3
     assert stat.S_IMODE(os.stat(tokdatei).st_mode) == 0o600, oct(stat.S_IMODE(os.stat(tokdatei).st_mode))
-    assert tok3 not in open(log3, encoding="utf-8").read()
-    assert tokdatei in open(log3, encoding="utf-8").read()      # der Pfad darf genannt werden
+    _log3 = _lies(log3)
+    assert tok3 not in _log3
+    assert tokdatei in _log3                                   # der Pfad darf genannt werden
     ok("admin_claim_token_file: Wert in einer eigenen Datei mit 0600, Log nennt nur den Pfad")
 
     app = FastAPI()
@@ -222,7 +235,7 @@ with contextlib.redirect_stderr(io.StringIO()):
     auth6 = TinySesam(TinySesamConfig(db_path=os.path.join(tmp6, "t.db"), cookie_secure=False,
                                       passkey_enabled=False, csrf_enabled=False,
                                       admin_claim_token_file=tokdatei6))
-inhalt6 = open(tokdatei6, encoding="utf-8").read()
+inhalt6 = _lies(tokdatei6)
 assert inhalt6 == auth6.admin_claim_token() + "\n", repr(inhalt6)
 assert "ALTES-TOKEN" not in inhalt6, f"Rest der Vorgängerdatei: {inhalt6!r}"
 ok("die Token-Datei wird abgeschnitten — kein Rest eines längeren Vorgängers")
@@ -352,7 +365,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _failregex(datei):
-    text = open(os.path.join(ROOT, "deploy", "fail2ban", datei), encoding="utf-8").read()
+    text = _lies(os.path.join(ROOT, "deploy", "fail2ban", datei))
     zeile = [z for z in text.splitlines() if z.startswith("failregex =")][0]
     muster = zeile.split("=", 1)[1].strip().replace("<HOST>", r"(?P<host>\S+)")
     return re.compile(muster)
