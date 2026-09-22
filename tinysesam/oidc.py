@@ -72,10 +72,33 @@ class OIDCClient:
                 import httpx
             except ModuleNotFoundError as e:
                 raise _fehlt_extra(e) from e
-            self._meta = httpx.get(self.issuer + "/.well-known/openid-configuration",
-                                   timeout=10, follow_redirects=True).json()
+            # Kein Redirect: Ein 3xx auf dem Well-Known-Pfad würde das Dokument von woanders holen —
+            # und aus diesem Dokument kommen token_endpoint, jwks_uri und der Issuer, gegen den jedes
+            # ID-Token geprüft wird. Wer den Pfad umleiten kann, hätte damit den ganzen Login.
+            antwort = httpx.get(self.issuer + "/.well-known/openid-configuration",
+                                timeout=10, follow_redirects=False)
+            if antwort.status_code != 200:
+                raise errors.ConfigError(
+                    f"OIDC-Discovery unter {self.issuer}/.well-known/openid-configuration antwortet mit "
+                    f"{antwort.status_code} statt 200 (Umleitungen werden nicht gefolgt — oidc_issuer muss "
+                    "die endgültige Adresse sein, z.B. https statt http, ohne Pfadumleitung).")
+            meta = antwort.json()
+            self._pruefe_issuer(meta)
+            self._meta = meta
             self._meta_zeit = time.time()
         return self._meta
+
+    def _pruefe_issuer(self, meta: dict) -> None:
+        """Das Discovery-Dokument muss den konfigurierten Issuer nennen (RFC 8414 §3.3, OIDC
+        Discovery §4.3). Alles Weitere — Token-Endpunkt, JWKS, der Schlüssel, unter dem Konten in
+        der Datenbank liegen — kommt aus diesem Dokument; stimmt der Issuer nicht, ist nichts davon
+        vertrauenswürdig. Bis 0.18.0 wurde das nie verglichen."""
+        gefunden = str(meta.get("issuer") or "").rstrip("/")
+        if gefunden != self.issuer:
+            raise errors.ConfigError(
+                f"OIDC-Discovery: das Dokument nennt issuer={gefunden or '?'}, konfiguriert ist "
+                f"oidc_issuer={self.issuer}. Beides muss übereinstimmen — sonst prüft TinySesam Tokens "
+                "gegen einen Provider, den niemand konfiguriert hat.")
 
     def _jwkset(self, erzwingen: bool = False):
         alt_genug = self._jwks_zeit and (time.time() - self._jwks_zeit) > self.JWKS_TTL
