@@ -248,9 +248,16 @@ class TinySesamConfig:
     # seinen Server umbiegen. trusted_redirect_hosts ist dafür kein Ersatz — steht dort mehr als
     # ein Host, wählt der Anfragende per Host-Header aus.
     # Mit Unterpfad montiert (root_path) gehört das Präfix HIER hinein:
-    # "https://example.com/sso". Wo base_url leer bleiben darf (nur Passwort/Passkey/PIN/LDAP,
+    # "https://example.com/sso" — es gilt für die VERSCHICKTEN LINKS, die es genau einmal tragen.
+    # Die eingebauten Seiten tragen es nicht (ihre Ziele stehen wurzel-absolut: /auth/register,
+    # /auth/forgot, ...), hinter einem Proxy, der das Präfix abschneidet, landet die Anmeldung
+    # also im 404, während die Mails funktionieren — backlog/T-15.
+    # Wo base_url leer bleiben darf (nur Passwort/Passkey/PIN/LDAP,
     # höchstens forward_auth_enabled), wird eine abgeleitete Basis geprüft: nur ein Host aus
     # trusted_redirect_hosts oder Loopback zählt, und der root_path des Servers kommt mit.
+    # Steht base_url, gewinnt sie IMMER — auch gegen eine von außen übergebene Basis auf einem
+    # zweiten eigenen Host aus trusted_redirect_hosts (sonst wählt der Host-Header aus, welcher
+    # der eigenen Namen in den Reset-Link kommt).
     base_url: str = ""
     login_path: str = "/auth/login"       # Login-Seite
     login_redirect: str = "/"             # Ziel nach erfolgreichem Login

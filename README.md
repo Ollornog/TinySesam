@@ -600,9 +600,15 @@ All optional (on/off by config), usable individually and combined, front end rep
   mailbox could point the link at their own server. `trusted_redirect_hosts` is no substitute:
   with more than one host listed, the `Host` header would still pick which one ends up in the
   link. **Mounted under a sub-path** (`root_path`), the prefix belongs in `base_url`:
-  `base_url="https://example.com/sso"`. This holds for the methods themselves, not just for the
-  built-in routes: `magic_url`, `send_password_reset`, `send_login_link`, `send_verify_email` and
-  `create_invite` reject a foreign base with `ConfigError` (no token, no mail). Building your own
+  `base_url="https://example.com/sso"` — and it applies to the **mailed links**, which carry it
+  exactly once. The built-in pages do *not* carry it: their form targets and links are
+  root-absolute (`/auth/register`, `/auth/forgot`, …), so behind a proxy that strips `/sso` the
+  sign-in itself ends up in a 404 while the mails work. See
+  [T-15](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-15-unterpfad-montage.md). The same one rule holds for the methods
+  themselves, not just for the built-in routes: `magic_url`, `send_password_reset`,
+  `send_login_link`, `send_verify_email` and `create_invite` all go through `public_base()`. With
+  `base_url` set it wins — even over a second host of your own listed in `trusted_redirect_hosts`.
+  Without it, a foreign base is rejected with `ConfigError` (no token, no mail). Building your own
   form? Take the base from `auth.public_base(request)` — empty means "no trusted address, abort" —
   never from `str(request.base_url)`.
 - **Registration + invitation:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);

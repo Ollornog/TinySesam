@@ -1522,14 +1522,22 @@ r.check("...und auf einem Host aus trusted_redirect_hosts bleibt sie absolut (Co
         and _loc_fa_gut.startswith("https://app.example.com" + _a_fa.cfg.login_path),
         f"HTTP {_fa_gut.status_code}: {_loc_fa_gut[:140]!r}")
 
-# ── Dieselbe Regel für die dokumentierten Methoden, nicht nur für die Routen ───
+# ── Dieselbe EINE Regel für die dokumentierten Methoden, nicht nur für die Routen ───
 # `public_base()` sass nur in den Routen. Eine App mit eigenem „Passwort vergessen"-Formular —
 # der in beiden READMEs und in API.md gezeigte Weg — rief `send_password_reset(mail, basis)`
 # selbst auf und war mit `str(request.base_url)` weiter voll angreifbar, während ihr die
 # eingebaute Route längst weggebrochen war. Die Prüfung sitzt jetzt in `magic_url()`, wo alle
 # vier Mail-Wege zusammenlaufen, und zusätzlich vor der Token-Vergabe in jedem Absender.
+#
+# Gemessen wird die REGEL, nicht ihr Mechanismus: Steht `base_url`, gewinnt sie — auch gegen
+# einen zweiten mitvertrauten Namen. Genau das war Befund B-umgehung-3: Hier entschied noch der
+# übergebene Host, solange er in `trusted_redirect_hosts` stand. Der `Host`-Header wählte damit
+# weiter aus, welcher der eigenen Namen in den Reset-Link kommt — der Kern von R4-01, eine Ebene
+# tiefer. Ohne `base_url` — der einzige Aufbau, in dem überhaupt abgeleitet wird — bleibt es
+# beim harten `ConfigError`.
 _a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, passkey_enabled=False,
-                        base_url=ECHT)
+                        base_url=ECHT,
+                        trusted_redirect_hosts=["auth.example.com", "app-b.example.com"])
 _mails_api: list = []
 _a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
 _a_api.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
@@ -1539,30 +1547,58 @@ def _tokenzeilen(auth_x) -> int:
     return auth_x.store._exec("SELECT COUNT(*) FROM magic_token").fetchone()[0]
 
 
-for _name, _ruf in (
-        ("magic_url", lambda: _a_api.magic_url("rohtoken", "https://" + BOESE, "reset_password")),
-        ("send_password_reset", lambda: _a_api.send_password_reset("opfer@example.com",
-                                                                   "https://" + BOESE)),
-        ("send_login_link", lambda: _a_api.send_login_link("opfer@example.com", "https://" + BOESE)),
-        ("send_verify_email", lambda: _a_api.send_verify_email(1, "opfer@example.com",
-                                                               "https://" + BOESE)),
-        ("create_invite", lambda: _a_api.create_invite("gast@example.com", "https://" + BOESE))):
+def _wege(auth_x, basis):
+    """Die fünf dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
+    return (
+        ("magic_url", lambda: auth_x.magic_url("rohtoken", basis, "reset_password")),
+        ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", basis)),
+        ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", basis)),
+        ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", basis)),
+        ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
+    )
+
+
+def _spur(erg, mails) -> str:
+    """Alles, was der Aufruf nach aussen gegeben hat: Rückgabe plus verschickte Mailtexte."""
+    return repr(erg) + " " + " ".join(mails)
+
+
+for _fremd, _was in (("https://" + BOESE, "einen fremden Host"),
+                     ("https://app-b.example.com", "einen ZWEITEN eigenen Namen")):
+    for _name, _ruf in _wege(_a_api, _fremd):
+        _mails_api.clear()
+        try:                            # ein ConfigError wäre auch hier ein Befund, kein Abbruch
+            _s = _spur(_ruf(), _mails_api)
+        except ConfigError as e:
+            _s = f"ConfigError: {e}"[:140]
+        r.check(f"{_name}: base_url gewinnt gegen {_was}",
+                (urlsplit(_fremd).hostname or "") not in _s and ECHT in _s,
+                f"{_s[:140]!r} — sonst wählt der Host-Header aus, was in den Link kommt")
+
+# Ohne `base_url` bleibt es beim harten Abbruch: kein Link, keine Mail, kein Token. Diesen Aufbau
+# lässt `konfigpruefung` als einzigen ohne `base_url` durch (kein Mail-Schalter an), und genau ihn
+# nennt der Befund als Anlass — eine einbettende App mit eigenem Formular.
+_a_ohne, _app_ohne = _app(passkey_enabled=False, trusted_redirect_hosts=["auth.example.com"])
+_mails_ohne: list = []
+_a_ohne.set_mailer(lambda to, betreff, text, html=None: _mails_ohne.append(text))
+_a_ohne.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+for _name, _ruf in _wege(_a_ohne, "https://" + BOESE):
     try:
-        _erg = _ruf()
-        _abgewiesen, _wie = False, repr(_erg)
+        _abgewiesen, _wie = False, repr(_ruf())
     except ConfigError as e:
         _abgewiesen, _wie = True, str(e)[:60]
-    r.check(f"{_name}(fremde Basis) wird abgewiesen, nicht ausgeliefert", _abgewiesen,
-            f"kam durch: {_wie} — die App mit eigenem Formular bleibt angreifbar")
+    r.check(f"ohne base_url: {_name}(fremde Basis) wird abgewiesen, nicht ausgeliefert",
+            _abgewiesen, f"kam durch: {_wie} — die App mit eigenem Formular bleibt angreifbar")
 
-r.check("dabei geht keine Mail hinaus", _mails_api == [], f"{_mails_api!r}")
+r.check("dabei geht keine Mail hinaus", _mails_ohne == [], f"{_mails_ohne!r}")
 r.check("und es bleibt kein unbrauchbarer Token in der Datenbank",
-        _tokenzeilen(_a_api) == 0,
-        f"{_tokenzeilen(_a_api)} Zeilen — geprüft wird vor der Token-Vergabe, nicht danach")
+        _tokenzeilen(_a_ohne) == 0,
+        f"{_tokenzeilen(_a_ohne)} Zeilen — geprüft wird vor der Token-Vergabe, nicht danach")
 
 # Der legitime Weg der App: die zugesagte Basis. Ohne diese Zusage wäre „nie wieder ein Link"
 # auch grün. Der Host der eigenen base_url genügt — ein `http://` aus einem TLS-terminierenden
 # Proxy wird dabei auf die konfigurierte Adresse gehoben, statt still unverschlüsselt zu bleiben.
+_mails_api.clear()
 r.check("legitimer Weg: base_url liefert den Link",
         _a_api.magic_url("rohtoken", ECHT, "reset_password") == ECHT + "/auth/reset?token=rohtoken",
         _a_api.magic_url("rohtoken", ECHT, "reset_password"))
@@ -1574,6 +1610,88 @@ r.check("und der Absender schickt damit wieder (die Methode lebt)",
         _a_api.send_password_reset("opfer@example.com", ECHT) is True
         and len(_mails_api) == 1 and ECHT + "/auth/reset" in _mails_api[0],
         f"{_mails_api!r}")
+r.check("auch ohne base_url trägt der legitime Weg (abgeleitete, belegte Basis)",
+        _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password")
+        == ECHT + "/auth/reset?token=rohtoken",
+        _a_ohne.magic_url("rohtoken", "https://auth.example.com", "reset_password"))
+
+# Befund B-regression-2: Der Pfadanteil stand VIERFACH im verschickten Link. `sichere_basis()`
+# gibt ihn seit N1 selbst zurück, `_gepruefte_basis()` hängte ihn trotzdem noch einmal an — und
+# weil die vier Absender erst selbst prüfen und danach `magic_url()` ein zweites Mal, wuchs
+# `https://portal.example.com/portal` zu `…/portal/portal/portal/portal/auth/reset?token=…`.
+# Die Mail ging hinaus, der Empfänger klickte, der Link war 404: kein Fehler, keine Logzeile.
+# Deshalb wird GEZÄHLT, nicht `startswith` geprüft — genau das hielt den Befund verborgen.
+_UNTER = "https://portal.example.com/portal"
+_a_pfad, _app_pfad = _app(passkey_enabled=False, trusted_redirect_hosts=["portal.example.com"])
+_mails_pfad: list = []
+_a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text))
+_a_pfad.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+def _links(texte) -> list:
+    """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
+    import re
+    return [g for t in texte for g in re.findall(r"https://portal\.example\.com[^\s'\"]*", t)]
+
+
+for _name, _ruf in _wege(_a_pfad, _UNTER):
+    _mails_pfad.clear()
+    _erg = _ruf()
+    _gefunden = _links([repr(_erg)] + list(_mails_pfad))
+    # Gezählt wird im PFAD, nicht im ganzen String: In "https://portal…" steckt "/portal"
+    # schon durch das "//" — eine Zählung darüber hätte auch den Vierfach-Link durchgelassen.
+    _zaehl = [urlsplit(u).path.count("/portal") for u in _gefunden]
+    r.check(f"{_name}: der Unterpfad steht genau EINMAL im Link",
+            bool(_zaehl) and all(z == 1 for z in _zaehl)
+            and all(u.startswith(_UNTER + "/auth/") for u in _gefunden),
+            f"{_zaehl} Vorkommen in {[u[:90] for u in _gefunden]!r}")
+r.check("die Prüfung ist idempotent (zweimal angewandt wächst der Pfad nicht)",
+        _a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER)) == _UNTER,
+        f"{_a_pfad._gepruefte_basis(_a_pfad._gepruefte_basis(_UNTER))!r} — die vier Absender "
+        "prüfen vor der Token-Vergabe, magic_url danach noch einmal")
+
+# Befund B-regression-3: Was eine Montage unter einem Unterpfad WIRKLICH trägt — gemessen an
+# einer echten Montage (`FastAPI(root_path="/sso")`), nicht an einer nachgebauten URL. Der
+# verschickte Link trägt das Präfix; die eingebauten Seiten tragen es NICHT, ihre Ziele stehen
+# wurzel-absolut in `templates.py`. Genau so steht es seit dieser Runde in README, KONFIGURATION
+# und CHANGELOG. Dieser Test hält die Doku ehrlich: Wird die Grenze verschoben (backlog/T-15),
+# wird er rot — und dann gehört die Einschränkung aus der Doku heraus, nicht der Test weg.
+_a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
+                                   cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
+                                   password_reset_enabled=True,
+                                   base_url="https://example.com/sso"))
+_mails_mnt: list = []
+_a_mnt.set_mailer(lambda to, betreff, text, html=None: _mails_mnt.append(text))
+_a_mnt.create_user("anna", password="Geheim12345!", email="anna@example.com")
+_app_mnt = FastAPI(root_path="/sso")
+_app_mnt.include_router(_a_mnt.router())
+_c_mnt = TestClient(_app_mnt, root_path="/sso", follow_redirects=False)
+_c_mnt.post("/auth/forgot", data={"email": "anna@example.com"}, headers={"accept": "text/html"})
+_link_mnt = [w for w in " ".join(_mails_mnt).split() if w.startswith("http")]
+r.check("echte Montage unter /sso: der Mail-Link trägt das Präfix genau einmal",
+        len(_link_mnt) == 1 and _link_mnt[0].startswith("https://example.com/sso/auth/reset?")
+        and urlsplit(_link_mnt[0]).path.count("/sso") == 1,
+        f"{_link_mnt!r} — ohne Präfix ist es ein 404, mehrfach auch")
+_seite_mnt = _c_mnt.get("/auth/login", headers={"accept": "text/html"}).text
+_ziel_mnt = _c_mnt.get("/auth/account", headers={"accept": "text/html"}).headers.get("location", "")
+r.check("...die eingebauten Seiten bleiben wurzel-absolut (ausgesprochene Grenze, backlog/T-15)",
+        "action='/auth/login'" in _seite_mnt and _ziel_mnt.startswith("/auth/login?next="),
+        f"{_ziel_mnt!r} — trägt die Seite jetzt das Präfix, gehört die Einschränkung aus "
+        "README/KONFIGURATION/CHANGELOG heraus")
+
+# Und die Regel selbst, mechanisch: Wo `public_base()` eine Basis liefert, liefert
+# `_gepruefte_basis()` GENAU dieselbe, und wo sie leer bleibt, wirft die Methode. Zwei Wege,
+# ein Ergebnis — sonst sind es wieder zwei Regeln, und die Lücke sitzt im Unterschied.
+for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
+    for _fall in (ECHT, "http://auth.example.com/", "https://app-b.example.com",
+                  "https://" + BOESE, _UNTER, ""):
+        _pb = _auth_x.public_base(kandidat=_fall)
+        try:
+            _gb, _warf = _auth_x._gepruefte_basis(_fall), False
+        except ConfigError:
+            _gb, _warf = "", True
+        r.check(f"eine Regel ({_lab}): public_base == _gepruefte_basis für {_fall!r}",
+                _gb == _pb and _warf == (not _pb),
+                f"public_base={_pb!r} _gepruefte_basis={_gb!r} warf={_warf}")
+
 # ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
 # Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
 # `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im

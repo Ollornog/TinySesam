@@ -614,9 +614,15 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   könnte den Link so auf seinen eigenen Server zeigen lassen. `trusted_redirect_hosts` ist dafür
   kein Ersatz: Steht dort mehr als ein Host, bestimmte weiterhin der `Host`-Header, welcher davon
   in den Link kommt. **Unter einem Unterpfad montiert** (`root_path`) gehört das Präfix in
-  `base_url`: `base_url="https://example.com/sso"`. Das gilt für die Methoden selbst, nicht nur
-  für die eingebauten Routen: `magic_url`, `send_password_reset`, `send_login_link`,
-  `send_verify_email` und `create_invite` weisen eine fremde Basis mit `ConfigError` ab (kein
+  `base_url`: `base_url="https://example.com/sso"` — und es gilt für die **verschickten Links**,
+  die es genau einmal tragen. Die eingebauten Seiten tragen es *nicht*: Ihre Formularziele und
+  Verweise stehen wurzel-absolut (`/auth/register`, `/auth/forgot`, …), hinter einem Proxy, der
+  `/sso` abschneidet, landet also die Anmeldung im 404, während die Mails funktionieren
+  ([`backlog/T-15`](../backlog/T-15-unterpfad-montage.md)). Dieselbe eine Regel gilt für die
+  Methoden selbst, nicht nur für die eingebauten Routen: `magic_url`, `send_password_reset`,
+  `send_login_link`, `send_verify_email` und `create_invite` gehen alle durch `public_base()`.
+  Steht `base_url`, gewinnt sie — auch gegen einen zweiten eigenen Host aus
+  `trusted_redirect_hosts`. Ohne sie wird eine fremde Basis mit `ConfigError` abgewiesen (kein
   Token, keine Mail). Wer ein eigenes Formular baut, holt die Basis aus
   `auth.public_base(request)` — leer heißt „keine vertrauenswürdige Adresse, abbrechen" — und
   nie aus `str(request.base_url)`.

@@ -154,13 +154,22 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   dieser Stellen wird einzeln gemessen (`tests/test_sicherheit_befunde.py`), nachdem sich in einer
   Mutationsprobe alle vier auf die alte Form zurückbauen ließen, ohne dass eine Prüfung rot wurde.
 
-  **Auch die dokumentierten Methoden prüfen ihre Basis jetzt selbst** — `magic_url()`, wo alle vier
+  **Auch die dokumentierten Methoden folgen jetzt derselben Regel** — `magic_url()`, wo alle vier
   Mail-Wege zusammenlaufen, und davor `send_password_reset`, `send_login_link`, `send_verify_email`
   und `create_invite`. Vorher saß die Prüfung nur in der Route: Eine App mit eigenem „Passwort
   vergessen"-Formular, die dem naheliegenden Muster `str(request.base_url)` folgte, blieb voll
-  angreifbar, während ihr die eingebaute Route längst abriegelte. Eine fremde Basis wird mit
-  `ConfigError` abgewiesen, und zwar **vor** der Token-Vergabe (kein unbrauchbarer Token bleibt
-  liegen) und vor der Kontosuche (die Ausnahme verrät nicht, ob es die Adresse gibt).
+  angreifbar, während ihr die eingebaute Route längst abriegelte. Es ist **eine** Regel, kein
+  zweites Regelwerk: `_gepruefte_basis()` ruft `public_base()` und macht aus dem leeren Ergebnis
+  einen Fehler. Steht `base_url`, **gewinnt sie auch hier unbedingt** — die übergebene Adresse kommt
+  gar nicht zum Zug. Das ist mehr als „ein fremder Host wird abgewiesen": Stehen mehrere eigene
+  Namen in `trusted_redirect_hosts` (beim SSO der Normalfall), konnte der `Host`-Header sonst weiter
+  *auswählen*, welcher davon in den Reset-Link kommt. Ohne `base_url` — der einzige Aufbau, in dem
+  überhaupt abgeleitet wird — wird eine fremde Basis mit `ConfigError` abgewiesen, und zwar **vor**
+  der Token-Vergabe (kein unbrauchbarer Token bleibt liegen) und vor der Kontosuche (die Ausnahme
+  verrät nicht, ob es die Adresse gibt). Die Prüfung ist **idempotent**: Die Absender prüfen vor der
+  Token-Vergabe, `magic_url()` prüft danach noch einmal — der Pfadanteil wächst dabei nicht mehr
+  (eine Zwischenfassung hängte ihn bei jedem Durchgang erneut an und schickte Links mit vierfachem
+  Präfix, also 404, hinaus). Ein Test zählt die Vorkommen, statt `startswith` zu prüfen.
 
   **`base_url` ist jetzt Pflicht — eine bewusste Verhaltensänderung, und die erste Fassung dieses
   Fixes war zu weich.** Der Absatz hier versprach „sichtbarer Fehler statt geratener Adresse";
@@ -180,26 +189,45 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Beides ist geschlossen: `konfigpruefung` meldet ein leeres `base_url` als **Fehler**, sobald ein
   Mail-Weg (`magiclink_enabled`, `password_reset_enabled`, `signup_verify_email`), `oidc_enabled`
   oder `saml_enabled` an ist — der Aufbau scheitert dann mit `ConfigError`, statt einen Betrieb zu
-  erlauben, der still das Falsche tut. Damit gewinnt `base_url` immer und der `Host`-Header hat
-  keine Stimme mehr. Zur Laufzeit gibt es keinen stillen Erfolg: die neue Methode
+  erlauben, der still das Falsche tut. Damit gewinnt `base_url` überall dort, wo eine absolute
+  Adresse **in fremde Hand** geht — Mail-Link, OIDC-Redirect-URI, Post-Logout, SAML-Entity-ID/ACS —,
+  und der `Host`-Header hat dort keine Stimme mehr. **Eine Ausnahme, und sie ist benannt:** Ohne
+  `cookie_domain` baut `forward_login_url()` die Login-Seite auf dem angefragten Host, wenn der in
+  `trusted_redirect_hosts` steht. Das Session-Cookie gilt dann host-only; zeigte die Login-URL
+  woandershin, drehte sich die Anmeldung still im Kreis. `konfigpruefung` sagt diesen Fall beim
+  Start an, und weiter als `trusted_redirect_hosts` reicht er nicht.
+
+  Zur Laufzeit gibt es keinen stillen Erfolg: die neue Methode
   `TinySesam.require_public_base()` wirft `ConfigError` mit klarer Meldung, wo bisher eine
   Erfolgsseite oder ein 500 stand (`forward_auth_enabled` bleibt eine Warnung — seine Umleitung
-  bleibt ohne Basis relativ und trifft denselben Browser). Zusätzlich kommt der **`root_path`**
-  jetzt mit: `base_url="https://example.com/sso"` behält ihr Präfix, und eine abgeleitete Basis
-  übernimmt den Unterpfad aus dem Request — vorher verschickte eine unter einem Unterpfad
-  montierte App Links ins 404.
+  bleibt ohne Basis relativ und trifft denselben Browser; wo vorher der `Host`-Header eine absolute
+  Adresse in `X-TinySesam-Location` schrieb, steht jetzt ein Pfad). Der Hinweis auf die fehlende
+  Basis steht **einmal je Prozess und Host** im Security-Log, nicht je Anfrage: Der Forward-Auth
+  fragt bei jeder anonymen Anfrage nach, ein Seitenaufruf sind zwanzig Unterressourcen — genau die
+  Datei, auf die die fail2ban-Jail zeigt, lief sonst voll.
+
+  Zusätzlich kommt der **`root_path`** mit — **für die verschickten Links**:
+  `base_url="https://example.com/sso"` behält ihr Präfix, eine abgeleitete Basis übernimmt den
+  Unterpfad aus dem Request, und beide tragen ihn im Link genau **einmal**; vorher verschickte eine
+  unter einem Unterpfad montierte App Links ins 404. **Die eingebauten Seiten tragen den Unterpfad
+  nicht:** Ihre Formularziele und Verweise stehen wurzel-absolut (`/auth/register`, `/auth/forgot`,
+  …), und `login_path`/`login_redirect`/`logout_redirect` gehen unverändert hinaus. Wer unter
+  `--root-path /sso` hinter einem Proxy montiert, der `/sso` abschneidet, bekommt funktionierende
+  Mails und eine Anmeldung ins 404. Die Grenze ist gemessen (`tests/test_sicherheit_befunde.py`
+  an einer echten Montage) und als Aufgabe geführt: [`backlog/T-15`](backlog/T-15-unterpfad-montage.md).
 
   **Für Betreiber — was einzutragen ist:** Wer bisher ohne `base_url` fuhr und einen Mail-Weg,
   OIDC oder SAML nutzt, muss `base_url` auf die öffentliche Adresse dieser App setzen, sonst
   startet die Instanz nicht mehr: `base_url="https://auth.example.com"` (lokal
   `base_url="http://127.0.0.1:8000"`, unter einem Unterpfad montiert mit Präfix,
-  `"https://example.com/sso"`). Die Fehlermeldung beim Start nennt genau das.
+  `"https://example.com/sso"` — für die Mail-Links, siehe oben). Die Fehlermeldung beim Start
+  nennt genau das.
 
   **Für Einbettende:** Wer die Basis selbst übergibt, nimmt sie nicht aus dem Request, sondern aus
-  `auth.public_base(request)` (leer = abbrechen); der Host der eigenen `base_url` wird weiterhin
-  angenommen und dabei auf die konfigurierte Adresse gehoben, damit ein `http://` aus einem
-  TLS-terminierenden Proxy nicht still in den Mail-Link wandert. Wer bisher `str(request.base_url)`
-  durchreichte, bekommt bei einem fremden Host jetzt `ConfigError` statt eines Links.
+  `auth.public_base(request)` (leer = abbrechen). Steht `base_url`, ersetzt sie eine abweichende
+  Angabe — das hebt auch ein `http://` aus einem TLS-terminierenden Proxy auf die konfigurierte
+  Adresse, statt es still in den Mail-Link wandern zu lassen; einmal je Host steht eine Zeile
+  darüber im Security-Log. Ohne `base_url` bekommt ein fremder Host `ConfigError` statt eines Links.
   Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)),
   nachgeschärft in den Nacharbeitsrunden N1 und N6 dazu.
 - **Eine fremde Registrierung konnte die Login-Kennung eines bestehenden Kontos besetzen.** Geprüft

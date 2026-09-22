@@ -243,6 +243,74 @@ _f7, _w7 = pruefe(TinySesamConfig(**_gemeinsam7))          # Weg an → still
 assert not any("admin_claim_token_file ist gesetzt" in w for w in _w7), _w7
 ok("admin_claim_token_file ohne Token-Weg wird beim Aufbau gemeldet (mit Weg: still)")
 
+# (4) Befund B-regression-6: Der Hinweis „Kein vertrauenswürdiger öffentlicher Host" kam bei
+#     JEDER anonymen Forward-Auth-Anfrage. `forward_login_url()` fragt seit N1 `public_base()`,
+#     und ohne `base_url` (erlaubt: forward_auth_enabled ist nur eine Warnung) hält die
+#     abgeleitete Basis der Prüfung nicht stand. Ein Seitenaufruf mit zwanzig Unterressourcen
+#     schrieb zwanzig gleiche Zeilen — in die Datei, auf die die fail2ban-Jail zeigt und die
+#     logrotate wochenlang aufhebt. Die Zeile bleibt, der Sturm geht.
+_abraeumen()
+security._GEMELDET.clear()            # prozessweiter Zustand: der Lauf muss wiederholbar sein
+tmp8 = tempfile.mkdtemp()
+log8 = os.path.join(tmp8, "security.log")
+auth8 = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                  security_log=log8, cookie_secure=False, passkey_enabled=False,
+                                  csrf_enabled=False, forward_auth_enabled=True))
+app8 = FastAPI()
+app8.include_router(auth8.router())
+c8 = TestClient(app8)
+
+
+def _hinweiszeilen(pfad, host=None) -> int:
+    with open(pfad, encoding="utf-8") as fh:
+        return len([z for z in fh if "Kein vertrauenswürdiger öffentlicher Host" in z
+                    and (host is None or host in z)])
+
+
+for _i in range(20):
+    c8.get("/auth/forward", headers={"x-forwarded-proto": "https",
+                                     "x-forwarded-host": "app.example.com",
+                                     "x-forwarded-uri": f"/asset{_i}.css"})
+assert _hinweiszeilen(log8) == 1, \
+    f"{_hinweiszeilen(log8)} Zeilen nach 20 Anfragen — ein Crawler bläst die fail2ban-Datei auf"
+ok("der Hinweis auf die fehlende Basis kommt einmal, nicht je Anfrage")
+
+c8.get("/auth/forward", headers={"x-forwarded-proto": "https",
+                                 "x-forwarded-host": "zweiter.example.com",
+                                 "x-forwarded-uri": "/"})
+assert _hinweiszeilen(log8, "zweiter.example.com") == 1, \
+    "ein ANDERER Host bekommt keine eigene Zeile mehr — dann schweigt die Stelle zu neuen Fällen"
+ok("...ein anderer Host wird trotzdem gemeldet (still ist nicht dasselbe wie stumm)")
+
+# Der Deckel: Der Schlüssel kommt aus der Anfrage. Wer den Host-Header durchprobiert, darf weder
+# die Datei noch den Speicher füllen — ab `_GEMELDET_MAX` schweigt die Stelle ganz.
+security._GEMELDET.clear()
+assert all(security.einmal_melden(f"probe:{i}") for i in range(security._GEMELDET_MAX))
+assert not security.einmal_melden("probe:noch einer"), "ohne Deckel füllt ein Angreifer den Speicher"
+assert not security.einmal_melden("probe:0"), "derselbe Schlüssel meldet sich nicht zweimal"
+security._GEMELDET.clear()
+ok("einmal_melden() ist gedeckelt (der Schlüssel stammt aus der Anfrage)")
+
+# (5) Dieselbe Bremse für den umgekehrten Fall: Steht `base_url`, GEWINNT sie — auch gegen eine
+#     übergebene Basis auf einem zweiten eigenen Host. Ganz still wäre das eine Falle für den
+#     Entwickler (sein Wert verschwindet), je Anfrage wäre es der nächste Sturm (der Wert kommt
+#     bei diesem Muster aus dem Host-Header). Also einmal je Host.
+_abraeumen()
+tmp9 = tempfile.mkdtemp()
+log9 = os.path.join(tmp9, "security.log")
+auth9 = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                  security_log=log9, cookie_secure=False, passkey_enabled=False,
+                                  base_url="https://auth.example.com",
+                                  trusted_redirect_hosts=["app-b.example.com"]))
+for _ in range(5):
+    assert auth9.magic_url("tok", "https://app-b.example.com", "reset_password").startswith(
+        "https://auth.example.com/"), "base_url muss auch gegen einen zweiten eigenen Namen gewinnen"
+with open(log9, encoding="utf-8") as fh:
+    _ersetzt = [z for z in fh if "wird durch base_url" in z]
+assert len(_ersetzt) == 1, f"{len(_ersetzt)} Zeilen nach 5 Aufrufen — einmal je Host, nicht je Anfrage"
+security._GEMELDET.clear()
+ok("eine ersetzte Basis meldet sich einmal je Host (nicht still, nicht im Sturm)")
+
 _abraeumen()
 for f in (db, db2, db3):
     if os.path.exists(f):

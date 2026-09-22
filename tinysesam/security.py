@@ -255,6 +255,34 @@ def is_trusted(ip: str, trusted_nets) -> bool:
 # Request. Ein Log-Sturm wird weggefiltert und hilft niemandem.
 _GEMELDETE_PEERS: set = set()
 
+#: Schlüssel, zu denen schon eine Hinweiszeile im Security-Log steht (`einmal_melden`).
+#: Gedeckelt: Der Schlüssel stammt aus der Anfrage, und wer den `Host`-Header durchprobiert,
+#: soll weder die Datei noch den Speicher füllen. Ist der Deckel erreicht, ist die Aussage
+#: längst angekommen — dann schweigt die Stelle ganz.
+_GEMELDET_MAX = 512
+_GEMELDET: set = set()
+
+
+def einmal_melden(schluessel: str) -> bool:
+    """True genau beim ersten Aufruf mit diesem Schlüssel, danach False — gegen Log-Stürme.
+
+    Dieselbe Idee wie `_GEMELDETE_PEERS` in `client_ip()`, nur allgemein: Ein Hinweis auf eine
+    **Fehlkonfiguration** sagt beim ersten Mal alles; wiederholt er sich je Anfrage, füllt er
+    die Datei, auf die die fail2ban-Jail zeigt und die logrotate wochenlang aufhebt. Ein
+    Seitenaufruf mit zwanzig Unterressourcen schrieb so zwanzig gleiche Zeilen, ein Crawler
+    beliebig viele — die Meldung wird dadurch nicht richtiger, nur lauter.
+
+    Der Schlüssel gehört zur Ursache, nicht zur einzelnen Anfrage (also der Host, nicht die
+    vollständige URL) — sonst hebt jeder neue Pfad die Sperre wieder auf.
+
+    Der Zustand ist prozessweit: Ein Test, der die Zeile sehen will, leert `_GEMELDET` vorher
+    (Tests müssen wiederholbar bleiben).
+    """
+    if schluessel in _GEMELDET or len(_GEMELDET) >= _GEMELDET_MAX:
+        return False
+    _GEMELDET.add(schluessel)
+    return True
+
 
 def client_ip(request, trusted_nets) -> str:
     """Echte Client-IP. Nur wenn der direkte Peer vertrauenswürdig ist, wird X-Forwarded-For ausgewertet

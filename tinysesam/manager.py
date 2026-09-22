@@ -39,6 +39,20 @@ from . import security
 _NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
 
 
+def _host_aus(wert: str) -> str:
+    """Nur der Hostname einer Adresse — oder "" bei einer kaputten (offene IPv6-Klammer u.ä.).
+
+    Wird als Schlüssel für `security.einmal_melden()` gebraucht: Der Hinweis gehört zum Host,
+    nicht zur einzelnen URL — sonst hebt jeder neue Pfad die Sperre auf und der Log-Sturm ist
+    wieder da.
+    """
+    from urllib.parse import urlsplit
+    try:
+        return urlsplit(str(wert or "")).hostname or ""
+    except ValueError:
+        return ""
+
+
 def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
@@ -1851,10 +1865,17 @@ class TinySesam:
         `base_url` bleibt davon unberührt — OIDC-/SAML-Callbacks brauchen weiter die eine feste
         Adresse, die beim IdP hinterlegt ist. Betroffen ist nur die eigene Login-Seite.
         Der echte Fix für SSO über mehrere Subdomains bleibt `cookie_domain=".example.com"`.
+
+        Die Basis kommt aus `public_base()`, also aus derselben einen Regel wie überall:
+        `base_url` gewinnt (die Header werden dann gar nicht erst gelesen), sonst zählt ein
+        abgeleiteter Host nur aus `trusted_redirect_hosts` oder Loopback, sonst bleibt "".
+        **Die eine Ausnahme ist der Absatz oben** und sie ist bewusst: ohne `cookie_domain`
+        darf der angefragte — mitvertraute — Host die Login-Seite an sich ziehen, sonst dreht
+        sich die Anmeldung im Kreis. `konfigpruefung` sagt diesen Fall beim Start an.
         """
         from urllib.parse import quote, urlsplit
-        base = self.cfg.base_url
-        if not base and request is not None:
+        kandidat = ""
+        if not self.cfg.base_url and request is not None:
             h = request.headers
             proto = (h.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
             host = (h.get("x-forwarded-host") or h.get("host") or request.url.netloc).split(",")[0].strip()
@@ -1862,7 +1883,8 @@ class TinySesam:
             # abgeleitete Basis der Prüfung nicht stand, bleibt die Login-URL relativ — der
             # Browser löst sie gegen den aufgerufenen Host auf, ein fremder Name kommt so
             # nicht in die Umleitung.
-            base = self.public_base(kandidat=f"{proto}://{host}")
+            kandidat = f"{proto}://{host}" if host else ""
+        base = self.public_base(kandidat=kandidat)
         if base and not self.cfg.cookie_domain:
             # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
             # und X-Forwarded-* bereits ausgewertet. Die Whitelist trusted_redirect_hosts ist
@@ -1973,13 +1995,26 @@ class TinySesam:
         Sonst wird der abgeleitete Host geprüft (`security.eigener_host`), und nur ein
         Host aus `trusted_redirect_hosts` oder eine Loopback-Adresse zählt als der eigene.
 
+        **Dies ist die einzige Stelle, an der diese Frage entschieden wird.**
+        `require_public_base()` und `_gepruefte_basis()` rufen sie beide und machen nur aus dem
+        leeren Ergebnis einen Fehler — mit dem Text, der zu ihrem Aufrufer passt.
+        `forward_login_url()` fragt ebenfalls hier (mit seiner einen, im Docstring dort
+        begründeten Ausnahme). Zwei Fassungen derselben Regel liefen auseinander, sobald mehrere
+        eigene Namen im Spiel waren: Die Routen hielten `base_url`, der Weg über die Methoden
+        ließ den `Host`-Header auswählen — und die Lücke saß genau im Unterschied.
+
         `kandidat` erlaubt einer Route, eine anders abgeleitete Basis prüfen zu lassen (SAML
         wertet `X-Forwarded-Proto/Host` selbst aus) — geprüft wird sie nach derselben Regel.
 
         **Der Pfadanteil gehört dazu**, aus beiden Quellen: `base_url="https://example.com/sso"`
         behält ihr Präfix, und eine abgeleitete Basis übernimmt den `root_path` des Servers
         (`security.sichere_basis`). Ohne das bekam eine unter einem Unterpfad montierte App
-        Mail-Links ohne Präfix.
+        Mail-Links ohne Präfix — und wer ihn danach noch einmal anhängt, Links mit vierfachem.
+        Das Ergebnis ist die **fertige** Basis: Es wird nichts mehr daran angefügt.
+
+        Die Zusage reicht so weit und nicht weiter: **die verschickten Links** tragen den
+        Unterpfad. Die eingebauten Seiten tragen ihn nicht (ihre Ziele stehen wurzel-absolut in
+        `templates.py`) — siehe `backlog/T-15-unterpfad-montage.md`.
 
         Wer eine Basis braucht und ohne sie nicht weiterarbeiten darf, nimmt
         `require_public_base()` — diese Methode hier gibt "" zurück und überlässt die
@@ -1990,16 +2025,19 @@ class TinySesam:
         """
         if self.cfg.base_url:
             return str(self.cfg.base_url).rstrip("/")
-        roh = kandidat or (str(request.base_url) if request is not None else "")
+        roh = str(kandidat or (str(request.base_url) if request is not None else "")).strip()
         basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
-        if not basis and roh:
+        if not basis and roh and security.einmal_melden("public_base:" + _host_aus(roh)):
             # Einmal laut sagen, warum nichts passiert — sonst sucht der Betreiber den Fehler
-            # beim Mailer. fail2ban liest diesen Logger mit: ein Sturm gleicher Zeilen wäre
-            # selbst ein Befund, deshalb steht der Hinweis auf base_url in der Zeile.
+            # beim Mailer. fail2ban liest diesen Logger mit, und der Forward-Auth fragt hier bei
+            # JEDER anonymen Anfrage nach (ein Seitenaufruf sind zwanzig Unterressourcen): Ein
+            # Sturm gleicher Zeilen wäre selbst ein Befund, deshalb sagt `einmal_melden()` es
+            # einmal je Prozess und Host — der Hinweis auf base_url steht in der Zeile.
             security.seclog.warning(
                 "Kein vertrauenswürdiger öffentlicher Host: %s stammt aus dem Host-Header und "
                 "steht weder in trusted_redirect_hosts noch ist er Loopback. Der Vorgang bricht "
-                "ab (sonst ginge ein Link auf einen fremden Host hinaus). Abhilfe: base_url setzen.",
+                "ab (sonst ginge ein Link auf einen fremden Host hinaus). Abhilfe: base_url "
+                "setzen. Diese Zeile kommt einmal je Host, nicht je Anfrage.",
                 security.fuer_log(roh))
         return basis
 
@@ -2047,43 +2085,53 @@ class TinySesam:
         in der Route, nicht in der Methode. Deshalb prüft jetzt jeder Weg, der einen Link
         verschickt, seine Basis selbst — `magic_url()` und die vier Absender darüber.
 
-        Die Regel ist dieselbe wie in `public_base()`:
+        Es ist **dieselbe eine Regel** — diese Methode ruft `public_base()` und macht aus dem
+        leeren Ergebnis einen Fehler, so wie `require_public_base()` es für die Routen tut.
+        Der Unterschied liegt nur im Text der Ausnahme, der vom übergebenen Wert spricht:
 
-        * Trägt die übergebene Basis den Host der konfigurierten `base_url`, gilt die
-          **konfigurierte** — sie ist die Zusage des Betreibers. Das fängt auch den Fall, in dem
-          hinter einem TLS-terminierenden Proxy `str(request.base_url)` ein `http://` liefert:
-          der Link bliebe sonst still unverschlüsselt.
-        * Sonst muss der Host aus `trusted_redirect_hosts` kommen oder Loopback sein
+        * Steht `cfg.base_url`, **gewinnt sie unbedingt** — mit Schema und Pfadanteil. Die
+          übergebene Basis kommt gar nicht zum Zug. Das fängt auch den Fall, in dem hinter einem
+          TLS-terminierenden Proxy `str(request.base_url)` ein `http://` liefert (der Link bliebe
+          sonst still unverschlüsselt) **und** den Fall mehrerer mitvertrauter Namen: Bis zur
+          zweiten Nacharbeit gewann `base_url` hier nur, wenn der übergebene Host zufällig
+          derselbe war; sonst entschied `trusted_redirect_hosts`. Damit konnte der `Host`-Header
+          weiter *auswählen*, welcher der eigenen Namen in den Reset-Link kommt — genau der Kern
+          von R4-01, nur eine Ebene tiefer.
+        * Ohne `base_url` muss der Host aus `trusted_redirect_hosts` kommen oder Loopback sein
           (`security.sichere_basis`). Ein Pfad in der Basis bleibt erhalten (App unter einem
           Unterpfad montiert), eine Benutzerangabe im Host nicht.
         * Alles andere ist ein Fremdname → `ConfigError`. Kein Token, keine Mail, ein Fehler,
           den der Entwickler beim ersten Versuch sieht — statt eines Links, den das Opfer
           anklickt.
+
+        **Idempotent**, und das ist keine Feinheit: Die vier Absender prüfen ihre Basis vor der
+        Token-Vergabe, `magic_url()` prüft sie noch einmal, weil dort auch eine App landet, die
+        nur diese eine Methode ruft. Die erste Fassung hängte den Pfadanteil dabei jedes Mal neu
+        an eine Basis, die ihn schon trug (`sichere_basis()` gibt ihn seit N1 mit zurück) — aus
+        `https://example.com/portal` wurde über vier Stationen
+        `https://example.com/portal/portal/portal/portal/auth/reset?token=…`. Die Mail ging
+        hinaus, der Empfänger klickte, der Link war 404: kein Fehler, keine Logzeile. Deshalb
+        wird hier nichts mehr angehängt, und ein Test schickt eine Basis MIT Pfad durch alle
+        fünf Wege und **zählt** die Vorkommen des Präfixes.
         """
-        from urllib.parse import urlsplit
-
-        def _host(wert: str) -> str:
-            try:
-                return urlsplit(wert).hostname or ""
-            except ValueError:      # kaputte Adresse, z.B. eine offene IPv6-Klammer
-                return ""
-
-        roh = str(base_url or "").strip().rstrip("/")
-        eigen = str(self.cfg.base_url or "").strip().rstrip("/")
-        # `and _host(eigen)`: Ein `base_url` ohne erkennbaren Host (Tippfehler) darf nicht per
-        # „beide Hosts sind leer" jede beliebige Angabe durchwinken.
-        if eigen and roh and (roh == eigen or (_host(eigen) and _host(roh) == _host(eigen))):
-            return eigen
-        basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
-        if not basis:
+        roh = str(base_url or "").strip()
+        basis = self.public_base(kandidat=roh)
+        # Ersetzt wird still — aber nicht lautlos: Wer eine andere Adresse übergibt als die, die
+        # am Ende im Link steht, hat entweder den Request durchgereicht (dann ist das genau der
+        # Schutz) oder sich vertan (dann sucht er sonst lange). Einmal je Host, nicht je Anfrage:
+        # der Wert kommt bei diesem Muster aus dem `Host`-Header.
+        if basis and roh and _host_aus(roh) and _host_aus(roh) != _host_aus(basis) \
+                and security.einmal_melden("gepruefte_basis:" + _host_aus(roh)):
             security.seclog.warning(
-                "Abgelehnte Basis-Adresse für einen verschickten Link: %s. Sie stammt weder aus "
-                "base_url noch aus trusted_redirect_hosts und ist nicht Loopback. Kommt der Wert "
-                "aus str(request.base_url), ist es der Host-Header des Anfragenden — genau der "
-                "Weg, über den ein Reset-Link auf einen fremden Server zeigte (R4-01).",
-                security.fuer_log(roh))
-            # Im Text steht die gekürzte, von Steuerzeichen befreite Fassung: Der Wert kommt
-            # vom Anfragenden, und eine Ausnahme wandert in Protokolle und Fehlerseiten.
+                "Übergebene Basis-Adresse %s wird durch base_url (%s) ersetzt — base_url ist die "
+                "Zusage des Betreibers und gewinnt immer. Kommt der Wert aus str(request.base_url), "
+                "ist es der Host-Header des Anfragenden; genau darüber zeigte ein Reset-Link auf "
+                "einen fremden Server (R4-01). Diese Zeile kommt einmal je Host, nicht je Anfrage.",
+                security.fuer_log(roh), security.fuer_log(basis))
+        if not basis:
+            # Geloggt hat `public_base()` bereits (einmal je Host). Im Text der Ausnahme steht
+            # die gekürzte, von Steuerzeichen befreite Fassung: Der Wert kommt vom Anfragenden,
+            # und eine Ausnahme wandert in Protokolle und Fehlerseiten.
             raise ConfigError(
                 f"Diese Basis-Adresse geht nicht in einen verschickten Link: "
                 f"{security.fuer_log(roh)!r}. Erlaubt "
@@ -2091,11 +2139,7 @@ class TinySesam:
                 "aus dem Request nimmt, nimmt den Host-Header des Anfragenden — bei einer Mail an "
                 "ein fremdes Postfach also den des Angreifers. In einer Route liefert "
                 "auth.public_base(request) die geprüfte Basis (leer = abbrechen).")
-        try:
-            pfad = urlsplit(roh).path.rstrip("/")
-        except ValueError:          # sichere_basis hätte das längst abgelehnt — doppelt hält
-            pfad = ""
-        return basis + pfad
+        return basis
 
     def safe_next(self, next_: str) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
