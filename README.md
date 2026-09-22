@@ -414,13 +414,27 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   within the `lockout_window_sec` window the login is locked — this also blocks the *correct* password.
   Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
 - **Method-scoped counters next to the login lockout:** the PIN (short keyspace,
-  `pin_max_attempts`) and the account page's current-password prompt
-  (`password_change_max_attempts`) get their **own** pot. Both are throttled and logged, but a
-  wrong guess there does not lock the **login**: otherwise a few typos on your own account page
-  would lock you out — and behind NAT, colleagues who had nothing to do with it.
+  `pin_max_attempts`), the account page's current-password prompt
+  (`password_change_max_attempts`), the step-up confirmation (`reauth_max_attempts`) and the
+  area PIN (`resource_max_attempts`) each get their **own** pot. All of them are throttled and
+  logged, but a wrong guess there does not lock the **login**: otherwise a few typos on your own
+  account page would lock you out — behind NAT, colleagues who had nothing to do with it, and at
+  the area PIN even passing visitors who have no account at all. Which method is not a sign-in
+  attempt is listed in `security.NICHT_LOGIN_METHODEN` — derived from `security.EIGENE_SPERRE`,
+  so no method can end up without a brake. The pots of the **signed-in** paths (password change,
+  step-up) deliberately count per account only, not per IP: guessing there requires a valid
+  session for that very account. The area PIN keeps the IP threshold — there the guesser is
+  anonymous.
 - **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
   (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
+  **Only real sign-in attempts carry `failed login`.** A wrong guess that was not a sign-in
+  (password change, step-up confirmation, area PIN) is logged as `failed verification …` and is
+  deliberately **not** banned by the shipped jail: those lines come from someone who is already
+  signed in — with `maxretry = 6` a legitimate user locked themselves out after a few typos on
+  their own account page, for the whole instance. To ban them anyway (say, for publicly offered
+  area PINs), add `tinysesam-verify-filter.conf` and the second, milder `[tinysesam-verify]`
+  jail; it ships disabled.
   Set `security_log="/var/log/tinysesam/security.log"` and TinySesam writes that file itself — the shipped
   jail points at it and would otherwise watch a file that never appears. Leave it empty if you wire up
   logging yourself; an unwritable path warns at startup instead of stopping it. The file is created

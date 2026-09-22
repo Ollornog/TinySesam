@@ -278,12 +278,18 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   500 mitten im Anmeldevorgang. `/auth/password` prüft zusätzlich gegen die
   **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
   nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`.
-  **Für einbettende Apps:** Der Meldungstext des `ConfigError` bleibt der von 0.18.x
-  („E-Mail-Adresse ist bereits vergeben"), und der neue Auslöser — Benutzername gleich fremder
-  E-Mail und umgekehrt — trägt dieselbe Formulierung; wer den Text prüft, weil der Typ allein
-  nicht unterscheidbar war, bricht an diesem Fix also nicht. Unterscheiden lässt sich der Fall
-  jetzt **ohne** Textvergleich: `e.feld` ist `"username"` oder `"email"`, `e.besitzer_id` nennt
-  das Konto, dem die Kennung gehört. Und weil die Datenbank keinen UNIQUE-Index über BEIDE
+  **Für einbettende Apps — ⚠️ hier ändert sich Verhalten:** Bei einer doppelten **E-Mail**
+  bleibt alles wie in 0.18.x (`ConfigError`, Wortlaut „E-Mail-Adresse ist bereits vergeben").
+  Ein doppelter **Benutzername** dagegen lief bis 0.18.x in die Datenbank und kam als
+  `sqlite3.IntegrityError` („UNIQUE constraint failed: users.username") zurück; jetzt fängt
+  `create_user()` ihn vorher ab und wirft ebenfalls `ConfigError`, mit dem Text „Benutzername
+  ist bereits vergeben". Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr — die
+  Signatur ist unverändert, `api_surface.json` sieht den Wechsel also nicht; er steht deshalb
+  hier und im Docstring (→ API.md). Ebenso ist der **Wortlaut feldabhängig**: Der neue Auslöser
+  (Benutzername gleich fremder E-Mail und umgekehrt) trägt den Text des Feldes, das kollidiert,
+  nicht immer den der E-Mail. Ein früherer Entwurf dieses Eintrags behauptete das Gegenteil.
+  Unterscheiden lässt sich der Fall ohnehin besser **ohne** Textvergleich: `e.feld` ist
+  `"username"` oder `"email"`, `e.besitzer_id` nennt das Konto, dem die Kennung gehört. Und weil die Datenbank keinen UNIQUE-Index über BEIDE
   Namensräume kennt — Prüfung und INSERT in `create_user` sind nicht atomar, und eine Datenbank
   von vor dem Fix trägt die Kollision längst —, **meldet der Start jetzt vorhandene
   Kreuz-Kollisionen** mit beiden Konto-IDs, statt sie schweigend mitzuführen
@@ -315,6 +321,35 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Neu: `auth.is_password_change_locked(username, ip)` und
   `store.count_fails(..., exclude_methods=…)`. Belege in `tests/test_hardening.py`.
   Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+  **Nachgearbeitet (zweite Angriffsrunde) — der Fix war an drei Stellen zu kurz:**
+  1. **Die Ausnahmeliste nannte nur `password_change`.** `record_login()` wird im Router mit
+     fünf Methoden gerufen; `reauth` (Step-up-Bestätigung) und `resource` (Bereichs-PIN ohne
+     Konto) zählten weiter in den Login-Topf. Fünf Tippfehler an der Reauth-Seite sperrten
+     damit die **Anmeldung** desselben Kontos, und bei der Bereichs-PIN — die jeder Besucher
+     probieren darf — genügten drei Bereiche à fünf Fehlgriffe, um über `ip_attempt_factor`
+     die Anmeldung wildfremder Konten von derselben Adresse zu verriegeln. Beide haben jetzt
+     ihren eigenen Topf (`auth.is_reauth_locked`, `auth.is_resource_locked`, Schwellen
+     `reauth_max_attempts`/`resource_max_attempts`); `NICHT_LOGIN_METHODEN` wird aus der
+     Zuordnung `security.EIGENE_SPERRE` **abgeleitet**, eine Methode ohne eigene Bremse lässt
+     sich also gar nicht mehr eintragen. Ein Test hält die Liste per AST gegen die Methoden,
+     mit denen der Router wirklich ruft — genau das fehlte, sonst wäre die Lücke aufgefallen.
+  2. **Die Nicht-Login-Zeile traf die mitgelieferte fail2ban-Jail.** `failed login user=…
+     ip=… method=password_change` passte Zeichen für Zeichen auf die ausgelieferte `failregex`
+     (`maxretry = 6`): Acht Tippfehler eines **angemeldeten** Nutzers am eigenen alten Passwort
+     erzeugten acht bannbare Zeilen, und ab der App-Sperre beschleunigte jeder weitere Klick den
+     Bann. Nicht-Anmeldungen tragen jetzt das eigene Ereigniswort **`failed verification`**
+     (`security.log_ereignis`) und laufen an der Jail vorbei; wer sie trotzdem bannen will,
+     nimmt den neuen Filter `deploy/fail2ban/tinysesam-verify-filter.conf` samt der milderen,
+     standardmässig **abgeschalteten** zweiten Jail dazu (sinnvoll vor allem für öffentlich
+     angebotene Bereichs-PINs). Protokolliert wird unverändert alles.
+  3. **Der eigene Topf brachte die NAT-Verstärkung mit, die er abschaffen sollte.** Er zählte
+     zunächst auch pro IP (`limit * ip_attempt_factor`): Drei vertippte Kollegen sperrten dem
+     vierten seinen **eigenen** Passwortwechsel — eine Sperre, die es auf 0.18.x gar nicht gab.
+     `is_password_change_locked` und `is_reauth_locked` zählen jetzt **nur pro Konto**; wer dort
+     rät, braucht ohnehin schon eine gültige Sitzung genau dieses Kontos, das Opfer ist also
+     immer der Angemeldete selbst. Gegen Klopfen von aussen steht weiter `rate_ok(ip)`.
+     `is_resource_locked` behält die IP-Schwelle: Dort rät ein Unangemeldeter, und ohne sie
+     liesse sich über immer neue Bereichsnamen endlos weiterraten.
 - **Ein `GET` auf `/auth/totp/setup` konnte den bestätigten zweiten Faktor entfernen.** Die Seite
   rief `totp_begin()` unbedingt und schrieb ein frisches, unbestätigtes Geheimnis über das alte:
   TOTP fiel auf „unbestätigt", die zehn Recovery-Codes blieben verwaist liegen, es entstand keine
@@ -433,10 +468,16 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   ohne Passwort, PIN und TOTP (OIDC/SAML/LDAP) hat nichts, womit es einen Step-up leisten könnte:
   `stepup_options()` ist leer, und nach Ablauf von `stepup_max_age_sec` (Vorgabe 900 s ab Login)
   antwortete die Route 403 — die Reauth-Seite bot dazu ein **Passwortfeld** an, das dieses Konto
-  nicht hat, und jeder aussichtslose Versuch zählte in dieselbe Brute-Force-Sperre. Das **Anlegen**
-  des ersten Faktors hängt jetzt am Alter der Anmeldung (neu: **`auth.login_fresh()`**, dieselbe
-  Spanne, gemessen ab Login statt ab Faktor-Bestätigung); **Ersetzen und Abbauen bleiben hinter
-  `require_mfa()`**. Ist auch die Anmeldung zu alt, sagt die Antwort, was hilft („melde dich neu
+  nicht hat, und jeder aussichtslose Versuch zählte in dieselbe Brute-Force-Sperre. Für ein Konto, das **gar keinen** Faktor hat, hängt das
+  **Anlegen** jetzt am Alter der Anmeldung (neu: **`auth.login_fresh()`**, dieselbe Spanne,
+  gemessen ab Login statt ab Faktor-Bestätigung); **Ersetzen, Abbauen — und das Anlegen für
+  jedes Konto, das überhaupt etwas zum Bestätigen hat — bleiben hinter `require_mfa()`**. Die
+  Einschränkung ist Absicht: Mit `pin_login` ist eine PIN ein vollwertiger Erstfaktor, ein
+  gestohlenes frisches Sitzungscookie richtete sich sonst einen eigenen, den Diebstahl
+  überdauernden Zugang ein. Für ein Konto mit Passwort heisst das: erst bestätigen (die
+  Kontoseite führt über `X-TinySesam-Reauth` von selbst dorthin), dann die erste PIN. Ein
+  früherer Entwurf dieses Eintrags las sich, als genüge überall die frische Anmeldung — die
+  Regel ist jetzt in `tests/test_pin_stepup.py` gemessen, statt nur beschrieben. Ist auch die Anmeldung zu alt, sagt die Antwort, was hilft („melde dich neu
   an"), und verweist **nicht** mehr auf die Reauth-Seite. Die zeigt bei leerer Methodenliste jetzt
   gar kein Formular, und ein POST dorthin wird nicht als Fehlversuch protokolliert.
 
@@ -450,6 +491,13 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 - **`auth.require_session(request)`** und **`auth.login_fresh(request)`** — die beiden Schranken
   aus den Punkten oben, auch für eigene Konto-Seiten: „angemeldet, aber nicht per API-Key" und
   „die Anmeldung ist höchstens `stepup_max_age_sec` alt". Reine Erweiterung, kein Bruch.
+- **`auth.is_reauth_locked(username, ip)` und `auth.is_resource_locked(username, ip)`** samt
+  den Schwellen **`reauth_max_attempts`** und **`resource_max_attempts`** (je 5, im Panel
+  änderbar wie die übrigen): die eigenen Töpfe für Step-up-Bestätigung und Bereichs-PIN. Dazu
+  `security.EIGENE_SPERRE` (Methode → Riegel; `NICHT_LOGIN_METHODEN` ist daraus abgeleitet) und
+  `security.log_ereignis(method)` für das Ereigniswort der Log-Zeile.
+- **`deploy/fail2ban/tinysesam-verify-filter.conf`** plus die Jail `[tinysesam-verify]` in der
+  Vorlage — die mildere, standardmässig abgeschaltete zweite Jail für `failed verification`.
 - **`recent_audit(limit, username=…)`** filtert in SQL (siehe `audit --user` oben).
 - **Drei Wächter in `tests/test_repo.py`**: Die in beiden READMEs genannte Zahl der Testdateien und
   die Python-Spanne werden gegen die Wirklichkeit gemessen, und solange die Version unter 1.0 liegt,

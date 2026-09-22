@@ -43,6 +43,8 @@
     "is_locked": "(username, ip) -> 'bool'",
     "is_password_change_locked": "(username, ip) -> 'bool'",
     "is_pin_locked": "(username, ip) -> 'bool'",
+    "is_reauth_locked": "(username, ip) -> 'bool'",
+    "is_resource_locked": "(username, ip) -> 'bool'",
     "is_secure": "(request: 'Request') -> 'bool'",
     "issue_csrf": "(response: 'Response') -> 'str'",
     "json_body": "(request: 'Request') -> 'dict'",

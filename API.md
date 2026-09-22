@@ -104,7 +104,7 @@ Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-
 
 ### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
 
-Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
+Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
 ### `csrf_rotieren(response) -> 'str'`
 
@@ -189,6 +189,14 @@ Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
 ### `is_pin_locked(username, ip) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
+
+### `is_reauth_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
+
+### `is_resource_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
 
 ### `is_secure(request: 'Request') -> 'bool'`
 
@@ -522,4 +530,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-113 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+115 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

@@ -418,14 +418,28 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
 - **Methodengebundene Zähler neben dem Login-Lockout:** Die PIN (kurzer Keyspace,
-  `pin_max_attempts`) und die Alt-Passwort-Abfrage der Kontoseite
-  (`password_change_max_attempts`) haben einen **eigenen** Topf. Beides ist gedrosselt und
-  protokolliert, aber ein Fehlgriff dort sperrt die **Anmeldung** nicht: Sonst hätten ein paar
-  Tippfehler auf der eigenen Kontoseite den Nutzer ausgeschlossen — hinter NAT auch Kollegen,
-  die nichts damit zu tun hatten.
+  `pin_max_attempts`), die Alt-Passwort-Abfrage der Kontoseite (`password_change_max_attempts`),
+  die Step-up-Bestätigung (`reauth_max_attempts`) und die Bereichs-PIN (`resource_max_attempts`)
+  haben je einen **eigenen** Topf. Alles davon ist gedrosselt und protokolliert, aber ein
+  Fehlgriff dort sperrt die **Anmeldung** nicht: Sonst hätten ein paar Tippfehler auf der
+  eigenen Kontoseite den Nutzer ausgeschlossen — hinter NAT auch Kollegen, die nichts damit zu
+  tun hatten, und bei der Bereichs-PIN sogar fremde Besucher, die gar kein Konto haben.
+  Welche Methode kein Anmeldeversuch ist, steht in `security.NICHT_LOGIN_METHODEN` — abgeleitet
+  aus `security.EIGENE_SPERRE`, damit keine Methode ohne Bremse dastehen kann.
+  Die Töpfe der **angemeldeten** Wege (Passwortwechsel, Step-up) zählen bewusst nur pro Konto,
+  nicht pro IP: Wer dort rät, braucht bereits eine Sitzung genau dieses Kontos. Die Bereichs-PIN
+  behält die IP-Schwelle, denn dort rät ein Unangemeldeter.
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
   (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.
+  **Nur echte Anmeldeversuche tragen `failed login`.** Ein Fehlgriff, der keine Anmeldung war
+  (Passwortwechsel, Step-up-Bestätigung, Bereichs-PIN), wird als `failed verification …`
+  protokolliert und von der mitgelieferten Jail bewusst **nicht** gebannt: Diese Zeilen kommen
+  von jemandem, der bereits angemeldet ist — mit `maxretry = 6` sperrte sich ein legitimer
+  Nutzer nach ein paar Tippfehlern auf der eigenen Kontoseite selbst aus, und zwar für die ganze
+  Instanz. Wer sie trotzdem bannen will (etwa bei öffentlich angebotenen Bereichs-PINs), nimmt
+  `tinysesam-verify-filter.conf` und die zweite, mildere Jail `[tinysesam-verify]` dazu; sie
+  liegt abgeschaltet bei.
   Mit `security_log="/var/log/tinysesam/security.log"` schreibt TinySesam die Datei selbst — die
   mitgelieferte Jail zeigt darauf und bewachte sonst eine Datei, die nie entsteht. Leer lassen, wer sein
   Logging selbst einrichtet; ein nicht schreibbarer Pfad warnt beim Start, statt ihn zu verhindern.

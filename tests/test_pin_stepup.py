@@ -299,4 +299,58 @@ assert antwort.status_code == 403, antwort.status_code
 assert auth.store.count_fails(0, username="sso-nutzer") == 0, "kein Fehlversuch im Sperr-Topf"
 os.unlink(db)
 print("  (b) zu alte Anmeldung: 403 'neu anmelden', Reauth-Seite ohne Feld ok")
+
+
+# ---------- 8) Dieselbe Route für ein Konto MIT Passwort: die Regel, genau ----------
+# Die Ausnahme aus (7) gilt schmal: Sie ist für ein Konto gedacht, das gar nichts hat, womit
+# es bestätigen könnte. Sobald `stepup_options()` etwas hergibt — und das tut sie für jedes
+# Konto mit Passwort —, verlangt auch das ANLEGEN der ersten PIN eine frische Bestätigung.
+# Das ist Absicht und keine Nachlässigkeit: Mit `pin_login` ist eine PIN ein vollwertiger
+# Erstfaktor, ein gestohlenes Sitzungscookie richtete sich damit sonst einen eigenen Zugang
+# ein, der den Diebstahl überdauert. Eine frische Anmeldung allein genügt dafür NICHT.
+# Bis zur zweiten Runde behauptete der CHANGELOG pauschal, das Anlegen hänge am Alter der
+# Anmeldung; gemessen wurde die Regel von keiner Suite. Jetzt hier. (Mutationsprobe:
+# `or auth.stepup_options(u)` in `pin_set` streichen → (b) wird rot.)
+db = os.path.join(tempfile.mkdtemp(), "t.db")
+auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
+                                 passkey_enabled=False, oidc_enabled=False, pin_enabled=True,
+                                 pin_login=True, stepup_max_age_sec=900))
+PW = "Anna-Passwort-2026"
+uid = auth.create_user("anna", PW)
+app = FastAPI(); app.include_router(auth.router())
+c = TestClient(app, headers=HTML)
+J = {"Accept": "application/json"}
+assert auth.stepup_options(auth.get_user(uid)) == ["password"], "Vorbedingung: das Konto kann bestätigen"
+assert c.post("/auth/login", data={"username": "anna", "password": PW, "next": "/"},
+              follow_redirects=False).status_code == 303
+
+# (a) Frisch angemeldet: Die erste PIN geht durch — die Anmeldung IST hier die Bestätigung.
+r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
+assert r.status_code == 200, (r.status_code, r.text[:120])
+assert auth.verify_user_pin(uid, "2468")
+print("  (a) Passwort-Konto, frisch angemeldet: erste PIN geht durch ok")
+
+# (b) Bestätigung abgelaufen, Anmeldung noch jung: 403 — und zwar der, der weiterhilft.
+auth.disable_pin(uid)
+_hash = auth.store.session_hash(c.cookies.get(auth.cfg.session_cookie))
+auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?", (int(time.time()) - 100000, _hash))
+_sitzung = auth.store._one("SELECT created_at, mfa_at FROM session WHERE token_hash=?", (_hash,))
+# Vorbedingung, sonst misst (b) den falschen Riegel: Die ANMELDUNG ist noch jung, nur die
+# Bestätigung ist abgelaufen. Genau diese Lage trennt `login_fresh()` von `stepup_fresh()`.
+assert int(time.time()) - _sitzung["created_at"] < auth.cfg.stepup_max_age_sec, dict(_sitzung)
+assert int(time.time()) - _sitzung["mfa_at"] > auth.cfg.stepup_max_age_sec, dict(_sitzung)
+r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
+assert r.status_code == 403, (r.status_code, r.text[:120])
+assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
+assert not auth.has_pin(uid), "ohne Bestätigung darf kein Anmeldefaktor entstehen"
+print("  (b) Passwort-Konto, Bestätigung abgelaufen: 403 + Verweis auf die Reauth-Seite ok")
+
+# (c) Und der Weg, auf den der Verweis zeigt, führt zum Ziel: Passwort bestätigen → PIN setzen.
+r = c.post("/auth/reauth", data={"password": PW, "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code
+r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
+assert r.status_code == 200, (r.status_code, r.text[:120])
+assert auth.verify_user_pin(uid, "1357")
+print("  (c) nach der Bestätigung auf /auth/reauth: erste PIN geht durch ok")
+os.unlink(db)
 print("OK test_pin_stepup")

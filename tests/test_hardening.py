@@ -185,6 +185,97 @@ r = dritter.post("/auth/login", data={"username": "unbeteiligt", "password": "Dr
 assert r.status_code == 303, f"Login des Unbeteiligten gesperrt: {r.status_code}"
 print("  ✓ keine NAT-Verstärkung: vertippte Kollegen sperren Unbeteiligte nicht aus")
 
+# (g) Nacharbeit zur zweiten Runde: Der eigene Topf trug die IP-Dimension zunächst mit
+# (`limit * ip_attempt_factor`). Damit verriegelten drei vertippte Kollegen dem vierten seinen
+# EIGENEN Passwortwechsel — dieselbe Kollateralsperre, nur eine Ebene tiefer, und gegen einen,
+# der nichts falsch eingegeben hat. Auf `main` gab es diese Sperre gar nicht. Sie fehlt auch
+# nicht: Wer hier rät, braucht bereits eine gültige Sitzung DIESES Kontos.
+# (Mutationsprobe: `ip_faktor=self.sec("ip_attempt_factor")` an `is_password_change_locked`
+# zurückgeben → diese drei Zeilen fallen, der Vierte bekommt 429.)
+assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_GRENZE, \
+    "Vorbedingung: die Test-IP hat die IP-Schwelle des Logins längst überschritten"
+uid_vierter = auth2.create_user("vierter", "Vierte-Passwort-1")
+vierter = TestClient(app2)
+t4, _ = auth2.start_session(uid_vierter, "password", remember=True)
+vierter.cookies.set(auth2.cfg.session_cookie, t4)
+assert not auth2.is_password_change_locked("vierter", "testclient"), \
+    "vertippte Kollegen sperren dem Unbeteiligten den eigenen Passwortwechsel"
+r = vierter.post("/auth/password", json={"current": "Vierte-Passwort-1", "new": "neues-langes-passwort"})
+assert r.status_code == 200, f"Passwortwechsel des Unbeteiligten gesperrt: {r.status_code} {r.text[:120]}"
+print("  ✓ der eigene Topf sperrt pro Konto, nicht pro Anschluss (kein NAT-Kollateral)")
+
+# ---------- R4-10/Runde 2: Die Ausnahmeliste ist vollständig — und jede Ausnahme hat eine Bremse ----------
+# Der erste Anlauf nahm nur `password_change` aus dem Login-Lockout. `record_login()` wird im
+# Router aber auch mit `reauth` (Step-up-Bestätigung) und `resource` (Bereichs-PIN ohne Konto)
+# gerufen: Fünf Tippfehler an der Reauth-Seite sperrten die Anmeldung desselben Kontos, und
+# drei Bereiche à fünf Fehlgriffe erreichten über `ip_attempt_factor` die Login-IP-Schwelle und
+# verriegelten die Anmeldung wildfremder Konten. Niemand merkte es, weil kein Test den INHALT
+# der Liste gegen die Wirklichkeit hielt. Genau das tun die folgenden drei Prüfungen.
+import ast                                                                      # noqa: E402
+from pathlib import Path                                                        # noqa: E402
+from tinysesam import security as _sec                                          # noqa: E402
+
+QUELLEN = sorted((Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"))
+ECHTE_ANMELDUNG = {"password", "pin", "totp"}     # bewusst hier gepflegt, nicht abgeleitet
+
+
+def _record_login_methoden(pfad: Path) -> set:
+    """Mit welchen Methoden ruft dieser Modul-Quelltext `record_login()`? (AST, nicht grep:
+    ein Docstring, der die Zeile zitiert, ist kein Aufruf.)"""
+    baum = ast.parse(pfad.read_text(encoding="utf-8"))
+    gefunden = set()
+    for knoten in ast.walk(baum):
+        if not (isinstance(knoten, ast.Call) and isinstance(knoten.func, ast.Attribute)):
+            continue
+        if knoten.func.attr != "record_login":
+            continue
+        arg = knoten.args[3] if len(knoten.args) > 3 else None
+        for kw in knoten.keywords:
+            if kw.arg == "method":
+                arg = kw.value
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            gefunden.add(arg.value)
+        else:
+            gefunden.add(f"<nicht-konstant in {pfad.name}:{knoten.lineno}>")
+    return gefunden
+
+
+benutzt = set().union(*(_record_login_methoden(q) for q in QUELLEN))
+assert "password" in benutzt and "reauth" in benutzt and "resource" in benutzt, \
+    f"der Sammler findet die bekannten Aufrufstellen nicht mehr: {sorted(benutzt)}"
+unbekannt = benutzt - ECHTE_ANMELDUNG - set(_sec.NICHT_LOGIN_METHODEN)
+assert not unbekannt, (f"neue record_login-Methode(n) {sorted(unbekannt)}: entweder ein echter "
+                       "Anmeldeversuch (dann oben in ECHTE_ANMELDUNG eintragen) oder keiner "
+                       "(dann in security.EIGENE_SPERRE — mit eigenem Topf)")
+print(f"  ✓ jede record_login-Methode ist eingeordnet ({len(benutzt)} gefunden, AST über tinysesam/)")
+
+# Kein Eintrag ohne Bremse: Eine Methode aus dem Login-Lockout zu nehmen, ohne ihr einen
+# eigenen Topf zu geben, hiesse, sie unbegrenzt ratbar zu machen.
+db3 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth3 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db3, cookie_secure=False,
+                                  passkey_enabled=False, oidc_enabled=False))
+for _m in _sec.NICHT_LOGIN_METHODEN:
+    riegel = getattr(auth3, _sec.EIGENE_SPERRE[_m], None)
+    assert callable(riegel), f"{_m} steht in NICHT_LOGIN_METHODEN, hat aber keinen eigenen Topf"
+    name = f"probant-{_m}"
+    for _ in range(20):
+        auth3.record_login(name, "198.51.100.4", False, _m)
+    assert not auth3.is_locked(name, "198.51.100.4"), \
+        f"Fehlversuche mit method={_m} sperren die Anmeldung (weder Anmeldung noch Ausnahme?)"
+    assert riegel(name, "198.51.100.4"), \
+        f"method={_m} ist aus dem Login-Lockout genommen, aber {_sec.EIGENE_SPERRE[_m]} bremst nicht"
+print(f"  ✓ jede Nicht-Login-Methode hat eine eigene Bremse ({', '.join(_sec.NICHT_LOGIN_METHODEN)})")
+
+# Und die Töpfe sind getrennt: Der eine füllt den anderen nicht.
+for _m in _sec.NICHT_LOGIN_METHODEN:
+    for _anderer in _sec.NICHT_LOGIN_METHODEN:
+        if _anderer == _m:
+            continue
+        assert not getattr(auth3, _sec.EIGENE_SPERRE[_anderer])(f"probant-{_m}", None), \
+            f"Fehlversuche mit method={_m} sperren auch {_anderer}"
+print("  ✓ die Töpfe sind gegeneinander dicht (Fehlgriff der einen Methode sperrt die andere nicht)")
+os.remove(db3)
+
 os.remove(db2)
 
 os.remove(db)

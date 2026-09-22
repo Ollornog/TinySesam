@@ -124,23 +124,60 @@ SECURITY_DEFAULTS = {
     "password_min_length": 8,
     "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
     "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
+    "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
+    "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
 }
 
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
-# Login-Lockout (`is_locked`) zählen dürfen.
+# Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
+# STATTDESSEN bremst.
 #
-# Warum überhaupt: Die Alt-Passwort-Abfrage der Kontoseite verbucht ihre Fehlversuche in
-# derselben Tabelle (R4-10 — sonst wäre sie ein stilles Orakel). `is_locked` zählte aber
-# methodenblind, und damit sperrten fünf Tippfehler auf der EIGENEN Kontoseite die Anmeldung
-# für 15 Minuten — abtragen konnte der Nutzer sie durch nichts, denn ein Erfolg räumt nur die
-# Fehlversuche derselben Methode weg. Hinter NAT reichten drei Kollegen mit je fünf Tippfehlern,
-# um einem völlig unbeteiligten Vierten den Login zu verriegeln (`ip_attempt_factor`).
+# Warum überhaupt: Die Alt-Passwort-Abfrage der Kontoseite, die Step-up-Bestätigung und die
+# Bereichs-PIN verbuchen ihre Fehlversuche in derselben Tabelle wie der Login (R4-10 — sonst
+# wären sie stille Orakel). `is_locked` zählte aber methodenblind, und damit sperrten fünf
+# Tippfehler auf der EIGENEN Kontoseite die Anmeldung für 15 Minuten — abtragen konnte der
+# Nutzer sie durch nichts, denn ein Erfolg räumt nur die Fehlversuche derselben Methode weg.
+# Hinter NAT reichten drei Kollegen mit je fünf Tippfehlern, um einem völlig unbeteiligten
+# Vierten den Login zu verriegeln (`ip_attempt_factor`); bei der Bereichs-PIN genügten dafür
+# fremde Besucher, die gar kein Konto haben.
+#
+# Die Zuordnung ist Absicht und keine Bequemlichkeit: Wer eine Methode hier einträgt, nimmt
+# sie aus dem Login-Lockout — ohne eigenen Topf wäre sie damit unbegrenzt ratbar. Deshalb
+# steht der Ersatz daneben, `NICHT_LOGIN_METHODEN` wird daraus abgeleitet (eine Methode ohne
+# Riegel lässt sich gar nicht erst eintragen), und ein Test hält die Tabelle gegen die
+# Methoden, mit denen der Router `record_login()` wirklich ruft.
 #
 # Bewusst eine **Ausnahmeliste**, keine Positivliste der Login-Methoden: Eine neue
 # Anmeldemethode zählt damit von sich aus mit. Eine vergessene Zeile kostet hier Bequemlichkeit
 # (eine Sperre zählt strenger als nötig), eine vergessene Zeile in einer Positivliste hätte ein
 # Loch im Lockout gekostet.
-NICHT_LOGIN_METHODEN = ("password_change",)
+EIGENE_SPERRE = {
+    "password_change": "is_password_change_locked",
+    "reauth": "is_reauth_locked",
+    "resource": "is_resource_locked",
+}
+
+NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
+
+#: Das Ereigniswort der Zeile im Sicherheits-Log. **Nur `failed login` trifft die
+#: mitgelieferte fail2ban-failregex** (`deploy/fail2ban/tinysesam-filter.conf`) — und das ist
+#: der Punkt: Ein Fehlgriff aus `NICHT_LOGIN_METHODEN` stammt von jemandem, der schon
+#: angemeldet ist (Kontoseite, Step-up) oder der gar kein Konto braucht (Bereichs-PIN). Mit
+#: demselben Wort bannte die ausgelieferte Jail (`maxretry = 6`) einen legitimen Nutzer nach
+#: ein paar Tippfehlern auf Firewall-Ebene aus — und zwar für die ganze Instanz, nicht für die
+#: Route. Verschärfend: Ab der App-Sperre erzeugt jeder weitere Klick eine weitere Zeile.
+#: Protokolliert wird deshalb unverändert, nur unter eigenem Namen; wer auch diese Zeilen
+#: bannen will, nimmt die zweite, mildere Jail aus `deploy/fail2ban/`.
+LOG_ANMELDUNG = "failed login"
+LOG_PRUEFUNG = "failed verification"
+
+
+def log_ereignis(method) -> str:
+    """Welches Ereigniswort gehört in die Sicherheits-Log-Zeile dieser Methode?
+
+    `failed login` nur für echte Anmeldeversuche — alles aus `NICHT_LOGIN_METHODEN` bekommt
+    `failed verification` und läuft damit an der mitgelieferten fail2ban-Jail vorbei."""
+    return LOG_PRUEFUNG if method in NICHT_LOGIN_METHODEN else LOG_ANMELDUNG
 
 
 def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:

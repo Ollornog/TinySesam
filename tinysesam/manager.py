@@ -383,7 +383,10 @@ class TinySesam:
     def create_user(self, username, password=None, is_admin=False, roles=None,
                     display_name=None, email=None, is_service=False,
                     email_verified: bool = True) -> int:
-        """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
+        """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein
+        Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch
+        beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der
+        Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
         Benutzername und E-Mail müssen **kreuzweise** frei sein (`kennung_vergeben`) — sonst
         besetzt ein neues Konto die Login-Kennung eines bestehenden. Die Prüfung sitzt hier,
@@ -403,9 +406,13 @@ class TinySesam:
         Allowlist-Adresse im Spiel ist).
 
         Eine vergebene Kennung wirft `ConfigError` mit dem Wortlaut „<Feld> ist bereits
-        vergeben" (unverändert seit 0.18.x) und gesetztem `e.feld` (`"username"`/`"email"`)
-        plus `e.besitzer_id` — daran, nicht am übersetzten Text, unterscheidet ein Aufrufer
-        die beiden Fälle."""
+        vergeben" und gesetztem `e.feld` (`"username"`/`"email"`) plus `e.besitzer_id` —
+        daran, nicht am übersetzten Text, unterscheidet ein Aufrufer die beiden Fälle.
+
+        ⚠️ **Geändert gegenüber 0.18.x:** Nur die doppelte *E-Mail* warf dort schon
+        `ConfigError`. Ein doppelter *Benutzername* lief bis in die Datenbank und kam als
+        `sqlite3.IntegrityError` zurück; er wird jetzt vorher abgefangen und wirft denselben
+        `ConfigError`. Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr."""
         username = (username or "").strip()
         email = norm_email(email)
         for feld, schluessel, kennung in (("Benutzername", "username", username),
@@ -414,12 +421,13 @@ class TinySesam:
             if besitzer:
                 security.seclog.warning(
                     "Konto nicht angelegt: %s ist bereits Login-Kennung von user_id=%s", feld, besitzer["id"])
-                # Der Wortlaut ist bewusst der von 0.18.x ("… ist bereits vergeben"). Weil ein
+                # Der Wortlaut ist der von 0.18.x ("… ist bereits vergeben"). Weil ein
                 # `ConfigError` allein nicht verrät, WAS kollidierte, prüfen Aufrufer den Text —
                 # die brüchigste Art, ein Programm zu steuern, aber eine verbreitete. Ein Fix
-                # darf ihr nicht die Grundlage wegziehen. Unterscheiden lässt sich der Fall
-                # jetzt an `feld`/`besitzer_id`; der neue Auslöser (Benutzername = fremde
-                # E-Mail und umgekehrt) trägt dieselbe Formulierung.
+                # darf ihr nicht die Grundlage wegziehen. Er nennt aber das Feld, das WIRKLICH
+                # kollidiert: Der neue Auslöser (Benutzername = fremde E-Mail und umgekehrt)
+                # trägt je nach Richtung den Benutzernamen- ODER den E-Mail-Text, nicht immer
+                # denselben. Verlässlich unterscheiden lässt er sich an `feld`/`besitzer_id`.
                 fehler = ConfigError(f"{feld} ist bereits vergeben")
                 fehler.feld = schluessel
                 fehler.besitzer_id = int(besitzer["id"])
@@ -1074,20 +1082,66 @@ class TinySesam:
         eigenen Kontoseite sperrt aber nicht die Anmeldung. Die Sperre gilt genau dort, wo
         geraten wurde.
 
+        **Nur pro Konto, nicht pro IP** (`ip` geht bloss in die Protokollzeile). Bis zur
+        zweiten Runde zählte auch hier eine IP-Schwelle mit — und die verriegelte hinter NAT
+        wieder Unbeteiligte: Drei vertippte Kollegen sperrten dem vierten seinen EIGENEN
+        Passwortwechsel, obwohl er nichts falsch eingegeben hatte. Der Umbau war angetreten,
+        genau das abzustellen. Sie fehlt auch nicht: Wer hier rät, braucht bereits eine
+        gültige Sitzung des Kontos, dessen Passwort er rät — das Opfer ist immer der
+        Angemeldete selbst. Gegen das Klopfen von aussen steht weiter `rate_ok(ip)`.
+
         Die Abweisung wird hier gemeldet, nicht in der Route: Sonst verstummte das
         Sicherheits-Log genau dann, wenn fail2ban die IP bannen soll (Begründung bei
-        `_abgewiesen`). Die IP-Schwelle liegt wie beim Login um `ip_attempt_factor` höher,
-        damit ein Büro hinter NAT nicht am ersten vertippten Kollegen hängt.
+        `_abgewiesen`).
+        """
+        return self._methoden_sperre(username, ip, "password_change",
+                                     self.sec("password_change_max_attempts"))
+
+    def is_reauth_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
+
+        Eine Step-up-Bestätigung ist **keine Anmeldung** — wer sie leistet, ist schon
+        angemeldet. Bis zur zweiten Runde zählten ihre Fehlversuche trotzdem in den
+        Login-Topf: Fünf Tippfehler an der Reauth-Seite sperrten dem Nutzer die **Anmeldung**
+        für `lockout_window_sec`, samt dem korrekten Passwort. Jetzt bremst sie dieser Topf
+        (`reauth_max_attempts`), und zwar **nur pro Konto**: Das Raten trifft ausschliesslich
+        das eigene Konto, eine IP-Schwelle träfe hinter NAT nur Unbeteiligte (`ip` geht bloss
+        in die Protokollzeile). Gedrosselt bleibt der Weg über `rate_ok(ip)`.
+        """
+        return self._methoden_sperre(username, ip, "reauth", self.sec("reauth_max_attempts"))
+
+    def is_resource_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
+
+        `username` ist hier der Pseudo-Name des Bereichs (`res:<name>`) — ein Konto gibt es
+        nicht. Bis zur zweiten Runde lief der Zähler in den Login-Topf, und weil die
+        Bereichs-PIN **jeder Besucher** probieren darf, war das ein Verstärker: Drei Bereiche
+        mal fünf Fehlgriffe von derselben Adresse erreichten die Login-IP-Schwelle
+        (`max_login_attempts * ip_attempt_factor`) und verriegelten die Anmeldung von Konten,
+        die nie etwas falsch gemacht hatten.
+
+        Die IP-Schwelle bleibt hier — anders als bei `password_change`/`reauth` — erhalten
+        (`resource_max_attempts * ip_attempt_factor`): Dieser Weg steht Unangemeldeten offen,
+        das Opfer ist also kein bestimmter Angemeldeter, und ohne IP-Dimension könnte ein
+        Angreifer über viele Bereichsnamen beliebig weiterraten. Sie sperrt jetzt aber nur
+        noch das, was sie schützt — Bereiche, keine Anmeldungen.
+        """
+        return self._methoden_sperre(username, ip, "resource", self.sec("resource_max_attempts"),
+                                     ip_faktor=self.sec("ip_attempt_factor"))
+
+    def _methoden_sperre(self, username, ip, method, limit, ip_faktor=0) -> bool:
+        """Gemeinsamer Rumpf der methodengebundenen Sperren (`is_*_locked`).
+
+        `ip_faktor=0` heisst: **keine** IP-Dimension — die Methode trifft nur den, der rät
+        (siehe `is_password_change_locked`). Nur wo ein Fremder von aussen raten kann, zählt
+        zusätzlich die Adresse mit (`is_resource_locked`).
         """
         since = int(time.time()) - self.sec("lockout_window_sec")
-        limit = self.sec("password_change_max_attempts")
-        if username and self.store.count_fails(since, username=username,
-                                               method="password_change") >= limit:
-            self._abgewiesen(username, ip, "lockout_password_change")
+        if username and self.store.count_fails(since, username=username, method=method) >= limit:
+            self._abgewiesen(username, ip, f"lockout_{method}", login=False)
             return True
-        if ip and self.store.count_fails(since, ip=ip, method="password_change") >= \
-                limit * self.sec("ip_attempt_factor"):
-            self._abgewiesen(username, ip, "lockout_password_change_ip")
+        if ip_faktor and ip and self.store.count_fails(since, ip=ip, method=method) >= limit * ip_faktor:
+            self._abgewiesen(username, ip, f"lockout_{method}_ip", login=False)
             return True
         return False
 
@@ -1719,8 +1773,15 @@ class TinySesam:
     # Das Format ist bewusst dasselbe wie bei einem echten Fehlversuch — der mitgelieferte
     # fail2ban-Filter (`failed login user=… ip=<HOST> method=.*`) greift dadurch sofort, auch
     # in Installationen, die ihre Filterdatei nie anfassen. `reason=` sagt, warum.
-    def _abgewiesen(self, username, ip, grund: str):
-        security.seclog.warning("failed login user=%s ip=%s method=blocked reason=%s",
+    #
+    # `login=False` für die Abweisungen der Nicht-Login-Töpfe: Die tragen das andere
+    # Ereigniswort (`security.LOG_PRUEFUNG`) und laufen damit an der mitgelieferten Jail
+    # vorbei — sonst bannte ein angemeldeter Nutzer sich mit ein paar Tippfehlern auf der
+    # eigenen Kontoseite selbst auf Firewall-Ebene aus, und jeder weitere Klick nach der
+    # App-Sperre beschleunigte den Bann noch (Begründung bei `security.LOG_ANMELDUNG`).
+    def _abgewiesen(self, username, ip, grund: str, login: bool = True):
+        wort = security.LOG_ANMELDUNG if login else security.LOG_PRUEFUNG
+        security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", wort,
                                 security.fuer_log(username) or "-", security.fuer_log(ip), grund)
 
     def rate_ok(self, ip) -> bool:
@@ -1771,7 +1832,12 @@ class TinySesam:
             # `fuer_log`: Der Benutzername kommt aus einem Formularfeld. Ungefiltert liess
             # sich damit eine zweite Logzeile mit fremder IP erzeugen und fail2ban gegen Dritte
             # richten (belegt gegen echtes fail2ban 1.1.1).
-            security.seclog.warning("failed login user=%s ip=%s method=%s",
+            # Das Ereigniswort trennt Anmeldeversuche von allem anderen: Nur `failed login`
+            # trifft die mitgelieferte failregex. Ein Fehlgriff am Passwortwechsel, an der
+            # Step-up-Seite oder an einer Bereichs-PIN ist keine Anmeldung und darf keinen
+            # legitimen, angemeldeten Nutzer auf Firewall-Ebene aussperren (siehe
+            # `security.log_ereignis`).
+            security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
                                     security.fuer_log(username), security.fuer_log(ip), method)
 
     def _fehl_grund(self, username) -> str:

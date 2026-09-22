@@ -252,6 +252,15 @@ def build_router(auth) -> APIRouter:
             # Faktor seines Besitzers): der Riegel steht deshalb VOR der Fallunterscheidung
             # und liefert die klare Meldung statt der Frische-Ausrede.
             u = auth.require_session(request)
+            # Die Regel, genau: `require_mfa()` gilt für das Ersetzen UND für das Anlegen,
+            # sobald das Konto überhaupt etwas hat, womit es bestätigen kann — auch wenn das
+            # nur sein Passwort ist. Denn mit `pin_login` ist eine PIN ein vollwertiger
+            # Erstfaktor: Wer ein frisches Sitzungscookie stiehlt, richtete sich sonst einen
+            # eigenen Zugang ein, der den Diebstahl überdauert. Das Passwort noch einmal zu
+            # tippen ist die Hürde, die genau das verhindert; die Kontoseite führt über
+            # `X-TinySesam-Reauth` von selbst dorthin. Nur ein Konto, das gar nichts hat
+            # (rein föderiert), hängt am Alter der Anmeldung — sonst wäre die Einrichtung
+            # für es eine Sackgasse.
             if auth.has_pin(u["id"]) or auth.stepup_options(u):
                 u = auth.require_mfa(request)
             elif not auth.login_fresh(request, u):
@@ -303,7 +312,12 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
-            if not auth.rate_ok(ip) or auth.is_locked(pseudo, ip):
+            # Eigener Topf (`is_resource_locked`): Die Bereichs-PIN darf JEDER Besucher
+            # probieren, und über den Login-Zähler verriegelten diese Fehlgriffe via
+            # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
+            # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
+            # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
+            if not auth.rate_ok(ip) or auth.is_resource_locked(pseudo, ip):
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
             if not auth.check_resource(name, secret):
@@ -425,8 +439,12 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reauth", request=request, status=403, next=nxt,
                                     username=u["username"], methods=methods,
                                     error=auth.t("err.stepup_none"))
-        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip) or \
-                ("pin" in methods and auth.is_pin_locked(u["username"], ip)):
+        # Eigener Topf (`is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
+        # ist keine Anmeldung — wer hier steht, ist bereits angemeldet. Mit dem geteilten
+        # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
+        # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
+        # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
+        if not auth.rate_ok(ip) or auth.is_reauth_locked(u["username"], ip):
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.

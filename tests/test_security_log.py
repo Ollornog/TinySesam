@@ -311,6 +311,127 @@ assert len(_ersetzt) == 1, f"{len(_ersetzt)} Zeilen nach 5 Aufrufen — einmal j
 security._GEMELDET.clear()
 ok("eine ersetzte Basis meldet sich einmal je Host (nicht still, nicht im Sturm)")
 
+# ---------------------------------------------------------------------------
+# Runde 2: Ein Fehlgriff, der KEINE Anmeldung war, darf die mitgelieferte Jail nicht treffen.
+#
+# Seit R4-10 protokolliert auch die Alt-Passwort-Abfrage der Kontoseite — richtig so, vorher
+# war sie ein stilles Orakel. Sie schrieb aber `failed login`, Zeichen für Zeichen die Zeile,
+# auf die `deploy/fail2ban/tinysesam-jail.conf` mit `maxretry = 6` bannt. Gemessen: acht
+# Fehlgriffe eines ANGEMELDETEN Nutzers am eigenen alten Passwort erzeugten acht passende
+# Zeilen — der legitime Nutzer sperrte sich auf Firewall-Ebene aus, für die ganze Instanz.
+# Verschärfend erzeugte ab der App-Sperre jeder weitere Klick eine weitere passende Zeile.
+# Jetzt tragen diese Zeilen ein eigenes Ereigniswort (`security.LOG_PRUEFUNG`).
+#
+# Geprüft wird gegen die AUSGELIEFERTEN Filterdateien, nicht gegen ein Muster im Test: Sonst
+# misst der Test seine eigene Kopie und merkt nicht, wenn die Vorlage auseinanderläuft.
+# ---------------------------------------------------------------------------
+_abraeumen()
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _failregex(datei):
+    text = open(os.path.join(ROOT, "deploy", "fail2ban", datei), encoding="utf-8").read()
+    zeile = [z for z in text.splitlines() if z.startswith("failregex =")][0]
+    muster = zeile.split("=", 1)[1].strip().replace("<HOST>", r"(?P<host>\S+)")
+    return re.compile(muster)
+
+
+JAIL = _failregex("tinysesam-filter.conf")                 # bannt: echte Anmeldeversuche
+JAIL_PRUEFUNG = _failregex("tinysesam-verify-filter.conf")  # die zweite, mildere Jail
+
+
+def _ohne_datum(zeile):
+    """Wie fail2ban die Zeile sieht: Den Zeitstempel datiert es selbst ab, der Rest wird gematcht."""
+    return re.sub(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:,\d+)? ", "", zeile)
+
+
+class _Mitschnitt:
+    """Fängt die Zeilen des Sicherheits-Logs im Format der ausgelieferten Datei ab."""
+
+    def __enter__(self):
+        self.puffer = io.StringIO()
+        self.haken = logging.StreamHandler(self.puffer)
+        self.haken.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        security.seclog.addHandler(self.haken)
+        return self
+
+    def __exit__(self, *_):
+        security.seclog.removeHandler(self.haken)
+
+    def zeilen(self):
+        return [_ohne_datum(z) for z in self.puffer.getvalue().splitlines() if z.strip()]
+
+
+dbf = os.path.join(tempfile.mkdtemp(), "t.db")
+authf = TinySesam(TinySesamConfig(db_path=dbf, cookie_secure=False, passkey_enabled=False,
+                                  csrf_enabled=False, lang="de"))
+uid_f = authf.create_user("anna", "Anna-Passwort-2026")
+
+# (1) Jede Methode einzeln: Anmeldeversuche treffen die Jail, alles andere nicht.
+for methode in ("password", "pin", "totp"):
+    with _Mitschnitt() as m:
+        authf.record_login("anna", "203.0.113.4", False, methode)
+    zeile = m.zeilen()[-1]
+    assert JAIL.search(zeile), f"{methode}: die Jail sieht den Anmeldeversuch nicht — {zeile!r}"
+    assert JAIL.search(zeile).group("host") == "203.0.113.4", zeile
+    assert not JAIL_PRUEFUNG.search(zeile), f"{methode} landet in der milderen Jail: {zeile!r}"
+for methode in security.NICHT_LOGIN_METHODEN:
+    with _Mitschnitt() as m:
+        authf.record_login("anna", "203.0.113.4", False, methode)
+    zeile = m.zeilen()[-1]
+    assert not JAIL.search(zeile), f"{methode} trifft die mitgelieferte Login-Jail: {zeile!r}"
+    assert JAIL_PRUEFUNG.search(zeile), f"{methode} trifft auch die zweite Jail nicht: {zeile!r}"
+    assert f"method={methode}" in zeile, zeile
+ok("Ereigniswort trennt: nur echte Anmeldeversuche treffen die failregex der Jail")
+
+# (2) Auch die ABWEISUNG (App-Lockout greift schon) hält sich daran — sonst verschöbe sich das
+# Problem nur um eine Zeile: ab der Sperre erzeugt jeder Klick eine weitere.
+authf.store.clear_fails(username="anna")
+for _ in range(authf.sec("max_login_attempts")):
+    authf.record_login("anna", "203.0.113.4", False, "password")
+with _Mitschnitt() as m:
+    assert authf.is_locked("anna", "203.0.113.4"), "Vorbedingung: der Login-Lockout greift"
+assert JAIL.search(m.zeilen()[-1]), f"die Login-Abweisung ist für die Jail unsichtbar: {m.zeilen()[-1]!r}"
+authf.store.clear_fails(username="anna")
+for _ in range(authf.sec("password_change_max_attempts")):
+    authf.record_login("anna", "203.0.113.4", False, "password_change")
+with _Mitschnitt() as m:
+    assert authf.is_password_change_locked("anna", "203.0.113.4"), "Vorbedingung: der eigene Topf greift"
+zeile = m.zeilen()[-1]
+assert "reason=lockout_password_change" in zeile, zeile
+assert not JAIL.search(zeile), f"die Abweisung des eigenen Topfes trifft die Login-Jail: {zeile!r}"
+assert JAIL_PRUEFUNG.search(zeile), zeile
+ok("auch die Abweisungen tragen das Wort ihres Topfes (Grund bleibt im Log)")
+
+# (3) Der gemessene Fall aus der Runde: acht Fehlgriffe eines ANGEMELDETEN Nutzers am eigenen
+# alten Passwort — mit `maxretry = 6` war das ein Selbst-Bann auf Firewall-Ebene.
+authf.store.clear_fails(username="anna")
+appf = FastAPI()
+appf.include_router(authf.router())
+cf = TestClient(appf)
+tok_f, _ = authf.start_session(uid_f, "password", remember=True)
+cf.cookies.set(authf.cfg.session_cookie, tok_f)
+with _Mitschnitt() as m:
+    codes = [cf.post("/auth/password", json={"current": f"vertippt{i}", "new": "neues-langes-passwort"}).status_code
+             for i in range(8)]
+assert 403 in codes and 429 in codes, codes          # geraten wurde, und die App-Sperre griff
+zeilen_f = [z for z in m.zeilen() if "user=anna" in z]
+assert len(zeilen_f) == 8, f"{len(zeilen_f)} Zeilen — der Vorgang wird nicht mehr protokolliert"
+treffer = [z for z in zeilen_f if JAIL.search(z)]
+assert not treffer, f"{len(treffer)} von 8 Zeilen bannen den legitimen Nutzer: {treffer[:1]}"
+assert all(JAIL_PRUEFUNG.search(z) for z in zeilen_f), zeilen_f[:1]
+ok("acht Tippfehler am eigenen Passwortwechsel: protokolliert, aber kein Treffer der Login-Jail")
+
+# (4) Und die Gegenprobe, damit (3) nicht bloss misst, dass nichts mehr greift: Derselbe
+# Angriff von aussen — Fehlanmeldungen am Login — füllt die Jail unverändert.
+with _Mitschnitt() as m:
+    for i in range(6):
+        cf.post("/auth/login", data={"username": "anna", "password": f"falsch{i}"})
+treffer = [z for z in m.zeilen() if JAIL.search(z)]
+assert len(treffer) >= 6, f"nur {len(treffer)} bannbare Zeilen — die Jail bekommt zu wenig zu lesen"
+ok("Gegenprobe: Fehlanmeldungen am Login treffen die Jail weiterhin")
+os.remove(dbf)
+
 _abraeumen()
 for f in (db, db2, db3):
     if os.path.exists(f):

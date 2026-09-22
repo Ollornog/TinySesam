@@ -297,6 +297,64 @@ assert r.status_code == 200 and r.json() == {"ok": True}, r.text[:120]
 assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
 ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
 
+# ---------- Runde 2: Fehlversuche an der Reauth-Seite sperren die ANMELDUNG nicht ----------
+# `/auth/reauth` verbuchte seine Fehlgriffe als `record_login(…, "reauth")`, und `is_locked`
+# zählte sie mit: Fünf Tippfehler bei der Step-up-Bestätigung sperrten dem Nutzer die
+# Anmeldung für `lockout_window_sec` — auch mit dem richtigen Passwort. Eine Bestätigung ist
+# aber keine Anmeldung; wer sie leistet, ist bereits angemeldet. Jetzt hat sie ihren eigenen
+# Topf (`is_reauth_locked`, `reauth_max_attempts`), und der kennt keine IP-Dimension: Das
+# Raten trifft nur das eigene Konto. (Mutationsprobe: in `reauth_submit` wieder `is_locked`
+# prüfen und "reauth" aus `security.EIGENE_SPERRE` nehmen → (a) wird rot.)
+db5 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, passkey_enabled=False,
+                                  oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
+PW_ANNA, PW_BEA = "Anna-Passwort-2026", "Bea-Passwort-2026"      # Literale: nicht neben `password=`
+auth5.create_user("anna", PW_ANNA)
+auth5.create_user("bea", PW_BEA)
+app5 = FastAPI()
+app5.include_router(auth5.router())
+c8 = TestClient(app5)
+assert c8.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
+               follow_redirects=False).status_code == 303
+GRENZE_R = auth5.sec("reauth_max_attempts")
+for i in range(GRENZE_R):
+    r = c8.post("/auth/reauth", data={"password": f"tippfehler{i}", "next": "/"})
+    assert r.status_code == 401, (i, r.status_code)
+assert auth5.store.count_fails(0, username="anna", method="reauth") >= GRENZE_R, \
+    "die Fehlversuche wurden gar nicht verbucht — der Test misst dann nichts"
+
+# (a) Der Angriff: Die Anmeldung desselben Kontos bleibt offen.
+assert not auth5.is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
+frisch5 = TestClient(app5)
+r = frisch5.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
+                 follow_redirects=False)
+assert r.status_code == 303, f"Login nach Step-up-Tippfehlern gesperrt: {r.status_code}"
+ok("Fehlversuche an der Reauth-Seite sperren die Anmeldung nicht (eigener Topf)")
+
+# (b) Gebremst wird trotzdem — dort, wo geraten wurde: Der nächste Versuch läuft in die Sperre,
+# auch mit dem richtigen Passwort. Die Schwelle ist verdrahtet, nicht nur vorhanden.
+assert auth5.is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
+r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"})
+assert r.status_code == 429, f"Step-up-Raten läuft nicht in die Sperre: {r.status_code}"
+ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
+
+# (c) Keine IP-Dimension: Ein zweiter Nutzer hinter derselben Adresse bestätigt weiter.
+c9 = TestClient(app5)
+assert c9.post("/auth/login", data={"username": "bea", "password": PW_BEA, "next": "/"},
+               follow_redirects=False).status_code == 303
+assert not auth5.is_reauth_locked("bea", "testclient"), \
+    "die Fehlversuche eines Kollegen sperren hinter NAT die Bestätigung eines Unbeteiligten"
+r = c9.post("/auth/reauth", data={"password": PW_BEA, "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, f"Bestätigung des Unbeteiligten gesperrt: {r.status_code}"
+ok("…und sie sperrt pro Konto, nicht pro Anschluss")
+
+# (d) Der legitime Weg von anna ist nach dem Abtragen wieder offen (Admin-Weg wie beim Login).
+auth5.store.clear_fails(username="anna", method="reauth")
+r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, f"Bestätigung nach Entsperren scheitert: {r.status_code}"
+ok("…entsperrbar, danach bestätigt dasselbe Konto wieder")
+os.remove(db5)
+
 os.remove(db)
 os.remove(db2)
 os.remove(db3)
