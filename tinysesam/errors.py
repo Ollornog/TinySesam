@@ -44,3 +44,12 @@ class MissingExtra(TinySesamError, RuntimeError):
 
 class MailNotConfigured(TinySesamError, RuntimeError):
     """Es sollte eine Mail raus, aber kein Mailer ist eingerichtet."""
+
+
+class StateError(TinySesamError, RuntimeError):
+    """Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+
+    Kein Konfigurations- und kein Installationsfehler: Die Anfrage ist für sich in Ordnung,
+    nur würde sie etwas überschreiben, das schon gilt. Erster Fall: eine TOTP-Einrichtung
+    starten, obwohl bereits ein bestätigter zweiter Faktor existiert (Fund B2-1) — dort war
+    der stille Erfolg das Problem, nicht der Abbruch."""

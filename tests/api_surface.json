@@ -253,6 +253,7 @@
     "ConfigError",
     "MailNotConfigured",
     "MissingExtra",
+    "StateError",
     "TinySesam",
     "TinySesamConfig",
     "TinySesamError",

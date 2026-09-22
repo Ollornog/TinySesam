@@ -147,6 +147,19 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   `record_login(…, "password_change")`; die eigene Methode sorgt dafür, dass ein Treffer hier die
   Fehlversuche des Login-Pfads nicht wegräumt. Belege in `tests/test_hardening.py`.
   Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+- **Ein `GET` auf `/auth/totp/setup` konnte den bestätigten zweiten Faktor entfernen.** Die Seite
+  rief `totp_begin()` unbedingt und schrieb ein frisches, unbestätigtes Geheimnis über das alte:
+  TOTP fiel auf „unbestätigt", die zehn Recovery-Codes blieben verwaist liegen, es entstand keine
+  Audit-Zeile — und danach genügte das Passwort allein für eine vollwertige Sitzung. CSRF half
+  dagegen nicht: Ein GET trägt kein Token, und `SameSite=Lax` (Vorgabe) schickt das
+  Sitzungscookie bei einer Top-Level-Navigation mit; ein Klick auf einen fremden Link reichte.
+  Jetzt verweigert `totp_begin()` den Start, solange ein **bestätigtes** TOTP existiert (neuer
+  Fehlertyp `StateError`, exportiert), die Route antwortet mit `409`, der abgewehrte Versuch geht
+  als `totp_setup_denied` ins Audit-Log, und eine neue Einrichtung räumt verwaiste Recovery-Codes
+  ab. Der Weg zum Authenticator-Wechsel führt über das reguläre Abschalten
+  (`POST /auth/totp/disable`, CSRF-geschützt und protokolliert); die Einrichtung für Konten
+  **ohne** TOTP — auch aus einer `login_chain` heraus — bleibt unverändert offen.
+  Fund **B2-1** aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

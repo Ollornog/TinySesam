@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from . import konfigpruefung
-from .errors import ConfigError
+from .errors import ConfigError, StateError
 from .config import TinySesamConfig
 from .store import Store, norm_email
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
@@ -876,12 +876,41 @@ class TinySesam:
         return self.store.totp_step_verbrauchen(user_id, schritt)
 
     def totp_begin(self, user_id):
-        """Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator."""
-        secret = _totp.new_secret()
-        self.store.set_totp(user_id, secret, confirmed=False)
+        """Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator.
+
+        **Nur solange kein bestätigtes TOTP existiert.** Bis 0.18.0 überschrieb jeder Aufruf das
+        Geheimnis und setzte `confirmed` zurück: Ein bestätigter zweiter Faktor fiel damit still
+        weg, die Recovery-Codes blieben verwaist liegen, und die Sitzung galt danach allein mit
+        dem Passwort als vollwertig. Weil `GET /auth/totp/setup` diese Methode unbedingt rief,
+        genügte dafür ein Klick auf einen fremden Link — ein GET trägt kein CSRF-Token, und
+        `SameSite=Lax` (Vorgabe) schickt das Sitzungscookie bei einer Top-Level-Navigation mit
+        (Fund B2-1). Wer den Authenticator wechseln will, schaltet TOTP regulär ab
+        (`totp_disable` — CSRF-geschützt und protokolliert) und richtet es neu ein.
+
+        Ein laufender, noch **unbestätigter** Versuch wird weiterhin durch einen frischen
+        ersetzt: Dort ist nichts zu verlieren, und ein einmal ausgegebenes Geheimnis
+        weiterzureichen wäre schlechter als ein neues.
+        """
+        if self.store.has_confirmed_totp(user_id):
+            # Der Versuch selbst ist die interessante Zeile: Bis 0.18.0 hinterliess dieser Weg
+            # keine Spur, obwohl er den zweiten Faktor entfernte.
+            self.audit("totp_setup_denied", detail=f"user={user_id} grund=bereits_bestaetigt")
+            raise StateError(
+                f"Konto {user_id} hat bereits ein bestätigtes TOTP — erst abschalten "
+                f"(totp_disable), dann neu einrichten.")
         u = self.store.get_user(user_id)
         if u is None:
             raise ConfigError(f"Kein Konto mit der ID {user_id} — TOTP lässt sich nicht einrichten.")
+        # Recovery-Codes ohne bestätigtes TOTP gehören zu einem Geheimnis, das niemand mehr hat.
+        # Sie liegen zu lassen hiesse, den zweiten Faktor über Codes offen zu halten, die zur
+        # neuen Einrichtung nicht passen.
+        verwaist = self.store.count_recovery_codes(user_id)
+        if verwaist:
+            self.store.delete_recovery_codes(user_id)
+            self.audit("recovery_verwaist_geloescht", detail=f"user={user_id} n={verwaist}")
+        secret = _totp.new_secret()
+        self.store.set_totp(user_id, secret, confirmed=False)
+        self.audit("totp_setup_start", detail=f"user={user_id}")
         uri = _totp.provisioning_uri(secret, u["username"], self.cfg.rp_name)
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 

@@ -1,4 +1,4 @@
-"""Nachgestellte Angriffe aus der Reifeprüfung vom 2026-09-21.
+"""Nachgestellte Angriffe aus der Reifeprüfung vom 2026-09-21 (und den Runden danach).
 
 Jede Prüfung hier hält einen Angriff fest, der einmal funktioniert hat. Sie sind bewusst nach dem
 ANGRIFF benannt, nicht nach der Funktion — wer eine davon rot sieht, soll sofort wissen, was
@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import ConfigError, StateError, TinySesam, TinySesamConfig  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Sicherheit — nachgestellte Angriffe")
@@ -1313,5 +1313,95 @@ r.check("...und das fremde Passwort gilt unverändert weiter",
 eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!"})
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
+# ── Ein GET entfernt den bestätigten zweiten Faktor (B2-1, Audit-Runde 3) ────
+# Angriff: Das Opfer ist voll angemeldet (Passwort + TOTP) und klickt auf einer fremden Seite
+# einen Link auf /auth/totp/setup. Die Seite rief `totp_begin()` unbedingt und schrieb damit ein
+# neues, unbestätigtes Geheimnis über das alte: TOTP fiel auf „unbestätigt", die zehn
+# Recovery-Codes blieben verwaist liegen, es entstand keine Audit-Zeile — und danach genügte das
+# Passwort allein. CSRF schützt hier nichts: Ein GET trägt kein Token, und `SameSite=Lax`
+# (Vorgabe) schickt das Sitzungscookie bei einer Top-Level-Navigation mit.
+import pyotp  # noqa: E402
 
+auth_b21, app_b21 = _app()
+uid_b21 = auth_b21.create_user("nina", password="geheim12345", email="nina@example.com")
+geheim_b21 = auth_b21.totp_begin(uid_b21)["secret"]
+auth_b21.totp_confirm(uid_b21, pyotp.TOTP(geheim_b21).now())
+codes_b21 = auth_b21.generate_recovery_codes(uid_b21)
+c_b21 = TestClient(app_b21, base_url="https://app.example.com")
+c_b21.get("/auth/login")
+c_b21.post("/auth/login", data={"username": "nina", "password": "geheim12345", "next": "/",
+                                "_csrf": c_b21.cookies.get(auth_b21.cfg.csrf_cookie)},
+           follow_redirects=False)
+c_b21.post("/auth/totp", data={"code": pyotp.TOTP(geheim_b21).now(), "next": "/",
+                               "_csrf": c_b21.cookies.get(auth_b21.cfg.csrf_cookie)},
+           follow_redirects=False)
+sitzung_b21 = auth_b21.store.get_session(c_b21.cookies.get(auth_b21.cfg.session_cookie))
+
+# Vorbedingung: Ohne diese drei Zeilen misst der Angriff unten nichts. Sie halten fest, dass
+# hier wirklich ein vollwertiger zweiter Faktor steht, der verloren gehen KÖNNTE.
+r.check("Vorbedingung: der zweite Faktor ist bestätigt",
+        auth_b21.store.has_confirmed_totp(uid_b21), "ohne TOTP prüft der Angriff nichts")
+r.check("Vorbedingung: zehn Recovery-Codes liegen dazu",
+        auth_b21.store.count_recovery_codes(uid_b21) == len(codes_b21) == 10,
+        f"{auth_b21.store.count_recovery_codes(uid_b21)}")
+r.check("Vorbedingung: die Sitzung ist vollwertig (CSRF an, SameSite=Lax)",
+        bool(sitzung_b21 and sitzung_b21["mfa_ok"]) and auth_b21.cfg.csrf_enabled
+        and auth_b21.cfg.cookie_samesite == "lax",
+        f"mfa_ok={sitzung_b21 and sitzung_b21['mfa_ok']} csrf={auth_b21.cfg.csrf_enabled}")
+
+ant_b21 = c_b21.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
+                                                 "Sec-Fetch-Mode": "navigate"})
+r.check("ein GET auf die Einrichtungsseite nimmt kein bestätigtes TOTP zurück",
+        ant_b21.status_code == 409,
+        f"HTTP {ant_b21.status_code} — ein Klick auf einen fremden Link genügt sonst")
+r.check("...der zweite Faktor steht danach noch", auth_b21.store.has_confirmed_totp(uid_b21),
+        "TOTP ist auf unbestätigt zurückgefallen, das Passwort allein reicht wieder")
+r.check("...und die Recovery-Codes gehören weiter zu einem gültigen Faktor",
+        auth_b21.store.count_recovery_codes(uid_b21) == 10
+        and auth_b21.store.has_confirmed_totp(uid_b21)
+        and auth_b21.verify_recovery_code(uid_b21, codes_b21[0]),
+        f"{auth_b21.store.count_recovery_codes(uid_b21)} Codes ohne bestätigtes TOTP = verwaist")
+
+# Nicht nur die Route: Der Wächter sitzt im Manager, damit ihn keine eigene Oberfläche umgeht.
+try:
+    auth_b21.totp_begin(uid_b21)
+    geworfen = ""
+except StateError as exc:
+    geworfen = str(exc)
+r.check("auch totp_begin() selbst verweigert das Überschreiben", bool(geworfen),
+        "die Methode schreibt weiter durch — jede eigene Oberfläche reisst dieselbe Lücke auf")
+r.check("der abgewehrte Versuch steht im Audit-Log",
+        any(z["event"] == "totp_setup_denied" for z in auth_b21.store.recent_audit(50)),
+        "der Versuch hinterlässt keine Spur")
+
+# Der legitime Weg muss bleiben: einrichten, wo noch nichts ist …
+auth_ok, app_ok = _app(csrf_enabled=False)
+uid_ok = auth_ok.create_user("tom", password="geheim12345")
+c_ok = TestClient(app_ok, follow_redirects=False)
+c_ok.cookies.set(auth_ok.cfg.session_cookie,
+                 auth_ok.store.create_session(uid_ok, 3600, True, "password"))
+r.check("ohne eingerichtetes TOTP ist die Einrichtungsseite weiter erreichbar",
+        c_ok.get("/auth/totp/setup").status_code == 200, "die Einrichtung ist zugemauert")
+neu_ok = auth_ok.store.get_totp(uid_ok)["secret"]
+r.check("...und die Bestätigung schaltet den Faktor scharf",
+        auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).now())
+        and auth_ok.store.has_confirmed_totp(uid_ok))
+
+# … und nach dem regulären Abschalten wieder neu einrichten (sonst wäre der Fix eine Sackgasse).
+r.check("nach dem regulären Abschalten ist die Einrichtung wieder offen",
+        (auth_ok.totp_disable(uid_ok), c_ok.get("/auth/totp/setup").status_code)[1] == 200,
+        "der Wechsel des Authenticators wäre unmöglich")
+
+# Verwaiste Recovery-Codes (Geheimnis weg, Codes noch da) räumt die Einrichtung ab.
+auth_v, _ = _app()
+uid_v = auth_v.create_user("vera", password="geheim12345")
+geheim_v = auth_v.totp_begin(uid_v)["secret"]
+auth_v.totp_confirm(uid_v, pyotp.TOTP(geheim_v).now())
+auth_v.generate_recovery_codes(uid_v)
+auth_v.store.delete_totp(uid_v)          # nur das Geheimnis weg — die Codes bleiben zurück
+auth_v.totp_begin(uid_v)
+r.check("eine neue Einrichtung lässt keine verwaisten Recovery-Codes stehen",
+        auth_v.store.count_recovery_codes(uid_v) == 0,
+        f"{auth_v.store.count_recovery_codes(uid_v)} Codes gelten weiter, "
+        "obwohl sie zu keinem Authenticator mehr passen")
 sys.exit(r.done())

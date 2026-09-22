@@ -110,6 +110,15 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
+        # Diese Seite ERZEUGT ein Geheimnis, ein GET trägt aber kein CSRF-Token und kommt bei
+        # `SameSite=Lax` (Vorgabe) auch von einer fremden Seite an. Wer schon einen bestätigten
+        # zweiten Faktor hat, darf ihn hier nicht verlieren — ein Klick auf einen Link reichte
+        # sonst, um TOTP auf „unbestätigt" zurückzusetzen (Fund B2-1). Der Weg zum Wechsel führt
+        # über das reguläre Abschalten (POST /auth/totp/disable, CSRF-geschützt).
+        # `totp_begin` verweigert das ebenfalls — der Wächter hier liefert nur die lesbare
+        # Antwort statt eines Serverfehlers.
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
 
     @r.post("/auth/totp/setup")
