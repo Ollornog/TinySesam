@@ -254,6 +254,14 @@ TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
 
+### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
+
+Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine Anwendung schützt. Der leere Rückgabewert ist Absicht: Er hält jede Aufrufstelle wortgleich beim Verhalten von 0.18.0, solange `oidc_clients` leer ist.
+
+### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
+
+Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
+
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
 Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen).
@@ -474,6 +482,10 @@ Das Passwort eines BEKANNTEN Kontos prüfen (Step-up: die Identität steht schon
 
 Wie `verify_user_password`, nur mit der PIN.
 
+### `vermerke_oidc_freigabe(token: 'str', client: 'str', rollen=None) -> 'None'`
+
+Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
+
 ### `version() -> 'str'`
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
@@ -496,7 +508,7 @@ Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Te
 
 Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
 
-### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, **overrides)`
+### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=15, **overrides)`
 
 Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
 
@@ -530,4 +542,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-115 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+118 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

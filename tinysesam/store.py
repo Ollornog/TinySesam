@@ -98,6 +98,18 @@ CREATE TABLE IF NOT EXISTS session (
     ip         TEXT,
     user_agent TEXT
 );
+-- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
+-- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
+-- Zugang zu app-b — dort entscheidet der Provider erneut. Ohne diese Tabelle gäbe es nur die
+-- Frage „angemeldet ja/nein", und die kann die Freigabe je Client nicht abbilden.
+CREATE TABLE IF NOT EXISTS oidc_grant (
+    token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
+    client     TEXT NOT NULL,                 -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
+    granted_at INTEGER NOT NULL,              -- erste Freigabe (bleibt stehen, auch über Nachprüfungen)
+    checked_at INTEGER NOT NULL,              -- letzte Bestätigung durch den Provider
+    roles      TEXT NOT NULL DEFAULT '[]',    -- Rollen, die der Provider FÜR DIESE Anwendung ergab
+    PRIMARY KEY (token_hash, client)
+);
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
     key        TEXT PRIMARY KEY,
     data       TEXT NOT NULL,               -- JSON
@@ -233,7 +245,7 @@ class Store:
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
     #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -566,6 +578,52 @@ class Store:
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
         return r["user_id"] if r else None
+
+    # ---------- Freigaben je Anwendung (T-14) ----------
+    # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
+    # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
+    def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
+        """Freigabe eintragen oder bestätigen. `granted_at` bleibt bei einer Bestätigung stehen —
+        die Frage „seit wann darf diese Sitzung in diese Anwendung" beantwortet sonst niemand mehr."""
+        self._exec(
+            "INSERT INTO oidc_grant(token_hash, client, granted_at, checked_at, roles) VALUES (?,?,?,?,?)"
+            " ON CONFLICT(token_hash, client) DO UPDATE SET checked_at=excluded.checked_at,"
+            " roles=excluded.roles",
+            (token_hash, client, jetzt, jetzt, json.dumps(list(roles or []))))
+
+    def get_oidc_grant(self, token_hash: str, client: str) -> Optional[dict]:
+        r = self._one("SELECT * FROM oidc_grant WHERE token_hash=? AND client=?", (token_hash, client))
+        if not r:
+            return None
+        d = dict(r)
+        try:
+            d["roles"] = json.loads(d.get("roles") or "[]")
+        except Exception:
+            d["roles"] = []
+        return d
+
+    def list_oidc_grants(self, token_hash: str) -> list:
+        return [dict(r) for r in self._all(
+            "SELECT client, granted_at, checked_at FROM oidc_grant WHERE token_hash=?"
+            " ORDER BY granted_at", (token_hash,))]
+
+    def drop_oidc_grant(self, token_hash: str, client: str) -> int:
+        """Eine Freigabe entziehen. Genau eine — die Sitzung und die übrigen Anwendungen bleiben;
+        das ist der Unterschied zwischen „der Provider sagt Nein zu dieser App" und „abmelden"."""
+        return self._exec("DELETE FROM oidc_grant WHERE token_hash=? AND client=?",
+                          (token_hash, client)).rowcount
+
+    def drop_oidc_grants_for_user(self, user_id: int, client: Optional[str] = None) -> int:
+        """Alle Freigaben eines Kontos entziehen (optional nur für eine Anwendung). Der Weg für
+        den Betreiber, wenn der Provider jemanden ausgeschlossen hat und es sofort wirken soll,
+        ohne die Sitzung selbst zu beenden."""
+        if client is None:
+            return self._exec(
+                "DELETE FROM oidc_grant WHERE token_hash IN (SELECT token_hash FROM session WHERE user_id=?)",
+                (user_id,)).rowcount
+        return self._exec(
+            "DELETE FROM oidc_grant WHERE client=? AND token_hash IN"
+            " (SELECT token_hash FROM session WHERE user_id=?)", (client, user_id)).rowcount
 
     # ---------- Sessions ----------
     # Gespeichert wird der sha256 des Tokens, nie das Token selbst. Alles, was aus einer

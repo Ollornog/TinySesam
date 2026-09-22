@@ -549,6 +549,53 @@ Aus dem [Releases-Feed](https://github.com/Ollornog/TinySesam/releases) — per 
 hochzieht. Dann läuft deine CI gegen die neue Version, und du entscheidest, ob du mergst.
 Die laufende Version zeigt `python -m tinysesam version` und das Admin-Panel unter „Härtung".
 
+## Mehrere Anwendungen, ein TinySesam
+
+Eine Installation kann mehrere Anwendungen schützen — und **wer in welche darf, entscheidet der
+Identity Provider**. Das ist deshalb wichtig, weil die Freigabe bei PocketID (und bei jedem
+Provider, der so arbeitet) am *OIDC-Client* hängt, nicht am Benutzer. Mit einem einzigen Client
+gibt es für alle Anwendungen nur eine Antwort: Wer in eine darf, darf in alle.
+
+Also bekommt jede Anwendung beim Provider ihren eigenen Client, und die Zuordnung Host → Client
+steht in der Konfiguration:
+
+```python
+cfg = TinySesamConfig.oidc_gateway(
+    issuer="https://id.example.com",
+    client_id="gateway", client_secret=os.environ["GATEWAY_SECRET"],   # Rückfall für nicht genannte Hosts
+    base_url="https://auth.example.com",
+    trusted_redirect_hosts=["app.example.com", "wiki.example.com"],
+    clients={
+        "app.example.com":  {"client_id": "app",  "client_secret": os.environ["APP_SECRET"]},
+        "wiki.example.com": {"client_id": "wiki", "client_secret": os.environ["WIKI_SECRET"],
+                             "group_role_map": {"redaktion": "redakteur"}},
+    },
+    revalidate_minutes=15,
+)
+```
+
+Alle Clients zeigen auf **eine** Redirect-URI (`base_url` + `/auth/oidc/callback`) — welcher
+Client gemeint ist, steht serverseitig im Vorgang, nicht in der Adresse. Beim Provider trägt man
+deshalb überall dieselbe Adresse ein.
+
+**Der Widerruf folgt dem Provider.** `revalidate_minutes` sagt, wie lange eine Freigabe gilt,
+bevor TinySesam erneut fragt. Läuft die Frist ab, geht die nächste Anfrage über den Provider;
+dessen Sitzung besteht in aller Regel weiter, der Mensch sieht also ein Flackern und keine
+Anmeldemaske. Wurde die Gruppe inzwischen entzogen, sagt der Provider Nein — und zeigt **seine**
+Absage, denn dort wird die Freigabe gepflegt. Die Sitzung selbst bleibt: Die anderen Anwendungen
+laufen weiter. `0` schaltet die Nachprüfung ab, dann wirkt ein Entzug erst, wenn die Sitzung
+abläuft (in der Vorgabe nach sieben Tagen).
+
+Als Umgebungsvariablen (Gateway-Container):
+
+```
+TINYSESAM_OIDC_CLIENTS='{"app.example.com": {"client_id": "app", "client_secret": "..."}}'
+TINYSESAM_OIDC_REVALIDATE_MINUTES=15
+```
+
+Eine Konfiguration mit einem einzigen Client verhält sich unverändert — keine Zuordnung, keine
+Freigabe, die ablaufen könnte.
+
 ## API-Keys & Service-/Daemon-Accounts
 
 Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — parallel zum interaktiven Login:

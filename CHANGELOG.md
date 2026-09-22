@@ -586,6 +586,43 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Hinzugefügt
 
+- **Mehrere Anwendungen hinter einer Installation** (`oidc_clients`, T-14). Wer in welche
+  Anwendung darf, entscheidet der Identity Provider — bei PocketID über die Gruppenfreigabe je
+  OIDC-Client. Diese Freigabe hängt am **Client**, nicht am Benutzer: Mit einem einzigen Client
+  gibt es für alle Anwendungen nur eine Antwort, und wer in eine darf, darf in alle. Die bisherige
+  Abhilfe war eine eigene Instanz je Anwendung — drei Container, drei Datenbanken, drei
+  Audit-Logs für dieselben Menschen.
+
+  Jetzt ordnet `oidc_clients` jedem geschützten Host einen eigenen Client beim **selben** Provider
+  zu (`client_id`, `client_secret`, optional `scopes`, `allowed_groups`, `group_role_map`). Alle
+  zeigen auf **eine** Redirect-URI: Welcher Client gemeint ist, steht im Vorgang auf dem Server,
+  nicht in der Adresse — beim Provider trägt man deshalb überall dieselbe ein. `/auth/forward`
+  fragt ab jetzt zwei Dinge statt einem: angemeldet, **und** für diese Anwendung freigegeben.
+  Fehlt die Freigabe, geht es nicht mit 403 gegen den Menschen, sondern mit 401 über den Provider
+  — er entscheidet, er zeigt seine eigene Absage.
+
+  Die Freigabe steht in der neuen Tabelle `oidc_grant` (Schema 6), je Sitzung und Anwendung, mit
+  den Rollen, die der Provider **für diese Anwendung** ergab. Eine Konfiguration ohne
+  `oidc_clients` verhält sich um kein Byte anders als in 0.18.0.
+
+- **Der Widerruf folgt dem Provider** (`oidc_revalidate_minutes`, Vorgabe 0 = aus; das Preset
+  `oidc_gateway()` setzt 15). Ohne Nachprüfung galt eine einmal erteilte Freigabe bis zum Ablauf
+  der Sitzung — in der Vorgabe **sieben Tage**. Ein Gruppenentzug im Provider wirkte so lange
+  nicht, und genau das ist der Fall, für den man die Freigabe dort pflegt. Läuft die Frist ab,
+  nimmt die nächste Anfrage den Weg über den Provider; dessen Sitzung besteht in aller Regel
+  weiter, der Mensch sieht ein Flackern statt einer Anmeldemaske. Sagt der Provider Nein, ist die
+  Freigabe **für diese eine Anwendung** weg — die Sitzung und die übrigen Anwendungen bleiben.
+
+  Bewusst **ohne Refresh-Token in der Datei**: Der stille Weg über einen Refresh-Grant hätte ein
+  benutzbares Geheimnis je Sitzung in die Datenbank gelegt. Der Sprung über den Provider braucht
+  keines und beantwortet dieselbe Frage.
+
+- **Gateway-Umgebungsvariablen** dafür: `TINYSESAM_OIDC_CLIENTS` als JSON oder je Host
+  `TINYSESAM_OIDC_CLIENT_<HOST>_ID`/`_SECRET`. Der Hostname aus dem Variablennamen wird gegen
+  `TINYSESAM_PROTECTED_HOSTS` abgeglichen, weil ein `_` im Namen für einen Punkt **oder** einen
+  Bindestrich stehen kann — ohne den Abgleich entstünde stillschweigend ein Eintrag für einen
+  Host, den es nicht gibt, und die Zuordnung griffe nie. Passt nichts, sagt eine Logzeile das.
+
 - **`stepup_strict`** (Vorgabe `False`): macht aus `stepup_methods` eine Schranke. Bisher war die
   Liste nur ein Wunsch — wer keines der genannten Verfahren eingerichtet hatte, bestätigte mit
   allem, was er hatte, inklusive des Passworts, mit dem er sich gerade angemeldet hatte. Das ist

@@ -619,6 +619,26 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)   # Session ODER API-Key
             orig = auth.forwarded_url(request)
             if u:
+                # Schützt diese Installation mehrere Anwendungen, reicht „angemeldet" nicht:
+                # Wer in welche darf, hat der Provider je Client entschieden (T-14). Der Vermerk
+                # dazu hängt an der SITZUNG — ein API-Key hat keinen und ist hier auch nicht
+                # gemeint; für ihn bleibt es bei der bisherigen Antwort.
+                anwendung = auth.oidc_anwendung(orig)
+                sitzung = request.cookies.get(cfg.session_cookie) or ""
+                if anwendung and sitzung:
+                    ja, grund = auth.oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
+                    if not ja:
+                        # Kein 403: Der Provider soll gefragt werden, nicht der Mensch abgewiesen.
+                        # Er hat dort meist noch eine Sitzung, der Sprung ist für ihn ein Flackern.
+                        # Erst wenn der Provider ablehnt, sieht der Mensch dessen eigene Absage —
+                        # und zwar die des Providers, denn dort wird die Freigabe gepflegt.
+                        auth.audit("oidc_app_revalidate", u["username"], auth.client_ip(request),
+                                   f"app={anwendung} grund={grund}")
+                        login = auth.forward_login_url(orig, request)
+                        return Response(status_code=401,
+                                        headers={"X-TinySesam-Location": login,
+                                                 "X-TinySesam-Reason": "app-" + grund,
+                                                 "WWW-Authenticate": 'FormBased realm="TinySesam"'})
                 # Rollenprüfung im Proxy-Modus. Fehlt die Rolle, ist das **403, nicht 401**:
                 # ein 401 schickte den bereits Angemeldeten zurück zum Login, der ihn sofort
                 # wieder hierher schickt — eine Schleife, an deren Ende dieselbe Rolle fehlt.

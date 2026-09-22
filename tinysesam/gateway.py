@@ -13,6 +13,13 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_PROTECTED_HOSTS                  Komma-Liste erlaubter Redirect-Ziele: app.example.com,wiki.example.com
     TINYSESAM_ALLOWED_GROUPS                   Komma-Liste; leer = alle
     TINYSESAM_TRUSTED_PROXIES                  Komma-Liste; Default 127.0.0.1/32,::1/128
+    TINYSESAM_OIDC_CLIENTS                     JSON: mehrere Anwendungen, je eine mit eigenem
+                                               Client beim selben Provider (T-14). Beispiel:
+                                               {"app.example.com": {"client_id": "...",
+                                                "client_secret": "..."}}
+                                               Alternativ je Host zwei Variablen, siehe unten.
+    TINYSESAM_OIDC_REVALIDATE_MINUTES          Frist, nach der die Freigabe beim Provider
+                                               nachgeprüft wird (Default 15, 0 = nie)
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
@@ -39,6 +46,81 @@ def _split(name):
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
 
+def _host_aus_variable(rest: str, bekannte) -> str:
+    """Aus `APP_B_EXAMPLE_COM` den Hostnamen zurückgewinnen.
+
+    Ein Variablenname trägt weder Punkt noch Bindestrich, beide werden zu `_` — die
+    Rückübersetzung kann also nicht raten, ob `APP_B_EXAMPLE_COM` für `app.b.example.com` oder
+    `app-b.example.com` steht. Deshalb wird nicht geraten, sondern **abgeglichen**: Jeder Host
+    aus `TINYSESAM_PROTECTED_HOSTS` wird genauso normalisiert; passt genau einer, ist er gemeint.
+
+    Ohne diesen Abgleich entstand stillschweigend ein Eintrag für einen Host, den es nicht gibt:
+    Die Anwendung lief weiter, nur ihre Zuordnung griff nie, und der Fehler zeigte sich erst als
+    „warum benutzt app-b den Vorgabe-Client". Passt nichts, bleibt der Punkt als Vermutung — dann
+    meldet `clients_from_env()` das laut.
+    """
+    for host in bekannte:
+        if _als_variable(host) == rest.upper():
+            return host.strip().lower()
+    return rest.lower().replace("_", ".")
+
+
+def _als_variable(host: str) -> str:
+    return str(host).strip().upper().replace(".", "_").replace("-", "_")
+
+
+def clients_from_env() -> dict:
+    """Die Zuordnung Host → Client aus der Umgebung lesen (T-14).
+
+    Zwei Schreibweisen, weil beide gebraucht werden: `TINYSESAM_OIDC_CLIENTS` als JSON ist die
+    knappe Form für eine compose-Datei mit vielen Anwendungen; die Einzelvariablen
+    `TINYSESAM_OIDC_CLIENT_<HOST>_ID` und `..._SECRET` sind die Form, in der ein Geheimnis aus
+    einer Datei oder einem Secret-Store kommt, ohne dass jemand JSON zusammensetzen muss.
+    Beides zusammen ist erlaubt; die Einzelvariablen gewinnen, weil sie spezifischer sind.
+    """
+    clients: dict = {}
+    roh = os.environ.get("TINYSESAM_OIDC_CLIENTS", "").strip()
+    if roh:
+        import json
+        try:
+            geladen = json.loads(roh)
+        except ValueError as e:
+            raise SystemExit(f"TINYSESAM_OIDC_CLIENTS ist kein gültiges JSON: {e}")
+        if not isinstance(geladen, dict):
+            raise SystemExit("TINYSESAM_OIDC_CLIENTS muss ein Objekt sein: "
+                             '{"app.example.com": {"client_id": "...", "client_secret": "..."}}')
+        for host, eintrag in geladen.items():
+            if not isinstance(eintrag, dict):
+                raise SystemExit(f"TINYSESAM_OIDC_CLIENTS[{host!r}] muss ein Objekt sein "
+                                 "(client_id, client_secret, optional scopes/allowed_groups).")
+            clients[str(host).strip().lower()] = dict(eintrag)
+    bekannte = _split("TINYSESAM_PROTECTED_HOSTS")
+    geraten = []
+    for name, wert in sorted(os.environ.items()):
+        if not name.startswith("TINYSESAM_OIDC_CLIENT_"):
+            continue
+        rest = name[len("TINYSESAM_OIDC_CLIENT_"):]
+        if rest in ("ID", "SECRET"):      # das ist der Einzel-Client, nicht eine Anwendung
+            continue
+        for endung, feld in (("_ID", "client_id"), ("_SECRET", "client_secret")):
+            if rest.endswith(endung):
+                roh = rest[:-len(endung)]
+                host = _host_aus_variable(roh, bekannte)
+                if bekannte and host not in [h.strip().lower() for h in bekannte]:
+                    geraten.append((name, host))
+                clients.setdefault(host, {})[feld] = wert
+    if geraten:
+        # Laut statt still: Ein Host, der in keiner Liste steht, bekommt nie eine Anfrage —
+        # die Zuordnung wäre da und wirkte trotzdem nie.
+        security.seclog.warning(
+            "Diese Client-Variablen nennen Hosts, die nicht in TINYSESAM_PROTECTED_HOSTS stehen: "
+            "%s. Ein Unterstrich im Variablennamen kann ein Punkt ODER ein Bindestrich sein — "
+            "steht der Host in PROTECTED_HOSTS, wird er erkannt, sonst wird der Punkt vermutet. "
+            "Sicherer ist TINYSESAM_OIDC_CLIENTS als JSON.",
+            ", ".join(f"{n} → {h}" for n, h in geraten))
+    return clients
+
+
 def config_from_env() -> TinySesamConfig:
     def req(key):
         v = os.environ.get(key)
@@ -57,6 +139,8 @@ def config_from_env() -> TinySesamConfig:
         https_mode=os.environ.get("TINYSESAM_HTTPS_MODE", "warn"),
         security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),
         trusted_proxies=_split("TINYSESAM_TRUSTED_PROXIES") or ["127.0.0.1/32", "::1/128"],
+        clients=clients_from_env(),
+        revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "15") or 0),
     )
 
 
@@ -145,6 +229,9 @@ Konfiguriert wird über Umgebungsvariablen:
   TINYSESAM_PROTECTED_HOSTS      Hosts hinter dem Proxy, kommagetrennt
   TINYSESAM_COOKIE_DOMAIN        z.B. .example.com — für mehrere Hosts
   TINYSESAM_TRUSTED_PROXIES      Netz des Proxys, z.B. 172.28.0.0/16
+  TINYSESAM_OIDC_CLIENTS         mehrere Anwendungen als JSON (Host → Client)
+  TINYSESAM_OIDC_CLIENT_<HOST>_ID / _SECRET   dasselbe je Host einzeln
+  TINYSESAM_OIDC_REVALIDATE_MINUTES           Frist der Nachprüfung (Default 15)
   TINYSESAM_DB                   Pfad der Datenbank
   TINYSESAM_HOST / _PORT         Bindeadresse (Vorgabe 0.0.0.0:8000)
 

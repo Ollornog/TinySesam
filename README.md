@@ -537,6 +537,51 @@ From the [releases feed](https://github.com/Ollornog/TinySesam/releases) — via
 CI runs against the new version and you decide whether to merge. The running version is shown by
 `python -m tinysesam version` and in the admin panel under "Hardening".
 
+## Several apps, one TinySesam
+
+One installation can protect several apps — and **the identity provider decides who gets into
+which one**. That matters because with PocketID (and every provider that works this way) the
+release is attached to the *OIDC client*, not to the user. With a single client there is only
+one answer for every app: whoever is allowed into one is allowed into all of them.
+
+Give each app its own client at the provider, then map host → client:
+
+```python
+cfg = TinySesamConfig.oidc_gateway(
+    issuer="https://id.example.com",
+    client_id="gateway", client_secret=os.environ["GATEWAY_SECRET"],   # fallback for unlisted hosts
+    base_url="https://auth.example.com",
+    trusted_redirect_hosts=["app.example.com", "wiki.example.com"],
+    clients={
+        "app.example.com":  {"client_id": "app",  "client_secret": os.environ["APP_SECRET"]},
+        "wiki.example.com": {"client_id": "wiki", "client_secret": os.environ["WIKI_SECRET"],
+                             "group_role_map": {"editors": "editor"}},
+    },
+    revalidate_minutes=15,
+)
+```
+
+All clients point at **one** redirect URI (`base_url` + `/auth/oidc/callback`) — which client a
+run belongs to is kept server-side, not in the URL. At the provider you therefore enter the same
+address for each one.
+
+**A release follows the provider.** `revalidate_minutes` says how long a release is trusted
+before TinySesam asks again. When the time is up the next request takes a trip through the
+provider; its session is usually still alive, so people see a flicker rather than a login. If the
+group was taken away in the meantime, the provider says no — and shows **its own** message,
+because that is where the release is maintained. The session itself stays: the other apps keep
+working. `0` turns the check off, and a withdrawal then only takes effect when the session
+expires (seven days by default).
+
+As environment variables (gateway container):
+
+```
+TINYSESAM_OIDC_CLIENTS='{"app.example.com": {"client_id": "app", "client_secret": "..."}}'
+TINYSESAM_OIDC_REVALIDATE_MINUTES=15
+```
+
+A config with a single client behaves exactly as before — no host mapping, no release to expire.
+
 ## API keys & service/daemon accounts
 
 For **machine access** (scripts, other services, system daemons) — alongside the interactive login:
