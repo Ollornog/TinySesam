@@ -6,7 +6,7 @@
     "Die Trennlinie ist Identitaet gegen Infrastruktur: 'admin@example.de' ist harmlos,",
     "'paperless.example.de' verraet, wo ein Paperless laeuft."
   ],
-  "version": 1,
+  "version": 2,
   "private_muster": [
     "(?<![\\w.])/home/[a-z_][a-z0-9_-]*",
     "\\b[a-z0-9-]+\\.(?!example\\b)[a-z0-9-]{3,}\\.(?:de|at|ch|eu)\\b",
@@ -52,6 +52,10 @@
   "erlaubte_hosts": [
     "example\\.(?:com|org|net|de)",
     "localhost",
+    "[a-z0-9-]+\\.test",
+    "[a-z0-9-]+\\.example",
+    "[a-z0-9-]+\\.invalid",
+    "[a-z0-9-]+\\.localhost",
     "127\\.0\\.0\\.1",
     "github\\.com",
     "keepachangelog\\.com",
@@ -59,11 +63,82 @@
     "www\\.w3\\.org",
     "contributor-covenant\\.org"
   ],
-  "geheimnis_muster": [
+  "_geheimnis_kommentar": [
+    "Geschaerft 2026-09-22 (Backlog-Block 8.1). Drei getrennte Listen statt einer:",
+    "FORMATE erkennen ein Credential an seiner Bauform und gelten IMMER (case-sensitiv,",
+    "denn genau so sehen die Werte aus). ZUWEISUNG erkennt 'name = wert' (case-INsensitiv,",
+    "weil Namen mal PAPERLESS_TOKEN und mal client_secret heissen). PLATZHALTER gelten NUR",
+    "gegen den Wert einer Zuweisung und nehmen ihn wieder heraus.",
+    "",
+    "Die vier Formen, die vorher KEIN Waechter fand (aus den 47 dokumentierten Fundstellen):",
+    "  1. unquotetes YAML  PAPERLESS_TOKEN: 23f9...   -> Anfuehrungszeichen ist jetzt optional",
+    "  2. ENCRYPTION_KEY=...                          -> Namensteil kennt jetzt blosses 'key'",
+    "  3. passphrase: ...                             -> Namensteil erweitert",
+    "  4. sk-...                                      -> eigenes Format",
+    "",
+    "WARUM PLATZHALTER: Am 2026-09-22 meldete ein laengenbasiertes Muster",
+    "'REPLACE_ME_TOKEN' und 'REPLACE_ME_NETBIRD_SETUP_KEY' aus einem Backup als Geheimnis;",
+    "der Fehlalarm wanderte zweimal bis zum PO. Regel daraus: ein Wert aus ausschliesslich",
+    "GROSSBUCHSTABEN und Unterstrichen ist nie ein Geheimnis, ein 'ssh-ed25519 ...' ist ein",
+    "OEFFENTLICHER Schluessel. Ein Fehlalarm-Generator kostet dieselbe Glaubwuerdigkeit wie",
+    "eine uebersehene Luecke.",
+    "",
+    "BEWUSSTE LUECKEN (lieber benannt als verschwiegen): ein Geheimnis, das nur aus",
+    "Grossbuchstaben und Unterstrichen besteht, und eines aus reinem Kleinbuchstaben-",
+    "Schlangenschrift (my_secret_value) fallen durch. Beide Formen kommen bei echten",
+    "Ausstellern nicht vor, bei Platzhaltern staendig."
+  ],
+  "geheimnis_formate": [
     "ghp_[A-Za-z0-9]{20,}",
+    "gho_[A-Za-z0-9]{20,}",
+    "ghu_[A-Za-z0-9]{20,}",
+    "ghs_[A-Za-z0-9]{20,}",
+    "ghr_[A-Za-z0-9]{20,}",
+    "github_pat_[A-Za-z0-9_]{20,}",
     "-----BEGIN [A-Z ]*PRIVATE KEY",
     "AKIA[0-9A-Z]{16}",
-    "(?:client_secret|password|token|api[_-]?key)\\s*[:=]\\s*['\\\"][A-Za-z0-9/+_-]{16,}"
+    "(?:^|[^A-Za-z0-9])sk-(?:ant-)?[A-Za-z0-9_-]{20,}",
+    "xox[abprs]-[A-Za-z0-9-]{10,}",
+    "PVEAPIToken=[A-Za-z0-9]"
+  ],
+  "_geheimnis_formate_bedeutung": [
+    "GitHub Personal Access Token (classic)",
+    "GitHub OAuth-Token",
+    "GitHub User-to-Server-Token",
+    "GitHub Server-to-Server-Token",
+    "GitHub Refresh-Token",
+    "GitHub fine-grained PAT",
+    "privater Schluessel im PEM-Format (OPENSSH/RSA/EC/...)",
+    "AWS Access Key ID",
+    "OpenAI-/Anthropic-Stil (sk-, sk-ant-); die Grenze davor verhindert Treffer in 'task-', 'risk-'",
+    "Slack-Token",
+    "Proxmox-API-Token; ein Platzhalter dahinter ({TOKEN_ID}, ${VAR}) trifft bewusst nicht"
+  ],
+  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:api[_-]?key|access[_-]?key|secret|token|passwd|password|passphrase|credential|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
+  "geheimnis_platzhalter": [
+    "^[A-Z][A-Z0-9_]*$",
+    "^[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)+$",
+    "^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$",
+    "^[a-z0-9_.-]*(?:/[a-z0-9_.-]*)+$",
+    "^[A-Za-z]+(?:-[A-Za-z]+)+$",
+    "^(?:changeme|change_me|example|beispiel|dummy|placeholder|redacted|geheim|your|dein)[a-z0-9_.-]*$",
+    "^ssh-(?:ed25519|rsa|dss)",
+    "^[A-Z][A-Za-z0-9]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+  ],
+  "_geheimnis_platzhalter_bedeutung": [
+    "NUR Grossbuchstaben/Ziffern/Unterstrich = Platzhaltername (REPLACE_ME_TOKEN)",
+    "gepunkteter Bezeichner aus Code (config.settings.api_key)",
+    "Schlangenschrift-Bezeichner (my_configuration_value, your_secret_here)",
+    "Dateipfad statt Wert (SECRETS=scripts/secret-patterns.txt) — nur Kleinbuchstaben, mit Schraegstrich; ein Base64-Geheimnis mit '/' traegt immer Grossbuchstaben",
+    "Wortkette mit Bindestrich und OHNE Ziffer (key=value-Extra-Vars aus einem Docstring) — kein Aussteller vergibt Geheimnisse dieser Form",
+    "ausgeschriebener Platzhalter",
+    "oeffentlicher SSH-Schluessel — ein Public Key ist kein Geheimnis",
+    "Die letzte Regel (seit 2026-09-22) deckt Attribut-/Enum-Ketten mit Grossbuchstaben",
+    "am Anfang ab: `ResidentKeyRequirement.PREFERRED` als Schluesselwort-Argument",
+    "`resident_key=` wurde als Geheimnis gemeldet — das Zuweisungsmuster greift bei",
+    "`_key=`, und die bestehende Punkt-Regel war auf Kleinbuchstaben beschraenkt.",
+    "Sie ist eng genug: ein JWT beginnt mit `ey`, Base64 kennt keinen Punkt, und jedes",
+    "Segment muss mit einem Buchstaben beginnen. Gemeldet von der TinySesam-Session."
   ],
   "artefakt_teile": [
     ".egg-info",
@@ -111,5 +186,14 @@
     ]
   },
   "_changelog_quelle": "https://keepachangelog.com/en/1.1.0/",
-  "_actions_quelle": "GitHub Docs, Security hardening for GitHub Actions"
+  "_actions_quelle": "GitHub Docs, Security hardening for GitHub Actions",
+  "_erlaubte_hosts_quelle": [
+    "RFC 2606 §2 reserviert .test, .example, .invalid und .localhost dauerhaft fuer",
+    "Tests und Dokumentation (bestaetigt in RFC 6761). Bis 2026-09-22 kannte die Liste",
+    "nur 'example.(com|org|net|de)' und den blanken Namen 'localhost' — ein Testfall mit",
+    "'ca.invalid' (FlyingCerts, internal/acme/*_test.go) wurde damit als Leck gemeldet,",
+    "obwohl er genau die Norm befolgt. Ein Fehlalarm zaehlt als Fehler: er erzieht dazu,",
+    "die Pruefung zu umgehen statt ihr zu glauben.",
+    "Quelle: https://www.rfc-editor.org/rfc/rfc2606.txt"
+  ]
 }
