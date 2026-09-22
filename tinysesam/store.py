@@ -13,6 +13,14 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT UNIQUE NOT NULL,
     display_name  TEXT,
     email         TEXT,
+    -- Trägt die Adresse einen Beleg? 1 = ja (lokale Registrierung mit Bestätigungsmail, vom
+    -- Admin/CLI gesetzt, aus einem Verzeichnis), 0 = nein. Nein heisst NICHT „ungültig": Die
+    -- Adresse wird ganz normal geführt und weitergereicht (`Remote-Email`), sie trägt nur keine
+    -- Rechte — Erst-Admin/Allowlist verlangen den Beleg (`maybe_promote_admin`). Ein IdP, der
+    -- `email_verified` nicht schickt (OIDC Core 5.1: optional; Entra ID), landet damit auf 0,
+    -- statt die Adresse zu verlieren. Vorgabe 1: ein Bestand aus der Zeit vor dieser Spalte
+    -- behält sein Verhalten (das ALTER TABLE füllt jede vorhandene Zeile damit).
+    email_verified INTEGER NOT NULL DEFAULT 1,
     is_admin      INTEGER NOT NULL DEFAULT 0,
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
     is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
@@ -224,7 +232,8 @@ class Store:
     #: 2 — 0.18.0: `session.token` → `session.token_hash` (sha256 statt Klartext)
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
-    SCHEMA_VERSION = 4
+    #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
+    SCHEMA_VERSION = 5
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -238,6 +247,10 @@ class Store:
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
             "totp_cred": [("last_step", "INTEGER")],
+            # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
+            # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
+            # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
+            "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1")],
         }
         with self._lock:
             for table, cols in adds.items():
@@ -346,15 +359,45 @@ class Store:
             return cur
 
     # ---------- Users ----------
-    def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None, is_service=False) -> int:
+    def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
+                    is_service=False, email_verified=True) -> int:
         cur = self._exec(
-            "INSERT INTO users(username, display_name, email, is_admin, roles, is_service, created_at) VALUES (?,?,?,?,?,?,?)",
-            (username, display_name or username, norm_email(email), 1 if is_admin else 0,
+            "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
+            "is_service, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (username, display_name or username, norm_email(email), 1 if email_verified else 0,
+             1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now()))
         return cur.lastrowid
 
-    def set_email(self, user_id, email):
-        self._exec("UPDATE users SET email=? WHERE id=?", (norm_email(email), user_id))
+    def set_email(self, user_id, email, verified: bool = False):
+        """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
+
+        Der Beleg gehört zur Adresse, nicht zum Konto: Seit `users.email_verified` über
+        Rechte entscheidet (`maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
+        der Beleg der **alten** Adresse auf der **neuen** — gemessen wurde genau das
+        (B-umgehung-8 aus T-13): `eve@example.com` (belegt) → `set_email(uid, "boss@example.com")` →
+        Erst-Admin über die Allowlist, ohne dass jemand etwas bestätigt hat.
+
+        Bis dahin stand hier, der Vermerk bleibe „fail-closed" liegen. Das galt nur für die
+        eine Richtung (unbestätigt bleibt unbestätigt); die andere war fail-**open**. Die
+        Vorgabe ist deshalb `verified=False`: Wer einen Beleg für die NEUE Adresse hat — eine
+        eingelöste Bestätigungsmail, ein IdP-Claim aus demselben Login —, sagt das
+        ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
+        `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
+        damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
+        trägt."""
+        self._exec("UPDATE users SET email=?, email_verified=? WHERE id=?",
+                   (norm_email(email), 1 if verified else 0, user_id))
+
+    def set_email_verified(self, user_id, verified: bool):
+        """Den Beleg für die Adresse vermerken (`users.email_verified`).
+
+        Getrennt von der Adresse, weil beides getrennt bekannt ist: Ein IdP schickt `email` in
+        jedem Login, den Claim `email_verified` aber nur manchmal. Und der Vermerk muss liegen
+        bleiben, denn über ihn entscheidet auch ein Login, der selbst keinen Beleg mitbringt
+        (lokales Passwort, Magic-Link) — sonst hinge der Schutz am Anmeldeweg."""
+        self._exec("UPDATE users SET email_verified=? WHERE id=?",
+                   (1 if verified else 0, user_id))
 
     def get_roles(self, user_id) -> list:
         r = self._one("SELECT roles FROM users WHERE id=?", (user_id,))
@@ -390,6 +433,30 @@ class Store:
     def email_taken(self, email, exclude_id=None) -> bool:
         u = self.get_user_by_email(email)
         return bool(u and u["id"] != exclude_id)
+
+    def kennungs_kollisionen(self, limit: int = 50) -> list:
+        """Konten, deren **Benutzername** die **E-Mail** eines ANDEREN Kontos ist (Fund R4-12).
+
+        Warum das eine eigene Abfrage braucht: Die Tabelle kennt `UNIQUE(username)` und den
+        Index `ux_users_email` auf `lower(email)` — aber **keinen Constraint über beide
+        Spalten**. Eindeutig ist also jeder Namensraum für sich, während `find_user` im
+        Vorgabe-Modus `both` in beiden sucht. `Manager.create_user` prüft kreuzweise, doch
+        Prüfung und INSERT sind nicht atomar (zwei gleichzeitige Registrierungen derselben
+        Kennung — eine als Name, eine als Adresse — kommen beide durch), und in einer Datenbank
+        von VOR dem Fix steht die Kollision längst. Diese Abfrage ist deshalb der Wächter, den
+        die Datenbank nicht stellen kann: Sie nennt, was da ist, statt es zu verhindern.
+
+        Verglichen wird `COLLATE NOCASE`, also genauso wie `get_user_by_name`/`get_user_by_email`
+        suchen — eine Kollision, die die Anmeldung findet, muss auch hier auffallen.
+        Zeilen: `(name_id, kennung, mail_id, adresse)`. Ein Konto, das dieselbe Zeichenfolge in
+        BEIDEN eigenen Spalten trägt, ist keine Kollision (E-Mail-Modus, vorgesehener Weg).
+        """
+        return self._all(
+            "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
+            "FROM users n JOIN users e ON e.id <> n.id "
+            "  AND e.email IS NOT NULL AND e.email <> '' "
+            "  AND e.email = n.username COLLATE NOCASE "
+            "ORDER BY n.id LIMIT ?", (int(limit),))
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
@@ -696,7 +763,14 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    def count_fails(self, since, username=None, ip=None, method=None) -> int:
+    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
+        """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
+
+        `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
+        was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
+        derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
+        (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+        """
         if not username and not ip:
             return 0
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
@@ -710,6 +784,10 @@ class Store:
         if method:
             q += " AND method=?"
             args.append(method)
+        if exclude_methods:
+            platz = ",".join("?" for _ in exclude_methods)
+            q += f" AND (method IS NULL OR method NOT IN ({platz}))"
+            args.extend(exclude_methods)
         return self._one(q, args)["c"]
 
     def clear_fails(self, username=None, ip=None, method=None):

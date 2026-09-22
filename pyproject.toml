@@ -39,16 +39,27 @@ classifiers = [
     "Topic :: System :: Systems Administration :: Authentication/Directory",
     "Typing :: Typed",
 ]
+# Die Untergrenzen sind KEIN „läuft vermutlich auch damit" — sie sind der gemessene Boden
+# ohne bekannte Lücke (OSV, Stand 2026-09-22). Ein `>=` ohne Deckel ist eine Zusage: Wer eine
+# alte Fassung festhält (Lockfile, Constraints, Distributionspaket), bekommt eine unterstützte
+# Installation. Lag der Boden unter einem Sicherheitsfix, war die Zusage falsch — so zog die
+# niedrigste erlaubte Auflösung bis 0.18.0 authlib 1.3.0, python-multipart 0.0.9 und (über
+# FastAPI) starlette 0.36.3, alle drei mit offenen Advisories. Gehoben wird der Boden,
+# **keine obere Schranke** ergänzt: Ein Deckel in einer Bibliothek blockiert genau die
+# Aktualisierung, die den nächsten Fix bringt. `tests/test_packaging.py` misst die Grenzen
+# gegen eine Tabelle mit, damit der Boden nicht wieder altert (B4-1 aus T-13).
 dependencies = [
-    "fastapi>=0.110",
+    # 0.133.0 ist die erste Fassung, die starlette >= 1.3.1 zulässt (Host-Header-Prüfung,
+    # UNC-Pfade in StaticFiles, Methoden-Dispatch, form()-Grenzen).
+    "fastapi>=0.133.0",
     "pyotp>=2.9",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.31",
 ]
 
 [project.optional-dependencies]
 argon2 = ["argon2-cffi>=23"]        # sonst stdlib-scrypt-Fallback
 qr = ["qrcode[pil]>=7"]             # TOTP-Enrollment-QR
-oidc = ["httpx>=0.27", "authlib>=1.3"]
+oidc = ["httpx>=0.27", "authlib>=1.6.12"]
 passkey = ["webauthn>=2.0"]
 ldap = ["ldap3>=2.9"]
 redis = ["redis>=5"]
@@ -56,8 +67,8 @@ saml = ["python3-saml>=1.15"]       # braucht System-libxmlsec1
 # Das Forward-Auth-Gateway als fertiger Dienst: OIDC + ein ASGI-Server. `[oidc]` allein reicht
 # NICHT — `python -m tinysesam.gateway` endete damit in einem ModuleNotFoundError für uvicorn,
 # und genau das stand als Startbefehl in der README.
-gateway = ["httpx>=0.27", "authlib>=1.3", "uvicorn>=0.30"]
-all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.3", "webauthn>=2.0",
+gateway = ["httpx>=0.27", "authlib>=1.6.12", "uvicorn>=0.30"]
+all = ["argon2-cffi>=23", "qrcode[pil]>=7", "httpx>=0.27", "authlib>=1.6.12", "webauthn>=2.0",
        "ldap3>=2.9", "redis>=5", "python3-saml>=1.15", "uvicorn>=0.30"]
 
 # Die Leiste neben der Projektseite im Index. Wer dort landet, sucht meist eines von

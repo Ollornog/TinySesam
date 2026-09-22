@@ -4,6 +4,50 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+**Verhaltensänderungen in dieser Runde.** Sechs Punkte ändern, was eine bestehende Installation
+tut — je Punkt steht dahinter, was zu tun ist; die Begründung steht weiter unten bei dem Befund,
+aus dem der Punkt kommt.
+
+1. **`base_url` ist Pflicht**, sobald ein Mail-Weg (`magiclink_enabled`, `password_reset_enabled`,
+   `signup_verify_email`), `oidc_enabled` oder `saml_enabled` an ist. Aus der Warnung ist ein
+   **Fehler** geworden: Die Instanz startet sonst nicht mehr. → **Zu tun:** die öffentliche
+   Adresse dieser App eintragen (`base_url="https://auth.example.com"`, lokal
+   `"http://127.0.0.1:8000"`, unter einem Unterpfad mit Präfix `"https://example.com/sso"`). Die
+   Fehlermeldung beim Start nennt genau das. Wer die Basis selbst übergibt, nimmt sie ab jetzt aus
+   `auth.public_base(request)`, nicht aus dem Request.
+2. **Eine E-Mail-Adresse trägt eine Rechte-Entscheidung nur noch mit Beleg** (neue Spalte
+   `users.email_verified`, Schema 5). Über OIDC zählt der Claim `email_verified`, über SAML und
+   LDAP gibt es keinen — dort befördert eine Adresse aus `admin_identifiers` nie mehr.
+   → **Zu tun:** Bestandskonten sind nicht betroffen (`ALTER TABLE … DEFAULT 1`). Wer den
+   Erst-Admin bisher über `admin_identifiers` + SAML/LDAP setzte, nimmt `/auth/claim-admin` und
+   danach das Gruppen-Mapping. Wer einen IdP fährt, der den optionalen Claim nie schickt (Entra ID),
+   und seine Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`.
+3. **Die Selbstverwaltung der Faktoren steht hinter Step-up.** `totp/disable`, `totp/recovery`,
+   `pin/set`, `pin/disable`, `passkey/delete` — und seit dem Nachschlag auch die **Anlage**
+   (`totp/setup`, `passkey/register/*`) — verlangen eine frisch bestätigte Sitzung.
+   → **Zu tun:** nichts konfigurieren; wer eine **eigene** Konto-Seite baut, wertet den Hinweis-Header
+   `X-TinySesam-Reauth` aus und schickt auf `/auth/reauth`, sonst scheitern die Knöpfe stumm mit 403.
+4. **Ein API-Key kommt auf diese Routen nicht mehr** — er ist ein Maschinen-Credential und erbringt
+   nie einen interaktiven Faktor; die Antwort ist **403**. → **Zu tun:** Automatisierung, die bisher
+   per Key Faktoren setzte oder abbaute, auf einen anderen Weg legen (Admin-API bzw. Datenbank). Ein
+   abgeflossener CI-Key kann dafür im Gegenzug nichts mehr.
+5. **Die Untergrenzen der Abhängigkeiten sind gehoben** — `fastapi>=0.133.0`,
+   `python-multipart>=0.0.31`, `authlib>=1.6.12`, ohne obere Schranken. → **Zu tun:** wer Versionen
+   festhält (Lockfile, Constraints, Distributionspaket), zieht sie nach; mit `authlib 1.3.0` war ein
+   gefälschtes ID-Token möglich.
+6. **Fehlversuche zählen in eigene Töpfe statt in den Login-Topf.** Passwortwechsel, Step-up-
+   Bestätigung und Bereichs-PIN haben eigene Schwellen (`password_change_max_attempts`,
+   `reauth_max_attempts`, `resource_max_attempts`, je 5); ihre Log-Zeilen tragen das eigene Wort
+   `failed verification` und treffen die mitgelieferte fail2ban-Jail **nicht** mehr.
+   → **Zu tun:** wer die Jail einsetzt, übernimmt die aktualisierte
+   `deploy/fail2ban/tinysesam-filter.conf`; wer auch diese Fehlgriffe bannen will, nimmt zusätzlich
+   `tinysesam-verify-filter.conf` samt der milderen, standardmässig abgeschalteten Jail.
+
+⚠️ **Für einbettende Apps** kommen zwei Änderungen an dokumentierten Methoden dazu: `create_user()`
+wirft beim doppelten **Benutzernamen** jetzt `ConfigError` statt `sqlite3.IntegrityError`, und
+`store.set_email()` schreibt den Bestätigungs-Vermerk mit, vorgabegemäss **unbestätigt**
+(`verified=True` für den belegten Fall). Beides steht unten bei seinem Befund.
+
 **Doku-Abgleich: 70 Stellen, an denen die Doku etwas anderes sagte als der Code.** Sieben Flächen
 wurden gegen die Wirklichkeit gemessen — beide READMEs, CHANGELOG, Docstrings, `deploy/`, `web/`,
 Backlog. Der Befund war nicht, dass Sätze veraltet klangen: **Zehn der Stellen waren Mängel im
@@ -51,9 +95,388 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   des Umleitungsziels. Jetzt über `http.client`, das von sich aus nie umleitet.
 - **`Documentation=` in `tinysesam-gc.service` verwarf systemd still** — der Umlaut im URL-Anker
   machte die Zeile ungültig.
+- **Der Quickstart beider READMEs baute nicht mehr.** Der erste Block, den ein neuer Nutzer
+  kopiert, schaltet `oidc_enabled=True` und setzte kein `base_url` — seit der Verschärfung weiter
+  unten ist genau das ein `ConfigError` im Konstruktor. Die Regel kam, das Beispiel blieb stehen:
+  dieselbe Klasse Fehler wie `pip install tinysesam`, die erste Zeile, die jemand ausprobiert,
+  war die erste, die fehlschlug. `base_url` steht jetzt in beiden Beispielen, mit dem Satz warum.
+  Damit das nicht wieder passiert, **baut die Hygiene jedes Konfig-Beispiel beider READMEs** und
+  führt die vollständigen Blöcke in einem Wegwerf-Verzeichnis aus (`tests/test_repo.py`) — bisher
+  maß sie nur Zahlen im Text, nicht, ob ein Beispiel läuft.
+- **Zwei Betreiber-Meldungen nannten Wege, die es nicht gibt.** Der neue Kollisions-Wächter beim
+  Start riet „Eine der beiden Kennungen ändern (Admin-Panel oder CLI)" — keins von beiden kann
+  das: Die Admin-API kennt Anlegen, Sperren, Rollen, Passwort und Keys, aber kein Umbenennen, und
+  das CLI legt überhaupt keine Konten an. Genannt wird jetzt, was existiert
+  (`store.set_email(…)`, sonst die Datenbank) — samt der Nebenwirkung, die dieser Weg seit dem
+  Punkt zu `set_email()` weiter unten hat: Die neue Adresse wird **unbestätigt** abgelegt
+  (`users.email_verified=0`), wer einen Beleg für sie hat, übergibt `verified=True`. Ebenso in
+  der Konfigurationsprüfung: „Der
+  Erst-Admin kommt dann nur über `admin_identifiers` oder die CLI zustande" → `ensure_admin()`
+  im eigenen Dienst. Es ist dieselbe falsche CLI-Zusage, die dieser Eintrag an anderer Stelle
+  schon einmal zurückgenommen hat.
 
 ### Sicherheit
 
+- **Das ID-Token bestimmt nicht mehr selbst, wie es geprüft wird.** `authlib.jose.jwt` ist ein
+  Dekoder mit Vorgabesatz, und dieser Satz enthält HS256: Wird beim Dekodieren kein Verfahren
+  genannt, entscheidet der **Header des Tokens** — also der Absender. Bis authlib 1.3.0 liess sich
+  damit ein ID-Token mit dem öffentlichen Schlüssel aus dem JWKS als HMAC-Geheimnis fälschen
+  (GHSA-5357-c2jx-v7qh, Algorithmen-Konfusion); der öffentliche Schlüssel ist per Definition
+  öffentlich, das `sub` hätte der Angreifer sich ausgesucht. Dazu passte der deklarierte Boden:
+  `authlib>=1.3` erlaubte genau diese Fassung, und wer eine Fassung festhält (Lockfile,
+  Constraints, Distributionspaket), bekam sie auch. Jetzt beides — `OIDCClient.ID_TOKEN_ALGS`
+  nennt ausschliesslich asymmetrische Verfahren (RS/PS/ES/EdDSA) und wird beim Dekodieren gesetzt,
+  versionsunabhängig; eine spätere Erweiterung um HS\* oder `none` weist der Client mit
+  `ConfigError` ab. Und die Untergrenzen sind gehoben, auf den gemessenen lückenfreien Boden
+  (OSV, Stand 2026-09-22): `fastapi>=0.133.0` (erst ab da ist starlette >= 1.3.1 erlaubt),
+  `python-multipart>=0.0.31`, `authlib>=1.6.12`. **Keine** oberen Schranken — ein Deckel in einer
+  Bibliothek blockiert genau die Aktualisierung, die den nächsten Fix bringt.
+  `tests/test_packaging.py` misst die Grenzen gegen eine eingefrorene Tabelle mit, damit der Boden
+  nicht wieder altert. Gefunden im dritten Audit (B4-1 aus [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
+- **Eine unbestätigte IdP-Adresse konnte den ersten Admin bestimmen.** `admin_identifiers` ist der
+  dokumentierte Bootstrap-Weg. Für die offene Registrierung verlangt TinySesam dafür eine bestätigte
+  Adresse — der OIDC-Weg las `email` dagegen bedingungslos und übersah den Standard-Claim
+  `email_verified` (OIDC Core 5.1). Wer sich bei einem IdP mit Selbstregistrierung oder in einem
+  zweiten Mandanten die Admin-Adresse eintrug, war beim ersten Login Erst-Admin. Jetzt gilt ein
+  fehlender Claim als *unbestätigt* (fail-closed, mit Protokoll- und Audit-Zeile), und diese
+  Adresse trägt in keinem Fall die Erst-Admin-Entscheidung — auch nicht bei einem Bestandskonto,
+  das sie schon führt, und auch nicht über einen späteren Login, der selbst keinen Beleg
+  mitbringt (`maybe_promote_admin(user, email_bestaetigt=…)`, durchgereicht von `apply_factor`;
+  ohne diesen Parameter entscheidet der Vermerk am Konto). **Geführt wird die Adresse
+  trotzdem:** Getrennt gemerkt wird nur der Beleg, in der neuen Spalte `users.email_verified`
+  (Schema-Version 5; ein `ALTER TABLE` mit `DEFAULT 1` lässt jedes Bestandskonto genau so
+  wirken wie bisher). Die Adresse zu *verwerfen* war die erste Fassung dieses Fixes, und sie
+  kostete mehr, als sie schützte: Ein IdP, der den optionalen Claim nie schickt (Entra ID),
+  liess damit jedes neu angelegte Konto `oidc-<sub>` heissen statt wie die Adresse, und
+  `Remote-Email` ging leer an die geschützte App — dieselbe Person landete nach dem Update in
+  einem *anderen* Konto der App, und Reset wie Magic-Link waren für sie zu. Weil der Claim
+  optional ist, entscheidet neu `oidc_email_verified_default` (Vorgabe `False`), was das
+  **Schweigen** eines Providers bedeutet; wer seine Adressen selbst verantwortet, stellt es auf
+  `True` und kann `admin_identifiers` auch mit so einem IdP nutzen. Ein Claim, der ausdrücklich
+  `false` sagt, bleibt in beiden Fällen ein Nein — und `_flag_wahr` liest ihn in den Formen, die
+  echte Provider senden (`True`, `"true"`, `"True"`, `1`, `"1"`; alles andere, auch die
+  Zeichenkette `"false"`, ist Nein — eine Wahrheitsprüfung auf dem rohen Wert hätte sie
+  durchgelassen, und kein Test hielt das fest). Adresse und
+  Beleg werden immer aus DEMSELBEN Dokument genommen: Der Callback legt ID-Token und
+  userinfo-Dokument zusammen, und beim Mischen konnte ein `email_verified=true` aus dem einen an die
+  Adresse aus dem anderen geraten. Zweitens hing der Wächter, der Allowlist-**Benutzernamen**
+  verbietet, allein an `allow_signup` — beim Auto-Anlegen durch einen IdP (`oidc_auto_create`,
+  `saml_auto_create`, `ldap_auto_create`) griff er nicht, obwohl der Name auch dort aus fremder
+  Hand kommt (`preferred_username`); er fasst jetzt alle vier Türen.
+  **Über SAML und LDAP gibt es diesen Beleg gar nicht — dort befördert eine Allowlist-Adresse
+  nie.** Der Riegel hing zunächst allein am OIDC-Callback: SAML-ACS und LDAP-Login riefen
+  `apply_factor` ohne das Argument, und `None` heisst „kein fremder IdP im Spiel" — es lief am
+  Riegel vorbei, ein IdP mit Selbstregistrierung oder ein Verzeichnis, in dem der Nutzer sein
+  `mail`-Attribut selbst pflegt, bestimmte also weiter den ersten Admin. Jetzt reichen beide
+  Wege ausdrücklich „kein Beleg" durch, und die Regel selbst ist **fail-closed**:
+  `maybe_promote_admin` bekommt den **Faktor** mit, und für einen föderierten Faktor (neu:
+  `TinySesam.FOEDERIERTE_FAKTOREN`) zählt eine Adresse nur mit einem ausdrücklichen `True` —
+  ein künftiger föderierter Weg, der den Beleg zu übergeben vergisst, verweigert damit, statt zu
+  befördern. LDAP braucht den ausdrücklichen Durchreicher zusätzlich, weil es bewusst den Faktor
+  `password` schreibt und am Faktornamen nicht zu erkennen ist. Die Konfigurationsprüfung nennt
+  die Kombination Allowlist-**Adresse** + `saml_auto_create`/`ldap_auto_create` und den belegten
+  Weg (`/auth/claim-admin`, danach das Gruppen-Mapping). Die Adresse selbst bleibt im Konto
+  stehen — sie ist das Attribut, das Verzeichnis oder IdP liefert; sie trägt nur keine
+  Rechte-Entscheidung mehr.
+  **Das schloss zunächst nur den ersten Login, und der Angriff brauchte danach genau einen
+  Klick mehr.** Ohne ausdrücklichen Beleg entscheidet der **Vermerk am Konto**
+  (`users.email_verified`) — und den legten `check_ldap`/`check_saml` mit der Vorgabe „belegt"
+  an, obwohl über diese Wege per Definition nichts belegt ist. Der Angreifer meldete sich also
+  einmal über das Verzeichnis an (Beförderung korrekt verweigert), richtete sich in seiner
+  frisch angemeldeten Sitzung eine PIN oder einen Passkey ein — Selbstbedienung, in der
+  eigenen Sitzung gewollt — und war beim zweiten Login Erst-Admin: Dieser Faktor ist nicht
+  föderiert, reicht keinen Beleg mit, und der Vermerk sagte „belegt". Gemessen mit einem
+  Verzeichnis, in dem der Nutzer sein `mail`-Attribut selbst pflegt. **Jetzt legen beide Wege
+  mit `email_verified=False` an**: Die Adresse steht im Konto, der Vermerk behauptet nichts.
+  Damit ist die Regel über alle Anmeldewege dieselbe — eine Adresse trägt eine
+  Rechte-Entscheidung nur, wenn *dieser* Login sie belegt (OIDC-Claim) oder ein eigener
+  Bestätigungsweg sie belegt hat. Die zwei Riegel für SAML (Durchreicher der ACS-Route,
+  `FOEDERIERTE_FAKTOREN`) und der eine für LDAP werden jetzt **einzeln** gemessen: Bisher deckte
+  einer den anderen, ein Umbau hätte den verbleibenden unbemerkt verlieren können.
+  Belege in `tests/test_saml.py`, `tests/test_ldap.py` und `tests/test_audit_runde2.py`.
+  Gefunden im dritten Audit (F-14 aus T-13; die beiden Nachschläge B-umgehung-1 und
+  B-umgehung-10 der zweiten Angriffsrunde).
+- **⚠️ `store.set_email()` nimmt den Bestätigungs-Vermerk jetzt mit — Verhaltensänderung für
+  Einbettende.** Seit `users.email_verified` über Rechte entscheidet, war ein stehengelassener
+  Vermerk der Beleg der **alten** Adresse auf der **neuen**: Ein Konto mit bestätigtem
+  `eve@example.com`, dessen Adresse auf die Allowlist-Adresse umgeschrieben wurde, war beim
+  nächsten Login Erst-Admin, ohne dass jemand etwas bestätigt hat. Der Docstring nannte das
+  Stehenlassen ausdrücklich „fail-closed" und begründete es mit der *anderen* Richtung
+  (unbestätigt bleibt unbestätigt) — diese hier war fail-**open**. Adresse und Vermerk gehen
+  jetzt in EINER Anweisung in die Datenbank, vorgabegemäss als **unbestätigt**; wer einen Beleg
+  für die neue Adresse hat, sagt es (`set_email(uid, mail, verified=True)`). Im Paket selbst
+  hat die Methode keinen Aufrufer — die Falle stand für Einbettende bereit. Beleg in
+  `tests/test_audit_runde2.py`. Gefunden im dritten Audit (B-umgehung-8 aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md)).
+- **LDAP folgt keinem Verweis (Referral) mehr — er kostete das Passwort des Dienstkontos.** ldap3
+  verfolgt einen `SearchResultDone resultCode=10` von sich aus und baut dazu eine neue Verbindung
+  zu dem Host auf, den die **Antwort** nennt — mit denselben Zugangsdaten. TinySesam setzte den
+  Parameter nirgends. Mit zwei LDAP-Servern auf Loopback nachgestellt: Server A beantwortete die
+  Suche mit einem Verweis, und beim fremden Server B kam der vollständige BindRequest mit DN und
+  Klartext-Passwort des Dienstkontos an — auf der Benutzer-Verbindung wäre es das Passwort des
+  Anmeldenden gewesen. Eine Referral braucht dafür kein übernommenes Verzeichnis: Auf einer
+  Klartext-Verbindung schiebt sie jeder Zwischenhörer ein. Jetzt `auto_referrals=False` auf
+  **jeder** Verbindung und `allowed_referral_hosts=[]` am Server (zweites Schloss, falls einmal
+  eine Verbindung ohne den Parameter entsteht); ohne Verfolgung endet die Suche ergebnislos und
+  die Anmeldung scheitert, statt Zugangsdaten zu verschenken. Bewusst hart und ohne Schalter —
+  wer über mehrere AD-Domänen sucht, fragt den Global Catalog ab. Damit dieser Preis nicht
+  **stumm** anfällt (ohne Verfolgung sieht jede Anmeldung aus wie ein falsches Passwort, und
+  zwar für jeden Nutzer der Domäne gleichzeitig), schreibt der verworfene Verweis jetzt eine
+  Zeile über `tinysesam.security` und nennt den verwiesenen Host — durch dieselbe Bereinigung
+  wie der Benutzername, ein Umbruch aus einer fremden Antwort erzeugt also keine zweite,
+  erfundene Logzeile. Der Global-Catalog-Hinweis (Port 3268/3269) steht jetzt im
+  LDAP-Abschnitt **beider READMEs** statt nur im Quelltext. Fund **F-28** aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md). Nebenbefund derselben Stelle: `ldap_bind_dn`
+  ohne `ldap_bind_password` lehnt ldap3 ab, der Fehler wurde im Login verschluckt und sah für
+  jeden Nutzer wie ein falsches Passwort aus — die Kombination meldet jetzt die
+  Konfigurationsprüfung beim Aufbau.
+- **Der `Host`-Header vergiftete Reset-, Anmelde- und Bestätigungslink.** An zehn Stellen leitete
+  TinySesam die öffentliche Adresse aus der Anfrage selbst ab — sechsmal als
+  `cfg.base_url or str(request.base_url)` (Magic-Link, Reset, Bestätigung, OIDC-Post-Logout,
+  OIDC-Redirect-URI, Admin-Einladung), dreimal für SAML, einmal in der Forward-Auth-Umleitung.
+  Der abgeleitete Teil ist der rohe `Host`-Header, also eine Eingabe des Anfragenden (kein Proxy
+  und kein ASGI-Server prüft ihn). Wer „Passwort vergessen" für ein **fremdes** Postfach
+  anstieß und dabei `Host:` setzte, ließ die echte App
+  eine echte Mail mit einem **gültigen Reset-Token** verschicken, deren Link auf den Server des
+  Angreifers zeigte; dasselbe für Magic-Link, E-Mail-Bestätigung und Admin-Einladung.
+  `trusted_redirect_hosts` schützte nur `?next=`, nicht diesen Weg (CWE-644). Jetzt entscheidet
+  überall `TinySesam.public_base()`: `base_url` gewinnt, sonst gilt ein abgeleiteter Host nur,
+  wenn er in `trusted_redirect_hosts` steht oder Loopback ist. Dieselbe Prüfung deckt
+  OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS und die Forward-Auth-Umleitung; jede
+  dieser Stellen wird einzeln gemessen (`tests/test_sicherheit_befunde.py`), nachdem sich in einer
+  Mutationsprobe alle vier auf die alte Form zurückbauen ließen, ohne dass eine Prüfung rot wurde.
+
+  **Auch die dokumentierten Methoden folgen jetzt derselben Regel** — `magic_url()`, wo alle vier
+  Mail-Wege zusammenlaufen, und davor `send_password_reset`, `send_login_link`, `send_verify_email`
+  und `create_invite`. Vorher saß die Prüfung nur in der Route: Eine App mit eigenem „Passwort
+  vergessen"-Formular, die dem naheliegenden Muster `str(request.base_url)` folgte, blieb voll
+  angreifbar, während ihr die eingebaute Route längst abriegelte. Es ist **eine** Regel, kein
+  zweites Regelwerk: `_gepruefte_basis()` ruft `public_base()` und macht aus dem leeren Ergebnis
+  einen Fehler. Steht `base_url`, **gewinnt sie auch hier unbedingt** — die übergebene Adresse kommt
+  gar nicht zum Zug. Das ist mehr als „ein fremder Host wird abgewiesen": Stehen mehrere eigene
+  Namen in `trusted_redirect_hosts` (beim SSO der Normalfall), konnte der `Host`-Header sonst weiter
+  *auswählen*, welcher davon in den Reset-Link kommt. Ohne `base_url` — der einzige Aufbau, in dem
+  überhaupt abgeleitet wird — wird eine fremde Basis mit `ConfigError` abgewiesen, und zwar **vor**
+  der Token-Vergabe (kein unbrauchbarer Token bleibt liegen) und vor der Kontosuche (die Ausnahme
+  verrät nicht, ob es die Adresse gibt). Die Prüfung ist **idempotent**: Die Absender prüfen vor der
+  Token-Vergabe, `magic_url()` prüft danach noch einmal — der Pfadanteil wächst dabei nicht mehr
+  (eine Zwischenfassung hängte ihn bei jedem Durchgang erneut an und schickte Links mit vierfachem
+  Präfix, also 404, hinaus). Ein Test zählt die Vorkommen, statt `startswith` zu prüfen.
+
+  **`base_url` ist jetzt Pflicht — eine bewusste Verhaltensänderung, und die erste Fassung dieses
+  Fixes war zu weich.** Der Absatz hier versprach „sichtbarer Fehler statt geratener Adresse";
+  für die beiden häufigsten Wege stimmte nur die erste Hälfte. `/auth/forgot` und
+  `/auth/magic/request` schrieben bei fehlender Basis eine Audit-Zeile und rendeten
+  **unverändert die Erfolgsseite**: HTTP 200, „Mail ist unterwegs", keine Mail. Dieselbe generische
+  Antwort verhindert die Benutzer-Enumeration und verdeckte hier einen Totalausfall — wer ohne
+  `base_url` aktualisierte, verlor Passwort-Reset und Magic-Link für **alle** Nutzer, sichtbar nur
+  in einer Logzeile. Die übrigen Wege (OIDC-Start, Registrierung mit Bestätigung, Admin-Einladung,
+  SAML) antworteten mit **500** mitten im Anmeldeversuch, obwohl schon beim Aufbau feststand, dass
+  es nicht gehen kann. Und `konfigpruefung` nannte das nur eine **Warnung**: Blieb `base_url` leer
+  und standen — beim Forward-Auth/SSO der Normalfall — mehrere Namen in
+  `trusted_redirect_hosts`, genügte der Laufzeit-Prüfung jeder davon; der Angreifer stieß den
+  Reset für ein fremdes Postfach an, setzte `Host:` auf einen **anderen** mitvertrauten Host und
+  der Token ging dorthin hinaus.
+
+  Beides ist geschlossen: `konfigpruefung` meldet ein leeres `base_url` als **Fehler**, sobald ein
+  Mail-Weg (`magiclink_enabled`, `password_reset_enabled`, `signup_verify_email`), `oidc_enabled`
+  oder `saml_enabled` an ist — der Aufbau scheitert dann mit `ConfigError`, statt einen Betrieb zu
+  erlauben, der still das Falsche tut. Damit gewinnt `base_url` überall dort, wo eine absolute
+  Adresse **in fremde Hand** geht — Mail-Link, OIDC-Redirect-URI, Post-Logout, SAML-Entity-ID/ACS —,
+  und der `Host`-Header hat dort keine Stimme mehr. **Eine Ausnahme, und sie ist benannt:** Ohne
+  `cookie_domain` baut `forward_login_url()` die Login-Seite auf dem angefragten Host, wenn der in
+  `trusted_redirect_hosts` steht. Das Session-Cookie gilt dann host-only; zeigte die Login-URL
+  woandershin, drehte sich die Anmeldung still im Kreis. `konfigpruefung` sagt diesen Fall beim
+  Start an, und weiter als `trusted_redirect_hosts` reicht er nicht.
+
+  Zur Laufzeit gibt es keinen stillen Erfolg: die neue Methode
+  `TinySesam.require_public_base()` wirft `ConfigError` mit klarer Meldung, wo bisher eine
+  Erfolgsseite stand („Mail ist unterwegs", HTTP 200, keine Mail — dieselbe Antwort, die die
+  Benutzer-Enumeration verhindert, verdeckte damit den Totalausfall). `forward_auth_enabled`
+  bleibt eine Warnung — seine Umleitung bleibt ohne Basis relativ und trifft denselben Browser;
+  wo vorher der `Host`-Header eine absolute Adresse in `X-TinySesam-Location` schrieb, steht jetzt
+  ein Pfad. **Der 500 bleibt.** Hier stand zunächst „wo bisher eine Erfolgsseite oder ein 500
+  stand"; das versprach mehr, als gemessen ist. Den `ConfigError` fängt keine Route ab, ein
+  ASGI-Server macht daraus einen Serverfehler — für den regulären Aufbau ist das bedeutungslos,
+  weil `konfigpruefung` ihn gar nicht mehr entstehen lässt, es trifft nur eine Config, die NACH dem
+  Konstruktor geändert wurde. Beides ist gemessen (`tests/test_sicherheit_befunde.py`): kein 200,
+  kein Mailversand, und die 500 als das, was heute herauskommt. Der Hinweis auf die fehlende Basis
+  steht **einmal je Prozess und Host** im Security-Log, nicht je Anfrage: Der Forward-Auth fragt
+  bei jeder anonymen Anfrage nach, ein Seitenaufruf sind zwanzig Unterressourcen — genau die Datei,
+  auf die die fail2ban-Jail zeigt, lief sonst voll.
+
+  Zusätzlich kommt der **`root_path`** mit — **für die verschickten Links**:
+  `base_url="https://example.com/sso"` behält ihr Präfix, eine abgeleitete Basis übernimmt den
+  Unterpfad aus dem Request, und beide tragen ihn im Link genau **einmal**; vorher verschickte eine
+  unter einem Unterpfad montierte App Links ins 404. **Die eingebauten Seiten tragen den Unterpfad
+  nicht:** Ihre Formularziele und Verweise stehen wurzel-absolut (`/auth/register`, `/auth/forgot`,
+  …), und `login_path`/`login_redirect`/`logout_redirect` gehen unverändert hinaus. Wer unter
+  `--root-path /sso` hinter einem Proxy montiert, der `/sso` abschneidet, bekommt funktionierende
+  Mails und eine Anmeldung ins 404. Die Grenze ist gemessen (`tests/test_sicherheit_befunde.py`
+  an einer echten Montage) und als Aufgabe geführt: [`backlog/T-15`](backlog/T-15-unterpfad-montage.md).
+
+  **Für Betreiber — was einzutragen ist:** Wer bisher ohne `base_url` fuhr und einen Mail-Weg,
+  OIDC oder SAML nutzt, muss `base_url` auf die öffentliche Adresse dieser App setzen, sonst
+  startet die Instanz nicht mehr: `base_url="https://auth.example.com"` (lokal
+  `base_url="http://127.0.0.1:8000"`, unter einem Unterpfad montiert mit Präfix,
+  `"https://example.com/sso"` — für die Mail-Links, siehe oben). Die Fehlermeldung beim Start
+  nennt genau das.
+
+  **Für Einbettende:** Wer die Basis selbst übergibt, nimmt sie nicht aus dem Request, sondern aus
+  `auth.public_base(request)` (leer = abbrechen). Steht `base_url`, ersetzt sie eine abweichende
+  Angabe — das hebt auch ein `http://` aus einem TLS-terminierenden Proxy auf die konfigurierte
+  Adresse, statt es still in den Mail-Link wandern zu lassen; einmal je Host steht eine Zeile
+  darüber im Security-Log. Ohne `base_url` bekommt ein fremder Host `ConfigError` statt eines Links.
+  Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)),
+  nachgeschärft in den Nacharbeitsrunden N1 und N6 dazu.
+- **Eine fremde Registrierung konnte die Login-Kennung eines bestehenden Kontos besetzen.** Geprüft
+  wurden die beiden Namensräume nur getrennt — die Adresse gegen `users.email`, der Benutzername
+  gegen `users.username`. Im Vorgabe-Modus `login_identifier="both"` durchsucht die Anmeldung aber
+  **beide** Spalten und lässt bei einer Kennung mit `@` die E-Mail gewinnen: Wer die E-Mail eines
+  bestehenden Kontos als *Benutzernamen* eintrug — oder dessen Benutzernamen als E-Mail —, besetzte
+  dessen Kennung. Der Inhaber, auch ein Admin, bekam ab da 401 trotz richtigem Passwort, und
+  `/auth/password` prüfte für die Sitzung des Fremden sein Geheimnis statt des eigenen: ein
+  Passwort-Orakel ohne Drossel, Sperre und Protokollzeile. Beide Kennungen müssen jetzt **kreuzweise**
+  frei sein; die Prüfung sitzt in `create_user` und gilt damit für jeden Weg, der ein Konto
+  anlegt — Registrierung, Einladung, Admin-API, `ensure_admin`/`create_service` und die
+  automatische Anlage aus OIDC/LDAP/SAML, die fail-closed scheitert, statt eine fremde Kennung
+  zu überschreiben. (Das CLI stand hier zunächst mit in der Liste — es kann gar keine Konten
+  anlegen.) Was diese Zusage auf den **föderierten** Wegen bedeutet, steht jetzt auch in
+  Tests: OIDC weicht auf einen freien Namen aus (geprüft werden beide Namensräume), eine nicht
+  ausweichbare Adresse endet mit **409**, LDAP mit **401**, SAML mit **403** — je eine saubere
+  Abweisung mit Audit-Zeile (`oidc_ident_taken`, `ldap_ident_taken`, `saml_ident_taken`), kein
+  500 mitten im Anmeldevorgang. `/auth/password` prüft zusätzlich gegen die
+  **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
+  nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`.
+  **Für einbettende Apps — ⚠️ hier ändert sich Verhalten:** Bei einer doppelten **E-Mail**
+  bleibt alles wie in 0.18.x (`ConfigError`, Wortlaut „E-Mail-Adresse ist bereits vergeben").
+  Ein doppelter **Benutzername** dagegen lief bis 0.18.x in die Datenbank und kam als
+  `sqlite3.IntegrityError` („UNIQUE constraint failed: users.username") zurück; jetzt fängt
+  `create_user()` ihn vorher ab und wirft ebenfalls `ConfigError`, mit dem Text „Benutzername
+  ist bereits vergeben". Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr — die
+  Signatur ist unverändert, `api_surface.json` sieht den Wechsel also nicht; er steht deshalb
+  hier und im Docstring (→ API.md). Ebenso ist der **Wortlaut feldabhängig**: Der neue Auslöser
+  (Benutzername gleich fremder E-Mail und umgekehrt) trägt den Text des Feldes, das kollidiert,
+  nicht immer den der E-Mail. Ein früherer Entwurf dieses Eintrags behauptete das Gegenteil.
+  Unterscheiden lässt sich der Fall ohnehin besser **ohne** Textvergleich: `e.feld` ist
+  `"username"` oder `"email"`, `e.besitzer_id` nennt das Konto, dem die Kennung gehört. Und weil die Datenbank keinen UNIQUE-Index über BEIDE
+  Namensräume kennt — Prüfung und INSERT in `create_user` sind nicht atomar, und eine Datenbank
+  von vor dem Fix trägt die Kollision längst —, **meldet der Start jetzt vorhandene
+  Kreuz-Kollisionen** mit beiden Konto-IDs, statt sie schweigend mitzuführen
+  (`store.kennungs_kollisionen()`). Bereinigt wird von Hand: welches Konto den Namen behält,
+  kann keine Bibliothek entscheiden. Gefunden im dritten Audit (R4-12 aus T-13).
+- **`/auth/password` war ein stilles Passwort-Orakel — und es prüfte nicht einmal das eigene Konto.**
+  Die Abfrage des alten Passworts lief als einzige Geheimnis-Prüfung ohne den Dreiklang des
+  Login-Pfads: keine Drossel, keine Sperre, kein verbuchter Fehlversuch — beliebig viele Versuche,
+  nie eine 429, keine Zeile fürs Sicherheits-Log oder fail2ban, während derselbe Fehlgriff am Login
+  nach wenigen Anläufen sperrt. Dazu löste sie das Konto über die **Login-Kennung** auf
+  (`check_password(u["username"], …)` → `find_user`) statt über die ID der eigenen Sitzung: Wer ein
+  Konto besitzt, dessen Benutzername der E-Mail eines anderen gleicht, riet darüber das Passwort
+  **dieses fremden Kontos** — und ein Treffer setzte still das eigene Passwort, blieb also auch im
+  Erfolg unsichtbar. Jetzt: `verify_user_password(u["id"], …)` plus `rate_ok` →
+  `is_password_change_locked` → `record_login(…, "password_change")`; die eigene Methode sorgt
+  dafür, dass ein Treffer hier die Fehlversuche des Login-Pfads nicht wegräumt.
+  Die Sperre ist ein **eigener, methodengebundener Topf** mit eigener Schwelle
+  (`password_change_max_attempts`, Vorgabe 5) — dieselbe Bauform wie der PIN-Zähler. Der erste
+  Anlauf hängte die Route an den Login-Lockout, und der zählt methodenblind: Fünf Tippfehler auf
+  der eigenen Kontoseite sperrten damit die **Anmeldung** für `lockout_window_sec`, samt der
+  Route, über die man die Sperre hätte abtragen können — und hinter NAT verriegelten drei
+  vertippte Kollegen über `ip_attempt_factor` den Login eines völlig unbeteiligten Vierten.
+  Deshalb zählt `is_locked` jetzt nur noch, was ein **Anmeldeversuch** war
+  (`security.NICHT_LOGIN_METHODEN` als Ausnahmeliste, damit eine neue Anmeldemethode von sich
+  aus mitzählt). Gedrosselt, gesperrt und protokolliert wird das Raten unverändert — nur eben
+  dort, wo geraten wurde. **Der Preis, offen gesagt:** Statt eines Topfes gibt es am Ende dieser
+  Runde **fünf** — Anmeldung, PIN-Anmeldung, Passwortwechsel, Step-up-Bestätigung und Bereichs-PIN,
+  je 5 Versuche im Fenster (die letzten drei kamen mit der Nacharbeit unten dazu). Die Step-up-Seite
+  prüft dabei auch die PIN-Sperre der Anmeldung mit, sonst liesse sich eine dort gesperrte PIN hier
+  weiterraten. Wer alle Töpfe ausreizt, hat
+  mehr Versuche als vorher; dafür verriegelt ein Tippfehler auf der Kontoseite niemandem mehr die
+  Anmeldung, und jeder Topf trifft genau den, der geraten hat.
+  Neu: `auth.is_password_change_locked(username, ip)` und
+  `store.count_fails(..., exclude_methods=…)`. Belege in `tests/test_hardening.py`.
+  Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+  **Nachgearbeitet (zweite Angriffsrunde) — der Fix war an drei Stellen zu kurz:**
+  1. **Die Ausnahmeliste nannte nur `password_change`.** `record_login()` wird im Router mit
+     fünf Methoden gerufen; `reauth` (Step-up-Bestätigung) und `resource` (Bereichs-PIN ohne
+     Konto) zählten weiter in den Login-Topf. Fünf Tippfehler an der Reauth-Seite sperrten
+     damit die **Anmeldung** desselben Kontos, und bei der Bereichs-PIN — die jeder Besucher
+     probieren darf — genügten drei Bereiche à fünf Fehlgriffe, um über `ip_attempt_factor`
+     die Anmeldung wildfremder Konten von derselben Adresse zu verriegeln. Beide haben jetzt
+     ihren eigenen Topf (`auth.is_reauth_locked`, `auth.is_resource_locked`, Schwellen
+     `reauth_max_attempts`/`resource_max_attempts`); `NICHT_LOGIN_METHODEN` wird aus der
+     Zuordnung `security.EIGENE_SPERRE` **abgeleitet**, eine Methode ohne eigene Bremse lässt
+     sich also gar nicht mehr eintragen. Ein Test hält die Liste per AST gegen die Methoden,
+     mit denen der Router wirklich ruft — genau das fehlte, sonst wäre die Lücke aufgefallen.
+  2. **Die Nicht-Login-Zeile traf die mitgelieferte fail2ban-Jail.** `failed login user=…
+     ip=… method=password_change` passte Zeichen für Zeichen auf die ausgelieferte `failregex`
+     (`maxretry = 6`): Acht Tippfehler eines **angemeldeten** Nutzers am eigenen alten Passwort
+     erzeugten acht bannbare Zeilen, und ab der App-Sperre beschleunigte jeder weitere Klick den
+     Bann. Nicht-Anmeldungen tragen jetzt das eigene Ereigniswort **`failed verification`**
+     (`security.log_ereignis`) und laufen an der Jail vorbei; wer sie trotzdem bannen will,
+     nimmt den neuen Filter `deploy/fail2ban/tinysesam-verify-filter.conf` samt der milderen,
+     standardmässig **abgeschalteten** zweiten Jail dazu (sinnvoll vor allem für öffentlich
+     angebotene Bereichs-PINs). Protokolliert wird unverändert alles.
+  3. **Der eigene Topf brachte die NAT-Verstärkung mit, die er abschaffen sollte.** Er zählte
+     zunächst auch pro IP (`limit * ip_attempt_factor`): Drei vertippte Kollegen sperrten dem
+     vierten seinen **eigenen** Passwortwechsel — eine Sperre, die es auf 0.18.x gar nicht gab.
+     `is_password_change_locked` und `is_reauth_locked` zählen jetzt **nur pro Konto**; wer dort
+     rät, braucht ohnehin schon eine gültige Sitzung genau dieses Kontos, das Opfer ist also
+     immer der Angemeldete selbst. Gegen Klopfen von aussen steht weiter `rate_ok(ip)`.
+     `is_resource_locked` behält die IP-Schwelle: Dort rät ein Unangemeldeter, und ohne sie
+     liesse sich über immer neue Bereichsnamen endlos weiterraten.
+- **Ein `GET` auf `/auth/totp/setup` konnte den bestätigten zweiten Faktor entfernen.** Die Seite
+  rief `totp_begin()` unbedingt und schrieb ein frisches, unbestätigtes Geheimnis über das alte:
+  TOTP fiel auf „unbestätigt", die zehn Recovery-Codes blieben verwaist liegen, es entstand keine
+  Audit-Zeile — und danach genügte das Passwort allein für eine vollwertige Sitzung. CSRF half
+  dagegen nicht: Ein GET trägt kein Token, und `SameSite=Lax` (Vorgabe) schickt das
+  Sitzungscookie bei einer Top-Level-Navigation mit; ein Klick auf einen fremden Link reichte.
+  Jetzt verweigert `totp_begin()` den Start, solange ein **bestätigtes** TOTP existiert (neuer
+  Fehlertyp `StateError`, exportiert), die Route antwortet mit `409`, der abgewehrte Versuch geht
+  als `totp_setup_denied` ins Audit-Log, und eine neue Einrichtung räumt verwaiste Recovery-Codes
+  ab. Der Weg zum Authenticator-Wechsel führt über das reguläre Abschalten
+  (`POST /auth/totp/disable`, CSRF-geschützt und protokolliert); die Einrichtung für Konten
+  **ohne** TOTP — auch aus einer `login_chain` heraus — bleibt unverändert offen.
+  **Nachgearbeitet:** Der Fundtext verlangte zwei Dinge — bei bestätigtem TOTP verweigern *und*
+  die Einrichtung nur auf ausdrückliche Anforderung beginnen. Das Zweite fehlte: Für jedes Konto
+  ohne bestätigtes TOTP erzeugte weiterhin **jeder** GET ein frisches Geheimnis und ersetzte
+  damit einen laufenden Einrichtungsversuch — ein fremder Link entwertete das eben gescannte
+  QR-Bild (die Bestätigung schlug danach unerklärlich fehl) und stiess Audit-Zeilen von aussen
+  an. Das Geheimnis entsteht jetzt ausschliesslich in der neuen, CSRF-geschützten Route
+  **`POST /auth/totp/setup/start`**; der GET zeigt nur noch den Knopf, der sie auslöst (neue
+  Texte `setup.start`/`setup.start_hint`, de/en). **Für einbettende Apps mit eigener TOTP-Seite:**
+  `totp_begin()` **wirft** jetzt, und zwar `StateError` — der erbt von
+  `TinySesamError`/`RuntimeError` und **nicht** von `ConfigError`; wer den dokumentierten Typ
+  fängt, bekommt in seiner eigenen Route sonst einen 500. Weil `api_surface.json` Signaturen
+  einfriert und geworfene Typen gar nicht sieht, listet [API.md](API.md) ab sofort die
+  Fehlertypen samt Hierarchie (erzeugt aus den Docstrings).
+  Fund **B2-1** aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md).
+- **Das Erst-Admin-Einmal-Token stand im Klartext in der `security.log`.** Solange es keinen Admin
+  gibt, schreibt TinySesam beim Start einen Hinweis auf `/auth/claim-admin?token=…` — bis 0.18.x
+  mitsamt dem Wert, und zwar über `security.seclog`. Mit gesetztem `security_log` ist das genau die
+  Datei, auf die die mitgelieferte fail2ban-Jail zeigt: sie entstand ohne Rechtevorgabe (gemessen
+  `-rw-rw-r--`), logrotate hebt sie wochenlang auf, jedes Log-Shipping nimmt sie mit. Wer sie lesen
+  konnte und irgendein Konto auf der Instanz hatte, löste den Token ein und war Admin. Jetzt geht
+  der Wert auf **stderr** — die Konsole des Betreibers, der einzige Empfänger, den der Docstring je
+  gemeint hat — oder, neu, in eine eigene Datei: `admin_claim_token_file` (wird mit **0600**
+  angelegt, Rechte auch bei einer vorhandenen Datei vor dem Schreiben gesetzt). Im Log steht nur
+  noch, *wo* der Token liegt. Dazu legt `attach_security_log()` die Logdatei selbst mit **0640** an
+  statt mit der umask — auch die nach einer Rotation neu entstandene —, denn darin stehen
+  Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber nicht
+  umgeschrieben. Eine Konfigurationsprüfung verweigert `admin_claim_token_file == security_log`.
+  **Für Betreiber:** 0640 heisst Eigentümer und Gruppe. Ein Log-Versand, der als *dritter*
+  Benutzer läuft (weder Eigentümer noch in der Gruppe), verliert den Lesezugriff — und zwar nicht
+  beim Update, sondern erst bei der nächsten Rotation, wenn der Handler die Datei neu anlegt. Wer
+  ihn braucht, gibt sie über die Gruppe frei: logrotate-Zeile `create 0640 tinysesam adm`. Die
+  stand bisher nur in der fail2ban-Vorlage und steht jetzt auch im `security_log`-Abschnitt von
+  KONFIGURATION.md und beider READMEs. Was der Fix **nicht** löst und deshalb als bekannte Grenze
+  in SECURITY.md und beiden READMEs steht: Eingelöst wird der Token über eine **URL**
+  (`GET /auth/claim-admin?token=…`, bei nicht angemeldetem Aufruf zusätzlich im `Location` des
+  Login-Redirects) und läuft damit durch Proxy-Access-Logs, `Referer` und Browser-History; per
+  Vorgabe geht er ausserdem auf **stderr**, das journald, `docker logs` und jedes Log-Shipping
+  einsammeln. Ein dauerhaftes Geheimnis gibt beides nicht her (genau einmal einlösbar, Ablauf per
+  `admin_claim_ttl_min`, Route 404 sobald ein Admin existiert) — kurze Frist setzen, wo stderr
+  gesammelt wird `admin_claim_token_file` nehmen, sofort einlösen.
+  Gefunden im dritten Audit (B5-03 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die
@@ -83,6 +506,54 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Fragmente heraus, aber eine eingeschobene Zeile aus einem manipulierten Benutzernamen ist
   vollständig und wohlgeformt — sie matcht genauso. Der Schutz ist allein die Bereinigung in
   0.18.0; der Kommentar sagt das jetzt.
+- **Der zweite Faktor liess sich ohne frische Bestätigung abbauen — und per API-Key.**
+  `POST /auth/totp/disable`, `/auth/totp/recovery`, `/auth/pin/set`, `/auth/pin/disable` und
+  `/auth/passkey/delete` hingen allein an `current_user()`. Eine Sitzung, deren Step-up längst
+  abgelaufen war — auf jedem `require(mfa=True)`-Guard ein 403 —, durfte damit TOTP löschen, sich
+  zehn frische Recovery-Codes ausstellen und PIN wie Passkey entfernen: Ausgerechnet die
+  Verwaltung der Faktoren stand hinter keiner Schranke. Dazu kam die zweite Hälfte: `current_user()`
+  akzeptiert auch einen **API-Key**, und ein Maschinen-Credential erbringt nie einen interaktiven
+  Faktor — ein abgeflossener CI-Key baute den zweiten Faktor seines Besitzers lautlos ab. Alle
+  fünf Routen verlangen jetzt `require_mfa()`: interaktive Sitzung mit frischer Bestätigung, für
+  einen API-Key konstruktiv unerreichbar (403, „Step-up-MFA nötig — nur per interaktiver Sitzung").
+  Bei `/auth/pin/set` gilt das für das **Ersetzen** einer PIN; dass dieselbe Route auch die erste
+  anlegt, ist der Sonderfall im Punkt unten. Die Konto-Seite wertet den Hinweis-Header
+  `X-TinySesam-Reauth` jetzt selbst aus und schickt zur Reauth-Seite, statt stumm zu scheitern —
+  gemessen wird das jetzt dort, wo es stattfindet: im Browser-Test (abgelaufene Frische, Klick auf
+  „2FA abschalten", Landung auf `/auth/reauth`, der Faktor steht danach noch). Dabei fiel auf, dass
+  die beiden Lösch-Knöpfe der Konto-Seite **unbedingt** Erfolg meldeten („✓ entfernt") und neu
+  luden — auch bei 403 oder 500. Sie prüfen die Antwort jetzt. Fund **R3-3** aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md).
+- **Der Riegel gegen den abbauenden API-Key war über die Faktor-ANLAGE umgehbar.** `require_mfa()`
+  deckte nur den Abbau; `GET/POST /auth/totp/setup` und `POST /auth/passkey/register/{begin,finish}`
+  hingen weiter allein an `current_user()` — und das akzeptiert einen API-Key, für den die
+  CSRF-Prüfung ohnehin entfällt (`_csrf_entbehrlich`). Damit standen zwei Wege offen: Der Key liest
+  das TOTP-Geheimnis im Klartext aus der Antwort der Einrichtungsseite und bestätigt es (danach
+  kontrolliert der **Key-Inhaber** den zweiten Faktor — der echte Nutzer ist ausgesperrt, mit
+  bekanntem Passwort ist es die volle Übernahme), oder er registriert einen eigenen Passkey. Ein
+  Passkey ist ein vollwertiger Login: Über ihn bekam der Key eine frische interaktive Sitzung und
+  stand damit doch vor genau den Routen, die ihn aussperren sollten. Die Anlage verlangt jetzt
+  dasselbe wie der Abbau — eine Sitzung, kein Maschinen-Credential (neu:
+  **`auth.require_session()`**, 403 „Einen Anmeldefaktor richtet ein Mensch ein …"). `register/finish`
+  bindet den neuen Passkey zusätzlich an das angemeldete Konto statt nur an das Flow-Cookie.
+  Angriff gegen den R3-3-Fix, nachgestellt im dritten Audit.
+- **Die erste PIN eines rein föderierten Kontos war hinter `require_mfa()` unerreichbar.**
+  `/auth/pin/set` ersetzt eine PIN — und ist zugleich der einzige Weg, sie **anzulegen**. Ein Konto
+  ohne Passwort, PIN und TOTP (OIDC/SAML/LDAP) hat nichts, womit es einen Step-up leisten könnte:
+  `stepup_options()` ist leer, und nach Ablauf von `stepup_max_age_sec` (Vorgabe 900 s ab Login)
+  antwortete die Route 403 — die Reauth-Seite bot dazu ein **Passwortfeld** an, das dieses Konto
+  nicht hat, und jeder aussichtslose Versuch zählte in dieselbe Brute-Force-Sperre. Für ein Konto, das **gar keinen** Faktor hat, hängt das
+  **Anlegen** jetzt am Alter der Anmeldung (neu: **`auth.login_fresh()`**, dieselbe Spanne,
+  gemessen ab Login statt ab Faktor-Bestätigung); **Ersetzen, Abbauen — und das Anlegen für
+  jedes Konto, das überhaupt etwas zum Bestätigen hat — bleiben hinter `require_mfa()`**. Die
+  Einschränkung ist Absicht: Mit `pin_login` ist eine PIN ein vollwertiger Erstfaktor, ein
+  gestohlenes frisches Sitzungscookie richtete sich sonst einen eigenen, den Diebstahl
+  überdauernden Zugang ein. Für ein Konto mit Passwort heisst das: erst bestätigen (die
+  Kontoseite führt über `X-TinySesam-Reauth` von selbst dorthin), dann die erste PIN. Ein
+  früherer Entwurf dieses Eintrags las sich, als genüge überall die frische Anmeldung — die
+  Regel ist jetzt in `tests/test_pin_stepup.py` gemessen, statt nur beschrieben. Ist auch die Anmeldung zu alt, sagt die Antwort, was hilft („melde dich neu
+  an"), und verweist **nicht** mehr auf die Reauth-Seite. Die zeigt bei leerer Methodenliste jetzt
+  gar kein Formular, und ein POST dorthin wird nicht als Fehlversuch protokolliert.
 
 ### Hinzugefügt
 
@@ -91,12 +562,31 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   allem, was er hatte, inklusive des Passworts, mit dem er sich gerade angemeldet hatte. Das ist
   kein Step-up. Mit `True` bleibt der Bereich verschlossen, bis das Verfahren eingerichtet ist;
   die Seite sagt das jetzt auch, statt ein Formular ohne Felder zu zeigen.
+- **`auth.require_session(request)`** und **`auth.login_fresh(request)`** — die beiden Schranken
+  aus den Punkten oben, auch für eigene Konto-Seiten: „angemeldet, aber nicht per API-Key" und
+  „die Anmeldung ist höchstens `stepup_max_age_sec` alt". Reine Erweiterung, kein Bruch.
+- **`auth.is_reauth_locked(username, ip)` und `auth.is_resource_locked(username, ip)`** samt
+  den Schwellen **`reauth_max_attempts`** und **`resource_max_attempts`** (je 5, im Panel
+  änderbar wie die übrigen): die eigenen Töpfe für Step-up-Bestätigung und Bereichs-PIN. Dazu
+  `security.EIGENE_SPERRE` (Methode → Riegel; `NICHT_LOGIN_METHODEN` ist daraus abgeleitet) und
+  `security.log_ereignis(method)` für das Ereigniswort der Log-Zeile.
+- **`deploy/fail2ban/tinysesam-verify-filter.conf`** plus die Jail `[tinysesam-verify]` in der
+  Vorlage — die mildere, standardmässig abgeschaltete zweite Jail für `failed verification`.
 - **`recent_audit(limit, username=…)`** filtert in SQL (siehe `audit --user` oben).
 - **Drei Wächter in `tests/test_repo.py`**: Die in beiden READMEs genannte Zahl der Testdateien und
   die Python-Spanne werden gegen die Wirklichkeit gemessen, und solange die Version unter 1.0 liegt,
   darf keine README eine PyPI-Installation zeigen. Genau diese drei Zahlen waren falsch — Zahlen,
   die niemand nachmisst, veralten beim nächsten Commit.
 - **`tests/test_bestandsdaten.py`** — 28 Prüfungen zu dem, was ein Upgrade überleben muss.
+- **Zusagen dieses Zyklus, die niemand gemessen hat, haben jetzt einen Test** — jede per
+  Mutationsprobe belegt (Rückbau → rot, sonst grün), nachdem sich alle mit voller Suite 46/46
+  zurückbauen liessen: `ConfigError.feld`/`.besitzer_id` **und** der unveränderte Meldungstext
+  „… ist bereits vergeben" (`tests/test_identifier.py`); der **PIN**-Lösch-Knopf der Konto-Seite,
+  der Erfolg erst nach `r.ok` meldet — gedeckt war nur der 2FA-Knopf, und zwar im Browser-Test,
+  der die PIN-Sektion gar nicht zu sehen bekommt (`tests/test_account.py`); die Bindung von
+  `passkey/register/finish` an das angemeldete Konto, gegen einen untergeschobenen fremden Flow
+  (`tests/test_methods.py`); und dass die beiden Betreiber-Meldungen nur Wege nennen, die es gibt
+  (`tests/test_security_log.py`, `tests/test_sicherheit_befunde.py`).
 
 ### Geändert
 

@@ -46,13 +46,21 @@ def build_router(auth) -> APIRouter:
         if auth.is_locked(username, ip):
             return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.locked"))
         u = auth.check_password(username, password)
+        aus_verzeichnis = False
         if not u and cfg.ldap_enabled:
             u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+            aus_verzeichnis = u is not None
         auth.record_login(username, ip, bool(u), "password")
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
+        # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
+        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Es gibt
+        # dafür keinen Beleg, und deshalb reist hier ausdrücklich „kein Beleg" mit: Eine
+        # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
+        # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
-                                              request.headers.get("user-agent"), remember_me)
+                                              request.headers.get("user-agent"), remember_me,
+                                              email_bestaetigt=False if aus_verzeichnis else None)
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
             auth.set_cookie(resp, token, remember=remember_me)
@@ -110,6 +118,39 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
+        # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Der Abbau war seit
+        # R3-3 gesperrt, die Anlage nicht: Ein abgeflossener CI-Key richtete sich ein eigenes
+        # TOTP ein und kam über den vollwertigen Login damit zurück an die Abbau-Routen.
+        auth.require_session(request, u)
+        # Wer schon einen bestätigten zweiten Faktor hat, darf ihn hier nicht verlieren — ein
+        # Klick auf einen fremden Link reichte sonst, um TOTP auf „unbestätigt" zurückzusetzen
+        # (Fund B2-1). Der Weg zum Wechsel führt über das reguläre Abschalten
+        # (POST /auth/totp/disable, CSRF-geschützt). `totp_begin` verweigert das ebenfalls —
+        # der Wächter hier liefert nur die lesbare Antwort statt eines Serverfehlers.
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
+        # Dieser GET schreibt NICHTS mehr. Bis zur Nacharbeit rief er `totp_begin()` unbedingt:
+        # Für ein Konto ohne bestätigtes TOTP erzeugte damit jeder Aufruf ein neues Geheimnis
+        # und ersetzte einen laufenden Einrichtungsversuch — ein fremder Link entwertete das
+        # eben gescannte QR-Bild und stiess Audit-Zeilen von aussen an. Der Fundtext zu B2-1
+        # verlangte beides: bei bestätigtem TOTP verweigern UND nur auf ausdrückliche
+        # Anforderung (POST mit CSRF-Token) beginnen. Das Geheimnis entsteht deshalb erst in
+        # `POST /auth/totp/setup/start`; diese Seite zeigt bloss den Knopf dafür.
+        return auth.render_page("totp_setup", request=request, data=None)
+
+    @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
+    def totp_setup_start(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+        """Die Einrichtung ausdrücklich starten — hier (und nur hier) entsteht das Geheimnis."""
+        auth.require_csrf(request, csrf_tok)
+        u = auth.current_user(request) or auth.totp_enrollment_user(request)
+        if not u:
+            return RedirectResponse(cfg.login_path, 303)
+        # Dasselbe Schloss wie am GET, und hier das wichtigere: Diese Antwort trägt das
+        # TOTP-Geheimnis im Klartext. Ein API-Key darf es nicht zu sehen bekommen — er käme
+        # sonst über den selbst registrierten Faktor an eine frische Sitzung.
+        auth.require_session(request, u)
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
 
     @r.post("/auth/totp/setup")
@@ -118,6 +159,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             raise HTTPException(401)
+        auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
         return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
 
     @r.post("/auth/totp/disable")
@@ -125,9 +167,14 @@ def build_router(auth) -> APIRouter:
         # Ohne diese Zeile genügte ein <form method=POST> ohne Body von einer fremden Seite,
         # um TOTP UND alle Recovery-Codes zu löschen — der zweite Faktor spurlos weg.
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        # **Faktor-Verwaltung verlangt Frische** (Befund R3-3). `current_user()` genügte hier
+        # bisher — mit zwei Folgen: (1) Eine Sitzung, deren Step-up längst abgelaufen war
+        # (jeder `require(mfa=True)`-Guard gab ihr 403), durfte den zweiten Faktor trotzdem
+        # abbauen. (2) `current_user()` akzeptiert auch einen **API-Key**: ein abgeflossenes
+        # Maschinen-Credential, das nie einen interaktiven Faktor erbracht hat, löschte TOTP und
+        # PIN seines Besitzers lautlos. `require_mfa()` schliesst beides — für einen API-Key ist
+        # Step-up-Frische konstruktiv unerreichbar (403, `api.stepup_session`).
+        u = auth.require_mfa(request)
         auth.totp_disable(u["id"])
         return {"ok": True}
 
@@ -135,9 +182,7 @@ def build_router(auth) -> APIRouter:
     def totp_recovery(request: Request):
         """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
         if not auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(400, auth.t("api.totp_first"))
         return {"codes": auth.generate_recovery_codes(u["id"])}
@@ -201,9 +246,31 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            # R3-3: Eine PIN zu ERSETZEN heisst, einen Anmeldefaktor auszutauschen — das darf
+            # nur eine interaktive Sitzung mit frischer Bestätigung. Ein API-Key kommt hier in
+            # keinem Fall durch, auch nicht beim Anlegen (sonst setzt der Key-Inhaber den
+            # Faktor seines Besitzers): der Riegel steht deshalb VOR der Fallunterscheidung
+            # und liefert die klare Meldung statt der Frische-Ausrede.
+            u = auth.require_session(request)
+            # Die Regel, genau: `require_mfa()` gilt für das Ersetzen UND für das Anlegen,
+            # sobald das Konto überhaupt etwas hat, womit es bestätigen kann — auch wenn das
+            # nur sein Passwort ist. Denn mit `pin_login` ist eine PIN ein vollwertiger
+            # Erstfaktor: Wer ein frisches Sitzungscookie stiehlt, richtete sich sonst einen
+            # eigenen Zugang ein, der den Diebstahl überdauert. Das Passwort noch einmal zu
+            # tippen ist die Hürde, die genau das verhindert; die Kontoseite führt über
+            # `X-TinySesam-Reauth` von selbst dorthin. Nur ein Konto, das gar nichts hat
+            # (rein föderiert), hängt am Alter der Anmeldung — sonst wäre die Einrichtung
+            # für es eine Sackgasse.
+            if auth.has_pin(u["id"]) or auth.stepup_options(u):
+                u = auth.require_mfa(request)
+            elif not auth.login_fresh(request, u):
+                # Die ERSTE PIN eines Kontos, das nichts hat, womit es bestätigen könnte
+                # (kein Passwort, keine PIN, kein TOTP — rein föderiert): `require_mfa()`
+                # wäre hier eine Sackgasse, `stepup_options()` ist leer und die Reauth-Seite
+                # hätte kein Feld. Das Anlegen hängt darum am Alter der Anmeldung. Kein
+                # `X-TinySesam-Reauth`: Die Reauth-Seite kann diesem Konto nicht helfen, ein
+                # neuer Login schon.
+                raise HTTPException(403, auth.t("api.stepup_relogin"))
             b = await auth.json_body(request)
             try:
                 auth.set_pin(u["id"], b.get("pin"))
@@ -215,9 +282,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
             auth.disable_pin(u["id"])
             auth.audit("pin_disable", u["username"])
             return {"ok": True}
@@ -247,7 +312,12 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
-            if not auth.rate_ok(ip) or auth.is_locked(pseudo, ip):
+            # Eigener Topf (`is_resource_locked`): Die Bereichs-PIN darf JEDER Besucher
+            # probieren, und über den Login-Zähler verriegelten diese Fehlgriffe via
+            # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
+            # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
+            # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
+            if not auth.rate_ok(ip, login=False) or auth.is_resource_locked(pseudo, ip):
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
             if not auth.check_resource(name, secret):
@@ -277,7 +347,17 @@ def build_router(auth) -> APIRouter:
             if not auth.rate_ok(ip):
                 return auth.render_page("magic_request", request=request, status=429, next=nxt, sent=False,
                                         error=auth.t("err.rate"))
-            base = cfg.base_url or str(request.base_url)
+            # Ohne vertrauenswürdige öffentliche Adresse geht KEINE Mail hinaus: der Link
+            # käme aus dem Host-Header des Anfragenden, und den setzt bei einer Mail an ein
+            # fremdes Postfach der Angreifer (R4-01).
+            #
+            # `require_public_base` und nicht `public_base`: Hier stand die Prüfung schon, aber
+            # der leere Fall schrieb nur eine Audit-Zeile und fiel unten in die Erfolgsseite —
+            # HTTP 200, „Mail ist unterwegs", keine Mail. Die generische Antwort ist gegen die
+            # Benutzer-Enumeration richtig und verdeckte hier einen Totalausfall. Ein fehlender
+            # `base_url` ist nicht adressbezogen: Der Abbruch verrät nichts über das Postfach,
+            # und `konfigpruefung` verhindert diesen Zustand ohnehin beim Aufbau.
+            base = auth.require_public_base(request)
             try:
                 auth.send_login_link(email.strip(), base, nxt)
             except Exception:
@@ -351,8 +431,21 @@ def build_router(auth) -> APIRouter:
         nxt = auth.safe_next(next)
         ip = auth.client_ip(request)
         methods = auth.stepup_options(u)
-        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip) or \
-                ("pin" in methods and auth.is_pin_locked(u["username"], ip)):
+        if not methods:
+            # Dieses Konto hat kein Verfahren, mit dem es hier bestätigen könnte
+            # (`stepup_strict`, oder noch gar kein Faktor eingerichtet). Der Versuch KANN
+            # nicht gelingen — er wird deshalb nicht als Fehlversuch protokolliert, sonst
+            # füttert die aussichtslose Seite die Brute-Force-Sperre desselben Kontos.
+            return auth.render_page("reauth", request=request, status=403, next=nxt,
+                                    username=u["username"], methods=methods,
+                                    error=auth.t("err.stepup_none"))
+        # Eigener Topf (`is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
+        # ist keine Anmeldung — wer hier steht, ist bereits angemeldet. Mit dem geteilten
+        # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
+        # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
+        # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
+        if (not auth.rate_ok(ip, login=False) or auth.is_reauth_locked(u["username"], ip)
+                or ("pin" in methods and auth.is_pin_locked(u["username"], ip))):
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
@@ -385,7 +478,7 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
-            base = cfg.base_url or str(request.base_url)
+            base = auth.require_public_base(request)   # fail closed, siehe /auth/magic/request
             try:
                 auth.send_password_reset(email.strip(), base)
             except Exception:
@@ -464,19 +557,25 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.email_required"))
             if email_final and not valid_email(email_final):
                 return err(auth.t("err.email_invalid"))
-            if email_final and auth.store.email_taken(email_final):
+            # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
+            # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
+            # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
+            if email_final and auth.kennung_vergeben(email_final):
                 return err(auth.t("err.email_taken"), 409)
             # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
             if cfg.login_identifier == "email":
                 username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
-            if auth.store.get_user_by_name(username):
+            if auth.kennung_vergeben(username):
                 return err(auth.t("err.username_taken"), 409)
             # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
             verify = cfg.signup_verify_email and not inv
             if verify and not auth.mail_configured():
                 return err(auth.t("err.verify_no_mailer"), 500)
+            # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
+            # das mangels Bestätigungsmail nie freigeschaltet werden kann.
+            verify_base = auth.require_public_base(request) if verify else ""
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
@@ -485,7 +584,7 @@ def build_router(auth) -> APIRouter:
             # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
-                auth.send_verify_email(uid, email_final, cfg.base_url or str(request.base_url))
+                auth.send_verify_email(uid, email_final, verify_base)
                 return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
@@ -553,7 +652,32 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         b = await auth.json_body(request)
-        if not auth.check_password(u["username"], b.get("current") or ""):
+        ip = auth.client_ip(request)
+        # Das alte Passwort ist ein Geheimnis wie am Login — also derselbe Dreiklang aus
+        # Drossel, Sperre und Protokoll. Ohne ihn war diese Route ein stilles, unbegrenztes
+        # Passwort-Orakel: beliebig viele Versuche, nie eine 429, keine Zeile im Sicherheits-
+        # Log, kein Fehlversuch in `login_attempt` — während derselbe Fehlversuch am Login
+        # nach wenigen Anläufen sperrt (R4-10; die Login-Schwelle ist `max_login_attempts`,
+        # Vorgabe 5 und im Panel einstellbar).
+        #
+        # Die Sperre ist ein EIGENER Topf (`is_password_change_locked`, eigene Schwelle
+        # `password_change_max_attempts`), nicht der des Logins: Mit dem geteilten Zähler
+        # sperrten fünf Tippfehler hier die Anmeldung für 15 Minuten — samt dieser Route, über
+        # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
+        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`rate_ok`),
+        # protokolliert auch.
+        if not auth.rate_ok(ip, login=False) or auth.is_password_change_locked(u["username"], ip):
+            raise HTTPException(429, auth.t("api.too_many"))
+        # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
+        # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
+        # FREMDES Konto auflösen (Benutzername des Angreifers = E-Mail des Opfers, R4-12).
+        # Dann riet man hier nicht sein eigenes Passwort, sondern dessen — und der Treffer
+        # setzte still das eigene Passwort, blieb also unsichtbar.
+        richtig = auth.verify_user_password(u["id"], b.get("current") or "")
+        # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
+        # (`record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
+        auth.record_login(u["username"], ip, richtig, "password_change")
+        if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
         if len(new) < auth.sec("password_min_length"):
@@ -632,8 +756,12 @@ def build_router(auth) -> APIRouter:
             except Exception:
                 factors = []
             if s and (s["method"] == "oidc" or "oidc" in factors):
-                base = (cfg.base_url or str(request.base_url)).rstrip("/")
-                oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
+                # Ohne vertrauenswürdige Basis KEIN post_logout_redirect_uri: sonst schickte
+                # der IdP das Opfer nach dem Logout auf den Host aus dem Host-Header. Der
+                # lokale Logout unten läuft trotzdem, nur eben ohne Provider-Umweg.
+                base = auth.public_base(request)
+                if base:
+                    oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
         if u:
             auth.audit("logout", u["username"], auth.client_ip(request))
         resp = RedirectResponse(oidc_logout_url or cfg.logout_redirect, 303)
@@ -702,9 +830,15 @@ def build_router(auth) -> APIRouter:
         # POST same-site und kommt durch, für einen echten IdP ist dieser Aufbau ohnehin keiner.
         _SAMLFLOW = "tinysesam_saml_flow"
 
+        # SAML baut aus der Basis die eigene Entity-ID und die ACS-URL. Kommt sie aus dem
+        # Host-Header, wandert ein fremder Name in den AuthnRequest und in die Metadaten —
+        # deshalb hier kein Weiterarbeiten ohne geprüfte Basis (R4-01).
+        def _saml_basis(request: Request) -> str:
+            return auth.require_public_base(request, _saml_base(request))
+
         @r.get("/auth/saml/login")
         def saml_login(request: Request, next: str = "/"):
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
             resp = RedirectResponse(url, 303)
             resp.set_cookie(_SAMLFLOW, rid or "", max_age=600, httponly=True,
@@ -716,7 +850,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
         async def saml_acs(request: Request):
             form = await request.form()
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             data = auth.saml.process(_saml_req(request, form), base,
                                      request_id=request.cookies.get(_SAMLFLOW) or "")
             if not data:
@@ -728,8 +862,14 @@ def build_router(auth) -> APIRouter:
             if not u:
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
+            # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
+            # Adresse geprüft hat. Deshalb reist hier ausdrücklich „kein Beleg" mit — eine
+            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Der Faktor `saml`
+            # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
-                                                  auth.client_ip(request), request.headers.get("user-agent"))
+                                                  auth.client_ip(request),
+                                                  request.headers.get("user-agent"),
+                                                  email_bestaetigt=False)
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
@@ -738,7 +878,7 @@ def build_router(auth) -> APIRouter:
 
         @r.get("/auth/saml/metadata")
         def saml_metadata(request: Request):
-            base = cfg.base_url or _saml_base(request)
+            base = _saml_basis(request)
             return _Resp(content=auth.saml.metadata(base), media_type="application/xml")
 
     # ---------- API-Keys: Self-Service für den eingeloggten User ----------

@@ -24,7 +24,7 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 
 ### `admin_claim_token() -> 'Optional[str]'`
 
-Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal eingelöst werden kann (`/auth/claim-admin?token=…`). Es steht nur im Log/in der Konsole — wer den Server betreibt, hat es; wer bloß die URL kennt, nicht. Läuft ab.
+Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal eingelöst werden kann (`/auth/claim-admin?token=…`). Der Wert geht beim Start auf stderr bzw. in `admin_claim_token_file` (0600) — wer den Server betreibt, hat ihn; wer bloß die URL kennt oder das Log lesen kann, nicht (B5-03). Läuft ab.
 
 ### `admin_exists() -> 'bool'`
 
@@ -38,7 +38,7 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
-### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True) -> 'tuple[str, bool, bool]'`
+### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
@@ -92,7 +92,7 @@ Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (dan
 
 ### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
 
-Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung.
+Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
@@ -102,9 +102,9 @@ Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
 
-Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
+Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
 ### `csrf_rotieren(response) -> 'str'`
 
@@ -182,9 +182,21 @@ Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
 
 Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
 
+### `is_password_change_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
+
 ### `is_pin_locked(username, ip) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
+
+### `is_reauth_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
+
+### `is_resource_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
 
 ### `is_secure(request: 'Request') -> 'bool'`
 
@@ -198,6 +210,10 @@ CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.
 
 JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500. Erzwingt CSRF (Header X-CSRF-Token) für cookie-basierte Clients; API-Key-Requests sind ausgenommen.
 
+### `kennung_vergeben(kennung, exclude_id=None) -> 'Optional[dict]'`
+
+Gehört diese Login-Kennung schon einem Konto — in IRGENDEINEM der beiden Namensräume?
+
 ### `list_api_keys(user_id)`
 
 Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe.
@@ -205,6 +221,10 @@ Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal
 ### `list_resource_secrets()`
 
 Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
+
+### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
+
+True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
 
 ### `login_redirect_after(request, token, user_id, nxt)`
 
@@ -216,15 +236,15 @@ Die Sitzung dieses Requests beenden und das Cookie löschen.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
-Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
+Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `base_url` wird geprüft: ein fremder Host wirft `ConfigError` — in einer Route liefert `public_base(request)` die geprüfte Basis.
 
 ### `mail_configured() -> 'bool'`
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `maybe_promote_admin(user) -> 'bool'`
+### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
 
 ### `mfa_pending(user_id) -> 'bool'`
 
@@ -242,11 +262,15 @@ Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrier
 
 User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0).
 
+### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+
+Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
+
 ### `purge_demo() -> 'int'`
 
 Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine gleichnamigen.
 
-### `rate_ok(ip) -> 'bool'`
+### `rate_ok(ip, login: 'bool' = True) -> 'bool'`
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
@@ -286,6 +310,10 @@ Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
 
 FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung.
 
+### `require_public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+
+Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
+
 ### `require_resource(name: 'str')`
 
 FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich. Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`.
@@ -293,6 +321,10 @@ FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisse
 ### `require_role(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)`
 
 FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
+
+### `require_session(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'`
+
+Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
 
 ### `require_user(request: 'Request') -> 'dict'`
 
@@ -324,7 +356,7 @@ Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
 
 ### `send_login_link(email, base_url, next='/') -> 'bool'`
 
-Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration).
+Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -332,11 +364,11 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 ### `send_password_reset(email, base_url) -> 'bool'`
 
-Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration).
+Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `session_from_request(request)`
 
@@ -396,7 +428,7 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 
 ### `totp_begin(user_id)`
 
-Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator.
+Die Einrichtung starten: liefert Geheimnis und `otpauth://`-Adresse für den Authenticator — und wirft neu `StateError` (kein `ConfigError`, kein stiller Erfolg), wenn das Konto bereits ein bestätigtes TOTP hat.
 
 ### `totp_confirm(user_id, code) -> 'bool'`
 
@@ -472,6 +504,30 @@ Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-pro
 
 Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
 
+## Fehlertypen
+
+Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen sind die Zusage.
+
+### `TinySesamError` (erbt von `Exception`)
+
+Basis aller eigenen Fehler — `except TinySesamError` fängt alles von hier.
+
+### `ConfigError` (erbt von `TinySesamError`, `ValueError`)
+
+Die Konfiguration widerspricht sich oder verspricht etwas, das so nicht wirkt.
+
+### `MailNotConfigured` (erbt von `TinySesamError`, `RuntimeError`)
+
+Es sollte eine Mail raus, aber kein Mailer ist eingerichtet.
+
+### `MissingExtra` (erbt von `TinySesamError`, `RuntimeError`)
+
+Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
+
+### `StateError` (erbt von `TinySesamError`, `RuntimeError`)
+
+Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+
 ---
 
-107 Methoden, 6 Presets — erzeugt aus den Docstrings.
+115 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

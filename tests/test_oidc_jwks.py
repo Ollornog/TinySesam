@@ -144,7 +144,11 @@ def baue_exchange_umgebung(c, versuche):
         return FakeClaims({"sub": "u1", "nonce": None})
 
     sys.modules["httpx"] = types.SimpleNamespace(post=lambda *a, **k: FakeAntwort(), get=fake_get)
-    sys.modules["authlib.jose"] = types.SimpleNamespace(JsonWebKey=FakeJWK, jwt=types.SimpleNamespace(decode=fake_decode))
+    # `exchange` baut sich den Dekoder selbst (mit fester Algorithmenliste, s. Abschnitt 4) —
+    # die Attrappe muss ihn nachbilden, sonst prüft dieser Abschnitt einen Importfehler.
+    fake_jwt = types.SimpleNamespace(decode=fake_decode)
+    sys.modules["authlib.jose"] = types.SimpleNamespace(
+        JsonWebKey=FakeJWK, JsonWebToken=lambda algs: fake_jwt, jwt=fake_jwt)
     return zustand
 
 
@@ -182,6 +186,127 @@ finally:
         sys.modules["authlib.jose"] = echtes_jose
     else:
         sys.modules.pop("authlib.jose", None)
+
+# ---------- 4) Algorithmen-Konfusion: das Token bestimmt nicht, wie es geprüft wird ----------
+# `authlib.jose.jwt` ist ein Dekoder MIT Vorgabesatz, und der enthält HS256. Wird beim Dekodieren
+# kein Verfahren genannt, entscheidet der **Header des Tokens**, wie geprüft wird — also der
+# Absender. Bis authlib 1.3.0 liess sich damit ein ID-Token mit dem öffentlichen Schlüssel als
+# HMAC-Geheimnis fälschen (GHSA-5357-c2jx-v7qh); der Boden in `pyproject.toml` lag bei 1.3, eine
+# Installation mit Lockfile bekam genau diese Fassung. Der dauerhafte Riegel ist nicht die
+# Version, sondern die eigene Liste: `OIDCClient.ID_TOKEN_ALGS` (B4-1 aus T-13).
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+import json  # noqa: E402
+
+from authlib.jose import JsonWebKey as _JWK  # noqa: E402
+from authlib.jose import jwt as _vorgabe_dekoder  # noqa: E402
+from tinysesam import errors as _err4  # noqa: E402
+
+r.check("die Liste nennt kein symmetrisches Verfahren und kein 'none'",
+        all(a.startswith(("RS", "PS", "ES", "Ed")) for a in OIDCClient.ID_TOKEN_ALGS),
+        f"ID_TOKEN_ALGS={OIDCClient.ID_TOKEN_ALGS}")
+
+c6 = frischer_client()
+try:
+    c6.ID_TOKEN_ALGS = ("RS256", "HS256")
+    c6._dekoder()
+    gewacht = False
+except _err4.ConfigError:
+    gewacht = True
+r.check("HS256 in der Liste wird abgewiesen, nicht durchgereicht", gewacht,
+        "eine spätere Erweiterung könnte das Loch wieder aufreissen")
+
+
+def _b64(rohdaten: bytes) -> bytes:
+    return base64.urlsafe_b64encode(rohdaten).rstrip(b"=")
+
+
+def _hs256(geheimnis: bytes, nutzlast: dict, kid: str = "k1") -> str:
+    """Ein HS256-Token bauen — das, was der Angreifer schickt."""
+    kopf = _b64(json.dumps({"alg": "HS256", "kid": kid, "typ": "JWT"}, separators=(",", ":")).encode())
+    rumpf = _b64(json.dumps(nutzlast, separators=(",", ":")).encode())
+    sig = _b64(hmac.new(geheimnis, kopf + b"." + rumpf, hashlib.sha256).digest())
+    return (kopf + b"." + rumpf + b"." + sig).decode()
+
+
+def _oidc_umgebung(jwks_dokument, id_token):
+    """httpx-Attrappe: der Token-Endpunkt liefert `id_token`, der JWKS-Endpunkt das Set."""
+    class Antwort:
+        def __init__(self, nutzlast):
+            self._n = nutzlast
+
+        def json(self):
+            return self._n
+
+    sys.modules["httpx"] = types.SimpleNamespace(
+        post=lambda *a, **k: Antwort({"id_token": id_token, "access_token": "at"}),
+        get=lambda *a, **k: Antwort(jwks_dokument))
+
+
+privat = _JWK.generate_key("RSA", 2048, {"kid": "k1"}, is_private=True)
+JWKS_RSA = {"keys": [privat.as_dict(is_private=False)]}
+NUTZLAST = {"iss": META["issuer"], "aud": "cid", "sub": "u1", "nonce": "n1",
+            "iat": int(time.time()), "exp": int(time.time()) + 600}
+OPTIONEN = {"iss": {"essential": True, "value": META["issuer"]},
+            "aud": {"essential": True, "value": "cid"}}
+
+echtes_httpx4 = sys.modules.get("httpx")
+try:
+    # a) Der legitime Weg bleibt offen: ein echtes RS256-Token geht durch `exchange`.
+    echt = _vorgabe_dekoder.encode({"alg": "RS256", "kid": "k1"}, dict(NUTZLAST), privat).decode()
+    c7 = frischer_client()
+    _oidc_umgebung(JWKS_RSA, echt)
+    claims, _tok = c7.exchange("code", "https://app.example.com/cb", "n1")
+    r.check("der legitime Weg bleibt offen: RS256 gegen das JWKS wird angenommen",
+            claims.get("sub") == "u1", f"claims={dict(claims) if claims else None}")
+
+    # b) Der Angriff: gleiches JWKS, aber `alg: HS256` mit dem öffentlichen Schlüssel als
+    #    HMAC-Geheimnis. Der Angreifer kennt das JWKS — es ist öffentlich abrufbar.
+    oeffentlich = json.dumps(privat.as_dict(is_private=False), separators=(",", ":")).encode()
+    gefaelscht = _hs256(oeffentlich, {**NUTZLAST, "sub": "angreifer"})
+    c8 = frischer_client()
+    _oidc_umgebung(JWKS_RSA, gefaelscht)
+    try:
+        c8.exchange("code", "https://app.example.com/cb", "n1")
+        durch = True
+    except Exception:
+        durch = False
+    r.check("ein HS256-Token gegen das RSA-JWKS wird abgewiesen", not durch,
+            "der öffentliche Schlüssel wäre damit das Signaturgeheimnis")
+
+    # c) Vorbedingung — und zugleich der Beweis, dass die Liste WIRKT und nicht nur dasteht:
+    #    Derselbe Angriff gegen einen Schlüsselsatz, in dem authlibs Vorgabe-Dekoder HMAC
+    #    tatsächlich ausführt. Die Vorgabe nimmt das Token an, der Dekoder von TinySesam nicht.
+    #    Ohne die feste Liste in `_dekoder()` wären beide Zeilen gleich — und dieser Test rot.
+    geheim = b"0123456789abcdef0123456789abcdef"
+    jwks_oct = {"keys": [{"kty": "oct", "kid": "k1", "k": _b64(geheim).decode()}]}
+    tok_oct = _hs256(geheim, {**NUTZLAST, "sub": "angreifer"})
+    satz = _JWK.import_key_set(jwks_oct)
+    try:
+        vorgabe = _vorgabe_dekoder.decode(tok_oct, satz, claims_options=OPTIONEN)
+        vorgabe.validate()
+        vorgabe_nahm_an = vorgabe.get("sub") == "angreifer"
+    except Exception:
+        vorgabe_nahm_an = False
+    r.check("Vorbedingung: authlibs Vorgabe-Dekoder nimmt genau dieses HS256-Token an",
+            vorgabe_nahm_an,
+            "ohne diese Vorbedingung misst der nächste Test nichts — dann läge es an authlib")
+
+    c9 = frischer_client()
+    try:
+        c9._dekoder().decode(tok_oct, satz, claims_options=OPTIONEN)
+        eigener_nahm_an = True
+    except Exception:
+        eigener_nahm_an = False
+    r.check("der Dekoder von TinySesam lehnt dasselbe Token ab", not eigener_nahm_an,
+            "die Algorithmenliste greift nicht — `alg` im Header entscheidet wieder")
+finally:
+    if echtes_httpx4 is not None:
+        sys.modules["httpx"] = echtes_httpx4
+    else:
+        sys.modules.pop("httpx", None)
+
 
 # ---------- 5) Discovery: Issuer-Vergleich, keine Umleitung ----------
 # Aus dem Discovery-Dokument kommen token_endpoint, jwks_uri und der Issuer, gegen den jedes

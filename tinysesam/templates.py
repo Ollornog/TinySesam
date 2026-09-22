@@ -373,14 +373,26 @@ def _account(auth, ctx) -> str:
 _ACCOUNT_JS = """
 <script>
 function tsCsrf(){return (document.cookie.match(/(?:^|; )tinysesam_csrf=([^;]+)/)||[])[1]||''}
-const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
+async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
+  // 403 + X-TinySesam-Reauth: die Faktor-Verwaltung verlangt seit R3-3 eine frische
+  // Bestätigung. Ohne diese Weiche scheiterte der Knopf nach Ablauf der Frische stumm.
+  const re=r.headers.get('X-TinySesam-Reauth');
+  if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
+  return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
 async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
   say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
-async function delpin(){const r=await J('/auth/pin/disable');say('pin_msg','✓ entfernt',true);setTimeout(()=>location.reload(),600)}
-async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;await J('/auth/totp/disable');location.reload()}
+// Erst prüfen, dann melden: Beide Knöpfe sagten früher UNBEDINGT „erledigt" und luden neu —
+// auch bei 403 (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah
+// „entfernt", der Faktor stand noch.
+async function delpin(){const r=await J('/auth/pin/disable');
+  say('pin_msg',r.ok?'✓ entfernt':(await r.json().catch(()=>({}))).detail||'Fehler',r.ok);
+  if(r.ok)setTimeout(()=>location.reload(),600)}
+async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;
+  const r=await J('/auth/totp/disable');
+  if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||'Fehler',false)}
 async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
   const r=await (await J('/auth/totp/recovery')).json();
   if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
@@ -572,18 +584,32 @@ def _stepup_field(auth, method, first) -> str:
 
 def _reauth(auth, ctx) -> str:
     """ctx: next, error, username, methods (Liste aus auth.stepup_options).
-    Sudo-Frische: erneut einen Faktor bestätigen (Step-up)."""
+    Sudo-Frische: erneut einen Faktor bestätigen (Step-up).
+
+    Eine **leere** Methodenliste ist eine Aussage und kein fehlender Wert: Dieses Konto hat
+    nichts, womit es hier bestätigen könnte (`stepup_strict`, oder noch gar kein Faktor
+    eingerichtet). Dann steht hier KEIN Formular. Vorher fiel die leere Liste auf
+    `["password"]` zurück und die Seite bot ein Passwortfeld an, das ein rein föderiertes
+    Konto nicht hat — der Nutzer probierte etwas, das nicht gelingen kann, und jeder Versuch
+    zählte in denselben Sperr-Topf. Fehlt der Schlüssel ganz (eigene Aufrufer, Vorschau),
+    bleibt es beim Passwortfeld.
+    """
     t = auth.t
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    methods = ctx.get("methods") or ["password"]
+    methods = ctx.get("methods")
+    methods = ["password"] if methods is None else list(methods)
+    kopf = (f"<h1>{_e(t('reauth.title'))}</h1>"
+            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}")
+    fuss = f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>"
+    if not methods:
+        return _page(auth, t("reauth.title"), kopf + fuss)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
-    body = (f"<h1>{_e(t('reauth.title'))}</h1>"
-            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}"
-            f"<form method=post action='/auth/reauth'>"
+    body = (kopf
+            + f"<form method=post action='/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>")
+            + fuss)
     return _page(auth, t("reauth.title"), body)
 
 
@@ -609,9 +635,20 @@ def _pin(auth, ctx) -> str:
 
 
 def _totp_setup(auth, ctx) -> str:
-    """ctx: data = {secret, uri, qr}."""
+    """ctx: data = {secret, uri, qr} — oder `None`/fehlend für den ersten Schritt.
+
+    Zwei Zustände, eine Seite: Ohne `data` steht hier nur ein POST-Formular, das die Einrichtung
+    ausdrücklich startet. Das Geheimnis entsteht erst mit diesem Klick (B2-1) — ein GET, der eines
+    erzeugt, lässt sich von einer fremden Seite anstossen und entwertet einen laufenden Versuch.
+    """
     t = auth.t
-    data = ctx["data"]
+    data = ctx.get("data")
+    if not data:
+        body = (f"<h1>{_e(t('setup.title'))}</h1>"
+                f"<div class=hint>{_e(t('setup.start_hint'))}</div>"
+                f"<form method=post action='/auth/totp/setup/start'>{_cf(ctx)}"
+                f"<button type=submit>{_e(t('setup.start'))}</button></form>")
+        return _page(auth, t("setup.title"), body)
     qr = f"<img class=qr src='{data['qr']}'>" if data.get("qr") else ""
     ok_msg = _e(t("setup.ok")).replace("'", "\\'")
     bad_msg = _e(t("err.code")).replace("'", "\\'")

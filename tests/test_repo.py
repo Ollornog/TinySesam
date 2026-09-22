@@ -453,4 +453,114 @@ if int(_ver.split(".")[0]) < 1:
             + "\n  ".join(_pypi))
     print("  READMEs installieren über den Git-Tag (PyPI erst ab 1.0)")
 
+# ---------- Die Code-Beispiele der READMEs müssen bauen ----------
+# Der allererste Block, den ein neuer Nutzer kopiert, schaltete `oidc_enabled=True` und setzte
+# kein `base_url` — und seit der Nacharbeit N1 ist genau das ein `ConfigError` im Konstruktor.
+# Die Regel kam, das Beispiel blieb stehen. Das ist dieselbe Klasse Fehler wie
+# `pip install tinysesam` eine Prüfung weiter oben: Die erste Zeile, die jemand ausprobiert, war
+# die erste, die fehlschlug. Gemessen wird deshalb nicht der Text, sondern der Bau.
+#
+# Zwei Stufen, weil sie verschieden weit tragen:
+#   (1) Jeder `TinySesamConfig(…)`-Aufruf beider READMEs wird gebaut. `TinySesam(cfg)` importiert
+#       die Extras nur lazy (es warnt bloss), also läuft diese Stufe auch im Kern-Job ohne [all]
+#       — sie ist die Messung, auf die Verlass ist.
+#   (2) Jeder VOLLSTÄNDIGE Block (einer mit `from tinysesam import …`) läuft zusätzlich als
+#       eigenes Programm in einem Wegwerf-Verzeichnis. Das ist die schärfere Probe (Syntax,
+#       Methodennamen, `auth.router()`), braucht aber die Extras, die seine Schalter nennen:
+#       `auth.router()` wirft ohne [passkey]/[oidc] einen `MissingExtra`. Fehlt ein Extra, sagt
+#       die Zeile es und Stufe (1) bleibt stehen.
+#
+# `db_path` wird auf ein Wegwerf-Verzeichnis umgebogen, sonst legte der Lauf `app.db` im Repo an.
+# Der Pfad ist nicht das, was hier gemessen wird.
+import contextlib as _cl  # noqa: E402
+import importlib.util as _ilu  # noqa: E402
+import io as _io  # noqa: E402
+import logging as _log  # noqa: E402
+import subprocess as _sp  # noqa: E402
+import tempfile as _tmp  # noqa: E402
+
+from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam.errors import ConfigError as _CfgErr  # noqa: E402
+
+_EXTRA_MODUL = {"passkey_enabled": ("webauthn", "passkey"), "oidc_enabled": ("authlib", "oidc"),
+                "saml_enabled": ("onelogin", "saml"), "ldap_enabled": ("ldap3", "ldap")}
+
+
+def _py_bloecke(text):
+    return _re.findall(r"```python\n(.*?)```", text, _re.S)
+
+
+def _config_aufrufe(text):
+    """Jeden `TinySesamConfig(…)`-Aufruf als Quelltext — über Klammertiefe, nicht per Regex."""
+    for m in _re.finditer(r"TinySesamConfig\(", text):
+        tiefe = 0
+        for j in range(m.end() - 1, len(text)):
+            if text[j] == "(":
+                tiefe += 1
+            elif text[j] == ")":
+                tiefe -= 1
+                if tiefe == 0:
+                    yield text[m.start():j + 1]
+                    break
+
+
+_seclog = _log.getLogger("tinysesam.security")
+_vorher = _seclog.level
+_seclog.setLevel(_log.CRITICAL)          # der Bau warnt über fehlende Extras — hier nur Lärm
+_gebaut = 0
+try:
+    for _datei, _text in _readmes.items():
+        for _nr, _block in enumerate(_py_bloecke(_text), 1):
+            for _quelle in _config_aufrufe(_block):
+                try:
+                    _cfg = eval(_quelle, {"TinySesamConfig": TinySesamConfig})   # noqa: S307
+                except Exception as _e:
+                    raise AssertionError(
+                        f"{_datei}, Block {_nr}: `{_quelle.splitlines()[0]}…` lässt sich nicht "
+                        f"einmal auswerten — {type(_e).__name__}: {_e}")
+                _cfg.db_path = os.path.join(_tmp.mkdtemp(), "beispiel.db")
+                try:
+                    with _cl.redirect_stderr(_io.StringIO()):     # Erst-Admin-Token an den Betreiber
+                        TinySesam(_cfg)
+                except _CfgErr as _e:
+                    raise AssertionError(
+                        f"{_datei}, Block {_nr}: das Beispiel baut nicht.\n  {_quelle[:90]}…\n  "
+                        f"ConfigError: {str(_e)[:300]}\n  (Wer es kopiert, kommt nicht über die "
+                        f"erste Zeile hinaus — wie beim `pip install` oben.)")
+                _gebaut += 1
+finally:
+    _seclog.setLevel(_vorher)
+assert _gebaut >= 12, f"nur {_gebaut} Konfig-Beispiele gefunden — Muster im Wächter anpassen"
+print(f"  READMEs: alle {_gebaut} Konfig-Beispiele bauen (ConfigError-frei)")
+
+# Stufe 2 — die vollständigen Blöcke wirklich ausführen.
+_ausgefuehrt, _uebersprungen = 0, []
+for _datei, _text in _readmes.items():
+    for _nr, _block in enumerate(_py_bloecke(_text), 1):
+        if "from tinysesam import" not in _block and "import tinysesam" not in _block:
+            continue                      # ein Ausschnitt, kein Programm
+        _fehlt = [f"[{_x}] ({_m})" for _s, (_m, _x) in _EXTRA_MODUL.items()
+                  if f"{_s}=True" in _block and _ilu.find_spec(_m) is None]
+        if _fehlt:
+            _uebersprungen.append(f"{_datei} Block {_nr}: " + ", ".join(_fehlt))
+            continue
+        _wo = _tmp.mkdtemp()
+        _skript = os.path.join(_wo, "beispiel.py")
+        with open(_skript, "w", encoding="utf-8") as _fh:
+            _fh.write(_block)
+        _umg = dict(os.environ, PYTHONPATH=ROOT + os.pathsep + os.environ.get("PYTHONPATH", ""))
+        _lauf = _sp.run([sys.executable, _skript], cwd=_wo, env=_umg,
+                        capture_output=True, text=True, timeout=120)
+        assert _lauf.returncode == 0, (
+            f"{_datei}, Block {_nr} läuft nicht durch (Exit {_lauf.returncode}):\n"
+            + (_lauf.stderr or _lauf.stdout)[-900:])
+        _ausgefuehrt += 1
+assert _ausgefuehrt + len(_uebersprungen) >= 2, "die READMEs enthalten keine zwei vollständigen Beispiele mehr"
+if _uebersprungen:
+    # Kein stilles Durchwinken: Stufe 1 hat dieselben Configs gebaut, nur `auth.router()` fehlt.
+    print("  (Block nicht ausgeführt, Extra fehlt: " + "; ".join(_uebersprungen) + ")")
+else:
+    assert _ausgefuehrt >= 2, f"nur {_ausgefuehrt} vollständige Beispiele — Muster anpassen"
+print(f"  READMEs: {_ausgefuehrt} vollständige Beispiele laufen im Wegwerf-Verzeichnis durch")
+
 print("OK test_repo")

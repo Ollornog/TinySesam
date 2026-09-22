@@ -14,7 +14,10 @@ def build(**cfgkw):
     sent = []
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
-                                     cookie_secure=False, **cfgkw))
+                                     cookie_secure=False,
+                                     # Der Bestätigungslink kommt seit R4-01 aus base_url,
+                                     # nicht mehr aus dem Host-Header (überschreibbar).
+                                     **{"base_url": "https://auth.example.com", **cfgkw}))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
     auth.ensure_admin("admin", "geheim123")
     app = FastAPI()
@@ -89,7 +92,9 @@ os.remove(db)
 # ---------- Invite-only: ohne Einladung kein Zugang, mit Einladung ok ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_invite_only=True, magiclink_enabled=True)
 assert c.get("/auth/register").status_code == 403        # ohne Einladung
-inv = auth.create_invite("gast@example.com", "http://testserver", roles=["editor"])
+# Die Basis kommt aus base_url, nicht aus dem Host des TestClients: `create_invite` prueft sie
+# seit R4-01 selbst und weist einen fremden Host mit ConfigError ab (kein Token, keine Mail).
+inv = auth.create_invite("gast@example.com", auth.cfg.base_url, roles=["editor"])
 token = inv["token"]
 # Link öffnen → Weiterleitung zur Registrierung (Token NICHT verbraucht)
 assert "/auth/invite/" in inv["url"] and "/auth/magic/" not in inv["url"]

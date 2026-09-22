@@ -37,6 +37,57 @@ def _hash(wert: str) -> str:
     return hashlib.sha256((wert or "").encode()).hexdigest()
 
 
+def _flag_wahr(wert) -> bool:
+    """`email_verified` als Ja/Nein — für einen Wert, der **da ist**. Ob er fehlt, entscheidet
+    der Aufrufer (`_email_mit_beleg`): Ein fehlender Claim heisst etwas anderes als ein Claim,
+    der `false` sagt.
+
+    Gemessen an dem, was echte Provider senden: `True` (JSON-Boolean, der Standard),
+    `"true"`/`"True"` (als Zeichenkette — verbreitete Abweichung) und `1`/`"1"`. Alles andere
+    ist **Nein**, ausdrücklich auch `"false"` als Zeichenkette: Sie ist nicht leer und wäre für
+    jede Wahrheitsprüfung auf dem rohen Wert (`bool("false")`) ein Ja — genau die Verwechslung,
+    mit der eine unbestätigte Adresse wieder Erst-Admin-fähig würde."""
+    if isinstance(wert, bool):
+        return wert
+    if wert is None:
+        return False
+    return str(wert).strip().lower() in ("true", "1")
+
+
+def _email_mit_beleg(claims, nutzerinfo, vorgabe_wenn_claim_fehlt: bool = False) -> tuple:
+    """Adresse UND Beleg immer aus demselben Dokument. Gibt
+    `(adresse, bestaetigt, ausdruecklich)` — `ausdruecklich` sagt, ob der Provider sich zur
+    Adresse **geäussert** hat oder ob nur die Vorgabe des Betreibers gilt (Schweigen).
+
+    OpenID Connect Core 5.1 kennt für die Adresse den Claim `email_verified` („True if the
+    End-User's e-mail address has been verified"). **Fehlt er, lautet die Antwort Nein** —
+    nicht „vielleicht": Ohne Beleg ist `email` ein Textfeld, das der Anmeldende beim IdP
+    selbst gefüllt hat (Selbstregistrierung, zweiter Mandant, öffentlicher Provider).
+
+    Weil der Claim optional ist, darf der Betreiber dieses Nein für seinen IdP umdrehen
+    (`oidc_email_verified_default`, hier `vorgabe_wenn_claim_fehlt`) — er verantwortet die
+    Adressen dann selbst. Das gilt nur für den **fehlenden** Claim: Steht er da und sagt
+    `false`, bleibt die Antwort Nein, sonst wäre der Schalter eine Umgehung der Aussage des
+    Providers.
+
+    Entscheidend ist das Wort *derselben*: Der Callback legt userinfo-Dokument und ID-Token
+    zu einem Wörterbuch zusammen, und beim Mischen kann der Beleg des einen an die Adresse
+    des anderen geraten — liefert das ID-Token nur `email` und das userinfo-Dokument eine
+    ANDERE Adresse mit `email_verified=true`, trüge die ungeprüfte Adresse den fremden Beleg.
+    Darum wird das Paar hier an der Quelle gebildet, mit Vorrang für das signierte ID-Token
+    (das gewinnt auch beim Mischen).
+    """
+    for quelle in (claims, nutzerinfo):
+        mail = (quelle or {}).get("email")
+        if mail:
+            # `in` statt `.get()`: Der fehlende Claim ist ein eigener Fall (dann gilt die
+            # Vorgabe des Betreibers), ein vorhandener wird immer gemessen — auch `"false"`.
+            if "email_verified" in (quelle or {}):
+                return mail, _flag_wahr((quelle or {}).get("email_verified")), True
+            return mail, bool(vorgabe_wenn_claim_fehlt), False
+    return None, False, False
+
+
 class OIDCClient:
     def __init__(self, issuer, client_id, client_secret, scopes):
         self.issuer = issuer.rstrip("/")
@@ -60,6 +111,15 @@ class OIDCClient:
     #: jedes kaputte id_token einen Abruf beim Provider aus — ein bequemer Weg, ihn von hier aus
     #: zu belasten.
     JWKS_MIN_ABSTAND = 60
+    #: Signaturverfahren, die für ein ID-Token gelten — bewusst NUR asymmetrische.
+    #: Geprüft wird gegen das **öffentliche** JWKS des Providers; ein HMAC-Verfahren ergäbe hier
+    #: nie einen Sinn, denn das Geheimnis wäre ein öffentlicher Schlüssel. Genau darauf zielt die
+    #: Algorithmen-Konfusion: Der Angreifer setzt `alg: HS256`, signiert mit dem öffentlichen
+    #: Schlüssel aus dem JWKS als HMAC-Geheimnis und schreibt sich ins `sub`, das er will.
+    #: Wer die Liste erweitert, muss beim asymmetrischen Verfahren bleiben — `_dekoder()` weist
+    #: alles andere ab.
+    ID_TOKEN_ALGS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+                     "ES256", "ES384", "ES512", "EdDSA")
 
     def meta(self, erzwingen: bool = False):
         # `self._meta_zeit and …`: Wer die Metadaten von aussen setzt (Tests ohne Netz, oder ein
@@ -112,6 +172,30 @@ class OIDCClient:
             self._jwks_zeit = time.time()
         return self._jwks
 
+    def _dekoder(self):
+        """Der JWT-Dekoder für das ID-Token — mit **fester** Algorithmenliste.
+
+        `authlib.jose.jwt` ist ein fertiger Dekoder mit Vorgabesatz, und dieser Satz enthält
+        HS256. Wird kein Verfahren genannt, sucht sich der **Header des Tokens** aus, wie geprüft
+        wird — die Entscheidung liegt damit beim Absender. Bis authlib 1.3.0 liess sich so mit dem
+        öffentlichen Schlüssel als HMAC-Geheimnis ein gültiges ID-Token fälschen
+        (GHSA-5357-c2jx-v7qh); die Gegenmassnahme dort deckt nur einige Schlüsselformate ab.
+        Die installierte Fassung darf nicht die Frage sein: Hier wird der Satz selbst gesetzt.
+        """
+        try:
+            from authlib.jose import JsonWebToken
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
+        # Fail-closed gegen eine spätere Erweiterung (auch aus einer Unterklasse heraus): Alles,
+        # was kein RSA-, PSS-, ECDSA- oder EdDSA-Verfahren ist, käme ohne privaten Schlüssel aus.
+        fremd = [a for a in self.ID_TOKEN_ALGS if not str(a).startswith(("RS", "PS", "ES", "Ed"))]
+        if fremd:
+            raise errors.ConfigError(
+                f"OIDC: ID_TOKEN_ALGS nennt {fremd}. Das ID-Token wird gegen das öffentliche JWKS "
+                "des Providers geprüft — ein HMAC-Verfahren (HS*) oder 'none' macht damit den "
+                "öffentlichen Schlüssel zum Signaturgeheimnis. Nur asymmetrische Verfahren.")
+        return JsonWebToken(list(self.ID_TOKEN_ALGS))
+
     def _jwks_auffrischbar(self) -> bool:
         """Darf jetzt ausserplanmässig neu geholt werden? (Drosselung gegen Fremdlast.)"""
         return (time.time() - self._jwks_zeit) > self.JWKS_MIN_ABSTAND
@@ -131,9 +215,9 @@ class OIDCClient:
         t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
         try:
             import httpx
-            from authlib.jose import jwt
         except ModuleNotFoundError as e:
             raise _fehlt_extra(e) from e
+        dekoder = self._dekoder()
         tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data={
             "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
             "client_id": self.client_id, "client_secret": self.client_secret}).json()
@@ -142,7 +226,7 @@ class OIDCClient:
         optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
                     "aud": {"essential": True, "value": self.client_id}}
         try:
-            claims = jwt.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
+            claims = dekoder.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
         except Exception:
             # Scheitert die Signatur, ist der wahrscheinlichste Grund eine Schlüsselrotation
             # beim Provider: Das Token nennt eine `kid`, die unser Set noch nicht kennt. Einmal
@@ -152,7 +236,8 @@ class OIDCClient:
                 raise
             security.seclog.warning(
                 "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
-            claims = jwt.decode(tok["id_token"], self._jwkset(erzwingen=True), claims_options=optionen)
+            claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
+                                    claims_options=optionen)
         claims.validate()  # exp/iat/nbf
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, t("api.oidc_nonce"))
@@ -192,8 +277,15 @@ def register_oidc_routes(router, auth):
         security.seclog.info("OIDC-Redirect-URI: %s", cfg.base_url.rstrip("/") + cfg.oidc_callback_path)
 
     def _redirect_uri(request: Request):
-        base = cfg.base_url or str(request.base_url).rstrip("/")
-        return base.rstrip("/") + cfg.oidc_callback_path
+        # Die Redirect-URI entscheidet, wohin der IdP den Autorisierungs-Code schickt. Aus dem
+        # Host-Header abgeleitet wäre sie durch den Anfragenden bestimmbar; ein IdP mit locker
+        # gepflegten Redirect-URIs würde den Code dann an einen fremden Host ausliefern
+        # (R4-01). Ohne geprüfte Basis bricht der Flow ab, statt sie zu raten.
+        # `require_public_base`: Ein 500 mitten im Anmeldeversuch war der falsche Ort für
+        # eine Konfigurationslücke — `/auth/oidc/start` ist der Einstieg, auf den ein Gateway
+        # jeden Besucher schickt. Seit dieser Fassung verlangt `konfigpruefung` bei
+        # `oidc_enabled` ein `base_url` und der Aufbau scheitert vorher.
+        return auth.require_public_base(request) + cfg.oidc_callback_path
 
     # Der Flow wird an den BROWSER gebunden, nicht nur an den `state`. Ohne das kann ein
     # Angreifer den Flow bei sich starten, sich beim IdP als er selbst anmelden und das Opfer
@@ -240,7 +332,8 @@ def register_oidc_routes(router, auth):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
             raise HTTPException(400, auth.t("api.oidc_browser"))
         claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
-        info = {**oidc.userinfo(tok.get("access_token")), **dict(claims)}
+        nutzerinfo = oidc.userinfo(tok.get("access_token")) or {}
+        info = {**nutzerinfo, **dict(claims)}
 
         if cfg.oidc_allowed_groups:
             groups = info.get(cfg.oidc_group_claim) or []
@@ -255,19 +348,77 @@ def register_oidc_routes(router, auth):
                 raise HTTPException(403, auth.t("api.oidc_group"))
 
         issuer, sub = oidc.meta()["issuer"], claims["sub"]
+
+        # Die E-Mail aus dem ID-Token trägt in TinySesam Entscheidungen: `admin_identifiers`
+        # macht ihren Träger beim ersten Login zum Admin. Das setzt voraus, dass die Adresse dem
+        # Anmeldenden wirklich gehört — belegt ist das allein durch `email_verified`. Wer sich
+        # bei einem IdP mit Selbstregistrierung eine beliebige Adresse einträgt, wurde sonst mit
+        # ihr zum Erst-Admin. Adresse und Beleg werden deshalb als Paar geführt: die Adresse wie
+        # bisher ins Konto und in `Remote-Email`, der Beleg als Vermerk daneben.
+        mail, mail_bestaetigt, beleg_ausdruecklich = _email_mit_beleg(
+            claims, nutzerinfo, cfg.oidc_email_verified_default)
+        if mail and not mail_bestaetigt:
+            # Die Adresse wird trotzdem geführt. Sie zu verwerfen war die erste Fassung dieses
+            # Fixes, und sie kostete mehr, als sie schützte: Ein IdP ohne den optionalen Claim
+            # (Entra ID) liess damit jedes neu angelegte Konto `oidc-<sub>` heissen statt wie die
+            # Adresse, und `Remote-Email` ging leer an die geschützte App — dieselbe Person
+            # landete nach dem Update in einem anderen Konto der App. Was die Adresse nicht mehr
+            # darf, ist Rechte tragen: Der fehlende Beleg wird am Konto vermerkt
+            # (`email_verified=0`) und gilt von dort für jeden Anmeldeweg dieses Kontos.
+            security.seclog.warning(
+                "OIDC: Der Provider meldet %s ohne Beleg (email_verified fehlt oder ist nicht "
+                "wahr) — die Adresse wird als unbestätigt übernommen und trägt keine Rechte. "
+                "Das Admin-Recht aus admin_identifiers hängt in keinem Fall daran; der belegte "
+                "Bootstrap-Weg ist /auth/claim-admin. Schickt dieser IdP den Claim nie und "
+                "verantwortet der Betreiber die Adressen selbst: "
+                "oidc_email_verified_default=True.", mail)
+            auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
+                       "übernommen=1 rechte=0")
+
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
             if not cfg.oidc_auto_create:
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
                            auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
-            username = info.get("preferred_username") or info.get("email") or ("oidc-" + sub[:8])
+            # Ersatzname notfalls aus der Adresse — auch aus einer unbestätigten: **ein Name ist
+            # keine Berechtigung.** Ein Allowlist-Name aus fremder Hand ist hier ohnehin
+            # unmöglich, den verbietet der Konstruktor-Wächter, sobald ein IdP Konten anlegt.
+            username = info.get("preferred_username") or mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
-            while auth.store.get_user_by_name(username):
+            # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
+            # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
+            while auth.kennung_vergeben(username):
                 i += 1
                 username = f"{base_un}{i}"
-            uid = auth.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
+            try:
+                # Adresse UND Beleg gehen zusammen ins Konto (F-14): Der Vermerk entscheidet
+                # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
+                # Konto sich das nächste Mal anmeldet.
+                uid = auth.create_user(username, display_name=info.get("name") or username,
+                                       email=mail, email_verified=mail_bestaetigt)
+            except errors.ConfigError:
+                # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
+                # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
+                auth.audit("oidc_ident_taken", str(mail or username or sub or "?"),
+                           auth.client_ip(request))
+                raise HTTPException(409, auth.t("api.idp_ident_taken"))
             auth.store.link_oidc(issuer, sub, uid)
+        elif mail and beleg_ausdruecklich:
+            # Bestandskonto: Was der Provider HEUTE über SEINE Adresse SAGT, ersetzt den Vermerk.
+            # Sonst bliebe ein „unbestätigt" von früher stehen, nachdem der IdP die Adresse
+            # geprüft hat — und umgekehrt bliebe ein alter Beleg gültig, obwohl der Provider ihn
+            # zurückgenommen hat.
+            #
+            # Zwei Grenzen: nur bei DERSELBEN Adresse (über eine andere sagt der Claim nichts —
+            # dieselbe Regel wie in `_email_mit_beleg`), und nur bei einer ausdrücklichen
+            # Aussage. **Schweigen überschreibt nichts:** Ein Konto, dessen Adresse der Betreiber
+            # selbst gesetzt hat (Admin, CLI, Registrierung mit Bestätigungsmail), verlöre sonst
+            # seinen Beleg, nur weil ein IdP den optionalen Claim nicht mitschickt.
+            konto = auth.store.get_user(uid)
+            if konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
+                    and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
+                auth.store.set_email_verified(uid, mail_bestaetigt)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt)
         _grp = info.get(cfg.oidc_group_claim) or []
@@ -275,7 +426,8 @@ def register_oidc_routes(router, auth):
 
         # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
-        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua)
+        token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
+                                              email_bestaetigt=mail_bestaetigt)
         target = auth.login_redirect_after(request, token, uid,
                                            auth.safe_next(flow.get("next") or cfg.login_redirect))
         resp = RedirectResponse(target, 303)

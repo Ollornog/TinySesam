@@ -20,6 +20,9 @@ nicht dreimal starten.
 """
 from __future__ import annotations
 
+import os
+import re
+
 #: Verfahren → welches Config-Feld es einschaltet. Dieselbe Liste bedient die Ketten-Prüfung.
 VERFAHREN = {
     "password": "password_enabled",
@@ -53,6 +56,27 @@ BRAUCHT_MAILER = {
     "magiclink_enabled": "Magic-Link-Anmeldung",
     "password_reset_enabled": "„Passwort vergessen\"",
     "signup_verify_email": "E-Mail-Bestätigung bei der Registrierung",
+}
+
+#: Was eine **absolute** Adresse in fremde Hand gibt — den Link in einer Mail an ein Postfach,
+#: die Redirect-URI beim IdP, die Entity-ID in SAML-Metadaten. Fehlt `base_url`, bliebe dafür
+#: nur der `Host`-Header, und den setzt der Anfragende (R4-01). Diese Schalter machen `base_url`
+#: zur **Pflicht**: ohne sie scheitert der Aufbau, nicht erst der erste Anmeldeversuch.
+BRAUCHT_BASE_URL = {
+    "magiclink_enabled": "Magic-Link und Einladung (Link in der Mail)",
+    "password_reset_enabled": "„Passwort vergessen\" (Reset-Link in der Mail)",
+    "signup_verify_email": "E-Mail-Bestätigung (Bestätigungslink in der Mail)",
+    "oidc_enabled": "OIDC (Redirect-URI zum IdP)",
+    "saml_enabled": "SAML (Entity-ID und ACS-URL)",
+}
+
+#: Derselbe Gedanke, aber nur eine Warnung: Die Forward-Auth-Umleitung schickt **denselben**
+#: Browser auf die eigene Login-Seite. Ohne geprüfte Basis bleibt sie relativ (`/auth/login?…`)
+#: und der Browser löst sie gegen den aufgerufenen Host auf — das funktioniert, solange App und
+#: TinySesam unter einem Namen liegen. Ein fremder Name kommt so nicht in die Umleitung, es geht
+#: nichts an Dritte hinaus, und deshalb ist das kein Grund, den Start zu verweigern.
+BASE_URL_EMPFOHLEN = {
+    "forward_auth_enabled": "Forward-Auth (Umleitung des Proxys auf die Login-Seite)",
 }
 
 
@@ -92,7 +116,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     unbekannt = sorted({f for felder in PFLICHTFELDER.values() for f in felder
                         if not hasattr(config, f)}
                        | {v for v in VERFAHREN.values() if not hasattr(config, v)}
-                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)})
+                       | {f for f in BRAUCHT_MAILER if not hasattr(config, f)}
+                       | {f for f in BRAUCHT_BASE_URL if not hasattr(config, f)}
+                       | {f for f in BASE_URL_EMPFOHLEN if not hasattr(config, f)}
+                       | {f for f in ("base_url", "trusted_redirect_hosts")
+                          if not hasattr(config, f)})
     if unbekannt:
         fehler.append(
             f"Die Konfigurationsprüfung nennt Felder, die es in TinySesamConfig nicht gibt: "
@@ -107,6 +135,19 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 f"{VERFAHREN[name]}=True, aber {', '.join(leer)} ist leer. So kann das Verfahren "
                 "nicht arbeiten und scheitert beim ersten Anmeldeversuch — es sei denn, der "
                 "Client wird zur Laufzeit ersetzt.")
+
+    # Nebenbefund aus demselben Audit (F-28): Ein Dienstkonto-DN ohne Passwort ist keine
+    # anonyme Suche, sondern eine Kombination, die ldap3 von sich aus ablehnt
+    # (`LDAPPasswordIsMandatoryError`). Der Fehler fliegt mitten im Login und wird dort
+    # verschluckt — der Betreiber sieht für JEDEN Nutzer „Passwort falsch" und sucht am
+    # falschen Ende. Warnung statt Fehler, weil der Client zur Laufzeit ersetzbar ist.
+    if _an(config, "ldap_enabled") and str(getattr(config, "ldap_bind_dn", "") or "").strip() \
+            and not str(getattr(config, "ldap_bind_password", "") or "").strip():
+        warnungen.append(
+            "ldap_bind_dn ist gesetzt, ldap_bind_password ist leer. Das ist keine anonyme Suche: "
+            "ldap3 lehnt DN ohne Passwort ab, der Fehler fällt erst beim Login an und sieht dort "
+            "für jeden Nutzer wie ein falsches Passwort aus. Entweder das Passwort des "
+            "Dienstkontos setzen oder ldap_bind_dn leeren (dann wird wirklich anonym gesucht).")
 
     # Ein Kettenschritt muss ein Faktor sein, den eine Sitzung auch bekommen kann. `ldap` ist
     # keiner (es schreibt den Faktor `password`), `apikey` ebenso wenig — beide standen trotzdem
@@ -144,6 +185,105 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         fehler.append(
             "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
             "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
+
+    # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
+    # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem
+    # `Host`-Header, also aus einer Eingabe des Anfragenden.
+    #
+    # Hier stand eine **Warnung**, mit zwei Begründungen — der lokale Aufbau (Loopback zählt als
+    # eigener Host) und ein `base_url`, das erst nach dem Konstruktor gesetzt wird. Beide haben
+    # nicht getragen, die Nacharbeit hat es gemessen:
+    #
+    # * Eine Warnung startet durch. Wer ohne `base_url` aktualisierte, verlor „Passwort
+    #   vergessen" und Magic-Link für ALLE Nutzer — und zwar still: Die Route rendete weiter die
+    #   Erfolgsseite („Mail ist unterwegs", HTTP 200), weil dieselbe Antwort die
+    #   Benutzer-Enumeration verhindert. Sichtbar war es in einer Logzeile.
+    # * Stehen mehrere Hosts in `trusted_redirect_hosts` — beim Forward-Auth/SSO der Normalfall —
+    #   genügte der Laufzeit-Prüfung JEDER davon. Der Angreifer stieß „Passwort vergessen" für
+    #   ein fremdes Postfach an und setzte `Host:` auf einen anderen mitvertrauten Host; der
+    #   Reset-Link ging dorthin hinaus. `base_url` schließt genau diese Wahlfreiheit: Steht sie,
+    #   kommt gar nichts aus dem Request.
+    #
+    # Deshalb jetzt ein **Fehler**: Der Aufbau scheitert mit `ConfigError`, statt einen Betrieb
+    # zu erlauben, der still das Falsche tut. Der lokale Aufbau trägt seine Adresse einfach ein
+    # (`base_url="http://127.0.0.1:8000"`), und wer sie erst spät kennt, schreibt sie ans
+    # Config-Objekt, BEVOR `TinySesam(config)` läuft — anders als `set_mailer()` gibt es dafür
+    # keinen Nachreich-Weg, denn ohne Basis endet der erste Klick auf „Passwort vergessen"
+    # bereits im Nichts.
+    _basis = str(getattr(config, "base_url", "") or "").strip()
+    if _basis and not re.match(r"^https?://[^/\s?#]+", _basis):
+        fehler.append(
+            f"base_url={_basis!r} ist keine absolute Adresse mit Schema und Host (erwartet z.B. "
+            "\"https://auth.example.com\"). Jeder daraus gebaute Link wäre kaputt — ohne Fehler, "
+            "ohne Logzeile, erst beim Empfänger.")
+    if not _basis:
+        betroffen = [wofuer for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
+        if betroffen:
+            fehler.append(
+                "base_url ist leer, aber diese Funktionen geben eine absolute Adresse in fremde "
+                "Hand: " + "; ".join(betroffen)
+                + ". Als Quelle bliebe der Host-Header der jeweiligen Anfrage — den setzt der "
+                "Anfragende (bei einer Mail an ein fremdes Postfach also der Angreifer). "
+                "Abhilfe: base_url auf die öffentliche Adresse dieser App setzen, z.B. "
+                "base_url=\"https://auth.example.com\" (lokal "
+                "base_url=\"http://127.0.0.1:8000\"). Unter einem Unterpfad montiert gehört "
+                "das Präfix mit hinein (\"https://example.com/sso\"). "
+                "trusted_redirect_hosts ist dafür KEIN Ersatz: Steht dort mehr als ein Host, "
+                "bestimmt der Anfragende per Host-Header, welcher davon in den Link kommt.")
+        weich = [wofuer for feld, wofuer in BASE_URL_EMPFOHLEN.items() if _an(config, feld)]
+        if weich and not betroffen:
+            warnungen.append(
+                "base_url ist leer, aber diese Funktion baut absolute Adressen: "
+                + "; ".join(weich)
+                + ". Ohne geprüfte Basis bleibt die Umleitung relativ — das trägt, solange App "
+                "und Login-Seite unter demselben Host liegen. Für SSO über mehrere Hosts "
+                "base_url (und cookie_domain) setzen.")
+    # Erst-Admin-Token: Der Wert darf nicht dort landen, wo ihn Fremde lesen. Genau das war
+    # B5-03 — er stand in der Datei, die die fail2ban-Jail liest und logrotate archiviert.
+    token_datei = str(getattr(config, "admin_claim_token_file", "") or "").strip()
+    seclog_datei = str(getattr(config, "security_log", "") or "").strip()
+    if token_datei and seclog_datei and os.path.abspath(token_datei) == os.path.abspath(seclog_datei):
+        fehler.append(
+            "admin_claim_token_file und security_log zeigen auf dieselbe Datei. Damit stünde das "
+            "Erst-Admin-Einmal-Token wieder in dem Log, das fail2ban liest, logrotate archiviert "
+            "und ein Log-Versand mitnimmt — wer es liest, wird Admin. Für den Token eine eigene "
+            "Datei nehmen (z.B. /run/<dienst>/admin-claim.token) oder das Feld leer lassen, dann "
+            "geht der Wert auf stderr.")
+    if token_datei and (int(getattr(config, "admin_claim_ttl_min", 0) or 0) <= 0
+                        or not _an(config, "admin_enabled")):
+        warnungen.append(
+            "admin_claim_token_file ist gesetzt, aber der Token-Weg ist aus "
+            "(admin_claim_ttl_min=0 oder admin_enabled=False) — die Datei wird nie geschrieben. "
+            "Der Erst-Admin kommt dann nur über admin_identifiers oder einen eigenen Aufruf "
+            "von auth.ensure_admin(…) zustande — das CLI kann keine Konten anlegen.")
+
+    # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
+    # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine
+    # Adresse bleibt erlaubt — aber sie trägt die Entscheidung nur mit Beleg, und einen Beleg
+    # gibt es allein bei OIDC (`email_verified`). SAML und LDAP kennen keinen: Kein
+    # Standardattribut sagt, dass die Adresse geprüft wurde, und ein `mail`-Attribut pflegt
+    # der Nutzer in vielen Verzeichnissen selbst. Die Laufzeit befördert dort deshalb nie
+    # (fail-closed, F-14) — wer den ersten Admin über diesen Weg erwartet, wartet umsonst.
+    # Warnung, nicht Fehler: Derselbe Aufbau ist mit einem lokalen Passwort-Login (bestätigte
+    # Adresse) völlig tragfähig, und der Betreiber soll nur wissen, welcher Weg zählt.
+    allowlist_adressen = sorted({str(i).strip() for i in
+                                 (getattr(config, "admin_identifiers", None) or [])
+                                 if "@" in str(i)})
+    ohne_beleg = [name for an, anlegen, name in (("saml_enabled", "saml_auto_create", "SAML"),
+                                                 ("ldap_enabled", "ldap_auto_create", "LDAP"))
+                  if _an(config, an) and _an(config, anlegen)]
+    if allowlist_adressen and ohne_beleg:
+        warnungen.append(
+            f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
+            + " und ".join(ohne_beleg) +
+            " legt Konten beim ersten Login selbst an. Über diese Wege wird die Adresse NIE "
+            "zum Erst-Admin: Weder SAML noch LDAP liefern einen Bestätigungsbeleg für eine "
+            "Adresse (bei OIDC ist es der Claim email_verified), und ohne Beleg befördert "
+            "TinySesam nicht — sonst genügte ein IdP mit Selbstregistrierung oder ein "
+            "Verzeichnis, in dem der Nutzer sein mail-Attribut selbst pflegt. Der belegte "
+            "Weg ist das Einmal-Token: anmelden, dann /auth/claim-admin (s. "
+            "admin_claim_ttl_min); danach vergibt der Erst-Admin die Rechte selbst. Ein "
+            "lokaler Passwort-Login mit bestätigter Adresse befördert weiterhin.")
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
