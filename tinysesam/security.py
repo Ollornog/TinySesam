@@ -336,8 +336,12 @@ _GEMELDETE_PEERS: set = set()
 _GEMELDET_MAX = 512
 _GEMELDET_FENSTER_SEK = 3600
 _GEMELDET: set = set()
-_GEMELDET_FENSTER_BEGINN = 0.0
-_GEMELDET_UEBERLAUF = False
+
+#: Beginn des laufenden Fensters und ob der Deckel darin schon gemeldet wurde. Bewusst ein dict
+#: und keine zwei Modul-Variablen: Die müssten in jeder schreibenden Funktion `global` heissen,
+#: und eine per `global` gesetzte Variable liest CodeQL als ungenutzt (py/unused-global-variable)
+#: — ein Fehlalarm, den man sonst je Fassung neu abweisen müsste.
+_GEMELDET_FENSTER = {"beginn": 0.0, "ueberlauf": False}
 
 
 def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
@@ -358,17 +362,16 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
     `jetzt` ist nur für Tests da: So lässt sich der Fensterwechsel prüfen, ohne eine Stunde zu
     warten (ein Test, der schläft, ist kein Test).
     """
-    global _GEMELDET_FENSTER_BEGINN, _GEMELDET_UEBERLAUF
     t = time.time() if jetzt is None else float(jetzt)
-    if t - _GEMELDET_FENSTER_BEGINN >= _GEMELDET_FENSTER_SEK:
+    if t - _GEMELDET_FENSTER["beginn"] >= _GEMELDET_FENSTER_SEK:
         _GEMELDET.clear()
-        _GEMELDET_FENSTER_BEGINN = t
-        _GEMELDET_UEBERLAUF = False
+        _GEMELDET_FENSTER["beginn"] = t
+        _GEMELDET_FENSTER["ueberlauf"] = False
     if schluessel in _GEMELDET:
         return False
     if len(_GEMELDET) >= _GEMELDET_MAX:
-        if not _GEMELDET_UEBERLAUF:
-            _GEMELDET_UEBERLAUF = True
+        if not _GEMELDET_FENSTER["ueberlauf"]:
+            _GEMELDET_FENSTER["ueberlauf"] = True
             # Direkt und nicht über `einmal_melden()` — sonst geriete die Meldung über den
             # Deckel in denselben Deckel. Genau eine Zeile je Fenster.
             seclog.warning(
@@ -384,10 +387,9 @@ def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
 
 def einmal_melden_zuruecksetzen() -> None:
     """Den Hinweis-Speicher leeren (Tests, und ein Betrieb, der bewusst neu hören will)."""
-    global _GEMELDET_FENSTER_BEGINN, _GEMELDET_UEBERLAUF
     _GEMELDET.clear()
-    _GEMELDET_FENSTER_BEGINN = 0.0
-    _GEMELDET_UEBERLAUF = False
+    _GEMELDET_FENSTER["beginn"] = 0.0
+    _GEMELDET_FENSTER["ueberlauf"] = False
 
 
 def client_ip(request, trusted_nets) -> str:

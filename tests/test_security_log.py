@@ -426,7 +426,10 @@ try:
                               passkey_enabled=False, base_url="https://wer:was@auth.example.com"))
     raise AssertionError("die veränderte Adresse wurde nicht gemeldet")
 except ConfigError as _e:
-    assert "wird als" in str(_e) and "https://auth.example.com" in str(_e), str(_e)[:200]
+    # Auf den kanonischen Wert in seiner Zitierform geprüft, nicht per Teilzeichenkette: sonst
+    # genügte "https://auth.example.com.angreifer.test" irgendwo im Text (CodeQL
+    # py/incomplete-url-substring-sanitization).
+    assert "wird als" in str(_e) and repr("https://auth.example.com") in str(_e), str(_e)[:200]
 ok("base_url wird nach derselben Regel geprüft wie eine abgeleitete Basis (C-7)")
 
 # ---------------------------------------------------------------------------
