@@ -2125,7 +2125,20 @@ class TinySesam:
         relativ, der Browser löst sie gegen den aufgerufenen Host auf).
         """
         if self.cfg.base_url:
-            return str(self.cfg.base_url).strip().rstrip("/")
+            # Auch die KONFIGURIERTE Basis läuft durch dieselbe Formprüfung wie die abgeleitete
+            # (C-7). Vorher sah sie nur `strip().rstrip("/")`: `https://wer:was@auth.example`
+            # stand damit in jedem Reset-Link und in jeder Redirect-URI, ein Fragment schnitt
+            # den angehängten Token ab. `konfigpruefung` weist beides schon beim Aufbau ab —
+            # diese Zeile ist der Boden darunter, denn eine Config lässt sich nach dem
+            # Konstruktor noch verändern.
+            basis = security.normalisiere_basis(str(self.cfg.base_url))
+            if not basis:
+                raise StateError(
+                    "base_url ist gesetzt, aber keine brauchbare Basis-Adresse: "
+                    f"{str(self.cfg.base_url)!r}. Erwartet wird Schema http/https und ein Host, "
+                    "ohne Benutzerangabe, Abfrage oder Fragment (erlaubt ist ein Unterpfad, z.B. "
+                    "\"https://example.com/sso\"). Geraten wird hier nichts.")
+            return basis
         roh = str(kandidat or (str(request.base_url) if request is not None else "")).strip()
         basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
         if not basis and roh and security.einmal_melden("public_base:" + _host_aus(roh)):
@@ -2219,10 +2232,17 @@ class TinySesam:
         basis = self.public_base(kandidat=roh)
         # Ersetzt wird still — aber nicht lautlos: Wer eine andere Adresse übergibt als die, die
         # am Ende im Link steht, hat entweder den Request durchgereicht (dann ist das genau der
-        # Schutz) oder sich vertan (dann sucht er sonst lange). Einmal je Host, nicht je Anfrage:
-        # der Wert kommt bei diesem Muster aus dem `Host`-Header.
-        if basis and roh and _host_aus(roh) and _host_aus(roh) != _host_aus(basis) \
-                and security.einmal_melden("gepruefte_basis:" + _host_aus(roh)):
+        # Schutz) oder sich vertan (dann sucht er sonst lange). Einmal je Adresse, nicht je
+        # Anfrage: der Wert kommt bei diesem Muster aus dem `Host`-Header.
+        #
+        # Verglichen wird die **ganze** Basis, nicht nur der Host (C-5): Eine App unter einem
+        # Unterpfad, die `https://auth.example/falsch` übergibt, während `base_url` auf
+        # `https://auth.example/sso` steht, bekam vorher keine Zeile — gleicher Host, also
+        # schwieg die Stelle. Genau dieser Fall (falsches Präfix → 404 beim Empfänger) ist der,
+        # den der CHANGELOG verspricht zu melden.
+        _vergleich = security.normalisiere_basis(roh) or roh.rstrip("/")
+        if basis and roh and _vergleich != basis \
+                and security.einmal_melden("gepruefte_basis:" + _vergleich):
             security.seclog.warning(
                 "Übergebene Basis-Adresse %s wird durch base_url (%s) ersetzt — base_url ist die "
                 "Zusage des Betreibers und gewinnt immer. Kommt der Wert aus str(request.base_url), "

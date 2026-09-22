@@ -318,13 +318,45 @@ assert _hinweiszeilen(log8, "zweiter.example.com") == 1, \
 ok("...ein anderer Host wird trotzdem gemeldet (still ist nicht dasselbe wie stumm)")
 
 # Der Deckel: Der Schlüssel kommt aus der Anfrage. Wer den Host-Header durchprobiert, darf weder
-# die Datei noch den Speicher füllen — ab `_GEMELDET_MAX` schweigt die Stelle ganz.
-security._GEMELDET.clear()
-assert all(security.einmal_melden(f"probe:{i}") for i in range(security._GEMELDET_MAX))
-assert not security.einmal_melden("probe:noch einer"), "ohne Deckel füllt ein Angreifer den Speicher"
-assert not security.einmal_melden("probe:0"), "derselbe Schlüssel meldet sich nicht zweimal"
-security._GEMELDET.clear()
+# die Datei noch den Speicher füllen — ab `_GEMELDET_MAX` schweigt die Stelle.
+security.einmal_melden_zuruecksetzen()
+T0 = 1_000_000.0
+assert all(security.einmal_melden(f"probe:{i}", jetzt=T0) for i in range(security._GEMELDET_MAX))
+assert not security.einmal_melden("probe:noch einer", jetzt=T0), "ohne Deckel füllt ein Angreifer den Speicher"
+assert not security.einmal_melden("probe:0", jetzt=T0), "derselbe Schlüssel meldet sich nicht zweimal"
 ok("einmal_melden() ist gedeckelt (der Schlüssel stammt aus der Anfrage)")
+
+# C-4: Der Deckel darf nicht für immer gelten. Vorher genügten 512 erfundene Host-Werte, um die
+# Stelle bis zum Neustart stillzulegen — danach blieb auch der Hinweis auf den ECHTEN
+# Betriebsfehler aus. Ein Angreifer konnte damit gezielt eine Warnung abschalten, nicht nur Lärm
+# machen. (Mutationsprobe: den Fensterwechsel in `einmal_melden` entfernen → die nächste Zeile
+# wird rot, der Rest der Suite bleibt grün.)
+assert security.einmal_melden("probe:nach dem Fenster", jetzt=T0 + security._GEMELDET_FENSTER_SEK), \
+    "nach dem Fenster muss die Stelle wieder sprechen"
+assert security.einmal_melden("probe:0", jetzt=T0 + security._GEMELDET_FENSTER_SEK), \
+    "der Speicher des alten Fensters ist geleert"
+assert len(security._GEMELDET) == 2, "das neue Fenster fängt bei null an, nicht bei 512"
+ok("...und der Deckel gilt je Zeitfenster, nicht für die Lebensdauer des Prozesses")
+
+# Und die Unterdrückung selbst ist sichtbar: genau eine Zeile je Fenster, sonst wäre „ab hier
+# schweige ich" ein zweites stilles Loch.
+security.einmal_melden_zuruecksetzen()
+_puffer_deckel = io.StringIO()
+_haken_deckel = logging.StreamHandler(_puffer_deckel)
+security.seclog.addHandler(_haken_deckel)
+try:
+    for i in range(security._GEMELDET_MAX):
+        security.einmal_melden(f"voll:{i}", jetzt=T0)
+    for i in range(3):
+        security.einmal_melden(f"zuviel:{i}", jetzt=T0)
+finally:
+    security.seclog.removeHandler(_haken_deckel)
+_text_deckel = _puffer_deckel.getvalue()
+assert _text_deckel.count("Hinweis-Deckel erreicht") == 1, \
+    f"genau eine Zeile je Fenster, nicht {_text_deckel.count('Hinweis-Deckel erreicht')}: {_text_deckel[:200]!r}"
+assert str(security._GEMELDET_MAX) in _text_deckel, _text_deckel[:200]
+security.einmal_melden_zuruecksetzen()
+ok("...und das Erreichen des Deckels wird einmal gemeldet (keine unsichtbare Unterdrückung)")
 
 # (5) Dieselbe Bremse für den umgekehrten Fall: Steht `base_url`, GEWINNT sie — auch gegen eine
 #     übergebene Basis auf einem zweiten eigenen Host. Ganz still wäre das eine Falle für den
@@ -342,9 +374,63 @@ for _ in range(5):
         "https://auth.example.com/"), "base_url muss auch gegen einen zweiten eigenen Namen gewinnen"
 with open(log9, encoding="utf-8") as fh:
     _ersetzt = [z for z in fh if "wird durch base_url" in z]
-assert len(_ersetzt) == 1, f"{len(_ersetzt)} Zeilen nach 5 Aufrufen — einmal je Host, nicht je Anfrage"
-security._GEMELDET.clear()
-ok("eine ersetzte Basis meldet sich einmal je Host (nicht still, nicht im Sturm)")
+assert len(_ersetzt) == 1, f"{len(_ersetzt)} Zeilen nach 5 Aufrufen — einmal je Adresse, nicht je Anfrage"
+security.einmal_melden_zuruecksetzen()
+ok("eine ersetzte Basis meldet sich einmal je Adresse (nicht still, nicht im Sturm)")
+
+# C-5: Derselbe Fall mit GLEICHEM Host, aber anderem Pfad. Der CHANGELOG verspricht eine Zeile,
+# wenn base_url eine abweichende Angabe ersetzt — geprüft wurde vorher nur der Host, also schwieg
+# genau der Fall, der beim Empfänger als 404 ankommt: eine unter `/sso` montierte App, deren
+# eigenes Formular `https://auth.example.com/falsch` durchreicht.
+# (Mutationsprobe: den Vergleich wieder auf `_host_aus(...)` zurückdrehen → die nächste
+# Zusicherung wird rot.)
+_abraeumen()
+tmp10 = tempfile.mkdtemp()
+log10 = os.path.join(tmp10, "security.log")
+auth10 = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                   security_log=log10, cookie_secure=False, passkey_enabled=False,
+                                   base_url="https://auth.example.com/sso"))
+security.einmal_melden_zuruecksetzen()
+for _ in range(4):
+    _link = auth10.magic_url("tok", "https://auth.example.com/falsch", "reset_password")
+    assert _link.startswith("https://auth.example.com/sso/"), _link
+_zeilen10 = [z for z in _lies(log10).splitlines() if "wird durch base_url" in z]
+assert len(_zeilen10) == 1, \
+    f"gleicher Host, anderer Pfad: {len(_zeilen10)} Zeilen — erwartet genau eine"
+assert "/falsch" in _zeilen10[0] and "/sso" in _zeilen10[0], _zeilen10[0][:200]
+
+# Gegenprobe: dieselbe Adresse wie base_url (nur mit Schrägstrich am Ende) ist keine Abweichung
+# und darf nicht melden — sonst wäre die Zeile Rauschen.
+security.einmal_melden_zuruecksetzen()
+_vorher10 = len(_lies(log10).splitlines())
+auth10.magic_url("tok", "https://auth.example.com/sso/", "reset_password")
+assert len(_lies(log10).splitlines()) == _vorher10, "eine identische Angabe ist keine Ersetzung"
+security.einmal_melden_zuruecksetzen()
+ok("...auch bei gleichem Host mit abweichendem Pfad (und Schweigen bei identischer Angabe)")
+
+# C-7: Die KONFIGURIERTE Basis läuft durch dieselbe Formprüfung wie die abgeleitete. Vorher sah
+# sie nur strip()/rstrip("/") — eine Benutzerangabe im Host stand damit in jedem Link, ein
+# Fragment hätte den angehängten Token abgeschnitten.
+for _kaputt in ("https://auth.example.com/x#y", "https://auth.example.com/x?y=1",
+                "https://auth.example.com/a/../b", "https://auth.example.com:99999", "auth.example.com"):
+    try:
+        TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                  cookie_secure=False, passkey_enabled=False,
+                                  base_url=_kaputt, oidc_enabled=False))
+        raise AssertionError(f"base_url={_kaputt!r} kam durch die Konfigurationsprüfung")
+    except ConfigError:
+        pass
+# Eine Benutzerangabe ist brauchbar, wird aber entfernt — das sagt die Prüfung, statt es still zu tun.
+try:
+    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"), cookie_secure=False,
+                              passkey_enabled=False, base_url="https://wer:was@auth.example.com"))
+    raise AssertionError("die veränderte Adresse wurde nicht gemeldet")
+except ConfigError as _e:
+    # Auf den kanonischen Wert in seiner Zitierform geprüft, nicht per Teilzeichenkette: sonst
+    # genügte "https://auth.example.com.angreifer.test" irgendwo im Text (CodeQL
+    # py/incomplete-url-substring-sanitization).
+    assert "wird als" in str(_e) and repr("https://auth.example.com") in str(_e), str(_e)[:200]
+ok("base_url wird nach derselben Regel geprüft wie eine abgeleitete Basis (C-7)")
 
 # ---------------------------------------------------------------------------
 # Runde 2: Ein Fehlgriff, der KEINE Anmeldung war, darf die mitgelieferte Jail nicht treffen.

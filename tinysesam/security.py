@@ -241,10 +241,17 @@ def eigener_host(host: str, allowed_hosts=None) -> bool:
 _PFAD_OK = re.compile(r"(?:/(?!\.{1,2}(?:/|$))[A-Za-z0-9._~-]+)+")
 
 
-def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
-    """Eine abgeleitete Basis-URL prüfen: Rückgabe ohne Schrägstrich am Ende, oder "" (fail closed).
+def normalisiere_basis(kandidat: str) -> str:
+    """Eine Basis-URL auf ihre **Form** prüfen und kanonisch zusammensetzen — oder "" (fail closed).
 
-    Leer heißt: es gibt keine vertrauenswürdige öffentliche Adresse. Nicht raten — abbrechen.
+    Beantwortet **nicht** die Frage, ob der Host der eigene ist; das macht `sichere_basis()`.
+    Getrennt seit 0.18.0, weil beide Zweige von `TinySesam.public_base()` dieselbe Form brauchen:
+    Bis dahin lief nur der **abgeleitete** Zweig hier durch, während ein konfiguriertes `base_url`
+    lediglich `strip().rstrip("/")` sah und die Konfigurationsprüfung es mit einem groben
+    Schema-und-Host-Muster abnahm. Damit kam durch, was hier scheitert: eine Benutzerangabe im Host
+    (`https://wer:was@auth.example` — sie stünde in jedem Reset-Link und in jeder Redirect-URI),
+    ein Fragment oder eine Abfrage, ein unzulässiger Port, ein Pfad mit `..` oder `//`. Eine Regel,
+    zwei Aufrufer — nicht zwei Regelwerke, von denen eines schwächer ist.
 
     Der **Pfadanteil kommt mit**: `request.base_url` trägt den `root_path` des ASGI-Servers
     (uvicorn `--root-path`, ein `Mount`), und bis 0.18.x warf diese Funktion ihn weg. Wer die
@@ -262,8 +269,13 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
         return ""
     if teile.scheme not in ("http", "https") or not teile.netloc:
         return ""
+    # Abfrage und Fragment gehören nicht in eine Basis: Was hinten angehängt wird (Token, Pfad),
+    # stünde sonst HINTER dem `#` und erreichte den Server nie — der Link sähe gültig aus und
+    # führte ins Leere.
+    if teile.query or teile.fragment:
+        return ""
     host = teile.hostname or ""
-    if not eigener_host(host, allowed_hosts):
+    if not host:
         return ""
     # Neu zusammengesetzt statt `netloc` übernommen: eine Benutzerangabe im Host
     # (`https://vertraut.example@…`) wäre sonst Teil jedes ausgehenden Links. Geprüft wird
@@ -280,6 +292,25 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
     return f"{teile.scheme}://{host}" + (f":{port}" if port else "") + pfad
 
 
+def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
+    """Eine **abgeleitete** Basis-URL prüfen: Form (`normalisiere_basis`) **und** eigener Host.
+
+    Leer heißt: es gibt keine vertrauenswürdige öffentliche Adresse. Nicht raten — abbrechen.
+    Der Unterschied zu `normalisiere_basis()` ist die Herkunft: Was aus dem `Host`-Header kommt,
+    muss zusätzlich belegen, dass es ein eigener Name ist (R4-01/CWE-644).
+    """
+    roh = str(kandidat or "").strip()
+    if not roh:
+        return ""
+    try:
+        host = urlsplit(roh).hostname or ""
+    except Exception:
+        return ""
+    if not eigener_host(host, allowed_hosts):
+        return ""
+    return normalisiere_basis(roh)
+
+
 def is_trusted(ip: str, trusted_nets) -> bool:
     try:
         addr = ipaddress.ip_address(ip)
@@ -294,13 +325,26 @@ _GEMELDETE_PEERS: set = set()
 
 #: Schlüssel, zu denen schon eine Hinweiszeile im Security-Log steht (`einmal_melden`).
 #: Gedeckelt: Der Schlüssel stammt aus der Anfrage, und wer den `Host`-Header durchprobiert,
-#: soll weder die Datei noch den Speicher füllen. Ist der Deckel erreicht, ist die Aussage
-#: längst angekommen — dann schweigt die Stelle ganz.
+#: soll weder die Datei noch den Speicher füllen.
+#:
+#: Der Deckel gilt **je Zeitfenster**, nicht für die Lebensdauer des Prozesses (C-4, 0.18.0):
+#: Vorher genügten 512 erfundene `Host`-Werte, um die Stelle bis zum Neustart stillzulegen —
+#: danach blieb auch der Hinweis auf den **echten** Betriebsfehler aus. Ein Angreifer konnte
+#: also nicht nur Lärm machen, sondern gezielt eine Warnung abschalten. Jetzt beginnt nach
+#: `_GEMELDET_FENSTER_SEK` ein neues Fenster, und das Erreichen des Deckels sagt einmal laut,
+#: dass ab hier geschwiegen wird — eine unsichtbare Unterdrückung wäre dasselbe Loch.
 _GEMELDET_MAX = 512
+_GEMELDET_FENSTER_SEK = 3600
 _GEMELDET: set = set()
 
+#: Beginn des laufenden Fensters und ob der Deckel darin schon gemeldet wurde. Bewusst ein dict
+#: und keine zwei Modul-Variablen: Die müssten in jeder schreibenden Funktion `global` heissen,
+#: und eine per `global` gesetzte Variable liest CodeQL als ungenutzt (py/unused-global-variable)
+#: — ein Fehlalarm, den man sonst je Fassung neu abweisen müsste.
+_GEMELDET_FENSTER = {"beginn": 0.0, "ueberlauf": False}
 
-def einmal_melden(schluessel: str) -> bool:
+
+def einmal_melden(schluessel: str, jetzt: float | None = None) -> bool:
     """True genau beim ersten Aufruf mit diesem Schlüssel, danach False — gegen Log-Stürme.
 
     Dieselbe Idee wie `_GEMELDETE_PEERS` in `client_ip()`, nur allgemein: Ein Hinweis auf eine
@@ -313,12 +357,39 @@ def einmal_melden(schluessel: str) -> bool:
     vollständige URL) — sonst hebt jeder neue Pfad die Sperre wieder auf.
 
     Der Zustand ist prozessweit: Ein Test, der die Zeile sehen will, leert `_GEMELDET` vorher
-    (Tests müssen wiederholbar bleiben).
+    (Tests müssen wiederholbar bleiben) — dafür gibt es `einmal_melden_zuruecksetzen()`.
+
+    `jetzt` ist nur für Tests da: So lässt sich der Fensterwechsel prüfen, ohne eine Stunde zu
+    warten (ein Test, der schläft, ist kein Test).
     """
-    if schluessel in _GEMELDET or len(_GEMELDET) >= _GEMELDET_MAX:
+    t = time.time() if jetzt is None else float(jetzt)
+    if t - _GEMELDET_FENSTER["beginn"] >= _GEMELDET_FENSTER_SEK:
+        _GEMELDET.clear()
+        _GEMELDET_FENSTER["beginn"] = t
+        _GEMELDET_FENSTER["ueberlauf"] = False
+    if schluessel in _GEMELDET:
+        return False
+    if len(_GEMELDET) >= _GEMELDET_MAX:
+        if not _GEMELDET_FENSTER["ueberlauf"]:
+            _GEMELDET_FENSTER["ueberlauf"] = True
+            # Direkt und nicht über `einmal_melden()` — sonst geriete die Meldung über den
+            # Deckel in denselben Deckel. Genau eine Zeile je Fenster.
+            seclog.warning(
+                "Hinweis-Deckel erreicht: %d verschiedene Schlüssel in diesem Fenster (%d s). "
+                "Weitere Hinweise dieser Art bleiben bis zum Fensterwechsel aus. Wer den "
+                "Host-Header durchprobiert, erzeugt genau dieses Bild — steht base_url, ist "
+                "der Host-Header ohnehin ohne Wirkung.",
+                _GEMELDET_MAX, _GEMELDET_FENSTER_SEK)
         return False
     _GEMELDET.add(schluessel)
     return True
+
+
+def einmal_melden_zuruecksetzen() -> None:
+    """Den Hinweis-Speicher leeren (Tests, und ein Betrieb, der bewusst neu hören will)."""
+    _GEMELDET.clear()
+    _GEMELDET_FENSTER["beginn"] = 0.0
+    _GEMELDET_FENSTER["ueberlauf"] = False
 
 
 def client_ip(request, trusted_nets) -> str:

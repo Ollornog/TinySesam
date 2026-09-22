@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import re
 
+from . import security
+
 #: Verfahren → welches Config-Feld es einschaltet. Dieselbe Liste bedient die Ketten-Prüfung.
 VERFAHREN = {
     "password": "password_enabled",
@@ -210,12 +212,29 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     # Config-Objekt, BEVOR `TinySesam(config)` läuft — anders als `set_mailer()` gibt es dafür
     # keinen Nachreich-Weg, denn ohne Basis endet der erste Klick auf „Passwort vergessen"
     # bereits im Nichts.
+    # Geprüft wird mit **derselben** Funktion, die `public_base()` später anwendet
+    # (`security.normalisiere_basis`), nicht mit einem eigenen, schwächeren Muster: Ein grobes
+    # Schema-und-Host-Muster nahm `https://wer:was@auth.example` und `https://auth.example/x#y`
+    # ab — beides stünde danach in jedem Reset-Link, und der Teil hinter `#` erreicht nicht
+    # einmal den Server. Zwei Regelwerke für dieselbe Frage sind eines zu viel (C-7).
     _basis = str(getattr(config, "base_url", "") or "").strip()
-    if _basis and not re.match(r"^https?://[^/\s?#]+", _basis):
+    _kanonisch = security.normalisiere_basis(_basis)
+    if _basis and _kanonisch and _kanonisch != _basis.rstrip("/"):
+        # Die Adresse ist brauchbar, aber sie wird unterwegs verändert — das sagen wir hier,
+        # statt es still zu tun. Häufigster Fall: eine Benutzerangabe im Host
+        # (`https://wer:was@auth.example`), die aus jedem ausgehenden Link entfernt wird.
         fehler.append(
-            f"base_url={_basis!r} ist keine absolute Adresse mit Schema und Host (erwartet z.B. "
-            "\"https://auth.example.com\"). Jeder daraus gebaute Link wäre kaputt — ohne Fehler, "
-            "ohne Logzeile, erst beim Empfänger.")
+            f"base_url={_basis!r} wird als {_kanonisch!r} verwendet — die Adresse ist nicht in "
+            "der Form, in der sie in Links steht. Bitte genau den zweiten Wert eintragen, damit "
+            "Konfiguration und Wirklichkeit dasselbe sagen.")
+    if _basis and not _kanonisch:
+        fehler.append(
+            f"base_url={_basis!r} ist keine brauchbare Basis-Adresse (erwartet z.B. "
+            "\"https://auth.example.com\", mit Unterpfad \"https://example.com/sso\"). Verlangt "
+            "sind Schema http/https und ein Host; nicht erlaubt sind Benutzerangabe im Host, "
+            "Abfrage (?) oder Fragment (#), ein unzulässiger Port und ein Pfad mit \"..\" oder "
+            "\"//\". Jeder daraus gebaute Link wäre kaputt — ohne Fehler, ohne Logzeile, erst "
+            "beim Empfänger.")
     if not _basis:
         betroffen = [wofuer for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
         if betroffen:
