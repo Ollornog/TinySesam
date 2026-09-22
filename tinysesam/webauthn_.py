@@ -17,7 +17,7 @@ from fastapi.responses import Response, JSONResponse
 _WAFLOW = "tinysesam_waflow"
 
 
-from . import errors
+from . import errors, security
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -38,6 +38,25 @@ def register_passkey_routes(router, auth):
     from webauthn.helpers.structs import (PublicKeyCredentialDescriptor, AuthenticatorSelectionCriteria,
                                           ResidentKeyRequirement, UserVerificationRequirement)
     from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+
+    def _uv_anforderung(cfg):
+        """Die Nutzerprüfung als WebAuthn-Wert — `required` (Vorgabe) oder `preferred` (B2-10).
+
+        Ein Passkey meldet in TinySesam **allein** an. Ohne Nutzerprüfung belegt er nur den
+        Besitz des Schlüssels: der entsperrte Rechner, der eingesteckte Stick, das kurz aus der
+        Hand gelegte Telefon. Deshalb ist `required` die Vorgabe — und die Antwort wird beim
+        Login auch geprüft, nicht nur erbeten."""
+        art = str(getattr(cfg, "passkey_user_verification", "required") or "required")
+        return (UserVerificationRequirement.REQUIRED if art == "required"
+                else UserVerificationRequirement.PREFERRED)
+
+    if str(getattr(cfg, "passkey_user_verification", "required")) != "required":
+        security.seclog.warning(
+            "passkey_user_verification=%r: Ein Passkey ohne Nutzerprüfung meldet allein an und "
+            "belegt dann nur den Besitz des Schlüssels — ein entsperrter Rechner oder ein "
+            "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für alte "
+            "Authentikatoren; für einen neuen Bestand gehört der Wert auf 'required'.",
+            cfg.passkey_user_verification)
 
     def _set_flow_cookie(resp, fk):
         resp.set_cookie(_WAFLOW, fk, max_age=300, httponly=True, secure=cfg.cookie_secure,
@@ -62,7 +81,7 @@ def register_passkey_routes(router, auth):
             user_display_name=u["display_name"] or u["username"],
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.PREFERRED,
-                user_verification=UserVerificationRequirement.PREFERRED),
+                user_verification=_uv_anforderung(cfg)),
             exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(c["credential_id"]))
                                  for c in existing],
         )
@@ -96,14 +115,23 @@ def register_passkey_routes(router, auth):
         auth.store.add_webauthn(flow["user_id"], bytes_to_base64url(v.credential_id),
                                 bytes_to_base64url(v.credential_public_key), v.sign_count,
                                 transports, name or "Passkey")
+        # Ein neuer Passkey ist ein neuer vollwertiger Login-Weg an diesem Konto. Bis 0.18.x
+        # entstand er spurlos — wer ihn sich heimlich einrichtete, hinterliess nichts (B5-01).
+        auth.audit("passkey_create", u["username"], auth.client_ip(request),
+                   f"name={name or 'Passkey'}")
         return {"ok": True}
 
     # ---------- Passwortloser Login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
     def login_begin(request: Request):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
+        # Drosselung wie an jedem anderen Login-Einstieg (B2-10). Ohne sie war dies die einzige
+        # Anmeldestrecke ohne Bremse: Jeder Aufruf legte zudem eine `flow`-Zeile an, die erst
+        # nach fünf Minuten verfällt — ein bequemer Weg, die Datenbank wachsen zu lassen.
+        if not auth.rate_ok(auth.client_ip(request)):
+            raise HTTPException(429, auth.t("err.rate"))
         opts = generate_authentication_options(rp_id=cfg.rp_id,
-                                               user_verification=UserVerificationRequirement.PREFERRED)
+                                               user_verification=_uv_anforderung(cfg))
         fk = secrets.token_urlsafe(24)
         auth.store.put_flow("walogin:" + fk, {"challenge": bytes_to_base64url(opts.challenge)}, ttl=300)
         resp = Response(content=options_to_json(opts), media_type="application/json")
@@ -117,16 +145,44 @@ def register_passkey_routes(router, auth):
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_login_expired"))
+        ip_roh = auth.client_ip(request)
+        if not auth.rate_ok(ip_roh):
+            raise HTTPException(429, auth.t("err.rate"))
         body = await request.body()
         data = _json.loads(body)
         row = auth.store.get_webauthn_by_credid(data.get("id") or data.get("rawId"))
         if not row:
+            # Ein unbekannter Schlüssel ist ein Fehlversuch wie jeder andere — mit dem
+            # Ereigniswort, auf das die fail2ban-Jail matcht. Bis 0.18.x hinterliess der
+            # Passkey-Pfad überhaupt keine Spur: weder Anlage noch Löschung noch Fehlanmeldung
+            # (B2-10, B5-01). Wer hier durchprobierte, tat das unbeobachtet.
+            security.seclog.warning("%s user=%s ip=%s method=passkey grund=unbekannter_schluessel",
+                                    security.log_ereignis("passkey"), "?",
+                                    security.fuer_log(ip_roh))
+            auth.audit("passkey_unknown", None, ip_roh)
             raise HTTPException(400, auth.t("api.passkey_unknown"))
-        v = verify_authentication_response(
-            credential=body.decode(), expected_challenge=base64url_to_bytes(flow["challenge"]),
-            expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,
-            credential_public_key=base64url_to_bytes(row["public_key"]),
-            credential_current_sign_count=row["sign_count"], require_user_verification=False)
+        try:
+            v = verify_authentication_response(
+                credential=body.decode(), expected_challenge=base64url_to_bytes(flow["challenge"]),
+                expected_rp_id=cfg.rp_id, expected_origin=cfg.origin,
+                credential_public_key=base64url_to_bytes(row["public_key"]),
+            credential_current_sign_count=row["sign_count"],
+            # Die Antwort des Authenticators wird jetzt auch GEPRÜFT. Vorher stand in der
+            # Anfrage „preferred" und hier `False`: Ein Authenticator konnte also nein sagen,
+            # und der Login galt trotzdem — die Bitte war unverbindlich in beide Richtungen.
+                require_user_verification=(str(cfg.passkey_user_verification) == "required"))
+        except Exception as e:
+            # Signatur falsch, Challenge alt, Nutzerprüfung verweigert — für den Angreifer alles
+            # dasselbe, für das Protokoll nicht. Der Typ der Ausnahme reicht: Ihr Text kann den
+            # Inhalt der Anfrage tragen und gehört damit nicht in eine Zeile, die fail2ban liest.
+            besitzer = auth.store.get_user(row["user_id"])
+            security.seclog.warning("%s user=%s ip=%s method=passkey grund=%s",
+                                    security.log_ereignis("passkey"),
+                                    security.fuer_log(str(besitzer["username"]) if besitzer else "?"),
+                                    security.fuer_log(ip_roh), type(e).__name__)
+            auth.audit("passkey_failed", str(besitzer["username"]) if besitzer else None, ip_roh,
+                       f"grund={type(e).__name__}")
+            raise HTTPException(400, auth.t("api.passkey_unknown"))
         auth.store.update_webauthn_signcount(row["id"], v.new_sign_count)
         # client_ip, nicht request.client.host: Hinter einem Reverse-Proxy ist der Peer der
         # Proxy. Die rohe Peer-IP landete sonst in der Sitzungsliste und im Protokoll — und
@@ -156,4 +212,6 @@ def register_passkey_routes(router, auth):
         u = auth.require_mfa(request)
         b = await auth.json_body(request)
         auth.store.delete_webauthn(int(b["id"]), u["id"])
+        # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
+        auth.audit("passkey_delete", u["username"], auth.client_ip(request), f"id={b['id']}")
         return {"ok": True}
