@@ -160,8 +160,9 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   `/auth/password` prüfte für die Sitzung des Fremden sein Geheimnis statt des eigenen: ein
   Passwort-Orakel ohne Drossel, Sperre und Protokollzeile. Beide Kennungen müssen jetzt **kreuzweise**
   frei sein; die Prüfung sitzt in `create_user` und gilt damit für jeden Weg — Registrierung,
-  Admin-API, Einladung, CLI und die automatische Anlage aus OIDC/LDAP/SAML, die fail-closed
-  scheitert, statt eine fremde Kennung zu überschreiben. `/auth/password` prüft zusätzlich gegen die
+  Admin-API, Einladung, Erst-Admin, Service-Konten und die automatische Anlage aus
+  OIDC/LDAP/SAML, die fail-closed scheitert, statt eine fremde Kennung zu überschreiben.
+  (Das CLI stand hier zunächst mit in der Liste — es kann gar keine Konten anlegen.) `/auth/password` prüft zusätzlich gegen die
   **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
   nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`. Gefunden im dritten
   Audit (R4-12 aus T-13).
@@ -173,9 +174,23 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   (`check_password(u["username"], …)` → `find_user`) statt über die ID der eigenen Sitzung: Wer ein
   Konto besitzt, dessen Benutzername der E-Mail eines anderen gleicht, riet darüber das Passwort
   **dieses fremden Kontos** — und ein Treffer setzte still das eigene Passwort, blieb also auch im
-  Erfolg unsichtbar. Jetzt: `verify_user_password(u["id"], …)` plus `rate_ok` → `is_locked` →
-  `record_login(…, "password_change")`; die eigene Methode sorgt dafür, dass ein Treffer hier die
-  Fehlversuche des Login-Pfads nicht wegräumt. Belege in `tests/test_hardening.py`.
+  Erfolg unsichtbar. Jetzt: `verify_user_password(u["id"], …)` plus `rate_ok` →
+  `is_password_change_locked` → `record_login(…, "password_change")`; die eigene Methode sorgt
+  dafür, dass ein Treffer hier die Fehlversuche des Login-Pfads nicht wegräumt.
+  Die Sperre ist ein **eigener, methodengebundener Topf** mit eigener Schwelle
+  (`password_change_max_attempts`, Vorgabe 5) — dieselbe Bauform wie der PIN-Zähler. Der erste
+  Anlauf hängte die Route an den Login-Lockout, und der zählt methodenblind: Fünf Tippfehler auf
+  der eigenen Kontoseite sperrten damit die **Anmeldung** für `lockout_window_sec`, samt der
+  Route, über die man die Sperre hätte abtragen können — und hinter NAT verriegelten drei
+  vertippte Kollegen über `ip_attempt_factor` den Login eines völlig unbeteiligten Vierten.
+  Deshalb zählt `is_locked` jetzt nur noch, was ein **Anmeldeversuch** war
+  (`security.NICHT_LOGIN_METHODEN` als Ausnahmeliste, damit eine neue Anmeldemethode von sich
+  aus mitzählt). Gedrosselt, gesperrt und protokolliert wird das Raten unverändert — nur eben
+  dort, wo geraten wurde. **Der Preis, offen gesagt:** Wer schon eine Sitzung hat, hat damit zwei
+  getrennte Töpfe (je 5 Versuche im Fenster) statt eines — das ist die Gegenleistung dafür, dass
+  ein Tippfehler auf der Kontoseite niemandem die Anmeldung verriegelt.
+  Neu: `auth.is_password_change_locked(username, ip)` und
+  `store.count_fails(..., exclude_methods=…)`. Belege in `tests/test_hardening.py`.
   Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Ein `GET` auf `/auth/totp/setup` konnte den bestätigten zweiten Faktor entfernen.** Die Seite
   rief `totp_begin()` unbedingt und schrieb ein frisches, unbestätigtes Geheimnis über das alte:

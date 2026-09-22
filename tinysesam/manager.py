@@ -338,8 +338,10 @@ class TinySesam:
 
         Benutzername und E-Mail müssen **kreuzweise** frei sein (`kennung_vergeben`) — sonst
         besetzt ein neues Konto die Login-Kennung eines bestehenden. Die Prüfung sitzt hier,
-        damit sie für JEDEN Weg gilt: Selbst-Registrierung, Admin-API, Einladung, CLI und die
-        automatische Anlage aus OIDC/LDAP/SAML."""
+        damit sie für JEDEN Weg gilt: Selbst-Registrierung, Admin-API, Einladung, Erst-Admin
+        (`ensure_admin`), Service-Konten (`create_service`) und die automatische Anlage aus
+        OIDC/LDAP/SAML. Das CLI ist bewusst nicht dabei: Es kann keine Konten anlegen
+        (`version`, `passwd`, `backup`, `restore`, `gc`, `audit`, `unlock`)."""
         username = (username or "").strip()
         email = norm_email(email)
         for feld, kennung in (("Benutzername", username), ("E-Mail-Adresse", email)):
@@ -910,6 +912,32 @@ class TinySesam:
         if username and self.store.count_fails(since, username=username, method="pin") >= limit:
             return True
         if ip and self.store.count_fails(since, ip=ip, method="pin") >= limit * self.sec("ip_attempt_factor"):
+            return True
+        return False
+
+    def is_password_change_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
+
+        Dieselbe Bauform wie `is_pin_locked`, aber mit eigener Schwelle
+        (`password_change_max_attempts`) und **getrennt vom Login-Lockout**: Raten bleibt
+        gedrosselt (R4-10 — die Route war ein stilles Passwort-Orakel), ein Tippfehler auf der
+        eigenen Kontoseite sperrt aber nicht die Anmeldung. Die Sperre gilt genau dort, wo
+        geraten wurde.
+
+        Die Abweisung wird hier gemeldet, nicht in der Route: Sonst verstummte das
+        Sicherheits-Log genau dann, wenn fail2ban die IP bannen soll (Begründung bei
+        `_abgewiesen`). Die IP-Schwelle liegt wie beim Login um `ip_attempt_factor` höher,
+        damit ein Büro hinter NAT nicht am ersten vertippten Kollegen hängt.
+        """
+        since = int(time.time()) - self.sec("lockout_window_sec")
+        limit = self.sec("password_change_max_attempts")
+        if username and self.store.count_fails(since, username=username,
+                                               method="password_change") >= limit:
+            self._abgewiesen(username, ip, "lockout_password_change")
+            return True
+        if ip and self.store.count_fails(since, ip=ip, method="password_change") >= \
+                limit * self.sec("ip_attempt_factor"):
+            self._abgewiesen(username, ip, "lockout_password_change_ip")
             return True
         return False
 
@@ -1518,12 +1546,22 @@ class TinySesam:
         return erlaubt
 
     def is_locked(self, username, ip) -> bool:
-        """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT)."""
+        """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
+
+        Gezählt wird alles in `login_attempt`, was ein **Anmeldeversuch** war; die Methoden aus
+        `security.NICHT_LOGIN_METHODEN` bleiben draussen. Sonst sperrt ein Fehlgriff, der gar
+        keine Anmeldung war, die Anmeldung mit — und zwar für einen Nutzer, der die Sperre nicht
+        abtragen kann (ein Erfolg räumt nur die eigene Methode weg). Der Zähler dieser Methoden
+        geht nicht verloren, er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
+        """
         since = int(time.time()) - self.sec("lockout_window_sec")
-        if username and self.store.count_fails(since, username=username) >= self.sec("max_login_attempts"):
+        ohne = security.NICHT_LOGIN_METHODEN
+        if username and self.store.count_fails(since, username=username,
+                                               exclude_methods=ohne) >= self.sec("max_login_attempts"):
             self._abgewiesen(username, ip, "lockout_user")
             return True
-        if ip and self.store.count_fails(since, ip=ip) >= self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
+        if ip and self.store.count_fails(since, ip=ip, exclude_methods=ohne) >= \
+                self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
             self._abgewiesen(username, ip, "lockout_ip")
             return True
         return False

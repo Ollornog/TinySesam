@@ -380,6 +380,12 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
   im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
+- **Methodengebundene Zähler neben dem Login-Lockout:** Die PIN (kurzer Keyspace,
+  `pin_max_attempts`) und die Alt-Passwort-Abfrage der Kontoseite
+  (`password_change_max_attempts`) haben einen **eigenen** Topf. Beides ist gedrosselt und
+  protokolliert, aber ein Fehlgriff dort sperrt die **Anmeldung** nicht: Sonst hätten ein paar
+  Tippfehler auf der eigenen Kontoseite den Nutzer ausgeschlossen — hinter NAT auch Kollegen,
+  die nichts damit zu tun hatten.
 - **Rate-Limiting:** Token-Bucket pro IP auf Login-/2FA-Endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** jeder Fehlversuch wird über den Logger `tinysesam.security` mit echter Client-IP geloggt
   (`failed login … ip=…`). Filter + Jail in [`deploy/fail2ban/`](../deploy/fail2ban/) → IP-Ban auf Firewall-Ebene.

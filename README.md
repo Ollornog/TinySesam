@@ -375,6 +375,11 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Brute-force throttling:** failed attempts per **user *and* IP** are counted; after `max_login_attempts`
   within the `lockout_window_sec` window the login is locked — this also blocks the *correct* password.
   Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
+- **Method-scoped counters next to the login lockout:** the PIN (short keyspace,
+  `pin_max_attempts`) and the account page's current-password prompt
+  (`password_change_max_attempts`) get their **own** pot. Both are throttled and logged, but a
+  wrong guess there does not lock the **login**: otherwise a few typos on your own account page
+  would lock you out — and behind NAT, colleagues who had nothing to do with it.
 - **Rate limiting:** token bucket per IP on the login/2FA endpoints (`rate_limit_max` / `rate_limit_window_sec`).
 - **fail2ban:** every failed attempt is logged via the `tinysesam.security` logger with the real client IP
   (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.

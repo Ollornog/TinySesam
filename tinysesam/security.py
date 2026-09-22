@@ -123,7 +123,24 @@ SECURITY_DEFAULTS = {
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
     "password_min_length": 8,
     "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
+    "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
 }
+
+# Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
+# Login-Lockout (`is_locked`) zählen dürfen.
+#
+# Warum überhaupt: Die Alt-Passwort-Abfrage der Kontoseite verbucht ihre Fehlversuche in
+# derselben Tabelle (R4-10 — sonst wäre sie ein stilles Orakel). `is_locked` zählte aber
+# methodenblind, und damit sperrten fünf Tippfehler auf der EIGENEN Kontoseite die Anmeldung
+# für 15 Minuten — abtragen konnte der Nutzer sie durch nichts, denn ein Erfolg räumt nur die
+# Fehlversuche derselben Methode weg. Hinter NAT reichten drei Kollegen mit je fünf Tippfehlern,
+# um einem völlig unbeteiligten Vierten den Login zu verriegeln (`ip_attempt_factor`).
+#
+# Bewusst eine **Ausnahmeliste**, keine Positivliste der Login-Methoden: Eine neue
+# Anmeldemethode zählt damit von sich aus mit. Eine vergessene Zeile kostet hier Bequemlichkeit
+# (eine Sperre zählt strenger als nötig), eine vergessene Zeile in einer Positivliste hätte ein
+# Loch im Lockout gekostet.
+NICHT_LOGIN_METHODEN = ("password_change",)
 
 
 def safe_next(next_: str, default: str = "/", allowed_hosts=None) -> str:

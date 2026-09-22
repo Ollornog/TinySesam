@@ -584,8 +584,16 @@ def build_router(auth) -> APIRouter:
         # Drossel, Sperre und Protokoll. Ohne ihn war diese Route ein stilles, unbegrenztes
         # Passwort-Orakel: beliebig viele Versuche, nie eine 429, keine Zeile im Sicherheits-
         # Log, kein Fehlversuch in `login_attempt` — während derselbe Fehlversuch am Login
-        # nach drei Anläufen sperrt (R4-10).
-        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip):
+        # nach wenigen Anläufen sperrt (R4-10; die Login-Schwelle ist `max_login_attempts`,
+        # Vorgabe 5 und im Panel einstellbar).
+        #
+        # Die Sperre ist ein EIGENER Topf (`is_password_change_locked`, eigene Schwelle
+        # `password_change_max_attempts`), nicht der des Logins: Mit dem geteilten Zähler
+        # sperrten fünf Tippfehler hier die Anmeldung für 15 Minuten — samt dieser Route, über
+        # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
+        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`rate_ok`),
+        # protokolliert auch.
+        if not auth.rate_ok(ip) or auth.is_password_change_locked(u["username"], ip):
             raise HTTPException(429, auth.t("api.too_many"))
         # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
         # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein

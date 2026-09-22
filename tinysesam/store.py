@@ -696,7 +696,14 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    def count_fails(self, since, username=None, ip=None, method=None) -> int:
+    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
+        """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
+
+        `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
+        was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
+        derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
+        (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+        """
         if not username and not ip:
             return 0
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
@@ -710,6 +717,10 @@ class Store:
         if method:
             q += " AND method=?"
             args.append(method)
+        if exclude_methods:
+            platz = ",".join("?" for _ in exclude_methods)
+            q += f" AND (method IS NULL OR method NOT IN ({platz}))"
+            args.extend(exclude_methods)
         return self._one(q, args)["c"]
 
     def clear_fails(self, username=None, ip=None, method=None):

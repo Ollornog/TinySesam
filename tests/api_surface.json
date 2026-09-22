@@ -41,6 +41,7 @@
     "install_https": "(app)",
     "is_admin": "(user) -> 'bool'",
     "is_locked": "(username, ip) -> 'bool'",
+    "is_password_change_locked": "(username, ip) -> 'bool'",
     "is_pin_locked": "(username, ip) -> 'bool'",
     "is_secure": "(request: 'Request') -> 'bool'",
     "issue_csrf": "(response: 'Response') -> 'str'",

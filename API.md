@@ -182,6 +182,10 @@ Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
 
 Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
 
+### `is_password_change_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
+
 ### `is_pin_locked(username, ip) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
