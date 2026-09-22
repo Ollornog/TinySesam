@@ -117,6 +117,35 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Ein erfundener `Host` kann keine Warnung mehr abschalten.** `security.einmal_melden()` hält
+  fest, worüber schon eine Hinweiszeile im Security-Log steht, damit ein Seitenaufruf mit zwanzig
+  Unterressourcen nicht zwanzig gleiche Zeilen schreibt. Der Schlüssel ist der **Host aus der
+  Anfrage**, und der Deckel von 512 Einträgen galt für die Lebensdauer des Prozesses: Wer 512
+  verschiedene `Host`-Werte durchprobierte, legte die Stelle bis zum Neustart still — danach blieb
+  auch der Hinweis auf den **echten** Betriebsfehler aus. Aus Lärm wurde so gezieltes Abschalten.
+  Der Deckel gilt jetzt je Zeitfenster (`_GEMELDET_FENSTER_SEK`, eine Stunde), und das Erreichen
+  des Deckels schreibt **eine** Zeile — eine unsichtbare Unterdrückung wäre dasselbe Loch noch
+  einmal. Gefunden beim Angriff auf die eigenen Fixes dieser Runde (C-4).
+
+- **`base_url` wird nach derselben Regel geprüft wie eine abgeleitete Basis.** Die Formprüfung
+  steht jetzt in `security.normalisiere_basis()`; `security.sichere_basis()` setzt nur noch die
+  Frage „ist das ein eigener Host?" davor. Vorher lief allein der **abgeleitete** Zweig durch die
+  Prüfung, während ein konfiguriertes `base_url` lediglich `strip().rstrip("/")` sah und die
+  Konfigurationsprüfung es mit einem groben Schema-und-Host-Muster abnahm. Damit kam durch, was im
+  anderen Zweig scheitert: eine Benutzerangabe im Host (`https://wer:was@auth.example` — sie stünde
+  in jedem Reset-Link und in jeder Redirect-URI), ein Fragment oder eine Abfrage (der angehängte
+  Token landete hinter dem `#` und erreichte den Server nie), ein unzulässiger Port, ein Pfad mit
+  `..`. Die Konfigurationsprüfung weist das jetzt beim Aufbau ab und meldet zusätzlich, wenn eine
+  brauchbare Adresse unterwegs **verändert** würde — mit dem Wert, den man stattdessen eintragen
+  sollte. `public_base()` normalisiert als Boden darunter (eine Config lässt sich nach dem
+  Konstruktor noch ändern). (C-7)
+
+- **Die Zusage „eine ersetzte Basis meldet sich" gilt auch bei gleichem Host.** Verglichen wurde
+  nur der Hostname, gemeldet also nur ein Wechsel des Namens. Eine unter `/sso` montierte App, die
+  ihrem eigenen Formular `https://auth.example.com/falsch` durchreicht, bekam keine Zeile — obwohl
+  genau dieses falsche Präfix beim Empfänger als 404 ankommt. Verglichen wird jetzt die ganze
+  normalisierte Basis. (C-5)
+
 - **Das ID-Token bestimmt nicht mehr selbst, wie es geprüft wird.** `authlib.jose.jwt` ist ein
   Dekoder mit Vorgabesatz, und dieser Satz enthält HS256: Wird beim Dekodieren kein Verfahren
   genannt, entscheidet der **Header des Tokens** — also der Absender. Bis authlib 1.3.0 liess sich
