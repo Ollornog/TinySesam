@@ -122,6 +122,10 @@ Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu
 
 Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
 
+### `darf_mfa_einrichten(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'`
+
+Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
+
 ### `disable_pin(user_id)`
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
@@ -161,6 +165,10 @@ Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL.
 ### `get_user(user_id) -> 'Optional[dict]'`
 
 Ein Konto per ID lesen, oder None.
+
+### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
+
+Ein Einrichtungsfenster öffnen und seinen Ablauf zurückgeben.
 
 ### `has_pin(user_id) -> 'bool'`
 
@@ -349,6 +357,10 @@ Ist diese Ressource für diesen Browser gerade freigeschaltet?
 ### `revoke_api_key(key_id, user_id=None)`
 
 Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen.
+
+### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
+
+Ein offenes Einrichtungsfenster sofort schliessen.
 
 ### `router()`
 
@@ -546,4 +558,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-119 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+122 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

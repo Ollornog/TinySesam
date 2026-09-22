@@ -349,6 +349,21 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "wird in /auth/forward geprüft — ohne Forward-Auth entsteht sie beim Login, wird "
             "danach aber von nichts abgefragt.")
 
+    # --- Selbst-Enrollment des zweiten Faktors (R3-1) ---
+    _arten = ("first_login", "grace", "strict")
+    _art = str(getattr(config, "mfa_enrollment", "") or "first_login")
+    if _art not in _arten:
+        fehler.append(
+            f"mfa_enrollment={_art!r} gibt es nicht. Erlaubt sind {list(_arten)}: 'first_login' "
+            "(Vorgabe, erlaubt bis zum ersten vollständigen Login), 'grace' (erlaubt "
+            "mfa_enrollment_grace_days ab Kontoanlage), 'strict' (nie — die Einrichtung kommt "
+            "dann vom Betreiber).")
+    if _art == "grace" and int(getattr(config, "mfa_enrollment_grace_days", 0) or 0) <= 0:
+        fehler.append(
+            "mfa_enrollment='grace', aber mfa_enrollment_grace_days ist 0 oder kleiner. Damit "
+            "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
+            "oder gleich mfa_enrollment='strict' schreiben.")
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
