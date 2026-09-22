@@ -10,6 +10,7 @@ Diese Suite fährt ohne Netz: Discovery, Token-Endpunkt und JWKS sind Attrappen.
 """
 from __future__ import annotations
 
+import re
 import sys
 import time
 import types
@@ -228,7 +229,8 @@ try:
     c5c, _ = discovery_client(200, {**META, "issuer": "https://attacker.example"})
     f = meta_fehler(c5c)
     r.check("fremder issuer im Dokument → ConfigError, beide Werte in der Meldung",
-            f is not None and "attacker.example" in f and "id.example.com" in f, f"Fehler: {f}")
+            f is not None and re.search(r"attacker\.example", f) and re.search(r"oidc_issuer=https://id\.example\.com\b", f),
+            f"Fehler: {f}")
 
     c5d, _ = discovery_client(302, {})
     f = meta_fehler(c5d)
