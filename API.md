@@ -198,6 +198,10 @@ CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.
 
 JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500. Erzwingt CSRF (Header X-CSRF-Token) für cookie-basierte Clients; API-Key-Requests sind ausgenommen.
 
+### `kennung_vergeben(kennung, exclude_id=None) -> 'Optional[dict]'`
+
+Gehört diese Login-Kennung schon einem Konto — in IRGENDEINEM der beiden Namensräume?
+
 ### `list_api_keys(user_id)`
 
 Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe.

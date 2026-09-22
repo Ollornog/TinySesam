@@ -59,9 +59,15 @@ r.check("wer sich unter der Admin-ADRESSE als Benutzername registriert, wird nic
         not auth_a.maybe_promote_admin(auth_a.get_user(angreifer)),
         "er ist Admin — der Wächter prüft die Konfiguration, der Vergleich etwas anderes")
 
-inhaber = auth_a.create_user("chefin", password="geheim12345", email="chef@example.com")
+# Eigene Instanz: seit R4-12 kann dieselbe Zeichenfolge nicht Benutzername des einen und
+# E-Mail des anderen sein. Der rechtmäßige Inhaber wird deshalb in einem sauberen Bestand
+# geprüft — die Frage hier ist die Beförderung, nicht die Eindeutigkeit.
+auth_a2, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
+                  signup_require_email=True, signup_verify_email=True,
+                  magiclink_enabled=True, smtp_host="mail.example.com")
+inhaber = auth_a2.create_user("chefin", password="geheim12345", email="chef@example.com")
 r.check("wer die Adresse wirklich hat, wird es weiterhin",
-        auth_a.maybe_promote_admin(auth_a.get_user(inhaber)),
+        auth_a2.maybe_promote_admin(auth_a2.get_user(inhaber)),
         "der vorgesehene Weg ist zu")
 
 # Und umgekehrt: Ein Eintrag OHNE @ gilt nur für den Benutzernamen.

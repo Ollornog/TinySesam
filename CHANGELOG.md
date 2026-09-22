@@ -121,6 +121,20 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Funktionen ohne sie läuft. **Für Betreiber:** Wer bisher ohne `base_url` fuhr, muss sie setzen —
   sonst gehen Mail-Links nicht mehr hinaus (fail closed, mit Logzeile und Konfigurations-Warnung).
   Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
+- **Eine fremde Registrierung konnte die Login-Kennung eines bestehenden Kontos besetzen.** Geprüft
+  wurden die beiden Namensräume nur getrennt — die Adresse gegen `users.email`, der Benutzername
+  gegen `users.username`. Im Vorgabe-Modus `login_identifier="both"` durchsucht die Anmeldung aber
+  **beide** Spalten und lässt bei einer Kennung mit `@` die E-Mail gewinnen: Wer die E-Mail eines
+  bestehenden Kontos als *Benutzernamen* eintrug — oder dessen Benutzernamen als E-Mail —, besetzte
+  dessen Kennung. Der Inhaber, auch ein Admin, bekam ab da 401 trotz richtigem Passwort, und
+  `/auth/password` prüfte für die Sitzung des Fremden sein Geheimnis statt des eigenen: ein
+  Passwort-Orakel ohne Drossel, Sperre und Protokollzeile. Beide Kennungen müssen jetzt **kreuzweise**
+  frei sein; die Prüfung sitzt in `create_user` und gilt damit für jeden Weg — Registrierung,
+  Admin-API, Einladung, CLI und die automatische Anlage aus OIDC/LDAP/SAML, die fail-closed
+  scheitert, statt eine fremde Kennung zu überschreiben. `/auth/password` prüft zusätzlich gegen die
+  **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
+  nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`. Gefunden im dritten
+  Audit (R4-12 aus T-13).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

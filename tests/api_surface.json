@@ -45,6 +45,7 @@
     "is_secure": "(request: 'Request') -> 'bool'",
     "issue_csrf": "(response: 'Response') -> 'str'",
     "json_body": "(request: 'Request') -> 'dict'",
+    "kennung_vergeben": "(kennung, exclude_id=None) -> 'Optional[dict]'",
     "list_api_keys": "(user_id)",
     "list_resource_secrets": "()",
     "login_redirect_after": "(request, token, user_id, nxt)",

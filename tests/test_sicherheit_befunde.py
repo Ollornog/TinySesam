@@ -1198,5 +1198,120 @@ r.check("konfigpruefung nennt das fehlende base_url",
 _fehler2, _warn2 = _kp.pruefe(auth_ok.cfg)
 r.check("mit gesetztem base_url schweigt sie dazu",
         not any("base_url ist leer" in w for w in _warn2), f"{_warn2!r}")
+# ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
+# Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
+# `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im
+# Vorgabe-Modus "both" aber in BEIDEN Spalten und lässt bei einem @ die E-Mail gewinnen. Damit
+# besetzte ein Fremder die Kennung eines bestehenden Kontos — der Inhaber (auch ein Admin) bekam
+# 401 trotz richtigem Passwort, und /auth/password prüfte fortan ein fremdes Geheimnis.
+
+PW_INHABER, PW_EVE = "Geheim12345!", "Angreifer12345!"
+
+
+def _anmelden(client, kennung, passwort=PW_INHABER):
+    return client.post("/auth/login", data={"username": kennung, "password": passwort, "next": "/"},
+                       follow_redirects=False)
+
+
+# Richtung 1: die E-MAIL des Fremden ist der Benutzername des Inhabers.
+auth_n1, app_n1 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
+chef1 = auth_n1.create_user("chef@example.com", password=PW_INHABER, is_admin=True)
+c_n1 = TestClient(app_n1)
+r.check("Vorbedingung: der Inhaber kommt mit seiner Kennung hinein",
+        _anmelden(c_n1, "chef@example.com").status_code == 303,
+        "ohne diesen Ausgangspunkt sagt der Rest der Prüfung nichts")
+c_n1.cookies.clear()
+
+angriff1 = c_n1.post("/auth/register",
+                     data={"username": "eve", "password": PW_EVE,
+                           "email": "chef@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung, deren E-MAIL der Benutzername eines Kontos ist, wird abgewiesen",
+        angriff1.status_code == 409, f"HTTP {angriff1.status_code} — die Kennung ist vergeben")
+r.check("...und legt kein Konto an", auth_n1.store.get_user_by_name("eve") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+r.check("...die Kennung zeigt weiter auf den Inhaber",
+        (auth_n1.find_user("chef@example.com") or {}).get("id") == chef1,
+        "find_user löst auf ein fremdes Konto auf")
+r.check("...und der Inhaber meldet sich weiter an",
+        _anmelden(c_n1, "chef@example.com").status_code == 303,
+        "ausgesperrt — mit dem richtigen Passwort")
+
+# Richtung 2 (die gefährlichere): der BENUTZERNAME des Fremden ist die E-Mail des Inhabers.
+auth_n2, app_n2 = _app(allow_signup=True, signup_require_email=True, csrf_enabled=False)
+chef2 = auth_n2.create_user("chef", password=PW_INHABER, email="chef@example.com", is_admin=True)
+c_n2 = TestClient(app_n2)
+angriff2 = c_n2.post("/auth/register",
+                     data={"username": "chef@example.com", "password": PW_EVE,
+                           "email": "eve@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung, deren BENUTZERNAME die E-Mail eines Kontos ist, wird abgewiesen",
+        angriff2.status_code == 409, f"HTTP {angriff2.status_code} — die Kennung ist vergeben")
+r.check("...und die E-Mail-Kennung zeigt weiter auf den Inhaber",
+        (auth_n2.find_user("chef@example.com") or {}).get("id") == chef2,
+        "die Kennung wurde übernommen")
+
+# Der legitime Weg bleibt offen — sonst wäre der Wächter nur eine kaputte Registrierung.
+frisch = c_n2.post("/auth/register",
+                   data={"username": "neu", "password": "Neues12345!",
+                         "email": "neu@example.com", "next": "/"}, follow_redirects=False)
+r.check("eine Registrierung mit freien Kennungen geht weiterhin durch", frisch.status_code == 303,
+        f"HTTP {frisch.status_code}: {frisch.text[:120]}")
+
+# Und dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos ist keine Kollision — im
+# E-Mail-Modus ist die Adresse der Benutzername, das ist der vorgesehene Weg.
+auth_n3, app_n3 = _app(allow_signup=True, signup_require_email=True,
+                       login_identifier="email", csrf_enabled=False)
+solo = TestClient(app_n3).post("/auth/register",
+                               data={"password": "Solo12345!", "email": "solo@example.com",
+                                     "next": "/"}, follow_redirects=False)
+r.check("im E-Mail-Modus bleibt die Adresse zugleich Benutzername", solo.status_code == 303,
+        f"HTTP {solo.status_code}: {solo.text[:120]}")
+
+# Der Wächter sitzt in create_user, nicht nur in der Route: CLI, Einladung und die Anlage aus
+# OIDC/LDAP/SAML kommen hier vorbei.
+for was, ruf in (("einen Benutzernamen, der fremde E-Mail ist",
+                  lambda: auth_n2.create_user("chef@example.com", password=PW_EVE)),
+                 ("eine E-Mail, die fremder Benutzername ist",
+                  lambda: auth_n2.create_user("zweitkonto", password=PW_EVE, email="chef"))):
+    try:
+        ruf()
+        entstanden = True
+    except ConfigError:
+        entstanden = False
+    r.check(f"create_user nimmt {was} nicht an", not entstanden,
+            "das Konto entsteht — dann hilft die Prüfung in der Route allein nichts")
+
+# Auch über das Admin-Panel darf die Kollision nicht entstehen.
+c_adm = TestClient(app_n2)
+c_adm.cookies.set(auth_n2.cfg.session_cookie,
+                  auth_n2.store.create_session(chef2, 3600, True, "password"))
+for feld, koerper in (("E-Mail", {"username": "eve2", "email": "chef@example.com"}),
+                      ("Benutzername", {"username": "chef@example.com", "email": "e2@example.com"})):
+    antwort_adm = c_adm.post("/auth/admin/api/users", json=koerper)
+    r.check(f"die Admin-API weist eine vergebene Kennung im Feld {feld} ab",
+            antwort_adm.status_code == 409,
+            f"HTTP {antwort_adm.status_code}: {antwort_adm.text[:120]}")
+
+# Altbestand: in einer Datenbank von VOR dem Fix steht die Kollision schon. Dann darf
+# /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
+auth_alt, app_alt = _app(csrf_enabled=False)
+opfer_alt = auth_alt.create_user("chef", password=PW_INHABER, email="chef@example.com")
+eve_alt = auth_alt.store.create_user("chef@example.com")      # am Wächter vorbei = Altbestand
+auth_alt.set_password(eve_alt, PW_EVE)
+r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf",
+        (auth_alt.find_user("chef@example.com") or {}).get("id") == opfer_alt,
+        "ohne diese Zweideutigkeit prüft der Test nichts")
+c_alt = TestClient(app_alt)
+c_alt.cookies.set(auth_alt.cfg.session_cookie,
+                  auth_alt.store.create_session(eve_alt, 3600, True, "password"))
+fremd = c_alt.post("/auth/password", json={"current": PW_INHABER, "new": "Neues12345!"})
+r.check("/auth/password nimmt das Passwort eines FREMDEN Kontos nicht an",
+        fremd.status_code == 403,
+        f"HTTP {fremd.status_code} — die Route ist ein Orakel für fremde Passwörter")
+r.check("...und das fremde Passwort gilt unverändert weiter",
+        auth_alt.check_password("chef", PW_INHABER) is not None,
+        "das Geheimnis des Opfers wurde überschrieben")
+eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!"})
+r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
+        f"HTTP {eigen.status_code}: {eigen.text[:120]}")
 
 sys.exit(r.done())

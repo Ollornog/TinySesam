@@ -295,12 +295,44 @@ class TinySesam:
                 "(gültig %d Minuten, genau einmal einlösbar).", tok, config.admin_claim_ttl_min)
 
     # ---------- User-Verwaltung ----------
+    def kennung_vergeben(self, kennung, exclude_id=None) -> Optional[dict]:
+        """Gehört diese Login-Kennung schon einem Konto — in IRGENDEINEM der beiden Namensräume?
+
+        Benutzername und E-Mail sind keine getrennten Räume: `find_user` durchsucht bei
+        `login_identifier="both"` (Vorgabe) **beide** Spalten, und bei einer Kennung mit `@`
+        gewinnt die E-Mail. Wer getrennt prüft, lässt zu, dass ein Fremder die E-Mail eines
+        bestehenden Kontos als *Benutzernamen* einträgt (oder umgekehrt) — ab da löst die Kennung
+        auf das fremde Konto auf und der Rechtmäßige ist ausgesperrt (Fund R4-12).
+
+        Geprüft wird **immer** kreuzweise, auch in den Modi "username" und "email": der Modus ist
+        ein Schalter, den ein Betrieb später umlegt; eine Kollision, die heute schläft, wäre dann
+        sofort scharf. Rückgabe ist das Konto, dem die Kennung gehört, sonst None. `exclude_id`
+        lässt ein Konto aus — für Prüfungen an einem bestehenden Konto.
+        """
+        kennung = (kennung or "").strip()
+        if not kennung:
+            return None
+        for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung)):
+            if treffer is not None and treffer["id"] != exclude_id:
+                return self._als_dict(treffer)
+        return None
+
     def create_user(self, username, password=None, is_admin=False, roles=None,
                     display_name=None, email=None, is_service=False) -> int:
-        """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys."""
+        """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
+
+        Benutzername und E-Mail müssen **kreuzweise** frei sein (`kennung_vergeben`) — sonst
+        besetzt ein neues Konto die Login-Kennung eines bestehenden. Die Prüfung sitzt hier,
+        damit sie für JEDEN Weg gilt: Selbst-Registrierung, Admin-API, Einladung, CLI und die
+        automatische Anlage aus OIDC/LDAP/SAML."""
+        username = (username or "").strip()
         email = norm_email(email)
-        if email and self.store.email_taken(email):
-            raise ConfigError("E-Mail-Adresse ist bereits vergeben")
+        for feld, kennung in (("Benutzername", username), ("E-Mail-Adresse", email)):
+            besitzer = self.kennung_vergeben(kennung) if kennung else None
+            if besitzer:
+                security.seclog.warning(
+                    "Konto nicht angelegt: %s ist bereits Login-Kennung von user_id=%s", feld, besitzer["id"])
+                raise ConfigError(f"{feld} ist bereits als Login-Kennung vergeben")
         uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service)
         if password:
             self.store.set_password_hash(uid, hash_password(password))
@@ -672,7 +704,14 @@ class TinySesam:
         if not u:
             if not self.cfg.ldap_auto_create:
                 return None
-            uid = self.create_user(username, display_name=info.get("name") or username, email=info.get("email"))
+            try:
+                uid = self.create_user(username, display_name=info.get("name") or username,
+                                       email=info.get("email"))
+            except ConfigError:
+                # Name oder Adresse gehören lokal schon jemandem (Fund R4-12). Fail-closed:
+                # lieber keine Anmeldung als ein Konto, das eine fremde Kennung besetzt.
+                self.audit("ldap_ident_taken", username)
+                return None
             u = self.store.get_user(uid)
             if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
                 return None
@@ -699,8 +738,13 @@ class TinySesam:
         if not u:
             if not cfg.saml_auto_create:
                 return None
-            uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
-                                   email=first(attrs, cfg.saml_attr_email))
+            try:
+                uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
+                                       email=first(attrs, cfg.saml_attr_email))
+            except ConfigError:
+                # Wie bei LDAP (Fund R4-12): eine schon vergebene Kennung legt kein Konto an.
+                self.audit("saml_ident_taken", username)
+                return None
             u = self.store.get_user(uid)
             if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
                 return None

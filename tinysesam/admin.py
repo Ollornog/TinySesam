@@ -70,14 +70,16 @@ def build_admin_router(auth) -> APIRouter:
         email = norm_email(b.get("email"))
         if email and not valid_email(email):
             raise HTTPException(400, auth.t("api.email_invalid"))
-        if email and auth.store.email_taken(email):
+        # Kreuzweise prüfen (Fund R4-12): Benutzername und E-Mail sind EIN Kennungs-Raum —
+        # eine Adresse, die schon Benutzername eines anderen Kontos ist, ist vergeben.
+        if email and auth.kennung_vergeben(email):
             raise HTTPException(409, auth.t("api.email_taken"))
         # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
         if not username and cfg.login_identifier == "email" and not b.get("is_service"):
             username = email or ""
         if not username:
             raise HTTPException(400, auth.t("api.username_req"))
-        if auth.store.get_user_by_name(username):
+        if auth.kennung_vergeben(username):
             raise HTTPException(409, auth.t("api.user_exists"))
         roles = b.get("roles") or []
         if b.get("is_service"):

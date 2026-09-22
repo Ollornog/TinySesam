@@ -473,14 +473,17 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.email_required"))
             if email_final and not valid_email(email_final):
                 return err(auth.t("err.email_invalid"))
-            if email_final and auth.store.email_taken(email_final):
+            # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
+            # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
+            # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
+            if email_final and auth.kennung_vergeben(email_final):
                 return err(auth.t("err.email_taken"), 409)
             # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
             if cfg.login_identifier == "email":
                 username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
-            if auth.store.get_user_by_name(username):
+            if auth.kennung_vergeben(username):
                 return err(auth.t("err.username_taken"), 409)
             # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
             verify = cfg.signup_verify_email and not inv
@@ -567,7 +570,10 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         b = await auth.json_body(request)
-        if not auth.check_password(u["username"], b.get("current") or ""):
+        # Gegen die ID der eigenen Sitzung prüfen, NICHT über die Kennung: `find_user` kann
+        # denselben Namen auf ein anderes Konto auflösen (Fund R4-12) — dann prüfte diese Route
+        # ein fremdes Geheimnis und wäre ein Passwort-Orakel.
+        if not auth.verify_user_password(u["id"], b.get("current") or ""):
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
         if len(new) < auth.sec("password_min_length"):

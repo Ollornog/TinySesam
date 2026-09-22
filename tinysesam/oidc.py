@@ -358,10 +358,22 @@ def register_oidc_routes(router, auth):
             # Konto wie eine Adresse, die niemand bestätigt hat.
             username = info.get("preferred_username") or mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
-            while auth.store.get_user_by_name(username):
+            # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
+            # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
+            while auth.kennung_vergeben(username):
                 i += 1
                 username = f"{base_un}{i}"
-            uid = auth.create_user(username, display_name=info.get("name") or username, email=mail)
+            try:
+                # `mail` ist die belegte Adresse (F-14), nicht die rohe aus dem Dokument:
+                # eine unbestätigte wird oben verworfen und darf auch hier nicht ins Konto.
+                uid = auth.create_user(username, display_name=info.get("name") or username,
+                                       email=mail)
+            except errors.ConfigError:
+                # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
+                # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
+                auth.audit("oidc_ident_taken", str(mail or username or sub or "?"),
+                           auth.client_ip(request))
+                raise HTTPException(409, auth.t("api.idp_ident_taken"))
             auth.store.link_oidc(issuer, sub, uid)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt)
