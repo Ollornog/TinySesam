@@ -605,6 +605,17 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
 - **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
+- **Zwei Arten Key, und keine davon ist eine Admin-API.** `kind="automat"` (Vorgabe) arbeitet
+  allein, trägt aber **nie das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin
+  verlangt — der Weg für Dienste, Skripte und CI. `kind="mensch"` gilt nur **zusammen mit einer
+  gültigen Sitzung desselben Kontos** und trägt dafür die vollen Rechte — der Weg für ein
+  Werkzeug, das ein Mensch selbst bedient. Allein abgeflossen ist so einer wertlos. Bis 0.18.x
+  gab es eine Art, und der Key eines Admins war eine vollständige Schreib-API: Nutzer anlegen,
+  `is_admin` setzen, Passwörter zurücksetzen — ohne zweiten Faktor, ohne CSRF-Schicht. Ein
+  abgeflossener CI-Key war die Instanz.
+- **Ein Key läuft von selbst ab.** Ohne `expires_days` galt er bisher unbefristet, und das war
+  der häufigste Fall. Jetzt greift `apikey_default_days` (90); `expires_days=0` heisst weiter
+  „unbefristet", braucht aber `apikey_allow_unlimited=True` und steht dann im Audit-Eintrag.
 - **Ein Key ist eine zweite Haustür — Aussperren nimmt ihn mit.** Der Admin-Passwort-Reset und
   das Sperren eines Kontos widerrufen dessen Keys, ebenso „**alle** Sitzungen beenden"
   (`scope=all`) durch den Nutzer selbst. Der **eigene** Passwortwechsel tut es bewusst nicht —
