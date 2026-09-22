@@ -291,15 +291,15 @@ matrix_regel = hygiene.pruefe_python_matrix_regel()
 assert not matrix_regel, "\n  ".join(matrix_regel)
 sammelt = hygiene.pruefe_run_all_sammelt_automatisch(ROOT)
 assert not sammelt, "\n  ".join(sammelt)
-KIT_AUSGENOMMEN = {
-    "pruefe_python_matrix": "TinySesam fährt 3.10 bis 3.14 (Zusage in Classifiern und README); die "
-                            "Kit-Matrix 3.12 bis 3.14 kommt erst mit dem Entscheid zu PR #54",
-    "pruefe_requires_python": "requires-python >=3.10 bleibt bis zum Entscheid zu PR #54 "
-                              "(gleiche Sache wie pruefe_python_matrix)",
-}
-ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen=KIT_AUSGENOMMEN)
+# Seit der Entscheidung zu PR #54 (Untergrenze 3.12) fährt dieses Repo die Kit-Matrix
+# unverändert — die beiden Ausnahmen von vorher sind damit erledigt und die Prüfungen laufen.
+matrix_abweichung = hygiene.pruefe_python_matrix(ROOT, FILES)
+assert not matrix_abweichung, "Python-Matrix weicht von der Kit-Quelle ab:\n  " + "\n  ".join(matrix_abweichung)
+untergrenze = hygiene.pruefe_requires_python(ROOT)
+assert not untergrenze, "\n  ".join(untergrenze)
+ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.13.2: jede Prüfung gerufen oder mit Grund ausgenommen (2 Ausnahmen, beide PR #54)")
+print("  Kit 0.13.2: jede Prüfung gerufen, keine Ausnahme mehr nötig")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"

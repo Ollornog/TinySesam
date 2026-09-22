@@ -11,7 +11,7 @@
 <p align="right">
 <a href="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml"><img src="https://github.com/Ollornog/TinySesam/actions/workflows/ci.yml/badge.svg" alt="tests"></a>
 <a href="https://github.com/Ollornog/TinySesam/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-informational.svg" alt="License: MIT"></a>
-<img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python">
+<img src="https://img.shields.io/badge/python-3.12%2B-blue.svg" alt="Python">
 </p>
 
 ### The login layer for your self-built apps.
@@ -803,7 +803,7 @@ gh run watch --exit-status            # after pushing: fetch the CI result, exit
 
 **GitHub Actions** runs all of it on **pushes to `main`, on pull requests and on demand**
 (`workflow_dispatch`) — a push to a feature branch deliberately triggers nothing; that is what
-`scripts/check.sh` is for. CI runs the full matrix (Python 3.10–3.14 with `[all]`), a minimal run
+`scripts/check.sh` is for. CI runs the full matrix (Python 3.12–3.14 with `[all]`), a minimal run
 without extras (guards the stdlib-scrypt fallback), and a browser job that also builds the website.
 
 ## Status

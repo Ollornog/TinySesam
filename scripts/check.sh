@@ -35,7 +35,12 @@ if [[ -z "$PY" ]]; then
         || fail "uv pip install"
     PY=".venv/bin/python"
 fi
-step "Interpreter: $("$PY" -c 'import sys;print(sys.version.split()[0], "@", sys.executable)')"
+# Die Zeile ist der BELEG fuer `ci-local --matrix`: der Laeufer liest sie zurueck und
+# vergleicht die Versionsnummer mit dem angeforderten Bein. Bis 2026-09-22 stand hier
+# nur `sys.executable` — ein Pfad wie /opt/venvs/py313/bin/python nennt keine Version,
+# und die Matrix lief deshalb in diesem Repo NIE durch ("unbelegt", Exit 1). Die
+# Version gehoert also zuerst, der Pfad bleibt daneben stehen (er verraet das venv).
+step "Interpreter: $("$PY" -c 'import sys; print(sys.version.split()[0], "@", sys.executable)')"
 
 if [[ $FAST -eq 1 ]]; then
     step "Suiten ohne Browser-Test (--fast)"

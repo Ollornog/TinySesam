@@ -19,18 +19,24 @@ permissions:
 # sdist und sieht hinein. Seit Python 3.12 bringt eine frische Umgebung setuptools nicht mehr mit,
 # und `pip install -e .` legt es nur in seine eigene Bau-Isolierung, nicht in die Umgebung.
 jobs:
-  # Voller Lauf mit allen Extras über die Matrix min + prod + max (siehe testing-policy.md):
-  #   3.10 = Untergrenze aus requires-python  (ohne sie ist die Zusage unbelegt)
-  #   3.12 = was in Prod / im ci-python-web-Image läuft
-  #   3.14 = aktuelle stable (seit 10/2025) — wurde vorher gar nicht getestet
+  # Voller Lauf mit allen Extras über die gefuehrte Matrix — die letzten DREI stable
+  # Minors (PO 2026-09-22). Die Versionen stehen NICHT hier zu Hause: gefuehrt werden
+  # sie in repokit (tests/_kit/python_matrix.json), und dasselbe Trio traegt das
+  # Abbild ci-python-web in /opt/ci-matrix.
+  #   3.12 = Untergrenze aus requires-python, zugleich Prod / System-Python im Abbild
+  #   3.13 = Mitte
+  #   3.14 = Obergrenze, aktuelle stable (seit 10/2025)
+  # 3.10 und 3.11 fielen am 2026-09-22 raus: 3.10 geht am 31.10.2026 EOL, und die
+  # Untergrenze wandert mit der Regel statt mit einer einmal gesetzten Zahl.
   # Prerelease (3.15) läuft separat nightly mit continue-on-error, damit ein RC-Bug
-  # keinen Push blockiert.
+  # keinen Push blockiert — und NUR dort: ein Gate-Bein gehoert nicht in einen Job,
+  # der nicht rot werden kann.
   full:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0

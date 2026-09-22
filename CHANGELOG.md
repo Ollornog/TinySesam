@@ -617,6 +617,24 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   (`tests/test_methods.py`); und dass die beiden Betreiber-Meldungen nur Wege nennen, die es gibt
   (`tests/test_security_log.py`, `tests/test_sicherheit_befunde.py`).
 
+### Geändert — Python 3.12 ist die neue Untergrenze (Matrix 3.12 / 3.13 / 3.14)
+
+**`requires-python` steigt von `>=3.10` auf `>=3.12`.** Wer TinySesam auf 3.10 oder 3.11
+betreibt, bekommt beim nächsten Update von pip kein neues Paket mehr — das ist der Zweck der
+Angabe, und sie ist die einzige Stelle, die das ehrlich sagen kann.
+
+Dahinter steht keine Zahl, sondern ein Fenster: **die letzten drei stable Minors**. Python 3.10
+geht am 31.10.2026 EOL. Die Zusage „läuft ab 3.10" war zuletzt ohnehin dünn — sie stand im
+pyproject, aber die Untergrenze wanderte nie mit, und jede Bibliothek darunter zieht früher oder
+später nach.
+
+Die Matrix fährt damit **3.12, 3.13, 3.14** statt bisher 3.10–3.14; die Classifier für 3.10 und
+3.11 sind entfallen (eine ungemessene Zusage ist eine Behauptung — die Suite erzwingt das). Die
+Obergrenze bleibt bewusst bei 3.14: **3.15 erscheint am 01.10.2026**, läuft aber weiterhin nur im
+nightly-Job mit `continue-on-error` und rückt erst ins Gate, wenn sie dort wirklich grün war.
+
+Geführt wird die Matrix jetzt an **einer** Stelle statt an dreien.
+
 ### Geändert
 
 - **Die Installationsanleitung führt mit dem Git-Tag.** Beide READMEs begannen mit
