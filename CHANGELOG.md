@@ -63,7 +63,10 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Start riet „Eine der beiden Kennungen ändern (Admin-Panel oder CLI)" — keins von beiden kann
   das: Die Admin-API kennt Anlegen, Sperren, Rollen, Passwort und Keys, aber kein Umbenennen, und
   das CLI legt überhaupt keine Konten an. Genannt wird jetzt, was existiert
-  (`store.set_email(…)`, sonst die Datenbank). Ebenso in der Konfigurationsprüfung: „Der
+  (`store.set_email(…)`, sonst die Datenbank) — samt der Nebenwirkung, die dieser Weg seit dem
+  Punkt zu `set_email()` weiter unten hat: Die neue Adresse wird **unbestätigt** abgelegt
+  (`users.email_verified=0`), wer einen Beleg für sie hat, übergibt `verified=True`. Ebenso in
+  der Konfigurationsprüfung: „Der
   Erst-Admin kommt dann nur über `admin_identifiers` oder die CLI zustande" → `ensure_admin()`
   im eigenen Dienst. Es ist dieselbe falsche CLI-Zusage, die dieser Eintrag an anderer Stelle
   schon einmal zurückgenommen hat.

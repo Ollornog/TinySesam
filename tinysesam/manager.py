@@ -353,7 +353,10 @@ class TinySesam:
                 "eine der beiden Kennungen — dafür gibt es weder im Admin-Panel noch im CLI "
                 "einen Weg: die E-Mail über store.set_email(user_id, adresse) aus dem "
                 "einbettenden Dienst, den Benutzernamen nur direkt in der Datenbank "
-                "(UPDATE users SET username=… WHERE id=…).",
+                "(UPDATE users SET username=… WHERE id=…). Achtung bei der E-Mail: "
+                "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
+                "(users.email_verified=0) — der Beleg der alten Adresse gilt nicht für eine "
+                "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
                 len(kollisionen), beispiele,
                 " (weitere folgen)" if len(kollisionen) > 3 else "")
         tok = self.admin_claim_token()

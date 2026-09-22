@@ -1903,6 +1903,26 @@ r.check("...und verspricht dafür weder Admin-Panel noch CLI",
         and "weder im Admin-Panel noch im CLI" in _text_k,
         f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
 
+# Integration der Runde: Die Meldung nennt `store.set_email(...)` — und genau diese Methode nimmt
+# seit B-umgehung-8 den Bestätigungs-Vermerk MIT (Vorgabe: unbestätigt). Wer der Meldung folgt, um
+# eine Kollision am Konto eines Admins aufzulösen, löscht damit nebenbei den Beleg seiner Adresse.
+# Das ist fail-closed und richtig — aber es darf den Betreiber nicht überraschen, und `verified=True`
+# ist der Weg, einen echten Beleg zu behalten. Gemessen wird beides zusammen: der Satz in der
+# Meldung UND das Verhalten dahinter. Fällt eines weg, wird die Prüfung rot.
+r.check("...und sagt, dass store.set_email den Bestätigungs-Vermerk mitnimmt",
+        "email_verified=0" in _text_k and "verified=True" in _text_k,
+        f"{_text_k[:400]!r} — der Betreiber folgt der Meldung und verliert stillschweigend den Beleg")
+auth_alt.store.set_email_verified(opfer_alt, True)
+auth_alt.store.set_email(opfer_alt, "chef-neu@example.com")
+r.check("...und so ist es auch: der genannte Weg legt die neue Adresse unbestätigt ab",
+        auth_alt.store.get_user(opfer_alt)["email_verified"] == 0,
+        "set_email lässt den Beleg der ALTEN Adresse stehen — dann ist die Meldung falsch, "
+        "und ein Adresswechsel ist wieder ein Bootstrap-Weg (B-umgehung-8)")
+auth_alt.store.set_email(opfer_alt, "chef-belegt@example.com", verified=True)
+r.check("...und verified=True behält ihn, wie die Meldung verspricht",
+        auth_alt.store.get_user(opfer_alt)["email_verified"] == 1,
+        "verified=True trägt den Beleg nicht — dann nennt die Meldung einen Weg, den es nicht gibt")
+
 # Gegenprobe, sonst wäre die Meldung Rauschen: In auth_n2 trägt EIN Konto denselben Wert in
 # beiden eigenen Spalten (chef / chef@example.com) — das ist der vorgesehene Weg, keine Kollision.
 r.check("eine Datenbank ohne Kreuz-Kollision schweigt",
