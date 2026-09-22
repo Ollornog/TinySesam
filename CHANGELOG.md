@@ -135,6 +135,18 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
   nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`. Gefunden im dritten
   Audit (R4-12 aus T-13).
+- **`/auth/password` war ein stilles Passwort-Orakel — und es prüfte nicht einmal das eigene Konto.**
+  Die Abfrage des alten Passworts lief als einzige Geheimnis-Prüfung ohne den Dreiklang des
+  Login-Pfads: keine Drossel, keine Sperre, kein verbuchter Fehlversuch — beliebig viele Versuche,
+  nie eine 429, keine Zeile fürs Sicherheits-Log oder fail2ban, während derselbe Fehlgriff am Login
+  nach wenigen Anläufen sperrt. Dazu löste sie das Konto über die **Login-Kennung** auf
+  (`check_password(u["username"], …)` → `find_user`) statt über die ID der eigenen Sitzung: Wer ein
+  Konto besitzt, dessen Benutzername der E-Mail eines anderen gleicht, riet darüber das Passwort
+  **dieses fremden Kontos** — und ein Treffer setzte still das eigene Passwort, blieb also auch im
+  Erfolg unsichtbar. Jetzt: `verify_user_password(u["id"], …)` plus `rate_ok` → `is_locked` →
+  `record_login(…, "password_change")`; die eigene Methode sorgt dafür, dass ein Treffer hier die
+  Fehlversuche des Login-Pfads nicht wegräumt. Belege in `tests/test_hardening.py`.
+  Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
   auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die

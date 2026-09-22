@@ -570,10 +570,24 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         b = await auth.json_body(request)
-        # Gegen die ID der eigenen Sitzung prüfen, NICHT über die Kennung: `find_user` kann
-        # denselben Namen auf ein anderes Konto auflösen (Fund R4-12) — dann prüfte diese Route
-        # ein fremdes Geheimnis und wäre ein Passwort-Orakel.
-        if not auth.verify_user_password(u["id"], b.get("current") or ""):
+        ip = auth.client_ip(request)
+        # Das alte Passwort ist ein Geheimnis wie am Login — also derselbe Dreiklang aus
+        # Drossel, Sperre und Protokoll. Ohne ihn war diese Route ein stilles, unbegrenztes
+        # Passwort-Orakel: beliebig viele Versuche, nie eine 429, keine Zeile im Sicherheits-
+        # Log, kein Fehlversuch in `login_attempt` — während derselbe Fehlversuch am Login
+        # nach drei Anläufen sperrt (R4-10).
+        if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip):
+            raise HTTPException(429, auth.t("api.too_many"))
+        # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
+        # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
+        # FREMDES Konto auflösen (Benutzername des Angreifers = E-Mail des Opfers, R4-12).
+        # Dann riet man hier nicht sein eigenes Passwort, sondern dessen — und der Treffer
+        # setzte still das eigene Passwort, blieb also unsichtbar.
+        richtig = auth.verify_user_password(u["id"], b.get("current") or "")
+        # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
+        # (`record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
+        auth.record_login(u["username"], ip, richtig, "password_change")
+        if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
         if len(new) < auth.sec("password_min_length"):
