@@ -8,7 +8,7 @@ version = "0.18.0"
 # Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Bewusst die Tabellenform statt des SPDX-Ausdrucks aus PEP 639: der verlangt setuptools>=77,
 # und gebaut wird auch mit älteren (das CI-Abbild bringt 68 mit). Umstellen, sobald überall
 # eine neuere Fassung liegt — dann `license = "MIT"` + `license-files = ["LICENSE"]`.
@@ -28,8 +28,6 @@ classifiers = [
     # hält beides zusammen. Ein Classifier ist ein Versprechen, keine Hoffnung.
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",

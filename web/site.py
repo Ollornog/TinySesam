@@ -54,7 +54,7 @@ T = {
                 "(OIDC, SAML, LDAP&nbsp;/&nbsp;AD). It is <b>not</b> an identity provider itself — "
                 "not a Keycloak / Authentik / PocketID replacement."),
         "cta_github": "View on GitHub", "cta_docs": "Documentation",
-        "meta": "MIT · Python 3.10+ · every feature optional, front end fully replaceable",
+        "meta": "MIT · Python 3.12+ · every feature optional, front end fully replaceable",
         "h_solves": "Use only what you need",
         "solves": [
             ("Just gate one page behind a PIN?", "a shared PIN or passphrase, no user account required."),
@@ -185,7 +185,7 @@ T = {
                 "(OIDC, SAML, LDAP&nbsp;/&nbsp;AD). Es ist <b>selbst kein</b> Identity Provider — "
                 "kein Ersatz für Keycloak / Authentik / PocketID."),
         "cta_github": "Auf GitHub ansehen", "cta_docs": "Dokumentation",
-        "meta": "MIT · Python 3.10+ · jedes Feature optional, Frontend komplett austauschbar",
+        "meta": "MIT · Python 3.12+ · jedes Feature optional, Frontend komplett austauschbar",
         "h_solves": "Nutze nur, was du brauchst",
         "solves": [
             ("Nur eine Seite hinter einer PIN sichern?",

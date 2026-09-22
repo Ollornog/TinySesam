@@ -59,8 +59,10 @@ for schalter, (modul, extra) in sorted(SCHALTER_BRAUCHT_EXTRA.items()):
 # maß also den Stand von vorgestern und meldete ein Extra als fehlend, das seit einer Stunde
 # im pyproject steht. Für die Frage „was verspricht das Paket" ist die Quelldatei richtig.
 #
-# (`tomllib` gibt es erst ab Python 3.11, und zugesagt ist ab 3.10 — deshalb von Hand gelesen
-# statt geparst. Für zwei Listen reicht das.)
+# (Von Hand gelesen statt mit `tomllib` geparst: das war noetig, solange 3.10 zugesagt war
+# — dort gibt es `tomllib` noch nicht. Seit der Untergrenze 3.12 (2026-09-22) waere es
+# moeglich; fuer zwei Listen lohnt der Umbau aber nicht, und ohne Parser bleibt der Test
+# auch in einem Klon lauffaehig, den jemand mit einem aelteren Interpreter oeffnet.)
 import re as _re  # noqa: E402
 
 _roh = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
