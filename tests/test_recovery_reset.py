@@ -117,5 +117,27 @@ r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw",
 assert r.status_code == 303
 ok("nach Reset: altes Passwort ungültig, neues gültig")
 
+
+# ---------- base_url mit Leerraum (C-2): der Link bleibt sauber, eine unbrauchbare Basis fällt beim Aufbau ----------
+from tinysesam.errors import ConfigError as _CfgErr
+_db2 = os.path.join(tempfile.mkdtemp(), "t.db")
+_a2 = TinySesam(TinySesamConfig(db_path=_db2, rp_name="T", passkey_enabled=False, oidc_enabled=False,
+                                cookie_secure=False, password_reset_enabled=True,
+                                base_url="https://auth.example.com "))
+_post = []
+_a2.set_mailer(lambda to, subject, text, html=None: _post.append(text))
+_a2.create_user("lea", password="geheim12345", email="lea@example.com")
+_a2.send_password_reset("lea@example.com", _a2.cfg.base_url)
+assert _post and " " not in _post[0].split("https://auth.example.com", 1)[1].split()[0] \
+    and "https://auth.example.com/auth/reset" in _post[0], _post
+try:
+    TinySesam(TinySesamConfig(db_path=_db2, rp_name="T", passkey_enabled=False, oidc_enabled=False,
+                              cookie_secure=False, password_reset_enabled=True, base_url="auth.example.com"))
+    raise AssertionError("base_url ohne Schema wurde angenommen")
+except _CfgErr as e:
+    assert "base_url" in str(e), e
+os.remove(_db2)
+print("  (C-2) base_url wird getrimmt, ohne Schema abgewiesen ok")
+
 os.remove(db)
 print("\nRECOVERY + RESET OK ✅")

@@ -352,6 +352,7 @@ class TinySesam:
                 "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Zu ändern ist "
                 "eine der beiden Kennungen — dafür gibt es weder im Admin-Panel noch im CLI "
                 "einen Weg: die E-Mail über store.set_email(user_id, adresse) aus dem "
+                "(die neue Adresse muss in BEIDEN Spalten frei sein — set_email prüft das nicht) "
                 "einbettenden Dienst, den Benutzernamen nur direkt in der Datenbank "
                 "(UPDATE users SET username=… WHERE id=…). Achtung bei der E-Mail: "
                 "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
@@ -1790,11 +1791,16 @@ class TinySesam:
         security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", wort,
                                 security.fuer_log(username) or "-", security.fuer_log(ip), grund)
 
-    def rate_ok(self, ip) -> bool:
-        """Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit)."""
+    def rate_ok(self, ip, login: bool = True) -> bool:
+        """Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
+
+        `login=False` für Routen, die keine Anmeldung sind (Passwortwechsel, Step-up, Bereichs-PIN):
+        Ihre Zeile trägt dann `failed verification` statt `failed login` — sonst bannte die
+        mitgelieferte Jail einen angemeldeten Nutzer, der auf seiner eigenen Kontoseite
+        weiterklickt (Abschlussangriff C-1)."""
         erlaubt = self.rl.allow(ip or "?", self.sec("rate_limit_max"), self.sec("rate_limit_window_sec"))
         if not erlaubt:
-            self._abgewiesen(None, ip, "ratelimit")
+            self._abgewiesen(None, ip, "ratelimit", login=login)
         return erlaubt
 
     def is_locked(self, username, ip) -> bool:
@@ -2119,7 +2125,7 @@ class TinySesam:
         relativ, der Browser löst sie gegen den aufgerufenen Host auf).
         """
         if self.cfg.base_url:
-            return str(self.cfg.base_url).rstrip("/")
+            return str(self.cfg.base_url).strip().rstrip("/")
         roh = str(kandidat or (str(request.base_url) if request is not None else "")).strip()
         basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
         if not basis and roh and security.einmal_melden("public_base:" + _host_aus(roh)):

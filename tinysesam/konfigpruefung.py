@@ -21,6 +21,7 @@ nicht dreimal starten.
 from __future__ import annotations
 
 import os
+import re
 
 #: Verfahren → welches Config-Feld es einschaltet. Dieselbe Liste bedient die Ketten-Prüfung.
 VERFAHREN = {
@@ -209,7 +210,13 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     # Config-Objekt, BEVOR `TinySesam(config)` läuft — anders als `set_mailer()` gibt es dafür
     # keinen Nachreich-Weg, denn ohne Basis endet der erste Klick auf „Passwort vergessen"
     # bereits im Nichts.
-    if not str(getattr(config, "base_url", "") or "").strip():
+    _basis = str(getattr(config, "base_url", "") or "").strip()
+    if _basis and not re.match(r"^https?://[^/\s?#]+", _basis):
+        fehler.append(
+            f"base_url={_basis!r} ist keine absolute Adresse mit Schema und Host (erwartet z.B. "
+            "\"https://auth.example.com\"). Jeder daraus gebaute Link wäre kaputt — ohne Fehler, "
+            "ohne Logzeile, erst beim Empfänger.")
+    if not _basis:
         betroffen = [wofuer for feld, wofuer in BRAUCHT_BASE_URL.items() if _an(config, feld)]
         if betroffen:
             fehler.append(

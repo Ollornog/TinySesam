@@ -555,6 +555,7 @@ for _datei, _text in _readmes.items():
             f"{_datei}, Block {_nr} läuft nicht durch (Exit {_lauf.returncode}):\n"
             + (_lauf.stderr or _lauf.stdout)[-900:])
         _ausgefuehrt += 1
+assert _ausgefuehrt + len(_uebersprungen) >= 2, "die READMEs enthalten keine zwei vollständigen Beispiele mehr"
 if _uebersprungen:
     # Kein stilles Durchwinken: Stufe 1 hat dieselben Configs gebaut, nur `auth.router()` fehlt.
     print("  (Block nicht ausgeführt, Extra fehlt: " + "; ".join(_uebersprungen) + ")")

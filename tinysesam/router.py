@@ -317,7 +317,7 @@ def build_router(auth) -> APIRouter:
             # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
             # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
             # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
-            if not auth.rate_ok(ip) or auth.is_resource_locked(pseudo, ip):
+            if not auth.rate_ok(ip, login=False) or auth.is_resource_locked(pseudo, ip):
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
             if not auth.check_resource(name, secret):
@@ -444,7 +444,8 @@ def build_router(auth) -> APIRouter:
         # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
         # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
         # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
-        if not auth.rate_ok(ip) or auth.is_reauth_locked(u["username"], ip):
+        if (not auth.rate_ok(ip, login=False) or auth.is_reauth_locked(u["username"], ip)
+                or ("pin" in methods and auth.is_pin_locked(u["username"], ip))):
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
@@ -665,7 +666,7 @@ def build_router(auth) -> APIRouter:
         # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
         # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`rate_ok`),
         # protokolliert auch.
-        if not auth.rate_ok(ip) or auth.is_password_change_locked(u["username"], ip):
+        if not auth.rate_ok(ip, login=False) or auth.is_password_change_locked(u["username"], ip):
             raise HTTPException(429, auth.t("api.too_many"))
         # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
         # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein

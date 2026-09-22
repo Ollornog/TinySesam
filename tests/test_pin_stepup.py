@@ -353,4 +353,28 @@ assert r.status_code == 200, (r.status_code, r.text[:120])
 assert auth.verify_user_pin(uid, "1357")
 print("  (c) nach der Bestätigung auf /auth/reauth: erste PIN geht durch ok")
 os.unlink(db)
+
+# ---------- 5) Eine an der PIN-Anmeldung gesperrte PIN lässt sich auf /auth/reauth nicht weiterraten (C-3) ----------
+# Die Step-up-Seite hat ihren eigenen Topf (`is_reauth_locked`); der darf die PIN-Sperre der
+# Anmeldung nicht aushebeln — sonst verdoppelt sich der Keyspace-Vorrat eines Angreifers.
+db = os.path.join(tempfile.mkdtemp(), "t.db")
+auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
+                                                passkey_enabled=False, pin_enabled=True,
+                                                stepup_methods=["pin"], stepup_max_age_sec=1,
+                                                cookie_secure=False))
+uid = auth.create_user("max", password="geheim12345")
+auth.set_pin(uid, "2468")
+app = FastAPI()
+app.include_router(auth.router())
+c = TestClient(app, headers=HTML)
+assert login(c).status_code == 303
+for _ in range(int(auth.sec("pin_max_attempts")) + 1):
+    c.post("/auth/pin", data={"pin": "0000", "next": "/"})
+assert auth.is_pin_locked("max", "testclient"), "Vorbedingung: die PIN-Anmeldung ist gesperrt"
+time.sleep(1.1)
+r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
+assert r.status_code == 429, f"gesperrte PIN wird auf /auth/reauth weiter angenommen: {r.status_code}"
+os.unlink(db)
+print("  (C-3) PIN-Sperre der Anmeldung gilt auch auf der Step-up-Seite ok")
+
 print("OK test_pin_stepup")

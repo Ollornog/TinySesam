@@ -386,8 +386,10 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   (`security.NICHT_LOGIN_METHODEN` als Ausnahmeliste, damit eine neue Anmeldemethode von sich
   aus mitzählt). Gedrosselt, gesperrt und protokolliert wird das Raten unverändert — nur eben
   dort, wo geraten wurde. **Der Preis, offen gesagt:** Statt eines Topfes gibt es am Ende dieser
-  Runde **vier** — Anmeldung, Passwortwechsel, Step-up-Bestätigung und Bereichs-PIN, je 5 Versuche
-  im Fenster (die letzten drei kamen mit der Nacharbeit unten dazu). Wer alle vier ausreizt, hat
+  Runde **fünf** — Anmeldung, PIN-Anmeldung, Passwortwechsel, Step-up-Bestätigung und Bereichs-PIN,
+  je 5 Versuche im Fenster (die letzten drei kamen mit der Nacharbeit unten dazu). Die Step-up-Seite
+  prüft dabei auch die PIN-Sperre der Anmeldung mit, sonst liesse sich eine dort gesperrte PIN hier
+  weiterraten. Wer alle Töpfe ausreizt, hat
   mehr Versuche als vorher; dafür verriegelt ein Tippfehler auf der Kontoseite niemandem mehr die
   Anmeldung, und jeder Topf trifft genau den, der geraten hat.
   Neu: `auth.is_password_change_locked(username, ip)` und

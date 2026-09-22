@@ -63,7 +63,7 @@
     "pending_user": "(request) -> 'Optional[dict]'",
     "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
     "purge_demo": "() -> 'int'",
-    "rate_ok": "(ip) -> 'bool'",
+    "rate_ok": "(ip, login: 'bool' = True) -> 'bool'",
     "record_login": "(username, ip, success, method)",
     "recovery_codes_remaining": "(user_id) -> 'int'",
     "redeem_magic": "(raw, purpose=None) -> 'Optional[dict]'",

@@ -270,7 +270,7 @@ Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Re
 
 Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine gleichnamigen.
 
-### `rate_ok(ip) -> 'bool'`
+### `rate_ok(ip, login: 'bool' = True) -> 'bool'`
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
