@@ -92,7 +92,7 @@ Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (dan
 
 ### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
 
-Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung.
+Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
@@ -224,7 +224,7 @@ Die Sitzung dieses Requests beenden und das Cookie löschen.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
-Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
+Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `base_url` wird geprüft: ein fremder Host wirft `ConfigError` — in einer Route liefert `public_base(request)` die geprüfte Basis.
 
 ### `mail_configured() -> 'bool'`
 
@@ -340,7 +340,7 @@ Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
 
 ### `send_login_link(email, base_url, next='/') -> 'bool'`
 
-Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration).
+Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -348,11 +348,11 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 ### `send_password_reset(email, base_url) -> 'bool'`
 
-Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration).
+Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `session_from_request(request)`
 

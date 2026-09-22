@@ -1142,7 +1142,14 @@ class TinySesam:
     # ---------- Passwort-Reset (Forgot-Password) ----------
     def send_password_reset(self, email, base_url) -> bool:
         """Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer
-        gleiche Meldung (keine Enumeration)."""
+        gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem
+        fremden Host, siehe `magic_url`).
+
+        Geprüft wird als Erstes — vor der Kontosuche, damit „Ausnahme statt False" nicht
+        verrät, ob es die Adresse gibt, und vor der Token-Vergabe, damit kein unbrauchbarer
+        Token zurückbleibt.
+        """
+        base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
@@ -1309,10 +1316,18 @@ class TinySesam:
     }
 
     def magic_url(self, raw, base_url, purpose="login") -> str:
-        """Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`)."""
+        """Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `base_url`
+        wird geprüft: ein fremder Host wirft `ConfigError` — in einer Route liefert
+        `public_base(request)` die geprüfte Basis.
+
+        Die Prüfung sitzt hier, weil hier alle vier Mail-Wege zusammenlaufen: Reset,
+        Anmelde-Link, Bestätigung und Einladung. Damit gilt der Schutz unabhängig davon, wer die
+        Route baut — auch für eine App mit eigenem Formular. Erlaubt sind `base_url`, ein Host
+        aus `trusted_redirect_hosts` und Loopback.
+        """
         from urllib.parse import quote
         pfad = self.TOKEN_PATHS[purpose].format(t=quote(str(raw), safe=""))
-        return f"{str(base_url).rstrip('/')}{pfad}"
+        return f"{self._gepruefte_basis(base_url)}{pfad}"
 
     def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
         """Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt)."""
@@ -1341,7 +1356,13 @@ class TinySesam:
 
     def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
         """Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die
-        vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung."""
+        vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url`
+        wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+
+        Geprüft wird vor der Token-Vergabe, damit ein abgewiesener Aufruf keinen
+        Einladungs-Token hinterlässt.
+        """
+        base_url = self._gepruefte_basis(base_url)
         raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
@@ -1353,7 +1374,10 @@ class TinySesam:
         return {"url": url, "token": raw}
 
     def send_verify_email(self, user_id, email, base_url) -> bool:
-        """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist."""
+        """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
+        `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+        """
+        base_url = self._gepruefte_basis(base_url)
         if not (email and self.mail_configured()):
             return False
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
@@ -1365,7 +1389,12 @@ class TinySesam:
 
     def send_login_link(self, email, base_url, next="/") -> bool:
         """Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert.
-        Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration)."""
+        Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration).
+        `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+
+        Geprüft wird als Erstes — vor der Kontosuche, damit die Ausnahme keine Adresse verrät.
+        """
+        base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
@@ -1970,6 +1999,66 @@ class TinySesam:
                 "base_url=\"https://auth.example.com\"; unter einem Unterpfad montiert mit "
                 "Präfix (\"https://example.com/sso\").")
         return basis
+
+    def _gepruefte_basis(self, base_url) -> str:
+        """Eine von AUSSEN übergebene Basis-Adresse prüfen, bevor sie in einen Link wandert.
+
+        `public_base()` sitzt in den Routen — wer TinySesam einbettet, baut sein „Passwort
+        vergessen"-Formular aber oft selbst und ruft dann `send_password_reset(mail, basis)`
+        auf. Folgte diese App dem naheliegenden Muster `str(request.base_url)`, war sie R4-01
+        voll ausgesetzt, obwohl die eingebaute Route längst abriegelte: Die Prüfung stand nur
+        in der Route, nicht in der Methode. Deshalb prüft jetzt jeder Weg, der einen Link
+        verschickt, seine Basis selbst — `magic_url()` und die vier Absender darüber.
+
+        Die Regel ist dieselbe wie in `public_base()`:
+
+        * Trägt die übergebene Basis den Host der konfigurierten `base_url`, gilt die
+          **konfigurierte** — sie ist die Zusage des Betreibers. Das fängt auch den Fall, in dem
+          hinter einem TLS-terminierenden Proxy `str(request.base_url)` ein `http://` liefert:
+          der Link bliebe sonst still unverschlüsselt.
+        * Sonst muss der Host aus `trusted_redirect_hosts` kommen oder Loopback sein
+          (`security.sichere_basis`). Ein Pfad in der Basis bleibt erhalten (App unter einem
+          Unterpfad montiert), eine Benutzerangabe im Host nicht.
+        * Alles andere ist ein Fremdname → `ConfigError`. Kein Token, keine Mail, ein Fehler,
+          den der Entwickler beim ersten Versuch sieht — statt eines Links, den das Opfer
+          anklickt.
+        """
+        from urllib.parse import urlsplit
+
+        def _host(wert: str) -> str:
+            try:
+                return urlsplit(wert).hostname or ""
+            except ValueError:      # kaputte Adresse, z.B. eine offene IPv6-Klammer
+                return ""
+
+        roh = str(base_url or "").strip().rstrip("/")
+        eigen = str(self.cfg.base_url or "").strip().rstrip("/")
+        # `and _host(eigen)`: Ein `base_url` ohne erkennbaren Host (Tippfehler) darf nicht per
+        # „beide Hosts sind leer" jede beliebige Angabe durchwinken.
+        if eigen and roh and (roh == eigen or (_host(eigen) and _host(roh) == _host(eigen))):
+            return eigen
+        basis = security.sichere_basis(roh, self.cfg.trusted_redirect_hosts)
+        if not basis:
+            security.seclog.warning(
+                "Abgelehnte Basis-Adresse für einen verschickten Link: %s. Sie stammt weder aus "
+                "base_url noch aus trusted_redirect_hosts und ist nicht Loopback. Kommt der Wert "
+                "aus str(request.base_url), ist es der Host-Header des Anfragenden — genau der "
+                "Weg, über den ein Reset-Link auf einen fremden Server zeigte (R4-01).",
+                security.fuer_log(roh))
+            # Im Text steht die gekürzte, von Steuerzeichen befreite Fassung: Der Wert kommt
+            # vom Anfragenden, und eine Ausnahme wandert in Protokolle und Fehlerseiten.
+            raise ConfigError(
+                f"Diese Basis-Adresse geht nicht in einen verschickten Link: "
+                f"{security.fuer_log(roh)!r}. Erlaubt "
+                "sind base_url, ein Host aus trusted_redirect_hosts und Loopback. Wer die Basis "
+                "aus dem Request nimmt, nimmt den Host-Header des Anfragenden — bei einer Mail an "
+                "ein fremdes Postfach also den des Angreifers. In einer Route liefert "
+                "auth.public_base(request) die geprüfte Basis (leer = abbrechen).")
+        try:
+            pfad = urlsplit(roh).path.rstrip("/")
+        except ValueError:          # sichere_basis hätte das längst abgelehnt — doppelt hält
+            pfad = ""
+        return basis + pfad
 
     def safe_next(self, next_: str) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).

@@ -589,7 +589,11 @@ All optional (on/off by config), usable individually and combined, front end rep
   mailbox could point the link at their own server. `trusted_redirect_hosts` is no substitute:
   with more than one host listed, the `Host` header would still pick which one ends up in the
   link. **Mounted under a sub-path** (`root_path`), the prefix belongs in `base_url`:
-  `base_url="https://example.com/sso"`.
+  `base_url="https://example.com/sso"`. This holds for the methods themselves, not just for the
+  built-in routes: `magic_url`, `send_password_reset`, `send_login_link`, `send_verify_email` and
+  `create_invite` reject a foreign base with `ConfigError` (no token, no mail). Building your own
+  form? Take the base from `auth.public_base(request)` — empty means "no trusted address, abort" —
+  never from `str(request.base_url)`.
 - **Registration + invitation:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   admin invite `auth.create_invite(email, base_url, roles=…)`. Each mailed link has **its own
   endpoint**: `/auth/verify/{token}` (address confirmation), `/auth/invite/{token}` (invitation),

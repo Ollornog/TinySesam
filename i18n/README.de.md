@@ -603,7 +603,12 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   könnte den Link so auf seinen eigenen Server zeigen lassen. `trusted_redirect_hosts` ist dafür
   kein Ersatz: Steht dort mehr als ein Host, bestimmte weiterhin der `Host`-Header, welcher davon
   in den Link kommt. **Unter einem Unterpfad montiert** (`root_path`) gehört das Präfix in
-  `base_url`: `base_url="https://example.com/sso"`.
+  `base_url`: `base_url="https://example.com/sso"`. Das gilt für die Methoden selbst, nicht nur
+  für die eingebauten Routen: `magic_url`, `send_password_reset`, `send_login_link`,
+  `send_verify_email` und `create_invite` weisen eine fremde Basis mit `ConfigError` ab (kein
+  Token, keine Mail). Wer ein eigenes Formular baut, holt die Basis aus
+  `auth.public_base(request)` — leer heißt „keine vertrauenswürdige Adresse, abbrechen" — und
+  nie aus `str(request.base_url)`.
 - **Registrierung + Einladung:** `allow_signup` (+ `signup_verify_email`, `signup_invite_only`);
   Admin-Einladung `auth.create_invite(email, base_url, roles=…)`.
   Jeder verschickte Link hat **seinen eigenen Endpunkt**: `/auth/verify/{token}` (Adresse bestätigen),

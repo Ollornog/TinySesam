@@ -1294,6 +1294,286 @@ r.check("...aber nichts, was wir nicht sauber zusammensetzen können (fail close
         all(_sec.sichere_basis("https://a.example.com" + _p, ["a.example.com"]) == ""
             for _p in ("/../etc", "/sso/../x", "/a//b", "/s so", "/a%2fb")),
         "ein halb geratenes Präfix ginge in jede ausgehende Mail")
+
+# Zuletzt: Die Konfigurationsprüfung schwieg zu `base_url` komplett — wer die Lücke offen ließ,
+# erfuhr es nirgends.
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+
+_fehler, _warn = _kp.pruefe(TinySesamConfig(password_reset_enabled=True))
+r.check("konfigpruefung nennt das fehlende base_url",
+        any("base_url ist leer" in f for f in _fehler), f"{_fehler!r}")
+_fehler2, _warn2 = _kp.pruefe(auth_ok.cfg)
+r.check("mit gesetztem base_url schweigt sie dazu",
+        not any("base_url ist leer" in m for m in _fehler2 + _warn2), f"{_fehler2!r} {_warn2!r}")
+
+# Gemessen wird die Warnung für JEDEN Schalter, der eine absolute Adresse baut — nicht nur für
+# die Mail-Wege. Vorher deckte die Suite drei der sechs Einträge ab: `BRAUCHT_BASE_URL` ließ
+# sich um `oidc_enabled`, `saml_enabled` und `forward_auth_enabled` kürzen, ohne dass eine
+# einzige Prüfung rot wurde (Mutationsprobe N4, volle Suite 46/46 grün).
+#
+# Die sechs Schalter stehen deshalb AUSGESCHRIEBEN, nicht als Schleife über die Tabelle selbst:
+# eine Schleife über `BRAUCHT_BASE_URL` prüfte nur die Einträge, die noch drin sind — wer einen
+# entfernt, nähme sich damit auch die Prüfung weg. (Genau das fiel beim Nachstellen der
+# Mutationsprobe auf.) Gefragt wird eine nackte Config, keine Instanz: `pruefe` liest nur
+# Felder, und so braucht die Zeile weder [oidc] noch [saml].
+#
+# Seit der Nacharbeit N1 ist die Meldung nach Schwere getrennt: Die fünf Wege, die eine absolute
+# Adresse in FREMDE Hand geben (Mail, IdP), sind ein **Fehler** — der Aufbau scheitert, weil eine
+# Warnung durchstartet und `/auth/forgot` sonst weiter die Erfolgsseite ohne Mail rendert.
+# Forward-Auth bleibt eine **Warnung**: Die Umleitung bleibt ohne Basis relativ, trifft denselben
+# Browser und gibt nichts an Dritte. Beide Tabellen werden hier gemessen, jede in ihrer Schwere.
+_BRAUCHT_BASIS = ("magiclink_enabled", "password_reset_enabled", "signup_verify_email",
+                  "oidc_enabled", "saml_enabled")
+_EMPFIEHLT_BASIS = ("forward_auth_enabled",)
+r.check("die Tabelle nennt alle sechs Funktionen, die absolute Adressen bauen",
+        set(_BRAUCHT_BASIS) <= set(_kp.BRAUCHT_BASE_URL)
+        and set(_EMPFIEHLT_BASIS) <= set(_kp.BASE_URL_EMPFOHLEN),
+        f"nicht genannt: {sorted((set(_BRAUCHT_BASIS) - set(_kp.BRAUCHT_BASE_URL)) | (set(_EMPFIEHLT_BASIS) - set(_kp.BASE_URL_EMPFOHLEN)))}")
+for _feld in _BRAUCHT_BASIS:
+    _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
+    r.check(f"konfigpruefung meldet {_feld} ohne base_url als FEHLER",
+            any("base_url ist leer" in f for f in _f3),
+            f"{_f3!r} — dieser Schalter gibt eine absolute Adresse aus der Hand, sagt es aber niemandem")
+for _feld in _EMPFIEHLT_BASIS:
+    _f3, _w3 = _kp.pruefe(TinySesamConfig(**{_feld: True}))
+    r.check(f"konfigpruefung warnt bei {_feld} ohne base_url (kein Fehler)",
+            any("base_url ist leer" in w for w in _w3)
+            and not any("base_url ist leer" in f for f in _f3),
+            f"F={_f3!r} W={_w3!r} — die Umleitung bleibt relativ, das darf den Start nicht verweigern")
+
+# ── R4-01, die sechs Stellen ohne Mail: OIDC, SAML, Forward-Auth ───────────────
+# Dieselbe Regel, andere Wege. Getestet waren bis hierher nur die vier Mail-Wege; die übrigen
+# Stellen verhielten sich richtig, aber ungemessen — jede ließ sich auf die alte Form
+# `cfg.base_url or <aus dem Request>` zurückbauen, ohne dass die volle Suite rot wurde
+# (Mutationsproben N5–N8, je 46/46 grün). Genau hier arbeitet F-16 weiter, das die
+# SAML-SP-Identität betrifft: ohne diese Prüfungen reißt ein Umbau R4-01 still wieder auf.
+from urllib.parse import unquote, urlsplit  # noqa: E402
+
+_OIDC_META = {
+    "issuer": "https://idp.example.invalid",
+    "authorization_endpoint": "https://idp.example.invalid/authorize",
+    "token_endpoint": "https://idp.example.invalid/token",
+    "jwks_uri": "https://idp.example.invalid/jwks",
+    "end_session_endpoint": "https://idp.example.invalid/logout",
+}
+
+
+def _oidc_app(**cfg):
+    cfg.setdefault("base_url", ECHT)
+    auth_x, app_x = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
+                         oidc_client_id="probe", oidc_client_secret="geheim",
+                         csrf_enabled=False, passkey_enabled=False, **cfg)
+    auth_x.oidc._meta = dict(_OIDC_META)   # kein Netz nötig: geprüft wird die Basis, nicht Discovery
+    return auth_x, app_x
+
+
+def _oidc_app_ohne_basis(**cfg):
+    """Dieselbe App, aber mit leerer Basis zur REQUEST-Zeit.
+
+    Seit N1 verweigert der Konstruktor `oidc_enabled` ohne `base_url` rundheraus — diese Lage ist
+    also gar nicht mehr aufzubauen. Gemessen wird deshalb das zweite Schloss, das genau dafür da
+    ist: eine Config, die nach dem Konstruktor geändert wurde (sie wird zur Request-Zeit
+    gelesen). Ohne dieses Schloss fiele der Router auf den Host-Header zurück.
+    """
+    auth_x, app_x = _oidc_app(**cfg)
+    auth_x.cfg.base_url = ""
+    return auth_x, app_x
+
+
+# (1) OIDC-Redirect-URI. Sie entscheidet, wohin der IdP den Autorisierungs-Code schickt — aus dem
+# Host-Header abgeleitet würde ein IdP mit locker gepflegten Redirect-URIs den Code an den Host
+# des Angreifers ausliefern.
+def _bricht_ab(ruf):
+    """(brach mit ConfigError ab, Text der Antwort bzw. der Ausnahme).
+
+    Seit N1 werfen diese Wege `ConfigError` statt `HTTPException(500)`: Ein Serverfehler mitten
+    im Anmeldeversuch war der falsche Ort für ein Problem, das schon beim Aufbau feststand.
+    Gemessen wird deshalb der Abbruch, nicht mehr eine Statuszeile — und in beiden Fällen, dass
+    der fremde Host nirgends durchschlägt.
+    """
+    try:
+        antwort = ruf()
+    except _CfgErr as e:
+        return True, str(e)
+    return False, getattr(antwort, "text", "") + str(getattr(antwort, "headers", ""))
+
+
+_a_oi, _app_oi = _oidc_app_ohne_basis()
+with TestClient(_app_oi) as _c:
+    _oi_ab, _oi_text = _bricht_ab(
+        lambda: _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False))
+r.check("OIDC-Start: gefälschter Host baut keine Redirect-URI (fail closed)",
+        _oi_ab and BOESE not in unquote(_oi_text),
+        f"abgebrochen={_oi_ab}: {_oi_text[:160]!r}")
+
+_a_oi2, _app_oi2 = _oidc_app(base_url=ECHT)
+with TestClient(_app_oi2) as _c:
+    _start_gut = _c.get("/auth/oidc/start", headers={"host": BOESE}, follow_redirects=False)
+_ziel_gut = unquote(_start_gut.headers.get("location", ""))
+r.check("...und mit base_url läuft der Flow weiter, auf der eigenen Adresse",
+        _start_gut.status_code == 303 and ECHT + "/auth/oidc/callback" in _ziel_gut
+        and BOESE not in _ziel_gut,
+        f"HTTP {_start_gut.status_code}: {_ziel_gut[:160]!r} — sonst prüft die Zeile darüber nur, "
+        "dass der Start überhaupt kaputt ist")
+
+# (2) OIDC-Post-Logout. Der `post_logout_redirect_uri` geht an den IdP; aus dem Host-Header
+# abgeleitet schickt der IdP das Opfer nach dem Abmelden auf den Server des Angreifers.
+def _abmelden(auth_x, app_x):
+    uid = auth_x.create_user("wer", password="Geheim12345!")
+    tok = auth_x.store.create_session(uid, 3600, True, "oidc")
+    with TestClient(app_x) as c:
+        c.cookies.set(auth_x.cfg.session_cookie, tok)
+        return c.get("/auth/logout", headers={"host": BOESE}, follow_redirects=False)
+
+
+_a_pl, _app_pl = _oidc_app_ohne_basis(oidc_rp_logout=True)
+_logout_boese = _abmelden(_a_pl, _app_pl)
+_loc_boese = unquote(_logout_boese.headers.get("location", ""))
+r.check("OIDC-Logout: kein post_logout_redirect_uri aus dem Host-Header",
+        BOESE not in _loc_boese and _loc_boese == _a_pl.cfg.logout_redirect,
+        f"{_loc_boese!r} — der IdP schickte das Opfer danach zum Angreifer")
+
+_a_pl2, _app_pl2 = _oidc_app(oidc_rp_logout=True, base_url=ECHT)
+_loc_gut = unquote(_abmelden(_a_pl2, _app_pl2).headers.get("location", ""))
+r.check("...und mit base_url meldet der Provider-Logout weiter ab (der Weg lebt)",
+        _loc_gut.startswith("https://idp.example.invalid/logout")
+        and ECHT + _a_pl2.cfg.logout_redirect in _loc_gut and BOESE not in _loc_gut,
+        f"{_loc_gut!r}")
+
+
+# (3) SAML: Entity-ID und ACS-URL. Beides ist die IDENTITÄT des SP — ein fremder Name darin
+# wandert in den AuthnRequest und in die Metadaten, die der Betreiber beim IdP hinterlegt.
+# Die Attrappe steht für den echten Client: geprüft wird die Basis, die der Router ihm gibt,
+# nicht die Signaturarbeit von python3-saml. So braucht diese Zeile das Extra [saml] nicht —
+# ein Überspringen wäre hier kein Grün.
+class _SamlAttrappe:
+    def login_url(self, req, base, return_to="/"):
+        return f"https://idp.example.invalid/sso?sp={base}&RelayState={return_to}", "rid-1"
+
+    def process(self, req, base, request_id=""):
+        return None      # „Assertion abgelehnt" → 400; ein 500 hieße: es gab gar keine Basis
+
+    def metadata(self, base):
+        return f'<EntityDescriptor entityID="{base}/auth/saml/metadata"/>'
+
+
+def _saml_app(**cfg):
+    tmp = tempfile.mkdtemp()
+    grund = dict(db_path=str(Path(tmp) / "t.db"), cookie_secure=False, csrf_enabled=False,
+                 passkey_enabled=False)
+    grund.update(cfg)
+    auth_x = TinySesam(TinySesamConfig(**grund))
+    auth_x.saml = _SamlAttrappe()    # VOR router(): die SAML-Routen hängen an auth.saml
+    app_x = FastAPI()
+    app_x.include_router(auth_x.router())
+    return auth_x, app_x
+
+
+_a_sa, _app_sa = _saml_app()
+with TestClient(_app_sa) as _c:
+    _md_ab, _md_text = _bricht_ab(lambda: _c.get("/auth/saml/metadata", headers={"host": BOESE}))
+    _lg_ab, _lg_text = _bricht_ab(
+        lambda: _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False))
+    _acs_ab, _ = _bricht_ab(
+        lambda: _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE}))
+r.check("SAML-Metadaten: keine Entity-ID aus dem Host-Header",
+        _md_ab and BOESE not in _md_text, f"abgebrochen={_md_ab}: {_md_text[:160]!r}")
+r.check("SAML-Login: kein AuthnRequest mit fremder SP-Adresse",
+        _lg_ab and BOESE not in unquote(_lg_text),
+        f"abgebrochen={_lg_ab}: {_lg_text[:160]!r}")
+r.check("SAML-ACS: bricht ab, bevor eine Assertion gegen eine fremde ACS-URL geprüft wird",
+        _acs_ab, "die Assertion wäre gegen eine fremde ACS-URL geprüft worden")
+
+_a_sa2, _app_sa2 = _saml_app(base_url=ECHT)
+with TestClient(_app_sa2) as _c:
+    _md_gut = _c.get("/auth/saml/metadata", headers={"host": BOESE})
+    _lg_gut = _c.get("/auth/saml/login", headers={"host": BOESE}, follow_redirects=False)
+    _acs_gut = _c.post("/auth/saml/acs", data={"SAMLResponse": "x"}, headers={"host": BOESE})
+r.check("...und mit base_url trägt SAML die eigene Adresse (Metadaten, Login, ACS leben)",
+        _md_gut.status_code == 200 and f'entityID="{ECHT}/auth/saml/metadata"' in _md_gut.text
+        and _lg_gut.status_code == 303 and f"sp={ECHT}" in unquote(_lg_gut.headers["location"])
+        and _acs_gut.status_code == 400 and BOESE not in _md_gut.text,
+        f"Metadaten HTTP {_md_gut.status_code}: {_md_gut.text[:90]!r}; Login HTTP "
+        f"{_lg_gut.status_code}; ACS HTTP {_acs_gut.status_code} (400 = Basis stand, Assertion "
+        "abgelehnt; 500 = keine Basis)")
+
+# (4) Forward-Auth-Umleitung. Der Proxy schickt jeden nicht angemeldeten Besucher auf die
+# Adresse aus `X-TinySesam-Location` — stünde dort ein fremder Host, führte der Proxy das Opfer
+# selbst auf die Anmeldeseite des Angreifers. Geprüft wird der HOST der Umleitung: das `next=`
+# trägt die angefragte URL und darf das auch, `safe_next` verwirft sie später.
+_a_fa, _app_fa = _app(forward_auth_enabled=True, csrf_enabled=False, passkey_enabled=False,
+                      trusted_redirect_hosts=["app.example.com"])
+with TestClient(_app_fa) as _c:
+    _fa_boese = _c.get("/auth/forward", headers={"host": BOESE, "x-forwarded-host": BOESE,
+                                                 "x-forwarded-proto": "https",
+                                                 "x-forwarded-uri": "/geheim"})
+    _fa_gut = _c.get("/auth/forward", headers={"host": "app.example.com",
+                                               "x-forwarded-host": "app.example.com",
+                                               "x-forwarded-proto": "https",
+                                               "x-forwarded-uri": "/geheim"})
+_loc_fa = _fa_boese.headers.get("X-TinySesam-Location", "")
+r.check("Forward-Auth: die 401-Umleitung zeigt auf keinen fremden Host",
+        _fa_boese.status_code == 401 and not (urlsplit(_loc_fa).hostname or "")
+        and _loc_fa.startswith(_a_fa.cfg.login_path + "?next="),
+        f"HTTP {_fa_boese.status_code}: {_loc_fa[:140]!r} — der Proxy selbst führte das Opfer hin")
+_loc_fa_gut = _fa_gut.headers.get("X-TinySesam-Location", "")
+r.check("...und auf einem Host aus trusted_redirect_hosts bleibt sie absolut (Cookie-Host)",
+        _fa_gut.status_code == 401
+        and _loc_fa_gut.startswith("https://app.example.com" + _a_fa.cfg.login_path),
+        f"HTTP {_fa_gut.status_code}: {_loc_fa_gut[:140]!r}")
+
+# ── Dieselbe Regel für die dokumentierten Methoden, nicht nur für die Routen ───
+# `public_base()` sass nur in den Routen. Eine App mit eigenem „Passwort vergessen"-Formular —
+# der in beiden READMEs und in API.md gezeigte Weg — rief `send_password_reset(mail, basis)`
+# selbst auf und war mit `str(request.base_url)` weiter voll angreifbar, während ihr die
+# eingebaute Route längst weggebrochen war. Die Prüfung sitzt jetzt in `magic_url()`, wo alle
+# vier Mail-Wege zusammenlaufen, und zusätzlich vor der Token-Vergabe in jedem Absender.
+_a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, passkey_enabled=False,
+                        base_url=ECHT)
+_mails_api: list = []
+_a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
+_a_api.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+
+
+def _tokenzeilen(auth_x) -> int:
+    return auth_x.store._exec("SELECT COUNT(*) FROM magic_token").fetchone()[0]
+
+
+for _name, _ruf in (
+        ("magic_url", lambda: _a_api.magic_url("rohtoken", "https://" + BOESE, "reset_password")),
+        ("send_password_reset", lambda: _a_api.send_password_reset("opfer@example.com",
+                                                                   "https://" + BOESE)),
+        ("send_login_link", lambda: _a_api.send_login_link("opfer@example.com", "https://" + BOESE)),
+        ("send_verify_email", lambda: _a_api.send_verify_email(1, "opfer@example.com",
+                                                               "https://" + BOESE)),
+        ("create_invite", lambda: _a_api.create_invite("gast@example.com", "https://" + BOESE))):
+    try:
+        _erg = _ruf()
+        _abgewiesen, _wie = False, repr(_erg)
+    except ConfigError as e:
+        _abgewiesen, _wie = True, str(e)[:60]
+    r.check(f"{_name}(fremde Basis) wird abgewiesen, nicht ausgeliefert", _abgewiesen,
+            f"kam durch: {_wie} — die App mit eigenem Formular bleibt angreifbar")
+
+r.check("dabei geht keine Mail hinaus", _mails_api == [], f"{_mails_api!r}")
+r.check("und es bleibt kein unbrauchbarer Token in der Datenbank",
+        _tokenzeilen(_a_api) == 0,
+        f"{_tokenzeilen(_a_api)} Zeilen — geprüft wird vor der Token-Vergabe, nicht danach")
+
+# Der legitime Weg der App: die zugesagte Basis. Ohne diese Zusage wäre „nie wieder ein Link"
+# auch grün. Der Host der eigenen base_url genügt — ein `http://` aus einem TLS-terminierenden
+# Proxy wird dabei auf die konfigurierte Adresse gehoben, statt still unverschlüsselt zu bleiben.
+r.check("legitimer Weg: base_url liefert den Link",
+        _a_api.magic_url("rohtoken", ECHT, "reset_password") == ECHT + "/auth/reset?token=rohtoken",
+        _a_api.magic_url("rohtoken", ECHT, "reset_password"))
+r.check("str(request.base_url) auf dem eigenen Host bleibt benutzbar — und wird nicht http",
+        _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password")
+        == ECHT + "/auth/reset?token=rohtoken",
+        _a_api.magic_url("rohtoken", "http://auth.example.com/", "reset_password"))
+r.check("und der Absender schickt damit wieder (die Methode lebt)",
+        _a_api.send_password_reset("opfer@example.com", ECHT) is True
+        and len(_mails_api) == 1 and ECHT + "/auth/reset" in _mails_api[0],
+        f"{_mails_api!r}")
 # ── Eine fremde Registrierung besetzte die Login-Kennung eines Kontos ────────
 # Fund R4-12 (drittes Audit). Die Registrierung prüfte die beiden Namensräume nur GETRENNT:
 # `email_taken` gegen users.email, `get_user_by_name` gegen users.username. `find_user` sucht im
@@ -1389,7 +1669,10 @@ for feld, koerper in (("E-Mail", {"username": "eve2", "email": "chef@example.com
 
 # Einladung: Die Adresse kommt dort aus dem Token, nicht aus dem Formular — der Wächter muss
 # auch diesen Weg treffen, sonst legt eine Einladung auf eine vergebene Kennung ein Konto an.
-_einladung = auth_n2.create_invite("chef@example.com", "https://app.example.invalid")["token"]
+# Die Basis muss seit N6 selbst belegt sein (`_gepruefte_basis`) — ein frei erfundener Host
+# geht nicht mehr in einen verschickten Link. Hier steht Loopback dafür; geprüft wird ohnehin
+# nur der Token, nicht der Link.
+_einladung = auth_n2.create_invite("chef@example.com", "http://127.0.0.1:8000")["token"]
 antwort_inv = c_n2.post("/auth/register",
                         data={"username": "eve3", "password": PW_EVE, "invite": _einladung,
                               "next": "/"}, follow_redirects=False)

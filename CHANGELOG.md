@@ -144,7 +144,17 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   `trusted_redirect_hosts` schützte nur `?next=`, nicht diesen Weg (CWE-644). Jetzt entscheidet
   überall `TinySesam.public_base()`: `base_url` gewinnt, sonst gilt ein abgeleiteter Host nur,
   wenn er in `trusted_redirect_hosts` steht oder Loopback ist. Dieselbe Prüfung deckt
-  OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS und die Forward-Auth-Umleitung.
+  OIDC-Redirect-URI und Post-Logout, SAML-Entity-ID/ACS und die Forward-Auth-Umleitung; jede
+  dieser Stellen wird einzeln gemessen (`tests/test_sicherheit_befunde.py`), nachdem sich in einer
+  Mutationsprobe alle vier auf die alte Form zurückbauen ließen, ohne dass eine Prüfung rot wurde.
+
+  **Auch die dokumentierten Methoden prüfen ihre Basis jetzt selbst** — `magic_url()`, wo alle vier
+  Mail-Wege zusammenlaufen, und davor `send_password_reset`, `send_login_link`, `send_verify_email`
+  und `create_invite`. Vorher saß die Prüfung nur in der Route: Eine App mit eigenem „Passwort
+  vergessen"-Formular, die dem naheliegenden Muster `str(request.base_url)` folgte, blieb voll
+  angreifbar, während ihr die eingebaute Route längst abriegelte. Eine fremde Basis wird mit
+  `ConfigError` abgewiesen, und zwar **vor** der Token-Vergabe (kein unbrauchbarer Token bleibt
+  liegen) und vor der Kontosuche (die Ausnahme verrät nicht, ob es die Adresse gibt).
 
   **`base_url` ist jetzt Pflicht — eine bewusste Verhaltensänderung, und die erste Fassung dieses
   Fixes war zu weich.** Der Absatz hier versprach „sichtbarer Fehler statt geratener Adresse";
@@ -178,8 +188,14 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   startet die Instanz nicht mehr: `base_url="https://auth.example.com"` (lokal
   `base_url="http://127.0.0.1:8000"`, unter einem Unterpfad montiert mit Präfix,
   `"https://example.com/sso"`). Die Fehlermeldung beim Start nennt genau das.
+
+  **Für Einbettende:** Wer die Basis selbst übergibt, nimmt sie nicht aus dem Request, sondern aus
+  `auth.public_base(request)` (leer = abbrechen); der Host der eigenen `base_url` wird weiterhin
+  angenommen und dabei auf die konfigurierte Adresse gehoben, damit ein `http://` aus einem
+  TLS-terminierenden Proxy nicht still in den Mail-Link wandert. Wer bisher `str(request.base_url)`
+  durchreichte, bekommt bei einem fremden Host jetzt `ConfigError` statt eines Links.
   Gefunden im dritten Audit (R4-01 = R8-4 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)),
-  nachgeschärft in der Nacharbeitsrunde N1 dazu.
+  nachgeschärft in den Nacharbeitsrunden N1 und N6 dazu.
 - **Eine fremde Registrierung konnte die Login-Kennung eines bestehenden Kontos besetzen.** Geprüft
   wurden die beiden Namensräume nur getrennt — die Adresse gegen `users.email`, der Benutzername
   gegen `users.username`. Im Vorgabe-Modus `login_identifier="both"` durchsucht die Anmeldung aber
