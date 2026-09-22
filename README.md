@@ -165,6 +165,12 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | confirm an address · accept an invitation |
 | `GET /auth/logout` · `GET /auth/me` | log out · current user (JSON) |
 
+**Managing a factor needs a fresh factor.** `POST /auth/totp/disable`, `/auth/totp/recovery`,
+`/auth/pin/set`, `/auth/pin/disable` and `/auth/passkey/delete` require a step-up confirmation no
+older than `stepup_max_age_sec` — otherwise 403 plus `X-TinySesam-Reauth: /auth/reauth` (browsers
+are redirected there). An **API key can never satisfy it**: a machine credential never performs an
+interactive factor, so it cannot take one away either.
+
 ## Configuration (`TinySesamConfig`, excerpt)
 
 | Field | Default | |

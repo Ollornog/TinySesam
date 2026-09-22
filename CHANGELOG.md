@@ -189,6 +189,19 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Fragmente heraus, aber eine eingeschobene Zeile aus einem manipulierten Benutzernamen ist
   vollständig und wohlgeformt — sie matcht genauso. Der Schutz ist allein die Bereinigung in
   0.18.0; der Kommentar sagt das jetzt.
+- **Der zweite Faktor liess sich ohne frische Bestätigung abbauen — und per API-Key.**
+  `POST /auth/totp/disable`, `/auth/totp/recovery`, `/auth/pin/set`, `/auth/pin/disable` und
+  `/auth/passkey/delete` hingen allein an `current_user()`. Eine Sitzung, deren Step-up längst
+  abgelaufen war — auf jedem `require(mfa=True)`-Guard ein 403 —, durfte damit TOTP löschen, sich
+  zehn frische Recovery-Codes ausstellen und PIN wie Passkey entfernen: Ausgerechnet die
+  Verwaltung der Faktoren stand hinter keiner Schranke. Dazu kam die zweite Hälfte: `current_user()`
+  akzeptiert auch einen **API-Key**, und ein Maschinen-Credential erbringt nie einen interaktiven
+  Faktor — ein abgeflossener CI-Key baute den zweiten Faktor seines Besitzers lautlos ab. Alle
+  fünf Routen verlangen jetzt `require_mfa()`: interaktive Sitzung mit frischer Bestätigung, für
+  einen API-Key konstruktiv unerreichbar (403, „Step-up-MFA nötig — nur per interaktiver Sitzung").
+  Die Konto-Seite wertet den Hinweis-Header `X-TinySesam-Reauth` jetzt selbst aus und schickt zur
+  Reauth-Seite, statt stumm zu scheitern. Fund **R3-3** aus
+  [T-13](backlog/T-13-audit-2026-09-22-runde-3.md).
 
 ### Hinzugefügt
 

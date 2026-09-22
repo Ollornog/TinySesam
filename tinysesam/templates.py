@@ -373,7 +373,12 @@ def _account(auth, ctx) -> str:
 _ACCOUNT_JS = """
 <script>
 function tsCsrf(){return (document.cookie.match(/(?:^|; )tinysesam_csrf=([^;]+)/)||[])[1]||''}
-const J=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
+async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
+  // 403 + X-TinySesam-Reauth: die Faktor-Verwaltung verlangt seit R3-3 eine frische
+  // Bestätigung. Ohne diese Weiche scheiterte der Knopf nach Ablauf der Frische stumm.
+  const re=r.headers.get('X-TinySesam-Reauth');
+  if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
+  return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}

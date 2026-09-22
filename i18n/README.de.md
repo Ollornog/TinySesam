@@ -161,6 +161,13 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 | `GET /auth/verify/{token}` · `GET /auth/invite/{token}` | Adresse bestätigen · Einladung annehmen |
 | `GET /auth/logout` · `GET /auth/me` | Abmelden · aktueller User (JSON) |
 
+**Wer einen Faktor verwaltet, muss gerade einen erbracht haben.** `POST /auth/totp/disable`,
+`/auth/totp/recovery`, `/auth/pin/set`, `/auth/pin/disable` und `/auth/passkey/delete` verlangen
+eine Step-up-Bestätigung, die nicht älter ist als `stepup_max_age_sec` — sonst 403 samt
+`X-TinySesam-Reauth: /auth/reauth` (Browser werden dorthin geschickt). Ein **API-Key erfüllt das
+nie**: Ein maschinelles Credential erbringt keinen interaktiven Faktor und kann folglich auch
+keinen abbauen.
+
 ## Konfiguration (`TinySesamConfig`, Auszug)
 
 | Feld | Default | |

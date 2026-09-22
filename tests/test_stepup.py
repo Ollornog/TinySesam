@@ -102,5 +102,130 @@ assert r.status_code == 303
 assert c3.get("/auth/admin", headers={"Accept": "text/html"}).status_code == 200
 ok("admin_require_mfa: Panel altert → Reauth per TOTP → wieder frei")
 
+# ---------- R3-3: Faktor-Verwaltung verlangt Frische — und scheitert am API-Key ----------
+# Angriff (Befund R3-3, Runde 3): Eine übernommene oder lange offene Sitzung bekam auf jedem
+# `require(mfa=True)`-Guard 403, durfte aber weiterhin TOTP löschen, sich zehn frische
+# Recovery-Codes ausstellen, die PIN setzen/entfernen und Passkeys löschen. Dieselben Routen
+# hingen an `current_user()` — und das akzeptiert auch einen **API-Key**: ein abgeflossenes
+# Maschinen-Credential, das nie einen interaktiven Faktor erbracht hat, baute den zweiten
+# Faktor seines Besitzers lautlos ab.
+db2 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp_name="Test",
+                                  cookie_secure=False, oidc_enabled=False, pin_enabled=True,
+                                  apikey_enabled=True, passkey_enabled=True,
+                                  stepup_max_age_sec=900))
+uid2 = auth2.create_user("opfer", password="geheim123")
+sec2 = auth2.totp_begin(uid2)["secret"]
+assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).now())
+auth2.set_pin(uid2, "2468")
+auth2.store.add_webauthn(uid2, "credid-r3-3", "pubkey", 0, ["internal"], "Testschlüssel")
+pk2 = auth2.store.list_webauthn(uid2)[0]["id"]
+app2 = FastAPI()
+app2.include_router(auth2.router())
+
+
+@app2.get("/normal2")
+def normal2(u=Depends(auth2.require_user)):
+    return {"u": u["username"]}
+
+
+@app2.get("/sudo2")
+def sudo2(u=Depends(auth2.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+def koerper(pfad, pin="9876", pk=None):
+    """Was die jeweilige Route als Body erwartet (die anderen ignorieren ihn)."""
+    if pfad == "/auth/pin/set":
+        return {"pin": pin}
+    if pfad == "/auth/passkey/delete":
+        return {"id": pk}
+    return {}
+
+
+#: Die fünf Routen, die einen Anmeldefaktor abbauen oder ersetzen.
+VERWALTUNG = ("/auth/totp/recovery", "/auth/totp/disable", "/auth/pin/set",
+              "/auth/pin/disable", "/auth/passkey/delete")
+
+
+def faktoren(a, uid):
+    """Womit kann sich dieses Konto gerade anmelden? (TOTP, PIN, Anzahl Passkeys)"""
+    return (a.store.has_confirmed_totp(uid), a.has_pin(uid), len(a.store.list_webauthn(uid)))
+
+
+c4 = TestClient(app2)
+c4.post("/auth/login", data={"username": "opfer", "password": "geheim123", "next": "/"},
+        follow_redirects=False)
+c4.post("/auth/totp", data={"code": pyotp.TOTP(sec2).now(), "next": "/"}, follow_redirects=False)
+assert c4.get("/sudo2", headers=JSON).status_code == 200
+assert c4.post("/auth/totp/recovery", json={}, headers=JSON).status_code == 200
+assert c4.post("/auth/pin/set", json={"pin": "9876"}, headers=JSON).status_code == 200
+assert auth2.verify_user_pin(uid2, "9876")
+ok("frische Sitzung: Recovery-Codes und PIN-Änderung gehen weiter durch (legitimer Weg)")
+
+tok2 = c4.cookies.get("tinysesam_session")
+auth2.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                  (int(time.time()) - 100000, auth2.store.session_hash(tok2)))
+# Vorbedingung — ohne sie prüfte der Block nichts: Die Sitzung LEBT weiter, `current_user()`
+# liefert sie, nur die Frische fehlt. Genau darauf stützten sich die fünf Routen vorher; mit
+# den alten `current_user()`-Zeilen wäre jede der folgenden Zusicherungen rot.
+assert c4.get("/normal2", headers=JSON).status_code == 200, "die Sitzung muss gültig bleiben"
+assert c4.get("/sudo2", headers=JSON).status_code == 403, "die Frische muss wirklich weg sein"
+vorher2 = faktoren(auth2, uid2)
+for pfad in VERWALTUNG:
+    antwort = c4.post(pfad, json=koerper(pfad, pk=pk2), headers=JSON)
+    assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
+    assert antwort.headers.get("X-TinySesam-Reauth") == "/auth/reauth", (pfad, dict(antwort.headers))
+assert faktoren(auth2, uid2) == vorher2, "aus einer veralteten Sitzung darf sich kein Faktor ändern"
+ok("veraltete Sitzung: alle fünf Faktor-Routen → 403 + Reauth-Hinweis, nichts geändert")
+
+# Frischer Zeitschritt: der Code vom Login ist verbraucht (ein TOTP-Code gilt genau einmal).
+r = c4.post("/auth/reauth", data={"code": pyotp.TOTP(sec2).at(int(time.time()) + 30), "next": "/"},
+            follow_redirects=False)
+assert r.status_code == 303, r.status_code
+assert c4.post("/auth/passkey/delete", json={"id": pk2}, headers=JSON).status_code == 200
+assert auth2.store.list_webauthn(uid2) == [], "nach dem Step-up muss der legitime Weg offen sein"
+ok("nach Reauth: derselbe Aufruf geht wieder durch (Passkey gelöscht)")
+
+# ---------- Derselbe Angriff per API-Key, mit eingeschaltetem CSRF ----------
+# CSRF bleibt hier AN (Vorgabe): Für einen echten API-Key greift `_csrf_entbehrlich`, die
+# CSRF-Schicht hält ihn also nicht auf. Was ihn aufhält, muss die Frische-Schranke sein.
+db3 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie_secure=False,
+                                  oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
+                                  passkey_enabled=True))
+uid3 = auth3.create_user("opfer", password="geheim123")
+sec3 = auth3.totp_begin(uid3)["secret"]
+assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).now())
+auth3.set_pin(uid3, "1357")
+auth3.store.add_webauthn(uid3, "credid-r3-3-api", "pubkey", 0, ["internal"], "Testschlüssel")
+pk3 = auth3.store.list_webauthn(uid3)[0]["id"]
+schluessel = auth3.create_api_key(uid3, name="ci")["key"]
+app3 = FastAPI()
+app3.include_router(auth3.router())
+
+
+@app3.get("/normal3")
+def normal3(u=Depends(auth3.require_user)):
+    return {"u": u["username"]}
+
+
+c5 = TestClient(app3)
+KEY = {"X-API-Key": schluessel, "Accept": "application/json"}
+# Vorbedingung: Der Key ist gültig und `current_user()` liefert damit das Konto — genau die
+# Grundlage, auf der die fünf Routen den Faktor-Abbau vorher zuliessen.
+assert c5.get("/normal3", headers=KEY).status_code == 200, "der API-Key muss gültig sein"
+vorher3 = faktoren(auth3, uid3)
+for pfad in VERWALTUNG:
+    antwort = c5.post(pfad, json=koerper(pfad, pin="1111", pk=pk3), headers=KEY)
+    assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
+    # Die Abweisung muss die Frische-Schranke sein, nicht zufällig CSRF.
+    assert antwort.json().get("detail") == auth3.t("api.stepup_session"), (pfad, antwort.text[:90])
+assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
+assert auth3.verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
+ok("API-Key (CSRF an): alle fünf Faktor-Routen → 403 'nur per interaktiver Sitzung'")
+
 os.remove(db)
+os.remove(db2)
+os.remove(db3)
 print("\nSTEP-UP OK ✅")

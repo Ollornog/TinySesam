@@ -134,9 +134,14 @@ def build_router(auth) -> APIRouter:
         # Ohne diese Zeile genügte ein <form method=POST> ohne Body von einer fremden Seite,
         # um TOTP UND alle Recovery-Codes zu löschen — der zweite Faktor spurlos weg.
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        # **Faktor-Verwaltung verlangt Frische** (Befund R3-3). `current_user()` genügte hier
+        # bisher — mit zwei Folgen: (1) Eine Sitzung, deren Step-up längst abgelaufen war
+        # (jeder `require(mfa=True)`-Guard gab ihr 403), durfte den zweiten Faktor trotzdem
+        # abbauen. (2) `current_user()` akzeptiert auch einen **API-Key**: ein abgeflossenes
+        # Maschinen-Credential, das nie einen interaktiven Faktor erbracht hat, löschte TOTP und
+        # PIN seines Besitzers lautlos. `require_mfa()` schliesst beides — für einen API-Key ist
+        # Step-up-Frische konstruktiv unerreichbar (403, `api.stepup_session`).
+        u = auth.require_mfa(request)
         auth.totp_disable(u["id"])
         return {"ok": True}
 
@@ -144,9 +149,7 @@ def build_router(auth) -> APIRouter:
     def totp_recovery(request: Request):
         """Neue Einmal-Recovery-Codes erzeugen (nur mit eingerichtetem TOTP). Klartext NUR EINMAL."""
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
         if not auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(400, auth.t("api.totp_first"))
         return {"codes": auth.generate_recovery_codes(u["id"])}
@@ -210,9 +213,9 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            # R3-3: Eine PIN setzen heisst, einen Anmeldefaktor zu ersetzen — das darf nur eine
+            # interaktive Sitzung mit frischer Bestätigung, nie ein API-Key.
+            u = auth.require_mfa(request)
             b = await auth.json_body(request)
             try:
                 auth.set_pin(u["id"], b.get("pin"))
@@ -224,9 +227,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
-            u = auth.current_user(request)
-            if not u:
-                raise HTTPException(401)
+            u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
             auth.disable_pin(u["id"])
             auth.audit("pin_disable", u["username"])
             return {"ok": True}

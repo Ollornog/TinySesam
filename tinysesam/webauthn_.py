@@ -139,9 +139,10 @@ def register_passkey_routes(router, auth):
 
     @router.post("/auth/passkey/delete")
     async def pk_delete(request: Request):
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        # R3-3: Einen Passkey zu löschen nimmt dem Konto einen vollwertigen Faktor. Das verlangt
+        # eine interaktive Sitzung mit frischer Bestätigung — `current_user()` hätte auch eine
+        # veraltete Sitzung und jeden API-Key durchgelassen.
+        u = auth.require_mfa(request)
         b = await auth.json_body(request)
         auth.store.delete_webauthn(int(b["id"]), u["id"])
         return {"ok": True}
