@@ -100,7 +100,7 @@ assert _m.status_code == 200 and _m.json()["admin"] is True, _m.text[:120]
 print("  ✓ Menschen-Key: allein wertlos, mit Sitzung voll wirksam")
 
 # Und er gilt nur für SEIN Konto, nicht für irgendeine Sitzung.
-_zweit = auth.create_user("zweitkonto", password="pw2")
+auth.create_user("zweitkonto", password="pw2")
 c4 = TestClient(app2)
 c4.post("/auth/login", data={"username": "zweitkonto", "password": "pw2", "next": "/"},
         follow_redirects=False)
