@@ -4,6 +4,50 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+**Verhaltensänderungen in dieser Runde.** Sechs Punkte ändern, was eine bestehende Installation
+tut — je Punkt steht dahinter, was zu tun ist; die Begründung steht weiter unten bei dem Befund,
+aus dem der Punkt kommt.
+
+1. **`base_url` ist Pflicht**, sobald ein Mail-Weg (`magiclink_enabled`, `password_reset_enabled`,
+   `signup_verify_email`), `oidc_enabled` oder `saml_enabled` an ist. Aus der Warnung ist ein
+   **Fehler** geworden: Die Instanz startet sonst nicht mehr. → **Zu tun:** die öffentliche
+   Adresse dieser App eintragen (`base_url="https://auth.example.com"`, lokal
+   `"http://127.0.0.1:8000"`, unter einem Unterpfad mit Präfix `"https://example.com/sso"`). Die
+   Fehlermeldung beim Start nennt genau das. Wer die Basis selbst übergibt, nimmt sie ab jetzt aus
+   `auth.public_base(request)`, nicht aus dem Request.
+2. **Eine E-Mail-Adresse trägt eine Rechte-Entscheidung nur noch mit Beleg** (neue Spalte
+   `users.email_verified`, Schema 5). Über OIDC zählt der Claim `email_verified`, über SAML und
+   LDAP gibt es keinen — dort befördert eine Adresse aus `admin_identifiers` nie mehr.
+   → **Zu tun:** Bestandskonten sind nicht betroffen (`ALTER TABLE … DEFAULT 1`). Wer den
+   Erst-Admin bisher über `admin_identifiers` + SAML/LDAP setzte, nimmt `/auth/claim-admin` und
+   danach das Gruppen-Mapping. Wer einen IdP fährt, der den optionalen Claim nie schickt (Entra ID),
+   und seine Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`.
+3. **Die Selbstverwaltung der Faktoren steht hinter Step-up.** `totp/disable`, `totp/recovery`,
+   `pin/set`, `pin/disable`, `passkey/delete` — und seit dem Nachschlag auch die **Anlage**
+   (`totp/setup`, `passkey/register/*`) — verlangen eine frisch bestätigte Sitzung.
+   → **Zu tun:** nichts konfigurieren; wer eine **eigene** Konto-Seite baut, wertet den Hinweis-Header
+   `X-TinySesam-Reauth` aus und schickt auf `/auth/reauth`, sonst scheitern die Knöpfe stumm mit 403.
+4. **Ein API-Key kommt auf diese Routen nicht mehr** — er ist ein Maschinen-Credential und erbringt
+   nie einen interaktiven Faktor; die Antwort ist **403**. → **Zu tun:** Automatisierung, die bisher
+   per Key Faktoren setzte oder abbaute, auf einen anderen Weg legen (Admin-API bzw. Datenbank). Ein
+   abgeflossener CI-Key kann dafür im Gegenzug nichts mehr.
+5. **Die Untergrenzen der Abhängigkeiten sind gehoben** — `fastapi>=0.133.0`,
+   `python-multipart>=0.0.31`, `authlib>=1.6.12`, ohne obere Schranken. → **Zu tun:** wer Versionen
+   festhält (Lockfile, Constraints, Distributionspaket), zieht sie nach; mit `authlib 1.3.0` war ein
+   gefälschtes ID-Token möglich.
+6. **Fehlversuche zählen in eigene Töpfe statt in den Login-Topf.** Passwortwechsel, Step-up-
+   Bestätigung und Bereichs-PIN haben eigene Schwellen (`password_change_max_attempts`,
+   `reauth_max_attempts`, `resource_max_attempts`, je 5); ihre Log-Zeilen tragen das eigene Wort
+   `failed verification` und treffen die mitgelieferte fail2ban-Jail **nicht** mehr.
+   → **Zu tun:** wer die Jail einsetzt, übernimmt die aktualisierte
+   `deploy/fail2ban/tinysesam-filter.conf`; wer auch diese Fehlgriffe bannen will, nimmt zusätzlich
+   `tinysesam-verify-filter.conf` samt der milderen, standardmässig abgeschalteten Jail.
+
+⚠️ **Für einbettende Apps** kommen zwei Änderungen an dokumentierten Methoden dazu: `create_user()`
+wirft beim doppelten **Benutzernamen** jetzt `ConfigError` statt `sqlite3.IntegrityError`, und
+`store.set_email()` schreibt den Bestätigungs-Vermerk mit, vorgabegemäss **unbestätigt**
+(`verified=True` für den belegten Fall). Beides steht unten bei seinem Befund.
+
 **Doku-Abgleich: 70 Stellen, an denen die Doku etwas anderes sagte als der Code.** Sieben Flächen
 wurden gegen die Wirklichkeit gemessen — beide READMEs, CHANGELOG, Docstrings, `deploy/`, `web/`,
 Backlog. Der Befund war nicht, dass Sätze veraltet klangen: **Zehn der Stellen waren Mängel im
@@ -341,9 +385,11 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Deshalb zählt `is_locked` jetzt nur noch, was ein **Anmeldeversuch** war
   (`security.NICHT_LOGIN_METHODEN` als Ausnahmeliste, damit eine neue Anmeldemethode von sich
   aus mitzählt). Gedrosselt, gesperrt und protokolliert wird das Raten unverändert — nur eben
-  dort, wo geraten wurde. **Der Preis, offen gesagt:** Wer schon eine Sitzung hat, hat damit zwei
-  getrennte Töpfe (je 5 Versuche im Fenster) statt eines — das ist die Gegenleistung dafür, dass
-  ein Tippfehler auf der Kontoseite niemandem die Anmeldung verriegelt.
+  dort, wo geraten wurde. **Der Preis, offen gesagt:** Statt eines Topfes gibt es am Ende dieser
+  Runde **vier** — Anmeldung, Passwortwechsel, Step-up-Bestätigung und Bereichs-PIN, je 5 Versuche
+  im Fenster (die letzten drei kamen mit der Nacharbeit unten dazu). Wer alle vier ausreizt, hat
+  mehr Versuche als vorher; dafür verriegelt ein Tippfehler auf der Kontoseite niemandem mehr die
+  Anmeldung, und jeder Topf trifft genau den, der geraten hat.
   Neu: `auth.is_password_change_locked(username, ip)` und
   `store.count_fails(..., exclude_methods=…)`. Belege in `tests/test_hardening.py`.
   Gefunden im dritten Audit (R4-10 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
