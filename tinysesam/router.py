@@ -118,20 +118,37 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
-        # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Diese Antwort
-        # enthält das TOTP-Geheimnis im Klartext: Ein abgeflossener CI-Key las es hier heraus,
-        # bestätigte es unten und hinterliess ein TOTP, das der KEY-Inhaber kontrolliert (der
-        # echte Nutzer kommt danach nicht mehr herein; mit bekanntem Passwort ist es die volle
-        # Übernahme). Der Abbau war seit R3-3 gesperrt, die Anlage nicht — und über einen
-        # selbst registrierten Faktor führte der Weg zurück an die Abbau-Routen.
+        # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Der Abbau war seit
+        # R3-3 gesperrt, die Anlage nicht: Ein abgeflossener CI-Key richtete sich ein eigenes
+        # TOTP ein und kam über den vollwertigen Login damit zurück an die Abbau-Routen.
         auth.require_session(request, u)
-        # Diese Seite ERZEUGT ein Geheimnis, ein GET trägt aber kein CSRF-Token und kommt bei
-        # `SameSite=Lax` (Vorgabe) auch von einer fremden Seite an. Wer schon einen bestätigten
-        # zweiten Faktor hat, darf ihn hier nicht verlieren — ein Klick auf einen Link reichte
-        # sonst, um TOTP auf „unbestätigt" zurückzusetzen (Fund B2-1). Der Weg zum Wechsel führt
-        # über das reguläre Abschalten (POST /auth/totp/disable, CSRF-geschützt).
-        # `totp_begin` verweigert das ebenfalls — der Wächter hier liefert nur die lesbare
-        # Antwort statt eines Serverfehlers.
+        # Wer schon einen bestätigten zweiten Faktor hat, darf ihn hier nicht verlieren — ein
+        # Klick auf einen fremden Link reichte sonst, um TOTP auf „unbestätigt" zurückzusetzen
+        # (Fund B2-1). Der Weg zum Wechsel führt über das reguläre Abschalten
+        # (POST /auth/totp/disable, CSRF-geschützt). `totp_begin` verweigert das ebenfalls —
+        # der Wächter hier liefert nur die lesbare Antwort statt eines Serverfehlers.
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
+        # Dieser GET schreibt NICHTS mehr. Bis zur Nacharbeit rief er `totp_begin()` unbedingt:
+        # Für ein Konto ohne bestätigtes TOTP erzeugte damit jeder Aufruf ein neues Geheimnis
+        # und ersetzte einen laufenden Einrichtungsversuch — ein fremder Link entwertete das
+        # eben gescannte QR-Bild und stiess Audit-Zeilen von aussen an. Der Fundtext zu B2-1
+        # verlangte beides: bei bestätigtem TOTP verweigern UND nur auf ausdrückliche
+        # Anforderung (POST mit CSRF-Token) beginnen. Das Geheimnis entsteht deshalb erst in
+        # `POST /auth/totp/setup/start`; diese Seite zeigt bloss den Knopf dafür.
+        return auth.render_page("totp_setup", request=request, data=None)
+
+    @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
+    def totp_setup_start(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+        """Die Einrichtung ausdrücklich starten — hier (und nur hier) entsteht das Geheimnis."""
+        auth.require_csrf(request, csrf_tok)
+        u = auth.current_user(request) or auth.totp_enrollment_user(request)
+        if not u:
+            return RedirectResponse(cfg.login_path, 303)
+        # Dasselbe Schloss wie am GET, und hier das wichtigere: Diese Antwort trägt das
+        # TOTP-Geheimnis im Klartext. Ein API-Key darf es nicht zu sehen bekommen — er käme
+        # sonst über den selbst registrierten Faktor an eine frische Sitzung.
+        auth.require_session(request, u)
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
         return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))

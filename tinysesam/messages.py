@@ -108,6 +108,9 @@ MESSAGES = {
         "reauth.submit": "Confirm",
         # --- totp setup ---
         "setup.title": "Set up 2FA",
+        "setup.start_hint": "A new key is created only when you ask for it — that way a link "
+                            "from elsewhere cannot invalidate a setup you already started.",
+        "setup.start": "Start setup",
         "setup.scan": "Scan the QR code with your authenticator app, then enter a code.",
         "setup.manual": "or enter the key manually:",
         "setup.code": "Confirmation code",
@@ -334,6 +337,9 @@ MESSAGES = {
         "reauth.pin": "PIN zur Bestätigung",
         "reauth.submit": "Bestätigen",
         "setup.title": "2FA einrichten",
+        "setup.start_hint": "Ein neues Geheimnis entsteht erst auf deinen Klick — so kann ein "
+                            "fremder Link keinen laufenden Einrichtungsversuch entwerten.",
+        "setup.start": "Einrichtung starten",
         "setup.scan": "Scanne den QR-Code mit deiner Authenticator-App und gib dann einen Code ein.",
         "setup.manual": "oder Schlüssel manuell:",
         "setup.code": "Bestätigungs-Code",

@@ -372,8 +372,43 @@ async def run():
         assert "demoadmin" in await p.js("document.querySelector('h1').textContent")
         print("  Login: Autofill verworfen, Knopf füllt, angemeldet, /app erreichbar")
 
+        # ---------- 9) Abgelaufene Step-up-Frische: der Knopf schickt zur Reauth ----------
+        # R3-3 legte die Faktor-Verwaltung hinter `require_mfa()`. Seither antwortet
+        # /auth/totp/disable mit 403 + `X-TinySesam-Reauth`, sobald die Step-up-Frische
+        # abgelaufen ist — und der Knopf auf der Konto-Seite scheiterte **stumm**: Die Seite lud
+        # einfach neu, der Faktor stand noch. Die Weiche im Konto-JS ist die einzige
+        # Oberflächen-Änderung dieser Runde; nur im Browser ist sie überhaupt messbar.
+        vorher_frische = showcase.auth.cfg.stepup_max_age_sec
+        demoadmin_id = showcase.auth.store.get_user_by_name("demoadmin")["id"]
+        # Einen zweiten Faktor einrichten, damit die Konto-Seite den Knopf „2FA abschalten"
+        # überhaupt zeigt — er ist der Weg, den R3-3 hinter die Frische gelegt hat.
+        showcase.auth.totp_begin(demoadmin_id)
+        showcase.auth.store.confirm_totp(demoadmin_id)
+        try:
+            showcase.auth.cfg.stepup_max_age_sec = 1        # die Frische künstlich altern lassen
+            await p.go("/auth/account", wait=1.6)
+            assert await p.js("!!document.querySelector('[data-act=deltotp]')"), \
+                "kein 2FA-Knopf auf der Konto-Seite — dann misst der Test nichts"
+            await p.js("window.confirm=()=>true")           # die Rückfrage des Knopfes bejahen
+            await asyncio.sleep(1.5)                        # … jetzt ist die Bestätigung zu alt
+            await p.click("[data-act=deltotp]")
+            ziel = await p.js("location.pathname + location.search")
+            assert ziel.startswith("/auth/reauth"), \
+                f"blieb auf {ziel!r} — der 403 scheitert stumm, die Seite lädt bloss neu"
+            assert "auth%2Faccount" in ziel or "/auth/account" in ziel, ziel
+            assert await p.js("!!document.querySelector('form')"), "Reauth-Seite ohne Formular"
+            assert showcase.auth.store.has_confirmed_totp(demoadmin_id), \
+                "der zweite Faktor wurde ohne frische Bestätigung entfernt"
+        finally:
+            showcase.auth.cfg.stepup_max_age_sec = vorher_frische
+        print("  Konto-Seite: abgelaufene Frische → Reauth-Seite statt stummem 403")
+
         assert not p.console, f"Konsolenfehler: {p.console[:2]}"
-        unexpected = [f for f in p.failed if not (f[0] == 400 and f[1].endswith("/auth/login"))]
+        # Erwartet sind genau zwei Fehlschläge: das leere Formular (400) und der 403, mit dem die
+        # Faktor-Verwaltung die abgelaufene Frische abweist — der Fall aus Abschnitt 9.
+        unexpected = [f for f in p.failed
+                      if not (f[0] == 400 and f[1].endswith("/auth/login"))
+                      and not (f[0] == 403 and f[1].endswith("/auth/totp/disable"))]
         assert not unexpected, f"kaputte Anfragen: {unexpected[:3]}"
 
 

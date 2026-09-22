@@ -153,7 +153,7 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 |---|---|
 | `GET/POST /auth/login` | Passwort-Login + Login-Seite (zeigt aktive Methoden) |
 | `GET/POST /auth/totp` | 2. Faktor nach Passwort/OIDC |
-| `GET/POST /auth/totp/setup` · `POST /auth/totp/disable` | TOTP einrichten/abschalten |
+| `GET/POST /auth/totp/setup` · `POST /auth/totp/setup/start` · `POST /auth/totp/disable` | TOTP einrichten/abschalten (das Geheimnis entsteht erst im `…/start`-POST) |
 | `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC-Flow *(wenn aktiviert)* |
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(wenn aktiviert)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | Passkeys verwalten |
@@ -286,6 +286,11 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   antwortet die Route mit 404. Der Wert bleibt bewusst aus dem Security-Log heraus — das liest
   fail2ban, und logrotate hebt es auf. Wird stderr selbst eingesammelt (journal, Container-Logs),
   nennt `admin_claim_token_file` eine eigene Datei; TinySesam legt sie mit `0600` an.
+  **Bekannte Grenze:** Eingelöst wird der Token über eine URL (`?token=…`, bei nicht angemeldetem
+  Aufruf zusätzlich im `Location` des Login-Redirects) — er läuft damit durch Proxy-Access-Logs,
+  `Referer` und die Browser-History, bevor er verbraucht ist. Also `admin_claim_ttl_min` kurz
+  halten und sofort einlösen. Wo überhaupt kein Token in einer URL stehen soll: den ersten Admin
+  über `auth.ensure_admin(...)` oder die Allowlist setzen. Siehe [SECURITY](SECURITY.de.md).
 
 Die Allowlist sagt, **welcher Name** Admin wird — nicht, **wer** diesen Namen bekommt. Mit
 `allow_signup=True` registriert sich ein Fremder einfach darunter und ist beim ersten Login Admin;
@@ -424,6 +429,12 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   Mit `security_log="/var/log/tinysesam/security.log"` schreibt TinySesam die Datei selbst — die
   mitgelieferte Jail zeigt darauf und bewachte sonst eine Datei, die nie entsteht. Leer lassen, wer sein
   Logging selbst einrichtet; ein nicht schreibbarer Pfad warnt beim Start, statt ihn zu verhindern.
+  Angelegt wird die Datei mit **0640** — auch die nach einer Rotation neu entstandene —, denn darin
+  stehen Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber
+  nicht umgeschrieben. Soll ein **dritter** Benutzer mitlesen (Log-Versand, weder Eigentümer noch in
+  der Gruppe), geht das über die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` — ohne sie
+  entsteht die Datei bei der nächsten Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der
+  Versand verliert den Lesezugriff. Nicht beim Update, sondern erst bei der Rotation.
 - **Echte Client-IP hinter Proxy:** `X-Forwarded-For` gilt nur, wenn der direkte Peer in
   `trusted_proxies` steht — sonst ist die IP fälschbar. **uvicorn ohne `--proxy-headers` starten.**
   Mit dem Flag ersetzt uvicorn `request.client.host` bereits durch die geforwardete IP; TinySesams
@@ -661,6 +672,16 @@ TinySesamConfig(
 )
 ```
 Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ketten gelten wie sonst.
+
+> **Verweisen (Referrals) folgt TinySesam nie** — und das steht jetzt im Log. ldap3 verfolgt einen
+> `SearchResultDone resultCode=10` von sich aus und bindet auf dem Host, den die *Antwort* nennt,
+> mit denselben Zugangsdaten (Fund F-28: DN und Klartext-Passwort des Dienstkontos kamen bei einem
+> fremden Server an). Deshalb steht `auto_referrals=False` auf jeder Verbindung, ohne Schalter
+> zurück. Der Preis: Eine Suche, die ein Verzeichnis per Verweis beantwortet, endet ergebnislos —
+> die Anmeldung scheitert und sieht wie ein falsches Passwort aus. Dieser Fall schreibt jetzt eine
+> Zeile über den Logger `tinysesam.security` und nennt den verwiesenen Host. **Steht sie für jeden
+> Nutzer einer Domäne da, den Global Catalog abfragen** (Port 3268/3269) und `ldap_user_base` auf
+> die Forest-Wurzel setzen, statt einen Domain-Controller zu fragen, der weiterverweist.
 
 ## SAML 2.0
 

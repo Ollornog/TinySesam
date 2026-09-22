@@ -269,9 +269,17 @@ class TinySesamConfig:
     # Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden.
     trusted_redirect_hosts: list[str] = field(default_factory=list)
     # Datei, in die der Logger "tinysesam.security" zusätzlich schreibt — das Lesefutter für
-    # fail2ban (deploy/fail2ban/). Leer = nur an den Logger; wer das Logging selbst einrichtet,
-    # lässt es leer. Ist die Datei nicht schreibbar, warnt TinySesam und läuft weiter.
-    security_log: str = ""                # z.B. /var/log/tinysesam/security.log
+    # fail2ban (deploy/fail2ban/), z.B. /var/log/tinysesam/security.log. Leer = nur an den
+    # Logger; wer das Logging selbst einrichtet, lässt es leer. Ist die Datei nicht schreibbar,
+    # warnt TinySesam und läuft weiter. NEU angelegt wird sie mit 0640 statt mit der umask (auch
+    # die nach einer Rotation), denn darin stehen Benutzernamen und IP-Adressen; eine schon
+    # vorhandene welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben. Soll ein DRITTER
+    # Benutzer mitlesen (Log-Versand, weder Eigentümer noch in der Gruppe), führt der Weg über
+    # die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` (steht so in
+    # deploy/fail2ban/tinysesam-jail.conf). Ohne sie entsteht die Datei bei der nächsten
+    # Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den
+    # Lesezugriff — nicht beim Update, sondern erst bei der Rotation.
+    security_log: str = ""
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 

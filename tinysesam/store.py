@@ -421,6 +421,30 @@ class Store:
         u = self.get_user_by_email(email)
         return bool(u and u["id"] != exclude_id)
 
+    def kennungs_kollisionen(self, limit: int = 50) -> list:
+        """Konten, deren **Benutzername** die **E-Mail** eines ANDEREN Kontos ist (Fund R4-12).
+
+        Warum das eine eigene Abfrage braucht: Die Tabelle kennt `UNIQUE(username)` und den
+        Index `ux_users_email` auf `lower(email)` — aber **keinen Constraint über beide
+        Spalten**. Eindeutig ist also jeder Namensraum für sich, während `find_user` im
+        Vorgabe-Modus `both` in beiden sucht. `Manager.create_user` prüft kreuzweise, doch
+        Prüfung und INSERT sind nicht atomar (zwei gleichzeitige Registrierungen derselben
+        Kennung — eine als Name, eine als Adresse — kommen beide durch), und in einer Datenbank
+        von VOR dem Fix steht die Kollision längst. Diese Abfrage ist deshalb der Wächter, den
+        die Datenbank nicht stellen kann: Sie nennt, was da ist, statt es zu verhindern.
+
+        Verglichen wird `COLLATE NOCASE`, also genauso wie `get_user_by_name`/`get_user_by_email`
+        suchen — eine Kollision, die die Anmeldung findet, muss auch hier auffallen.
+        Zeilen: `(name_id, kennung, mail_id, adresse)`. Ein Konto, das dieselbe Zeichenfolge in
+        BEIDEN eigenen Spalten trägt, ist keine Kollision (E-Mail-Modus, vorgesehener Weg).
+        """
+        return self._all(
+            "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
+            "FROM users n JOIN users e ON e.id <> n.id "
+            "  AND e.email IS NOT NULL AND e.email <> '' "
+            "  AND e.email = n.username COLLATE NOCASE "
+            "ORDER BY n.id LIMIT ?", (int(limit),))
+
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
 

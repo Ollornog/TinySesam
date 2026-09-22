@@ -271,7 +271,20 @@ if HAT_LDAP3:
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
         ldap_url=f"ldap://127.0.0.1:{pa}", ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
         ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})")
-    assert LDAPClient(cfg_svc).authenticate("alice", "egal") is None
+    # Dabei gleich mitmessen, dass der verworfene Verweis eine Logzeile schreibt — hier gegen
+    # ein ECHTES ldap3, nicht gegen den Stub weiter unten (nur so ist belegt, dass der Verweis
+    # wirklich in `Connection.result` steht und nicht bloss in unserer Annahme davon).
+    import io as _io2, logging as _logging2
+    from tinysesam.security import seclog as _seclog2
+    _puffer = _io2.StringIO()
+    _haken = _logging2.StreamHandler(_puffer)
+    _seclog2.addHandler(_haken)
+    try:
+        assert LDAPClient(cfg_svc).authenticate("alice", "egal") is None
+    finally:
+        _seclog2.removeHandler(_haken)
+    assert "VERWEIS" in _puffer.getvalue() and "Global Catalog" in _puffer.getvalue(), \
+        f"echtes ldap3: der verworfene Verweis blieb stumm: {_puffer.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
     assert SVC_DN.encode() not in beute, f"Bind-DN des Dienstkontos ging an den Verweis-Host: {beute[:120]!r}"
@@ -288,7 +301,17 @@ if HAT_LDAP3:
         db_path=":memory:", password_enabled=True, ldap_enabled=True,
         ldap_url=f"ldap://127.0.0.1:{pa}",
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
-    info = LDAPClient(cfg_usr).authenticate("alice", "NUTZER-GEHEIM-456")
+    _puffer_b = _io2.StringIO()
+    _haken_b = _logging2.StreamHandler(_puffer_b)
+    _seclog2.addHandler(_haken_b)
+    try:
+        info = LDAPClient(cfg_usr).authenticate("alice", "NUTZER-GEHEIM-456")
+    finally:
+        _seclog2.removeHandler(_haken_b)
+    # Auch auf diesem Weg darf der Verweis nicht stumm bleiben: Ohne die Attribute fehlen
+    # E-Mail, Name und Gruppen — mit `ldap_allowed_groups` ist das eine Abweisung ohne Grund.
+    assert "Attribut-Suche" in _puffer_b.getvalue(), \
+        f"der Verweis auf der Attribut-Suche blieb stumm: {_puffer_b.getvalue()[:200]!r}"
     time.sleep(0.5)
     beute = eimer[0] if eimer else b""
     assert b"NUTZER-GEHEIM-456" not in beute, f"Nutzerpasswort ging an den Verweis-Host: {beute[:120]!r}"
@@ -317,7 +340,9 @@ else:                                              # pragma: no cover
 # dieses Modul aufmacht, schaltet die Verweis-Verfolgung ab, und der Server erlaubt keinen
 # Verweis-Host. Gemessen mit einem untergeschobenen ldap3: Fällt einer der beiden Parameter
 # weg, ist diese Prüfung rot, auch wenn kein Verzeichnis in der Nähe ist.
-def stub_ldap3(mitschrift):
+def stub_ldap3(mitschrift, leer=False, result=None):
+    """Untergeschobenes ldap3. `leer=True` + `result=…` stellt die Antwort eines Verzeichnisses
+    nach, das die Suche mit einem VERWEIS statt mit Einträgen beantwortet."""
     mod = types.ModuleType("ldap3")
     mod.NONE, mod.BASE = "NONE", "BASE"
 
@@ -334,7 +359,9 @@ def stub_ldap3(mitschrift):
     class Connection:
         def __init__(self, server, **kw):
             mitschrift.append(("Connection", kw))
-            self.entries = [Eintrag()]
+            self.entries = [] if leer else [Eintrag()]
+            if result is not None:
+                self.result = result
 
         def start_tls(self):
             pass
@@ -383,6 +410,62 @@ assert len(verbindungen) == 3, f"erwartet: Such-Bind + zwei Benutzer-Binds, war 
 assert all(kw.get("auto_referrals") is False for kw in verbindungen), verbindungen
 assert server and all(kw.get("allowed_referral_hosts") == [] for kw in server), server
 ok("jede Verbindung setzt auto_referrals=False, jeder Server allowed_referral_hosts=[]")
+
+# ---------- A-regression-9: der verworfene Verweis darf nicht STUMM sein ----------
+# Der F-28-Fix hat einen Preis: Mit `auto_referrals=False` endet eine Suche, die das Verzeichnis
+# per Verweis beantwortet, ergebnislos — `authenticate()` gibt None zurück, und die App zeigt
+# „Passwort falsch". Wer über mehrere AD-Domänen sucht, sah das nach dem Update für JEDEN Nutzer
+# und hatte nichts, was auf die Ursache zeigt: Der Global-Catalog-Hinweis stand nur im Quelltext
+# und im CHANGELOG. Jetzt schreibt der Fall eine Zeile ins Sicherheits-Log.
+import io as _io, logging as _logging          # noqa: E402
+from tinysesam.security import seclog as _seclog  # noqa: E402
+
+# Die Verweis-Adresse kommt aus FREMDER Hand: ein Umbruch darin wäre eine zusätzliche,
+# frei erfundene Zeile in genau dem Log, das fail2ban liest (Log-Injection).
+_VERWEIS = ("ldap://fremd.example.com/dc=example,dc=com\n"
+            "2026-09-22 00:00:00 WARNING failed login user=opfer ip=203.0.113.9 method=password")
+
+
+def _mit_seclog(fn):
+    puffer = _io.StringIO()
+    haken = _logging.StreamHandler(puffer)
+    _seclog.addHandler(haken)
+    try:
+        fn()
+    finally:
+        _seclog.removeHandler(haken)
+    return puffer.getvalue()
+
+
+_cfg_verweis = TinySesamConfig(
+    db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy",
+    ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
+    ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})")
+_vorher = {name: sys.modules.get(name) for name in
+           ("ldap3", "ldap3.utils", "ldap3.utils.conv", "ldap3.utils.dn")}
+try:
+    sys.modules.update(stub_ldap3([], leer=True,
+                                  result={"result": 10, "referrals": [_VERWEIS]}))
+    _text = _mit_seclog(lambda: LDAPClient(_cfg_verweis).authenticate("alice", "egal"))
+    # Gegenprobe: dieselbe leere Suche OHNE Verweis ist ein gewöhnliches „Konto gibt es nicht"
+    # und darf das Log nicht fluten.
+    sys.modules.update(stub_ldap3([], leer=True, result={"result": 0, "referrals": []}))
+    _still = _mit_seclog(lambda: LDAPClient(_cfg_verweis).authenticate("alice", "egal"))
+finally:
+    for name, mod in _vorher.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
+
+assert "VERWEIS" in _text and "referral" in _text, f"kein Hinweis auf den Verweis: {_text[:200]!r}"
+assert "fremd.example.com" in _text, f"der verwiesene Host fehlt: {_text[:200]!r}"
+assert "Global Catalog" in _text and "3268" in _text, f"kein Betriebs-Hinweis: {_text[:200]!r}"
+assert "user=alice" in _text, _text[:200]
+assert len(_text.strip().splitlines()) == 1, f"der Verweis hat eine Zeile eingeschoben: {_text!r}"
+assert "ip=203.0.113.9" not in _text, f"Log-Injection über die Verweis-Adresse: {_text!r}"
+assert _still.strip() == "", f"eine gewöhnliche leere Suche meldet sich: {_still[:120]!r}"
+ok("verworfener Verweis: eine Logzeile mit Host und Global-Catalog-Hinweis (Umbruch entschärft)")
 
 # Nebenbefund zu F-28: Ein Dienstkonto-DN ohne Passwort lehnt ldap3 ab; der Fehler wird im
 # Login verschluckt und sieht für jeden Nutzer wie ein falsches Passwort aus. Deshalb fällt die

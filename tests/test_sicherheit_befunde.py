@@ -1714,6 +1714,39 @@ r.check("...und das fremde Passwort gilt unverändert weiter",
 eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!"})
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
+
+# Und der Bestand selbst? Die Datenbank kann diese Kollision nicht verhindern: `UNIQUE(username)`
+# und `ux_users_email` gelten je SPALTE, es gibt keinen Index über beide Namensräume — und
+# `create_user` prüft und INSERTet nicht atomar. Der Wächter kann hier also nur MELDEN, und genau
+# das muss er beim Start tun: Ohne Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
+
+
+def _start_log(db_pfad):
+    """Eine Instanz auf dieser Datenbank aufbauen und mitschreiben, was sie beim Start sagt."""
+    puffer = io.StringIO()
+    haken = logging.StreamHandler(puffer)
+    seclog.addHandler(haken)
+    try:
+        TinySesam(TinySesamConfig(db_path=db_pfad, cookie_secure=False))
+    finally:
+        seclog.removeHandler(haken)
+    return puffer.getvalue()
+
+
+r.check("Vorbedingung: die Kreuz-Kollision steht wirklich in der Datenbank",
+        len(auth_alt.store.kennungs_kollisionen()) == 1,
+        f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — dann misst der Test nichts")
+_text_k = _start_log(auth_alt.cfg.db_path)
+r.check("der Start meldet eine Kennungs-Kollision im Bestand", "Kennungs-Kollision" in _text_k,
+        f"stumm: {_text_k[:120]!r} — niemand erfährt, warum ein Konto nicht mehr hereinkommt")
+r.check("...und nennt beide beteiligten Konten",
+        f"user_id={eve_alt}" in _text_k and f"user_id={opfer_alt}" in _text_k,
+        f"ohne IDs ist die Meldung nicht abarbeitbar: {_text_k[:200]!r}")
+# Gegenprobe, sonst wäre die Meldung Rauschen: In auth_n2 trägt EIN Konto denselben Wert in
+# beiden eigenen Spalten (chef / chef@example.com) — das ist der vorgesehene Weg, keine Kollision.
+r.check("eine Datenbank ohne Kreuz-Kollision schweigt",
+        "Kennungs-Kollision" not in _start_log(auth_n2.cfg.db_path),
+        "dieselbe Zeichenfolge in beiden Spalten DESSELBEN Kontos wird als Kollision gemeldet")
 # ── Ein GET entfernt den bestätigten zweiten Faktor (B2-1, Audit-Runde 3) ────
 # Angriff: Das Opfer ist voll angemeldet (Passwort + TOTP) und klickt auf einer fremden Seite
 # einen Link auf /auth/totp/setup. Die Seite rief `totp_begin()` unbedingt und schrieb damit ein
@@ -1775,6 +1808,56 @@ r.check("der abgewehrte Versuch steht im Audit-Log",
         any(z["event"] == "totp_setup_denied" for z in auth_b21.store.recent_audit(50)),
         "der Versuch hinterlässt keine Spur")
 
+# ── Dieselbe Tür, zweite Hälfte: der GET erzeugte weiter Geheimnisse ─────────
+# Der Fundtext zu B2-1 verlangt ZWEI Dinge: bei bestätigtem TOTP verweigern **und** die
+# Einrichtung nur auf ausdrückliche Anforderung (POST mit CSRF-Token) beginnen. Zunächst war
+# nur das Erste umgesetzt: Für ein Konto OHNE bestätigtes TOTP erzeugte jeder GET auf
+# /auth/totp/setup ein frisches Geheimnis und ersetzte damit einen laufenden
+# Einrichtungsversuch. Kein Faktor-Verlust — aber ein fremder Link entwertete das eben
+# gescannte QR-Bild (die Bestätigung schlug danach unerklärlich fehl) und stiess
+# Audit-Zeilen von aussen an.
+auth_b7, app_b7 = _app()
+uid_b7 = auth_b7.create_user("paul", password="geheim12345")
+c_b7 = TestClient(app_b7, base_url="https://app.example.com")
+c_b7.cookies.set(auth_b7.cfg.session_cookie,
+                 auth_b7.store.create_session(uid_b7, 3600, True, "password"))
+r.check("Vorbedingung: CSRF ist an und das Sitzungscookie ist SameSite=Lax",
+        auth_b7.cfg.csrf_enabled and auth_b7.cfg.cookie_samesite == "lax",
+        "ohne diese Lage trägt ein fremder Link das Cookie nicht mit — der Test misst nichts")
+seite_b7 = c_b7.get("/auth/totp/setup")
+r.check("ein GET auf die Einrichtungsseite erzeugt kein Geheimnis",
+        seite_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7) is None,
+        f"HTTP {seite_b7.status_code}, Geheimnis={auth_b7.store.get_totp(uid_b7) is not None} "
+        "— ein GET, der schreibt, ist von aussen anstossbar")
+r.check("...die Seite zeigt stattdessen den Knopf, der sie ausdrücklich startet",
+        "/auth/totp/setup/start" in seite_b7.text, "ohne Knopf ist die Einrichtung zugemauert")
+r.check("...und hinterlässt keine Audit-Zeile",
+        not any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
+        "Audit-Rauschen, das jeder von aussen erzeugen kann")
+csrf_b7 = c_b7.cookies.get(auth_b7.cfg.csrf_cookie)
+start_b7 = c_b7.post("/auth/totp/setup/start", data={"_csrf": csrf_b7})
+zeile_b7 = auth_b7.store.get_totp(uid_b7)
+r.check("der POST mit CSRF-Token richtet ein", start_b7.status_code == 200 and zeile_b7 is not None,
+        f"HTTP {start_b7.status_code}: {start_b7.text[:120]}")
+# B2-1 hat auch die Audit-Zeile versprochen — bis 0.18.x war die TOTP-Einrichtung unsichtbar.
+r.check("...und die Einrichtung steht im Audit-Log",
+        any(z["event"] == "totp_setup_start" for z in auth_b7.store.recent_audit(20)),
+        "die Einrichtung eines zweiten Faktors hinterlässt keine Spur")
+vorher_b7 = zeile_b7["secret"]
+fremd_b7 = c_b7.post("/auth/totp/setup/start", data={})           # kein Token = fremde Seite
+r.check("ein POST ohne CSRF-Token ersetzt das laufende Geheimnis nicht",
+        fremd_b7.status_code == 403 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
+        f"HTTP {fremd_b7.status_code} — das gescannte QR-Bild ist von aussen entwertbar")
+quer_b7 = c_b7.get("/auth/totp/setup", headers={"Sec-Fetch-Site": "cross-site",
+                                                "Sec-Fetch-Mode": "navigate"})
+r.check("...und ein Klick auf einen fremden Link genauso wenig",
+        quer_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
+        "der GET hat das Geheimnis ersetzt")
+r.check("...die Bestätigung mit dem Code aus DIESEM Geheimnis schaltet scharf",
+        auth_b7.totp_confirm(uid_b7, pyotp.TOTP(vorher_b7).now())
+        and auth_b7.store.has_confirmed_totp(uid_b7),
+        "der legitime Weg ist unterbrochen")
+
 # Der legitime Weg muss bleiben: einrichten, wo noch nichts ist …
 auth_ok, app_ok = _app(csrf_enabled=False)
 uid_ok = auth_ok.create_user("tom", password="geheim12345")
@@ -1783,14 +1866,19 @@ c_ok.cookies.set(auth_ok.cfg.session_cookie,
                  auth_ok.store.create_session(uid_ok, 3600, True, "password"))
 r.check("ohne eingerichtetes TOTP ist die Einrichtungsseite weiter erreichbar",
         c_ok.get("/auth/totp/setup").status_code == 200, "die Einrichtung ist zugemauert")
+r.check("...und der Start-Knopf richtet ein",
+        c_ok.post("/auth/totp/setup/start").status_code == 200
+        and auth_ok.store.get_totp(uid_ok) is not None, "die Einrichtung ist zugemauert")
 neu_ok = auth_ok.store.get_totp(uid_ok)["secret"]
 r.check("...und die Bestätigung schaltet den Faktor scharf",
         auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).now())
         and auth_ok.store.has_confirmed_totp(uid_ok))
 
 # … und nach dem regulären Abschalten wieder neu einrichten (sonst wäre der Fix eine Sackgasse).
+auth_ok.totp_disable(uid_ok)
 r.check("nach dem regulären Abschalten ist die Einrichtung wieder offen",
-        (auth_ok.totp_disable(uid_ok), c_ok.get("/auth/totp/setup").status_code)[1] == 200,
+        c_ok.get("/auth/totp/setup").status_code == 200
+        and c_ok.post("/auth/totp/setup/start").status_code == 200,
         "der Wechsel des Authenticators wäre unmöglich")
 
 # Verwaiste Recovery-Codes (Geheimnis weg, Codes noch da) räumt die Einrichtung ab.

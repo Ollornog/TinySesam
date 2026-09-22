@@ -384,8 +384,15 @@ async function changepw(){const r=await J('/auth/password',{current:pw_cur.value
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
 async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
   say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
-async function delpin(){const r=await J('/auth/pin/disable');say('pin_msg','✓ entfernt',true);setTimeout(()=>location.reload(),600)}
-async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;await J('/auth/totp/disable');location.reload()}
+// Erst prüfen, dann melden: Beide Knöpfe sagten früher UNBEDINGT „erledigt" und luden neu —
+// auch bei 403 (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah
+// „entfernt", der Faktor stand noch.
+async function delpin(){const r=await J('/auth/pin/disable');
+  say('pin_msg',r.ok?'✓ entfernt':(await r.json().catch(()=>({}))).detail||'Fehler',r.ok);
+  if(r.ok)setTimeout(()=>location.reload(),600)}
+async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;
+  const r=await J('/auth/totp/disable');
+  if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||'Fehler',false)}
 async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
   const r=await (await J('/auth/totp/recovery')).json();
   if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
@@ -628,9 +635,20 @@ def _pin(auth, ctx) -> str:
 
 
 def _totp_setup(auth, ctx) -> str:
-    """ctx: data = {secret, uri, qr}."""
+    """ctx: data = {secret, uri, qr} — oder `None`/fehlend für den ersten Schritt.
+
+    Zwei Zustände, eine Seite: Ohne `data` steht hier nur ein POST-Formular, das die Einrichtung
+    ausdrücklich startet. Das Geheimnis entsteht erst mit diesem Klick (B2-1) — ein GET, der eines
+    erzeugt, lässt sich von einer fremden Seite anstossen und entwertet einen laufenden Versuch.
+    """
     t = auth.t
-    data = ctx["data"]
+    data = ctx.get("data")
+    if not data:
+        body = (f"<h1>{_e(t('setup.title'))}</h1>"
+                f"<div class=hint>{_e(t('setup.start_hint'))}</div>"
+                f"<form method=post action='/auth/totp/setup/start'>{_cf(ctx)}"
+                f"<button type=submit>{_e(t('setup.start'))}</button></form>")
+        return _page(auth, t("setup.title"), body)
     qr = f"<img class=qr src='{data['qr']}'>" if data.get("qr") else ""
     ok_msg = _e(t("setup.ok")).replace("'", "\\'")
     bad_msg = _e(t("err.code")).replace("'", "\\'")

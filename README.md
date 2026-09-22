@@ -157,7 +157,7 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 |---|---|
 | `GET/POST /auth/login` | password login + login page (shows active methods) |
 | `GET/POST /auth/totp` | 2nd factor after password/OIDC |
-| `GET/POST /auth/totp/setup` · `POST /auth/totp/disable` | set up / turn off TOTP |
+| `GET/POST /auth/totp/setup` · `POST /auth/totp/setup/start` · `POST /auth/totp/disable` | set up / turn off TOTP (the `…/start` POST is what creates the key) |
 | `GET /auth/oidc/start` · `/auth/oidc/callback` | OIDC flow *(when enabled)* |
 | `POST /auth/passkey/{register,login}/{begin,finish}` | WebAuthn *(when enabled)* |
 | `GET /auth/passkey/list` · `POST /auth/passkey/delete` | manage passkeys |
@@ -286,6 +286,11 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
   route answers 404. The value is deliberately kept out of the security log — that file is what
   fail2ban reads and logrotate keeps. Where stderr itself is collected (journal, container logs),
   set `admin_claim_token_file` and TinySesam writes the token to that file with mode `0600`.
+  **Known limit:** the token is redeemed through a URL (`?token=…`, mirrored into the login
+  redirect's `Location` when you are not signed in yet), so it passes through proxy access logs,
+  `Referer` and the browser history before it is spent — keep `admin_claim_ttl_min` short and
+  redeem it right away. Where no token should appear in a URL at all, take the first admin over
+  `auth.ensure_admin(...)` or the allowlist. See [SECURITY.md](https://github.com/Ollornog/TinySesam/blob/main/SECURITY.md).
 
 The allowlist says **which name** becomes admin, not **who** gets that name. With
 `allow_signup=True` a stranger can simply register under it and be admin on first sign-in — so that
@@ -418,7 +423,13 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   (`failed login … ip=…`). Filter + jail in [`deploy/fail2ban/`](https://github.com/Ollornog/TinySesam/tree/main/deploy/fail2ban/) → IP ban at the firewall level.
   Set `security_log="/var/log/tinysesam/security.log"` and TinySesam writes that file itself — the shipped
   jail points at it and would otherwise watch a file that never appears. Leave it empty if you wire up
-  logging yourself; an unwritable path warns at startup instead of stopping it.
+  logging yourself; an unwritable path warns at startup instead of stopping it. The file is created
+  with mode **0640** (usernames and IP addresses are in it), and so is the one created after a
+  rotation; an already existing world-readable file is reported, not rewritten. If a **third** user
+  has to read along (log shipping, neither owner nor in the group), grant it through the group:
+  logrotate line `create 0640 tinysesam adm` — without it the next rotation puts the file back on
+  the group of the TinySesam process and the shipper loses read access, not at update time but at
+  the next rotation.
 - **Real client IP behind a proxy:** `X-Forwarded-For` is only trusted when the direct peer is listed
   in `trusted_proxies` — otherwise the IP is forgeable. **Start uvicorn without `--proxy-headers`.**
   With that flag uvicorn already rewrites `request.client.host` to the forwarded IP, so TinySesam's
@@ -644,6 +655,16 @@ TinySesamConfig(
 )
 ```
 Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains apply as usual.
+
+> **Referrals are never followed** — and that is visible in the log. ldap3 follows a
+> `SearchResultDone resultCode=10` on its own and binds on the host named by the *answer*, with the
+> same credentials (that was finding F-28: the service account's DN and cleartext password arrived
+> at a foreign server). TinySesam therefore sets `auto_referrals=False` on every connection, with
+> no switch to turn it back on. The price: a search a directory answers by referral ends with no
+> result, so the sign-in fails and looks like a wrong password. That case now writes a line to the
+> `tinysesam.security` logger naming the referred host — **if you see it for every user of a
+> domain, query the Global Catalog** (port 3268/3269) and point `ldap_user_base` at the forest
+> root, instead of searching a single domain controller that refers you onward.
 
 ## SAML 2.0
 

@@ -92,7 +92,7 @@ Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (dan
 
 ### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
 
-Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung.
 
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
@@ -210,10 +210,6 @@ Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal
 
 Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
-### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
-
-True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
-
 ### `login_redirect_after(request, token, user_id, nxt)`
 
 Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors.
@@ -224,7 +220,7 @@ Die Sitzung dieses Requests beenden und das Cookie löschen.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
-Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `base_url` wird geprüft: ein fremder Host wirft `ConfigError` — in einer Route liefert `public_base(request)` die geprüfte Basis.
+Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
 
 ### `mail_configured() -> 'bool'`
 
@@ -306,10 +302,6 @@ FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisse
 
 FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
 
-### `require_session(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'`
-
-Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
-
 ### `require_user(request: 'Request') -> 'dict'`
 
 FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User. Wer keine Rollen braucht: `Depends(auth.require_user)` genügt.
@@ -340,7 +332,7 @@ Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
 
 ### `send_login_link(email, base_url, next='/') -> 'bool'`
 
-Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration).
 
 ### `send_mail(to, subject, text, html=None)`
 
@@ -348,11 +340,11 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 ### `send_password_reset(email, base_url) -> 'bool'`
 
-Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration).
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
 
 ### `session_from_request(request)`
 
@@ -412,7 +404,7 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 
 ### `totp_begin(user_id)`
 
-Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator.
+Die Einrichtung starten: liefert Geheimnis und `otpauth://`-Adresse für den Authenticator — und wirft neu `StateError` (kein `ConfigError`, kein stiller Erfolg), wenn das Konto bereits ein bestätigtes TOTP hat.
 
 ### `totp_confirm(user_id, code) -> 'bool'`
 
@@ -488,6 +480,30 @@ Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-pro
 
 Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
 
+## Fehlertypen
+
+Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen sind die Zusage.
+
+### `TinySesamError` (erbt von `Exception`)
+
+Basis aller eigenen Fehler — `except TinySesamError` fängt alles von hier.
+
+### `ConfigError` (erbt von `TinySesamError`, `ValueError`)
+
+Die Konfiguration widerspricht sich oder verspricht etwas, das so nicht wirkt.
+
+### `MailNotConfigured` (erbt von `TinySesamError`, `RuntimeError`)
+
+Es sollte eine Mail raus, aber kein Mailer ist eingerichtet.
+
+### `MissingExtra` (erbt von `TinySesamError`, `RuntimeError`)
+
+Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
+
+### `StateError` (erbt von `TinySesamError`, `RuntimeError`)
+
+Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+
 ---
 
-111 Methoden, 6 Presets — erzeugt aus den Docstrings.
+109 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

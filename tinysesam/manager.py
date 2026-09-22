@@ -319,6 +319,26 @@ class TinySesam:
                     "wird dort gebaut). Für gemeinsames SSO über Subdomains cookie_domain setzen, "
                     "z.B. '.%s'.", own or "?", ", ".join(fremd),
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
+        # Kreuz-Kollisionen im Bestand: Seit R4-12 prüft `create_user` kreuzweise, aber die
+        # Datenbank hat keinen UNIQUE-Index über BEIDE Namensräume — eine Kollision aus einer
+        # älteren Fassung (oder aus zwei gleichzeitigen Registrierungen, denn Prüfung und INSERT
+        # sind nicht atomar) steht weiter drin und wird von nichts gemeldet. Sie ist nicht
+        # harmlos: `find_user` löst die Kennung dann mehrdeutig auf, und der rechtmäßige Inhaber
+        # kann ausgesperrt sein. Bereinigt wird von Hand (welches Konto den Namen behält, kann
+        # keine Bibliothek entscheiden) — gesagt wird es beim Start.
+        kollisionen = self.store.kennungs_kollisionen()
+        if kollisionen:
+            beispiele = "; ".join(
+                f"user_id={z['name_id']} heisst '{security.fuer_log(z['kennung'])}' und ist "
+                f"zugleich E-Mail von user_id={z['mail_id']}" for z in kollisionen[:3])
+            security.seclog.warning(
+                "%d Kennungs-Kollision(en) im Bestand: Benutzername und E-Mail sind EIN "
+                "Kennungs-Raum (find_user sucht in beiden Spalten), die Datenbank erzwingt das "
+                "aber nur je Spalte. Die Anmeldung mit dieser Kennung ist mehrdeutig, der "
+                "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Eine der beiden "
+                "Kennungen ändern (Admin-Panel oder CLI).",
+                len(kollisionen), beispiele,
+                " (weitere folgen)" if len(kollisionen) > 3 else "")
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
@@ -364,15 +384,30 @@ class TinySesam:
         Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber oder eine Bestätigungsmail
         für die Adresse einsteht (Admin-API, Erst-Admin, Service-Konten, Einladung, Registrierung
         — dort verlangt der Konstruktor-Wächter `signup_verify_email`, sobald eine
-        Allowlist-Adresse im Spiel ist)."""
+        Allowlist-Adresse im Spiel ist).
+
+        Eine vergebene Kennung wirft `ConfigError` mit dem Wortlaut „<Feld> ist bereits
+        vergeben" (unverändert seit 0.18.x) und gesetztem `e.feld` (`"username"`/`"email"`)
+        plus `e.besitzer_id` — daran, nicht am übersetzten Text, unterscheidet ein Aufrufer
+        die beiden Fälle."""
         username = (username or "").strip()
         email = norm_email(email)
-        for feld, kennung in (("Benutzername", username), ("E-Mail-Adresse", email)):
+        for feld, schluessel, kennung in (("Benutzername", "username", username),
+                                          ("E-Mail-Adresse", "email", email)):
             besitzer = self.kennung_vergeben(kennung) if kennung else None
             if besitzer:
                 security.seclog.warning(
                     "Konto nicht angelegt: %s ist bereits Login-Kennung von user_id=%s", feld, besitzer["id"])
-                raise ConfigError(f"{feld} ist bereits als Login-Kennung vergeben")
+                # Der Wortlaut ist bewusst der von 0.18.x ("… ist bereits vergeben"). Weil ein
+                # `ConfigError` allein nicht verrät, WAS kollidierte, prüfen Aufrufer den Text —
+                # die brüchigste Art, ein Programm zu steuern, aber eine verbreitete. Ein Fix
+                # darf ihr nicht die Grundlage wegziehen. Unterscheiden lässt sich der Fall
+                # jetzt an `feld`/`besitzer_id`; der neue Auslöser (Benutzername = fremde
+                # E-Mail und umgekehrt) trägt dieselbe Formulierung.
+                fehler = ConfigError(f"{feld} ist bereits vergeben")
+                fehler.feld = schluessel
+                fehler.besitzer_id = int(besitzer["id"])
+                raise fehler
         uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
                                      email_verified=email_verified)
         if password:
@@ -1047,7 +1082,9 @@ class TinySesam:
         return self.store.totp_step_verbrauchen(user_id, schritt)
 
     def totp_begin(self, user_id):
-        """Die Einrichtung starten: liefert Geheimnis und die `otpauth://`-Adresse für den Authenticator.
+        """Die Einrichtung starten: liefert Geheimnis und `otpauth://`-Adresse für den
+        Authenticator — und wirft neu `StateError` (kein `ConfigError`, kein stiller Erfolg),
+        wenn das Konto bereits ein bestätigtes TOTP hat.
 
         **Nur solange kein bestätigtes TOTP existiert.** Bis 0.18.0 überschrieb jeder Aufruf das
         Geheimnis und setzte `confirmed` zurück: Ein bestätigter zweiter Faktor fiel damit still

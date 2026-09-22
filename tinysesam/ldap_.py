@@ -9,12 +9,15 @@ Zwei Modi:
 Gibt bei Erfolg {username, email, name, groups} zurück, sonst None. Fehler/Bind-Fehler → None.
 Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz). **Verweisen (Referrals) folgt
 dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben Zugangsdaten
-(s. `_OHNE_REFERRALS`).
+(s. `_OHNE_REFERRALS`). Ein verworfener Verweis wird ins Sicherheits-Log geschrieben
+(`_verweis_melden`), damit der Betrieb den Grund der Abweisung sieht und nicht bloß
+„Passwort falsch" für jeden Nutzer.
 """
 from __future__ import annotations
 
 
 from . import errors
+from .security import fuer_log, seclog
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -42,7 +45,40 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
 #: Betriebsmodus, den ein Konfigurationsfeld zurückholen sollte. Wer über mehrere AD-Domänen
 #: suchen muss, fragt den Global Catalog (Port 3268/3269) ab, statt Verweisen zu folgen.
 #: Ohne Verfolgung endet die Suche ergebnislos → `authenticate()` gibt `None` zurück (fail-closed).
+#: Damit das nicht stumm passiert, meldet `_verweis_melden()` den Fall im Sicherheits-Log.
 _OHNE_REFERRALS = {"auto_referrals": False}
+
+
+def _verweis_melden(conn, was: str, username: str) -> None:
+    """Eine Suche, die das Verzeichnis mit einem VERWEIS beantwortet hat, ins Sicherheits-Log
+    schreiben — sonst endet der Login stumm als „Passwort falsch".
+
+    Ohne diese Zeile war der Preis des F-28-Fixes unsichtbar: Wer über mehrere AD-Domänen sucht,
+    bekam nach dem Update für **jeden** Nutzer eine Abweisung und nichts, was auf die Ursache
+    zeigt (der Global-Catalog-Hinweis stand nur im Quelltext). Gemeldet wird nur der
+    Verweis-Fall; eine gewöhnlich leere Suche (Konto gibt es nicht) ist keine Auffälligkeit
+    und würde das Log fluten.
+
+    Die Verweis-Adresse kommt aus einer FREMDEN Antwort und geht deshalb durch `fuer_log` —
+    ein Zeilenumbruch darin wäre eine zusätzliche, frei erfundene Zeile in genau dem Log, das
+    fail2ban liest (dieselbe Falle wie beim Benutzernamen).
+    """
+    try:
+        ergebnis = getattr(conn, "result", None) or {}
+        verweise = ergebnis.get("referrals") or []
+        code = ergebnis.get("result")
+    except Exception:            # fremdes/unerwartetes Connection-Objekt — nie den Login stören
+        return
+    if not verweise and code != 10:
+        return
+    seclog.warning(
+        "LDAP: %s für user=%s endete mit einem VERWEIS (referral) auf %s — dem folgt TinySesam "
+        "bewusst nicht (sonst ginge das Passwort an den verwiesenen Host, Fund F-28). Die "
+        "Anmeldung scheitert deshalb, obwohl das Konto existieren kann. Wer über mehrere "
+        "AD-Domänen sucht, fragt den Global Catalog ab (Port 3268/3269) und setzt "
+        "ldap_user_base auf die Wurzel.",
+        was, fuer_log(username),
+        ", ".join(fuer_log(v) for v in verweise[:3]) or "(Host nicht genannt)")
 
 
 class LDAPClient:
@@ -91,6 +127,7 @@ class LDAPClient:
                 attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)
                 if not svc.entries:
+                    _verweis_melden(svc, "die Benutzersuche", username)
                     svc.unbind()
                     return None
                 user_dn = svc.entries[0].entry_dn
@@ -105,6 +142,10 @@ class LDAPClient:
             attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
             conn.search(user_dn, "(objectClass=*)", search_scope=ldap3.BASE, attributes=attrs)
             entry = conn.entries[0] if conn.entries else None
+            if entry is None:
+                # Auch hier: Ein Verweis auf der Attribut-Suche lässt E-Mail, Name und Gruppen
+                # fehlen — mit ldap_allowed_groups ist das eine Abweisung ohne erkennbaren Grund.
+                _verweis_melden(conn, "die Attribut-Suche", username)
             info: dict = {"username": username, "email": None, "name": username, "groups": []}
             if entry is not None:
                 info["email"] = _first(entry, cfg.ldap_attr_email)

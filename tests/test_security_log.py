@@ -5,6 +5,7 @@ auf eine Datei, die nie entstand, und lief still ins Leere.
 """
 import contextlib
 import io
+import logging
 import os
 import re
 import stat
@@ -166,6 +167,81 @@ try:
     ok("Konfigurationsprüfung: admin_claim_token_file darf nicht das security_log sein")
 finally:
     os.umask(alte_maske)
+
+# ---------------------------------------------------------------------------
+# Drei Zusagen aus demselben Fix, die bisher niemand gemessen hat (Nacharbeit zu B5-03):
+# eine schon vorhandene welt-lesbare Datei wird GEMELDET, die Token-Datei wird vor dem
+# Schreiben ABGESCHNITTEN, und eine Token-Datei ohne Token-Weg fällt der Konfigurationsprüfung
+# auf. Jede dieser Zeilen liess sich zurückbauen, ohne dass eine Suite rot wurde.
+# ---------------------------------------------------------------------------
+
+# (1) Vorhandene Datei: nicht umschreiben (das wäre eine Entscheidung des Betreibers), aber sagen.
+_abraeumen()
+tmp5 = tempfile.mkdtemp()
+log5 = os.path.join(tmp5, "security.log")
+open(log5, "w").close()
+os.chmod(log5, 0o666)                       # so entstand sie vor dem Fix: umask-abhängig, welt-lesbar
+puffer5 = io.StringIO()
+haken5 = logging.StreamHandler(puffer5)
+security.seclog.addHandler(haken5)
+try:
+    assert security.attach_security_log(log5) is True
+finally:
+    security.seclog.removeHandler(haken5)
+text5 = puffer5.getvalue()
+assert "welt-lesbar" in text5, f"keine Meldung: {text5[:160]!r}"
+assert log5 in text5 and "chmod 640" in text5, text5[:200]
+assert stat.S_IMODE(os.stat(log5).st_mode) == 0o666, "die bestehende Datei wurde umgeschrieben"
+ok("eine schon vorhandene welt-lesbare Logdatei wird gemeldet (und nicht umgeschrieben)")
+
+# Gegenprobe: eine bereits enge Datei schweigt — sonst wäre die Warnung Rauschen, das niemand liest.
+_abraeumen()
+log5b = os.path.join(tmp5, "eng.log")
+open(log5b, "w").close()
+os.chmod(log5b, 0o640)
+puffer5b = io.StringIO()
+haken5b = logging.StreamHandler(puffer5b)
+security.seclog.addHandler(haken5b)
+try:
+    security.attach_security_log(log5b)
+finally:
+    security.seclog.removeHandler(haken5b)
+assert "welt-lesbar" not in puffer5b.getvalue(), puffer5b.getvalue()[:160]
+ok("...eine bereits enge Datei meldet sich nicht")
+
+# (2) Die Token-Datei wird vor dem Schreiben abgeschnitten. Ohne `os.ftruncate` bliebe der
+#     Schwanz einer längeren Vorgängerdatei stehen — ein abgelaufenes Token, das noch aussieht
+#     wie eines, und eine Datei, aus der nicht hervorgeht, welche Zeile gilt.
+_abraeumen()
+tmp6 = tempfile.mkdtemp()
+tokdatei6 = os.path.join(tmp6, "admin-claim.token")
+with open(tokdatei6, "w", encoding="utf-8") as fh:
+    fh.write("ALTES-TOKEN-AUS-EINEM-FRUEHEREN-LAUF-VIEL-LAENGER-ALS-DAS-NEUE-0123456789\n")
+os.chmod(tokdatei6, 0o600)
+with contextlib.redirect_stderr(io.StringIO()):
+    auth6 = TinySesam(TinySesamConfig(db_path=os.path.join(tmp6, "t.db"), cookie_secure=False,
+                                      passkey_enabled=False, csrf_enabled=False,
+                                      admin_claim_token_file=tokdatei6))
+inhalt6 = open(tokdatei6, encoding="utf-8").read()
+assert inhalt6 == auth6.admin_claim_token() + "\n", repr(inhalt6)
+assert "ALTES-TOKEN" not in inhalt6, f"Rest der Vorgängerdatei: {inhalt6!r}"
+ok("die Token-Datei wird abgeschnitten — kein Rest eines längeren Vorgängers")
+
+# (3) Token-Datei gesetzt, Token-Weg aus: Die Datei entsteht nie. Ohne Warnung wartet der
+#     Betreiber auf einen Token, der nicht kommt.
+from tinysesam.konfigpruefung import pruefe                                    # noqa: E402
+
+_gemeinsam7 = dict(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                   admin_claim_token_file=os.path.join(tmp6, "claim.token"))
+for _lage, _cfg in (("admin_claim_ttl_min=0", TinySesamConfig(admin_claim_ttl_min=0, **_gemeinsam7)),
+                    ("admin_enabled=False", TinySesamConfig(admin_enabled=False, **_gemeinsam7))):
+    _f7, _w7 = pruefe(_cfg)
+    assert any("admin_claim_token_file ist gesetzt" in w and "nie geschrieben" in w for w in _w7), \
+        f"{_lage}: keine Warnung — {_w7!r}"
+    assert not _f7, _f7
+_f7, _w7 = pruefe(TinySesamConfig(**_gemeinsam7))          # Weg an → still
+assert not any("admin_claim_token_file ist gesetzt" in w for w in _w7), _w7
+ok("admin_claim_token_file ohne Token-Weg wird beim Aufbau gemeldet (mit Weg: still)")
 
 _abraeumen()
 for f in (db, db2, db3):

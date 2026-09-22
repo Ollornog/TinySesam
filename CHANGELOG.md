@@ -127,7 +127,13 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   **jeder** Verbindung und `allowed_referral_hosts=[]` am Server (zweites Schloss, falls einmal
   eine Verbindung ohne den Parameter entsteht); ohne Verfolgung endet die Suche ergebnislos und
   die Anmeldung scheitert, statt Zugangsdaten zu verschenken. Bewusst hart und ohne Schalter —
-  wer über mehrere AD-Domänen sucht, fragt den Global Catalog ab. Fund **F-28** aus
+  wer über mehrere AD-Domänen sucht, fragt den Global Catalog ab. Damit dieser Preis nicht
+  **stumm** anfällt (ohne Verfolgung sieht jede Anmeldung aus wie ein falsches Passwort, und
+  zwar für jeden Nutzer der Domäne gleichzeitig), schreibt der verworfene Verweis jetzt eine
+  Zeile über `tinysesam.security` und nennt den verwiesenen Host — durch dieselbe Bereinigung
+  wie der Benutzername, ein Umbruch aus einer fremden Antwort erzeugt also keine zweite,
+  erfundene Logzeile. Der Global-Catalog-Hinweis (Port 3268/3269) steht jetzt im
+  LDAP-Abschnitt **beider READMEs** statt nur im Quelltext. Fund **F-28** aus
   [T-13](backlog/T-13-audit-2026-09-22-runde-3.md). Nebenbefund derselben Stelle: `ldap_bind_dn`
   ohne `ldap_bind_password` lehnt ldap3 ab, der Fehler wurde im Login verschluckt und sah für
   jeden Nutzer wie ein falsches Passwort aus — die Kombination meldet jetzt die
@@ -214,8 +220,18 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Abweisung mit Audit-Zeile (`oidc_ident_taken`, `ldap_ident_taken`, `saml_ident_taken`), kein
   500 mitten im Anmeldevorgang. `/auth/password` prüft zusätzlich gegen die
   **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
-  nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`. Gefunden im dritten
-  Audit (R4-12 aus T-13).
+  nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`.
+  **Für einbettende Apps:** Der Meldungstext des `ConfigError` bleibt der von 0.18.x
+  („E-Mail-Adresse ist bereits vergeben"), und der neue Auslöser — Benutzername gleich fremder
+  E-Mail und umgekehrt — trägt dieselbe Formulierung; wer den Text prüft, weil der Typ allein
+  nicht unterscheidbar war, bricht an diesem Fix also nicht. Unterscheiden lässt sich der Fall
+  jetzt **ohne** Textvergleich: `e.feld` ist `"username"` oder `"email"`, `e.besitzer_id` nennt
+  das Konto, dem die Kennung gehört. Und weil die Datenbank keinen UNIQUE-Index über BEIDE
+  Namensräume kennt — Prüfung und INSERT in `create_user` sind nicht atomar, und eine Datenbank
+  von vor dem Fix trägt die Kollision längst —, **meldet der Start jetzt vorhandene
+  Kreuz-Kollisionen** mit beiden Konto-IDs, statt sie schweigend mitzuführen
+  (`store.kennungs_kollisionen()`). Bereinigt wird von Hand: welches Konto den Namen behält,
+  kann keine Bibliothek entscheiden. Gefunden im dritten Audit (R4-12 aus T-13).
 - **`/auth/password` war ein stilles Passwort-Orakel — und es prüfte nicht einmal das eigene Konto.**
   Die Abfrage des alten Passworts lief als einzige Geheimnis-Prüfung ohne den Dreiklang des
   Login-Pfads: keine Drossel, keine Sperre, kein verbuchter Fehlversuch — beliebig viele Versuche,
@@ -254,6 +270,19 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   ab. Der Weg zum Authenticator-Wechsel führt über das reguläre Abschalten
   (`POST /auth/totp/disable`, CSRF-geschützt und protokolliert); die Einrichtung für Konten
   **ohne** TOTP — auch aus einer `login_chain` heraus — bleibt unverändert offen.
+  **Nachgearbeitet:** Der Fundtext verlangte zwei Dinge — bei bestätigtem TOTP verweigern *und*
+  die Einrichtung nur auf ausdrückliche Anforderung beginnen. Das Zweite fehlte: Für jedes Konto
+  ohne bestätigtes TOTP erzeugte weiterhin **jeder** GET ein frisches Geheimnis und ersetzte
+  damit einen laufenden Einrichtungsversuch — ein fremder Link entwertete das eben gescannte
+  QR-Bild (die Bestätigung schlug danach unerklärlich fehl) und stiess Audit-Zeilen von aussen
+  an. Das Geheimnis entsteht jetzt ausschliesslich in der neuen, CSRF-geschützten Route
+  **`POST /auth/totp/setup/start`**; der GET zeigt nur noch den Knopf, der sie auslöst (neue
+  Texte `setup.start`/`setup.start_hint`, de/en). **Für einbettende Apps mit eigener TOTP-Seite:**
+  `totp_begin()` **wirft** jetzt, und zwar `StateError` — der erbt von
+  `TinySesamError`/`RuntimeError` und **nicht** von `ConfigError`; wer den dokumentierten Typ
+  fängt, bekommt in seiner eigenen Route sonst einen 500. Weil `api_surface.json` Signaturen
+  einfriert und geworfene Typen gar nicht sieht, listet [API.md](API.md) ab sofort die
+  Fehlertypen samt Hierarchie (erzeugt aus den Docstrings).
   Fund **B2-1** aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md).
 - **Das Erst-Admin-Einmal-Token stand im Klartext in der `security.log`.** Solange es keinen Admin
   gibt, schreibt TinySesam beim Start einen Hinweis auf `/auth/claim-admin?token=…` — bis 0.18.x
@@ -268,6 +297,19 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   statt mit der umask — auch die nach einer Rotation neu entstandene —, denn darin stehen
   Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber nicht
   umgeschrieben. Eine Konfigurationsprüfung verweigert `admin_claim_token_file == security_log`.
+  **Für Betreiber:** 0640 heisst Eigentümer und Gruppe. Ein Log-Versand, der als *dritter*
+  Benutzer läuft (weder Eigentümer noch in der Gruppe), verliert den Lesezugriff — und zwar nicht
+  beim Update, sondern erst bei der nächsten Rotation, wenn der Handler die Datei neu anlegt. Wer
+  ihn braucht, gibt sie über die Gruppe frei: logrotate-Zeile `create 0640 tinysesam adm`. Die
+  stand bisher nur in der fail2ban-Vorlage und steht jetzt auch im `security_log`-Abschnitt von
+  KONFIGURATION.md und beider READMEs. Was der Fix **nicht** löst und deshalb als bekannte Grenze
+  in SECURITY.md und beiden READMEs steht: Eingelöst wird der Token über eine **URL**
+  (`GET /auth/claim-admin?token=…`, bei nicht angemeldetem Aufruf zusätzlich im `Location` des
+  Login-Redirects) und läuft damit durch Proxy-Access-Logs, `Referer` und Browser-History; per
+  Vorgabe geht er ausserdem auf **stderr**, das journald, `docker logs` und jedes Log-Shipping
+  einsammeln. Ein dauerhaftes Geheimnis gibt beides nicht her (genau einmal einlösbar, Ablauf per
+  `admin_claim_ttl_min`, Route 404 sobald ein Admin existiert) — kurze Frist setzen, wo stderr
+  gesammelt wird `admin_claim_token_file` nehmen, sofort einlösen.
   Gefunden im dritten Audit (B5-03 aus [T-13](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-13-audit-2026-09-22-runde-3.md)).
 - **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
   TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
@@ -309,8 +351,12 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   fünf Routen verlangen jetzt `require_mfa()`: interaktive Sitzung mit frischer Bestätigung, für
   einen API-Key konstruktiv unerreichbar (403, „Step-up-MFA nötig — nur per interaktiver Sitzung").
   Bei `/auth/pin/set` gilt das für das **Ersetzen** einer PIN; dass dieselbe Route auch die erste
-  anlegt, ist der Sonderfall im Punkt unten. Die Konto-Seite wertet den Hinweis-Header `X-TinySesam-Reauth` jetzt selbst
-  aus und schickt zur Reauth-Seite, statt stumm zu scheitern. Fund **R3-3** aus
+  anlegt, ist der Sonderfall im Punkt unten. Die Konto-Seite wertet den Hinweis-Header
+  `X-TinySesam-Reauth` jetzt selbst aus und schickt zur Reauth-Seite, statt stumm zu scheitern —
+  gemessen wird das jetzt dort, wo es stattfindet: im Browser-Test (abgelaufene Frische, Klick auf
+  „2FA abschalten", Landung auf `/auth/reauth`, der Faktor steht danach noch). Dabei fiel auf, dass
+  die beiden Lösch-Knöpfe der Konto-Seite **unbedingt** Erfolg meldeten („✓ entfernt") und neu
+  luden — auch bei 403 oder 500. Sie prüfen die Antwort jetzt. Fund **R3-3** aus
   [T-13](backlog/T-13-audit-2026-09-22-runde-3.md).
 - **Der Riegel gegen den abbauenden API-Key war über die Faktor-ANLAGE umgehbar.** `require_mfa()`
   deckte nur den Abbau; `GET/POST /auth/totp/setup` und `POST /auth/passkey/register/{begin,finish}`
