@@ -46,13 +46,21 @@ def build_router(auth) -> APIRouter:
         if auth.is_locked(username, ip):
             return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.locked"))
         u = auth.check_password(username, password)
+        aus_verzeichnis = False
         if not u and cfg.ldap_enabled:
             u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+            aus_verzeichnis = u is not None
         auth.record_login(username, ip, bool(u), "password")
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
+        # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
+        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Es gibt
+        # dafür keinen Beleg, und deshalb reist hier ausdrücklich „kein Beleg" mit: Eine
+        # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
+        # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
-                                              request.headers.get("user-agent"), remember_me)
+                                              request.headers.get("user-agent"), remember_me,
+                                              email_bestaetigt=False if aus_verzeichnis else None)
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
             auth.set_cookie(resp, token, remember=remember_me)
@@ -789,8 +797,14 @@ def build_router(auth) -> APIRouter:
             if not u:
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
+            # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
+            # Adresse geprüft hat. Deshalb reist hier ausdrücklich „kein Beleg" mit — eine
+            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Der Faktor `saml`
+            # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
-                                                  auth.client_ip(request), request.headers.get("user-agent"))
+                                                  auth.client_ip(request),
+                                                  request.headers.get("user-agent"),
+                                                  email_bestaetigt=False)
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)

@@ -99,8 +99,23 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Adresse aus dem anderen geraten. Zweitens hing der Wächter, der Allowlist-**Benutzernamen**
   verbietet, allein an `allow_signup` — beim Auto-Anlegen durch einen IdP (`oidc_auto_create`,
   `saml_auto_create`, `ldap_auto_create`) griff er nicht, obwohl der Name auch dort aus fremder
-  Hand kommt (`preferred_username`); er fasst jetzt alle vier Türen. Gefunden im dritten Audit
-  (F-14 aus T-13).
+  Hand kommt (`preferred_username`); er fasst jetzt alle vier Türen.
+  **Über SAML und LDAP gibt es diesen Beleg gar nicht — dort befördert eine Allowlist-Adresse
+  nie.** Der Riegel hing zunächst allein am OIDC-Callback: SAML-ACS und LDAP-Login riefen
+  `apply_factor` ohne das Argument, und `None` heisst „kein fremder IdP im Spiel" — es lief am
+  Riegel vorbei, ein IdP mit Selbstregistrierung oder ein Verzeichnis, in dem der Nutzer sein
+  `mail`-Attribut selbst pflegt, bestimmte also weiter den ersten Admin. Jetzt reichen beide
+  Wege ausdrücklich „kein Beleg" durch, und die Regel selbst ist **fail-closed**:
+  `maybe_promote_admin` bekommt den **Faktor** mit, und für einen föderierten Faktor (neu:
+  `TinySesam.FOEDERIERTE_FAKTOREN`) zählt eine Adresse nur mit einem ausdrücklichen `True` —
+  ein künftiger föderierter Weg, der den Beleg zu übergeben vergisst, verweigert damit, statt zu
+  befördern. LDAP braucht den ausdrücklichen Durchreicher zusätzlich, weil es bewusst den Faktor
+  `password` schreibt und am Faktornamen nicht zu erkennen ist. Die Konfigurationsprüfung nennt
+  die Kombination Allowlist-**Adresse** + `saml_auto_create`/`ldap_auto_create` und den belegten
+  Weg (`/auth/claim-admin`, danach das Gruppen-Mapping). Die Adresse selbst bleibt im Konto
+  stehen — sie ist das Attribut, das Verzeichnis oder IdP liefert; sie trägt nur keine
+  Rechte-Entscheidung mehr. Belege in `tests/test_saml.py`, `tests/test_ldap.py` und
+  `tests/test_audit_runde2.py`. Gefunden im dritten Audit (F-14 aus T-13).
 - **LDAP folgt keinem Verweis (Referral) mehr — er kostete das Passwort des Dienstkontos.** ldap3
   verfolgt einen `SearchResultDone resultCode=10` von sich aus und baut dazu eine neue Verbindung
   zu dem Host auf, den die **Antwort** nennt — mit denselben Zugangsdaten. TinySesam setzte den
@@ -173,10 +188,15 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   dessen Kennung. Der Inhaber, auch ein Admin, bekam ab da 401 trotz richtigem Passwort, und
   `/auth/password` prüfte für die Sitzung des Fremden sein Geheimnis statt des eigenen: ein
   Passwort-Orakel ohne Drossel, Sperre und Protokollzeile. Beide Kennungen müssen jetzt **kreuzweise**
-  frei sein; die Prüfung sitzt in `create_user` und gilt damit für jeden Weg — Registrierung,
-  Admin-API, Einladung, Erst-Admin, Service-Konten und die automatische Anlage aus
-  OIDC/LDAP/SAML, die fail-closed scheitert, statt eine fremde Kennung zu überschreiben.
-  (Das CLI stand hier zunächst mit in der Liste — es kann gar keine Konten anlegen.) `/auth/password` prüft zusätzlich gegen die
+  frei sein; die Prüfung sitzt in `create_user` und gilt damit für jeden Weg, der ein Konto
+  anlegt — Registrierung, Einladung, Admin-API, `ensure_admin`/`create_service` und die
+  automatische Anlage aus OIDC/LDAP/SAML, die fail-closed scheitert, statt eine fremde Kennung
+  zu überschreiben. (Das CLI stand hier zunächst mit in der Liste — es kann gar keine Konten
+  anlegen.) Was diese Zusage auf den **föderierten** Wegen bedeutet, steht jetzt auch in
+  Tests: OIDC weicht auf einen freien Namen aus (geprüft werden beide Namensräume), eine nicht
+  ausweichbare Adresse endet mit **409**, LDAP mit **401**, SAML mit **403** — je eine saubere
+  Abweisung mit Audit-Zeile (`oidc_ident_taken`, `ldap_ident_taken`, `saml_ident_taken`), kein
+  500 mitten im Anmeldevorgang. `/auth/password` prüft zusätzlich gegen die
   **ID** der eigenen Sitzung statt über die Kennung, damit eine Kollision aus einem Altbestand dort
   nicht mehr wirkt. Neu: `auth.kennung_vergeben(kennung, exclude_id=None)`. Gefunden im dritten
   Audit (R4-12 aus T-13).

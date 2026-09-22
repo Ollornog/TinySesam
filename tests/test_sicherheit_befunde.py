@@ -1387,6 +1387,28 @@ for feld, koerper in (("E-Mail", {"username": "eve2", "email": "chef@example.com
             antwort_adm.status_code == 409,
             f"HTTP {antwort_adm.status_code}: {antwort_adm.text[:120]}")
 
+# Einladung: Die Adresse kommt dort aus dem Token, nicht aus dem Formular — der Wächter muss
+# auch diesen Weg treffen, sonst legt eine Einladung auf eine vergebene Kennung ein Konto an.
+_einladung = auth_n2.create_invite("chef@example.com", "https://app.example.invalid")["token"]
+antwort_inv = c_n2.post("/auth/register",
+                        data={"username": "eve3", "password": PW_EVE, "invite": _einladung,
+                              "next": "/"}, follow_redirects=False)
+r.check("eine Einladung auf eine vergebene Kennung wird abgewiesen",
+        antwort_inv.status_code == 409,
+        f"HTTP {antwort_inv.status_code}: {antwort_inv.text[:120]}")
+r.check("...und legt kein Konto an", auth_n2.store.get_user_by_name("eve3") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+
+# Und der Maschinen-Weg: ein Dienstkonto hat keinen Login, sein Name ist aber trotzdem eine
+# Kennung im gemeinsamen Raum (`find_user` sucht auch ihn).
+try:
+    auth_n2.create_service("chef@example.com")
+    _dienst_entstand = True
+except ConfigError:
+    _dienst_entstand = False
+r.check("create_service nimmt eine vergebene Kennung nicht an", not _dienst_entstand,
+        "das Dienstkonto entsteht — und besetzt die Kennung des Admins")
+
 # Altbestand: in einer Datenbank von VOR dem Fix steht die Kollision schon. Dann darf
 # /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
 auth_alt, app_alt = _app(csrf_enabled=False)

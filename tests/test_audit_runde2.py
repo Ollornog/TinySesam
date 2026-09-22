@@ -291,6 +291,93 @@ r.check("eine bestätigte Adresse aus dem userinfo-Dokument zählt weiterhin",
         f"Konto: {dict(nurui) if nurui else None}")
 
 
+# Der Beleg gibt es aber NUR bei OIDC. SAML kennt kein `email_verified`, und ein LDAP-`mail`
+# pflegt in vielen Verzeichnissen der Nutzer selbst — über diese Wege darf eine
+# Allowlist-ADRESSE deshalb NIE befördern. Bis zur Nacharbeit N4 hing der Riegel allein am
+# OIDC-Callback: SAML und LDAP riefen `apply_factor` ohne das Argument, und `None` hiess
+# „kein IdP im Spiel" — es lief am Riegel vorbei. Jetzt entscheidet der FAKTOR mit: ein
+# föderierter Weg ohne ausdrücklichen Beleg befördert nicht (fail-closed), das Vergessen des
+# Arguments ist also kein Loch mehr.
+def _bootstrap_probe():
+    """Frische Instanz mit Allowlist-ADRESSE und einem Konto, das sie trägt.
+
+    Jede Probe braucht ihre eigene: `maybe_promote_admin` ist nicht folgenlos — ein Erfolg
+    setzt das Admin-Flag, und danach messen alle weiteren Aufrufe nur noch `admin_exists`."""
+    a, _ = _app(admin_identifiers=["chef@example.com"])
+    return a, a.create_user("chefin", email="chef@example.com")
+
+
+for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argument vergessen)"),
+                                 ("oidc", None, False, "OIDC ohne Beleg (Argument vergessen)"),
+                                 ("saml", False, False, "SAML mit ausdrücklichem „kein Beleg\""),
+                                 ("password", None, True, "lokaler Passwort-Login"),
+                                 ("oidc", True, True, "OIDC mit email_verified=true")):
+    a_p, uid_p = _bootstrap_probe()
+    ergebnis = a_p.maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
+    r.check(f"{was} → Erst-Admin {'JA' if soll else 'NEIN'}", ergebnis is soll,
+            f"maybe_promote_admin gab {ergebnis!r} zurück")
+
+
+# Der Betreiber soll das beim Aufbau erfahren und nicht beim vergeblichen Warten auf den
+# ersten Admin: Die Konfigurationsprüfung nennt die Kombination und den belegten Weg. Warnung,
+# nicht Fehler — mit einem lokalen Passwort-Login (bestätigte Adresse) ist derselbe Aufbau
+# tragfähig, nur eben nicht über SAML/LDAP.
+from tinysesam import konfigpruefung as _kp_f14  # noqa: E402
+
+OIDC_AN = dict(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="c", oidc_client_secret="s")
+SAML_AN = dict(saml_enabled=True, saml_idp_sso_url=IDP + "/sso", saml_idp_x509cert="PEM")
+LDAP_AN = dict(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid")
+for kurz, an in (("SAML", SAML_AN), ("LDAP", LDAP_AN)):
+    _f14, _w14 = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                                admin_identifiers=["chef@example.com"], **an))
+    treffer = [w for w in _w14 if "/auth/claim-admin" in w and kurz in w]
+    r.check(f"konfigpruefung nennt bei admin_identifiers + {kurz} den Weg über /auth/claim-admin",
+            len(treffer) == 1, f"Warnungen: {_w14!r}")
+    r.check(f"...und macht aus dem {kurz}-Aufbau keinen Fehler", not _f14, f"Fehler: {_f14!r}")
+
+# Gegenproben: OIDC hat den Beleg (dort trägt die Adresse weiterhin), und ohne IdP ist gar
+# nichts zu melden. Eine Warnung, die immer feuert, liest am Ende niemand mehr.
+_f14b, _w14b = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                              admin_identifiers=["chef@example.com"], **OIDC_AN))
+r.check("bei OIDC schweigt sie (der Claim email_verified ist der Beleg)",
+        not any("/auth/claim-admin" in w for w in _w14b), f"{_w14b!r}")
+_f14c, _w14c = _kp_f14.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example",
+                                              admin_identifiers=["chef@example.com"]))
+r.check("und ohne föderierten Weg ebenfalls",
+        not any("/auth/claim-admin" in w for w in _w14c), f"{_w14c!r}")
+
+
+# ── R4-12 über die föderierten Wege: die Login-Kennung ist EIN Raum ──────────
+# Die Kreuzprüfung sitzt in `create_user` und gilt damit auch für das Auto-Anlegen aus
+# OIDC/LDAP/SAML. Gemessen war diese Hälfte nie: Vier Mutationen (Ausweichname → harte 409,
+# saubere Abweisung → roher 500) liessen die volle Suite grün.
+auth_k9, app_k9 = _oidc_app({"sub": "k9", "preferred_username": "chef@example.com",
+                             "email": "neu@example.com", "email_verified": True})
+lokal9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example.com")
+antw9 = _oidc_login(app_k9)
+r.check("ein OIDC-Name, der die E-Mail eines Kontos ist, weicht auf einen freien Namen aus",
+        antw9.status_code == 303, f"HTTP {antw9.status_code} — der Nutzer kommt nicht mehr herein")
+r.check("...das neue Konto heisst anders", auth_k9.store.get_user_by_name("chef@example.com2") is not None,
+        "kein Ausweichname — dann wurde entweder abgewiesen oder eine Kennung besetzt")
+r.check("...und die Kennung zeigt weiter auf das lokale Konto",
+        (auth_k9.find_user("chef@example.com") or {}).get("id") == lokal9,
+        "die fremde Anmeldung hat die Kennung übernommen")
+
+# Was sich NICHT ausweichen lässt: die E-Mail der Identität. Dann bleibt nur fail-closed —
+# und zwar als saubere Abweisung, nicht als 500 mitten im Anmeldevorgang.
+auth_k11, app_k11 = _oidc_app({"sub": "k11", "preferred_username": "fremd",
+                               "email": "kollision@example.com", "email_verified": True})
+lokal11 = auth_k11.create_user("kollision@example.com", password="geheim12345")
+antw11 = _oidc_login(app_k11)
+r.check("eine OIDC-Adresse, die lokal schon Login-Kennung ist, wird mit 409 abgewiesen",
+        antw11.status_code == 409, f"HTTP {antw11.status_code} — 500 wäre ein Defekt, 303 ein Loch")
+r.check("...und legt kein Konto an", auth_k11.store.get_user_by_name("fremd") is None,
+        "das Konto steht trotz Abweisung in der Datenbank")
+r.check("...der Inhaber behält seine Kennung",
+        (auth_k11.find_user("kollision@example.com") or {}).get("id") == lokal11,
+        "die Kennung wurde besetzt")
+
+
 # ── Allowlist-BENUTZERNAME, während ein IdP Konten von selbst anlegt (F-14 b) ──
 # Der Name eines auto-angelegten Kontos kommt aus `preferred_username` bzw. dem
 # SAML-/LDAP-Feld — von niemandem bestätigt, genau wie bei der offenen Registrierung.
@@ -309,7 +396,6 @@ def _baut_f14(**cfg):
         return False, str(e)
 
 
-OIDC_AN = dict(oidc_enabled=True, oidc_issuer=IDP, oidc_client_id="c", oidc_client_secret="s")
 gebaut, text = _baut_f14(admin_identifiers=["chef"], allow_signup=False, **OIDC_AN)
 r.check("Allowlist-BENUTZERNAME + oidc_auto_create wird abgewiesen", not gebaut,
         "die Instanz baut — wer beim IdP 'chef' heisst, wird Erst-Admin")

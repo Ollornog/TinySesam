@@ -259,7 +259,8 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
 ```
 
 - **Allowlist** — the named username or email is promoted on its next successful sign-in, whatever the
-  method (also OIDC/SAML/LDAP, where the email is usually the stable handle). After that: never again.
+  method. An **address** only counts with proof that it belongs to whoever is signing in; SAML and
+  LDAP offer no such proof, so it never promotes there (see below). After that: never again.
 - **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
   (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
   admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
@@ -283,6 +284,16 @@ carries no rights, on any sign-in path that account uses later. For an IdP that 
 claim (Entra ID): use the one-time token, the path with proof — or, if you vouch for those
 addresses yourself, set `oidc_email_verified_default=True`. A claim that explicitly says `false`
 stays a no either way.
+
+**SAML and LDAP have no such proof**: no standard attribute states that the address was verified,
+and in many directories the `mail` entry is maintained by the user themselves. Over those two
+paths an allowlist address therefore **never** becomes the first admin — not even for an existing
+account that already carries it. The configuration check says so at construction time, and the
+refused attempt is logged to the security log and the audit trail
+(`admin_bootstrap_denied`). There the path with proof is the **one-time token**; to keep driving
+rights from the IdP afterwards, use `saml_group_role_map`/`ldap_group_role_map` (target
+`__admin__`) — that is the operator's decision in the configuration, not an attribute inside a
+sign-in.
 
 Alternatively `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` seeds an admin before the app
 ever serves a request — best when you deploy from a script.

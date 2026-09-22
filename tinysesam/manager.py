@@ -554,9 +554,20 @@ class TinySesam:
         """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
         return any(u["is_admin"] for u in self.store.list_users())
 
-    def maybe_promote_admin(self, user, email_bestaetigt: Optional[bool] = None) -> bool:
+    #: Faktoren, mit denen die Identität von einem FREMDEN Anbieter kommt. Für sie gilt in
+    #: `maybe_promote_admin` fail-closed: Ohne ausdrücklichen Beleg trägt eine Allowlist-Adresse
+    #: dort keine Erst-Admin-Entscheidung — ein neuer föderierter Weg, der den Beleg zu
+    #: übergeben vergisst, befördert also nicht, sondern verweigert.
+    #: `ldap` steht bewusst nicht hier: LDAP schreibt den Faktor `password` (s. `check_ldap`),
+    #: ist am Faktornamen also nicht zu erkennen — sein Aufrufer reicht den Beleg, den es dort
+    #: gar nicht gibt, ausdrücklich als `False` durch.
+    FOEDERIERTE_FAKTOREN = ("oidc", "saml")
+
+    def maybe_promote_admin(self, user, email_bestaetigt: Optional[bool] = None,
+                            faktor: Optional[str] = None) -> bool:
         """Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über
-        welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
+        welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg,
+        dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
 
         **Ein Eintrag mit `@` wird NUR gegen die E-Mail geprüft, einer ohne NUR gegen den
         Benutzernamen.** Vorher galt „Name ODER E-Mail" für jeden Eintrag, und das machte den
@@ -569,17 +580,27 @@ class TinySesam:
 
         `email_bestaetigt` ist der **Beleg für die Adresse**, mit dem der Aufrufer anreist:
         `True`/`False` sagt ein föderierter Anmeldeweg über den Claim `email_verified`,
-        `None` heisst „dieser Anmeldeweg weiss es nicht" — dann gilt der Vermerk am Konto
-        (`users.email_verified`, gelesen von `_beleg_am_konto`). Ohne Beleg zählt eine
-        Treffer-Adresse nicht: Sonst genügte ein IdP mit Selbstregistrierung, um sich die
-        Admin-Adresse einzutragen und beim ersten Login Erst-Admin zu werden.
+        `None` heisst „dieser Anmeldeweg weiss es nicht". Ohne Beleg zählt eine Treffer-Adresse
+        nicht: Sonst genügte ein IdP mit Selbstregistrierung, um sich die Admin-Adresse
+        einzutragen und beim ersten Login Erst-Admin zu werden.
 
-        **Warum der Vermerk und nicht nur der Parameter:** Die Adresse eines IdP ohne den Claim
-        wird seit dieser Fassung ganz normal ins Konto geschrieben (sonst verlöre eine bestehende
-        Installation Kontoname und `Remote-Email`) — sie darf nur nichts tragen. Hinge das allein
-        am Parameter, wäre der Schutz eine Frage des Anmeldewegs: derselbe Datensatz, einmal über
-        einen lokalen Weg (Magic-Link, Passwort) angemeldet, käme mit `None` herein und wäre
-        befördert worden. Der Vermerk steht in der Datenbank und gilt deshalb für jeden Weg.
+        Belegt wird in zwei Stufen, beide fail-closed:
+
+        1. **Föderierter Weg ohne Beleg verweigert.** Einen Beleg gibt es nur bei OIDC (Claim
+           `email_verified`, OIDC Core 5.1). **SAML und LDAP kennen keinen** — kein
+           Standard-Attribut sagt, dass ein Verzeichnis die Adresse geprüft hat, und ein
+           `mail`-Attribut pflegt der Nutzer in vielen Verzeichnissen selbst. Damit das nicht am
+           Gedächtnis des Aufrufers hängt: `faktor` aus `FOEDERIERTE_FAKTOREN` verlangt
+           `email_bestaetigt is True`, ein vergessenes Argument verweigert. LDAP schreibt den
+           Faktor `password` und ist daran nicht zu erkennen — dort reicht der Aufrufer
+           `email_bestaetigt=False` durch.
+        2. **Sonst entscheidet der Vermerk am Konto** (`users.email_verified`, gelesen von
+           `_beleg_am_konto`). Die Adresse eines IdP ohne den Claim wird seit dieser Fassung ganz
+           normal ins Konto geschrieben (sonst verlöre eine bestehende Installation Kontoname und
+           `Remote-Email`) — sie darf nur nichts tragen. Hinge das allein am Parameter, wäre der
+           Schutz eine Frage des Anmeldewegs: derselbe Datensatz, einmal über einen lokalen Weg
+           (Magic-Link, Passwort) angemeldet, käme mit `None` herein und wäre befördert worden.
+           Der Vermerk steht in der Datenbank und gilt deshalb für jeden Weg.
 
         Der Benutzername bleibt davon unberührt — für ihn ist der Konstruktor-Wächter zuständig,
         der Allowlist-Namen verbietet, sobald Konten von selbst entstehen.
@@ -591,16 +612,27 @@ class TinySesam:
         namen = ids - adressen
         trifft_adresse = str(user["email"] or "").lower() in adressen
         trifft_name = str(user["username"] or "").lower() in namen
-        beleg = email_bestaetigt if email_bestaetigt is not None else _beleg_am_konto(user)
-        if trifft_adresse and not trifft_name and beleg is False:
-            security.seclog.warning(
-                "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, für die kein "
-                "Beleg vorliegt (der Claim email_verified fehlt oder steht auf false; am Konto "
-                "vermerkt als unbestätigt). Die Adresse bleibt am Konto, sie trägt nur diese "
-                "Entscheidung nicht. Belegter Weg: /auth/claim-admin.",
-                user["username"], user["email"])
-            self.audit("admin_bootstrap_denied", user["username"], detail="email_unbestaetigt")
-            return False
+        if trifft_adresse and not trifft_name:
+            # Zwei Stufen, beide fail-closed: Ein ausdrücklicher Beleg des Anmeldewegs gewinnt.
+            # Schweigt der Weg (`None`), verweigert ein föderierter Faktor grundsätzlich — auch
+            # wenn er das Argument schlicht vergessen hat —, und sonst entscheidet der Vermerk
+            # am Konto.
+            if email_bestaetigt is not None:
+                belegt, grund = email_bestaetigt is True, "email_unbestaetigt"
+            elif (faktor or "") in self.FOEDERIERTE_FAKTOREN:
+                belegt, grund = False, f"ohne_beleg:{faktor or '?'}"
+            else:
+                belegt, grund = _beleg_am_konto(user), "email_unbestaetigt"
+            if not belegt:
+                security.seclog.warning(
+                    "Erst-Admin NICHT vergeben: %s trägt die Allowlist-Adresse %s, für diesen "
+                    "Anmeldeweg (%s) liegt aber kein Bestätigungsbeleg vor (OIDC: Claim "
+                    "email_verified; SAML und LDAP kennen keinen; sonst der Vermerk am Konto). "
+                    "Die Adresse bleibt am Konto, sie trägt nur diese Entscheidung nicht. "
+                    "Belegter Weg: /auth/claim-admin.",
+                    user["username"], user["email"], faktor or "?")
+                self.audit("admin_bootstrap_denied", user["username"], detail=grund)
+                return False
         if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
@@ -790,7 +822,14 @@ class TinySesam:
     # ---------- LDAP / lldap (Passwort-Backend) ----------
     def check_ldap(self, username, password) -> Optional[dict]:
         """Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben.
-        Zählt wie ein Passwort-Login (Faktor 'password')."""
+        Zählt wie ein Passwort-Login (Faktor 'password').
+
+        Die übernommene Adresse (`info["email"]`) ist ein Verzeichnisattribut ohne Beleg — in
+        vielen Verzeichnissen pflegt sie der Nutzer selbst. Wer diesen Weg selbst einbindet,
+        reicht deshalb `email_bestaetigt=False` an `apply_factor` durch (so macht es die
+        mitgelieferte Login-Route); sonst könnte eine Allowlist-Adresse über LDAP den
+        Erst-Admin bestimmen (F-14). Am Faktornamen ist der Weg nicht erkennbar — `password`
+        steht nicht in `FOEDERIERTE_FAKTOREN`, weil ein lokales Passwort dort auch ankommt."""
         if not self.ldap:
             return None
         info = self.ldap.authenticate(username, password)
@@ -825,7 +864,11 @@ class TinySesam:
 
     # ---------- SAML (Attribute → lokaler User) ----------
     def check_saml(self, nameid, attrs) -> Optional[dict]:
-        """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'."""
+        """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
+
+        Die Adresse aus dem Attribut trägt keinen Beleg (SAML kennt kein `email_verified`).
+        Der Faktor `saml` steht darum in `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird
+        über diesen Weg nie zum Erst-Admin, auch wenn ein Aufrufer den Beleg nicht nennt."""
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
@@ -1359,8 +1402,11 @@ class TinySesam:
         (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel).
         Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
-        `email_bestaetigt` reicht ein föderierter Weg durch (OIDC: Claim `email_verified`) —
-        hier entscheidet sich der Erst-Admin, und eine unbelegte Adresse darf ihn nicht tragen."""
+        `email_bestaetigt` reicht ein föderierter Weg durch (OIDC: Claim `email_verified`;
+        SAML und LDAP kennen keinen Beleg und reichen `False` durch) — hier entscheidet sich
+        der Erst-Admin, und eine unbelegte Adresse darf ihn nicht tragen. Der Faktor geht
+        mit an `maybe_promote_admin`: Für einen föderierten Faktor gilt dort fail-closed,
+        ein vergessenes Argument befördert also nicht."""
         s = self.session_from_request(request)
         if s and s["user_id"] == user_id:
             # gleiche Identität → Faktor an laufende Sitzung anhängen (Ketten-/Route-Schritt).
@@ -1371,7 +1417,8 @@ class TinySesam:
                 done.append(factor)
             ok = self._session_ok(user_id, done)
             self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
-            self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt)
+            self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt,
+                                     faktor=factor)
             if ok and not was_ok:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
@@ -1390,7 +1437,7 @@ class TinySesam:
             # Redirects und Cookies. In der Sitzungs-Zeile steht nur noch das Handle.
             return request.cookies.get(self.cfg.session_cookie), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
-        self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt)
+        self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
 
     def login_redirect_after(self, request, token, user_id, nxt):

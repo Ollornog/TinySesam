@@ -249,6 +249,34 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "(admin_claim_ttl_min=0 oder admin_enabled=False) — die Datei wird nie geschrieben. "
             "Der Erst-Admin kommt dann nur über admin_identifiers oder die CLI zustande.")
 
+    # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
+    # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine
+    # Adresse bleibt erlaubt — aber sie trägt die Entscheidung nur mit Beleg, und einen Beleg
+    # gibt es allein bei OIDC (`email_verified`). SAML und LDAP kennen keinen: Kein
+    # Standardattribut sagt, dass die Adresse geprüft wurde, und ein `mail`-Attribut pflegt
+    # der Nutzer in vielen Verzeichnissen selbst. Die Laufzeit befördert dort deshalb nie
+    # (fail-closed, F-14) — wer den ersten Admin über diesen Weg erwartet, wartet umsonst.
+    # Warnung, nicht Fehler: Derselbe Aufbau ist mit einem lokalen Passwort-Login (bestätigte
+    # Adresse) völlig tragfähig, und der Betreiber soll nur wissen, welcher Weg zählt.
+    allowlist_adressen = sorted({str(i).strip() for i in
+                                 (getattr(config, "admin_identifiers", None) or [])
+                                 if "@" in str(i)})
+    ohne_beleg = [name for an, anlegen, name in (("saml_enabled", "saml_auto_create", "SAML"),
+                                                 ("ldap_enabled", "ldap_auto_create", "LDAP"))
+                  if _an(config, an) and _an(config, anlegen)]
+    if allowlist_adressen and ohne_beleg:
+        warnungen.append(
+            f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
+            + " und ".join(ohne_beleg) +
+            " legt Konten beim ersten Login selbst an. Über diese Wege wird die Adresse NIE "
+            "zum Erst-Admin: Weder SAML noch LDAP liefern einen Bestätigungsbeleg für eine "
+            "Adresse (bei OIDC ist es der Claim email_verified), und ohne Beleg befördert "
+            "TinySesam nicht — sonst genügte ein IdP mit Selbstregistrierung oder ein "
+            "Verzeichnis, in dem der Nutzer sein mail-Attribut selbst pflegt. Der belegte "
+            "Weg ist das Einmal-Token: anmelden, dann /auth/claim-admin (s. "
+            "admin_claim_ttl_min); danach vergibt der Erst-Admin die Rechte selbst. Ein "
+            "lokaler Passwort-Login mit bestätigter Adresse befördert weiterhin.")
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:

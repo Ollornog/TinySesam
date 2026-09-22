@@ -258,8 +258,9 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 ```
 
 - **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
-  befördert, egal über welche Methode (auch OIDC/SAML/LDAP, wo die Adresse meist die stabile Kennung
-  ist). Danach nie wieder.
+  befördert, egal über welche Methode. Eine **Adresse** zählt dabei nur mit einem Beleg, dass sie
+  dem Anmeldenden gehört; über SAML und LDAP gibt es keinen, dort befördert sie nie (s. unten).
+  Danach nie wieder.
 - **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
   **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
   Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
@@ -284,6 +285,15 @@ geht weiter als `Remote-Email` hinaus — sie ist nur als unbestätigt vermerkt
 desselben Kontos. Für IdPs ohne diesen Claim (Entra ID): der Einmal-Token ist der belegte Weg —
 oder, wer die Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`. Ein Claim,
 der ausdrücklich `false` sagt, bleibt in beiden Fällen ein Nein.
+
+**SAML und LDAP kennen keinen solchen Beleg**: Kein Standardattribut sagt, dass die Adresse
+geprüft wurde, und ein `mail`-Eintrag im Verzeichnis pflegt vielerorts der Nutzer selbst. Über
+diese beiden Wege wird eine Allowlist-Adresse deshalb **nie** zum Erst-Admin — auch nicht bei
+einem Bestandskonto, das sie schon führt. Die Konfigurationsprüfung sagt das beim Aufbau, und der
+abgewehrte Versuch steht im Sicherheits-Log und im Audit (`admin_bootstrap_denied`). Der belegte
+Weg ist dort der **Einmal-Token**; wer Rechte fortlaufend aus dem IdP steuern will, nimmt danach
+`saml_group_role_map`/`ldap_group_role_map` (Ziel `__admin__`) — das entscheidet der Betreiber in
+der Konfiguration, nicht ein Attribut in der Anmeldung.
 
 Alternativ legt `auth.ensure_admin("admin", os.environ["INITIAL_PW"])` den Admin an, bevor die App
 den ersten Request beantwortet — am saubersten, wenn du per Skript deployst.

@@ -87,6 +87,76 @@ assert c.post("/auth/login", data={"username": "carol", "password": "x"}).status
 ok("ldap_auto_create=False: unbekannter LDAP-User wird nicht angelegt")
 os.remove(db)
 
+# ---------- F-14: eine Allowlist-ADRESSE wird über LDAP nicht Erst-Admin ----------
+# Das `mail`-Attribut pflegt in vielen Verzeichnissen der Nutzer selbst, und einen Beleg wie
+# OIDCs Claim `email_verified` kennt LDAP nicht. Wer sich dort die Admin-Adresse eintrug, war
+# beim ersten Login Erst-Admin der Instanz: Der Riegel aus F-14 hing allein am OIDC-Callback,
+# die Login-Route rief `apply_factor` ohne Beleg, und „kein Beleg" (None) hiess dort
+# „kein IdP im Spiel". Jetzt reicht die Route ausdrücklich „kein Beleg" durch (fail-closed).
+def baue_ohne_admin(**cfgkw):
+    """Wie `build`, aber OHNE `ensure_admin` — die Bootstrap-Wege greifen nur, solange es
+    keinen Admin gibt. Mit dem lokalen Admin aus `build` würde jede Prüfung hier grün sein,
+    ohne etwas zu messen."""
+    db = os.path.join(tempfile.mkdtemp(), "t.db")
+    auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test",
+                                     passkey_enabled=False, oidc_enabled=False,
+                                     cookie_secure=False, ldap_enabled=True,
+                                     ldap_url="ldap://dummy", **cfgkw))
+    app = FastAPI()
+    app.include_router(auth.router())
+    return db, auth, TestClient(app)
+
+
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"])
+auth.ldap = FakeLDAP({"angreifer": {"password": "x", "email": "boss@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "angreifer", "password": "x"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code          # die Anmeldung selbst bleibt erlaubt
+u = auth.store.get_user_by_name("angreifer")
+assert u is not None and not u["is_admin"], dict(u) if u else None
+assert not auth.admin_exists(), "die Instanz hat jetzt einen Admin — über ein mail-Attribut"
+ok("F-14: eine Allowlist-ADRESSE aus dem Verzeichnis befördert nicht (LDAP kennt keinen Beleg)")
+os.remove(db)
+
+# Gegenprobe, sonst wäre die Prüfung oben auch grün, wenn der Bootstrap komplett kaputt wäre:
+# Ein Allowlist-NAME zählt weiterhin. Erlaubt ist er nur ohne Auto-Anlegen (sonst verbietet ihn
+# der Konstruktor-Wächter) — das Konto hat der Betreiber dann selbst angelegt.
+db, auth, c = baue_ohne_admin(admin_identifiers=["chefin"], ldap_auto_create=False)
+uid = auth.create_user("chefin", email="chefin@example.com")
+auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "chefin@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "chefin", "password": "x"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code
+assert auth.get_user(uid)["is_admin"], "der dokumentierte Bootstrap-Weg über den Namen ist zu"
+ok("... der Allowlist-NAME eines vorher angelegten Kontos befördert weiterhin")
+os.remove(db)
+
+# ---------- R4-12: eine Verzeichnis-Kennung besetzt keine lokale ----------
+# Benutzername und E-Mail sind EIN Kennungs-Raum (`find_user` sucht in beiden Spalten). Die
+# Kreuzprüfung sitzt in `create_user` und trifft damit auch das Auto-Anlegen aus LDAP — und
+# sie muss hier als saubere Abweisung ankommen, nicht als 500 mitten im Anmeldevorgang.
+for was, verzeichnis, kennung in (
+        ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve"),
+        ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com")):
+    db, auth, c = baue_ohne_admin()
+    lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
+    auth.ldap = FakeLDAP({kennung: dict(verzeichnis, groups=[])})
+    r = c.post("/auth/login", data={"username": kennung, "password": "x"}, follow_redirects=False)
+    assert r.status_code == 401, f"HTTP {r.status_code} — 303 wäre eine besetzte Kennung, 500 ein Defekt"
+    assert auth.store.get_user_by_name(kennung) is None, "das Konto entstand trotz Abweisung"
+    assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "die Kennung wurde übernommen"
+    assert any(z["event"] == "ldap_ident_taken" for z in auth.store.recent_audit(20)), \
+        "kein Audit-Eintrag — die Abweisung ist unsichtbar"
+    ok(f"R4-12: eine Verzeichnis-Identität, {was}, legt kein Konto an (401, kein 500)")
+    os.remove(db)
+
+# Gegenprobe: freie Kennungen legen weiterhin an.
+db, auth, c = baue_ohne_admin()
+auth.create_user("chef", password="lokal12345", email="chef@example.com")
+auth.ldap = FakeLDAP({"neu": {"password": "x", "email": "neu@example.com", "groups": []}})
+r = c.post("/auth/login", data={"username": "neu", "password": "x"}, follow_redirects=False)
+assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
+ok("... mit freien Kennungen legt LDAP weiterhin an")
+os.remove(db)
+
 # ---------- F-28: Verweisen (Referrals) wird nie gefolgt ----------
 # ldap3 folgt einem `SearchResultDone resultCode=10 (referral)` von sich aus und bindet auf dem
 # Host, den die ANTWORT nennt, erneut mit denselben Zugangsdaten. Ein übernommenes Verzeichnis

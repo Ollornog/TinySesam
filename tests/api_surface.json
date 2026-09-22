@@ -53,7 +53,7 @@
     "logout": "(request, response)",
     "magic_url": "(raw, base_url, purpose='login') -> 'str'",
     "mail_configured": "() -> 'bool'",
-    "maybe_promote_admin": "(user, email_bestaetigt: 'Optional[bool]' = None) -> 'bool'",
+    "maybe_promote_admin": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
     "mfa_pending": "(user_id) -> 'bool'",
     "next_login_step": "(user_id, done)",
     "peek_magic": "(raw, purpose=None) -> 'Optional[dict]'",
@@ -114,6 +114,7 @@
   },
   "TinySesam.konstanten": {
     "DEMO_USERS": "('demo', 'demoadmin')",
+    "FOEDERIERTE_FAKTOREN": "('oidc', 'saml')",
     "FORWARD_HEADERS_DEFAULT": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups'}",
     "IDENTIFYING": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
     "RECOVERY_BYTES": "7",

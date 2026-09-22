@@ -230,9 +230,9 @@ Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None) -> 'bool'`
+### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
 
 ### `mfa_pending(user_id) -> 'bool'`
 
