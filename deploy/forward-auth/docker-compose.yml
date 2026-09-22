@@ -30,6 +30,22 @@ services:
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
       # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
+      #
+      # Zwei Anwendungen, zwei Clients, EINE Installation (T-14). Wer in welche darf, steht
+      # beim Provider — dort hängt die Freigabe am Client. Ohne eigene Clients gäbe es nur eine
+      # Antwort für beide: Wer in app darf, käme auch ins wiki.
+      TINYSESAM_OIDC_CLIENTS: >-
+        {"app.example.com":  {"client_id": "app",  "client_secret": "CHANGE_ME_APP"},
+         "wiki.example.com": {"client_id": "wiki", "client_secret": "CHANGE_ME_WIKI"}}
+      # Dieselbe Angabe einzeln — praktisch, wenn die Geheimnisse aus einer Datei oder einem
+      # Secret-Store kommen. Der Hostname wird gegen PROTECTED_HOSTS abgeglichen, ein
+      # Unterstrich kann also auch für einen Bindestrich stehen:
+      #   TINYSESAM_OIDC_CLIENT_APP_EXAMPLE_COM_ID: "app"
+      #   TINYSESAM_OIDC_CLIENT_APP_EXAMPLE_COM_SECRET: "CHANGE_ME_APP"
+      #
+      # Nach dieser Frist fragt das Gateway beim Provider nach, ob die Freigabe noch gilt.
+      # 0 schaltet das ab — dann wirkt ein Gruppenentzug dort erst, wenn die Sitzung abläuft.
+      TINYSESAM_OIDC_REVALIDATE_MINUTES: "15"
       # Das Netz unten, NICHT 0.0.0.0/0: Gilt jede Adresse als Proxy, bleibt keine als Client
       # übrig — X-Forwarded-For wird dann wirkungslos statt großzügig, und alle Nutzer erscheinen
       # unter der Caddy-IP. Rate-Limit und IP-Sperre wirken ab da kollektiv, und fail2ban bannt

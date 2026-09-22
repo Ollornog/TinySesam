@@ -268,9 +268,96 @@ class OIDCClient:
             return {}
 
 
+#: Schlüssel des Einzel-Clients in `oidc_grant` und im Flow. Ein Stern, weil er für **jeden**
+#: Host gilt, für den `oidc_clients` nichts Eigenes sagt — und weil kein Hostname so heissen kann.
+VORGABE_CLIENT = "*"
+
+
+class OIDCClients:
+    """Alle OIDC-Clients einer Installation: Host → Client beim selben Provider (T-14).
+
+    Warum eine Registry und nicht einfach ein zweites Feld: Wer in welche Anwendung darf,
+    entscheidet der Provider je **Client** (bei PocketID über die Gruppenfreigabe). Mit einem
+    einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen. Die Registry hält
+    die Zuordnung an genau einer Stelle, damit Flow, Callback und Forward-Auth dieselbe Frage
+    gleich beantworten.
+
+    **Ein Issuer für alle.** Discovery-Dokument und JWKS hängen am Provider, nicht am Client;
+    sie werden deshalb geteilt statt je Client neu geholt. Mehrere Provider in einer Instanz
+    sind nicht vorgesehen — `konfigpruefung` weist einen `issuer` im Client-Eintrag ab.
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self._clients: dict = {}
+        vorgabe = OIDCClient(cfg.oidc_issuer, cfg.oidc_client_id, cfg.oidc_client_secret,
+                             cfg.oidc_scopes)
+        self._clients[VORGABE_CLIENT] = vorgabe
+        for host, eintrag in (cfg.oidc_clients or {}).items():
+            e = dict(eintrag or {})
+            c = OIDCClient(cfg.oidc_issuer, e.get("client_id", ""), e.get("client_secret", ""),
+                           e.get("scopes") or cfg.oidc_scopes)
+            # Metadaten und JWKS kommen vom selben Provider — einmal holen reicht. Ohne das
+            # fragte jeder Client einzeln nach demselben Dokument, bei drei Anwendungen also
+            # dreifach, und eine Schlüsselrotation wäre dreimal zu bemerken statt einmal.
+            c._meta, c._meta_zeit = vorgabe._meta, vorgabe._meta_zeit
+            self._clients[str(host).strip().lower()] = c
+        self._teile_meta()
+
+    def _teile_meta(self):
+        """Den Metadaten-Cache des Vorgabe-Clients an alle anderen weiterreichen.
+
+        Aufgerufen nach jedem Abruf: `meta()` setzt `_meta` auf dem Client, der gerade fragt.
+        Ohne dieses Nachziehen hätte jeder Client seinen eigenen Stand, und ein Test, der die
+        Metadaten von aussen setzt (die OIDC-Attrappe tut das), erreichte nur einen davon.
+        """
+        vorgabe = self._clients[VORGABE_CLIENT]
+        for schluessel, c in self._clients.items():
+            if schluessel == VORGABE_CLIENT:
+                continue
+            c._meta, c._meta_zeit = vorgabe._meta, vorgabe._meta_zeit
+            c._jwks, c._jwks_zeit = vorgabe._jwks, vorgabe._jwks_zeit
+
+    @property
+    def mehrere(self) -> bool:
+        return len(self._clients) > 1
+
+    def schluessel_fuer_host(self, host: str) -> str:
+        """Welcher Client-Schlüssel gilt für diesen Host? Unbekannt → der Vorgabe-Client.
+
+        Ein unbekannter Host bekommt bewusst den Vorgabe-Client und keine Absage: Genau so
+        verhält sich eine Installation ohne `oidc_clients`, und der Übergang soll keiner sein.
+        Welche Hosts überhaupt geschützt sind, entscheidet der Proxy — nicht diese Zuordnung.
+        """
+        h = str(host or "").strip().lower()
+        if h and ":" in h and not h.startswith("["):
+            h = h.split(":", 1)[0]          # Port gehört nicht zum Namen der Anwendung
+        return h if h in self._clients else VORGABE_CLIENT
+
+    def __getitem__(self, schluessel: str) -> OIDCClient:
+        return self._clients.get(schluessel) or self._clients[VORGABE_CLIENT]
+
+    def fuer_host(self, host: str) -> OIDCClient:
+        return self[self.schluessel_fuer_host(host)]
+
+    def eintrag(self, schluessel: str) -> dict:
+        """Die Zusatzangaben eines Clients (`allowed_groups`, `group_role_map`) — mit den
+        Werten des Einzel-Clients als Rückfall. So gilt eine global gesetzte Gruppenregel auch
+        für eine Anwendung, die selbst keine nennt."""
+        e = dict((self.cfg.oidc_clients or {}).get(schluessel) or {})
+        return {
+            "allowed_groups": list(e.get("allowed_groups") or self.cfg.oidc_allowed_groups or []),
+            "group_role_map": dict(e.get("group_role_map") or self.cfg.oidc_group_role_map or {}),
+        }
+
+    def namen(self) -> list:
+        return [k for k in self._clients if k != VORGABE_CLIENT]
+
+
 def register_oidc_routes(router, auth):
     cfg = auth.cfg
     oidc: OIDCClient = auth.oidc
+    clients: OIDCClients = auth.oidc_clients
     if cfg.base_url:
         # Sichtbar machen, was der IdP als Redirect-URI kennen muss. Stimmt es nicht überein,
         # meldet den Fehler sonst erst der Provider — nach dem Login, ohne Hinweis auf die Ursache.
@@ -300,7 +387,7 @@ def register_oidc_routes(router, auth):
                         samesite=cfg.cookie_samesite, path=cfg.cookie_path)
 
     @router.get("/auth/oidc/start")
-    def oidc_start(request: Request, next: str = "/"):
+    def oidc_start(request: Request, next: str = "/", app: str = ""):
         # Jeder Aufruf hinterlässt eine `flow`-Zeile (600 s), gelöscht wird sie nur beim
         # erfolgreichen Rückweg oder von `gc`. Im Gateway-Betrieb ist das genau der Einstieg,
         # auf den der Proxy jeden nicht angemeldeten Besucher schickt — jeder Abbruch, jeder
@@ -309,12 +396,20 @@ def register_oidc_routes(router, auth):
         if not auth.rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+        # Welche Anwendung gemeint ist, entscheidet sich HIER und wandert in den Flow-Satz —
+        # nicht in die Redirect-URI (die ist für alle Clients dieselbe, damit beim Provider
+        # eine einzige Adresse eingetragen werden muss) und nicht in den `state` (den liest
+        # jeder aus der Adresszeile). `?app=` kommt vom Forward-Auth oder von der Anwendung
+        # selbst; ein unbekannter Name landet beim Vorgabe-Client, genau wie bisher (T-14).
+        ziel = clients.schluessel_fuer_host(app)
+        client = clients[ziel]
         # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.
         # Wer den `state` aus der Redirect-URL abliest, hat damit noch nichts.
         flow_key = secrets.token_urlsafe(24)
         auth.store.put_flow("oidc:" + state,
-                            {"nonce": nonce, "next": next, "fk": _hash(flow_key)}, ttl=600)
-        resp = RedirectResponse(oidc.auth_url(_redirect_uri(request), state, nonce), 303)
+                            {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": ziel},
+                            ttl=600)
+        resp = RedirectResponse(client.auth_url(_redirect_uri(request), state, nonce), 303)
         _flow_cookie_setzen(resp, flow_key)
         return resp
 
@@ -331,23 +426,33 @@ def register_oidc_routes(router, auth):
         if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
             raise HTTPException(400, auth.t("api.oidc_browser"))
-        claims, tok = oidc.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
-        nutzerinfo = oidc.userinfo(tok.get("access_token")) or {}
+        # Getauscht wird mit dem Client, mit dem der Flow begonnen hat. Ein anderer Client hätte
+        # ein anderes Geheimnis — der Tausch scheitert dann beim Provider, und zwar zu Recht.
+        ziel = str(flow.get("app") or VORGABE_CLIENT)
+        client = clients[ziel]
+        claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
+        nutzerinfo = client.userinfo(tok.get("access_token")) or {}
         info = {**nutzerinfo, **dict(claims)}
 
-        if cfg.oidc_allowed_groups:
+        # Gruppenregel je Anwendung: `oidc_clients[host]["allowed_groups"]`, sonst die globale.
+        # Die eigentliche Freigabe trifft ohnehin der Provider (er gibt einem nicht freigegebenen
+        # Benutzer gar keinen Code) — das hier ist die zweite Schranke für den Fall, dass beim
+        # Provider grosszügiger freigegeben ist als gewollt.
+        eintrag = clients.eintrag(ziel)
+        erlaubte = eintrag["allowed_groups"]
+        if erlaubte:
             groups = info.get(cfg.oidc_group_claim) or []
-            if not (set(cfg.oidc_allowed_groups) & set(groups if isinstance(groups, list) else [groups])):
+            if not (set(erlaubte) & set(groups if isinstance(groups, list) else [groups])):
                 # Ins Protokoll, nicht nur an den Browser: „ich komme nicht rein" ist im
                 # Gateway-Betrieb der häufigste Supportfall, und ohne diese Zeile hinterliess
                 # er serverseitig gar nichts. Das Muster gibt es im Projekt schon
                 # (`forward_role_denied` in router.py).
                 auth.audit("oidc_group_denied", str(info.get("email") or info.get("sub") or "?"),
                            auth.client_ip(request),
-                           f"verlangt={sorted(cfg.oidc_allowed_groups)}")
+                           f"app={ziel} verlangt={sorted(erlaubte)}")
                 raise HTTPException(403, auth.t("api.oidc_group"))
 
-        issuer, sub = oidc.meta()["issuer"], claims["sub"]
+        issuer, sub = client.meta()["issuer"], claims["sub"]
 
         # Die E-Mail aus dem ID-Token trägt in TinySesam Entscheidungen: `admin_identifiers`
         # macht ihren Träger beim ersten Login zum Admin. Das setzt voraus, dass die Adresse dem
@@ -420,14 +525,21 @@ def register_oidc_routes(router, auth):
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)
 
-        # OIDC-Gruppen → lokale Rollen (falls gemappt)
+        # OIDC-Gruppen → lokale Rollen (falls gemappt). Die Zuordnung darf je Anwendung eine
+        # andere sein: Dieselbe Verzeichnisgruppe kann in App A „Redakteur" heissen und in App B
+        # gar nichts. Ohne Eintrag gilt die globale Zuordnung, also das Verhalten von 0.18.0.
         _grp = info.get(cfg.oidc_group_claim) or []
-        auth.apply_idp_groups(uid, _grp if isinstance(_grp, list) else [_grp], cfg.oidc_group_role_map)
+        _gruppen = _grp if isinstance(_grp, list) else [_grp]
+        auth.apply_idp_groups(uid, _gruppen, eintrag["group_role_map"])
 
         # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
                                               email_bestaetigt=mail_bestaetigt)
+        # Der Provider hat für DIESE Anwendung zugestimmt — das wird an der Sitzung vermerkt.
+        # Für jede andere Anwendung sagt dieser Vermerk nichts; dort fragt `/auth/forward`
+        # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).
+        auth.vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
         target = auth.login_redirect_after(request, token, uid,
                                            auth.safe_next(flow.get("next") or cfg.login_redirect))
         resp = RedirectResponse(target, 303)

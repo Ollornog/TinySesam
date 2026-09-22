@@ -175,7 +175,138 @@ for kaputt in ({"mail": "X-Mail"}, {"user": "Bad Name"}, {"user": "X-U\r\nSet-Co
         pass
 ok("unbekanntes Feld und ungültiger Header-Name brechen beim Start ab, nicht still zur Laufzeit")
 
+# ---------- T-14: mehrere Anwendungen, ein TinySesam ----------
+# Wer in welche Anwendung darf, entscheidet der Provider je OIDC-Client. „Angemeldet" ist
+# deshalb nicht mehr dieselbe Frage wie „darf hier rein": Die Freigabe hängt an der Sitzung UND
+# der Anwendung. Ohne diesen Block wäre der Zustand vor T-14 wieder da — eine Anmeldung für
+# app-a öffnete auch app-b.
+import time as _zeit                                                        # noqa: E402
+from tinysesam.oidc import VORGABE_CLIENT                                    # noqa: E402
+
+db4 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth4 = TinySesam(TinySesamConfig(
+    csrf_enabled=False, lang="de", db_path=db4, rp_name="Test", passkey_enabled=False,
+    cookie_secure=False, forward_auth_enabled=True, base_url="https://auth.example.com",
+    trusted_redirect_hosts=["app-a.example.com", "app-b.example.com"],
+    oidc_enabled=True, oidc_issuer="https://id.example.com",
+    oidc_client_id="haupt", oidc_client_secret="s-haupt",
+    oidc_revalidate_minutes=15,
+    oidc_clients={
+        "app-a.example.com": {"client_id": "a", "client_secret": "s-a"},
+        "app-b.example.com": {"client_id": "b", "client_secret": "s-b",
+                              "group_role_map": {"b-team": "redakteur"}},
+    }))
+auth4.ensure_admin("admin", "geheim123")
+app4 = FastAPI()
+app4.include_router(auth4.router())
+
+assert auth4.oidc_clients.namen() == ["app-a.example.com", "app-b.example.com"]
+assert auth4.oidc_clients.fuer_host("app-a.example.com").client_id == "a"
+assert auth4.oidc_clients.fuer_host("app-b.example.com:8443").client_id == "b"
+assert auth4.oidc_clients.schluessel_fuer_host("fremd.example.com") == VORGABE_CLIENT
+ok("T-14: jede Anwendung hat ihren eigenen Client, ein unbekannter Host den Vorgabe-Client")
+
+c14 = TestClient(app4)
+c14.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+         follow_redirects=False)
+_sitzung = c14.cookies.get("tinysesam_session")
+_h = auth4.store.session_hash(_sitzung)
+PROXY_A = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "app-a.example.com",
+           "X-Forwarded-Uri": "/geheim"}
+PROXY_B = {**PROXY_A, "X-Forwarded-Host": "app-b.example.com"}
+
+# Ohne Freigabe ist auch eine gültige Sitzung nicht genug — der Provider wurde für diese
+# Anwendung nie gefragt. (Mutationsprobe: die Prüfung in `_forward` entfernen → 200 statt 401.)
+r = c14.get("/auth/forward", headers=PROXY_A)
+assert r.status_code == 401, (r.status_code, dict(r.headers))
+assert r.headers.get("X-TinySesam-Reason") == "app-fehlt", dict(r.headers)
+assert "app=app-a.example.com" in r.headers.get("X-TinySesam-Location", ""), r.headers.get("X-TinySesam-Location")
+ok("T-14: angemeldet, aber ohne Freigabe für diese Anwendung → 401 mit app= in der Login-URL")
+
+# Der Provider hat für A zugestimmt.
+auth4.vermerke_oidc_freigabe(_sitzung, "app-a.example.com", rollen=["a-team"])
+r = c14.get("/auth/forward", headers=PROXY_A)
+assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
+
+# …und genau deshalb noch lange nicht für B.
+r = c14.get("/auth/forward", headers=PROXY_B)
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-fehlt", dict(r.headers)
+assert "app=app-b.example.com" in r.headers.get("X-TinySesam-Location", "")
+ok("T-14: die Freigabe für A gilt nicht für B — dieselbe Sitzung, zwei Antworten")
+
+# Widerruf: die Frist läuft ab, die Sitzung bleibt. Der nächste Aufruf geht über den Provider.
+auth4.store._exec("UPDATE oidc_grant SET checked_at=? WHERE token_hash=? AND client=?",
+                  (int(_zeit.time()) - 16 * 60, _h, "app-a.example.com"))
+r = c14.get("/auth/forward", headers=PROXY_A)
+assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-veraltet", dict(r.headers)
+assert c14.get("/auth/forward", headers=PROXY_A).status_code == 401
+# Die Sitzung selbst ist unberührt — das ist der Unterschied zum Abmelden.
+assert auth4.store.get_session(_sitzung) is not None, "die Sitzung darf die abgelaufene Freigabe überleben"
+auth4.vermerke_oidc_freigabe(_sitzung, "app-a.example.com")
+assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
+ok("T-14: nach oidc_revalidate_minutes verfällt die Freigabe (Sitzung bleibt), Bestätigung öffnet wieder")
+
+# Entzug von Hand: eine Anwendung zu, die andere offen.
+auth4.vermerke_oidc_freigabe(_sitzung, "app-b.example.com")
+assert c14.get("/auth/forward", headers=PROXY_B).status_code == 200
+_weg = auth4.store.drop_oidc_grant(_h, "app-b.example.com")
+assert _weg == 1
+assert c14.get("/auth/forward", headers=PROXY_B).status_code == 401
+assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
+ok("T-14: eine Freigabe entziehen trifft genau eine Anwendung")
+
+# Der Flow merkt sich, für WELCHE Anwendung er läuft. Die Redirect-URI ist für alle Clients
+# dieselbe (beim Provider steht eine Adresse), also kann der Client nicht aus der Rückkehr-
+# Adresse kommen — er steht im Flow-Satz. Ohne das liefe jede Anmeldung über den Vorgabe-Client
+# und die Freigabe je Client wäre wirkungslos.
+_META = {"issuer": "https://id.example.com", "jwks_uri": "https://id.example.com/jwks",
+         "token_endpoint": "https://id.example.com/token",
+         "authorization_endpoint": "https://id.example.com/auth"}
+for _schluessel in [VORGABE_CLIENT] + auth4.oidc_clients.namen():
+    _k = auth4.oidc_clients[_schluessel]
+    _k._meta, _k._meta_zeit = dict(_META), _zeit.time()
+
+from urllib.parse import parse_qs as _pq                                      # noqa: E402
+
+
+def _abfrage_der_umleitung(pfad):
+    """Die Query der Provider-Umleitung, die /auth/oidc/start baut."""
+    a = TestClient(app4).get(pfad, follow_redirects=False)
+    assert a.status_code == 303, (pfad, a.status_code)
+    return _pq(urlparse(a.headers["location"]).query)
+
+assert _abfrage_der_umleitung("/auth/oidc/start?app=app-a.example.com")["client_id"] == ["a"]
+assert _abfrage_der_umleitung("/auth/oidc/start?app=app-b.example.com")["client_id"] == ["b"]
+assert _abfrage_der_umleitung("/auth/oidc/start")["client_id"] == ["haupt"]
+assert _abfrage_der_umleitung("/auth/oidc/start?app=fremd.example.com")["client_id"] == ["haupt"]
+_abfrage_b = _abfrage_der_umleitung("/auth/oidc/start?app=app-b.example.com")
+_flow_b = auth4.store.pop_flow("oidc:" + _abfrage_b["state"][0])
+assert (_flow_b or {}).get("app") == "app-b.example.com", _flow_b
+ok("T-14: /auth/oidc/start wählt den Client der Anwendung und hält ihn im Flow-Satz fest")
+
+# Und der Bestandsfall: EIN Client, keine Zuordnung — alles wie in 0.18.0, ohne app= irgendwo.
+db5 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth5 = TinySesam(TinySesamConfig(
+    csrf_enabled=False, lang="de", db_path=db5, rp_name="Test", passkey_enabled=False,
+    cookie_secure=False, forward_auth_enabled=True, base_url="https://auth.example.com",
+    trusted_redirect_hosts=["app.example.com"], oidc_enabled=True,
+    oidc_issuer="https://id.example.com", oidc_client_id="haupt", oidc_client_secret="s"))
+auth5.ensure_admin("admin", "geheim123")
+app5 = FastAPI()
+app5.include_router(auth5.router())
+c15 = TestClient(app5)
+c15.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+         follow_redirects=False)
+r = c15.get("/auth/forward", headers=PROXY)
+assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
+assert auth5.oidc_anwendung("https://app.example.com/x") == ""
+assert "app=" not in auth5.forward_login_url("https://app.example.com/x")
+assert auth5.oidc_freigabe_gueltig("egal", "egal") == (True, "")
+ok("T-14: eine Installation mit einem Client verhält sich unverändert (kein app=, keine Freigabe nötig)")
+
 os.remove(db)
 os.remove(db2)
 os.remove(db3)
+os.remove(db4)
+os.remove(db5)
 print("\nFORWARD-AUTH OK ✅")

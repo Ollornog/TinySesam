@@ -59,6 +59,8 @@
     "maybe_promote_admin": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
     "mfa_pending": "(user_id) -> 'bool'",
     "next_login_step": "(user_id, done)",
+    "oidc_anwendung": "(url_oder_host: 'str') -> 'str'",
+    "oidc_freigabe_gueltig": "(token_hash: 'str', client: 'str') -> 'tuple'",
     "peek_magic": "(raw, purpose=None) -> 'Optional[dict]'",
     "pending_user": "(request) -> 'Optional[dict]'",
     "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
@@ -114,6 +116,7 @@
     "verify_totp": "(user_id, code) -> 'bool'",
     "verify_user_password": "(user_id, password) -> 'bool'",
     "verify_user_pin": "(user_id, pin) -> 'bool'",
+    "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
     "version": "() -> 'str'"
   },
   "TinySesam.konstanten": {
@@ -188,12 +191,14 @@
     "oidc_callback_path": "str = '/auth/oidc/callback'",
     "oidc_client_id": "str = ''",
     "oidc_client_secret": "str = ''",
+    "oidc_clients": "dict = {}",
     "oidc_email_verified_default": "bool = False",
     "oidc_enabled": "bool = False",
     "oidc_group_claim": "str = 'groups'",
     "oidc_group_role_map": "dict = {}",
     "oidc_issuer": "str = ''",
     "oidc_name": "str = 'SSO'",
+    "oidc_revalidate_minutes": "int = 0",
     "oidc_rp_logout": "bool = False",
     "oidc_scopes": "str = 'openid profile email'",
     "origin": "str = 'http://localhost:8000'",
@@ -254,7 +259,7 @@
     "enabled_methods": "() -> 'list[str]'",
     "entra_id": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
     "local_accounts": "(**overrides)",
-    "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, **overrides)",
+    "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=15, **overrides)",
     "pruefen": "() -> 'list[str]'"
   },
   "exporte": [
