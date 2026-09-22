@@ -17,6 +17,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 
@@ -112,22 +113,172 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
     return treffer
 
 
-def pruefe_geheimnisse(root: str, dateien: list[str], policy: dict) -> list[str]:
-    """Keine Tokens, Schlüssel oder Passwörter im Klartext.
+def _geheimnis_regeln(policy: dict):
+    """(Formate, Zuweisungsmuster, Platzhalter) — einmal kompiliert.
 
-    Vereinigt beide Ansätze: Credential-**Formate** (`ghp_`, PEM, `AKIA`) fangen einen
-    versehentlich eingecheckten Schlüssel auch ohne Zuweisung; das **Zuweisungsmuster**
-    fängt `token = "…"`. Gescannt wird jede lesbare Datei, nicht nur bekannte Endungen —
-    ein `.pem` fiele sonst schon durch die Dateiauswahl.
+    Die Gross-/Kleinschreibung ist je Liste ANDERS und das ist Absicht:
+
+    * **Formate** case-SENSITIV. `ghp_`, `AKIA`, `-----BEGIN … PRIVATE KEY` sehen genau so
+      aus und nicht anders. Mit `IGNORECASE` wuerde `AKIA[0-9A-Z]{16}` mitten in einem
+      Base64-Block anschlagen — ein Fehlalarm, den niemand nachvollziehen kann.
+    * **Zuweisung** case-INSENSITIV. Der Name heisst mal `PAPERLESS_TOKEN`, mal
+      `client_secret`, mal `Api-Key`.
+    * **Platzhalter** case-SENSITIV. Die erste Regel ist „NUR Grossbuchstaben" — mit
+      `IGNORECASE` wuerde sie auf jeden Kleinbuchstaben-Wert passen und den Waechter
+      lautlos abschalten.
     """
-    muster = [re.compile(m, re.IGNORECASE) for m in policy["geheimnis_muster"]]
+    formate = [re.compile(m) for m in policy["geheimnis_formate"]]
+    zuweisung = re.compile(policy["geheimnis_zuweisung"], re.IGNORECASE)
+    platzhalter = [re.compile(m) for m in policy["geheimnis_platzhalter"]]
+    return formate, zuweisung, platzhalter
+
+
+def ist_platzhalter(wert: str, platzhalter: list) -> bool:
+    """Ist der zugewiesene Wert ein Platzhalter und damit kein Geheimnis?
+
+    Belegter Anlass (2026-09-22): `REPLACE_ME_TOKEN` und `REPLACE_ME_NETBIRD_SETUP_KEY`
+    aus einem Backup wurden von einem laengenbasierten Muster als Geheimnisse gemeldet,
+    und der Fehlalarm wanderte zweimal bis zum PO. Ein Waechter, dem man nicht glaubt,
+    wird abgeschaltet — Fehlalarme kosten genauso viel wie uebersehene Luecken.
+    """
+    return any(p.match(wert) for p in platzhalter)
+
+
+def geheimnis_zeilen(inhalt: str, policy: dict) -> list[tuple[int, str]]:
+    """(Zeilennummer, Art) je verdaechtiger Zeile. **Nie der Wert.**
+
+    Der Rueckgabewert nennt bewusst nur die Art des Treffers. Wer den Fund weiterreicht
+    — Bericht, Mail, Log — reicht damit kein Geheimnis weiter. Genau daran ist es am
+    2026-09-21 schon einmal gescheitert: ein unzureichend maskierter Fund landete im
+    Sitzungsprotokoll und der Wert galt ab da als verbrannt.
+    """
+    formate, zuweisung, platzhalter = _geheimnis_regeln(policy)
+    treffer = []
+    for n, zeile in enumerate(inhalt.splitlines(), 1):
+        for pat in formate:
+            if pat.search(zeile):
+                treffer.append((n, "Format"))
+                break
+        else:
+            m = zuweisung.search(zeile)
+            if m and not ist_platzhalter(m.group("wert"), platzhalter):
+                treffer.append((n, "Zuweisung"))
+    return treffer
+
+
+def pruefe_geheimnisse(root: str, dateien: list[str], policy: dict) -> list[str]:
+    """Keine Tokens, Schluessel oder Passwoerter im Klartext.
+
+    Vereinigt zwei Ansaetze: Credential-**Formate** (`ghp_`, `gho_`, `github_pat_`, PEM,
+    `AKIA`, `sk-…`, `PVEAPIToken=`) fangen einen versehentlich eingecheckten Schluessel
+    auch ohne Zuweisung; das **Zuweisungsmuster** faengt `token = "…"` — seit 2026-09-22
+    auch ohne Anfuehrungszeichen (`PAPERLESS_TOKEN: 23f9…`), weil genau diese Form in den
+    47 dokumentierten Fundstellen ueberwog und durch JEDEN der fuenf Waechter fiel.
+
+    Gescannt wird jede lesbare Datei, nicht nur bekannte Endungen — ein `.pem` fiele sonst
+    schon durch die Dateiauswahl.
+
+    Der Befund nennt Datei, Zeile und Art. **Nie den Wert.**
+    """
     treffer = []
     for rel, inhalt in _texte(root, dateien, policy):
-        for pat in muster:
-            if pat.search(inhalt):
-                treffer.append(rel)
-                break
+        for n, art in geheimnis_zeilen(inhalt, policy):
+            treffer.append(f"{rel}:{n}: {art}")
     return treffer
+
+
+# ---------------------------------------------------------------------------
+# Adapter: dieselbe Policy fuer die Nicht-Python-Repos
+# ---------------------------------------------------------------------------
+def _ere(muster: str, ignoriere_gross_klein: bool = False) -> str:
+    """Python-Regex -> POSIX-ERE, wie `grep -E` es versteht.
+
+    WARUM ES DEN ADAPTER GIBT (2026-09-22): Es gab fuenf unabhaengige Fassungen derselben
+    Pruefung, und ihre Luecken waren komplementaer — `ci-infra` kannte `gho_` und
+    `github_pat_`, aber kein PEM-Muster; ausgerechnet das Repo mit den Runner-Bauanleitungen
+    haette einen eingecheckten SSH-Schluessel nicht gesehen. `ansible-deploy` kannte
+    `PVEAPIToken`, aber keinen GitHub-Token. Seither ist `hygiene_policy.json` die eine
+    Quelle, und die Shell-Repos bekommen ihre Musterdatei daraus erzeugt.
+
+    Drei Uebersetzungen, mehr braucht es nicht:
+
+    * `(?:` und `(?P<name>` -> `(` — ERE kennt keine nicht-fangenden und keine benannten
+      Gruppen. Die Gruppen selbst bleiben, sie aendern das Treffverhalten nicht.
+    * `\t` -> ein echtes Tabulatorzeichen. In einer ERE-Klammerklasse bedeutet `\t`
+      **Backslash oder t**, nicht Tabulator — `[ \t]*` haette also klaglos auf jedes `t`
+      gepasst.
+    * Buchstaben -> `[aA]`, wenn das Muster in Python mit `IGNORECASE` laeuft. `grep -i`
+      waere der bequeme Weg, wuerde aber ALLE Muster einer Datei aufweichen; `AKIA`
+      duerfte das nicht.
+
+    Zeichenklassen bleiben unangetastet (sie sind bereits vollstaendig geschrieben),
+    Escape-Sequenzen ebenso.
+    """
+    aus = []
+    i, in_klasse = 0, False
+    while i < len(muster):
+        c = muster[i]
+        if c == "\\" and i + 1 < len(muster):
+            aus.append("\t" if muster[i + 1] == "t" else muster[i:i + 2])
+            i += 2
+            continue
+        if in_klasse:
+            if c == "]":
+                in_klasse = False
+            aus.append(c)
+            i += 1
+            continue
+        if c == "[":
+            in_klasse = True
+            aus.append(c)
+            i += 1
+            continue
+        if muster.startswith("(?:", i):
+            aus.append("(")
+            i += 3
+            continue
+        if muster.startswith("(?P<", i):
+            aus.append("(")
+            i = muster.index(">", i) + 1
+            continue
+        if ignoriere_gross_klein and c.isalpha() and c.isascii():
+            aus.append(f"[{c.lower()}{c.upper()}]")
+            i += 1
+            continue
+        aus.append(c)
+        i += 1
+    return "".join(aus)
+
+
+def grep_muster(policy: dict) -> list[str]:
+    """Die Suchmuster fuer `grep -nIE -f` — Formate und Zuweisung, aus derselben Policy."""
+    return [_ere(m) for m in policy["geheimnis_formate"]] + \
+           [_ere(policy["geheimnis_zuweisung"], ignoriere_gross_klein=True)]
+
+
+def grep_ausnahmen(policy: dict) -> list[str]:
+    """Die Gegenliste fuer `grep -vE -f`: Zuweisungen, deren Wert ein Platzhalter ist.
+
+    ⚠️ **Die Ausnahme muss den NAMEN mitnehmen, nicht nur den Wert** — sonst schaltet sie
+    den Waechter ab. Erster Entwurf am 2026-09-22 nahm nur das Wertmuster und liess es auf
+    die ganze Zeile los: `[A-Z][A-Z0-9_]*` passt dann auf `PAPERLESS_TOKEN` selbst, und
+    ausgerechnet die Zeile mit dem echten Token waere als „Platzhalter" verworfen worden.
+    Darum steht hier der komplette Zuweisungskopf aus der Policy davor und das Wertmuster
+    direkt dahinter.
+
+    Der Unterschied zur Python-Fassung bleibt und ist ehrlich zu benennen: `grep`
+    entscheidet je ZEILE, Python je WERT. Eine Zeile mit einem echten Geheimnis *und*
+    einem Platzhalter faellt in der Shell-Fassung durch. Die Python-Repos haben die
+    genaue Fassung.
+    """
+    kopf = policy["geheimnis_zuweisung"].split("(?P<wert>")[0]
+    schwanz = "([^A-Za-z0-9/+_.=~-]|$)"
+    aus = []
+    for m in policy["geheimnis_platzhalter"]:
+        kern = m[1:] if m.startswith("^") else m
+        kern = kern[:-1] if kern.endswith("$") else kern
+        aus.append(_ere(kopf, ignoriere_gross_klein=True) + _ere(kern) + schwanz)
+    return aus
 
 
 def pruefe_adressen(root: str, dateien: list[str], policy: dict,
@@ -302,6 +453,299 @@ def pruefe_workflow_permissions(root: str, dateien: list[str]) -> list[str]:
     return treffer
 
 
+def pruefe_kein_abbruch_auf_default_branch(root: str, dateien: list[str],
+                                           default_branch: str = "main") -> list[str]:
+    """`cancel-in-progress` darf auf dem Default-Branch nicht unbedingt `true` sein.
+
+    Auf einem Feature-Branch ist der Abbruch richtig — dort zählt nur der letzte Stand.
+    Auf dem Default-Branch hängt am Lauf aber das Abbild oder ein Required Status Check:
+    ein abgebrochener Commit hat hinterher keines, und das fällt erst auf, wenn jemand
+    genau diesen Commit ausrollen oder nachvollziehen will.
+
+    Der Schaden ist belegt, nicht theoretisch: paperlaiss verlor am 2026-09-21 vier
+    main-Läufe innerhalb von 33 Sekunden, DashMyBoard drei am 2026-07-10.
+
+    Richtig ist der Ausdruck, nicht ein pauschales `false`:
+
+        cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+    Geprüft wird nur, wo es zählt: ein Workflow, der gar nicht auf den Default-Branch
+    pusht (reine `pull_request`-Workflows), darf unbedingt abbrechen.
+    """
+    treffer = []
+    for rel in dateien:
+        if not rel.startswith(".github/workflows/") or not rel.endswith((".yml", ".yaml")):
+            continue
+        inhalt = _lies(root, rel) or ""
+        m = re.search(r"^\s*cancel-in-progress:\s*(.+?)\s*$", inhalt, re.M)
+        if not m:
+            continue
+        wert = ohne_yaml_kommentar(m.group(1)).strip().strip("'\"")
+        if wert.lower() != "true":
+            continue          # `false` oder ein Ausdruck -> die Entscheidung ist getroffen
+        # Läuft der Workflow überhaupt AUF dem Default-Branch? Ein `branches:` unter
+        # `pull_request:` meint PRs GEGEN den Branch, nicht Läufe auf ihm — deshalb wird
+        # der push-Block gesucht und nicht bloß der Branch-Name irgendwo im Text.
+        push = re.search(r"^\s{2,}push:\s*$(.*?)(?=^\s{2,}\w+:\s*$|^\w)", inhalt,
+                         re.M | re.S)
+        laeuft_auf_default = bool(push and re.search(rf"\b{re.escape(default_branch)}\b",
+                                                     push.group(1)))
+        if laeuft_auf_default:
+            treffer.append(
+                f"{rel}: `cancel-in-progress: true` gilt auch auf {default_branch} — "
+                f"nimm ${{{{ github.ref != 'refs/heads/{default_branch}' }}}}")
+    return treffer
+
+
+# ---------------------------------------------------------------------------
+# Die Python-Matrix — eine Quelle, drei Prüfungen (2026-09-22)
+#
+# Bis heute stand die Matrix an drei Stellen gleichzeitig: im Abbild
+# (`/opt/ci-matrix`), in jeder `ci.yml` und implizit in `requires-python`. Gemessen am
+# 2026-09-21 waren alle drei verschieden — das Abbild fuhr 3.10/3.12/3.14, die ci.yml
+# 3.10/3.12/3.13, `requires-python` sagte `>=3.10`. Jede Stelle fuer sich sah richtig
+# aus; zusammen war die Zusage "wir testen, was wir versprechen" unbelegt.
+#
+# `python_matrix.json` ist die Quelle fuer alles, was in einem FREMDEN Klon und auf
+# `ubuntu-latest` gelten muss. Das Abbild fuehrt dieselbe Matrix in `/opt/ci-matrix`;
+# das ist Absicht und keine Dublette — eine Datei im Abbild ist zur Testzeit eines
+# oeffentlichen Repos nicht erreichbar, und ein Kit, das zur Laufzeit ins Netz greift,
+# waere genau das Leck, das dieses Repo verhindern soll.
+# ---------------------------------------------------------------------------
+_MATRIX_SCHLUESSEL = ("python", "python-version", "python_version")
+
+
+def lade_python_matrix(pfad: str | None = None) -> dict:
+    with open(pfad or os.path.join(HIER, "python_matrix.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _als_zahlen(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.split("."))
+
+
+def _matrix_listen(inhalt: str) -> list[tuple[int, str, list[str]]]:
+    """Alle Versionslisten unter einem `matrix:`-Block. -> (zeile, schluessel, werte)
+
+    Ohne YAML-Parser (stdlib-only, und PyYAML fehlt auf mehr als einem Runner), dafuer
+    eng gefuehrt: gesucht wird nur INNERHALB eines `matrix:`-Blocks, erkannt an der
+    Einrueckung. Sonst faenge das Muster auch `python-version: ${{ matrix.python }}`
+    in den Schritten — also genau die Zeile, die die Matrix korrekt benutzt.
+    """
+    treffer: list[tuple[int, str, list[str]]] = []
+    zeilen = inhalt.splitlines()
+    block_tiefe: int | None = None
+    i = 0
+    while i < len(zeilen):
+        zeile = zeilen[i]
+        nackt = zeile.strip()
+        tiefe = len(zeile) - len(zeile.lstrip(" "))
+        if nackt and not nackt.startswith("#"):
+            if block_tiefe is not None and tiefe <= block_tiefe:
+                block_tiefe = None
+            if re.match(r"^matrix:\s*(#.*)?$", nackt):
+                block_tiefe = tiefe
+                i += 1
+                continue
+        if block_tiefe is not None:
+            m = re.match(r"^(%s):\s*(.*)$" % "|".join(_MATRIX_SCHLUESSEL), nackt)
+            if m:
+                schluessel, rest = m.group(1), ohne_yaml_kommentar(m.group(2)).strip()
+                if rest.startswith("["):
+                    werte = re.findall(r"['\"]?(\d+\.\d+)['\"]?", rest)
+                    treffer.append((i + 1, schluessel, werte))
+                elif not rest:
+                    # Blockform:  python:\n  - "3.12"
+                    werte, j = [], i + 1
+                    while j < len(zeilen):
+                        eintrag = re.match(r"^\s*-\s*['\"]?(\d+\.\d+)['\"]?\s*(#.*)?$", zeilen[j])
+                        if not eintrag:
+                            break
+                        werte.append(eintrag.group(1))
+                        j += 1
+                    if werte:
+                        treffer.append((i + 1, schluessel, werte))
+                        i = j
+                        continue
+        i += 1
+    return treffer
+
+
+def _setzt(inhalt: str, schluessel: str) -> bool:
+    """Steht `<schluessel>: true` wirklich als Einstellung da — nicht bloss im Kommentar?
+
+    TinySesams `ci.yml` erwaehnt `continue-on-error` in einem erklaerenden Kommentar;
+    eine Textsuche haette den Gate-Workflow fuer einen Prerelease-Job gehalten und die
+    ganze Matrix-Pruefung dort abgeschaltet. Dieselbe Klasse Fehler wie beim
+    self-hosted-Waechter (Register 2026-09-19).
+    """
+    return bool(re.search(rf"^\s*{re.escape(schluessel)}:\s*true\s*(#.*)?$", inhalt, re.M))
+
+
+def pruefe_python_matrix(root: str, dateien: list[str], quelle: dict | None = None) -> list[str]:
+    """Die `python:`-Matrix jeder Workflow-Datei muss der gefuehrten Matrix entsprechen.
+
+    Ein Repo, dessen Workflow eine andere Matrix faehrt als das Abbild, testet lokal
+    etwas anderes als im Gate — und meldet beides gruen. Ein Workflow OHNE Matrix ist
+    kein Verstoss: nicht jedes Repo ist ein Python-Repo, und ein Job, der bewusst auf
+    genau einem Interpreter laeuft (Browser-Job, Release-Job), gehoert nicht in die
+    Matrix.
+
+    AUSNAHME PRERELEASE — und warum sie keine Hintertuer ist: Die Obergrenze wandert
+    nur, wenn jemand die neue Version vorher fahren konnte. Dafuer gibt es den
+    nightly-Job (`allow-prereleases: true`, `continue-on-error: true`). Er darf eine
+    Version fahren, die nicht in der Matrix steht — aber NUR eine, die ueber der
+    Obergrenze liegt, und nur, wenn er tatsaechlich nicht rot werden kann. Sonst waere
+    das Muster genau der Weg, ein Gate-Bein in einem Job verschwinden zu lassen, der
+    nie rot wird: die Zelle stuende weiter im Bericht, ihr Ausfall haette aber keine
+    Folge mehr.
+    """
+    q = quelle or lade_python_matrix()
+    soll, ober = q["matrix"], q["obergrenze"]["version"]
+    treffer = []
+    for rel in dateien:
+        if not rel.startswith(".github/workflows/") or not rel.endswith((".yml", ".yaml")):
+            continue
+        inhalt = _lies(root, rel) or ""
+        listen = _matrix_listen(inhalt)
+        if not listen:
+            continue
+        if _setzt(inhalt, "allow-prereleases"):
+            if not _setzt(inhalt, "continue-on-error"):
+                treffer.append(f"{rel}: faehrt ein Prerelease, aber ohne "
+                               f"`continue-on-error: true` — ein RC-Bug blockiert damit jeden Push")
+            for n, schluessel, ist in listen:
+                zu_tief = [v for v in ist if _als_zahlen(v) <= _als_zahlen(ober)]
+                if zu_tief:
+                    treffer.append(f"{rel}:{n}: {schluessel}: {zu_tief} liegt nicht ueber der "
+                                   f"Obergrenze {ober} — ein Gate-Bein gehoert nicht in einen "
+                                   f"Job, der nicht rot werden kann")
+            continue
+        for n, schluessel, ist in listen:
+            if sorted(ist, key=_als_zahlen) != sorted(soll, key=_als_zahlen):
+                treffer.append(f"{rel}:{n}: {schluessel}: {ist} — gefuehrt ist {soll} "
+                               f"(tests/_kit/python_matrix.json)")
+    return treffer
+
+
+def pruefe_requires_python(root: str, quelle: dict | None = None,
+                           datei: str = "pyproject.toml") -> list[str]:
+    """`requires-python` muss die Untergrenze der Matrix nennen — nicht eine aeltere.
+
+    Ein `>=3.10` bei einer Matrix ab 3.12 ist eine Zusage an jeden Installierenden,
+    die nichts einloest: pip laesst das Paket auf 3.10 zu, geprueft hat es dort seit
+    dem Matrix-Umbau niemand mehr.
+    """
+    pfad = os.path.join(root, datei)
+    if not os.path.exists(pfad):
+        return []
+    soll = min((quelle or lade_python_matrix())["matrix"], key=_als_zahlen)
+    with open(pfad, encoding="utf-8") as fh:
+        inhalt = fh.read()
+    m = re.search(r"^requires-python\s*=\s*['\"]([^'\"]+)['\"]", inhalt, re.M)
+    if not m:
+        return []
+    ist = m.group(1).replace(" ", "")
+    if ist != f">={soll}":
+        return [f"{datei}: requires-python = \"{m.group(1)}\" — die Matrix beginnt bei "
+                f"{soll}, also muss dort \">={soll}\" stehen"]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Die Rolling-Regel: ein WAECHTER, keine Automatik (3.5)
+#
+# Die Regel lautet "die letzten drei stable Minors". Sie als Automatik zu bauen waere
+# ein Fehler: am 01.10.2026 erscheint 3.15, und die Matrix zoege ungefragt nach — in
+# ein Gate, an dem jeder Push haengt, mit Wheels, die es fuer cp315 noch nicht gibt.
+# Deshalb meldet diese Pruefung nur.
+#
+# Die Daten stehen als gepflegte Liste in `python_matrix.json`. `endoflife.date` zur
+# Testzeit abzufragen haette den Wolf zum Hueter gemacht: eine Suite, die Netz braucht,
+# ist in einem fremden Klon nicht mehr lauffaehig — und ein Wert, der ueber das Netz
+# kommt, laesst sich umhaengen.
+#
+# WARUM DIE FREIGABE EIN DATUM TRAEGT: Ohne Frist waere "3.15 ist da" eine Zeile, die
+# niemand liest. Mit Frist wird die Suite rot, sobald ueber der Freigabe eine stabile
+# Version steht UND das Pruefdatum verstrichen ist. Der Ausweg ist immer ein Satz in
+# der JSON — Obergrenze heben ODER das Datum mit Begruendung verschieben. Was nicht
+# geht, ist: nichts tun.
+# ---------------------------------------------------------------------------
+def _heute(heute: str | None) -> str:
+    if heute:
+        return heute
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+def pruefe_python_matrix_regel(quelle: dict | None = None,
+                               heute: str | None = None) -> list[str]:
+    """Widerspricht die gefuehrte Matrix der Rolling-Regel? (rot)"""
+    q = quelle or lade_python_matrix()
+    tag = _heute(heute)
+    rel = q["releases"]
+    matrix = q["matrix"]
+    ober = q["obergrenze"]["version"]
+
+    treffer = []
+    if ober not in rel:
+        return [f"obergrenze {ober} steht in keiner Release-Zeile"]
+
+    # Die Liste selbst muss gepflegt sein: kennt sie keine Version, die noch NICHT
+    # erschienen ist, dann ist sie hinter der Wirklichkeit — und jede Rechnung
+    # darauf haette ein stilles Loch nach oben.
+    if not any(d["erschienen"] > tag for d in rel.values()):
+        treffer.append(f"die Release-Liste kennt am {tag} keine kuenftige Version mehr "
+                       f"— sie ist ungepflegt (letzte: {max(rel, key=_als_zahlen)})")
+
+    kaputt = False
+    for v in matrix:
+        if v not in rel:
+            treffer.append(f"{v} steht in der Matrix, aber in keiner Release-Zeile")
+            kaputt = True
+        elif rel[v]["erschienen"] > tag:
+            treffer.append(f"{v} steht in der Matrix, erscheint aber erst am "
+                           f"{rel[v]['erschienen']}")
+            kaputt = True
+        elif rel[v]["eol"] <= tag:
+            treffer.append(f"{v} steht in der Matrix, ist aber seit {rel[v]['eol']} EOL")
+            kaputt = True
+
+    stabil = sorted((v for v, d in rel.items() if d["erschienen"] <= tag < d["eol"]),
+                    key=_als_zahlen)
+    freigegeben = [v for v in stabil if _als_zahlen(v) <= _als_zahlen(ober)]
+    soll = freigegeben[-3:]
+    if not kaputt and sorted(matrix, key=_als_zahlen) != soll:
+        treffer.append(f"gefuehrt ist {matrix}, die Regel ergibt am {tag} aber {soll} "
+                       f"(letzte drei stable Minors bis Obergrenze {ober})")
+
+    frist = q["obergrenze"].get("naechste_pruefung")
+    darueber = [v for v in stabil if _als_zahlen(v) > _als_zahlen(ober)]
+    if darueber and frist and tag > frist:
+        treffer.append(
+            f"{', '.join(darueber)} ist stable und steht ueber der Obergrenze {ober}; "
+            f"die Freigabe war bis {frist} zu pruefen. Entweder die Obergrenze heben "
+            f"oder 'naechste_pruefung' mit Begruendung verschieben.")
+    return treffer
+
+
+def melde_python_matrix_nachschub(quelle: dict | None = None,
+                                  heute: str | None = None) -> list[str]:
+    """Steht ueber der Obergrenze schon eine stabile Version? (Hinweis, nicht rot)
+
+    Bewusst getrennt von `pruefe_python_matrix_regel`: die Nachricht "es gibt etwas
+    Neues" ist kein Defekt. Erst wenn die Frist verstreicht, wird daraus einer.
+    """
+    q = quelle or lade_python_matrix()
+    tag = _heute(heute)
+    rel, ober = q["releases"], q["obergrenze"]["version"]
+    frist = q["obergrenze"].get("naechste_pruefung", "—")
+    return [f"{v} ist seit {rel[v]['erschienen']} stable und steht ueber der Obergrenze "
+            f"{ober} — zu pruefen bis {frist}"
+            for v, d in sorted(rel.items(), key=lambda kv: _als_zahlen(kv[0]))
+            if d["erschienen"] <= tag < d["eol"] and _als_zahlen(v) > _als_zahlen(ober)]
+
+
 def pruefe_changelog_kategorien(root: str, policy: dict, datei: str = "CHANGELOG.md") -> list[str]:
     """Keep a Changelog 1.1.0: fester Satz Kategorien, innerhalb eines Repos eine Sprache.
 
@@ -387,4 +831,73 @@ def pruefe_uebersetzungs_struktur(root: str, paare: list[tuple[str, str]]) -> li
             fehlt = [t for _, t in oh[len(uh):]] or [t for _, t in uh[len(oh):]]
             wo = uebersetzung if len(oh) > len(uh) else original
             treffer.append(f"{wo}: {abs(len(oh) - len(uh))} Überschrift(en) fehlen — {fehlt[:3]}")
+    return treffer
+
+
+def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | None = None,
+                                       testverzeichnis: str = "tests") -> list[str]:
+    """Wird jede `pruefe_*` des Kits im Repo auch AUFGERUFEN?
+
+    WARUM ES DIESE PRÜFUNG GIBT (2026-09-22, dritter Fall derselben Sorte): Das Kit
+    liefert geprüfte Funktionen aus, `repokit sync` kopiert sie in jedes Repo, und
+    repokits Eigentests belegen, dass sie richtig rechnen. Nur belegt **nichts**, dass
+    ein Repo sie danach ruft. Gemessen am 2026-09-22:
+
+    - `pruefe_python_matrix`, `pruefe_requires_python`, `pruefe_python_matrix_regel`
+      lagen in sieben Repos und wurden in **keinem** gerufen (seit 2026-09-21).
+    - `pruefe_kein_abbruch_auf_default_branch` wurde in **keinem** Repo gerufen.
+    - `endpoint-check` trug das ganze `hygiene.py` samt Policy im Baum und rief
+      daraus **keine einzige** Prüfung.
+
+    Jedes Mal sah die Suite grün aus, und jedes Mal war die Zusage, die das Kit gibt,
+    unbelegt. Dieselbe Lehre steht seit dem Manifest-Vendoring in `manifest.py`:
+    *eine Prüfung, die niemand ruft, ist keine.* Sie hat sich dreimal wiederholt, weil
+    niemand sie gemessen hat — das tut jetzt diese Funktion.
+
+    Ausnehmen ist erlaubt, aber nur **mit Grund** — deshalb ein dict, keine Liste:
+
+        ausgenommen={"pruefe_python_matrix": "Go-Repo, ci.yml hat keine Python-Matrix"}
+
+    So steht die Begründung im Repo und nicht im Kopf dessen, der sie weggelassen hat.
+    Ein leerer Grund zählt nicht als Begründung und wird gemeldet.
+    """
+    import inspect
+
+    ausgenommen = ausgenommen or {}
+    treffer = []
+
+    for name, grund in sorted(ausgenommen.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {name!r} ohne Begründung — ein Grund ist Pflicht")
+
+    angeboten = {n for n, _ in inspect.getmembers(sys.modules[__name__], inspect.isfunction)
+                 if n.startswith("pruefe_")}
+    angeboten.discard("pruefe_kit_prueffunktionen_gerufen")  # sich selbst nicht fordern
+
+    quelle = []
+    wurzel = os.path.join(root, testverzeichnis)
+    for pfad, verzeichnisse, dateien in os.walk(wurzel):
+        verzeichnisse[:] = [v for v in verzeichnisse if v not in ("_kit", "__pycache__")]
+        for d in dateien:
+            if d.endswith(".py"):
+                try:
+                    with open(os.path.join(pfad, d), encoding="utf-8") as fh:
+                        quelle.append(fh.read())
+                except OSError:
+                    continue
+    text = "\n".join(quelle)
+
+    for name in sorted(angeboten):
+        if name in ausgenommen:
+            continue
+        # Der Aufruf, nicht die blosse Erwähnung in einem Kommentar.
+        if not re.search(rf"\b{re.escape(name)}\s*\(", text):
+            treffer.append(f"{name} liegt im Kit, wird aber nirgends aufgerufen "
+                           f"(rufen oder mit Grund in `ausgenommen` eintragen)")
+
+    unbekannt = set(ausgenommen) - angeboten
+    for name in sorted(unbekannt):
+        treffer.append(f"Ausnahme {name!r} nennt keine Prüfung des Kits — Tippfehler "
+                       f"oder aus dem Kit entfernt?")
+
     return treffer

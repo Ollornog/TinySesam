@@ -14,12 +14,12 @@ def ok(name):
 # ---------- safe_next (Open-Redirect-Schutz) ----------
 assert safe_next("/dashboard") == "/dashboard"
 assert safe_next("") == "/"
-assert safe_next("//evil.com") == "/"                       # protokoll-relativ
-assert safe_next("https://evil.com/x") == "/"               # absoluter fremder Host
+assert safe_next("//evil.example") == "/"                       # protokoll-relativ
+assert safe_next("https://evil.example/x") == "/"               # absoluter fremder Host
 assert safe_next("javascript:alert(1)") == "/"
 assert safe_next("/ok", allowed_hosts=["app.example.com"]) == "/ok"
 assert safe_next("https://app.example.com/x", allowed_hosts=["app.example.com"]) == "https://app.example.com/x"
-assert safe_next("https://evil.com/x", allowed_hosts=["app.example.com"]) == "/"
+assert safe_next("https://evil.example/x", allowed_hosts=["app.example.com"]) == "/"
 ok("safe_next: relative erlaubt, fremde/protokoll-relative Ziele → /")
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -39,7 +39,7 @@ def geheim(u=Depends(auth.require_user)):
 c = TestClient(app)
 
 # ---------- Login mit Open-Redirect-next → landet auf / statt beim Angreifer ----------
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "https://evil.com"},
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "https://evil.example"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/", r.headers.get("location")
 ok("Login mit fremdem next → Redirect auf / (kein Open-Redirect)")

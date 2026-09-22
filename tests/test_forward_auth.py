@@ -62,7 +62,7 @@ ok("API-Key → 200 (maschineller Zugang)")
 
 # Open-Redirect-Schutz: safe_next lässt die App-URL nur wegen trusted_redirect_hosts durch
 assert auth.safe_next("https://app.example.com/geheim") == "https://app.example.com/geheim"
-assert auth.safe_next("https://evil.com/x") == "/"
+assert auth.safe_next("https://evil.example/x") == "/"
 ok("safe_next: App-Host erlaubt (trusted_redirect_hosts), Fremd-Host blockiert")
 
 # ---------- Rollenprüfung im Proxy-Modus (?roles= / X-TinySesam-Roles) ----------
