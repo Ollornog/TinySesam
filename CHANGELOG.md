@@ -2,7 +2,17 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.19.0] — 2026-09-22
+
+**Sicherheits-Release.** Das dritte Audit (Red/Blue, 139 bestätigte Befunde) hatte 16 Punkte als
+Blocker für 1.0 benannt; diese Fassung schliesst sie bis auf die drei, die LDAP und SAML betreffen
+(F-11, F-12, F-16 — sie stehen in T-13 und brauchen eine Migration der Identitätsbindung). Dazu
+kommt T-14: mehrere Anwendungen hinter **einer** Installation, mit einer Freigabe je Anwendung,
+die dem Identity Provider folgt.
+
+**Die Datenbank wandert von Schema 5 auf 8.** Sicherung vor dem Update ziehen — ein Rückschritt
+auf 0.18.x braucht sie (`tinysesam backup`).
+
 
 **Verhaltensänderungen in dieser Runde.** Sechs Punkte ändern, was eine bestehende Installation
 tut — je Punkt steht dahinter, was zu tun ist; die Begründung steht weiter unten bei dem Befund,

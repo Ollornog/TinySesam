@@ -66,9 +66,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam installs from its **git tag** — it is not on PyPI yet (see below):
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.19.0"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.19.0"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -380,10 +380,12 @@ systemctl start tinysesam
 > first, checks the backup before overwriting anything (integrity, account count, schema version),
 > and sets `0600` afterwards.
 
-> **Rolling back to ≤ 0.17.x needs a backup in the old schema.** 0.18.0 migrates the database on
-> first start. Older code then opens the file without complaining, `/healthz` stays green and
-> accounts are readable — but every session operation raises. Take a backup *before* the update
-> (`tinysesam backup` leaves the source untouched) and restore that one.
+> **Rolling back needs a backup in the old schema.** Each release that adds columns migrates the
+> database on first start — 0.18.0 did it once (schema 5), 0.19.0 takes it to **schema 8**
+> (per-app OIDC grants, key kind, first login and enrollment window). Older code then opens the
+> file without complaining, `/healthz` stays green and accounts are readable — but every session
+> operation raises. Take a backup *before* the update (`tinysesam backup` leaves the source
+> untouched) and restore that one.
 
 ### Diagnosing "I can't get in"
 
@@ -482,7 +484,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.18.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.19.0
 ```
 
 The same line installs the same code tomorrow, and updating means: bump the line, reinstall,
@@ -496,7 +498,7 @@ Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To 
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.18.0/tinysesam-0.18.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.19.0/tinysesam-0.19.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -504,7 +506,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.18.0/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.18.0
+ghcr.io/ollornog/tinysesam:v0.19.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -515,9 +517,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog
-gh attestation verify tinysesam-0.18.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.18.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.19.0 --owner Ollornog
+gh attestation verify tinysesam-0.19.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.19.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
