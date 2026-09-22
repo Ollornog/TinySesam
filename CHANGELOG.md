@@ -117,6 +117,31 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Zwei Arten API-Key, und keine davon ist mehr eine Admin-API** (`kind`, R6-5). Ein Key war
+  bisher eine vollständige Schreib-Schnittstelle im Namen seines Besitzers. Bei einem Admin hiess
+  das: Nutzer anlegen, `is_admin` setzen, Passwörter zurücksetzen, Schwellen ändern — ohne zweiten
+  Faktor und ohne die CSRF-Schicht, weil für einen Key beides nicht greift. Ein abgeflossener
+  CI-Key war die Instanz. Der vorhandene Rollen-Scope half nicht: Er verengt die **Rollen**, das
+  Admin-Flag kommt aus der Kontozeile und blieb unberührt.
+
+  Jetzt sagt ein Key, was er ist. `kind="automat"` (Vorgabe) arbeitet allein, trägt aber **nie
+  das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin verlangt — der Weg für
+  Dienste, Skripte und CI. `kind="mensch"` gilt **nur zusammen mit einer gültigen Sitzung
+  desselben Kontos** und trägt dafür die vollen Rechte — der Weg für ein Werkzeug, das ein Mensch
+  selbst bedient. Allein abgeflossen ist so ein Key wertlos. Die Sitzung muss dem Konto des Keys
+  gehören; irgendeine Anmeldung genügt nicht.
+
+- **Ein API-Key läuft jetzt von selbst ab** (`apikey_default_days`, Vorgabe 90;
+  `apikey_allow_unlimited`, Vorgabe aus). Ohne Angabe war ein Key bisher **unbefristet**, und das
+  war der häufigste Fall — ein Geheimnis, das niemand mehr zurücknimmt, das den Menschen überlebt,
+  der es ausgestellt hat, und das Projekt, für das es gedacht war. `expires_days=0` heisst weiter
+  ausdrücklich „unbefristet", braucht aber die Erlaubnis und steht dann im Audit-Eintrag. Ein
+  negativer Wert bleibt ein Ablauf in der Vergangenheit, also ein von vornherein toter Key.
+
+  **Bestandsdateien:** Schema 7 trägt die Art nach, und zwar als `automat` — die engere Auslegung.
+  Ein Key, der bisher Admin-Routen bedienen konnte, verliert das; genau darum geht es. Ein
+  abgewiesener Aufruf hinterlässt eine Zeile im Sicherheits-Log.
+
 - **Ein gesperrtes Konto bekommt beim SSO-Login gar nichts mehr** (F-17). Der OIDC-Callback lief
   für ein `disabled=1`-Konto vollständig durch: Gruppen wurden übernommen, das Admin-Flag konnte
   gesetzt werden, ein Login-Eintrag entstand — nur die Sitzung blieb am Ende aus. Ein Konto zu

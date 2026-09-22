@@ -507,8 +507,25 @@ class TinySesam:
         """Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope."""
         return self.create_user(username, is_service=True, roles=roles, display_name=display_name or username)
 
-    def create_api_key(self, user_id, name=None, expires_days=None, roles=None) -> dict:
+    def create_api_key(self, user_id, name=None, expires_days=None, roles=None,
+                       kind: str = "automat") -> dict:
         """Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
+
+        **Zwei Arten** (R6-5), weil ein Key zwei ganz verschiedene Dinge sein kann:
+
+        * ``kind="automat"`` (Vorgabe) — ein Dienst, ein Skript, eine CI. Er arbeitet allein,
+          trägt aber **nie das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin
+          verlangt. Bis 0.18.x war ein Key eines Admins eine vollständige Admin-Schreib-API,
+          ohne zweiten Faktor und ohne CSRF-Schicht: Nutzer anlegen, `is_admin` setzen,
+          Passwörter zurücksetzen. Ein abgeflossener CI-Key war damit die Instanz.
+        * ``kind="mensch"`` — ein Werkzeug, das ein Mensch selbst bedient. Er gilt **nur
+          zusammen mit einer gültigen Sitzung desselben Kontos**; dafür trägt er die vollen
+          Rechte. Allein abgeflossen ist er wertlos.
+
+        `expires_days` fehlt bei einem Automaten-Key nicht folgenlos: Dann greift
+        `apikey_default_days` (Vorgabe 90). `expires_days=0` heisst „unbefristet" und braucht
+        `apikey_allow_unlimited=True` — ein Key ohne Ablauf überlebt den Menschen, der ihn
+        ausgestellt hat, und das Projekt, für das er gedacht war.
 
         `roles` ist ein **Scope**, kein Rechtezuwachs: Die Liste wird auf die Rollen des Besitzers
         beschnitten. Ein Key kann damit weniger können als sein Besitzer, nie mehr.
@@ -526,10 +543,33 @@ class TinySesam:
         Datenbank rollenlos blieb. Im Forward-Auth-Betrieb ging die erfundene Rolle als Remote-Group
         an die nachgelagerte App.
         """
+        if kind not in ("automat", "mensch"):
+            raise ConfigError(
+                f"API-Key-Art {kind!r} gibt es nicht. 'automat' arbeitet allein (ohne Admin-Rechte), "
+                "'mensch' gilt nur zusammen mit einer Sitzung desselben Kontos.")
         raw = "tsk_" + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
         prefix = raw[:12] + "…"
-        expires_at = (int(time.time()) + int(expires_days) * 86400) if expires_days is not None else None
+        # Ablauf: 0 heisst ausdrücklich „unbefristet" und braucht die Erlaubnis; None heisst
+        # „keine Angabe" und bekommt die Vorgabe. Beides auseinanderzuhalten ist der Punkt —
+        # vorher war `None` stillschweigend unbefristet, und das war der häufigste Fall.
+        if expires_days is None:
+            expires_days = int(self.cfg.apikey_default_days or 0)
+        expires_days = int(expires_days)
+        # Genau NULL heisst unbefristet. Ein negativer Wert ist ein Ablauf in der Vergangenheit,
+        # also ein von vornherein toter Key — das ist kein Unfug, sondern der Weg, einen Key
+        # anzulegen, der sofort ungültig ist (die Suite prüft damit die Ablaufprüfung selbst).
+        if expires_days == 0:
+            if not self.cfg.apikey_allow_unlimited:
+                raise ConfigError(
+                    "Ein API-Key ohne Ablauf ist ein Geheimnis, das niemand mehr zurücknimmt — er "
+                    "überlebt den Menschen, der ihn ausgestellt hat, und das Projekt, für das er "
+                    "gedacht war. Entweder expires_days setzen (Vorgabe: "
+                    f"apikey_default_days={self.cfg.apikey_default_days}) oder, wenn es wirklich "
+                    "keinen anderen Weg gibt, apikey_allow_unlimited=True.")
+            expires_at = None
+        else:
+            expires_at = int(time.time()) + expires_days * 86400
 
         abgeschnitten = []
         if roles is not None:
@@ -556,17 +596,27 @@ class TinySesam:
                     "'erbt alles'. Entweder eine vorhandene Rolle nennen oder `roles` weglassen "
                     "(dann erbt der Key die Rollen des Kontos).")
 
-        kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at)
-        detail = f"user={user_id} key={kid} name={name}"
+        kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at, kind=kind)
+        detail = f"user={user_id} key={kid} name={name} art={kind}"
+        if expires_at is None:
+            # Ausdrücklich ins Protokoll: Ein unbefristeter Key ist eine Entscheidung, keine
+            # Einstellung — wer später fragt „seit wann liegt das Ding herum", findet hier etwas.
+            detail += " ablauf=unbefristet"
         if abgeschnitten:
             # In den Audit-Eintrag, nicht nur verwerfen: Wer das versucht, soll sichtbar sein.
             detail += f" verworfene_rollen={','.join(abgeschnitten)}"
         self.audit("apikey_create", detail=detail)
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
-                "roles": roles, "verworfene_rollen": abgeschnitten}
+                "roles": roles, "verworfene_rollen": abgeschnitten, "kind": kind}
 
     def verify_api_key(self, key):
-        """(user, key_roles|None) bei gültigem Key, sonst (None, None)."""
+        """(user, key_roles|None) bei gültigem Key, sonst (None, None).
+
+        Die **Art** des Keys steht danach in `self._letzte_key_art` — `current_user()` braucht
+        sie, und eine dritte Rückgabe hätte jeden fremden Aufrufer gebrochen (M-1 friert die
+        Oberfläche für 1.0 ein). Wer die Art selbst wissen will, nimmt `api_key_art(key)`.
+        """
+        self._letzte_key_art = "automat"
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
@@ -579,10 +629,22 @@ class TinySesam:
             return None, None
         self.store.touch_api_key(row["id"])
         try:
+            self._letzte_key_art = str(row["kind"] or "automat")
+        except (IndexError, KeyError):
+            self._letzte_key_art = "automat"      # Zeile aus einer Datei vor Schema 7
+        try:
             kr = json.loads(row["roles"] or "[]")
         except Exception:
             kr = []
         return u, (kr or None)
+
+    def api_key_art(self, key) -> str:
+        """Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen."""
+        row = self.store.get_api_key_by_hash(hashlib.sha256((key or "").encode()).hexdigest())
+        try:
+            return str(row["kind"] or "automat") if row else ""
+        except (IndexError, KeyError):
+            return "automat"
 
     def _extract_api_key(self, request: Request):
         h = request.headers.get("x-api-key")
@@ -1673,9 +1735,28 @@ class TinySesam:
             key = self._extract_api_key(request)
             if key:
                 u, key_roles = self.verify_api_key(key)
+                art = getattr(self, "_letzte_key_art", "automat")
+                if u and art == "mensch":
+                    # Ein Menschen-Key gilt NUR zusammen mit einer Sitzung desselben Kontos
+                    # (R6-5). Allein abgeflossen ist er wertlos — das ist der ganze Unterschied
+                    # zum Automaten-Key, und dafür darf er die vollen Rechte tragen.
+                    if not (s and s["mfa_ok"] and s["user_id"] == u["id"]):
+                        security.seclog.warning(
+                            "API-Key der Art 'mensch' ohne passende Sitzung vorgelegt "
+                            "(user=%s ip=%s) — abgewiesen.",
+                            security.fuer_log(str(u["username"])),
+                            security.fuer_log(self.client_ip(request)))
+                        return None
                 if u:
                     d = dict(u)
                     d["_via"] = "apikey"
+                    d["_key_art"] = art
+                    if art == "automat" and d.get("is_admin"):
+                        # Der Kern von R6-5: Ein Automaten-Key trägt das Admin-Flag seines
+                        # Besitzers NICHT. Vorher war jeder Key eines Admins eine vollständige
+                        # Admin-Schreib-API — ohne zweiten Faktor, ohne CSRF-Schicht. Die Rollen
+                        # bleiben (dafür gibt es den Scope), das Flag nicht.
+                        d["is_admin"] = 0
                     if key_roles is not None:
                         # SCHNITTMENGE, nicht Überschreibung: Der Scope verengt, er erweitert nie.
                         # Zweite Schicht neben der Begrenzung in create_api_key — sie greift auch

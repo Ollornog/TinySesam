@@ -930,8 +930,12 @@ def build_router(auth) -> APIRouter:
         async def apikeys_create(request: Request):
             u = _nur_mit_sitzung(request)
             b = await auth.json_body(request)
+            # `kind` entscheidet, was der Key kann (R6-5): "automat" arbeitet allein, trägt
+            # aber nie das Admin-Flag; "mensch" gilt nur zusammen mit einer Sitzung desselben
+            # Kontos. Die Vorgabe ist die engere der beiden.
             return auth.create_api_key(u["id"], name=b.get("name"),
-                                       expires_days=b.get("expires_days"), roles=b.get("roles"))
+                                       expires_days=b.get("expires_days"), roles=b.get("roles"),
+                                       kind=str(b.get("kind") or "automat"))
 
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):
@@ -947,9 +951,18 @@ def build_router(auth) -> APIRouter:
     return r
 
 
+def _key_art(k) -> str:
+    """Die Art eines Key-Datensatzes, verträglich mit Dateien vor Schema 7."""
+    try:
+        return str(k["kind"] or "automat")
+    except (IndexError, KeyError):
+        return "automat"
+
+
 def key_view(k) -> dict:
     return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
-            "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
+            "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
+            "kind": _key_art(k)}
 
 
 def _login_nach_token(auth, request, uid, nxt):

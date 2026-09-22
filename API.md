@@ -38,6 +38,10 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
+### `api_key_art(key) -> 'str'`
+
+Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
+
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
@@ -86,7 +90,7 @@ Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
 
 Das Einmal-Token einlösen und dieses Konto zum Admin machen. Gilt genau einmal.
 
-### `create_api_key(user_id, name=None, expires_days=None, roles=None) -> 'dict'`
+### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'`
 
 Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
 
@@ -542,4 +546,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-118 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+119 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

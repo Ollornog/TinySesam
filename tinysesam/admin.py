@@ -15,6 +15,7 @@ import json
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
+from .router import _key_art
 from .store import norm_email, valid_email
 from .templates import brand, favicon_link
 from .theme import TOKENS
@@ -54,7 +55,8 @@ def build_admin_router(auth) -> APIRouter:
 
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
-                "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"])}
+                "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
+                "kind": _key_art(k)}
 
     # ---------- Benutzer / Service-Accounts ----------
     @ar.get("/api/users")

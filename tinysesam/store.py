@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS api_key (
     prefix     TEXT NOT NULL,                   -- Anzeige (tsk_xxxx…), NICHT der Key
     key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
     roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
+    -- Welche Art Key ist das? (R6-5)
+    --   'automat' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
+    --                        erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
+    --   'mensch'           : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
+    --                        Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
+    --                        ein Mensch selbst bedient (CLI am eigenen Rechner).
+    -- Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key eines Admins war eine vollständige
+    -- Admin-Schreib-API, ohne zweiten Faktor und ohne CSRF-Schicht — ein abgeflossener CI-Key
+    -- war die Instanz.
+    kind       TEXT NOT NULL DEFAULT 'automat',
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
     expires_at INTEGER,                          -- NULL = unbefristet
@@ -245,7 +255,7 @@ class Store:
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
     #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 7
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -259,6 +269,10 @@ class Store:
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
             "totp_cred": [("last_step", "INTEGER")],
+            # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
+            # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
+            # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
+            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automat'")],
             # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
             # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
             # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
@@ -948,10 +962,12 @@ class Store:
         return self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
 
     # ---------- API-Keys ----------
-    def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None) -> int:
+    def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
+                    kind: str = "automat") -> int:
         cur = self._exec(
-            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
-            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), _now(), expires_at))
+            "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (user_id, name, prefix, key_hash, json.dumps(list(roles or [])), kind, _now(), expires_at))
         return cur.lastrowid
 
     def get_api_key_by_hash(self, key_hash):
