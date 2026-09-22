@@ -570,7 +570,7 @@ cfg = TinySesamConfig.oidc_gateway(
         "wiki.example.com": {"client_id": "wiki", "client_secret": os.environ["WIKI_SECRET"],
                              "group_role_map": {"redaktion": "redakteur"}},
     },
-    revalidate_minutes=15,
+    revalidate_minutes=60,
 )
 ```
 
@@ -590,7 +590,7 @@ Als Umgebungsvariablen (Gateway-Container):
 
 ```
 TINYSESAM_OIDC_CLIENTS='{"app.example.com": {"client_id": "app", "client_secret": "..."}}'
-TINYSESAM_OIDC_REVALIDATE_MINUTES=15
+TINYSESAM_OIDC_REVALIDATE_MINUTES=60
 ```
 
 Eine Konfiguration mit einem einzigen Client verhält sich unverändert — keine Zuordnung, keine

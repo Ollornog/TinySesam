@@ -557,7 +557,7 @@ cfg = TinySesamConfig.oidc_gateway(
         "wiki.example.com": {"client_id": "wiki", "client_secret": os.environ["WIKI_SECRET"],
                              "group_role_map": {"editors": "editor"}},
     },
-    revalidate_minutes=15,
+    revalidate_minutes=60,
 )
 ```
 
@@ -577,7 +577,7 @@ As environment variables (gateway container):
 
 ```
 TINYSESAM_OIDC_CLIENTS='{"app.example.com": {"client_id": "app", "client_secret": "..."}}'
-TINYSESAM_OIDC_REVALIDATE_MINUTES=15
+TINYSESAM_OIDC_REVALIDATE_MINUTES=60
 ```
 
 A config with a single client behaves exactly as before — no host mapping, no release to expire.

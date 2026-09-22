@@ -304,6 +304,15 @@ assert "app=" not in auth5.forward_login_url("https://app.example.com/x")
 assert auth5.oidc_freigabe_gueltig("egal", "egal") == (True, "")
 ok("T-14: eine Installation mit einem Client verhält sich unverändert (kein app=, keine Freigabe nötig)")
 
+# Die Vorgabe des Gateway-Presets steht hier, damit eine Änderung daran auffällt: Sie ist die
+# einzige Stelle, an der TinySesam von sich aus eine Frist setzt — im Grundaufbau bleibt sie 0.
+_preset = TinySesamConfig.oidc_gateway(
+    issuer="https://id.example.com", client_id="g", client_secret="s",
+    base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "t.db"))
+assert _preset.oidc_revalidate_minutes == 60, _preset.oidc_revalidate_minutes
+assert TinySesamConfig(db_path="/dev/null").oidc_revalidate_minutes == 0
+ok("T-14: oidc_gateway() prüft stündlich nach, der Grundaufbau gar nicht")
+
 os.remove(db)
 os.remove(db2)
 os.remove(db3)

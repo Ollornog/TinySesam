@@ -235,7 +235,7 @@ class TinySesamConfig:
     #: sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in
     #: aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab,
     #: ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt.
-    #: ``oidc_gateway()`` setzt 15; wer es von Hand aufbaut, entscheidet selbst.
+    #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst.
     oidc_revalidate_minutes: int = 0
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
@@ -336,7 +336,7 @@ class TinySesamConfig:
                      cookie_domain="", trusted_redirect_hosts=None, allowed_groups=None,
                      group_claim="groups", oidc_name="SSO", oidc_scopes="openid profile email",
                      db_path="tinysesam-gateway.db", https_mode="warn", session_ttl_hours=24 * 7,
-                     trusted_proxies=None, clients=None, revalidate_minutes=15, **overrides):
+                     trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides):
         """Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil).
         Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`.
         Einzelne Felder via **overrides überschreibbar.
@@ -345,10 +345,18 @@ class TinySesamConfig:
         beim selben Provider (T-14). Ohne die Angabe gilt der Einzel-Client für alles, genau wie
         bisher.
 
-        `revalidate_minutes` steht hier auf **15**, nicht auf 0 wie im Grundaufbau: Ein Gateway
+        `revalidate_minutes` steht hier auf **60**, nicht auf 0 wie im Grundaufbau: Ein Gateway
         ist der Ort, an dem die Freigabe des Providers die einzige Autorisierung ist. Bliebe sie
         bis zum Sitzungsende gültig, wirkte ein Gruppenentzug dort bis zu `session_ttl_hours`
-        nicht — in der Vorgabe sieben Tage."""
+        nicht — in der Vorgabe sieben Tage.
+
+        Warum eine Stunde und nicht weniger: Jede Nachprüfung ist ein Sprung über den Provider.
+        Für einen Menschen am Browser ist das ein Flackern, für alles andere ein Bruch — ein
+        offenes Formular, ein laufender Upload, eine XHR-Anfrage im Hintergrund. Je kürzer die
+        Frist, desto öfter trifft es einen davon. Eine Stunde ist gegenüber sieben Tagen die
+        Größenordnung, auf die es ankommt; der Unterschied zwischen 15 und 60 Minuten ist für
+        einen Entzug selten entscheidend, für den Betrieb dagegen schon. Wer es enger braucht,
+        setzt es enger."""
         base = dict(
             db_path=db_path,
             password_enabled=False, passkey_enabled=False, pin_enabled=False,

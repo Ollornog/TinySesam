@@ -45,7 +45,7 @@ services:
       #
       # Nach dieser Frist fragt das Gateway beim Provider nach, ob die Freigabe noch gilt.
       # 0 schaltet das ab — dann wirkt ein Gruppenentzug dort erst, wenn die Sitzung abläuft.
-      TINYSESAM_OIDC_REVALIDATE_MINUTES: "15"
+      TINYSESAM_OIDC_REVALIDATE_MINUTES: "60"
       # Das Netz unten, NICHT 0.0.0.0/0: Gilt jede Adresse als Proxy, bleibt keine als Client
       # übrig — X-Forwarded-For wird dann wirkungslos statt großzügig, und alle Nutzer erscheinen
       # unter der Caddy-IP. Rate-Limit und IP-Sperre wirken ab da kollektiv, und fail2ban bannt
