@@ -40,3 +40,4 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[ADR-4](ADR-4-keine-self-hosted-runner.md)** CI bleibt auf gehosteten Runnern — self-hosted ausgeschlossen
 * ☑ **[ADR-5](ADR-5-rollen-im-forward-auth.md)** Rollen im Forward-Auth kommen vom Proxy, nicht aus einer Regeltabelle
 * ☑ **[ADR-6](ADR-6-pypi-veroeffentlichen.md)** TinySesam wird ab 1.0 auf PyPI veröffentlicht
+* ☑ **[ADR-7](ADR-7-faktoren-nicht-aus-dem-idp.md)** TOTP-Geheimnisse und PINs kommen nie aus dem Identitätsanbieter
