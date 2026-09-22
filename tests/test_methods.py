@@ -59,6 +59,10 @@ a_id = auth.create_user("konto_a", password="Geheim12345!")
 b_id = auth.create_user("konto_b", password="Geheim12345!")
 
 
+def ok_(name):
+    print(f"  ✓ {name}")
+
+
 def _sitzung(uid):
     cx = TestClient(app, raise_server_exceptions=False)
     cx.cookies.set(auth.cfg.session_cookie, auth.store.create_session(uid, 3600, True, "password"))
@@ -92,6 +96,89 @@ assert not (r_eigen.status_code == 400
     "der eigene Flow wird genauso abgewiesen wie der fremde — dann misst die Prüfung oben nur, "
     f"dass finish() mit leerem Körper scheitert (HTTP {r_eigen.status_code})")
 print("  ✓ register/finish: fremder Flow → 400, kein Passkey an einem der beiden Konten")
+
+# ---------- B2-10: ein Passkey ohne Nutzerprüfung ist kein vollwertiger Login ----------
+# Ein Passkey meldet in TinySesam ALLEIN an. Ohne Nutzerprüfung belegt er nur den Besitz des
+# Schlüssels: der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand gelegte
+# Telefon. Bis 0.18.x stand in der Anfrage „preferred" UND die Antwort wurde nicht geprüft —
+# ein Authenticator konnte also nein sagen und galt trotzdem.
+import json as _json_b210                                                  # noqa: E402
+from tinysesam.errors import ConfigError as _ConfigError                    # noqa: E402
+
+_opt_reg = _json_b210.loads(_sitzung(a_id).post("/auth/passkey/register/begin").text)
+assert _opt_reg["authenticatorSelection"]["userVerification"] == "required", _opt_reg["authenticatorSelection"]
+_opt_log = _json_b210.loads(c.post("/auth/passkey/login/begin").text)
+assert _opt_log["userVerification"] == "required", _opt_log
+ok_("B2-10: Registrierung und Login verlangen die Nutzerprüfung (Vorgabe)")
+
+# Abschaltbar, aber nicht still: Der Aufbau sagt es, und die Konfigurationsprüfung warnt.
+_db_p = os.path.join(tempfile.mkdtemp(), "t.db")
+_auth_p = TinySesam(TinySesamConfig(db_path=_db_p, csrf_enabled=False, cookie_secure=False,
+                                    passkey_enabled=True, rp_id="localhost",
+                                    origin="http://localhost:8000",
+                                    passkey_user_verification="preferred"))
+_app_p = FastAPI()
+_app_p.include_router(_auth_p.router())
+_opt_p = _json_b210.loads(TestClient(_app_p).post("/auth/passkey/login/begin").text)
+assert _opt_p["userVerification"] == "preferred", _opt_p
+from tinysesam.konfigpruefung import pruefe as _pruefe                      # noqa: E402
+_f, _w = _pruefe(_auth_p.cfg)
+assert any("passkey_user_verification" in x for x in _w), _w
+ok_("B2-10: 'preferred' ist möglich, meldet sich aber beim Aufbau und in der Konfigprüfung")
+
+# Ein Tippfehler bricht ab, statt die Prüfung stillschweigend abzuschalten.
+try:
+    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                              passkey_enabled=True, rp_id="localhost",
+                              origin="http://localhost:8000",
+                              passkey_user_verification="egal"))
+    raise AssertionError("unbekannter Wert kam durch")
+except _ConfigError:
+    pass
+ok_("B2-10: ein unbekannter Wert für passkey_user_verification bricht den Aufbau ab")
+
+# Drosselung: Der Passkey-Login war die einzige Anmeldestrecke ohne Bremse — und jeder Aufruf
+# legte eine flow-Zeile an, die erst nach fünf Minuten verfiel.
+_db_r = os.path.join(tempfile.mkdtemp(), "t.db")
+_auth_r = TinySesam(TinySesamConfig(db_path=_db_r, csrf_enabled=False, cookie_secure=False,
+                                    passkey_enabled=True, rp_id="localhost",
+                                    origin="http://localhost:8000"))
+_auth_r.store.set_setting("rate_limit_max", "3")
+_app_r = FastAPI()
+_app_r.include_router(_auth_r.router())
+_c_r = TestClient(_app_r)
+_codes = [_c_r.post("/auth/passkey/login/begin").status_code for _ in range(6)]
+assert 429 in _codes, f"keine Drosselung am Passkey-Login: {_codes}"
+ok_("B2-10: der Passkey-Login ist gedrosselt wie jeder andere Einstieg")
+
+# Protokoll: Ein unbekannter Schlüssel ist ein Fehlversuch und trifft die fail2ban-Jail.
+import io as _io_b210, logging as _logging_b210                             # noqa: E402
+from tinysesam import security as _sec_b210                                 # noqa: E402
+
+# Eigene Instanz: die Drosselung oben hat die vorherige absichtlich dichtgemacht.
+_db_l = os.path.join(tempfile.mkdtemp(), "t.db")
+_auth_l = TinySesam(TinySesamConfig(db_path=_db_l, csrf_enabled=False, cookie_secure=False,
+                                    passkey_enabled=True, rp_id="localhost",
+                                    origin="http://localhost:8000"))
+_app_l = FastAPI()
+_app_l.include_router(_auth_l.router())
+_puffer_b = _io_b210.StringIO()
+_haken_b = _logging_b210.StreamHandler(_puffer_b)
+_sec_b210.seclog.addHandler(_haken_b)
+try:
+    _c_l = TestClient(_app_l)
+    _c_l.post("/auth/passkey/login/begin")
+    _c_l.post("/auth/passkey/login/finish", content=_json_b210.dumps({"id": "gibtsnicht"}))
+finally:
+    _sec_b210.seclog.removeHandler(_haken_b)
+_text_b = _puffer_b.getvalue()
+assert _sec_b210.log_ereignis("passkey") in _text_b, f"keine Jail-Zeile: {_text_b[:200]!r}"
+assert "unbekannter_schluessel" in _text_b, _text_b[:200]
+assert any(e["event"] == "passkey_unknown" for e in _auth_l.store.recent_audit(limit=10))
+ok_("B2-10: eine Passkey-Fehlanmeldung steht im Protokoll und trifft die Jail")
+
+for _d in (_db_p, _db_r, _db_l):
+    os.remove(_d)
 
 os.remove(db)
 print("\nMETHODEN-STRUKTUR OK ✅")

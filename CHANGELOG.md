@@ -117,6 +117,26 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Ein Passkey muss den Menschen prüfen, nicht nur den Schlüssel** (`passkey_user_verification`,
+  Vorgabe `"required"`, B2-10). Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter
+  Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz**: der
+  entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand gelegte Telefon genügen dann.
+
+  Bis 0.18.x stand in der Anfrage `preferred` **und** die Antwort wurde nicht einmal geprüft
+  (`require_user_verification=False`) — ein Authenticator konnte also nein sagen und galt trotzdem.
+  Die Bitte war in beide Richtungen unverbindlich. Jetzt wird sie verlangt und geprüft.
+  `"preferred"` bleibt möglich für einen Bestand alter Authentikatoren, meldet sich aber beim
+  Aufbau und in der Konfigurationsprüfung.
+
+- **Der Passkey-Pfad ist gedrosselt und hinterlässt Spuren** (B2-10, B5-01). Er war die einzige
+  Anmeldestrecke ohne Bremse, und jeder Aufruf von `login/begin` legte eine `flow`-Zeile an, die
+  erst nach fünf Minuten verfiel — ein bequemer Weg, die Datenbank wachsen zu lassen. Protokolliert
+  wurde gar nichts: weder die Anlage eines Passkeys (ein neuer vollwertiger Login-Weg am Konto),
+  noch seine Löschung, noch eine Fehlanmeldung. Wer hier durchprobierte, tat das unbeobachtet.
+  Jetzt zählt der Rate-Limit-Topf mit, und Anlage, Löschung und Fehlversuch stehen im Audit-Log;
+  der Fehlversuch trägt zusätzlich das Ereigniswort, auf das die fail2ban-Jail matcht — er **ist**
+  einer.
+
 - **Zwei Arten API-Key, und keine davon ist mehr eine Admin-API** (`kind`, R6-5). Ein Key war
   bisher eine vollständige Schreib-Schnittstelle im Namen seines Besitzers. Bei einem Admin hiess
   das: Nutzer anlegen, `is_admin` setzen, Passwörter zurücksetzen, Schwellen ändern — ohne zweiten

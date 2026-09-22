@@ -364,6 +364,20 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
             "oder gleich mfa_enrollment='strict' schreiben.")
 
+    # --- Nutzerprüfung bei Passkeys (B2-10) ---
+    _uv = str(getattr(config, "passkey_user_verification", "required") or "required")
+    if _uv not in ("required", "preferred"):
+        fehler.append(
+            f"passkey_user_verification={_uv!r} gibt es nicht. Erlaubt sind 'required' (Vorgabe: "
+            "der Authenticator muss den Menschen prüfen) und 'preferred' (er wird gebeten). "
+            "Ein Passkey meldet allein an — ohne Prüfung belegt er nur den Besitz des Schlüssels.")
+    elif _uv == "preferred" and _an(config, "passkey_enabled"):
+        warnungen.append(
+            "passkey_user_verification='preferred': Ein Passkey ohne Nutzerprüfung meldet allein "
+            "an und belegt dann nur den Besitz des Schlüssels — ein entsperrter Rechner oder ein "
+            "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für einen Bestand "
+            "alter Authentikatoren; für einen neuen gehört der Wert auf 'required'.")
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
