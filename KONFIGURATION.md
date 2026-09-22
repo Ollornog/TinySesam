@@ -144,7 +144,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `stepup_max_age_sec` | `int` | `900` | 15 min |
+| `stepup_max_age_sec` | `int` | `900` | 15 min; begrenzt auch die Anlage des ERSTEN Faktors (dort ab Login gemessen) |
 | `admin_require_mfa` | `bool` | `False` | Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA |
 
 ## Sessions (server-side, revozierbar)

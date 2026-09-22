@@ -168,6 +168,25 @@ eine Step-up-Bestätigung, die nicht älter ist als `stepup_max_age_sec` — son
 nie**: Ein maschinelles Credential erbringt keinen interaktiven Faktor und kann folglich auch
 keinen abbauen.
 
+**Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
+`POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
+bekommt 403 (der Wächter ist `auth.require_session()`). Sonst richtet ein abgeflossener CI-Key
+einen Faktor ein, den **er** kontrolliert: Das TOTP-Geheimnis steht im Rumpf von
+`GET /auth/totp/setup`, und ein selbst registrierter Passkey ist ein vollwertiger Login — darüber
+hätte der Key eine frische interaktive Sitzung und damit doch die Routen von oben.
+
+**Der ERSTE Faktor ist ein Sonderfall.** Ein Konto ohne Passwort, PIN und TOTP (rein föderiert)
+hat nichts, womit es bestätigen könnte — `stepup_options()` ist leer und die Reauth-Seite hat
+kein einziges Feld. Für genau diesen Fall genügt `POST /auth/pin/set` eine **frische Anmeldung**
+(nicht älter als `stepup_max_age_sec`, gemessen ab Login, `auth.login_fresh()`); das *Ersetzen*
+einer PIN und das Abbauen jedes Faktors bleiben hinter `require_mfa()`.
+
+**Kein API-Key-Weg auf diese Routen — und kein Ersatz über HTTP.** Automatik, die mit eigenem
+Schlüssel eine PIN rotiert oder TOTP abschaltet, bekommt 403 mit übersetzter Begründung
+(`api.needs_session` / `api.stepup_session`). Es gibt dafür weder eine Admin-Route noch ein
+CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …)`,
+`auth.totp_disable(uid)`) — derselbe Code-Pfad wie in den Routen, nur ohne HTTP-Fläche.
+
 ## Konfiguration (`TinySesamConfig`, Auszug)
 
 | Feld | Default | |

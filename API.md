@@ -102,7 +102,7 @@ Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys.
 
@@ -182,10 +182,6 @@ Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
 
 Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
 
-### `is_password_change_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
-
 ### `is_pin_locked(username, ip) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
@@ -214,6 +210,10 @@ Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal
 
 Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
+### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
+
+True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
+
 ### `login_redirect_after(request, token, user_id, nxt)`
 
 Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors.
@@ -230,9 +230,9 @@ Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`).
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
+### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP). Danach nie wieder.
 
 ### `mfa_pending(user_id) -> 'bool'`
 
@@ -298,10 +298,6 @@ Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
 
 FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung.
 
-### `require_public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
-
-Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
-
 ### `require_resource(name: 'str')`
 
 FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich. Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`.
@@ -309,6 +305,10 @@ FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisse
 ### `require_role(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)`
 
 FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
+
+### `require_session(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'`
+
+Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
 
 ### `require_user(request: 'Request') -> 'dict'`
 
@@ -490,4 +490,4 @@ Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau ge�
 
 ---
 
-110 Methoden, 6 Presets — erzeugt aus den Docstrings.
+111 Methoden, 6 Presets — erzeugt aus den Docstrings.

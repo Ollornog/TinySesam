@@ -147,7 +147,10 @@ class TinySesamConfig:
     # --- Step-up / per-Route-MFA (Sudo-Frische) ---
     # Guards mit mfa=True verlangen eine „frische" Faktor-Bestätigung. Frisch ist eine Sitzung
     # stepup_max_age_sec lang nach Login/Reauth; danach → /auth/reauth. 0 = nie ablaufen (nur „hat 2FA bestanden").
-    stepup_max_age_sec: int = 900         # 15 min
+    # Dieselbe Spanne begrenzt die Anlage des ERSTEN Faktors: Ein Konto ohne Passwort, PIN und TOTP
+    # kann keinen Step-up leisten (`stepup_options()` leer, die Reauth-Seite hat kein Feld), darum
+    # zählt dort das Alter der ANMELDUNG (`login_fresh()`) — danach hilft nur ein neuer Login.
+    stepup_max_age_sec: int = 900         # 15 min; begrenzt auch die Anlage des ERSTEN Faktors (dort ab Login gemessen)
     admin_require_mfa: bool = False        # Admin-Panel + require_admin verlangen zusätzlich Step-up-MFA
 
     # --- Sessions (server-side, revozierbar) ---

@@ -292,9 +292,34 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Faktor — ein abgeflossener CI-Key baute den zweiten Faktor seines Besitzers lautlos ab. Alle
   fünf Routen verlangen jetzt `require_mfa()`: interaktive Sitzung mit frischer Bestätigung, für
   einen API-Key konstruktiv unerreichbar (403, „Step-up-MFA nötig — nur per interaktiver Sitzung").
-  Die Konto-Seite wertet den Hinweis-Header `X-TinySesam-Reauth` jetzt selbst aus und schickt zur
-  Reauth-Seite, statt stumm zu scheitern. Fund **R3-3** aus
+  Bei `/auth/pin/set` gilt das für das **Ersetzen** einer PIN; dass dieselbe Route auch die erste
+  anlegt, ist der Sonderfall im Punkt unten. Die Konto-Seite wertet den Hinweis-Header `X-TinySesam-Reauth` jetzt selbst
+  aus und schickt zur Reauth-Seite, statt stumm zu scheitern. Fund **R3-3** aus
   [T-13](backlog/T-13-audit-2026-09-22-runde-3.md).
+- **Der Riegel gegen den abbauenden API-Key war über die Faktor-ANLAGE umgehbar.** `require_mfa()`
+  deckte nur den Abbau; `GET/POST /auth/totp/setup` und `POST /auth/passkey/register/{begin,finish}`
+  hingen weiter allein an `current_user()` — und das akzeptiert einen API-Key, für den die
+  CSRF-Prüfung ohnehin entfällt (`_csrf_entbehrlich`). Damit standen zwei Wege offen: Der Key liest
+  das TOTP-Geheimnis im Klartext aus der Antwort der Einrichtungsseite und bestätigt es (danach
+  kontrolliert der **Key-Inhaber** den zweiten Faktor — der echte Nutzer ist ausgesperrt, mit
+  bekanntem Passwort ist es die volle Übernahme), oder er registriert einen eigenen Passkey. Ein
+  Passkey ist ein vollwertiger Login: Über ihn bekam der Key eine frische interaktive Sitzung und
+  stand damit doch vor genau den Routen, die ihn aussperren sollten. Die Anlage verlangt jetzt
+  dasselbe wie der Abbau — eine Sitzung, kein Maschinen-Credential (neu:
+  **`auth.require_session()`**, 403 „Einen Anmeldefaktor richtet ein Mensch ein …"). `register/finish`
+  bindet den neuen Passkey zusätzlich an das angemeldete Konto statt nur an das Flow-Cookie.
+  Angriff gegen den R3-3-Fix, nachgestellt im dritten Audit.
+- **Die erste PIN eines rein föderierten Kontos war hinter `require_mfa()` unerreichbar.**
+  `/auth/pin/set` ersetzt eine PIN — und ist zugleich der einzige Weg, sie **anzulegen**. Ein Konto
+  ohne Passwort, PIN und TOTP (OIDC/SAML/LDAP) hat nichts, womit es einen Step-up leisten könnte:
+  `stepup_options()` ist leer, und nach Ablauf von `stepup_max_age_sec` (Vorgabe 900 s ab Login)
+  antwortete die Route 403 — die Reauth-Seite bot dazu ein **Passwortfeld** an, das dieses Konto
+  nicht hat, und jeder aussichtslose Versuch zählte in dieselbe Brute-Force-Sperre. Das **Anlegen**
+  des ersten Faktors hängt jetzt am Alter der Anmeldung (neu: **`auth.login_fresh()`**, dieselbe
+  Spanne, gemessen ab Login statt ab Faktor-Bestätigung); **Ersetzen und Abbauen bleiben hinter
+  `require_mfa()`**. Ist auch die Anmeldung zu alt, sagt die Antwort, was hilft („melde dich neu
+  an"), und verweist **nicht** mehr auf die Reauth-Seite. Die zeigt bei leerer Methodenliste jetzt
+  gar kein Formular, und ein POST dorthin wird nicht als Fehlversuch protokolliert.
 
 ### Hinzugefügt
 
@@ -303,6 +328,9 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   allem, was er hatte, inklusive des Passworts, mit dem er sich gerade angemeldet hatte. Das ist
   kein Step-up. Mit `True` bleibt der Bereich verschlossen, bis das Verfahren eingerichtet ist;
   die Seite sagt das jetzt auch, statt ein Formular ohne Felder zu zeigen.
+- **`auth.require_session(request)`** und **`auth.login_fresh(request)`** — die beiden Schranken
+  aus den Punkten oben, auch für eigene Konto-Seiten: „angemeldet, aber nicht per API-Key" und
+  „die Anmeldung ist höchstens `stepup_max_age_sec` alt". Reine Erweiterung, kein Bruch.
 - **`recent_audit(limit, username=…)`** filtert in SQL (siehe `audit --user` oben).
 - **Drei Wächter in `tests/test_repo.py`**: Die in beiden READMEs genannte Zahl der Testdateien und
   die Python-Spanne werden gegen die Wirklichkeit gemessen, und solange die Version unter 1.0 liegt,

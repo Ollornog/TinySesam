@@ -118,6 +118,13 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
+        # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Diese Antwort
+        # enthält das TOTP-Geheimnis im Klartext: Ein abgeflossener CI-Key las es hier heraus,
+        # bestätigte es unten und hinterliess ein TOTP, das der KEY-Inhaber kontrolliert (der
+        # echte Nutzer kommt danach nicht mehr herein; mit bekanntem Passwort ist es die volle
+        # Übernahme). Der Abbau war seit R3-3 gesperrt, die Anlage nicht — und über einen
+        # selbst registrierten Faktor führte der Weg zurück an die Abbau-Routen.
+        auth.require_session(request, u)
         # Diese Seite ERZEUGT ein Geheimnis, ein GET trägt aber kein CSRF-Token und kommt bei
         # `SameSite=Lax` (Vorgabe) auch von einer fremden Seite an. Wer schon einen bestätigten
         # zweiten Faktor hat, darf ihn hier nicht verlieren — ein Klick auf einen Link reichte
@@ -135,6 +142,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             raise HTTPException(401)
+        auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
         return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
 
     @r.post("/auth/totp/disable")
@@ -221,9 +229,22 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):
-            # R3-3: Eine PIN setzen heisst, einen Anmeldefaktor zu ersetzen — das darf nur eine
-            # interaktive Sitzung mit frischer Bestätigung, nie ein API-Key.
-            u = auth.require_mfa(request)
+            # R3-3: Eine PIN zu ERSETZEN heisst, einen Anmeldefaktor auszutauschen — das darf
+            # nur eine interaktive Sitzung mit frischer Bestätigung. Ein API-Key kommt hier in
+            # keinem Fall durch, auch nicht beim Anlegen (sonst setzt der Key-Inhaber den
+            # Faktor seines Besitzers): der Riegel steht deshalb VOR der Fallunterscheidung
+            # und liefert die klare Meldung statt der Frische-Ausrede.
+            u = auth.require_session(request)
+            if auth.has_pin(u["id"]) or auth.stepup_options(u):
+                u = auth.require_mfa(request)
+            elif not auth.login_fresh(request, u):
+                # Die ERSTE PIN eines Kontos, das nichts hat, womit es bestätigen könnte
+                # (kein Passwort, keine PIN, kein TOTP — rein föderiert): `require_mfa()`
+                # wäre hier eine Sackgasse, `stepup_options()` ist leer und die Reauth-Seite
+                # hätte kein Feld. Das Anlegen hängt darum am Alter der Anmeldung. Kein
+                # `X-TinySesam-Reauth`: Die Reauth-Seite kann diesem Konto nicht helfen, ein
+                # neuer Login schon.
+                raise HTTPException(403, auth.t("api.stepup_relogin"))
             b = await auth.json_body(request)
             try:
                 auth.set_pin(u["id"], b.get("pin"))
@@ -379,6 +400,14 @@ def build_router(auth) -> APIRouter:
         nxt = auth.safe_next(next)
         ip = auth.client_ip(request)
         methods = auth.stepup_options(u)
+        if not methods:
+            # Dieses Konto hat kein Verfahren, mit dem es hier bestätigen könnte
+            # (`stepup_strict`, oder noch gar kein Faktor eingerichtet). Der Versuch KANN
+            # nicht gelingen — er wird deshalb nicht als Fehlversuch protokolliert, sonst
+            # füttert die aussichtslose Seite die Brute-Force-Sperre desselben Kontos.
+            return auth.render_page("reauth", request=request, status=403, next=nxt,
+                                    username=u["username"], methods=methods,
+                                    error=auth.t("err.stepup_none"))
         if not auth.rate_ok(ip) or auth.is_locked(u["username"], ip) or \
                 ("pin" in methods and auth.is_pin_locked(u["username"], ip)):
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],

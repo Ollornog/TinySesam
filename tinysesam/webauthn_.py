@@ -47,9 +47,14 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/register/begin")
     def reg_begin(request: Request):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        # Einen Passkey ANZULEGEN verlangt eine interaktive Sitzung. `current_user()` genügte
+        # hier nicht: Es akzeptiert einen API-Key, und für einen echten Key entfällt die
+        # CSRF-Prüfung ohnehin (`_csrf_entbehrlich`). Ein abgeflossener CI-Key registrierte
+        # damit einen EIGENEN Passkey — und ein Passkey ist ein vollwertiger Login: Darüber
+        # bekam der Key eine frische interaktive Sitzung und stand plötzlich vor genau den
+        # `require_mfa()`-Routen, die ihn seit R3-3 aussperren sollten. Die Anlage war der
+        # Hebel, mit dem der Riegel gegen den lautlos abbauenden Key umgangen wurde.
+        u = auth.require_session(request)
         existing = auth.store.list_webauthn(u["id"])
         opts = generate_registration_options(
             rp_id=cfg.rp_id, rp_name=cfg.rp_name,
@@ -70,9 +75,15 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/register/finish")
     async def reg_finish(request: Request, name: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
+        u = auth.require_session(request)   # derselbe Riegel wie beim begin
         fk = request.cookies.get(_WAFLOW)
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
+            raise HTTPException(400, auth.t("api.passkey_reg_expired"))
+        # Der neue Faktor gehört an das Konto, das hier angemeldet ist — nicht an das aus dem
+        # Flow-Cookie. Wer über eine Subdomain ein Cookie setzen kann, schiebt sonst einen
+        # fremden Flow unter und der Passkey landet an einem anderen Konto.
+        if flow["user_id"] != u["id"]:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
         body = await request.body()
         v = verify_registration_response(credential=body.decode(),

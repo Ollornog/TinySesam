@@ -2074,6 +2074,30 @@ class TinySesam:
                 return False
         return True
 
+    def login_fresh(self, request: Request, user: Optional[dict] = None) -> bool:
+        """True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
+
+        Die schwächere Schwester von `stepup_fresh()`: gemessen wird nicht die letzte
+        Faktor-Bestätigung, sondern das Alter der Sitzung (`created_at`, also der Login).
+
+        Gedacht für genau eine Lage — ein Konto, das **keinen** Faktor hat, mit dem es
+        bestätigen könnte (`stepup_options()` leer, rein föderiertes Konto ohne Passwort, PIN
+        und TOTP). Für das Anlegen des ERSTEN Faktors kann die Schranke dort nicht an der
+        Bestätigung hängen, sonst ist die Einrichtung eine Sackgasse: Nach Ablauf des Fensters
+        antwortete `/auth/pin/set` mit 403, und die Reauth-Seite bot ein Passwortfeld an, das
+        dieses Konto nicht hat. Ein API-Key ist auch hier nichts wert.
+        """
+        user = user or self.current_user(request)
+        if not user or user.get("_via") == "apikey":
+            return False
+        s = self.session_from_request(request)
+        if not s:
+            return False
+        if self.cfg.stepup_max_age_sec > 0:
+            if (int(time.time()) - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
+                return False
+        return True
+
     def _redirect_factor(self, request: Request, step) -> NoReturn:
         # Browser → Redirect zur Eingabeseite des nächsten Faktors; JSON → 401 + X-TinySesam-Factor.
         if step is None:
@@ -2195,6 +2219,31 @@ class TinySesam:
     def require_mfa(self, request: Request) -> dict:
         """FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung."""
         return self._enforce(request, mfa=True)
+
+    def require_session(self, request: Request, user: Optional[dict] = None) -> dict:
+        """Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
+
+        Der Riegel für die **Anlage** eines Faktors (TOTP einrichten, Passkey registrieren,
+        erste PIN). `require_mfa()` deckte nur den Abbau; die Anlage hing weiter an
+        `current_user()`, und das akzeptiert einen API-Key. Ein abgeflossener CI-Key richtete
+        damit einen Faktor ein, den **er** kontrolliert: das TOTP-Geheimnis steht in der Antwort
+        von `GET /auth/totp/setup`, und ein selbst registrierter Passkey ist ein vollwertiger
+        Login — über ihn kam der Key an eine frische interaktive Sitzung und damit doch an die
+        `require_mfa()`-Routen. Die Enrollment-Route war der Hebel, der die Sperre aushob.
+
+        Geprüft wird auf `_via == "apikey"`, nicht auf `_via == "session"`: Bei der
+        TOTP-Einrichtung unter `login_chain=["password","totp"]` steht dort ein Nutzer aus
+        `totp_enrollment_user()` — eine Sitzung, die ihren Erstfaktor erbracht hat, aber noch
+        nicht vollständig angemeldet ist. Die darf einrichten, ein Maschinen-Credential nicht.
+        (Die Schlüssel-Verwaltung prüft umgekehrt auf `"session"` — sie kennt keinen solchen
+        Zwischenzustand und bleibt lieber fail-closed.)
+        """
+        u = user or self.current_user(request)
+        if not u:
+            self._deny(request)
+        if u.get("_via") == "apikey":
+            raise HTTPException(403, self.t("api.needs_session"))
+        return u
 
     # ---------- Geteilte Ressourcen-Geheimnisse (PIN oder Passphrase, ohne User-Konto) ----------
     def set_resource_secret(self, name, secret, kind="pin", label=None):

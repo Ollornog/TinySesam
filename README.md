@@ -171,6 +171,25 @@ older than `stepup_max_age_sec` — otherwise 403 plus `X-TinySesam-Reauth: /aut
 are redirected there). An **API key can never satisfy it**: a machine credential never performs an
 interactive factor, so it cannot take one away either.
 
+**Setting a factor up needs an interactive session.** `GET/POST /auth/totp/setup` and
+`POST /auth/passkey/register/{begin,finish}` require a session as well — an API key gets a 403
+(`auth.require_session()` is the guard). Otherwise a leaked CI key would enrol a factor **it**
+controls: the TOTP secret is in the body of `GET /auth/totp/setup`, and a passkey it registered is
+a full sign-in — which would have handed it a fresh interactive session and, through that, the
+step-up routes above.
+
+**A first factor is different.** An account with no password, no PIN and no TOTP (a purely
+federated account) has nothing to confirm with — `stepup_options()` is empty and the reauth page
+has no field at all. For that one case `POST /auth/pin/set` accepts a **fresh sign-in** instead
+(no older than `stepup_max_age_sec`, measured from the login, `auth.login_fresh()`); *replacing*
+a PIN and removing any factor stay behind `require_mfa()`.
+
+**No API-key path to these routes, and no replacement over HTTP.** Automation that rotated a PIN
+or turned TOTP off with its own key gets a 403 with a translated reason
+(`api.needs_session` / `api.stepup_session`). There is no admin route and no CLI command for it:
+do it in-process through the Python API (`auth.set_pin(uid, …)`, `auth.totp_disable(uid)`), which
+is the same code path the routes use, minus the HTTP surface.
+
 ## Configuration (`TinySesamConfig`, excerpt)
 
 | Field | Default | |

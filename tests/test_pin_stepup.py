@@ -1,7 +1,9 @@
 """Drei Aufbauten ohne E-Mail: nur User+Passwort, PIN als Route-Faktor, PIN als Step-up."""
 import os
+import re
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -214,4 +216,87 @@ assert c.get(f"/auth/claim-admin?token={tok}").status_code == 404, "Route versch
 assert auth.admin_claim_token() is None
 os.unlink(db)
 print("  Erst-Admin: Allowlist + Einmal-Token, kein 'erster User gewinnt' ok")
+
+
+# ---------- 7) Die ERSTE PIN eines Kontos ohne jeden Faktor ----------
+# `/auth/pin/set` ist nicht nur der Weg, eine PIN zu ersetzen, sondern der einzige, sie
+# anzulegen. Hinter `require_mfa()` war das für ein rein föderiertes Konto (kein Passwort,
+# keine PIN, kein TOTP) eine Sackgasse: `stepup_options()` ist leer, es gibt also nichts,
+# womit dieses Konto einen Step-up leisten könnte, und nach Ablauf von `stepup_max_age_sec`
+# kam es nie mehr an die Einrichtung. Nachgestellt in `a2_r33_pin_sackgasse.py` (Runde 3).
+# Jetzt: ANLEGEN hängt am Alter der Anmeldung, ERSETZEN und Abbauen bleiben hinter
+# `require_mfa()`. Mutationsprobe: die Fallunterscheidung in `pin_set` wieder auf ein
+# nacktes `require_mfa()` zurückgedreht → (a) wird rot; `login_fresh` immer True → (b) wird rot.
+db = os.path.join(tempfile.mkdtemp(), "t.db")
+auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
+                                 passkey_enabled=False, oidc_enabled=False,
+                                 password_enabled=False,      # rein föderiertes Konto
+                                 pin_enabled=True, totp_enabled=True, stepup_max_age_sec=900))
+uid = auth.create_user("sso-nutzer")
+app = FastAPI(); app.include_router(auth.router())
+c = TestClient(app, headers=HTML)
+J = {"Accept": "application/json"}
+assert not auth.store.get_password_hash(uid) and not auth.has_pin(uid)
+assert not auth.store.has_confirmed_totp(uid)
+assert auth.stepup_options(auth.get_user(uid)) == [], "Vorbedingung: nichts zum Bestätigen da"
+
+tok, mfa_ok = auth.start_session(uid, "oidc", remember=True)
+assert mfa_ok, "der föderierte Login allein macht die Sitzung vollwertig"
+c.cookies.set(auth.cfg.session_cookie, tok)
+# Die Frische ist abgelaufen (das Fenster ist 15 Minuten, die Sitzung hält Tage) — genau die
+# Lage, in der die Sackgasse zuschnappte. Die Anmeldung selbst ist noch jung.
+auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                 (int(time.time()) - 100000, auth.store.session_hash(tok)))
+assert c.get("/auth/me", headers=J).status_code == 200, "die Sitzung muss gültig bleiben"
+r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
+assert r.status_code == 200, (r.status_code, r.text[:120])       # (a)
+assert auth.verify_user_pin(uid, "2468"), "die erste PIN muss ankommen"
+print("  (a) erste PIN ohne jeden Faktor: frische Anmeldung genügt ok")
+
+# Jetzt HAT das Konto einen Faktor → das Ersetzen verlangt wieder eine Bestätigung, und die
+# ist über die PIN auch leistbar. Die Zusage „Faktor ändern verlangt Frische" bleibt intakt.
+r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
+assert r.status_code == 403, (r.status_code, r.text[:120])
+assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
+assert auth.verify_user_pin(uid, "2468"), "die alte PIN darf stehen bleiben"
+seite = c.get("/auth/reauth").text
+assert "name=pin" in seite, "die Reauth-Seite muss jetzt ein PIN-Feld haben"
+r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, r.status_code
+assert c.post("/auth/pin/set", json={"pin": "1357"}, headers=J).status_code == 200
+assert auth.verify_user_pin(uid, "1357")
+print("  PIN ERSETZEN bleibt hinter require_mfa (403 → Reauth per PIN → 200) ok")
+os.unlink(db)
+
+# Und die alte Anmeldung öffnet nichts mehr: Ist auch der Login zu alt, bleibt es bei 403 —
+# aber mit dem Hinweis, der hilft (neu anmelden), und OHNE den Verweis auf eine Reauth-Seite,
+# die diesem Konto kein Feld anbieten kann.
+db = os.path.join(tempfile.mkdtemp(), "t.db")
+auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, lang="de", cookie_secure=False,
+                                 passkey_enabled=False, oidc_enabled=False, password_enabled=False,
+                                 pin_enabled=True, totp_enabled=True, stepup_max_age_sec=900))
+uid = auth.create_user("sso-nutzer")
+app = FastAPI(); app.include_router(auth.router())
+c = TestClient(app, headers=HTML)
+tok, _ = auth.start_session(uid, "oidc", remember=True)
+c.cookies.set(auth.cfg.session_cookie, tok)
+auth.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE token_hash=?",
+                 (int(time.time()) - 100000, int(time.time()) - 100000,
+                  auth.store.session_hash(tok)))
+r = c.post("/auth/pin/set", json={"pin": "2468"}, headers={"Accept": "application/json"})
+assert r.status_code == 403, (r.status_code, r.text[:120])       # (b)
+assert r.json().get("detail") == auth.t("api.stepup_relogin"), r.text[:160]
+assert "X-TinySesam-Reauth" not in r.headers, dict(r.headers)
+assert not auth.has_pin(uid), "ohne frische Anmeldung darf keine PIN gesetzt werden"
+# Die Reauth-Seite sagt dem Konto die Wahrheit, statt ein Passwortfeld anzubieten, das es
+# nicht hat (jeder Versuch wäre aussichtslos — und zählte in denselben Sperr-Topf).
+seite = c.get("/auth/reauth")
+felder = re.findall(r"<input[^>]*name=[\"\']?(\w+)", seite.text)
+assert felder == [], felder
+assert auth.t("err.stepup_none") in seite.text, seite.text[:300]
+antwort = c.post("/auth/reauth", data={"password": "geraten", "next": "/"})
+assert antwort.status_code == 403, antwort.status_code
+assert auth.store.count_fails(0, username="sso-nutzer") == 0, "kein Fehlversuch im Sperr-Topf"
+os.unlink(db)
+print("  (b) zu alte Anmeldung: 403 'neu anmelden', Reauth-Seite ohne Feld ok")
 print("OK test_pin_stepup")

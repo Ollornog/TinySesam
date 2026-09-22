@@ -1,5 +1,6 @@
 """Phase 2: Step-up / per-Route-MFA (Flag am Guard), Reauth-Frische, admin_require_mfa."""
 import os
+import re
 import tempfile, os, time
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -216,16 +217,77 @@ KEY = {"X-API-Key": schluessel, "Accept": "application/json"}
 # Grundlage, auf der die fünf Routen den Faktor-Abbau vorher zuliessen.
 assert c5.get("/normal3", headers=KEY).status_code == 200, "der API-Key muss gültig sein"
 vorher3 = faktoren(auth3, uid3)
+#: Welche Meldung die Abweisung tragen MUSS. `/auth/pin/set` läuft in den Sitzungs-Riegel
+#: (er steht dort vor der Fallunterscheidung erste/weitere PIN), die vier reinen Abbau-Routen
+#: in die Frische-Schranke. Beides ist 403 — geprüft wird der Grund, nicht nur die Zahl,
+#: sonst hielte auch ein zufälliges CSRF-403 den Test grün.
+GRUND = {"/auth/pin/set": "api.needs_session"}
 for pfad in VERWALTUNG:
     antwort = c5.post(pfad, json=koerper(pfad, pin="1111", pk=pk3), headers=KEY)
     assert antwort.status_code == 403, (pfad, antwort.status_code, antwort.text[:90])
-    # Die Abweisung muss die Frische-Schranke sein, nicht zufällig CSRF.
-    assert antwort.json().get("detail") == auth3.t("api.stepup_session"), (pfad, antwort.text[:90])
+    erwartet = auth3.t(GRUND.get(pfad, "api.stepup_session"))
+    assert antwort.json().get("detail") == erwartet, (pfad, antwort.text[:90])
 assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
 assert auth3.verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
-ok("API-Key (CSRF an): alle fünf Faktor-Routen → 403 'nur per interaktiver Sitzung'")
+ok("API-Key (CSRF an): alle fünf Faktor-Routen → 403, jede mit ihrem Grund")
+
+# ---------- A-umgehung-2: derselbe Riegel gilt für die ANLAGE eines Faktors ----------
+# Der R3-3-Fix deckte nur den ABBAU. Die Anlage hing weiter an `current_user()`, und das
+# akzeptiert einen API-Key; die CSRF-Prüfung entfällt für einen echten Key ohnehin
+# (`_csrf_entbehrlich`). Zwei Wege standen damit offen:
+#   (1) `GET /auth/totp/setup` gibt das Geheimnis im Klartext zurück, `POST` bestätigt es →
+#       das Konto trug danach ein TOTP, dessen Geheimnis der KEY-Inhaber kennt.
+#   (2) Ein selbst registrierter Passkey ist ein vollwertiger Login → frische interaktive
+#       Sitzung → und damit stand der Key doch vor den fünf Abbau-Routen.
+# Nachgestellt in `A2b_r3-3_apikey_totp.py` / `A2_r3-3_apikey_passkey.py` (Runde 3, Angriff
+# gegen die Fixes). Mutationsprobe: `auth.require_session(...)` in `totp_setup` oder
+# `reg_begin` wieder durch `auth.current_user(request)` ersetzt → dieser Block wird rot
+# (GET 200 mit Geheimnis bzw. begin 200), der Rest der Suite bleibt grün.
+db4 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth4 = TinySesam(TinySesamConfig(lang="de", db_path=db4, rp_name="Test", cookie_secure=False,
+                                  oidc_enabled=False, pin_enabled=True, apikey_enabled=True,
+                                  passkey_enabled=True))
+uid4 = auth4.create_user("opfer", password="geheim123")      # KEIN TOTP, KEINE PIN
+app4 = FastAPI()
+app4.include_router(auth4.router())
+c6 = TestClient(app4)
+KEY4 = {"X-API-Key": auth4.create_api_key(uid4, name="ci")["key"], "Accept": "application/json"}
+
+r = c6.get("/auth/totp/setup", headers=KEY4)
+assert r.status_code == 403, (r.status_code, r.text[:90])
+assert r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
+assert auth4.store.get_totp(uid4) is None, "der Aufruf darf nicht einmal ein Geheimnis anlegen"
+# Ohne Geheimnis kann der Key auch nichts bestätigen — geprüft wird trotzdem die Route selbst.
+r = c6.post("/auth/totp/setup", data={"code": "000000"}, headers=KEY4)
+assert r.status_code == 403 and r.json().get("detail") == auth4.t("api.needs_session"), r.text[:120]
+assert not auth4.store.has_confirmed_totp(uid4), "per API-Key darf kein TOTP scharf werden"
+for pfad in ("/auth/passkey/register/begin", "/auth/passkey/register/finish"):
+    r = c6.post(pfad, json={}, headers=KEY4)
+    assert r.status_code == 403, (pfad, r.status_code, r.text[:90])
+    assert r.json().get("detail") == auth4.t("api.needs_session"), (pfad, r.text[:120])
+    assert "tinysesam_waflow" not in r.cookies, pfad
+assert auth4.store.list_webauthn(uid4) == [], "per API-Key darf kein Passkey dazukommen"
+assert auth4.list_api_keys(uid4), "Vorbedingung: der Key ist ausgestellt und gültig"
+ok("API-Key: auch die ANLAGE (totp/setup, passkey/register) → 403 'nur mit Sitzung'")
+
+# Und der legitime Weg desselben Kontos läuft weiter — sonst wäre der Riegel eine Sackgasse.
+c7 = TestClient(app4)
+c7.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+assert c7.post("/auth/login", data={"username": "opfer", "password": "geheim123", "next": "/",
+                                    "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
+               follow_redirects=False).status_code == 303
+seite = c7.get("/auth/totp/setup", headers={"Accept": "text/html"})
+assert seite.status_code == 200, seite.status_code
+geheim = re.search(r"<div class=mono>([A-Z2-7]+)</div>", seite.text)
+assert geheim, seite.text[:200]
+r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim.group(1)).now()},
+            headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
+assert r.status_code == 200 and r.json() == {"ok": True}, r.text[:120]
+assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
+ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
 
 os.remove(db)
 os.remove(db2)
 os.remove(db3)
+os.remove(db4)
 print("\nSTEP-UP OK ✅")

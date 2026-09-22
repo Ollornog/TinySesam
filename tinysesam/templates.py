@@ -577,18 +577,32 @@ def _stepup_field(auth, method, first) -> str:
 
 def _reauth(auth, ctx) -> str:
     """ctx: next, error, username, methods (Liste aus auth.stepup_options).
-    Sudo-Frische: erneut einen Faktor bestätigen (Step-up)."""
+    Sudo-Frische: erneut einen Faktor bestätigen (Step-up).
+
+    Eine **leere** Methodenliste ist eine Aussage und kein fehlender Wert: Dieses Konto hat
+    nichts, womit es hier bestätigen könnte (`stepup_strict`, oder noch gar kein Faktor
+    eingerichtet). Dann steht hier KEIN Formular. Vorher fiel die leere Liste auf
+    `["password"]` zurück und die Seite bot ein Passwortfeld an, das ein rein föderiertes
+    Konto nicht hat — der Nutzer probierte etwas, das nicht gelingen kann, und jeder Versuch
+    zählte in denselben Sperr-Topf. Fehlt der Schlüssel ganz (eigene Aufrufer, Vorschau),
+    bleibt es beim Passwortfeld.
+    """
     t = auth.t
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    methods = ctx.get("methods") or ["password"]
+    methods = ctx.get("methods")
+    methods = ["password"] if methods is None else list(methods)
+    kopf = (f"<h1>{_e(t('reauth.title'))}</h1>"
+            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}")
+    fuss = f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>"
+    if not methods:
+        return _page(auth, t("reauth.title"), kopf + fuss)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
-    body = (f"<h1>{_e(t('reauth.title'))}</h1>"
-            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}"
-            f"<form method=post action='/auth/reauth'>"
+    body = (kopf
+            + f"<form method=post action='/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>")
+            + fuss)
     return _page(auth, t("reauth.title"), body)
 
 
