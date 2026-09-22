@@ -606,7 +606,7 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   `oidc_clients` verhält sich um kein Byte anders als in 0.18.0.
 
 - **Der Widerruf folgt dem Provider** (`oidc_revalidate_minutes`, Vorgabe 0 = aus; das Preset
-  `oidc_gateway()` setzt 15). Ohne Nachprüfung galt eine einmal erteilte Freigabe bis zum Ablauf
+  `oidc_gateway()` setzt 60). Ohne Nachprüfung galt eine einmal erteilte Freigabe bis zum Ablauf
   der Sitzung — in der Vorgabe **sieben Tage**. Ein Gruppenentzug im Provider wirkte so lange
   nicht, und genau das ist der Fall, für den man die Freigabe dort pflegt. Läuft die Frist ab,
   nimmt die nächste Anfrage den Weg über den Provider; dessen Sitzung besteht in aller Regel
@@ -616,6 +616,12 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
   Bewusst **ohne Refresh-Token in der Datei**: Der stille Weg über einen Refresh-Grant hätte ein
   benutzbares Geheimnis je Sitzung in die Datenbank gelegt. Der Sprung über den Provider braucht
   keines und beantwortet dieselbe Frage.
+
+  Die Stunde ist eine Abwägung, keine Formel: Jede Nachprüfung ist ein Sprung über den Provider,
+  und der ist für einen Menschen am Browser ein Flackern, für ein offenes Formular oder eine
+  laufende XHR-Anfrage dagegen ein Bruch. Gegenüber sieben Tagen ist die Größenordnung das
+  Entscheidende; zwischen 15 und 60 Minuten entscheidet sich selten ein Entzug, wohl aber,
+  wie oft es jemanden mitten in der Arbeit trifft.
 
 - **Gateway-Umgebungsvariablen** dafür: `TINYSESAM_OIDC_CLIENTS` als JSON oder je Host
   `TINYSESAM_OIDC_CLIENT_<HOST>_ID`/`_SECRET`. Der Hostname aus dem Variablennamen wird gegen

@@ -19,7 +19,7 @@ Konfiguration per Umgebungsvariablen:
                                                 "client_secret": "..."}}
                                                Alternativ je Host zwei Variablen, siehe unten.
     TINYSESAM_OIDC_REVALIDATE_MINUTES          Frist, nach der die Freigabe beim Provider
-                                               nachgeprüft wird (Default 15, 0 = nie)
+                                               nachgeprüft wird (Default 60, 0 = nie)
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
@@ -140,7 +140,7 @@ def config_from_env() -> TinySesamConfig:
         security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),
         trusted_proxies=_split("TINYSESAM_TRUSTED_PROXIES") or ["127.0.0.1/32", "::1/128"],
         clients=clients_from_env(),
-        revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "15") or 0),
+        revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
     )
 
 
@@ -231,7 +231,7 @@ Konfiguriert wird über Umgebungsvariablen:
   TINYSESAM_TRUSTED_PROXIES      Netz des Proxys, z.B. 172.28.0.0/16
   TINYSESAM_OIDC_CLIENTS         mehrere Anwendungen als JSON (Host → Client)
   TINYSESAM_OIDC_CLIENT_<HOST>_ID / _SECRET   dasselbe je Host einzeln
-  TINYSESAM_OIDC_REVALIDATE_MINUTES           Frist der Nachprüfung (Default 15)
+  TINYSESAM_OIDC_REVALIDATE_MINUTES           Frist der Nachprüfung (Default 60)
   TINYSESAM_DB                   Pfad der Datenbank
   TINYSESAM_HOST / _PORT         Bindeadresse (Vorgabe 0.0.0.0:8000)
 
