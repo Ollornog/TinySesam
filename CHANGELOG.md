@@ -54,6 +54,14 @@ Getroffen hätte es genau die Installationen, für die der Fallback gebaut ist.
 
 ### Sicherheit
 
+- **Das OIDC-Discovery-Dokument wird jetzt gegen den konfigurierten Issuer geprüft.** Bisher nahm
+  TinySesam `issuer`, `token_endpoint` und `jwks_uri` ungeprüft aus dem Dokument und folgte beim Abruf
+  auch Umleitungen — ein 3xx auf dem Well-Known-Pfad hätte genügt, um alle drei zu ersetzen, und die
+  ID-Token-Prüfung hätte gegen den Issuer *aus dem Dokument* geprüft (RFC 8414 §3.3, OIDC Discovery §4.3
+  verlangen den Vergleich). Jetzt: kein Redirect, nur 200, und `issuer` muss `oidc_issuer` entsprechen —
+  sonst `ConfigError` mit beiden Werten. Der Schlüssel, unter dem Konten in der Datenbank liegen, bleibt
+  der Issuer aus dem Dokument; er ist durch den Vergleich jetzt derselbe wie in der Konfiguration.
+  Gefunden im dritten Audit (PocketID-Symbiose, RB-03).
 - **CodeQL-Bestand bereinigt.** 61 offene Alerts lagen auf `main`, unbewertet. Sie tun nichts — bis ein Pull Request eine
   ihrer Zeilen berührt und der Merge an einem `note`-Thread hängt. Durchgesehen ([T-12](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-12-codeql-bestand.md)):
   **ein echter Fund** — `examples/showcase.py` setzte den Benutzernamen unescaped in die Demo-Seiten
