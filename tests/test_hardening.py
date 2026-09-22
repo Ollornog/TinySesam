@@ -70,9 +70,12 @@ app2.include_router(auth2.router())
 OPFER_PW = "Opfer-Passwort-2026"
 ANG_PW = "Angreifer-Passwort-1"
 uid_opfer = auth2.create_user("chef", OPFER_PW, email=_mail("chef"), is_admin=True)
-# Die Kollision entsteht hier über create_user (Admin-Weg) — damit hängt diese Prüfung NICHT
-# daran, ob die Selbstregistrierung den zweiten Namensraum inzwischen kreuzweise absichert.
-uid_ang = auth2.create_user(_mail("chef"), ANG_PW, email=_mail("eve"))
+# Die Kollision entsteht über den Store, also am Wächter vorbei — sie stellt damit eine
+# Datenbank von VOR R4-12 dar (Altbestand). Seit R4-12 sperrt `create_user` die beiden
+# Namensräume kreuzweise, eine neue Kollision kann über die API nicht mehr entstehen; eine
+# bestehende wird aber nicht rückwirkend aufgelöst — genau dagegen schützt die ID-Prüfung hier.
+uid_ang = auth2.store.create_user(_mail("chef"), email=_mail("eve"))
+auth2.set_password(uid_ang, ANG_PW)
 
 # Vorbedingung: Die Kennung des Angreifers zeigt tatsächlich auf das fremde Konto. Ohne sie
 # liefe der Angriff ins Leere und der Test bewiese nichts.
