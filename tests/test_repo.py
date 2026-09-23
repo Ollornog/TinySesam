@@ -343,9 +343,16 @@ assert not tabelle, "Kit-Prüfung in keiner oder mehreren Listen:\n  " + "\n  ".
 schluessel = hygiene.pruefe_policy_schluessel_gelesen(POLICY)
 assert not schluessel, "Policy-Schlüssel ohne Leser:\n  " + "\n  ".join(schluessel)
 
+# Kit 0.18: Nichts wird von Dritten nachgeladen (PO-Regel 2026-09-23). Ein Link ist eine Tür, ein
+# `src` ist ein Bote: beanstandet werden src/srcset, <link href>, url(), @import, fetch()/import(),
+# <iframe src> — nie ein <a href>. Grenze: was JavaScript zur Laufzeit zusammenbaut, sieht diese
+# Prüfung nicht.
+fremd = hygiene.pruefe_keine_fremdressourcen(ROOT, FILES, POLICY)
+assert not fremd, "Ressourcen von Dritten im Markup:\n  " + "\n  ".join(fremd)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.17.4: jede Prüfung gerufen, keine Ausnahme nötig")
+print("  Kit 0.18.0: jede Prüfung gerufen, keine Ausnahme nötig")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
