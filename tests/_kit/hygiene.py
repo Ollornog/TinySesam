@@ -13,6 +13,7 @@ so passt derselbe Code in ein `assert not pruefe_...(...)` wie in ein sammelndes
 from __future__ import annotations
 
 import ast
+import glob
 import hashlib
 import json
 import os
@@ -120,6 +121,12 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
     aber nicht den des nächsten Kunden.
     """
     muster = [re.compile(m, re.IGNORECASE) for m in policy["private_muster"]]
+    # Der Domain-Anker seit 0.17.0: eine Subdomain ist nur dann ein Ausschnitt UNSERER
+    # Karte, wenn sie unter EINER UNSERER Domains liegt. Das alte Muster fragte "dreiteilig?"
+    # und traf damit jede fremde Website (135 Fehlalarme in einem Repo mit Normen-Katalog).
+    eigene = frozenset(policy.get("eigene_domains_sha256_16", []))
+    unter_eigener = re.compile(
+        r"(?<![\w.@-])(?:[a-z0-9-]+\.)+([a-z0-9-]+)\.[a-z]{2,6}(?![\w-])", re.IGNORECASE)
     eigen = eigener_name_sha256 or []
     if isinstance(eigen, str):
         eigen = [eigen]
@@ -139,6 +146,13 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
             for w in wort.findall(sauber.lower()):
                 if hashlib.sha256(w.encode()).hexdigest()[:16] in namen:
                     treffer.append(f"{rel}:{n}: verbotener Name")
+            for m in unter_eigener.finditer(sauber):
+                eltern = m.group(1).lower()
+                # `www.<eigene>` ist der Alias der Website, kein Dienst.
+                if _ist_eigene_identitaet(m.group(0), policy):
+                    continue
+                if hashlib.sha256(eltern.encode()).hexdigest()[:16] in eigene:
+                    treffer.append(f"{rel}:{n}: Dienst-Subdomain unter eigener Domain")
     return treffer
 
 
@@ -347,19 +361,81 @@ def _ist_generiert(rel: str, policy: dict) -> bool:
     return any(re.search(m, rel) for m in policy.get("generierte_dateien", []))
 
 
+def _ist_belegstelle(rel: str, belegstellen: list[str] | None) -> bool:
+    """Verzeichnis, das NUR Fundstellen enthaelt — Normen, Gesetze, Quellenverzeichnisse.
+
+    Wie `_ist_generiert`, andere Begruendung: der Inhalt kommt von Dritten, und wer eine
+    Gesetzesfundstelle anonymisiert, zerstoert den Beleg.
+
+    ⚠️ Gilt NUR fuer Adressen, nicht fuer `pruefe_geheimnisse`. Und ein Muster ist so eng wie
+    moeglich — `pruefe_belegstellen_eng` prueft das, weil ein zu weites Muster den naechsten
+    echten Befund mit derselben Bewegung verdeckt, mit der es die Fehlalarme entfernt.
+    """
+    return any(re.search(m, rel) for m in (belegstellen or []))
+
+
+def _ist_eigene_identitaet(host: str, policy: dict) -> bool:
+    r"""Die NACKTE eigene Domain (und ihr `www`) ist Identitaet, keine Karte.
+
+    WARUM (2026-09-23, gemeldet von der Kundenrepo-Session): `eigene_domains_sha256_16` las bis
+    dahin nur `pruefe_private_infrastruktur`. Die Adresspruefungen kannten die Liste nicht und
+    meldeten die eigene Produktdomain als fremden Host — 8 von 96 verbliebenen Treffern in einem
+    Kundenrepo.
+
+    Die beiden Pruefungen brauchen die Liste in ENTGEGENGESETZTER Richtung, und genau das macht
+    sie wertvoll:
+
+    | | eigene Domain | fremde Domain |
+    |---|---|---|
+    | `pruefe_private_infrastruktur` | Subdomain darunter = ROT | egal wie viele Punkte = gruen |
+    | `pruefe_adressen` | nackte Form = GRUEN (Identitaet) | je nach Kontext |
+
+    ⚠️ **Warum NICHT `erlaubte_hosts`:** Diese Liste ist eine Subdomain-Wildcard
+    (`(?:^|\.)…$`) — ein Eintrag dort haette `test.<eigene-domain>` still mitfreigegeben, also
+    genau den Fund, fuer den der Domain-Anker gebaut wurde. Die falsche Tuer, mit demselben
+    Ergebnis wie die alte `erlaubte_hosts`-Verdeckungsfalle.
+
+    **`www` gilt mit, und das ist eine KEHRTWENDE gegenueber 0.17.0**, wo `www.<eigene>` bewusst
+    rot war. Die Begruendung damals: "seit dem Domain-Anker ist `www` genauso eine Subdomain wie
+    jede andere". Das war formal richtig und sachlich falsch. Die Hausregel trennt nicht nach der
+    Form, sondern nach der Sache: erlaubt ist, was zur **Identitaet** gehoert (Autor,
+    Impressums-Mail, Repo-URL, Projektname), verboten ist, was einen **Dienst** verraet. `www` ist
+    kein Dienst, sondern der kanonische Alias der Website selbst — meist ein Redirect auf die
+    nackte Domain, und die steht im Impressum. `paperless.<eigene>` verraet, wo ein Paperless
+    laeuft; `www` verraet nichts, was das Impressum nicht schon sagt.
+
+    (Nicht zu verwechseln mit dem `www`-Behelf aus 0.16.0: der stand fuer FREMDE Domains und
+    existierte nur, weil das Muster Namensteile zaehlte. Der ist mit 0.17.0 entfallen und kommt
+    nicht zurueck. Hier geht es um EIGENE Domains und um die Sache, nicht um die Punktzahl.)
+    """
+    eigene = frozenset(policy.get("eigene_domains_sha256_16", []))
+    if not eigene:
+        return False
+    labels = host.lower().rstrip(".").split(".")
+    if len(labels) < 2:
+        return False
+    if hashlib.sha256(labels[-2].encode()).hexdigest()[:16] not in eigene:
+        return False
+    # Nackt (`domain.tld`) oder genau `www.domain.tld` — jede andere Subdomain ist ein Dienst.
+    return labels[:-2] in ([], ["www"])
+
+
 def pruefe_adressen(root: str, dateien: list[str], policy: dict,
-                    zusaetzliche_hosts: list[str] | None = None) -> list[str]:
+                    zusaetzliche_hosts: list[str] | None = None,
+                    belegstellen: list[str] | None = None) -> list[str]:
     """Nur neutrale Beispieladressen (RFC 2606) in Doku und Code."""
     hosts = list(policy["erlaubte_hosts"]) + list(zusaetzliche_hosts or [])
     erlaubt = re.compile(r"(?:^|\.)(?:" + "|".join(hosts) + r")$", re.IGNORECASE)
     url = re.compile(r"https?://([a-z0-9.-]+)", re.IGNORECASE)
     treffer = []
     for rel, inhalt in _texte(root, dateien, policy):
-        if _ist_generiert(rel, policy):
+        if _ist_generiert(rel, policy) or _ist_belegstelle(rel, belegstellen):
             continue
         for host in url.findall(inhalt):
             # Regex-Literale im Frontend enthalten "https?://" ohne echten Host.
             if "." not in host or not re.search(r"[a-z]", host, re.IGNORECASE):
+                continue
+            if _ist_eigene_identitaet(host, policy):
                 continue
             if not erlaubt.search(host):
                 treffer.append(f"{rel}: {host}")
@@ -941,6 +1017,16 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
     angeboten = {n for n, _ in inspect.getmembers(sys.modules[__name__], inspect.isfunction)
                  if n.startswith("pruefe_")}
     angeboten.discard("pruefe_kit_prueffunktionen_gerufen")  # sich selbst nicht fordern
+    # Pruefungen ANDERER Kit-Module — die Introspektion oben sieht sie nicht. Sie war der
+    # blinde Fleck: `manifest.pruefe` scheiterte an beidem, Modul UND Namenspraefix.
+    #
+    # NUR wenn das Modul im Repo auch LIEGT. `repokit sync` verteilt heute alle Module in
+    # jedes Repo, aber der Plan kann sich aendern, und ein Repo, das ein Modul nicht hat,
+    # kann dessen Pruefung nicht rufen — eine Forderung waere dort ein Fehlalarm, und ein
+    # Fehlalarm ist der Anfang jeder Ausnahmeliste, die spaeter etwas Echtes verdeckt.
+    for modul, funktion in AUSGELIEFERTE_PRUEFUNGEN:
+        if os.path.exists(os.path.join(root, testverzeichnis, "_kit", f"{modul}.py")):
+            angeboten.add(f"{modul}.{funktion}")
 
     quelle = []
     wurzel = os.path.join(root, testverzeichnis)
@@ -959,7 +1045,10 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
         if name in ausgenommen:
             continue
         # Der Aufruf, nicht die blosse Erwähnung in einem Kommentar.
-        if not re.search(rf"\b{re.escape(name)}\s*\(", text):
+        # `modul.funktion` wird als `manifest.pruefe(` ODER `pruefe(` nach einem
+        # `from _kit import manifest` gerufen — beide Formen gelten.
+        kurz = name.split(".")[-1]
+        if not re.search(rf"(?:\b{re.escape(name)}|\b{re.escape(kurz)})\s*\(", text):
             treffer.append(f"{name} liegt im Kit, wird aber nirgends aufgerufen "
                            f"(rufen oder mit Grund in `ausgenommen` eintragen)")
 
@@ -1142,9 +1231,24 @@ def _host_kandidaten(inhalt: str, ist_python: bool) -> set[str]:
             baum = ast.parse(inhalt)
         except SyntaxError:
             return aus_text(inhalt)
+        # dict-SCHLUESSEL sind Nachschlage-Zeichen, keine Werte — und nie ein Hostname.
+        # Gemeldet 2026-09-23: `{"admin.app": "App"}` in einem Uebersetzungskatalog. Der AST
+        # sieht ein String-Literal, also genau die Menge, die man extrahieren will; die
+        # STELLE unterscheidet es.
+        # ⚠️ Nur die Schluessel, nicht das ganze dict: der echte Fund, der diese Pruefung
+        # ausgeloest hat, war ein dict-WERT (`{"domains": "<kunde>.at"}`). Wer dict-Literale
+        # pauschal ueberspringt, verdeckt genau den Fall, fuer den sie gebaut wurde.
+        schluessel = set()
+        for k in ast.walk(baum):
+            if isinstance(k, ast.Dict):
+                for kk in k.keys:
+                    if isinstance(kk, ast.Constant) and isinstance(kk.value, str):
+                        schluessel.add(kk.value)
         roh: set[str] = set()
         for k in ast.walk(baum):
             if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                if k.value in schluessel:
+                    continue
                 roh |= aus_text(k.value)
         for zeile in inhalt.splitlines():
             if "#" in zeile:
@@ -1154,7 +1258,8 @@ def _host_kandidaten(inhalt: str, ist_python: bool) -> set[str]:
 
 def pruefe_blanke_adressen(root: str, dateien: list[str], policy: dict,
                            zusaetzliche_hosts: list[str] | None = None,
-                           grundstock: list[str] | None = None) -> list[str]:
+                           grundstock: list[str] | None = None,
+                           belegstellen: list[str] | None = None) -> list[str]:
     """Fremde Hostnamen OHNE `https://` davor — die Lücke, durch die ein Kundenname fiel.
 
     WARUM (2026-09-22): In einem **öffentlichen** Repo standen ein realer Firmenname
@@ -1187,11 +1292,13 @@ def pruefe_blanke_adressen(root: str, dateien: list[str], policy: dict,
 
     treffer = []
     for rel, inhalt in _texte(root, dateien, policy):
-        if _ist_generiert(rel, policy):
+        if _ist_generiert(rel, policy) or _ist_belegstelle(rel, belegstellen):
             continue
         for host in sorted(_host_kandidaten(inhalt, rel.endswith(".py"))):
             klein = host.lower()
             if klein in gesegnet or erlaubt.search(host):
+                continue
+            if _ist_eigene_identitaet(host, policy):
                 continue
             # Falle 1: der Treffer ist ein PRAEFIX eines Dateinamens (`login.de.html`).
             if re.search(rf"{re.escape(host)}\.[a-z0-9]{{1,5}}\b", inhalt, re.IGNORECASE):
@@ -1203,3 +1310,244 @@ def pruefe_blanke_adressen(root: str, dateien: list[str], policy: dict,
                            f"(RFC 2606: .example/.invalid/.test) oder, wenn er dort "
                            f"hingehoert, nach Durchsicht in den Grundstock aufnehmen")
     return sorted(set(treffer))
+
+
+def pruefe_belegstellen_eng(root: str, dateien: list[str],
+                            belegstellen: list[str] | None = None) -> list[str]:
+    """Trifft ein Belegstellen-Muster auch Code oder Konfiguration?
+
+    WARUM (2026-09-23): Eine Belegstelle nimmt Verzeichnisse von den Adresspruefungen aus.
+    Das ist richtig — und es ist die naechste Verdeckungsfalle. Belegt an einem Kundenrepo:
+    67 Adress-Treffer lagen in `docs/claude`, **alle in derselben Datei**, die den einzigen
+    echten Infrastruktur-Befund trug. Ein pauschales `docs/**` haette ihn mit derselben
+    Bewegung verdeckt, mit der es die Fehlalarme entfernt.
+
+    *Die Verdeckungsfalle wechselt nur das Gewand: erst `erlaubte_hosts`, dann `belegstellen`.*
+
+    ⚠️ **WAS DIESE PRUEFUNG NICHT KANN — und warum sie es nicht versucht.** Der erste Entwurf
+    hatte zusaetzlich eine ANTEILS-Schwelle: ein Muster, das mehr als ein Viertel der Dateien
+    abdeckt, sei zu weit. Beim ersten Lauf meldete sie `docs/research/` — ein Verzeichnis, das
+    genau eine korrekte Belegstelle IST. In dem Kundenrepo deckt es 659 von 1331 Dateien ab,
+    also 49%; bei einem dokumentationslastigen Produkt ist ein hoher Anteil **normal**. Die
+    Schwelle haette also die richtige Belegstelle verboten und die falsche nicht gefunden.
+    Sie ist ersatzlos entfallen.
+
+    **Ob ein Verzeichnis NUR Fundstellen enthaelt, ist mechanisch nicht entscheidbar.** Die
+    Datei, die den echten Befund trug, war eine `.md` wie alle anderen darin. Deshalb bleibt
+    genau ein Kriterium, und das ist ein strukturelles: **ein Muster, das Code oder
+    Konfiguration trifft, ist zu weit** — dort steht eine Adresse als Einstellung, nicht als
+    Beleg. Der Rest ist Sichtung durch einen Menschen, und die Liste gehoert entsprechend eng.
+    """
+    treffer = []
+    if not belegstellen:
+        return treffer
+    code = (".py", ".sh", ".yml", ".yaml", ".go", ".php", ".js", ".ts", ".toml",
+            ".cfg", ".ini", ".env", ".sql", ".tf", ".j2")
+    for muster in belegstellen:
+        try:
+            pat = re.compile(muster)
+        except re.error as fehler:
+            treffer.append(f"Belegstelle {muster!r} ist kein gueltiger Ausdruck: {fehler}")
+            continue
+        getroffen = [d for d in dateien if pat.search(d)]
+        if not getroffen:
+            treffer.append(f"Belegstelle {muster!r} trifft keine einzige Datei — "
+                           f"veraltet oder Tippfehler? Eine Ausnahme ohne Wirkung "
+                           f"taeuscht Sorgfalt vor.")
+            continue
+        mit_code = sorted(d for d in getroffen
+                          if d.endswith(code)
+                          or os.path.basename(d) in ("Dockerfile", "Makefile"))
+        if mit_code:
+            treffer.append(
+                f"Belegstelle {muster!r} trifft auch Code/Konfiguration "
+                f"({', '.join(mit_code[:3])}{' …' if len(mit_code) > 3 else ''}) — dort steht "
+                f"eine Adresse als Einstellung, nicht als Beleg, und die Ausnahme wuerde sie "
+                f"verdecken. Enger fassen.")
+    return treffer
+
+
+
+# Die ausgelieferten Pruefungen — AUSDRUECKLICH, nicht per Introspektion.
+#
+# WARUM DIESE TABELLE (2026-09-23): `pruefe_kit_prueffunktionen_gerufen` sammelte seine
+# Soll-Liste ueber `inspect.getmembers(sys.modules[__name__])` und filterte auf den Praefix
+# `pruefe_`. Damit sah er nur Funktionen DIESES Moduls mit DIESEM Namen — und uebersah
+# `manifest.pruefe` vollstaendig: anderes Modul, und sie heisst `pruefe`, nicht `pruefe_…`.
+#
+# Folge, gemessen: Ein Repo trug die Manifest-Pruefung im Baum und rief sie **nie**. Genau die
+# Leiche, gegen die der Waechter gebaut ist — er hat sie nicht gemeldet. Der Satz aus seinem
+# eigenen Docstring ("eine Pruefung, die niemand ruft, ist keine") galt fuer ihn selbst nicht.
+#
+# Die Lehre ist allgemeiner als der Fall: **wer "was als Pruefung zaehlt" implizit ueber eine
+# Namenskonvention definiert, baut die Blindheit mit ein.** Deshalb steht es hier als Liste.
+# Wer eine Pruefung hinzufuegt, traegt sie ein — und `pruefe_tabelle_vollstaendig` unten
+# vergleicht die Tabelle gegen das Modul, damit auch das nicht am Vorsatz haengt.
+AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
+    ("manifest", "pruefe"),
+    # Die SAMMELFUNKTION, nicht ihre Teile — sie ist die ausgelieferte Schnittstelle.
+    #
+    # ⚠️ KORREKTUR 0.17.1, und die Lehre ist bitter, weil sie meine eigene ist: 0.17.0
+    # trug hier `pruefe_backlog` und `pruefe_keine_zyklen` einzeln ein, mit der Begruendung
+    # "ueber sieben Repos gemessen, in KEINEM gerufen". Die Messung war ein grep nach
+    # `pruefe_backlog\s*\(` — und `backlog.alle_pruefungen()` ruft beide auf. ALLE sieben
+    # Repos riefen sie also, ueber genau die Schnittstelle, die dafuer gebaut ist.
+    #
+    # Die Zahl war ein Werkzeug-Artefakt, kein Befund. Und es ist DERSELBE Fehler, gegen
+    # den dieser ganze Waechter gebaut ist — "Funktion ist nicht Aufrufer" — nur einmal
+    # um die Ecke: wer nach dem Namen der Funktion sucht, findet den Aufruf nicht, der
+    # ueber eine Sammelfunktion laeuft. Beim Rollout fiel es sofort auf, weil sechs Repos
+    # gleichzeitig rot wurden. *Sechs gleichzeitige Fehlalarme sind ein Befund ueber die
+    # Pruefung, nicht ueber die Repos.*
+    ("backlog", "alle_pruefungen"),
+]
+
+# Angeboten, aber NICHT gefordert — und jedes mit dem Grund, warum nicht.
+#
+# Die Unterscheidung ist noetig, weil "ausgeliefert" zwei verschiedene Dinge heisst.
+# Eine Hygiene- oder Backlog-Pruefung braucht nichts als das Repo; wer sie nicht ruft,
+# laesst sie einfach liegen. Ein Header-Pruefer braucht eine **HTTP-Antwort** — ein Repo
+# ohne Web-Dienst kann ihn nicht rufen, und ihn dort zu fordern erzwaenge in jedem Repo
+# fuenf Ausnahmen mit Begruendung. Eine Ausnahmeliste, die in jedem Repo fuenf Zeilen
+# lang ist, ist wieder genau die Verdeckungsfalle, gegen die der Waechter gebaut ist.
+#
+# ⚠️ Diese Liste ist KEIN Ablagefach fuer Unbequemes. Der Grund muss die Form der
+# Funktion betreffen ("braucht eine Antwort, die nur eine laufende App liefert"),
+# nicht die Bequemlichkeit des Repos ("haben wir noch nicht eingebaut") — das Zweite
+# gehoert als Ausnahme MIT Grund ins jeweilige Repo, wo es sichtbar bleibt.
+KIT_WERKZEUGE: list[tuple[str, str, str]] = [
+    ("headers", "pruefe_cookie_flags",
+     "braucht geparste Set-Cookie-Koepfe einer echten Antwort"),
+    ("headers", "pruefe_security_header",
+     "braucht die Antwort-Koepfe eines laufenden Dienstes"),
+    ("headers", "pruefe_csp", "braucht einen CSP-Wert aus einer Antwort"),
+    ("headers", "pruefe_hsts",
+     "gehoert auf die Proxy-/Deploy-Ebene, nicht in eine App-Suite (s. Docstring)"),
+    ("headers", "pruefe_kein_versions_leak",
+     "braucht die Antwort-Koepfe eines laufenden Dienstes"),
+]
+
+
+def pruefe_policy_schluessel_gelesen(policy: dict,
+                                     kit_verzeichnis: str | None = None) -> list[str]:
+    """Traegt die Policy einen Schluessel, den KEIN Kit-Modul liest?
+
+    WARUM (2026-09-23, gefunden im eigenen 0.17.0): Die Policy bekam den Schluessel
+    `belegstellen` mit leerem Vorgabewert — und **nichts las ihn**. Die Belegstellen gehen
+    als Parameter in den Aufruf (`pruefe_blanke_adressen(..., belegstellen=[...])`), genau
+    wie `grundstock`, weil die Policy-Datei vom Manifest bewacht wird: ein Repo, das dort
+    eintraegt, bricht seine eigene Manifest-Pruefung.
+
+    Der tote Schluessel war also nicht bloss nutzlos, er war eine **falsche Einladung** —
+    er zeigte auf den einen Ort, an dem ein Repo seine Belegstellen NICHT eintragen kann.
+
+    Dieselbe Sorte Befund wie "ausgeliefert ist nicht gerufen", nur fuer **Daten** statt
+    Funktionen: *ein Konfigurationswert, den niemand liest, ist keine Konfiguration — er ist
+    eine Zusage, die nichts einloest.*
+
+    Geprueft wird per Textsuche nach `policy["<name>"]` und `policy.get("<name>")` ueber alle
+    Kit-Module. Schluessel, die mit `_` beginnen, sind Kommentare und zaehlen nicht.
+    """
+    treffer = []
+    wurzel = kit_verzeichnis or HIER
+    quellen = []
+    for datei in sorted(glob.glob(os.path.join(wurzel, "*.py"))):
+        try:
+            with open(datei, encoding="utf-8") as fh:
+                quellen.append(fh.read())
+        except OSError as fehler:
+            treffer.append(f"Kit-Modul {os.path.basename(datei)} nicht lesbar: {fehler}")
+    quelle = "\n".join(quellen)
+    if not quelle:
+        treffer.append("Kein Kit-Modul gefunden — die Pruefung haette nichts gemessen "
+                       "und waere aus dem falschen Grund gruen")
+        return treffer
+
+    for name in sorted(k for k in policy if not str(k).startswith("_")):
+        muster = (rf'\[\s*["\']{re.escape(name)}["\']\s*\]'
+                  rf'|\.get\(\s*["\']{re.escape(name)}["\']')
+        if not re.search(muster, quelle):
+            treffer.append(
+                f"Policy-Schluessel {name!r} wird von keinem Kit-Modul gelesen — entfernen "
+                f"oder verdrahten. Ein Wert, den niemand liest, ist eine Zusage, die nichts "
+                f"einloest; steht er an einer Stelle, die ein Repo nicht aendern DARF "
+                f"(Manifest), ist er ausserdem eine falsche Einladung.")
+    return treffer
+
+
+def pruefe_tabelle_vollstaendig(kit_verzeichnis: str | None = None) -> list[str]:
+    """Kennt die Tabelle JEDE Pruefung der anderen Kit-Module?
+
+    WARUM (2026-09-23): `AUSGELIEFERTE_PRUEFUNGEN` schliesst die Luecke, die die
+    Introspektion liess — aber als **handgefuehrte Liste**. Wer morgen eine Pruefung in
+    `backlog.py` hinzufuegt und die Zeile hier vergisst, hat die alte Blindheit zurueck,
+    nur eine Ebene hoeher. Genau so entstand der erste Fall: der Waechter wurde gebaut,
+    `manifest.pruefe` stand nicht drin, und niemand merkte es, weil nichts es prueft.
+
+    *Wer eine Liste einfuehrt, um eine Konvention zu ersetzen, muss die Liste pruefen —
+    sonst hat er die Konvention nur umbenannt.*
+
+    Deshalb vergleicht diese Funktion die Tabelle gegen den Quellbaum: jede oberste
+    `pruefe*`-Funktion eines Kit-Moduls ausser `hygiene` selbst muss in **genau einer**
+    der beiden Listen stehen. Sie liest per AST, importiert also nichts.
+    """
+    treffer = []
+    wurzel = kit_verzeichnis or HIER
+    gefordert = {(m, f) for m, f in AUSGELIEFERTE_PRUEFUNGEN}
+    werkzeug = {(m, f) for m, f, _ in KIT_WERKZEUGE}
+
+    for m, f, grund in KIT_WERKZEUGE:
+        if not str(grund).strip():
+            treffer.append(f"{m}.{f} steht als Werkzeug ohne Grund — ein Grund ist Pflicht")
+    for doppelt in sorted(gefordert & werkzeug):
+        treffer.append(f"{doppelt[0]}.{doppelt[1]} steht in BEIDEN Listen — gefordert "
+                       f"oder angeboten, nicht beides")
+
+    # ZWEI Mengen, und die Trennung ist der Kern: `alle` beantwortet "existiert die
+    # Tabellenzeile noch?" und darf am Namen NICHT haengen — sonst meldet die Pruefung
+    # `alle_pruefungen` als verschwunden, weil der Name nicht `pruefe` vorne hat. Genau
+    # der Praefix-Filter, dessen Blindheit dieser ganze Umbau behebt; er kroch beim ersten
+    # Versuch sofort wieder herein.
+    #
+    # `gefunden` beantwortet die andere Richtung — "gibt es eine Pruefung, die in keiner
+    # Liste steht?" — und DA ist der Praefix eine Heuristik mit **benannter Grenze**: eine
+    # neue `pruefe_*` faellt auf, eine neue `bewerte_*` nicht. Mechanisch ist "was ist eine
+    # Pruefung?" nicht entscheidbar; deshalb steht die Grenze hier, statt so zu tun, als
+    # gaebe es sie nicht.
+    alle: set[tuple[str, str]] = set()
+    gefunden = set()
+    # Was eine eingetragene Funktion SELBST ruft, gilt als abgedeckt — sonst meldet die
+    # Pruefung die Teile einer Sammelfunktion als "nicht eingetragen" und treibt genau
+    # die Einzel-Eintraege herbei, die in 0.17.0 sechs Repos rot machten (s. oben).
+    ueber_sammler: set[tuple[str, str]] = set()
+    for datei in sorted(glob.glob(os.path.join(wurzel, "*.py"))):
+        modul = os.path.splitext(os.path.basename(datei))[0]
+        if modul in ("hygiene", "__init__"):
+            continue
+        try:
+            with open(datei, encoding="utf-8") as fh:
+                baum = ast.parse(fh.read())
+        except (OSError, SyntaxError) as fehler:
+            treffer.append(f"Kit-Modul {modul} nicht lesbar: {fehler}")
+            continue
+        for knoten in baum.body:
+            if not isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            alle.add((modul, knoten.name))
+            if knoten.name.startswith("pruefe"):
+                gefunden.add((modul, knoten.name))
+            if (modul, knoten.name) in gefordert or (modul, knoten.name) in werkzeug:
+                for inner in ast.walk(knoten):
+                    if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name):
+                        ueber_sammler.add((modul, inner.func.id))
+
+    for m, f in sorted(gefunden - gefordert - werkzeug - ueber_sammler):
+        treffer.append(f"{m}.{f} ist eine Pruefung des Kits, steht aber in KEINER Liste — "
+                       f"in AUSGELIEFERTE_PRUEFUNGEN eintragen (dann muss jedes Repo sie "
+                       f"rufen) oder mit Grund in KIT_WERKZEUGE")
+    for m, f in sorted((gefordert | werkzeug) - alle):
+        if m == "hygiene":
+            continue
+        treffer.append(f"{m}.{f} steht in der Tabelle, existiert im Kit aber nicht "
+                       f"(umbenannt oder entfernt?)")
+    return treffer
