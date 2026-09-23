@@ -108,6 +108,9 @@ def build_admin_router(auth) -> APIRouter:
             # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
             # niemand mehr weiss.
             keys = auth.store.revoke_user_api_keys(uid)
+            # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
+            # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
+            auth.store.revoke_user_magic_tokens(uid)
         protokoll(request, "user_disable" if disabled else "user_enable",
               f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return {"ok": True}

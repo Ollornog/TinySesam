@@ -75,6 +75,50 @@ assert r.json()["status"] == "ok" and r.json()["version"][0].isdigit(), r.json()
 r2 = TestClient(happ, base_url="http://auth.example.com").get("/auth/login", follow_redirects=False)
 assert r2.status_code in (301, 307, 308), f"HTTPS-Zwang greift nicht mehr: {r2.status_code}"
 ok("/healthz: ohne Auth, 200 auch bei https_mode=force; andere Pfade werden umgeleitet")
+
+# ---------- /healthz sieht eine nur noch lesbare Datenbank (B6-4) ----------
+# Read-only-Mount, Rechte nach einem Rückspielen: Lesen geht, jede Anmeldung scheitert an ihrem
+# ersten INSERT. Ein `SELECT 1` meldete dabei 200 — Docker hielt den Container für gesund.
+import sqlite3  # noqa: E402
+hstore = happ.state.auth.store
+nur_lesen = sqlite3.connect(f"file:{hdb}?mode=ro", uri=True, check_same_thread=False)
+nur_lesen.row_factory = sqlite3.Row
+alt_db, hstore.db = hstore.db, nur_lesen
+# Ohne die Drossel der Probe (s. unten): Hier geht es um das Erkennen, nicht um die Frist.
+hstore.SCHREIBPROBE_SEK = 0
+hc = TestClient(happ, base_url="http://auth.example.com")
+r = hc.get("/healthz")
+assert r.status_code == 503 and r.json()["status"] == "degraded", (r.status_code, r.text)
+assert "readonly" not in r.text and "database" not in r.text, "Fehlertext gehört nicht ins Netz"
+assert hstore._one("SELECT 1 AS eins")["eins"] == 1, "Gegenprobe: Lesen muss hier noch gehen"
+# Dasselbe über den Schalter, den SQLite selbst dafür hat.
+hstore.db = alt_db
+hstore.db.execute("PRAGMA query_only=ON")
+assert hc.get("/healthz").status_code == 503
+hstore.db.execute("PRAGMA query_only=OFF")
+assert hc.get("/healthz").status_code == 200, "nach der Heilung wieder gesund"
+nur_lesen.close()
+ok("/healthz: nur lesbare Datenbank → 503 degraded (Lesen allein zählt nicht als gesund)")
+
+# ---------- /healthz ist flutbar, aber nicht teuer (A-B6-4-schreiblast) ----------
+# Ohne Anmeldung erreichbar: Ein Commit mit fsync unter Store._lock je Aufruf liess jeden, der
+# /healthz flutet, die Schreibsperre belegen, auf die Anmeldungen warten, und das WAL wachsen.
+del hstore.SCHREIBPROBE_SEK                     # zurück auf die Vorgabe der Klasse
+assert hstore.SCHREIBPROBE_SEK >= 1
+hstore._geschrieben = None                      # nächste Probe schreibt wirklich
+_befehle = []
+hstore.db.set_trace_callback(_befehle.append)
+for _ in range(200):
+    assert hc.get("/healthz").status_code == 200
+hstore.db.set_trace_callback(None)
+_schreibvorgaenge = sum(1 for b in _befehle if b.strip().upper() == "COMMIT")
+assert 1 <= _schreibvorgaenge <= 2, f"{_schreibvorgaenge} Schreibvorgänge für 200 Proben"
+# Die Drossel verdeckt keine kaputte Verbindung: Die Zwischenprobe liest trotzdem.
+_zu = sqlite3.connect(":memory:", check_same_thread=False); _zu.close()
+alt_db, hstore.db = hstore.db, _zu
+assert hc.get("/healthz").status_code == 503, "geschlossene Verbindung hinter der Drossel versteckt"
+hstore.db = alt_db
+ok(f"/healthz: 200 Proben → {_schreibvorgaenge} Commit(s); eine tote Verbindung fällt trotzdem sofort auf")
 os.remove(hdb)
 
 os.remove(db)

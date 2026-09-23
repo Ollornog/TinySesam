@@ -180,11 +180,18 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
     def healthz():
         """Ohne Anmeldung erreichbar — sonst könnte kein Orchestrator ihn benutzen.
 
-        Fragt die Datenbank mit einem `SELECT 1`. Vorher meldete er nur, dass der Prozess lebt:
-        Nach einem Rollback, bei vollem Volume oder falschen Dateirechten lieferte der Dienst
-        allen angemeldeten Nutzern 500, während Docker den Container dauerhaft als `healthy`
-        führte — kein Neustart, kein Alarm. Ein Wächter, der den wahrscheinlichsten Ausfall
-        nicht sehen kann, ist keiner.
+        Schreibt einmal in die Datenbank (`Store.schreibprobe()`). Ganz früher meldete er nur,
+        dass der Prozess lebt; danach fragte er mit `SELECT 1` — und das gelingt auch auf einer
+        nur lesbaren oder vollen Datenbank (B6-4). Nach einem Rollback, bei vollem Volume oder
+        falschen Dateirechten lieferte der Dienst allen Nutzern beim Anmelden 500, während
+        Docker den Container dauerhaft als `healthy` führte — kein Neustart, kein Alarm. Ein
+        Wächter, der den wahrscheinlichsten Ausfall nicht sehen kann, ist keiner.
+
+        Ohne Anmeldung erreichbar heisst auch: flutbar. Deshalb schreibt die Probe höchstens alle
+        `Store.SCHREIBPROBE_SEK` wirklich, dazwischen prüft sie nur die Verbindung — sonst belegte
+        jeder Aufruf die Schreibsperre, auf die Anmeldungen warten. Sie wartet wie jede Anmeldung
+        bis zu `Store.BUSY_TIMEOUT_MS` hinter einem fremden Schreiber; der HEALTHCHECK im
+        Dockerfile gibt ihr dafür mehr Zeit.
 
         Verraten wird trotzdem nichts: bei einem Defekt nur `status: "degraded"` und 503, nie
         die Fehlermeldung (die stünde sonst unauthentifiziert im Netz).
@@ -193,9 +200,10 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
 
         from . import current_version
         try:
-            auth.store._one("SELECT 1 AS eins")
+            auth.store.schreibprobe()
         except Exception as e:
-            security.seclog.error("Healthcheck: Datenbank nicht erreichbar (%s)", type(e).__name__)
+            security.seclog.error("Healthcheck: Datenbank nicht beschreibbar (%s: %s)",
+                                  type(e).__name__, e)
             return JSONResponse({"status": "degraded", "version": current_version()},
                                 status_code=503)
         return {"status": "ok", "version": current_version()}

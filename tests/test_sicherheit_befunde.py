@@ -2076,4 +2076,321 @@ r.check("eine neue Einrichtung lässt keine verwaisten Recovery-Codes stehen",
         auth_v.store.count_recovery_codes(uid_v) == 0,
         f"{auth_v.store.count_recovery_codes(uid_v)} Codes gelten weiter, "
         "obwohl sie zu keinem Authenticator mehr passen")
+# ── Ein Rückwärtssprung der Uhr belebte Abgelaufenes (B6-9) ──────────────────
+# NTP-Korrektur, ein Pi ohne Pufferbatterie, ein VM-Snapshot: Die Wanduhr springt zurück, und
+# jede Frist in der Datenbank wurde neu verhandelt — abgelaufene Sitzungen galten wieder, ein
+# verfallener Magic-Link liess sich einlösen, ein alter Step-up war wieder „frisch".
+from tinysesam import store as _store_mod  # noqa: E402
+
+# Die Uhr für sich, mit gestellter Wand- und Monotonzeit.
+_w, _m = [1000.0], [0.0]
+_u = _store_mod._Uhr(wand=lambda: _w[0], mono=lambda: _m[0])
+_folge = [_u.jetzt()]
+_w[0], _m[0] = 400.0, 10.0          # Sprung 600 s zurück, 10 s sind wirklich vergangen
+_folge.append(_u.jetzt())
+_w[0], _m[0] = 2000.0, 20.0         # die Wanduhr springt nach vorn (NTP nach dem Boot)
+_folge.append(_u.jetzt())
+r.check("die Uhr zählt nach einem Rückwärtssprung monoton weiter und folgt nach vorn",
+        _folge == [1000, 1010, 2000], f"{_folge}")
+
+auth_u, _ = _app()
+uid_u = auth_u.create_user("uhrzeit", password="geheim12345")
+tok_u = auth_u.store.create_session(uid_u, 3600, True, "password")
+roh_magic = auth_u.create_magic_token("login", user_id=uid_u, ttl_min=10)
+jetzt_u = _store_mod.jetzt()
+# Beides ist vor 60 s abgelaufen …
+auth_u.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
+                   (jetzt_u - 60, auth_u.store.session_hash(tok_u)))
+auth_u.store._exec("UPDATE magic_token SET expires_at=?", (jetzt_u - 60,))
+# … und dann springt die Wanduhr eine Stunde zurück.
+_echt = _store_mod._UHR.wand
+_store_mod._UHR.wand = lambda: _echt() - 3600
+try:
+    r.check("eine abgelaufene Sitzung bleibt nach einem Rückwärtssprung abgelaufen",
+            auth_u.store.get_session(tok_u) is None, "die Sitzung lebt wieder auf")
+    r.check("ein verfallener Magic-Link bleibt verfallen",
+            auth_u.redeem_magic(roh_magic, "login") is None, "der Link lässt sich wieder einlösen")
+finally:
+    _store_mod._UHR.wand = _echt
+
+# Über einen Neustart: Die Datenbank trägt den Stand. Frische Uhr, Wanduhr eine Stunde zurück.
+auth_n, _ = _app()
+uid_n = auth_n.create_user("neustart", password="geheim12345")
+tok_n = auth_n.store.create_session(uid_n, 3600, True, "password")
+jetzt_n = _store_mod.jetzt()
+auth_n.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
+                   (jetzt_n - 60, auth_n.store.session_hash(tok_n)))
+auth_n.store.db.close()
+_alte_uhr = _store_mod._UHR
+_store_mod._UHR = _store_mod._Uhr(wand=lambda: _echt() - 3600)
+_uhr_log = io.StringIO()
+_uhr_h = logging.StreamHandler(_uhr_log)
+logging.getLogger("tinysesam").addHandler(_uhr_h)
+try:
+    st_n = _store_mod.Store(auth_n.cfg.db_path)
+    r.check("nach einem Neustart mit zurückgestellter Uhr bleibt die Sitzung abgelaufen",
+            st_n.get_session(tok_n) is None, "der Neustart hat die Frist vergessen")
+    r.check("…und der Rückstand der Systemuhr steht im Log",
+            "Systemuhr" in _uhr_log.getvalue(), _uhr_log.getvalue()[:200])
+    st_n.db.close()
+finally:
+    _store_mod._UHR = _alte_uhr
+    logging.getLogger("tinysesam").removeHandler(_uhr_h)
+
+# Über einen Neustart bis zum zuletzt GESICHERTEN Stand, nicht nur bis zum letzten Ereignis
+# (A-B6-9-neustart): Ein Link und eine Sitzung, zwei Stunden vor dem Neustart abgelaufen, ohne
+# dass danach etwas angelegt wurde. Der Pi bootet mit einem Datum ein Jahr zurück. Vorher kannte
+# `Store()` nur MAX(created_at/ts) und hob die Uhr auf den Zeitpunkt der Anlage — beide galten
+# wieder für ihre volle Restfrist.
+_T = 1_800_000_000.0
+_wand_n = [_T]
+
+
+def _neustart_nach_2h(sichern):
+    """Legt Link + Sitzung bei T an, lässt 2 h vergehen, `sichern(store)` sichert (oder nicht),
+    startet mit einem Jahr zurückgestellter Uhr neu. → (link gilt?, sitzung gilt?, uhr_stand)"""
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _wand_n[0])
+    _wand_n[0] = _T
+    a = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "n.db"),
+                                  cookie_secure=False))
+    uid = a.create_user("pi", password="geheim12345")
+    roh = a.create_magic_token("login", user_id=uid, ttl_min=15)
+    tok = a.store.create_session(uid, 1800, False, "password")
+    _wand_n[0] = _T + 7200
+    sichern(a.store)
+    a.store.db.close()
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
+    a.store = _store_mod.Store(a.cfg.db_path)
+    gilt = (a.peek_magic(roh, purpose="login") is not None, a.store.get_session(tok) is not None)
+    # Ein Schreiber, dessen Uhr NICHT gehoben ist (ein zweiter Prozess auf derselben Datei, vor
+    # der Sicherung gestartet), darf den gesicherten Stand nicht nach unten überschreiben.
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
+    a.store.UHR_SICHERN_SEK = 0
+    a.create_user("nach-dem-boot")
+    stand = int(a.store.get_setting(a.store.UHR_STAND) or 0)
+    a.store.db.close()
+    return gilt + (stand,)
+
+
+def _per_healthcheck(st):
+    st._geschrieben = None                   # die Probe ist fällig, wie alle 30 s im Container
+    st.schreibprobe()
+
+
+def _per_schreibzugriff(st):
+    st.UHR_SICHERN_SEK = 0                   # „eine Minute ist vergangen"
+    st.set_setting("irgendwas", "1")
+
+
+logging.getLogger("tinysesam").addHandler(_uhr_h)
+try:
+    _hc = _neustart_nach_2h(_per_healthcheck)
+    _sz = _neustart_nach_2h(_per_schreibzugriff)
+finally:
+    _store_mod._UHR = _alte_uhr
+    logging.getLogger("tinysesam").removeHandler(_uhr_h)
+r.check("nach einem Neustart bleibt, was NACH dem letzten Ereignis ablief, abgelaufen "
+        "(Stand aus der Schreibprobe des Healthchecks)",
+        _hc[:2] == (False, False), f"Link gilt: {_hc[0]}, Sitzung gilt: {_hc[1]}")
+r.check("…ebenso mit dem Stand, den ein gewöhnlicher Schreibzugriff mitsichert",
+        _sz[:2] == (False, False), f"Link gilt: {_sz[0]}, Sitzung gilt: {_sz[1]}")
+r.check("ein Schreiber mit ungehobener Uhr setzt den gesicherten Stand nicht zurück",
+        _hc[2] >= _T + 7200 and _sz[2] >= _T + 7200, f"uhr_stand={_hc[2]}/{_sz[2]}")
+
+# `time.time` wird nicht beim Import gebunden (A-B6-9-zeitpatch): Eine einbettende App, die in
+# ihren Tests die Zeit vorstellt, stellt damit auch TinySesams Uhr vor. Gebunden sah TinySesam den
+# Patch nie — Sitzungen und Tokens liefen im Test der App nie ab.
+from unittest import mock  # noqa: E402
+import time as _time  # noqa: E402
+_store_mod._UHR = _store_mod._Uhr()          # frische Uhr: der Sprung soll im Prozess nicht bleiben
+try:
+    auth_p, _ = _app()
+    uid_p = auth_p.create_user("zeitpatch", password="geheim12345")
+    tok_p = auth_p.store.create_session(uid_p, 60, False, "password")
+    _echt_t = _time.time()
+    with mock.patch("time.time", lambda: _echt_t + 3600):
+        _gilt_p = auth_p.store.get_session(tok_p) is not None
+finally:
+    _store_mod._UHR = _alte_uhr
+r.check("mock.patch('time.time') nach vorn lässt eine Sitzung ablaufen",
+        not _gilt_p, "TinySesam sieht die gepatchte Zeit nicht (beim Import gebunden)")
+
+
+# ── pop_flow gab dieselbe Challenge zweimal heraus (R3-8) ────────────────────
+# Lesen und Löschen waren zwei Schritte. Zwei Callbacks mit demselben OIDC-`state` (zwei
+# Threads, zwei Worker auf derselben Datei) lasen beide, bevor einer löschte. Nachgestellt
+# deterministisch: Zwischen dem SELECT des ersten und seinem DELETE verbraucht ein zweiter
+# Worker (eigene Verbindung, dieselbe Datei) denselben Schlüssel.
+auth_f, _ = _app()
+st_a = auth_f.store
+st_b = _store_mod.Store(auth_f.cfg.db_path)
+st_a.put_flow("oidc:zustand", {"nonce": "n-1"})
+
+
+class _Dazwischen:
+    """Verbindung, die nach dem Lesen des Flows den zweiten Worker zum Zug kommen lässt."""
+
+    def __init__(self, db):
+        self._db, self.zweiter = db, None
+
+    def execute(self, sql, *args):
+        cur = self._db.execute(sql, *args)
+        if sql.startswith("SELECT data, expires_at FROM flow") and self.zweiter is None:
+            self.zweiter = st_b.pop_flow("oidc:zustand")
+        return cur
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+_zw = _Dazwischen(st_a.db)
+st_a.db = _zw
+erster = st_a.pop_flow("oidc:zustand")
+st_a.db = _zw._db
+r.check("der zweite Worker bekommt den Flow-State", _zw.zweiter == {"nonce": "n-1"}, f"{_zw.zweiter}")
+r.check("…und der erste dann nicht mehr — genau einer gewinnt",
+        erster is None, f"beide haben {erster} bekommen: Challenge/state doppelt verbraucht")
+st_a.put_flow("oidc:einfach", {"x": 1})
+r.check("ohne Wettlauf kommt der Flow genau einmal heraus",
+        st_a.pop_flow("oidc:einfach") == {"x": 1} and st_a.pop_flow("oidc:einfach") is None)
+st_b.db.close()
+
+
+# ── SQLite wartete nach einer unbewussten Vorgabe (B6-11) ─────────────────────
+# Wie lange ein zweiter Schreiber wartet, bevor eine Anmeldung mit „database is locked"
+# scheitert, war Pythons stille Vorgabe (5 s). Jetzt ausdrücklich — und an der Verbindung lesbar.
+import sqlite3 as _sqlite3  # noqa: E402
+import threading as _threading  # noqa: E402
+
+auth_b, _ = _app()
+bt = auth_b.store.db.execute("PRAGMA busy_timeout").fetchone()[0]
+r.check("busy_timeout ist bewusst gesetzt (Store.BUSY_TIMEOUT_MS, über Pythons 5 s)",
+        bt == _store_mod.Store.BUSY_TIMEOUT_MS and bt > 5000, f"busy_timeout={bt}")
+fremd = _sqlite3.connect(auth_b.cfg.db_path, isolation_level=None, check_same_thread=False)
+fremd.execute("BEGIN IMMEDIATE")                  # ein zweiter Schreiber hält die Sperre …
+_frei = _threading.Timer(0.5, lambda: fremd.execute("COMMIT"))
+_frei.start()
+try:
+    auth_b.store.put_flow("warten", {"ok": True})  # … und dieser Schreiber wartet, statt zu scheitern
+    gewartet = True
+except _sqlite3.OperationalError as e:
+    gewartet = str(e)
+_frei.join(timeout=5)
+fremd.close()
+r.check("ein Schreiber wartet auf eine kurz gehaltene Sperre, statt abzubrechen",
+        gewartet is True, f"{gewartet}")
+
+# ── H-18 (a): ein gesperrtes Konto kommt über KEINEN Weg zu einer Sitzung ────────
+# Jeder Weg hatte seine eigene `disabled`-Prüfung — oder eben nicht: Anmelde-Link und Passkey
+# legten für ein gesperrtes Konto eine Sitzung an (erst `current_user()` verwarf sie wieder),
+# und ein offener Bestätigungslink aus der Registrierung hob die Sperre des Betreibers sogar
+# auf. Gemessen wird deshalb die Klasse: alle Wege, danach die Frage „gibt es eine neue Sitzung?".
+from fastapi import HTTPException as _HTTPException  # noqa: E402
+from starlette.requests import Request as _Request  # noqa: E402
+
+auth_g, app_g = _app(csrf_enabled=False, pin_enabled=True, pin_login=True,
+                     magiclink_enabled=True, apikey_enabled=True, passkey_enabled=False,
+                     allow_signup=True, signup_require_email=True, signup_verify_email=True,
+                     base_url=ECHT)
+auth_g.set_mailer(lambda to, betreff, text, html=None: None)
+uid_g = auth_g.create_user("gesperrt", password="Geheim12345!", email="gesperrt@example.com")
+auth_g.set_pin(uid_g, "471193")
+key_g = auth_g.create_api_key(uid_g, "bot")["key"]
+alt_g = auth_g.store.create_session(uid_g, 3600, True, "password")
+magic_g = auth_g.create_magic_token("login", user_id=uid_g, email="gesperrt@example.com")
+# Direkt im Store gesperrt, nicht über das Panel: Die Token und die alte Sitzung bleiben so
+# stehen — geprüft wird, dass kein WEG sie nutzen kann, nicht, dass das Panel aufräumt.
+auth_g.store.set_disabled(uid_g, True)
+
+
+@app_g.get("/geschuetzt")
+def _geschuetzt_g(u=Depends(auth_g.require_user)):
+    return {"u": u["username"]}
+
+
+def _sitzungen_g():
+    return {z["token_hash"] for z in auth_g.store.list_sessions(uid_g)}
+
+
+vorher_g = _sitzungen_g()
+cg = TestClient(app_g)
+cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!", "next": "/"},
+        follow_redirects=False)
+cg.post("/auth/pin", data={"username": "gesperrt", "pin": "471193", "next": "/"},
+        follow_redirects=False)
+magic_antwort = cg.get(f"/auth/magic/{magic_g}", follow_redirects=False)
+r.check("Anmelde-Link eines gesperrten Kontos wird abgewiesen",
+        magic_antwort.status_code == 403, f"HTTP {magic_antwort.status_code}")
+
+# Die Wege, die hier nicht als Route laufen (Passkey, OIDC, SAML, LDAP, Kette), enden alle in
+# `apply_factor` — dort sitzt der Riegel für die ganze Klasse.
+_leer = _Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+_durch = []
+for _faktor in ("password", "pin", "passkey", "oidc", "saml", "magic", "totp"):
+    try:
+        auth_g.apply_factor(_leer, uid_g, _faktor, "198.51.100.7")
+        _durch.append(_faktor)
+    except _HTTPException as e:
+        if e.status_code != 403:
+            _durch.append(f"{_faktor}:{e.status_code}")
+r.check("apply_factor verweigert einem gesperrten Konto jeden Faktor", not _durch,
+        f"durchgelassen: {_durch}")
+r.check("…und jeder abgewiesene Versuch steht im Audit-Log (login_disabled)",
+        sum(z["event"] == "login_disabled" for z in auth_g.store.recent_audit(50)) >= 8,
+        f"{[z['event'] for z in auth_g.store.recent_audit(20)]}")
+r.check("…und über keinen Weg ist eine neue Sitzung entstanden", _sitzungen_g() == vorher_g,
+        f"{len(_sitzungen_g() - vorher_g)} neue Sitzung(en) für ein gesperrtes Konto")
+cg.cookies.set(auth_g.cfg.session_cookie, alt_g)
+r.check("eine Sitzung von vor der Sperre öffnet nichts mehr",
+        cg.get("/geschuetzt").status_code == 401)
+cg.cookies.clear()
+r.check("ein API-Key des gesperrten Kontos öffnet nichts",
+        cg.get("/geschuetzt", headers={"X-API-Key": key_g}).status_code == 401)
+
+# Die halbe Sitzung (erster Faktor erbracht, TOTP offen) wird nach einer Sperre nicht vollwertig.
+uid_h = auth_g.create_user("halb", password="Geheim12345!")
+halb_tok = auth_g.store.create_session(uid_h, 3600, False, "password")
+auth_g.store.set_disabled(uid_h, True)
+r.check("eine halbe Sitzung wird nach der Sperre nicht über TOTP vollwertig",
+        auth_g.complete_totp(halb_tok) is None and auth_g.store.get_session(halb_tok) is None,
+        "complete_totp stellte einem gesperrten Konto eine volle Sitzung aus")
+
+# Die Sperre durch den Betreiber hält gegen einen offenen Bestätigungslink.
+admin_g = auth_g.create_user("chefin-g", password="Geheim12345!", is_admin=True)
+uid_v = auth_g.create_user("wartend", password="Geheim12345!", email="wartend@example.com")
+auth_g.store.set_disabled(uid_v, True)                      # wie nach der Registrierung
+verify_g = auth_g.create_magic_token("verify_email", user_id=uid_v, email="wartend@example.com")
+ca_g = TestClient(app_g)
+ca_g.cookies.set(auth_g.cfg.session_cookie, auth_g.store.create_session(admin_g, 3600, True, "password"))
+ca_g.post(f"/auth/admin/api/users/{uid_v}/disable", json={"disabled": True})
+cv = TestClient(app_g)
+cv.get(f"/auth/verify/{verify_g}", follow_redirects=False)
+r.check("ein Bestätigungslink hebt eine Sperre des Betreibers nicht auf",
+        bool(auth_g.store.get_user(uid_v)["disabled"]),
+        "der Link aus der Registrierung hat das gesperrte Konto wieder freigeschaltet")
+
+
+# ── H-18 (c): jeder Mail-Link entsteht aus `base_url` — auch künftige ─────────────
+# Die fünf Wege oben (`_wege`) sind eine Liste von Hand. Ein sechster Absender fiele dort nicht
+# auf. Deshalb mechanisch: Jede Funktion im Paket, die `send_mail()` oder `magic_url()` ruft,
+# muss in dieser Liste stehen — sonst verschickt sie Links, deren Basis niemand gemessen hat.
+import ast as _ast  # noqa: E402
+
+_GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url"}
+_absender = set()
+for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
+    _baum = _ast.parse(_datei.read_text(encoding="utf-8"))
+    for _fn in _ast.walk(_baum):
+        if not isinstance(_fn, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            continue
+        for _k in _ast.walk(_fn):
+            if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
+                    and _k.func.attr in ("send_mail", "magic_url")):
+                _absender.add(_fn.name)
+r.check("Wächter: er findet die bekannten Absender überhaupt",
+        {"send_password_reset", "send_login_link", "send_verify_email", "create_invite"} <= _absender,
+        f"gefunden: {sorted(_absender)} — ohne Treffer prüft die Zeile darunter nichts")
+r.check("jeder Absender von Mail-Links steht in der gemessenen Liste",
+        _absender <= _GEMESSEN, f"ungemessen: {sorted(_absender - _GEMESSEN)} — in `_wege` aufnehmen")
+
 sys.exit(r.done())

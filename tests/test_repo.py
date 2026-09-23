@@ -68,11 +68,41 @@ assert not fehlend, f"Pflichtdateien fehlen: {fehlend}"
 print("  Lizenz, SECURITY, CHANGELOG, beide READMEs, py.typed, alle Workflows vorhanden")
 
 # ---------- docs/ enthält nur noch Beilagen; die Seiten baut die Action ----------
+# Ausnahme: BETRIEB.md, die Betreiber-Doku (Ausfallverhalten, Sitzungen, Anmeldewege). Sie ist
+# Quelltext wie API.md, keine gebaute Seite — die Pages-Action veröffentlicht docs/ nicht.
 docs = [f for f in FILES if f.startswith("docs/")]
-assert sorted(docs) == ["docs/.nojekyll", "docs/theme.css", "docs/wizard.png"], docs
+assert sorted(docs) == ["docs/.nojekyll", "docs/BETRIEB.md", "docs/theme.css", "docs/wizard.png"], docs
 assert not any(f.endswith(".html") for f in FILES), "generiertes HTML gehört nicht ins Repo"
 assert "_site/" in read(".gitignore")
-print("  docs/: nur theme.css, wizard.png, .nojekyll — kein generiertes HTML im Repo")
+print("  docs/: nur BETRIEB.md, theme.css, wizard.png, .nojekyll — kein generiertes HTML im Repo")
+
+# ---------- docs/BETRIEB.md sagt, was der Code tut ----------
+# Eine Betreiber-Doku, deren Zahlen vom Code wegwandern, ist schlimmer als keine: Man plant
+# danach. Geprüft wird, was sich mechanisch ablesen lässt — die Wartezeit auf eine gesperrte
+# Datenbank, der Healthcheck-Pfad und dass jeder identifizierende Faktor in der Tabelle der
+# Anmeldewege steht (ein neuer Weg ohne Zeile dort wäre genau die Lücke aus B1-11).
+betrieb = read("docs", "BETRIEB.md")
+_store_src = read("tinysesam", "store.py")
+_busy = int(re.search(r"^    BUSY_TIMEOUT_MS = ([\d_]+)", _store_src, re.M).group(1).replace("_", ""))
+assert f"**{_busy // 1000} s**" in betrieb, f"BETRIEB.md nennt nicht die echte Wartezeit ({_busy} ms)"
+assert re.search(r'^HEALTH_PATH = "/healthz"', read("tinysesam", "gateway.py"), re.M) and "/healthz" in betrieb
+_ident = re.search(r"^    IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
+_faktoren = re.findall(r'"(\w+)"', _ident)
+assert len(_faktoren) >= 6, f"IDENTIFYING nicht gelesen: {_faktoren}"
+_fehlend = [f for f in _faktoren if f"(`{f}`" not in betrieb]
+assert not _fehlend, f"BETRIEB.md: Anmeldeweg ohne Zeile in der Stärke-Tabelle: {_fehlend}"
+print(f"  docs/BETRIEB.md: Wartezeit {_busy // 1000} s, /healthz und alle {len(_faktoren)} "
+      "identifizierenden Faktoren stimmen mit dem Code")
+
+# Der HEALTHCHECK des Abbilds muss länger warten als die Datenbank: `/healthz` schreibt und steht
+# wie jede Anmeldung bis zu BUSY_TIMEOUT_MS hinter einem fremden Schreiber. Mit 4 s brach der
+# Check bei einer 6-s-Sperre ab, obwohl der Dienst danach 200 lieferte (A-B6-4-healthz-sperre).
+_df = read("Dockerfile")
+_hc_docker = int(re.search(r"HEALTHCHECK [^\n]*--timeout=(\d+)s", _df).group(1))
+_hc_client = int(re.search(r"HTTPConnection\(.*?timeout=(\d+)\)", _df).group(1))
+assert _hc_client * 1000 > _busy, f"Health-Client wartet {_hc_client} s, die Datenbank bis {_busy} ms"
+assert _hc_docker > _hc_client, f"Docker bricht nach {_hc_docker} s ab, vor dem Client ({_hc_client} s)"
+print(f"  Dockerfile: HEALTHCHECK wartet {_hc_client} s/{_hc_docker} s, länger als busy_timeout")
 
 # ---------- Generierte Artefakte gehören nicht ins Repo ----------
 artefakte = hygiene.pruefe_artefakte(FILES, POLICY)

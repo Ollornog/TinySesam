@@ -97,9 +97,14 @@ EXPOSE 8000
 # reicht dafür nicht: `build_opener` lässt Default-Handler nur weg, wenn eine SUBKLASSE genau
 # dieses Handlers übergeben wird — ein mitgegebener HTTPHandler ersetzt den Redirect-Handler
 # nicht.) `http.client` leitet von sich aus nie um.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+#
+# Die Fristen liegen über `Store.BUSY_TIMEOUT_MS` (10 s): `/healthz` schreibt (B6-4) und wartet
+# dabei wie jede Anmeldung hinter einem fremden Schreiber (Checkpoint, Sicherung, zweiter Worker).
+# Mit 4 s brach der Check ab, während Anmeldungen nur warteten und dann gelangen; erst was länger
+# als 10 s sperrt, ist ein Ausfall — und dann antwortet der Dienst selbst mit 503.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import os,http.client,sys;\
-c=http.client.HTTPConnection('127.0.0.1',int(os.environ.get('TINYSESAM_PORT','8000')),timeout=4);\
+c=http.client.HTTPConnection('127.0.0.1',int(os.environ.get('TINYSESAM_PORT','8000')),timeout=12);\
 c.request('GET','/healthz');\
 sys.exit(0 if c.getresponse().status==200 else 1)"]
 
