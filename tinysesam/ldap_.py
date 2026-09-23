@@ -6,7 +6,9 @@ Zwei Modi:
 - **Search-then-Bind** (`ldap_bind_dn`/`ldap_bind_password` + `ldap_user_base`/`ldap_user_filter`):
   Service-Account sucht den User, dann Re-Bind mit dessen DN + Passwort.
 
-Gibt bei Erfolg {username, email, name, groups} zurück, sonst None. Fehler/Bind-Fehler → None.
+Gibt bei Erfolg {username, email, name, groups} zurück, bei falschem Passwort/unbekanntem Konto
+None. Ist das Verzeichnis nicht erreichbar oder nicht benutzbar (Netz, TLS, Dienstkonto), fliegt
+`VerzeichnisNichtErreichbar` — ein Ausfall ist kein Fehlversuch des Anmeldenden (F-23).
 Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz). **Verweisen (Referrals) folgt
 dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben Zugangsdaten
 (s. `_OHNE_REFERRALS`). Ein verworfener Verweis wird ins Sicherheits-Log geschrieben
@@ -81,6 +83,35 @@ def _verweis_melden(conn, was: str, username: str) -> None:
         ", ".join(fuer_log(v) for v in verweise[:3]) or "(Host nicht genannt)")
 
 
+class VerzeichnisNichtErreichbar(errors.TinySesamError, RuntimeError):
+    """Das Verzeichnis hat die Frage nicht beantwortet — Netz, TLS, Dienstkonto (F-23).
+
+    Bis 0.20.0 endete jeder Fehler in `authenticate()` als `None`, also als „Passwort falsch":
+    Der Login verbuchte einen Fehlversuch, fail2ban las `failed login`, und nach ein paar
+    Minuten Ausfall waren die Nutzer gesperrt, die nichts falsch gemacht hatten. Im Protokoll
+    war der Ausfall vom falschen Passwort nicht zu unterscheiden. Diese Ausnahme trennt die
+    beiden Fälle; die Login-Route antwortet dann 503 und verbucht nichts gegen das Konto."""
+
+
+#: Wie lange ein Verbindungsaufbau und eine Antwort dauern dürfen. Ohne Grenze hing ein Login
+#: bei einem Verzeichnis, das Pakete verwirft statt abzulehnen, so lange wie der TCP-Timeout
+#: des Betriebssystems (Minuten) — mit einem Worker-Thread je wartendem Nutzer.
+VERBINDUNGS_TIMEOUT = 10
+
+
+def _ausfall_arten() -> tuple:
+    """Die ldap3-Fehler, die „Verzeichnis nicht erreichbar/benutzbar" heissen — nicht „falsches
+    Passwort". Ein falsches Benutzerpasswort wirft keinen davon: `bind()` gibt dann False zurück.
+    `LDAPBindError` kommt nur aus dem `auto_bind` des Dienstkontos — dessen Zugangsdaten sind
+    Betreiberkonfiguration, nicht der Fehler des Anmeldenden."""
+    try:
+        from ldap3.core import exceptions as lx
+    except ImportError:          # untergeschobenes ldap3 ohne Ausnahme-Modul (Testattrappe)
+        return ()
+    return (lx.LDAPCommunicationError, lx.LDAPStartTLSError, lx.LDAPBindError,
+            lx.LDAPMaximumRetriesError, lx.LDAPSSLConfigurationError)
+
+
 class LDAPClient:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -95,7 +126,7 @@ class LDAPClient:
         # zwar mit Zugangsdaten". Selbst wenn irgendwann jemand eine Connection ohne
         # `auto_referrals=False` anlegt, findet ldap3 dann keinen erlaubten Verweis-Host mehr.
         return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[],
-                            tls=self._tls(ldap3))
+                            tls=self._tls(ldap3), connect_timeout=VERBINDUNGS_TIMEOUT)
 
     def _tls(self, ldap3):
         """Die TLS-Einstellungen für `ldaps://` und StartTLS (F-12).
@@ -148,7 +179,7 @@ class LDAPClient:
                     password=cfg.ldap_bind_password or None,
                     auto_bind=(ldap3.AUTO_BIND_TLS_BEFORE_BIND if cfg.ldap_start_tls
                                else ldap3.AUTO_BIND_NO_TLS),
-                    **_OHNE_REFERRALS)
+                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
                 attrs = _attributliste(cfg)
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)
@@ -160,7 +191,7 @@ class LDAPClient:
                 svc.unbind()
             # Re-Bind mit dem User-DN + Passwort → prüft das Passwort
             conn = ldap3.Connection(server, user=user_dn, password=password,
-                                    **_OHNE_REFERRALS)
+                                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
             if cfg.ldap_start_tls:
                 conn.start_tls()
             if not conn.bind():
@@ -181,6 +212,11 @@ class LDAPClient:
                 info["id"] = _stabile_kennung(entry, cfg)
             conn.unbind()
             return info
+        except _ausfall_arten() as e:
+            # Kein `None`: Das hiesse „Passwort falsch" und kostete den Nutzer einen Fehlversuch
+            # für einen Ausfall, den er nicht verursacht hat (F-23).
+            raise VerzeichnisNichtErreichbar(
+                f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
         except Exception:
             return None
 

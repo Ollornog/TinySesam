@@ -46,7 +46,7 @@ Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
-### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None)`
+### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)`
 
 IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant, nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben.
 
@@ -70,7 +70,7 @@ Wie `check_password`, nur mit der persönlichen PIN.
 
 Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`).
 
-### `check_saml(nameid, attrs) -> 'Optional[dict]'`
+### `check_saml(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'`
 
 Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
@@ -214,10 +214,6 @@ Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
 
 HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost).
 
-### `is_totp_setup_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
-
 ### `issue_csrf(response: 'Response') -> 'str'`
 
 CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.), die nicht über `render_page()` laufen. Rückgabe gehört ins Formularfeld `_csrf` bzw. den Header `X-CSRF-Token`. Ist CSRF abgeschaltet, passiert nichts und der Rückgabewert ist leer.
@@ -270,13 +266,13 @@ Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — eg
 
 TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
-### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
-
-`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
-
 ### `next_login_step(user_id, done)`
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
+
+### `nur_foederiert(user_id) -> 'bool'`
+
+Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
 
 ### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
 
@@ -285,10 +281,6 @@ Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
 ### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
 
 Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
-
-### `passwort_mangel(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
-
-Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
@@ -310,7 +302,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method)`
+### `record_login(username, ip, success, method, quelle: 'str' = '')`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
@@ -406,13 +398,9 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
-### `send_signup_notice(email, base_url) -> 'bool'`
-
-Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
-
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
 ### `session_from_request(request)`
 
@@ -454,10 +442,6 @@ Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der D
 
 Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str \| Response.
 
-### `sicherheitsereignis(ereignis: 'str', user_id, **details) -> 'None'`
-
-`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
-
 ### `start_session(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'`
 
 Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig.
@@ -473,10 +457,6 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 ### `t(key, **fmt) -> 'str'`
 
 Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}.
-
-### `token_abgewiesen(zweck, request: 'Optional[Request]' = None, grund='ungueltig')`
-
-Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
 ### `totp_begin(user_id)`
 
@@ -586,4 +566,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+124 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
