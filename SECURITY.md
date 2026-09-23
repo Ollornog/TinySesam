@@ -5,9 +5,25 @@
 
 ## Reporting a vulnerability
 
-Please do **not** report security issues via public issues. Report them privately through this repo's
-**GitHub Security Advisories** (the *Security* tab → *Report a vulnerability*).
-I aim to give a first response within a few days.
+Please do **not** report security issues via public issues. Two private channels:
+
+1. **GitHub private vulnerability reporting** — the *Security* tab → *Report a vulnerability*
+   (<https://github.com/Ollornog/TinySesam/security/advisories/new>). Preferred: the report,
+   the discussion and the later advisory stay in one place.
+2. **E-mail** to <tinysesam-github@ollornog.de> with the subject `[security] TinySesam` — for
+   anyone without a GitHub account, or when the form is unavailable.
+
+What you can rely on (calendar days, counted from your report):
+
+| Step | Deadline |
+| --- | --- |
+| Acknowledgement of receipt | **7 days** |
+| First assessment (confirmed / not reproducible / out of scope) | **14 days** |
+| Fixed release, or a published advisory with a workaround | **90 days** |
+
+Coordinated disclosure: please keep the details private until a fix is released or the 90 days
+have passed, whichever comes first. If a deadline slips, you get a message saying so and why —
+silence is not an answer. Credit in the advisory and the CHANGELOG, unless you prefer otherwise.
 
 ## Status / scope
 

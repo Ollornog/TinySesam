@@ -1,0 +1,7 @@
+# Die Bauwerkzeuge des Release-Jobs. Gepinnt samt Hashes (requirements.txt daneben), weil sie
+# über den Inhalt von Wheel und sdist entscheiden: Mit einem anderen setuptools entsteht ein
+# anderes Archiv, und die veröffentlichte Prüfsumme liesse sich nicht mehr nachbauen.
+# Bewusst NICHT `requirements.in`: Zu diesem Namen hielte Dependabot requirements.txt für eine
+# pip-compile-Ausgabe und erzeugte sie mit pip-compile neu, statt die Zeilen samt Hashes zu heben.
+build
+setuptools

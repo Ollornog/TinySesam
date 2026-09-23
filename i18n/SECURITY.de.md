@@ -5,9 +5,25 @@
 
 ## Schwachstellen melden
 
-Bitte Sicherheitslücken **nicht** über öffentliche Issues melden, sondern privat über die
-**GitHub Security Advisories** dieses Repos (Reiter *Security* → *Report a vulnerability*).
-Ich bemühe mich um eine erste Rückmeldung innerhalb weniger Tage.
+Bitte Sicherheitslücken **nicht** über öffentliche Issues melden. Zwei vertrauliche Wege:
+
+1. **Private Schwachstellenmeldung auf GitHub** — Reiter *Security* → *Report a vulnerability*
+   (<https://github.com/Ollornog/TinySesam/security/advisories/new>). Bevorzugt: Meldung,
+   Rückfragen und das spätere Advisory bleiben an einer Stelle.
+2. **E-Mail** an <tinysesam-github@ollornog.de> mit dem Betreff `[security] TinySesam` — für alle
+   ohne GitHub-Konto, oder wenn das Formular nicht erreichbar ist.
+
+Worauf Verlass ist (Kalendertage, ab Eingang der Meldung):
+
+| Schritt | Frist |
+| --- | --- |
+| Eingangsbestätigung | **7 Tage** |
+| Erste Einschätzung (bestätigt / nicht nachstellbar / ausserhalb des Umfangs) | **14 Tage** |
+| Behobenes Release oder veröffentlichtes Advisory mit Umgehung | **90 Tage** |
+
+Koordinierte Offenlegung: Details bitte vertraulich halten, bis ein Fix veröffentlicht ist oder
+die 90 Tage vorbei sind — was zuerst eintritt. Reisst eine Frist, kommt eine Nachricht mit dem
+Grund; Schweigen ist keine Antwort. Nennung im Advisory und im CHANGELOG, wenn gewünscht.
 
 ## Status / Umfang
 

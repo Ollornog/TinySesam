@@ -24,15 +24,30 @@ FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc4243
 # enthalten, der hier daneben liegt — nicht das, was `main` gerade zufällig ist.
 WORKDIR /src
 COPY pyproject.toml README.md ./
+COPY deploy/gateway/requirements.txt ./requirements.txt
 COPY tinysesam ./tinysesam
 
+# Der Digest oben hält nur das Basis-Abbild fest — die andere Hälfte der Frage ist, was pip
+# hineinlegt. Deshalb zwei Schritte statt eines `pip install ".[gateway]"`:
+#   1. die Abhängigkeiten aus der gehashten Sperrliste, nichts sonst (`--require-hashes`); dort
+#      steht auch setuptools, das Bau-Backend für Schritt 2;
+#   2. TinySesam selbst ohne Netz (`--no-index`), ohne Bau-Isolierung (die holte sich setuptools
+#      sonst ungeprüft aus dem Index) und ohne Abhängigkeitsauflösung.
+# Kein `pip install --upgrade pip` mehr: Das zog bei jedem Bau die gerade neueste Fassung. Das pip
+# des Basis-Abbilds ist durch den Digest festgelegt und wird am Ende ohnehin entfernt.
+# `SOURCE_DATE_EPOCH` (setzt der Release-Workflow) macht die .pyc-Dateien zeitstempelfrei.
+ARG SOURCE_DATE_EPOCH
 RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir ".[gateway]"
+    && /opt/venv/bin/pip install --no-cache-dir --require-hashes --no-deps -r requirements.txt \
+    && /opt/venv/bin/pip install --no-cache-dir --no-deps --no-index --no-build-isolation . \
+    && /opt/venv/bin/pip uninstall --yes setuptools
 
 # ---------- Laufen ----------
 FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
 
+# `useradd` schreibt das Datum der letzten Passwortänderung nach /etc/shadow — ohne diese Zeile
+# den Tag des Baus, mit ihr den Tag des Commits (shadow ab 4.14 liest SOURCE_DATE_EPOCH).
+ARG SOURCE_DATE_EPOCH
 RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin tinysesam \
     && mkdir -p /data && chown tinysesam:tinysesam /data
 

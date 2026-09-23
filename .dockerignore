@@ -4,4 +4,5 @@
 !pyproject.toml
 !README.md
 !tinysesam/
+!deploy/gateway/requirements.txt
 tinysesam/**/__pycache__/

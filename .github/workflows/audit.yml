@@ -1,0 +1,76 @@
+name: audit
+
+# Das Schwachstellen-Tor (B4-2 aus T-13). Bis 0.19.0 prüfte kein Lauf, ob eine Abhängigkeit eine
+# bekannte Lücke hat: Dependabot meldet zwar repo-weit, aber eine Meldung ist kein Tor — ein PR
+# mit einer verwundbaren Auflösung wurde grün.
+#
+# Geprüft werden vier Auflösungen, weil jede eine andere Zusage trägt:
+#   neu     — was `pip install tinysesam[all]` heute zieht
+#   boden   — die niedrigste erlaubte Fassung jeder direkten Abhängigkeit (`lowest-direct`). Das
+#             ist die Zusage der `>=`-Grenzen in pyproject.toml: Wer sie festhält, bekommt eine
+#             Installation ohne bekannte Lücke. Erscheint ein Advisory für einen Boden, wird
+#             dieser Lauf rot und der Boden wandert — Dependabot hebt einen offenen `>=`-Boden
+#             nie an, die Spanne erlaubt die neue Fassung ja schon (B4-3).
+#   gateway — die gehashte Sperrliste des Abbilds (deploy/gateway/requirements.txt)
+#   bau     — die Werkzeuge, die Wheel und sdist bauen (.github/bau/requirements.txt), und die
+#             dieses Tors selbst (.github/audit/requirements.txt)
+#
+# Nächtlich zusätzlich, weil Advisories ohne Codeänderung erscheinen. Öffentliches Repo →
+# `ubuntu-latest`, keine self-hosted Runner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # GitHub-cron kennt nur UTC: 02:45 UTC = 04:45 Europe/Berlin (MESZ) bzw. 03:45 (MEZ).
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Eigene Umgebung, gepinnt samt Hashes: Das Prüfwerkzeug gehört nicht in die Umgebung, die
+      # es prüft, und kommt nicht in der gerade neuesten Fassung aus dem Index.
+      - name: Werkzeuge
+        run: |
+          python -m venv "$RUNNER_TEMP/audit"
+          "$RUNNER_TEMP/audit/bin/pip" install --require-hashes --no-deps -r .github/audit/requirements.txt
+
+      # Nur auflösen, nichts installieren: Aufgelöst wird gegen den Index, ohne Code der Pakete
+      # auszuführen (Metadaten aus den Rädern). `--python-version` = die Untergrenze aus
+      # requires-python, dort ist die Auflösung am ältesten.
+      - name: Auflösen (neueste und niedrigste erlaubte Fassungen)
+        run: |
+          uv="$RUNNER_TEMP/audit/bin/uv"
+          "$uv" pip compile pyproject.toml --all-extras --python-version 3.12 --no-header \
+              -o "$RUNNER_TEMP/neu.txt"
+          "$uv" pip compile pyproject.toml --all-extras --resolution lowest-direct \
+              --python-version 3.12 --no-header -o "$RUNNER_TEMP/boden.txt"
+
+      # `--strict`: Ein Paket, das pip-audit nicht nachschlagen kann, ist ein Fehler, kein Skip.
+      - name: pip-audit
+        run: |
+          audit="$RUNNER_TEMP/audit/bin/pip-audit"
+          for f in neu boden; do
+            echo "::group::$f"
+            "$audit" --strict --progress-spinner off --no-deps --disable-pip -r "$RUNNER_TEMP/$f.txt"
+            echo "::endgroup::"
+          done
+          for f in deploy/gateway/requirements.txt .github/bau/requirements.txt \
+                   .github/audit/requirements.txt; do
+            echo "::group::$f"
+            "$audit" --strict --progress-spinner off --require-hashes --disable-pip -r "$f"
+            echo "::endgroup::"
+          done

@@ -40,6 +40,9 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _kit import hygiene  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import _sdist_normalisieren  # noqa: E402
+
 # Ohne setuptools lässt sich nichts bauen — und ohne Bau prüft dieser Test nichts. Ein
 # stilles „übersprungen" wäre hier die schlechteste Antwort: Es sähe grün aus und wäre leer.
 try:
@@ -56,24 +59,61 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-def baue() -> tuple[str, str, str]:
-    """(verzeichnis, wheel, sdist) — aus einer Kopie der versionierten Dateien."""
+# Feste Bauzeit für den Reproduzierbarkeits-Vergleich unten. Der Wert ist beliebig — es zählt,
+# dass beide Bauläufe denselben sehen, wie im Release-Workflow der Zeitstempel des Commits.
+BAUZEIT = 1700000000
+GEGRAFTET = ("tests", "examples", "deploy")   # die `graft`-Bäume aus MANIFEST.in
+
+
+def attrappen_aus_gitignore() -> list[str]:
+    """Für jedes Muster aus .gitignore je eine Attrappe in jedem gegrafteten Baum (B4-13)."""
+    pfade = []
+    for zeile in pathlib.Path(ROOT, ".gitignore").read_text(encoding="utf-8").splitlines():
+        muster = zeile.strip()
+        if not muster or muster.startswith(("#", "!")) or muster.startswith("/"):
+            continue
+        name = muster.rstrip("/").replace("*", "attrappe")
+        for baum in GEGRAFTET:
+            pfade.append(f"{baum}/{name}/attrappe.txt" if muster.endswith("/") else f"{baum}/{name}")
+    return pfade
+
+
+def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = ()) -> tuple[str, str, str]:
+    """(verzeichnis, wheel, sdist) — aus einer Kopie der versionierten Dateien.
+
+    `verschiebung` setzt die Datei-Zeitstempel der Kopie um so viele Sekunden anders — so sieht
+    ein zweiter Checkout desselben Commits aus. `attrappen` legt ungetrackte Dateien dazu, so wie
+    sie in einem benutzten Arbeitsbaum liegen.
+    """
     arbeit = tempfile.mkdtemp(prefix="tinysesam-pack-")
     quelle, ziel = os.path.join(arbeit, "src"), os.path.join(arbeit, "dist")
     os.makedirs(quelle)
     os.makedirs(ziel)
-    for rel in hygiene.getrackte_dateien(ROOT):
+    for rel in list(hygiene.getrackte_dateien(ROOT)) + list(attrappen):
         pfad = os.path.join(quelle, rel)
         os.makedirs(os.path.dirname(pfad), exist_ok=True)
-        shutil.copy2(os.path.join(ROOT, rel), pfad)
+        if rel in attrappen:
+            pathlib.Path(pfad).write_text("gehört nicht ins sdist\n", encoding="utf-8")
+        else:
+            shutil.copy2(os.path.join(ROOT, rel), pfad)
+        if verschiebung:
+            stempel = os.stat(pfad).st_mtime + verschiebung
+            os.utime(pfad, (stempel, stempel))
 
-    vorher = os.getcwd()
+    vorher, sde = os.getcwd(), os.environ.get("SOURCE_DATE_EPOCH")
     try:
         os.chdir(quelle)
+        os.environ["SOURCE_DATE_EPOCH"] = str(BAUZEIT)
         whl = build_meta.build_wheel(ziel)
         sdist = build_meta.build_sdist(ziel)
     finally:
         os.chdir(vorher)
+        if sde is None:
+            os.environ.pop("SOURCE_DATE_EPOCH", None)
+        else:
+            os.environ["SOURCE_DATE_EPOCH"] = sde
+    # Derselbe Schritt wie im Release-Workflow — ohne ihn wäre das sdist nicht reproduzierbar.
+    _sdist_normalisieren.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
     return arbeit, os.path.join(ziel, whl), os.path.join(ziel, sdist)
 
 
@@ -81,7 +121,9 @@ def kopf(text: bytes):
     return email.parser.BytesParser().parsebytes(text)
 
 
-ARBEIT, WHEEL, SDIST = baue()
+ATTRAPPEN = tuple(attrappen_aus_gitignore())
+ARBEIT, WHEEL, SDIST = baue(attrappen=ATTRAPPEN)
+ZWEITER = None
 try:
     with zipfile.ZipFile(WHEEL) as z:
         wheel_dateien = set(z.namelist())
@@ -266,6 +308,34 @@ try:
     ok(f"sdist: {len(sdist_dateien)} Dateien, Lizenz/CHANGELOG/SECURITY dabei, "
        "keine halbe Testsuite, kein Bytecode")
 
+    # ---------- Was .gitignore ausschliesst, bleibt draussen (B4-13) ----------
+    # Gebaut wurde oben MIT einer Attrappe je .gitignore-Muster in jedem gegrafteten Baum — so
+    # sieht ein benutzter Arbeitsbaum aus (eine `examples/app.db`, eine `deploy/…/.env`). Der
+    # Release baut aus einem frischen Checkout; wer selbst paketiert, nicht.
+    assert len(ATTRAPPEN) >= 3 * len(GEGRAFTET), f"zu wenige Attrappen aus .gitignore: {ATTRAPPEN}"
+    durchgerutscht = sorted(a for a in ATTRAPPEN if a in sdist_dateien or a in wheel_dateien)
+    assert not durchgerutscht, ("gitignorierte Dateien im Paket — Muster in MANIFEST.in "
+                                f"nachziehen: {durchgerutscht[:6]}")
+    ok(f"keine der {len(ATTRAPPEN)} gitignorierten Attrappen im sdist oder Wheel")
+
+    # ---------- Bit-reproduzierbar: zweiter Checkout, gleiche Prüfsummen (B4-8) ----------
+    # Ein zweiter Bau mit anderen Datei-Zeitstempeln — so unterscheiden sich zwei Checkouts
+    # desselben Commits. Mit gleicher `SOURCE_DATE_EPOCH` müssen Wheel und sdist Byte für Byte
+    # gleich sein, sonst kann niemand die veröffentlichte Prüfsumme nachstellen.
+    import hashlib  # noqa: E402
+    ZWEITER, WHEEL2, SDIST2 = baue(verschiebung=86400.0, attrappen=ATTRAPPEN)
+
+    def _sha(pfad: str) -> str:
+        return hashlib.sha256(pathlib.Path(pfad).read_bytes()).hexdigest()
+
+    assert _sha(WHEEL) == _sha(WHEEL2), "Wheel nicht reproduzierbar (SOURCE_DATE_EPOCH wirkt nicht)"
+    assert _sha(SDIST) == _sha(SDIST2), ("sdist nicht reproduzierbar — "
+                                         "scripts/_sdist_normalisieren.py greift nicht")
+    rel_text = pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8")
+    for noetig in ("SOURCE_DATE_EPOCH", "scripts/_sdist_normalisieren.py"):
+        assert noetig in rel_text, f"der Release-Workflow baut ohne {noetig} — nicht reproduzierbar"
+    ok(f"Wheel und sdist bit-reproduzierbar (sha256 {_sha(SDIST)[:12]}…), Release baut genauso")
+
     # ---------- Veröffentlicht wird ohne Geheimnis ----------
     # Trusted Publishing (OIDC) statt API-Token: kein Wert im Repo, keiner, der rotiert werden
     # muss, und keiner, den ein Fork-PR abgreifen könnte.
@@ -307,5 +377,7 @@ try:
 
 finally:
     shutil.rmtree(ARBEIT, ignore_errors=True)
+    if ZWEITER:
+        shutil.rmtree(ZWEITER, ignore_errors=True)
 
 print("OK test_packaging")

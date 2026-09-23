@@ -52,12 +52,20 @@ permissions:
   contents: read         # Grundrechte knapp halten; jeder Job holt sich, was er braucht
 
 jobs:
-  release:
+  # ── Aufteilung: Wer eine Identität hält, führt keinen fremden Code aus (B4-4 aus T-13) ──────
+  # Bis 0.19.0 lief alles in EINEM Job: `pip install -e ".[all]"`, die ganze Suite und
+  # `python -m build` — mit `id-token: write` und `contents: write` im selben Job. Jede der rund
+  # dreissig installierten Abhängigkeiten hätte damit ein Sigstore-Zertifikat auf die Identität
+  # DIESES Workflows ziehen (eine Attestation für ein beliebiges Artefakt fälschen) und Releases
+  # anlegen können. Jetzt:
+  #   pruefen  — Suite, fremder Code, nur Leserecht
+  #   bauen    — Wheel/sdist aus gehashten Bauwerkzeugen, nur Leserecht
+  #   release  — kein Checkout, kein pip: lädt das fertige Artefakt, beglaubigt, legt das Release an
+  #   pypi     — kein Checkout, kein pip: lädt hoch
+  # `tests/test_repo.py` hält das fest: Ein Job mit `id-token: write` oder `contents: write`
+  # darf weder das Repo auschecken noch pip, python oder ein Bauwerkzeug starten.
+  pruefen:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write      # Release anlegen und Dateien anhängen
-      id-token: write      # Sigstore-Identität für die Attestation
-      attestations: write  # die Attestation an GitHub übergeben
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -80,40 +88,50 @@ jobs:
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
         run: |
           sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
-          # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline,
-          # ohne Isolierung) und überspringt sich ohne Bau-Backend nicht etwa, sondern wird ROT.
+          # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline, ohne
+          # Isolierung) und überspringt sich ohne Bau-Backend nicht etwa, sondern wird ROT.
           # Genau hier wäre das am teuersten — der Job soll ja prüfen, ob das Paket baut.
           # Aufgefallen beim ersten Tag überhaupt (v0.19.0): 0.18.0 wurde nie getaggt, also lief
           # dieser Job noch nie. Dieselbe Zeile steht seit jeher in scripts/check.sh.
           pip install -e ".[all]" uvicorn httpx setuptools wheel
           python tests/run_all.py --no-browser
 
+  bauen:
+    needs: pruefen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Bit-reproduzierbar (B4-8): Wer denselben Commit mit denselben Bauwerkzeugen baut, bekommt
+      # dieselben Prüfsummen wie hier. Drei Zutaten:
+      #   - die Werkzeuge gepinnt samt Hashes (.github/bau/requirements.txt) und `--no-isolation`,
+      #     sonst holte sich `build` das gerade neueste setuptools;
+      #   - `SOURCE_DATE_EPOCH` = Zeitstempel des Commits (Wheel);
+      #   - das sdist danach normalisiert (Zeitstempel, Reihenfolge, Eigentümer, gzip-Kopf).
+      # Nachbauen: dieselben drei Schritte auf dem Tag, dann `sha256sum -c SHA256SUMS`.
+      # `tests/test_packaging.py` baut zweimal mit verschiedenen Datei-Zeitstempeln und vergleicht.
       - name: Pakete bauen
         run: |
-          pip install build
-          python -m build                       # erzeugt dist/*.whl und dist/*.tar.gz
+          python -m venv "$RUNNER_TEMP/bau"
+          "$RUNNER_TEMP/bau/bin/pip" install --require-hashes --no-deps -r .github/bau/requirements.txt
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl und dist/*.tar.gz
+          python scripts/_sdist_normalisieren.py dist/*.tar.gz
 
       - name: Prüfsummen
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
 
-      # Herkunft der Pakete beglaubigen, BEVOR sie veröffentlicht werden.
-      - name: Herkunft von Wheel und sdist beglaubigen
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
-        with:
-          subject-path: "dist/*.whl, dist/*.tar.gz"
-
-      # Bewusst `gh` statt einer Dritt-Action: die bräuchte `contents: write` auf dieses Repo,
-      # und ihr Tag liesse sich umhängen. `gh` ist auf den Runnern vorinstalliert.
-      - name: Release anlegen
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
-
-      # Nur Wheel und sdist wandern weiter: Der Upload-Job lädt alles hoch, was er im
+      # Nur Wheel und sdist wandern zu PyPI: Der Upload-Job lädt alles hoch, was er im
       # Verzeichnis findet, und würde an `SHA256SUMS` scheitern (keine Distribution).
       # Gebaut wird genau EINMAL — das PyPI-Artefakt ist dasselbe, das im Release hängt
-      # und dessen Herkunft oben beglaubigt wurde.
-      - name: Wheel und sdist an den Upload-Job übergeben
+      # und dessen Herkunft beglaubigt wird.
+      - name: Wheel und sdist weitergeben
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: pypi-dist
@@ -121,6 +139,43 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           if-no-files-found: error
+      - name: Prüfsummen weitergeben
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pruefsummen
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    needs: bauen
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # Release anlegen und Dateien anhängen
+      id-token: write      # Sigstore-Identität für die Attestation
+      attestations: write  # die Attestation an GitHub übergeben
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: pypi-dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: pruefsummen
+          path: dist
+
+      # Herkunft beglaubigen, BEVOR veröffentlicht wird — über genau die Bytes aus `bauen`.
+      - name: Herkunft von Wheel und sdist beglaubigen
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+
+      # Bewusst `gh` statt einer Dritt-Action: die bräuchte `contents: write` auf dieses Repo,
+      # und ihr Tag liesse sich umhängen. `gh` ist auf den Runnern vorinstalliert. Ohne Checkout
+      # kennt `gh` das Repo nicht aus `.git` — deshalb `--repo`.
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
 
   # Der Upload nach PyPI. Bewusst ein EIGENER Job: Er tut nichts, als das fertige Artefakt
   # herunterzuladen und hochzuladen — kein Code aus dem Repo läuft hier. Nur so ist das
@@ -149,30 +204,50 @@ jobs:
           print-hash: true
 
   # Das Gateway-Abbild. Läuft erst, wenn das Release steht — ein Abbild ohne Release
-  # wäre ein Artefakt, zu dem die Notizen fehlen.
+  # wäre ein Artefakt, zu dem die Notizen fehlen. Gebaut wird OHNE Identität: Der Bau führt
+  # pip im Abbild aus, die Beglaubigung macht der Job danach über den Digest.
   image:
     needs: release
     runs-on: ubuntu-latest
     permissions:
+      contents: read       # Checkout
       packages: write      # Abbild nach GHCR schieben
-      id-token: write      # Sigstore-Identität für die Attestation
-      attestations: write  # Attestation an GitHub übergeben (und in die Registry legen)
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       # arm64 wird emuliert. Das ist nur erträglich, weil das Abbild ausschließlich das
-      # `[oidc]`-Extra installiert (reine Python-Räder). Mit `[all]` müsste hier libxmlsec1
+      # `[gateway]`-Extra installiert (reine Python-Räder). Mit `[all]` müsste hier libxmlsec1
       # kompiliert werden — Minuten statt Sekunden.
+      #
+      # Beide Actions laden zur Laufzeit ein Werkzeug nach, und ohne Angabe ein WANDERNDES
+      # (B4-6): qemu aus dem `latest`-Tag von tonistiigi/binfmt (läuft privilegiert auf dem Runner),
+      # BuildKit aus `moby/buildkit:buildx-stable-1`, buildx in der Fassung, die der Runner
+      # gerade mitbringt. Der SHA-Pin der Action hält davon nichts fest. Deshalb hier je Werkzeug
+      # Version und Digest; `tests/test_repo.py` verlangt sie. Dependabot sieht diese Angaben
+      # nicht — beim Heben der Action die Werkzeuge mit heben.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1  # v4.4.0
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+        with:
+          version: v0.37.1
+          driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
 
       # Container-Registries verlangen kleingeschriebene Repository-Namen; `repository_owner`
       # liefert die Schreibweise des GitHub-Kontos. Groß geschrieben bricht `buildx` ab:
       # `invalid tag …: repository name must be lowercase`.
       - name: Eigentümer kleinschreiben
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      # Zeitstempel des Commits für den Abbild-Bau (B4-7): BuildKit reicht ihn als Build-Arg
+      # durch (Dockerfile: .pyc, /etc/shadow) und schreibt ihn mit `rewrite-timestamp` in jede
+      # Ebene. Die Abhängigkeiten legt deploy/gateway/requirements.txt samt Hashes fest.
+      - name: Zeitstempel des Commits
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: An GHCR anmelden
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
@@ -187,12 +262,32 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
           # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
           # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
           # andere Version, ohne dass jemand etwas geändert hätte.
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
+          outputs: type=image,push=true,rewrite-timestamp=true
           provenance: false
+
+  # Beglaubigung des Abbilds — getrennt vom Bau, aus demselben Grund wie oben: Die Identität
+  # liegt nur in einem Job, der weder auscheckt noch baut. Er kennt nur den Digest.
+  image-beglaubigen:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write      # Attestation und SBOM neben das Abbild in die Registry legen
+      id-token: write      # Sigstore-Identität für die Attestation
+      attestations: write  # Attestation an GitHub übergeben
+    steps:
+      - name: Eigentümer kleinschreiben
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: An GHCR anmelden
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # BuildKits eigene Provenance bleibt aus (`provenance: false` oben): Sie ist UNSIGNIERT und
       # belegt damit genau das nicht, worum es hier geht. Stattdessen eine über Sigstore signierte
@@ -202,16 +297,18 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ needs.image.outputs.digest }}
           push-to-registry: true
 
       # Die SBOM beantwortet die Frage, die nach jeder CVE-Meldung kommt: steckt das Paket drin?
       # Erzeugt wird sie aus dem GESCHOBENEN Abbild (per Digest), nicht aus dem Bauverzeichnis —
-      # sonst beschriebe sie etwas anderes als das, was ausgeliefert wurde.
+      # sonst beschriebe sie etwas anderes als das, was ausgeliefert wurde. Syft lädt die Action
+      # selbst nach; die Fassung steht als Konstante im gepinnten Commit der Action (bei diesem
+      # SHA v1.51.1) — mit dem SHA-Pin ist sie also festgelegt, anders als qemu/BuildKit oben.
       - name: SBOM aus dem geschobenen Abbild erzeugen
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
         with:
-          image: ghcr.io/${{ env.OWNER_LC }}/tinysesam@${{ steps.push.outputs.digest }}
+          image: ghcr.io/${{ env.OWNER_LC }}/tinysesam@${{ needs.image.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: false
@@ -220,12 +317,14 @@ jobs:
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
         with:
           subject-name: ghcr.io/${{ env.OWNER_LC }}/tinysesam
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ needs.image.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
 
       - name: Digest ausgeben (für einen unveränderlichen Pin)
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           echo "Abbild: ghcr.io/${OWNER_LC}/tinysesam:${GITHUB_REF_NAME}"
-          echo "Digest: ${{ steps.push.outputs.digest }}"
-          echo "Unveränderlich pinnen: ghcr.io/${OWNER_LC}/tinysesam@${{ steps.push.outputs.digest }}"
+          echo "Digest: ${DIGEST}"
+          echo "Unveränderlich pinnen: ghcr.io/${OWNER_LC}/tinysesam@${DIGEST}"
