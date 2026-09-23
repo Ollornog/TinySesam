@@ -22,18 +22,24 @@ DUMMY_CERT = "MIID...dummy...cert"   # nur nicht-leer; echte Signaturprüfung te
 class FakeSAML:
     def __init__(self, nameid="alice", attrs=None, valid=True):
         self.nameid, self.attrs, self.valid = nameid, (attrs or {}), valid
+        self.kontexte = []
 
     def login_url(self, req, base, return_to="/"):
+        self.kontexte.append(req)
         return (f"https://idp.example.com/sso?SAMLRequest=abc&RelayState={return_to}",
                 "_authnreq-id-4711")
 
     def process(self, req, base, request_id=""):
         # Die Attrappe steht für den echten Client NACH bestandener Prüfung — den Abgleich von
-        # InResponseTo stellt tests/test_sicherheit_befunde.py nach.
+        # InResponseTo stellt tests/test_sicherheit_befunde.py nach. Der `req`-Satz wird
+        # mitgeschrieben: Aus ihm berechnet python3-saml die eigene Adresse und vergleicht sie
+        # mit der `Destination` der Assertion (F-16).
+        self.kontexte.append(req)
         self.gesehene_request_id = request_id
         return {"nameid": self.nameid, "attrs": self.attrs} if self.valid else None
 
     def metadata(self, base):
+        self.metadaten_basis = base
         return "<md:EntityDescriptor/>"
 
 
@@ -41,7 +47,7 @@ def build(**cfgkw):
     db = os.path.join(tempfile.mkdtemp(), "t.db")
     auth = TinySesam(TinySesamConfig(
         db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
-        csrf_enabled=False, base_url="https://app.example.com",
+        csrf_enabled=False, base_url=cfgkw.pop("base_url", "https://app.example.com"),
         saml_enabled=True, saml_idp_sso_url="https://idp.example.com/sso",
         saml_idp_x509cert=DUMMY_CERT, saml_attr_email="email", saml_attr_name="displayName",
         saml_attr_groups="groups", **cfgkw))
@@ -274,5 +280,57 @@ r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_re
 assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
 ok("... mit freien Kennungen legt SAML weiterhin an")
 os.remove(db)
+
+# ---------- F-16: die SP-Identität kommt aus base_url, nicht aus dem Host-Header ----------
+# python3-saml baut aus `https`, `http_host` und `script_name` die Adresse, die es für die eigene
+# hält, und vergleicht damit die `Destination` der Assertion. Kamen Schema und Host aus
+# X-Forwarded-Proto/Host, bestimmte der Anfragende diesen Vergleich mit: Er legte eine Assertion
+# vor, deren Destination auf SEINEN Namen lautet, und setzte den Header passend dazu. Zusammen
+# mit der Bindung über den blossen Benutzernamen (F-11) war das eine Kontoübernahme.
+db16, auth16, app16 = build()
+auth16.saml = FakeSAML()
+c16 = TestClient(app16)
+FREMD = {"X-Forwarded-Proto": "http", "X-Forwarded-Host": "angreifer.example",
+         "Host": "angreifer.example"}
+
+auth16.saml.kontexte.clear()
+c16.get("/auth/saml/login", headers=FREMD, follow_redirects=False)
+_k = auth16.saml.kontexte[-1]
+assert _k["http_host"] == "app.example.com", f"fremder Host im SAML-Kontext: {_k}"
+assert _k["https"] == "on", _k
+ok("F-16: der AuthnRequest nennt den Host aus base_url, nicht den aus dem Header")
+
+auth16.saml.kontexte.clear()
+c16.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"}, headers=FREMD,
+         follow_redirects=False)
+_k = auth16.saml.kontexte[-1]
+assert _k["http_host"] == "app.example.com", f"fremder Host an der ACS: {_k}"
+ok("F-16: …und die ACS rechnet ihre eigene Adresse genauso aus")
+
+# Die Metadaten bauen Entity-ID und ACS-URL — sie kommen aus derselben geprüften Basis, sonst
+# läge im Dokument, das der IdP einliest, der Name des Anfragenden.
+c16.get("/auth/saml/metadata", headers=FREMD)
+assert auth16.saml.metadaten_basis == "https://app.example.com", auth16.saml.metadaten_basis
+ok("F-16: …auch die Metadaten, die der IdP einliest")
+
+# Der Pfadanteil einer unter einem Unterpfad montierten App gehört mit in die Selbst-Adresse,
+# sonst weicht sie von der ACS-URL in den Settings ab und die Destination-Prüfung scheitert.
+db16b, auth16b, app16b = build(base_url="https://app.example.com/sso")
+auth16b.saml = FakeSAML()
+c16b = TestClient(app16b)
+auth16b.saml.kontexte.clear()
+c16b.get("/auth/saml/login", follow_redirects=False)
+_kb = auth16b.saml.kontexte[-1]
+assert _kb["script_name"] == "/sso/auth/saml/login", _kb
+ok("F-16: der Unterpfad aus base_url steht in der berechneten Selbst-Adresse")
+
+# Und er wird nicht doppelt angehängt, wenn er im Pfad schon steckt (ASGI-Mount).
+from tinysesam.saml_ import request_kontext                                # noqa: E402
+_direkt = request_kontext("https://app.example.com/sso", "/sso/auth/saml/acs")
+assert _direkt["script_name"] == "/sso/auth/saml/acs", _direkt
+ok("F-16: …und nicht doppelt, wenn er schon im Pfad steht")
+
+for _d in (db16, db16b):
+    os.remove(_d)
 
 print("\nSAML OK ✅")

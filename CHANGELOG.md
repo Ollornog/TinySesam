@@ -11,6 +11,19 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
 ### Sicherheit
 
+- **Die SAML-Selbstauskunft hört nicht mehr auf den Anfragenden** (F-16). python3-saml baut aus
+  `https`, `http_host` und `script_name` die Adresse, die es für die eigene hält, und vergleicht
+  damit die `Destination` der Assertion. Diese drei Angaben kamen aus `X-Forwarded-Proto` und dem
+  `Host`-Header — der Anfragende bestimmte den Vergleich also mit: Er legte eine Assertion vor,
+  deren `Destination` auf seinen Namen lautet, und setzte den Header passend dazu. Die Prüfung
+  ging auf, obwohl die Assertion nie für uns gedacht war. Zusammen mit der Bindung über den
+  blossen Benutzernamen (F-11) war das eine Kontoübernahme ohne Kenntnis des lokalen Passworts.
+
+  Der `req`-Satz kommt jetzt aus `saml_.request_kontext()` und damit aus der **geprüften
+  Basis** — derselben, aus der auch Entity-ID und ACS-URL gebaut werden. Alle drei Angaben sagen
+  dasselbe, und keine hört auf den Anfragenden. Der Pfadanteil einer unter einem Unterpfad
+  montierten App wandert mit, aber nicht doppelt.
+
 - **Das Passwort des Dienstkontos ging im Klartext über die Leitung** (F-12). Bei
   Search-then-Bind stand `auto_bind=True` in der Verbindung und `start_tls()` eine Zeile später:
   Der Bind war also schon durch, bevor die Leitung verschlüsselt wurde. Ein Mitleser brauchte
