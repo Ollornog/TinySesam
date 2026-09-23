@@ -765,6 +765,35 @@ class Store:
         """Handle aus einer Sitzungs-Zeile — für Admin-Panel und „andere Sitzungen beenden"."""
         self._exec("DELETE FROM session WHERE token_hash=?", (self._handle(handle),))
 
+    def rotate_session(self, handle) -> Optional[str]:
+        """Der Sitzung ein neues Token geben, ohne sonst etwas an ihr zu ändern (F-06).
+
+        Laufzeit, Faktoren und `created_at` bleiben — ein Step-up soll das Token erneuern, nicht
+        die absolute Lebensdauer verlängern. Die OIDC-Freigaben hängen per Fremdschlüssel am
+        Handle und ziehen mit um; darum neue Zeile, Freigaben umhängen, alte Zeile löschen, alles
+        in einer Transaktion. Gibt das neue Klartext-Token zurück, oder None, wenn es die
+        Sitzung nicht (mehr) gibt."""
+        alt = self._handle(handle)
+        token = secrets.token_urlsafe(32)
+        neu = self.session_hash(token)
+        spalten = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
+                   "remember, ip, user_agent")
+        with self._lock:
+            try:
+                cur = self.db.execute(
+                    f"INSERT INTO session(token_hash, {spalten}) SELECT ?, {spalten} FROM session "
+                    "WHERE token_hash=?", (neu, alt))
+                if cur.rowcount != 1:
+                    self.db.rollback()
+                    return None
+                self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
+        return token
+
     def delete_user_sessions(self, user_id):
         self._exec("DELETE FROM session WHERE user_id=?", (user_id,))
 
@@ -991,6 +1020,27 @@ class Store:
     def add_resource_unlock(self, token, resource, expires_at):
         self._exec("INSERT OR REPLACE INTO resource_unlock(token, resource, expires_at) VALUES (?,?,?)",
                    (self.session_hash(token), resource, expires_at))
+
+    def move_resource_unlocks(self, old_token, new_token) -> int:
+        """Die Freigaben eines Browsers auf ein neues Token umhängen (F-01).
+
+        Umhängen statt kopieren: Danach hält das alte Token nichts mehr. War es von aussen
+        untergeschoben, geht der Unterschieber leer aus; war es das eigene, bleiben die
+        Bereiche offen, die dieser Browser schon hatte."""
+        if not old_token:
+            return 0
+        with self._lock:
+            cur = self.db.execute("UPDATE OR REPLACE resource_unlock SET token=? WHERE token=?",
+                                  (self.session_hash(new_token), self.session_hash(old_token)))
+            self.db.commit()
+            return cur.rowcount
+
+    def delete_resource_unlocks(self, token) -> int:
+        """Alle Freigaben dieses Browsers beenden — beim Logout (F-08)."""
+        if not token:
+            return 0
+        return self._exec("DELETE FROM resource_unlock WHERE token=?",
+                          (self.session_hash(token),)).rowcount
 
     def is_resource_unlocked(self, token, resource) -> bool:
         if not token:

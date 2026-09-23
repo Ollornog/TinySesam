@@ -101,7 +101,7 @@ def build_router(auth) -> APIRouter:
             auth.record_login(pu["username"], ip, False, "totp")
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
         auth.record_login(pu["username"], ip, True, "totp")
-        sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
+        sitzungs_token = request.cookies.get(auth.session_cookie_name)   # Klartext nur hier, im Cookie
         # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
         # Rechtewechsel. Dann muss das Cookie mit.
         erneuert = auth.complete_totp(sitzungs_token)
@@ -160,7 +160,10 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
-        return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
+        ok = auth.totp_confirm(u["id"], code)
+        # B1-7: Nach einem neuen Faktor das Beenden der übrigen Sitzungen anbieten — die Zahl
+        # sagt der Oberfläche, ob es etwas anzubieten gibt.
+        return JSONResponse({"ok": ok, "other_sessions": auth.andere_sitzungen(request, u) if ok else 0})
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
@@ -176,7 +179,7 @@ def build_router(auth) -> APIRouter:
         # Step-up-Frische konstruktiv unerreichbar (403, `api.stepup_session`).
         u = auth.require_mfa(request)
         auth.totp_disable(u["id"])
-        return {"ok": True}
+        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
 
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
@@ -277,7 +280,7 @@ def build_router(auth) -> APIRouter:
             except ValueError as e:
                 raise HTTPException(400, str(e))
             auth.audit("pin_set", u["username"])
-            return {"ok": True}
+            return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
 
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
@@ -285,7 +288,7 @@ def build_router(auth) -> APIRouter:
             u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
             auth.disable_pin(u["id"])
             auth.audit("pin_disable", u["username"])
-            return {"ok": True}
+            return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
 
     # ---------- Geteiltes Ressourcen-Geheimnis (PIN/Passphrase ohne User-Konto) ----------
     if cfg.resource_locks_enabled:
@@ -461,10 +464,14 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reauth", request=request, status=401, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.reauth"))
         s = auth.session_from_request(request)
+        resp = RedirectResponse(nxt, 303)
         if s:
             auth.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
+            # Frisch bestätigt heisst neues Token (F-06): Ein mitgelesenes altes Cookie hielte
+            # sonst genau die Sitzung, die eben Sudo-Rechte bekommen hat.
+            auth.rotate_session(request, resp)
         auth.audit("stepup", u["username"], ip)
-        return RedirectResponse(nxt, 303)
+        return resp
 
     # ---------- Passwort vergessen / zurücksetzen (braucht einen Mailer, NICHT den Magic-Link) ----------
     if cfg.password_reset_enabled:
@@ -624,7 +631,7 @@ def build_router(auth) -> APIRouter:
                 # dazu hängt an der SITZUNG — ein API-Key hat keinen und ist hier auch nicht
                 # gemeint; für ihn bleibt es bei der bisherigen Antwort.
                 anwendung = auth.oidc_anwendung(orig)
-                sitzung = request.cookies.get(cfg.session_cookie) or ""
+                sitzung = request.cookies.get(auth.session_cookie_name) or ""
                 if anwendung and sitzung:
                     ja, grund = auth.oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
                     if not ja:
@@ -732,6 +739,10 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             raise HTTPException(401)
+        # Die Liste nennt IP und Browser jeder Sitzung — das ist die Sicht eines Menschen auf sein
+        # Konto, nicht die eines Automaten (F-09). Ansehen braucht keine frische Bestätigung
+        # (ASVS 5.0 7.5.2 verlangt sie nur fürs Beenden), wohl aber eine echte Sitzung.
+        auth.require_session(request, u)
         cur = auth.session_from_request(request)
         cur_tok = cur["token_hash"] if cur else None
         out = []
@@ -742,9 +753,14 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/sessions/revoke")
     async def own_sessions_revoke(request: Request):
-        u = auth.current_user(request)
-        if not u:
+        # Sitzungen beenden verlangt eine frische Bestätigung (F-09, ASVS 5.0 7.5.2: „having
+        # authenticated again with at least one factor"). Vorher genügte jede Sitzung und jeder
+        # API-Key: Ein gestohlenes Cookie warf den rechtmässigen Inhaber auf allen anderen
+        # Geräten hinaus, und „alle beenden" widerrief dabei auch noch seine API-Keys. Die
+        # Kontoseite folgt dem `X-TinySesam-Reauth`-Hinweis von selbst.
+        if not auth.current_user(request):
             raise HTTPException(401)
+        u = auth.require_mfa(request)
         scope = (await auth.json_body(request)).get("scope", "others")
         # Ein API-Key ist eine zweite, gleichwertige Anmeldung — er hängt an keiner Sitzung.
         # „alle beenden" ist die Panik-Taste (Konto vermutlich übernommen): da gehört er dazu.
@@ -763,8 +779,7 @@ def build_router(auth) -> APIRouter:
                 "api_keys_active": auth.store.count_active_api_keys(u["id"])}
 
     # ---------- Logout / me ----------
-    @r.get("/auth/logout")
-    def logout(request: Request):
+    def _abmelden(request: Request):
         u = auth.current_user(request) or auth.pending_user(request)
         # OIDC-Provider-Logout (optional): vor dem lokalen Logout prüfen, ob die Sitzung via OIDC lief
         oidc_logout_url = None
@@ -787,6 +802,24 @@ def build_router(auth) -> APIRouter:
         resp = RedirectResponse(oidc_logout_url or cfg.logout_redirect, 303)
         auth.logout(request, resp)
         return resp
+
+    @r.get("/auth/logout")
+    def logout(request: Request):
+        # Logout-CSRF (F-07): Ein GET, der abmeldet, lässt sich von jeder fremden Seite mit einem
+        # <img src> auslösen. Der Browser sagt aber, woher die Navigation kommt. Von der eigenen
+        # Seite, einer Nachbar-Subdomain (die Abmelden-Schaltfläche einer geschützten App) oder
+        # aus der Adresszeile gilt der Link weiter; von einer FREMDEN Seite kommt statt des
+        # Abmeldens eine Rückfrage mit POST-Formular. Ohne den Header (alter Browser, Skript)
+        # bleibt es beim alten Verhalten — sonst bräche jeder bestehende Abmelde-Link.
+        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
+            return auth.render_page("logout", request=request)
+        return _abmelden(request)
+
+    @r.post("/auth/logout")
+    def logout_post(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+        """Abmelden per Formular — mit CSRF-Prüfung, der Weg für eigene Oberflächen."""
+        auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
+        return _abmelden(request)
 
     @r.get("/auth/me")
     def me(request: Request):

@@ -264,8 +264,8 @@ def build_admin_router(auth) -> APIRouter:
             # Erklärung. Gegen einen Angreifer schützte das nie — getroffen wurde der eigene
             # Nutzer. (War als B-1 auf „nach 1.0" vertagt; durch die neuen CSRF-Prüfungen im
             # Panel trifft es inzwischen mehr Wege als bei der Meldung.)
-            if cfg.csrf_enabled and not request.cookies.get(cfg.csrf_cookie):
-                resp.set_cookie(cfg.csrf_cookie, auth.csrf_token(request), secure=cfg.cookie_secure,
+            if cfg.csrf_enabled and not request.cookies.get(auth.csrf_cookie_name):
+                resp.set_cookie(auth.csrf_cookie_name, auth.csrf_token(request), secure=cfg.cookie_secure,
                                 samesite=cfg.cookie_samesite, path=cfg.cookie_path)
             return resp
 
@@ -311,7 +311,7 @@ def render_panel(auth, base: str, warn: str = "") -> str:
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
             .replace("__RP__", cfg.rp_name).replace("__BASE__", base)
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
-            .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
+            .replace("__WARN__", warn).replace("__CSRFCK__", auth.csrf_cookie_name)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")

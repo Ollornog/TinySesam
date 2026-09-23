@@ -129,10 +129,11 @@ class Browser:
 
         Die eingebaute Hilfe `tsCsrf()` gibt es nur auf TinySesams eigenen Seiten; auf einer Seite
         der Anwendung fehlt sie. Das Double-Submit-Cookie ist bewusst nicht HttpOnly, genau damit
-        eigene Skripte es lesen können.
+        eigene Skripte es lesen können. Über HTTPS heisst es seit H-1 `__Host-tinysesam_csrf`.
         """
         return await self.js(
-            "(document.cookie.split('; ').find(c => c.startsWith('tinysesam_csrf=')) || '')"
+            "(document.cookie.split('; ').find(c => c.startsWith('__Host-tinysesam_csrf=')"
+            " || c.startsWith('tinysesam_csrf=')) || '')"
             ".split('=')[1] || ''")
 
     async def angemeldet_als(self, warte=0):

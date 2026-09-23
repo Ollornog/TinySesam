@@ -164,6 +164,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `cookie_samesite` | `str` | `"lax"` | lax\|strict\|none |
 | `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
 | `cookie_domain` | `str` | `""` | leer = Host-only; für SSO über Subdomains z.B. ".example.com" |
+| `cookie_host_prefix` | `bool` | `True` | : `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der : Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Ein so : benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie tossing). : Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden. Eigenes JS liest den : Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`. |
 
 ## Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…)
 
@@ -177,6 +178,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `csrf_enabled` | `bool` | `True` | State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token) |
 | `csrf_cookie` | `str` | `"tinysesam_csrf"` | Name des CSRF-Cookies |
+| `csrf_origin_check` | `bool` | `True` | : Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Origin` muss ein eigener Host sein : (Host-Header, X-Forwarded-Host, base_url, trusted_redirect_hosts), `Sec-Fetch-Site: : cross-site` ohne eigenen Origin wird abgewiesen. Fehlen beide Header (alter Browser, : Skript), entscheidet allein das Token. Aus nur für Proxys, die den Host umschreiben, : ohne X-Forwarded-Host zu setzen — besser: base_url setzen. |
 
 ## LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password')
 
@@ -270,4 +272,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-135 Felder, erzeugt aus `tinysesam/config.py`.
+137 Felder, erzeugt aus `tinysesam/config.py`.

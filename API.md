@@ -38,6 +38,10 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
+### `andere_sitzungen(request, user) -> 'int'`
+
+Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
+
 ### `api_key_art(key) -> 'str'`
 
 Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
@@ -248,7 +252,7 @@ Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite de
 
 ### `logout(request, response)`
 
-Die Sitzung dieses Requests beenden und das Cookie löschen.
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
@@ -365,6 +369,10 @@ Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, 
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
 Ein offenes Einrichtungsfenster sofort schliessen.
+
+### `rotate_session(request, response) -> 'Optional[str]'`
+
+Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
 
 ### `router()`
 
@@ -562,4 +570,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+125 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

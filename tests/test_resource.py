@@ -133,5 +133,56 @@ auth.remove_resource_secret("neu")
 assert "neu" not in {r["name"] for r in auth.list_resource_secrets()}
 ok("Manager/Admin: Geheimnisse anlegen + löschen")
 
+# F-01: Session-Fixation der Freigabe. Der Angreifer schiebt dem Opfer ein Token unter, das er
+# kennt (Nachbar-Subdomain, Klartext-HTTP); das Opfer gibt den Bereich frei. Vorher hing die
+# Freigabe danach an GENAU diesem Token — der Angreifer war mit drin.
+for _b in ("fotos", "wiki"):     # die Sperr-Prüfungen oben haben die Bereiche verriegelt
+    auth.store.clear_fails(username=f"res:{_b}", method="resource")
+RC = auth.resource_cookie_name
+cf = TestClient(app, client=("198.51.100.41", 50000))   # eigene Adresse: die Sperren oben kleben an "testclient"
+
+
+def mit(tok):
+    """Cookie ausdrücklich im Header — der Jar des Clients bliebe sonst beim alten Wert."""
+    cf.cookies.clear()
+    return {**JSON, "Cookie": f"{RC}={tok}"} if tok else dict(JSON)
+
+
+def gesetzt(r):
+    import re as _re
+    m = _re.search(RC + r"=([^;]*)", ";".join(r.headers.get_list("set-cookie")))
+    return m.group(1) if m else None
+
+
+untergeschoben = "vom-angreifer-gewaehlt-0123456789abcdef"
+r = cf.post("/auth/resource/fotos", data={"secret": "2468", "next": "/fotos"},
+            headers=mit(untergeschoben), follow_redirects=False)
+assert r.status_code == 303, (r.status_code, r.text[:200])
+neu_tok = gesetzt(r)
+assert neu_tok and neu_tok != untergeschoben, "die Freigabe muss ein NEUES Token bekommen"
+assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 200, "das Opfer selbst ist drin"
+assert cf.get("/fotos", headers=mit(untergeschoben)).status_code == 401, \
+    "das untergeschobene Token ist wertlos"
+ok("F-01: Freigabe vergibt ein neues Token — ein untergeschobenes wird nicht freigeschaltet")
+
+# Was derselbe Browser schon offen hatte, zieht mit um — und bleibt am alten Token nicht hängen.
+r = cf.post("/auth/resource/wiki", data={"secret": "geheime passphrase", "next": "/wiki"},
+            headers=mit(neu_tok), follow_redirects=False)
+drittes = gesetzt(r)
+assert drittes and drittes != neu_tok
+assert cf.get("/fotos", headers=mit(drittes)).status_code == 200
+assert cf.get("/wiki", headers=mit(drittes)).status_code == 200
+assert cf.get("/fotos", headers=mit(neu_tok)).status_code == 401, "das vorige Token muss leer sein"
+ok("…bereits offene Bereiche ziehen auf das neue Token um, das alte hält nichts mehr")
+
+# F-08: Logout beendet auch die Freigaben dieses Browsers — ein Abmelden am geteilten Rechner
+# liess den gesperrten Bereich bisher bis zu resource_unlock_ttl_hours offen.
+r = cf.get("/auth/logout", headers=mit(drittes), follow_redirects=False)
+assert r.status_code == 303
+assert gesetzt(r) in ("", '""'), f"Freigabe-Cookie muss geleert werden: {gesetzt(r)!r}"
+assert cf.get("/fotos", headers=mit(drittes)).status_code == 401, "Freigabe überlebt den Logout"
+assert cf.get("/wiki", headers=mit(drittes)).status_code == 401
+ok("F-08: Logout löscht die Freigaben serverseitig und das Freigabe-Cookie im Browser")
+
 os.remove(db)
 print("\nRESOURCE-LOCK OK ✅")

@@ -364,6 +364,20 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
             "oder gleich mfa_enrollment='strict' schreiben.")
 
+    # --- CSRF-Schutz ganz aus (F-03) ---
+    # Einzeln ist jeder Wert vertretbar: `csrf_enabled=False`, weil SameSite=Lax die
+    # Cross-Site-POSTs schon abfängt; `cookie_samesite='none'` für eine eingebettete App, weil
+    # das CSRF-Token dann schützt. Zusammen bleibt NICHTS: Das Sitzungs-Cookie fährt bei jedem
+    # fremden Formular mit, und niemand prüft ein Token. Das ist kein Kompromiss, das ist ein Loch.
+    if (not _an(config, "csrf_enabled")
+            and str(getattr(config, "cookie_samesite", "lax") or "").lower() == "none"):
+        fehler.append(
+            "csrf_enabled=False zusammen mit cookie_samesite='none': Dann schickt der Browser "
+            "das Sitzungs-Cookie bei jedem Formular einer fremden Seite mit, und kein Token "
+            "hält dagegen — jede zustandsändernde Route ist per CSRF auslösbar. Entweder "
+            "csrf_enabled=True (nötig, sobald SameSite=None gebraucht wird) oder "
+            "cookie_samesite='lax'.")
+
     # --- Nutzerprüfung bei Passkeys (B2-10) ---
     _uv = str(getattr(config, "passkey_user_verification", "required") or "required")
     if _uv not in ("required", "preferred"):

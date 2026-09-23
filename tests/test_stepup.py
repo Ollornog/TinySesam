@@ -75,6 +75,36 @@ assert r.status_code == 303 and r.headers["location"] == "/sudo"
 assert c.get("/sudo", headers=JSON).status_code == 200
 ok("Reauth per Passwort → sudo wieder erreichbar")
 
+# ---------- F-06: der Step-up erneuert das Sitzungs-Token ----------
+# Wer das alte Cookie mitgelesen hat, darf nach der Bestätigung keine Sudo-Sitzung halten.
+# Laufzeit und Anmeldezeitpunkt bleiben — ein Step-up verlängert die Sitzung nicht.
+stale()
+vorher = c.cookies.get("tinysesam_session")
+zeile_vorher = auth.store.get_session(vorher)
+r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
+assert r.status_code == 303 and "tinysesam_session=" in r.headers.get("set-cookie", ""), r.headers
+nachher = c.cookies.get("tinysesam_session")
+assert nachher and nachher != vorher, "Reauth muss ein neues Token ausgeben"
+assert auth.store.get_session(vorher) is None, "das alte Token muss tot sein"
+zeile = auth.store.get_session(nachher)
+assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
+assert zeile["remember"] == zeile_vorher["remember"] and zeile["mfa_ok"] == 1
+assert c.get("/sudo", headers=JSON).status_code == 200
+dieb = TestClient(app)
+dieb.cookies.set("tinysesam_session", vorher)
+assert dieb.get("/normal", headers=JSON).status_code == 401, "altes Cookie trägt nicht mehr"
+ok("F-06: Reauth rotiert das Token (altes tot, Laufzeit und created_at unverändert)")
+
+# Dasselbe, wenn der Step-up über einen erneuten Login mit einem Faktor läuft (apply_factor auf
+# einer schon vollwertigen Sitzung): neues Token, alte Sitzung weg, keine zweite daneben.
+vorher = c.cookies.get("tinysesam_session")
+anzahl = len(auth.store.list_sessions(uid))
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+           follow_redirects=False)
+assert r.status_code == 303 and c.cookies.get("tinysesam_session") != vorher
+assert auth.store.get_session(vorher) is None and len(auth.store.list_sessions(uid)) == anzahl
+ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungszahl gleich")
+
 # ---------- API-Key erfüllt Step-up NICHT ----------
 key = auth.create_api_key(uid, name="k")["key"]
 assert c.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200
@@ -305,7 +335,7 @@ geheim = re.search(r"<div class=mono>([A-Z2-7]+)</div>", seite.text)
 assert geheim, seite.text[:200]
 r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim.group(1)).now()},
             headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
-assert r.status_code == 200 and r.json() == {"ok": True}, r.text[:120]
+assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 0}, r.text[:120]
 assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
 ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
 
