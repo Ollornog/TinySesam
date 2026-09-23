@@ -368,7 +368,8 @@ def _account(auth, ctx) -> str:
             f"<div>{admin_link} <a href='/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections)
             + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name))
-               .replace("__OFFER__", json.dumps(t("acc.sessions_offer"))))
+               + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
+               .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
             + pkjs)
     # Account nutzt volle Breite (kein Card) + Account-CSS + Branding
     return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
@@ -377,10 +378,6 @@ def _account(auth, ctx) -> str:
 _ACCOUNT_JS = """
 <script>
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
-// B1-7 (ASVS 7.4.3): Nach jeder Faktor-Änderung das Beenden der übrigen Sitzungen anbieten —
-// die Antwort sagt mit `other_sessions`, ob es welche gibt.
-async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}
-  if(r.ok&&j.other_sessions>0&&confirm(__OFFER__)){await J('/auth/sessions/revoke',{scope:'others'});loadsess()}}
 async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
   // 403 + X-TinySesam-Reauth: die Faktor-Verwaltung verlangt seit R3-3 eine frische
   // Bestätigung. Ohne diese Weiche scheiterte der Knopf nach Ablauf der Frische stumm.
@@ -421,7 +418,7 @@ async function loadsess(){const el=document.getElementById('sesslist');if(!el)re
   el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
 function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
-  await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
+  if(await tsRevokeOthers())say('sess_msg','\\u2713 beendet',true);loadsess()}
 // Ein delegierter Listener statt Inline-Klick-Handlern — sonst blockt die strenge CSP
 // die Buttons. Auch die per JS nachgeladenen Buttons (data-act=revk/delpk) werden erreicht.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
@@ -444,7 +441,7 @@ async function addpk(){
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
     const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();await offer(r);
+    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();await offer(r);loadsess();
   }catch(e){say('pk_msg','abgebrochen: '+e,false)}
 }
 </script>
@@ -547,6 +544,40 @@ def _error(auth, ctx) -> str:
             f"<div class='hint errhint'>{_e(msg)}</div>"
             f"<a class=btn2 href='/'>{_e(t('error.home'))}</a>")
     return _page(auth, str(code), body)
+
+
+def _revoke_js(auth, zurueck: str) -> str:
+    """JS für das Angebot nach einer Faktor-Änderung (B1-7, ASVS 7.4.3): `offer(r)` liest
+    `other_sessions` aus der Antwort und fragt nach, `tsRevokeOthers()` beendet die übrigen
+    Sitzungen. Braucht `tsCsrf()` auf der Seite.
+
+    Das Beenden verlangt eine frische Bestätigung (F-09), die Anlage eines Faktors nicht immer
+    (Passkey, TOTP brauchen nur eine Sitzung). Ist die Frische abgelaufen, führt der Weg über
+    die Reauth-Seite — und `zurueck` (ein JS-Ausdruck, oder leer) sagt, wohin es danach geht,
+    damit die schon gegebene Zustimmung nicht stillschweigend verloren geht (A-5). Während
+    dieser Umleitung kehrt `tsRevokeOthers` nie zurück: Ein Aufrufer, der danach neu lädt,
+    bräche die Navigation sonst ab."""
+    t = auth.t
+    ziel = (f"location.href=re+'?next='+encodeURIComponent({zurueck});return new Promise(()=>{{}})"
+            if zurueck else f"alert({json.dumps(t('api.stepup'))});return false")
+    return ("<script>"
+            "async function tsRevokeOthers(){const r=await fetch('/auth/sessions/revoke',{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
+            "body:JSON.stringify({scope:'others'})});"
+            "const re=r.headers.get('X-TinySesam-Reauth');"
+            f"if(r.status===403&&re){{{ziel}}}return r.ok}}"
+            "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
+            f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
+            "await tsRevokeOthers()}</script>")
+
+
+# Zurück von der Reauth mit `?revoke_others=1`: noch einmal fragen, dann beenden. Nicht still
+# ausführen — sonst beendete jeder fremde Link auf diese Adresse die anderen Sitzungen.
+_ACCOUNT_RUECKKEHR_JS = """<script>
+if(new URLSearchParams(location.search).get('revoke_others')==='1'){
+  history.replaceState(null,'',location.pathname);
+  if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg','\u2713 beendet',true);loadsess()})}
+</script>"""
 
 
 def _logout(auth, ctx) -> str:
@@ -684,9 +715,13 @@ def _totp_setup(auth, ctx) -> str:
             "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name) + "=([^;]+)/)||[])[1]||''}"
             "async function conf(e){e.preventDefault();const c=e.target.code.value;"
             "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
-            "body:'code='+encodeURIComponent(c)});const j=await r.json();"
-            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';return false}}"
-            "document.getElementById('tstotp').addEventListener('submit',conf)</script>")
+            "body:'code='+encodeURIComponent(c)});const j=await r.clone().json();"
+            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
+            # B1-7 auch auf dieser Seite (A-5): Sie ist der Weg, auf dem TOTP entsteht.
+            "await offer(r);return false}"
+            "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
+            + _revoke_js(auth, "'/auth/account?revoke_others=1'"
+                         if getattr(auth.cfg, "account_enabled", False) else ""))
     return _page(auth, t("setup.title"), body)
 
 

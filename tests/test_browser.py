@@ -403,12 +403,46 @@ async def run():
             showcase.auth.cfg.stepup_max_age_sec = vorher_frische
         print("  Konto-Seite: abgelaufene Frische → Reauth-Seite statt stummem 403")
 
+        # ---------- 10) Angebot nach Faktor-Änderung: `offer()` wirklich ausführen (B1-7, A-5) ----------
+        # Vorher prüfte nur ein String-Test, dass `offer(` im HTML steht. Gemessen wird hier, was
+        # der Nutzer erlebt: Die Zustimmung beendet die andere Sitzung — und geht bei
+        # abgelaufener Frische nicht verloren, sondern kommt nach der Reauth als Rückfrage wieder.
+        antwort = "new Response(JSON.stringify({ok:true,other_sessions:1}),{status:200})"
+        andere, _ = showcase.auth.start_session(demoadmin_id, "password")
+        await p.go("/auth/account", wait=1.6)
+        await p.js("window.confirm=()=>true")
+        await p.js(f"offer({antwort}).then(()=>{{window.__offer_fertig=true}});1")
+        await asyncio.sleep(1.2)
+        assert await p.js("window.__offer_fertig===true"), "offer() kam nicht zurück"
+        assert showcase.auth.store.get_session(andere) is None, \
+            "bestätigtes Angebot, die andere Sitzung läuft trotzdem weiter"
+        # Frische abgelaufen: Umweg über die Reauth, die Zustimmung reist als ?revoke_others=1 mit.
+        andere, _ = showcase.auth.start_session(demoadmin_id, "password")
+        try:
+            showcase.auth.cfg.stepup_max_age_sec = 1
+            await asyncio.sleep(1.5)
+            await p.js(f"offer({antwort});1")
+            await asyncio.sleep(1.4)
+            ziel = await p.js("location.pathname + decodeURIComponent(location.search)")
+            assert ziel.startswith("/auth/reauth") and "/auth/account?revoke_others=1" in ziel, \
+                f"blieb auf {ziel!r} — die Zustimmung ginge verloren"
+            assert showcase.auth.store.get_session(andere) is not None, "ohne Frische beendet"
+        finally:
+            showcase.auth.cfg.stepup_max_age_sec = vorher_frische   # ≙ Reauth bestanden
+        await p.cmd("Page.addScriptToEvaluateOnNewDocument", source="window.confirm=()=>true")
+        await p.go("/auth/account?revoke_others=1", wait=1.8)
+        assert showcase.auth.store.get_session(andere) is None, \
+            "nach der Reauth nicht nachgefragt/beendet — die Zustimmung ist verloren"
+        assert await p.js("location.search") == "", "?revoke_others bleibt in der Adresse stehen"
+        print("  Konto-Seite: Angebot beendet die anderen Sitzungen, auch über den Reauth-Umweg")
+
         assert not p.console, f"Konsolenfehler: {p.console[:2]}"
-        # Erwartet sind genau zwei Fehlschläge: das leere Formular (400) und der 403, mit dem die
-        # Faktor-Verwaltung die abgelaufene Frische abweist — der Fall aus Abschnitt 9.
+        # Erwartet sind genau drei Fehlschläge: das leere Formular (400) und die 403, mit denen
+        # Faktor-Verwaltung und Sitzungs-Beenden die abgelaufene Frische abweisen (Abschnitt 9, 10).
         unexpected = [f for f in p.failed
                       if not (f[0] == 400 and f[1].endswith("/auth/login"))
-                      and not (f[0] == 403 and f[1].endswith("/auth/totp/disable"))]
+                      and not (f[0] == 403 and f[1].endswith("/auth/totp/disable"))
+                      and not (f[0] == 403 and f[1].endswith("/auth/sessions/revoke"))]
         assert not unexpected, f"kaputte Anfragen: {unexpected[:3]}"
 
 

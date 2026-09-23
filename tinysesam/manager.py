@@ -1608,6 +1608,10 @@ class TinySesam:
         aber, woher der Request kommt: `Origin` bei jedem POST, `Sec-Fetch-Site` bei jedem
         Request. Die kann eine fremde Seite nicht fälschen.
 
+        * `Sec-Fetch-Site: same-origin` → ja. Das sagt der Browser selbst, gemessen an der
+          Adresse, die ER sieht — damit bleibt eine App hinter einem Proxy bedienbar, der den
+          Host umschreibt, ohne X-Forwarded-Host zu setzen (nginx-Vorgabe), auch ohne
+          `base_url` (A-3). Eine Nachbar-Subdomain bekommt hier `same-site`, nie `same-origin`.
         * `Origin` gesetzt → er muss ein eigener Host sein, sonst nein. `same-site` von einer
           Nachbar-Subdomain fällt genau hier heraus.
         * kein brauchbarer `Origin`, aber `Sec-Fetch-Site: cross-site` → nein.
@@ -1616,6 +1620,8 @@ class TinySesam:
         if not self.cfg.csrf_origin_check:
             return True
         from urllib.parse import urlsplit
+        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "same-origin":
+            return True
         origin = (request.headers.get("origin") or "").strip()
         if origin and origin != "null":
             try:
@@ -2067,19 +2073,52 @@ class TinySesam:
         return self.issue_csrf(response)
 
     # ---------- Cookie-Namen (H-1) ----------
-    def _cookie_name(self, basis: str) -> str:
+    def _cookie_name(self, basis: str, host_only: bool = False) -> str:
         """`__Host-` davor, wo der Browser es zulässt (Secure, kein Domain, Pfad `/`).
 
         Ein `__Host-`-Cookie kann nur der eigene Host über HTTPS setzen — eine Nachbar-Subdomain
         kann es weder anlegen noch mit einem `Domain=.example.com`-Cookie gleichen Namens
         überschatten. Genau darauf baut das Unterschieben eines Sitzungs-, CSRF- oder
         Freigabe-Tokens (F-01, F-02). Zur Request-Zeit berechnet, weil `cfg` nach dem Aufbau
-        geändert werden darf."""
+        geändert werden darf.
+
+        `host_only=True` für Cookies, die nie mit `cookie_domain` gesetzt werden (die
+        Flow-Cookies von OIDC, SAML und Passkey) — die dürfen das Präfix auch dann tragen.
+
+        Der Pfad muss wörtlich `/` sein: Bei `cookie_path=""` schickt `set_cookie` gar kein
+        `Path`-Attribut, und ein `__Host-`-Cookie ohne `Path=/` verwirft der Browser still —
+        dann käme etwa das CSRF-Cookie nie an und jeder POST scheiterte (A-7)."""
         c = self.cfg
-        if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure and not c.cookie_domain
-                and (c.cookie_path or "/") == "/" and not basis.startswith("__")):
+        if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure
+                and (host_only or not c.cookie_domain)
+                and c.cookie_path == "/" and not basis.startswith("__")):
             return "__Host-" + basis
         return basis
+
+    def flow_cookie_name(self, basis: str) -> str:
+        """Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
+        Das Flow-Cookie bindet einen Anmeldevorgang an den Browser, der ihn begonnen hat. Kann
+        eine Nachbar-Subdomain es per `Domain=.example.com` setzen, schiebt sie dem Opfer den
+        Flow des Angreifers unter und lockt es auf die Callback-URL — Login-CSRF, obwohl das
+        Sitzungs-Cookie selbst schon gepräfixt ist."""
+        return self._cookie_name(basis, host_only=True)
+
+    def _flow_cookie_setzen(self, response, basis: str, wert: str, max_age: int,
+                           samesite: Optional[str] = None) -> None:
+        """Ein Flow-Cookie setzen: httponly, host-only, kurzlebig."""
+        response.set_cookie(self.flow_cookie_name(basis), wert, max_age=max_age, httponly=True,
+                            secure=self.cfg.cookie_secure,
+                            samesite=_samesite(samesite or self.cfg.cookie_samesite),
+                            path=self.cfg.cookie_path)
+
+    def _flow_cookie_loeschen(self, response, basis: str,
+                             samesite: Optional[str] = None) -> None:
+        # Mit Secure: Ein `__Host-`-Set-Cookie ohne Secure nimmt der Browser nicht an, auch
+        # nicht das löschende.
+        response.delete_cookie(self.flow_cookie_name(basis), path=self.cfg.cookie_path,
+                               secure=self.cfg.cookie_secure, httponly=True,
+                               samesite=_samesite(samesite or self.cfg.cookie_samesite))
 
     @property
     def session_cookie_name(self) -> str:
@@ -2096,9 +2135,19 @@ class TinySesam:
         """Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN."""
         return self._cookie_name(self.cfg.resource_cookie)
 
-    def set_cookie(self, response, token, remember: bool = True):
+    def set_cookie(self, response, token, remember: Optional[bool] = None):
         """Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL);
-        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen)."""
+        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
+
+        Ohne `remember` richtet sich die Art nach der Sitzung, zu der das Token gehört (A-2):
+        Ein Step-up oder ein Ketten-Schritt dreht das Token einer LAUFENDEN Sitzung, und deren
+        Art hat der Nutzer beim ersten Faktor gewählt. Vorher galt hier stumpf `True` — eine
+        Sitzung ohne „Angemeldet bleiben" bekam nach dem Einlösen eines Magic-Links ein Cookie
+        für sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte.
+        Gibt es keine Sitzung zum Token, bleibt es beim persistenten Cookie wie bisher."""
+        if remember is None:
+            s = self.store.get_session(token)
+            remember = bool(s["remember"]) if s else True
         kw = dict(httponly=True, secure=self.cfg.cookie_secure,
                   samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         if self.cfg.cookie_domain:

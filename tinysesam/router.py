@@ -63,7 +63,7 @@ def build_router(auth) -> APIRouter:
                                               email_bestaetigt=False if aus_verzeichnis else None)
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
-            auth.set_cookie(resp, token, remember=remember_me)
+            auth.set_cookie(resp, token)   # Art des Cookies folgt der Sitzung (A-2)
         return resp
 
     # ---------- TOTP als Faktor (2. Schritt oder Ketten-/Route-Faktor) ----------
@@ -244,7 +244,7 @@ def build_router(auth) -> APIRouter:
                                                   request.headers.get("user-agent"), remember_me)
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
-                auth.set_cookie(resp, token, remember=remember_me)
+                auth.set_cookie(resp, token)
             return resp
 
         @r.post("/auth/pin/set")
@@ -597,7 +597,7 @@ def build_router(auth) -> APIRouter:
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
             if is_new:
-                auth.set_cookie(resp, token, remember=True)
+                auth.set_cookie(resp, token)
             return resp
 
     # ---------- Forward-Auth (Reverse-Proxy: Caddy forward_auth / nginx auth_request / Traefik) ----------
@@ -897,10 +897,9 @@ def build_router(auth) -> APIRouter:
             base = _saml_basis(request)
             url, rid = auth.saml.login_url(_saml_req(request), base, return_to=auth.safe_next(next))
             resp = RedirectResponse(url, 303)
-            resp.set_cookie(_SAMLFLOW, rid or "", max_age=600, httponly=True,
-                            secure=cfg.cookie_secure,
-                            samesite="none" if cfg.cookie_secure else cfg.cookie_samesite,
-                            path=cfg.cookie_path)
+            # `__Host-` davor, wo möglich (A-1) — sonst setzt eine Nachbar-Subdomain den Anker.
+            auth._flow_cookie_setzen(resp, _SAMLFLOW, rid or "", max_age=600,
+                                    samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
             return resp
 
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
@@ -908,7 +907,7 @@ def build_router(auth) -> APIRouter:
             form = await request.form()
             base = _saml_basis(request)
             data = auth.saml.process(_saml_req(request, form), base,
-                                     request_id=request.cookies.get(_SAMLFLOW) or "")
+                                     request_id=request.cookies.get(auth.flow_cookie_name(_SAMLFLOW)) or "")
             if not data:
                 # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
                 # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
@@ -929,7 +928,9 @@ def build_router(auth) -> APIRouter:
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
-            resp.delete_cookie(_SAMLFLOW, path=cfg.cookie_path)   # einmal angefordert, einmal eingelöst
+            # einmal angefordert, einmal eingelöst
+            auth._flow_cookie_loeschen(resp, _SAMLFLOW,
+                                      samesite="none" if cfg.cookie_secure else cfg.cookie_samesite)
             return resp
 
         @r.get("/auth/saml/metadata")

@@ -214,10 +214,16 @@ ok("Logout leert das Session-Cookie beim Browser (mit Secure + Path, sonst nimmt
 # gar kein Cookie.
 for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
                      ({"cookie_secure": False}, False), ({"cookie_domain": ".example.com"}, False),
-                     ({"cookie_path": "/app"}, False), ({"cookie_host_prefix": False}, False)):
+                     ({"cookie_path": "/app"}, False), ({"cookie_host_prefix": False}, False),
+                     # A-7: Pfad "" schickt gar kein Path-Attribut — `__Host-` verlangt Path=/.
+                     ({"cookie_path": ""}, False)):
     a, _ = baue(**kw)
     namen = (a.session_cookie_name, a.csrf_cookie_name, a.resource_cookie_name)
     assert all(n.startswith("__Host-") == erwartet for n in namen), (kw, namen)
+    # Die Flow-Cookies (OIDC/SAML/Passkey) setzen nie eine Domain — sie tragen das Präfix
+    # auch bei gesetztem cookie_domain (A-1).
+    flow_erwartet = erwartet or kw == {"cookie_domain": ".example.com"}
+    assert a.flow_cookie_name("tinysesam_oidc_flow").startswith("__Host-") == flow_erwartet, kw
     resp = Response()
     a.set_cookie(resp, "tok123")
     a.issue_csrf(resp)
@@ -228,7 +234,16 @@ for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
         for n in namen:
             assert gesetzt[n].get("secure") is True and gesetzt[n].get("path") == "/" \
                 and "domain" not in gesetzt[n], (n, gesetzt[n])
+    # Kein `__Host-`-Cookie ohne Path=/ — das verwirft der Browser still (A-7).
+    for n in namen:
+        assert not n.startswith("__Host-") or gesetzt[n].get("path") == "/", (kw, n, gesetzt[n])
+    fr = Response()
+    a._flow_cookie_setzen(fr, "tinysesam_oidc_flow", "w", max_age=60)
+    f_n, f_c = next(iter(gesetzte_cookies(fr).items()))
+    assert f_n == a.flow_cookie_name("tinysesam_oidc_flow") and "domain" not in f_c, (kw, f_n, f_c)
+    assert not f_n.startswith("__Host-") or (f_c.get("secure") is True and f_c.get("path") == "/"), f_c
 ok("__Host- an Sitzung, CSRF und Freigabe genau dann, wenn Secure + host-only + Path=/ (sonst ohne)")
+ok("A-1/A-7: Flow-Cookies mit __Host- auch bei cookie_domain; cookie_path='' bekommt kein Präfix")
 
 # Ein Cookie gleichen Namens OHNE Präfix — das, was eine Nachbar-Subdomain setzen kann —
 # meldet niemanden an.

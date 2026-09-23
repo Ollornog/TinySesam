@@ -143,6 +143,23 @@ assert "other_sessions" in seite and "andere" in auth.t("acc.sessions_offer").lo
     and auth.t("acc.sessions_offer")[:20] in seite, "Kontoseite muss das Beenden anbieten"
 ok("B1-7: Faktor-Änderung meldet other_sessions, die Kontoseite bietet das Beenden an")
 
+# A-5: Auch die eigene TOTP-Einrichtungsseite bietet das Beenden an, und bei abgelaufener
+# Frische reist die Zustimmung über die Reauth zur Kontoseite (?revoke_others=1) — dort fragt
+# sie noch einmal. Ausgeführt wird `offer()` in test_browser.py (Abschnitt 10).
+setup = auth.templates.render("totp_setup", auth, {"data": {"secret": "ABC", "qr": ""}})
+assert "await offer(r)" in setup and "function tsRevokeOthers" in setup, "Setup-Seite ohne Angebot"
+assert "/auth/account?revoke_others=1" in setup, "Zustimmung ginge bei der Reauth verloren"
+assert "revoke_others" in seite and "tsRevokeOthers" in seite, "Kontoseite ohne Rückkehr-Weiche"
+ohne_konto = TinySesam(TinySesamConfig(lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                       passkey_enabled=False, account_enabled=False))
+setup = ohne_konto.templates.render("totp_setup", ohne_konto, {"data": {"secret": "ABC", "qr": ""}})
+assert "await offer(r)" in setup and "revoke_others" not in setup, "ohne Kontoseite kein toter Rückweg"
+r = z.post("/auth/reauth", data={"password": "geheim123", "next": "/auth/account?revoke_others=1",
+                                 "_csrf": z.cookies.get("tinysesam_csrf")},
+           follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/auth/account?revoke_others=1", r.headers
+ok("A-5: TOTP-Setup bietet das Beenden an; der Reauth-Umweg behält ?revoke_others=1")
+
 # F-07: Logout-CSRF. Von einer fremden Seite (cross-site) meldet der GET NICHT ab, sondern fragt.
 w = anmelden()
 r = w.get("/auth/logout", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)

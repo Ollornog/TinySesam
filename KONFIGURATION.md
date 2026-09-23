@@ -178,7 +178,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `csrf_enabled` | `bool` | `True` | State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token) |
 | `csrf_cookie` | `str` | `"tinysesam_csrf"` | Name des CSRF-Cookies |
-| `csrf_origin_check` | `bool` | `True` | : Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Origin` muss ein eigener Host sein : (Host-Header, X-Forwarded-Host, base_url, trusted_redirect_hosts), `Sec-Fetch-Site: : cross-site` ohne eigenen Origin wird abgewiesen. Fehlen beide Header (alter Browser, : Skript), entscheidet allein das Token. Aus nur für Proxys, die den Host umschreiben, : ohne X-Forwarded-Host zu setzen — besser: base_url setzen. |
+| `csrf_origin_check` | `bool` | `True` | : Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Sec-Fetch-Site: same-origin` genügt, : sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url, : trusted_redirect_hosts); `Sec-Fetch-Site: cross-site` ohne eigenen Origin wird : abgewiesen. Fehlen beide Header (alter Browser, Skript), entscheidet allein das Token. : Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern : nur Browser ohne `Sec-Fetch-Site` (Safari vor 16.4) — dafür base_url setzen. |
 
 ## LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password')
 

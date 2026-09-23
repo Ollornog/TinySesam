@@ -171,6 +171,16 @@ try:
     assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}, _app) == 403
     ok("H-2: Proxy mit umgeschriebenem Host — base_url oder X-Forwarded-Host machen den Origin eigen")
 
+    # A-3: Derselbe Proxy OHNE base_url (nginx-Vorgabe, reiner Passwort-Login) sperrte nach dem
+    # Update jeden POST aus. Ein heutiger Browser sagt `Sec-Fetch-Site: same-origin` — gemessen
+    # an der Adresse, die ER sieht — und das trägt. Eine Nachbar-Subdomain bekommt `same-site`.
+    _proxy = {"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}
+    assert _login({**_proxy, "Sec-Fetch-Site": "same-origin"}, _app) == 303, \
+        "Proxy ohne base_url/X-Forwarded-Host sperrt den eigenen Login aus"
+    assert _login({"Origin": "https://nachbar.example.com", "Host": "127.0.0.1:8000",
+                   "Sec-Fetch-Site": "same-site"}, _app) == 403, "Nachbar-Subdomain bleibt draussen"
+    ok("A-3: Proxy mit umgeschriebenem Host ohne base_url — Sec-Fetch-Site: same-origin trägt den Login")
+
     # JSON-Weg (json_body) prüft genauso.
     cl = TestClient(_app)
     feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)

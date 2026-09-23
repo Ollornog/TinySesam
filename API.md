@@ -146,6 +146,10 @@ Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran.
 
 Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 
+### `flow_cookie_name(basis: 'str') -> 'str'`
+
+Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
 ### `forward_login_url(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'`
 
 Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>.
@@ -410,7 +414,7 @@ Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da 
 
 Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
 
-### `set_cookie(response, token, remember: 'bool' = True)`
+### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
 Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
 
@@ -570,4 +574,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-125 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

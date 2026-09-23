@@ -128,6 +128,42 @@ r.check("ein Callback ohne passendes Flow-Cookie wird abgewiesen",
         antwort.status_code == 400,
         f"HTTP {antwort.status_code} — die Konto-Unterschiebung ist zurück")
 
+# Dieselbe Unterschiebung per Cookie-Tossing (A-1): Eine Nachbar-Subdomain kann ein Cookie
+# `Domain=.example.com` setzen — aber keines mit `__Host-`. Das Flow-Cookie muss also das
+# Präfix tragen, sonst schiebt sie dem Opfer den Flow des Angreifers samt Wert unter, und das
+# Opfer landet trotz gepräfixtem Sitzungs-Cookie im Konto des Angreifers.
+auth_s, app_s = _app(oidc_enabled=True, oidc_issuer="https://idp.example.invalid",
+                     oidc_client_id="probe", oidc_client_secret="geheim", cookie_secure=True,
+                     base_url="https://auth.example.com")
+auth_s.oidc._meta = dict(auth_o.oidc._meta)
+with TestClient(app_s, base_url="https://auth.example.com") as angreifer:
+    start = angreifer.get("/auth/oidc/start", follow_redirects=False)
+    flow_wert = angreifer.cookies.get("__Host-tinysesam_oidc_flow")
+r.check("mit Secure heisst das Flow-Cookie __Host-tinysesam_oidc_flow", bool(flow_wert),
+        f"gesetzt: {start.headers.get('set-cookie', '—')[:60]}")
+state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
+with TestClient(app_s, base_url="https://auth.example.com") as opfer_b:
+    opfer_b.cookies.set("tinysesam_oidc_flow", flow_wert or "")   # was eine Nachbar-Subdomain setzen kann
+    antwort = opfer_b.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
+r.check("ein ungepräfixtes (untergeschobenes) Flow-Cookie bindet den Callback nicht",
+        antwort.status_code == 400 and auth_s.t("api.oidc_browser") in antwort.text,
+        f"HTTP {antwort.status_code} {antwort.text[:80]} — Login-CSRF per Cookie-Tossing")
+# Gegenprobe: Mit dem echten, gepräfixten Cookie kommt der Callback an der Bindung vorbei
+# (und scheitert erst am Tausch mit dem attrappenlosen IdP) — sonst prüfte der Fall oben nichts.
+with TestClient(app_s, base_url="https://auth.example.com") as selbst:
+    start = selbst.get("/auth/oidc/start", follow_redirects=False)
+    state_s = parse_qs(urlparse(start.headers["location"]).query).get("state", [""])[0]
+    try:
+        antwort = selbst.get(f"/auth/oidc/callback?code=egal&state={state_s}", follow_redirects=False)
+        text = antwort.text
+    except Exception as e:      # der Tausch gegen idp.example.invalid darf werfen
+        text = repr(e)
+r.check("…das gepräfixte Cookie des eigenen Browsers bindet ihn weiterhin",
+        auth_s.t("api.oidc_browser") not in text, text[:80])
+r.check("SAML- und Passkey-Flow-Cookie tragen das Präfix ebenso",
+        auth_s.flow_cookie_name("tinysesam_saml_flow") == "__Host-tinysesam_saml_flow"
+        and auth_s.flow_cookie_name("tinysesam_waflow") == "__Host-tinysesam_waflow")
+
 # ── Schreibende Routen ohne CSRF-Prüfung ──────────────────────────────────────
 # Angriff: Ein <form method=POST> auf einer fremden Seite, ohne Body, ohne Preflight.
 # `POST /auth/totp/disable` löschte damit TOTP UND alle Recovery-Codes — ohne Rückfrage,
