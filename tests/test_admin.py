@@ -284,7 +284,10 @@ print("  ✓ Fund 8: Rollen ohne Text → 400 vor jedem Schreiben; Altbestand wi
 # schwaches Passwort) — das Panel-JS sah nur den Körper: `savesec` meldete „gespeichert", `pw`
 # „Passwort gesetzt", `saveroles` lud still neu. Die Admin-Person glaubte, es sei geschehen.
 # (Mutationsproben: in `savesec` wieder `await p(…);alert(L.saved)` → rot; in `p` den Blick auf
-#  `r.ok` entfernen → rot beim 500 ohne JSON.)
+#  `r.ok` entfernen → rot — mit node in der Laufzeitprobe, ohne node in der Strukturprüfung von
+#  `p()` darunter. Vorher entfiel die Laufzeitprobe ohne node still, und das Image von ci-local
+#  hat kein node: Dort blieb genau diese Mutation grün.)
+import os as _os  # noqa: E402
 import re as _re  # noqa: E402
 import shutil as _shutil  # noqa: E402
 import subprocess as _sp  # noqa: E402
@@ -304,6 +307,15 @@ _schreibend = [n for n in sorted(_act) if _re.search(r"(?<![\w.])p\(", _stuecke.
 _ohne = [n for n in _schreibend if "abgewiesen(" not in _stuecke[n]]
 assert not _ohne, f"Aktionen ohne Anzeige der Abweisung: {_ohne}"
 assert len(_schreibend) >= 10 and _act <= set(_stuecke), (_schreibend, _act - set(_stuecke))
+# Und `p()` selbst: Ohne den Blick auf `r.ok` gibt sie bei 400/500 den Körper zurück, und
+# `abgewiesen()` sieht bei einem 500 ohne JSON-Körper nichts. Die Laufzeitprobe unten braucht
+# node; diese Prüfung läuft immer.
+_p_def = _re.search(r"^const p=\(u,b\)=>(.*?)^(?:const|function|async function) ", _js, _re.S | _re.M)
+assert _p_def, "p() nicht gefunden"
+_p_code = "\n".join(z for z in _p_def.group(1).splitlines() if not z.lstrip().startswith("//"))
+assert _re.search(r"if\s*\(\s*r\.ok\s*\)\s*return", _p_code), f"p() liest r.ok nicht: {_p_code}"
+assert _re.search(r"return\s*\{\s*detail\s*:", _p_code) and 'L["err.generic"]' in _p_code, \
+    f"p() gibt eine Abweisung nicht als {{detail}} mit Rückfalltext zurück: {_p_code}"
 
 _node = _shutil.which("node")
 if _node:
@@ -338,7 +350,15 @@ if _node:
     assert _Lp["saved"] not in _erg["savesec 400"] + _erg["savesec 500"], _erg
     assert _erg["pw 500"] == [_Lp["err.generic"]], _erg
     print("  ✓ Fund 10 (node): 400/500 zeigen den Grund statt „gespeichert“, 200 bleibt still bzw. meldet Erfolg")
-print("  ✓ Fund 10: jede Panel-Aktion, die schreibt, zeigt die Abweisung des Servers an")
+elif _os.environ.get("GITHUB_ACTIONS") == "true":
+    # Auf dem GitHub-Runner (ubuntu-latest) ist node vorhanden. Fehlt es dort, ist die Umgebung
+    # kaputt — dann nicht still weniger prüfen („Skip ist kein Grün").
+    raise AssertionError("node fehlt auf dem CI-Runner — die Laufzeitprobe zu Fund 10 liefe nicht")
+else:
+    print("  ⚠ Fund 10 (node): Laufzeitprobe NICHT gelaufen — node fehlt; geprüft sind nur die "
+          "Struktur der Aktionen und p()")
+print("  ✓ Fund 10 (Struktur): jede Panel-Aktion, die schreibt, führt das Ergebnis über abgewiesen(),"
+      " und p() liest r.ok")
 
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")

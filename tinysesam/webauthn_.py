@@ -213,10 +213,15 @@ def register_passkey_routes(router, auth):
         # veraltete Sitzung und jeden API-Key durchgelassen.
         u = auth.require_mfa(request)
         b = await auth.json_body(request)
-        try:
-            passkey_id = int(b.get("id"))
-        except (TypeError, ValueError):
+        # Eine ganze Zahl oder eine Ziffernfolge, sonst 400. `int()` allein nahm `true` als
+        # Passkey 1 und `1.9` als 1, und `1e400`/`Infinity` (json.loads: float('inf')) warfen
+        # OverflowError — HTTP 500 statt der zugesagten 400.
+        roh = b.get("id")
+        if isinstance(roh, str) and roh.isascii() and roh.isdigit():
+            roh = int(roh)
+        if isinstance(roh, bool) or not isinstance(roh, int):
             raise HTTPException(400, auth.t("api.invalid", grund="id"))
+        passkey_id = roh
         # Löschen, Audit-Zeile (B5-01) und `passkey_removed` in einem — derselbe Weg wie der
         # Widerruf im Admin-Panel (Integrationsfund 3). Ein Passkey, den das Konto nicht hat,
         # ist 404 und hinterlässt weder Zeile noch Ereignis.

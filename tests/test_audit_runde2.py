@@ -1331,15 +1331,19 @@ import ast as _ast  # noqa: E402
 import importlib.util as _ilu  # noqa: E402
 
 
-def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set) -> list:
+def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set, quellen=None) -> list:
     """Wo in `tinysesam/` steht ein Aufruf `<empfaenger>.<methode>(…)` ausserhalb von `erlaubt`?
 
     `erlaubt` sind Paare (innerste Klasse, innerste Funktion). Per AST und nicht per Textsuche:
     Docstrings und Kommentare nennen die Methode ebenfalls, und eine verschachtelte Funktion wie
-    `_zuruecknehmen` muss als sie selbst erkannt werden, nicht als die Route um sie herum."""
+    `_zuruecknehmen` muss als sie selbst erkannt werden, nicht als die Route um sie herum.
+    `quellen` (Liste aus (Dateiname, Text)) ersetzt `tinysesam/*.py` — für die Selbsttests."""
     funde = []
-    for pfad in sorted((ROOT / "tinysesam").glob("*.py")):
-        baum = _ast.parse(pfad.read_text(encoding="utf-8"))
+    if quellen is None:
+        quellen = [(p.name, p.read_text(encoding="utf-8"))
+                   for p in sorted((ROOT / "tinysesam").glob("*.py"))]
+    for pfadname, text in quellen:
+        baum = _ast.parse(text)
 
         def gehe(knoten, klasse=None, funktion=None):
             for kind in _ast.iter_child_nodes(knoten):
@@ -1351,7 +1355,7 @@ def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set) -> list:
                 if (isinstance(kind, _ast.Call) and isinstance(kind.func, _ast.Attribute)
                         and kind.func.attr == methode and empfaenger(kind.func.value, k)
                         and (k, f) not in erlaubt):
-                    funde.append(f"{pfad.name}:{kind.lineno} ({k}.{f})")
+                    funde.append(f"{pfadname}:{kind.lineno} ({k}.{f})")
                 gehe(kind, k, f)
         gehe(baum)
     return funde
@@ -1463,6 +1467,10 @@ def _f12_unbestaetigt():
     uid = a.create_user(_F12_NAME, password="Geheim12345!", email=_F12_MAIL)
     a.store.set_disabled(uid, True)
     a.create_magic_token("verify_email", user_id=uid)
+    # Die Spuren entstehen NACH der Sekunde der Anlage (das Konto ist eine Minute alt): Ein
+    # Anmeldeversuch aus der Anlage-Sekunde selbst lässt `delete_attempts_for` bewusst stehen —
+    # ob er davor oder danach kam, ist nicht zu entscheiden (Nachbesserung N-1).
+    a.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (uid,))
     a.audit("signup", _F12_NAME, "203.0.113.66")
     TestClient(app_, client=("198.51.100.7", 1)).post(
         "/auth/login", data={"username": _F12_MAIL, "password": "falsch-falsch"})
@@ -1536,5 +1544,441 @@ _f12_c.audit("signup", "berta", "198.51.100.10")
 _f12_bev = [(e["event"], e["ip"]) for e in _f12_c.own_events(_f12_berta)]
 r.check("Fund 12: die Kontoseite zeigt keine Zeilen von vor der Anlage des Kontos",
         _f12_bev == [("signup", "198.51.100.10")], f"{_f12_bev}")
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Nachbesserung: Angriff auf die Integrationsfixes (Löschweg, Einladung, Passkey-ID, Wächter)
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+# ── N-1/N-6: der eine Löschweg rührt nur an, was ab der Anlage des Kontos entstand ─────────
+# Seit `gc()`, `tinysesam gc` und die B6-5-Rücknahme über `Store.konto_entfernen` löschen, löst
+# diesen Weg ein Fremder ohne Konto aus: registrieren, nie bestätigen. Ohne Grenze schrieb er
+# dabei Zeilen um, die VOR seinem Konto entstanden und anderen gehören — die Einladung des
+# Admins (Adresse im Detail), den Fehlversuch eines Sprayers unter dem damals freien Namen, den
+# der echten Adressinhaberin — und ihre login_attempt-Zeilen (Drosselung je IP) verschwanden.
+# Geprüft in zwei Lagen: die fremden Zeilen eine Minute vor der Registrierung (der Normalfall)
+# und in DERSELBEN Sekunde (angehaltene Uhr — so lief der Nachweis des Angreifers). Eine nur
+# sekundengenaue Grenze hält die zweite Lage nicht; dort entscheidet die Registrierungszeile
+# (`Store.anlage_grenze`).
+# (Mutationsproben: in `konto_entfernen` `seit=`/`nach=` nicht weitergeben → rot in beiden
+#  Lagen; `seit_id` nicht weitergeben → rot nur in „dieselbe Sekunde"; in `delete_attempts_for`
+#  `ts > ?` zu `ts >= ?` → rot in „dieselbe Sekunde"; in `TinySesam.delete_user`
+#  `adresse_unbefristet=True` streichen → rot bei N-6.)
+from tinysesam import store as _store_mod  # noqa: E402
+
+_N1_NAME, _N1_MAIL = "root", "carol@example.com"
+_N1_IPS = ("203.0.113.9", "198.51.100.50")
+
+
+@_ctxlib.contextmanager
+def _uhr_steht():
+    """Die Store-Uhr anhalten: Alles darin trägt denselben Zeitstempel (dieselbe Sekunde).
+    Danach läuft sie ab dort weiter — ohne Vorlauf gegenüber der Wanduhr."""
+    uhr = _store_mod._UHR
+    alt = (uhr.wand, uhr.mono)
+    wand, mono = float(uhr.wand()), float(uhr.mono())
+    uhr.wand, uhr.mono = (lambda: wand), (lambda: mono)
+    try:
+        yield
+    finally:
+        uhr.wand, uhr.mono = alt
+
+
+def _n1_fremde(a) -> tuple:
+    """Die Zeilen, die vor dem Konto entstanden: Einladung, zwei Fehlversuche, zwei Versuche."""
+    audit = [(z["event"], z["username"], z["ip"], z["detail"]) for z in a.store._all(
+        "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail') AND ip IN (?, ?, ?) "
+        "ORDER BY id", ("198.51.100.1", *_N1_IPS))]
+    versuche = [(z["username"], z["ip"], z["success"]) for z in a.store._all(
+        "SELECT * FROM login_attempt WHERE ip IN (?, ?) ORDER BY id", _N1_IPS)]
+    return audit, versuche
+
+
+def _n1_kaputt(*a, **k):
+    raise OSError("550 recipient rejected")
+
+
+def _n1_lauf(mailer, gleiche_sekunde: bool):
+    """Einladung, Sprayer, echte Inhaberin — dann registriert ein Fremder Name und Adresse."""
+    a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                   magiclink_enabled=True, csrf_enabled=False)
+    a.set_mailer(lambda *x, **k: True)   # die Einladung geht hinaus; `mailer` gilt danach
+    chef = a.create_user("chef", password="Geheim12345!", is_admin=True)
+    ca = TestClient(app_, client=("198.51.100.1", 1))
+    ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
+    vor_id = a.store._one("SELECT COALESCE(MAX(id), 0) AS m FROM audit")["m"]
+    with (_uhr_steht() if gleiche_sekunde else _ctxlib.nullcontext()):
+        assert ca.post("/auth/admin/api/invite", json={"email": _N1_MAIL}).status_code == 200
+        TestClient(app_, client=(_N1_IPS[0], 1)).post(                # Sprayer, Name noch frei
+            "/auth/login", data={"username": _N1_NAME, "password": "Passwort1!"})
+        TestClient(app_, client=(_N1_IPS[1], 1)).post(                # die echte Carol, ohne Konto
+            "/auth/login", data={"username": _N1_MAIL, "password": "irgendwas-langes"})
+        if not gleiche_sekunde:
+            a.store._exec("UPDATE audit SET ts=ts-60")                # eine Minute davor
+            a.store._exec("UPDATE login_attempt SET ts=ts-60")
+        vorher = _n1_fremde(a)
+        assert len(vorher[0]) == 3 and len(vorher[1]) == 2, f"Vorbedingung: {vorher}"
+        a.set_mailer(mailer)
+        reg = TestClient(app_, client=("192.0.2.66", 1), raise_server_exceptions=False).post(
+            "/auth/register", data={"username": _N1_NAME, "password": "Fremder-Langes-77",
+                                    "email": _N1_MAIL, "next": "/"})
+        if gleiche_sekunde:
+            _konto = a.store.get_user_by_name(_N1_NAME)
+            _ts = {z["ts"] for z in a.store._all("SELECT ts FROM audit WHERE id > ?", (vor_id,))}
+            assert len(_ts) == 1 and (_konto is None or {_konto["created_at"]} == _ts), \
+                f"Vorbedingung: alles in einer Sekunde ({_ts})"
+    return a, app_, reg, vorher
+
+
+for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", True)):
+    _n1_a, _n1_app, _n1_reg, _n1_vorher = _n1_lauf(lambda *x, **k: True, _n1_gleich)
+    _n1_uid = _n1_a.store.get_user_by_name(_N1_NAME)["id"]
+    # Dieselbe Grenze auf der Kontoseite (H-7): Der Fehlversuch des Sprayers unter dem damals
+    # freien Namen ist nicht das Ereignis dieses Kontos — auch nicht aus derselben Sekunde.
+    # (Mutationsprobe: in `own_events` `seit_id` nicht weitergeben → rot in „dieselbe Sekunde".)
+    _n1_eigen = [(e["event"], e["ip"]) for e in _n1_a.own_events(_n1_uid)]
+    r.check(f"N-1 ({_n1_lage}): die Kontoseite zeigt nur die eigene Registrierung, nicht den Sprayer",
+            _n1_eigen == [("signup", "192.0.2.66")], f"{_n1_eigen}")
+    # Nach der Anlage: ein Fehlversuch unter dem Namen — der trifft DIESES Konto und geht mit.
+    # Er kommt Sekunden später (die Sekunde der Anlage selbst lässt `delete_attempts_for` stehen).
+    TestClient(_n1_app, client=("203.0.113.77", 1)).post(
+        "/auth/login", data={"username": _N1_NAME, "password": "falsch-falsch"})
+    _n1_a.store._exec("UPDATE audit SET ts=ts+5 WHERE ip='203.0.113.77'")
+    _n1_a.store._exec("UPDATE login_attempt SET ts=ts+5 WHERE ip='203.0.113.77'")
+    _n1_a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=? AND purpose='verify_email'",
+                      (_n1_uid,))
+    _n1_gc = _n1_a.gc()["unverified_accounts"]
+    _n1_nach = _n1_fremde(_n1_a)
+    r.check(f"N-1 ({_n1_lage}): gc() eines nie bestätigten Kontos lässt Zeilen von VOR seiner Anlage "
+            "stehen (Einladung des Admins, Sprayer, echte Adressinhaberin — samt Versuchszeilen)",
+            _n1_reg.status_code == 200 and _n1_gc == 1 and _n1_nach == _n1_vorher,
+            f"HTTP {_n1_reg.status_code}, gc={_n1_gc}\nvorher {_n1_vorher}\nnachher {_n1_nach}")
+    _n1_danach = [(z["event"], z["username"]) for z in _n1_a.store._all(
+        "SELECT * FROM audit WHERE ip IN ('192.0.2.66', '203.0.113.77') ORDER BY id")]
+    _n1_versuch77 = _n1_a.store._all("SELECT * FROM login_attempt WHERE ip='203.0.113.77'")
+    r.check(f"N-1 ({_n1_lage}): … was ab der Anlage entstand, geht weiter mit (Registrierung, "
+            "späterer Fehlversuch)",
+            _n1_danach == [("signup", f"gelöscht#{_n1_uid}"), ("login_fail", f"gelöscht#{_n1_uid}")]
+            and not _n1_versuch77, f"{_n1_danach}, Versuche {[dict(v) for v in _n1_versuch77]}")
+
+    _n1_b, _, _n1_breg, _n1_bvorher = _n1_lauf(_n1_kaputt, _n1_gleich)
+    _n1_bnach = _n1_fremde(_n1_b)
+    _n1_bsignup = [z["username"] for z in _n1_b.store._all("SELECT * FROM audit WHERE event='signup'")]
+    r.check(f"N-1 ({_n1_lage}): die B6-5-Rücknahme (Versand scheitert) lässt dieselben fremden "
+            "Zeilen stehen — und nimmt die eigene Registrierung aus dem Log",
+            _n1_breg.status_code == 200 and _n1_b.store.get_user_by_name(_N1_NAME) is None
+            and _n1_bnach == _n1_bvorher and len(_n1_bsignup) == 1
+            and _n1_bsignup[0].startswith("gelöscht#"),
+            f"HTTP {_n1_breg.status_code}, signup {_n1_bsignup}\nvorher {_n1_bvorher}\n"
+            f"nachher {_n1_bnach}")
+
+# Der Anker ist die Registrierungszeile aus der Sekunde der Anlage (oder der nächsten) — nicht
+# irgendeine spätere. Eine Registrierung mit der Adresse als Name, die schon einem Konto als
+# Benutzername gehört, schreibt `signup_taken` unter genau diesem Namen; als Anker genommen, fiele
+# die Zeile des Admins aus der Anlage-Sekunde aus der Anonymisierung.
+# (Mutationsprobe: in `anlage_grenze` `ts BETWEEN ? AND ?` zu `ts >= ?` → rot.)
+_n7_a, _n7_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                      csrf_enabled=False)
+_n7_a.set_mailer(lambda *x, **k: True)
+_n7_chef = _n7_a.create_user("chef", password="Geheim12345!", is_admin=True)
+_n7_ca = TestClient(_n7_app, client=("198.51.100.1", 1))
+_n7_ca.cookies.set(_n7_a.cfg.session_cookie, _n7_a.store.create_session(_n7_chef, 3600, True, "password"))
+with _uhr_steht():                     # Anlage und `user_create` in einer Sekunde
+    assert _n7_ca.post("/auth/admin/api/users", json={"username": "kasse@example.com"}).status_code == 200
+_n7_uid = _n7_a.store.get_user_by_name("kasse@example.com")["id"]
+_n7_r = TestClient(_n7_app, client=("203.0.113.66", 1)).post(
+    "/auth/register", data={"username": "kasse@example.com", "password": "Anderes-77!",
+                            "email": "kasse@example.com", "next": "/"})
+_n7_a.store._exec("UPDATE audit SET ts=ts+5 WHERE event='signup_taken'")   # Tage später
+_n7_a.delete_user(_n7_uid)
+_n7_z = [z["detail"] for z in _n7_a.store._all("SELECT * FROM audit WHERE event='user_create'")]
+r.check("N-1: eine spätere signup_taken-Zeile unter dem Namen verschiebt die Grenze nicht "
+        "(user_create aus der Anlage-Sekunde wird anonymisiert)",
+        _n7_r.status_code == 200 and _n7_z == [f"gelöscht#{_n7_uid} service=False"], f"{_n7_z}")
+
+# Die bewusste Löschung eines Kontos, dessen Adresse BESTÄTIGT ist, bleibt so gründlich wie
+# H-13 sie zusagt: Die Adresse gehört nachweislich dem Konto, also verschwindet sie auch aus
+# älteren Zeilen (die Einladung, die zu dem Konto führte). Der NAME dagegen gehörte vor der
+# Anlage niemandem — der Fehlversuch darunter bleibt, wie er war.
+_n6_a, _ = _app(csrf_enabled=False)
+_n6_a.create_user("chef", password="Geheim12345!", is_admin=True)
+_n6_a.store.audit_log("invite_create", "chef", "198.51.100.1", "dora@example.com")
+_n6_a.store.audit_log("login_fail", "dora", "203.0.113.9", "password grund=kein_konto")
+_n6_a.store.record_attempt("dora", "203.0.113.9", False, "password")
+_n6_a.store._exec("UPDATE audit SET ts=ts-60")
+_n6_a.store._exec("UPDATE login_attempt SET ts=ts-60")
+_n6_dora = _n6_a.create_user("dora", password="Geheim12345!", email="dora@example.com")
+_n6_a.delete_user(_n6_dora)
+_n6_zeilen = {z["event"]: (z["username"], z["detail"]) for z in _n6_a.store._all(
+    "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail')")}
+r.check("N-6: die Löschung durch einen Admin nimmt eine bestätigte Adresse auch aus älteren Zeilen (H-13)",
+        _n6_zeilen.get("invite_create") == ("chef", f"gelöscht#{_n6_dora}"), f"{_n6_zeilen}")
+r.check("N-6: … den Namen aber erst ab der Anlage — der Fehlversuch unter dem freien Namen bleibt samt Versuch",
+        _n6_zeilen.get("login_fail") == ("dora", "password grund=kein_konto")
+        and len(_n6_a.store._all("SELECT id FROM login_attempt WHERE username='dora'")) == 1,
+        f"{_n6_zeilen}")
+
+# ── N-5: Nicht-ASCII-Namensvetter teilen einen Zähl-Topf ──────────────────────────────────────
+# Der Sperrzähler faltet mit Python-`lower()` (`norm_kennung`), `kennung_vergeben` und
+# `get_user_by_name` mit SQLite-NOCASE — das faltet nur ASCII. Neben `Émile` liess sich deshalb
+# `émile` anlegen, beide zählten im Topf `émile`. Über `konto_entfernen` (gc, B6-5 — anonym
+# auslösbar) löschte das Entfernen von `émile` die Fehlversuche von `Émile`: Die Konto-Schwelle
+# gegen verteiltes Raten (R7-6/H-8) liess sich für jedes Konto mit Ö/Ü/Ä/É … beliebig oft leeren.
+# (Mutationsproben: in `kennung_vergeben` die Topf-Prüfung streichen → rot bei der Registrierung;
+#  in `delete_attempts_for` die Prüfung auf ein verbleibendes Konto im Topf streichen → rot beim
+#  Bestand; `delete_attempts_for` wieder nur mit SQLite-`lower()` vergleichen → rot beim Admin.)
+_n5_a, _n5_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                      csrf_enabled=False)
+_n5_a.set_mailer(_n1_kaputt)          # scheiterte die Registrierung doch, griffe B6-5 sofort
+_n5_a.create_user("Émile", password="Geheim12345!", email="emile@example.com")
+_n5_reg = TestClient(_n5_app, client=("203.0.113.99", 1), raise_server_exceptions=False).post(
+    "/auth/register", data={"username": "émile", "password": "Irgendwas-Langes-77",
+                            "email": "gibtsnicht@example.org", "next": "/"})
+_n5_kein = None
+try:
+    # Klein-é: SQLite-NOCASE sieht darin einen anderen Namen (anders als bei „ÉMILE“, das
+    # schon an ASCII-Faltung scheitert) — der Weg, den die Registrierung oben nimmt.
+    _n5_a.create_user("émile", password="Anderes-77!")
+except ConfigError as _e:
+    _n5_kein = getattr(_e, "feld", "?")
+r.check("N-5: „émile“ neben „Émile“ ist vergeben (derselbe Zähl-Topf) — 409, kein zweites Konto",
+        _n5_reg.status_code == 409 and _n5_kein == "username"
+        and len(_n5_a.store._all("SELECT id FROM users")) == 1,
+        f"HTTP {_n5_reg.status_code}, create_user: {_n5_kein}")
+r.check("N-5: … ein anderer Topf bleibt frei („Emile“ ohne Akzent)",
+        bool(_n5_a.create_user("Emile", password="Anderes-77!")))
+
+
+def _n5_rate(a, app_, name):
+    for _i in range(4):
+        _cl = TestClient(app_, client=(f"203.0.113.{_i + 1}", 1))
+        for _ in range(4):
+            _cl.post("/auth/login", data={"username": name, "password": "falsch-falsch"})
+
+
+# Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.
+_n5_b, _n5_bapp = _app(csrf_enabled=False)
+_n5_b.create_user("Özlem", password="Geheim12345!", email="oezlem@example.com")
+_n5_platz = _n5_b.store.create_user("özlem")
+# Eine Minute vor den Rateversuchen angelegt — sonst blieben sie schon als Versuche aus der
+# Anlage-Sekunde stehen, und die Probe mässe die Topf-Prüfung nicht.
+_n5_b.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_platz,))
+_n5_b.store.set_disabled(_n5_platz, True)
+_n5_b.create_magic_token("verify_email", user_id=_n5_platz)
+_n5_rate(_n5_b, _n5_bapp, "Özlem")
+
+
+def _n5_topf(a, topf):
+    return a.store._one("SELECT COUNT(*) AS n FROM login_attempt WHERE username=? AND success=0",
+                        (topf,))["n"]
+
+
+_n5_vor = _n5_topf(_n5_b, "özlem")
+_n5_b.store._exec("UPDATE magic_token SET expires_at=1 WHERE purpose='verify_email'")
+_n5_gc = _n5_b.gc()["unverified_accounts"]
+_n5_frisch = TestClient(_n5_bapp, client=("198.51.100.200", 1)).post(
+    "/auth/login", data={"username": "Özlem", "password": "falsch"})
+r.check("N-5: gc() eines Namensvetters aus dem Bestand leert den Topf des verbleibenden Kontos nicht",
+        _n5_vor >= 15 and _n5_gc == 1 and _n5_topf(_n5_b, "özlem") == _n5_vor
+        and _n5_frisch.status_code == 429,
+        f"vorher {_n5_vor}, gc={_n5_gc}, nachher {_n5_topf(_n5_b, 'özlem')}, "
+        f"nächster Versuch HTTP {_n5_frisch.status_code}")
+
+# Und in die andere Richtung: Der Topf von `Émile` heisst `émile`, SQLite-`lower('Émile')`
+# ist `Émile`. Eine Löschung durch den Admin liess die Versuchszeilen deshalb liegen — die
+# Zusage von H-13 („deren Versuchszeilen werden gelöscht") galt nur für ASCII-Namen.
+_n5_c, _n5_capp = _app(csrf_enabled=False)
+_n5_c.create_user("chef", password="Geheim12345!", is_admin=True)
+_n5_ae = _n5_c.create_user("Ärmel", password="Geheim12345!")
+_n5_c.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_ae,))
+_n5_rate(_n5_c, _n5_capp, "Ärmel")
+_n5_cvor = _n5_topf(_n5_c, "ärmel")
+_n5_c.delete_user(_n5_ae)
+r.check("N-5: die Löschung eines Kontos mit Nicht-ASCII-Grossbuchstaben räumt auch seinen Zähl-Topf",
+        _n5_cvor >= 15 and _n5_topf(_n5_c, "ärmel") == 0,
+        f"vorher {_n5_cvor}, nachher {_n5_topf(_n5_c, 'ärmel')}")
+
+# ── N-2: auch der GET mit Einladungs-Token hinterlässt eine Spur (B5-18) ──────────────────────
+# `/auth/register?invite=<t>` prüft den Token per peek und antwortet unterschiedlich (403/200
+# samt vorausgefüllter Adresse) — ohne Audit- und fail2ban-Zeile. /auth/invite/<t> und der POST
+# protokollieren; wer Einladungs-Token durchprobieren wollte, nahm den stillen Weg.
+# (Mutationsprobe: den `token_abgewiesen`-Aufruf in `register_page` streichen → rot.)
+_n2_a, _n2_app = _app(allow_signup=True, signup_invite_only=True, magiclink_enabled=True,
+                      csrf_enabled=False)
+_n2_a.set_mailer(lambda *x, **k: True)
+_n2_inv = _n2_a.create_invite("gast@example.com", "http://testserver")
+_n2_tok = _n2_inv.get("token") or _n2_inv["url"].rsplit("/", 1)[-1]
+_n2_puffer = io.StringIO()
+_n2_haken = logging.StreamHandler(_n2_puffer)
+_sec.seclog.addHandler(_n2_haken)
+_n2_erg = {}
+try:
+    _n2_c = TestClient(_n2_app, client=("203.0.113.5", 1))
+    for _n2_name, _n2_pfad in (("geraten", "/auth/register?invite=geraten-123"),
+                               ("echt", f"/auth/register?invite={_n2_tok}"),
+                               ("ohne", "/auth/register")):
+        _n2_a0 = len(_n2_a.store._all("SELECT id FROM audit WHERE event='token_invalid'"))
+        _n2_l0 = len([z for z in _n2_puffer.getvalue().splitlines()
+                      if z.startswith(_sec.LOG_PRUEFUNG) and "token_invite" in z])
+        _n2_st = _n2_c.get(_n2_pfad).status_code
+        _n2_erg[_n2_name] = (
+            _n2_st,
+            len(_n2_a.store._all("SELECT id FROM audit WHERE event='token_invalid'")) - _n2_a0,
+            len([z for z in _n2_puffer.getvalue().splitlines()
+                 if z.startswith(_sec.LOG_PRUEFUNG) and "token_invite" in z]) - _n2_l0)
+finally:
+    _sec.seclog.removeHandler(_n2_haken)
+r.check("N-2: GET /auth/register mit erfundenem Einladungs-Token → token_invalid + „failed verification“",
+        _n2_erg.get("geraten") == (403, 1, 1), f"{_n2_erg}")
+r.check("N-2: … mit gültigem Token und ganz ohne Token dagegen keine Zeile",
+        _n2_erg.get("echt") == (200, 0, 0) and _n2_erg.get("ohne") == (403, 0, 0), f"{_n2_erg}")
+
+# ── N-3: die Passkey-ID der Selbstbedienung ist eine ganze Zahl — sonst 400 ──────────────────
+# Gefangen wurden nur TypeError/ValueError. `1e400`, `Infinity` und `-Infinity` macht json.loads
+# zu float('inf'), `int()` wirft OverflowError → HTTP 500. `true` las `int()` als Passkey 1 und
+# löschte ihn, `1.9` als Passkey 1.
+# (Mutationsprobe: in `passkey_delete` wieder `int(b.get("id"))` mit TypeError/ValueError → rot.)
+if _ilu.find_spec("webauthn") is not None:
+    _n3_a, _n3_app = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
+                          origin="http://localhost")
+    _n3_anna = _n3_a.create_user("anna", password="Geheim12345!")
+    _n3_ereig = []
+    _n3_a.on_security_event = lambda e, k, d: _n3_ereig.append(e)
+    _n3_a.store.add_webauthn(_n3_anna, b"cred-n3", b"pk", 0, [], "Laptop")
+    _n3_pk = _n3_a.store.list_webauthn(_n3_anna)[0]["id"]
+    _n3_c = TestClient(_n3_app, client=("203.0.113.70", 1), raise_server_exceptions=False)
+    _n3_c.cookies.set(_n3_a.cfg.session_cookie,
+                      _n3_a.store.create_session(_n3_anna, 3600, True, "password"))
+    _n3_status = {}
+    for _n3_body in ('{"id": 1e400}', '{"id": Infinity}', '{"id": -Infinity}', '{"id": NaN}',
+                     '{"id": true}', f'{{"id": {_n3_pk}.9}}', '{"id": "¹"}', '{"id": " 1"}',
+                     '{"id": 99999999999999999999999999}'):
+        _n3_status[_n3_body] = _n3_c.post("/auth/passkey/delete", content=_n3_body,
+                                          headers={"content-type": "application/json"}).status_code
+    r.check("N-3: id aus 1e400/Infinity/true/Kommazahl/Hochzahl → 400, nichts gelöscht, kein Ereignis",
+            all(s in (400, 404) for s in _n3_status.values())
+            and all(_n3_status[b] == 400 for b in list(_n3_status)[:8])
+            and len(_n3_a.store.list_webauthn(_n3_anna)) == 1 and _n3_ereig == [],
+            f"{_n3_status}, übrig {len(_n3_a.store.list_webauthn(_n3_anna))}, Hook {_n3_ereig}")
+    _n3_ok = _n3_c.post("/auth/passkey/delete", json={"id": str(_n3_pk)})
+    r.check("N-3: … eine ganze Zahl (auch als Ziffernfolge) löscht wie bisher",
+            _n3_ok.status_code == 200 and not _n3_a.store.list_webauthn(_n3_anna)
+            and _n3_ereig == ["passkey_removed"], f"HTTP {_n3_ok.status_code}, Hook {_n3_ereig}")
+
+# ── N-8: der Löschweg-Wächter sieht auch Alias, getattr und rohes SQL ──────────────────────
+# `_ist_store` erkannte nur die wörtlichen Formen `auth.store.x`, `self.store.x`, `store.x`.
+# `st = self.store; st.delete_user(uid)` oder ein `DELETE FROM users` am Store vorbei blieben
+# grün — genau der „nächste neue Weg", gegen den der Wächter stehen soll. Jetzt umgekehrt: Ein
+# Aufruf von `delete_user` gilt als Store-Aufruf, solange sein Empfänger nicht nachweislich der
+# Manager ist (`auth`, `self` in TinySesam), und rohes SQL, das Konten oder Passkeys löscht
+# (auch mit einem Tabellennamen aus einer Variable), steht nur in den Store-Bausteinen.
+# Grenze, die der Wächter nicht sieht: ein Methodenname, der erst zur Laufzeit entsteht.
+# (Mutationsproben: die Empfänger-Prüfung wieder auf `_ist_store` stellen → rot beim Alias;
+#  `_sql_ausserhalb` leer zurückgeben → rot beim SQL-Selbsttest.)
+_SQL_LOESCHT = re.compile(r"\bDELETE\s+FROM\s+(?:[\"'`\[]?(users|webauthn_cred)\b|$)",
+                          re.IGNORECASE)
+
+
+def _ist_manager(knoten, klasse) -> bool:
+    """`auth.x`, `self.auth.x` und in TinySesam `self.x` — der Manager, nicht der Store."""
+    return ((isinstance(knoten, _ast.Name) and knoten.id == "auth")
+            or (isinstance(knoten, _ast.Attribute) and knoten.attr == "auth")
+            or (isinstance(knoten, _ast.Name) and knoten.id == "self" and klasse == "TinySesam"))
+
+
+def _getattr_ausserhalb(methode, erlaubt, quellen=None) -> list:
+    """`getattr(x, "<methode>")` ausserhalb von `erlaubt` — der Umweg um jede Empfänger-Prüfung."""
+    funde = []
+    for name, text in (quellen if quellen is not None else _quelltexte()):
+        for pfad, knoten, k, f in _knoten_mit_ort(name, text):
+            if (isinstance(knoten, _ast.Call) and isinstance(knoten.func, _ast.Name)
+                    and knoten.func.id == "getattr" and len(knoten.args) >= 2
+                    and isinstance(knoten.args[1], _ast.Constant) and knoten.args[1].value == methode
+                    and (k, f) not in erlaubt):
+                funde.append(f"{pfad}:{knoten.lineno} ({k}.{f})")
+    return funde
+
+
+def _sql_ausserhalb(erlaubt: dict, quellen=None) -> list:
+    """Rohes SQL, das Konten/Passkeys löscht (`DELETE FROM users|webauthn_cred|{variable}`),
+    ausserhalb der erlaubten Stellen. `erlaubt` ordnet der Tabelle (`""` = Name aus einer
+    Variable) die Paare (Klasse, Funktion) zu. Docstrings zählen nicht."""
+    funde = []
+    for name, text in (quellen if quellen is not None else _quelltexte()):
+        for pfad, knoten, k, f in _knoten_mit_ort(name, text):
+            if not (isinstance(knoten, _ast.Constant) and isinstance(knoten.value, str)):
+                continue
+            if getattr(knoten, "_ist_docstring", False):
+                continue
+            for treffer in _SQL_LOESCHT.finditer(knoten.value):
+                tabelle = (treffer.group(1) or "").lower()
+                if (k, f) not in erlaubt.get(tabelle, set()):
+                    funde.append(f"{pfad}:{knoten.lineno} ({k}.{f}) DELETE FROM {tabelle or '{…}'}")
+    return funde
+
+
+def _quelltexte():
+    return [(p.name, p.read_text(encoding="utf-8")) for p in sorted((ROOT / "tinysesam").glob("*.py"))]
+
+
+def _knoten_mit_ort(name, text):
+    """Jeder AST-Knoten mit (Datei, Knoten, innerste Klasse, innerste Funktion); Docstrings markiert."""
+    baum = _ast.parse(text)
+    for traeger in _ast.walk(baum):
+        if isinstance(traeger, (_ast.Module, _ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef)):
+            koerper = traeger.body
+            if (koerper and isinstance(koerper[0], _ast.Expr)
+                    and isinstance(koerper[0].value, _ast.Constant)
+                    and isinstance(koerper[0].value.value, str)):
+                koerper[0].value._ist_docstring = True
+    aus = []
+
+    def gehe(knoten, klasse=None, funktion=None):
+        for kind in _ast.iter_child_nodes(knoten):
+            k, f = klasse, funktion
+            if isinstance(kind, _ast.ClassDef):
+                k = kind.name
+            elif isinstance(kind, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                f = kind.name
+            aus.append((name, kind, k, f))
+            gehe(kind, k, f)
+    gehe(baum)
+    return aus
+
+
+def _nicht_manager(knoten, klasse) -> bool:
+    return not _ist_manager(knoten, klasse)
+
+
+_N8_ERLAUBT_SQL = {"users": {("Store", "delete_user")},
+                   "webauthn_cred": {("Store", "delete_user"), ("Store", "delete_webauthn")},
+                   "": {("Store", "delete_user")}}
+_N8_PROBEN = {
+    "Alias": "class TinySesam:\n    def weg(self, uid):\n        st = self.store\n        st.delete_user(uid)\n",
+    "Attribut": "class Hilfe:\n    def weg(self, uid):\n        self._s.delete_user(uid)\n",
+    "getattr": "def weg(s, uid):\n    getattr(s, 'delete_user')(uid)\n",
+    "SQL": "class TinySesam:\n    def weg(self, uid):\n        self.store._exec('DELETE FROM users WHERE id=?', (uid,))\n",
+    "SQL-Passkey": "def weg(db):\n    db.execute(\"DELETE  FROM webauthn_cred WHERE id=1\")\n",
+    "SQL-Variable": "def weg(db, t):\n    db.execute(f'DELETE FROM {t} WHERE id=1')\n",
+}
+_n8_selbst = {}
+for _n8_art, _n8_text in _N8_PROBEN.items():
+    _n8_q = [("probe.py", _n8_text)]
+    _n8_selbst[_n8_art] = bool(
+        _aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "konto_entfernen")}, _n8_q)
+        or _getattr_ausserhalb("delete_user", set(), _n8_q)
+        or _sql_ausserhalb(_N8_ERLAUBT_SQL, _n8_q))
+_n8_harmlos = [("probe.py", "def route(auth, uid):\n    '''DELETE FROM users steht nur im Docstring'''\n"
+                            "    auth.delete_user(uid)\n")]
+r.check("N-8 (Wächter-Selbsttest): Alias, fremdes Attribut, getattr und rohes SQL schlagen an",
+        all(_n8_selbst.values()), f"{_n8_selbst}")
+r.check("N-8 (Wächter-Selbsttest): … der Manager-Aufruf und ein Docstring nicht",
+        not (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "konto_entfernen")}, _n8_harmlos)
+             or _sql_ausserhalb(_N8_ERLAUBT_SQL, _n8_harmlos)))
+_n8_funde = (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "konto_entfernen")})
+             + _aufrufe_ausserhalb("delete_webauthn", lambda k, c: True, {("TinySesam", "remove_passkey")})
+             + _getattr_ausserhalb("delete_user", set()) + _getattr_ausserhalb("delete_webauthn", set())
+             + _sql_ausserhalb(_N8_ERLAUBT_SQL))
+r.check("N-8 (Wächter): Konten und Passkeys löschen nur die Bausteine — auch nicht per Alias oder SQL",
+        not _n8_funde, f"{_n8_funde}")
 
 sys.exit(r.done())

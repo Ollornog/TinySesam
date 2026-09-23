@@ -397,11 +397,18 @@ class TinySesam:
         ein Schalter, den ein Betrieb später umlegt; eine Kollision, die heute schläft, wäre dann
         sofort scharf. Rückgabe ist das Konto, dem die Kennung gehört, sonst None. `exclude_id`
         lässt ein Konto aus — für Prüfungen an einem bestehenden Konto.
+
+        Und über den **Zähl-Topf** des Sperrzählers (`Store.konto_mit_topf`): `Émile` und
+        `émile` sind für SQLite-NOCASE (nur ASCII) zwei Namen, für `norm_kennung` einer. Zwei
+        solche Konten teilten sich die Konto-Schwelle gegen verteiltes Raten — und wurde das eine
+        entfernt (auch anonym auslösbar: Registrierung, die `gc()` abräumt), gingen die
+        Fehlversuche des anderen mit. Ein solcher Namensvetter gilt deshalb als vergeben.
         """
         kennung = (kennung or "").strip()
         if not kennung:
             return None
-        for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung)):
+        for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung),
+                        self.store.konto_mit_topf(kennung, ausser=exclude_id)):
             if treffer is not None and treffer["id"] != exclude_id:
                 return self._als_dict(treffer)
         return None
@@ -843,6 +850,11 @@ class TinySesam:
         gelöschtes Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht; ein Log,
         dem die Zeilen fehlen, taugt nicht mehr zur Aufarbeitung.
 
+        Ersetzt wird, was ab der Anlage des Kontos entstand; eine BESTÄTIGTE Adresse auch in
+        älteren Zeilen (etwa in der Einladung, die zu dem Konto führte) — sie gehört dem Konto
+        nachweislich. Ein Name gehörte vor der Anlage niemandem oder jemand anderem; ein
+        Fehlversuch darunter bleibt, wie er war (s. `Store.konto_entfernen`).
+
         Der letzte Admin lässt sich nicht löschen (`StateError`) — sonst stünde die Instanz ohne
         Verwaltung da, und der Erst-Admin-Weg öffnete sich für den Nächstbesten. Gibt False
         zurück, wenn es das Konto nicht gibt.
@@ -853,8 +865,10 @@ class TinySesam:
         if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
             raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
         # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
-        # und die Rücknahme einer Registrierung löschen (Integrationsfunde 12/18).
-        entfernt = self.store.konto_entfernen(user_id)
+        # und die Rücknahme einer Registrierung löschen (Integrationsfunde 12/18). Nur hier, bei
+        # der bewussten Löschung, gilt eine bestätigte Adresse auch vor der Anlage als die des
+        # Kontos — die anderen Wege kann ein Fremder auslösen.
+        entfernt = self.store.konto_entfernen(user_id, adresse_unbefristet=True)
         if entfernt is None:
             return False
         ersatz, n = entfernt
@@ -872,17 +886,19 @@ class TinySesam:
         dessen IP — die des Admins. Die bleibt weg; `by_admin` sagt stattdessen, dass es nicht
         der Kontoinhaber war.
 
-        Gezählt wird erst ab der Anlage des Kontos. Der Filter geht über den NAMEN, und ein Name
-        kann vorher einem anderen gehört haben: einem gelöschten Konto, dessen Zeilen ein älterer
-        Stand nicht anonymisiert hat (Integrationsfund 12), oder niemandem — dann steht dort der
-        Fehlversuch eines Fremden unter dem damals freien Namen, samt seiner IP.
+        Gezählt wird erst ab der Anlage des Kontos (`Store.anlage_grenze`). Der Filter geht über
+        den NAMEN, und ein Name kann vorher einem anderen gehört haben: einem gelöschten Konto,
+        dessen Zeilen ein älterer Stand nicht anonymisiert hat (Integrationsfund 12), oder
+        niemandem — dann steht dort der Fehlversuch eines Fremden unter dem damals freien Namen,
+        samt seiner IP.
         """
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
             return []
         aus = []
+        seit, seit_id = self.store.anlage_grenze(u)   # dieselbe Grenze wie `konto_entfernen`
         for z in self.store.recent_audit(max(1, int(limit)), username=str(u["username"]),
-                                         seit=u["created_at"]):
+                                         seit=seit, seit_id=seit_id):
             fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
             aus.append({"ts": z["ts"], "event": z["event"],
                         "ip": None if fremd else z["ip"], "by_admin": fremd})

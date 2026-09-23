@@ -282,7 +282,10 @@ def norm_kennung(kennung) -> str:
     sich ein verteilter Angreifer mit `' opfer'`, `'opfer '`, `'\topfer'` … beliebig viele
     frische Töpfe auf, und die Konto-Schwelle über alle Adressen bindet nichts. `lower()`
     faltet gröber als NOCASE (auch ausserhalb von ASCII) — zwei Namen, die nur darin
-    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer."""
+    abweichen (`Émile`/`émile`), teilen sich dann einen Topf. Das ist strenger, nie lockerer.
+    Neu anlegen lässt sich ein solcher Namensvetter nicht mehr (`TinySesam.kennung_vergeben`
+    fragt `Store.konto_mit_topf`); einer aus dem Bestand teilt den Topf weiter, und
+    `delete_attempts_for` lässt ihn stehen, solange eines der beiden Konten besteht."""
     return str(kennung or "").strip().lower()
 
 
@@ -746,7 +749,7 @@ class Store:
         return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
                          (kanonisch, alt, unicode_form))
 
-    def konto_entfernen(self, user_id) -> Optional[tuple[str, int]]:
+    def konto_entfernen(self, user_id, adresse_unbefristet: bool = False) -> Optional[tuple[str, int]]:
         """Ein Konto löschen — der EINE Löschweg, über den jeder Aufrufer geht (H-13).
 
         Konto samt Zugangsdaten und Sitzungen, die Anmeldeversuche unter Name und Adresse, und
@@ -760,6 +763,28 @@ class Store:
         späterer Namensvetter sah die Registrierung des Fremden als eigenes Ereignis
         (Integrationsfunde 12/18). Der Store ist die tiefste Stelle, die alle Wege teilen.
 
+        **Nur was ab der Anlage des Kontos entstand** (`anlage_grenze` — dieselbe Grenze wie
+        `TinySesam.own_events`). Seit `gc()` und die B6-5-Rücknahme hier durchgehen, löst diesen
+        Weg auch ein Fremder ohne Konto aus: registrieren, nie bestätigen. Ohne Grenze schrieb
+        er dabei Zeilen um, die VOR seinem Konto entstanden und anderen gehören — die Einladung
+        des Admins mit der Adresse im Detail, den Fehlversuch eines Sprayers unter dem damals
+        freien Namen, den der echten Adressinhaberin —, und deren Versuchszeilen verschwanden
+        aus der Drosselung je IP. Ein Name oder eine eingetippte Adresse gehörte vor der Anlage
+        niemandem oder jemand anderem. Anmeldeversuche aus der Sekunde der Anlage bleiben
+        stehen: Ob sie davor oder danach kamen, lässt sich nicht entscheiden, und Stehenlassen
+        ist hier die sichere Richtung (sie verfallen mit dem Sperrfenster).
+
+        `adresse_unbefristet=True` nimmt eine **bestätigte** Adresse davon aus: Sie gehört
+        nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die Einladung, die zu
+        dem Konto führte). Das ist die bewusste Löschung durch einen Admin
+        (`TinySesam.delete_user`, H-13) — kein Weg, den ein Anonymer auslöst. `gc()`, die
+        Rücknahme und `purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
+        Grenze auch für die Adresse (die bei einer Registrierung ja als „bestätigt" angelegt
+        wird, bis der Link sie freischaltet).
+
+        Die Anmeldeversuche eines Zähl-Topfs (`norm_kennung`), den ein VERBLEIBENDES Konto
+        teilt, bleiben stehen (s. `delete_attempts_for`).
+
         Gibt `(ersatzname, anonymisierte Zeilen)` zurück — unter dem Ersatznamen schreibt der
         Aufrufer seine eigene Zeile (`user_delete`, `signup_expired`, `verify_send_error`) —,
         None, wenn es das Konto nicht gibt."""
@@ -767,10 +792,53 @@ class Store:
         if u is None:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
+        seit, seit_id = self.anlage_grenze(u)
+        unbefristet = (mail,) if (adresse_unbefristet and mail and u["email_verified"]) else ()
         self.delete_user(user_id)
-        self.delete_attempts_for(name, (mail,))
+        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet)
         ersatz = ersatzname(user_id)
-        return ersatz, self.audit_anonymisieren(name, ersatz, (mail,))
+        return ersatz, self.audit_anonymisieren(name, ersatz, (mail,), seit=seit, seit_id=seit_id,
+                                                unbefristet=unbefristet)
+
+    def anlage_grenze(self, user) -> tuple[int, int]:
+        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)`.
+
+        `seit` ist `created_at` (Unix-Sekunden). Aus der Sekunde der Anlage selbst zählen nur
+        Zeilen ab `seit_id`: der Registrierungszeile des Kontos (`signup`, beim Platzhalter
+        `signup_taken`), die direkt nach dem Anlegen geschrieben wird. Ohne sie wäre die Grenze
+        nur sekundengenau — und ein Fremder, der sich in derselben Sekunde registriert, in der
+        der Admin die Adresse einlädt oder ein Sprayer den freien Namen probiert, bekäme deren
+        Zeilen zugeschrieben. Genau diese Wege (Registrierung, `gc()`, B6-5) haben die Zeile
+        immer; ein Konto ohne sie (Admin-API, SSO, Demo) fällt auf `seit_id = 0` zurück — dann
+        zählt die ganze Sekunde.
+
+        Gesucht wird die Zeile nur in der Sekunde der Anlage und der nächsten (das Passwort wird
+        NACH dem Anlegen gehasht, die Zeile kann eine Sekunde später stehen). Eine spätere
+        `signup_taken`-Zeile unter demselben Namen — jemand registriert sich mit der Adresse
+        eines Kontos, dessen Benutzername sie ist — ist nicht die Anlage und verschiebt nichts.
+
+        Filter für SQL: `ts > seit OR (ts = seit AND id >= seit_id)`."""
+        seit = int(user["created_at"] or 0)
+        anker = self._one(
+            "SELECT MIN(id) AS a FROM audit WHERE event IN ('signup', 'signup_taken') "
+            "AND lower(username) = lower(?) AND ts BETWEEN ? AND ?",
+            (str(user["username"]), seit, seit + 1))
+        return seit, int((anker["a"] if anker else None) or 0)
+
+    def konto_mit_topf(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
+        """Das erste Konto, dessen Name oder Adresse in denselben Zähl-Topf fällt wie `kennung`.
+
+        Der Topf ist `norm_kennung` (Python-`lower()`), die Namensprüfung der Datenbank dagegen
+        `COLLATE NOCASE` — und das faltet nur ASCII. `Émile` und `émile` sind für SQLite zwei
+        Namen, für den Sperrzähler einer. Die Abfrage läuft deshalb in Python, nicht in SQL.
+        `ausser` lässt ein Konto aus (die ID, um die es gerade geht)."""
+        topf = norm_kennung(kennung)
+        if not topf:
+            return None
+        for z in self._all("SELECT * FROM users ORDER BY id"):
+            if z["id"] != ausser and topf in (norm_kennung(z["username"]), norm_kennung(z["email"])):
+                return z
+        return None
 
     def delete_user(self, user_id):
         """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
@@ -1546,22 +1614,44 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=()) -> int:
+    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=()) -> int:
         """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
 
         `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
-        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr)."""
+        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr).
+
+        Gezählt wird unter dem Topf `norm_kennung` (Python-`lower()`), gelöscht wird deshalb
+        auch dort — `lower()` in SQLite faltet nur ASCII und traf den Topf `ärmel` des Kontos
+        `Ärmel` nie. Zeilen aus der Zeit vor `_topf` stehen unter der rohen Eingabe und werden
+        weiter über SQLite-`lower()` gefunden.
+
+        Zwei Grenzen (Nachbesserung zu den Integrationsfunden 12/18):
+        - `nach` (Unix-Sekunden): nur Versuche NACH dieser Sekunde (der Anlage des Kontos) —
+          davor galten sie nicht ihm, und sie zählen in der Drosselung je IP dessen, der sie
+          machte. Die Sekunde selbst bleibt: Ob ein Versuch darin vor oder nach der Anlage kam,
+          ist nicht zu entscheiden, und ein stehengebliebener Versuch verfällt mit dem
+          Sperrfenster. Kennungen in `unbefristet` gelten ohne diese Grenze.
+        - Führt ein VERBLEIBENDES Konto denselben Topf (ein Namensvetter wie `Émile`/`émile`
+          aus einem Bestand, `konto_mit_topf`), bleibt der Topf unberührt. Sonst leerte das
+          Entfernen eines Kontos, das ein Anonymer anlegen und per `gc()` abräumen lassen kann,
+          die Konto-Schwelle eines fremden (R7-6/H-8)."""
         n = 0
         for wert in (username, *[w for w in weitere if w]):
-            n += self._exec("DELETE FROM login_attempt WHERE lower(username)=lower(?)",
-                            (wert,)).rowcount
+            topf = norm_kennung(wert)
+            if not topf or self.konto_mit_topf(topf) is not None:
+                continue
+            ab = -1 if (nach is None or wert in unbefristet) else int(nach)
+            n += self._exec("DELETE FROM login_attempt WHERE ts > ? "
+                            "AND (username = ? OR lower(username) = lower(?))",
+                            (ab, topf, str(wert))).rowcount
         return n
 
     def gc_audit(self, older_than_ts: int) -> int:
         """Audit-Zeilen vor einem Zeitpunkt löschen (`audit_retention_days`, B5-11)."""
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
-    def audit_anonymisieren(self, username, ersatz, weitere=()) -> int:
+    def audit_anonymisieren(self, username, ersatz, weitere=(), seit=None, seit_id=0,
+                            unbefristet=()) -> int:
         """Ein Konto aus dem Audit-Log herausnehmen, ohne die Zeilen zu löschen (H-13).
 
         Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
@@ -1574,16 +1664,29 @@ class Store:
         fremde Zeilen: Mit dem Konto `admin` wurde aus `admin=0->1` in der Rollenänderung eines
         ANDEREN Kontos `gelöscht#2=0->1`, mit `password` die Methode jedes Fehlversuchs. Eine
         Kennung mit `@` ist dagegen unverwechselbar und wird überall ersetzt.
+
+        `seit`/`seit_id` beschränken das auf Zeilen ab der Anlage des Kontos (`anlage_grenze`,
+        `konto_entfernen`): Was davor unter dem Namen oder mit der Adresse geschrieben wurde,
+        gehörte nicht diesem Konto. Kennungen in `unbefristet` gelten ohne die Grenze. Ohne
+        `seit` gilt jede Zeile.
         """
         if not username:
             return 0
         import re as _re
         kennungen = [str(w) for w in (username, *weitere) if w]
+        ohne_frist = {str(w) for w in unbefristet if w}
+
+        def ab(wert) -> tuple:
+            if seit is None or wert in ohne_frist:
+                return (-1, -1, 0)
+            return (int(seit), int(seit), int(seit_id or 0))
+        grenze = "(ts > ? OR (ts = ? AND id >= ?))"
         with self._lock:
             n = 0
             for wert in kennungen:
-                n += self.db.execute("UPDATE audit SET username=? WHERE lower(username)=lower(?)",
-                                     (ersatz, wert)).rowcount
+                n += self.db.execute(
+                    f"UPDATE audit SET username=? WHERE lower(username)=lower(?) AND {grenze}",
+                    (ersatz, wert, *ab(wert))).rowcount
             for wert in kennungen:
                 w = _re.escape(wert)
                 ende = r"(?![\w@.=-])"
@@ -1592,8 +1695,9 @@ class Store:
                 else:
                     muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
                 zeilen = self.db.execute(
-                    "SELECT id, event, detail FROM audit WHERE instr(lower(detail), lower(?)) > 0",
-                    (wert,)).fetchall()
+                    "SELECT id, event, detail FROM audit "
+                    f"WHERE instr(lower(detail), lower(?)) > 0 AND {grenze}",
+                    (wert, *ab(wert))).fetchall()
                 for z in zeilen:
                     alt = z["detail"] or ""
                     if "@" in wert:
@@ -1608,14 +1712,16 @@ class Store:
             self.db.commit()
         return n
 
-    def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None):
+    def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
+                     seit_id: int = 0):
         """Die jüngsten Audit-Einträge, neueste zuerst.
 
         `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
         letzten N Einträge dieses Kontos" und „die Einträge dieses Kontos unter den letzten N" —
         und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
         Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
-        filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL.
+        filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL; aus der Sekunde `seit`
+        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
@@ -1623,8 +1729,8 @@ class Store:
             bedingungen.append("lower(username)=lower(?)")
             werte.append(username)
         if seit:
-            bedingungen.append("ts >= ?")
-            werte.append(int(seit))
+            bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
+            werte.extend((int(seit), int(seit), int(seit_id or 0)))
         wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
         return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
 

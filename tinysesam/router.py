@@ -747,6 +747,11 @@ def build_router(auth) -> APIRouter:
             if auth.current_user(request):
                 return RedirectResponse(nxt, 303)
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
+            if invite and not inv:
+                # Dieselbe Spur wie /auth/invite/<t> und der POST (B5-18): Die Seite antwortet
+                # je nach Token anders (403 oder die vorausgefüllte Adresse) — ohne diese Zeile
+                # liessen sich Einladungs-Token hier still durchprobieren.
+                auth.token_abgewiesen("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
