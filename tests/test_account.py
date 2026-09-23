@@ -150,9 +150,8 @@ ok("on_security_event: Passwort, PIN setzen/entfernen und neuer API-Key melden s
 # (Passkey braucht das Extra). Per AST, nicht per Textsuche: ein Docstring zählt nicht.
 import ast as _ast
 import pathlib as _pl
-import tinysesam as _ts
 _gerufen = set()
-for _datei in _pl.Path(_ts.__file__).parent.glob("*.py"):
+for _datei in (_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"):
     for _k in _ast.walk(_ast.parse(_datei.read_text(encoding="utf-8"))):
         if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
                 and _k.func.attr == "sicherheitsereignis" and _k.args

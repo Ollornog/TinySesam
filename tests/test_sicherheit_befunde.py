@@ -2627,7 +2627,7 @@ try:
         _c2.post("/auth/login", data={"username": "chef", "password": "Fremder-123456"})
         _admin_api = _c2.get("/auth/admin/api/users").status_code
 except _CfgErr:
-    pass
+    pass   # der Aufbau darf abgelehnt werden — geprüft wird unten, dass niemand Admin wurde
 _chef = _a2.store.get_user_by_name("chef")
 r.check("...und niemand registriert sich als 'chef' zum Erst-Admin",
         (_chef is None or not _chef["is_admin"]) and _admin_api != 200,

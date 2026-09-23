@@ -925,7 +925,7 @@ if HAT_LDAP3:
             conn.recv(8192)
             conn.close()
         except Exception:
-            pass
+            pass   # der Client hat aufgelegt — für diesen Attrappen-Server kein Fehler
 
     threading.Thread(target=_lehnt_ab, args=(_sa,), daemon=True).start()
     assert LDAPClient(TinySesamConfig(

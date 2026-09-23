@@ -10,8 +10,19 @@ ausgeliefert; ein String wird als HTML mit dem jeweiligen Status verpackt.
 from __future__ import annotations
 import html
 import json
+import re
 
 from .theme import TOKENS
+
+_NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
+
+
+def inject_nonce(html_str: str, nonce: str) -> str:
+    """Jedem `<script>`/`<style>` ohne eigene Nonce die der Antwort geben (CSP 'strict').
+
+    Hier und nicht im Manager: Das Admin-Panel braucht dieselbe Funktion, und ein Import aus dem
+    Manager machte `admin` ↔ `manager` zu einem Import-Kreis."""
+    return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
 
 class Templates:

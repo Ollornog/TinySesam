@@ -18,11 +18,10 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
-from .manager import _inject_nonce
 from .router import _key_art, _mail_basis, gehaertete_route
 from . import security
 from .store import norm_email, valid_email
-from .templates import brand, favicon_link
+from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
 
 

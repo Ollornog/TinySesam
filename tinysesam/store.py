@@ -341,8 +341,15 @@ class _Uhr:
     WARN_AB_SEK = 5
 
     def __init__(self, wand=None, mono=None):
-        self.wand = wand or (lambda: time.time())
-        self.mono = mono or (lambda: time.monotonic())
+        # Bei JEDEM Aufruf nachschlagen, nicht beim Bau binden: Wer `time.time` patcht
+        # (`mock.patch`, freezegun), stellt damit auch diese Uhr (siehe Docstring oben).
+        def _wand():
+            return time.time()
+
+        def _mono():
+            return time.monotonic()
+        self.wand = wand or _wand
+        self.mono = mono or _mono
         self._lock = threading.Lock()
         self._stand = 0.0          # zuletzt ausgegebene Zeit (Wanduhr-Skala)
         self._mono = None          # monotone Zeit bei dieser Ausgabe
@@ -657,7 +664,7 @@ class Store:
             try:
                 self.db.rollback()
             except sqlite3.Error:
-                pass
+                pass   # nichts offen, nichts zurückzurollen — der Uhrstand ist nur Vorsorge
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,

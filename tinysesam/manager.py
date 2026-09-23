@@ -30,7 +30,7 @@ from .store import Store, norm_email, norm_kennung, jetzt as _jetzt
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
-from .templates import Templates
+from .templates import Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
 
@@ -48,7 +48,6 @@ _ANFRAGE: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", d
 # Setzt nonce="…" in jedes <script>/<style>, das noch keins hat. Zentral, statt den Nonce
 # durch jede Template-Funktion zu faedeln. Sicher, weil keine der eingebauten Seiten den
 # String "<script"/"<style" INNERHALB eines JS-Strings ausgibt (geprueft) — nur echte Tags.
-_NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
 
 
 def _host_aus(wert: str) -> str:
@@ -164,10 +163,6 @@ def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
             "(ganzer DN, Teil-DN von vorn wie 'cn=admins,ou=groups', oder nur der CN) oder "
             "group_match='substring' setzen.", security.fuer_log(s), feld,
             security.fuer_log(next(str(g) for g in gruppen if s in str(g)))[:200])
-
-
-def _inject_nonce(html_str: str, nonce: str) -> str:
-    return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
 
 def _auf_stderr(zeile: str) -> None:

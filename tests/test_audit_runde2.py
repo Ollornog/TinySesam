@@ -1180,7 +1180,7 @@ r.check("A-1: eine Zone mit Zeilenumbruch landet nicht in der ip-Spalte",
 
 # ── A-2 / A-3: Konto löschen trifft fremde Zeilen nicht, dafür die Anmeldeversuche per Mail ──
 auth_d, app_d2 = _app(csrf_enabled=False)
-_ch = auth_d.create_user("chef", password="Geheim12345!", is_admin=True)
+auth_d.create_user("chef", password="Geheim12345!", is_admin=True)
 _adm = auth_d.create_user("admin", password="Geheim12345!", email="Anna.Admin@example.com",
                           is_admin=True)
 _bob = auth_d.create_user("bob", password="Geheim12345!")

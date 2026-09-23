@@ -1,5 +1,6 @@
 """Phase 5: Mailer-Hook + Magic-Link (Einmal-Login per E-Mail)."""
 import os
+import re
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
@@ -313,7 +314,8 @@ try:
 finally:
     _mailer_mod.smtplib.SMTP, _mailer_mod.smtplib.SMTP_SSL = _echt
     _mailer_mod.log.removeHandler(_h)
-assert "smtp_ca_file" in _puffer.getvalue() and "mail.example.com" in _puffer.getvalue(), _puffer.getvalue()
+assert "smtp_ca_file" in _puffer.getvalue() and re.search(r"\bmail\.example\.com\b", _puffer.getvalue()), \
+    _puffer.getvalue()
 ok("A4: fehlender smtp_ca_file ist Aufbaufehler, Relay per IP warnt, Zertifikatsfehler nennt die Abhilfe")
 
 print("\nMAGIC-LINK OK ✅")
