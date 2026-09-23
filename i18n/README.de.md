@@ -385,7 +385,8 @@ systemctl start tinysesam
 > **Ein Rückschritt braucht eine Sicherung im alten Schema.** Jede Fassung, die Spalten
 > hinzufügt, migriert die Datenbank beim ersten Start — 0.18.0 tat es einmal (Schema 5), 0.19.0
 > hebt sie auf **Schema 8** (Freigaben je Anwendung, Key-Art, Erst-Login und
-> Einrichtungsfenster). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
+> Einrichtungsfenster); die nächste Fassung fügt **Schema 9** hinzu (stabile
+> Verzeichnis-Kennungen für LDAP/SAML). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
 > Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem Update
 > ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die zurückspielen.
 

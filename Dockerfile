@@ -15,9 +15,9 @@
 # nicht: Der Server fehlte im Extra, nicht im Abbild.
 
 # ---------- Bauen ----------
-# Per DIGEST gepinnt, nicht per Tag: `python:3.12-slim` zeigt heute hierhin und morgen
+# Per DIGEST gepinnt, nicht per Tag: `python:3.14-slim` zeigt heute hierhin und morgen
 # woanders — zwei Bauläufe desselben Commits ergäben verschiedene Abbilder. Anheben:
-#   docker manifest inspect python:3.12-slim   (bzw. Dependabot, s. dependabot.yml)
+#   docker manifest inspect python:3.14-slim   (bzw. Dependabot, s. dependabot.yml)
 FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 AS build
 
 # Aus dem Build-Kontext installieren, NICHT aus dem Netz: das Abbild soll genau den Stand

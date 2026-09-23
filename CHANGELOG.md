@@ -9,6 +9,12 @@ Verzeichnis im Klartext anspricht, muss das mit `ldap_allow_plaintext=True` ausd
 → **Zu tun:** entweder `ldaps://` in der URL, oder `ldap_start_tls=True`, oder den Schalter
 setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
+### Geändert
+
+- **Das Container-Abbild baut auf Python 3.14** statt 3.12 (`python:3.14-slim`, per Digest
+  gepinnt). 3.14 ist die Obergrenze der unterstützten Matrix; vor dem Wechsel geprüft, dass alle
+  Extras im Zielabbild installieren und importieren.
+
 ### Sicherheit
 
 - **Jeder `actions/checkout` setzt `persist-credentials: false`** (neun Stellen, keine Ausnahme).
