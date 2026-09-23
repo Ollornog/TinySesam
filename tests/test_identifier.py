@@ -307,4 +307,58 @@ assert auth.sperre_aufheben(opfer_id) == geprueft
 os.unlink(db)
 print(f"  Sperr-Topf über die Route: {geprueft} geprüft, dann zu (Konto-Schwelle {DECKEL}) ok")
 
+# ---------- H-13 × Sperr-Topf: das Löschen räumt die Versuche unter der gefalteten Kennung ----------
+# Seit der Sperr-Topf NFKC und IDNA faltet (oben), stehen die Versuche eines Kontos unter
+# `norm_kennung(...)`. `delete_user` suchte sie aber per SQLite `lower()` unter dem GESPEICHERTEN
+# Namen bzw. der gespeicherten Adresse. Ein Name mit Kompatibilitätszeichen (`ｂｅｒｔａ`, `ﬁnn` —
+# `create_user` faltet Namen nicht, sie kommen etwa aus LDAP oder OIDC) und eine Bestandsadresse
+# von vor R4-06 in Unicode-Form (`u2@bücher.example`) liessen Kennung und IP nach dem Löschen
+# stehen — gegen die H-13-Zusage „deren Versuchszeilen werden gelöscht". (Mutationsprobe:
+# `delete_attempts_for` wieder nur mit der Rohform und `lower(username)=lower(?)` → rot.)
+auth, c, db = build(login_identifier="both")
+berta_id = auth.create_user("ｂｅｒｔａ", "Berta-Passwort-2026x")
+finn_id = auth.create_user("ﬁnn", "Finn-Passwort-2026x")
+bestand_id = auth.create_user("bestand", "Bestand-Passwort-2026x", email="u2@example.org")
+auth.store.db.execute("UPDATE users SET email='u2@bücher.example' WHERE id=?", (bestand_id,))
+auth.store.db.commit()
+assert auth.find_user("u2@bücher.example")["id"] == bestand_id, "Vorbedingung: Bestandsadresse wird gefunden"
+for i, kennung in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "BESTAND")):
+    for ip in ("198.51.100.1", "198.51.100.2"):
+        r = login(TestClient(c.app, client=(ip, 40000 + i)), kennung, "falsch-geraten-1")
+        assert r.status_code == 401, (kennung, r.status_code)
+
+
+def _versuche(a):
+    return [(z["username"], z["ip"]) for z in a.store._all("SELECT username, ip FROM login_attempt")]
+
+
+assert len(_versuche(auth)) == 8, f"Vorbedingung: acht Fehlversuche stehen: {_versuche(auth)}"
+for uid in (berta_id, finn_id, bestand_id):
+    assert auth.delete_user(uid)
+assert _versuche(auth) == [], f"nach delete_user stehen noch Versuche gelöschter Konten: {_versuche(auth)}"
+os.unlink(db)
+print("  H-13: delete_user räumt die Versuche auch unter NFKC-/IDNA-gefalteter Kennung ok")
+
+# …aber nicht den Topf eines ANDEREN Kontos. `ｃｌａｒａ` und `clara` sind zwei Konten (der Name
+# ist nur ASCII-NOCASE eindeutig), zählen aber in einem Topf: Wer `ｃｌａｒａ` tippt, rät gegen
+# dasselbe, was `clara` schützt. Das Löschen des einen darf die Sperre des anderen nicht
+# zurücksetzen — sonst wäre „Konto anlegen, raten, Konto löschen lassen" ein Weg an der
+# Konto-Schwelle vorbei. (Mutationsprobe: in `delete_attempts_for` die Ausnahme für `geteilt`
+# streichen → rot.)
+auth, c, db = build()
+auth.set_security("rate_limit_max", 1000)
+voll_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
+clara_id = auth.create_user("clara", "Clara-Ascii-2026x")
+fehl = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
+for i in range(fehl):
+    login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
+r = login(TestClient(c.app, client=("192.0.2.50", 40000)), "clara", "Clara-Ascii-2026x")
+assert r.status_code == 429, f"Vorbedingung: clara ist nach {fehl} Fehlversuchen gesperrt ({r.status_code})"
+assert auth.delete_user(voll_id)
+r = login(TestClient(c.app, client=("192.0.2.51", 40000)), "clara", "Clara-Ascii-2026x")
+assert r.status_code == 429, f"das Löschen von ｃｌａｒａ hat die Sperre von clara aufgehoben ({r.status_code})"
+assert len(_versuche(auth)) >= fehl, _versuche(auth)
+os.unlink(db)
+print("  H-13: ein Topf, den ein verbleibendes Konto teilt, bleibt stehen ok")
+
 print("OK test_identifier")

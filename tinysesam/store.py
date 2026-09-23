@@ -535,7 +535,10 @@ class Store:
                       # nächsten Login einrichten können — der Riegel greift ab da (R3-1).
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER")],
         }
-        with self._lock:
+        # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
+        # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
+        # offen (der AST-Wächter in tests/test_hardening2.py verlangt das für jeden Commit).
+        with self._schreibend():
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in cols:
@@ -657,9 +660,10 @@ class Store:
         Fehlschlag schon geschrieben hatte.
 
         Jeder Schreibweg läuft deshalb hierüber (oder über `_exec`, das es auch tut); wer die
-        Transaktion selbst führt (`reserve_attempt`, `rotate_session`, `_migrate`,
-        `_uhr_mitschreiben`), rollt im eigenen `except` zurück. tests/test_hardening2.py prüft
-        das per Syntaxbaum für jeden Commit in dieser Klasse."""
+        Transaktion selbst führt (`reserve_attempt`, `rotate_session`, `_uhr_mitschreiben`, der
+        innere Block von `_migrate`), setzt jeden Commit in ein `try`, dessen breites `except`
+        (oder `finally`) zurückrollt. tests/test_hardening2.py prüft das per Syntaxbaum für jeden
+        Commit in dieser Klasse — nicht bloss, ob irgendwo in der Funktion `rollback()` steht."""
         with self._lock:
             try:
                 yield
@@ -1562,15 +1566,36 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=()) -> int:
+    def delete_attempts_for(self, username, weitere=(), geteilt=()) -> int:
         """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
 
         `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
-        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr)."""
+        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr).
+
+        Gesucht wird unter jeder Form, unter der ein Versuch stehen kann: der gefalteten Kennung
+        (`norm_kennung` — so zählt der Sperr-Topf seit der Integration von T-13, mit NFKC und
+        IDNA), der früheren Faltung (strip + lower) und der gespeicherten Rohform, jeweils ohne
+        Rücksicht auf ASCII-Gross-/Kleinschreibung. Bis dahin hiess es nur
+        `lower(username)=lower(<Rohform>)`: Ein Name mit Kompatibilitätszeichen (`ｂｅｒｔａ`) und
+        eine Bestandsadresse in Unicode-Form (`u@bücher.example`) liessen Kennung und IP stehen.
+
+        `geteilt` sind gefaltete Kennungen, die noch einem ANDEREN Konto gehören (`ｃｌａｒａ` und
+        `clara` sind zwei Konten, aber ein Topf). Deren Versuche bleiben stehen: Sie schützen
+        das verbleibende Konto, und wer sie mit dem Löschen des einen räumen könnte, setzte die
+        Sperre des anderen zurück. Sie verfallen mit dem gewöhnlichen Aufräumen."""
+        geteilt = {k for k in geteilt if k}
+        formen: set = set()
+        for wert in (username, *weitere):
+            if not wert:
+                continue
+            roh = str(wert)
+            if norm_kennung(roh) in geteilt:
+                continue
+            formen.update(f for f in (roh, roh.strip().lower(), norm_kennung(roh)) if f)
         n = 0
-        for wert in (username, *[w for w in weitere if w]):
-            n += self._exec("DELETE FROM login_attempt WHERE lower(username)=lower(?)",
-                            (wert,)).rowcount
+        for form in sorted(formen):
+            n += self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE",
+                            (form,)).rowcount
         return n
 
     def gc_audit(self, older_than_ts: int) -> int:

@@ -847,6 +847,11 @@ class TinySesam:
         gelöschtes Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht; ein Log,
         dem die Zeilen fehlen, taugt nicht mehr zur Aufarbeitung.
 
+        Die Anmeldeversuche verschwinden unter jeder Schreibweise, unter der der Sperr-Topf sie
+        zählt (NFKC, IDNA, s. `Store.delete_attempts_for`). Ausnahme: ein Topf, den ein
+        verbleibendes Konto teilt (`ｃｌａｒａ` und `clara`) — der bleibt bis zum gewöhnlichen
+        Aufräumen stehen, sonst höbe das Löschen des einen die Sperre des anderen auf.
+
         Der letzte Admin lässt sich nicht löschen (`StateError`) — sonst stünde die Instanz ohne
         Verwaltung da, und der Erst-Admin-Weg öffnete sich für den Nächstbesten. Gibt False
         zurück, wenn es das Konto nicht gibt.
@@ -859,7 +864,13 @@ class TinySesam:
         name, mail = str(u["username"]), (u["email"] or "")
         self.store.delete_user_sessions(user_id)
         self.store.delete_user(user_id)
-        self.store.delete_attempts_for(name, (mail,))
+        # Die Versuche stehen unter der gefalteten Kennung (Sperr-Topf, `norm_kennung`). Einen
+        # Topf, den ein verbleibendes Konto teilt, lässt das Löschen stehen — sonst hebt das
+        # Löschen von `ｃｌａｒａ` die Sperre von `clara` auf (s. `Store.delete_attempts_for`).
+        geteilt: set[str] = set()
+        for anderes in self.store.list_users():
+            geteilt.update((norm_kennung(anderes["username"]), norm_kennung(anderes["email"])))
+        self.store.delete_attempts_for(name, (mail,), geteilt=geteilt)
         ersatz = f"gelöscht#{user_id}"
         n = self.store.audit_anonymisieren(name, ersatz, (mail,))
         self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
@@ -1303,15 +1314,30 @@ class TinySesam:
         bestimmen (F-14)."""
         if not self.ldap:
             return None
+        from .ldap_ import AnfrageAbgebrochen, VerzeichnisNichtErreichbar, eingabe_zu_lang
+        # Länger als jede echte Anmeldung: nicht ans Verzeichnis, sondern wie ein falsches
+        # Passwort (Fehlversuch, `failed login`). Hier und nicht erst im Client, damit es auch für
+        # einen selbst gesetzten Client gilt — und bevor der Merker einen Probenplatz vergibt.
+        # Vorher schickte die Login-Route jede Länge durch: Ein Passwort mit 270 000 Zeichen
+        # liess slapd die Verbindung beenden (s. `ldap_.AnfrageAbgebrochen`).
+        if eingabe_zu_lang(username, password):
+            return None
         # Nach einem Ausfall wird das Verzeichnis eine Weile gar nicht erst gefragt: Die Route
         # hat den Versuch schon vorgebucht (R7-2) und nimmt ihn erst zurück, wenn der Ausfall
         # gemeldet ist — ohne den Merker schwebte er bei jedem Anlauf bis zum Timeout und
         # sperrte derweil Unbeteiligte (Begründung bei `ldap_.AusfallMerker`).
-        from .ldap_ import VerzeichnisNichtErreichbar
         merker = self._ldap_ausfall
         probe = merker.zugang()
         try:
             info = self.ldap.authenticate(username, password)
+        except AnfrageAbgebrochen:
+            # Nur DIESE Anfrage ist gescheitert, schnell und nach dem Senden ihrer Eingaben —
+            # kein Beleg für einen Ausfall. Den Merker scharf zu schalten, gäbe jedem Absender
+            # einer präparierten Anmeldung einen Schalter, der LDAP für alle abstellt. War sie die
+            # Probe, fragt die nächste Anmeldung nach.
+            if probe:
+                merker.freigeben()
+            raise
         except VerzeichnisNichtErreichbar as e:
             merker.ausgefallen(e, war_probe=probe)
             raise

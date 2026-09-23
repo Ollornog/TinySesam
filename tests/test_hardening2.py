@@ -136,15 +136,20 @@ os.remove(db_s)
 
 # Wächter über die Liste oben: Sie nennt die Schreibwege von heute. Ein neuer Schreiber mit
 # `with self._lock: … self.db.commit()` fiele ihr nicht auf. Deshalb per AST: Jeder Commit im
-# Store steht in einem `_schreibend()`-Block — oder in einer Funktion, die ihre Transaktion
-# selbst führt UND sichtbar zurückrollt. (Mutationsprobe: in `delete_user` wieder
-# `with self._lock:` → rot, mit Funktionsname.)
+# Store steht in einem `_schreibend()`-Block — oder, in einer Funktion, die ihre Transaktion
+# selbst führt, im `try` eines Blocks, dessen `except` (für Exception/BaseException/sqlite3.Error
+# oder ohne Typ) bzw. `finally` zurückrollt. Bis zur Nachbesserung prüfte der Wächter bei den
+# selbst geführten Funktionen nur, ob IRGENDWO in ihnen `rollback()` stand: `rotate_session`
+# hat eines im Zweig `rowcount != 1`, und ohne das Zurückrollen im `except` blieb der Wächter
+# grün, obwohl ein gescheitertes INSERT die Transaktion offen liess. (Mutationsprobe: in
+# `delete_user` wieder `with self._lock:` → rot, mit Funktionsname; in `rotate_session`
+# `except Exception: self.db.rollback(); raise` durch `finally: pass` ersetzen → rot — das
+# prüft auch die Selbstprobe unten, ohne die Datei anzufassen.)
 import ast                                                                      # noqa: E402
 from pathlib import Path                                                        # noqa: E402
 
 SELBST_GEFUEHRT = {"__init__", "_migrate", "rotate_session", "reserve_attempt", "_uhr_mitschreiben"}
-baum = ast.parse((Path(__file__).resolve().parent.parent / "tinysesam" / "store.py").read_text("utf-8"))
-store_klasse = next(k for k in baum.body if isinstance(k, ast.ClassDef) and k.name == "Store")
+STORE_QUELLE = (Path(__file__).resolve().parent.parent / "tinysesam" / "store.py").read_text("utf-8")
 
 
 def _ist_commit(k):
@@ -156,33 +161,82 @@ def _ist_commit(k):
             and str(k.args[0].value).strip().upper() == "COMMIT")
 
 
+def _rollt_zurueck(knoten):
+    """Enthält der Block ein Zurückrollen — `rollback()`, `execute("ROLLBACK")`, `_verwerfen()`?"""
+    for k in ast.walk(knoten):
+        if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute):
+            if k.func.attr in ("rollback", "_verwerfen"):
+                return True
+            if (k.func.attr == "execute" and k.args and isinstance(k.args[0], ast.Constant)
+                    and str(k.args[0].value).strip().upper() == "ROLLBACK"):
+                return True
+    return False
+
+
+def _faengt_alles(handler):
+    """Fängt dieser `except` jeden Fehlschlag eines Schreibzugriffs (nicht bloss einen Sonderfall)?"""
+    typen = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    for t in typen:
+        if t is None:
+            return True
+        name = t.attr if isinstance(t, ast.Attribute) else getattr(t, "id", "")
+        if name in ("Exception", "BaseException", "Error", "DatabaseError", "OperationalError"):
+            return True
+    return False
+
+
 def _geschuetzt(fn):
-    """Die Knoten innerhalb eines `with self._schreibend():`-Blocks."""
+    """Die Knoten, deren Fehlschlag zurückgerollt wird: in einem `with self._schreibend():`-Block
+    oder im `try`-Teil eines Blocks, dessen breiter `except` oder `finally` zurückrollt."""
     drin = set()
     for w in ast.walk(fn):
         if isinstance(w, ast.With) and any(
                 isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
                 and i.context_expr.func.attr == "_schreibend" for i in w.items):
             drin.update(id(k) for k in ast.walk(w))
+        elif isinstance(w, ast.Try) and (
+                any(_faengt_alles(h) and _rollt_zurueck(h) for h in w.handlers)
+                or any(_rollt_zurueck(f) for f in w.finalbody)):
+            for teil in w.body:
+                drin.update(id(k) for k in ast.walk(teil))
     return drin
 
 
-ungeschuetzt, ohne_rollback = [], []
-for fn in store_klasse.body:
-    if not isinstance(fn, ast.FunctionDef):
-        continue
-    commits = [k for k in ast.walk(fn) if _ist_commit(k)]
-    if not commits:
-        continue
-    if fn.name in SELBST_GEFUEHRT:
-        quelle = ast.unparse(fn)
-        if fn.name != "__init__" and not any(w in quelle for w in ("rollback()", "'ROLLBACK'", "_verwerfen()")):
-            ohne_rollback.append(fn.name)
-        continue
-    drin = _geschuetzt(fn)
-    ungeschuetzt += [f"{fn.name}:{k.lineno}" for k in commits if id(k) not in drin]
+def _commits_pruefen(quelle):
+    """(Commits ausserhalb von `_schreibend()`, Commits selbst geführter Transaktionen ohne
+    Zurückrollen beim Fehlschlag) — je als `funktion:zeile`."""
+    klasse = next(k for k in ast.parse(quelle).body if isinstance(k, ast.ClassDef) and k.name == "Store")
+    ohne_schreibend, ohne_rollback = [], []
+    for fn in klasse.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        commits = [k for k in ast.walk(fn) if _ist_commit(k)]
+        if not commits or fn.name == "__init__":     # Aufbau: scheitert er, gibt es keinen Store
+            continue
+        drin = _geschuetzt(fn)
+        offen = [f"{fn.name}:{k.lineno}" for k in commits if id(k) not in drin]
+        (ohne_rollback if fn.name in SELBST_GEFUEHRT else ohne_schreibend).extend(offen)
+    return ohne_schreibend, ohne_rollback
+
+
+ungeschuetzt, ohne_rollback = _commits_pruefen(STORE_QUELLE)
 assert not ungeschuetzt, f"Commit ausserhalb von _schreibend() (kein Zurückrollen beim Fehlschlag): {ungeschuetzt}"
-assert not ohne_rollback, f"führt die Transaktion selbst, rollt aber nie zurück: {ohne_rollback}"
+assert not ohne_rollback, f"führt die Transaktion selbst, rollt beim Fehlschlag aber nicht zurück: {ohne_rollback}"
+# Selbstprobe des Wächters: genau die Mutation, die ihm vorher entging.
+_ROTATE_EXCEPT = ("                self.db.commit()\n"
+                  "            except Exception:\n"
+                  "                self.db.rollback()\n"
+                  "                raise\n"
+                  "        return token\n")
+assert STORE_QUELLE.count(_ROTATE_EXCEPT) == 1, "Selbstprobe: rotate_session sieht anders aus — Probe anpassen"
+_, _mutiert = _commits_pruefen(STORE_QUELLE.replace(
+    _ROTATE_EXCEPT, "                self.db.commit()\n            finally:\n                pass\n        return token\n"))
+assert any(f.startswith("rotate_session:") for f in _mutiert), \
+    f"der Wächter übersieht rotate_session ohne Zurückrollen im except: {_mutiert}"
+_, _mutiert = _commits_pruefen(STORE_QUELLE.replace(
+    _ROTATE_EXCEPT, _ROTATE_EXCEPT.replace("except Exception:", "except KeyError:")))
+assert any(f.startswith("rotate_session:") for f in _mutiert), \
+    f"der Wächter lässt einen except gelten, der den Schreibfehler gar nicht fängt: {_mutiert}"
 ok("jeder Commit im Store rollt beim Fehlschlag zurück (AST über store.py)")
 
 os.remove(db)
