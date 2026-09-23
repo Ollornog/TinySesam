@@ -17,6 +17,8 @@ dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben
 """
 from __future__ import annotations
 
+import threading
+import time
 
 from . import errors
 from .security import fuer_log, seclog
@@ -97,6 +99,103 @@ class VerzeichnisNichtErreichbar(errors.TinySesamError, RuntimeError):
 #: bei einem Verzeichnis, das Pakete verwirft statt abzulehnen, so lange wie der TCP-Timeout
 #: des Betriebssystems (Minuten) — mit einem Worker-Thread je wartendem Nutzer.
 VERBINDUNGS_TIMEOUT = 10
+
+#: Wie lange nach einem Ausfall das Verzeichnis gar nicht erst gefragt wird (Sekunden, s.
+#: `AusfallMerker`). So lange wie die Redis-Pause: Kürzer hiesse mehr hängende Proben, länger
+#: hiesse, dass ein zurückgekehrtes Verzeichnis spürbar später wieder angenommen wird.
+AUSFALL_PAUSE_SEK = 30
+
+
+class AusfallMerker:
+    """Merkt sich einen Verzeichnis-Ausfall, damit nicht jede Anmeldung bis zum Timeout hängt.
+
+    Vorbild ist die Redis-Pause (`security.RedisRateLimiter`). Hier ist sie mehr als Komfort: Die
+    Login-Route bucht jeden Versuch VORAB als Fehlversuch (`versuch_beginnen`, R7-2) und nimmt ihn
+    bei einem Ausfall erst zurück, wenn `VerzeichnisNichtErreichbar` kommt (F-23). Bei einem
+    Verzeichnis, das Pakete verwirft, ist das nach `VERBINDUNGS_TIMEOUT`. Bis dahin zählte jede
+    hängende Anmeldung für Konto, Paar und Adresse mit — und zwar während des GANZEN Ausfalls,
+    denn jeder neue Anlauf hing wieder zehn Sekunden: 15 Kollegen hinter einer NAT-Adresse, und
+    der lokale Notfall-Admin bekam mit richtigem Passwort 429; jede weitere Abweisung schrieb
+    `failed login … reason=lockout_ip`, und fail2ban bannte die Adresse. Genau das sollte F-23
+    verhindern.
+
+    Ablauf: Nach einem Ausfall ruht das Verzeichnis `pause_sec` lang — jede Frage bekommt sofort
+    `VerzeichnisNichtErreichbar`, der vorgebuchte Versuch ist Millisekunden später zurückgenommen.
+    Danach fragt **genau eine** Anmeldung nach (Probe); alle anderen bekommen weiter sofort den
+    Ausfall, bis sie zurück ist. So schwebt auch beim Nachfragen höchstens ein Versuch. Antwortet
+    das Verzeichnis — auch mit „Passwort falsch" —, ist es wieder frei; sonst beginnt die nächste
+    Pause. Gemeldet wird der Wechsel (einmal beim Ausfall, einmal bei der Rückkehr), nicht jede
+    Anfrage.
+
+    **Was bleibt:** das erste Fenster. Bevor die erste Frage scheitert, weiss niemand, dass das
+    Verzeichnis weg ist; Anmeldungen, die in diesen höchstens `VERBINDUNGS_TIMEOUT` Sekunden
+    beginnen, schweben wie vorher. Das geschieht einmal je Ausfall und je Prozess (der Merker lebt
+    im Prozess, bei `--workers N` also N-mal, zeitgleich). Ganz schliessen liesse es sich nur mit
+    einem Schwebezustand der Vorbuchung in der Datenbank.
+
+    `uhr` ist austauschbar, damit ein Test die Pause ablaufen lassen kann, ohne zu warten.
+    """
+
+    def __init__(self, pause_sec: float = AUSFALL_PAUSE_SEK, uhr=None):
+        self.pause_sec = pause_sec
+        self._uhr = uhr or time.monotonic
+        self._lock = threading.Lock()
+        self._gestoert = False
+        self._pause_bis = 0.0
+        self._probe = False
+        self._grund = ""
+
+    def zugang(self) -> bool:
+        """Darf diese Anmeldung das Verzeichnis fragen? Wirft `VerzeichnisNichtErreichbar`, wenn nicht.
+
+        Rückgabe `True`: Diese Anmeldung ist die Probe nach einer Pause — sie MUSS mit
+        `ausgefallen()`, `erreicht()` oder `freigeben()` enden, sonst fragt niemand mehr nach."""
+        with self._lock:
+            if not self._gestoert:
+                return False
+            rest = self._pause_bis - self._uhr()
+            if rest > 0 or self._probe:
+                grund = self._grund
+                warum = (f"nächster Versuch in {rest:.0f} s" if rest > 0
+                         else "eine andere Anmeldung fragt gerade nach")
+            else:
+                self._probe = True
+                return True
+        raise VerzeichnisNichtErreichbar(
+            f"LDAP-Verzeichnis gilt nach einem Fehlschlag als nicht erreichbar ({warum}): {grund}")
+
+    def ausgefallen(self, fehler, war_probe: bool = False) -> None:
+        """Die Frage ist gescheitert: Pause (neu) beginnen, den Wechsel einmal melden.
+
+        Den Platz der Probe gibt nur die Probe selbst frei — ein Nachzügler aus dem ersten
+        Fenster, der erst jetzt in sein Timeout läuft, liesse sonst eine zweite Probe zu."""
+        with self._lock:
+            self._pause_bis = self._uhr() + self.pause_sec
+            if war_probe:
+                self._probe = False
+            self._grund = str(fehler)[:300]
+            neu = not self._gestoert
+            self._gestoert = True
+        if neu:
+            seclog.warning("LDAP-Verzeichnis nicht erreichbar (%s) — Anmeldungen über das "
+                           "Verzeichnis bekommen %d s lang sofort 503, danach fragt eine einzelne "
+                           "Anmeldung wieder nach.", fuer_log(str(fehler)), int(self.pause_sec))
+
+    def erreicht(self) -> None:
+        """Das Verzeichnis hat geantwortet (auch mit „Passwort falsch"): wieder frei."""
+        if not self._gestoert:
+            return
+        with self._lock:
+            war = self._gestoert
+            self._gestoert = False
+            self._probe = False
+        if war:
+            seclog.warning("LDAP-Verzeichnis wieder erreichbar — Anmeldungen fragen es wieder.")
+
+    def freigeben(self) -> None:
+        """Eine Probe endete ohne Antwort und ohne Ausfall (anderer Fehler): Platz freigeben."""
+        with self._lock:
+            self._probe = False
 
 
 def _ausfall_arten() -> tuple:

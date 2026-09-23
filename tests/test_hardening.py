@@ -370,6 +370,37 @@ def _totp(i):
 codes = _salve(12, _totp)
 assert codes.count(401) <= 3, f"R3-2: {codes.count(401)} von 12 parallelen TOTP-Versuchen durften raten: {codes}"
 print(f"  ✓ R3-2: parallele Salve am TOTP-Schritt — {codes.count(401)} geprüft, {codes.count(429)} gesperrt")
+
+# (4) Bestätigung der TOTP-Einrichtung (B2-12/R3-6). Die Prüfstelle kam aus einem anderen Zweig
+# und blieb beim Muster `is_totp_setup_locked()` → prüfen → `record_login()` ohne Versuch: 40 von
+# 40 parallelen Codes erreichten die Prüfung, bei einer Grenze von 5. Die Wirkung ist klein (wer
+# einrichtet, sieht das Geheimnis), die zugesagte Grenze galt aber nur für brave Einzelanfragen.
+# (Mutationsprobe: in `totp_setup_confirm` wieder `is_totp_setup_locked()` + `record_login()`
+# ohne `versuch` → 12 von 12 kommen durch → rot.)
+auth_t.set_security("totp_setup_max_attempts", 3)
+uid_tilda = auth_t.create_user("tilda", "Tilda-Passwort-2026")
+c_tilda = TestClient(app_t)
+assert c_tilda.post("/auth/login", data={"username": "tilda", "password": "Tilda-Passwort-2026"},
+                    follow_redirects=False).status_code == 303
+sitzung_tilda = c_tilda.cookies.get(auth_t.cfg.session_cookie)
+auth_t.totp_begin(uid_tilda)
+_langsam(auth_t, "totp_confirm")
+
+
+def _einrichten(i):
+    ci = TestClient(app_t)
+    ci.cookies.set(auth_t.cfg.session_cookie, sitzung_tilda)
+    return ci.post("/auth/totp/setup", data={"code": "000000"}).status_code
+
+
+codes = _salve(12, _einrichten)
+geprueft = codes.count(200)
+assert geprueft <= 3, f"B2-12: {geprueft} von 12 parallelen Einrichtungscodes durften raten: {codes}"
+assert codes.count(429) >= 9, codes
+assert auth_t.store.count_fails(0, username="tilda", method="totp_setup") == geprueft, \
+    "jeder geprüfte Code steht genau einmal als Fehlversuch im eigenen Topf"
+del auth_t.totp_confirm
+print(f"  ✓ B2-12: parallele Salve an der TOTP-Einrichtung — {geprueft} geprüft, {codes.count(429)} gesperrt")
 os.remove(db_t)
 
 # ---------- R7-6 / H-8: Konto UND Adresse, nicht Konto allein ----------

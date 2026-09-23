@@ -132,7 +132,9 @@ def build_router(auth) -> APIRouter:
                 # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
                 # Der Versuch steht seit `versuch_beginnen` schon als Fehlversuch in der Tabelle
                 # (R7-2) — ohne lokales Passwort wird er also zurückgenommen, nicht nur nicht
-                # zusätzlich verbucht.
+                # zusätzlich verbucht. Bis dahin zählt er mit; damit das nicht bei jedem Anlauf
+                # bis zum Timeout dauert, fragt `check_ldap` nach einem Ausfall eine Pause lang
+                # gar nicht erst (`ldap_.AusfallMerker`) und wirft sofort.
                 lokal = auth.find_user(username)
                 if lokal and auth.store.get_password_hash(lokal["id"]):
                     auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
@@ -271,12 +273,16 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(409, auth.t("api.totp_active"))
         # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
         # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
-        # Login-Lockout nicht füllen.
+        # Login-Lockout nicht füllen. Prüfen und Verbuchen in EINEM Schritt wie überall sonst
+        # (R7-2): Mit `is_totp_setup_locked()` vorab und `record_login()` danach lag die
+        # Codeprüfung dazwischen, und eine parallele Salve kam an der Grenze vorbei.
         ip = auth.client_ip(request)
-        if not auth.rate_ok(ip, login=False) or auth.is_totp_setup_locked(u["username"], ip):
+        versuch = (auth.versuch_beginnen(u["username"], ip, "totp_setup")
+                   if auth.rate_ok(ip, login=False) else None)
+        if versuch is None:
             raise HTTPException(429, auth.t("api.too_many"))
         ok = auth.totp_confirm(u["id"], code)
-        auth.record_login(u["username"], ip, ok, "totp_setup")
+        auth.record_login(u["username"], ip, ok, "totp_setup", versuch=versuch)
         if not (ok and einschreibung):
             # B1-7: Nach einem neuen Faktor das Beenden der übrigen Sitzungen anbieten — die Zahl
             # sagt der Oberfläche, ob es etwas anzubieten gibt.

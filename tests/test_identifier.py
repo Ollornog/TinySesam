@@ -250,4 +250,61 @@ assert frei_id and auth.store.get_user(frei_id)["username"] == "frei"
 os.unlink(db)
 print("  Kreuz-Kollision: Wortlaut bleibt, e.feld/e.besitzer_id benennen den Fall ok")
 
+# ---------- Der Sperr-Topf faltet wie find_user — auch NFKC und IDNA ----------
+# Die Konto-Schwelle gegen verteiltes Raten zählt unter `norm_kennung()`. Das war strip + lower;
+# `find_user` sucht eine Adresse aber über `norm_email()`, und das faltet seit R4-06 auch NFKC
+# und IDNA. `ｖｉｃｔｉｍ@example.com`, `victim＠example.com` (Vollbreiten-@) und jede Mischform
+# trafen dasselbe Konto, füllten aber je einen eigenen Topf — allein für diese eine Adresse
+# 2^16 Schreibweisen. Gemessen: 40 Fehlversuche aus 40 Adressen, keiner gesperrt, der Inhaber
+# danach mit 303 drin. (Mutationsprobe: `norm_kennung` wieder auf `strip().lower()` → die
+# Topf-Prüfung und die Salve werden rot; nur NFKC ohne `norm_email` → die IDNA-Zeile wird rot.)
+from tinysesam.store import norm_kennung  # noqa: E402
+
+VOLL = {ch: chr(ord(ch) + 0xFEE0) for ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@."}
+
+
+def _voll(text, maske):
+    """Die Zeichen an den Stellen, deren Bit in `maske` gesetzt ist, in Vollbreite."""
+    return "".join(VOLL.get(z, z) if (maske >> i) & 1 else z for i, z in enumerate(text))
+
+
+auth, c, db = build(login_identifier="both")
+opfer_id = auth.create_user("opfer", "Richtiges-Passwort-42x", email="victim@example.com")
+idn_id = auth.create_user("idn", "Idn-Passwort-2026x", email="u@bücher.example")
+basis = "victim@example.com"
+varianten = [_voll(basis, m) for m in (0b1, 0b111111, 0b1000000, 0b111111111111111111, 0b10101010101,
+                                       (1 << 18) - 1 - 0b1000000)]
+varianten += ["VICTIM＠EXAMPLE.COM", " ｖｉｃｔｉｍ@example.com\t", "\xa0victim@ｅｘａｍｐｌｅ.ｃｏｍ"]
+for v in varianten:
+    gefunden = auth.find_user(v)
+    assert gefunden and gefunden["id"] == opfer_id, f"Vorbedingung: {v!r} trifft das Konto nicht"
+    assert norm_kennung(v) == norm_kennung(basis), \
+        f"{v!r} trifft das Konto, zählt aber im Topf {norm_kennung(v)!r} statt {norm_kennung(basis)!r}"
+# IDNA: A-Label und Unicode-Form derselben Domain sind dasselbe Postfach, also ein Topf.
+for v in ("u@bücher.example", "u@xn--bcher-kva.example", "U@BÜCHER.EXAMPLE", "u@ｂüｃｈｅｒ.example"):
+    assert auth.find_user(v)["id"] == idn_id, f"Vorbedingung: {v!r} trifft das IDN-Konto nicht"
+    assert norm_kennung(v) == norm_kennung("u@bücher.example"), f"IDNA-Schreibweise {v!r} hat eigenen Topf"
+print(f"  Sperr-Topf: {len(varianten) + 4} Schreibweisen, die find_user demselben Konto zuordnet, zählen zusammen ok")
+
+# Und über die Route: verteiltes Raten mit Vollbreiten-Schreibweisen, jede Anfrage von einer
+# anderen Adresse. Mehr als die Konto-Schwelle darf die Prüfung nicht erreichen.
+auth.set_security("rate_limit_max", 1000)
+app_k = FastAPI()
+app_k.include_router(auth.router())
+DECKEL = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")
+geprueft = 0
+for i in range(DECKEL + 25):
+    ci = TestClient(app_k, client=(f"198.51.100.{i + 1}", 40000))
+    r = ci.post("/auth/login", data={"username": _voll(basis, i + 1), "password": f"falsch-{i}"},
+                follow_redirects=False)
+    geprueft += r.status_code == 401
+assert geprueft <= DECKEL, f"{geprueft} Rateversuche über Vollbreiten-Schreibweisen, zugesagt sind höchstens {DECKEL}"
+r = TestClient(app_k, client=("192.0.2.200", 40000)).post(
+    "/auth/login", data={"username": basis, "password": "Richtiges-Passwort-42x"}, follow_redirects=False)
+assert r.status_code == 429, f"die Konto-Schwelle hat bei {geprueft} Versuchen nicht gegriffen: {r.status_code}"
+# Aufheben trifft denselben Topf: gezählt wurde unter der gefalteten Adresse.
+assert auth.sperre_aufheben(opfer_id) == geprueft
+os.unlink(db)
+print(f"  Sperr-Topf über die Route: {geprueft} geprüft, dann zu (Konto-Schwelle {DECKEL}) ok")
+
 print("OK test_identifier")

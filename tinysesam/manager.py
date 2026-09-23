@@ -251,6 +251,10 @@ class TinySesam:
         self.oidc = None
         self.webauthn = None
         self.ldap = None
+        # Der Ausfall-Merker hängt am Manager, nicht am Client: Er gilt auch für einen selbst
+        # gesetzten Client (`auth.ldap = eigener_client`) — Begründung bei `AusfallMerker`.
+        from .ldap_ import AusfallMerker
+        self._ldap_ausfall = AusfallMerker()
         self.saml = None
         if config.security_log:
             security.attach_security_log(config.security_log)
@@ -1299,7 +1303,23 @@ class TinySesam:
         bestimmen (F-14)."""
         if not self.ldap:
             return None
-        info = self.ldap.authenticate(username, password)
+        # Nach einem Ausfall wird das Verzeichnis eine Weile gar nicht erst gefragt: Die Route
+        # hat den Versuch schon vorgebucht (R7-2) und nimmt ihn erst zurück, wenn der Ausfall
+        # gemeldet ist — ohne den Merker schwebte er bei jedem Anlauf bis zum Timeout und
+        # sperrte derweil Unbeteiligte (Begründung bei `ldap_.AusfallMerker`).
+        from .ldap_ import VerzeichnisNichtErreichbar
+        merker = self._ldap_ausfall
+        probe = merker.zugang()
+        try:
+            info = self.ldap.authenticate(username, password)
+        except VerzeichnisNichtErreichbar as e:
+            merker.ausgefallen(e, war_probe=probe)
+            raise
+        except BaseException:
+            if probe:
+                merker.freigeben()
+            raise
+        merker.erreicht()
         if not info:
             return None
         # Gruppen-Gate gegen memberOf — nach DN-Bestandteilen, nicht als Teilstring (F-19):
@@ -1561,6 +1581,10 @@ class TinySesam:
         eine Prüfstelle ohne Bremse und ohne Spur ist genau die, nach der niemand mehr schaut.
         Wie `reauth` **nur pro Konto** (`totp_setup_max_attempts`) und getrennt vom
         Login-Lockout: Fünf Tippfehler beim Einrichten sollen nicht die Anmeldung sperren.
+
+        Nur lesend: Die Route nimmt `versuch_beginnen(…, "totp_setup")`, das prüft und bucht in
+        einem Schritt — mit dieser Methode vorab und `record_login()` danach kam eine parallele
+        Salve an der Grenze vorbei.
         """
         return self._sperre_pruefen(self._regeln(username, ip, "totp_setup"), username, ip, login=False)
 

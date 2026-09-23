@@ -7,7 +7,7 @@ Was bei einer nur lesbaren, vollen oder gesperrten Datenbank und bei einem Sprun
 geschieht, steht für Betreiber in `docs/BETRIEB.md` (Ausfallverhalten).
 """
 from __future__ import annotations
-import sqlite3, threading, time, secrets, json, logging, hashlib, os, stat, unicodedata
+import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, stat, unicodedata
 from typing import Optional
 
 SCHEMA = """
@@ -275,15 +275,29 @@ def _eine_schrift(teil: str) -> bool:
 
 
 def norm_kennung(kennung) -> str:
-    """Die Login-Kennung so, wie der Sperrzähler sie führt: getrimmt und klein.
+    """Die Login-Kennung so, wie der Sperrzähler sie führt: NFKC, getrimmt, klein — und eine
+    Adresse so kanonisch wie `norm_email` sie speichert.
 
     Muss mindestens so grob falten wie `TinySesam.find_user` (strip, `norm_email`, NOCASE):
     Jede Schreibweise, die dasselbe Konto trifft, gehört in denselben Zähl-Topf. Sonst stellt
     sich ein verteilter Angreifer mit `' opfer'`, `'opfer '`, `'\topfer'` … beliebig viele
     frische Töpfe auf, und die Konto-Schwelle über alle Adressen bindet nichts. `lower()`
     faltet gröber als NOCASE (auch ausserhalb von ASCII) — zwei Namen, die nur darin
-    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer."""
-    return str(kennung or "").strip().lower()
+    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer.
+
+    Bis zur Integration von T-13 hiess das nur strip + lower. `norm_email` faltet seit R4-06
+    aber auch NFKC und IDNA, und `find_user` fand damit `ｖｉｃｔｉｍ@example.com`,
+    `victim＠example.com` (Vollbreiten-@) und jede Mischform — je mit eigenem Topf, allein für
+    diese Adresse 2^16. Deshalb erst NFKC, DANN nach dem `@` sehen: Das Vollbreiten-@ U+FF20
+    wird erst durch die Faltung zu einem. Gezählt wird bewusst unter der gefalteten EINGABE,
+    nicht unter dem Konto, das sie trifft: So verhält sich die Sperre für vorhandene und
+    erfundene Kennungen gleich und verrät nicht, welche Adresse zu welchem Benutzernamen
+    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `sperre_aufheben`
+    räumt beide)."""
+    k = unicodedata.normalize("NFKC", str(kennung or "")).strip().lower()
+    if "@" in k:
+        return norm_email(k) or ""
+    return k
 
 
 def valid_email(email) -> bool:
@@ -621,8 +635,40 @@ class Store:
         with self._lock:
             return self.db.execute(sql, args).fetchall()
 
-    def _exec(self, sql, args=()):
+    def _verwerfen(self) -> None:
+        """Eine offene Transaktion zurückrollen (unter `_lock`) — nach einem gescheiterten Schreiben."""
+        try:
+            self.db.rollback()
+        except sqlite3.Error:
+            pass     # Verbindung geschlossen o. ä. — dann liegt auch nichts mehr offen
+
+    @contextlib.contextmanager
+    def _schreibend(self):
+        """`_lock` halten, schreiben — und bei einem Fehlschlag die Transaktion VERWERFEN.
+
+        Pythons `sqlite3` öffnet vor jedem INSERT/UPDATE/DELETE still ein `BEGIN`. Scheiterte
+        der Schreibzugriff (ein fremder Schreiber hielt die Sperre länger als `busy_timeout`,
+        Volume voll, Datei nur lesbar), blieb diese Transaktion auf der GETEILTEN Verbindung
+        offen. Gemessen: `reserve_attempt` beginnt mit einem ausdrücklichen `BEGIN IMMEDIATE`
+        und scheiterte an „cannot start a transaction within a transaction" — jede Anmeldung
+        endete mit 500, bis irgendein anderer Schreibzugriff zufällig committete. Ausgelöst hat
+        es schon die Schreibprobe von `/healthz`, die ohne Anmeldung erreichbar ist. Dazu kommt:
+        Dieser fremde Commit nähme mit, was ein mehrteiliger Schreiber (`delete_user`) vor dem
+        Fehlschlag schon geschrieben hatte.
+
+        Jeder Schreibweg läuft deshalb hierüber (oder über `_exec`, das es auch tut); wer die
+        Transaktion selbst führt (`reserve_attempt`, `rotate_session`, `_migrate`,
+        `_uhr_mitschreiben`), rollt im eigenen `except` zurück. tests/test_hardening2.py prüft
+        das per Syntaxbaum für jeden Commit in dieser Klasse."""
         with self._lock:
+            try:
+                yield
+            except BaseException:
+                self._verwerfen()
+                raise
+
+    def _exec(self, sql, args=()):
+        with self._schreibend():
             cur = self.db.execute(sql, args)
             self.db.commit()
             self._geschrieben = time.monotonic()
@@ -740,7 +786,7 @@ class Store:
 
     def delete_user(self, user_id):
         """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""
-        with self._lock:
+        with self._schreibend():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
                           "webauthn_cred", "oidc_identity", "federated_identity", "session",
                           "magic_token"):
@@ -843,14 +889,14 @@ class Store:
 
     def add_recovery_codes(self, user_id, hashes):
         now = _now()
-        with self._lock:
+        with self._schreibend():
             self.db.executemany("INSERT INTO recovery_code(user_id, code_hash, created_at) VALUES (?,?,?)",
                                 [(user_id, h, now) for h in hashes])
             self.db.commit()
 
     def consume_recovery_code(self, user_id, code_hash) -> bool:
         """Einen ungenutzten Code atomar entwerten. True nur beim ersten gültigen Einlösen."""
-        with self._lock:
+        with self._schreibend():
             cur = self.db.execute(
                 "UPDATE recovery_code SET used_at=? WHERE id=(SELECT id FROM recovery_code "
                 "WHERE user_id=? AND code_hash=? AND used_at IS NULL LIMIT 1)",
@@ -1187,7 +1233,7 @@ class Store:
         Challenge. Jetzt entscheidet das `DELETE`: Nur wer die Zeile tatsächlich entfernt hat
         (`rowcount == 1`), bekommt den Inhalt. SQLite serialisiert die Schreiber, auch über
         Prozessgrenzen — `RETURNING` wäre eleganter, verlangt aber SQLite ≥ 3.35."""
-        with self._lock:
+        with self._schreibend():
             r = self.db.execute("SELECT data, expires_at FROM flow WHERE key=?", (key,)).fetchone()
             if not r:
                 return None
@@ -1232,7 +1278,7 @@ class Store:
         ein fremder über `_exec`) kürzer zurück, genügt ein Lesezugriff — eine geschlossene oder
         verschwundene Verbindung fällt dabei weiterhin sofort auf, ein Wechsel auf „nur lesbar"
         spätestens nach `SCHREIBPROBE_SEK`."""
-        with self._lock:
+        with self._schreibend():
             m = time.monotonic()
             if self._geschrieben is not None and m - self._geschrieben < self.SCHREIBPROBE_SEK:
                 self.db.execute("SELECT 1").fetchone()
@@ -1308,6 +1354,16 @@ class Store:
         der dazwischen stirbt, hinterlässt einen Fehlversuch — im Zweifel strenger.
         """
         with self._lock:
+            if self.db.in_transaction:
+                # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum
+                # (ein Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN
+                # unten an ihr — und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr
+                # Inhalt ist der Rest eines GESCHEITERTEN Schreibzugriffs; er wird verworfen,
+                # nicht mitgebucht. Laut, weil es ein Fehler an anderer Stelle ist.
+                logging.getLogger("tinysesam").warning(
+                    "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
+                    "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
+                self._verwerfen()
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 for grund, grenze, filt in regeln:
@@ -1375,7 +1431,7 @@ class Store:
 
     def use_magic_token(self, token_hash) -> bool:
         """Atomar als benutzt markieren. True nur beim ERSTEN gültigen Einlösen (one-shot)."""
-        with self._lock:
+        with self._schreibend():
             cur = self.db.execute(
                 "UPDATE magic_token SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at>=?",
                 (_now(), token_hash, _now()))
@@ -1458,7 +1514,7 @@ class Store:
         Bereiche offen, die dieser Browser schon hatte."""
         if not old_token:
             return 0
-        with self._lock:
+        with self._schreibend():
             cur = self.db.execute("UPDATE OR REPLACE resource_unlock SET token=? WHERE token=?",
                                   (self.session_hash(new_token), self.session_hash(old_token)))
             self.db.commit()
@@ -1539,7 +1595,7 @@ class Store:
             return 0
         import re as _re
         kennungen = [str(w) for w in (username, *weitere) if w]
-        with self._lock:
+        with self._schreibend():
             n = 0
             for wert in kennungen:
                 n += self.db.execute("UPDATE audit SET username=? WHERE lower(username)=lower(?)",

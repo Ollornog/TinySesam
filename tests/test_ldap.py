@@ -826,7 +826,7 @@ os.remove(db19c)
 # Bis 0.20.0 endete jeder Fehler in `authenticate()` als None, also als „Passwort falsch": ein
 # Fehlversuch gegen Konto und IP, `failed login` für fail2ban. Nach ein paar Minuten Ausfall
 # waren genau die Nutzer gesperrt, die nichts falsch gemacht hatten.
-from tinysesam.ldap_ import VerzeichnisNichtErreichbar  # noqa: E402
+from tinysesam.ldap_ import AUSFALL_PAUSE_SEK, AusfallMerker, VerzeichnisNichtErreichbar  # noqa: E402
 
 
 class AusfallLDAP:
@@ -836,6 +836,10 @@ class AusfallLDAP:
 
 db23, auth23, c23 = build()
 auth23.ldap = AusfallLDAP()
+# Nach einem Ausfall fragt der Login das Verzeichnis eine Pause lang nicht (AusfallMerker, siehe
+# unten); die Uhr des Merkers ist hier gestellt, damit die Gegenprobe die Pause ablaufen lassen kann.
+_uhr23 = [1000.0]
+auth23._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr23[0])
 import io as _io23, logging as _log23                     # noqa: E402
 from tinysesam.security import seclog as _seclog23       # noqa: E402
 _puffer23 = _io23.StringIO()
@@ -854,8 +858,10 @@ assert "failed login" not in _puffer23.getvalue(), "fail2ban bekäme einen Ausfa
 assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
 assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
 ok("F-23: Verzeichnis-Ausfall → 503, kein Fehlversuch, keine Sperre, kein 'failed login', eigene Audit-Zeile")
-# Gegenprobe: dieselbe Route mit einem erreichbaren Verzeichnis und falschem Passwort zählt.
+# Gegenprobe: dieselbe Route mit einem erreichbaren Verzeichnis und falschem Passwort zählt —
+# sobald die Pause nach dem Ausfall abgelaufen ist und der Login wieder nachfragt.
 auth23.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+_uhr23[0] += AUSFALL_PAUSE_SEK + 1
 assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
 assert auth23.store.count_fails(0, username="alice") == 1
 ok("F-23: …ein echtes falsches Passwort bleibt ein Fehlversuch")
@@ -888,6 +894,132 @@ c23a.post("/auth/login", data={"username": "alice", "password": "x"})
 assert auth23a.store.count_fails(0, username="alice") == 0
 ok("A-1: Ausfall entschuldigt nur das Verzeichnis — ein falsches LOKALES Passwort zählt und sperrt")
 os.remove(db23a)
+
+# ---------- T-13-Integration: vorgebuchte Versuche schweben nicht bis zum Timeout ----------
+# Der Login bucht jeden Versuch VORAB als Fehlversuch (R7-2) und nimmt ihn bei einem Ausfall
+# zurück (F-23) — aber erst, wenn `VerzeichnisNichtErreichbar` kommt. Ein Verzeichnis, das Pakete
+# verwirft, antwortet erst nach dem Timeout (10 s). Bis dahin zählte jede hängende Anmeldung für
+# Konto, Paar und Adresse: 15 Kollegen hinter einer NAT-Adresse, und der lokale Notfall-Admin
+# bekam mit RICHTIGEM Passwort 429; jede weitere Abweisung schrieb `failed login … reason=
+# lockout_ip`, und fail2ban bannte die Adresse. Und das nicht einmal, sondern bei jedem Anlauf
+# während des ganzen Ausfalls. Jetzt merkt sich der Login den Ausfall: Danach kommt sofort 503,
+# ohne das Verzeichnis erneut zu fragen. (Mutationsprobe: in `check_ldap` den Aufruf
+# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, der Admin bekommt 429 → rot.)
+from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
+
+HAENGT24 = 2.0
+
+
+class HaengendesLDAP:
+    """Ein Verzeichnis, das Pakete verwirft: jede Frage hängt bis zum Timeout, dann Ausfall."""
+
+    def __init__(self):
+        self.fragen = 0
+        self._zaehler = threading.Lock()
+
+    def authenticate(self, username, password):
+        with self._zaehler:
+            self.fragen += 1
+        time.sleep(HAENGT24)
+        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+
+
+db24, auth24, c24 = build()
+auth24.set_security("rate_limit_max", 1000)          # eine 429 muss aus der Sperre kommen
+haengt24 = HaengendesLDAP()
+auth24.ldap = haengt24
+NAT24 = ("198.51.100.7", 40000)
+SCHWELLE24 = auth24.sec("max_login_attempts") * auth24.sec("ip_attempt_factor")
+
+
+def _anmelden24(name, pw="x"):
+    return TestClient(c24.app, client=NAT24).post(
+        "/auth/login", data={"username": name, "password": pw}, follow_redirects=False).status_code
+
+
+_puffer24 = _io23.StringIO()
+_haken24 = _log23.StreamHandler(_puffer24)
+_seclog23.addHandler(_haken24)
+try:
+    # (1) Der erste Anlauf entdeckt den Ausfall. Er hängt bis zum Timeout — dieses eine Fenster
+    # bleibt, denn vorher weiss niemand, dass das Verzeichnis weg ist.
+    _t0 = time.monotonic()
+    assert _anmelden24("kollege0") == 503
+    assert time.monotonic() - _t0 >= HAENGT24 * 0.9, "Vorbedingung: die erste Frage hing nicht"
+    # (2) Während des Ausfalls: das ganze Büro hinter der NAT-Adresse — so viele wie die
+    # IP-Schwelle, alle innerhalb von drei Fünfteln des Timeouts —, danach der lokale Notfall-Admin
+    # mit richtigem Passwort. Ohne Merker schwebten zu dem Zeitpunkt alle Anläufe noch und füllten
+    # die IP-Schwelle. Gestaffelt, nicht auf einen Schlag: Eine Vorbuchung lebt jetzt so lange wie
+    # die lokale Prüfung und ein paar Schreibzugriffe (unter Last einige hundert Millisekunden).
+    # Kommen mehr Anmeldungen als die IP-Schwelle GLEICHZEITIG, weist die Sperre einige ab — das
+    # ist R7-2 im Normalbetrieb genauso und hat mit dem Ausfall nichts zu tun.
+    _anzahl24 = SCHWELLE24
+    _abstand24 = HAENGT24 * 0.6 / _anzahl24
+    with _Pool24(max_workers=_anzahl24) as _pool24:
+        _laufend24 = []
+        for i in range(1, _anzahl24 + 1):
+            _laufend24.append(_pool24.submit(_anmelden24, f"kollege{i}"))
+            time.sleep(_abstand24)
+        _schwebend24 = auth24.store.count_fails(0, ip=NAT24[0])
+        _admin24 = _anmelden24("admin", "lokalpw")
+        _kollegen24 = [f.result(timeout=30) for f in _laufend24]
+    # (3) Der ungeduldige Nutzer, der auf der hängenden Seite siebenmal abschickt.
+    _klicks24 = [_anmelden24("alice") for _ in range(7)]
+finally:
+    _seclog23.removeHandler(_haken24)
+assert _admin24 == 303, (f"der Notfall-Admin kommt während des Ausfalls nicht hinein: {_admin24} "
+                         f"({_schwebend24} vorgebuchte Versuche der Adresse schwebten)")
+assert _kollegen24 == [503] * len(_kollegen24), f"Kollegen während des Ausfalls: {sorted(set(_kollegen24))}"
+assert _klicks24 == [503] * 7, f"ungeduldige Klicks: {_klicks24}"
+assert haengt24.fragen == 1, f"während der Pause wurde das Verzeichnis {haengt24.fragen - 1}-mal erneut gefragt"
+assert "failed login" not in _puffer24.getvalue(), \
+    "fail2ban bekäme den Ausfall als Angriff: " + next(
+        z for z in _puffer24.getvalue().splitlines() if "failed login" in z)
+assert auth24.store.count_fails(0, ip=NAT24[0]) == 0, "vom Ausfall blieben Fehlversuche stehen"
+ok(f"F-23 × R7-2: nach dem ersten Timeout sofort 503 — {len(_kollegen24)} Kollegen, 7 Klicks, "
+   "der lokale Admin kommt hinein, kein 'failed login'")
+
+# Nach der Pause fragt GENAU EINE Anmeldung nach (Probe); alle übrigen bekommen weiter sofort 503,
+# bis sie zurück ist — sonst schwebten nach jeder Pause wieder alle, die gerade anklopfen. Antwortet
+# das Verzeichnis wieder (auch mit „Passwort falsch"), ist es frei. Gemeldet wird der Wechsel, je
+# einmal, nicht jede Anfrage. (Mutationsprobe: in `AusfallMerker.zugang` die laufende Probe nicht
+# beachten (`if rest > 0:` statt `if rest > 0 or self._probe:`) → während der Probe fragen alle
+# das Verzeichnis → rot; in `check_ldap` `merker.erreicht()` streichen → das zurückgekehrte
+# Verzeichnis bleibt gesperrt → rot.)
+_uhr24 = [5000.0]
+auth24._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr24[0])
+haengt24.fragen = 0
+_puffer24b = _io23.StringIO()
+_haken24b = _log23.StreamHandler(_puffer24b)
+_seclog23.addHandler(_haken24b)
+try:
+    assert _anmelden24("kollege0") == 503 and haengt24.fragen == 1      # Ausfall entdeckt
+    assert _anmelden24("kollege1") == 503 and haengt24.fragen == 1      # Pause: nicht gefragt
+    _uhr24[0] += AUSFALL_PAUSE_SEK + 1                                  # Pause vorbei
+    with _Pool24(max_workers=2) as _pool24b:
+        _probe24 = _pool24b.submit(_anmelden24, "kollege2")             # die Probe hängt
+        time.sleep(HAENGT24 / 4)
+        _andere24 = [_anmelden24(f"kollege{i}") for i in range(3, 13)]
+        _admin24b = _anmelden24("admin", "lokalpw")
+        _probe_status24 = _probe24.result(timeout=30)
+    assert haengt24.fragen == 2, \
+        f"während der Probe fragten {haengt24.fragen - 2} weitere Anmeldungen das Verzeichnis"
+    assert _andere24 == [503] * 10 and _probe_status24 == 503, (_andere24, _probe_status24)
+    assert _admin24b == 303, f"der lokale Admin während der Probe: {_admin24b}"
+    # Das Verzeichnis ist zurück: Nach der nächsten Pause antwortet die Probe, danach läuft alles normal.
+    auth24.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+    _uhr24[0] += AUSFALL_PAUSE_SEK + 1
+    assert _anmelden24("alice", "falsch") == 401, "die Probe mit falschem Passwort ist ein Fehlversuch"
+    assert _anmelden24("alice", "richtig") == 303, "nach der Rückkehr des Verzeichnisses bleibt es gesperrt"
+finally:
+    _seclog23.removeHandler(_haken24b)
+_text24 = _puffer24b.getvalue()
+assert _text24.count("LDAP-Verzeichnis nicht erreichbar (") == 1, _text24
+assert _text24.count("LDAP-Verzeichnis wieder erreichbar") == 1, _text24
+assert "failed login user=kollege" not in _text24, _text24
+assert auth24.store.count_fails(0, username="alice") == 0, "der volle Login räumt den Fehlversuch"
+ok("…nach der Pause fragt genau eine Anmeldung nach; Ausfall und Rückkehr stehen je einmal im Log")
+os.remove(db24)
 
 if HAT_LDAP3:
     # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der

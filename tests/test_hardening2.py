@@ -62,5 +62,128 @@ import importlib.util as _ilu, os.path as osp
 assert osp.exists(osp.join(osp.dirname(_ilu.find_spec("tinysesam").origin), "py.typed"))
 ok("py.typed ausgeliefert")
 
+# ---------- Ein gescheiterter Schreibzugriff lässt keine Transaktion offen ----------
+# Pythons sqlite3 öffnet vor jedem INSERT/UPDATE/DELETE still ein BEGIN. Scheiterte der
+# Schreibzugriff (fremder Schreiber hält die Sperre länger als busy_timeout, Volume voll, nur
+# lesbar), blieb diese Transaktion auf der geteilten Verbindung offen. `reserve_attempt` beginnt
+# mit einem ausdrücklichen `BEGIN IMMEDIATE` und scheiterte daran mit „cannot start a transaction
+# within a transaction" — jede Anmeldung endete mit 500, bis irgendein anderer Schreibzugriff die
+# Reste zufällig mitcommittete. Auslöser genügte die Schreibprobe von /healthz, ohne Anmeldung
+# erreichbar. (Mutationsprobe: in `Store._exec` `with self._schreibend():` durch
+# `with self._lock:` ersetzen → „_exec (audit_log)" rot; dasselbe in `schreibprobe` →
+# „schreibprobe" rot, in `delete_user` → „delete_user" rot; in `reserve_attempt` das Aufräumen
+# vor `BEGIN IMMEDIATE` streichen → der Anmeldeversuch über einer liegengebliebenen Transaktion
+# wirft → rot.)
+import sqlite3                                                                  # noqa: E402
+
+db_s = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False))
+uid_s = auth_s.create_user("sven", "Sven-Passwort-2026")
+app_s = FastAPI()
+app_s.include_router(auth_s.router())
+auth_s.store.db.execute("PRAGMA busy_timeout=200")      # nicht zehn Sekunden je Fehlschlag warten
+
+
+def _schreibprobe():
+    auth_s.store._geschrieben = None                    # sonst genügt ihr ein Lesezugriff
+    auth_s.store.schreibprobe()
+
+
+schreiber = {
+    "schreibprobe": _schreibprobe,
+    "_exec (audit_log)": lambda: auth_s.store.audit_log("probe", "sven", None, None),
+    "record_attempt": lambda: auth_s.store.record_attempt("sven", "198.51.100.9", False, "password"),
+    "add_recovery_codes": lambda: auth_s.store.add_recovery_codes(uid_s, ["a" * 64]),
+    "consume_recovery_code": lambda: auth_s.store.consume_recovery_code(uid_s, "b" * 64),
+    "use_magic_token": lambda: auth_s.store.use_magic_token("c" * 64),
+    "delete_user": lambda: auth_s.store.delete_user(uid_s + 1000),
+}
+fremd = sqlite3.connect(db_s, isolation_level=None)
+fremd.execute("BEGIN IMMEDIATE")
+try:
+    for name, schreiben in schreiber.items():
+        try:
+            schreiben()
+        except sqlite3.OperationalError:
+            pass
+        else:
+            raise AssertionError(f"{name}: Vorbedingung verfehlt — der fremde Schreiber sperrt nicht")
+        assert not auth_s.store.db.in_transaction, \
+            f"{name} lässt nach dem Fehlschlag eine Transaktion auf der geteilten Verbindung offen"
+finally:
+    fremd.execute("ROLLBACK")
+    fremd.close()
+auth_s.store.db.execute(f"PRAGMA busy_timeout={auth_s.store.BUSY_TIMEOUT_MS}")
+codes = [TestClient(app_s, raise_server_exceptions=False).post(
+    "/auth/login", data={"username": "sven", "password": "Sven-Passwort-2026"},
+    follow_redirects=False).status_code for _ in range(3)]
+assert codes == [303, 303, 303], f"Anmeldung nach gescheiterten Schreibzugriffen: {codes}"
+ok(f"gescheiterte Schreibzugriffe rollen zurück ({len(schreiber)} Wege), die Anmeldung bleibt heil")
+
+# Zweites Schloss: Liegt trotzdem eine Transaktion herum (ein künftiger Schreiber ohne
+# Zurückrollen), räumt `reserve_attempt` sie weg, statt jede Anmeldung scheitern zu lassen.
+auth_s.store.db.execute("INSERT INTO setting(key, value) VALUES ('probe_liegengeblieben', '1')")
+assert auth_s.store.db.in_transaction, "Vorbedingung: eine offene Transaktion liegt herum"
+versuch_s = auth_s.versuch_beginnen("sven", "198.51.100.9", "password")
+assert versuch_s is not None, "der Anmeldeversuch wurde abgewiesen"
+assert not auth_s.store.db.in_transaction
+assert auth_s.store.get_setting("probe_liegengeblieben") is None, \
+    "die Reste eines gescheiterten Schreibers wurden mitcommittet statt verworfen"
+ok("reserve_attempt verwirft eine liegengebliebene Transaktion, statt an ihr zu scheitern")
+auth_s.store.db.close()
+os.remove(db_s)
+
+# Wächter über die Liste oben: Sie nennt die Schreibwege von heute. Ein neuer Schreiber mit
+# `with self._lock: … self.db.commit()` fiele ihr nicht auf. Deshalb per AST: Jeder Commit im
+# Store steht in einem `_schreibend()`-Block — oder in einer Funktion, die ihre Transaktion
+# selbst führt UND sichtbar zurückrollt. (Mutationsprobe: in `delete_user` wieder
+# `with self._lock:` → rot, mit Funktionsname.)
+import ast                                                                      # noqa: E402
+from pathlib import Path                                                        # noqa: E402
+
+SELBST_GEFUEHRT = {"__init__", "_migrate", "rotate_session", "reserve_attempt", "_uhr_mitschreiben"}
+baum = ast.parse((Path(__file__).resolve().parent.parent / "tinysesam" / "store.py").read_text("utf-8"))
+store_klasse = next(k for k in baum.body if isinstance(k, ast.ClassDef) and k.name == "Store")
+
+
+def _ist_commit(k):
+    if not (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)):
+        return False
+    if k.func.attr == "commit":
+        return True
+    return (k.func.attr == "execute" and k.args and isinstance(k.args[0], ast.Constant)
+            and str(k.args[0].value).strip().upper() == "COMMIT")
+
+
+def _geschuetzt(fn):
+    """Die Knoten innerhalb eines `with self._schreibend():`-Blocks."""
+    drin = set()
+    for w in ast.walk(fn):
+        if isinstance(w, ast.With) and any(
+                isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
+                and i.context_expr.func.attr == "_schreibend" for i in w.items):
+            drin.update(id(k) for k in ast.walk(w))
+    return drin
+
+
+ungeschuetzt, ohne_rollback = [], []
+for fn in store_klasse.body:
+    if not isinstance(fn, ast.FunctionDef):
+        continue
+    commits = [k for k in ast.walk(fn) if _ist_commit(k)]
+    if not commits:
+        continue
+    if fn.name in SELBST_GEFUEHRT:
+        quelle = ast.unparse(fn)
+        if fn.name != "__init__" and not any(w in quelle for w in ("rollback()", "'ROLLBACK'", "_verwerfen()")):
+            ohne_rollback.append(fn.name)
+        continue
+    drin = _geschuetzt(fn)
+    ungeschuetzt += [f"{fn.name}:{k.lineno}" for k in commits if id(k) not in drin]
+assert not ungeschuetzt, f"Commit ausserhalb von _schreibend() (kein Zurückrollen beim Fehlschlag): {ungeschuetzt}"
+assert not ohne_rollback, f"führt die Transaktion selbst, rollt aber nie zurück: {ohne_rollback}"
+ok("jeder Commit im Store rollt beim Fehlschlag zurück (AST über store.py)")
+
 os.remove(db)
 print("\nHÄRTUNG-2 OK ✅")
