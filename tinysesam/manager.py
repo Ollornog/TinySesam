@@ -53,6 +53,59 @@ def _host_aus(wert: str) -> str:
         return ""
 
 
+def _dn_teile(wert: str) -> list[str]:
+    """Einen DN an den UNmaskierten Kommas zerlegen (`cn=a\\,b,ou=x` hat zwei Teile, nicht drei)."""
+    teile, aktuell, maskiert = [], [], False
+    for zeichen in str(wert):
+        if maskiert:
+            aktuell.append(zeichen)
+            maskiert = False
+        elif zeichen == "\\":
+            aktuell.append(zeichen)
+            maskiert = True
+        elif zeichen == ",":
+            teile.append("".join(aktuell).strip())
+            aktuell = []
+        else:
+            aktuell.append(zeichen)
+    teile.append("".join(aktuell).strip())
+    return teile
+
+
+def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False) -> bool:
+    """Passt der Schlüssel aus `*_group_role_map`/`ldap_allowed_groups` auf diese Gruppe?
+
+    `teilstring=True` ist der alte Vergleich (`schluessel in gruppe`) und nur noch auf
+    ausdrücklichen Wunsch da (`group_match="substring"`). Bis 0.20.0 galt er für LDAP IMMER,
+    egal was `group_match` sagte (F-19): `admin` passte dann auf `cn=nicht-admin,…` und
+    `staff` auf `cn=staffextern,…` — wer im Verzeichnis eine Gruppe benennen darf, bekam
+    Rolle und Admin-Flag.
+
+    `dn=True` (LDAP, `memberOf` liefert ganze DNs) vergleicht **genau**, aber nach Bestandteilen:
+    der ganze DN, der erste RDN (`cn=staff`) oder dessen Wert (`staff`). Gross/klein zählt dort
+    nicht — LDAP vergleicht Namen so, und `CN=Staff,OU=Groups` ist dieselbe Gruppe. So bleibt
+    die gewohnte Schreibweise (`{"staff": …}` oder `{"cn=staff": …}`) gültig, ohne dass ein
+    Namensteil eine fremde Gruppe trifft.
+    """
+    s, g = str(schluessel), str(gruppe)
+    if not s:
+        return False
+    if teilstring:
+        return s in g
+    if s == g:
+        return True
+    if not dn or "=" not in g:
+        return False
+    normal = lambda w: ",".join(t.lower() for t in _dn_teile(w))  # noqa: E731
+    if normal(s) == normal(g):
+        return True
+    erster = _dn_teile(g)[0]
+    if s.strip().lower() == erster.lower():
+        return True
+    _, _, wert = erster.partition("=")
+    return s.strip().lower() == wert.strip().lower()
+
+
 def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
@@ -475,23 +528,23 @@ class TinySesam:
         """Die Rollen eines Kontos ersetzen."""
         self.store.set_roles(user_id, roles)
 
-    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None):
+    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None,
+                         dn: bool = False):
         """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
         nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
         entfernt), manuell vergebene Rollen bleiben.
 
-        Verglichen wird standardmäßig **exakt** (`config.group_match`). Teilstring nur, wo er nötig
-        ist — bei LDAP kommen ganze `memberOf`-DNs an. Sonst würde `admin` auch auf `nicht-admin`
-        passen: eine stille Rechteausweitung."""
+        Verglichen wird standardmäßig **exakt** (`config.group_match`). Sonst würde `admin` auch
+        auf `nicht-admin` passen: eine stille Rechteausweitung. `dn=True` (LDAP) vergleicht einen
+        Gruppen-DN nach seinen Bestandteilen statt als Text (`gruppe_passt`): ganzer DN, erster
+        RDN (`cn=staff`) oder dessen Wert (`staff`) — nie ein Teilstring."""
         if not mapping:
             return
         if substring is None:
             substring = self.cfg.group_match == "substring"
         gs = [str(g) for g in (groups or [])]
-        if substring:
-            matched = {role for key, role in mapping.items() if any(str(key) in g for g in gs)}
-        else:
-            matched = {role for key, role in mapping.items() if str(key) in gs}
+        matched = {role for key, role in mapping.items()
+                   if any(gruppe_passt(key, g, substring, dn) for g in gs)}
         managed = {role for role in mapping.values() if role != "__admin__"}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
@@ -1071,11 +1124,16 @@ class TinySesam:
         info = self.ldap.authenticate(username, password)
         if not info:
             return None
-        # Gruppen-Gate (Teilstring-Match gegen memberOf/Gruppen-Werte)
+        # Gruppen-Gate gegen memberOf — nach DN-Bestandteilen, nicht als Teilstring (F-19):
+        # `staff` liess sonst auch `cn=staffextern,…` durch. `group_match="substring"` holt
+        # den alten Vergleich ausdrücklich zurück.
         allowed = self.cfg.ldap_allowed_groups
+        teilstring = self.cfg.group_match == "substring"
         if allowed:
             groups = info.get("groups") or []
-            if not any(a and any(a in str(g) for g in groups) for a in allowed):
+            if not any(gruppe_passt(a, g, teilstring, dn=True) for a in allowed for g in groups):
+                self.audit("ldap_group_denied", username,
+                           detail=f"verlangt={sorted(str(a) for a in allowed)}")
                 return None
         def _anlegen():
             if not self.cfg.ldap_auto_create:
@@ -1099,31 +1157,40 @@ class TinySesam:
         u = self._fremde_identitaet_aufloesen("ldap", info.get("id") or "", username, _anlegen)
         if not u or u["disabled"]:
             return None
-        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map,
-                              substring=True)   # memberOf liefert ganze DNs
+        # memberOf liefert ganze DNs → Vergleich nach Bestandteilen (F-19). Bis 0.20.0 stand
+        # hier `substring=True` fest verdrahtet, und `group_match` war für LDAP wirkungslos.
+        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
     # ---------- SAML (Attribute → lokaler User) ----------
-    def check_saml(self, nameid, attrs) -> Optional[dict]:
+    def check_saml(self, nameid, attrs, ip: Optional[str] = None) -> Optional[dict]:
         """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
         Die Adresse aus dem Attribut trägt keinen Beleg (SAML kennt kein `email_verified`).
         Deshalb legt dieser Weg mit `email_verified=False` an, und der Faktor `saml` steht in
         `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird über diesen Weg nie zum Erst-Admin,
         auch wenn ein Aufrufer den Beleg nicht nennt — und auch nicht über einen zweiten,
-        selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13)."""
+        selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13).
+
+        Jede fachliche Abweisung hinterlässt eine Audit-Zeile mit Grund (F-22): Bis 0.20.0
+        endeten Gruppen-Gate, fehlendes Konto und gesperrtes Konto stumm in einer 403 — „ich komme
+        nicht rein" war serverseitig nicht zu beantworten. `ip` reicht die ACS-Route durch."""
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
         username = (username or nameid or "").strip()
         if not username:
+            self.audit("saml_denied", None, ip, "grund=kein_name")
             return None
         if cfg.saml_allowed_groups:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
+                self.audit("saml_denied", username, ip,
+                           f"grund=gruppe verlangt={sorted(cfg.saml_allowed_groups)}")
                 return None
         def _anlegen():
             if not cfg.saml_auto_create:
+                self.audit("saml_denied", username, ip, "grund=kein_konto saml_auto_create=False")
                 return None
             try:
                 # Wie bei LDAP (B-umgehung-1 aus T-13): Die Adresse aus der Assertion kommt ohne
@@ -1141,8 +1208,11 @@ class TinySesam:
         # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
         kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
         u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen)
-        if not u or u["disabled"]:
+        if u and u["disabled"]:
+            self.audit("saml_denied", str(u["username"]), ip, "grund=konto_gesperrt")
             return None
+        if not u:
+            return None     # Grund steht schon im Audit-Log (Anlegen/Kennung)
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
@@ -1436,6 +1506,14 @@ class TinySesam:
         return self.store.count_recovery_codes(user_id)
 
     # ---------- Passwort-Reset (Forgot-Password) ----------
+    def nur_foederiert(self, user_id) -> bool:
+        """Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
+
+        Grenze: Ein LDAP- oder SAML-Konto aus der Zeit vor der Kennungsbindung (F-11), das sich
+        seitdem nicht angemeldet hat, trägt noch keine Bindung und zählt hier als lokal."""
+        return (self.store.has_foreign_identity(user_id)
+                and not self.store.get_password_hash(user_id))
+
     def send_password_reset(self, email, base_url) -> bool:
         """Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer
         gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem
@@ -1448,6 +1526,14 @@ class TinySesam:
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
+            return False
+        if self.nur_foederiert(u["id"]):
+            # Ein reines SSO-Konto bekommt keinen Reset-Link (H-4). Er setzte ein LOKALES
+            # Passwort — ein zweiter Weg an IdP bzw. Verzeichnis vorbei: Sperre, Gruppenentzug
+            # und MFA-Pflicht des Providers griffen dann nicht mehr, und bei LDAP gewinnt das
+            # lokale Passwort sogar vor dem Verzeichnis (`check_password` zuerst). Die Antwort
+            # nach aussen bleibt dieselbe (keine Konto-Erkundung); der Grund steht im Audit-Log.
+            self.audit("reset_sso_only", u["username"], detail="kein lokales Passwort, föderiert")
             return False
         raw = self.create_magic_token("reset_password", user_id=u["id"], email=email)
         url = self.magic_url(raw, base_url, "reset_password")
@@ -2102,9 +2188,18 @@ class TinySesam:
             return True
         return False
 
-    def record_login(self, username, ip, success, method):
-        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg."""
+    def record_login(self, username, ip, success, method, quelle: str = ""):
+        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
+
+        `quelle` sagt dem Audit-Log, WER das Geheimnis geprüft hat, wo die Methode es nicht
+        verrät (F-29): LDAP schreibt bewusst den Faktor `password` — Sperre und Kette sollen
+        beide Wege gleich behandeln —, im Protokoll muss der Betreiber sie aber trennen können.
+        Ein Erfolg mit `quelle` schreibt eine eigene Zeile `login_<quelle>` (`login_ldap`,
+        `login_lokal`), ein Fehlversuch hängt `quelle=…` an `login_fail` an (`lokal+ldap`: beide
+        wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe."""
         self.store.record_attempt(username, ip, success, method)
+        if success and quelle:
+            self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:
             # NUR die Fehlversuche derselben Methode: Ein Passwort-Erfolg sagt nichts darueber,
             # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
@@ -2117,7 +2212,8 @@ class TinySesam:
             # vertippt" bisher dasselbe: `login_fail … password`. Das ist der häufigste
             # Supportfall, und er war mit Bordmitteln nicht zu beantworten.
             self.store.audit_log("login_fail", username, ip,
-                                 f"{method} grund={self._fehl_grund(username)}")
+                                 f"{method} grund={self._fehl_grund(username)}"
+                                 + (f" quelle={quelle}" if quelle else ""))
             # fail2ban parst diese Zeile (ip=…)
             # `fuer_log`: Der Benutzername kommt aus einem Formularfeld. Ungefiltert liess
             # sich damit eine zweite Logzeile mit fremder IP erzeugen und fail2ban gegen Dritte

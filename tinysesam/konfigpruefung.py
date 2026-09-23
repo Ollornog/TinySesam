@@ -100,11 +100,23 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     except Exception:
         aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
     if not aktive:
+        # `ldap_enabled=True` steht NICHT in der Abhilfe (F-30): LDAP ist kein eigenes Feld auf
+        # der Login-Seite, sondern prüft das Passwortformular gegen das Verzeichnis. Die Meldung
+        # nannte es trotzdem — und wer es befolgte, bekam dieselbe Meldung wieder.
         fehler.append(
             "Keine einzige Anmelde-Methode ist eingeschaltet — die Login-Seite hätte kein "
             "einziges Feld, niemand kann sich anmelden. Mindestens eines von: "
-            + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND)
-            + " (bei PIN zusätzlich pin_login=True, sonst ist sie nur Step-up).")
+            + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND if n != "ldap")
+            + " (bei PIN zusätzlich pin_login=True, sonst ist sie nur Step-up). LDAP allein "
+            "genügt nicht: ldap_enabled=True prüft das Passwortformular gegen das Verzeichnis "
+            "und braucht deshalb password_enabled=True.")
+    if _an(config, "ldap_enabled") and not _an(config, "password_enabled"):
+        # Warnung, kein Fehler: Mit einem zweiten Verfahren (OIDC, Passkey) startet der Aufbau
+        # sinnvoll — nur der LDAP-Weg ist dann tot, und das soll der Betreiber wissen.
+        warnungen.append(
+            "ldap_enabled=True, aber password_enabled=False. LDAP hat kein eigenes Formular, es "
+            "prüft das Passwortfeld der Login-Seite gegen das Verzeichnis — ohne "
+            "password_enabled=True meldet sich niemand über LDAP an.")
 
     # Warnung, nicht Fehler: Die Clients für OIDC, SAML und LDAP lassen sich ersetzen
     # (`auth.ldap = eigener_client`), und genau so arbeiten auch die eigenen Suiten. Ein harter

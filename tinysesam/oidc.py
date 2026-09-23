@@ -1,7 +1,8 @@
 """OIDC (Authorization Code Flow) für einen generischen Provider (PocketID, Keycloak, …).
 
 httpx für Discovery/Token, authlib.jose für die ID-Token-Verifikation (Signatur gegen JWKS +
-iss/aud/exp). state & nonce liegen kurzlebig im Store (flow), nicht im Client → CSRF-/Replay-fest.
+iss/aud/exp). state, nonce und der PKCE-Verifier (S256) liegen kurzlebig im Store (flow), nicht
+im Client → CSRF-/Replay-fest, ein abgefangener Code ist ohne den Verifier nicht einlösbar.
 Beide Libs sind optional-Extra `[oidc]`.
 """
 from __future__ import annotations
@@ -35,6 +36,22 @@ def _hash(wert: str) -> str:
     """Flow-Geheimnisse liegen nur als Hash im Speicher — wie Sitzungs-Token auch."""
     import hashlib
     return hashlib.sha256((wert or "").encode()).hexdigest()
+
+
+def pkce_paar() -> tuple[str, str]:
+    """(code_verifier, code_challenge) nach RFC 7636 mit S256.
+
+    PKCE bindet den Autorisierungs-Code an DEN Flow, der ihn angefordert hat (F-20/H-12): Wer
+    einen Code abfängt (Referer, Proxy-Log, Browser-Verlauf, ein Mitleser auf der Redirect-URI),
+    kann ihn ohne den Verifier nicht eintauschen — der liegt nur im Flow-Satz auf dem Server.
+    RFC 9700 (OAuth 2.0 Security BCP, 2.1.1) empfiehlt es ausdrücklich auch für vertrauliche
+    Clients mit Client-Secret, weil es zusätzlich die Code-Injektion in einen fremden Flow
+    abfängt. 48 Zufallsbytes ergeben 64 Zeichen, RFC 7636 verlangt 43 bis 128."""
+    import base64
+    import hashlib
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge.rstrip(b"=").decode("ascii")
 
 
 def _flag_wahr(wert) -> bool:
@@ -168,7 +185,17 @@ class OIDCClient:
                 from authlib.jose import JsonWebKey
             except ModuleNotFoundError as e:
                 raise _fehlt_extra(e) from e
-            self._jwks = JsonWebKey.import_key_set(httpx.get(self.meta()["jwks_uri"], timeout=10).json())
+            antwort = httpx.get(self.meta()["jwks_uri"], timeout=10)
+            # Eine Fehlerantwort ist kein Schlüsselsatz. Ohne diese Prüfung landete ein
+            # `{"keys": []}` hinter einem 5xx (oder einem Wartungs-Proxy) für JWKS_TTL im Cache,
+            # und bis dahin scheiterte jeder Login an der Signatur (F-24, dieselbe Regel wie bei
+            # der Discovery oben: Nur eine 200 wird gemerkt).
+            status = getattr(antwort, "status_code", 200)
+            if status != 200:
+                raise errors.ConfigError(
+                    f"OIDC: JWKS unter {self.meta()['jwks_uri']} antwortet mit {status} statt 200 "
+                    "— nichts zwischengespeichert, der nächste Login fragt erneut.")
+            self._jwks = JsonWebKey.import_key_set(antwort.json())
             self._jwks_zeit = time.time()
         return self._jwks
 
@@ -200,17 +227,32 @@ class OIDCClient:
         """Darf jetzt ausserplanmässig neu geholt werden? (Drosselung gegen Fremdlast.)"""
         return (time.time() - self._jwks_zeit) > self.JWKS_MIN_ABSTAND
 
-    def auth_url(self, redirect_uri, state, nonce):
-        q = urlencode({"response_type": "code", "client_id": self.client_id, "redirect_uri": redirect_uri,
-                       "scope": self.scopes, "state": state, "nonce": nonce})
-        return self.meta()["authorization_endpoint"] + "?" + q
+    #: Wie viele Sekunden die Uhren von Provider und TinySesam auseinandergehen dürfen, wenn
+    #: `exp`, `iat` und `nbf` geprüft werden (F-26). Ohne Toleranz scheiterte JEDER Login, sobald
+    #: die Uhr des Providers ein paar Sekunden vorging: Das frische Token trug ein `iat` in der
+    #: Zukunft. 60 s ist der übliche Wert (Keycloak-Adapter, Spring Security, PyJWT-Beispiele) —
+    #: deutlich unter jeder sinnvollen Token-Lebensdauer.
+    UHR_TOLERANZ = 60
 
-    def exchange(self, code, redirect_uri, nonce, t=None):
+    def auth_url(self, redirect_uri, state, nonce, code_challenge: str = ""):
+        """Die Adresse der Autorisierungsanfrage. Mit `code_challenge` (aus `pkce_paar()`)
+        verlangt sie PKCE mit S256; der Aufrufer muss dann denselben Verifier an `exchange()`
+        geben."""
+        felder = {"response_type": "code", "client_id": self.client_id, "redirect_uri": redirect_uri,
+                  "scope": self.scopes, "state": state, "nonce": nonce}
+        if code_challenge:
+            felder.update(code_challenge=code_challenge, code_challenge_method="S256")
+        return self.meta()["authorization_endpoint"] + "?" + urlencode(felder)
+
+    def exchange(self, code, redirect_uri, nonce, t=None, code_verifier: str = ""):
         """Code gegen Tokens tauschen und das ID-Token verifizieren.
 
         `t` ist die Übersetzungsfunktion des Aufrufers (`auth.t`). Der Client selbst kennt keine
         Sprache — er spricht das Protokoll, nicht mit dem Nutzer. Ohne `t` bleiben die beiden
         Meldungen englisch, statt einem Aufrufer mit `lang="en"` Deutsch unterzuschieben.
+
+        `code_verifier` gehört zur `code_challenge` aus `auth_url()` (PKCE, F-20). Der eigene
+        Callback reicht ihn immer mit.
         """
         t = t or (lambda schluessel, **fmt: translate("en", schluessel, None, **fmt))
         try:
@@ -218,13 +260,19 @@ class OIDCClient:
         except ModuleNotFoundError as e:
             raise _fehlt_extra(e) from e
         dekoder = self._dekoder()
-        tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data={
-            "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
-            "client_id": self.client_id, "client_secret": self.client_secret}).json()
+        daten = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
+                 "client_id": self.client_id, "client_secret": self.client_secret}
+        if code_verifier:
+            daten["code_verifier"] = code_verifier
+        tok = httpx.post(self.meta()["token_endpoint"], timeout=15, data=daten).json()
         if "id_token" not in tok:
             raise HTTPException(502, t("api.oidc_token", grund=tok.get("error", "?")))
+        # `exp` ist Pflicht (F-25). authlib prüft den Ablauf nur, wenn der Claim DA ist — ein
+        # ID-Token ohne `exp` galt damit für immer. OIDC Core 2 verlangt ihn („REQUIRED"), ein
+        # Provider, der ihn weglässt, ist defekt oder das Token nicht von ihm.
         optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
-                    "aud": {"essential": True, "value": self.client_id}}
+                    "aud": {"essential": True, "value": self.client_id},
+                    "exp": {"essential": True}}
         try:
             claims = dekoder.decode(tok["id_token"], self._jwkset(), claims_options=optionen)
         except Exception:
@@ -238,7 +286,7 @@ class OIDCClient:
                 "OIDC: ID-Token nicht verifizierbar — JWKS wird neu geholt (Schlüsselrotation?).")
             claims = dekoder.decode(tok["id_token"], self._jwkset(erzwingen=True),
                                     claims_options=optionen)
-        claims.validate()  # exp/iat/nbf
+        claims.validate(leeway=self.UHR_TOLERANZ)  # exp/iat/nbf, mit Uhrentoleranz (F-26)
         self._pruefe_publikum(claims, t)
         if nonce and claims.get("nonce") != nonce:
             raise HTTPException(400, t("api.oidc_nonce"))
@@ -480,10 +528,15 @@ def register_oidc_routes(router, auth):
         # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.
         # Wer den `state` aus der Redirect-URL abliest, hat damit noch nichts.
         flow_key = secrets.token_urlsafe(24)
+        # PKCE (F-20): Der Verifier bleibt im Flow-Satz auf dem Server, nur die Challenge geht
+        # in die Adresszeile. Ein abgefangener Code ist ohne ihn wertlos.
+        verifier, challenge = pkce_paar()
         auth.store.put_flow("oidc:" + state,
-                            {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": ziel},
+                            {"nonce": nonce, "next": next, "fk": _hash(flow_key), "app": ziel,
+                             "pkce": verifier},
                             ttl=600)
-        resp = RedirectResponse(client.auth_url(_redirect_uri(request), state, nonce), 303)
+        resp = RedirectResponse(client.auth_url(_redirect_uri(request), state, nonce,
+                                                code_challenge=challenge), 303)
         _flow_cookie_setzen(resp, flow_key)
         return resp
 
@@ -504,7 +557,8 @@ def register_oidc_routes(router, auth):
         # ein anderes Geheimnis — der Tausch scheitert dann beim Provider, und zwar zu Recht.
         ziel = str(flow.get("app") or VORGABE_CLIENT)
         client = clients[ziel]
-        claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t)
+        claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t,
+                                      code_verifier=str(flow.get("pkce") or ""))
         # Das `sub` aus dem **signierten** Token ist der Massstab für die UserInfo-Antwort, die
         # selbst nicht signiert ist (F-18). Deshalb steht es vor dem Abruf, nicht danach.
         sub_im_token = str(claims.get("sub") or "")

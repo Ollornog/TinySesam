@@ -46,7 +46,7 @@ Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
-### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None)`
+### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)`
 
 IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant, nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben.
 
@@ -70,7 +70,7 @@ Wie `check_password`, nur mit der persönlichen PIN.
 
 Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`).
 
-### `check_saml(nameid, attrs) -> 'Optional[dict]'`
+### `check_saml(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'`
 
 Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
@@ -270,6 +270,10 @@ TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
 
+### `nur_foederiert(user_id) -> 'bool'`
+
+Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
+
 ### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
 
 Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine Anwendung schützt. Der leere Rückgabewert ist Absicht: Er hält jede Aufrufstelle wortgleich beim Verhalten von 0.18.0, solange `oidc_clients` leer ist.
@@ -298,7 +302,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method)`
+### `record_login(username, ip, success, method, quelle: 'str' = '')`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
@@ -562,4 +566,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+124 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

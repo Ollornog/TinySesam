@@ -113,7 +113,7 @@ def _oidc_app(claims, nutzerinfo=None, **cfg):
     auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
                        "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
                        "jwks_uri": IDP + "/jwks"}
-    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None: (
+    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
     # Ersetzt wird nur der HTTP-Abruf; der `sub`-Abgleich aus F-18 läuft über die ECHTE
     # Funktion. Eine Attrappe, die ihn nachbaut, prüft sonst den Nachbau statt den Code —
@@ -231,7 +231,7 @@ r.check("ein fehlender Claim löscht den Vermerk eines Bestandskontos nicht",
 # Einwegventil: Ein nachgeliefertes `email_verified=true` müsste ewig ohne Wirkung bleiben, und
 # ein zurückgenommener Beleg bliebe für immer stehen.
 def _claims_setzen(auth, claims):
-    auth.oidc.exchange = lambda code, ru, nonce, t=None: (
+    auth.oidc.exchange = lambda code, ru, nonce, t=None, **_: (
         _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
 
 
@@ -915,5 +915,36 @@ r.check("fremdes sub im userinfo-Dokument: weder Adresse noch Rollen wandern ins
         _echt is not None and not _echt["is_admin"] and _echt["roles"] == "[]"
         and (_echt["email"] or "") != "chef@example.com",
         f"Konto: {dict(_echt) if _echt else None}")
+
+# ── F-20/H-12: PKCE über den echten Flow ──────────────────────────────────────
+# `oidc.py` misst die Mechanik (Challenge, Verifier im POST). Hier der Draht dazwischen: Die
+# Challenge in der Umleitung zum Provider muss zu dem Verifier passen, den der Callback beim
+# Tausch mitgibt — und der Verifier darf nie in der Adresszeile stehen.
+import base64 as _b64p  # noqa: E402
+import hashlib as _hlp  # noqa: E402
+
+auth_p, app_p = _oidc_app({"sub": "pkce-1", "preferred_username": "pkce"})
+_gesehen_p = {}
+
+
+def _tausch_p(code, ru, nonce, t=None, code_verifier=""):
+    _gesehen_p["verifier"] = code_verifier
+    return _Claims({"sub": "pkce-1", "preferred_username": "pkce", "nonce": nonce}), {"access_token": "at"}
+
+
+auth_p.oidc.exchange = _tausch_p
+_cp = TestClient(app_p)
+_start_p = _cp.get("/auth/oidc/start", follow_redirects=False)
+_q_p = parse_qs(urlparse(_start_p.headers["location"]).query)
+_antwort_p = _cp.get(f"/auth/oidc/callback?code=x&state={_q_p['state'][0]}", follow_redirects=False)
+_v_p = _gesehen_p.get("verifier") or ""
+_passend = _b64p.urlsafe_b64encode(_hlp.sha256(_v_p.encode()).digest()).rstrip(b"=").decode()
+r.check("PKCE: die Umleitung zum Provider verlangt S256",
+        _q_p.get("code_challenge_method") == ["S256"] and bool(_q_p.get("code_challenge")), _q_p)
+r.check("PKCE: der Callback tauscht mit DEM Verifier, der zur Challenge gehört",
+        _antwort_p.status_code == 303 and _v_p and _q_p.get("code_challenge") == [_passend],
+        f"HTTP {_antwort_p.status_code}, Verifier={_v_p!r}")
+r.check("PKCE: der Verifier steht nie in der Adresszeile",
+        _v_p and _v_p not in _start_p.headers["location"])
 
 sys.exit(r.done())

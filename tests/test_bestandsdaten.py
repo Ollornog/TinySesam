@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -248,5 +249,80 @@ def fehlende_header(datei: str) -> list[str]:
 for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/Caddyfile"):
     fehlt = fehlende_header(datei)
     r.check(f"{datei} setzt alle Remote-Header", not fehlt, f"fehlt: {fehlt}")
+
+
+# NEU-1: Jeder Sub-Request an TinySesam setzt X-Forwarded-For selbst. Tut er es nicht, reicht nginx
+# den Header des CLIENTS durch — und weil nginx in trusted_proxies steht, bestimmte der Anfragende
+# die IP für Rate-Limit, Sperre und fail2ban. Nachgestellt mit nginx:alpine: ohne die Zeile kam
+# ein mitgeschickter `X-Forwarded-For: 6.6.6.6` bei TinySesam an, mit ihr 127.0.0.1.
+def ungeschuetzte_subrequests(datei: str) -> list[str]:
+    """Die `location`-Blöcke, die an TinySesam weiterreichen, ohne X-Forwarded-For zu setzen."""
+    text = (ROOT / datei).read_text(encoding="utf-8")
+    fehlend = []
+    for kopf, rumpf in re.findall(r"location\s+([^{]+)\{(.*?)\n\s*\}", text, re.S):
+        if "proxy_pass" in rumpf and ":8000" in rumpf:
+            if not re.search(r"proxy_set_header\s+X-Forwarded-For\s+\$(remote_addr|proxy_add_x_forwarded_for)\s*;",
+                             rumpf):
+                fehlend.append(kopf.strip())
+    return fehlend
+
+
+for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.conf"):
+    r.check(f"{datei}: jeder Weg zu TinySesam setzt X-Forwarded-For selbst (NEU-1)",
+            not ungeschuetzte_subrequests(datei), f"ohne: {ungeschuetzte_subrequests(datei)}")
+
+
+# B-20: Das Sitzungs-Cookie geht nicht an die geschützte App. Gemessen wird die Regel selbst:
+# die `header_up Cookie`-Zeilen der Vorlage, in ihrer Reihenfolge angewandt (Go-RE2 und Pythons
+# `re` lesen diese Muster gleich; gegen echtes Caddy 2.11 nachgestellt).
+def caddy_cookie_regeln() -> list[tuple[str, str]]:
+    text = (ROOT / "deploy/forward-auth/Caddyfile").read_text(encoding="utf-8")
+    return [(muster.replace("\\\\", "\\"), ersatz)
+            for muster, ersatz in re.findall(r'^\s*header_up\s+Cookie\s+"((?:[^"\\]|\\.)*)"\s+"([^"]*)"',
+                                             text, re.M)]
+
+
+def cookie_nach_caddy(cookie: str) -> str:
+    for muster, ersatz in caddy_cookie_regeln():
+        cookie = re.sub(muster, ersatz, cookie)
+    return cookie
+
+
+_sitzung = TinySesamConfig(db_path=":memory:").session_cookie
+_faelle = {
+    f"a=1; {_sitzung}=GEHEIM; b=2": "a=1; b=2",
+    f"{_sitzung}=GEHEIM; b=2": "b=2",
+    f"a=1; {_sitzung}=GEHEIM": "a=1",
+    f"{_sitzung}=GEHEIM": "",
+    f"__Host-{_sitzung}=GEHEIM; x=1": "x=1",
+    f"{_sitzung}=A; {_sitzung}=B; c=3": "c=3",
+    f"x{_sitzung}=bleibt; y=2": f"x{_sitzung}=bleibt; y=2",
+}
+r.check("Caddyfile: es gibt die Cookie-Regel vor der App (B-20)", bool(caddy_cookie_regeln()),
+        "keine header_up-Cookie-Zeile — die App bekommt das Sitzungs-Cookie")
+_falsch = {ein: cookie_nach_caddy(ein) for ein, aus in _faelle.items() if cookie_nach_caddy(ein) != aus}
+r.check("Caddyfile: das Sitzungs-Cookie wird entfernt, andere Cookies bleiben unberührt", not _falsch,
+        f"{_falsch}")
+_caddy = (ROOT / "deploy/forward-auth/Caddyfile").read_text(encoding="utf-8")
+_auth_block = _caddy.split("rewrite /auth/forward")[1].split("handle_response @ok")[0]
+r.check("Caddyfile: der Sub-Request an /auth/forward behält das Cookie (sonst ist jeder abgemeldet)",
+        "header_up Cookie" not in _auth_block)
+
+
+# H-16: Caddy findet einen Antwort-Header in `{rp.header.…}` nur in der Schreibweise, die Gos
+# textproto daraus macht (jedes Wort gross, der Rest klein). Mit `X-TinySesam-Location` kam eine
+# 302 mit LEEREM Location heraus — ohne Fehler, ohne Logzeile.
+def go_kanonisch(name: str) -> str:
+    return "-".join(w[:1].upper() + w[1:].lower() for w in name.split("-"))
+
+
+_platzhalter = re.findall(r"\{rp\.header\.([A-Za-z0-9-]+)\}", _caddy)
+_schief = [p for p in _platzhalter if p != go_kanonisch(p)]
+r.check("Caddyfile: jeder {rp.header.…}-Platzhalter steht in Go-kanonischer Form (H-16)",
+        _platzhalter and not _schief, f"nicht kanonisch: {_schief}")
+_gesendet = set(TinySesam.FORWARD_HEADERS_DEFAULT.values()) | {"X-TinySesam-Location"}
+_fehlt = [h for h in _gesendet if go_kanonisch(h) not in _platzhalter]
+r.check("Caddyfile: jeder Header, den TinySesam schickt, hat seinen Platzhalter", not _fehlt,
+        f"fehlt: {_fehlt}")
 
 raise SystemExit(r.done())

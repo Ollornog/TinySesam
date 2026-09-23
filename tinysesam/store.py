@@ -653,6 +653,12 @@ class Store:
                       (quelle, user_id))
         return r["kennung"] if r else None
 
+    def has_foreign_identity(self, user_id: int) -> bool:
+        """Ist dieses Konto an irgendeine fremde Identität gebunden (OIDC, LDAP, SAML)?"""
+        return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? "
+                              "UNION ALL SELECT 1 FROM federated_identity WHERE user_id=? LIMIT 1",
+                              (user_id, user_id)))
+
     def unlink_federated(self, quelle: str, user_id: int) -> int:
         """Die Bindung eines Kontos für eine Quelle lösen (Betreiber-Weg nach einem Umzug)."""
         return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",

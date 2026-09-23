@@ -139,5 +139,34 @@ except _CfgErr as e:
 os.remove(_db2)
 print("  (C-2) base_url wird getrimmt, ohne Schema abgewiesen ok")
 
+# ---------- H-4: kein Reset-Link für ein reines SSO-Konto ----------
+# Ein Reset auf einem Konto, das nur über IdP/Verzeichnis angemeldet wird, setzte ein LOKALES
+# Passwort — ein zweiter Weg an Sperre, Gruppenentzug und MFA-Pflicht des Providers vorbei. Bei
+# LDAP gewinnt ein lokales Passwort sogar vor dem Verzeichnis.
+sent.clear()
+_sso = auth.create_user("sso-nutzer", email="sso@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-sso", _sso)
+_ldap = auth.create_user("ldap-nutzer", email="ldap@example.com")
+auth.store.link_federated("ldap", "uuid-ldap", _ldap, 0)
+_gemischt = auth.create_user("gemischt", password="lokal-pw-123", email="gemischt@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _gemischt)
+for _adresse in ("sso@example.com", "ldap@example.com"):
+    assert c.post("/auth/forgot", data={"email": _adresse}).status_code == 200
+assert sent == [], f"ein reines SSO-Konto bekam einen Reset-Link: {[m['to'] for m in sent]}"
+assert sum(1 for z in auth.store.recent_audit(30) if z["event"] == "reset_sso_only") == 2
+# Die Antwort nach aussen ist dieselbe wie für eine unbekannte Adresse — keine Konto-Erkundung.
+def _ohne_nonce(antwort):
+    return antwort.status_code, re.sub(r'nonce="[^"]*"', "", antwort.text)
+
+
+assert _ohne_nonce(c.post("/auth/forgot", data={"email": "sso@example.com"})) == \
+    _ohne_nonce(c.post("/auth/forgot", data={"email": "gibtsnicht@example.com"}))
+ok("H-4: reines SSO-Konto (OIDC oder LDAP gebunden, kein lokales Passwort) bekommt keinen Reset-Link")
+# Gegenprobe: gebunden UND mit lokalem Passwort — das lokale Passwort ist ein eigener Weg und
+# bleibt rücksetzbar.
+c.post("/auth/forgot", data={"email": "gemischt@example.com"})
+assert [m["to"] for m in sent] == ["gemischt@example.com"], sent
+ok("H-4: …ein föderiertes Konto MIT lokalem Passwort bleibt rücksetzbar")
+
 os.remove(db)
 print("\nRECOVERY + RESET OK ✅")

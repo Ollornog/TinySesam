@@ -27,13 +27,13 @@ class TinySesamConfig:
     # Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`.
     admin_implies_roles: bool = True
     # Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen?
-    # "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs).
-    # LDAP nutzt automatisch substring, weil dort ganze DNs ankommen.
+    # "exact" (Default, sicher) oder "substring" (alter Teilstring-Vergleich, nur auf Wunsch).
+    # LDAP vergleicht bei "exact" einen memberOf-DN nach Bestandteilen: ganzer DN, "cn=staff" oder "staff".
     group_match: str = "exact"
     # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).
     available_roles: list[str] = field(default_factory=list)
     # IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant).
-    # Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert.
+    # Vergleich nach `group_match` (Vorgabe exakt). Managed Rollen werden je Login synchronisiert.
     oidc_group_role_map: dict = field(default_factory=dict)
     saml_group_role_map: dict = field(default_factory=dict) # SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}`
     ldap_group_role_map: dict = field(default_factory=dict) # LDAP-Gruppe (DN oder Name) → lokale Rolle
@@ -257,7 +257,7 @@ class TinySesamConfig:
     ldap_attr_email: str = "mail"     # LDAP-Attribut mit der E-Mail-Adresse
     ldap_attr_name: str = "cn"        # LDAP-Attribut mit dem Anzeigenamen
     ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
-    ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (Teilstring-Match)
+    ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring)
     ldap_auto_create: bool = True         # unbekannten LDAP-User lokal anlegen (ohne lokales Passwort)
 
     # --- OIDC ---

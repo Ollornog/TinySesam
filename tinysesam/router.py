@@ -13,6 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+from . import security
 from .store import norm_email, valid_email
 
 
@@ -48,9 +49,29 @@ def build_router(auth) -> APIRouter:
         u = auth.check_password(username, password)
         aus_verzeichnis = False
         if not u and cfg.ldap_enabled:
-            u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+            from .ldap_ import VerzeichnisNichtErreichbar
+            try:
+                u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+            except VerzeichnisNichtErreichbar as e:
+                # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
+                # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
+                # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
+                # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
+                # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
+                auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
+                security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
+                                      security.fuer_log(username), security.fuer_log(ip),
+                                      security.fuer_log(str(e)))
+                return auth.render_page("login", request=request, status=503, next=nxt,
+                                        error=auth.t("err.directory_down"))
             aus_verzeichnis = u is not None
-        auth.record_login(username, ip, bool(u), "password")
+        # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
+        # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
+        # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
+        # Verzeichnis gefragt worden war und abgelehnt hatte.
+        auth.record_login(username, ip, bool(u), "password",
+                          quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
+                                  else "lokal" if u else "lokal+ldap"))
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
@@ -872,6 +893,13 @@ def build_router(auth) -> APIRouter:
 
         @r.post("/auth/saml/acs")            # POST vom IdP → von CSRF ausgenommen (Signatur schützt)
         async def saml_acs(request: Request):
+            # Ratenbegrenzt wie jeder andere Anmelde-Einstieg (F-22). Die ACS nimmt ohne CSRF und
+            # ohne Sitzung einen POST an und wirft ihn durch die XML-Signaturprüfung — die
+            # teuerste Arbeit, die ein Unangemeldeter hier auslösen kann, und bis 0.20.0 die
+            # einzige Anmelderoute ohne Drossel.
+            ip = auth.client_ip(request)
+            if not auth.rate_ok(ip):
+                raise HTTPException(429, auth.t("err.rate"))
             form = await request.form()
             base = _saml_basis(request)
             data = auth.saml.process(_saml_req(request, form), base,
@@ -880,9 +908,12 @@ def build_router(auth) -> APIRouter:
                 # NICHT die Magic-Link-Seite („dieser Link ist ungültig, abgelaufen oder schon
                 # benutzt") — hier ging es um keinen Link, und die Meldung schickte beim ersten
                 # Lauf gegen einen echten IdP in die falsche Richtung. Der Grund steht im Log.
+                auth.audit("saml_invalid", None, ip, "Assertion abgelehnt (Grund im Sicherheits-Log)")
                 raise HTTPException(400, auth.t("err.saml"))
-            u = auth.check_saml(data.get("nameid"), data.get("attrs") or {})
+            u = auth.check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
             if not u:
+                # Den Grund (Gruppe, kein Konto, gesperrt, Kennung vergeben) schreibt
+                # `check_saml` selbst ins Audit-Log — hier nur die Antwort an den Browser.
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
             # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die

@@ -718,4 +718,182 @@ ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab
 for _d in (db11, db11b, db11c):
     os.remove(_d)
 
+# ---------- F-19: Gruppen aus dem Verzeichnis werden nicht mehr als Teilstring verglichen ----------
+# Bis 0.20.0 verglich LDAP IMMER per Teilstring, `group_match` war wirkungslos: `admin` passte auf
+# `cn=nicht-admin,…`, `staff` auf `cn=staffextern,…`. Wer im Verzeichnis eine Gruppe benennen
+# darf (in vielen AD-Umgebungen jeder Abteilungsleiter), bekam damit Rolle und Admin-Flag.
+db19, auth19, c19 = build(ldap_allowed_groups=["staff"],
+                          ldap_group_role_map={"admin": "__admin__", "cn=redaktion": "redaktion"})
+auth19.ldap = FakeLDAP({
+    "eve": {"password": "x", "id": "e1",
+            "groups": ["cn=staffextern,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp"]},
+    "bob": {"password": "x", "id": "b1",
+            "groups": ["CN=Staff,OU=Groups,DC=corp", "cn=admin,ou=groups,dc=corp",
+                       "cn=redaktion,ou=groups,dc=corp"]},
+    "mia": {"password": "x", "id": "m1",
+            "groups": ["cn=staff,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp",
+                       "cn=redaktion-alt,ou=groups,dc=corp"]},
+})
+assert auth19.check_ldap("eve", "x") is None, "staff passt nicht auf cn=staffextern"
+assert any(z["event"] == "ldap_group_denied" and z["username"] == "eve"
+           for z in auth19.store.recent_audit(20)), "die Abweisung am Gruppen-Gate ist stumm"
+ok("F-19: ldap_allowed_groups=['staff'] lässt cn=staffextern nicht durch (und sagt es im Audit-Log)")
+_mia = auth19.check_ldap("mia", "x")
+assert _mia is not None and not _mia["is_admin"], "admin passt auf cn=nicht-admin"
+assert auth19.store.get_roles(_mia["id"]) == [], auth19.store.get_roles(_mia["id"])
+ok("F-19: 'admin' und 'cn=redaktion' treffen weder cn=nicht-admin noch cn=redaktion-alt")
+_bob = auth19.check_ldap("bob", "x")
+assert _bob is not None and _bob["is_admin"], "der exakte CN-Treffer muss weiter greifen"
+assert auth19.store.get_roles(_bob["id"]) == ["redaktion"], auth19.store.get_roles(_bob["id"])
+ok("F-19: der gewohnte Schlüssel ('staff', 'cn=redaktion') greift weiter — Gross/klein egal")
+os.remove(db19)
+
+# Die ausdrückliche Rückkehr zum alten Vergleich bleibt möglich — jetzt wirkt der Schalter.
+db19b, auth19b, _ = build(ldap_allowed_groups=["staff"], group_match="substring")
+auth19b.ldap = FakeLDAP({"eve": {"password": "x", "id": "e1",
+                                 "groups": ["cn=staffextern,ou=groups,dc=corp"]}})
+assert auth19b.check_ldap("eve", "x") is not None
+ok("F-19: group_match='substring' holt den Teilstring-Vergleich ausdrücklich zurück")
+os.remove(db19b)
+
+from tinysesam.manager import gruppe_passt  # noqa: E402
+assert gruppe_passt("cn=a\\,b", "cn=a\\,b,ou=g,dc=x", dn=True), "maskiertes Komma zerlegt den DN nicht"
+assert not gruppe_passt("a", "cn=a\\,b,ou=g,dc=x", dn=True)
+assert gruppe_passt("cn=staff,ou=groups,dc=corp", "CN=Staff, OU=Groups, DC=corp", dn=True)
+assert not gruppe_passt("staff", "cn=staff,ou=g", dn=False), "ohne dn=True bleibt es beim exakten Text"
+assert not gruppe_passt("", "cn=x", dn=True)
+ok("F-19: gruppe_passt zerlegt DNs an unmaskierten Kommas, vergleicht ganzen DN/ersten RDN/Wert")
+
+# ---------- F-23: ein Ausfall des Verzeichnisses ist kein Fehlversuch ----------
+# Bis 0.20.0 endete jeder Fehler in `authenticate()` als None, also als „Passwort falsch": ein
+# Fehlversuch gegen Konto und IP, `failed login` für fail2ban. Nach ein paar Minuten Ausfall
+# waren genau die Nutzer gesperrt, die nichts falsch gemacht hatten.
+from tinysesam.ldap_ import VerzeichnisNichtErreichbar  # noqa: E402
+
+
+class AusfallLDAP:
+    def authenticate(self, username, password):
+        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
+
+
+db23, auth23, c23 = build()
+auth23.ldap = AusfallLDAP()
+import io as _io23, logging as _log23                     # noqa: E402
+from tinysesam.security import seclog as _seclog23       # noqa: E402
+_puffer23 = _io23.StringIO()
+_haken23 = _log23.StreamHandler(_puffer23)
+_seclog23.addHandler(_haken23)
+try:
+    antworten23 = [c23.post("/auth/login", data={"username": "alice", "password": "egal"})
+                   for _ in range(auth23.sec("max_login_attempts") + 2)]
+finally:
+    _seclog23.removeHandler(_haken23)
+assert all(a.status_code == 503 for a in antworten23), [a.status_code for a in antworten23]
+assert "nicht erreichbar" in antworten23[0].text, antworten23[0].text[:300]
+assert auth23.store.count_fails(0, username="alice") == 0, "der Ausfall wurde als Fehlversuch verbucht"
+assert not auth23.is_locked("alice", "testclient"), "ein Ausfall sperrt das Konto"
+assert "failed login" not in _puffer23.getvalue(), "fail2ban bekäme einen Ausfall als Angriff"
+assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
+assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
+ok("F-23: Verzeichnis-Ausfall → 503, kein Fehlversuch, keine Sperre, kein 'failed login', eigene Audit-Zeile")
+# Gegenprobe: dieselbe Route mit einem erreichbaren Verzeichnis und falschem Passwort zählt.
+auth23.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
+assert auth23.store.count_fails(0, username="alice") == 1
+ok("F-23: …ein echtes falsches Passwort bleibt ein Fehlversuch")
+os.remove(db23)
+
+if HAT_LDAP3:
+    # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der
+    # Bibliothek kommen, nicht aus unserer Attrappe — sonst wäre die Zuordnung der Fehlerarten
+    # (`_ausfall_arten`) ungemessen.
+    _s = socket.socket()
+    _s.bind(("127.0.0.1", 0))
+    _toter_port = _s.getsockname()[1]
+    _s.close()
+    for _cfg in (TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
+                                 ldap_url=f"ldap://127.0.0.1:{_toter_port}", ldap_allow_plaintext=True,
+                                 ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"),
+                 TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
+                                 ldap_url=f"ldap://127.0.0.1:{_toter_port}", ldap_allow_plaintext=True,
+                                 ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
+                                 ldap_user_base="ou=people,dc=example,dc=com")):
+        try:
+            LDAPClient(_cfg).authenticate("alice", "egal")
+            _geworfen = False
+        except VerzeichnisNichtErreichbar:
+            _geworfen = True
+        assert _geworfen, "ein toter Port endet wieder als 'Passwort falsch'"
+    ok("F-23: echtes ldap3 gegen einen toten Port → VerzeichnisNichtErreichbar (Direkt- und Such-Bind)")
+    # Und ein abgewiesenes Passwort gegen einen ECHTEN Server bleibt None, nicht Ausfall.
+    _sa, _pa = lauscher()
+
+    def _lehnt_ab(sock):
+        try:
+            conn, _ = sock.accept()
+            conn.settimeout(5)
+            daten = conn.recv(8192)
+            mid, _op = zerlegen(daten)
+            # BindResponse resultCode 49 = invalidCredentials
+            conn.sendall(antwort(mid, 0x61, tlv(0x0A, b"\x31") + tlv(0x04, b"") + tlv(0x04, b"")))
+            conn.recv(8192)
+            conn.close()
+        except Exception:
+            pass
+
+    threading.Thread(target=_lehnt_ab, args=(_sa,), daemon=True).start()
+    assert LDAPClient(TinySesamConfig(
+        db_path=":memory:", password_enabled=True, ldap_enabled=True,
+        ldap_url=f"ldap://127.0.0.1:{_pa}", ldap_allow_plaintext=True,
+        ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")).authenticate(
+        "alice", "falsch") is None
+    _sa.close()
+    ok("F-23: invalidCredentials vom echten Server bleibt None (Fehlversuch), kein Ausfall")
+
+# ---------- F-29: LDAP- und lokale Anmeldung sind im Audit-Log unterscheidbar ----------
+db29, auth29, c29 = build()
+auth29.ldap = FakeLDAP({"ldapnutzer": {"password": "lp", "id": "l1"}})
+c29.post("/auth/login", data={"username": "ldapnutzer", "password": "lp"}, follow_redirects=False)
+c29.get("/auth/logout")
+c29.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
+c29.get("/auth/logout")
+c29.post("/auth/login", data={"username": "niemand", "password": "x"})
+_zeilen29 = auth29.store.recent_audit(50)
+_ereignisse = {(z["event"], z["username"]) for z in _zeilen29}
+assert ("login_ldap", "ldapnutzer") in _ereignisse, _ereignisse
+assert ("login_lokal", "admin") in _ereignisse, _ereignisse
+assert ("login_ldap", "admin") not in _ereignisse and ("login_lokal", "ldapnutzer") not in _ereignisse
+_fail29 = [z for z in _zeilen29 if z["event"] == "login_fail" and z["username"] == "niemand"]
+assert _fail29 and "quelle=lokal+ldap" in (_fail29[0]["detail"] or ""), _fail29
+ok("F-29: login_ldap / login_lokal getrennt, ein Fehlversuch nennt quelle=lokal+ldap")
+os.remove(db29)
+# Ohne LDAP bleibt das Audit-Log wie bisher — keine neue Zeile für jeden lokalen Login.
+db29b = os.path.join(tempfile.mkdtemp(), "t.db")
+auth29b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db29b, rp_name="Test",
+                                    passkey_enabled=False, cookie_secure=False))
+auth29b.ensure_admin("admin", "lokalpw")
+_app29b = FastAPI()
+_app29b.include_router(auth29b.router())
+TestClient(_app29b).post("/auth/login", data={"username": "admin", "password": "lokalpw"},
+                         follow_redirects=False)
+assert not any(z["event"].startswith("login_l") for z in auth29b.store.recent_audit(20))
+ok("F-29: ohne ldap_enabled keine Zusatzzeile")
+os.remove(db29b)
+
+# ---------- F-30: die Konfigurationsprüfung nennt keine Abhilfe, die sie selbst ablehnt ----------
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+_f30, _w30 = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=False,
+                                        passkey_enabled=False, ldap_enabled=True,
+                                        ldap_url="ldaps://ldap.example.com"))
+_meldung30 = next(f for f in _f30 if "Keine einzige Anmelde-Methode" in f)
+assert "ldap_enabled=True," not in _meldung30.split("LDAP allein")[0], _meldung30
+assert "password_enabled=True" in _meldung30.split("LDAP allein")[1], _meldung30
+assert any("ldap_enabled=True, aber password_enabled=False" in w for w in _w30), _w30
+# Gegenprobe: die genannte Abhilfe wird tatsächlich angenommen.
+_f30b, _w30b = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=True,
+                                          passkey_enabled=False, ldap_enabled=True,
+                                          ldap_url="ldaps://ldap.example.com"))
+assert not any("Keine einzige" in f for f in _f30b) and not any("password_enabled=False" in w for w in _w30b)
+ok("F-30: 'keine Methode' nennt ldap_enabled nicht mehr als Abhilfe; LDAP ohne Passwortfeld warnt")
+
 print("\nLDAP-BACKEND OK ✅")
