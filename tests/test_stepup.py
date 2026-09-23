@@ -105,6 +105,54 @@ assert r.status_code == 303 and c.cookies.get("tinysesam_session") != vorher
 assert auth.store.get_session(vorher) is None and len(auth.store.list_sessions(uid)) == anzahl
 ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungszahl gleich")
 
+# Der dritte Step-up-Weg: POST /auth/totp auf einer VOLLEN Sitzung (Routen-Kette mit TOTP, oder
+# jemand ruft die Seite einfach auf). `complete_totp` machte die Sitzung wieder frisch, drehte
+# das Token aber nur beim Übergang halb → voll — ein vorher mitgelesenes Cookie bekam so frische
+# Sudo-Rechte. Eigene Instanz: Ein TOTP am Admin oben änderte jeden Login dieser Suite.
+# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` → rotate_session streichen → rot.)
+db_t = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
+uid_t = auth_t.create_user("eva", password="Eva-Geheim-2026")
+assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
+codes_t = auth_t.generate_recovery_codes(uid_t)   # zwei Codes ohne Warten auf das nächste TOTP-Fenster
+app_t = FastAPI()
+app_t.include_router(auth_t.router())
+
+
+@app_t.get("/sudo")
+def sudo_t(u=Depends(auth_t.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+c_t = TestClient(app_t)
+c_t.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/"},
+         follow_redirects=False)
+assert c_t.post("/auth/totp", data={"code": codes_t[0], "next": "/"}, follow_redirects=False
+                ).status_code == 303
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "nach TOTP voll angemeldet"
+vorher = c_t.cookies.get("tinysesam_session")
+auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_t.store.session_hash(vorher)))
+assert c_t.get("/sudo", headers=JSON).status_code == 403, "Frische muss abgelaufen sein"
+zeile_vorher = auth_t.store.get_session(vorher)
+anzahl = len(auth_t.store.list_sessions(uid_t))
+r = c_t.post("/auth/totp", data={"code": codes_t[1], "next": "/sudo"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/sudo", (r.status_code, r.headers)
+assert any(z.startswith("tinysesam_session=") for z in r.headers.get_list("set-cookie")), \
+    "Step-up über /auth/totp setzt kein neues Sitzungs-Cookie"
+nachher = c_t.cookies.get("tinysesam_session")
+assert nachher and nachher != vorher and auth_t.store.get_session(vorher) is None, "altes Token lebt"
+zeile = auth_t.store.get_session(nachher)
+assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
+assert len(auth_t.store.list_sessions(uid_t)) == anzahl, "Step-up legt eine zweite Sitzung an"
+assert c_t.get("/sudo", headers=JSON).status_code == 200
+dieb = TestClient(app_t)
+dieb.cookies.set("tinysesam_session", vorher)
+assert dieb.get("/sudo", headers=JSON).status_code == 401, "das mitgelesene Cookie trägt noch"
+ok("F-06: Step-up über /auth/totp auf voller Sitzung rotiert das Token (altes tot, Laufzeit gleich)")
+os.remove(db_t)
+
 # ---------- API-Key erfüllt Step-up NICHT ----------
 key = auth.create_api_key(uid, name="k")["key"]
 assert c.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200

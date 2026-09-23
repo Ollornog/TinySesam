@@ -175,8 +175,17 @@ try:
     assert _login({"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}) == 303
     assert _login({}) == 303, "ohne beide Header entscheidet das Token (alter Browser, Skript)"
     assert _login({"Origin": "null"}) == 303, "Origin null allein sagt nichts — Token entscheidet"
-    assert _login({"Origin": "https://portal.example.com"}) == 303, "trusted_redirect_hosts zählt als eigen"
-    ok("H-2: eigener Origin, fehlende Header, Origin null und vertraute Hosts gehen durch")
+    ok("H-2: eigener Origin, fehlende Header und Origin null gehen durch")
+
+    # `trusted_redirect_hosts` sind erlaubte ZIELE für `?next=` — im Forward-Auth-Aufbau die
+    # geschützten Apps. Ein eigener Origin sind sie nicht: Eine kompromittierte App auf einem
+    # dieser Hosts schickte sonst Formulare mit gültigem Origin an TinySesam (Login-CSRF,
+    # Sitzungen des Opfers beenden). Bis zur Nacharbeit zählten sie hier als eigen.
+    # (Mutationsprobe: `trusted_redirect_hosts` wieder in `_eigene_hosts` aufnehmen → rot.)
+    assert _login({"Origin": "https://portal.example.com"}) == 403, \
+        "ein Host aus trusted_redirect_hosts gilt als eigener Origin"
+    assert _login({"Origin": "https://portal.example.com", "Sec-Fetch-Site": "same-site"}) == 403
+    ok("H-2: trusted_redirect_hosts sind Redirect-Ziele, kein eigener Origin → 403")
 
     # Proxy schreibt den Host um (upstream-Name), ohne X-Forwarded-Host — base_url rettet es.
     _a2, _app2 = _instanz(base_url="https://auth.example.com")
@@ -217,6 +226,59 @@ try:
     ok("csrf_origin_check=False schaltet nur die Vorprüfung ab (Notausgang für schiefe Proxys)")
 finally:
     _log.removeHandler(_fang)
+
+# ---------- H-1 im Forward-Auth-Aufbau: das CSRF-Cookie trägt `__Host-` auch mit cookie_domain ----------
+# Mit `cookie_domain` (SSO über Subdomains) kann das SITZUNGS-Cookie kein `__Host-` tragen. Das
+# CSRF-Cookie setzt TinySesam aber nie mit Domain — es ist immer host-only und darf das Präfix
+# immer tragen. Ohne es setzte jede Nachbar-Subdomain (eine kompromittierte App) ein
+# `tinysesam_csrf=BEKANNT; Domain=.example.com`, und das Double-Submit bestand mit ihrem Wert.
+# (Mutationsprobe: in `csrf_cookie_name` host_only=True streichen → rot.)
+_fa_db = os.path.join(tempfile.mkdtemp(), "t.db")
+_fa = TinySesam(TinySesamConfig(db_path=_fa_db, lang="de", passkey_enabled=False, oidc_enabled=False,
+                                cookie_secure=True, base_url="https://auth.example.com",
+                                cookie_domain=".example.com", forward_auth_enabled=True,
+                                trusted_redirect_hosts=["app.example.com"]))
+_fa.ensure_admin("admin", "geheim123")
+_fa.create_user("mallory", password="angreifer-pw-1")
+_fa_app = FastAPI()
+_fa_app.include_router(_fa.router())
+assert _fa.session_cookie_name == "tinysesam_session", "Sitzung mit cookie_domain: ohne Präfix"
+assert _fa.csrf_cookie_name == "__Host-tinysesam_csrf", _fa.csrf_cookie_name
+_fa_c = TestClient(_fa_app, base_url="https://auth.example.com")
+_seite = _fa_c.get("/auth/login")
+_zeile = [z for z in _seite.headers.get_list("set-cookie") if z.startswith("__Host-tinysesam_csrf=")]
+assert len(_zeile) == 1 and "domain" not in _zeile[0].lower() and "secure" in _zeile[0].lower() \
+    and "path=/" in _zeile[0].lower(), _seite.headers.get_list("set-cookie")
+_feld = re.search(r"name=_csrf value='([^']+)'", _seite.text).group(1)
+assert _fa_c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+                                       "_csrf": _feld}, follow_redirects=False).status_code == 303
+ok("H-1: mit cookie_domain heisst das CSRF-Cookie __Host-…, ohne Domain; der Login geht")
+
+
+def _geworfen(kopf):
+    """Login-CSRF mit einem untergeschobenen Domain-Cookie `tinysesam_csrf=BEKANNT`."""
+    cl = TestClient(_fa_app, base_url="https://auth.example.com")
+    cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
+    return cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-1",
+                                        "next": "/", "_csrf": "BEKANNT"},
+                   headers=kopf, follow_redirects=False).status_code
+
+
+assert _geworfen({}) == 403, "ein untergeschobenes tinysesam_csrf besteht das Double-Submit"
+assert _geworfen({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"}) == 403, \
+    "Login-CSRF von der geschützten App"
+# Und mit der Sitzung des Opfers: Die geschützte App beendet dessen andere Sitzungen nicht.
+_opfer = TestClient(_fa_app, base_url="https://auth.example.com")
+_f = re.search(r"name=_csrf value='([^']+)'", _opfer.get("/auth/login").text).group(1)
+_opfer.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+                                 "_csrf": _f}, follow_redirects=False)
+_opfer.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
+_r = _opfer.post("/auth/sessions/revoke", content='{"scope":"others","_csrf":"BEKANNT"}',
+                 headers={"Content-Type": "text/plain", "Origin": "https://app.example.com",
+                          "Sec-Fetch-Site": "same-site"})
+assert _r.status_code == 403, (_r.status_code, _r.text[:120])
+ok("H-1/H-2: ein von einer App untergeschobenes CSRF-Cookie trägt weder Login noch Sitzungsaktion")
+os.remove(_fa_db)
 
 # Das eingebaute JS liest den TATSÄCHLICHEN Cookie-Namen — mit __Host- (H-1) hieße das Cookie
 # sonst anders als das, was die Kontoseite sucht, und jeder Knopf dort antwortete 403.

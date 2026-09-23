@@ -42,7 +42,7 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
-### `andere_sitzungen(request, user) -> 'int'`
+### `andere_sitzungen(request, user, token: 'Optional[str]' = None) -> 'int'`
 
 Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
 
@@ -268,7 +268,7 @@ Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite de
 
 ### `logout(request, response)`
 
-Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen.
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
