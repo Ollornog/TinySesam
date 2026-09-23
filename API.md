@@ -38,6 +38,10 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
+### `andere_sitzungen(request, user) -> 'int'`
+
+Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
+
 ### `api_key_art(key) -> 'str'`
 
 Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
@@ -46,7 +50,7 @@ Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
-### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)`
+### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None)`
 
 IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant, nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben.
 
@@ -70,7 +74,7 @@ Wie `check_password`, nur mit der persönlichen PIN.
 
 Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`).
 
-### `check_saml(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'`
+### `check_saml(nameid, attrs) -> 'Optional[dict]'`
 
 Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
@@ -141,6 +145,10 @@ Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran.
 ### `find_user(identifier) -> 'Optional[dict]'`
 
 Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
+
+### `flow_cookie_name(basis: 'str') -> 'str'`
+
+Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
 
 ### `forward_login_url(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'`
 
@@ -248,7 +256,7 @@ Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite de
 
 ### `logout(request, response)`
 
-Die Sitzung dieses Requests beenden und das Cookie löschen.
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
@@ -269,10 +277,6 @@ TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 ### `next_login_step(user_id, done)`
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
-
-### `nur_foederiert(user_id) -> 'bool'`
-
-Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
 
 ### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
 
@@ -302,7 +306,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method, quelle: 'str' = '')`
+### `record_login(username, ip, success, method)`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
@@ -370,6 +374,10 @@ Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, 
 
 Ein offenes Einrichtungsfenster sofort schliessen.
 
+### `rotate_session(request, response) -> 'Optional[str]'`
+
+Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
+
 ### `router()`
 
 Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
@@ -406,7 +414,7 @@ Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da 
 
 Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
 
-### `set_cookie(response, token, remember: 'bool' = True)`
+### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
 Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
 
@@ -566,4 +574,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-124 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

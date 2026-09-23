@@ -75,6 +75,36 @@ assert r.status_code == 303 and r.headers["location"] == "/sudo"
 assert c.get("/sudo", headers=JSON).status_code == 200
 ok("Reauth per Passwort → sudo wieder erreichbar")
 
+# ---------- F-06: der Step-up erneuert das Sitzungs-Token ----------
+# Wer das alte Cookie mitgelesen hat, darf nach der Bestätigung keine Sudo-Sitzung halten.
+# Laufzeit und Anmeldezeitpunkt bleiben — ein Step-up verlängert die Sitzung nicht.
+stale()
+vorher = c.cookies.get("tinysesam_session")
+zeile_vorher = auth.store.get_session(vorher)
+r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
+assert r.status_code == 303 and "tinysesam_session=" in r.headers.get("set-cookie", ""), r.headers
+nachher = c.cookies.get("tinysesam_session")
+assert nachher and nachher != vorher, "Reauth muss ein neues Token ausgeben"
+assert auth.store.get_session(vorher) is None, "das alte Token muss tot sein"
+zeile = auth.store.get_session(nachher)
+assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
+assert zeile["remember"] == zeile_vorher["remember"] and zeile["mfa_ok"] == 1
+assert c.get("/sudo", headers=JSON).status_code == 200
+dieb = TestClient(app)
+dieb.cookies.set("tinysesam_session", vorher)
+assert dieb.get("/normal", headers=JSON).status_code == 401, "altes Cookie trägt nicht mehr"
+ok("F-06: Reauth rotiert das Token (altes tot, Laufzeit und created_at unverändert)")
+
+# Dasselbe, wenn der Step-up über einen erneuten Login mit einem Faktor läuft (apply_factor auf
+# einer schon vollwertigen Sitzung): neues Token, alte Sitzung weg, keine zweite daneben.
+vorher = c.cookies.get("tinysesam_session")
+anzahl = len(auth.store.list_sessions(uid))
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+           follow_redirects=False)
+assert r.status_code == 303 and c.cookies.get("tinysesam_session") != vorher
+assert auth.store.get_session(vorher) is None and len(auth.store.list_sessions(uid)) == anzahl
+ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungszahl gleich")
+
 # ---------- API-Key erfüllt Step-up NICHT ----------
 key = auth.create_api_key(uid, name="k")["key"]
 assert c.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200
@@ -305,7 +335,7 @@ geheim = re.search(r"<div class=mono>([A-Z2-7]+)</div>", seite.text)
 assert geheim, seite.text[:200]
 r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim.group(1)).now()},
             headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
-assert r.status_code == 200 and r.json() == {"ok": True}, r.text[:120]
+assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 0}, r.text[:120]
 assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
 ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
 
@@ -452,6 +482,52 @@ for pfad in sorted(set(OFFEN) & _post6):
         f"verschieben ({OFFEN[pfad]})")
 ok(f"H-18: {len(STEPUP & _post6)} Routen verlangen Step-up, {len(NUR_SITZUNG & _post6)} nur eine "
    f"Sitzung, {len(set(OFFEN) & _post6)} bekannt offen ({', '.join(sorted(set(OFFEN.values())))})")
+os.remove(db6)
+
+# ---------- A-2: der Step-up behält die Art des Sitzungs-Cookies ----------
+# Seit F-06 dreht ein Step-up das Token, und der Aufrufer setzt das Cookie neu. Mit der
+# Vorgabe `remember=True` bekam eine Sitzung OHNE „Angemeldet bleiben" dabei ein Cookie für
+# sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte; umgekehrt machte
+# die PIN-Route mit leerem Formularfeld aus einer gemerkten Sitzung ein Session-Cookie.
+db6 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, passkey_enabled=False,
+                                  oidc_enabled=False, cookie_secure=False, magiclink_enabled=True,
+                                  pin_enabled=True, base_url="https://auth.example.com"))
+auth6.set_mailer(lambda *a, **k: None)
+auth6.ensure_admin("admin", "geheim123")
+uid6 = auth6.store.get_user_by_name("admin")["id"]
+auth6.set_pin(uid6, "24680")
+app6 = FastAPI()
+app6.include_router(auth6.router())
+
+
+def _sitzungs_cookie(antwort):
+    zeilen = [z for z in antwort.headers.get_list("set-cookie") if z.startswith("tinysesam_session=")]
+    assert len(zeilen) == 1, antwort.headers.get_list("set-cookie")
+    return zeilen[0].lower()
+
+
+for merken in ("", "on"):
+    c6 = TestClient(app6)
+    r = c6.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+                                     "remember": merken}, follow_redirects=False)
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), _sitzungs_cookie(r)
+    vorher = c6.cookies.get("tinysesam_session")
+    roh = auth6.create_magic_token("login", user_id=uid6, email="x@example.com", ttl_min=15,
+                                   payload={"next": "/"})
+    r = c6.get(f"/auth/magic/{roh}", follow_redirects=False)
+    assert c6.cookies.get("tinysesam_session") != vorher, "Step-up muss rotieren (F-06)"
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
+        f"Magic-Step-up (remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
+    # PIN mit dem GEGENTEIL im Formular — die Sitzung hat ihre Art beim ersten Faktor bekommen.
+    r = c6.post("/auth/pin", data={"username": "admin", "pin": "24680", "next": "/",
+                                   "remember": "" if merken else "on"}, follow_redirects=False)
+    assert r.status_code == 303, r.status_code
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
+        f"PIN-Step-up (Sitzung remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
+    zeile = auth6.store.get_session(c6.cookies.get("tinysesam_session"))
+    assert bool(zeile["remember"]) == bool(merken)
+ok("A-2: Step-up per Magic-Link und PIN behält die Cookie-Art der Sitzung (merken ja/nein)")
 os.remove(db6)
 
 os.remove(db)

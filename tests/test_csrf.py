@@ -124,3 +124,106 @@ assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345"
 assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345"}).status_code == 403
 os.remove(_db)
 print("  CSRF-Token bleibt über Seitenwechsel gültig; falsches/fehlendes Token weiterhin 403")
+
+# ---------- H-2 / F-02: Herkunft vor dem Token-Vergleich ----------
+# Das naive Double-Submit prüft nur, ob Cookie und Feld zusammenpassen. Wer über eine
+# Nachbar-Subdomain Cookies setzen kann, setzt das passende Paar gleich mit und schickt das
+# Opfer per Formular in SEIN Konto (Login-CSRF). Hier ist das Paar deshalb immer GÜLTIG — nur
+# die Herkunft entscheidet.
+import logging  # noqa: E402
+
+_db = os.path.join(tempfile.mkdtemp(), "t.db")
+
+
+def _instanz(**kw):
+    a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
+                                  apikey_enabled=True, **kw))
+    a.ensure_admin("admin", "geheim123")
+    ap = FastAPI()
+    ap.include_router(a.router())
+    return a, ap
+
+
+_a, _app = _instanz(trusted_redirect_hosts=["portal.example.com"])
+
+
+def _login(kopf, app=None):
+    cl = TestClient(app or _app)
+    feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
+    return cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+                                        "_csrf": feld}, headers=kopf, follow_redirects=False).status_code
+
+
+class _Fang(logging.Handler):
+    zeilen: list = []
+
+    def emit(self, record):
+        _Fang.zeilen.append(record.getMessage())
+
+
+_log = logging.getLogger("tinysesam.security")
+_fang = _Fang()
+_log.addHandler(_fang)
+try:
+    assert _login({"Origin": "https://angreifer.example"}) == 403, "fremder Origin mit gültigem Paar"
+    assert _login({"Origin": "https://nachbar.example.com", "Sec-Fetch-Site": "same-site"}) == 403, \
+        "Nachbar-Subdomain (cookie tossing) muss scheitern"
+    assert _login({"Sec-Fetch-Site": "cross-site"}) == 403, "cross-site ohne Origin"
+    assert any("csrf origin rejected" in z for z in _Fang.zeilen), "Abweisung muss im Log stehen"
+    ok("H-2: fremder Origin, Nachbar-Subdomain und cross-site → 403, obwohl das Token-Paar stimmt")
+
+    assert _login({"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}) == 303
+    assert _login({}) == 303, "ohne beide Header entscheidet das Token (alter Browser, Skript)"
+    assert _login({"Origin": "null"}) == 303, "Origin null allein sagt nichts — Token entscheidet"
+    assert _login({"Origin": "https://portal.example.com"}) == 303, "trusted_redirect_hosts zählt als eigen"
+    ok("H-2: eigener Origin, fehlende Header, Origin null und vertraute Hosts gehen durch")
+
+    # Proxy schreibt den Host um (upstream-Name), ohne X-Forwarded-Host — base_url rettet es.
+    _a2, _app2 = _instanz(base_url="https://auth.example.com")
+    assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}, _app2) == 303
+    assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000",
+                   "X-Forwarded-Host": "auth.example.com"}, _app) == 303, "X-Forwarded-Host zählt"
+    assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}, _app) == 403
+    ok("H-2: Proxy mit umgeschriebenem Host — base_url oder X-Forwarded-Host machen den Origin eigen")
+
+    # A-3: Derselbe Proxy OHNE base_url (nginx-Vorgabe, reiner Passwort-Login) sperrte nach dem
+    # Update jeden POST aus. Ein heutiger Browser sagt `Sec-Fetch-Site: same-origin` — gemessen
+    # an der Adresse, die ER sieht — und das trägt. Eine Nachbar-Subdomain bekommt `same-site`.
+    _proxy = {"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}
+    assert _login({**_proxy, "Sec-Fetch-Site": "same-origin"}, _app) == 303, \
+        "Proxy ohne base_url/X-Forwarded-Host sperrt den eigenen Login aus"
+    assert _login({"Origin": "https://nachbar.example.com", "Host": "127.0.0.1:8000",
+                   "Sec-Fetch-Site": "same-site"}, _app) == 403, "Nachbar-Subdomain bleibt draussen"
+    ok("A-3: Proxy mit umgeschriebenem Host ohne base_url — Sec-Fetch-Site: same-origin trägt den Login")
+
+    # JSON-Weg (json_body) prüft genauso.
+    cl = TestClient(_app)
+    feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
+    cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "_csrf": feld})
+    r = cl.post("/auth/password", json={"current": "geheim123", "new": "anderespasswort1"},
+                headers={"X-CSRF-Token": feld, "Origin": "https://angreifer.example"})
+    assert r.status_code == 403, r.status_code
+    ok("H-2: auch der JSON-Weg (X-CSRF-Token) weist fremde Herkunft ab")
+
+    # Ein echter API-Key bleibt ausgenommen — ein Daemon hat keinen Browser.
+    _key = _a.create_api_key(_a.store.get_user_by_name("admin")["id"], name="k")["key"]
+    r = TestClient(_app).get("/auth/apikeys", headers={"Authorization": f"Bearer {_key}",
+                                                       "Origin": "https://angreifer.example"})
+    assert r.status_code == 200
+    ok("H-2: API-Key-Requests bleiben von der CSRF-Schicht ausgenommen")
+
+    _a3, _app3 = _instanz(csrf_origin_check=False)
+    assert _login({"Origin": "https://angreifer.example"}, _app3) == 303
+    ok("csrf_origin_check=False schaltet nur die Vorprüfung ab (Notausgang für schiefe Proxys)")
+finally:
+    _log.removeHandler(_fang)
+
+# Das eingebaute JS liest den TATSÄCHLICHEN Cookie-Namen — mit __Host- (H-1) hieße das Cookie
+# sonst anders als das, was die Kontoseite sucht, und jeder Knopf dort antwortete 403.
+_a4 = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, pin_enabled=True))
+assert _a4.csrf_cookie_name == "__Host-tinysesam_csrf"
+_html = _a4.templates.render("account", _a4, {"user": {"username": "x", "display_name": "x"},
+                                              "methods": ["password", "pin"]})
+assert "__Host-tinysesam_csrf=" in _html and "; )tinysesam_csrf=" not in _html, "Kontoseite liest falschen Namen"
+ok("Kontoseite liest das CSRF-Cookie unter seinem tatsächlichen Namen (__Host-…)")
+os.remove(_db)

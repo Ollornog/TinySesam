@@ -40,9 +40,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `admin_implies_roles` | `bool` | `True` | Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten). ACHTUNG: hängen die Rechte einer App allein an einer IdP-Gruppe, ist das eine stille Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`. |
-| `group_match` | `str` | `"exact"` | Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen? "exact" (Default, sicher) oder "substring" (alter Teilstring-Vergleich, nur auf Wunsch). LDAP vergleicht bei "exact" einen memberOf-DN nach Bestandteilen: ganzer DN, "cn=staff" oder "staff". |
+| `group_match` | `str` | `"exact"` | Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen? "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs). LDAP nutzt automatisch substring, weil dort ganze DNs ankommen. |
 | `available_roles` | `list[str]` | `list` | Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback). |
-| `oidc_group_role_map` | `dict` | `dict` | IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant). Vergleich nach `group_match` (Vorgabe exakt). Managed Rollen werden je Login synchronisiert. |
+| `oidc_group_role_map` | `dict` | `dict` | IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant). Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert. |
 | `saml_group_role_map` | `dict` | `dict` | SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}` |
 | `ldap_group_role_map` | `dict` | `dict` | LDAP-Gruppe (DN oder Name) → lokale Rolle |
 
@@ -51,7 +51,6 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `password_enabled` | `bool` | `True` | Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN) |
-| `password_blocklist_file` | `str` | `""` | Eigene Blockliste für neue Passwörter: Pfad zu einer Textdatei, ein Passwort je Zeile (UTF-8, Zeilen in anderer Kodierung gelten als Latin-1; `#` am Zeilenanfang = Kommentar). Ergänzt die kleine eingebaute Liste — wer die gängigen Leak-Listen (z.B. die 100 000 häufigsten) abgleichen will, legt sie hier ab. Offline: TinySesam fragt keinen fremden Dienst. Leer = nur die eingebaute Liste. `tinysesam passwd` liest sie mit `--blocklist-file`. |
 | `passkey_enabled` | `bool` | `False` | WebAuthn / Passkeys (passwortlos) — braucht [passkey] |
 | `passkey_user_verification` | `str` | `"required"` | : Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er : signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch : ein Nein (B2-10). : : Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter : Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz** : des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand : gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person : kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein : Authenticator konnte also nein sagen und galt trotzdem. : : `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und : meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`. |
 | `pin_enabled` | `bool` | `False` | persönliche PIN pro User (Benutzer + PIN) |
@@ -121,7 +120,6 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `smtp_starttls` | `bool` | `True` | 587 = STARTTLS; für 465 smtp_ssl=True setzen |
 | `smtp_ssl` | `bool` | `False` | SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS |
 | `smtp_timeout` | `int` | `15` | Sekunden, bis ein hängender Mailserver aufgibt |
-| `smtp_ca_file` | `str` | `""` | eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer |
 | `mail_subject_prefix` | `str` | `""` | optionaler Betreff-Präfix, z.B. "[MeineApp] " |
 
 ## TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent)
@@ -166,6 +164,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `cookie_samesite` | `str` | `"lax"` | lax\|strict\|none |
 | `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
 | `cookie_domain` | `str` | `""` | leer = Host-only; für SSO über Subdomains z.B. ".example.com" |
+| `cookie_host_prefix` | `bool` | `True` | : `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der : Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Ein so : benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie tossing). : Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden. Eigenes JS liest den : Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`. |
 
 ## Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…)
 
@@ -179,6 +178,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `csrf_enabled` | `bool` | `True` | State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token) |
 | `csrf_cookie` | `str` | `"tinysesam_csrf"` | Name des CSRF-Cookies |
+| `csrf_origin_check` | `bool` | `True` | : Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Sec-Fetch-Site: same-origin` genügt, : sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url, : trusted_redirect_hosts); `Sec-Fetch-Site: cross-site` ohne eigenen Origin wird : abgewiesen. Fehlen beide Header (alter Browser, Skript), entscheidet allein das Token. : Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern : nur Browser ohne `Sec-Fetch-Site` (Safari vor 16.4) — dafür base_url setzen. |
 
 ## LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password')
 
@@ -200,7 +200,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `ldap_attr_email` | `str` | `"mail"` | LDAP-Attribut mit der E-Mail-Adresse |
 | `ldap_attr_name` | `str` | `"cn"` | LDAP-Attribut mit dem Anzeigenamen |
 | `ldap_group_attr` | `str` | `"memberOf"` | Attribut mit Gruppen-Zugehörigkeit |
-| `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring) |
+| `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (Teilstring-Match) |
 | `ldap_auto_create` | `bool` | `True` | unbekannten LDAP-User lokal anlegen (ohne lokales Passwort) |
 
 ## OIDC
@@ -272,4 +272,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-136 Felder, erzeugt aus `tinysesam/config.py`.
+137 Felder, erzeugt aus `tinysesam/config.py`.

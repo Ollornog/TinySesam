@@ -1946,7 +1946,7 @@ class TinySesam:
             raise HTTPException(400, self.t("api.json_object"))
         if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request):
             token = request.headers.get("x-csrf-token") or data.get("_csrf")
-            if not self.verify_csrf(request, token):
+            if not self._herkunft_ok(request) or not self.verify_csrf(request, token):
                 raise HTTPException(403, self.t("api.csrf"))
         return data
 
@@ -1958,7 +1958,7 @@ class TinySesam:
         if not self.cfg.csrf_enabled:
             return ""
         token = secrets.token_urlsafe(24)
-        response.set_cookie(self.cfg.csrf_cookie, token, secure=self.cfg.cookie_secure,
+        response.set_cookie(self.csrf_cookie_name, token, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         return token
 
@@ -1967,7 +1967,7 @@ class TinySesam:
         if not self.cfg.csrf_enabled:
             return True
         import hmac
-        cookie = request.cookies.get(self.cfg.csrf_cookie)
+        cookie = request.cookies.get(self.csrf_cookie_name)
         return bool(cookie) and bool(submitted) and hmac.compare_digest(str(cookie), str(submitted))
 
     def _csrf_entbehrlich(self, request: Request) -> bool:
@@ -1990,7 +1990,7 @@ class TinySesam:
         key = self._extract_api_key(request)
         if not key:
             return False
-        if self.store.get_session(request.cookies.get(self.cfg.session_cookie) or ""):
+        if self.store.get_session(request.cookies.get(self.session_cookie_name) or ""):
             return False        # Cookie im Spiel → CSRF gilt, egal was im Header steht
         # Die IP vor der Key-Prüfung festhalten: Diese Prüfung läuft VOR `current_user`, und
         # `verify_api_key` protokolliert Nutzung und Abweisung (B5-05). Ohne den Aufruf stand ein
@@ -2005,8 +2005,72 @@ class TinySesam:
         Ausgenommen sind nur Requests, die wirklich per API-Key angemeldet sind — s.
         `_csrf_entbehrlich`."""
         if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request) \
-                and not self.verify_csrf(request, submitted):
+                and not (self._herkunft_ok(request) and self.verify_csrf(request, submitted)):
             raise HTTPException(403, self.t("api.csrf"))
+
+    def _eigene_hosts(self, request: Request) -> set:
+        """Die Hostnamen, unter denen diese Instanz im Browser steht.
+
+        Host-Header und X-Forwarded-Host kann ein fremdes Skript im Browser des Opfers nicht
+        setzen — sie sagen also, wohin der Browser WOLLTE. Dazu `base_url` und
+        `trusted_redirect_hosts`, damit ein Proxy, der den Host umschreibt, nicht aussperrt."""
+        from urllib.parse import urlsplit
+
+        def name(netloc):
+            try:
+                return (urlsplit("//" + netloc.strip()).hostname or "") if netloc else ""
+            except ValueError:
+                return ""
+        h = request.headers
+        hosts = {name(h.get("host", "")), name((h.get("x-forwarded-host") or "").split(",")[0]),
+                 name(request.url.netloc)}
+        if self.cfg.base_url:
+            hosts.add(urlsplit(self.cfg.base_url).hostname or "")
+        hosts |= {str(x).strip().lower() for x in (self.cfg.trusted_redirect_hosts or []) if x}
+        hosts.discard("")
+        return hosts
+
+    def _herkunft_ok(self, request: Request) -> bool:
+        """Vorprüfung vor dem Double-Submit-Vergleich (H-2, F-02).
+
+        Das Token allein beweist nur, dass Cookie und Formularfeld zusammenpassen. Wer über eine
+        Nachbar-Subdomain ein Cookie setzen kann (cookie tossing), setzt das passende Paar gleich
+        mit und schickt das Opfer per Formular in SEIN Konto (Login-CSRF). Der Browser verrät
+        aber, woher der Request kommt: `Origin` bei jedem POST, `Sec-Fetch-Site` bei jedem
+        Request. Die kann eine fremde Seite nicht fälschen.
+
+        * `Sec-Fetch-Site: same-origin` → ja. Das sagt der Browser selbst, gemessen an der
+          Adresse, die ER sieht — damit bleibt eine App hinter einem Proxy bedienbar, der den
+          Host umschreibt, ohne X-Forwarded-Host zu setzen (nginx-Vorgabe), auch ohne
+          `base_url` (A-3). Eine Nachbar-Subdomain bekommt hier `same-site`, nie `same-origin`.
+        * `Origin` gesetzt → er muss ein eigener Host sein, sonst nein. `same-site` von einer
+          Nachbar-Subdomain fällt genau hier heraus.
+        * kein brauchbarer `Origin`, aber `Sec-Fetch-Site: cross-site` → nein.
+        * beides fehlt (alter Browser, Skript, TestClient) → das Token entscheidet allein.
+        """
+        if not self.cfg.csrf_origin_check:
+            return True
+        from urllib.parse import urlsplit
+        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "same-origin":
+            return True
+        origin = (request.headers.get("origin") or "").strip()
+        if origin and origin != "null":
+            try:
+                host = (urlsplit(origin).hostname or "").lower()
+            except ValueError:
+                host = ""
+            if host and host in self._eigene_hosts(request):
+                return True
+            security.seclog.warning(
+                "csrf origin rejected origin=%s ip=%s — fremde Herkunft. Steht die App hinter "
+                "einem Proxy, der den Host umschreibt: base_url setzen.",
+                security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
+            return False
+        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
+            security.seclog.warning("csrf origin rejected sec-fetch-site=cross-site ip=%s",
+                                    security.fuer_log(self.client_ip(request)))
+            return False
+        return True
 
     # ---------- E-Mail-Versand ----------
     def set_mailer(self, fn):
@@ -2325,9 +2389,16 @@ class TinySesam:
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
                 self.store.delete_session_by_handle(s["token_hash"])
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
+            if ok and was_ok:
+                # Die Sitzung war schon vollwertig, der Faktor frischt sie nur auf — das ist ein
+                # Step-up (mfa_at ist eben neu gesetzt worden). Auch der bekommt ein neues Token
+                # (F-06, ASVS 5.0 7.2.4); Laufzeit und Anmeldezeitpunkt bleiben dabei.
+                gedreht = self.store.rotate_session(s["token_hash"])
+                if gedreht:
+                    return gedreht, ok, True
             # Zurück geht das Klartext-Token aus dem Cookie — der Aufrufer baut daraus
             # Redirects und Cookies. In der Sitzungs-Zeile steht nur noch das Handle.
-            return request.cookies.get(self.cfg.session_cookie), ok, False
+            return request.cookies.get(self.session_cookie_name), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
@@ -2388,7 +2459,7 @@ class TinySesam:
 
     def session_from_request(self, request):
         """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle."""
-        return self.store.get_session(request.cookies.get(self.cfg.session_cookie))
+        return self.store.get_session(request.cookies.get(self.session_cookie_name))
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist."""
@@ -2572,26 +2643,141 @@ class TinySesam:
         """
         return self.issue_csrf(response)
 
-    def set_cookie(self, response, token, remember: bool = True):
+    # ---------- Cookie-Namen (H-1) ----------
+    def _cookie_name(self, basis: str, host_only: bool = False) -> str:
+        """`__Host-` davor, wo der Browser es zulässt (Secure, kein Domain, Pfad `/`).
+
+        Ein `__Host-`-Cookie kann nur der eigene Host über HTTPS setzen — eine Nachbar-Subdomain
+        kann es weder anlegen noch mit einem `Domain=.example.com`-Cookie gleichen Namens
+        überschatten. Genau darauf baut das Unterschieben eines Sitzungs-, CSRF- oder
+        Freigabe-Tokens (F-01, F-02). Zur Request-Zeit berechnet, weil `cfg` nach dem Aufbau
+        geändert werden darf.
+
+        `host_only=True` für Cookies, die nie mit `cookie_domain` gesetzt werden (die
+        Flow-Cookies von OIDC, SAML und Passkey) — die dürfen das Präfix auch dann tragen.
+
+        Der Pfad muss wörtlich `/` sein: Bei `cookie_path=""` schickt `set_cookie` gar kein
+        `Path`-Attribut, und ein `__Host-`-Cookie ohne `Path=/` verwirft der Browser still —
+        dann käme etwa das CSRF-Cookie nie an und jeder POST scheiterte (A-7)."""
+        c = self.cfg
+        if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure
+                and (host_only or not c.cookie_domain)
+                and c.cookie_path == "/" and not basis.startswith("__")):
+            return "__Host-" + basis
+        return basis
+
+    def flow_cookie_name(self, basis: str) -> str:
+        """Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
+        Das Flow-Cookie bindet einen Anmeldevorgang an den Browser, der ihn begonnen hat. Kann
+        eine Nachbar-Subdomain es per `Domain=.example.com` setzen, schiebt sie dem Opfer den
+        Flow des Angreifers unter und lockt es auf die Callback-URL — Login-CSRF, obwohl das
+        Sitzungs-Cookie selbst schon gepräfixt ist."""
+        return self._cookie_name(basis, host_only=True)
+
+    def _flow_cookie_setzen(self, response, basis: str, wert: str, max_age: int,
+                           samesite: Optional[str] = None) -> None:
+        """Ein Flow-Cookie setzen: httponly, host-only, kurzlebig."""
+        response.set_cookie(self.flow_cookie_name(basis), wert, max_age=max_age, httponly=True,
+                            secure=self.cfg.cookie_secure,
+                            samesite=_samesite(samesite or self.cfg.cookie_samesite),
+                            path=self.cfg.cookie_path)
+
+    def _flow_cookie_loeschen(self, response, basis: str,
+                             samesite: Optional[str] = None) -> None:
+        # Mit Secure: Ein `__Host-`-Set-Cookie ohne Secure nimmt der Browser nicht an, auch
+        # nicht das löschende.
+        response.delete_cookie(self.flow_cookie_name(basis), path=self.cfg.cookie_path,
+                               secure=self.cfg.cookie_secure, httponly=True,
+                               samesite=_samesite(samesite or self.cfg.cookie_samesite))
+
+    @property
+    def session_cookie_name(self) -> str:
+        """Der tatsächliche Name des Sitzungs-Cookies (mit `__Host-`, wo möglich)."""
+        return self._cookie_name(self.cfg.session_cookie)
+
+    @property
+    def csrf_cookie_name(self) -> str:
+        """Der tatsächliche Name des CSRF-Cookies — den muss eigenes JS lesen."""
+        return self._cookie_name(self.cfg.csrf_cookie)
+
+    @property
+    def resource_cookie_name(self) -> str:
+        """Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN."""
+        return self._cookie_name(self.cfg.resource_cookie)
+
+    def set_cookie(self, response, token, remember: Optional[bool] = None):
         """Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL);
-        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen)."""
+        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
+
+        Ohne `remember` richtet sich die Art nach der Sitzung, zu der das Token gehört (A-2):
+        Ein Step-up oder ein Ketten-Schritt dreht das Token einer LAUFENDEN Sitzung, und deren
+        Art hat der Nutzer beim ersten Faktor gewählt. Vorher galt hier stumpf `True` — eine
+        Sitzung ohne „Angemeldet bleiben" bekam nach dem Einlösen eines Magic-Links ein Cookie
+        für sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte.
+        Gibt es keine Sitzung zum Token, bleibt es beim persistenten Cookie wie bisher."""
+        if remember is None:
+            s = self.store.get_session(token)
+            remember = bool(s["remember"]) if s else True
         kw = dict(httponly=True, secure=self.cfg.cookie_secure,
                   samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain
         if remember:
             kw["max_age"] = self._ttl(True)   # type: ignore[assignment]  # kw trägt gemischte Typen
-        response.set_cookie(self.cfg.session_cookie, token, **kw)
+        response.set_cookie(self.session_cookie_name, token, **kw)
+
+    def rotate_session(self, request, response) -> Optional[str]:
+        """Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
+
+        Für jeden Rechtewechsel, der KEINE neue Sitzung anlegt — der Step-up. OWASP Session
+        Management: „The session ID must be renewed … after any privilege level change";
+        ASVS 5.0 7.2.4 verlangt das ausdrücklich auch bei der Re-Authentisierung. Wer das alte
+        Token mitgelesen hat, hält danach eine tote Sitzung statt einer frisch bestätigten.
+        Laufzeit und Anmeldezeitpunkt bleiben; das Cookie behält seine Art (persistent oder
+        nicht). Gibt das neue Token zurück, oder None ohne Sitzung."""
+        s = self.session_from_request(request)
+        if not s:
+            return None
+        neu = self.store.rotate_session(s["token_hash"])
+        if neu:
+            self.set_cookie(response, neu, remember=bool(s["remember"]))
+        return neu
+
+    def andere_sitzungen(self, request, user) -> int:
+        """Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
+
+        Die Antwort jeder Faktor-Änderung trägt die Zahl als `other_sessions`: ASVS 5.0 7.4.3
+        verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
+        beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld."""
+        s = self.session_from_request(request)
+        eigen = s["token_hash"] if s else None
+        return sum(1 for z in self.store.list_sessions(user["id"]) if z["token_hash"] != eigen)
+
+    def _cookie_loeschen(self, response, name):
+        # Secure muss mit: Ein Browser nimmt ein `__Host-`-Set-Cookie ohne Secure nicht an —
+        # auch nicht das, das es löschen soll.
+        kw = dict(path=self.cfg.cookie_path, secure=self.cfg.cookie_secure, httponly=True,
+                  samesite=_samesite(self.cfg.cookie_samesite))
+        if self.cfg.cookie_domain:
+            kw["domain"] = self.cfg.cookie_domain
+        response.delete_cookie(name, **kw)
 
     def logout(self, request, response):
-        """Die Sitzung dieses Requests beenden und das Cookie löschen."""
+        """Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und
+        beide Cookies löschen.
+
+        Die Freigaben gehören dazu (F-08): Bis 0.20 überlebten sie das Abmelden um bis zu
+        `resource_unlock_ttl_hours`. Wer sich am geteilten Rechner abmeldet, erwartet, dass
+        danach nichts mehr offen ist — auch nicht der mit einer PIN gesperrte Bereich."""
         s = self.session_from_request(request)
         if s:
             self.store.delete_session_by_handle(s["token_hash"])
-        kw = dict(path=self.cfg.cookie_path)
-        if self.cfg.cookie_domain:
-            kw["domain"] = self.cfg.cookie_domain
-        response.delete_cookie(self.cfg.session_cookie, **kw)
+        self._cookie_loeschen(response, self.session_cookie_name)
+        freigabe = request.cookies.get(self.resource_cookie_name)
+        if freigabe:
+            self.store.delete_resource_unlocks(freigabe)
+            self._cookie_loeschen(response, self.resource_cookie_name)
 
     # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
     def client_ip(self, request: Request) -> str:
@@ -3054,8 +3240,9 @@ class TinySesam:
     #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
     #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
     #: wurde eingetragen und nie aufgerufen.
-    SEITEN = ("account", "error", "forgot", "login", "magic_confirm", "magic_invalid", "magic_request",
-              "pin", "reauth", "register", "reset", "resource_unlock", "totp", "totp_setup")
+    SEITEN = ("account", "error", "forgot", "login", "logout", "magic_confirm", "magic_invalid",
+              "magic_request", "pin", "reauth", "register", "reset", "resource_unlock", "totp",
+              "totp_setup")
 
     def set_template(self, name, fn):
         """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.
@@ -3071,7 +3258,7 @@ class TinySesam:
     def csrf_token(self, request: Optional[Request] = None) -> str:
         """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln."""
         if request is not None and self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.cfg.csrf_cookie)
+            cur = request.cookies.get(self.csrf_cookie_name)
             if cur:
                 return cur
         return secrets.token_urlsafe(24)
@@ -3081,8 +3268,10 @@ class TinySesam:
         Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene
         Formulare ungültig (klassische „Formular abgelaufen"-Falle)."""
         tok, fresh = None, False
+        if request is not None:
+            self._pruefe_secure_flag(request)
         if self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.cfg.csrf_cookie) if request is not None else None
+            cur = request.cookies.get(self.csrf_cookie_name) if request is not None else None
             tok = cur or secrets.token_urlsafe(24)
             fresh = cur is None
             ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
@@ -3102,7 +3291,7 @@ class TinySesam:
                 resp.headers.setdefault("Content-Security-Policy", policy)
         if tok is not None and fresh:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
-            resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
+            resp.set_cookie(self.csrf_cookie_name, tok, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         # Auch hier, nicht nur in der Route: Fehlerseiten aus `install_error_pages` laufen an
         # keiner TinySesam-Route vorbei und tragen sonst keine einzige Härtungskopfzeile.
@@ -3129,6 +3318,30 @@ class TinySesam:
         """
         self._kopfzeilen_in(resp.headers)
         return resp
+
+    _secure_flag_gemeldet = False
+
+    def _pruefe_secure_flag(self, request: Request) -> None:
+        """`cookie_secure=False`, obwohl der Browser über HTTPS kommt? Einmal laut sagen (F-04).
+
+        Die häufigste Produktionsform ist ein TLS-Proxy vor einer App, die selbst nur HTTP sieht.
+        Wer dort `cookie_secure=False` stehen lässt (weil es lokal ohne Zertifikat nötig war),
+        verschickt das Sitzungs-Cookie ohne Secure-Flag — und nichts meldete das: Die
+        Konfigurationsprüfung schweigt bewusst (`base_url` ist keine Aussage über den
+        Transport), und das Panel warnt nur bei fehlendem HTTPS. Der Request selbst weiss es
+        aber: Schema `https` oder `X-Forwarded-Proto: https`. Loopback zählt hier NICHT als
+        sicher (anders als in `is_secure`) — lokal ohne Zertifikat ist genau der erlaubte Fall.
+        Eine Zeile je Instanz, damit das Log nicht vollläuft."""
+        if self.cfg.cookie_secure or self._secure_flag_gemeldet:
+            return
+        proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if request.url.scheme != "https" and proto != "https":
+            return
+        self._secure_flag_gemeldet = True
+        security.seclog.warning(
+            "Konfiguration: cookie_secure=False, aber der Browser kommt über HTTPS — Sitzungs- und "
+            "CSRF-Cookie gehen ohne Secure-Flag hinaus und damit auch über jede Klartext-Verbindung "
+            "zum selben Host. cookie_secure=True setzen (das ist die Vorgabe).")
 
     def _kopfzeilen_fehler(self, exc) -> None:
         """Dieselben Kopfzeilen für eine `HTTPException` aus einer TinySesam-Route.
@@ -3824,18 +4037,27 @@ class TinySesam:
 
     def resource_unlocked(self, request: Request, name) -> bool:
         """Ist diese Ressource für diesen Browser gerade freigeschaltet?"""
-        return self.store.is_resource_unlocked(request.cookies.get(self.cfg.resource_cookie), name)
+        return self.store.is_resource_unlocked(request.cookies.get(self.resource_cookie_name), name)
 
     def unlock_resource(self, request: Request, response, name):
-        """Eine Ressource für diesen Browser freischalten und das Cookie setzen."""
-        token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
+        """Eine Ressource für diesen Browser freischalten und das Cookie setzen.
+
+        Jede Freischaltung bekommt ein **neues** Token (F-01). Vorher übernahm sie das Token aus
+        dem Cookie des Browsers: Wer dem Opfer vorher ein eigenes untergeschoben hatte
+        (Nachbar-Subdomain, Klartext-HTTP), kannte danach das Token eines freigeschalteten
+        Browsers — Session-Fixation, nur für die Bereichs-PIN. Was dieser Browser schon offen
+        hatte, zieht auf das neue Token um."""
+        alt = request.cookies.get(self.resource_cookie_name)
+        token = secrets.token_urlsafe(32)
+        if alt:
+            self.store.move_resource_unlocks(alt, token)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
         self.store.add_resource_unlock(token, name, _jetzt() + ttl)
         kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=_samesite(self.cfg.cookie_samesite),
                   path=self.cfg.cookie_path, max_age=ttl)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain
-        response.set_cookie(self.cfg.resource_cookie, token, **kw)
+        response.set_cookie(self.resource_cookie_name, token, **kw)
 
     def require_resource(self, name: str):
         """FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich.

@@ -502,11 +502,13 @@ def register_oidc_routes(router, auth):
     # arbeitet dort weiter. Ein gewöhnlicher Top-Level-GET genügt dafür; SameSite hilft nicht,
     # weil gar kein Cookie gebraucht wird. Dasselbe Muster nutzt webauthn_.py schon
     # (`_set_flow_cookie`) — hier fehlte es.
+    # Der tatsächliche Name trägt `__Host-`, wo möglich (A-1): Sonst setzt eine
+    # Nachbar-Subdomain per `Domain=.example.com` ihr eigenes Flow-Cookie, und die Bindung
+    # an den Browser hält nichts mehr.
     _OIDCFLOW = "tinysesam_oidc_flow"
 
     def _flow_cookie_setzen(resp, wert):
-        resp.set_cookie(_OIDCFLOW, wert, max_age=600, httponly=True, secure=cfg.cookie_secure,
-                        samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+        auth._flow_cookie_setzen(resp, _OIDCFLOW, wert, max_age=600)
 
     @router.get("/auth/oidc/start")
     def oidc_start(request: Request, next: str = "/", app: str = ""):
@@ -549,7 +551,7 @@ def register_oidc_routes(router, auth):
             raise HTTPException(400, auth.t("api.oidc_state"))
         # Der Rückweg muss aus DEMSELBEN Browser kommen, der den Flow begonnen hat.
         erwartet = flow.get("fk")
-        mitgebracht = request.cookies.get(_OIDCFLOW) or ""
+        mitgebracht = request.cookies.get(auth.flow_cookie_name(_OIDCFLOW)) or ""
         if not erwartet or not secrets.compare_digest(_hash(mitgebracht), erwartet):
             security.seclog.warning("OIDC-Callback ohne passendes Flow-Cookie — abgewiesen")
             raise HTTPException(400, auth.t("api.oidc_browser"))
@@ -699,5 +701,5 @@ def register_oidc_routes(router, auth):
             auth.set_cookie(resp, token)
         # Das Flow-Cookie hat seinen Zweck erfüllt — es liegen zu lassen wäre ein Rest,
         # der nichts mehr schützt und nur noch verrät, dass hier ein Flow lief.
-        resp.delete_cookie(_OIDCFLOW, path=cfg.cookie_path)
+        auth._flow_cookie_loeschen(resp, _OIDCFLOW)
         return resp

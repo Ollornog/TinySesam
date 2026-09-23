@@ -59,8 +59,9 @@ def register_passkey_routes(router, auth):
             cfg.passkey_user_verification)
 
     def _set_flow_cookie(resp, fk):
-        resp.set_cookie(_WAFLOW, fk, max_age=300, httponly=True, secure=cfg.cookie_secure,
-                        samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+        # `__Host-` davor, wo möglich (A-1): Ein von einer Nachbar-Subdomain untergeschobenes
+        # Flow-Cookie hängte das Opfer an die Challenge des Angreifers.
+        auth._flow_cookie_setzen(resp, _WAFLOW, fk, max_age=300)
 
     # ---------- Registrierung (eingeloggter User) ----------
     @router.post("/auth/passkey/register/begin")
@@ -95,7 +96,7 @@ def register_passkey_routes(router, auth):
     async def reg_finish(request: Request, name: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.require_session(request)   # derselbe Riegel wie beim begin
-        fk = request.cookies.get(_WAFLOW)
+        fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
@@ -120,7 +121,7 @@ def register_passkey_routes(router, auth):
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
         auth.sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
-        return {"ok": True}
+        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
 
     # ---------- Passwortloser Login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
@@ -142,7 +143,7 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/login/finish")
     async def login_finish(request: Request, next: str = "/"):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        fk = request.cookies.get(_WAFLOW)
+        fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_login_expired"))
@@ -216,4 +217,4 @@ def register_passkey_routes(router, auth):
         # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
         auth.audit("passkey_delete", u["username"], auth.client_ip(request), f"id={b['id']}")
         auth.sicherheitsereignis("passkey_removed", u["id"], passkey_id=int(b["id"]))
-        return {"ok": True}
+        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7

@@ -9,6 +9,7 @@ ausgeliefert; ein String wird als HTML mit dem jeweiligen Status verpackt.
 """
 from __future__ import annotations
 import html
+import json
 
 from .theme import TOKENS
 
@@ -206,7 +207,7 @@ def _cf(ctx) -> str:
 def _csrf_js(auth) -> str:
     """JS-Helfer: liest das CSRF-Cookie → tsCsrf(); die fetch-Aufrufe senden X-CSRF-Token."""
     return ("<script>function tsCsrf(){return (document.cookie.match("
-            f"/(?:^|; ){_e(auth.cfg.csrf_cookie)}=([^;]+)/)||[])[1]||''}}</script>")
+            f"/(?:^|; ){_e(auth.csrf_cookie_name)}=([^;]+)/)||[])[1]||''}}</script>")
 
 
 # ---------- Default-Renderer  (fn(auth, ctx) -> str) ----------
@@ -391,14 +392,18 @@ def _account(auth, ctx) -> str:
     pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
             f"<div>{admin_link} <a href='/auth/logout'>{_e(t('logout'))}</a></div></header>"
-            + "".join(sections) + ("" if static else _ACCOUNT_JS) + pkjs)
+            + "".join(sections)
+            + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name))
+               + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
+               .replace("__CONFIRM__", json.dumps(t("acc.sessions_confirm"))))
+            + pkjs)
     # Account nutzt volle Breite (kein Card) + Account-CSS + Branding
     return _page(auth, t("acc.title"), f"<style>{css}</style>{body}", card=False)
 
 
 _ACCOUNT_JS = """
 <script>
-function tsCsrf(){return (document.cookie.match(/(?:^|; )tinysesam_csrf=([^;]+)/)||[])[1]||''}
+function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
 async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(b||{})});
   // 403 + X-TinySesam-Reauth: die Faktor-Verwaltung verlangt seit R3-3 eine frische
   // Bestätigung. Ohne diese Weiche scheiterte der Knopf nach Ablauf der Frische stumm.
@@ -408,16 +413,16 @@ async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Typ
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
 async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
-async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});
+async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});await offer(r);
   say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
 // Erst prüfen, dann melden: Beide Knöpfe sagten früher UNBEDINGT „erledigt" und luden neu —
 // auch bei 403 (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah
 // „entfernt", der Faktor stand noch.
-async function delpin(){const r=await J('/auth/pin/disable');
+async function delpin(){const r=await J('/auth/pin/disable');await offer(r);
   say('pin_msg',r.ok?'✓ entfernt':(await r.json().catch(()=>({}))).detail||'Fehler',r.ok);
   if(r.ok)setTimeout(()=>location.reload(),600)}
 async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;
-  const r=await J('/auth/totp/disable');
+  const r=await J('/auth/totp/disable');await offer(r);
   if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||'Fehler',false)}
 async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
   const r=await (await J('/auth/totp/recovery')).json();
@@ -432,7 +437,7 @@ async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">löschen</button></li>`).join('')||'<li>keine</li>'}
-async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
+async function delpk(id){await offer(await J('/auth/passkey/delete',{id}));loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
@@ -442,7 +447,7 @@ async function loadsess(){const el=document.getElementById('sesslist');if(!el)re
 // wie <img src=x onerror=…> lief als Code. Alle fünf Zeichen, weil Werte auch in Attributen stehen.
 function esc0(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
-  await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
+  if(await tsRevokeOthers())say('sess_msg','\\u2713 beendet',true);loadsess()}
 // Ein delegierter Listener statt Inline-Klick-Handlern — sonst blockt die strenge CSP
 // die Buttons. Auch die per JS nachgeladenen Buttons (data-act=revk/delpk) werden erreicht.
 document.addEventListener('click',function(e){var b=e.target.closest('[data-act]');if(!b)return;
@@ -465,7 +470,7 @@ async function addpk(){
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
     const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();
+    say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();await offer(r);loadsess();
   }catch(e){say('pk_msg','abgebrochen: '+e,false)}
 }
 </script>
@@ -582,6 +587,52 @@ def _magic_confirm(auth, ctx) -> str:
             f"<form method=post action='{_e(ctx.get('action', ''))}'>{_cf(ctx)}"
             f"<button type=submit autofocus>{_e(knopf)}</button></form>")
     return _page(auth, t("magic.confirm_title"), body)
+
+
+def _revoke_js(auth, zurueck: str) -> str:
+    """JS für das Angebot nach einer Faktor-Änderung (B1-7, ASVS 7.4.3): `offer(r)` liest
+    `other_sessions` aus der Antwort und fragt nach, `tsRevokeOthers()` beendet die übrigen
+    Sitzungen. Braucht `tsCsrf()` auf der Seite.
+
+    Das Beenden verlangt eine frische Bestätigung (F-09), die Anlage eines Faktors nicht immer
+    (Passkey, TOTP brauchen nur eine Sitzung). Ist die Frische abgelaufen, führt der Weg über
+    die Reauth-Seite — und `zurueck` (ein JS-Ausdruck, oder leer) sagt, wohin es danach geht,
+    damit die schon gegebene Zustimmung nicht stillschweigend verloren geht (A-5). Während
+    dieser Umleitung kehrt `tsRevokeOthers` nie zurück: Ein Aufrufer, der danach neu lädt,
+    bräche die Navigation sonst ab."""
+    t = auth.t
+    ziel = (f"location.href=re+'?next='+encodeURIComponent({zurueck});return new Promise(()=>{{}})"
+            if zurueck else f"alert({json.dumps(t('api.stepup'))});return false")
+    return ("<script>"
+            "async function tsRevokeOthers(){const r=await fetch('/auth/sessions/revoke',{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
+            "body:JSON.stringify({scope:'others'})});"
+            "const re=r.headers.get('X-TinySesam-Reauth');"
+            f"if(r.status===403&&re){{{ziel}}}return r.ok}}"
+            "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
+            f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
+            "await tsRevokeOthers()}</script>")
+
+
+# Zurück von der Reauth mit `?revoke_others=1`: noch einmal fragen, dann beenden. Nicht still
+# ausführen — sonst beendete jeder fremde Link auf diese Adresse die anderen Sitzungen.
+_ACCOUNT_RUECKKEHR_JS = """<script>
+if(new URLSearchParams(location.search).get('revoke_others')==='1'){
+  history.replaceState(null,'',location.pathname);
+  if(confirm(__CONFIRM__))tsRevokeOthers().then(ok=>{if(ok)say('sess_msg','\u2713 beendet',true);loadsess()})}
+</script>"""
+
+
+def _logout(auth, ctx) -> str:
+    """ctx: — . Rückfrage vor dem Abmelden, wenn der Link von einer fremden Seite kam (F-07).
+    Ein POST-Formular mit CSRF-Feld; der GET selbst meldet in diesem Fall nicht ab."""
+    t = auth.t
+    body = (f"<h1>{_e(t('logout'))}</h1>"
+            f"<div class=hint>{_e(t('logout.confirm'))}</div>"
+            f"<form method=post action='/auth/logout'>{_cf(ctx)}"
+            f"<button type=submit>{_e(t('logout'))}</button></form>"
+            f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
+    return _page(auth, t("logout"), body)
 
 
 def _magic_invalid(auth, ctx) -> str:
@@ -705,16 +756,20 @@ def _totp_setup(auth, ctx) -> str:
             f"<input name=code class=code inputmode=numeric maxlength=6 autofocus>"
             f"<button type=submit>{_e(t('setup.activate'))}</button></form>"
             f"<div class=hint id=msg></div>"
-            "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.cfg.csrf_cookie) + "=([^;]+)/)||[])[1]||''}"
+            "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name) + "=([^;]+)/)||[])[1]||''}"
             "async function conf(e){e.preventDefault();const c=e.target.code.value;"
             "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
             "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(e.target.dataset.next||'/')});"
-            "const j=await r.json();"
+            "const j=await r.clone().json();"
             f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
+            # B1-7 auch auf dieser Seite (A-5): Sie ist der Weg, auf dem TOTP entsteht.
+            "await offer(r);"
             # Unter der Pflicht-Kette ist die Anmeldung mit der Bestätigung fertig (A-1) —
             # weiter zum Ziel statt einer Seite, die zum erneuten Code-Tippen einlädt.
             "if(j.ok&&j.next){location.href=j.next}return false}"
-            "document.getElementById('tstotp').addEventListener('submit',conf)</script>")
+            "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
+            + _revoke_js(auth, "'/auth/account?revoke_others=1'"
+                         if getattr(auth.cfg, "account_enabled", False) else ""))
     return _page(auth, t("setup.title"), body)
 
 
@@ -740,6 +795,7 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
 
 
 DEFAULTS = {
+    "logout": _logout,
     "login": _login,
     "totp": _totp,
     "reauth": _reauth,
