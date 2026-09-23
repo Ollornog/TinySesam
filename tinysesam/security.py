@@ -14,6 +14,23 @@ from collections import OrderedDict, deque
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
 
+#: Unicode-Formatzeichen, die die Leserichtung umdrehen (Bidi-Overrides/-Isolates). Sie brechen
+#: keine Zeile, lassen aber im Terminal eine andere stehen, als gespeichert ist (A-7).
+_BIDI = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+                  "\u2066\u2067\u2068\u2069")
+
+
+def _zeilenbrecher(z: str) -> bool:
+    """Ein Zeichen, das in einer Logzeile nichts zu suchen hat.
+
+    Nicht nur ASCII < 0x20 und DEL: Auch die C1-Steuerzeichen (U+0080–U+009F, darunter NEL als
+    Zeilenumbruch und CSI als Terminal-Befehl), der Zeilen- und Absatztrenner U+2028/U+2029 —
+    `str.splitlines()` und manche Anzeigen brechen daran — und die Bidi-Steuerzeichen.
+    """
+    o = ord(z)
+    return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
+
+
 def fuer_log(wert) -> str:
     """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
 
@@ -28,8 +45,112 @@ def fuer_log(wert) -> str:
     Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
     keine Anmeldung, sondern ein Versuch, das Log zu fluten).
     """
-    text = "".join(z for z in str(wert if wert is not None else "") if z >= " " and z != "\x7f")
+    text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
     return (text[:64] + "…") if len(text) > 64 else text
+
+
+def zeilenfest(wert) -> str:
+    """Wie `fuer_log`, nur ohne Längendeckel — für Anzeigen, die den ganzen Wert brauchen.
+
+    Ein Umbruch wird sichtbar (`\\n`) statt still entfernt: In der forensischen Ansicht soll
+    auffallen, DASS jemand einen Zeilenumbruch in einen Benutzernamen geschrieben hat (B5-06).
+    """
+    text = str(wert if wert is not None else "")
+    return "".join(z if not _zeilenbrecher(z) else
+                   {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(z, "?") for z in text)
+
+
+def url_fuer_log(url) -> str:
+    """Eine URL ohne Query und Fragment, zeilenfest und gedeckelt — für das Audit-Log.
+
+    Hinter dem `?` stehen bei geschützten Anwendungen oft Geheimnisse: Freigabe-Links
+    (`?token=…`), OAuth-Codes, signierte Download-Parameter. Im Audit-Log blieben sie dauerhaft
+    lesbar, auch im Panel. Für die Frage „wohin wollte die Anfrage" genügen Host und Pfad; dass
+    eine Query dabei war, zeigt ein `?…`.
+    """
+    text = str(url or "")
+    teile = urlsplit(text) if "://" in text else None
+    if teile is not None and teile.netloc:
+        rest = "?…" if (teile.query or teile.fragment) else ""
+        text = f"{teile.scheme}://{teile.netloc}{teile.path}{rest}"
+    else:
+        kopf, trenner, _ = text.partition("?")
+        kopf, trenner2, _ = kopf.partition("#")
+        text = kopf + ("?…" if (trenner or trenner2) else "")
+    return zeilenfest(text)[:200]
+
+
+class _ZeilenSchutz(logging.Filter):
+    """Neutralisiert Steuerzeichen in den ARGUMENTEN jeder `seclog`-Zeile (B5-14).
+
+    `fuer_log` an jeder Aufrufstelle ist eine Konvention — und zwei Stellen hatten sie nicht
+    (die `X-Forwarded-For`-Warnung und die OIDC-Adresse ohne Beleg). Die nächste neue Zeile
+    vergisst es wieder. Der Filter hängt am Logger selbst und greift deshalb für jede Zeile,
+    auch für künftige. Der Formatstring bleibt unberührt: Er ist Code, nicht Eingabe.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(self._sauber(a) for a in args)
+        elif isinstance(args, dict):
+            record.args = {k: self._sauber(v) for k, v in args.items()}
+        return True
+
+    @staticmethod
+    def _sauber(a):
+        if isinstance(a, (int, float)) or a is None:
+            return a            # %d/%.1f brauchen die Zahl, und eine Zahl bricht keine Zeile
+        return zeilenfest(a)
+
+
+seclog.addFilter(_ZeilenSchutz())
+
+
+def ip_normiert(wert) -> str | None:
+    """Die kanonische Schreibweise einer IP-Adresse, oder None, wenn es keine ist (B5-15).
+
+    Kanonisch heisst: `2001:DB8::1` und `2001:db8:0::1` sind dieselbe Adresse und landen als
+    eine im Protokoll, im Rate-Limit und in der Sperre — sonst zählte jede Schreibweise als
+    eigener Client. Eine Portangabe (`1.2.3.4:5678`, `[2001:db8::1]:443`), wie manche
+    Proxys sie in `X-Forwarded-For` schreiben, wird abgelöst.
+    """
+    roh = str(wert or "").strip()
+    if not roh:
+        return None
+    if roh.startswith("[") and "]" in roh:
+        roh = roh[1:roh.index("]")]
+    elif roh.count(":") == 1:
+        roh = roh.split(":", 1)[0]
+    try:
+        addr = ipaddress.ip_address(roh)
+    except ValueError:
+        return None
+    if getattr(addr, "scope_id", None) is not None:
+        # Die Zonenangabe (`fe80::1%eth0`) fällt weg. `ipaddress` nimmt hinter dem `%` jeden
+        # Text an — auch einen Zeilenumbruch —, und jede Zone wäre ein eigener Schlüssel: Über
+        # einen Proxy, der den Client-Header durchreicht, dreht ein Angreifer sie je Anfrage
+        # weiter und entgeht so Rate-Limit, IP-Sperre und Log-Drossel. Die Zone benennt nur die
+        # Schnittstelle des Absenders, nicht den Client.
+        addr = ipaddress.IPv6Address(addr.packed)
+    return str(addr)
+
+
+def ip_pseudonym(ip: str) -> str:
+    """Eine IP auf ihr Netz kürzen: IPv4 auf /24, IPv6 auf /48 (`audit_ip_pseudonymize`).
+
+    Das ist die Kürzung, die auch Webanalyse-Werkzeuge für „nicht mehr personenbeziehbar"
+    ansetzen. Für die Forensik bleibt das Netz — genug, um einen Provider oder eine Welle
+    zu erkennen, nicht genug, um einen Anschluss zu benennen. Keine IP → Wert unverändert.
+    """
+    norm = ip_normiert(ip)
+    if norm is None:
+        return ip
+    addr = ipaddress.ip_address(norm)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 ist eine IPv4-Adresse
+    netz = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
+    return str(netz)
 
 
 #: Rechte, mit denen die Security-Logdatei angelegt wird — bei der ersten Zeile und nach jeder
@@ -408,7 +529,20 @@ def client_ip(request, trusted_nets) -> str:
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
-                return ip
+                # Nur eine ECHTE Adresse wird Client-IP (B5-15). Vorher ging der erste nicht
+                # vertrauenswürdige Eintrag ungeprüft durch — auch `evil`, ein Zeilenumbruch
+                # oder 4 kB Text, und das als Schlüssel für Rate-Limit, Sperre und Audit-Log.
+                # Ein Proxy, der den Client-Header nur durchreicht statt anzuhängen, macht genau
+                # diesen Eintrag client-steuerbar. Dann lieber die Peer-IP (kollektiv, aber echt).
+                norm = ip_normiert(ip)
+                if norm is not None:
+                    return norm
+                if einmal_melden("xff-ungueltig:" + peer):
+                    seclog.warning(
+                        "X-Forwarded-For von %s nennt keine gültige Adresse (%s) — es bleibt bei "
+                        "der Peer-IP. Reicht der Proxy den Header des Clients nur durch, statt "
+                        "anzuhängen?", peer, fuer_log(ip))
+                return peer
     if xff and peer not in _GEMELDETE_PEERS:
         _GEMELDETE_PEERS.add(peer)
         if not is_trusted(peer, trusted_nets):
@@ -426,7 +560,7 @@ def client_ip(request, trusted_nets) -> str:
                 "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
                 "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
                 "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
-                xff, list(trusted_nets or []), peer)
+                fuer_log(xff), list(trusted_nets or []), peer)
     return peer
 
 

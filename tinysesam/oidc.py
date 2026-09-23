@@ -553,7 +553,7 @@ def register_oidc_routes(router, auth):
                 "Das Admin-Recht aus admin_identifiers hängt in keinem Fall daran; der belegte "
                 "Bootstrap-Weg ist /auth/claim-admin. Schickt dieser IdP den Claim nie und "
                 "verantwortet der Betreiber die Adressen selbst: "
-                "oidc_email_verified_default=True.", mail)
+                "oidc_email_verified_default=True.", security.fuer_log(mail))
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
                        "übernommen=1 rechte=0")
 

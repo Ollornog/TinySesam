@@ -486,4 +486,16 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "hinaus und das Verfahren endet still. Entweder smtp_host setzen oder zur "
                 "Laufzeit auth.set_mailer(...) aufrufen — dann ist diese Meldung gegenstandslos.")
 
+    # Eine negative Frist wäre in `gc()` ein Zeitpunkt in der Zukunft — das ganze Audit-Log
+    # fiele beim nächsten Lauf weg. Ein Tippfehler darf die Forensik nicht löschen.
+    try:
+        _frist = int(getattr(config, "audit_retention_days", 0) or 0)
+    except (TypeError, ValueError):
+        _frist = -1
+    if _frist < 0:
+        fehler.append(
+            f"audit_retention_days={getattr(config, 'audit_retention_days', None)!r} ist keine "
+            "Zahl ≥ 0. 0 heisst „keine Frist“, eine positive Zahl die Tage, die das Audit-Log "
+            "aufbewahrt wird.")
+
     return fehler, warnungen

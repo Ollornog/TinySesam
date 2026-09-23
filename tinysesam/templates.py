@@ -280,7 +280,7 @@ def _totp(auth, ctx) -> str:
 
 
 def _account(auth, ctx) -> str:
-    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path. Selbstverwaltung + Logout.
+    """ctx: user, methods, has_totp, has_pin, is_admin, admin_path, events. Selbstverwaltung + Logout.
     Über auth.set_template('account', fn) komplett ersetzbar."""
     u = ctx["user"]
     t = auth.t
@@ -334,6 +334,23 @@ def _account(auth, ctx) -> str:
         f"<div class=sec><h2>{_e(t('acc.sessions'))}</h2><ul id=sesslist></ul>"
         f"<button class=warn data-act=revokeothers>{_e(t('acc.sessions_revoke'))}</button>"
         "<span id=sess_msg class=msg></span></div>")
+
+    # Eigene Ereignisse (H-7): Wer sieht, dass um 3 Uhr nachts von einer fremden Adresse
+    # angemeldet wurde, meldet sich — das Protokoll lag bisher nur beim Betreiber. Serverseitig
+    # gerendert (kein weiterer Endpunkt), Zeit als UTC, weil die Seite die Zone des Lesers
+    # nicht kennt. `events` fehlt im ctx einer eigenen Vorlage/Vorschau → Abschnitt entfällt.
+    events = ctx.get("events")
+    if events is not None:
+        import datetime as _dt
+        zeilen = "".join(
+            f"<li><code>{_e(_dt.datetime.fromtimestamp(int(ev['ts']), _dt.timezone.utc).strftime('%Y-%m-%d %H:%M'))}"
+            f" UTC</code> {_e(ev['event'])} <small>"
+            f"{_e(t('acc.events_by_admin') if ev.get('by_admin') else (ev.get('ip') or ''))}</small></li>"
+            for ev in events) or f"<li>{_e(t('acc.events_none'))}</li>"
+        sections.append(
+            f"<div class=sec><h2>{_e(t('acc.events'))}</h2>"
+            f"<p class=msg style='margin:0 0 8px'>{_e(t('acc.events_hint'))}</p>"
+            f"<ul id=eventlist>{zeilen}</ul></div>")
 
     admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
                   if ctx.get("is_admin") else "")

@@ -17,6 +17,7 @@ import secrets
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
+from .errors import StateError
 from .manager import _inject_nonce
 from .router import _key_art, gehaertete_route
 from .store import norm_email, valid_email
@@ -137,10 +138,55 @@ def build_admin_router(auth) -> APIRouter:
     async def user_roles(request: Request, uid: int):
         guard(request)
         b = await auth.json_body(request)
+        # Vorher/Nachher ins Protokoll (R6-7): „uid=5" sagte, DASS sich Rechte änderten, nicht
+        # welche. Ob jemand Admin wurde, ist aber genau die Frage nach einem Vorfall.
+        vorher = auth.store.get_user(uid)
+        rollen_vorher = sorted(auth.user_roles(vorher)) if vorher else []
+        admin_vorher = bool(vorher["is_admin"]) if vorher else False
         auth.set_roles(uid, b.get("roles") or [])
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
-        protokoll(request, "user_roles", f"uid={uid}")
+        nachher = auth.store.get_user(uid)
+        rollen_nachher = sorted(auth.user_roles(nachher)) if nachher else []
+        admin_nachher = bool(nachher["is_admin"]) if nachher else False
+        detail = (f"uid={uid} rollen={','.join(rollen_vorher) or '-'}"
+                  f"->{','.join(rollen_nachher) or '-'}")
+        if admin_vorher != admin_nachher:
+            detail += f" admin={int(admin_vorher)}->{int(admin_nachher)}"
+        protokoll(request, "user_roles", detail)
+        return {"ok": True}
+
+    # ---------- Passkeys fremder Konten / Konto löschen (B5-08) ----------
+    # Bisher konnte nur der Inhaber einen Passkey entfernen. Ist das Gerät gestohlen und der
+    # Mensch ausgesperrt, blieb dem Betreiber nur die Datenbank. Dasselbe beim Löschen eines
+    # Kontos: Sperren ging, Löschen (etwa auf Verlangen nach Art. 17 DSGVO) nicht.
+    @ar.get("/api/users/{uid}/passkeys")
+    def user_passkeys(request: Request, uid: int):
+        guard(request)
+        return [{"id": c["id"], "name": c["name"], "created_at": c["created_at"],
+                 "last_used": c["last_used"]} for c in auth.store.list_webauthn(uid)]
+
+    @ar.post("/api/users/{uid}/passkeys/{cid}/delete")
+    def user_passkey_delete(request: Request, uid: int, cid: int):
+        guard(request)
+        if not any(c["id"] == cid for c in auth.store.list_webauthn(uid)):
+            raise HTTPException(404, auth.t("api.not_found"))
+        auth.store.delete_webauthn(cid, uid)
+        # `username` = das betroffene Konto, der Admin steht als akteur= im Detail — so findet
+        # `tinysesam audit --user <inhaber>` den Widerruf.
+        auth.audit("passkey_delete", auth._kontoname(uid), None, f"id={cid}")
+        return {"ok": True}
+
+    @ar.post("/api/users/{uid}/delete")
+    def user_delete(request: Request, uid: int):
+        me = guard(request)
+        if uid == me["id"]:
+            raise HTTPException(400, auth.t("api.no_self_delete"))
+        try:
+            if not auth.delete_user(uid):
+                raise HTTPException(404, auth.t("api.not_found"))
+        except StateError:
+            raise HTTPException(409, auth.t("api.last_admin_delete"))
         return {"ok": True}
 
     # ---------- API-Keys (je User) ----------
@@ -153,11 +199,13 @@ def build_admin_router(auth) -> APIRouter:
     async def user_key_create(request: Request, uid: int):
         guard(request)
         b = await auth.json_body(request)
+        # Die Audit-Zeile schreibt `create_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
         return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"))
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
         guard(request)
+        # Die Audit-Zeile schreibt `revoke_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
 
@@ -165,6 +213,9 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/sessions")
     def sessions(request: Request):
         guard(request)
+        # Auch Lesen wird protokolliert (B5-12): Die Liste nennt IP und Anmeldeweg jedes
+        # Nutzers, und wer als Admin mitliest, soll dabei selbst eine Spur hinterlassen.
+        protokoll(request, "sessions_read")
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
         # `full` ist das HANDLE (sha256 des Tokens), nicht das Token: Es benennt die Sitzung zum
         # Beenden und taugt nicht zum Anmelden. Vorher stand hier das echte Sitzungstoken jedes
@@ -236,10 +287,16 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/security")
     async def security_set(request: Request):
         guard(request)
+        # Vorher/Nachher (R6-7): Wer `max_login_attempts` von 5 auf 5000 stellt, schaltet die
+        # Sperre faktisch ab — im Protokoll stand bisher nur, DASS etwas gespeichert wurde.
+        vorher = auth.all_security()
         for k, v in (await auth.json_body(request)).items():
             auth.set_security(k, v)
-        protokoll(request, "security_update")
-        return auth.all_security()
+        nachher = auth.all_security()
+        geaendert = [f"{k}={vorher[k]}->{nachher[k]}" for k in sorted(nachher)
+                     if vorher.get(k) != nachher[k]]
+        protokoll(request, "security_update", " ".join(geaendert) or "unverändert")
+        return nachher
 
     @ar.get("/api/version")
     def version_get(request: Request):
@@ -249,6 +306,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/audit")
     def audit(request: Request, limit: int = 100):
         guard(request)
+        protokoll(request, "audit_read", f"limit={limit}")    # B5-12, s. sessions_read
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
                 for a in auth.store.recent_audit(limit)]
 
@@ -295,7 +353,8 @@ _KEYS = (
     "f.key_name f.key_expires "
     "th.user th.email th.type th.roles th.status th.actions th.method th.ip th.since th.mfa "
     "th.time th.event th.detail "
-    "active disabled revoked enable disable btn.pw btn.roles btn.keys "
+    "active disabled revoked enable disable btn.pw btn.roles btn.keys btn.passkeys btn.delete "
+    "passkeys no_passkeys confirm.delete confirm.pk_delete "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening version installed update_note"
@@ -439,6 +498,8 @@ async function users(){
         <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
         <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
         <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
+        <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
+        <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
@@ -472,6 +533,12 @@ async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
       <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   if(r.key)prompt(L.key_once,r.key);keys(id,"")}
+async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
+  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
+    <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
+      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
+async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){await p(`/api/users/${uid}/passkeys/${cid}/delete`);pks(uid,name)}}
+async function deluser(id){if(!confirm(L["confirm.delete"]))return;const r=await p(`/api/users/${id}/delete`);if(r.ok)users();else alert(r.detail||L["err.generic"])}
 async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
@@ -496,7 +563,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // Ein delegierter Listener fuer alle Knoepfe, auch die per innerHTML nachgeladenen. Nur Namen
 // aus ACT sind aufrufbar — data-on waehlt eine Aktion aus, es nennt keinen beliebigen Code.
-const ACT={go,mkuser,dis,pw,roles,saveroles,clr,keys,mkkey,revk,revs,savesec};
+const ACT={go,mkuser,dis,pw,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();

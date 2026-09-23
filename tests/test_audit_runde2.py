@@ -915,4 +915,380 @@ r.check("fremdes sub im userinfo-Dokument: weder Adresse noch Rollen wandern ins
         and (_echt["email"] or "") != "chef@example.com",
         f"Konto: {dict(_echt) if _echt else None}")
 
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# T-13, Bereich „Audit und Forensik": Wer, von wo, was genau — und was das Log verfälscht.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+import contextlib as _ctxlib  # noqa: E402
+from tinysesam.__main__ import _audit as _cli_audit, _gc as _cli_gc  # noqa: E402
+
+auth_t, app_t = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
+                     forward_auth_enabled=True)
+auth_t.set_mailer(lambda *a, **k: None)
+_chef_t = auth_t.create_user("chef", password="Geheim12345!", is_admin=True)
+_anna_t = auth_t.create_user("anna", password="Geheim12345!", email="anna@example.com")
+
+
+def _sitzung_t(uid):
+    c = TestClient(app_t)
+    c.cookies.set(auth_t.cfg.session_cookie, auth_t.store.create_session(uid, 3600, True, "password"))
+    return c
+
+
+def _zeilen_t(event, n=500):
+    return [dict(z) for z in auth_t.store.recent_audit(n) if z["event"] == event]
+
+
+c_anna, c_chef = _sitzung_t(_anna_t), _sitzung_t(_chef_t)
+
+# ── B5-02: Konto-Ereignisse tragen Konto und IP ──────────────────────────────────────────
+_start = c_anna.post("/auth/totp/setup/start")
+_geheim = auth_t.store.get_totp(_anna_t)["secret"]
+_best = c_anna.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim).now()})
+_rc = c_anna.post("/auth/totp/recovery")
+r.check("Aufbau: TOTP eingerichtet, Recovery-Codes ausgestellt",
+        _start.status_code == 200 and _best.json().get("ok") and _rc.status_code == 200,
+        f"{_start.status_code} {_best.text[:80]} {_rc.status_code} {_rc.text[:80]}")
+_konto_ev = ("totp_setup_start", "totp_enable", "recovery_generate")
+_ohne = [(e, z["username"], z["ip"]) for e in _konto_ev for z in _zeilen_t(e)
+         if z["username"] != "anna" or not z["ip"]]
+r.check("B5-02: jede Konto-Zeile nennt das Konto UND die IP", not _ohne and all(
+    _zeilen_t(e) for e in _konto_ev), f"ohne Konto/IP: {_ohne}")
+r.check("B5-02: `tinysesam audit --user anna` findet sie (Filter in SQL auf username)",
+        {"totp_setup_start", "totp_enable", "recovery_generate"}
+        <= {z["event"] for z in auth_t.store.recent_audit(50, username="anna")})
+
+# ── B5-07: TOTP-Einrichtung protokolliert, Recovery-Code ≠ TOTP ────────────────────────────
+r.check("B5-07: das Bestätigen der TOTP-Einrichtung hinterlässt `totp_enable`",
+        len(_zeilen_t("totp_enable")) == 1)
+_login_rc = TestClient(app_t)
+_login_rc.post("/auth/login", data={"username": "anna", "password": "Geheim12345!"})
+_rc_antwort = _login_rc.post("/auth/totp", data={"code": _rc.json()["codes"][0]},
+                             follow_redirects=False)
+_rc_zeilen = _zeilen_t("recovery_used")
+r.check("B5-07: ein Recovery-Code im TOTP-Schritt steht als `recovery_used` im Log",
+        _rc_antwort.status_code == 303 and len(_rc_zeilen) == 1
+        and _rc_zeilen[0]["username"] == "anna" and _rc_zeilen[0]["ip"]
+        and "verbleibend=9" in (_rc_zeilen[0]["detail"] or ""),
+        f"HTTP {_rc_antwort.status_code}, Zeilen {_rc_zeilen}")
+
+# ── B5-04 / R6-3: die drei Panel-Routen ohne Akteur ───────────────────────────────────────
+_key_t = c_chef.post(f"/auth/admin/api/users/{_anna_t}/keys", json={"name": "ci"}).json()
+c_chef.post(f"/auth/admin/api/keys/{_key_t['id']}/revoke")
+c_chef.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
+_panel = {e: (_zeilen_t(e) or [{}])[0] for e in ("apikey_create", "apikey_revoke", "invite_create")}
+r.check("B5-04/R6-3: Key anlegen/widerrufen nennt Besitzer, IP und den Admin als akteur=",
+        all(_panel[e].get("username") == "anna" and _panel[e].get("ip")
+            and "akteur=chef" in (_panel[e].get("detail") or "")
+            for e in ("apikey_create", "apikey_revoke")), f"{_panel}")
+r.check("B5-04: die Einladung nennt den einladenden Admin und seine IP",
+        _panel["invite_create"].get("username") == "chef" and _panel["invite_create"].get("ip"),
+        f"{_panel['invite_create']}")
+
+# ── B5-05: Key-Nutzung und -Abweisung ─────────────────────────────────────────────────────
+_key2 = auth_t.create_api_key(_anna_t, name="sync")
+for _ in range(3):
+    TestClient(app_t).get("/auth/me", headers={"X-API-Key": _key2["key"]})
+_nutzung = [z for z in _zeilen_t("apikey_use") if f"key={_key2['id']} " in z["detail"] + " "]
+r.check("B5-05: die Nutzung eines Keys steht mit Besitzer und IP im Log — gedrosselt, 1× statt 3×",
+        len(_nutzung) == 1 and _nutzung[0]["username"] == "anna" and _nutzung[0]["ip"],
+        f"{_nutzung}")
+_sl_puffer = io.StringIO()
+_sl_h = logging.StreamHandler(_sl_puffer)
+_sec.seclog.addHandler(_sl_h)
+try:
+    TestClient(app_t).get("/auth/me", headers={"X-API-Key": _key_t["key"]})     # widerrufen
+    TestClient(app_t).get("/auth/me", headers={"X-API-Key": "tsk_" + "x" * 40})  # unbekannt
+finally:
+    _sec.seclog.removeHandler(_sl_h)
+_abgewiesen = {z["detail"].split("grund=")[-1]: z for z in _zeilen_t("apikey_denied")}
+r.check("B5-05: ein WIDERRUFENER Key, der weiter anklopft, steht im Log (Konto, IP, Grund)",
+        _abgewiesen.get("widerrufen", {}).get("username") == "anna"
+        and _abgewiesen["widerrufen"].get("ip"), f"{_abgewiesen}")
+r.check("B5-05: ein unbekannter Key ebenfalls — und beide im Sicherheits-Log",
+        "unbekannt" in _abgewiesen and _sl_puffer.getvalue().count("api key denied") == 2,
+        _sl_puffer.getvalue())
+
+# ── R6-7: Vorher/Nachher ──────────────────────────────────────────────────────────────────
+c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": ["redaktion"], "is_admin": True})
+_rollen_z = _zeilen_t("user_roles")[0]["detail"] or ""
+r.check("R6-7: die Rollenänderung nennt vorher → nachher, samt Admin-Flag",
+        "rollen=-->redaktion" in _rollen_z and "admin=0->1" in _rollen_z, _rollen_z)
+c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": [], "is_admin": False})
+_vorher_ma = auth_t.sec("max_login_attempts")
+c_chef.post("/auth/admin/api/security", json={"max_login_attempts": _vorher_ma + 995})
+_sec_z = _zeilen_t("security_update")[0]["detail"] or ""
+r.check("R6-7: die Härtungsänderung nennt den alten und den neuen Wert",
+        f"max_login_attempts={_vorher_ma}->{_vorher_ma + 995}" in _sec_z, _sec_z)
+auth_t.set_security("max_login_attempts", _vorher_ma)
+
+# ── B5-12: Lesen wird protokolliert ───────────────────────────────────────────────────────
+c_chef.get("/auth/admin/api/sessions")
+c_chef.get("/auth/admin/api/audit")
+r.check("B5-12: Sitzungsliste und Audit-Log lesen hinterlässt eine Zeile mit dem Leser",
+        (_zeilen_t("sessions_read") or [{}])[0].get("username") == "chef"
+        and (_zeilen_t("audit_read") or [{}])[0].get("username") == "chef")
+
+# ── H-7: eigene Ereignisse auf der Kontoseite ─────────────────────────────────────────────
+_konto_seite = c_anna.get("/auth/account").text
+r.check("H-7: die Kontoseite zeigt die eigenen Ereignisse",
+        "Recent activity" in _konto_seite and "totp_enable" in _konto_seite
+        and "recovery_used" in _konto_seite)
+r.check("H-7: … ohne Detailtext (dort stehen bei Admin-Aktionen fremde Konten)",
+        "akteur=" not in _konto_seite and "verbleibend=" not in _konto_seite)
+
+# ── B5-17: abgewiesene Forward-Auth ───────────────────────────────────────────────────────
+_vorher_fw = len(_zeilen_t("forward_denied"))
+TestClient(app_t).get("/auth/forward")                                   # ohne Nachweis
+_ohne_nachweis = len(_zeilen_t("forward_denied")) - _vorher_fw
+_fw = TestClient(app_t)
+_fw.cookies.set(auth_t.cfg.session_cookie, "abgelaufen-oder-geraten")
+_fw_status = [_fw.get("/auth/forward").status_code for _ in range(3)]
+_fw_z = _zeilen_t("forward_denied")
+r.check("B5-17: eine 401 mit ungültigem Sitzungscookie steht im Log (gedrosselt: 1× für 3 Anfragen)",
+        _fw_status == [401] * 3 and len(_fw_z) - _vorher_fw == 1
+        and "grund=sitzung_ungueltig" in _fw_z[0]["detail"] and _fw_z[0]["ip"],
+        f"{_fw_status} {_fw_z}")
+r.check("B5-17: … ein Aufruf ganz ohne Nachweis (der erste Besuch) dagegen nicht", _ohne_nachweis == 0)
+
+# ── B5-08 / H-13: Passkey widerrufen, Konto löschen, Log anonymisieren ────────────────────
+auth_t.store.add_webauthn(_anna_t, "credid-b5-08", "pubkey", 0, ["usb"], "Stick")
+_pk = c_chef.get(f"/auth/admin/api/users/{_anna_t}/passkeys").json()
+_pk_weg = c_chef.post(f"/auth/admin/api/users/{_anna_t}/passkeys/{_pk[0]['id']}/delete")
+_pk_z = _zeilen_t("passkey_delete")[0]
+r.check("B5-08: der Admin widerruft einen fremden Passkey — protokolliert beim Inhaber",
+        len(_pk) == 1 and _pk_weg.status_code == 200 and not auth_t.store.list_webauthn(_anna_t)
+        and _pk_z["username"] == "anna" and "akteur=chef" in _pk_z["detail"], f"{_pk} {_pk_z}")
+r.check("B5-08: fremder Passkey über die falsche Konto-ID → 404, nichts gelöscht",
+        c_chef.post(f"/auth/admin/api/users/{_chef_t}/passkeys/999/delete").status_code == 404)
+r.check("B5-08: das eigene Konto lässt sich im Panel nicht löschen",
+        c_chef.post(f"/auth/admin/api/users/{_chef_t}/delete").status_code == 400)
+_try_last = None
+try:
+    auth_t.delete_user(_chef_t)
+except Exception as e:        # noqa: BLE001
+    _try_last = type(e).__name__
+r.check("B5-08: der letzte Admin lässt sich nicht löschen (StateError)", _try_last == "StateError",
+        str(_try_last))
+auth_t.store.audit_log("invite_create", "chef", None, "an anna@example.com und annabell")
+_weg = c_chef.post(f"/auth/admin/api/users/{_anna_t}/delete")
+_rest = [dict(z) for z in auth_t.store.recent_audit(1000)]
+r.check("B5-08: Konto gelöscht", _weg.status_code == 200 and auth_t.store.get_user(_anna_t) is None,
+        f"HTTP {_weg.status_code} {_weg.text[:80]}")
+r.check("H-13: im Audit-Log steht der Name nirgends mehr, weder als Konto noch im Detail",
+        not any("anna" == (z["username"] or "") or "anna@example.com" in (z["detail"] or "")
+                for z in _rest),
+        f"{[z for z in _rest if 'anna' in str(z)][:3]}")
+r.check("H-13: … die Zeilen selbst bleiben stehen (Forensik), unter `gelöscht#<id>`",
+        len(auth_t.store.recent_audit(1000, username=f"gelöscht#{_anna_t}")) >= 10)
+r.check("H-13: … und nur ganze Wörter werden ersetzt („annabell“ bleibt)",
+        any("annabell" in (z["detail"] or "") for z in _rest))
+
+# ── B5-11: Aufbewahrungsfrist und IP-Kürzung ──────────────────────────────────────────────
+auth_f, _ = _app(audit_retention_days=30, audit_ip_pseudonymize=True)
+auth_f.store.audit_log("alt", "x", "203.0.113.77")
+auth_f.store.audit_log("neu", "x", "2001:DB8:1234:5678::1")
+auth_f.store._exec("UPDATE audit SET ts = ts - 31*86400 WHERE event='alt'")
+_ips_f = {z["event"]: z["ip"] for z in auth_f.store.recent_audit(10)}
+r.check("B5-11: audit_ip_pseudonymize kürzt IPv4 auf /24 und IPv6 auf /48",
+        _ips_f == {"alt": "203.0.113.0/24", "neu": "2001:db8:1234::/48"}, f"{_ips_f}")
+_gc_f = auth_f.gc()
+r.check("B5-11: gc() löscht Audit-Zeilen jenseits der Frist, die jüngeren bleiben",
+        _gc_f.get("audit") == 1 and [z["event"] for z in auth_f.store.recent_audit(10)] == ["neu"],
+        f"{_gc_f}")
+auth_g, _ = _app()
+auth_g.store.audit_log("alt", "x", "203.0.113.77")
+auth_g.store._exec("UPDATE audit SET ts = ts - 3650*86400")
+r.check("B5-11: ohne Frist (Vorgabe) bleibt das Log unangetastet, und die IP voll",
+        "audit" not in auth_g.gc() and auth_g.store.recent_audit(5)[0]["ip"] == "203.0.113.77")
+_cli_out = io.StringIO()
+with _ctxlib.redirect_stdout(_cli_out):
+    _cli_gc(["--db", auth_g.cfg.db_path, "--audit-days", "30"])
+r.check("B5-11: `tinysesam gc --audit-days N` räumt dasselbe von der Kommandozeile",
+        "audit=1" in _cli_out.getvalue() and not auth_g.store.recent_audit(5), _cli_out.getvalue())
+try:
+    _app(audit_retention_days=-1)
+    _neg = "angenommen"
+except ConfigError:
+    _neg = "abgewiesen"
+r.check("B5-11: eine negative Frist (löschte ALLES) wird beim Aufbau abgewiesen", _neg == "abgewiesen")
+
+# ── B5-06: Log-Injection in `tinysesam audit` ─────────────────────────────────────────────
+auth_i, _ = _app()
+auth_i.store.audit_log("login_fail", "x\n2026-01-01 00:00:00  login  admin  198.51.100.1  ok\x1b[2J",
+                       "198.51.100.9", "password\nzweite")
+_cli_out = io.StringIO()
+with _ctxlib.redirect_stdout(_cli_out):
+    _cli_audit(["--db", auth_i.cfg.db_path])
+_cli_zeilen = _cli_out.getvalue().splitlines()
+r.check("B5-06: ein Umbruch im Benutzernamen erzeugt in `tinysesam audit` KEINE zweite Zeile",
+        len(_cli_zeilen) == 1 and "\\n" in _cli_zeilen[0] and "\x1b" not in _cli_out.getvalue(),
+        repr(_cli_out.getvalue()))
+
+# ── B5-14: Steuerzeichen in JEDER seclog-Zeile, auch ohne fuer_log an der Aufrufstelle ────
+_sl_puffer = io.StringIO()
+_sl_h = logging.StreamHandler(_sl_puffer)
+_sec.seclog.addHandler(_sl_h)
+try:
+    _sec.seclog.warning("probe user=%s ip=%s", "x\nfailed login user=y ip=192.0.2.66", "192.0.2.1")
+finally:
+    _sec.seclog.removeHandler(_sl_h)
+r.check("B5-14: der Logger selbst neutralisiert Umbrüche in den Argumenten (eine Zeile, nicht zwei)",
+        _sl_puffer.getvalue().count("\n") == 1 and "192.0.2.66" in _sl_puffer.getvalue(),
+        repr(_sl_puffer.getvalue()))
+
+
+# ── B5-15: das Feld `ip` enthält eine IP ─────────────────────────────────────────────────
+class _Anfr:
+    def __init__(self, peer, xff):
+        self.client = type("C", (), {"host": peer})()
+        self.headers = {"x-forwarded-for": xff}
+
+
+_sec.einmal_melden_zuruecksetzen()
+_proxy = ["127.0.0.1/32"]
+r.check("B5-15: ein X-Forwarded-For ohne gültige Adresse wird nicht zur Client-IP",
+        _sec.client_ip(_Anfr("127.0.0.1", "evil\nfailed login"), _proxy) == "127.0.0.1")
+r.check("B5-15: gültige Adressen kommen kanonisch an (Schreibweise ≠ neuer Client)",
+        _sec.client_ip(_Anfr("127.0.0.1", "2001:DB8:0::1"), _proxy) == "2001:db8::1"
+        and _sec.client_ip(_Anfr("127.0.0.1", "198.51.100.7:4711"), _proxy) == "198.51.100.7")
+auth_i.store.audit_log("probe", "x", "kein\nip")
+r.check("B5-15: das Audit-Log nimmt in der ip-Spalte nichts mit Zeilenumbruch an",
+        "\n" not in auth_i.store.recent_audit(1)[0]["ip"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# T-13, Angriff auf die Audit-Fixes (A-1 … A-7): was die Reparaturen selbst aufrissen.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+# ── A-1: IPv6-Zonenangabe als frei drehbarer Schlüssel ────────────────────────────────────
+# `ipaddress` nimmt hinter dem `%` jeden Text. Über einen Proxy, der XFF nur durchreicht, wäre
+# jede Zone ein neuer Client — für Rate-Limit, Sperre und Log-Drossel.
+_sec.einmal_melden_zuruecksetzen()
+_zonen = {_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::2%z{i}"), _proxy) for i in range(20)}
+r.check("A-1: wechselnde IPv6-Zonen ergeben EINE Client-IP (ohne Zone)",
+        _zonen == {"2001:db8::2"}, f"{_zonen}")
+auth_z, _ = _app(trusted_proxies=["127.0.0.1/32"])
+_erlaubt = sum(auth_z.rate_ok(_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::3%q{i}"), _proxy))
+               for i in range(60))
+_fest = sum(auth_z.rate_ok("2001:db8::4") for _ in range(60))
+r.check("A-1: das Rate-Limit greift bei Zonen-Rotation genauso wie bei fester Adresse",
+        _erlaubt == _fest < 60, f"Rotation {_erlaubt}/60, fest {_fest}/60")
+auth_i.store.audit_log("probe_zone", "x", "fe80::1%a\nFAKE 2026-01-01 login admin")
+r.check("A-1: eine Zone mit Zeilenumbruch landet nicht in der ip-Spalte",
+        auth_i.store.recent_audit(1)[0]["ip"] == "fe80::1", repr(auth_i.store.recent_audit(1)[0]["ip"]))
+
+# ── A-2 / A-3: Konto löschen trifft fremde Zeilen nicht, dafür die Anmeldeversuche per Mail ──
+auth_d, app_d2 = _app(csrf_enabled=False)
+_ch = auth_d.create_user("chef", password="Geheim12345!", is_admin=True)
+_adm = auth_d.create_user("admin", password="Geheim12345!", email="Anna.Admin@example.com",
+                          is_admin=True)
+_bob = auth_d.create_user("bob", password="Geheim12345!")
+_kd = TestClient(app_d2)
+_kd.cookies.set(auth_d.cfg.session_cookie, auth_d.store.create_session(_adm, 3600, True, "password"))
+_kd.post(f"/auth/admin/api/users/{_bob}/roles", json={"roles": ["ops"], "is_admin": True})
+auth_d.record_login("bob", "198.51.100.3", False, "password")
+auth_d.record_login("anna.admin@example.com", "198.51.100.4", False, "password")
+auth_d.record_login("Anna.Admin@example.com", "198.51.100.4", False, "password")
+auth_d.delete_user(_adm)
+_zd = [dict(z) for z in auth_d.store.recent_audit(200)]
+_rollen_d = next(z for z in _zd if z["event"] == "user_roles")
+r.check("A-2: ein gelöschtes Konto `admin` verstümmelt `admin=0->1` einer FREMDEN Zeile nicht",
+        "admin=0->1" in _rollen_d["detail"] and "gelöscht" not in _rollen_d["detail"],
+        _rollen_d["detail"])
+r.check("A-2: … dieselbe Zeile nennt den gelöschten Admin als Täter nicht mehr",
+        _rollen_d["username"] == f"gelöscht#{_adm}", f"{_rollen_d}")
+_bob_fail = next(z for z in _zd if z["event"] == "login_fail" and z["username"] == "bob")
+r.check("A-2: die Methode im Detail fremder Fehlversuche bleibt unberührt",
+        _bob_fail["detail"].startswith("password "), _bob_fail["detail"])
+_mail_rest = [z for z in _zd if "anna.admin@example.com" in str(z).lower()]
+r.check("A-3: Anmeldeversuche unter der E-Mail-Adresse sind im Audit-Log anonymisiert",
+        not _mail_rest and sum(1 for z in _zd if z["event"] == "login_fail"
+                               and z["username"] == f"gelöscht#{_adm}") == 2, f"{_mail_rest}")
+_versuche = auth_d.store._all("SELECT username FROM login_attempt", ())
+r.check("A-3: … und ihre login_attempt-Zeilen sind gelöscht (nur bob bleibt)",
+        [v["username"] for v in _versuche] == ["bob"], f"{[dict(v) for v in _versuche]}")
+auth_d.store.audit_log("apikey_create", "bob", None, "key=9 akteur=Admin")
+auth_d.store.audit_log("user_create", "chef", None, "admin service=False")
+auth_d.store.audit_anonymisieren("admin", "gelöscht#99")
+_nach = {z["event"]: z["detail"] for z in auth_d.store.recent_audit(2)}
+r.check("A-2: dort, wo ein Name steht (akteur=, Kopf von user_create), wird er weiter ersetzt",
+        _nach == {"apikey_create": "key=9 akteur=gelöscht#99",
+                  "user_create": "gelöscht#99 service=False"}, f"{_nach}")
+
+# ── A-4: die CSRF-Ausnahme prüft den Key VOR current_user — die IP muss schon da sein ─────
+auth_k, app_k = _app()
+_kchef = auth_k.create_user("chef", password="Geheim12345!", is_admin=True)
+_k_weg = auth_k.create_api_key(_kchef, name="alt")
+auth_k.revoke_api_key(_k_weg["id"])
+_k_ok = auth_k.create_api_key(_kchef, name="ok")
+_kc = TestClient(app_k, client=("198.51.100.50", 1))
+for _k in (_k_weg["key"], _k_ok["key"]):
+    _kc.post(f"/auth/admin/api/users/{_kchef}/roles", json={"roles": []}, headers={"X-API-Key": _k})
+_kz = [dict(z) for z in auth_k.store.recent_audit(50) if z["event"].startswith("apikey_")
+       and z["event"] != "apikey_create" and z["event"] != "apikey_revoke"]
+r.check("A-4: widerrufener Key an einer POST-Route: apikey_denied MIT IP",
+        [(z["event"], z["ip"]) for z in _kz if z["event"] == "apikey_denied"]
+        == [("apikey_denied", "198.51.100.50")], f"{_kz}")
+r.check("A-4: gültiger Key an einer POST-Route: EINE apikey_use-Zeile, mit IP",
+        [(z["event"], z["ip"]) for z in _kz if z["event"] == "apikey_use"]
+        == [("apikey_use", "198.51.100.50")], f"{_kz}")
+
+# ── A-5: die Kontoseite zeigt nicht die IP des Admins ─────────────────────────────────────
+auth_e, app_e = _app(csrf_enabled=False)
+_echef = auth_e.create_user("chef", password="Geheim12345!", is_admin=True)
+_eanna = auth_e.create_user("anna", password="Geheim12345!")
+_ec = TestClient(app_e, client=("198.51.100.50", 1))
+_ec.cookies.set(auth_e.cfg.session_cookie, auth_e.store.create_session(_echef, 3600, True, "password"))
+_ea = TestClient(app_e, client=("203.0.113.9", 1))
+_ea.cookies.set(auth_e.cfg.session_cookie, auth_e.store.create_session(_eanna, 3600, True, "password"))
+_ec.post(f"/auth/admin/api/users/{_eanna}/keys", json={"name": "ci"})
+auth_e.audit("password_change", "anna", "203.0.113.9")
+_eigene = auth_e.own_events(_eanna)
+_seite_e = _ea.get("/auth/account").text
+r.check("A-5: eine Admin-Aktion am eigenen Konto zeigt die Admin-IP nicht, nur „durch einen Admin“",
+        ("apikey_create", None, True) in [(e["event"], e["ip"], e["by_admin"]) for e in _eigene]
+        and "198.51.100.50" not in _seite_e and "by an administrator" in _seite_e, f"{_eigene}")
+r.check("A-5: … die eigenen Zeilen behalten ihre IP",
+        ("password_change", "203.0.113.9", False) in
+        [(e["event"], e["ip"], e["by_admin"]) for e in _eigene] and "203.0.113.9" in _seite_e)
+
+# ── A-6: kein Query-String (Freigabe-Token) im Audit-Log ─────────────────────────────────
+_fw6 = TestClient(app_t, client=("198.51.100.66", 1))
+_fw6.cookies.set(auth_t.cfg.session_cookie, "abgelaufen")
+_fw6.get("/auth/forward", headers={"x-forwarded-proto": "https", "x-forwarded-host": "app.example.com",
+                                   "x-forwarded-uri": "/share?t=GEHEIM#frag"})
+_fw6_z = [z["detail"] for z in auth_t.store.recent_audit(50) if z["event"] == "forward_denied"
+          and z["ip"] == "198.51.100.66"]
+r.check("A-6: forward_denied nennt Host und Pfad, aber nicht den Query-String",
+        len(_fw6_z) == 1 and "GEHEIM" not in _fw6_z[0] and "/share?…" in _fw6_z[0], f"{_fw6_z}")
+r.check("A-6: url_fuer_log auch für relative Ziele und ohne Query",
+        _sec.url_fuer_log("/a/b?code=x") == "/a/b?…" and _sec.url_fuer_log("https://h.example/p")
+        == "https://h.example/p" and _sec.url_fuer_log("/x#t") == "/x?…")
+
+# ── A-7: C1-Steuerzeichen, Zeilentrenner und Bidi-Overrides ──────────────────────────────
+auth_c, _ = _app()
+auth_c.store.audit_log("login_fail", "x\x852026-01-01 login admin zeile\x9b2J‮evil",
+                       "198.51.100.9", "d ")
+_cli_out = io.StringIO()
+with _ctxlib.redirect_stdout(_cli_out):
+    _cli_audit(["--db", auth_c.cfg.db_path])
+_c7 = _cli_out.getvalue()
+r.check("A-7: NEL/U+2028/U+2029 erzeugen in `tinysesam audit` keine weitere Zeile, CSI und "
+        "U+202E kommen nicht roh an",
+        len(_c7.splitlines()) == 1 and not any(z in _c7 for z in "\x85\x9b  ‮"),
+        repr(_c7))
+_sl_puffer = io.StringIO()
+_sl_h = logging.StreamHandler(_sl_puffer)
+_sec.seclog.addHandler(_sl_h)
+try:
+    _sec.seclog.warning("probe user=%s ip=%s", "x\x85failed login user=y ip=192.0.2.66‮",
+                        "192.0.2.1")
+finally:
+    _sec.seclog.removeHandler(_sl_h)
+r.check("A-7: auch im Sicherheits-Log (Filter am Logger) und in fuer_log",
+        len(_sl_puffer.getvalue().splitlines()) == 1 and "\x85" not in _sl_puffer.getvalue()
+        and "‮" not in _sl_puffer.getvalue()
+        and _sec.fuer_log("a\x9bb c‮d") == "abcd", repr(_sl_puffer.getvalue()))
+
 sys.exit(r.done())

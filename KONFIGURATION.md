@@ -267,7 +267,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `redis_url` | `str` | `""` | z.B. redis://localhost:6379/0 |
 | `trusted_redirect_hosts` | `list[str]` | `list` | Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade). Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden. |
 | `security_log` | `str` | `""` | Datei, in die der Logger "tinysesam.security" zusätzlich schreibt — das Lesefutter für fail2ban (deploy/fail2ban/), z.B. /var/log/tinysesam/security.log. Leer = nur an den Logger; wer das Logging selbst einrichtet, lässt es leer. Ist die Datei nicht schreibbar, warnt TinySesam und läuft weiter. NEU angelegt wird sie mit 0640 statt mit der umask (auch die nach einer Rotation), denn darin stehen Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben. Soll ein DRITTER Benutzer mitlesen (Log-Versand, weder Eigentümer noch in der Gruppe), führt der Weg über die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` (steht so in deploy/fail2ban/tinysesam-jail.conf). Ohne sie entsteht die Datei bei der nächsten Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den Lesezugriff — nicht beim Update, sondern erst bei der Rotation. |
+| `audit_retention_days` | `int` | `0` | Aufbewahrung des Audit-Logs in Tagen: `auth.gc()` löscht ältere Zeilen (B5-11). 0 = keine Frist, das Log wächst wie bisher unbegrenzt. Im Audit-Log stehen Benutzernamen und IPs, also personenbezogene Daten — eine Frist ist Sache des Betreibers (Zweck und Dauer gehören in sein Verarbeitungsverzeichnis). Die Vorgabe löscht deshalb nichts von selbst. Das Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile. |
+| `audit_ip_pseudonymize` | `bool` | `False` | IPs im Audit-Log auf ihr Netz kürzen (IPv4 /24, IPv6 /48). Gilt für neue Zeilen; Sperre, Rate-Limit und security_log (fail2ban) sehen weiterhin die volle Adresse, sonst träfe eine Sperre das ganze Netz. |
 
 ---
 
-135 Felder, erzeugt aus `tinysesam/config.py`.
+137 Felder, erzeugt aus `tinysesam/config.py`.

@@ -391,6 +391,16 @@ class TinySesamConfig:
     # Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den
     # Lesezugriff — nicht beim Update, sondern erst bei der Rotation.
     security_log: str = ""
+    # Aufbewahrung des Audit-Logs in Tagen: `auth.gc()` löscht ältere Zeilen (B5-11). 0 = keine
+    # Frist, das Log wächst wie bisher unbegrenzt. Im Audit-Log stehen Benutzernamen und IPs,
+    # also personenbezogene Daten — eine Frist ist Sache des Betreibers (Zweck und Dauer gehören
+    # in sein Verarbeitungsverzeichnis). Die Vorgabe löscht deshalb nichts von selbst. Das
+    # Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile.
+    audit_retention_days: int = 0
+    # IPs im Audit-Log auf ihr Netz kürzen (IPv4 /24, IPv6 /48). Gilt für neue Zeilen; Sperre,
+    # Rate-Limit und security_log (fail2ban) sehen weiterhin die volle Adresse, sonst träfe eine
+    # Sperre das ganze Netz.
+    audit_ip_pseudonymize: bool = False
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 

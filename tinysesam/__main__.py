@@ -189,12 +189,17 @@ def _gc(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gc",
         description="Abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche löschen.",
-        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht — das Audit-Log bleibt "
-               "bewusst unangetastet.")
+        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht. Das Audit-Log bleibt "
+               "unangetastet, solange --audit-days nicht gesetzt ist.")
     ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
     ap.add_argument("--attempts-older-than", type=int, default=86400, metavar="SEK",
                     help="Login-Versuche älter als N Sekunden löschen (Vorgabe: 86400)")
+    ap.add_argument("--audit-days", type=int, default=0, metavar="TAGE",
+                    help="Audit-Einträge älter als N Tage löschen (Vorgabe: 0 = keine; "
+                         "Gegenstück zu config.audit_retention_days)")
     a = ap.parse_args(argv)
+    if a.audit_days < 0:
+        ap.error("--audit-days muss ≥ 0 sein")
     store = _oeffne(a.db)
     if store is None:
         return 1
@@ -206,6 +211,8 @@ def _gc(argv) -> int:
         "resource_unlocks": store.gc_resource_unlocks(),
         "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
     }
+    if a.audit_days > 0:
+        zahlen["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
     print(" ".join(f"{k}={v}" for k, v in zahlen.items()))
     return 0
 
@@ -231,10 +238,15 @@ def _audit(argv) -> int:
     if not zeilen:
         print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
         return 0
+    # Jedes Feld durch `zeilenfest` (B5-06): Benutzername und Detail stammen aus Formularen und
+    # fremden Antworten. Ein `\n` darin druckte hier eine zweite, frei erfundene Zeile — mit
+    # Zeitstempel, Ereignis und IP nach Wahl — genau in der Ansicht, auf die man sich im
+    # Anlassfall verlässt. Ein Steuerzeichen (ESC) konnte zudem das Terminal selbst umstellen.
+    from .security import zeilenfest as _z
     for z in reversed(zeilen):
         zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{zeit}  {z['event']:22} {(z['username'] or '-'):16} "
-              f"{(z['ip'] or '-'):18} {z['detail'] or ''}")
+        print(f"{zeit}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
+              f"{_z(z['ip'] or '-'):18} {_z(z['detail'] or '')}")
     return 0
 
 
