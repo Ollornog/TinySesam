@@ -1,7 +1,15 @@
 """Passwort-Hashing. Bevorzugt argon2 (argon2-cffi); Fallback auf stdlib-scrypt,
-damit TinySesam auch ohne argon2-cffi läuft. Beide sind speicher-hart und sicher."""
+damit TinySesam auch ohne argon2-cffi läuft. Beide sind speicher-hart und sicher.
+
+Die Richtung zählt: scrypt-Hashes prüft jede Installation, argon2-Hashes nur eine mit dem Extra
+`[argon2]`. Fehlt es zur Laufzeit — neues Abbild ohne das Extra, `pip install tinysesam` statt
+`tinysesam[argon2]`, ein venv neu aufgesetzt —, passt kein einziges Bestandspasswort mehr (B6-8).
+Das bleibt so (ein argon2-Hash lässt sich ohne argon2 nicht prüfen), aber es geschieht nicht mehr
+still: `TinySesam()` zählt die betroffenen Hashes beim Start, und der erste Fehlschlag dieser Art
+im Betrieb schreibt eine Zeile mit der Abhilfe.
+"""
 from __future__ import annotations
-import hashlib, os, base64, hmac
+import hashlib, os, base64, hmac, logging
 
 try:
     from argon2 import PasswordHasher
@@ -76,7 +84,33 @@ def verify_password(pw: str, stored: str) -> bool:
             return False
         except Exception:
             return False
+    if ist_argon2(stored):
+        _argon2_fehlt_melden()
     return False
+
+
+#: Hinweis, wenn ein argon2-Hash ohne das Extra auftaucht — eine Zeile, mit der Abhilfe.
+ARGON2_FEHLT = ("Das Extra [argon2] fehlt, die Datenbank enthält aber argon2-Hashes: Diese "
+                "Passwörter/PINs lassen sich nicht prüfen, jede Anmeldung damit scheitert. "
+                "Abhilfe: pip install 'tinysesam[argon2]' und neu starten.")
+_ARGON2_GEMELDET = {"ja": False}
+
+
+def argon2_verfuegbar() -> bool:
+    """Ist das Extra `[argon2]` in diesem Prozess nutzbar?"""
+    return _ARGON
+
+
+def ist_argon2(stored) -> bool:
+    return isinstance(stored, str) and stored.startswith("$argon2")
+
+
+def _argon2_fehlt_melden() -> None:
+    """Einmal je Prozess: im Betrieb wäre es sonst eine Zeile je Anmeldeversuch."""
+    if _ARGON2_GEMELDET["ja"]:
+        return
+    _ARGON2_GEMELDET["ja"] = True
+    logging.getLogger("tinysesam").error(ARGON2_FEHLT)
 
 
 # Dummy-Hash (mit dem AKTIVEN Verfahren, einmalig erzeugt) für Timing-Ausgleich: bei unbekanntem

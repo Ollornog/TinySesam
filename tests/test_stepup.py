@@ -367,6 +367,93 @@ assert r.status_code == 303, f"Bestätigung nach Entsperren scheitert: {r.status
 ok("…entsperrbar, danach bestätigt dasselbe Konto wieder")
 os.remove(db5)
 
+
+# ---------- H-18 (b): jede Selbstverwaltungsroute ist eingeordnet und hält ihre Klasse ----------
+# R3-3 hat fünf Routen an die Step-up-Frische gebunden — einzeln. Eine sechste Route, die einen
+# Faktor anlegt oder abbaut, fiele keinem Test auf. Deshalb: Jede POST-Route des Routers, die
+# nicht zum Anmeldefluss gehört, steht in genau einer Klasse, und jede Klasse wird gemessen.
+# Eine neue Route ohne Einordnung macht diese Prüfung rot — das ist der Zweck.
+db6 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, rp_name="Test",
+                                  passkey_enabled=HAT_PASSKEY, oidc_enabled=False,
+                                  cookie_secure=False, stepup_max_age_sec=900, pin_enabled=True,
+                                  apikey_enabled=True, account_enabled=True,
+                                  resource_locks_enabled=True))
+app6 = FastAPI()
+router6 = auth6.router()
+app6.include_router(router6)
+uid6 = auth6.create_user("selbst", password="Geheim12345!")
+auth6.set_pin(uid6, "471193")
+_sec6 = auth6.totp_begin(uid6)["secret"]
+assert auth6.totp_confirm(uid6, pyotp.TOTP(_sec6).now())
+key6 = auth6.create_api_key(uid6, "bot")["key"]
+
+#: Anmeldefluss: Diese Routen SIND die Bestätigung, sie verwalten nichts.
+ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request", "/auth/reauth",
+                "/auth/forgot", "/auth/reset", "/auth/register", "/auth/resource/{name}",
+                "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish"}
+#: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
+STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
+          "/auth/passkey/delete"}
+#: Das alte Passwort ist die Bestätigung (gedrosselt, gesperrt, protokolliert — R4-10).
+PASSWORT = {"/auth/password"}
+#: Einrichtung eines Faktors: nur mit interaktiver Sitzung, nie mit API-Key (R3-1/R3-3).
+NUR_SITZUNG = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
+               "/auth/passkey/register/finish"}
+#: Bekannt offen — mit Begründung. Wird eine davon gebunden, gehört sie nach STEPUP.
+OFFEN = {"/auth/sessions/revoke": "F-09 (Sitzungen beenden ohne erneute Authentisierung)",
+         "/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
+         "/auth/apikeys/{key_id}/revoke": "Key-Widerruf ohne Step-up (gemeldet mit H-18)"}
+
+# Aus dem Router selbst, nicht aus `app6.routes`: Neuere FastAPI-Fassungen legen eingebundene
+# Router dort als ein Objekt ohne Pfad ab — die Liste wäre leer und die Prüfung still grün.
+_post6 = {rt.path for rt in router6.routes
+          if "POST" in (getattr(rt, "methods", None) or ())
+          and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
+_klassen = [ANMELDEFLUSS, STEPUP, PASSWORT, NUR_SITZUNG, set(OFFEN)]
+_uneingeordnet = sorted(p for p in _post6 if not any(p in k for k in _klassen))
+assert not _uneingeordnet, f"Selbstverwaltungsroute ohne Einordnung: {_uneingeordnet}"
+_doppelt = [p for p in _post6 if sum(p in k for k in _klassen) > 1]
+assert not _doppelt, _doppelt
+assert STEPUP & _post6 and NUR_SITZUNG & _post6, f"Wächter ohne Treffer: Router-Aufbau geändert? {sorted(_post6)}"
+ok(f"H-18: alle {len(_post6)} POST-Routen eingeordnet (Anmeldefluss, Step-up, Passwort, Sitzung, offen)")
+
+
+def _abgestanden_client():
+    """Voll angemeldet, aber Anmeldung UND letzte Bestätigung liegen lange zurück."""
+    cl = TestClient(app6)
+    tok = auth6.store.create_session(uid6, 3600, True, "password")
+    alt = int(time.time()) - 100000
+    auth6.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE token_hash=?",
+                      (alt, alt, auth6.store.session_hash(tok)))
+    cl.cookies.set(auth6.cfg.session_cookie, tok)
+    return cl
+
+
+_nutzlast = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"data": {"code": "000000"}},
+             "/auth/password": {"json": {"current": "falsch-falsch", "new": "Neu1234567890!"}},
+             "/auth/sessions/revoke": {"json": {"scope": "others"}},
+             "/auth/apikeys": {"json": {"name": "neu"}}}
+for pfad in sorted(STEPUP & _post6):
+    r = _abgestanden_client().post(pfad, headers=JSON, **_nutzlast.get(pfad, {}))
+    assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \
+        f"{pfad}: abgelaufene Bestätigung kam durch ({r.status_code}) — Step-up fehlt"
+for pfad in sorted(NUR_SITZUNG & _post6):
+    r = TestClient(app6).post(pfad, headers={**JSON, "X-API-Key": key6}, **_nutzlast.get(pfad, {}))
+    assert r.status_code in (401, 403), f"{pfad}: API-Key richtet einen Faktor ein ({r.status_code})"
+r = _abgestanden_client().post("/auth/password", headers=JSON, **_nutzlast["/auth/password"])
+assert r.status_code == 403 and auth6.check_password("selbst", "Geheim12345!"), \
+    f"/auth/password ohne das alte Passwort: {r.status_code}"
+for pfad in sorted(set(OFFEN) & _post6):
+    ziel = pfad.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
+    r = _abgestanden_client().post(ziel, headers=JSON, **_nutzlast.get(pfad, {}))
+    assert r.status_code == 200, (
+        f"{pfad} verlangt jetzt eine Bestätigung ({r.status_code}) — aus OFFEN nach STEPUP "
+        f"verschieben ({OFFEN[pfad]})")
+ok(f"H-18: {len(STEPUP & _post6)} Routen verlangen Step-up, {len(NUR_SITZUNG & _post6)} nur eine "
+   f"Sitzung, {len(set(OFFEN) & _post6)} bekannt offen ({', '.join(sorted(set(OFFEN.values())))})")
+os.remove(db6)
+
 os.remove(db)
 os.remove(db2)
 os.remove(db3)

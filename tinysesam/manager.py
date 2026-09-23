@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import re
 import sys
-import time
 import json
 import hashlib
 import secrets
@@ -26,8 +25,9 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email
+from .store import Store, norm_email, jetzt as _jetzt
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
+from . import passwords as _passwords
 from .templates import Templates
 from . import totp as _totp
 from . import security
@@ -242,6 +242,15 @@ class TinySesam:
                                          "Header-Name")
         self.cfg = config
         self.store = Store(config.db_path)
+        # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
+        # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
+        # Beim Start zählen und sagen, wie viele es trifft; der Start selbst bleibt möglich
+        # (Passkey, OIDC und SSO hängen nicht daran, und ein Dienst, der wegen eines fehlenden
+        # Pakets gar nicht mehr hochkommt, wäre der grössere Ausfall).
+        if not _passwords.argon2_verfuegbar():
+            betroffen = self.store.zaehle_argon2_hashes()
+            if betroffen:
+                security.seclog.error("%s (%d betroffene Hashes)", _passwords.ARGON2_FEHLT, betroffen)
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
@@ -569,7 +578,7 @@ class TinySesam:
                     "keinen anderen Weg gibt, apikey_allow_unlimited=True.")
             expires_at = None
         else:
-            expires_at = int(time.time()) + expires_days * 86400
+            expires_at = _jetzt() + expires_days * 86400
 
         abgeschnitten = []
         if roles is not None:
@@ -622,7 +631,7 @@ class TinySesam:
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
         if not row or row["revoked"]:
             return None, None
-        if row["expires_at"] and row["expires_at"] < int(time.time()):
+        if row["expires_at"] and row["expires_at"] < _jetzt():
             return None, None
         u = self.store.get_user(row["user_id"])
         if not u or u["disabled"]:
@@ -830,7 +839,7 @@ class TinySesam:
         if not self.cfg.admin_enabled or self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
             return None
         raw = self.store.get_setting("admin_claim")
-        now = int(time.time())
+        now = _jetzt()
         if raw:
             token, exp = raw.split(":", 1)
             if int(exp) > now:
@@ -847,7 +856,7 @@ class TinySesam:
         if not raw:
             return False
         want, exp = raw.split(":", 1)
-        if int(exp) <= int(time.time()) or not secrets.compare_digest(token, want):
+        if int(exp) <= _jetzt() or not secrets.compare_digest(token, want):
             return False
         self.store.set_setting("admin_claim", "")     # einmalig
         self.store.set_admin(user["id"], True)
@@ -981,7 +990,7 @@ class TinySesam:
         Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
         daraus eine Abweisung.
         """
-        jetzt = int(time.time())
+        jetzt = _jetzt()
         kennung = str(kennung or "").strip()
         if not kennung:
             if self.cfg.federation_require_stable_id:
@@ -1233,7 +1242,7 @@ class TinySesam:
 
     def is_pin_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
-        since = int(time.time()) - self.sec("lockout_window_sec")
+        since = _jetzt() - self.sec("lockout_window_sec")
         limit = self.sec("pin_max_attempts")
         if username and self.store.count_fails(since, username=username, method="pin") >= limit:
             return True
@@ -1304,7 +1313,7 @@ class TinySesam:
         (siehe `is_password_change_locked`). Nur wo ein Fremder von aussen raten kann, zählt
         zusätzlich die Adresse mit (`is_resource_locked`).
         """
-        since = int(time.time()) - self.sec("lockout_window_sec")
+        since = _jetzt() - self.sec("lockout_window_sec")
         if username and self.store.count_fails(since, username=username, method=method) >= limit:
             self._abgewiesen(username, ip, f"lockout_{method}", login=False)
             return True
@@ -1598,7 +1607,7 @@ class TinySesam:
         raw = secrets.token_urlsafe(32)
         h = hashlib.sha256(raw.encode()).hexdigest()
         ttl = int(ttl_min if ttl_min is not None else self.cfg.magiclink_ttl_min) * 60
-        self.store.add_magic_token(h, purpose, int(time.time()) + ttl, user_id, email, payload)
+        self.store.add_magic_token(h, purpose, _jetzt() + ttl, user_id, email, payload)
         return raw
 
     #: Wo ein Token eingelöst wird — je Zweck ein eigener Endpunkt. Bis 0.15 liefen alle vier
@@ -1643,7 +1652,7 @@ class TinySesam:
         if not raw:
             return None
         row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
-        if not row or row["used_at"] or row["expires_at"] < int(time.time()):
+        if not row or row["used_at"] or row["expires_at"] < _jetzt():
             return None
         if purpose and row["purpose"] != purpose:
             return None
@@ -1730,7 +1739,7 @@ class TinySesam:
         schliesst dieses Fenster — und zwar beim ERSTEN vollständigen Login, egal auf welchem
         Weg er zustande kam. Ein offenes Einrichtungsfenster wird dabei geschlossen: Es war für
         genau diesen einen Vorgang gedacht."""
-        if not self.store.mark_first_login(user_id, int(time.time())):
+        if not self.store.mark_first_login(user_id, _jetzt()):
             return
         u = self.store.get_user(user_id)
         try:
@@ -1750,7 +1759,17 @@ class TinySesam:
         SAML und LDAP kennen keinen Beleg und reichen `False` durch) — hier entscheidet sich
         der Erst-Admin, und eine unbelegte Adresse darf ihn nicht tragen. Der Faktor geht
         mit an `maybe_promote_admin`: Für einen föderierten Faktor gilt dort fail-closed,
-        ein vergessenes Argument befördert also nicht."""
+        ein vergessenes Argument befördert also nicht.
+
+        Ein gesperrtes Konto bekommt hier nie eine Sitzung (403) — egal, welcher Weg den Faktor
+        geprüft hat. Jeder Anmeldeweg endet in dieser Methode; die Prüfung in den einzelnen
+        Wegen bleibt, aber die Klasse hängt nicht mehr daran, dass jeder neue Weg sie kennt
+        (H-18: Anmelde-Link und Passkey legten für ein gesperrtes Konto eine Sitzung an, die
+        erst `current_user()` wieder verwarf)."""
+        konto = self.store.get_user(user_id)
+        if not konto or konto["disabled"]:
+            self.audit("login_disabled", str(konto["username"]) if konto else None, ip, factor)
+            raise HTTPException(403, self.t("api.account_disabled"))
         s = self.session_from_request(request)
         if s and s["user_id"] == user_id:
             # gleiche Identität → Faktor an laufende Sitzung anhängen (Ketten-/Route-Schritt).
@@ -1807,6 +1826,12 @@ class TinySesam:
         """
         s = self.store.get_session(token)
         if not s:
+            return None
+        konto = self.store.get_user(s["user_id"])
+        if not konto or konto["disabled"]:
+            # Zwischen erstem Faktor und TOTP gesperrt: Die halbe Sitzung endet hier, statt
+            # zur vollwertigen zu werden (H-18, dieselbe Regel wie in `apply_factor`).
+            self.store.delete_session_by_handle(s["token_hash"])
             return None
         war_ok = bool(s["mfa_ok"])
         done = json.loads(s["factors_done"] or "[]")
@@ -1948,7 +1973,7 @@ class TinySesam:
         das Risiko ein anderes — dort ist der erste Anmeldende der rechtmässige, so wie bei einem
         Einladungslink auch.
         """
-        jetzt = int(time.time()) if jetzt is None else int(jetzt)
+        jetzt = _jetzt() if jetzt is None else int(jetzt)
         u = self.store.get_user(user_id)
         if not u:
             return False
@@ -1977,7 +2002,7 @@ class TinySesam:
         Der Weg des Betreibers, wenn jemand sein Gerät verloren hat oder `mfa_enrollment="strict"`
         gilt. Bewusst zeitlich begrenzt: ein dauerhaft offenes Fenster wäre die alte Lücke unter
         neuem Namen."""
-        bis = int(time.time()) + max(1, int(minutes)) * 60
+        bis = _jetzt() + max(1, int(minutes)) * 60
         self.store.set_mfa_enroll_until(user_id, bis)
         u = self.store.get_user(user_id)
         self.audit("mfa_enrollment_granted", str(u["username"]) if u else None,
@@ -2090,7 +2115,7 @@ class TinySesam:
         abtragen kann (ein Erfolg räumt nur die eigene Methode weg). Der Zähler dieser Methoden
         geht nicht verloren, er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
         """
-        since = int(time.time()) - self.sec("lockout_window_sec")
+        since = _jetzt() - self.sec("lockout_window_sec")
         ohne = security.NICHT_LOGIN_METHODEN
         if username and self.store.count_fails(since, username=username,
                                                exclude_methods=ohne) >= self.sec("max_login_attempts"):
@@ -2149,7 +2174,7 @@ class TinySesam:
         """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
         Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
         Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich."""
-        older = int(time.time()) - int(attempts_older_than_sec)
+        older = _jetzt() - int(attempts_older_than_sec)
         return {
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
@@ -2300,7 +2325,7 @@ class TinySesam:
     def vermerke_oidc_freigabe(self, token: str, client: str, rollen=None) -> None:
         """Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken."""
         self.store.put_oidc_grant(self.store.session_hash(token), client or "*",
-                                  int(time.time()), rollen)
+                                  _jetzt(), rollen)
 
     def oidc_freigabe_gueltig(self, token_hash: str, client: str) -> tuple:
         """Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
@@ -2322,7 +2347,7 @@ class TinySesam:
         if not grant:
             return False, "fehlt"
         frist = int(self.cfg.oidc_revalidate_minutes or 0) * 60
-        if frist and (int(time.time()) - int(grant["checked_at"])) > frist:
+        if frist and (_jetzt() - int(grant["checked_at"])) > frist:
             return False, "veraltet"
         return True, ""
 
@@ -2689,7 +2714,7 @@ class TinySesam:
         if not s or not s["mfa_ok"]:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if not s["mfa_at"] or (int(time.time()) - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
+            if not s["mfa_at"] or (_jetzt() - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -2713,7 +2738,7 @@ class TinySesam:
         if not s:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if (int(time.time()) - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
+            if (_jetzt() - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -2894,7 +2919,7 @@ class TinySesam:
         """Eine Ressource für diesen Browser freischalten und das Cookie setzen."""
         token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
-        self.store.add_resource_unlock(token, name, int(time.time()) + ttl)
+        self.store.add_resource_unlock(token, name, _jetzt() + ttl)
         kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=_samesite(self.cfg.cookie_samesite),
                   path=self.cfg.cookie_path, max_age=ttl)
         if self.cfg.cookie_domain:

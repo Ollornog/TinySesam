@@ -245,6 +245,60 @@ def fehlende_header(datei: str) -> list[str]:
     return [h for h in TinySesam.FORWARD_HEADERS_DEFAULT.values() if h.lower() not in text]
 
 
+# ------------------------------------- Das Extra [argon2] fehlt nach einem Upgrade (B6-8)
+# Neues Abbild ohne das Extra, ein venv neu aufgesetzt: Jede Anmeldung gegen einen argon2-Hash
+# scheiterte als „falsches Passwort" — für alle Bestandskonten, ohne eine einzige Logzeile.
+# Nachgestellt ohne das Extra zu deinstallieren: `_ARGON` für die Dauer der Prüfung aus.
+import logging  # noqa: E402
+
+# Ein argon2id-Hash von „geheim123" mit Minimalparametern (nur Testdaten, kein Geheimnis).
+ARGON_HASH = "$argon2id$v=19$m=8,t=1,p=1$lwj6WKW+poScm3635SRZ9Q$GB7yXwpoOqfsI27pXnI9FDaNWilsn2lwG85zAqfypFo"
+
+
+class _Fang(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.zeilen = []
+
+    def emit(self, record):
+        self.zeilen.append(record.getMessage())
+
+
+fang = _Fang()
+logging.getLogger("tinysesam").addHandler(fang)
+war_argon = passwords._ARGON
+auth_a, db_a = frisch()
+uid_a = auth_a.create_user("altkonto", password="egal12345")
+auth_a.store.set_password_hash(uid_a, ARGON_HASH)
+auth_a.store.db.close()
+passwords._ARGON = False
+passwords._ARGON2_GEMELDET["ja"] = False
+try:
+    auth_b, _ = frisch(db_path=db_a)
+    beim_start = [z for z in fang.zeilen if "[argon2]" in z]
+    r.check("fehlt [argon2], nennt der Start die betroffenen Hashes samt Abhilfe",
+            any("1 betroffene" in z and "pip install" in z for z in beim_start),
+            f"{fang.zeilen} — alle Bestandskonten gesperrt, und niemand erfährt warum")
+    fang.zeilen.clear()
+    r.check("die Anmeldung scheitert weiter (ein argon2-Hash ist ohne argon2 nicht prüfbar)",
+            not auth_b.check_password("altkonto", "geheim123"))
+    r.check("…aber nicht mehr still: der Fehlschlag schreibt eine Zeile",
+            any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
+    fang.zeilen.clear()
+    auth_b.check_password("altkonto", "geheim123")
+    r.check("…und zwar einmal, nicht eine je Anmeldeversuch",
+            not any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
+finally:
+    passwords._ARGON = war_argon
+    logging.getLogger("tinysesam").removeHandler(fang)
+fang2 = _Fang()
+logging.getLogger("tinysesam").addHandler(fang2)
+frisch(db_path=db_a)
+logging.getLogger("tinysesam").removeHandler(fang2)
+r.check("mit [argon2] bleibt der Start still (Gegenprobe, sofern das Extra da ist)",
+        not war_argon or not any("[argon2]" in z for z in fang2.zeilen), f"{fang2.zeilen}")
+
+
 for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/Caddyfile"):
     fehlt = fehlende_header(datei)
     r.check(f"{datei} setzt alle Remote-Header", not fehlt, f"fehlt: {fehlt}")
