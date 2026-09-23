@@ -1,6 +1,5 @@
 """Phase 5: Mailer-Hook + Magic-Link (Einmal-Login per E-Mail)."""
 import os
-import re
 import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
