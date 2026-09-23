@@ -392,21 +392,22 @@ def pruefe(config) -> tuple[list[str], list[str]]:
 
     # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
-    _revalidate = int(getattr(config, "oidc_revalidate_minutes", 0) or 0)
+    # Typ und Bereich prüft ZAHLENGRENZEN (unten, samt negativer Werte); hier nur die
+    # Kombination. Ein `int()` auf einen Text liess die ganze Prüfung abstürzen.
+    _revalidate = getattr(config, "oidc_revalidate_minutes", 0)
+    if isinstance(_revalidate, bool) or not isinstance(_revalidate, int):
+        _revalidate = 0
     if _clients and not _an(config, "oidc_enabled"):
         fehler.append(
             "oidc_clients nennt " + ", ".join(sorted(str(h) for h in _clients)) + ", aber "
             "oidc_enabled ist False. Die Zuordnung Host→Client wäre wirkungslos: Es gäbe keinen "
             "OIDC-Weg, über den eine Freigabe entstehen könnte.")
-    if _revalidate and not _clients:
+    if _revalidate > 0 and not _clients:
         warnungen.append(
             f"oidc_revalidate_minutes={_revalidate}, aber oidc_clients ist leer. Die Nachprüfung "
             "betrifft die Freigabe je Anwendung — ohne mehrere Clients gibt es keine, und der "
             "Wert bleibt folgenlos. Gemeint war vermutlich session_ttl_hours (Lebensdauer der "
             "Sitzung) oder stepup_max_age_sec (Frische für heikle Routen).")
-    if _revalidate < 0:
-        fehler.append(f"oidc_revalidate_minutes={_revalidate} ist negativ. 0 schaltet die "
-                      "Nachprüfung ab, jede positive Zahl ist eine Frist in Minuten.")
     _vertraute = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
     for host, eintrag in _clients.items():
         h = str(host).strip().lower()
@@ -542,17 +543,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "hinaus und das Verfahren endet still. Entweder smtp_host setzen oder zur "
                 "Laufzeit auth.set_mailer(...) aufrufen — dann ist diese Meldung gegenstandslos.")
 
-    # Eine negative Frist wäre in `gc()` ein Zeitpunkt in der Zukunft — das ganze Audit-Log
-    # fiele beim nächsten Lauf weg. Ein Tippfehler darf die Forensik nicht löschen.
-    try:
-        _frist = int(getattr(config, "audit_retention_days", 0) or 0)
-    except (TypeError, ValueError):
-        _frist = -1
-    if _frist < 0:
-        fehler.append(
-            f"audit_retention_days={getattr(config, 'audit_retention_days', None)!r} ist keine "
-            "Zahl ≥ 0. 0 heisst „keine Frist“, eine positive Zahl die Tage, die das Audit-Log "
-            "aufbewahrt wird.")
+    # `audit_retention_days` prüft ZAHLENGRENZEN (unten): Eine negative Frist wäre in `gc()` ein
+    # Zeitpunkt in der Zukunft — das ganze Audit-Log fiele beim nächsten Lauf weg. Die eigene
+    # Prüfung, die hier stand, kannte nur `< 0` und liess `True`, Sekunden statt Tagen und
+    # Riesenwerte (OverflowError in gc()) durch.
 
     return fehler, warnungen
 
@@ -578,6 +572,13 @@ ZAHLENGRENZEN = {
     "stepup_max_age_sec": (0, 7 * 86400),
     "session_ttl_hours": (1, 24 * 400),
     "session_ttl_transient_hours": (1, 24 * 400),
+    # 0 = keine Frist. Zehn Jahre (samt Schalttagen) reichen für jede Aufbewahrungspflicht;
+    # darüber liegt fast immer die Frist in Sekunden (2592000 für 30 Tage), die nie griffe.
+    # `True` galt hier als ein Tag, und gc() löschte das Audit-Log bis auf den letzten Tag.
+    "audit_retention_days": (0, 3660),
+    # 0 = keine Nachprüfung. Ein Entzug beim Provider, der erst nach mehr als 30 Tagen ankommt,
+    # ist keine Nachprüfung mehr; `86400` (ein Tag in Sekunden statt Minuten) fällt so auf.
+    "oidc_revalidate_minutes": (0, 30 * 24 * 60),
 }
 
 

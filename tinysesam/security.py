@@ -325,6 +325,33 @@ def klemme_haertung(key: str, value) -> int:
     unten, oben = SECURITY_GRENZEN[key]
     return min(max(zahl, unten), oben)
 
+
+def haertung_lesen(store, key: str) -> int:
+    """Eine Härtungs-Schwelle aus der Datenbank lesen, wie sie gilt: der Wert aus dem Panel oder
+    die Vorgabe, immer innerhalb von `SECURITY_GRENZEN`.
+
+    Der EINE Leseweg für `TinySesam.sec()` und das CLI (`tinysesam passwd`). Das CLI las
+    `password_min_length` bis T-13 roh: Ein Altwert aus einer Fassung ohne Grenzen (4, 0) galt im
+    Web als 8, offline weiter als 4 — und `passwd` setzte ein Passwort, das jede Web-Setzstelle
+    ablehnt. Zwei Lesewege laufen auseinander, und der schwächere entscheidet.
+
+    Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer Fassung ohne
+    Grenzen, oder direkt geschrieben), wird an die nächste Grenze gezogen (`klemme_haertung`):
+    Ihn weiter anzuwenden hiesse, eine stillgelegte Instanz stillgelegt zu lassen (R6-4); ihn auf
+    die Vorgabe zu setzen, lockerte still jede strengere Bestandseinstellung (A1)."""
+    v = store.get_setting(key)
+    if v is None:
+        return SECURITY_DEFAULTS[key]
+    try:
+        return pruefe_haertung(key, v)
+    except ValueError as e:
+        wert = klemme_haertung(key, v)
+        if einmal_melden("sec:" + key):
+            seclog.warning(
+                "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt %s. Der Wert lässt "
+                "sich im Admin-Panel bestätigen oder ändern.", e, wert)
+        return wert
+
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
 # Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
 # STATTDESSEN bremst.

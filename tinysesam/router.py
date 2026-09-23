@@ -861,16 +861,27 @@ def build_router(auth) -> APIRouter:
                     auth.store.delete_user(uid)
                     auth.audit("verify_send_error", konto, ip, detail=f"{grund}, Konto entfernt")
 
+                seite = auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
+                # Der Token entsteht HIER, in der Anfrage; nur der Versand wartet auf den
+                # Postausgang. Eine Sperre durch den Betreiber verwirft offene Token (H-18) —
+                # entstand er erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
+                # der verspätete Link hob sie danach auf. Zeitlich neutral: Der Weg für eine
+                # vergebene Adresse (R4-03) legt seinen Token ebenfalls in der Anfrage an.
+                try:
+                    senden = auth._verify_mail(uid, email_final, verify_base)
+                except Exception:
+                    senden = None
+                if senden is None:
+                    _zuruecknehmen("versand")
+                    return seite
+
                 def _versand():
                     try:
-                        gesendet = auth.send_verify_email(uid, email_final, verify_base)
+                        senden()
                     except Exception:
-                        gesendet = False
-                    if not gesendet:
                         _zuruecknehmen("versand")
                 return auth.nach_der_antwort(
-                    auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
-                    _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
+                    seite, _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)

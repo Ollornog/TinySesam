@@ -334,15 +334,31 @@ class _Uhr:
     Aufruf nachgeschlagen, nicht beim Import gebunden: Eine einbettende App, die in ihren Tests
     `time.time` patcht (`mock.patch`, `monkeypatch`, freezegun), stellt damit auch diese Uhr
     vor. Zurückdrehen lässt sie sich so nicht — das ist genau der Schutz oben.
+
+    freezegun ersetzt zusätzlich `time.monotonic`, und zwar durch die eingefrorene Zeit auf der
+    Epoch-Skala statt durch die Betriebszeit. Fortgeschrieben wäre das ein Sprung um Jahrzehnte
+    (und beim Verlassen von `freeze_time` einer zurück). Ein Monotonie-Schritt, der rückwärts
+    geht oder größer ist als `MONO_SCHRITT_MAX_SEK`, zählt deshalb nicht als vergangene Zeit:
+    Unter freezegun folgt die Uhr der eingefrorenen Wanduhr nach vorn (`tick()`/`move_to()`
+    eingeschlossen), nach dem Verlassen bleibt sie auf dem vorgestellten Stand, bis die echte
+    Zeit aufholt. Den Preis zahlt nur ein Rückwärtssprung der Wanduhr, der in eine Pause von
+    mehr als einem Jahr ohne jeden Aufruf fällt: Dann gilt die zurückgesprungene Wanduhr, aber
+    nie weniger als der zuletzt ausgegebene Stand.
     """
 
     #: Ab welchem Rückstand der Wanduhr eine Warnung geschrieben wird (Sekunden). Darunter ist
     #: es normales NTP-Zittern.
     WARN_AB_SEK = 5
 
+    #: Größter Schritt der monotonen Zeit zwischen zwei Aufrufen, der noch als vergangene Zeit
+    #: gilt (Sekunden). Ein echter Schritt ist die Pause zwischen zwei Anfragen; freezegun liefert
+    #: dagegen die eingefrorene Zeit auf der Epoch-Skala (≈1,8e9 s) — ein Sprung um Jahrzehnte.
+    #: Ein Jahr trennt beides sicher, ohne den Schutz nach einer langen Pause aufzugeben.
+    MONO_SCHRITT_MAX_SEK = 365 * 86400
+
     def __init__(self, wand=None, mono=None):
         # Bei JEDEM Aufruf nachschlagen, nicht beim Bau binden: Wer `time.time` patcht
-        # (`mock.patch`, freezegun), stellt damit auch diese Uhr (siehe Docstring oben).
+        # (`mock.patch`, `monkeypatch`, freezegun), stellt damit auch diese Uhr (siehe Docstring).
         def _wand():
             return time.time()
 
@@ -358,8 +374,15 @@ class _Uhr:
     def jetzt(self) -> int:
         with self._lock:
             wand, mono = float(self.wand()), float(self.mono())
-            fortgeschrieben = self._stand + (mono - self._mono if self._mono is not None else 0.0)
-            self._stand, self._mono = max(wand, fortgeschrieben), mono
+            schritt = mono - self._mono if self._mono is not None else 0.0
+            if not 0.0 <= schritt <= self.MONO_SCHRITT_MAX_SEK:
+                # Keine echte monotone Uhr (rückwärts oder ein Sprung um Jahrzehnte: freezegun
+                # ersetzt `time.monotonic` durch die Epoch-Zeit). Nicht fortschreiben — sonst
+                # sprang die Uhr um ≈57 Jahre vor und `uhr_stand` hielt jede spätere Öffnung der
+                # Datenbank dort fest. Die Wanduhr nach vorn gilt weiter, rückwärts steht die Uhr —
+                # auch wenn die monotone Quelle selbst zurückspringt (Verlassen von freeze_time).
+                schritt = 0.0
+            self._stand, self._mono = max(wand, self._stand + schritt), mono
             self._rueckstand_pruefen(wand)
             return int(self._stand)
 

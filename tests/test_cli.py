@@ -104,6 +104,43 @@ assert code == 1 and "lässt sich nicht lesen" in aus, aus
 assert auth.check_password("admin", _von_der_liste)
 ok("passwd liest --blocklist-file (auch Latin-1-Zeilen) und --rp-name wie die Config")
 
+# Die Mindestlänge liest das CLI wie das Web (T-13-Angriff, faktoren × konfiguration): Ein
+# Altwert aus einer Fassung ohne Grenzen (`password_min_length` = 4 oder 0) gilt im Web als 8
+# (`sec()` zieht ihn an die Grenze), das CLI las ihn roh und setzte Passwörter, die jede
+# Web-Setzstelle ablehnt.
+from tinysesam import security as _security
+
+for _altwert in ("4", "0"):
+    auth.store.set_setting("password_min_length", _altwert)
+    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 Zeichen
+    assert code == 1 and "zu kurz (min. 8)" in aus, (_altwert, code, aus)
+    assert auth.sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
+    assert auth.check_password("admin", _von_der_liste)
+auth.store.set_setting("password_min_length", "12")                 # gültiger Wert: gilt wie im Web
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 Zeichen
+assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
+auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # zurück zur Vorgabe
+ok("passwd liest die Mindestlänge wie das Web (Altwert jenseits der Grenze gilt als Grenze)")
+# (Mutationsprobe: in `_passwd` wieder `int(store.get_setting("password_min_length") or …)` statt
+# `haertung_lesen` → rot.)
+
+# Die Klasse dahinter: Jede Härtungs-Schwelle wird über `security.haertung_lesen` gelesen — ein
+# zweiter, roher Leseweg entschiede sonst mit dem schwächeren Wert.
+import ast as _ast
+import pathlib as _pl
+
+_roh = []
+for _datei in sorted((_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py")):
+    for _k in _ast.walk(_ast.parse(_datei.read_text(encoding="utf-8"))):
+        if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
+                and _k.func.attr == "get_setting" and _k.args
+                and isinstance(_k.args[0], _ast.Constant) and _k.args[0].value in _security.SECURITY_DEFAULTS):
+            _roh.append(f"{_datei.name}:{_k.lineno}")
+assert not _roh, f"Härtungs-Schwelle roh gelesen (statt security.haertung_lesen): {_roh}"
+ok("keine Härtungs-Schwelle wird am gemeinsamen Leseweg vorbei gelesen")
+# (Mutationsprobe: dieselbe Rückstellung wie oben → der Wächter nennt `__main__.py:<Zeile>` → rot;
+# einzeln nachgeprüft, weil in der Suite das assert darüber zuerst anschlägt.)
+
 code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
 ok("unbekanntes Kommando → usage, Exit 2")
@@ -160,6 +197,20 @@ code, aus = cli("gc", "--db", db)
 assert code == 0 and "sessions=" in aus and "login_attempts=" in aus, (code, aus)
 assert "unverified_accounts=1" in aus and auth.store.get_user(_sq) is None, aus
 ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer), nie bestätigte Konten zuerst")
+
+# `--audit-days` ist das Gegenstück zu `audit_retention_days` und hält dieselbe Grenze
+# (T-13-Angriff, audit × konfiguration): 10**20 brach mit OverflowError ab, NACHDEM Sitzungen und
+# Tokens schon gelöscht waren; Sekunden statt Tagen (2592000) liessen die Frist still ins Leere laufen.
+auth.store.audit_log("bleibt", "x", None)
+for _tage in (str(10 ** 20), "2592000", "-1"):
+    try:
+        code, aus = cli("gc", "--db", db, "--audit-days", _tage)
+    except Exception as e:   # noqa: BLE001 — ein Traceback ist hier der Befund
+        code, aus = f"{type(e).__name__}", str(e)
+    assert code == 2 and "--audit-days" in aus, (_tage, code, aus[-200:])
+assert any(z["event"] == "bleibt" for z in auth.store.recent_audit(20))
+ok("gc --audit-days hält dieselbe Grenze wie audit_retention_days (kein Absturz, nichts gelöscht)")
+# (Mutationsprobe: die Bereichsprüfung in `_gc` auf `a.audit_days < 0` zurückstellen → rot.)
 
 os.remove(nackt)
 os.remove(roh)

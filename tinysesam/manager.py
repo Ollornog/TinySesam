@@ -2112,7 +2112,14 @@ class TinySesam:
         """Eine Mail mit Einmal-Token verschicken. Scheitert der Versand, ist der Token sofort
         verbraucht (B6-12): Sonst lag ein gültiger, nie zugestellter Link bis zum Ablauf in der
         Datenbank — ein Beweisstück ohne Empfänger, und bei einem Relay, das die Mail doch noch
-        nachreicht, ein Link, von dem der Absender glaubt, es gebe ihn nicht."""
+        nachreicht, ein Link, von dem der Absender glaubt, es gebe ihn nicht.
+
+        Ist der Token vor dem Versand schon verworfen oder eingelöst, geht keine Mail hinaus:
+        Liegt zwischen Anlage und Versand der Postausgang, kann der Betreiber das Konto in der
+        Zwischenzeit gesperrt haben (H-18) — die Mail trüge dann nur noch einen toten Link."""
+        zeile = self.store.get_magic_token(self._token_hash(raw))
+        if not zeile or zeile["used_at"]:
+            return
         try:
             self.send_mail(to, subject, text, html)
         except Exception:
@@ -2236,15 +2243,31 @@ class TinySesam:
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
         Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
         """
+        senden = self._verify_mail(user_id, email, base_url)
+        if senden is None:
+            return False
+        senden()
+        return True
+
+    def _verify_mail(self, user_id, email, base_url):
+        """Den Bestätigungstoken JETZT anlegen und den Versand als Funktion zurückgeben — oder
+        None, wenn kein Mailer da ist. `base_url` wird geprüft wie bei `send_verify_email`.
+
+        Getrennt, weil die Registrierung nur den Versand in den Postausgang schiebt (R4-05/B6-6),
+        nicht die Token-Vergabe: Die Sperre durch den Betreiber verwirft offene Token (H-18).
+        Entstand der Token erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
+        der verspätete Link hob sie danach wieder auf (T-13-Angriff, mail × betrieb)."""
         base_url = self._gepruefte_basis(base_url)
         if not (email and self.mail_configured()):
-            return False
+            return None
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
         url = self.magic_url(raw, base_url, "verify_email")
-        self._token_mail(raw, email, "E-Mail bestätigen",
-                         f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
-                         html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
-        return True
+
+        def senden():
+            self._token_mail(raw, email, "E-Mail bestätigen",
+                             f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
+                             html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+        return senden
 
     def send_signup_notice(self, email, base_url) -> bool:
         """Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
@@ -2780,23 +2803,11 @@ class TinySesam:
         return security.client_ip(request, self.cfg.trusted_proxies)
 
     def sec(self, key) -> int:
-        """Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`."""
-        v = self.store.get_setting(key)
-        if v is None:
-            return security.SECURITY_DEFAULTS[key]
-        try:
-            return security.pruefe_haertung(key, v)
-        except ValueError as e:
-            # Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer
-            # Fassung ohne Grenzen, oder direkt geschrieben). Ihn weiter anzuwenden hiesse, eine
-            # stillgelegte Instanz stillgelegt zu lassen (R6-4); ihn auf die Vorgabe zu setzen,
-            # lockerte still jede strengere Bestandseinstellung (A1). Also die nächste Grenze.
-            wert = security.klemme_haertung(key, v)
-            if security.einmal_melden("sec:" + key):
-                security.seclog.warning(
-                    "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt %s. Der Wert lässt "
-                    "sich im Admin-Panel bestätigen oder ändern.", e, wert)
-            return wert
+        """Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
+
+        Gelesen über `security.haertung_lesen` — denselben Weg nimmt das CLI (`tinysesam passwd`);
+        ein Bestandswert jenseits der Grenzen gilt dort wie hier als die nächste Grenze."""
+        return security.haertung_lesen(self.store, key)
 
     def all_security(self) -> dict:
         """Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht)."""
