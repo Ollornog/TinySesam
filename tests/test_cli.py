@@ -124,9 +124,15 @@ assert code == 1 and "Keine Datenbank" in aus, (code, aus)
 ok("backup auf eine fehlende Datenbank → Exit 1, keine leere Datei angelegt")
 
 # ---------- gc: das Aufräumen braucht einen Weg von aussen ----------
+# R4-09: ein nie bestätigtes Konto (gesperrt, abgelaufener unbenutzter Bestätigungstoken) räumt
+# auch der CLI-Weg weg — und zwar VOR den Tokens, sonst verschwände das Merkmal zuerst.
+_sq = auth.create_user("squatter", password="geheim12345", email="opfer@example.com")
+auth.store.set_disabled(_sq, True)
+auth.store.add_magic_token("abgelaufen-verify", "verify_email", 1, user_id=_sq, email="opfer@example.com")
 code, aus = cli("gc", "--db", db)
 assert code == 0 and "sessions=" in aus and "login_attempts=" in aus, (code, aus)
-ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer)")
+assert "unverified_accounts=1" in aus and auth.store.get_user(_sq) is None, aus
+ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer), nie bestätigte Konten zuerst")
 
 os.remove(nackt)
 os.remove(roh)

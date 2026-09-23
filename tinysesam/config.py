@@ -143,6 +143,7 @@ class TinySesamConfig:
     smtp_starttls: bool = True            # 587 = STARTTLS; für 465 smtp_ssl=True setzen
     smtp_ssl: bool = False            # SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS
     smtp_timeout: int = 15            # Sekunden, bis ein hängender Mailserver aufgibt
+    smtp_ca_file: str = ""            # eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer
     mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---

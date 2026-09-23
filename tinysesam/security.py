@@ -248,6 +248,8 @@ SECURITY_DEFAULTS = {
     "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
     "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
+    "mail_per_address_max": 3,      # Mails je Zieladresse im Fenster (Anmelde-Link, Reset, Hinweis) — R4-04
+    "mail_per_address_window_sec": 900,  # … Fenster dazu; die IP-Drossel allein schützt kein fremdes Postfach
 }
 
 #: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).

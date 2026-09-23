@@ -126,10 +126,6 @@ Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. 
 
 Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
 
-### `delete_user(user_id: 'int') -> 'bool'`
-
-Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
-
 ### `disable_pin(user_id)`
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
@@ -160,7 +156,7 @@ Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forward
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
+Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich.
 
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
@@ -270,6 +266,10 @@ Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — eg
 
 TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
+### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
+
+`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
+
 ### `next_login_step(user_id, done)`
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
@@ -281,10 +281,6 @@ Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
 ### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
 
 Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
-
-### `own_events(user_id: 'int', limit: 'int' = 20) -> 'list'`
-
-Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
@@ -384,7 +380,7 @@ Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
 
 ### `sec(key) -> 'int'`
 
-Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
+Härtungs-Wert: Store-Setting (Panel) ODER Default.
 
 ### `seed_demo() -> 'None'`
 
@@ -402,9 +398,13 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
+### `send_signup_notice(email, base_url) -> 'bool'`
+
+Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
+
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
 
 ### `session_from_request(request)`
 
@@ -461,6 +461,10 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 ### `t(key, **fmt) -> 'str'`
 
 Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}.
+
+### `token_abgewiesen(zweck, request: 'Optional[Request]' = None, grund='ungueltig')`
+
+Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
 ### `totp_begin(user_id)`
 
@@ -570,4 +574,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-125 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

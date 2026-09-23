@@ -52,6 +52,21 @@ r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "n
 assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "admin"}
 ok("Login-POST mit gültigem CSRF-Token → 303")
 
+# ---------- R4-02: der Einmal-Link löst per POST ein — und der braucht das CSRF-Token ----------
+_m_db = os.path.join(tempfile.mkdtemp(), "t.db")
+_m = TinySesam(TinySesamConfig(db_path=_m_db, passkey_enabled=False, cookie_secure=False,
+                               magiclink_enabled=True, base_url="https://auth.example.com"))
+_m_uid = _m.create_user("mia", password="geheim12345", email="mia@example.com")
+_m_app = FastAPI(); _m_app.include_router(_m.router())
+_mc = TestClient(_m_app)
+_m_tok = _m.create_magic_token("login", user_id=_m_uid, email="mia@example.com", payload={"next": "/"})
+assert _mc.post(f"/auth/magic/{_m_tok}", follow_redirects=False).status_code == 403, "ohne Token"
+_seite = _mc.get(f"/auth/magic/{_m_tok}").text
+_feld = re.search(r"name=_csrf value='([^']+)'", _seite).group(1)
+assert _mc.post(f"/auth/magic/{_m_tok}", data={"_csrf": _feld}, follow_redirects=False).status_code == 303
+os.remove(_m_db)
+ok("R4-02: Bestätigungsseite trägt das CSRF-Feld; POST ohne Token 403, mit Token eingelöst")
+
 # ---------- JSON-Endpoint ohne Header → 403, mit Header → ok ----------
 assert c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).status_code == 403
 tok = c.cookies.get("tinysesam_csrf")

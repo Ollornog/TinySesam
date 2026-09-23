@@ -82,6 +82,15 @@ BASE_URL_EMPFOHLEN = {
 }
 
 
+def _ist_ip(wert: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(wert)
+        return True
+    except ValueError:
+        return False
+
+
 def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
 
@@ -484,6 +493,22 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _kombinationen(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
+    # --- SMTP-TLS (B3-1, Angriff A4): Seit das Zertifikat geprüft wird, scheitert ein falscher
+    # CA-Pfad oder ein Relay per IP-Adresse bei JEDER Mail — und zwar still, nur als
+    # *_send_error im Audit-Log. Beides lässt sich schon beim Aufbau erkennen.
+    _smtp_ca = str(getattr(config, "smtp_ca_file", "") or "").strip()
+    if _smtp_ca and not os.path.isfile(_smtp_ca):
+        fehler.append(
+            f"smtp_ca_file={_smtp_ca!r} gibt es nicht. Die TLS-Prüfung des Mailservers scheitert "
+            "dann bei jeder Mail — Anmelde-Links, Resets und Bestätigungen gingen nie hinaus, "
+            "und das erst im Betrieb.")
+    _smtp_host = str(getattr(config, "smtp_host", "") or "").strip().strip("[]")
+    if hat_mailer and _ist_ip(_smtp_host):
+        warnungen.append(
+            f"smtp_host={_smtp_host!r} ist eine IP-Adresse. Das Zertifikat des Mailservers wird "
+            "gegen den Hostnamen geprüft; trägt es die IP nicht als Subject Alternative Name, "
+            "scheitert jeder Versand. Abhilfe: den Namen eintragen, auf den das Zertifikat "
+            "ausgestellt ist (bei eigener CA zusätzlich smtp_ca_file).")
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
             warnungen.append(

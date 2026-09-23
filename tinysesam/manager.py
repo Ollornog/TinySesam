@@ -166,6 +166,8 @@ class TinySesam:
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
+        from .mailer import Postausgang
+        self._postausgang = Postausgang()
         self.oidc = None
         self.webauthn = None
         self.ldap = None
@@ -1590,18 +1592,26 @@ class TinySesam:
         Geprüft wird als Erstes — vor der Kontosuche, damit „Ausnahme statt False" nicht
         verrät, ob es die Adresse gibt, und vor der Token-Vergabe, damit kein unbrauchbarer
         Token zurückbleibt.
+
+        Die Mail geht an die **gespeicherte** Adresse, nicht an die Eingabe (R4-11): Die Suche
+        ist nachsichtig (Gross-/Kleinschreibung, Leerzeichen), der Versand darf es nicht sein.
+        Scheitert der Versand, wird der Token sofort entwertet (B6-12) und der Fehler geht an
+        den Aufrufer weiter.
         """
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
-        raw = self.create_magic_token("reset_password", user_id=u["id"], email=email)
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "reset_password"):
+            return False
+        raw = self.create_magic_token("reset_password", user_id=u["id"], email=ziel)
         url = self.magic_url(raw, base_url, "reset_password")
         mins = self.cfg.magiclink_ttl_min
-        self.send_mail(email, "Passwort zurücksetzen",
-                       f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                       html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
+        self._token_mail(raw, ziel, "Passwort zurücksetzen",
+                         f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                         html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
         return True
 
     # ---------- Faktor-Ketten-Engine ----------
@@ -1743,6 +1753,78 @@ class TinySesam:
         fn = self._mailer_override or SMTPMailer(self.cfg)
         fn(to, subject, text, html)
 
+    def _mail_ziel_ok(self, adresse, zweck, topf="mail") -> bool:
+        """Darf an diese Adresse noch eine Mail? Gedrosselt je **Ziel**, nicht je Absender (R4-04).
+
+        Die IP-Drossel der Routen schützt den Server, nicht das Postfach: Wer über wechselnde
+        Adressen „Passwort vergessen" für ein fremdes Konto anstösst, füllte dessen Postfach
+        unbegrenzt. Die Abweisung ist nach aussen unsichtbar (dieselbe Antwort wie sonst) und
+        steht im Audit-Log, damit der Betreiber die Flut sieht.
+
+        `topf` trennt Kontingente: Anmelde-Link und Reset teilen sich einen (beide bringen den
+        Inhaber ins Konto — wer sie für ihn anstösst, schickt ihm brauchbare Links). Der Hinweis
+        der Registrierung hat einen eigenen (Angriff A2): Ihn löst jeder Fremde aus, er trägt
+        keinen Token, und im gemeinsamen Topf verbrauchten drei fremde Registrierungen das
+        Kontingent, mit dem der Inhaber sich selbst einen Link schickt — bei Betrieb nur mit
+        Anmelde-Link eine wiederholbare Aussperrung.
+        """
+        schluessel = f"{topf}:" + (norm_email(adresse) or "")
+        if self.rl.allow(schluessel, self.sec("mail_per_address_max"),
+                         self.sec("mail_per_address_window_sec")):
+            return True
+        self.audit("mail_ratelimit", detail=f"{zweck} an={adresse}")
+        return False
+
+    @staticmethod
+    def _token_hash(raw) -> str:
+        return hashlib.sha256(str(raw).encode()).hexdigest()
+
+    def _token_mail(self, raw, to, subject, text, html=None):
+        """Eine Mail mit Einmal-Token verschicken. Scheitert der Versand, ist der Token sofort
+        verbraucht (B6-12): Sonst lag ein gültiger, nie zugestellter Link bis zum Ablauf in der
+        Datenbank — ein Beweisstück ohne Empfänger, und bei einem Relay, das die Mail doch noch
+        nachreicht, ein Link, von dem der Absender glaubt, es gebe ihn nicht."""
+        try:
+            self.send_mail(to, subject, text, html)
+        except Exception:
+            self.store.expire_magic_token(self._token_hash(raw))
+            raise
+
+    def nach_der_antwort(self, resp, auftrag, bei_ueberlauf=None):
+        """`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter
+        (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück."""
+        from starlette.background import BackgroundTask
+        resp.background = BackgroundTask(self._postausgang.nachher(auftrag, bei_ueberlauf))
+        return resp
+
+    #: Deckel für `token_invalid`-Zeilen im Audit-Log: höchstens so viele je Fenster (global).
+    _TOKEN_AUDIT_MAX = 20
+    _TOKEN_AUDIT_FENSTER_SEC = 60
+
+    def token_abgewiesen(self, zweck, request: Optional[Request] = None, grund="ungueltig"):
+        """Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
+
+        Bisher hinterliess das keine Spur: Wer Reset- oder Anmelde-Token durchprobierte, sah der
+        Betreiber nirgends. Audit-Zeile für den Betreiber, Sicherheits-Log mit dem Wort der
+        Nicht-Login-Prüfungen (`failed verification`) — ein veralteter Link im eigenen
+        Postfach ist kein Anmeldeversuch und darf niemanden per fail2ban aussperren.
+        """
+        ip = self.client_ip(request) if request is not None else None
+        # Das Sicherheits-Log bekommt jede Zeile: Es rotiert, und die Verify-Jail von fail2ban
+        # bannt daraus genau den, der Links durchprobiert.
+        self._abgewiesen(None, ip, f"token_{zweck}", login=False)
+        # Das Audit-Log dagegen räumt `gc()` nie auf, und die Routen sind anonym und ungedrosselt
+        # (Angriff A3): Jeder GET auf /auth/magic/<Unsinn> schrieb dauerhaft eine Datenbankzeile —
+        # eine Festplatte liess sich so füllen. Gedeckelt wird deshalb global je Zeitfenster,
+        # nicht je IP (die wechselt ein Angreifer), und wenn der Deckel greift, steht genau
+        # EINE Zeile dazu im Audit — sonst sähe der Betreiber die Flut nicht.
+        fenster = self._TOKEN_AUDIT_FENSTER_SEC
+        if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, fenster):
+            self.audit("token_invalid", ip=ip, detail=f"zweck={zweck} grund={grund}")
+        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, fenster):
+            self.audit("token_invalid_throttled", ip=ip,
+                       detail=f"mehr als {self._TOKEN_AUDIT_MAX} in {fenster}s — weitere nur im Sicherheits-Log")
+
     # ---------- Magic-/Einmal-Token ----------
     def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
         """Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB."""
@@ -1807,31 +1889,58 @@ class TinySesam:
         wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
         Geprüft wird vor der Token-Vergabe, damit ein abgewiesener Aufruf keinen
-        Einladungs-Token hinterlässt.
+        Einladungs-Token hinterlässt. Scheitert der Versand, ist der Token entwertet (B6-12).
         """
         base_url = self._gepruefte_basis(base_url)
         raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
-            self.send_mail(email, "Deine Einladung",
-                           f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
-                           html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
+            self._token_mail(raw, email, "Deine Einladung",
+                             f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
+                             html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
         self.audit("invite_create", detail=email)
         return {"url": url, "token": raw}
 
     def send_verify_email(self, user_id, email, base_url) -> bool:
         """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+        Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
         """
         base_url = self._gepruefte_basis(base_url)
         if not (email and self.mail_configured()):
             return False
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
         url = self.magic_url(raw, base_url, "verify_email")
-        self.send_mail(email, "E-Mail bestätigen",
-                       f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
-                       html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+        self._token_mail(raw, email, "E-Mail bestätigen",
+                         f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
+                         html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+        return True
+
+    def send_signup_notice(self, email, base_url) -> bool:
+        """Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
+
+        Die Registrierung antwortet bei eingeschalteter Bestätigung für eine vergebene Adresse
+        genauso wie für eine freie („Bestätigungsmail ist unterwegs") — sonst verriet sie per
+        409 und Text, welche Adressen ein Konto haben. Der echte Inhaber bekommt stattdessen
+        diese Mail: kein Token, nur der Weg zur Anmeldung. Gedrosselt wie jede Mail (R4-04), aber
+        im eigenen Topf — sonst sperrte sie den Inhaber von seinen eigenen Links aus (A2).
+        """
+        base_url = self._gepruefte_basis(base_url)
+        u = self.store.get_user_by_email(email)
+        if not u or u["is_service"] or not self.mail_configured():
+            return False
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "signup_notice", topf="hinweis"):
+            return False
+        login = f"{base_url}{self.cfg.login_path}"
+        self.send_mail(ziel, "Registrierung mit deiner Adresse",
+                       f"Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.\n\n"
+                       f"Warst du das, melde dich hier an:\n{login}\n\n"
+                       f"Wenn nicht, kannst du diese E-Mail ignorieren.",
+                       html=f'<p>Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.</p>'
+                            f'<p><a href="{login}">Zur Anmeldung</a></p>'
+                            f'<p>Wenn du das nicht warst, kannst du diese E-Mail ignorieren.</p>')
         return True
 
     def send_login_link(self, email, base_url, next="/") -> bool:
@@ -1840,20 +1949,25 @@ class TinySesam:
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
         Geprüft wird als Erstes — vor der Kontosuche, damit die Ausnahme keine Adresse verrät.
+        Versandt wird an die gespeicherte Adresse (R4-11), gedrosselt je Ziel (R4-04); ein
+        gescheiterter Versand entwertet den Token (B6-12).
         """
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
-        raw = self.create_magic_token("login", user_id=u["id"], email=email, payload={"next": next})
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "login"):
+            return False
+        raw = self.create_magic_token("login", user_id=u["id"], email=ziel, payload={"next": next})
         url = self.magic_url(raw, base_url)
         mins = self.cfg.magiclink_ttl_min
-        self.send_mail(email, "Dein Anmelde-Link",
-                       f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                       html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
-                            f'<p><a href="{url}">Jetzt anmelden</a></p>'
-                            f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
+        self._token_mail(raw, ziel, "Dein Anmelde-Link",
+                         f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                         html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
+                              f'<p><a href="{url}">Jetzt anmelden</a></p>'
+                              f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
         return True
 
     # ---------- Sessions ----------
@@ -2428,7 +2542,17 @@ class TinySesam:
         Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht
         die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich."""
         older = _jetzt() - int(attempts_older_than_sec)
+        # VOR den Tokens: Das Merkmal „nie bestätigt" ist der abgelaufene Bestätigungstoken —
+        # räumt `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen (R4-09).
+        # Ohne diesen Schritt blieb eine Adresse, die jemand fremdes registriert und nie
+        # bestätigt hatte, für immer belegt: Der echte Inhaber bekam „E-Mail vergeben".
+        unbestaetigt = self.store.unbestaetigte_konten()
+        for uid in unbestaetigt:
+            u = self.store.get_user(uid)
+            self.store.delete_user(uid)
+            self.audit("signup_expired", u["username"] if u else None, detail=f"uid={uid}")
         zahlen = {
+            "unverified_accounts": len(unbestaetigt),
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),
@@ -2647,8 +2771,8 @@ class TinySesam:
     #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
     #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
     #: wurde eingetragen und nie aufgerufen.
-    SEITEN = ("account", "error", "forgot", "login", "magic_invalid", "magic_request", "pin",
-              "reauth", "register", "reset", "resource_unlock", "totp", "totp_setup")
+    SEITEN = ("account", "error", "forgot", "login", "magic_confirm", "magic_invalid", "magic_request",
+              "pin", "reauth", "register", "reset", "resource_unlock", "totp", "totp_setup")
 
     def set_template(self, name, fn):
         """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.

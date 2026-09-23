@@ -36,6 +36,33 @@ assert not valid_email("ab.de") and not valid_email("a@b") and not valid_email("
 assert not valid_email("a@@b.de") and not valid_email("@b.de") and not valid_email("a@.de")
 print("  norm_email/valid_email ok")
 
+# ---------- R4-06: Kompatibilitätszeichen, IDNA, Verwechsler ----------
+assert norm_email("ａｄｍｉｎ@ｅｘａｍｐｌｅ.com") == "admin@example.com", "NFKC faltet Vollbreite"
+assert norm_email("u@Bücher.example") == norm_email("u@xn--bcher-kva.example") == "u@xn--bcher-kva.example"
+# IDNA 2003 (stdlib) machte aus straße.example ein strasse.example — eine andere Domain. Bleibt unverändert.
+assert norm_email("u@straße.example") == "u@straße.example"
+assert not valid_email("аdmin@example.com"), "kyrillisches а zwischen lateinischen Buchstaben"
+assert not valid_email("admin@exаmple.com"), "Verwechsler in der Domain"
+assert not valid_email("ad\u200bmin@example.com") and not valid_email("ad\u200dmin@example.com"), "unsichtbar"
+assert valid_email("müller@example.com") and valid_email("иван@example.com"), "eine Schrift bleibt erlaubt"
+# Angriff A6: Schriften, die in einer Sprache zusammengehören, dürfen mischen — Japanisch schreibt
+# Kanji mit Hiragana/Katakana. Latein bleibt aus jeder Gruppe draussen.
+assert valid_email("山田たろう@example.jp") and valid_email("user@例え.テスト"), "Japanisch mischt Kanji und Kana"
+assert valid_email("ラーメン@example.jp") and valid_email("홍길동漢@example.kr"), "Kana-Langzeichen, Hangul+Hanja"
+assert not valid_email("山田a@example.jp") and not valid_email("たаро@example.jp"), "Latein/Kyrillisch mischt nicht mit"
+auth, c, db = build(login_identifier="email", allow_signup=True)
+auth.create_user("admin@example.com", password="geheim12345", email="admin@example.com")
+r = c.post("/auth/register", data={"password": "geheim12345", "email": "ａｄｍｉｎ@example.com", "next": "/"})
+assert r.status_code == 409, "Vollbreiten-Doppelgänger ist dieselbe Kennung"
+r = c.post("/auth/register", data={"password": "geheim12345", "email": "аdmin@example.com", "next": "/"})
+assert r.status_code == 400, "Verwechsler wird abgewiesen"
+assert auth.store._exec("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+# Bestand von VOR R4-06: eine Umlaut-Domain in Unicode-Form wird weiter gefunden
+auth.store._exec("INSERT INTO users(username, email, created_at) VALUES ('alt', 'alt@bücher.example', 0)")
+assert auth.store.get_user_by_email("Alt@Bücher.example")["username"] == "alt"
+os.unlink(db)
+print("  R4-06: NFKC, IDNA-A-Label, Verwechsler abgewiesen, Bestand weiter auffindbar ok")
+
 # ---------- Modus "both": Login mit beidem ----------
 auth, c, db = build(login_identifier="both")
 auth.create_user("max", password="geheim12345", email="Max@Example.com")
@@ -157,7 +184,7 @@ assert u["disabled"], "Konto bis zur Bestätigung gesperrt"
 assert login(c, "v@example.com").status_code != 303, "gesperrtes Konto darf nicht rein"
 assert sent and sent[0][0] == "v@example.com"
 link = re.search(r"https?://\S+/auth/verify/(\S+)", sent[0][1]).group(1).rstrip(".,)")
-c.get(f"/auth/verify/{link}", follow_redirects=False)
+c.post(f"/auth/verify/{link}", follow_redirects=False)   # R4-02: eingelöst wird per POST
 assert not auth.store.get_user_by_name("verify")["disabled"], "nach Bestätigung entsperrt"
 assert login(c, "v@example.com").status_code == 303
 os.unlink(db)

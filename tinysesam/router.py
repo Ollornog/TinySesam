@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from .errors import ConfigError
 from .store import norm_email, valid_email
 from . import security
+from .passwords import hash_password
 
 
 async def _antwort_des_handlers(request: Request, exc: Exception):
@@ -425,29 +426,60 @@ def build_router(auth) -> APIRouter:
             # `base_url` ist nicht adressbezogen: Der Abbruch verrät nichts über das Postfach,
             # und `konfigpruefung` verhindert diesen Zustand ohnehin beim Aufbau.
             base = _mail_basis(auth, request)
-            try:
-                auth.send_login_link(email.strip(), base, nxt)
-            except Exception:
-                auth.audit("magic_send_error", detail=email)   # Fehler nicht nach außen leaken
-            # immer dieselbe Antwort (keine User-Enumeration)
-            return auth.render_page("magic_request", request=request, next=nxt, sent=True, error="")
+            adresse = email.strip()
 
-        @r.get("/auth/magic/{token}")
-        def magic_redeem(request: Request, token: str):
+            def _versand():
+                try:
+                    auth.send_login_link(adresse, base, nxt)
+                except Exception:
+                    auth.audit("magic_send_error", detail=adresse)   # Fehler nicht nach außen leaken
+            # immer dieselbe Antwort (keine User-Enumeration) — und zur selben Zeit: versandt
+            # wird erst nach der Antwort (R4-05), im eigenen Mail-Arbeiter (B6-6).
+            return auth.nach_der_antwort(
+                auth.render_page("magic_request", request=request, next=nxt, sent=True, error=""), _versand)
+
+        # R4-02: Der Link aus der Mail führt auf eine Bestätigungsseite, erst deren POST löst ein.
+        # Mail-Scanner (Safe Links, Virenprüfer, Vorschau-Bots) rufen jeden Link per GET auf —
+        # bisher verbrauchte schon dieser Abruf den Token, und der Nutzer landete auf „Link
+        # ungültig". Ein GET, der anmeldet, meldet ausserdem jeden an, der den Link öffnet,
+        # auch den Scanner. Die Seite prüft nur (`peek_magic`), eingelöst wird mit CSRF-Token.
+        @r.get("/auth/magic/{token}", response_class=HTMLResponse)
+        def magic_confirm(request: Request, token: str):
             """Nur noch der Anmelde-Link. E-Mail-Bestätigung und Einladung haben seit 0.16 eigene
             Endpunkte — sonst nahm das Abschalten des Magic-Links beides mit."""
+            if not auth.peek_magic(token, purpose="login"):
+                auth.token_abgewiesen("login", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("magic_confirm", request=request, zweck="login",
+                                    action=f"/auth/magic/{_q(token)}")
+
+        @r.post("/auth/magic/{token}")
+        def magic_redeem(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="login")
             if not data or not data.get("user_id"):
+                auth.token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return _login_nach_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "/"))
 
     # ---------- E-Mail-Bestätigung (eigener Endpunkt, unabhängig vom Magic-Link) ----------
     if cfg.signup_verify_email:
-        @r.get("/auth/verify/{token}")
-        def verify_email(request: Request, token: str):
+        @r.get("/auth/verify/{token}", response_class=HTMLResponse)
+        def verify_confirm(request: Request, token: str):
+            """Bestätigungsseite statt Einlösen per GET — Begründung bei `/auth/magic/{token}` (R4-02)."""
+            if not auth.peek_magic(token, purpose="verify_email"):
+                auth.token_abgewiesen("verify_email", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("magic_confirm", request=request, zweck="verify_email",
+                                    action=f"/auth/verify/{_q(token)}")
+
+        @r.post("/auth/verify/{token}")
+        def verify_email(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="verify_email")
             if not data or not data.get("user_id"):
+                auth.token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.store.set_disabled(uid, False)          # Konto aktivieren
@@ -462,6 +494,7 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/invite/{token}")
         def invite_redeem(request: Request, token: str):
             if not auth.peek_magic(token, purpose="invite"):
+                auth.token_abgewiesen("invite", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return RedirectResponse(f"/auth/register?invite={_q(token)}", 303)
 
@@ -558,15 +591,24 @@ def build_router(auth) -> APIRouter:
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
             base = _mail_basis(auth, request)   # fail closed, siehe /auth/magic/request
-            try:
-                auth.send_password_reset(email.strip(), base)
-            except Exception:
-                auth.audit("reset_send_error", detail=email)
-            return auth.render_page("forgot", request=request, sent=True, error="")   # generisch (keine Enumeration)
+            adresse = email.strip()
+
+            def _versand():
+                try:
+                    auth.send_password_reset(adresse, base)
+                except Exception:
+                    auth.audit("reset_send_error", detail=adresse)
+            # generisch (keine Enumeration), Versand nach der Antwort (R4-05/B6-6)
+            return auth.nach_der_antwort(auth.render_page("forgot", request=request, sent=True, error=""),
+                                         _versand)
 
         @r.get("/auth/reset", response_class=HTMLResponse)
         def reset_page(request: Request, token: str = ""):
             if not auth.peek_magic(token, purpose="reset_password"):
+                # Ohne Token (Lesezeichen, Crawler) ist das kein vorgelegter Link — kein Eintrag,
+                # sonst meldete das Sicherheits-Log einen Fehlgriff, den es nie gab (A3).
+                if token:
+                    auth.token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("reset", request=request, token=token, error="")
 
@@ -579,6 +621,7 @@ def build_router(auth) -> APIRouter:
                                         error=auth.t("err.pw_short", n=auth.sec("password_min_length")))
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
+                auth.token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
@@ -620,6 +663,8 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("register", request=request, status=429, **_reg_ctx(nxt, invite=invite, email=email,
                                         error=auth.t("err.rate")))
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
+            if invite and not inv:
+                auth.token_abgewiesen("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
@@ -642,25 +687,68 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.email_required"))
             if email_final and not valid_email(email_final):
                 return err(auth.t("err.email_invalid"))
-            # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
-            # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
-            # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
-            if email_final and auth.kennung_vergeben(email_final):
-                return err(auth.t("err.email_taken"), 409)
-            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
-            if cfg.login_identifier == "email":
-                username = email_final or ""
-            if not username:
-                return err(auth.t("err.username_required"))
-            if auth.kennung_vergeben(username):
-                return err(auth.t("err.username_taken"), 409)
             # Bestätigung verlangt, aber kein Mailer? Dann NICHT stillschweigend durchwinken.
+            # Steht vor der Vergeben-Prüfung: Sie hängt nicht an der Adresse und verrät nichts.
             verify = cfg.signup_verify_email and not inv
             if verify and not auth.mail_configured():
                 return err(auth.t("err.verify_no_mailer"), 500)
             # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
             # das mangels Bestätigungsmail nie freigeschaltet werden kann.
             verify_base = _mail_basis(auth, request) if verify else ""
+            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
+            if cfg.login_identifier == "email":
+                username = email_final or ""
+            if not username:
+                return err(auth.t("err.username_required"))
+            # Benutzername = die eigene Adresse? Dann prüft die Adress-Prüfung unten beides.
+            name_ist_adresse = bool(email_final) and norm_email(username) == email_final
+            # Mit Bestätigung darf ein Benutzername keine FREMDE Adresse sein (Angriff A1): Die
+            # Namensprüfung sucht kreuzweise auch in den Adressen und hätte mit 409 verraten,
+            # dass es die Adresse gibt — R4-03 wäre über das Namensfeld umgangen.
+            if verify and "@" in username and not name_ist_adresse:
+                return err(auth.t("err.username_is_address"))
+            # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
+            # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
+            # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
+            # Der Name kommt VOR der Adresse (Angriff A1): Andersherum war ein bekannter,
+            # vergebener Name (`admin`) plus Zieladresse ein Orakel — vergebene Adresse 200,
+            # freie Adresse 409 username_taken. Ein vergebener Name ist ohnehin sichtbar (der
+            # Nutzer muss einen anderen wählen); jetzt hängt die Antwort darauf nicht mehr an der Adresse.
+            if not name_ist_adresse and auth.kennung_vergeben(username):
+                return err(auth.t("err.username_taken"), 409)
+            if email_final and auth.kennung_vergeben(email_final):
+                if verify:
+                    # R4-03: Mit Bestätigung antwortet eine vergebene Adresse wie eine freie —
+                    # 409 und „E-Mail vergeben" verrieten jedem, welche Adressen ein Konto
+                    # haben. Der Inhaber bekommt stattdessen einen Hinweis. Ohne Bestätigung
+                    # geht das nicht: Dort meldet der Erfolgsfall sofort an, die Antwort
+                    # unterscheidet sich also zwangsläufig.
+                    #
+                    # Der Benutzername wird dabei genauso belegt wie beim echten Anlegen (A1,
+                    # zweite Variante): ein gesperrter Platzhalter ohne Adresse, mit einem nie
+                    # verschickten Bestätigungstoken. Sonst verriet die zweite Registrierung
+                    # desselben Namens per 409, ob die erste ein Konto angelegt hatte — also ob
+                    # die Adresse frei war. `gc()` entfernt den Platzhalter mit Ablauf des
+                    # Tokens, genau wie ein nie bestätigtes echtes Konto (R4-09). Das Anlegen
+                    # samt Passwort-Hash gleicht zugleich die Laufzeit an.
+                    if name_ist_adresse:
+                        hash_password(password)   # Name = Adresse: nichts zu belegen, nur Laufzeit
+                    else:
+                        platzhalter = auth.create_user(username, password=password, roles=[])
+                        auth.store.set_disabled(platzhalter, True)
+                        auth.create_magic_token("verify_email", user_id=platzhalter)
+                    adresse = email_final
+
+                    def _hinweis():
+                        try:
+                            auth.send_signup_notice(adresse, verify_base)
+                        except Exception:
+                            auth.audit("signup_notice_error", detail=adresse)
+                    auth.audit("signup_taken", username, ip, detail=adresse)
+                    return auth.nach_der_antwort(
+                        auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
+                        _hinweis)
+                return err(auth.t("err.email_taken"), 409)
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
@@ -669,8 +757,26 @@ def build_router(auth) -> APIRouter:
             # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
-                auth.send_verify_email(uid, email_final, verify_base)
-                return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
+                konto = username
+
+                def _zuruecknehmen(grund):
+                    # B6-5: Ohne zugestellte Bestätigung ist das Konto eine Leiche — gesperrt,
+                    # nie freischaltbar, und es hält Namen und Adresse besetzt. Bis 0.19 kam
+                    # dazu eine HTTP-500. Es wird deshalb wieder entfernt; die Registrierung
+                    # lässt sich danach einfach wiederholen.
+                    auth.store.delete_user(uid)
+                    auth.audit("verify_send_error", konto, ip, detail=f"{grund}, Konto entfernt")
+
+                def _versand():
+                    try:
+                        gesendet = auth.send_verify_email(uid, email_final, verify_base)
+                    except Exception:
+                        gesendet = False
+                    if not gesendet:
+                        _zuruecknehmen("versand")
+                return auth.nach_der_antwort(
+                    auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
+                    _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
