@@ -182,7 +182,43 @@ def offene_gegen_erledigten_milestone(root: str = ".") -> list[str]:
     return fehler
 
 
+def pruefe_backlog_vorhanden(root: str = ".") -> list[str]:
+    """Gibt es das `backlog/`-Verzeichnis ueberhaupt?
+
+    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session, gemessen an drei Stellen):
+    `lade()` gibt bei fehlendem Verzeichnis eine leere Liste zurueck, und alle Pruefungen
+    darauf melden folgerichtig **nichts**. Der Aufrufer sieht einen gruenen Haken fuer eine
+    Pruefung, die kein einziges Element angesehen hat.
+
+    In repokit selbst stand dieser gruene Haken acht Freigaben lang: `scripts/check.sh` rief
+    `alle_pruefungen(".")`, und ein `backlog/` gab es hier gar nicht.
+
+        *Eine Pruefung, die null Faelle gesehen hat, ist rot — nicht gruen.*
+
+    Dieselbe Regel wie beim Sperr-Test in ci-infra und beim Rueckstands-Check seit 0.20.1:
+    „nichts messbar" ist nicht „alles in Ordnung". Sie fehlte dort, wo eine Pruefung ueber
+    eine LEERE MENGE laeuft — und eine leere Menge ist immer fehlerfrei.
+
+    ⚠️ FEHLEND ist nicht LEER. Ein Verzeichnis ohne Eintraege ist in Ordnung (frisches Repo,
+    alles abgearbeitet) — dafuer gibt es `test_leerer_backlog_ist_sauber`. Gemeldet wird nur
+    das FEHLEN: `repokit sync` liefert `backlog/README-KONVENTION.md` aus, also hat jedes
+    gesyncte Repo das Verzeichnis. Fehlt es, hat jemand es entfernt oder nie gesynct.
+    """
+    verz = os.path.join(root, BACKLOG_DIR)
+    if os.path.isdir(verz):
+        return []
+    return [f"{BACKLOG_DIR}/ fehlt — jede Backlog-Pruefung laeuft damit ueber eine leere "
+            f"Menge und meldet folgerichtig nichts. Das ist ein gruener Haken fuer eine "
+            f"Pruefung, die kein Element angesehen hat. `repokit sync` legt das Verzeichnis "
+            f"samt Konvention an; wer es bewusst nicht will, ruft die Backlog-Pruefungen nicht."]
+
+
 def alle_pruefungen(root: str = ".") -> list[str]:
+    fehlt = pruefe_backlog_vorhanden(root)
+    if fehlt:
+        # Ohne Verzeichnis sind die drei folgenden Pruefungen per Konstruktion still —
+        # sie hier trotzdem zu rufen erzeugte nur den Eindruck, es sei etwas geprueft worden.
+        return fehlt
     return (pruefe_backlog(root)
             + pruefe_keine_zyklen(root)
             + offene_gegen_erledigten_milestone(root))

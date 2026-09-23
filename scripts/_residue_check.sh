@@ -76,6 +76,27 @@ check() {
     done <<<"$nachher"
 
     if [[ ${#rueckstaende[@]} -gt 0 ]]; then
+        if [[ -z "$vorher_datei" ]]; then
+            # Ohne Vorher-Stand ist NICHT entscheidbar, ob das der Lauf war. Exit 2 statt 1:
+            # es ist kein Freispruch, aber auch kein Vorwurf, den dieses Skript belegen kann.
+            {
+                echo
+                echo "Rückstands-Check: NICHT ENTSCHEIDBAR — der Baum ist verändert, aber es"
+                echo "gibt keinen Vorher-Stand. Ob das der Lauf war oder schon vorher da lag,"
+                echo "kann dieses Skript nicht wissen:"
+                printf '  %s\n' "${rueckstaende[@]}"
+                echo
+                echo "In der CI und unter ci-local tritt das nie auf — dort ist der Baum vor"
+                echo "dem Lauf per Konstruktion sauber. Beim Lauf von Hand im Arbeitsbaum ist"
+                echo "es der Normalfall."
+                echo
+                echo "Damit es entscheidbar wird, VOR der Suite einmal:"
+                echo "    scripts/_residue_check.sh snapshot > \"\$TMPDIR/vorher.txt\""
+                echo "und danach:"
+                echo "    scripts/_residue_check.sh check --seit \"\$TMPDIR/vorher.txt\""
+            } >&2
+            return 2
+        fi
         {
             echo
             echo "Rückstands-Check: ABGEBROCHEN — die Suite hat Rückstände hinterlassen:"
@@ -87,7 +108,7 @@ check() {
         return 1
     fi
     # Ein Check, dessen Lauf man nie sieht, verdient kein Vertrauen.
-    echo "Rückstands-Check: Baum sauber."
+    echo "Rückstands-Check: Baum sauber.${vorher_datei:+ (gegen Vorher-Stand)}"
     return 0
 }
 

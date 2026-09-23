@@ -143,7 +143,25 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
             for pat in muster:
                 if pat.search(sauber):
                     treffer.append(f"{rel}:{n}: {zeile.strip()[:60]}")
+            # Auch die BESTANDTEILE einer Zusammensetzung pruefen.
+            #
+            # WARUM (2026-09-23, am eigenen Fehler gemessen): `wort` nimmt den Bindestrich
+            # INS Wort (`[a-z][a-z0-9-]{3,}`). Ein Kundenname in einer Zusammensetzung —
+            # `<kunde>-Session`, `<kunde>-deploy`, `<kunde>-stack` — ist damit ein anderes
+            # Wort, dessen Hash nicht in der Liste steht, und rutscht durch.
+            #
+            # Belegt an meinem eigenen Fehler: Ich habe an einem Abend sechsmal einen
+            # Kundennamen in der Form `<Kunde>-Session` in `hygiene_policy.json` geschrieben
+            # — eine Datei, die `repokit sync` in SECHS oeffentliche Repos kopiert. Der Zaun
+            # schwieg jedes Mal. Der blanke Name allein loeste aus, die Zusammensetzung nie.
+            #
+            # *Ein Zaun, der nur den Normalfall kennt, faengt den Fall nicht, in dem der Name
+            # beilaeufig vorkommt — und beilaeufig ist er meistens.*
+            kandidaten = set()
             for w in wort.findall(sauber.lower()):
+                kandidaten.add(w)
+                kandidaten.update(t for t in w.split("-") if len(t) >= 4)
+            for w in sorted(kandidaten):
                 if hashlib.sha256(w.encode()).hexdigest()[:16] in namen:
                     treffer.append(f"{rel}:{n}: verbotener Name")
             for m in unter_eigener.finditer(sauber):
@@ -377,7 +395,7 @@ def _ist_belegstelle(rel: str, belegstellen: list[str] | None) -> bool:
 def _ist_eigene_identitaet(host: str, policy: dict) -> bool:
     r"""Die NACKTE eigene Domain (und ihr `www`) ist Identitaet, keine Karte.
 
-    WARUM (2026-09-23, gemeldet von der SpecDoor-Session): `eigene_domains_sha256_16` las bis
+    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session): `eigene_domains_sha256_16` las bis
     dahin nur `pruefe_private_infrastruktur`. Die Adresspruefungen kannten die Liste nicht und
     meldeten die eigene Produktdomain als fremden Host — 8 von 96 verbliebenen Treffern in einem
     Kundenrepo.
@@ -1081,6 +1099,129 @@ def pruefe_uebersetzungs_struktur(root: str, paare: list[tuple[str, str]]) -> li
     return treffer
 
 
+def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
+                               laeufer: list[str] | None = None,
+                               ausgenommen: dict[str, str] | None = None) -> list[str]:
+    """Wird jede `tests/test_*`-Datei von irgendetwas AUFGERUFEN?
+
+    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session an einem echten Repo): Dort wurde
+    `tests/test_hygiene.py` von **nichts** gerufen — weder von `scripts/check.sh` noch von
+    einem Workflow. Die 16 Kit-Pruefungen darin hatten am Vortag 1060 Treffer auf null
+    gebracht und liefen seitdem in **keinem** Lauf mit.
+
+    ⚠️ **WARUM `pruefe_kit_prueffunktionen_gerufen` DAS NICHT SEHEN KANN — und nie koennte.**
+    Jene Pruefung belegt, dass die Kit-Funktionen **in** der Testdatei gerufen werden. Sie
+    laeuft aber selbst nur, wenn die Datei laeuft:
+
+        Ein nicht verkabelter Hygiene-Test besteht seine eigene Aufruf-Pruefung dadurch,
+        dass er schweigt.
+
+    Deshalb muss diese Frage von AUSSEN gestellt werden — aus der Datei heraus geht es
+    prinzipiell nicht. Das ist derselbe Gedanke wie „eine Pruefung, die null Faelle gesehen
+    hat, ist rot": *ein Pruefer, der nichts findet, meldet gruen — ob das „nichts da" oder
+    „nichts gesehen" heisst, steht in keiner Ausgabe.*
+
+    Gesucht wird der Dateiname in den **Laeufern**: `scripts/check.sh`, `scripts/run_all.py`
+    und allem unter `.github/workflows/`. Wer einen eigenen Laeufer hat, reicht ihn herein.
+
+    `ausgenommen` ist ein dict `{"<dateiname>": "Grund"}` — ein leerer Grund zaehlt nicht.
+    ⚠️ Eine Testdatei, die absichtlich nicht laeuft, ist fast immer eine, die geloescht
+    gehoert. Der Eintrag hier ist die Ausnahme fuer den seltenen Fall (z.B. ein Test, den nur
+    ein Mensch von Hand fuehrt), nicht der bequeme Weg an einer unverkabelten Datei vorbei.
+    """
+    import glob as _glob
+
+    ausgenommen = ausgenommen or {}
+    treffer = []
+    for name, grund in sorted(ausgenommen.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {name!r} ohne Begruendung — ein Grund ist Pflicht")
+
+    # ⚠️ ZUERST: sammelt irgendein Laeufer AUTOMATISCH? Dann ist jede Datei abgedeckt, und
+    # ein Namensvergleich waere ein reiner Fehlalarm.
+    #
+    # Beim ersten Lauf ueber acht Repos meldete diese Pruefung **54 Befunde in sechs Repos** —
+    # und keiner war echt: fuenf Repos rufen `tests/run_all.py`, das per `glob("test_*.py")`
+    # sammelt. Dort steht naturgemaess kein Dateiname.
+    # *Sechs gleichzeitige Fehlalarme sind ein Befund ueber die Pruefung, nicht ueber die
+    # Repos* — dieselbe Lehre wie beim Sammelfunktions-Fall in 0.17.1, und beide Male hat sie
+    # eine Messung VOR dem Scharfschalten aufgedeckt.
+    #
+    # Der Waechter bleibt trotzdem noetig: repokits `check.sh` zaehlt namentlich auf, und
+    # genau dort lagen zwei Testdateien im Baum, ohne je zu laufen. Und des Kundenrepos
+    # `test_hygiene.py` wird von gar nichts gerufen — weder namentlich noch per Sammler.
+    for _sammler in ("tests/run_all.py", "run_all.py", "scripts/run_all.py"):
+        _inhalt = _lies(root, _sammler)
+        if _inhalt and ("glob(" in _inhalt or "glob.glob" in _inhalt or "iterdir" in _inhalt
+                        or "discover" in _inhalt):
+            return treffer
+    _check = _lies(root, "scripts/check.sh") or ""
+    if re.search(r"pytest\s+(-[^\s]+\s+)*tests?\b|unittest\s+discover", _check):
+        return treffer
+
+    if laeufer is None:
+        # `tox.ini` und `pyproject.toml` dazu: gemeldet von einer Kunden-Session, die
+        # beim Belegen ihres Befunds BEIDE Einstiegspunkte greppen musste (check.sh und
+        # die Workflows). Ein Waechter, der nur check.sh liest, mahnt ein Repo an, das
+        # seine Tests woanders ruft — und ein Fehlalarm schaltet ihn ab.
+        laeufer = ["scripts/check.sh", "scripts/run_all.py", "run_all.py", "Makefile",
+                   "tox.ini", "pyproject.toml", "noxfile.py", "justfile"]
+        laeufer += sorted(_glob.glob(os.path.join(root, ".github", "workflows", "*.yml")))
+        laeufer += sorted(_glob.glob(os.path.join(root, ".github", "workflows", "*.yaml")))
+    quelle = []
+    for rel in laeufer:
+        pfad = rel if os.path.isabs(rel) else os.path.join(root, rel)
+        try:
+            with open(pfad, encoding="utf-8") as fh:
+                quelle.append(fh.read())
+        except (OSError, UnicodeDecodeError):
+            continue
+    text = "\n".join(quelle)
+    if not text.strip():
+        # Kein Laeufer gefunden -> die Pruefung haette nichts gemessen. Das ist der Fall,
+        # gegen den sie gebaut ist; sie darf ihn nicht selbst begehen.
+        return treffer + [f"kein Laeufer gefunden (gesucht: {', '.join(laeufer[:3])}…) — "
+                          f"diese Pruefung haette nichts gemessen und waere aus dem falschen "
+                          f"Grund gruen"]
+
+    muster = os.path.join(root, testverzeichnis, "test_*")
+    dateien = sorted(d for d in _glob.glob(muster)
+                     if os.path.isfile(d) and not d.endswith((".pyc", ".orig")))
+    if not dateien:
+        # ⚠️ NICHT SCHWEIGEN. Gemeldet von derselben Kunden-Session, die den Anlass-Befund
+        # lieferte — und sie hatte den Fehler am selben Abend im eigenen Werkzeug:
+        #
+        #     „Meiner tat es beim ersten Lauf — er fand null Dateien und meldete gruen."
+        #
+        # Genau das ist die Stufe, gegen die diese Pruefung gebaut ist (M-1 Stufe 3: *hat sie
+        # etwas gesehen?*). Sie darf sie nicht selbst offen lassen: ein Waechter, der keine
+        # Testdateien findet und daraufhin gruen meldet, sieht aus wie ein sauberes Repo.
+        #
+        # Wer legitim keine `tests/test_*` hat (ein reines Doku- oder Datenrepo), traegt eine
+        # Ausnahme mit Grund ein — dann steht es wenigstens da.
+        if "__keine_testdateien__" in ausgenommen:
+            return treffer
+        return treffer + [
+            f"in {testverzeichnis}/ liegt keine einzige `test_*`-Datei — diese Pruefung hat "
+            f"nichts gemessen und waere aus dem falschen Grund gruen. Wenn das Repo bewusst "
+            f"keine hat: ausgenommen={{'__keine_testdateien__': '<Grund>'}}"]
+
+    for pfad in dateien:
+        name = os.path.basename(pfad)
+        if name in ausgenommen:
+            continue
+        if not re.search(rf"(^|[\s\"'/]){re.escape(name)}\b", text, re.M):
+            treffer.append(f"{testverzeichnis}/{name} liegt im Baum, wird aber von keinem "
+                           f"Laeufer aufgerufen (check.sh, run_all, Workflows) — er laeuft "
+                           f"in KEINEM Lauf mit und meldet deshalb nie etwas")
+
+    unbekannt = set(ausgenommen) - {os.path.basename(d) for d in dateien}
+    for name in sorted(unbekannt):
+        treffer.append(f"Ausnahme {name!r} nennt keine vorhandene Testdatei — Tippfehler "
+                       f"oder geloescht?")
+    return treffer
+
+
 def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | None = None,
                                        testverzeichnis: str = "tests") -> list[str]:
     """Wird jede `pruefe_*` des Kits im Repo auch AUFGERUFEN?
@@ -1167,7 +1308,7 @@ def pruefe_dateiliste_plausibel(dateien: list[str], mindestens: int = 5,
                                 root: str | None = None) -> list[str]:
     """Ist die Dateiliste vollständig? — sonst prüft jede Prüfung danach zu wenig.
 
-    WARUM (2026-09-22, gemeldet von der SpecDoor-Session): `pruefe_geheimnisse([], …)`
+    WARUM (2026-09-22, gemeldet von der des Kundenrepos-Session): `pruefe_geheimnisse([], …)`
     und `pruefe_private_infrastruktur([], …)` geben beide **grün** zurück. Eine leere
     Liste ist damit von „alles sauber" nicht zu unterscheiden.
 
