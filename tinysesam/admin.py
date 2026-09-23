@@ -10,12 +10,15 @@ eingebettet werden kann. Die eingebaute UI ermittelt ihre Basis-URL selbst → l
 Mountpunkt. Nur Admins.
 """
 from __future__ import annotations
+import html
 import json
+import secrets
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
-from .router import _key_art
+from .manager import _inject_nonce
+from .router import _key_art, gehaertete_route
 from .store import norm_email, valid_email
 from .templates import brand, favicon_link
 from .theme import TOKENS
@@ -23,7 +26,7 @@ from .theme import TOKENS
 
 def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
-    ar = APIRouter(tags=["admin"])
+    ar = APIRouter(tags=["admin"], route_class=gehaertete_route(auth))
 
     def guard(request: Request):
         # Admin + (optional) Step-up-MFA. Browser-Seitenaufruf → Redirect zu Login/Reauth;
@@ -256,7 +259,15 @@ def build_admin_router(auth) -> APIRouter:
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis
-            resp = HTMLResponse(render_panel(auth, request.url.path.rstrip("/"), warn=warn))
+            # Dieselbe CSP wie jede andere eingebaute Seite (R8-1). Bis 0.19.0 kam ausgerechnet
+            # das Panel, das Konten anlegt und Rechte vergibt, ohne CSP und ohne Schutz gegen
+            # Einbetten. Möglich wurde es erst, als die Inline-Handler verschwanden (`data-on`).
+            nonce = secrets.token_urlsafe(16)
+            resp = HTMLResponse(_inject_nonce(
+                render_panel(auth, request.url.path.rstrip("/"), warn=warn), nonce))
+            policy = auth._csp_header(nonce)
+            if policy:
+                resp.headers.setdefault("Content-Security-Policy", policy)
             # Ein VORHANDENES Cookie übernehmen, nicht überschreiben — dieselbe Behandlung wie
             # in `render_page`. Diese Stelle war der dritte Setzer und der letzte, der bei jedem
             # Aufruf neu würfelte: Wer das Panel in einem zweiten Reiter öffnete, machte damit
@@ -309,7 +320,11 @@ def render_panel(auth, base: str, warn: str = "") -> str:
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
-            .replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+            # `rp_name` ist Text, kein Markup (R8-3) — die übrigen Seiten escapen ihn längst.
+            # `base` kommt aus dem Anfragepfad und landet in einem JS-String; json.dumps plus
+            # `<`-Maskierung hält ihn dort.
+            .replace("__RP__", html.escape(cfg.rp_name))
+            .replace('"__BASE__"', json.dumps(base).replace("<", "\\u003c"))
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
             .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
@@ -364,6 +379,9 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
   border-radius:calc(var(--ts-radius) - 2px);padding:14px;margin-bottom:14px}
 .tsadmin h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
 .tsadmin .muted{color:var(--ts-muted)}
+.tsadmin .w120{width:120px}.tsadmin .w150{width:150px}.tsadmin .w200{width:200px}
+.tsadmin .w230{width:230px}.tsadmin .w280{width:280px}.tsadmin .mr12{margin-right:12px}
+.tsadmin .small{font-size:12px}
 .tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
   padding:2px 6px;font-size:12px}
 __BRANDCSS__
@@ -387,16 +405,15 @@ const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
 const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-// Ein Wert, der als JS-ARGUMENT in ein onclick-Attribut geht. HTML-Escaping allein genuegt dort
-// NICHT: Der Browser dekodiert das Attribut zuerst und laesst den JS-Parser danach ueber das
-// Ergebnis laufen — aus &#39; wird wieder ein Apostroph, der den String schliesst. Ein Nutzer,
-// der sich als  bob');alert(document.cookie);//  registriert, fuehrte damit Code im Browser der
-// angemeldeten Administratorin aus, sobald sie das Panel oeffnet.
-// JSON.stringify baut ein gueltiges JS-Literal (samt Anfuehrungszeichen), esc() macht es
-// attribut-sicher. Deshalb stehen an den Aufrufstellen KEINE eigenen Anfuehrungszeichen mehr.
-const jsarg=v=>esc(JSON.stringify(v??""));
+// Ein Knopf bekommt seine Aktion als data-on (Name) und data-a (Argumente als JSON), nie als
+// onclick. Zwei Gruende: Die CSP des Panels erlaubt Skript nur per Nonce, ein Inline-Handler
+// liefe gar nicht (R8-1). Und Daten in einem onclick sind Code — der Browser dekodiert das
+// Attribut und laesst den JS-Parser darueber laufen; aus &#39; wurde wieder ein Apostroph, und
+// ein Benutzername wie  bob');alert(document.cookie);//  lief im Browser der Administratorin.
+// data-a dagegen wird nur mit JSON.parse gelesen: Was darin steht, bleibt ein Wert.
+const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
-function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${esc(l)}</div>`).join("")}
+function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
 function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
@@ -405,9 +422,9 @@ async function users(){
   V(`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
     <input id=nu placeholder="${esc(L["f.username"])}"><input id=ne type=email placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
     <input id=np type=password placeholder="${esc(L["f.password"])}">
-    <input id=nr placeholder="${esc(L["f.roles"])}" style=width:200px>
+    <input id=nr placeholder="${esc(L["f.roles"])}" class=w200>
     <label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>
-    <button onclick=mkuser()>${esc(L.create)}</button></div></div>
+    <button ${on("mkuser")}>${esc(L.create)}</button></div></div>
     <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
@@ -415,10 +432,10 @@ async function users(){
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
       <td>${u.disabled?`<span class="badge red">${esc(L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
-        <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${esc(u.disabled?L.enable:L.disable)}</button>
-        <button class=sec onclick="pw(${u.id})">${esc(L["btn.pw"])}</button>
-        <button class=sec onclick="roles(${u.id},${jsarg((u.roles||[]).join(','))},${u.is_admin?1:0})">${esc(L["btn.roles"])}</button>
-        <button class=sec onclick="keys(${u.id},${jsarg(u.username)})">${esc(L["btn.keys"])}</button>
+        <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
+        <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
+        <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
+        <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
@@ -429,13 +446,13 @@ async function pw(id){const v=prompt(L["prompt.pw"]);if(v)await p(`/api/users/${
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
-    ? ROLES.map(r=>`<label style="margin-right:12px"><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
-    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" style=width:280px>`;
+    ? ROLES.map(r=>`<label class=mr12><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
+    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" class=w280>`;
   document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.roles_groups)}</h2>
     <div class=row>${inner||`<span class=muted>${esc(L.no_roles)}</span>`}</div>
     <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>
-      <button onclick="saveroles(${id})">${esc(L.save)}</button>
-      <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">${esc(L.cancel)}</button></div></div></td>`;
+      <button ${on("saveroles",id)}>${esc(L.save)}</button>
+      <button class=sec ${on("clr",id)}>${esc(L.cancel)}</button></div></div></td>`;
 }
 async function saveroles(id){
   const roles = ROLES.length
@@ -445,11 +462,11 @@ async function saveroles(id){
 }
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
-    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" style=width:150px>
-    <button onclick="mkkey(${id})">${esc(L.create_key)}</button></div>
+    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
+    <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},${jsarg(name)})">${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
   if(r.key)prompt(L.key_once,r.key);keys(id,"")}
 async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
@@ -457,15 +474,16 @@ async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
-      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs(${jsarg(s.full)})">${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
+      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn ${on("revs",s.full)}>${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
 async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
+function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
   V(`<div class=card><h2>${esc(L.hardening)}</h2>`+
-    Object.entries(s).map(([k,v])=>`<div class=row><label style=width:230px>${k}</label><input id=s_${k} value=${v} type=number style=width:120px></div>`).join("")+
-    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>${esc(L.save)}</button></div></div>`+
+    Object.entries(s).map(([k,v])=>`<div class=row><label class=w230>${esc(k)}</label><input id="s_${esc(k)}" value="${esc(v)}" type=number class=w120></div>`).join("")+
+    `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
-     <div class=muted style=font-size:12px>${esc(L.update_note)}</div></div>`)}
+     <div class="muted small">${esc(L.update_note)}</div></div>`)}
 async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert(L.saved)}
 
 
@@ -473,6 +491,11 @@ async function audit(){const a=await g("/api/audit?limit=120");
   V(`<table><tr><th>${esc(L["th.time"])}</th><th>${esc(L["th.event"])}</th><th>${esc(L["th.user"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.detail"])}</th></tr>`+
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
+// Ein delegierter Listener fuer alle Knoepfe, auch die per innerHTML nachgeladenen. Nur Namen
+// aus ACT sind aufrufbar — data-on waehlt eine Aktion aus, es nennt keinen beliebigen Code.
+const ACT={go,mkuser,dis,pw,roles,saveroles,clr,keys,mkkey,revk,revs,savesec};
+document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
+  if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();
 </script>
 </div>__FOOTER__</body></html>"""

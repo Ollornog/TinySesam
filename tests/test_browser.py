@@ -372,6 +372,22 @@ async def run():
         assert "demoadmin" in await p.js("document.querySelector('h1').textContent")
         print("  Login: Autofill verworfen, Knopf füllt, angemeldet, /app erreichbar")
 
+        # ---------- 8b) Admin-Panel unter strenger CSP: die Knöpfe laufen trotzdem ----------
+        # R8-1: Das Panel bekam die CSP erst, als seine Inline-Handler verschwanden. Ob die
+        # delegierten `data-on`-Knöpfe wirklich greifen, zeigt nur ein Browser mit echter Policy.
+        await p.go("/auth/admin", wait=1.5)
+        assert await p.js("document.querySelectorAll('#view tr').length") > 1, "Benutzerliste leer"
+        await p.click("[data-on=keys]")
+        await asyncio.sleep(0.6)
+        assert await p.js("!!document.querySelector('#view #kn')"), "Keys-Knopf ohne Wirkung"
+        await p.click(".tab[data-on=go]:nth-child(2)")
+        await asyncio.sleep(0.6)
+        assert await p.js("document.querySelector('.tab.on').textContent") != \
+            await p.js("document.querySelector('.tab').textContent"), "Reiter-Wechsel ohne Wirkung"
+        viol = await p.js("JSON.stringify(window.__csp===undefined?['(kein Listener)']:window.__csp)")
+        assert viol == "[]", f"CSP-Verstoss im Admin-Panel: {viol}"
+        print("  Admin-Panel unter strenger CSP: Knöpfe und Reiter wirken, kein Verstoss")
+
         # ---------- 9) Abgelaufene Step-up-Frische: der Knopf schickt zur Reauth ----------
         # R3-3 legte die Faktor-Verwaltung hinter `require_mfa()`. Seither antwortet
         # /auth/totp/disable mit 403 + `X-TinySesam-Reauth`, sobald die Step-up-Frische

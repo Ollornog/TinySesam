@@ -2391,7 +2391,55 @@ class TinySesam:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
             resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
+        # Auch hier, nicht nur in der Route: Fehlerseiten aus `install_error_pages` laufen an
+        # keiner TinySesam-Route vorbei und tragen sonst keine einzige Härtungskopfzeile.
+        return self._kopfzeilen(resp)
+
+    def _kopfzeilen(self, resp: Response) -> Response:
+        """Die Härtungskopfzeilen jeder TinySesam-Antwort (R8-1, R8-5, R4-08, R5-2).
+
+        Bis 0.19.0 trug nur die gerenderte Seite eine CSP; alles andere — Admin-Panel, JSON-API,
+        Umleitungen mit Token in der Adresse — kam ohne jede Kopfzeile. `setdefault`, damit eine
+        Route (oder ein Override), die bewusst etwas anderes setzt, gewinnt.
+
+        * `nosniff` — eine JSON-Antwort mit Benutzereingabe darin wird nie als HTML gedeutet.
+        * `Referrer-Policy: same-origin` — Reset-, Anmelde- und Einladungsseiten tragen das Token
+          in der Adresse; ein Bild oder Link nach aussen nähme es sonst als `Referer` mit.
+          Bewusst nicht `no-referrer`: Damit setzt der Browser bei jedem gleich-origin-POST
+          `Origin: null`, und eine Origin-Prüfung im Proxy davor wiese das Login-Formular ab.
+        * `Cache-Control: no-store` + `Vary: Cookie` — die Antworten hängen an der Sitzung
+          (Konto, Sitzungsliste, `/auth/me`); ein geteilter Cache davor darf sie weder aufheben
+          noch dem nächsten Besucher geben.
+        * `X-Frame-Options: SAMEORIGIN` — nur bei `csp='strict'`, deren `frame-ancestors 'self'`
+          es für ältere Browser wiederholt. Eine eigene Policy oder `off` (der Proxy setzt die
+          CSP) entscheidet selbst, wer einbetten darf; ein festes XFO würde das überstimmen.
+        """
+        self._kopfzeilen_in(resp.headers)
         return resp
+
+    def _kopfzeilen_fehler(self, exc) -> None:
+        """Dieselben Kopfzeilen für eine `HTTPException` aus einer TinySesam-Route.
+
+        Die Antwort baut dort der Exception-Handler des Gastgebers (oder Starlettes Vorgabe) —
+        die Routen-Klasse bekommt sie nie zu sehen. Beide übernehmen aber `exc.headers`; also
+        wandern die Kopfzeilen dort hinein. Das 401 von `/auth/admin` ohne Sitzung ist genau so
+        eine Antwort.
+        """
+        from starlette.datastructures import MutableHeaders
+        h = MutableHeaders(headers=dict(exc.headers or {}))
+        self._kopfzeilen_in(h)
+        exc.headers = dict(h.items())
+
+    def _kopfzeilen_in(self, h) -> None:
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("Referrer-Policy", "same-origin")
+        h.setdefault("Cache-Control", "no-store")
+        vary = h.get("vary", "")
+        if "cookie" not in [v.strip().lower() for v in vary.split(",")]:
+            h["Vary"] = f"{vary}, Cookie" if vary.strip() else "Cookie"
+        if ((self.cfg.csp or "").strip() == "strict"
+                and h.get("content-type", "").startswith("text/html")):
+            h.setdefault("X-Frame-Options", "SAMEORIGIN")
 
     def _csp_header(self, nonce: str) -> str:
         """Die CSP für die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per

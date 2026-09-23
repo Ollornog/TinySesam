@@ -210,9 +210,13 @@ class TinySesamConfig:
     # pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert.
     #   "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce
     #   "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt)
-    #   eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt
-    # Gilt NUR für die von TinySesam gerenderten String-Seiten, nicht für eigene
-    # Response-Overrides (die setzen ihre CSP selbst).
+    #   eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt. Jede
+    #                        Direktive muss eine bekannte sein — ein Tippfehler ('Strict',
+    #                        'scirpt-src') bricht den Aufbau ab, statt die CSP still abzuschalten
+    # Gilt für die von TinySesam gerenderten Seiten und das Admin-Panel, nicht für eigene
+    # Response-Overrides (die setzen ihre CSP selbst). Bei 'strict' kommt X-Frame-Options:
+    # SAMEORIGIN dazu; nosniff, Referrer-Policy, no-store und Vary: Cookie tragen alle
+    # TinySesam-Antworten unabhängig von diesem Schalter.
     csp: str = "strict"
 
     # --- CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax) ---

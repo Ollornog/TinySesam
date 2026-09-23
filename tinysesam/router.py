@@ -11,14 +11,39 @@ Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufge
 fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .store import norm_email, valid_email
 
 
+def gehaertete_route(auth) -> type[APIRoute]:
+    """Eine Routen-Klasse, die jede Antwort durch `auth._kopfzeilen` schickt.
+
+    Als Routen-Klasse und nicht als Middleware: TinySesam ist ein Router in einer fremden App.
+    Eine Middleware träfe jede Route des Gastgebers mit — dessen Cache-Regeln für statische
+    Dateien eingeschlossen. `include_router` übernimmt die Klasse je Route, deshalb gilt sie
+    auch für das Admin-Panel unter einem frei gewählten Präfix.
+    """
+    class _GehaerteteRoute(APIRoute):
+        def get_route_handler(self):
+            innen = super().get_route_handler()
+
+            async def handler(request: Request):
+                try:
+                    antwort = await innen(request)
+                except _StarletteHTTPException as exc:   # FastAPIs HTTPException erbt davon
+                    auth._kopfzeilen_fehler(exc)
+                    raise
+                return auth._kopfzeilen(antwort)
+            return handler
+    return _GehaerteteRoute
+
+
 def build_router(auth) -> APIRouter:
     cfg = auth.cfg
-    r = APIRouter(tags=["auth"])
+    r = APIRouter(tags=["auth"], route_class=gehaertete_route(auth))
 
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)

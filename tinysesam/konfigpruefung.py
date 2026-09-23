@@ -86,6 +86,44 @@ def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
 
 
+#: Die Direktiven, die eine Content-Security-Policy kennt (CSP Level 3 plus die verbreiteten
+#: Altlasten). Eine eigene Policy muss aus ihnen bestehen — mehr prüft TinySesam nicht.
+CSP_DIREKTIVEN = frozenset({
+    "default-src", "script-src", "script-src-elem", "script-src-attr", "style-src",
+    "style-src-elem", "style-src-attr", "img-src", "font-src", "connect-src", "media-src",
+    "object-src", "frame-src", "child-src", "worker-src", "manifest-src", "prefetch-src",
+    "fenced-frame-src", "base-uri", "form-action", "frame-ancestors", "navigate-to", "sandbox",
+    "upgrade-insecure-requests", "block-all-mixed-content", "report-uri", "report-to",
+    "require-trusted-types-for", "trusted-types", "webrtc", "plugin-types", "referrer",
+})
+
+
+def csp_fehler(wert) -> str:
+    """Der Befund zu `csp`, leer wenn in Ordnung (B3-2).
+
+    Alles ausser 'strict' und 'off' ging bis 0.19.0 ungeprüft 1:1 in den Header. Ein Tippfehler
+    wie 'Strict' oder 'stirct' war damit eine „eigene Policy" ohne eine einzige Direktive — der
+    Browser verwirft so einen Header, und die Seiten liefen **ohne jede CSP**, ohne dass es
+    irgendwo auffiel. Geprüft wird deshalb nur die Form: jede Direktive muss eine bekannte sein.
+    Ob die Policy inhaltlich taugt, bleibt Sache dessen, der sie schreibt.
+    """
+    if not isinstance(wert, str):
+        return ""                  # meldet der Konstruktor eigens — kein doppelter Befund
+    roh = wert.strip()
+    if roh in ("", "strict", "off"):
+        return ""
+    if roh.lower() in ("strict", "off"):
+        return (f"csp={wert!r} — gemeint ist wohl {roh.lower()!r} (klein geschrieben). So wäre es "
+                "eine eigene Policy ohne Direktive, und der Browser liefe ohne jede CSP.")
+    namen = [teil.split()[0].lower() for teil in roh.split(";") if teil.strip()]
+    unbekannt = [n for n in namen if n not in CSP_DIREKTIVEN]
+    if not namen or unbekannt:
+        return (f"csp={wert!r} ist weder 'strict' noch 'off' noch eine Policy aus bekannten "
+                f"Direktiven (unbekannt: {', '.join(unbekannt) or '—'}). Der Browser verwirft so "
+                "einen Header, und die Seiten liefen ohne jede CSP.")
+    return ""
+
+
 def pruefe(config) -> tuple[list[str], list[str]]:
     """(Fehler, Warnungen) — beide vollständig, nicht beim ersten Fund abgebrochen."""
     fehler: list[str] = []
@@ -405,6 +443,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             fehler.append(
                 f"ldap_tls_ca_file={_ca!r} gibt es nicht. Die Verbindung zum Verzeichnis "
                 "scheitert dann bei jeder Anmeldung — und zwar erst im Betrieb.")
+
+    _csp_fund = csp_fehler(getattr(config, "csp", "strict"))
+    if _csp_fund:
+        fehler.append(_csp_fund)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():

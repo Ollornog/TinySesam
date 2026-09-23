@@ -809,20 +809,22 @@ r.check("esc() ersetzt alle HTML-Sonderzeichen, nicht nur '<'",
         all(z in panel_js for z in ('"&":"&amp;"', "'\"':\"&quot;\"", '"\'":"&#39;"')),
         "esc() deckt nicht alle Zeichen ab — in einem Attribut reicht `<` nicht")
 
-# Kein `'${esc(...)}'` mehr: ein JS-String, den ein HTML-escapter Wert füllt, ist ausbrechbar.
-ausbrechbar = re.findall(r"onclick=\"[^\"]*'\$\{esc\([^\"]*\"", panel_js)
-r.check("kein JS-String-Argument mehr, das nur HTML-escaped ist", not ausbrechbar,
-        f"{ausbrechbar[:2]} — dort bricht ein Apostroph aus")
-
-r.check("Daten in onclick laufen über jsarg() (JSON.stringify + Attribut-Escaping)",
-        "const jsarg=" in panel_js and panel_js.count("${jsarg(") >= 4,
-        f"{panel_js.count('${jsarg(')} Verwendungen")
+# Seit R8-1 steht gar kein Datum mehr in einem Inline-Handler: Die CSP des Panels liesse ihn
+# nicht laufen, und ein onclick ist Code. Die Knöpfe tragen `data-on` (Aktionsname) und
+# `data-a` (Argumente als JSON), ein delegierter Listener liest sie mit JSON.parse.
+r.check("kein onclick mehr im Panel", not re.search(r"\bon[a-z]+=", panel_js.split("_PAGE = ")[1]),
+        "ein Inline-Handler ist zurück — unter der CSP läuft er nicht, und Daten darin sind Code")
+r.check("Knöpfe laufen über on() (JSON in data-a, Attribut-escaped)",
+        'const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;' in panel_js
+        and panel_js.count("${on(") >= 10, f"{panel_js.count('${on(')} Verwendungen")
+r.check("der Listener ruft nur Aktionen aus ACT auf und liest data-a mit JSON.parse",
+        "const ACT={" in panel_js and 'JSON.parse(el.dataset.a||"[]")' in panel_js)
 
 # Die Wirkung messen, nicht im Quelltext raten.
 #
-# Der Kern ist prüfbar ohne JS-Laufzeit: `jsarg` = JSON-Literal + HTML-Escaping. Ein Wert, der
-# so behandelt wird, darf im erzeugten Attribut KEIN rohes Anführungszeichen mehr enthalten —
-# sonst schliesst er den JS-String, sobald der Browser das Attribut dekodiert hat.
+# Der Kern ist prüfbar ohne JS-Laufzeit: `on` = JSON-Liste + HTML-Escaping in einem
+# doppelt-gequoteten Attribut. Darin darf KEIN rohes `"` stehen (sonst endet das Attribut), und
+# nach der Dekodierung durch den Browser muss JSON.parse genau den Namen zurückgeben.
 ZEICHEN = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}
 
 
@@ -830,25 +832,21 @@ def _esc(w):
     return "".join(ZEICHEN.get(z, z) for z in str(w))
 
 
-def _jsarg(w):
+def _on(f, *a):
     import json as _j
-    return _esc(_j.dumps(str(w)))
+    return f'data-on="{f}" data-a="{_esc(_j.dumps(list(a), separators=(",", ":")))}"'
 
 
-angriff = "bob');alert(document.cookie);//"
-attribut = f'onclick="keys(1,{_jsarg(angriff)})"'
+angriff = "bob\");alert(document.cookie);//'\"><img src=x onerror=alert(1)>"
+attribut = _on("keys", 1, angriff)
+_wert = attribut.split('data-a="', 1)[1]
 r.check("ein präparierter Benutzername lässt kein rohes Anführungszeichen im Attribut",
-        "'" not in attribut.split("keys(1,")[1] and '"' not in attribut.split("keys(1,")[1][:-2],
-        f"{attribut}")
-# Und nach der Attribut-Dekodierung durch den Browser muss ein gültiges JS-Literal dastehen,
-# nicht ein geschlossener String plus Code.
+        '"' not in _wert[:-1] and "<" not in _wert and "'" not in _wert, attribut)
 import html as _html  # noqa: E402
+import json as _json_a  # noqa: E402
 
-dekodiert = _html.unescape(attribut.split("keys(1,")[1].rsplit(")", 1)[0])
-r.check("nach der HTML-Dekodierung steht ein einzelnes JS-String-Literal da",
-        dekodiert.startswith('"') and dekodiert.endswith('"')
-        and dekodiert.count('"') == 2 + dekodiert.count('\\"'),
-        f"{dekodiert!r} — hier bricht der String auf")
+r.check("nach der HTML-Dekodierung liefert JSON.parse genau die Argumente zurück",
+        _json_a.loads(_html.unescape(_wert[:-1])) == [1, angriff], _wert)
 
 # Wenn node da ist, dasselbe gegen die ECHTEN Helfer aus dem Panel — die stärkere Messung.
 import shutil as _sh2  # noqa: E402
@@ -857,18 +855,19 @@ node = _sh2.which("node")
 if node:
     import json as _json2
 
-    defs = re.search(r"const esc=.*?const jsarg=v=>esc\(JSON\.stringify\(v\?\?\"\"\)\);",
-                     panel_js, re.S)
-    r.check("die JS-Helfer sind im Panel auffindbar", defs is not None, "esc/jsarg nicht gefunden")
-    if defs:
-        probe = defs.group(0) + (
-            f"\nprocess.stdout.write(`<button onclick=\"keys(1,${{jsarg({_json2.dumps(angriff)})}})\">x</button>`);")
+    defs = re.search(r"const esc=.*?\);\n", panel_js, re.S)
+    ondef = re.search(r"const on=.*?;\n", panel_js)
+    r.check("die JS-Helfer sind im Panel auffindbar", defs is not None and ondef is not None,
+            "esc/on nicht gefunden")
+    if defs and ondef:
+        probe = defs.group(0) + ondef.group(0) + (
+            f"\nprocess.stdout.write(`<button ${{on('keys',1,{_json2.dumps(angriff)})}}>x</button>`);")
         aus = subprocess.run([node, "-e", probe], capture_output=True, text=True).stdout
-        r.check("auch das echte Panel-JS bricht nicht aus dem onclick aus",
-                "');alert" not in aus and "&#39;" in aus, f"erzeugt: {aus[:110]}")
+        r.check("auch das echte Panel-JS bricht nicht aus dem Attribut aus",
+                "<img" not in aus and "&quot;" in aus, f"erzeugt: {aus[:110]}")
         r.check("und der Nachbau oben stimmt mit dem echten JS überein",
-                _jsarg(angriff) in aus,
-                f"Nachbau: {_jsarg(angriff)!r} — dann misst die Prüfung ohne node etwas anderes")
+                _on("keys", 1, angriff) in aus,
+                f"Nachbau: {_on('keys', 1, angriff)!r} — dann misst die Prüfung ohne node etwas anderes")
 
 # ---------- F-17: ein gesperrtes Konto bekommt beim SSO-Login gar nichts mehr ----------
 # Bis 0.18.x lief der Callback für ein `disabled=1`-Konto vollständig durch: Gruppen wurden
