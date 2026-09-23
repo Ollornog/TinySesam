@@ -1602,15 +1602,22 @@ class TinySesam:
         fn = self._mailer_override or SMTPMailer(self.cfg)
         fn(to, subject, text, html)
 
-    def _mail_ziel_ok(self, adresse, zweck) -> bool:
+    def _mail_ziel_ok(self, adresse, zweck, topf="mail") -> bool:
         """Darf an diese Adresse noch eine Mail? Gedrosselt je **Ziel**, nicht je Absender (R4-04).
 
         Die IP-Drossel der Routen schützt den Server, nicht das Postfach: Wer über wechselnde
         Adressen „Passwort vergessen" für ein fremdes Konto anstösst, füllte dessen Postfach
         unbegrenzt. Die Abweisung ist nach aussen unsichtbar (dieselbe Antwort wie sonst) und
         steht im Audit-Log, damit der Betreiber die Flut sieht.
+
+        `topf` trennt Kontingente: Anmelde-Link und Reset teilen sich einen (beide bringen den
+        Inhaber ins Konto — wer sie für ihn anstösst, schickt ihm brauchbare Links). Der Hinweis
+        der Registrierung hat einen eigenen (Angriff A2): Ihn löst jeder Fremde aus, er trägt
+        keinen Token, und im gemeinsamen Topf verbrauchten drei fremde Registrierungen das
+        Kontingent, mit dem der Inhaber sich selbst einen Link schickt — bei Betrieb nur mit
+        Anmelde-Link eine wiederholbare Aussperrung.
         """
-        schluessel = "mail:" + (norm_email(adresse) or "")
+        schluessel = f"{topf}:" + (norm_email(adresse) or "")
         if self.rl.allow(schluessel, self.sec("mail_per_address_max"),
                          self.sec("mail_per_address_window_sec")):
             return True
@@ -1639,6 +1646,10 @@ class TinySesam:
         resp.background = BackgroundTask(self._postausgang.nachher(auftrag, bei_ueberlauf))
         return resp
 
+    #: Deckel für `token_invalid`-Zeilen im Audit-Log: höchstens so viele je Fenster (global).
+    _TOKEN_AUDIT_MAX = 20
+    _TOKEN_AUDIT_FENSTER_SEC = 60
+
     def token_abgewiesen(self, zweck, request: Optional[Request] = None, grund="ungueltig"):
         """Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
@@ -1648,8 +1659,20 @@ class TinySesam:
         Postfach ist kein Anmeldeversuch und darf niemanden per fail2ban aussperren.
         """
         ip = self.client_ip(request) if request is not None else None
-        self.audit("token_invalid", ip=ip, detail=f"zweck={zweck} grund={grund}")
+        # Das Sicherheits-Log bekommt jede Zeile: Es rotiert, und die Verify-Jail von fail2ban
+        # bannt daraus genau den, der Links durchprobiert.
         self._abgewiesen(None, ip, f"token_{zweck}", login=False)
+        # Das Audit-Log dagegen räumt `gc()` nie auf, und die Routen sind anonym und ungedrosselt
+        # (Angriff A3): Jeder GET auf /auth/magic/<Unsinn> schrieb dauerhaft eine Datenbankzeile —
+        # eine Festplatte liess sich so füllen. Gedeckelt wird deshalb global je Zeitfenster,
+        # nicht je IP (die wechselt ein Angreifer), und wenn der Deckel greift, steht genau
+        # EINE Zeile dazu im Audit — sonst sähe der Betreiber die Flut nicht.
+        fenster = self._TOKEN_AUDIT_FENSTER_SEC
+        if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, fenster):
+            self.audit("token_invalid", ip=ip, detail=f"zweck={zweck} grund={grund}")
+        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, fenster):
+            self.audit("token_invalid_throttled", ip=ip,
+                       detail=f"mehr als {self._TOKEN_AUDIT_MAX} in {fenster}s — weitere nur im Sicherheits-Log")
 
     # ---------- Magic-/Einmal-Token ----------
     def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
@@ -1749,14 +1772,15 @@ class TinySesam:
         Die Registrierung antwortet bei eingeschalteter Bestätigung für eine vergebene Adresse
         genauso wie für eine freie („Bestätigungsmail ist unterwegs") — sonst verriet sie per
         409 und Text, welche Adressen ein Konto haben. Der echte Inhaber bekommt stattdessen
-        diese Mail: kein Token, nur der Weg zur Anmeldung. Gedrosselt wie jede Mail (R4-04).
+        diese Mail: kein Token, nur der Weg zur Anmeldung. Gedrosselt wie jede Mail (R4-04), aber
+        im eigenen Topf — sonst sperrte sie den Inhaber von seinen eigenen Links aus (A2).
         """
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["is_service"] or not self.mail_configured():
             return False
         ziel = u["email"]
-        if not self._mail_ziel_ok(ziel, "signup_notice"):
+        if not self._mail_ziel_ok(ziel, "signup_notice", topf="hinweis"):
             return False
         login = f"{base_url}{self.cfg.login_path}"
         self.send_mail(ziel, "Registrierung mit deiner Adresse",

@@ -218,6 +218,20 @@ def _domain_kanonisch(domain: str) -> str:
         return domain
 
 
+def _email_unicode(email: str) -> str:
+    """Die Adresse mit der Domain in Unicode-Form (`xn--bcher-kva.example` → `bücher.example`).
+
+    Nur für die Suche nach Bestandsadressen von vor R4-06, die noch so gespeichert sind — nie zum
+    Speichern. Was sich nicht dekodieren lässt, kommt unverändert zurück."""
+    lokal, at, domain = email.rpartition("@")
+    if not at or "xn--" not in domain:
+        return email
+    try:
+        return f"{lokal}@{domain.encode('ascii').decode('idna').lower()}"
+    except UnicodeError:
+        return email
+
+
 def norm_email(email) -> Optional[str]:
     """E-Mail kanonisch speichern: NFKC, getrimmt, klein, Domain als A-Label. `None` bleibt `None`.
 
@@ -239,6 +253,24 @@ def _schriften(text: str) -> set:
     return {unicodedata.name(z, "?").split(" ", 1)[0] for z in text if z.isalpha()}
 
 
+#: Schriften, die in EINER Sprache zusammengehören und deshalb mischen dürfen (Angriff A6,
+#: Vorbild UTS #39 „Highly Restrictive"): Japanisch schreibt Kanji mit Hiragana und Katakana
+#: (`山田たろう`, `例え`), Koreanisch Hanja mit Hangul, Chinesisch Han mit Bopomofo. Ohne diese
+#: Ausnahme wies die Schriftprüfung gewöhnliche japanische Adressen und IDN-Domains ab. Latein
+#: gehört bewusst in keine Gruppe — `аdmin` (kyrillisch/lateinisch) bleibt abgewiesen.
+_SCHRIFT_GRUPPEN = (
+    frozenset({"CJK", "IDEOGRAPHIC", "HIRAGANA", "KATAKANA", "KATAKANA-HIRAGANA"}),
+    frozenset({"CJK", "IDEOGRAPHIC", "HANGUL"}),
+    frozenset({"CJK", "IDEOGRAPHIC", "BOPOMOFO"}),
+)
+
+
+def _eine_schrift(teil: str) -> bool:
+    """Stammen die Buchstaben aus einer Schrift — oder aus einer Gruppe, die zusammengehört?"""
+    s = _schriften(teil)
+    return len(s) <= 1 or any(s <= gruppe for gruppe in _SCHRIFT_GRUPPEN)
+
+
 def valid_email(email) -> bool:
     """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
     Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`).
@@ -246,7 +278,8 @@ def valid_email(email) -> bool:
     Abgewiesen wird ausserdem, was zum Verwechseln gebaut ist (R4-06): unsichtbare Zeichen
     (Steuer- und Formatzeichen wie Zero-Width-Joiner) und ein Teil, der Schriften mischt —
     `аdmin@example.com` mit kyrillischem `а` sieht im Panel aus wie das Admin-Postfach. Eine
-    Adresse ganz in einer Schrift (`müller@…`, `иван@…`) bleibt erlaubt."""
+    Adresse ganz in einer Schrift (`müller@…`, `иван@…`) bleibt erlaubt, ebenso die Mischungen einer
+    Sprache aus `_SCHRIFT_GRUPPEN` (`山田たろう@…`)."""
     e = (email or "").strip()
     if not e or " " in e or e.count("@") != 1:
         return False
@@ -255,7 +288,7 @@ def valid_email(email) -> bool:
     local, _, domain = e.partition("@")
     if not (bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")):
         return False
-    return all(len(_schriften(teil)) <= 1 for teil in [local, *domain.split(".")])
+    return all(_eine_schrift(teil) for teil in [local, *domain.split(".")])
 
 
 def _now() -> int:
@@ -516,9 +549,14 @@ class Store:
             return None
         # Auch die Form von vor R4-06 (nur getrimmt und klein) suchen: Eine gespeicherte Adresse
         # mit Umlaut-Domain steht im Bestand noch in Unicode-Form und würde sonst nicht gefunden.
+        # Und zwar in BEIDE Richtungen (Angriff A5): Die Unicode-Form wird auch aus der A-Label-
+        # Eingabe zurückgewonnen — sonst fand `user@xn--bcher-kva.example` den Bestand
+        # `user@bücher.example` nicht, und die Registrierung legte ein zweites Konto für dasselbe
+        # Postfach an.
         alt = str(email or "").strip().lower()
-        return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?) ORDER BY id LIMIT 1",
-                         (kanonisch, alt))
+        unicode_form = _email_unicode(kanonisch)
+        return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
+                         (kanonisch, alt, unicode_form))
 
     def delete_user(self, user_id):
         """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""

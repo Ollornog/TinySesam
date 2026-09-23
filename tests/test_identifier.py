@@ -45,6 +45,11 @@ assert not valid_email("аdmin@example.com"), "kyrillisches а zwischen lateinis
 assert not valid_email("admin@exаmple.com"), "Verwechsler in der Domain"
 assert not valid_email("ad\u200bmin@example.com") and not valid_email("ad\u200dmin@example.com"), "unsichtbar"
 assert valid_email("müller@example.com") and valid_email("иван@example.com"), "eine Schrift bleibt erlaubt"
+# Angriff A6: Schriften, die in einer Sprache zusammengehören, dürfen mischen — Japanisch schreibt
+# Kanji mit Hiragana/Katakana. Latein bleibt aus jeder Gruppe draussen.
+assert valid_email("山田たろう@example.jp") and valid_email("user@例え.テスト"), "Japanisch mischt Kanji und Kana"
+assert valid_email("ラーメン@example.jp") and valid_email("홍길동漢@example.kr"), "Kana-Langzeichen, Hangul+Hanja"
+assert not valid_email("山田a@example.jp") and not valid_email("たаро@example.jp"), "Latein/Kyrillisch mischt nicht mit"
 auth, c, db = build(login_identifier="email", allow_signup=True)
 auth.create_user("admin@example.com", password="geheim12345", email="admin@example.com")
 r = c.post("/auth/register", data={"password": "geheim12345", "email": "ａｄｍｉｎ@example.com", "next": "/"})

@@ -526,7 +526,10 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/reset", response_class=HTMLResponse)
         def reset_page(request: Request, token: str = ""):
             if not auth.peek_magic(token, purpose="reset_password"):
-                auth.token_abgewiesen("reset_password", request)
+                # Ohne Token (Lesezeichen, Crawler) ist das kein vorgelegter Link — kein Eintrag,
+                # sonst meldete das Sicherheits-Log einen Fehlgriff, den es nie gab (A3).
+                if token:
+                    auth.token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("reset", request=request, token=token, error="")
 
@@ -607,19 +610,48 @@ def build_router(auth) -> APIRouter:
             # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
             # das mangels Bestätigungsmail nie freigeschaltet werden kann.
             verify_base = auth.require_public_base(request) if verify else ""
+            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
+            if cfg.login_identifier == "email":
+                username = email_final or ""
+            if not username:
+                return err(auth.t("err.username_required"))
+            # Benutzername = die eigene Adresse? Dann prüft die Adress-Prüfung unten beides.
+            name_ist_adresse = bool(email_final) and norm_email(username) == email_final
+            # Mit Bestätigung darf ein Benutzername keine FREMDE Adresse sein (Angriff A1): Die
+            # Namensprüfung sucht kreuzweise auch in den Adressen und hätte mit 409 verraten,
+            # dass es die Adresse gibt — R4-03 wäre über das Namensfeld umgangen.
+            if verify and "@" in username and not name_ist_adresse:
+                return err(auth.t("err.username_is_address"))
             # Kreuzweise prüfen: Benutzername und E-Mail sind EIN Kennungs-Raum (Fund R4-12).
             # Eine Adresse, die schon als Benutzername eines anderen Kontos dient, ist vergeben —
             # sonst besetzt die Registrierung dessen Login-Kennung und sperrt ihn aus.
+            # Der Name kommt VOR der Adresse (Angriff A1): Andersherum war ein bekannter,
+            # vergebener Name (`admin`) plus Zieladresse ein Orakel — vergebene Adresse 200,
+            # freie Adresse 409 username_taken. Ein vergebener Name ist ohnehin sichtbar (der
+            # Nutzer muss einen anderen wählen); jetzt hängt die Antwort darauf nicht mehr an der Adresse.
+            if not name_ist_adresse and auth.kennung_vergeben(username):
+                return err(auth.t("err.username_taken"), 409)
             if email_final and auth.kennung_vergeben(email_final):
                 if verify:
                     # R4-03: Mit Bestätigung antwortet eine vergebene Adresse wie eine freie —
                     # 409 und „E-Mail vergeben" verrieten jedem, welche Adressen ein Konto
-                    # haben. Der Inhaber bekommt stattdessen einen Hinweis. Die Hash-Arbeit
-                    # gleicht die Laufzeit an die eines echten Anlegens an. Ohne Bestätigung
+                    # haben. Der Inhaber bekommt stattdessen einen Hinweis. Ohne Bestätigung
                     # geht das nicht: Dort meldet der Erfolgsfall sofort an, die Antwort
-                    # unterscheidet sich also zwangsläufig — und im Benutzernamen-Modus ist ein
-                    # vergebener Name ohnehin sichtbar (der Nutzer muss einen anderen wählen).
-                    hash_password(password)
+                    # unterscheidet sich also zwangsläufig.
+                    #
+                    # Der Benutzername wird dabei genauso belegt wie beim echten Anlegen (A1,
+                    # zweite Variante): ein gesperrter Platzhalter ohne Adresse, mit einem nie
+                    # verschickten Bestätigungstoken. Sonst verriet die zweite Registrierung
+                    # desselben Namens per 409, ob die erste ein Konto angelegt hatte — also ob
+                    # die Adresse frei war. `gc()` entfernt den Platzhalter mit Ablauf des
+                    # Tokens, genau wie ein nie bestätigtes echtes Konto (R4-09). Das Anlegen
+                    # samt Passwort-Hash gleicht zugleich die Laufzeit an.
+                    if name_ist_adresse:
+                        hash_password(password)   # Name = Adresse: nichts zu belegen, nur Laufzeit
+                    else:
+                        platzhalter = auth.create_user(username, password=password, roles=[])
+                        auth.store.set_disabled(platzhalter, True)
+                        auth.create_magic_token("verify_email", user_id=platzhalter)
                     adresse = email_final
 
                     def _hinweis():
@@ -627,18 +659,11 @@ def build_router(auth) -> APIRouter:
                             auth.send_signup_notice(adresse, verify_base)
                         except Exception:
                             auth.audit("signup_notice_error", detail=adresse)
-                    auth.audit("signup_taken", ip=ip, detail=adresse)
+                    auth.audit("signup_taken", username, ip, detail=adresse)
                     return auth.nach_der_antwort(
                         auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
                         _hinweis)
                 return err(auth.t("err.email_taken"), 409)
-            # Im E-Mail-Modus gibt es kein Benutzernamen-Feld — die Adresse IST die Kennung.
-            if cfg.login_identifier == "email":
-                username = email_final or ""
-            if not username:
-                return err(auth.t("err.username_required"))
-            if auth.kennung_vergeben(username):
-                return err(auth.t("err.username_taken"), 409)
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:

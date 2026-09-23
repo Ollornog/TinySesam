@@ -55,6 +55,19 @@ class SMTPMailer:
         msg.set_content(text)
         if html:
             msg.add_alternative(html, subtype="html")
+        try:
+            self._senden(cfg, msg)
+        except ssl.SSLCertVerificationError as e:
+            # Seit B3-1 wird das Zertifikat geprüft. Wer vorher mit selbstsigniertem Zertifikat
+            # oder per IP-Adresse versandt hat, sieht sonst nur `*_send_error` im Audit-Log —
+            # hier steht, was zu tun ist (Angriff A4).
+            log.error("SMTP: Zertifikat von %s nicht vertrauenswürdig (%s). Eigene CA in "
+                      "smtp_ca_file eintragen bzw. smtp_host auf den Namen im Zertifikat setzen.",
+                      cfg.smtp_host, getattr(e, "verify_message", None) or e)
+            raise
+
+    @staticmethod
+    def _senden(cfg, msg):
         if cfg.smtp_ssl:
             with smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, timeout=cfg.smtp_timeout,
                                   context=tls_kontext(cfg)) as s:

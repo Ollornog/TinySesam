@@ -279,4 +279,41 @@ finally:
     _mailer_mod.smtplib.SMTP, _mailer_mod.smtplib.SMTP_SSL = _echt
 ok("B3-1: STARTTLS und SMTPS mit Zertifikats- und Hostnamenprüfung; smtp_ca_file greift")
 
+# ---------- Angriff A4: die Folgen von B3-1 fallen beim Aufbau bzw. mit einem Hinweis auf ----------
+from tinysesam.konfigpruefung import pruefe as _pruefe
+def _smtp_befunde(**kw):
+    f, w = _pruefe(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                   passkey_enabled=False, **kw))
+    return ([x for x in f if "smtp" in x.lower()], [x for x in w if "smtp_host=" in x])
+assert len(_smtp_befunde(smtp_host="mail.example.com", smtp_ca_file="/gibt/es/nicht.pem")[0]) == 1
+with tempfile.NamedTemporaryFile(suffix=".pem") as _ca:
+    assert _smtp_befunde(smtp_host="mail.example.com", smtp_ca_file=_ca.name) == ([], [])
+assert len(_smtp_befunde(smtp_host="192.0.2.10")[1]) == 1, "Relay per IP: Hostnamenprüfung scheitert"
+assert len(_smtp_befunde(smtp_host="[2001:db8::1]")[1]) == 1
+assert _smtp_befunde(smtp_host="mail.example.com") == ([], [])
+# Scheitert die Zertifikatsprüfung, sagt das Log, was zu tun ist (nicht nur *_send_error im Audit)
+import logging as _logging, io as _io
+
+
+class _ZertSMTP(_FalschSMTP):
+    def starttls(self, context=None):
+        raise ssl.SSLCertVerificationError(1, "certificate verify failed: self-signed certificate")
+
+
+_puffer = _io.StringIO()
+_h = _logging.StreamHandler(_puffer)
+_mailer_mod.log.addHandler(_h)
+_mailer_mod.smtplib.SMTP = _ZertSMTP
+try:
+    try:
+        _mailer_mod.SMTPMailer(TinySesamConfig(smtp_host="mail.example.com"))("x@example.com", "s", "t")
+        assert False, "Zertifikatsfehler verschluckt"
+    except ssl.SSLCertVerificationError:
+        pass
+finally:
+    _mailer_mod.smtplib.SMTP, _mailer_mod.smtplib.SMTP_SSL = _echt
+    _mailer_mod.log.removeHandler(_h)
+assert "smtp_ca_file" in _puffer.getvalue() and "mail.example.com" in _puffer.getvalue(), _puffer.getvalue()
+ok("A4: fehlender smtp_ca_file ist Aufbaufehler, Relay per IP warnt, Zertifikatsfehler nennt die Abhilfe")
+
 print("\nMAGIC-LINK OK ✅")
