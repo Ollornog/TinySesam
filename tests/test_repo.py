@@ -334,9 +334,18 @@ blank = hygiene.pruefe_blanke_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=O
                                        grundstock=BLANKE_ADRESSEN_OK)
 assert not blank, "blanke Hostnamen ausserhalb der durchgesehenen Liste:\n  " + "\n  ".join(blank)
 
+# Kit 0.17: drei Prüfungen über das Kit selbst. `belegstellen` ist leer — TinySesam führt kein
+# Zitatverzeichnis; der Aufruf steht trotzdem, damit ein späterer Eintrag geprüft wird.
+beleg = hygiene.pruefe_belegstellen_eng(ROOT, FILES, [])
+assert not beleg, "Belegstellen-Muster treffen Code:\n  " + "\n  ".join(beleg)
+tabelle = hygiene.pruefe_tabelle_vollstaendig()
+assert not tabelle, "Kit-Prüfung in keiner oder mehreren Listen:\n  " + "\n  ".join(tabelle)
+schluessel = hygiene.pruefe_policy_schluessel_gelesen(POLICY)
+assert not schluessel, "Policy-Schlüssel ohne Leser:\n  " + "\n  ".join(schluessel)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.16.1: jede Prüfung gerufen, keine Ausnahme nötig")
+print("  Kit 0.17.4: jede Prüfung gerufen, keine Ausnahme nötig")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
