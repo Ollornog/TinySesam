@@ -92,8 +92,14 @@ c3 = TestClient(app2)
 bereiche = ["lager", "archiv", "keller"]
 for n in bereiche:
     auth2.set_resource_secret(n, "1234", kind="pin", label=n)
+# Seit R7-3 sperrt die ADRESSE schon bei `resource_max_attempts` — die Angriffslage (die Adresse
+# erreicht die Login-IP-Schwelle) lässt sich mit der Vorgabe also gar nicht mehr herstellen.
+# Für diese Probe wird die Bereichs-Schwelle deshalb auf die Login-IP-Schwelle gehoben.
+JE_BEREICH = auth2.sec("resource_max_attempts")     # wie bisher: fünf je Bereich, 15 zusammen
+auth2.set_security("resource_max_attempts",
+                   auth2.sec("max_login_attempts") * auth2.sec("ip_attempt_factor"))
 for n in bereiche:
-    for _ in range(auth2.sec("resource_max_attempts")):
+    for _ in range(JE_BEREICH):
         c3.post(f"/auth/resource/{n}", data={"secret": "0000", "next": "/"})
 IP_GRENZE = auth2.sec("max_login_attempts") * auth2.sec("ip_attempt_factor")
 assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_GRENZE, \
@@ -122,6 +128,43 @@ r = c4.post("/auth/resource/tresor", data={"secret": "9876", "next": "/"}, follo
 assert r.status_code == 303, f"fremder Anschluss mitgesperrt: {r.status_code}"
 ok("…die IP-Schwelle des Bereichs-Topfes bleibt (sperrt Bereiche, keine Anmeldungen)")
 os.remove(db2)
+
+# ---------- R7-3: Ein einzelner Fremder sperrt den Bereich nicht für alle ----------
+# Bis T-13 griff die Bereichsschwelle (`res:<name>`) schon bei `resource_max_attempts` — egal,
+# von wem die Fehlgriffe kamen. Fünf Anfragen eines Fremden verriegelten den Bereich für jeden,
+# auch für die, die das Geheimnis kennen. Jetzt stoppt die Adresse den Fremden zuerst; der
+# Bereich selbst geht erst beim `account_attempt_factor`-fachen zu, also nur, wenn mehrere
+# Anschlüsse raten. (Mutationsprobe: in `_regeln` die beiden Resource-Grenzen tauschen → rot.)
+db5 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, rp_name="Test",
+                                  passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
+                                  resource_locks_enabled=True))
+auth5.set_resource_secret("garten", "4711", kind="pin", label="Garten")
+app5 = FastAPI()
+app5.include_router(auth5.router())
+G5 = auth5.sec("resource_max_attempts")
+fremd = TestClient(app5, client=("198.51.100.66", 40000))
+codes = [fremd.post("/auth/resource/garten", data={"secret": "0000", "next": "/"}).status_code
+         for _ in range(G5 + 2)]
+assert codes[:G5] == [401] * G5 and codes[G5:] == [429, 429], codes
+kenner = TestClient(app5, client=("203.0.113.77", 40000))
+r = kenner.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+assert r.status_code == 303, f"ein einzelner Fremder sperrt den Bereich für alle: {r.status_code}"
+ok("R7-3: ein Fremder sperrt nur seine Adresse, nicht den Bereich")
+
+# …aber verteiltes Raten bleibt begrenzt: Ab `account_attempt_factor` Anschlüssen geht der
+# Bereich zu, auch für einen weiteren, unbeteiligten.
+kenner.cookies.clear()
+auth5.store.clear_fails(username="res:garten")
+for i in range(auth5.sec("account_attempt_factor")):
+    ci = TestClient(app5, client=(f"198.51.100.{10 + i}", 40000))
+    for _ in range(G5):
+        ci.post("/auth/resource/garten", data={"secret": "0000", "next": "/"})
+spaet = TestClient(app5, client=("203.0.113.78", 40000))
+r = spaet.post("/auth/resource/garten", data={"secret": "4711", "next": "/"}, follow_redirects=False)
+assert r.status_code == 429, f"verteiltes Raten ist unbegrenzt: {r.status_code}"
+ok("…verteiltes Raten über viele Adressen sperrt den Bereich weiterhin")
+os.remove(db5)
 
 # Admin-API verwaltet Geheimnisse
 admin = auth.store.get_user_by_name("admin")

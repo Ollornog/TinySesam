@@ -1,6 +1,7 @@
 {
   "TinySesam": {
     "add_messages": "(lang, mapping: 'dict')",
+    "admin_claim_fehlgriff": "(username, ip) -> 'None'",
     "admin_claim_token": "() -> 'Optional[str]'",
     "admin_exists": "() -> 'bool'",
     "admin_router": "()",
@@ -45,7 +46,7 @@
     "is_admin": "(user) -> 'bool'",
     "is_locked": "(username, ip) -> 'bool'",
     "is_password_change_locked": "(username, ip) -> 'bool'",
-    "is_pin_locked": "(username, ip) -> 'bool'",
+    "is_pin_locked": "(username, ip, login: 'bool' = True) -> 'bool'",
     "is_reauth_locked": "(username, ip) -> 'bool'",
     "is_resource_locked": "(username, ip) -> 'bool'",
     "is_secure": "(request: 'Request') -> 'bool'",
@@ -70,7 +71,7 @@
     "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
     "purge_demo": "() -> 'int'",
     "rate_ok": "(ip, login: 'bool' = True) -> 'bool'",
-    "record_login": "(username, ip, success, method)",
+    "record_login": "(username, ip, success, method, versuch: 'Optional[int]' = None)",
     "recovery_codes_remaining": "(user_id) -> 'int'",
     "redeem_magic": "(raw, purpose=None) -> 'Optional[dict]'",
     "remove_resource_secret": "(name)",
@@ -105,6 +106,7 @@
     "set_roles": "(user_id, roles)",
     "set_security": "(key, value)",
     "set_template": "(name, fn)",
+    "sperre_aufheben": "(user_id, methoden=None) -> 'int'",
     "start_session": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
     "stepup_fresh": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
     "stepup_options": "(user) -> 'list[str]'",
@@ -122,7 +124,8 @@
     "verify_user_password": "(user_id, password) -> 'bool'",
     "verify_user_pin": "(user_id, pin) -> 'bool'",
     "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
-    "version": "() -> 'str'"
+    "version": "() -> 'str'",
+    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'"
   },
   "TinySesam.konstanten": {
     "DEMO_USERS": "('demo', 'demoadmin')",

@@ -553,6 +553,62 @@ assert len(treffer) >= 6, f"nur {len(treffer)} bannbare Zeilen — die Jail beko
 ok("Gegenprobe: Fehlanmeldungen am Login treffen die Jail weiterhin")
 os.remove(dbf)
 
+# (5) `is_pin_locked` meldet seine Abweisung wie jede andere Sperre. Bis T-13 wies sie als
+# einzige stumm ab — fail2ban bekam genau dann nichts zu lesen, wenn es bannen sollte. Am Login
+# ist die PIN ein Anmeldeversuch (`failed login`), auf der Step-up-Seite nicht.
+# (Mutationsprobe: in `is_pin_locked` wieder nur zählen, ohne `_sperre_pruefen` → rot.)
+dbp = os.path.join(tempfile.mkdtemp(), "t.db")
+authp = TinySesam(TinySesamConfig(db_path=dbp, cookie_secure=False, passkey_enabled=False,
+                                  csrf_enabled=False, lang="de", pin_enabled=True, pin_login=True))
+authp.create_user("paul", "Paul-Passwort-2026")
+for _ in range(authp.sec("pin_max_attempts")):
+    authp.record_login("paul", "203.0.113.5", False, "pin")
+with _Mitschnitt() as m:
+    assert authp.is_pin_locked("paul", "203.0.113.5"), "Vorbedingung: der PIN-Topf greift"
+zeilen_p = [z for z in m.zeilen() if "reason=lockout_pin" in z]
+assert zeilen_p and JAIL.search(zeilen_p[-1]), f"die PIN-Sperre weist stumm ab: {m.zeilen()!r}"
+with _Mitschnitt() as m:
+    assert authp.is_pin_locked("paul", "203.0.113.5", login=False)
+assert m.zeilen() and not JAIL.search(m.zeilen()[-1]) and JAIL_PRUEFUNG.search(m.zeilen()[-1]), \
+    f"auf der Step-up-Seite ist die PIN-Sperre keine Anmeldung: {m.zeilen()!r}"
+ok("is_pin_locked meldet die Abweisung (Login: failed login, Step-up: failed verification)")
+os.remove(dbp)
+
+# (6) B5-16: Fehlgriffe an /auth/claim-admin — gedrosselt und protokolliert. Bis T-13 durfte
+# ein angemeldetes Konto hier beliebig oft raten, spurlos. (Mutationsprobe:
+# `admin_claim_fehlgriff` im Router streichen → keine Zeile, kein Audit.)
+dbc = os.path.join(tempfile.mkdtemp(), "t.db")
+authc = TinySesam(TinySesamConfig(db_path=dbc, cookie_secure=False, passkey_enabled=False,
+                                  csrf_enabled=False, lang="de"))
+authc.admin_claim_token()
+authc.create_user("clara", "Clara-Passwort-2026")
+authc.set_security("rate_limit_max", 5)
+appc = FastAPI()
+appc.include_router(authc.router())
+cc = TestClient(appc, headers={"Accept": "text/html"})
+cc.post("/auth/login", data={"username": "clara", "password": "Clara-Passwort-2026"})
+with _Mitschnitt() as m:
+    codes = [cc.get(f"/auth/claim-admin?token=rate{i}").status_code for i in range(8)]
+assert 403 in codes and codes[-1] == 429, f"B5-16: /auth/claim-admin ist nicht gedrosselt: {codes}"
+zeilen_c = [z for z in m.zeilen() if "method=claim_admin" in z]
+assert len(zeilen_c) == codes.count(403), f"B5-16: {len(zeilen_c)} Zeilen für {codes.count(403)} Fehlgriffe"
+assert all(JAIL_PRUEFUNG.search(z) and not JAIL.search(z) for z in zeilen_c), zeilen_c[:1]
+fehl = [z for z in authc.store.recent_audit(50) if z["event"] == "admin_claim_fail"]
+assert len(fehl) == codes.count(403) and fehl[0]["username"] == "clara" and fehl[0]["ip"], fehl[:1]
+ok("B5-16: Fehlgriffe am Erst-Admin-Claim sind gedrosselt, im Audit- und im Sicherheits-Log")
+os.remove(dbc)
+
+# (7) Die Bereichs-PIN schreibt einen Grund, den man auswerten kann. `res:<name>` ist nie ein
+# Konto — bis T-13 stand bei JEDEM Fehlgriff `grund=kein_konto`.
+dbr = os.path.join(tempfile.mkdtemp(), "t.db")
+authr = TinySesam(TinySesamConfig(db_path=dbr, cookie_secure=False, passkey_enabled=False,
+                                  csrf_enabled=False, lang="de"))
+authr.record_login("res:lager", "203.0.113.6", False, "resource")
+detail = [z["detail"] for z in authr.store.recent_audit(5) if z["event"] == "login_fail"][0]
+assert "grund=falsches_bereichsgeheimnis" in detail and "kein_konto" not in detail, detail
+ok("Bereichs-PIN: grund=falsches_bereichsgeheimnis statt des irreführenden kein_konto")
+os.remove(dbr)
+
 _abraeumen()
 for f in (db, db2, db3):
     if os.path.exists(f):

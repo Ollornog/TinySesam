@@ -117,6 +117,48 @@ r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw",
 assert r.status_code == 303
 ok("nach Reset: altes Passwort ungültig, neues gültig")
 
+# ---------- R4-13 / H-10: Der Reset ist der Weg aus der Sperre ----------
+# Bis T-13 setzte der Selbstbedienungs-Reset das Passwort und liess die Fehlversuche stehen:
+# Wer sich ausgesperrt hatte und den vorgesehenen Weg ging, stand mit dem NEUEN Passwort vor
+# derselben 429 — bis das Fenster ablief oder ein Admin `tinysesam unlock` fuhr. Der Reset
+# prüft die Sperre nicht (unabhängiger Weg, H-10) und hebt jetzt die Passwort-Sperre auf. Die
+# TOTP-Fehlversuche bleiben: Ein Postfach beweist den zweiten Faktor nicht.
+# (Mutationsprobe: `sperre_aufheben` in `reset_submit` streichen → 429 statt 303.)
+db_s = os.path.join(tempfile.mkdtemp(), "t.db")
+post_s = []
+a_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, cookie_secure=False,
+                                passkey_enabled=False, password_reset_enabled=True,
+                                base_url="https://auth.example.com"))
+a_s.set_mailer(lambda to, subject, text, html=None: post_s.append(text))
+a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
+app_s = FastAPI()
+app_s.include_router(a_s.router())
+c_s = TestClient(app_s, headers={"Accept": "text/html"})
+for _ in range(a_s.sec("max_login_attempts")):
+    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "vergessen"}).status_code == 401
+a_s.record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
+assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
+    "Vorbedingung: das Konto ist gesperrt"
+c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
+tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", post_s[0]).group(1)
+assert c_s.post("/auth/reset", data={"token": tok_s, "password": "neues-geheimnis-2"},
+                follow_redirects=False).status_code == 303, "der Reset selbst hängt an der Sperre"
+r = c_s.post("/auth/login", data={"username": "gesperrt", "password": "neues-geheimnis-2"},
+             follow_redirects=False)
+assert r.status_code == 303, f"nach dem Reset weiter gesperrt: {r.status_code}"
+ok("R4-13/H-10: der Reset läuft an der Sperre vorbei und hebt sie auf")
+# Der Login oben war vollständig und hat damit ohnehin alles geräumt (R7-1); gemessen wird der
+# Reset deshalb am Zähler direkt, mit einem frischen Fehlgriff je Methode.
+a_s.record_login("gesperrt", "testclient", False, "password")
+a_s.record_login("gesperrt", "testclient", False, "totp")
+weg = a_s.sperre_aufheben(a_s.store.get_user_by_name("gesperrt")["id"], methoden=("password",))
+assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
+    "der Reset räumt auch Fehlversuche am zweiten Faktor"
+assert any("fehlversuche_verworfen=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
+           if z["event"] == "password_reset"), "das Audit-Log sagt nicht, was der Reset geräumt hat"
+ok("…nur die Passwort-Fehlversuche, nicht die des zweiten Faktors; das Audit-Log nennt die Zahl")
+os.remove(db_s)
+
 
 # ---------- base_url mit Leerraum (C-2): der Link bleibt sauber, eine unbrauchbare Basis fällt beim Aufbau ----------
 from tinysesam.errors import ConfigError as _CfgErr

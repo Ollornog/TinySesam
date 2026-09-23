@@ -9,7 +9,7 @@ import logging.handlers
 import ipaddress
 import re
 from urllib.parse import urlsplit
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
@@ -116,9 +116,10 @@ def attach_security_log(path: str) -> bool:
 
 # Härtungs-Defaults — im Admin-Panel überschreibbar (store.setting). Nur diese Keys sind einstellbar.
 SECURITY_DEFAULTS = {
-    "max_login_attempts": 5,        # Fehlversuche pro User im Fenster → Lockout
+    "max_login_attempts": 5,        # Fehlversuche je Konto UND IP (Paar) im Fenster → Lockout
     "lockout_window_sec": 900,      # Beobachtungs-/Sperrfenster (15 min)
     "ip_attempt_factor": 3,         # IP-Lockout-Schwelle = max_login_attempts * Faktor (mehrere User hinter NAT)
+    "account_attempt_factor": 3,    # Konto-Schwelle über alle IPs = max_login_attempts * Faktor (verteiltes Raten)
     "rate_limit_max": 30,           # max Requests pro IP …
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
     "password_min_length": 8,
@@ -432,31 +433,87 @@ def client_ip(request, trusted_nets) -> str:
 class RateLimiter:
     """In-memory Token-Bucket pro Schlüssel (IP), pro Prozess. Für Single-Worker-Deployments;
     bei mehreren Workern greift zusätzlich die DB-basierte Regulation (Lockout). Für ein
-    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url)."""
-    def __init__(self):
-        self._hits = defaultdict(deque)
+    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url).
+
+    **Gedeckelt** (R7-5): Bis T-13 wuchs das Wörterbuch mit jeder neuen Adresse und schrumpfte
+    nie — ein leerer Eimer blieb als Schlüssel stehen. Wer die Quelladresse wechselt (IPv6
+    liefert davon ein /64 pro Anschluss), füllte so den Speicher des Prozesses. Jetzt gilt
+    `max_keys`, und darüber geht der am längsten ruhende Schlüssel zuerst — jede Anfrage, auch
+    eine abgewiesene, rückt ihren Schlüssel nach vorn. Wer gerade gebremst wird, fragt also
+    ständig und bleibt; verdrängt wird, wessen letzter Versuch am weitesten zurückliegt.
+    """
+    def __init__(self, max_keys: int = 100_000):
+        self._hits: OrderedDict = OrderedDict()
+        self.max_keys = max(1, int(max_keys))
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
         now = time.time()
-        dq = self._hits[key]
+        dq = self._hits.get(key)
+        if dq is None:
+            dq = self._hits[key] = deque()
+        self._hits.move_to_end(key)
         while dq and dq[0] < now - window_sec:
             dq.popleft()
         if len(dq) >= max_requests:
             return False
         dq.append(now)
+        while len(self._hits) > self.max_keys:
+            self._hits.popitem(last=False)
         return True
+
+    def __len__(self) -> int:
+        return len(self._hits)
 
 
 class RedisRateLimiter:
     """Prozessübergreifendes Rate-Limit über Redis (Fixed-Window-Counter) — für Multi-Worker/
-    Multi-Instanz. Gleiche allow()-Schnittstelle. Bei Redis-Fehler: fail-open (erlauben) + Log,
-    damit ein Redis-Ausfall keine Nutzer aussperrt (die DB-Lockout-Regulation greift weiter)."""
-    def __init__(self, url: str, prefix: str = "tsrl"):
+    Multi-Instanz. Gleiche allow()-Schnittstelle.
+
+    **Bei einem Redis-Ausfall wird nicht aufgemacht, sondern je Prozess weitergezählt** (B6-1).
+    Bis T-13 hiess es hier „fail-open (erlauben)" mit der Begründung, die DB-Sperre greife ja
+    weiter. Die gibt es aber nur an den Anmelde-Routen; Magic-Link-Anforderung, Passwort
+    vergessen, Registrierung und der Start der Föderation hängen allein an diesem Limit — ohne
+    Redis waren sie offen, und die ersten beiden verschicken Mails an beliebige Adressen. Jetzt
+    übernimmt ein eingebauter `RateLimiter`: pro Prozess statt über alle, also bis zu N-mal so
+    grosszügig — aber eine Grenze. Ausgesperrt wird durch den Ausfall niemand.
+
+    **Und er wird bemerkt** (B6-2): Der Konstruktor fragt Redis einmal (`ping`), statt den
+    Ausfall erst beim ersten Besucher zu entdecken. Gemeldet wird der **Wechsel** — einmal beim
+    Ausfall, einmal bei der Rückkehr —, nicht jede Anfrage: vorher schrieb jede Anfrage eine
+    Warnzeile in genau die Datei, die fail2ban liest. Nach einem Fehler ruht Redis
+    `pause_sec` lang, danach wird es wieder versucht; so hängt nicht jede Anfrage im Timeout
+    eines toten Servers. Dazu kurze Socket-Timeouts: Ein Redis, das nicht antwortet (statt
+    abzulehnen), hielt sonst jede Anfrage unbegrenzt fest.
+    """
+    def __init__(self, url: str, prefix: str = "tsrl", pause_sec: float = 30.0, timeout_sec: float = 1.0):
         import redis   # Extra [redis]
-        self.client = redis.from_url(url)
+        self.client = redis.from_url(url, socket_connect_timeout=timeout_sec, socket_timeout=timeout_sec)
         self.prefix = prefix
+        self._einrichten(pause_sec)
+        try:
+            self.client.ping()
+        except Exception as e:
+            self._ausgefallen(e)
+
+    def _einrichten(self, pause_sec: float = 30.0) -> None:
+        """Rückfall-Zustand anlegen (auch für Tests, die `__init__` umgehen)."""
+        self.ersatz = RateLimiter()
+        self.pause_sec = pause_sec
+        self._pause_bis = 0.0
+        self._gestoert = False
+
+    def _ausgefallen(self, fehler) -> None:
+        self._pause_bis = time.time() + self.pause_sec
+        if not self._gestoert:
+            self._gestoert = True
+            seclog.warning("Redis-Rate-Limit nicht erreichbar (%s) — es zählt jetzt jeder Prozess "
+                           "für sich weiter, bis Redis wieder antwortet.", fehler)
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
+        if not hasattr(self, "ersatz"):
+            self._einrichten()
+        if self._gestoert and time.time() < self._pause_bis:
+            return self.ersatz.allow(key, max_requests, window_sec)
         try:
             bucket = int(time.time() // max(1, window_sec))
             rk = f"{self.prefix}:{key}:{window_sec}:{bucket}"
@@ -464,7 +521,10 @@ class RedisRateLimiter:
             pipe.incr(rk)
             pipe.expire(rk, window_sec)
             count = pipe.execute()[0]
-            return int(count) <= max_requests
         except Exception as e:
-            seclog.warning("redis rate-limit fail-open: %s", e)
-            return True
+            self._ausgefallen(e)
+            return self.ersatz.allow(key, max_requests, window_sec)
+        if self._gestoert:
+            self._gestoert = False
+            seclog.warning("Redis-Rate-Limit wieder erreichbar — es zählt wieder über alle Prozesse.")
+        return int(count) <= max_requests
