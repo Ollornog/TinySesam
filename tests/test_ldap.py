@@ -25,6 +25,10 @@ class FakeLDAP:
 
 def build(**cfgkw):
     db = os.path.join(tempfile.mkdtemp(), "t.db")
+    # `ldap_allow_plaintext=True`: Diese Suite spricht mit einer Attrappe, es gibt weder Server
+    # noch Netz. Seit F-12 wäre `ldap://` ohne TLS sonst ein Aufbaufehler — zu Recht, aber hier
+    # ginge es an der Sache vorbei. Der Riegel selbst wird unten eigens gemessen.
+    cfgkw.setdefault("ldap_allow_plaintext", True)
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, ldap_enabled=True, ldap_url="ldap://dummy", **cfgkw))
     auth.ensure_admin("admin", "lokalpw")   # lokaler User mit lokalem Passwort
@@ -101,7 +105,7 @@ def baue_ohne_admin(**cfgkw):
     auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test",
                                      passkey_enabled=False, oidc_enabled=False,
                                      cookie_secure=False, ldap_enabled=True,
-                                     ldap_url="ldap://dummy", **cfgkw))
+                                     ldap_url="ldap://dummy", ldap_allow_plaintext=True, **cfgkw))
     app = FastAPI()
     app.include_router(auth.router())
     return db, auth, TestClient(app)
@@ -402,6 +406,18 @@ def stub_ldap3(mitschrift, leer=False, result=None):
     nach, das die Suche mit einem VERWEIS statt mit Einträgen beantwortet."""
     mod = types.ModuleType("ldap3")
     mod.NONE, mod.BASE = "NONE", "BASE"
+    # Die Attrappe bildet nach, was der Code von ldap3 benutzt — seit F-12 auch `Tls` und die
+    # AUTO_BIND-Konstanten. Fehlten sie, prüfte die Suite eine Fassung des Moduls, die es nicht
+    # gibt, und der Härtungsschritt liefe hier ins Leere.
+    mod.AUTO_BIND_NO_TLS = "NO_TLS"
+    mod.AUTO_BIND_TLS_BEFORE_BIND = "TLS_BEFORE_BIND"
+
+    class Tls:
+        def __init__(self, **kw):
+            self.kw = kw
+            mitschrift.append(("Tls", kw))
+
+    mod.Tls = Tls
 
     class Eintrag:
         entry_dn = "uid=alice,ou=people,dc=example,dc=com"
@@ -447,11 +463,11 @@ vorher = {name: sys.modules.get(name) for name in
 try:
     sys.modules.update(stub_ldap3(mitschrift))
     LDAPClient(cfg_svc if HAT_LDAP3 else TinySesamConfig(
-        db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy",
+        db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
         ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
         ldap_user_base="ou=people,dc=example,dc=com")).authenticate("alice", "egal")
     LDAPClient(TinySesamConfig(
-        db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy",
+        db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
         ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",
     )).authenticate("alice", "egal")
 finally:
@@ -495,7 +511,7 @@ def _mit_seclog(fn):
 
 
 _cfg_verweis = TinySesamConfig(
-    db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy",
+    db_path=":memory:", password_enabled=True, ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
     ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
     ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})")
 _vorher = {name: sys.modules.get(name) for name in
@@ -534,7 +550,7 @@ ok("verworfener Verweis: eine Logzeile mit Host und Global-Catalog-Hinweis (Umbr
 # Kombination jetzt schon beim Aufbau der Konfiguration auf, nicht erst im Betrieb.
 from tinysesam.konfigpruefung import pruefe
 
-_gemeinsam = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://dummy",
+_gemeinsam = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
                   ldap_user_base="ou=people,dc=example,dc=com")
 _fehler, _warn = pruefe(TinySesamConfig(ldap_bind_dn=SVC_DN, **_gemeinsam))
 assert any("ldap_bind_password" in w for w in _warn), _warn
@@ -544,5 +560,89 @@ assert not any("ldap_bind_password" in w for w in _warn_ok), _warn_ok
 _, _warn_anon = pruefe(TinySesamConfig(**_gemeinsam))          # anonyme Suche bleibt still
 assert not any("ldap_bind_password" in w for w in _warn_anon), _warn_anon
 ok("ldap_bind_dn ohne ldap_bind_password wird beim Aufbau gemeldet, nicht erst beim Login")
+
+# ---------- F-12: der Transport ----------
+# Drei Mängel auf einmal: Vorgabe war Klartext, das Zertifikat wurde nie geprüft, und das
+# Dienstkonto band sich AN, bevor StartTLS die Leitung verschlüsselte — sein Passwort war also
+# schon über das Netz. Ein Mitleser brauchte keinen Angriff, nur Geduld.
+_mit12 = []
+_vorher12 = {n: sys.modules.get(n) for n in ("ldap3", "ldap3.utils", "ldap3.utils.conv", "ldap3.utils.dn")}
+sys.modules.update(stub_ldap3(_mit12))
+try:
+    # (a) TLS-Objekt mit Zertifikatsprüfung geht an den Server — vorher gab es gar keines.
+    LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                               passkey_enabled=False, ldap_enabled=True,
+                               ldap_url="ldaps://dir.example.com",
+                               ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
+    _tls_kw = [kw for art, kw in _mit12 if art == "Tls"]
+    assert _tls_kw, f"kein Tls-Objekt gebaut: {_mit12[:3]}"
+    import ssl as _ssl
+    assert _tls_kw[0]["validate"] == _ssl.CERT_REQUIRED, _tls_kw[0]
+    _srv_kw = [kw for art, kw in _mit12 if art == "Server"]
+    assert _srv_kw and _srv_kw[0].get("tls") is not None, _srv_kw
+    ok("F-12: der Server bekommt ein TLS-Objekt mit Zertifikatsprüfung")
+
+    # (b) Eigene CA-Datei wandert durch.
+    _mit12.clear()
+    LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                               passkey_enabled=False, ldap_enabled=True,
+                               ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/etc/ssl/eigene.pem",
+                               ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
+    assert [kw for art, kw in _mit12 if art == "Tls"][0]["ca_certs_file"] == "/etc/ssl/eigene.pem"
+    ok("F-12: eine eigene CA-Datei wird durchgereicht")
+
+    # (c) Abschaltbar — aber dann ausdrücklich ohne Prüfung, nicht heimlich.
+    _mit12.clear()
+    LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                               passkey_enabled=False, ldap_enabled=True,
+                               ldap_url="ldaps://dir.example.com", ldap_tls_verify=False,
+                               ldap_user_dn_template="uid={username},dc=x")).authenticate("alice", "pw")
+    assert [kw for art, kw in _mit12 if art == "Tls"][0]["validate"] == _ssl.CERT_NONE
+    ok("F-12: ldap_tls_verify=False schaltet die Prüfung ab (und wird beim Aufbau gemeldet)")
+
+    # (d) Der Kern: Das Dienstkonto bindet erst NACH dem TLS-Upgrade.
+    _mit12.clear()
+    LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                               passkey_enabled=False, ldap_enabled=True,
+                               ldap_url="ldap://dir.example.com", ldap_start_tls=True,
+                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="geheim",
+                               ldap_user_base="dc=x")).authenticate("alice", "pw")
+    _conns = [kw for art, kw in _mit12 if art == "Connection"]
+    assert _conns, _mit12
+    assert _conns[0].get("auto_bind") == "TLS_BEFORE_BIND", \
+        f"das Dienstkonto bindet vor dem TLS-Upgrade: auto_bind={_conns[0].get('auto_bind')!r}"
+    ok("F-12: das Dienstkonto bindet erst nach dem TLS-Upgrade, nicht davor")
+
+    # Gegenprobe: ohne StartTLS gibt es nichts hochzuschalten — dann kein TLS_BEFORE_BIND.
+    _mit12.clear()
+    LDAPClient(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                               passkey_enabled=False, ldap_enabled=True,
+                               ldap_url="ldaps://dir.example.com",
+                               ldap_bind_dn="cn=svc,dc=x", ldap_bind_password="geheim",
+                               ldap_user_base="dc=x")).authenticate("alice", "pw")
+    assert [kw for art, kw in _mit12 if art == "Connection"][0].get("auto_bind") == "NO_TLS"
+    ok("F-12: bei ldaps:// ist die Leitung schon verschlüsselt — kein zusätzliches Upgrade")
+finally:
+    for n, m in _vorher12.items():
+        if m is None:
+            sys.modules.pop(n, None)
+        else:
+            sys.modules[n] = m
+
+# Und die Konfigurationsprüfung fängt den Klartext-Betrieb beim Aufbau ab.
+def _ldap_befunde(**kw):
+    f, w = pruefe(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "t.db"),
+                                  passkey_enabled=False, ldap_enabled=True,
+                                  ldap_user_dn_template="uid={username},dc=x", **kw))
+    return ([x for x in f if "ldap" in x.lower()], [x for x in w if "ldap" in x.lower()])
+
+
+assert len(_ldap_befunde(ldap_url="ldap://dir.example.com")[0]) == 1
+assert len(_ldap_befunde(ldap_url="ldap://dir.example.com", ldap_allow_plaintext=True)[1]) == 1
+assert _ldap_befunde(ldap_url="ldap://dir.example.com", ldap_allow_plaintext=True, ldap_start_tls=True) == ([], [])
+assert _ldap_befunde(ldap_url="ldaps://dir.example.com") == ([], [])
+assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_verify=False)[1]) == 1
+assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/gibt/es/nicht.pem")[0]) == 1
+ok("F-12: Klartext ohne ausdrückliche Erlaubnis ist ein Aufbaufehler, kein Betriebsproblem")
 
 print("\nLDAP-BACKEND OK ✅")

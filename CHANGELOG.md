@@ -2,6 +2,33 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+**Verhaltensänderung.** `ldap://` ohne StartTLS ist jetzt ein **Aufbaufehler**. Wer ein
+Verzeichnis im Klartext anspricht, muss das mit `ldap_allow_plaintext=True` ausdrücklich sagen.
+→ **Zu tun:** entweder `ldaps://` in der URL, oder `ldap_start_tls=True`, oder den Schalter
+setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
+
+### Sicherheit
+
+- **Das Passwort des Dienstkontos ging im Klartext über die Leitung** (F-12). Bei
+  Search-then-Bind stand `auto_bind=True` in der Verbindung und `start_tls()` eine Zeile später:
+  Der Bind war also schon durch, bevor die Leitung verschlüsselt wurde. Ein Mitleser brauchte
+  keinen Angriff, nur Geduld — und zwar bei **jeder** Anmeldung, denn die Suche läuft jedes Mal.
+  Jetzt schaltet `AUTO_BIND_TLS_BEFORE_BIND` zuerst auf TLS um; die Benutzer-Verbindung machte es
+  von Anfang an richtig.
+
+- **Das Zertifikat des Verzeichnisses wird geprüft** (F-12, `ldap_tls_verify`, Vorgabe an).
+  `ldap3.Server(...)` ohne `tls=` prüft gar nichts — verschlüsselt hiess damit nur „nicht
+  mitlesbar von jemandem, der nicht dazwischensitzt". Wer den Verkehr umlenkt, hält ein eigenes
+  Zertifikat hin, bekommt beide Passwörter und reicht die Antwort an das echte Verzeichnis
+  weiter; für beide Seiten sieht der Vorgang normal aus. Eine interne CA gehört in
+  `ldap_tls_ca_file`; `ldap_tls_verify=False` bleibt möglich und meldet sich beim Aufbau.
+
+- **Klartext ist kein Vorgabewert mehr** (F-12, `ldap_allow_plaintext`, Vorgabe aus). Bis 0.19.0
+  war `ldap://` ohne StartTLS der Auslieferungszustand, und die Konfigurationsprüfung sagte dazu
+  nichts. Jetzt scheitert der Aufbau mit einem Text, der beide Auswege nennt.
+
 ## [0.19.0] — 2026-09-22
 
 **Sicherheits-Release.** Das dritte Audit (Red/Blue, 139 bestätigte Befunde) hatte 16 Punkte als

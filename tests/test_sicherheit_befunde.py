@@ -940,8 +940,11 @@ try:
     # `password_enabled` bleibt an: LDAP prüft Passwörter und erfüllt den Faktor `password` —
     # ohne den Schalter gäbe es keine einzige Anmelde-Methode, und die Konfigurationsprüfung
     # bricht (zu Recht) vorher ab. Hier geht es um das fehlende Extra, nicht um das.
+    # `ldap_allow_plaintext=True`: Seit F-12 ist `ldap://` ohne TLS ein Aufbaufehler. Hier soll
+    # aber das FEHLENDE EXTRA gemessen werden, nicht der Transport — ohne den Schalter bräche
+    # der Aufbau aus dem anderen Grund ab und die Prüfung darunter wäre grün, ohne zu messen.
     auth_x, _ = _ohne_modul("ldap3", lambda: _app(
-        ldap_enabled=True, ldap_url="ldap://ldap.example.com"))
+        ldap_enabled=True, ldap_url="ldap://ldap.example.com", ldap_allow_plaintext=True))
     gebaut_x = True
 except Exception as e:
     auth_x, gebaut_x = None, e

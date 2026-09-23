@@ -94,7 +94,27 @@ class LDAPClient:
         # `_OHNE_REFERRALS`): ldap3 vergibt hier per Vorgabe `[('*', True)]` — „jeder Host, und
         # zwar mit Zugangsdaten". Selbst wenn irgendwann jemand eine Connection ohne
         # `auto_referrals=False` anlegt, findet ldap3 dann keinen erlaubten Verweis-Host mehr.
-        return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[])
+        return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[],
+                            tls=self._tls(ldap3))
+
+    def _tls(self, ldap3):
+        """Die TLS-Einstellungen für `ldaps://` und StartTLS (F-12).
+
+        Bis 0.19.0 gab es sie gar nicht: `ldap3.Server(...)` ohne `tls=` prüft das Zertifikat
+        **nicht** (`validate=CERT_NONE` ist ldap3s Vorgabe). Verschlüsselt hiess damit nur „nicht
+        mitlesbar von jemandem, der nicht dazwischensitzt". Wer den Verkehr umlenkt, hält ein
+        eigenes Zertifikat hin, bekommt das Passwort des Dienstkontos und jedes
+        Benutzerpasswort, und reicht die Antwort an das echte Verzeichnis weiter — für beide
+        Seiten sieht der Vorgang normal aus.
+
+        `ldap_tls_verify=False` bleibt möglich (ein Verzeichnis mit selbstsigniertem Zertifikat
+        und ohne eigene CA-Datei), meldet sich aber beim Aufbau.
+        """
+        import ssl
+        if not self.cfg.ldap_tls_verify:
+            return ldap3.Tls(validate=ssl.CERT_NONE)
+        return ldap3.Tls(validate=ssl.CERT_REQUIRED,
+                         ca_certs_file=(self.cfg.ldap_tls_ca_file or None))
 
     def authenticate(self, username: str, password: str):
         if not username or not password:
@@ -118,11 +138,17 @@ class LDAPClient:
                 user_dn = cfg.ldap_user_dn_template.format(username=escape_rdn(username))
             else:
                 # Search-then-Bind: erst mit Service-Account suchen
-                svc = ldap3.Connection(server, user=cfg.ldap_bind_dn or None,
-                                       password=cfg.ldap_bind_password or None, auto_bind=True,
-                                       **_OHNE_REFERRALS)
-                if cfg.ldap_start_tls:
-                    svc.start_tls()
+                # **TLS VOR dem Bind** (F-12). Vorher stand `auto_bind=True` hier und
+                # `start_tls()` eine Zeile später: Das Passwort des Dienstkontos war also schon
+                # über die Leitung, bevor sie verschlüsselt wurde. Ein Mitleser brauchte nicht
+                # einmal einen Angriff — nur Geduld. `AUTO_BIND_TLS_BEFORE_BIND` ist genau dafür
+                # da; die Benutzer-Verbindung unten machte es von Anfang an richtig.
+                svc = ldap3.Connection(
+                    server, user=cfg.ldap_bind_dn or None,
+                    password=cfg.ldap_bind_password or None,
+                    auto_bind=(ldap3.AUTO_BIND_TLS_BEFORE_BIND if cfg.ldap_start_tls
+                               else ldap3.AUTO_BIND_NO_TLS),
+                    **_OHNE_REFERRALS)
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
                 attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)

@@ -49,7 +49,7 @@ os.remove(db)
 # ---------- LDAP-Login wendet ldap_group_role_map an ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False,
-                                 ldap_enabled=True, ldap_url="ldap://x",
+                                 ldap_enabled=True, ldap_url="ldap://x", ldap_allow_plaintext=True,
                                  ldap_group_role_map={"staff": "editor"}))
 
 class FakeLDAP:

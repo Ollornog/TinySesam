@@ -16,7 +16,7 @@ assert cfg.ldap_attr_name == "displayName" and cfg.db_path == "x.db"
 ok("active_directory (UPN): ldap_user_dn_template gesetzt, memberOf-Gate, Attribute")
 
 # ---------- active_directory: Search-then-Bind (sAMAccountName) ----------
-cfg = TinySesamConfig.active_directory(ldap_url="ldap://dc.corp:389", bind_dn="CN=svc,DC=corp",
+cfg = TinySesamConfig.active_directory(ldap_url="ldap://dc.corp:389", ldap_allow_plaintext=True, bind_dn="CN=svc,DC=corp",
                                        bind_password="pw", base_dn="DC=corp,DC=example,DC=com")
 assert cfg.ldap_bind_dn == "CN=svc,DC=corp" and cfg.ldap_user_filter == "(sAMAccountName={username})"
 assert cfg.ldap_user_base == "DC=corp,DC=example,DC=com" and not cfg.ldap_user_dn_template

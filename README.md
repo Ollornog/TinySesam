@@ -729,14 +729,21 @@ normal password form (factor `password`). `pip install 'tinysesam[ldap]'`:
 
 ```python
 TinySesamConfig(
-    ldap_enabled=True, ldap_url="ldap://lldap:3890",
+    ldap_enabled=True, ldap_url="ldaps://lldap:6360",   # or ldap:// + ldap_start_tls=True
     ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com",   # direct bind (lldap)
     # OR search-then-bind: ldap_bind_dn=…, ldap_bind_password=…, ldap_user_base=…, ldap_user_filter="(uid={username})"
     ldap_allowed_groups=["staff"],   # optional gate (memberOf), empty = all
     ldap_auto_create=True,           # create an unknown LDAP user locally
+    # ldap_tls_ca_file="/etc/ssl/own-ca.pem",   # internal CA; empty = system store
 )
 ```
 Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains apply as usual.
+
+> **Plain text needs saying so.** `ldap://` without StartTLS sends the service account's password
+> *and* every user password over the wire on every sign-in. Since 0.20.0 that is a **startup
+> error**; `ldap_allow_plaintext=True` says out loud that this is what you want (a directory on
+> the same host). The certificate is checked by default (`ldap_tls_verify`), and the service
+> account binds **after** the TLS upgrade, not before it.
 
 > **Referrals are never followed** — and that is visible in the log. ldap3 follows a
 > `SearchResultDone resultCode=10` on its own and binds on the host named by the *answer*, with the
