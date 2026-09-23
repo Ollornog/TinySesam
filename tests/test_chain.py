@@ -151,6 +151,56 @@ assert c_a.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=F
                ).headers.get("location", "").startswith("/auth/totp/setup")
 ok("R3-1: ein noch nie benutztes Konto richtet den zweiten Faktor selbst ein (Vorgabe)")
 
+# A-1: Die Bestätigung der Pflicht-Einrichtung schliesst den TOTP-Schritt gleich mit ab. Seit der
+# Einrichtungscode verbraucht wird (B2-3), war derselbe Code an /auth/totp ein Fehlversuch —
+# wer ihn (wie früher) noch einmal tippte, füllte den Login-Lockout samt fail2ban-Zeilen und
+# sperrte nach fünf Versuchen das eben eingerichtete Konto.
+# (Mutationsprobe: den Einschreibungs-Zweig in router.totp_setup_confirm streichen → rot.)
+import io as _io_e, logging as _logging_e, re as _re                     # noqa: E402
+from tinysesam import security as _sec_e                                  # noqa: E402
+
+db_e, auth_e, uid_e, app_e = _kette_ohne_totp()
+c_e = _bis_zum_zweiten_faktor(app_e)
+assert "value='/ziel'" in c_e.get("/auth/totp/setup?next=/ziel").text
+_seite = c_e.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+assert "data-next='/ziel'" in _seite, "das Ziel geht auf dem Weg durch die Einrichtung verloren"
+assert "location.href=j.next" in _seite, "die Seite folgt dem Ziel nach der Bestätigung nicht"
+_geheim = _re.search(r"class=mono>([A-Z2-7]+)<", _seite).group(1)
+_ereig_e = []
+auth_e.on_security_event = lambda e, k, d: _ereig_e.append(e)
+_code = pyotp.TOTP(_geheim).now()
+_puffer_e = _io_e.StringIO()
+_haken_e = _logging_e.StreamHandler(_puffer_e)
+_sec_e.seclog.addHandler(_haken_e)
+try:
+    _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/ziel"})
+    assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/ziel"}, _ant.text
+    _s = auth_e.store.get_session(c_e.cookies.get(auth_e.cfg.session_cookie))
+    assert _s and _s["mfa_ok"], "nach der Pflicht-Einrichtung hängt die Sitzung noch im MFA-Schritt"
+    # Der alte Weg — denselben Code an /auth/totp noch einmal — ist damit überflüssig: Die
+    # Einrichtungsseite leitet mit `next` direkt zum Ziel weiter.
+    assert not auth_e.is_locked("neu", "testclient")
+    assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "nicht voll angemeldet"
+finally:
+    _sec_e.seclog.removeHandler(_haken_e)
+assert "failed login" not in _puffer_e.getvalue(), _puffer_e.getvalue()
+assert _ereig_e == ["totp_enabled"], _ereig_e
+ok("A-1: Pflicht-Einrichtung unter der Kette meldet mit der Bestätigung an (kein Fehlversuch danach)")
+
+# A-4: Ein schon aktives TOTP wird nicht „noch einmal bestätigt" — weder über die Route (409 wie
+# GET und /start) noch über die Methode. Vorher: 200 {"ok": true}, ein falsches Ereignis
+# `totp_enabled` und ein zweiter Code-Prüfer für den aktiven Faktor.
+# (Mutationsprobe: `or t["confirmed"]` in totp_confirm ODER den 409-Wächter streichen → rot.)
+_folge = pyotp.TOTP(_geheim).at(_zeit.time() + 30)
+_ant = c_e.post("/auth/totp/setup", data={"code": _folge})
+assert _ant.status_code == 409, (_ant.status_code, _ant.text)
+assert not auth_e.totp_confirm(uid_e, _folge), "totp_confirm bestätigt ein aktives TOTP erneut"
+assert _ereig_e == ["totp_enabled"], _ereig_e
+assert sum(z["event"] == "totp_setup_confirm" for z in auth_e.store.recent_audit(50)) == 1
+assert auth_e.verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
+ok("A-4: bestätigtes TOTP → 409 an /auth/totp/setup, kein zweites totp_enabled")
+os.remove(db_e)
+
 # …aber nur bis zum ersten vollständigen Login. Danach ist der Weg zu — genau der Fall, in dem
 # jemand das Passwort eines BESTEHENDEN Kontos hat.
 auth_a.store.mark_first_login(uid_a, int(_zeit.time()))

@@ -114,7 +114,7 @@ def build_router(auth) -> APIRouter:
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
-    def totp_setup(request: Request):
+    def totp_setup(request: Request, next: str = "/"):
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
@@ -136,10 +136,10 @@ def build_router(auth) -> APIRouter:
         # verlangte beides: bei bestätigtem TOTP verweigern UND nur auf ausdrückliche
         # Anforderung (POST mit CSRF-Token) beginnen. Das Geheimnis entsteht deshalb erst in
         # `POST /auth/totp/setup/start`; diese Seite zeigt bloss den Knopf dafür.
-        return auth.render_page("totp_setup", request=request, data=None)
+        return auth.render_page("totp_setup", request=request, data=None, next=auth.safe_next(next))
 
     @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
-    def totp_setup_start(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+    def totp_setup_start(request: Request, next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
         """Die Einrichtung ausdrücklich starten — hier (und nur hier) entsteht das Geheimnis."""
         auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
@@ -151,15 +151,25 @@ def build_router(auth) -> APIRouter:
         auth.require_session(request, u)
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
-        return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
+        return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]),
+                                next=auth.safe_next(next))
 
     @r.post("/auth/totp/setup")
-    def totp_setup_confirm(request: Request, code: str = Form(...)):
+    def totp_setup_confirm(request: Request, code: str = Form(...), next: str = Form("/")):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request) or auth.totp_enrollment_user(request)
+        voll = auth.current_user(request)
+        # Vor der Bestätigung fragen — danach hat das Konto ein bestätigtes TOTP, und
+        # `totp_enrollment_user` sagt None.
+        einschreibung = None if voll else auth.totp_enrollment_user(request)
+        u = voll or einschreibung
         if not u:
             raise HTTPException(401)
         auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
+        # Wie GET und /start (A-4): Ein aktives TOTP wird hier nicht „noch einmal bestätigt".
+        # Sonst meldete die Stelle `totp_enabled` für nichts und prüfte nebenbei Codes des
+        # aktiven Faktors mit eigenem Versuchstopf.
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
         # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
         # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
         # Login-Lockout nicht füllen.
@@ -168,7 +178,22 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(429, auth.t("api.too_many"))
         ok = auth.totp_confirm(u["id"], code)
         auth.record_login(u["username"], ip, ok, "totp_setup")
-        return JSONResponse({"ok": ok})
+        if not (ok and einschreibung):
+            return JSONResponse({"ok": ok})
+        # Pflicht-Einrichtung unter der Kette (A-1): Der Bestätigungscode IST der TOTP-Schritt.
+        # Er ist jetzt verbraucht; hätte der Nutzer ihn an /auth/totp noch einmal getippt, wäre
+        # das ein Fehlversuch gewesen — fünfmal, und der Login-Lockout samt fail2ban-Zeilen
+        # sperrte das Konto, das sich gerade korrekt eingerichtet hat.
+        auth.record_login(u["username"], ip, True, "totp")
+        sitzungs_token = request.cookies.get(cfg.session_cookie)
+        erneuert = auth.complete_totp(sitzungs_token)
+        weiter = erneuert or sitzungs_token
+        antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
+            request, weiter, u["id"], auth.safe_next(next))})
+        if erneuert:
+            auth.set_cookie(antwort, erneuert)
+            auth.csrf_rotieren(antwort)
+        return antwort
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
@@ -506,7 +531,12 @@ def build_router(auth) -> APIRouter:
             # Die Regel braucht das Konto (Kontextwörter) — also erst nachsehen, OHNE den Token
             # zu verbrauchen: Ein abgelehntes Passwort soll den Link nicht entwerten.
             vorab = auth.peek_magic(token, purpose="reset_password") or {}
-            konto = auth.store.get_user(vorab["user_id"]) if vorab.get("user_id") else None
+            if not vorab.get("user_id"):
+                # Ein toter Link zuerst (A-8): Sonst hiess es bei abgelaufenem Link und schwachem
+                # Passwort „zu leicht", und erst der zweite Versuch verriet, dass der Link nicht
+                # mehr gilt. Verraten wird damit nichts Neues — der GET sagt dasselbe.
+                return auth.render_page("magic_invalid", request=request, status=400)
+            konto = auth.store.get_user(vorab["user_id"])
             mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
                                           email=konto["email"] if konto else None)
             if mangel:

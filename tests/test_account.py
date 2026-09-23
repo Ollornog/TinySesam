@@ -90,6 +90,45 @@ except ConfigError as _e:
     assert "password_blocklist_file" in str(_e)
 ok("password_blocklist_file ergänzt die Liste; fehlt die Datei, bricht der Start ab")
 
+# A-3: Leak-Listen wie rockyou.txt mischen UTF-8 und Latin-1. Ein striktes UTF-8-Lesen brach den
+# Start mit einem rohen UnicodeDecodeError ab — genau an den Listen, für die das Feld gedacht ist.
+# (Mutationsprobe: in `passwords.blockliste_lesen` die Latin-1-Ausweichzeile streichen → rot.)
+_misch = os.path.join(tempfile.mkdtemp(), "leak.txt")
+with open(_misch, "wb") as _f:
+    _f.write(b"password\nsch\xf6n123\n" + "möhrenkuchen\n".encode("utf-8"))   # Latin-1, dann UTF-8
+_am = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
+                                password_blocklist_file=_misch))
+assert _am.passwort_mangel("Schön123!") and _am.passwort_mangel("Möhrenkuchen99")
+try:
+    TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
+                              password_blocklist_file=os.path.dirname(_misch)))
+    raise AssertionError("ein Verzeichnis als Blockliste wurde still übergangen")
+except ConfigError as _e:
+    assert "password_blocklist_file" in str(_e)
+ok("A-3: Blockliste mit Latin-1- und UTF-8-Zeilen lädt; unlesbarer Pfad bleibt ConfigError")
+
+# A-5: Kontextwörter auch in ihren Teilen — der Nachname allein ist das naheliegendste Wort eines
+# Kontos `max.mustermann`, und der Vergleich des ganzen Namens liess ihn durch.
+# (Mutationsprobe: in `passwords._kontextteile` nur `{_kern(roh)}` zurückgeben → rot.)
+for _pw, _name, _mail in (("Mustermann1990!", "maxm", "max.mustermann@example.com"),
+                          ("Schmidt1985!", "anna.schmidt", None),
+                          ("Mueller2026!", "km", "k.mueller@example.com"),
+                          ("Mustermann1990!", "MaxMustermann", None)):
+    assert _ab.passwort_mangel(_pw, username=_name, email=_mail), (_pw, _name, _mail)
+# Gegenprobe: Teile unter vier Buchstaben (`max`, `k`) tragen nichts.
+assert _ab.passwort_mangel("Maximal-Ruhig-7", username="max.mustermann") is None
+ok("A-5: Namensteile aus Benutzername und E-Mail (Trenner, Binnenmajuskel) sind Kontextwörter")
+
+# A-6: Die übrigen trivialen Muster aus den Leak-Listen — absteigend mit Umbruch, wiederholte
+# Blöcke, gedoppelte Folgen, Tastaturwege.
+# (Mutationsprobe: in `passwords._trivial` alles nach der ±1-Prüfung durch `return False` ersetzen → rot.)
+for _muster in ("0987654321", "12341234", "asdfasdf", "abcabcabc", "12121212", "11112222",
+                "qwerasdf", "Asdf1234", "7890123456", "aabbccdd", "yxcvbnm123"):
+    assert _ab.passwort_mangel(_muster), _muster
+for _gut in ("24681357", "correct horse battery", "9384756102", "Zauberwald-17", "Tischlampe42"):
+    assert _ab.passwort_mangel(_gut) is None, _gut
+ok("A-6: Wiederholungsblöcke, Tastatur- und Zählreihen gelten als trivial")
+
 # ---------- on_security_event (B2-2/H-6) ----------
 # Jede Änderung an einem Anmeldefaktor erreicht den Hook — der Inhaber soll davon erfahren.
 # (Mutationsprobe: `self.sicherheitsereignis("password_changed", …)` aus `set_password`
@@ -121,6 +160,15 @@ for _datei in _pl.Path(_ts.__file__).parent.glob("*.py"):
             _gerufen.add(_k.args[0].value)
 assert _gerufen == set(auth.SICHERHEITSEREIGNISSE), (sorted(_gerufen), auth.SICHERHEITSEREIGNISSE)
 ok("jedes Ereignis aus SICHERHEITSEREIGNISSE wird irgendwo ausgelöst (und kein anderes)")
+
+# A-2: Der Hook stand nur im generierten API.md — ein Integrator erfuhr nirgends, welche
+# Ereignisse kommen. Die Betriebshinweise (beide Sprachen) nennen jetzt jedes einzelne.
+_wurzel = _pl.Path(__file__).resolve().parent.parent
+for _doku in ("SECURITY.md", "i18n/SECURITY.de.md"):
+    _txt = (_wurzel / _doku).read_text(encoding="utf-8")
+    _fehlt = [e for e in auth.SICHERHEITSEREIGNISSE if f"`{e}`" not in _txt]
+    assert "on_security_event" in _txt and not _fehlt, (_doku, _fehlt)
+ok("A-2: SECURITY.md (en/de) beschreibt on_security_event mit allen Ereignissen")
 
 # Ein kaputter Hook bricht nichts ab, bleibt aber nicht still.
 import logging as _logging

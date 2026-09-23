@@ -690,12 +690,13 @@ class TinySesam:
         """Die Betreiber-Blockliste (`password_blocklist_file`) einlesen — einmal, beim Start.
 
         Fehlt die Datei, bricht der Start ab (`ConfigError`) statt still ohne Liste
-        weiterzulaufen: Wer eine Liste angibt, verlässt sich auf sie."""
+        weiterzulaufen: Wer eine Liste angibt, verlässt sich auf sie. Zeilen, die kein UTF-8
+        sind, liest `blockliste_lesen` als Latin-1 — sonst kam hier ein roher
+        `UnicodeDecodeError` statt einer brauchbaren Liste (A-3)."""
         if not pfad:
             return frozenset()
         try:
-            with open(pfad, encoding="utf-8") as f:
-                return _pw.mit_kernen(z for z in f if z.strip() and not z.lstrip().startswith("#"))
+            return _pw.blockliste_lesen(pfad)
         except OSError as e:
             raise ConfigError(f"password_blocklist_file {pfad!r} lässt sich nicht lesen: {e}") from e
 
@@ -1489,9 +1490,14 @@ class TinySesam:
         Einrichtung eingetippt (und dabei womöglich abgelesen), meldete danach an
         `/auth/totp` noch bis zu 90 Sekunden an — die Einmal-Zusage aus T-9 galt nur für die
         Anmeldung, nicht für die Einrichtung. Wer unter `login_chain=["password","totp"]`
-        einrichtet, gibt deshalb im nächsten Schritt den FOLGENDEN Code ein."""
+        einrichtet, bekommt den TOTP-Schritt mit dieser Bestätigung gleich gutgeschrieben (die
+        Route erledigt das, A-1) — sonst wäre der eben getippte Code dort ein Fehlversuch.
+
+        Ein **schon bestätigtes** TOTP bestätigt diese Methode nicht noch einmal (A-4): Sie meldete
+        sonst `totp_enabled` für etwas, das niemand eingerichtet hat, und war nebenbei ein
+        zweiter Code-Prüfer für den aktiven Faktor mit eigenem Versuchstopf."""
         t = self.store.get_totp(user_id)
-        if not t or not code:
+        if not t or not code or t["confirmed"]:
             return False
         schritt = _totp.passender_schritt(t["secret"], code)
         if schritt is None or not self.store.totp_step_verbrauchen(user_id, schritt):
@@ -2032,8 +2038,10 @@ class TinySesam:
 
         Sicherheitlich ist das kein Nachlass: Wer hier steht, hat den Erstfaktor bereits erbracht,
         und ohne die Kette (klassischer Modus) hätte ihn dasselbe Passwort ohnehin vollständig
-        angemeldet. Die Einrichtung allein meldet niemanden an — der Faktor gilt erst, wenn im
-        nächsten Schritt ein Code aus dem frischen Geheimnis stimmt.
+        angemeldet. Die Einrichtung allein meldet niemanden an — der Faktor gilt erst, wenn ein
+        Code aus dem frischen Geheimnis stimmt. Das ist der Bestätigungscode selbst: Die Route
+        `POST /auth/totp/setup` schliesst den TOTP-Schritt damit ab (A-1), denn der Code ist
+        verbraucht und an `/auth/totp` nur noch ein Fehlversuch.
         """
         u = self.pending_user(request)
         if not u or self.store.has_confirmed_totp(u["id"]):

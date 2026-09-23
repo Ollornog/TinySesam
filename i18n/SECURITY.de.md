@@ -42,6 +42,20 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
   (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
   Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
+- **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
+  gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
+  sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
+  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
+  `api_key_created`. TinySesam verschickt selbst nichts; die Mail geht aus dem Hook (am besten über
+  eine Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung nie
+  rückgängig, landet aber im Sicherheits-Log.
+- **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
+  bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
+  Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
+  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` und danach
+  `verify_totp(uid, now())` mit demselben Code rufen, werden seit T-13 rot — dort mit dem Code des
+  vorigen Zeitschritts bestätigen.
 
 ## Unterstützte Versionen
 

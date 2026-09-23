@@ -1,7 +1,8 @@
 """CLI: `python -m tinysesam <kommando>` (auch als Konsolenskript `tinysesam`).
 
     version                          die installierte Version
-    passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung)
+    passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung; --blocklist-file,
+                                     --rp-name: dieselbe Passwortregel wie die Config)
     backup --db auth.db <ziel>       konsistente Kopie ziehen (NICHT die Datei kopieren!)
     restore --db auth.db <quelle>    eine Sicherung zurückspielen (Dienst vorher stoppen!)
     gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
@@ -33,13 +34,19 @@ def _passwd(argv) -> int:
                     help="Passwort von der Standardeingabe lesen statt interaktiv fragen")
     ap.add_argument("--keep-sessions", action="store_true",
                     help="offene Sitzungen des Kontos NICHT beenden (Vorgabe: beenden)")
+    # Das CLI liest keine Config — was dort für die Passwortregel steht, bekommt es hier.
+    # Ohne diese beiden Schalter galt offline eine schwächere Regel als im Web (A-7).
+    ap.add_argument("--blocklist-file", default="",
+                    help="eigene Blockliste wie config.password_blocklist_file")
+    ap.add_argument("--rp-name", default="",
+                    help="Dienstname wie config.rp_name (gilt als Kontextwort)")
     a = ap.parse_args(argv)
 
     # Store statt TinySesam: kein FastAPI nötig, und die Instanz hätte Nebenwirkungen
     # (Demo-Seeding, Erst-Admin-Token) — beides hat in einem Wartungsbefehl nichts verloren.
     import os
     from .store import Store
-    from .passwords import hash_password, passwort_mangel
+    from .passwords import hash_password, passwort_mangel, blockliste_lesen
     from .security import SECURITY_DEFAULTS
 
     # Ohne diese Prüfung legt sqlite3 die Datei stillschweigend an und der Tippfehler im Pfad
@@ -64,10 +71,18 @@ def _passwd(argv) -> int:
         minlen = int(store.get_setting("password_min_length") or SECURITY_DEFAULTS["password_min_length"])
     except (TypeError, ValueError):
         minlen = SECURITY_DEFAULTS["password_min_length"]
-    # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername) —
-    # das CLI ist ein Setzweg wie die anderen. Ohne Config kennt es `password_blocklist_file`
-    # und `rp_name` nicht; die eingebaute Liste gilt trotzdem.
-    mangel = passwort_mangel(pw, minlen, kontext=(a.username, (user["email"] or "").split("@", 1)[0]))
+    # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername,
+    # E-Mail-Name) — das CLI ist ein Setzweg wie die anderen. Blockliste und Dienstname des
+    # Betreibers kommen über `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
+    blockliste: frozenset = frozenset()
+    if a.blocklist_file:
+        try:
+            blockliste = blockliste_lesen(a.blocklist_file)
+        except OSError as e:
+            print(f"Blockliste {a.blocklist_file!r} lässt sich nicht lesen: {e}", file=sys.stderr)
+            return 1
+    mangel = passwort_mangel(pw, minlen, blockliste=blockliste,
+                             kontext=(a.username, (user["email"] or "").split("@", 1)[0], a.rp_name))
     if mangel:
         grund, werte = mangel
         print({"short": f"Passwort zu kurz (min. {werte.get('n')}).",

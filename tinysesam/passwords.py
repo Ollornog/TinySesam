@@ -174,12 +174,84 @@ def _kern(pw: str) -> str:
     return "".join(z for z in pw.lower() if z.isalpha())
 
 
+#: Zeichenreihen, deren Abschnitte als „Folge" gelten — vorwärts wie rückwärts. Tastaturzeilen
+#: (deutsches und englisches Layout), Alphabet, Ziffernzeile.
+_VORWAERTS = ("1234567890", "qwertyuiop", "qwertzuiop", "asdfghjkl", "yxcvbnm", "zxcvbnm",
+              "abcdefghijklmnopqrstuvwxyz")
+_REIHEN: tuple = _VORWAERTS + tuple(r[::-1] for r in _VORWAERTS)
+
+
+def _aus_reihen(s: str) -> bool:
+    """Lässt sich `s` lückenlos aus Reihen-Abschnitten von je mindestens drei Zeichen legen?
+
+    Fängt `qwerasdf`, `0987654321`, `7890123`, `Asdf1234` — Tastaturwege und Zählreihen, die
+    in jeder Leak-Liste weit oben stehen, aber keinen konstanten Zeichenabstand haben."""
+    n = len(s)
+    geht = [True] + [False] * n
+    for i in range(n):
+        if not geht[i]:
+            continue
+        for j in range(i + 3, min(n, i + 26) + 1):
+            if any(s[i:j] in r for r in _REIHEN):
+                geht[j] = True
+    return geht[n]
+
+
 def _trivial(pw: str) -> bool:
-    """Ein Zeichen wiederholt (`aaaaaaaa`) oder eine lückenlose Zeichenfolge (`45678901`)."""
-    if len(set(pw)) <= 1:
+    """Triviale Muster: ein Zeichen wiederholt (`aaaaaaaa`), eine lückenlose Folge (`45678901`),
+    ein wiederholter Block (`12341234`, `asdfasdf`), Doppelungen einer Folge (`11112222`,
+    `aabbccdd`) und Tastatur- oder Zählreihen (`qwerasdf`, `0987654321`).
+
+    Bis zur Nacharbeit (A-6) kannte die Prüfung nur den konstanten Abstand ±1 — alles andere
+    aus diesem Katalog steht ebenso weit oben in den Leak-Listen und ging durch."""
+    s = pw.lower()
+    if len(set(s)) <= 1:
         return True
-    schritte = {ord(b) - ord(a) for a, b in zip(pw, pw[1:])}
-    return schritte in ({1}, {-1}) or (pw.isdigit() and schritte <= {1, -9})
+    schritte = {ord(b) - ord(a) for a, b in zip(s, s[1:])}
+    if schritte in ({1}, {-1}) or (s.isdigit() and (schritte <= {1, -9} or schritte <= {-1, 9})):
+        return True
+    # Ein Block, mehrfach hintereinander: `s` steckt in sich selbst um weniger als seine
+    # Länge verschoben genau dann, wenn es periodisch ist.
+    if (s + s).find(s, 1) < len(s):
+        return True
+    # Läufe gleicher Zeichen zusammenfalten: Was danach höchstens halb so lang und selbst
+    # trivial ist, war nur eine aufgeblähte Folge.
+    gefaltet = "".join(z for i, z in enumerate(s) if i == 0 or s[i - 1] != z)
+    if len(gefaltet) * 2 <= len(s) and (len(set(gefaltet)) <= 2 or _trivial(gefaltet)):
+        return True
+    return _aus_reihen(s)
+
+
+def _kontextteile(wort: str) -> set:
+    """Ein Kontextwort als Ganzes UND in seinen Teilen (Trenner, Ziffern, Binnenmajuskel).
+
+    `max.mustermann`, `anna_schmidt`, `k.mueller`, `MaxMustermann` — der Nachname allein ist
+    das naheliegendste Passwort-Wort dieser Konten, und der Vergleich des ganzen Namens liess
+    ihn durch (A-5)."""
+    roh = str(wort or "")
+    getrennt = "".join(" " + z if z.isupper() and i and roh[i - 1].islower() else z
+                       for i, z in enumerate(roh))
+    teile = "".join(z if z.isalpha() else " " for z in getrennt.lower()).split()
+    return {_kern(roh), *teile}
+
+
+def blockliste_lesen(pfad) -> frozenset:
+    """Eine Blockliste aus einer Datei: ein Passwort je Zeile, `#` am Zeilenanfang = Kommentar.
+
+    Zeilen werden als UTF-8 gelesen; eine Zeile, die kein gültiges UTF-8 ist, als Latin-1.
+    Gängige Leak-Listen (etwa `rockyou.txt`) mischen beides — mit einem strikten UTF-8-Lesen
+    brach der Start an genau den Listen ab, für die das Feld gedacht ist (A-3). Ein
+    `OSError` (Datei fehlt, Verzeichnis, keine Rechte) geht an den Aufrufer."""
+    zeilen = []
+    with open(pfad, "rb") as f:
+        for roh in f:
+            try:
+                z = roh.decode("utf-8")
+            except UnicodeDecodeError:
+                z = roh.decode("latin-1")
+            if z.strip() and not z.lstrip().startswith("#"):
+                zeilen.append(z)
+    return mit_kernen(zeilen)
 
 
 def passwort_mangel(pw: str, min_laenge: int, *, kontext=(), blockliste=()) -> "Optional[tuple]":
@@ -207,11 +279,11 @@ def passwort_mangel(pw: str, min_laenge: int, *, kontext=(), blockliste=()) -> "
     if kern and (kern in _BLOCK or kern in blockliste):
         return "weak", {}
     for wort in tuple(KONTEXT_GRUNDWORTE) + tuple(kontext or ()):
-        w = _kern(str(wort or ""))
-        # Unter vier Buchstaben trägt ein Kontextwort nichts — `al` stünde in jedem zweiten Wort.
-        # Auch verdoppelt (`admin-admin`) ist es nur das eine Wort.
-        if kern and len(w) >= 4 and len(kern) % len(w) == 0 and kern == w * (len(kern) // len(w)):
-            return "weak", {}
+        for w in _kontextteile(wort):
+            # Unter vier Buchstaben trägt ein Kontextwort nichts — `al` stünde in jedem zweiten
+            # Wort. Auch verdoppelt (`admin-admin`) ist es nur das eine Wort.
+            if kern and len(w) >= 4 and len(kern) % len(w) == 0 and kern == w * (len(kern) // len(w)):
+                return "weak", {}
     return None
 
 

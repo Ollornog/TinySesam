@@ -40,6 +40,19 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   it with a key kept outside the database is planned (T-13, H-14/H-15). Until then, treat the
   database and its backups as a secret (mode `0600`, encrypted backups), and if you need the second
   factor to survive a database leak, use passkeys — only a public key is stored for them.
+- **Notify account holders about factor changes — `auth.on_security_event`.** Opt-in hook,
+  called as `hook(event, account, details)` with `account = {id, username, email, display_name}`
+  whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
+  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
+  `api_key_created`. TinySesam sends nothing itself; send the mail from the hook (ideally via a
+  queue — it runs synchronously in the request). An exception in the hook never undoes the change,
+  but lands in the security log.
+- **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
+  setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
+  step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that
+  call `totp_confirm(uid, now())` and then `verify_totp(uid, now())` with the same code fail since
+  T-13 — confirm with the previous time step's code instead.
 
 ## Supported versions
 

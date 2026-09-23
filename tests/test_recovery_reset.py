@@ -189,6 +189,14 @@ assert any(z["event"] == "password_reset" and "api_keys_revoked=1" in (z["detail
            for z in auth_r.store.recent_audit(20))
 assert ereig_r[-1][0] == "password_changed"
 ok("R4-14: Passwort-Reset per Mail widerruft die API-Keys (und prüft die Passwortregel)")
+
+# A-8: Ein toter Link geht der Passwortregel vor — sonst hiess es „zu leicht", und erst der
+# zweite Versuch verriet, dass der Link nicht mehr gilt. (tok_r ist oben verbraucht.)
+for _tok in ("quatsch", tok_r):
+    r = cr.post("/auth/reset", data={"token": _tok, "password": "password"})
+    assert r.status_code == 400 and auth_r.t("magic.invalid") in r.text, r.text[:300]
+    assert "leicht zu erraten" not in r.text
+ok("A-8: ungültiger oder verbrauchter Link → „Link ungültig“ vor der Passwortregel")
 auth_r.totp_disable(uid_r)
 assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
 os.remove(db_r)
