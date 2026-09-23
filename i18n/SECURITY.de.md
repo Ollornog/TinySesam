@@ -58,6 +58,19 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
   (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
   Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
+- **Bekannte Grenze — mit `cookie_domain` gilt jeder Host unter dieser Domain als
+  vertrauenswürdig.** SSO über Subdomains braucht ein Sitzungs-Cookie, das für die ganze Domain
+  gilt, und ein solches Cookie kann kein `__Host-`-Präfix tragen. Jeder Host unter der Domain —
+  auch eine geschützte App hinter Forward-Auth — kann deshalb ein eigenes `tinysesam_session` für
+  die ganze Domain setzen (cookie tossing): Ein abgemeldeter Besucher ist danach als das Konto
+  angemeldet, dessen Token die App besitzt, ein angemeldeter meist ebenso, weil das jüngere Cookie
+  gewinnt. Dafür braucht es keinen Request an TinySesam, also halten weder CSRF-Token noch
+  Herkunftsprüfung das auf; sie schliessen nur den Weg über ein Formular (Login-CSRF per POST an
+  TinySesam). `cookie_domain` nur setzen, wenn jeder Host darunter einem selbst gehört und so
+  vertrauenswürdig ist wie TinySesam. Sonst leer lassen: Die Sitzung bleibt host-only mit
+  `__Host-`, und kein anderer Host kann sie setzen. (Apps auf dem Host von TinySesam selbst, wie
+  im pfadbasierten Forward-Auth-Aufbau, teilen seinen Origin und gelten ohnehin als
+  vertrauenswürdig.)
 - **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
   gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,

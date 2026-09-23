@@ -88,11 +88,11 @@ Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der
 
 ### `complete_mfa(token)`
 
-Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht.
+Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht brechen.
 
 ### `complete_totp(token) -> 'Optional[str]'`
 
-Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
 ### `consume_admin_claim(token, user) -> 'bool'`
 

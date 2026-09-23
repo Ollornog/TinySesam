@@ -187,6 +187,18 @@ try:
     assert _login({"Origin": "https://portal.example.com", "Sec-Fetch-Site": "same-site"}) == 403
     ok("H-2: trusted_redirect_hosts sind Redirect-Ziele, kein eigener Origin → 403")
 
+    # Dieselbe App liefert ihre Seite mit `Referrer-Policy: no-referrer` aus: Dann trägt ihr
+    # Formular-POST `Origin: null`, und `Sec-Fetch-Site` sagt weiter `same-site`. Bis zur
+    # Nacharbeit wog nur `cross-site` ohne Origin schwer — `null` mit `same-site` ging durch,
+    # und wo das CSRF-Cookie kein `__Host-` tragen kann, entschied wieder allein das Token.
+    # (Mutationsprobe: in `_herkunft_ok` die Abweisung bei `same-site` ohne eigenen Origin auf
+    # `cross-site` allein zurückstellen → rot.)
+    assert _login({"Origin": "null", "Sec-Fetch-Site": "same-site"}) == 403, \
+        "Origin null von einer Nachbar-Subdomain (no-referrer) besteht die Herkunftsprüfung"
+    assert _login({"Sec-Fetch-Site": "same-site"}) == 403, "same-site ohne Origin"
+    assert _login({"Origin": "null", "Sec-Fetch-Site": "cross-site"}) == 403
+    ok("H-2: same-site oder cross-site ohne brauchbaren Origin (null, fehlt) → 403")
+
     # Proxy schreibt den Host um (upstream-Name), ohne X-Forwarded-Host — base_url rettet es.
     _a2, _app2 = _instanz(base_url="https://auth.example.com")
     assert _login({"Origin": "https://auth.example.com", "Host": "127.0.0.1:8000"}, _app2) == 303
@@ -279,6 +291,40 @@ _r = _opfer.post("/auth/sessions/revoke", content='{"scope":"others","_csrf":"BE
 assert _r.status_code == 403, (_r.status_code, _r.text[:120])
 ok("H-1/H-2: ein von einer App untergeschobenes CSRF-Cookie trägt weder Login noch Sitzungsaktion")
 os.remove(_fa_db)
+
+# Wo das Präfix nicht greifen kann (hier abgeschaltet, ebenso bei cookie_path≠"/" oder ohne
+# Secure), lässt sich `tinysesam_csrf` unterschieben — dann trägt die Herkunftsprüfung allein.
+# Die kompromittierte App schickt ihr Formular unter `Referrer-Policy: no-referrer`, also mit
+# `Origin: null` und `Sec-Fetch-Site: same-site`. Vorher: 303 und eine Sitzung als mallory.
+# (Mutationsprobe: wie oben, `same-site` ohne eigenen Origin wieder durchlassen → rot.)
+_np_db = os.path.join(tempfile.mkdtemp(), "t.db")
+_np = TinySesam(TinySesamConfig(db_path=_np_db, lang="de", passkey_enabled=False, oidc_enabled=False,
+                                cookie_secure=True, base_url="https://auth.example.com",
+                                cookie_domain=".example.com", forward_auth_enabled=True,
+                                cookie_host_prefix=False, trusted_redirect_hosts=["app.example.com"]))
+_np.ensure_admin("admin", "geheim123")
+_np.create_user("mallory", password="angreifer-pw-1")
+_np_app = FastAPI()
+_np_app.include_router(_np.router())
+assert _np.csrf_cookie_name == "tinysesam_csrf"
+
+
+def _ohne_praefix(kopf):
+    cl = TestClient(_np_app, base_url="https://auth.example.com")
+    cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
+    r = cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-1",
+                                     "next": "/", "_csrf": "BEKANNT"},
+                headers=kopf, follow_redirects=False)
+    return r.status_code, [z.split("=", 1)[0] for z in r.headers.get_list("set-cookie")]
+
+
+assert _ohne_praefix({"Origin": "null", "Sec-Fetch-Site": "same-site"}) == (403, []), \
+    "Login-CSRF über Origin null + same-site ohne __Host--CSRF-Cookie"
+assert _ohne_praefix({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-site"})[0] == 403
+assert _ohne_praefix({"Origin": "https://auth.example.com", "Sec-Fetch-Site": "same-origin"})[0] == 303, \
+    "der eigene Login muss ohne Präfix weiter gehen"
+ok("H-2: ohne __Host--Präfix hält die Herkunftsprüfung Origin null + same-site allein auf")
+os.remove(_np_db)
 
 # Das eingebaute JS liest den TATSÄCHLICHEN Cookie-Namen — mit __Host- (H-1) hieße das Cookie
 # sonst anders als das, was die Kontoseite sucht, und jeder Knopf dort antwortete 403.

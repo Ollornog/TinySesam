@@ -151,7 +151,82 @@ dieb = TestClient(app_t)
 dieb.cookies.set("tinysesam_session", vorher)
 assert dieb.get("/sudo", headers=JSON).status_code == 401, "das mitgelesene Cookie trägt noch"
 ok("F-06: Step-up über /auth/totp auf voller Sitzung rotiert das Token (altes tot, Laufzeit gleich)")
+
+# Eigene Oberfläche (README „Your own login page"): `complete_totp` gibt beim Step-up jetzt ein
+# neues Token zurück, und das alte ist danach tot. Wer den Rückgabewert ins Cookie setzt, bleibt
+# angemeldet — der Weg, den die Doku zeigen muss. (Wer ihn ignoriert, hat seit F-06 eine tote
+# Sitzung im Cookie; beim Login halb → voll war das schon immer so.)
+# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` streichen → rot, schon im Block
+# davor; hier bliebe das alte Token am Leben.)
+from fastapi import Request as _Req, Response as _Resp   # noqa: E402
+
+
+@app_t.post("/eigen/stepup")
+def eigen_stepup(request: _Req, code: str = ""):
+    antwort = _Resp()
+    tok = request.cookies.get(auth_t.session_cookie_name)
+    s = auth_t.session_from_request(request)
+    if s and auth_t.verify_recovery_code(s["user_id"], code):
+        neu = auth_t.complete_totp(tok)
+        if neu:
+            auth_t.set_cookie(antwort, neu)
+    return antwort
+
+
+vorher = c_t.cookies.get("tinysesam_session")
+auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_t.store.session_hash(vorher)))
+assert c_t.get("/sudo", headers=JSON).status_code == 403
+codes_t2 = auth_t.generate_recovery_codes(uid_t)
+assert c_t.post("/eigen/stepup", params={"code": codes_t2[0]}).status_code == 200
+assert c_t.cookies.get("tinysesam_session") != vorher and auth_t.store.get_session(vorher) is None
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "eigener Step-up nach Doku-Muster meldet ab"
+ok("F-06: eigene Step-up-Route mit `neu = complete_totp(tok); set_cookie(resp, neu)` bleibt angemeldet")
 os.remove(db_t)
+
+# Beim Step-up über /auth/totp dreht TinySesam das Sitzungs-Token, das CSRF-Token aber nicht —
+# wie `/auth/reauth`: Ein neues entwertete nur die Formulare in den anderen offenen Reitern.
+# Beim Login (halb → voll) dagegen ein frisches (csrf_rotieren, cookie injection).
+# (Mutationsprobe: in router.totp_submit das `if not s["mfa_ok"]` vor csrf_rotieren streichen → rot.)
+db_x = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
+                                   cookie_secure=False, stepup_max_age_sec=900))
+uid_x = auth_x.create_user("eva", password="Eva-Geheim-2026")
+assert auth_x.totp_confirm(uid_x, pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"]).now())
+codes_x = auth_x.generate_recovery_codes(uid_x)
+app_x = FastAPI()
+app_x.include_router(auth_x.router())
+
+
+@app_x.get("/sudo")
+def sudo_x(u=Depends(auth_x.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+def _gesetzt(antwort):
+    return {z.split("=", 1)[0] for z in antwort.headers.get_list("set-cookie")}
+
+
+c_x = TestClient(app_x)
+_feld = re.search(r"name=_csrf value='([^']+)'", c_x.get("/auth/login").text).group(1)
+c_x.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/",
+                              "_csrf": _feld}, follow_redirects=False)
+r = c_x.post("/auth/totp", data={"code": codes_x[0], "next": "/", "_csrf": c_x.cookies.get("tinysesam_csrf")},
+             follow_redirects=False)
+assert r.status_code == 303 and {"tinysesam_session", "tinysesam_csrf"} <= _gesetzt(r), \
+    ("beim Login (halb → voll) gehört ein frisches CSRF-Token dazu", _gesetzt(r))
+csrf_vorher = c_x.cookies.get("tinysesam_csrf")
+tok_x = c_x.cookies.get("tinysesam_session")
+auth_x.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_x.store.session_hash(tok_x)))
+assert c_x.get("/sudo", headers=JSON).status_code == 403
+r = c_x.post("/auth/totp", data={"code": codes_x[1], "next": "/sudo", "_csrf": csrf_vorher},
+             follow_redirects=False)
+assert r.status_code == 303 and "tinysesam_session" in _gesetzt(r), (r.status_code, _gesetzt(r))
+assert "tinysesam_csrf" not in _gesetzt(r), "der Step-up dreht das CSRF-Token (andere Reiter brechen)"
+assert c_x.cookies.get("tinysesam_csrf") == csrf_vorher and c_x.get("/sudo", headers=JSON).status_code == 200
+ok("F-06: Step-up über /auth/totp dreht das Sitzungs-, nicht das CSRF-Token; der Login dreht beide")
+os.remove(db_x)
 
 # ---------- API-Key erfüllt Step-up NICHT ----------
 key = auth.create_api_key(uid, name="k")["key"]

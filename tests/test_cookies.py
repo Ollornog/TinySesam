@@ -331,6 +331,59 @@ assert "tinysesam_session" in geloescht(c.post("/eigen/abmelden")), \
     "auth.logout() in einer eigenen Route lässt die Altnamen stehen"
 ok("H-1: auth.logout() in einer eigenen Route räumt die Altnamen ebenfalls")
 
+# Ebenso ein Step-up über die öffentliche Methode `auth.rotate_session(request, response)` in einer
+# eigenen Route: Sie schreibt die Sitzung und hat den Request — also gehen die Altnamen mit.
+# (Mutationsprobe: den Aufruf von `_altnamen_loeschen` in `rotate_session` streichen → rot.)
+
+
+@_app_eigen.post("/eigen/stepup")
+def _eigen_stepup(request: Request):
+    antwort = Response()
+    auth.rotate_session(request, antwort)
+    return antwort
+
+
+login(c)
+_alt_su = auth.store.create_session(auth.store.get_user_by_name("admin")["id"], 3600, True, "password")
+c.cookies.set("tinysesam_session", _alt_su)
+r = c.post("/eigen/stepup")
+assert "__Host-tinysesam_session" in gesetzte_cookies(r), "rotate_session setzt kein Cookie"
+assert "tinysesam_session" in geloescht(r), "auth.rotate_session() lässt die Altnamen stehen"
+assert auth.store.get_session(_alt_su) is None, "die Sitzung hinter dem Altnamen lebt weiter"
+ok("H-1: auth.rotate_session() in einer eigenen Route räumt die Altnamen ebenfalls")
+
+# Gelöscht wird nur, wenn die Antwort die Sitzung schreibt. Eine Seite, die bloss das CSRF-Cookie
+# setzt (GET /auth/login), lässt die Altnamen stehen — sonst beendete jeder Seitenaufruf, auch ein
+# eingebettetes Bild von fremder Hand, die Sitzung hinter dem alten Cookie.
+# (Mutationsprobe: in `_altnamen_loeschen` die Bedingung „Sitzungs-Cookie gesetzt" streichen → rot.)
+auth, c = baue()
+_alt_get = auth.store.create_session(auth.store.get_user_by_name("admin")["id"], 3600, True, "password")
+for n in ALT:
+    c.cookies.set(n, "ALT")
+c.cookies.set("tinysesam_session", _alt_get)
+r = c.get("/auth/login")
+assert r.status_code == 200 and "__Host-tinysesam_csrf" in gesetzte_cookies(r), gesetzte_cookies(r)
+assert not geloescht(r) and not set(ALT) & set(gesetzte_cookies(r)), gesetzte_cookies(r)
+assert auth.store.get_session(_alt_get), "ein blosser Seitenaufruf beendet die Altsitzung"
+ok("H-1: eine Antwort ohne Sitzungs-Cookie (GET /auth/login) löscht keine Altnamen")
+
+# Mit `cookie_domain` (Forward-Auth über Subdomains) greift das Präfix nur am CSRF-Cookie — der
+# Altname ist dann `tinysesam_csrf`. Den setzte TinySesam auch vorher nie mit Domain; gelöscht
+# wird er also host-only. Ein `Domain=`-Attribut träfe ein anderes Cookie und liesse das echte
+# liegen.
+# (Mutationsprobe: in `_altnamen_loeschen` `_cookie_loeschen` statt der host-only-Löschung → rot.)
+auth, c = baue(cookie_domain=".example.com")
+assert auth.session_cookie_name == "tinysesam_session" and auth.csrf_cookie_name == "__Host-tinysesam_csrf"
+assert auth._altnamen() == ["tinysesam_csrf"], auth._altnamen()
+c.cookies.set("tinysesam_csrf", "ALT")
+r = login(c)
+assert r.status_code == 303 and "tinysesam_session" in gesetzte_cookies(r)
+assert "tinysesam_csrf" in geloescht(r), f"Altname tinysesam_csrf nicht gelöscht: {geloescht(r)}"
+_zeile = gesetzte_cookies(r)["tinysesam_csrf"]
+assert "domain" not in _zeile and _zeile.get("path") == "/", _zeile
+assert gesetzte_cookies(r)["tinysesam_session"].get("domain") in (".example.com", "example.com")
+ok("H-1: mit cookie_domain wird der Altname tinysesam_csrf host-only gelöscht, die Sitzung bleibt Domain-weit")
+
 # Wo das Präfix nicht greift, SIND die Altnamen die aktuellen Namen — die dürfen nicht fallen.
 auth, c = baue(cookie_secure=False)
 c.cookies.set("tinysesam_runlock", "AKTUELL")

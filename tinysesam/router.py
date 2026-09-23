@@ -300,9 +300,13 @@ def build_router(auth) -> APIRouter:
         # B1-7 auch hier: Gerade die Einschreibung ist der Fall mit alten Sitzungen (Gerät
         # verloren, Betreiber-Fenster). Gezählt an der NEUEN Sitzung — die alte, halbe hat
         # `complete_totp` eben gelöscht (sonst liefe die neue als „andere" mit).
+        # Nur wenn die Sitzung damit voll ist (`erneuert`): Folgt in der Kette noch ein Schritt
+        # (password → totp → pin), bleibt sie halb, und das Beenden der übrigen Sitzungen
+        # scheiterte mit 401 — die Seite hätte gefragt, der Nutzer zugestimmt, und das verlorene
+        # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
         antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next)),
-            "other_sessions": auth.andere_sitzungen(request, u, token=weiter)})
+            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0})
         if erneuert:
             auth.set_cookie(antwort, erneuert)
             auth.csrf_rotieren(antwort)

@@ -2043,9 +2043,15 @@ class TinySesam:
           Host umschreibt, ohne X-Forwarded-Host zu setzen (nginx-Vorgabe), auch ohne
           `base_url` (A-3). Eine Nachbar-Subdomain bekommt hier `same-site`, nie `same-origin`.
         * `Origin` gesetzt → er muss ein eigener Host sein, sonst nein. `same-site` von einer
-          Nachbar-Subdomain fällt genau hier heraus.
-        * kein brauchbarer `Origin`, aber `Sec-Fetch-Site: cross-site` → nein.
-        * beides fehlt (alter Browser, Skript, TestClient) → das Token entscheidet allein.
+          Nachbar-Subdomain mit ihrem eigenen Origin fällt hier heraus.
+        * kein brauchbarer `Origin` (fehlt oder `null`), aber `Sec-Fetch-Site: same-site` oder
+          `cross-site` → nein. `null` bekommt eine Nachbar-Subdomain schon, wenn sie ihre Seite
+          mit `Referrer-Policy: no-referrer` ausliefert; `same-site` sagt der Browser trotzdem.
+          Bis zur Nacharbeit fiel hier nur `cross-site` heraus, und wo das CSRF-Cookie kein
+          `__Host-` tragen kann, entschied für die Nachbar-Subdomain wieder allein das Token.
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` fehlt oder sagt `none` (vom
+          Nutzer selbst angestossen, keine Seite kann das auslösen) → das Token entscheidet
+          allein. Ebenso, wenn beides fehlt (alter Browser, Skript, TestClient).
         """
         if not self.cfg.csrf_origin_check:
             return True
@@ -2065,8 +2071,10 @@ class TinySesam:
                 "einem Proxy, der den Host umschreibt: base_url setzen.",
                 security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
             return False
-        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
-            security.seclog.warning("csrf origin rejected sec-fetch-site=cross-site ip=%s",
+        seite = (request.headers.get("sec-fetch-site") or "").strip().lower()
+        if seite in ("same-site", "cross-site"):
+            security.seclog.warning("csrf origin rejected sec-fetch-site=%s origin=%s ip=%s",
+                                    seite, "null" if origin else "-",
                                     security.fuer_log(self.client_ip(request)))
             return False
         return True
@@ -2412,11 +2420,14 @@ class TinySesam:
         return self.factor_entry(step, nxt) if step else nxt
 
     def complete_totp(self, token) -> Optional[str]:
-        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein
+        neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`,
+        `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
-        Gibt ein **neues Sitzungs-Token** zurück, wenn die Sitzung dadurch vollwertig wird oder,
-        schon vollwertig, frisch bestätigt ist (Step-up, F-06) — dann gehört es ins Cookie, denn
-        das alte Token ist danach tot. Sonst `None` (nichts zu tun).
+        Ein neues Token gibt es, wenn die Sitzung dadurch vollwertig wird oder, schon vollwertig,
+        frisch bestätigt ist (Step-up, F-06). Sonst `None` (nichts zu tun). Seit F-06 gilt das
+        auch für den Step-up: Eine eigene Oberfläche, die den Rückgabewert dort ignoriert, hält
+        danach eine tote Sitzung im Cookie. Beim Login (halb → voll) war das schon immer so.
 
         Heißt seit 0.18.0 so, weil der alte Name `complete_mfa` mehr versprach, als die Methode
         tut — MFA ist die ganze Kette, hier geht es um genau einen Faktor. `complete_mfa` bleibt
@@ -2459,7 +2470,9 @@ class TinySesam:
         return None
 
     def complete_mfa(self, token):
-        """Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht."""
+        """Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token
+        gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht
+        brechen."""
         return self.complete_totp(token)
 
     def session_from_request(self, request):
@@ -2746,13 +2759,17 @@ class TinySesam:
         ASVS 5.0 7.2.4 verlangt das ausdrücklich auch bei der Re-Authentisierung. Wer das alte
         Token mitgelesen hat, hält danach eine tote Sitzung statt einer frisch bestätigten.
         Laufzeit und Anmeldezeitpunkt bleiben; das Cookie behält seine Art (persistent oder
-        nicht). Gibt das neue Token zurück, oder None ohne Sitzung."""
+        nicht). Gibt das neue Token zurück, oder None ohne Sitzung.
+
+        Räumt dabei die Cookies unter den Namen von vor dem `__Host-`-Präfix ab (H-1) — wie
+        `logout()` auch dann, wenn eine eigene Route der App die Methode ruft."""
         s = self.session_from_request(request)
         if not s:
             return None
         neu = self.store.rotate_session(s["token_hash"])
         if neu:
             self.set_cookie(response, neu, remember=bool(s["remember"]))
+            self._altnamen_loeschen(request, response)
         return neu
 
     def andere_sitzungen(self, request, user, token: Optional[str] = None) -> int:
@@ -2792,6 +2809,12 @@ class TinySesam:
     def _altnamen_loeschen(self, request, response) -> None:
         """Cookies unter den Altnamen beim Browser löschen, wenn diese Antwort die Sitzung
         schreibt (Anmelden, Abmelden, Step-up).
+
+        Gerufen von der Routen-Klasse (jede eingebaute Route), von `logout()` und von
+        `rotate_session()` — die beiden öffentlichen Methoden haben den Request. `set_cookie()`
+        hat ihn nicht: Eine eigene Anmelderoute der App (`start_session` + `set_cookie`) lässt
+        die Altnamen stehen, bis der Browser das nächste Mal über eine dieser Stellen läuft oder
+        sie ablaufen. TinySesam liest sie ohnehin nicht mehr.
 
         TinySesam liest sie nach dem Umstieg auf `__Host-` nicht mehr, aber der Browser schickte
         sie bis zu ihrem Ablauf weiter mit (Sitzung bis zu sieben Tage) — an TinySesam und an
