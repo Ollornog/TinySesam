@@ -399,19 +399,22 @@ async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
   const ks=await (await fetch('/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
-  el.innerHTML=ks.map(k=>`<li>${k.prefix} ${k.name||''} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn data-act=revk data-id=${k.id}>widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
 async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
   if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
 async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
   const ps=await (await fetch('/auth/passkey/list')).json();
-  el.innerHTML=ps.map(p=>`<li>${p.name||'Passkey'} <button class=warn data-act=delpk data-id=${p.id}>löschen</button></li>`).join('')||'<li>keine</li>'}
+  el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">löschen</button></li>`).join('')||'<li>keine</li>'}
 async function delpk(id){await J('/auth/passkey/delete',{id});loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
   const ss=await (await fetch('/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
-function esc0(s){return (s??'').toString().replace(/</g,'&lt;')}
+// Jeder Wert aus der API geht durch esc0, bevor er in innerHTML landet (R8-6): Key- und
+// Passkey-Namen setzt der Nutzer selbst, und bis 0.19.0 standen sie roh im Markup — ein Name
+// wie <img src=x onerror=…> lief als Code. Alle fünf Zeichen, weil Werte auch in Attributen stehen.
+function esc0(s){return (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function revokeothers(){if(!confirm('Alle anderen Sitzungen beenden?'))return;
   await J('/auth/sessions/revoke',{scope:'others'});say('sess_msg','\\u2713 beendet',true);loadsess()}
 // Ein delegierter Listener statt Inline-Klick-Handlern — sonst blockt die strenge CSP

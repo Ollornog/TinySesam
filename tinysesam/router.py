@@ -11,14 +11,67 @@ Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufge
 fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .store import norm_email, valid_email
 
 
+async def _antwort_des_handlers(request: Request, exc: Exception):
+    """Die Antwort, die der Exception-Handler der App für `exc` bauen würde — oder None.
+
+    Dieselbe Suche wie Starlettes `ExceptionMiddleware` (entlang der MRO in der Tabelle, die sie
+    in den Scope legt), damit ein eigener Handler des Gastgebers gewinnt wie ohne TinySesam.
+    """
+    from starlette.concurrency import run_in_threadpool
+    import inspect
+    tabellen = request.scope.get("starlette.exception_handlers")
+    if not tabellen:
+        return None
+    h = next((tabellen[0][k] for k in type(exc).__mro__ if k in tabellen[0]), None)
+    if h is None:
+        return None
+    if inspect.iscoroutinefunction(h):
+        return await h(request, exc)
+    return await run_in_threadpool(h, request, exc)
+
+
+def gehaertete_route(auth) -> type[APIRoute]:
+    """Eine Routen-Klasse, die jede Antwort durch `auth._kopfzeilen` schickt.
+
+    Als Routen-Klasse und nicht als Middleware: TinySesam ist ein Router in einer fremden App.
+    Eine Middleware träfe jede Route des Gastgebers mit — dessen Cache-Regeln für statische
+    Dateien eingeschlossen. `include_router` übernimmt die Klasse je Route, deshalb gilt sie
+    auch für das Admin-Panel unter einem frei gewählten Präfix.
+    """
+    class _GehaerteteRoute(APIRoute):
+        def get_route_handler(self):
+            innen = super().get_route_handler()
+
+            async def handler(request: Request):
+                try:
+                    antwort = await innen(request)
+                except _StarletteHTTPException as exc:   # FastAPIs HTTPException erbt davon
+                    auth._kopfzeilen_fehler(exc)
+                    raise
+                except RequestValidationError as exc:
+                    # Das 422 gibt die Eingabe zurück, trägt aber keine `headers`, in die man die
+                    # Kopfzeilen legen könnte (A2). Also die Antwort hier bauen — mit genau dem
+                    # Handler, den die App dafür registriert hat (der des Gastgebers oder FastAPIs
+                    # Vorgabe), damit sich an ihrem Inhalt nichts ändert.
+                    antwort = await _antwort_des_handlers(request, exc)
+                    if antwort is None:
+                        raise
+                return auth._kopfzeilen(antwort)
+            return handler
+    return _GehaerteteRoute
+
+
 def build_router(auth) -> APIRouter:
     cfg = auth.cfg
-    r = APIRouter(tags=["auth"])
+    r = APIRouter(tags=["auth"], route_class=gehaertete_route(auth))
 
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)

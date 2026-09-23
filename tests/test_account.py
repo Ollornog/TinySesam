@@ -103,5 +103,44 @@ auth.set_template("account", lambda a, ctx: f"<html>MEIN-KONTO {ctx['user']['use
 assert "MEIN-KONTO admin" in c.get("/auth/account").text
 ok("Account-Seite per set_template ersetzbar")
 
+# R8-6: Key- und Passkey-Namen setzt der Nutzer selbst, und die Konto-Seite schrieb sie roh in
+# innerHTML. Ein Key namens <img src=x onerror=…> lief als Code — auch im Browser eines Admins,
+# der sich die Seite ansieht. Jedes API-Feld, das dort ins Markup geht, muss durch esc0.
+from tinysesam.templates import _ACCOUNT_JS  # noqa: E402
+
+_felder = _re.findall(r"(\S{0,6})\b([kps])\.(name|prefix|id|method|ip|user_agent)\b", _ACCOUNT_JS)
+_roh = [f"{v}{o}.{f}" for v, o, f in _felder if not v.endswith("esc0(")]
+assert _felder and not _roh, f"API-Felder roh im Markup: {_roh}"
+assert "replace(/[&<>\"']/g" in _ACCOUNT_JS, "esc0 deckt nicht alle fünf Zeichen ab"
+ok("Konto-Seite: jedes API-Feld im Markup läuft durch esc0")
+
+# Mit node die echten Listen-Funktionen gegen präparierte Namen laufen lassen — die Wirkung,
+# nicht nur der Quelltext.
+import json as _json  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+_node = _shutil.which("node")
+if _node:
+    _boese = '<img src=x onerror=alert(1)>"\'&'
+    _daten = {"/auth/apikeys": [{"id": 7, "prefix": "ts_ab", "name": _boese, "revoked": 0}],
+              "/auth/passkey/list": [{"id": 3, "name": _boese}],
+              "/auth/sessions": [{"created_at": 0, "method": _boese, "ip": _boese,
+                                  "user_agent": _boese, "current": 0}]}
+    _skript = _ACCOUNT_JS.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+    _probe = ("const E={};const document={cookie:'',addEventListener(){},"
+              "getElementById:i=>E[i]||(E[i]={innerHTML:''})};"
+              f"const D={_json.dumps(_daten)};"
+              "const fetch=async u=>({json:async()=>D[u]});const location={};\n"
+              + _skript +
+              "\nsetTimeout(()=>process.stdout.write(JSON.stringify("
+              "[E.keylist.innerHTML,E.pklist.innerHTML,E.sesslist.innerHTML])),50);")
+    _aus = _sp.run([_node, "-e", _probe], capture_output=True, text=True, timeout=30)
+    assert _aus.returncode == 0, _aus.stderr[-400:]
+    _listen = _json.loads(_aus.stdout)
+    for _l in _listen:
+        assert "<img" not in _l and "&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;" in _l, _l
+    ok("Konto-Seite (node): präparierte Key-/Passkey-/Sitzungswerte bleiben Text")
+
 os.remove(db)
 print("\nACCOUNT OK ✅")

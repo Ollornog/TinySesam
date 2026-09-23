@@ -53,6 +53,30 @@ def _host_aus(wert: str) -> str:
         return ""
 
 
+class _DictKopfzeilen:
+    """Die drei Zugriffe, die `_kopfzeilen_in` braucht, über einem gewöhnlichen dict.
+
+    Nachsehen ohne Rücksicht auf Groß-/Kleinschreibung, Schreiben auf den Schlüssel, der schon da
+    ist — sonst unter der übergebenen Schreibweise. So bleibt `exc.headers["Location"]` lesbar.
+    """
+    def __init__(self, d: dict):
+        self.d = d
+
+    def _schluessel(self, name: str):
+        return next((k for k in self.d if k.lower() == name.lower()), None)
+
+    def get(self, name: str, vorgabe=None):
+        k = self._schluessel(name)
+        return vorgabe if k is None else self.d[k]
+
+    def setdefault(self, name: str, wert: str):
+        if self._schluessel(name) is None:
+            self.d[name] = wert
+
+    def __setitem__(self, name: str, wert: str):
+        self.d[self._schluessel(name) or name] = wert
+
+
 def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
@@ -2416,7 +2440,58 @@ class TinySesam:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
             resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
+        # Auch hier, nicht nur in der Route: Fehlerseiten aus `install_error_pages` laufen an
+        # keiner TinySesam-Route vorbei und tragen sonst keine einzige Härtungskopfzeile.
+        return self._kopfzeilen(resp)
+
+    def _kopfzeilen(self, resp: Response) -> Response:
+        """Die Härtungskopfzeilen jeder TinySesam-Antwort (R8-1, R8-5, R4-08, R5-2).
+
+        Bis 0.19.0 trug nur die gerenderte Seite eine CSP; alles andere — Admin-Panel, JSON-API,
+        Umleitungen mit Token in der Adresse — kam ohne jede Kopfzeile. `setdefault`, damit eine
+        Route (oder ein Override), die bewusst etwas anderes setzt, gewinnt.
+
+        * `nosniff` — eine JSON-Antwort mit Benutzereingabe darin wird nie als HTML gedeutet.
+        * `Referrer-Policy: same-origin` — Reset-, Anmelde- und Einladungsseiten tragen das Token
+          in der Adresse; ein Bild oder Link nach aussen nähme es sonst als `Referer` mit.
+          Bewusst nicht `no-referrer`: Damit setzt der Browser bei jedem gleich-origin-POST
+          `Origin: null`, und eine Origin-Prüfung im Proxy davor wiese das Login-Formular ab.
+        * `Cache-Control: no-store` + `Vary: Cookie` — die Antworten hängen an der Sitzung
+          (Konto, Sitzungsliste, `/auth/me`); ein geteilter Cache davor darf sie weder aufheben
+          noch dem nächsten Besucher geben.
+        * `X-Frame-Options: SAMEORIGIN` — nur bei `csp='strict'`, deren `frame-ancestors 'self'`
+          es für ältere Browser wiederholt. Eine eigene Policy oder `off` (der Proxy setzt die
+          CSP) entscheidet selbst, wer einbetten darf; ein festes XFO würde das überstimmen.
+        """
+        self._kopfzeilen_in(resp.headers)
         return resp
+
+    def _kopfzeilen_fehler(self, exc) -> None:
+        """Dieselben Kopfzeilen für eine `HTTPException` aus einer TinySesam-Route.
+
+        Die Antwort baut dort der Exception-Handler des Gastgebers (oder Starlettes Vorgabe) —
+        die Routen-Klasse bekommt sie nie zu sehen. Beide übernehmen aber `exc.headers`; also
+        wandern die Kopfzeilen dort hinein. Das 401 von `/auth/admin` ohne Sitzung ist genau so
+        eine Antwort.
+
+        `exc.headers` bleibt ein gewöhnliches dict mit den Schlüsseln, wie die Route sie schrieb.
+        Ein Umweg über `MutableHeaders` schrieb sie klein — ein Handler des Gastgebers mit
+        `exc.headers["Location"]` fand die Umleitung dann nicht mehr und lieferte einen 307 ohne
+        Ziel (A1). Deshalb: Groß-/Kleinschreibung nur beim Nachsehen ignorieren, nie beim Schreiben.
+        """
+        exc.headers = dict(exc.headers or {})
+        self._kopfzeilen_in(_DictKopfzeilen(exc.headers))
+
+    def _kopfzeilen_in(self, h) -> None:
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("Referrer-Policy", "same-origin")
+        h.setdefault("Cache-Control", "no-store")
+        vary = h.get("vary", "")
+        if "cookie" not in [v.strip().lower() for v in vary.split(",")]:
+            h["Vary"] = f"{vary}, Cookie" if vary.strip() else "Cookie"
+        if ((self.cfg.csp or "").strip() == "strict"
+                and h.get("content-type", "").startswith("text/html")):
+            h.setdefault("X-Frame-Options", "SAMEORIGIN")
 
     def _csp_header(self, nonce: str) -> str:
         """Die CSP für die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per
@@ -2678,7 +2753,8 @@ class TinySesam:
             if _wants_html(request):
                 return self.render_page("error", status=500, request=request, code=500,
                                        message=self.t("error.oops"))
-            return JSONResponse({"detail": "internal server error"}, status_code=500)
+            # Der JSON-Zweig ging an `render_page` vorbei und kam ohne jede Härtungskopfzeile (A2).
+            return self._kopfzeilen(JSONResponse({"detail": "internal server error"}, status_code=500))
 
     def install_https(self, app):
         """HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' →

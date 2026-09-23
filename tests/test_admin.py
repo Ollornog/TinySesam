@@ -75,5 +75,21 @@ assert len(c.get("/auth/admin/api/audit").json()) >= 1
 assert c.get("/auth/admin").status_code == 200 and "Admin" in c.get("/auth/admin").text
 print("  ✓ Audit-Log + Admin-UI-Seite")
 
+# R8-3: `rp_name` ist Text. Login-, Konto- und Fehlerseite escapten ihn längst, das Panel setzte
+# ihn roh in <title> und <h1> — wer den Namen aus einer Mandanten-Einstellung oder Umgebung
+# übernimmt, gab damit Markup in die mächtigste Seite der Installation.
+from tinysesam.admin import render_panel  # noqa: E402
+
+auth.cfg.rp_name = "</title><script>alert(1)</script>"
+_panel = render_panel(auth, "/auth/admin")
+assert "<script>alert(1)" not in _panel and "&lt;/title&gt;&lt;script&gt;" in _panel, \
+    "rp_name steht roh im Panel"
+assert _panel.count("&lt;/title&gt;") == 2, "rp_name nicht an beiden Stellen (<title>, <h1>) escaped"
+# Der Mountpunkt geht in einen JS-String — als JSON-Literal, nicht roh eingesetzt.
+_panel_b = render_panel(auth, '/x"</script><script>alert(2)//')
+assert "<script>alert(2)" not in _panel_b and 'const B="/x\\"\\u003c/script>' in _panel_b, \
+    _panel_b[_panel_b.index("const B="):][:60]
+print("  ✓ rp_name und Mountpunkt landen escaped im Panel")
+
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")
