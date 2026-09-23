@@ -27,6 +27,7 @@
     "csrf_token": "(request: 'Optional[Request]' = None) -> 'str'",
     "current_user": "(request) -> 'Optional[dict]'",
     "darf_mfa_einrichten": "(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'",
+    "delete_user": "(user_id: 'int') -> 'bool'",
     "disable_pin": "(user_id)",
     "ensure_admin": "(username, password) -> 'bool'",
     "factor_entry": "(step, nxt='/') -> 'str'",
@@ -65,6 +66,7 @@
     "next_login_step": "(user_id, done)",
     "oidc_anwendung": "(url_oder_host: 'str') -> 'str'",
     "oidc_freigabe_gueltig": "(token_hash: 'str', client: 'str') -> 'tuple'",
+    "own_events": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
     "peek_magic": "(raw, purpose=None) -> 'Optional[dict]'",
     "pending_user": "(request) -> 'Optional[dict]'",
     "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
@@ -125,6 +127,7 @@
     "version": "() -> 'str'"
   },
   "TinySesam.konstanten": {
+    "APIKEY_AUDIT_FENSTER": "3600",
     "DEMO_USERS": "('demo', 'demoadmin')",
     "FOEDERIERTE_FAKTOREN": "('oidc', 'saml')",
     "FOEDERIERTE_QUELLEN": "('ldap', 'saml')",
@@ -149,6 +152,8 @@
     "apikey_allow_unlimited": "bool = False",
     "apikey_default_days": "int = 90",
     "apikey_enabled": "bool = True",
+    "audit_ip_pseudonymize": "bool = False",
+    "audit_retention_days": "int = 0",
     "available_roles": "list[str] = []",
     "base_url": "str = ''",
     "brand_css": "str = ''",

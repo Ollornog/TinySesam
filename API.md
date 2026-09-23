@@ -126,6 +126,10 @@ Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. 
 
 Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
 
+### `delete_user(user_id: 'int') -> 'bool'`
+
+Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
+
 ### `disable_pin(user_id)`
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
@@ -156,7 +160,7 @@ Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forward
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich.
+Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
 
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
@@ -277,6 +281,10 @@ Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
 ### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
 
 Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
+
+### `own_events(user_id: 'int', limit: 'int' = 20) -> 'list'`
+
+Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
@@ -562,4 +570,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+125 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

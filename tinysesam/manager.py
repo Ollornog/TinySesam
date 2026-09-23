@@ -17,6 +17,7 @@ import time
 import json
 import hashlib
 import secrets
+import contextvars
 from typing import Any, Literal, NoReturn, Optional, cast
 
 from fastapi import Request, HTTPException
@@ -31,6 +32,16 @@ from .passwords import hash_password, verify_password, needs_rehash, dummy_verif
 from .templates import Templates
 from . import totp as _totp
 from . import security
+
+#: IP und angemeldetes Konto der Anfrage, die gerade bearbeitet wird (B5-02, B5-04).
+#:
+#: Die Konto-Methoden (`totp_disable`, `create_api_key`, `create_invite`, …) bekommen keinen
+#: Request — sie sind auch ohne einen aufrufbar. Ihre Audit-Zeilen standen deshalb ohne IP und
+#: ohne Konto da (`detail="user=5"`), und `tinysesam audit --user X` fand sie nicht. Gesetzt
+#: wird der Wert dort, wo TinySesam die Anfrage ohnehin auflöst (`current_user` und
+#: Verwandte); `audit()` liest ihn. Ein ContextVar, keine Instanzvariable: Er gilt je Anfrage
+#: (je asyncio-Task bzw. je Threadpool-Aufruf) und kann nicht in eine parallele überlaufen.
+_ANFRAGE: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", default=None)
 
 
 # Setzt nonce="…" in jedes <script>/<style>, das noch keins hat. Zentral, statt den Nonce
@@ -242,6 +253,8 @@ class TinySesam:
                                          "Header-Name")
         self.cfg = config
         self.store = Store(config.db_path)
+        self.store.audit_ip_pseudonym = bool(config.audit_ip_pseudonymize)
+        self._protokoll_drossel: dict = {}   # siehe `_einmal_je`
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
@@ -605,7 +618,7 @@ class TinySesam:
         if abgeschnitten:
             # In den Audit-Eintrag, nicht nur verwerfen: Wer das versucht, soll sichtbar sein.
             detail += f" verworfene_rollen={','.join(abgeschnitten)}"
-        self.audit("apikey_create", detail=detail)
+        self.audit("apikey_create", self._kontoname(user_id), detail=detail)
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
                 "roles": roles, "verworfene_rollen": abgeschnitten, "kind": kind}
 
@@ -620,14 +633,21 @@ class TinySesam:
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
-        if not row or row["revoked"]:
+        if not row:
+            self._key_protokoll(None, "unbekannt")
+            return None, None
+        if row["revoked"]:
+            self._key_protokoll(row, "widerrufen")
             return None, None
         if row["expires_at"] and row["expires_at"] < int(time.time()):
+            self._key_protokoll(row, "abgelaufen")
             return None, None
         u = self.store.get_user(row["user_id"])
         if not u or u["disabled"]:
+            self._key_protokoll(row, "konto_gesperrt")
             return None, None
         self.store.touch_api_key(row["id"])
+        self._key_protokoll(row, None)
         try:
             self._letzte_key_art = str(row["kind"] or "automat")
         except (IndexError, KeyError):
@@ -637,6 +657,53 @@ class TinySesam:
         except Exception:
             kr = []
         return u, (kr or None)
+
+    #: Wie lange dieselbe Key-Nutzung (Key, IP, Ausgang) nicht erneut ins Audit-Log geht (B5-05).
+    #: Ein Key ist für Automatiken da, die ihn im Sekundentakt vorlegen; eine Zeile je Anfrage
+    #: begrübe das übrige Log. Eine je Stunde und Adresse beantwortet die Fragen, die man nach
+    #: einem Abfluss stellt: seit wann, von wo, und kam eine NEUE Adresse dazu.
+    APIKEY_AUDIT_FENSTER = 3600
+    _DROSSEL_MAX = 10000
+
+    def _einmal_je(self, schluessel, fenster_sek: float) -> bool:
+        """True, wenn `schluessel` im Fenster noch nicht protokolliert wurde — und merkt ihn vor.
+
+        Für Ereignisse, die in Salven kommen (Key-Nutzung, abgewiesene Forward-Auth). Je Prozess;
+        mehrere Worker schreiben also je eine Zeile, das ist gewollt billiger als ein Abgleich.
+        """
+        jetzt = time.time()
+        if jetzt - self._protokoll_drossel.get(schluessel, 0) < fenster_sek:
+            return False
+        if len(self._protokoll_drossel) >= self._DROSSEL_MAX:
+            self._protokoll_drossel.clear()   # Deckel: wer Adressen durchprobiert, füllt keinen Speicher
+        self._protokoll_drossel[schluessel] = jetzt
+        return True
+
+    def _key_protokoll(self, row, grund: Optional[str]) -> None:
+        """Eine Key-Nutzung (grund=None) oder -Abweisung protokollieren — gedrosselt (B5-05).
+
+        Bis hierhin kannte das System von einem Key nur `last_used`: kein Wer, kein Woher, und
+        ein abgewiesener Key hinterliess gar nichts. Gerade der ist aber das Signal — ein
+        widerrufener Key, der weiter anklopft, heisst: Er liegt noch irgendwo, oder er ist
+        abgeflossen. Die IP kommt aus der laufenden Anfrage (`_ANFRAGE`).
+        """
+        a = _ANFRAGE.get() or {}
+        ip = a.get("ip")
+        kid = row["id"] if row is not None else None
+        if not self._einmal_je(("apikey", kid, ip, grund), self.APIKEY_AUDIT_FENSTER):
+            return
+        besitzer = self._kontoname(row["user_id"]) if row is not None else None
+        try:
+            art = str(row["kind"] or "automat") if row is not None else "?"
+        except (IndexError, KeyError):
+            art = "automat"
+        if grund is None:
+            self.store.audit_log("apikey_use", besitzer, ip, f"key={kid} art={art}")
+            return
+        detail = f"key={kid} grund={grund}" if kid is not None else f"grund={grund}"
+        self.store.audit_log("apikey_denied", besitzer, ip, detail)
+        security.seclog.warning("api key denied user=%s ip=%s grund=%s",
+                                security.fuer_log(besitzer or "-"), security.fuer_log(ip), grund)
 
     def api_key_art(self, key) -> str:
         """Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen."""
@@ -663,8 +730,9 @@ class TinySesam:
 
     def revoke_api_key(self, key_id, user_id=None):
         """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
+        besitzer = self.store.api_key_owner(key_id)
         self.store.revoke_api_key(key_id, user_id)
-        self.audit("apikey_revoke", detail=f"key={key_id}")
+        self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
 
     def set_password(self, user_id, password):
         """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers)."""
@@ -681,6 +749,45 @@ class TinySesam:
     # Bewusst NICHT "der erste registrierte User wird Admin": bei offener Registrierung gewinnt,
     # wer als Erstes da ist — auch ein Fremder, der die frische Instanz findet. Stattdessen zwei
     # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt.
+    def delete_user(self, user_id: int) -> bool:
+        """Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
+
+        Die Audit-Zeilen bleiben stehen (was geschah, wann, von welcher IP), nur der Name wird zu
+        `gelöscht#<id>`, auch dort, wo er oder die E-Mail-Adresse im Detailtext steht. Ein
+        gelöschtes Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht; ein Log,
+        dem die Zeilen fehlen, taugt nicht mehr zur Aufarbeitung.
+
+        Der letzte Admin lässt sich nicht löschen (`StateError`) — sonst stünde die Instanz ohne
+        Verwaltung da, und der Erst-Admin-Weg öffnete sich für den Nächstbesten. Gibt False
+        zurück, wenn es das Konto nicht gibt.
+        """
+        u = self.store.get_user(user_id)
+        if not u:
+            return False
+        if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
+            raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
+        name, mail = str(u["username"]), (u["email"] or "")
+        self.store.delete_user_sessions(user_id)
+        self.store.delete_user(user_id)
+        self.store.delete_attempts_for(name)
+        ersatz = f"gelöscht#{user_id}"
+        n = self.store.audit_anonymisieren(name, ersatz, (mail,))
+        self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
+        return True
+
+    def own_events(self, user_id: int, limit: int = 20) -> list:
+        """Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
+
+        Nur Zeit, Ereignis und IP — das Detail bleibt beim Betreiber: Bei einer Admin-Aktion
+        nennt es fremde Konten, und eine Anzeige für den Kontoinhaber soll nicht mehr zeigen als
+        sein eigenes Konto. Genau das, was man dort sucht: „War das ich?"
+        """
+        name = self._kontoname(user_id)
+        if not name:
+            return []
+        return [{"ts": z["ts"], "event": z["event"], "ip": z["ip"]}
+                for z in self.store.recent_audit(max(1, int(limit)), username=name)]
+
     def admin_exists(self) -> bool:
         """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
         return any(u["is_admin"] for u in self.store.list_users())
@@ -761,14 +868,16 @@ class TinySesam:
                     "email_verified; SAML und LDAP kennen keinen; sonst der Vermerk am Konto). "
                     "Die Adresse bleibt am Konto, sie trägt nur diese Entscheidung nicht. "
                     "Belegter Weg: /auth/claim-admin.",
-                    user["username"], user["email"], faktor or "?")
+                    security.fuer_log(user["username"]), security.fuer_log(user["email"]),
+                    faktor or "?")
                 self.audit("admin_bootstrap_denied", user["username"], detail=grund)
                 return False
         if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
-        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s", user["username"])
+        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s",
+                                security.fuer_log(user["username"]))
         return True
 
     def _admin_claim_bekanntgeben(self, token: str) -> None:
@@ -852,7 +961,8 @@ class TinySesam:
         self.store.set_setting("admin_claim", "")     # einmalig
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
-        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s", user["username"])
+        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s",
+                                security.fuer_log(user["username"]))
         return True
 
     # ---------- Demo-Modus ----------
@@ -1161,7 +1271,7 @@ class TinySesam:
     def disable_pin(self, user_id):
         """Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt)."""
         self.store.delete_pin(user_id)
-        self.audit("pin_disable", detail=f"user={user_id}")
+        self.audit("pin_disable", self._kontoname(user_id), detail=f"user={user_id}")
 
     def check_pin(self, username, pin) -> Optional[dict]:
         """Wie `check_password`, nur mit der persönlichen PIN."""
@@ -1361,7 +1471,8 @@ class TinySesam:
         if self.store.has_confirmed_totp(user_id):
             # Der Versuch selbst ist die interessante Zeile: Bis 0.18.0 hinterliess dieser Weg
             # keine Spur, obwohl er den zweiten Faktor entfernte.
-            self.audit("totp_setup_denied", detail=f"user={user_id} grund=bereits_bestaetigt")
+            self.audit("totp_setup_denied", self._kontoname(user_id),
+                       detail=f"user={user_id} grund=bereits_bestaetigt")
             raise StateError(
                 f"Konto {user_id} hat bereits ein bestätigtes TOTP — erst abschalten "
                 f"(totp_disable), dann neu einrichten.")
@@ -1374,10 +1485,11 @@ class TinySesam:
         verwaist = self.store.count_recovery_codes(user_id)
         if verwaist:
             self.store.delete_recovery_codes(user_id)
-            self.audit("recovery_verwaist_geloescht", detail=f"user={user_id} n={verwaist}")
+            self.audit("recovery_verwaist_geloescht", str(u["username"]),
+                       detail=f"user={user_id} n={verwaist}")
         secret = _totp.new_secret()
         self.store.set_totp(user_id, secret, confirmed=False)
-        self.audit("totp_setup_start", detail=f"user={user_id}")
+        self.audit("totp_setup_start", str(u["username"]), detail=f"user={user_id}")
         uri = _totp.provisioning_uri(secret, u["username"], self.cfg.rp_name)
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 
@@ -1386,6 +1498,10 @@ class TinySesam:
         t = self.store.get_totp(user_id)
         if t and _totp.verify(t["secret"], code):
             self.store.confirm_totp(user_id)
+            # Ab hier gilt ein neuer zweiter Faktor — das Gegenstück zu `totp_disable` und
+            # bisher die einzige Faktor-Änderung ohne Zeile (B5-07). Gerade sie ist es, die ein
+            # Angreifer mit einer übernommenen Sitzung vornimmt, um wiederzukommen.
+            self.audit("totp_enable", self._kontoname(user_id), detail=f"user={user_id}")
             return True
         return False
 
@@ -1397,7 +1513,8 @@ class TinySesam:
         # Das Abschalten eines zweiten Faktors ist das, was ein Angreifer als Erstes tut, wenn er
         # eine Sitzung hat. Ohne Eintrag ist es hinterher nicht nachvollziehbar — bis 2026-09-21
         # hinterliess es keine Spur, obwohl dabei TOTP UND alle Recovery-Codes fallen.
-        self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
+        self.audit("totp_disable", self._kontoname(user_id),
+                   detail=f"user={user_id} recovery_codes_geloescht={offen}")
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
     #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 7 Byte = **112 Bit**.
@@ -1417,7 +1534,7 @@ class TinySesam:
         codes = ["-".join(secrets.token_hex(self.RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
-        self.audit("recovery_generate", detail=f"user={user_id} n={n}")
+        self.audit("recovery_generate", self._kontoname(user_id), detail=f"user={user_id} n={n}")
         return codes
 
     @staticmethod
@@ -1429,7 +1546,14 @@ class TinySesam:
         """Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal."""
         if not code:
             return False
-        return self.store.consume_recovery_code(user_id, self._rc_hash(code))
+        if not self.store.consume_recovery_code(user_id, self._rc_hash(code)):
+            return False
+        # Eigene Zeile (B5-07): Der TOTP-Schritt nimmt beide Codearten an und verbuchte beide
+        # als `totp`. Ein Recovery-Code heisst aber „Authenticator weg" — oder: jemand hat die
+        # ausgedruckten Codes. Beides will man sehen, samt der Zahl, die noch übrig ist.
+        self.audit("recovery_used", self._kontoname(user_id),
+                   detail=f"user={user_id} verbleibend={self.store.count_recovery_codes(user_id)}")
+        return True
 
     def recovery_codes_remaining(self, user_id) -> int:
         """Wie viele Einmal-Codes dieses Konto noch hat."""
@@ -1838,6 +1962,15 @@ class TinySesam:
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist."""
+        # Erst die IP merken, dann auflösen: Auch ein abgewiesener API-Key (B5-05) soll mit der
+        # Adresse im Protokoll stehen, von der er kam.
+        self._anfrage_merken(request)
+        u = self._current_user_ermitteln(request)
+        if u:
+            self._anfrage_merken(request, u)
+        return u
+
+    def _current_user_ermitteln(self, request) -> Optional[dict]:
         # 1) Session (Mensch, inkl. MFA)
         s = self.session_from_request(request)
         if s and s["mfa_ok"]:
@@ -1887,7 +2020,10 @@ class TinySesam:
         s = self.session_from_request(request)
         if not s or s["mfa_ok"]:
             return None
-        return self._als_dict(self.store.get_user(s["user_id"]))
+        u = self._als_dict(self.store.get_user(s["user_id"]))
+        if u:
+            self._anfrage_merken(request, u)
+        return u
 
     def totp_enrollment_user(self, request) -> Optional[dict]:
         """Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
@@ -2142,21 +2278,56 @@ class TinySesam:
         return "falsches_geheimnis"
 
     def audit(self, event, username=None, ip=None, detail=None):
-        """Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet."""
+        """Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
+
+        Was der Aufrufer nicht nennt, ergänzt `audit()` aus der laufenden Anfrage (B5-02): die
+        IP, das angemeldete Konto als `username`, wenn keins genannt ist, und `akteur=<name>` im
+        Detail, wenn das angemeldete Konto ein ANDERES ist als das betroffene — der Admin, der
+        einem fremden Konto einen Key ausstellt. `username` ist damit immer das Konto, um das es
+        geht; `tinysesam audit --user X` findet auch das, was andere an X getan haben.
+        """
+        a = _ANFRAGE.get()
+        if a:
+            if ip is None:
+                ip = a.get("ip")
+            akteur = a.get("akteur")
+            if akteur:
+                if username is None:
+                    username = akteur
+                elif str(username).lower() != str(akteur).lower():
+                    detail = f"{detail} akteur={akteur}" if detail else f"akteur={akteur}"
         self.store.audit_log(event, username, ip, detail)
+
+    def _kontoname(self, user_id) -> Optional[str]:
+        """Der Benutzername zu einer ID — für Audit-Zeilen, die sonst nur `user=<id>` trügen."""
+        u = self.store.get_user(user_id) if user_id is not None else None
+        return str(u["username"]) if u else None
+
+    def _anfrage_merken(self, request, u=None) -> None:
+        """IP und angemeldetes Konto der laufenden Anfrage für `audit()` festhalten (`_ANFRAGE`)."""
+        try:
+            ip = self.client_ip(request)
+        except Exception:        # Attrappe ohne Header/Client — dann eben ohne IP
+            ip = None
+        _ANFRAGE.set({"ip": ip, "akteur": str(u["username"]) if u else None})
 
     def gc(self, attempts_older_than_sec: int = 86400) -> dict:
         """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
         Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
-        Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich."""
+        Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht
+        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich."""
         older = int(time.time()) - int(attempts_older_than_sec)
-        return {
+        zahlen = {
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
         }
+        tage = int(self.cfg.audit_retention_days or 0)
+        if tage > 0:
+            zahlen["audit"] = self.store.gc_audit(int(time.time()) - tage * 86400)
+        return zahlen
 
     def version(self) -> str:
         """Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst;

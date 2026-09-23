@@ -32,6 +32,82 @@ def fuer_log(wert) -> str:
     return (text[:64] + "…") if len(text) > 64 else text
 
 
+def zeilenfest(wert) -> str:
+    """Wie `fuer_log`, nur ohne Längendeckel — für Anzeigen, die den ganzen Wert brauchen.
+
+    Ein Umbruch wird sichtbar (`\\n`) statt still entfernt: In der forensischen Ansicht soll
+    auffallen, DASS jemand einen Zeilenumbruch in einen Benutzernamen geschrieben hat (B5-06).
+    """
+    text = str(wert if wert is not None else "")
+    return "".join(z if (z >= " " and z != "\x7f") else
+                   {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(z, "?") for z in text)
+
+
+class _ZeilenSchutz(logging.Filter):
+    """Neutralisiert Steuerzeichen in den ARGUMENTEN jeder `seclog`-Zeile (B5-14).
+
+    `fuer_log` an jeder Aufrufstelle ist eine Konvention — und zwei Stellen hatten sie nicht
+    (die `X-Forwarded-For`-Warnung und die OIDC-Adresse ohne Beleg). Die nächste neue Zeile
+    vergisst es wieder. Der Filter hängt am Logger selbst und greift deshalb für jede Zeile,
+    auch für künftige. Der Formatstring bleibt unberührt: Er ist Code, nicht Eingabe.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(self._sauber(a) for a in args)
+        elif isinstance(args, dict):
+            record.args = {k: self._sauber(v) for k, v in args.items()}
+        return True
+
+    @staticmethod
+    def _sauber(a):
+        if isinstance(a, (int, float)) or a is None:
+            return a            # %d/%.1f brauchen die Zahl, und eine Zahl bricht keine Zeile
+        return zeilenfest(a)
+
+
+seclog.addFilter(_ZeilenSchutz())
+
+
+def ip_normiert(wert) -> str | None:
+    """Die kanonische Schreibweise einer IP-Adresse, oder None, wenn es keine ist (B5-15).
+
+    Kanonisch heisst: `2001:DB8::1` und `2001:db8:0::1` sind dieselbe Adresse und landen als
+    eine im Protokoll, im Rate-Limit und in der Sperre — sonst zählte jede Schreibweise als
+    eigener Client. Eine Portangabe (`1.2.3.4:5678`, `[2001:db8::1]:443`), wie manche
+    Proxys sie in `X-Forwarded-For` schreiben, wird abgelöst.
+    """
+    roh = str(wert or "").strip()
+    if not roh:
+        return None
+    if roh.startswith("[") and "]" in roh:
+        roh = roh[1:roh.index("]")]
+    elif roh.count(":") == 1:
+        roh = roh.split(":", 1)[0]
+    try:
+        return str(ipaddress.ip_address(roh))
+    except ValueError:
+        return None
+
+
+def ip_pseudonym(ip: str) -> str:
+    """Eine IP auf ihr Netz kürzen: IPv4 auf /24, IPv6 auf /48 (`audit_ip_pseudonymize`).
+
+    Das ist die Kürzung, die auch Webanalyse-Werkzeuge für „nicht mehr personenbeziehbar"
+    ansetzen. Für die Forensik bleibt das Netz — genug, um einen Provider oder eine Welle
+    zu erkennen, nicht genug, um einen Anschluss zu benennen. Keine IP → Wert unverändert.
+    """
+    norm = ip_normiert(ip)
+    if norm is None:
+        return ip
+    addr = ipaddress.ip_address(norm)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 ist eine IPv4-Adresse
+    netz = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
+    return str(netz)
+
+
 #: Rechte, mit denen die Security-Logdatei angelegt wird — bei der ersten Zeile und nach jeder
 #: Rotation. Vorher entstand sie mit der Prozess-umask, in der Praxis `-rw-rw-r--`: welt-lesbar.
 #: In den Zeilen stehen Benutzernamen und IP-Adressen; bis 0.18.x stand dort sogar das
@@ -407,7 +483,20 @@ def client_ip(request, trusted_nets) -> str:
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
-                return ip
+                # Nur eine ECHTE Adresse wird Client-IP (B5-15). Vorher ging der erste nicht
+                # vertrauenswürdige Eintrag ungeprüft durch — auch `evil`, ein Zeilenumbruch
+                # oder 4 kB Text, und das als Schlüssel für Rate-Limit, Sperre und Audit-Log.
+                # Ein Proxy, der den Client-Header nur durchreicht statt anzuhängen, macht genau
+                # diesen Eintrag client-steuerbar. Dann lieber die Peer-IP (kollektiv, aber echt).
+                norm = ip_normiert(ip)
+                if norm is not None:
+                    return norm
+                if einmal_melden("xff-ungueltig:" + peer):
+                    seclog.warning(
+                        "X-Forwarded-For von %s nennt keine gültige Adresse (%s) — es bleibt bei "
+                        "der Peer-IP. Reicht der Proxy den Header des Clients nur durch, statt "
+                        "anzuhängen?", peer, fuer_log(ip))
+                return peer
     if xff and peer not in _GEMELDETE_PEERS:
         _GEMELDETE_PEERS.add(peer)
         if not is_trusted(peer, trusted_nets):
@@ -425,7 +514,7 @@ def client_ip(request, trusted_nets) -> str:
                 "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
                 "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
                 "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
-                xff, list(trusted_nets or []), peer)
+                fuer_log(xff), list(trusted_nets or []), peer)
     return peer
 
 

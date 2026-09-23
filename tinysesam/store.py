@@ -476,7 +476,8 @@ class Store:
         """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""
         with self._lock:
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
-                          "webauthn_cred", "oidc_identity", "session", "magic_token"):
+                          "webauthn_cred", "oidc_identity", "federated_identity", "session",
+                          "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
             self.db.commit()
@@ -1008,9 +1009,61 @@ class Store:
         return self._exec("DELETE FROM resource_unlock WHERE expires_at < ?", (_now(),)).rowcount
 
     # ---------- Audit-Log ----------
+    #: IPs im Audit-Log auf ihr Netz kürzen (`TinySesamConfig.audit_ip_pseudonymize`, B5-11).
+    #: Steht hier und nicht im Manager, weil auch der Login-Pfad direkt `audit_log` schreibt —
+    #: eine Kürzung, die nur ein Teil der Zeilen erfährt, schützt niemanden.
+    audit_ip_pseudonym = False
+
     def audit_log(self, event, username=None, ip=None, detail=None):
+        # Die Spalte heisst `ip` — also steht darin eine (B5-15). Eine echte Adresse in ihrer
+        # kanonischen Form; alles andere (ein Test-Peer, ein Unix-Socket) nur steuerzeichenfrei
+        # und gedeckelt, damit weder das Panel noch `tinysesam audit` eine erfundene Zeile zeigt.
+        if ip is not None:
+            from . import security as _sec
+            norm = _sec.ip_normiert(ip)
+            if norm is None:
+                ip = _sec.fuer_log(ip) or None
+            else:
+                ip = _sec.ip_pseudonym(norm) if self.audit_ip_pseudonym else norm
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
+
+    def delete_attempts_for(self, username) -> int:
+        """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13)."""
+        return self._exec("DELETE FROM login_attempt WHERE lower(username)=lower(?)",
+                          (username,)).rowcount
+
+    def gc_audit(self, older_than_ts: int) -> int:
+        """Audit-Zeilen vor einem Zeitpunkt löschen (`audit_retention_days`, B5-11)."""
+        return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
+
+    def audit_anonymisieren(self, username, ersatz, weitere=()) -> int:
+        """Ein Konto aus dem Audit-Log herausnehmen, ohne die Zeilen zu löschen (H-13).
+
+        Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
+        die Forensik stehen; WER es war, steht danach nur noch als `ersatz` da. `weitere` sind
+        zusätzliche Kennungen (die E-Mail-Adresse), die im Detailtext vorkommen können.
+        """
+        if not username:
+            return 0
+        import re as _re
+        with self._lock:
+            n = self.db.execute("UPDATE audit SET username=? WHERE lower(username)=lower(?)",
+                                (ersatz, username)).rowcount
+            for wert in (username, *[w for w in weitere if w]):
+                # Nur als ganzes Wort ersetzen: Ein Konto „al" darf nicht jedes „alt" und
+                # „grund=falsches_geheimnis" im Log verstümmeln.
+                muster = _re.compile(r"(?<![\w@.-])" + _re.escape(str(wert)) + r"(?![\w@.-])",
+                                     _re.IGNORECASE)
+                zeilen = self.db.execute(
+                    "SELECT id, detail FROM audit WHERE instr(lower(detail), lower(?)) > 0",
+                    (str(wert),)).fetchall()
+                for z in zeilen:
+                    neu = muster.sub(ersatz, z["detail"] or "")
+                    if neu != z["detail"]:
+                        self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu, z["id"]))
+            self.db.commit()
+        return n
 
     def recent_audit(self, limit=100, username: str | None = None):
         """Die jüngsten Audit-Einträge, neueste zuerst.
@@ -1054,6 +1107,11 @@ class Store:
     def count_active_api_keys(self, user_id) -> int:
         r = self._one("SELECT COUNT(*) AS n FROM api_key WHERE user_id=? AND revoked=0", (user_id,))
         return r["n"] if r else 0
+
+    def api_key_owner(self, key_id) -> Optional[int]:
+        """Die Konto-ID zu einem Key — für die Audit-Zeile beim Widerruf (B5-04)."""
+        r = self._one("SELECT user_id FROM api_key WHERE id=?", (key_id,))
+        return r["user_id"] if r else None
 
     def revoke_api_key(self, key_id, user_id=None):
         if user_id is not None:

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .store import norm_email, valid_email
+from . import security
 
 
 def build_router(auth) -> APIRouter:
@@ -283,8 +284,9 @@ def build_router(auth) -> APIRouter:
         def pin_off(request: Request):
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
             u = auth.require_mfa(request)   # R3-3: frische Faktor-Bestätigung, kein API-Key
+            # Die Zeile schreibt `disable_pin` selbst — mit Konto und IP (B5-02). Hier stand eine
+            # zweite, die denselben Vorgang doppelt ins Log schrieb.
             auth.disable_pin(u["id"])
-            auth.audit("pin_disable", u["username"])
             return {"ok": True}
 
     # ---------- Geteiltes Ressourcen-Geheimnis (PIN/Passphrase ohne User-Konto) ----------
@@ -384,7 +386,10 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.store.set_disabled(uid, False)          # Konto aktivieren
-            auth.audit("email_verified", detail=data.get("email"))
+            # Konto und IP gehören in die Zeile (B5-02): Hier wird ein Konto freigeschaltet, und
+            # ohne Namen fand `tinysesam audit --user X` den Vorgang nicht.
+            auth.audit("email_verified", auth._kontoname(uid), auth.client_ip(request),
+                       data.get("email"))
             return _login_nach_token(auth, request, uid, "/")
 
     # ---------- Einladung (eigener Endpunkt; verbraucht wird der Token erst bei der Registrierung) ----------
@@ -504,7 +509,8 @@ def build_router(auth) -> APIRouter:
             uid = data["user_id"]
             auth.set_password(uid, password)
             auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
-            auth.audit("password_reset", detail=f"uid={uid}")
+            auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
+                       f"uid={uid}")
             return RedirectResponse(f"{cfg.login_path}?next=/", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -615,6 +621,29 @@ def build_router(auth) -> APIRouter:
                     groups.append(rs)
             return groups
 
+        def _forward_abweisung_protokollieren(request: Request, orig: str) -> None:
+            """Eine 401 der Forward-Auth ins Audit-Log — wenn ein Nachweis vorlag (B5-17).
+
+            Bisher schrieb diese Antwort nichts. Protokolliert wird, wenn die Anfrage etwas
+            MITBRACHTE, das nicht (mehr) gilt: ein Sitzungscookie ohne gültige Sitzung, eine
+            Sitzung mitten im Faktor-Schritt, einen API-Key. Das ist der Anlass zum Nachsehen —
+            ein abgelaufener, gestohlener oder erratener Nachweis. Ein Aufruf ganz OHNE Nachweis
+            ist der gewöhnliche erste Besuch vor dem Login; ihn zu protokollieren begrübe das Log
+            unter Seitenaufrufen, und das Zugriffslog des Proxys hat ihn ohnehin. Gedrosselt je
+            IP und Grund, weil ein Browser mit abgelaufenem Cookie jede Teilanfrage einer Seite
+            (Bilder, Skripte) einzeln abweisen lässt.
+            """
+            if request.cookies.get(cfg.session_cookie):
+                grund = "mfa_offen" if auth.pending_user(request) else "sitzung_ungueltig"
+            elif cfg.apikey_enabled and auth._extract_api_key(request):
+                grund = "api_key_ungueltig"
+            else:
+                return
+            ip = auth.client_ip(request)
+            if auth._einmal_je(("forward401", ip, grund), 300):
+                auth.audit("forward_denied", None, ip,
+                           f"grund={grund} url={security.zeilenfest(orig)[:200]}")
+
         def _forward(request: Request):
             u = auth.current_user(request)   # Session ODER API-Key
             orig = auth.forwarded_url(request)
@@ -653,6 +682,7 @@ def build_router(auth) -> APIRouter:
                 # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
                 return Response(status_code=200, headers=auth.forward_response_headers(u))
             login = auth.forward_login_url(orig, request)
+            _forward_abweisung_protokollieren(request, orig)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
                                                       "WWW-Authenticate": 'FormBased realm="TinySesam"'})
@@ -724,7 +754,8 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
-                                    is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path)
+                                    is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
+                                    events=auth.own_events(u["id"]))
 
     # ---------- Eigene Sitzungen verwalten ----------
     @r.get("/auth/sessions")
