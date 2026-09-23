@@ -27,6 +27,39 @@ def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
         f"es fehlt: {e.name or 'onelogin'}.", extra="saml")
 
 
+def request_kontext(basis: str, pfad: str, form=None, query=None) -> dict:
+    """Der `req`-Satz für python3-saml — **aus der geprüften Basis**, nicht aus Headern (F-16).
+
+    python3-saml baut aus `https`, `http_host` und `script_name` die Adresse, die es für die
+    eigene hält, und vergleicht damit die `Destination` der Assertion. Kamen Schema und Host
+    aus `X-Forwarded-Proto`/`Host`, bestimmte der Anfragende diesen Vergleich mit: Er konnte
+    eine Assertion vorlegen, deren `Destination` auf seinen Namen lautet, und den Header dazu
+    passend setzen — die Prüfung ging auf, obwohl die Assertion nie für uns gedacht war.
+    Zusammen mit der Bindung über den blossen Benutzernamen (F-11) ergab das eine
+    Kontoübernahme ohne Kenntnis des lokalen Passworts.
+
+    Die Basis kommt jetzt aus `TinySesam.public_base()`, also aus `base_url` — derselben
+    Zusage, aus der auch Entity-ID und ACS-URL gebaut werden. Damit sagen alle drei Angaben
+    dasselbe, und keine davon hört auf den Anfragenden.
+
+    Der **Pfadanteil** der Basis gehört in `script_name`, sonst schlägt die Destination-
+    Prüfung bei einer unter einem Unterpfad montierten App fehl: Die ACS-URL in den Settings
+    trägt ihn (`base + /auth/saml/acs`), die berechnete Selbst-Adresse müsste ihn also auch
+    tragen. Ist er im Pfad schon enthalten (ASGI-Mount), wird er nicht doppelt angehängt.
+    """
+    from urllib.parse import urlsplit
+    teile = urlsplit(str(basis or ""))
+    praefix = (teile.path or "").rstrip("/")
+    weg = str(pfad or "/")
+    if praefix and not weg.startswith(praefix + "/") and weg != praefix:
+        weg = praefix + weg
+    host = teile.netloc or ""
+    return {"https": "on" if teile.scheme == "https" else "off",
+            "http_host": host, "script_name": weg,
+            "get_data": dict(query or {}),
+            "post_data": {k: v for k, v in (form or {}).items()}}
+
+
 class SAMLClient:
     def __init__(self, cfg):
         self.cfg = cfg

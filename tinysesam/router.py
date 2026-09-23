@@ -832,12 +832,15 @@ def build_router(auth) -> APIRouter:
             return f"{proto}://{host}"
 
         def _saml_req(request: Request, form=None):
-            proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-            host = (request.headers.get("x-forwarded-host") or request.headers.get("host")
-                    or request.url.netloc).split(",")[0].strip()
-            return {"https": "on" if proto == "https" else "off", "http_host": host,
-                    "script_name": request.url.path, "get_data": dict(request.query_params),
-                    "post_data": {k: v for k, v in (form or {}).items()}}
+            """Der `req`-Satz für python3-saml — gebaut aus der GEPRÜFTEN Basis (F-16).
+
+            Vorher standen hier Schema und Host aus `X-Forwarded-Proto`/`Host`. python3-saml
+            berechnet daraus die Adresse, die es für die eigene hält, und vergleicht sie mit der
+            `Destination` der Assertion — der Anfragende bestimmte diesen Vergleich also mit.
+            """
+            from .saml_ import request_kontext
+            return request_kontext(_saml_basis(request), request.url.path,
+                                   form=form, query=request.query_params)
 
         # Anker gegen untergeschobene Assertions: Die ID des AuthnRequests liegt bis zur ACS in
         # einem eigenen, kurzlebigen Cookie.
