@@ -715,7 +715,35 @@ auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
 assert auth11c.check_ldap("ohne", "pw") is None
 ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab")
 
-for _d in (db11, db11b, db11c):
+# A-4 (Angriff auf H-4): Ohne stabile Kennung wurde nie gebunden — das LDAP-Konto galt als lokal
+# und bekam einen Reset-Link. Das neue lokale Passwort stach danach das Verzeichnis, auch wenn das
+# Konto dort gesperrt war. Hier über den ECHTEN Login-Weg, nicht über eine Bindung von Hand.
+db11d, auth11d, c11d = build(ldap_auto_create=True, password_reset_enabled=True,
+                             base_url="https://auth.example.com")
+_post11d = []
+auth11d.set_mailer(lambda to, s, t, html=None: _post11d.append(to))
+auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "email": "bob@example.com"}})   # kein "id"
+assert c11d.post("/auth/login", data={"username": "bob", "password": "ldappw"},
+                 follow_redirects=False).status_code == 303
+_uid_bob = auth11d.store.get_user_by_name("bob")["id"]
+assert auth11d.nur_foederiert(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
+c11d.get("/auth/logout")
+assert c11d.post("/auth/forgot", data={"email": "bob@example.com"}).status_code == 200
+assert _post11d == [], f"LDAP-Konto ohne Kennung bekam einen Reset-Link: {_post11d}"
+ok("A-4: ein LDAP-Konto ohne stabile Kennung bekommt über den echten Login-Weg keinen Reset-Link")
+# Kommt später eine echte Kennung, ersetzt sie den Platzhalter (Nachbindung, kein Kennungswechsel).
+auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "id": "uuid-bob"}})
+assert auth11d.check_ldap("bob", "ldappw") is not None, "der Platzhalter blockiert die echte Kennung"
+assert auth11d.store.get_federated_kennung("ldap", _uid_bob) == "uuid-bob"
+# Eine Kennung in Platzhalter-Form aus dem Verzeichnis wird abgewiesen — sie träfe sonst das
+# Konto, dessen ID sie nennt.
+_adm11d = auth11d.store.get_user_by_name("admin")["id"]
+auth11d.store.link_federated("ldap", f"{auth11d._OHNE_KENNUNG}{_adm11d}", _adm11d, 0)
+auth11d.ldap = FakeLDAP({"mallory": {"password": "m", "id": f"{auth11d._OHNE_KENNUNG}{_adm11d}"}})
+assert auth11d.check_ldap("mallory", "m") is None, "Platzhalter-Kennung übernahm ein fremdes Konto"
+ok("A-4: echte Kennung ersetzt den Platzhalter; Platzhalter-Form aus dem Verzeichnis abgewiesen")
+
+for _d in (db11, db11b, db11c, db11d):
     os.remove(_d)
 
 # ---------- F-19: Gruppen aus dem Verzeichnis werden nicht mehr als Teilstring verglichen ----------
@@ -764,6 +792,36 @@ assert not gruppe_passt("staff", "cn=staff,ou=g", dn=False), "ohne dn=True bleib
 assert not gruppe_passt("", "cn=x", dn=True)
 ok("F-19: gruppe_passt zerlegt DNs an unmaskierten Kommas, vergleicht ganzen DN/ersten RDN/Wert")
 
+# A-3 (Angriff auf F-19): Das README-Beispiel `{"cn=admins,ou=g": "__admin__"}` ist ein Teil-DN.
+# Nach dem ersten Fix traf es `cn=admins,ou=g,dc=example,dc=com` nicht mehr — Admin-Mapping still
+# weg, als ldap_allowed_groups jeder Nutzer abgewiesen.
+assert gruppe_passt("cn=admins,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert gruppe_passt("CN=Admins, OU=G", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert not gruppe_passt("ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True), "nur von vorn"
+assert not gruppe_passt("cn=admin,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert not gruppe_passt("cn=admins,ou=g,dc=example,dc=com,dc=x", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+db19c, auth19c, _ = build(ldap_allowed_groups=["cn=admins,ou=g"],
+                          ldap_group_role_map={"cn=admins,ou=g": "__admin__", "ou=g": "alle"})
+auth19c.ldap = FakeLDAP({"ada": {"password": "x", "id": "a1",
+                                 "groups": ["cn=admins,ou=g,dc=example,dc=com"]}})
+from tinysesam import security as _sec19                    # noqa: E402
+_sec19.einmal_melden_zuruecksetzen()
+_puffer19 = __import__("io").StringIO()
+_haken19 = __import__("logging").StreamHandler(_puffer19)
+_sec19.seclog.addHandler(_haken19)
+try:
+    _ada = auth19c.check_ldap("ada", "x")
+finally:
+    _sec19.seclog.removeHandler(_haken19)
+assert _ada is not None, "README-Schlüssel als ldap_allowed_groups weist jeden ab"
+assert _ada["is_admin"], "README-Schlüssel als Admin-Mapping greift nicht"
+assert auth19c.store.get_roles(_ada["id"]) == [], "Teilstring 'ou=g' darf nicht treffen"
+# Der Schlüssel, der nur noch als Teilstring träfe, fällt nicht still weg: eine Zeile im Log.
+assert "'ou=g'" in _puffer19.getvalue() and "Teilstring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
+assert "cn=admins,ou=g'" not in _puffer19.getvalue(), "ein greifender Schlüssel darf nicht warnen"
+ok("A-3: Teil-DN von vorn (README-Beispiel) greift wieder; ein reiner Teilstring-Schlüssel meldet sich")
+os.remove(db19c)
+
 # ---------- F-23: ein Ausfall des Verzeichnisses ist kein Fehlversuch ----------
 # Bis 0.20.0 endete jeder Fehler in `authenticate()` als None, also als „Passwort falsch": ein
 # Fehlversuch gegen Konto und IP, `failed login` für fail2ban. Nach ein paar Minuten Ausfall
@@ -802,6 +860,34 @@ assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"})
 assert auth23.store.count_fails(0, username="alice") == 1
 ok("F-23: …ein echtes falsches Passwort bleibt ein Fehlversuch")
 os.remove(db23)
+
+# A-1 (Angriff auf F-23): Während des Ausfalls blieb auch das falsche LOKALE Passwort
+# unverbucht — gegen den lokalen Admin, das Notfallkonto, war beliebig oft zu raten (verteilt
+# über IPs griff nur das IP-Ratelimit), und das richtige Passwort kam danach trotz
+# max_login_attempts durch.
+db23a, auth23a, c23a = build()
+auth23a.ldap = AusfallLDAP()
+_max23a = auth23a.sec("max_login_attempts")
+_puffer23a = _io23.StringIO()
+_haken23a = _log23.StreamHandler(_puffer23a)
+_seclog23.addHandler(_haken23a)
+try:
+    _antw23a = [c23a.post("/auth/login", data={"username": "admin", "password": f"falsch{i}"}).status_code
+                for i in range(_max23a)]
+finally:
+    _seclog23.removeHandler(_haken23a)
+assert all(s == 503 for s in _antw23a), _antw23a
+assert auth23a.store.count_fails(0, username="admin") == _max23a, \
+    "falsches lokales Passwort während des Ausfalls wurde nicht verbucht"
+assert auth23a.is_locked("admin", "testclient"), "lokaler Admin während des Ausfalls unbegrenzt ratbar"
+assert "failed login" in _puffer23a.getvalue(), "fail2ban sieht das Raten am lokalen Konto nicht"
+_r23a = c23a.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
+assert _r23a.status_code == 429, f"richtiges Passwort kam nach {_max23a} Fehlversuchen durch: {_r23a.status_code}"
+# Der Verzeichnis-Anteil bleibt entschuldigt: das LDAP-Konto ohne lokales Passwort zählt nicht.
+c23a.post("/auth/login", data={"username": "alice", "password": "x"})
+assert auth23a.store.count_fails(0, username="alice") == 0
+ok("A-1: Ausfall entschuldigt nur das Verzeichnis — ein falsches LOKALES Passwort zählt und sperrt")
+os.remove(db23a)
 
 if HAT_LDAP3:
     # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der

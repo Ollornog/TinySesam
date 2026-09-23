@@ -82,10 +82,11 @@ def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False)
     Rolle und Admin-Flag.
 
     `dn=True` (LDAP, `memberOf` liefert ganze DNs) vergleicht **genau**, aber nach Bestandteilen:
-    der ganze DN, der erste RDN (`cn=staff`) oder dessen Wert (`staff`). Gross/klein zählt dort
-    nicht — LDAP vergleicht Namen so, und `CN=Staff,OU=Groups` ist dieselbe Gruppe. So bleibt
-    die gewohnte Schreibweise (`{"staff": …}` oder `{"cn=staff": …}`) gültig, ohne dass ein
-    Namensteil eine fremde Gruppe trifft.
+    der ganze DN, ein **Anfang** aus ganzen RDNs (`cn=staff` oder `cn=staff,ou=groups` — der
+    Teil-DN ohne Basis, wie ihn die README als Beispiel zeigt) oder der Wert des ersten RDN
+    (`staff`). Gross/klein zählt dort nicht — LDAP vergleicht Namen so, und `CN=Staff,OU=Groups`
+    ist dieselbe Gruppe. So bleibt die gewohnte Schreibweise gültig, ohne dass ein Namensteil
+    eine fremde Gruppe trifft: verglichen werden nur ganze Bestandteile, vorn beginnend.
     """
     s, g = str(schluessel), str(gruppe)
     if not s:
@@ -96,14 +97,37 @@ def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False)
         return True
     if not dn or "=" not in g:
         return False
-    normal = lambda w: ",".join(t.lower() for t in _dn_teile(w))  # noqa: E731
-    if normal(s) == normal(g):
-        return True
-    erster = _dn_teile(g)[0]
-    if s.strip().lower() == erster.lower():
-        return True
-    _, _, wert = erster.partition("=")
-    return s.strip().lower() == wert.strip().lower()
+    g_teile = [t.lower() for t in _dn_teile(g)]
+    if "=" in s:
+        # Ganzer DN oder Teil-DN von vorn (A-3): `cn=admins,ou=g` trifft
+        # `cn=admins,ou=g,dc=example,dc=com`. Bis zum ersten Fix dieser Runde deckte das der
+        # Teilstring ab; ohne diesen Zweig fiel ein so geschriebener Schlüssel nach dem Update
+        # still weg — Admin-Mapping weg, oder als ldap_allowed_groups jeder Nutzer abgewiesen.
+        s_teile = [t.lower() for t in _dn_teile(s)]
+        return g_teile[:len(s_teile)] == s_teile
+    _, _, wert = g_teile[0].partition("=")
+    return s.strip().lower() == wert.strip()
+
+
+def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
+    """Einmal je Schlüssel sagen, wenn er nur noch per Teilstring treffen würde (A-3).
+
+    Bis 0.20.0 verglich LDAP immer per Teilstring (F-19). Ein Schlüssel, der damals griff und
+    heute nicht mehr, kostet nach dem Update still Rollen oder — in `ldap_allowed_groups` — den
+    ganzen Zugang. Statisch ist das nicht zu erkennen (es hängt an den DNs des Verzeichnisses),
+    also fällt es beim ersten Login auf, bei dem es passiert."""
+    s = str(schluessel)
+    if not s or not any(s in str(g) for g in gruppen):
+        return
+    if any(gruppe_passt(s, g, dn=True) for g in gruppen):
+        return
+    if security.einmal_melden(f"ldap_teilstring:{feld}:{s}"):
+        security.seclog.warning(
+            "LDAP: der Schlüssel %r in %s trifft nur noch als Teilstring (%s) und greift seit "
+            "0.20.0 nicht mehr — verglichen wird nach DN-Bestandteilen. Schreibweise ändern "
+            "(ganzer DN, Teil-DN von vorn wie 'cn=admins,ou=groups', oder nur der CN) oder "
+            "group_match='substring' setzen.", security.fuer_log(s), feld,
+            security.fuer_log(next(str(g) for g in gruppen if s in str(g)))[:200])
 
 
 def _inject_nonce(html_str: str, nonce: str) -> str:
@@ -545,6 +569,9 @@ class TinySesam:
         gs = [str(g) for g in (groups or [])]
         matched = {role for key, role in mapping.items()
                    if any(gruppe_passt(key, g, substring, dn) for g in gs)}
+        if dn and not substring:
+            for key in mapping:
+                _teilstring_hinweis(key, gs, "ldap_group_role_map")
         managed = {role for role in mapping.values() if role != "__admin__"}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
@@ -1007,6 +1034,12 @@ class TinySesam:
     #: Quellen, die eine fremde Identität über eine stabile Kennung binden (F-11). OIDC steht
     #: nicht dabei: Es hat mit `issuer`+`sub` seit jeher eine eigene, stabilere Zuordnung.
     FOEDERIERTE_QUELLEN = ("ldap", "saml")
+    #: Platzhalter-Kennung für ein Konto, das über eine Quelle OHNE stabile Kennung kam (A-4).
+    #: Die Zeile in `federated_identity` sagt nur „dieses Konto stammt aus LDAP/SAML" — sonst
+    #: zählte es für `nur_foederiert()` als lokal und bekäme einen Reset-Link, dessen Passwort
+    #: danach vor dem Verzeichnis gewinnt. Je Konto eindeutig (Primärschlüssel quelle+kennung),
+    #: nie für eine Zuordnung gelesen, und eine echte Kennung ersetzt ihn beim nächsten Login.
+    _OHNE_KENNUNG = "~ohne-kennung:"
 
     def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
                                      anlegen) -> Optional[dict]:
@@ -1036,6 +1069,14 @@ class TinySesam:
         """
         jetzt = int(time.time())
         kennung = str(kennung or "").strip()
+        if kennung.startswith(self._OHNE_KENNUNG):
+            # Eine Kennung in der Form des Platzhalters würde über `get_federated_user` genau
+            # das Konto treffen, dessen ID sie nennt. Aus einem echten Verzeichnis kommt so etwas
+            # nicht (UUID/GUID) — also ist es ein manipuliertes Attribut.
+            security.seclog.warning("%s: Kennung in Platzhalter-Form abgewiesen (user=%s)",
+                                    quelle, security.fuer_log(username))
+            self.audit(f"{quelle}_kennung_ungueltig", username, detail="Platzhalter-Form")
+            return None
         if not kennung:
             if self.cfg.federation_require_stable_id:
                 security.seclog.warning(
@@ -1064,13 +1105,20 @@ class TinySesam:
             uid = anlegen()
             if uid is None:
                 return None
-            if kennung:
-                self.store.link_federated(quelle, kennung, uid, jetzt)
+            self.store.link_federated(quelle, kennung or f"{self._OHNE_KENNUNG}{uid}", uid, jetzt)
             neu = self.store.get_user(uid)
             return self._als_dict(neu) if neu else None
 
-        if kennung:
-            vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        if not kennung:
+            if not vorhandene:
+                # Herkunft festhalten, auch ohne Kennung (A-4) — siehe _OHNE_KENNUNG.
+                self.store.link_federated(quelle, f"{self._OHNE_KENNUNG}{u['id']}", u["id"], jetzt)
+        else:
+            if vorhandene and vorhandene.startswith(self._OHNE_KENNUNG):
+                # Nur der Herkunfts-Platzhalter, keine Kennung: wie ungebunden (Lage 4).
+                self.store.unlink_federated(quelle, u["id"])
+                vorhandene = None
             if vorhandene and vorhandene != kennung:
                 # Lage 3: Das Konto gehört jemand anderem, auch wenn der Name derselbe ist.
                 security.seclog.warning(
@@ -1131,6 +1179,9 @@ class TinySesam:
         teilstring = self.cfg.group_match == "substring"
         if allowed:
             groups = info.get("groups") or []
+            if not teilstring:
+                for a in allowed:
+                    _teilstring_hinweis(a, groups, "ldap_allowed_groups")
             if not any(gruppe_passt(a, g, teilstring, dn=True) for a in allowed for g in groups):
                 self.audit("ldap_group_denied", username,
                            detail=f"verlangt={sorted(str(a) for a in allowed)}")
@@ -1509,8 +1560,15 @@ class TinySesam:
     def nur_foederiert(self, user_id) -> bool:
         """Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
 
-        Grenze: Ein LDAP- oder SAML-Konto aus der Zeit vor der Kennungsbindung (F-11), das sich
-        seitdem nicht angemeldet hat, trägt noch keine Bindung und zählt hier als lokal."""
+        Liefert das Verzeichnis keine stabile Kennung, bindet der Login einen Herkunfts-Platzhalter
+        (`_OHNE_KENNUNG`, A-4) — auch so ein Konto zählt hier als föderiert.
+
+        Grenze: Ein LDAP- oder SAML-Konto, das sich seit dem Update auf diese Fassung nicht
+        angemeldet hat, trägt noch keine Zeile und zählt hier als lokal.
+
+        Nicht hier geregelt: Der Magic-Login-Link (`magiclink_enabled`) geht auch an ein reines
+        SSO-Konto — das ist ein vom Betreiber eingeschalteter Anmeldeweg, kein Passwort, das
+        bleibt; ob er für solche Konten abgeschaltet gehört, ist eine Produktentscheidung."""
         return (self.store.has_foreign_identity(user_id)
                 and not self.store.get_password_hash(user_id))
 

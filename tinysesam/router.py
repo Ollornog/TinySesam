@@ -62,6 +62,16 @@ def build_router(auth) -> APIRouter:
                 security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
                                       security.fuer_log(username), security.fuer_log(ip),
                                       security.fuer_log(str(e)))
+                # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
+                # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
+                # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
+                # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
+                # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
+                # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
+                # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
+                lokal = auth.find_user(username)
+                if lokal and auth.store.get_password_hash(lokal["id"]):
+                    auth.record_login(username, ip, False, "password", quelle="lokal")
                 return auth.render_page("login", request=request, status=503, next=nxt,
                                         error=auth.t("err.directory_down"))
             aus_verzeichnis = u is not None

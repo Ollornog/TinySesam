@@ -297,12 +297,50 @@ _faelle = {
     f"__Host-{_sitzung}=GEHEIM; x=1": "x=1",
     f"{_sitzung}=A; {_sitzung}=B; c=3": "c=3",
     f"x{_sitzung}=bleibt; y=2": f"x{_sitzung}=bleibt; y=2",
+    # A-5: auch das Freigabe- und das CSRF-Cookie gehen nicht an die App.
+    "a=1; tinysesam_runlock=R; __Secure-tinysesam_csrf=C; b=2": "a=1; b=2",
+    ("tinysesam_oidc_flow=1; tinysesam_saml_flow=2; tinysesam_waflow=3; tinysesam_session=4; "
+     "tinysesam_runlock=5; tinysesam_csrf=6; x=7"): "x=7",
 }
 r.check("Caddyfile: es gibt die Cookie-Regel vor der App (B-20)", bool(caddy_cookie_regeln()),
         "keine header_up-Cookie-Zeile — die App bekommt das Sitzungs-Cookie")
 _falsch = {ein: cookie_nach_caddy(ein) for ein, aus in _faelle.items() if cookie_nach_caddy(ein) != aus}
-r.check("Caddyfile: das Sitzungs-Cookie wird entfernt, andere Cookies bleiben unberührt", not _falsch,
+r.check("Caddyfile: die TinySesam-Cookies werden entfernt, andere bleiben unberührt", not _falsch,
         f"{_falsch}")
+
+
+# A-2: nginx reicht die TinySesam-Cookies ebenso wenig an die App (oder an PHP) weiter. Gemessen
+# wird die map-Kette der Vorlage selbst, in Python nachgespielt (PCRE und `re` lesen diese Muster
+# gleich; gegen echtes nginx 1.29 + php-fpm 8.3 nachgestellt).
+def nginx_app_cookie(datei: str, cookie: str) -> str:
+    text = (ROOT / datei).read_text(encoding="utf-8")
+    werte = {"http_cookie": cookie}
+    for quelle, ziel, muster, ersatz, vorgabe in re.findall(
+            r'^map \$(\w+) \$(\w+) \{ "~(.*?)" "(.*?)"; default \$(\w+); \}$', text, re.M):
+        treffer = re.match(muster.replace("(?<", "(?P<"), werte[quelle])
+        werte[ziel] = (re.sub(r"\$(\w+)", lambda m: treffer.group(m.group(1)) or "", ersatz)
+                       if treffer else werte[vorgabe])
+    return werte.get("ts_app_cookie", cookie)
+
+
+for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.conf"):
+    _nfalsch = {ein: nginx_app_cookie(datei, ein) for ein, aus in _faelle.items()
+                if nginx_app_cookie(datei, ein) != aus}
+    r.check(f"{datei}: die TinySesam-Cookies werden entfernt, andere bleiben unberührt (A-2)",
+            not _nfalsch, f"{_nfalsch}")
+_ngx = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
+_ngx_app = _ngx.split("location / {")[1].split("proxy_pass")[0]
+r.check("nginx.conf: die App bekommt das gefilterte Cookie", "proxy_set_header Cookie $ts_app_cookie;" in _ngx_app)
+_ngx_auth = _ngx.split("location = /auth/forward {")[1].split("}")[0]
+r.check("nginx.conf: der Sub-Request an /auth/forward behält das Cookie",
+        "proxy_set_header Cookie $http_cookie;" in _ngx_auth)
+_pfad = (ROOT / "deploy/forward-auth/nginx-pfad.conf").read_text(encoding="utf-8")
+r.check("nginx-pfad.conf: jede PHP-Location bekommt das gefilterte Cookie (auch die offene)",
+        _pfad.count("fastcgi_pass") == _pfad.count("fastcgi_param HTTP_COOKIE        $ts_app_cookie;"),
+        "eine fastcgi_pass-Location reicht das Cookie ungefiltert an PHP")
+_traefik = (ROOT / "deploy/forward-auth/traefik.yml").read_text(encoding="utf-8")
+r.check("traefik.yml: die Cookie-Lücke ist benannt und der Ausweg vorhanden (A-2)",
+        "B-20" in _traefik and 'Cookie: ""' in _traefik)
 _caddy = (ROOT / "deploy/forward-auth/Caddyfile").read_text(encoding="utf-8")
 _auth_block = _caddy.split("rewrite /auth/forward")[1].split("handle_response @ok")[0]
 r.check("Caddyfile: der Sub-Request an /auth/forward behält das Cookie (sonst ist jeder abgemeldet)",
