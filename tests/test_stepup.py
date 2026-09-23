@@ -421,18 +421,18 @@ key6 = auth6.create_api_key(uid6, "bot")["key"]
 #: Anmeldefluss: Diese Routen SIND die Bestätigung, sie verwalten nichts.
 ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request", "/auth/reauth",
                 "/auth/forgot", "/auth/reset", "/auth/register", "/auth/resource/{name}",
-                "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish"}
+                "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish",
+                "/auth/logout"}   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
 #: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
-          "/auth/passkey/delete"}
+          "/auth/passkey/delete", "/auth/sessions/revoke"}   # sessions/revoke: F-09
 #: Das alte Passwort ist die Bestätigung (gedrosselt, gesperrt, protokolliert — R4-10).
 PASSWORT = {"/auth/password"}
 #: Einrichtung eines Faktors: nur mit interaktiver Sitzung, nie mit API-Key (R3-1/R3-3).
 NUR_SITZUNG = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
                "/auth/passkey/register/finish"}
 #: Bekannt offen — mit Begründung. Wird eine davon gebunden, gehört sie nach STEPUP.
-OFFEN = {"/auth/sessions/revoke": "F-09 (Sitzungen beenden ohne erneute Authentisierung)",
-         "/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
+OFFEN = {"/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
          "/auth/apikeys/{key_id}/revoke": "Key-Widerruf ohne Step-up (gemeldet mit H-18)"}
 
 # Aus dem Router selbst, nicht aus `app6.routes`: Neuere FastAPI-Fassungen legen eingebundene
@@ -456,7 +456,7 @@ def _abgestanden_client():
     alt = int(time.time()) - 100000
     auth6.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE token_hash=?",
                       (alt, alt, auth6.store.session_hash(tok)))
-    cl.cookies.set(auth6.cfg.session_cookie, tok)
+    cl.cookies.set(auth6.session_cookie_name, tok)
     return cl
 
 
@@ -515,7 +515,7 @@ for merken in ("", "on"):
     vorher = c6.cookies.get("tinysesam_session")
     roh = auth6.create_magic_token("login", user_id=uid6, email="x@example.com", ttl_min=15,
                                    payload={"next": "/"})
-    r = c6.get(f"/auth/magic/{roh}", follow_redirects=False)
+    r = c6.post(f"/auth/magic/{roh}", follow_redirects=False)   # R4-02: erst der POST löst ein
     assert c6.cookies.get("tinysesam_session") != vorher, "Step-up muss rotieren (F-06)"
     assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
         f"Magic-Step-up (remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"

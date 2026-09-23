@@ -22,6 +22,10 @@ Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md).
 
 Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebauten).
 
+### `admin_claim_fehlgriff(username, ip) -> 'None'`
+
+Einen gescheiterten Erst-Admin-Claim festhalten — Audit-Log und Sicherheits-Log (B5-16).
+
 ### `admin_claim_token() -> 'Optional[str]'`
 
 Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal eingelöst werden kann (`/auth/claim-admin?token=…`). Der Wert geht beim Start auf stderr bzw. in `admin_claim_token_file` (0600) — wer den Server betreibt, hat ihn; wer bloß die URL kennt oder das Log lesen kann, nicht (B5-03). Läuft ab.
@@ -50,7 +54,7 @@ Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
-### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None)`
+### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)`
 
 IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant, nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben.
 
@@ -74,7 +78,7 @@ Wie `check_password`, nur mit der persönlichen PIN.
 
 Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`).
 
-### `check_saml(nameid, attrs) -> 'Optional[dict]'`
+### `check_saml(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'`
 
 Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
@@ -130,6 +134,10 @@ Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. 
 
 Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
 
+### `delete_user(user_id: 'int') -> 'bool'`
+
+Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
+
 ### `disable_pin(user_id)`
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
@@ -164,7 +172,7 @@ Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forward
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich.
+Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
 
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
@@ -200,13 +208,13 @@ Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
 
 ### `is_locked(username, ip) -> 'bool'`
 
-Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
+Zu viele Fehlversuche im Fenster — je Paar aus Konto und IP, je Konto, je IP.
 
 ### `is_password_change_locked(username, ip) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
 
-### `is_pin_locked(username, ip) -> 'bool'`
+### `is_pin_locked(username, ip, login: 'bool' = True) -> 'bool'`
 
 Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
 
@@ -221,6 +229,10 @@ Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
 ### `is_secure(request: 'Request') -> 'bool'`
 
 HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost).
+
+### `is_totp_setup_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
 
 ### `issue_csrf(response: 'Response') -> 'str'`
 
@@ -274,9 +286,17 @@ Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — eg
 
 TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
+### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
+
+`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
+
 ### `next_login_step(user_id, done)`
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
+
+### `nur_foederiert(user_id) -> 'bool'`
+
+Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
 
 ### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
 
@@ -285,6 +305,14 @@ Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
 ### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
 
 Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
+
+### `own_events(user_id: 'int', limit: 'int' = 20) -> 'list'`
+
+Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
+
+### `passwort_mangel(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
+
+Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
@@ -306,7 +334,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method)`
+### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '')`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
@@ -388,7 +416,7 @@ Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
 
 ### `sec(key) -> 'int'`
 
-Härtungs-Wert: Store-Setting (Panel) ODER Default.
+Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
 
 ### `seed_demo() -> 'None'`
 
@@ -406,9 +434,13 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
+### `send_signup_notice(email, base_url) -> 'bool'`
+
+Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
+
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
 
 ### `session_from_request(request)`
 
@@ -450,6 +482,14 @@ Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der D
 
 Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str \| Response.
 
+### `sicherheitsereignis(ereignis: 'str', user_id, **details) -> 'None'`
+
+`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
+
+### `sperre_aufheben(user_id, methoden=None) -> 'int'`
+
+Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
+
 ### `start_session(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'`
 
 Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig.
@@ -465,6 +505,10 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 ### `t(key, **fmt) -> 'str'`
 
 Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}.
+
+### `token_abgewiesen(zweck, request: 'Optional[Request]' = None, grund='ungueltig')`
+
+Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
 ### `totp_begin(user_id)`
 
@@ -522,6 +566,10 @@ Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
 
+### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'`
+
+Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
+
 ## `TinySesamConfig` — Presets
 
 ### `TinySesamConfig.active_directory(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
@@ -574,4 +622,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+138 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

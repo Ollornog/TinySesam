@@ -1324,6 +1324,10 @@ class Store:
         if success:
             self._exec("UPDATE login_attempt SET success=1 WHERE id=?", (attempt_id,))
 
+    def cancel_attempt(self, attempt_id):
+        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
+        self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
+
     def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None):
         """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 

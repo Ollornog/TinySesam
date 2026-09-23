@@ -168,6 +168,11 @@ for k, v in security.SECURITY_DEFAULTS.items():
 print("  ✓ A1: strengere Altwerte bleiben, Werte jenseits der Grenze landen an der Grenze")
 # (Mutationsprobe: in manager.sec() wieder `return security.SECURITY_DEFAULTS[key]` statt
 #  klemme_haertung → rot; SECURITY_GRENZEN max_login_attempts wieder (3, …) → rot.)
+# Jede Härtungs-Schwelle hat Grenzen. Ohne Eintrag warf `pruefe_haertung` einen KeyError, also
+# ein 500 im Panel — so geschehen, als drei Zweige je eine neue Schwelle brachten und keiner die
+# Grenzen nachzog. Die Schleife oben trifft das nur für die Vorgaben; hier steht es als Regel.
+assert set(security.SECURITY_GRENZEN) == set(security.SECURITY_DEFAULTS), \
+    set(security.SECURITY_GRENZEN) ^ set(security.SECURITY_DEFAULTS)
 
 # ---------- A4: Infinity ist ein 400, kein 500 ----------
 r = c.post("/auth/admin/api/security", content=b'{"max_login_attempts": Infinity}',

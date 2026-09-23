@@ -1627,13 +1627,15 @@ def _tokenzeilen(auth_x) -> int:
 
 
 def _wege(auth_x, basis):
-    """Die fünf dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
+    """Die dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
     return (
         ("magic_url", lambda: auth_x.magic_url("rohtoken", basis, "reset_password")),
         ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", basis)),
         ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", basis)),
         ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", basis)),
         ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
+        # R4-03: der Hinweis an den Inhaber einer vergebenen Adresse trägt den Weg zur Anmeldung.
+        ("send_signup_notice", lambda: auth_x.send_signup_notice("opfer@example.com", basis)),
     )
 
 
@@ -2372,7 +2374,7 @@ cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!",
         follow_redirects=False)
 cg.post("/auth/pin", data={"username": "gesperrt", "pin": "471193", "next": "/"},
         follow_redirects=False)
-magic_antwort = cg.get(f"/auth/magic/{magic_g}", follow_redirects=False)
+magic_antwort = cg.post(f"/auth/magic/{magic_g}", follow_redirects=False)   # R4-02: POST löst ein
 r.check("Anmelde-Link eines gesperrten Kontos wird abgewiesen",
         magic_antwort.status_code == 403, f"HTTP {magic_antwort.status_code}")
 
@@ -2425,12 +2427,14 @@ r.check("ein Bestätigungslink hebt eine Sperre des Betreibers nicht auf",
 
 
 # ── H-18 (c): jeder Mail-Link entsteht aus `base_url` — auch künftige ─────────────
-# Die fünf Wege oben (`_wege`) sind eine Liste von Hand. Ein sechster Absender fiele dort nicht
+# Die Wege oben (`_wege`) sind eine Liste von Hand. Ein sechster Absender fiele dort nicht
 # auf. Deshalb mechanisch: Jede Funktion im Paket, die `send_mail()` oder `magic_url()` ruft,
 # muss in dieser Liste stehen — sonst verschickt sie Links, deren Basis niemand gemessen hat.
 import ast as _ast  # noqa: E402
 
-_GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url"}
+# `_token_mail` ist nur die Hülle um `send_mail` (B6-12: Token verfällt, wenn der Versand
+# scheitert) — den Text samt Link bauen ihre Aufrufer, und die stehen in `_wege`.
+_GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url", "_token_mail"}
 _absender = set()
 for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
     _baum = _ast.parse(_datei.read_text(encoding="utf-8"))

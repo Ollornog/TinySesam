@@ -278,6 +278,10 @@ SECURITY_GRENZEN = {
     "password_change_max_attempts": (1, 100),
     "reauth_max_attempts": (1, 100),
     "resource_max_attempts": (1, 100),
+    "account_attempt_factor": (1, 100),
+    "totp_setup_max_attempts": (1, 100),
+    "mail_per_address_max": (1, 1000),
+    "mail_per_address_window_sec": (60, 86400),
 }
 
 

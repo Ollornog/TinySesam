@@ -130,9 +130,14 @@ def build_router(auth) -> APIRouter:
                 # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
                 # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
                 # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
+                # Der Versuch steht seit `versuch_beginnen` schon als Fehlversuch in der Tabelle
+                # (R7-2) — ohne lokales Passwort wird er also zurückgenommen, nicht nur nicht
+                # zusätzlich verbucht.
                 lokal = auth.find_user(username)
                 if lokal and auth.store.get_password_hash(lokal["id"]):
-                    auth.record_login(username, ip, False, "password", quelle="lokal")
+                    auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
+                else:
+                    auth.store.cancel_attempt(versuch)
                 return auth.render_page("login", request=request, status=503, next=nxt,
                                         error=auth.t("err.directory_down"))
             aus_verzeichnis = u is not None

@@ -683,7 +683,7 @@ class TinySesam:
         Für Ereignisse, die in Salven kommen (Key-Nutzung, abgewiesene Forward-Auth). Je Prozess;
         mehrere Worker schreiben also je eine Zeile, das ist gewollt billiger als ein Abgleich.
         """
-        jetzt = time.time()
+        jetzt = _jetzt()
         if jetzt - self._protokoll_drossel.get(schluessel, 0) < fenster_sek:
             return False
         if len(self._protokoll_drossel) >= self._DROSSEL_MAX:
