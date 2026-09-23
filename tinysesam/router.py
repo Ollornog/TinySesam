@@ -96,14 +96,19 @@ def build_router(auth) -> APIRouter:
         ip = auth.client_ip(request)
         if not auth.rate_ok(ip):
             return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.rate"))
-        if auth.is_locked(username, ip):
+        # Prüfen und Verbuchen in EINEM Schritt (R7-2): Mit `is_locked()` vorab und
+        # `record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
+        # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
+        # Fehlversuch in der Tabelle; `record_login(..., versuch=…)` macht ihn zum Erfolg.
+        versuch = auth.versuch_beginnen(username, ip, "password")
+        if versuch is None:
             return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.locked"))
         u = auth.check_password(username, password)
         aus_verzeichnis = False
         if not u and cfg.ldap_enabled:
             u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
             aus_verzeichnis = u is not None
-        auth.record_login(username, ip, bool(u), "password")
+        auth.record_login(username, ip, bool(u), "password", versuch=versuch)
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
@@ -147,13 +152,15 @@ def build_router(auth) -> APIRouter:
         if not s or not pu:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
-        if not auth.rate_ok(ip) or auth.is_locked(pu["username"], ip):
+        # Atomar wie am Login (R3-2): Die Prüfung liegt sonst zwischen Sperre und Zählung.
+        versuch = auth.versuch_beginnen(pu["username"], ip, "totp") if auth.rate_ok(ip) else None
+        if versuch is None:
             return auth.render_page("totp", request=request, status=429, next=nxt, error=auth.t("err.retry"))
         # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
         if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
-            auth.record_login(pu["username"], ip, False, "totp")
+            auth.record_login(pu["username"], ip, False, "totp", versuch=versuch)
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
-        auth.record_login(pu["username"], ip, True, "totp")
+        auth.record_login(pu["username"], ip, True, "totp", versuch=versuch)
         sitzungs_token = request.cookies.get(cfg.session_cookie)   # Klartext nur hier, im Cookie
         # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
         # Rechtewechsel. Dann muss das Cookie mit.
@@ -281,13 +288,16 @@ def build_router(auth) -> APIRouter:
             ident = me["username"] if me else username
             if not ident:
                 return fail(auth.t("err.credentials"), 401)
-            if auth.is_locked(ident, ip) or auth.is_pin_locked(ident, ip):
+            # Login- und PIN-Topf in einem atomaren Schritt (R3-7): Eine vierstellige PIN
+            # ist das dankbarste Ziel einer parallelen Salve.
+            versuch = auth.versuch_beginnen(ident, ip, "pin")
+            if versuch is None:
                 return fail(auth.t("err.locked"), 429)
             if me:
                 u = auth.get_user(me["id"]) if auth.verify_user_pin(me["id"], pin) else None
             else:
                 u = auth.check_pin(ident, pin)
-            auth.record_login(ident, ip, bool(u), "pin")
+            auth.record_login(ident, ip, bool(u), "pin", versuch=versuch)
             if not u:
                 return fail(auth.t("err.credentials"), 401)
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
@@ -370,13 +380,14 @@ def build_router(auth) -> APIRouter:
             # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
             # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
             # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
-            if not auth.rate_ok(ip, login=False) or auth.is_resource_locked(pseudo, ip):
+            versuch = auth.versuch_beginnen(pseudo, ip, "resource") if auth.rate_ok(ip, login=False) else None
+            if versuch is None:
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
             if not auth.check_resource(name, secret):
-                auth.record_login(pseudo, ip, False, "resource")
+                auth.record_login(pseudo, ip, False, "resource", versuch=versuch)
                 return auth.render_page("resource_unlock", request=request, status=401, **_res_ctx(row, name, nxt, "Falsch"))
-            auth.record_login(pseudo, ip, True, "resource")
+            auth.record_login(pseudo, ip, True, "resource", versuch=versuch)
             resp = RedirectResponse(nxt, 303)
             auth.unlock_resource(request, resp, name)
             auth.audit("resource_unlock", ip=ip, detail=name)
@@ -456,7 +467,15 @@ def build_router(auth) -> APIRouter:
             return RedirectResponse(f"{cfg.login_path}?next=/auth/claim-admin?token={_q(token)}", 303)
         if auth.admin_exists():
             raise HTTPException(404)          # kein Hinweis darauf, dass es die Route mal gab
+        # Gedrosselt und protokolliert (B5-16): Bis T-13 durfte ein angemeldetes Konto hier
+        # beliebig oft raten, und kein Fehlgriff hinterliess eine Spur. Das Token hat 192 Bit,
+        # Raten ist also aussichtslos — aber wer es versucht, soll im Log stehen, und zwar
+        # als `failed verification` (kein Anmeldeversuch, siehe `security.LOG_PRUEFUNG`).
+        ip = auth.client_ip(request)
+        if not auth.rate_ok(ip, login=False):
+            raise HTTPException(429, auth.t("api.too_many"))
         if not auth.consume_admin_claim(token, u):
+            auth.admin_claim_fehlgriff(u["username"], ip)
             raise HTTPException(403, auth.t("err.claim"))
         return RedirectResponse(cfg.admin_path, 303)
 
@@ -497,8 +516,9 @@ def build_router(auth) -> APIRouter:
         # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
         # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
         # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
-        if (not auth.rate_ok(ip, login=False) or auth.is_reauth_locked(u["username"], ip)
-                or ("pin" in methods and auth.is_pin_locked(u["username"], ip))):
+        versuch = (auth.versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
+                   if auth.rate_ok(ip, login=False) else None)
+        if versuch is None:
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
@@ -509,7 +529,7 @@ def build_router(auth) -> APIRouter:
             ok = auth.verify_user_pin(u["id"], pin)
         elif "password" in methods and password:
             ok = auth.verify_user_password(u["id"], password)
-        auth.record_login(u["username"], ip, ok, "reauth")
+        auth.record_login(u["username"], ip, ok, "reauth", versuch=versuch)
         if not ok:
             return auth.render_page("reauth", request=request, status=401, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.reauth"))
@@ -557,7 +577,12 @@ def build_router(auth) -> APIRouter:
             uid = data["user_id"]
             auth.set_password(uid, password)
             auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
-            auth.audit("password_reset", detail=f"uid={uid}")
+            # Der Reset hebt die Passwort-Sperre auf (R4-13). Vorher setzte er das Passwort
+            # und liess die Fehlversuche stehen: Wer sich ausgesperrt hatte und den
+            # vorgesehenen Weg ging, stand danach mit dem NEUEN Passwort vor derselben 429.
+            # Damit ist der Reset der Weg aus der Sperre, der nicht an ihr hängt (H-10).
+            weg = auth.sperre_aufheben(uid, methoden=("password",))
+            auth.audit("password_reset", detail=f"uid={uid} fehlversuche_verworfen={weg}")
             return RedirectResponse(f"{cfg.login_path}?next=/", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -739,7 +764,9 @@ def build_router(auth) -> APIRouter:
         # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
         # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`rate_ok`),
         # protokolliert auch.
-        if not auth.rate_ok(ip, login=False) or auth.is_password_change_locked(u["username"], ip):
+        versuch = (auth.versuch_beginnen(u["username"], ip, "password_change")
+                   if auth.rate_ok(ip, login=False) else None)
+        if versuch is None:
             raise HTTPException(429, auth.t("api.too_many"))
         # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
         # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
@@ -749,7 +776,7 @@ def build_router(auth) -> APIRouter:
         richtig = auth.verify_user_password(u["id"], b.get("current") or "")
         # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
         # (`record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
-        auth.record_login(u["username"], ip, richtig, "password_change")
+        auth.record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
         if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""

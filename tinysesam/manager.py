@@ -25,7 +25,7 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email, jetzt as _jetzt
+from .store import Store, norm_email, norm_kennung, jetzt as _jetzt
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from .templates import Templates
@@ -126,6 +126,15 @@ SCHALTER_BRAUCHT_EXTRA = {
     "ldap_enabled": ("ldap3", "ldap"),
 }
 
+
+
+def _gueltige_regeln(regeln) -> list:
+    """Nur die Regeln, deren Schlüssel belegt sind.
+
+    Eine Regel „je Konto" ohne Konto würde sonst stillschweigend zu einer „je Adresse" mit
+    falscher Grenze (`count_fails` lässt einen leeren Filter einfach weg)."""
+    return [r for r in regeln
+            if all(r[2].get(k) for k in ("username", "ip") if k in r[2])]
 
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
@@ -888,6 +897,12 @@ class TinySesam:
         security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s", user["username"])
         return True
 
+    def admin_claim_fehlgriff(self, username, ip) -> None:
+        """Einen gescheiterten Erst-Admin-Claim festhalten — Audit-Log und Sicherheits-Log (B5-16)."""
+        self.audit("admin_claim_fail", username, ip)
+        security.seclog.warning("%s user=%s ip=%s method=claim_admin", security.LOG_PRUEFUNG,
+                                security.fuer_log(username), security.fuer_log(ip))
+
     # ---------- Demo-Modus ----------
     DEMO_USERS = ("demo", "demoadmin")
 
@@ -1264,15 +1279,15 @@ class TinySesam:
             return []              # gewünscht, aber nichts davon eingerichtet → verschlossen
         return avail               # der alte Weg: das beste, was der Nutzer hat
 
-    def is_pin_locked(self, username, ip) -> bool:
-        """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
-        since = _jetzt() - self.sec("lockout_window_sec")
-        limit = self.sec("pin_max_attempts")
-        if username and self.store.count_fails(since, username=username, method="pin") >= limit:
-            return True
-        if ip and self.store.count_fails(since, ip=ip, method="pin") >= limit * self.sec("ip_attempt_factor"):
-            return True
-        return False
+    def is_pin_locked(self, username, ip, login: bool = True) -> bool:
+        """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
+
+        Die Abweisung wird hier gemeldet (`_abgewiesen`), wie bei jeder anderen Sperre: Bis
+        T-13 wies diese als einzige stumm ab, und das Sicherheits-Log schwieg genau dann, wenn
+        fail2ban lesen sollte. `login=False` für die Step-up-Seite — dort ist die PIN keine
+        Anmeldung, die Zeile trägt dann `failed verification`.
+        """
+        return self._sperre_pruefen(self._regeln_pin(username, ip), username, ip, login)
 
     def is_password_change_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
@@ -1295,8 +1310,8 @@ class TinySesam:
         Sicherheits-Log genau dann, wenn fail2ban die IP bannen soll (Begründung bei
         `_abgewiesen`).
         """
-        return self._methoden_sperre(username, ip, "password_change",
-                                     self.sec("password_change_max_attempts"))
+        return self._sperre_pruefen(self._regeln(username, ip, "password_change"),
+                                    username, ip, login=False)
 
     def is_reauth_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
@@ -1309,7 +1324,7 @@ class TinySesam:
         das eigene Konto, eine IP-Schwelle träfe hinter NAT nur Unbeteiligte (`ip` geht bloss
         in die Protokollzeile). Gedrosselt bleibt der Weg über `rate_ok(ip)`.
         """
-        return self._methoden_sperre(username, ip, "reauth", self.sec("reauth_max_attempts"))
+        return self._sperre_pruefen(self._regeln(username, ip, "reauth"), username, ip, login=False)
 
     def is_resource_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
@@ -1321,30 +1336,116 @@ class TinySesam:
         (`max_login_attempts * ip_attempt_factor`) und verriegelten die Anmeldung von Konten,
         die nie etwas falsch gemacht hatten.
 
-        Die IP-Schwelle bleibt hier — anders als bei `password_change`/`reauth` — erhalten
-        (`resource_max_attempts * ip_attempt_factor`): Dieser Weg steht Unangemeldeten offen,
-        das Opfer ist also kein bestimmter Angemeldeter, und ohne IP-Dimension könnte ein
-        Angreifer über viele Bereichsnamen beliebig weiterraten. Sie sperrt jetzt aber nur
-        noch das, was sie schützt — Bereiche, keine Anmeldungen.
+        Zwei Schwellen, und ihre Reihenfolge ist der Punkt (R7-3): **je Adresse**
+        `resource_max_attempts`, **je Bereich** das `account_attempt_factor`-fache davon. Bis
+        T-13 war es umgekehrt — der Bereich sperrte schon nach `resource_max_attempts`, egal von
+        wem. Ein einzelner Fremder verriegelte so mit fünf Fehlgriffen den Bereich für ALLE,
+        auch für die, die das Geheimnis kennen. Jetzt stoppt ihn seine eigene Adresse, lange
+        bevor der Bereich zugeht; dafür braucht es mehrere Anschlüsse. Ganz fallen lassen lässt
+        sich die Bereichsschwelle nicht: Ohne sie rät ein verteilter Angreifer eine vierstellige
+        PIN in Stunden, weil jede Adresse ihre eigenen Versuche mitbringt.
         """
-        return self._methoden_sperre(username, ip, "resource", self.sec("resource_max_attempts"),
-                                     ip_faktor=self.sec("ip_attempt_factor"))
+        return self._sperre_pruefen(self._regeln(username, ip, "resource"), username, ip, login=False)
 
-    def _methoden_sperre(self, username, ip, method, limit, ip_faktor=0) -> bool:
-        """Gemeinsamer Rumpf der methodengebundenen Sperren (`is_*_locked`).
+    # ---------- Die Sperr-Regeln: eine Quelle für Prüfen und atomares Verbuchen ----------
+    def _regeln_pin(self, username, ip, since=None) -> list:
+        """Der eigene PIN-Topf: pro Konto `pin_max_attempts`, pro Adresse das `ip_attempt_factor`-fache.
 
-        `ip_faktor=0` heisst: **keine** IP-Dimension — die Methode trifft nur den, der rät
-        (siehe `is_password_change_locked`). Nur wo ein Fremder von aussen raten kann, zählt
-        zusätzlich die Adresse mit (`is_resource_locked`).
+        Pro Konto und nicht pro Paar aus Konto und Adresse: Eine PIN hat oft nur vier Stellen,
+        ein verteilter Angreifer hätte sie mit Paar-Zählung in Stunden durch."""
+        since = self._fenster_beginn() if since is None else since
+        username = norm_kennung(username)
+        grenze = self.sec("pin_max_attempts")
+        return [("lockout_pin", grenze, dict(since=since, username=username, method="pin")),
+                ("lockout_pin_ip", grenze * self.sec("ip_attempt_factor"),
+                 dict(since=since, ip=ip, method="pin"))]
+
+    @staticmethod
+    def _topf(username, method) -> str:
+        """Unter welchem Namen ein Versuch zählt: die Kennung so gefaltet wie `find_user` sie liest.
+
+        Gezählt wurde bis zur dritten Runde unter dem ROH eingetippten Text, gesucht aber
+        getrimmt und ohne Gross-/Kleinschreibung. `' opfer'`, `'opfer '`, `'\topfer'` trafen
+        dasselbe Konto und füllten je einen eigenen Topf — die Konto-Schwelle gegen verteiltes
+        Raten (R7-6/H-8) band damit nichts. Ausgenommen ist der Bereichs-Pseudoname
+        `res:<name>`: Den setzt der Server aus einem Bereich, den es geben muss."""
+        return username if method == "resource" else norm_kennung(username)
+
+    def _fenster_beginn(self) -> int:
+        return _jetzt() - self.sec("lockout_window_sec")
+
+    def _regeln(self, username, ip, method) -> list:
+        """Welche Zähler gelten für einen Versuch dieser Methode? Liste `(grund, grenze, filter)`.
+
+        `is_*_locked()` prüft sie, `versuch_beginnen()` prüft sie UND bucht atomar — beide lesen
+        dieselbe Liste, damit die beiden Wege nie verschieden streng sind.
+
+        **Anmeldung** (alles ausser `security.NICHT_LOGIN_METHODEN`, R7-6/H-8): Die erste
+        Schwelle zählt je **Paar aus Konto und Adresse** (`max_login_attempts`). Bis T-13 zählte
+        sie je Konto allein — dann sperrte jeder Fremde jedes Konto, dessen Namen er kannte,
+        mit fünf Anfragen für ein Fenster aus, samt dem Inhaber mit dem richtigen Passwort. Je
+        Konto bleibt eine zweite, höhere Schwelle (`account_attempt_factor`-fach) gegen das
+        Raten über viele Adressen; die erreicht ein Einzelner nicht mehr, weil ihn das Paar
+        vorher stoppt. Je Adresse bleibt die NAT-Schwelle (`ip_attempt_factor`-fach) gegen
+        das Durchprobieren vieler Konten.
+
+        Der Konto-Schlüssel ist `_topf(username)`, nicht der rohe Text — sonst stellt sich ein
+        Angreifer mit Leerzeichen und Schreibweisen beliebig viele Töpfe für dasselbe Konto auf.
         """
-        since = _jetzt() - self.sec("lockout_window_sec")
-        if username and self.store.count_fails(since, username=username, method=method) >= limit:
-            self._abgewiesen(username, ip, f"lockout_{method}", login=False)
-            return True
-        if ip_faktor and ip and self.store.count_fails(since, ip=ip, method=method) >= limit * ip_faktor:
-            self._abgewiesen(username, ip, f"lockout_{method}_ip", login=False)
-            return True
+        since = self._fenster_beginn()
+        username = self._topf(username, method)
+        if method in ("password_change", "reauth"):
+            grenze = self.sec(f"{method}_max_attempts")
+            return [(f"lockout_{method}", grenze, dict(since=since, username=username, method=method))]
+        if method == "resource":
+            grenze = self.sec("resource_max_attempts")
+            return [("lockout_resource_ip", grenze, dict(since=since, ip=ip, method=method)),
+                    ("lockout_resource", grenze * self.sec("account_attempt_factor"),
+                     dict(since=since, username=username, method=method))]
+        ohne = security.NICHT_LOGIN_METHODEN
+        grenze = self.sec("max_login_attempts")
+        regeln = []
+        if username and ip:
+            regeln.append(("lockout_user", grenze,
+                           dict(since=since, username=username, ip=ip, exclude_methods=ohne)))
+        regeln += [
+            ("lockout_account", grenze * self.sec("account_attempt_factor"),
+             dict(since=since, username=username, exclude_methods=ohne)),
+            ("lockout_ip", grenze * self.sec("ip_attempt_factor"),
+             dict(since=since, ip=ip, exclude_methods=ohne)),
+        ]
+        if method == "pin":
+            regeln += self._regeln_pin(username, ip, since)
+        return regeln
+
+    def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
+        """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`)."""
+        for grund, grenze, filt in _gueltige_regeln(regeln):
+            if self.store.count_fails(**filt) >= grenze:
+                self._abgewiesen(username, ip, grund, login=login)
+                return True
         return False
+
+    def versuch_beginnen(self, username, ip, method, auch_pin: bool = False) -> Optional[int]:
+        """Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
+
+        Rückgabe: eine Versuchs-ID, die an `record_login(..., versuch=id)` zurückgeht, oder
+        `None` — gesperrt (bereits gemeldet). Ersetzt die Folge `is_locked()` → prüfen →
+        `record_login()`, die eine parallele Salve an der Sperre vorbeiliess (R3-2, R3-7,
+        R7-2; Begründung bei `Store.reserve_attempt`).
+
+        `auch_pin=True` hängt den PIN-Topf mit an — für die Step-up-Seite, auf der eine PIN
+        bestätigt, deren Versuche aber im Topf `reauth` landen.
+        """
+        regeln = self._regeln(username, ip, method)
+        if auch_pin:
+            regeln = regeln + self._regeln_pin(username, ip)
+        versuch, grund = self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                                    _gueltige_regeln(regeln))
+        if versuch is None:
+            self._abgewiesen(username, ip, grund,
+                             login=method not in security.NICHT_LOGIN_METHODEN)
+        return versuch
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
@@ -1753,6 +1854,7 @@ class TinySesam:
             u = self.store.get_user(user_id)
             self.store.audit_log("login", u["username"] if u else None, ip, method)
             self._vermerke_erstlogin(user_id)
+            self.sperre_aufheben(user_id)
         return token, mfa_ok
 
     def _vermerke_erstlogin(self, user_id: int) -> None:
@@ -1810,6 +1912,7 @@ class TinySesam:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
                 self._vermerke_erstlogin(user_id)
+                self.sperre_aufheben(user_id)
                 # **Neues Token beim Rechtewechsel.** Die Sitzung wird hier vom halben Login
                 # zur vollwertigen — OWASP Session Management Cheat Sheet: „The session ID must
                 # be renewed or regenerated by the web application after any privilege level
@@ -1867,6 +1970,7 @@ class TinySesam:
             u = self.store.get_user(s["user_id"])
             self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
         if ok and not war_ok:
+            self.sperre_aufheben(s["user_id"])
             # Rechtewechsel → neues Token (OWASP Session Management). Gibt es zurück, damit der
             # Aufrufer das Cookie setzen kann; wer den Rückgabewert ignoriert, behält das alte
             # Verhalten, denn die Sitzung wandert mit.
@@ -2131,34 +2235,38 @@ class TinySesam:
         return erlaubt
 
     def is_locked(self, username, ip) -> bool:
-        """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
+        """Zu viele Fehlversuche im Fenster — je Paar aus Konto und IP, je Konto, je IP.
+
+        Die Schwellen stehen in `_regeln` (Begründung dort): das Paar bei `max_login_attempts`,
+        das Konto allein beim `account_attempt_factor`-fachen, die Adresse allein beim
+        `ip_attempt_factor`-fachen (NAT). Ohne `ip` gilt nur die Konto-Schwelle.
 
         Gezählt wird alles in `login_attempt`, was ein **Anmeldeversuch** war; die Methoden aus
         `security.NICHT_LOGIN_METHODEN` bleiben draussen. Sonst sperrt ein Fehlgriff, der gar
-        keine Anmeldung war, die Anmeldung mit — und zwar für einen Nutzer, der die Sperre nicht
-        abtragen kann (ein Erfolg räumt nur die eigene Methode weg). Der Zähler dieser Methoden
-        geht nicht verloren, er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
-        """
-        since = _jetzt() - self.sec("lockout_window_sec")
-        ohne = security.NICHT_LOGIN_METHODEN
-        if username and self.store.count_fails(since, username=username,
-                                               exclude_methods=ohne) >= self.sec("max_login_attempts"):
-            self._abgewiesen(username, ip, "lockout_user")
-            return True
-        if ip and self.store.count_fails(since, ip=ip, exclude_methods=ohne) >= \
-                self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
-            self._abgewiesen(username, ip, "lockout_ip")
-            return True
-        return False
+        keine Anmeldung war, die Anmeldung mit. Der Zähler dieser Methoden geht nicht verloren,
+        er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
 
-    def record_login(self, username, ip, success, method):
-        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg."""
-        self.store.record_attempt(username, ip, success, method)
+        Nur lesend: Die Routen nehmen `versuch_beginnen()`, das prüft und bucht in einem Schritt.
+        """
+        return self._sperre_pruefen(self._regeln(username, ip, "password"), username, ip, login=True)
+
+    def record_login(self, username, ip, success, method, versuch: Optional[int] = None):
+        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
+
+        `versuch` ist die ID aus `versuch_beginnen()`: Dann steht der Versuch schon als
+        Fehlversuch in der Tabelle und wird hier nur abgeschlossen, statt ein zweites Mal
+        gezählt zu werden."""
+        topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
+        if versuch is None:
+            self.store.record_attempt(topf, ip, success, method)
+        else:
+            self.store.finish_attempt(versuch, bool(success))
         if success:
             # NUR die Fehlversuche derselben Methode: Ein Passwort-Erfolg sagt nichts darueber,
             # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
-            # den zweiten Faktor ratbar.
-            self.store.clear_fails(username=username, method=method)   # 'login'-Audit erst beim vollen Abschluss
+            # den zweiten Faktor ratbar. Alles übrige räumt erst die VOLLSTÄNDIGE Anmeldung
+            # (`sperre_aufheben`).
+            self.store.clear_fails(username=topf, method=method)   # 'login'-Audit erst beim vollen Abschluss
         else:
             # Der GRUND gehört ins serverseitige Protokoll. Die HTTP-Antwort bleibt bewusst
             # gleich (keine Konto-Erkundung) — im Audit-Log liest aber nur der Betreiber mit,
@@ -2166,7 +2274,7 @@ class TinySesam:
             # vertippt" bisher dasselbe: `login_fail … password`. Das ist der häufigste
             # Supportfall, und er war mit Bordmitteln nicht zu beantworten.
             self.store.audit_log("login_fail", username, ip,
-                                 f"{method} grund={self._fehl_grund(username)}")
+                                 f"{method} grund={self._fehl_grund(username, method)}")
             # fail2ban parst diese Zeile (ip=…)
             # `fuer_log`: Der Benutzername kommt aus einem Formularfeld. Ungefiltert liess
             # sich damit eine zweite Logzeile mit fremder IP erzeugen und fail2ban gegen Dritte
@@ -2179,8 +2287,47 @@ class TinySesam:
             security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
                                     security.fuer_log(username), security.fuer_log(ip), method)
 
-    def _fehl_grund(self, username) -> str:
+    def sperre_aufheben(self, user_id, methoden=None) -> int:
+        """Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
+
+        Ohne `methoden`: nach einer **vollständigen** Anmeldung (R7-1). Der Login-Lockout zählt
+        methodenblind — Passwort, PIN und TOTP füllen denselben Topf —, ein Erfolg räumte aber
+        nur die eigene Methode weg. Wer sich nach drei vertippten TOTP-Codes per PIN anmeldete,
+        trug die drei weiter mit sich, und das Konto war nie wieder „frisch". Eine vollständige
+        Anmeldung hat jeden verlangten Faktor bestanden; danach gibt es nichts mehr, wogegen
+        die alten Fehlversuche schützen. Die eigenen Töpfe (`NICHT_LOGIN_METHODEN`) bleiben:
+        Sie gehören zu Vorgängen NACH der Anmeldung.
+
+        Mit `methoden`: nur diese. Der Selbstbedienungs-Reset (R4-13) räumt `("password",)`:
+        Er beweist Zugriff aufs Postfach und ersetzt das Passwort — über PIN und TOTP sagt er
+        nichts. Räumte er auch deren Fehlversuche, bekäme jeder mit Zugriff aufs Postfach bei
+        jedem Reset frische Rateversuche gegen den zweiten Faktor.
+
+        Gezählt wurde unter der Kennung, die jemand eingetippt hat — Benutzername ODER E-Mail.
+        Geräumt wird deshalb unter beiden.
+        """
+        u = self.store.get_user(user_id)
+        if not u:
+            return 0
+        weg = 0
+        since = 0
+        for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
+            if methoden is None:
+                ohne = security.NICHT_LOGIN_METHODEN
+                weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
+                self.store.clear_fails(username=kennung, exclude_methods=ohne)
+            else:
+                for m in methoden:
+                    weg += self.store.count_fails(since, username=kennung, method=m)
+                    self.store.clear_fails(username=kennung, method=m)
+        return weg
+
+    def _fehl_grund(self, username, method=None) -> str:
         """Warum ist die Anmeldung gescheitert — für das Protokoll, nicht für die Antwort."""
+        if method == "resource":
+            # Der Pseudo-Name `res:<name>` ist nie ein Konto. `kein_konto` stand deshalb bei
+            # JEDEM Fehlgriff an einer Bereichs-PIN — eine Zeile, die niemand auswerten kann.
+            return "falsches_bereichsgeheimnis"
         u = self.find_user(username)
         if not u:
             return "kein_konto"

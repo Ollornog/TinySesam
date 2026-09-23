@@ -276,6 +276,208 @@ for _m in _sec.NICHT_LOGIN_METHODEN:
 print("  ✓ die Töpfe sind gegeneinander dicht (Fehlgriff der einen Methode sperrt die andere nicht)")
 os.remove(db3)
 
+
+# ---------- T-13: Sperren atomar (R7-2, R3-2, R3-7) ----------
+# Zwischen `is_locked()` und `record_login()` lag die ganze Prüfung. Eine parallele Salve las
+# N-mal „noch nicht gesperrt" und durfte N-mal raten. Die Probe verlangsamt die Prüfung künstlich
+# (sonst gewinnt der Zufall) und schickt zwölf Anfragen gleichzeitig: Mehr als die Grenze darf
+# nicht bis zur Prüfung durchkommen. (Mutationsprobe: in `login_submit` wieder
+# `is_locked()` + `record_login()` ohne `versuch` → alle zwölf kommen durch.)
+import threading                                                                # noqa: E402
+import time as _time                                                            # noqa: E402
+from concurrent.futures import ThreadPoolExecutor                               # noqa: E402
+import pyotp                                                                    # noqa: E402
+
+
+def _salve(anzahl, aufruf):
+    """`anzahl` Aufrufe gleichzeitig loslassen (Barriere), Statuscodes zurück."""
+    start = threading.Barrier(anzahl)
+
+    def eins(i):
+        start.wait(timeout=10)
+        return aufruf(i)
+    with ThreadPoolExecutor(max_workers=anzahl) as pool:
+        return sorted(pool.map(eins, range(anzahl)))
+
+
+def _langsam(obj, name, sek=0.25):
+    echt = getattr(obj, name)
+
+    def bremse(*a, **k):
+        _time.sleep(sek)
+        return echt(*a, **k)
+    setattr(obj, name, bremse)
+
+
+db_t = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, cookie_secure=False,
+                                   passkey_enabled=False, oidc_enabled=False, pin_enabled=True,
+                                   pin_login=True))
+auth_t.set_security("max_login_attempts", 3)
+auth_t.set_security("pin_max_attempts", 3)
+auth_t.set_security("rate_limit_max", 1000)
+uid_t = auth_t.create_user("toni", "Toni-Passwort-2026")
+auth_t.set_pin(uid_t, "13579")
+app_t = FastAPI()
+app_t.include_router(auth_t.router())
+
+# (1) Passwort-Login (R7-2)
+_langsam(auth_t, "check_password")
+codes = _salve(12, lambda i: TestClient(app_t).post(
+    "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
+assert codes.count(401) <= 3, f"R7-2: {codes.count(401)} von 12 parallelen Versuchen durften raten: {codes}"
+assert codes.count(429) >= 9, codes
+print(f"  ✓ R7-2: parallele Salve am Login — {codes.count(401)} geprüft, {codes.count(429)} gesperrt")
+auth_t.store.clear_fails(username="toni")
+
+# (1b) Zählen und Buchen sind EIN Schritt, nicht bloss dicht hintereinander: Hier wird das
+# Zählen selbst verlangsamt. Wer zählt und danach getrennt bucht, lässt die Salve wieder durch.
+# (Mutationsprobe: `versuch_beginnen` zählt per `count_fails` und bucht danach mit eigenem
+# INSERT → rot.)
+del auth_t.check_password                         # wieder die echte Prüfung
+_langsam(auth_t.store, "_fails_abfrage", 0.05)
+codes = _salve(12, lambda i: TestClient(app_t).post(
+    "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
+assert codes.count(401) <= 3, f"Zählen und Buchen sind getrennte Schritte: {codes.count(401)} von 12 durch"
+del auth_t.store._fails_abfrage
+print(f"  ✓ …Zählen und Buchen in einer Transaktion ({codes.count(401)} geprüft, {codes.count(429)} gesperrt)")
+auth_t.store.clear_fails(username="toni")
+
+# (2) PIN-Login (R3-7) — der kurze Schlüsselraum ist das eigentliche Ziel
+_langsam(auth_t, "check_pin")
+codes = _salve(12, lambda i: TestClient(app_t).post(
+    "/auth/pin", data={"username": "toni", "pin": f"{i:04d}"}).status_code)
+assert codes.count(401) <= 3, f"R3-7: {codes.count(401)} von 12 parallelen PIN-Versuchen durften raten: {codes}"
+print(f"  ✓ R3-7: parallele Salve an der PIN — {codes.count(401)} geprüft, {codes.count(429)} gesperrt")
+auth_t.store.clear_fails(username="toni")
+
+# (3) TOTP-Schritt (R3-2) — mit bekanntem Passwort, gleiche halbe Sitzung für alle
+geheim_t = auth_t.totp_begin(uid_t)["secret"]
+auth_t.totp_confirm(uid_t, pyotp.TOTP(geheim_t).now())
+c_t = TestClient(app_t)
+assert c_t.post("/auth/login", data={"username": "toni", "password": "Toni-Passwort-2026"},
+                follow_redirects=False).status_code == 303
+halb = c_t.cookies.get(auth_t.cfg.session_cookie)
+_langsam(auth_t, "verify_totp")
+
+
+def _totp(i):
+    ci = TestClient(app_t)
+    ci.cookies.set(auth_t.cfg.session_cookie, halb)
+    return ci.post("/auth/totp", data={"code": "000000"}).status_code
+
+
+codes = _salve(12, _totp)
+assert codes.count(401) <= 3, f"R3-2: {codes.count(401)} von 12 parallelen TOTP-Versuchen durften raten: {codes}"
+print(f"  ✓ R3-2: parallele Salve am TOTP-Schritt — {codes.count(401)} geprüft, {codes.count(429)} gesperrt")
+os.remove(db_t)
+
+# ---------- R7-6 / H-8: Konto UND Adresse, nicht Konto allein ----------
+# Bis T-13 sperrten fünf Fehlversuche von IRGENDWO das Konto für alle — jeder, der einen
+# Benutzernamen kannte, verriegelte dessen Inhaber für ein Fenster, samt richtigem Passwort.
+# Jetzt stoppt die erste Schwelle das Paar aus Konto und Adresse; das Konto allein geht erst beim
+# `account_attempt_factor`-fachen zu, also erst, wenn mehrere Anschlüsse raten.
+# (Mutationsprobe: in `_regeln` die Paar-Regel streichen und `lockout_account` auf
+# `max_login_attempts` setzen → der Inhaber bekommt 429.)
+db_f = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_f = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_f, cookie_secure=False,
+                                   passkey_enabled=False, oidc_enabled=False))
+auth_f.create_user("inhaber", "Inhaber-Passwort-1")
+app_f = FastAPI()
+app_f.include_router(auth_f.router())
+G = auth_f.sec("max_login_attempts")
+fremd = TestClient(app_f, client=("198.51.100.20", 40000))
+codes = [fremd.post("/auth/login", data={"username": "inhaber", "password": "rate"}).status_code
+         for _ in range(G + 1)]
+assert codes == [401] * G + [429], codes
+assert fremd.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"}
+                  ).status_code == 429, "die Adresse des Fremden ist für dieses Konto nicht gesperrt"
+inhaber = TestClient(app_f, client=("203.0.113.21", 40000))
+r = inhaber.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"},
+                 follow_redirects=False)
+assert r.status_code == 303, f"R7-6: ein Fremder sperrt den Inhaber aus: {r.status_code}"
+print("  ✓ R7-6/H-8: ein Fremder sperrt nur das Paar Konto+Adresse, nicht den Inhaber")
+inhaber.get("/auth/logout")
+# Die Konto-Schwelle bleibt gegen verteiltes Raten: Viele Anschlüsse zusammen sperren das Konto.
+# (Der Login oben war vollständig und hat die Fehlversuche geräumt — R7-1 —, also neu zählen.)
+for i in range(auth_f.sec("account_attempt_factor")):
+    ci = TestClient(app_f, client=(f"198.51.100.{30 + i}", 40000))
+    for _ in range(G):
+        ci.post("/auth/login", data={"username": "inhaber", "password": "rate"})
+r = inhaber.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"})
+assert r.status_code == 429, f"verteiltes Raten über viele Adressen bleibt unbegrenzt: {r.status_code}"
+print("  ✓ …die Konto-Schwelle greift weiter, wenn viele Adressen zusammen raten")
+os.remove(db_f)
+
+# Die Konto-Schwelle zählt unter der Kennung, die `find_user` liest — nicht unter dem rohen Text.
+# Bis zur dritten Runde trafen ' opfer', 'OPFER\t', '\xa0opfer' … dasselbe Konto, füllten aber je
+# einen eigenen Topf: Ein Adress-Pool mit einer Schreibweise je Adresse riet unbegrenzt, und die
+# Probe oben sah es nicht, weil sie nur die kanonische Kennung tippte. (Mutationsprobe: in
+# `TinySesam._topf` den rohen `username` zurückgeben → 60 Versuche erreichen die Prüfung.)
+db_v = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_v = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_v, cookie_secure=False,
+                                   passkey_enabled=False, oidc_enabled=False))
+auth_v.create_user("opfer", "Opfer-Passwort-1", email="opfer@example.com")
+app_v = FastAPI()
+app_v.include_router(auth_v.router())
+G = auth_v.sec("max_login_attempts")
+DECKEL = G * auth_v.sec("account_attempt_factor")
+varianten = [" opfer", "opfer ", "\topfer", "OPFER", " Opfer\t", "\xa0opfer", "opfer\n", "  oPfEr  ",
+             "\nOPFER", "opfer ", " opfer ", "Opfer"]
+assert all(auth_v.find_user(v) for v in varianten), "die Varianten treffen nicht mehr dasselbe Konto"
+geprueft = 0
+for i, v in enumerate(varianten):
+    ci = TestClient(app_v, client=(f"2001:db8:1::{i:x}", 40000))
+    for _ in range(G):
+        geprueft += ci.post("/auth/login", data={"username": v, "password": "rate"}).status_code == 401
+assert geprueft <= DECKEL, \
+    f"R7-6/H-8: {geprueft} Versuche über Schreibweisen der Kennung, zugesagt sind höchstens {DECKEL}"
+r = TestClient(app_v, client=("203.0.113.22", 40000)).post(
+    "/auth/login", data={"username": "opfer", "password": "Opfer-Passwort-1"})
+assert r.status_code == 429, f"die Konto-Schwelle hat bei {geprueft} Versuchen nicht gegriffen: {r.status_code}"
+print(f"  ✓ …auch über Leerzeichen und Schreibweisen der Kennung: {geprueft} geprüft, dann zu")
+# Aufheben muss denselben Topf treffen: Die Fehlversuche stehen unter 'opfer', nicht unter '  oPfEr  '.
+assert auth_v.sperre_aufheben(auth_v.find_user("opfer")["id"]) == geprueft
+assert auth_v.store.count_fails(0, username="opfer") == 0
+os.remove(db_v)
+
+# ---------- R7-1: Der Lockout zählt methodenblind — also räumt eine volle Anmeldung auch so ----------
+# Passwort, PIN und TOTP füllen denselben Topf; ein Erfolg räumte bis T-13 nur die eigene
+# Methode. Wer nach zwei vertippten Passwörtern per PIN VOLLSTÄNDIG hineinkam, trug die zwei
+# weiter mit sich. Ein Teil-Erfolg (Passwort vor einem TOTP-Schritt) räumt weiter NUR sich
+# selbst — sonst wäre der zweite Faktor wieder ratbar. (Mutationsprobe: `sperre_aufheben` in
+# `start_session` streichen → die erste Zusage fällt.)
+db_m = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_m = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_m, cookie_secure=False,
+                                   passkey_enabled=False, oidc_enabled=False, pin_enabled=True,
+                                   pin_login=True))
+uid_m = auth_m.create_user("mia", "Mia-Passwort-2026")
+auth_m.set_pin(uid_m, "24680")
+app_m = FastAPI()
+app_m.include_router(auth_m.router())
+c_m = TestClient(app_m)
+for _ in range(2):
+    c_m.post("/auth/login", data={"username": "mia", "password": "vertippt"})
+auth_m.record_login("mia", "testclient", False, "password_change")   # eigener Topf, bleibt
+assert c_m.post("/auth/pin", data={"username": "mia", "pin": "24680"},
+                follow_redirects=False).status_code == 303
+assert auth_m.store.count_fails(0, username="mia", method="password") == 0, \
+    "R7-1: eine vollständige Anmeldung lässt die Fehlversuche der anderen Methoden stehen"
+assert auth_m.store.count_fails(0, username="mia", method="password_change") == 1, \
+    "die volle Anmeldung räumt auch die eigenen Töpfe (Kontoseite) — das gehört nicht dazu"
+print("  ✓ R7-1: eine vollständige Anmeldung räumt alle Anmelde-Töpfe, nicht die eigenen")
+c_m.get("/auth/logout")
+# Teil-Erfolg: Passwort gelingt, TOTP steht noch aus → die TOTP-Fehlversuche bleiben.
+geheim_m = auth_m.totp_begin(uid_m)["secret"]
+auth_m.totp_confirm(uid_m, pyotp.TOTP(geheim_m).now())
+auth_m.record_login("mia", "testclient", False, "totp")
+assert c_m.post("/auth/login", data={"username": "mia", "password": "Mia-Passwort-2026"},
+                follow_redirects=False).status_code == 303
+assert auth_m.store.count_fails(0, username="mia", method="totp") == 1, \
+    "ein halber Login räumt die Fehlversuche des zweiten Faktors — TOTP wird wieder ratbar"
+print("  ✓ …ein halber Login (TOTP ausstehend) räumt den zweiten Faktor nicht")
+os.remove(db_m)
+
 os.remove(db2)
 
 os.remove(db)

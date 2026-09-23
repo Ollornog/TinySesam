@@ -207,6 +207,18 @@ def norm_email(email) -> Optional[str]:
     return e or None
 
 
+def norm_kennung(kennung) -> str:
+    """Die Login-Kennung so, wie der Sperrzähler sie führt: getrimmt und klein.
+
+    Muss mindestens so grob falten wie `TinySesam.find_user` (strip, `norm_email`, NOCASE):
+    Jede Schreibweise, die dasselbe Konto trifft, gehört in denselben Zähl-Topf. Sonst stellt
+    sich ein verteilter Angreifer mit `' opfer'`, `'opfer '`, `'\topfer'` … beliebig viele
+    frische Töpfe auf, und die Konto-Schwelle über alle Adressen bindet nichts. `lower()`
+    faltet gröber als NOCASE (auch ausserhalb von ASCII) — zwei Namen, die nur darin
+    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer."""
+    return str(kennung or "").strip().lower()
+
+
 def valid_email(email) -> bool:
     """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
     Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`)."""
@@ -1112,16 +1124,9 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
-        """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
-
-        `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
-        was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
-        derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
-        (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
-        """
-        if not username and not ip:
-            return 0
+    @staticmethod
+    def _fails_abfrage(since, username=None, ip=None, method=None, exclude_methods=None):
+        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
         if username:
@@ -1137,23 +1142,86 @@ class Store:
             platz = ",".join("?" for _ in exclude_methods)
             q += f" AND (method IS NULL OR method NOT IN ({platz}))"
             args.extend(exclude_methods)
+        return q, args
+
+    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
+        """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
+
+        `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
+        was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
+        derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
+        (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+        """
+        if not username and not ip:
+            return 0
+        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods)
         return self._one(q, args)["c"]
 
-    def clear_fails(self, username=None, ip=None, method=None):
-        """Fehlversuche loeschen — optional nur die EINER Methode.
+    def reserve_attempt(self, username, ip, method, regeln) -> tuple:
+        """Sperren prüfen und den Versuch **in derselben Transaktion** vorab als Fehlversuch buchen.
+
+        `regeln` ist eine Liste `(grund, grenze, filter)`; `filter` sind die Schlüsselwörter von
+        `count_fails`. Rückgabe `(id, None)` — der Versuch darf laufen und steht schon als
+        Fehlversuch in der Tabelle — oder `(None, grund)`, wenn eine Regel greift.
+
+        Warum vorab und warum in einer Transaktion (R3-2, R3-7, R7-2): Vorher stand zwischen
+        `is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
+        Millisekunden). Eine parallele Salve von N Anfragen las N-mal denselben Zählerstand
+        „noch nicht gesperrt" und durfte N-mal raten — die Grenze galt nur für Angreifer, die
+        brav nacheinander fragen. Jetzt reserviert jeder Versuch seinen Platz, bevor er prüft,
+        und `BEGIN IMMEDIATE` macht Zählen und Buchen zu einem Schritt, auch über mehrere
+        Prozesse (`uvicorn --workers N`) hinweg: Die Schreibsperre der Datei ordnet sie.
+        Gelingt der Versuch, macht `finish_attempt` aus der Zeile einen Erfolg; ein Prozess,
+        der dazwischen stirbt, hinterlässt einen Fehlversuch — im Zweifel strenger.
+        """
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                for grund, grenze, filt in regeln:
+                    if not filt.get("username") and not filt.get("ip"):
+                        continue
+                    q, args = self._fails_abfrage(**filt)
+                    if self.db.execute(q, args).fetchone()["c"] >= grenze:
+                        self.db.execute("ROLLBACK")
+                        return None, grund
+                cur = self.db.execute(
+                    "INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,0,?)",
+                    (_now(), username, ip, method))
+                self.db.execute("COMMIT")
+                return cur.lastrowid, None
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+
+    def finish_attempt(self, attempt_id, success: bool):
+        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen (Fehlversuch bleibt stehen)."""
+        if success:
+            self._exec("UPDATE login_attempt SET success=1 WHERE id=?", (attempt_id,))
+
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None):
+        """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 
         `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
         Passwort-Login auch die TOTP- und PIN-Fehlversuche weg. Wer das Passwort kannte (Leak,
         Wiederverwendung, Phishing), meldete sich vor jedem Rateversuch einmal korrekt an und
         setzte damit die Sperre fuer den ZWEITEN Faktor zurueck — beliebig oft. Die Regulierung,
         die das Panel als Haertung ausweist, griff fuer den zweiten Faktor nie.
+
+        `exclude_methods` räumt alles ausser den genannten — der Weg nach einer VOLLSTÄNDIGEN
+        Anmeldung, die die eigenen Töpfe (Kontoseite, Step-up, Bereich) nicht betrifft.
         """
-        wo_method, args_method = ("", ()) if method is None else (" AND method=?", (method,))
+        wo: str = ""
+        args_m: tuple = ()
+        if method is not None:
+            wo, args_m = " AND method=?", (method,)
+        elif exclude_methods:
+            platz = ",".join("?" for _ in exclude_methods)
+            wo, args_m = f" AND (method IS NULL OR method NOT IN ({platz}))", tuple(exclude_methods)
         if username:
-            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo_method,
-                       (username,) + args_method)
+            self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
+                       (username,) + args_m)
         if ip:
-            self._exec("DELETE FROM login_attempt WHERE ip=?" + wo_method, (ip,) + args_method)
+            self._exec("DELETE FROM login_attempt WHERE ip=?" + wo, (ip,) + args_m)
 
     def gc_attempts(self, older_than) -> int:
         return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount
