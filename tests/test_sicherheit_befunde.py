@@ -2223,6 +2223,75 @@ r.check("...und pruefen() liefert weiter eine Liste (Fehler + Warnungen)",
         isinstance(TinySesamConfig(db_path=":memory:").pruefen(), list))
 # (Mutationsprobe: `self._nachpruefen()` in router() entfernen → rot.)
 
+# A2: Auch die Riegel des Konstruktors gelten vor router()/admin_router(), nicht nur konfigpruefung.
+# Angriff: admin_identifiers=["chef"] ist sicher, solange Konten nicht von selbst entstehen. Wer
+# NACH dem Konstruktor allow_signup einschaltete, baute trotzdem einen Router — der erste Besucher
+# registrierte sich als „chef" und war Erst-Admin mit Zugriff auf die Admin-API.
+def _nachtraeglich(aenderung, **cfg):
+    a, _ = _app(**cfg)
+    for k, v in aenderung.items():
+        setattr(a.cfg, k, v)
+    ergebnis = []
+    for bau in (a.router, a.admin_router):
+        try:
+            bau()
+            ergebnis.append("")
+        except _CfgErr as e:
+            ergebnis.append(str(e))
+    return ergebnis
+
+
+for _titel, _aend, _cfg, _wort in (
+        ("admin_identifiers + allow_signup", {"allow_signup": True}, {"admin_identifiers": ["chef"]},
+         "admin_identifiers"),
+        ("admin_identifiers + oidc_auto_create", {"oidc_enabled": True, "oidc_auto_create": True},
+         {"admin_identifiers": ["chef"], "base_url": "https://auth.example.com"}, "admin_identifiers"),
+        ("login_identifier='bogus'", {"login_identifier": "bogus"}, {}, "login_identifier"),
+        ("forward_headers mit Zeilenumbruch", {"forward_headers": {"user": "X-User\r\nSet-Cookie: a=b"}}, {},
+         "forward_headers"),
+        ("totp_required=True", {"totp_required": True}, {}, "totp_required")):
+    _erg = _nachtraeglich(_aend, **_cfg)
+    r.check(f"A2: nachträglich {_titel} scheitert an router() und admin_router()",
+            all(_wort in x and "nach dem Aufbau" in x for x in _erg), f"{_erg}")
+# Der Angriff selbst: Mit dem Riegel entsteht gar kein Router, also auch keine Registrierung.
+_a2, _ = _app(admin_identifiers=["chef"], csrf_enabled=False, signup_require_email=False)
+_a2.cfg.allow_signup = True
+_admin_api = None
+try:
+    _app2 = FastAPI()
+    _app2.include_router(_a2.router())
+    with TestClient(_app2) as _c2:
+        _c2.post("/auth/register", data={"username": "chef", "password": "Fremder-123456"})
+        _c2.post("/auth/login", data={"username": "chef", "password": "Fremder-123456"})
+        _admin_api = _c2.get("/auth/admin/api/users").status_code
+except _CfgErr:
+    pass
+_chef = _a2.store.get_user_by_name("chef")
+r.check("...und niemand registriert sich als 'chef' zum Erst-Admin",
+        (_chef is None or not _chef["is_admin"]) and _admin_api != 200,
+        f"Konto={dict(_chef) if _chef else None}, Admin-API={_admin_api}")
+r.check("...eine erlaubte Änderung neben admin_identifiers baut weiter",
+        _nachtraeglich({"lang": "en"}, admin_identifiers=["chef"]) == ["", ""])
+# (Mutationsprobe: den `_riegel`-Aufruf in _nachpruefen entfernen → rot.)
+
+# A5: origin darf eine Liste sein — py_webauthn nimmt als expected_origin auch mehrere.
+_zwei = ["https://a.example.com", "https://b.example.com"]
+_f5, _w5 = _befund(passkey_enabled=True, rp_id="example.com", origin=_zwei, base_url="https://a.example.com")
+r.check("A5: origin als Liste passender Origins ist kein Fehler",
+        not _nennt(_f5, "origin") and not _nennt(_w5, "origin"), f"{_f5} {_w5}")
+# (Mutationsprobe: in _proxies_und_passkey wieder `str(origin)` statt der Liste prüfen → rot.)
+r.check("...ein schlechter Eintrag in der Liste bleibt ein Fehler",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com",
+                       origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "ist kein Origin"))
+r.check("...ein Eintrag ausserhalb der rp_id ebenso",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com",
+                       origin=["https://a.example.com", "https://a.example.org"])[0], "passt nicht"))
+r.check("...eine leere Liste auch",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=[])[0], "leere Liste"))
+r.check("...und base_url ausserhalb der Liste wird weiter gemeldet",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=_zwei,
+                       base_url="https://c.example.com")[1], "base_url"))
+
 # R5-1: Schema und Benutzerangabe der Login-URL kommen nicht mehr ungeprüft aus der Anfrage.
 _a51, _app51 = _app(forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"],
                     cookie_secure=True)

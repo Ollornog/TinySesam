@@ -248,7 +248,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `rp_id` | `str` | `"localhost"` | Registrable Domain (z.B. app.example.com) — OHNE Schema/Port |
 | `rp_name` | `str` | `"TinySesam"` | Anzeigename der Relying Party |
-| `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers |
+| `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste |
 
 ## App-Integration
 

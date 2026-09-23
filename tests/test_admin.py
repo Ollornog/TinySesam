@@ -104,7 +104,7 @@ assert by_name("svc1")["is_admin"] is False
 print("  ✓ R6-2: Service-Konto wird weder beim Anlegen noch über die Rollen zum Admin")
 
 # ---------- R6-4 / B2-9: Härtungs-Schwellen mit Grenzen ----------
-from tinysesam import ConfigError  # noqa: E402
+from tinysesam import ConfigError, security  # noqa: E402
 vorher = auth.sec("max_login_attempts")
 for boese in ({"rate_limit_max": 0}, {"max_login_attempts": 0}, {"lockout_window_sec": 10**9},
               {"password_min_length": 1}, {"rate_limit_max": "viele"}, {"gibtsnicht": 5},
@@ -119,12 +119,52 @@ try:
     raise AssertionError("set_security nahm 0 an")
 except ConfigError:
     pass
-# Ein Wert, der schon in der Datenbank steht (Fassung ohne Grenzen): die Vorgabe gilt.
+# Ein Wert, der schon in der Datenbank steht (Fassung ohne Grenzen): Er wird an die nächste
+# Grenze gezogen — 0 legte die Instanz still, die Untergrenze hält sie am Leben.
 auth.store.set_setting("rate_limit_max", "0")
+assert auth.sec("rate_limit_max") == 3, auth.sec("rate_limit_max")
+auth.store.set_setting("rate_limit_max", "keine Zahl")          # nur Unlesbares fällt auf die Vorgabe
 assert auth.sec("rate_limit_max") == 30, auth.sec("rate_limit_max")
 auth.store.set_setting("rate_limit_max", "30")
-print("  ✓ R6-4/B2-9: Grenzen im Panel und in set_security, alles-oder-nichts, Altwert fällt auf Vorgabe")
+print("  ✓ R6-4/B2-9: Grenzen im Panel und in set_security, alles-oder-nichts, Altwert an die Grenze")
 # (Mutationsprobe: in security.pruefe_haertung die Bereichsprüfung auskommentieren → rot.)
+
+# ---------- A1: ein Upgrade lockert keine strengere Bestandseinstellung ----------
+# Bis 0.19.x schrieb set_security jeden Wert. Wer dort STRENGER eingestellt hatte, als die
+# Grenzen der ersten Fassung erlaubten, bekam nach dem Upgrade still die schwächere Vorgabe.
+streng = {"max_login_attempts": 2, "pin_max_attempts": 2, "lockout_window_sec": 7 * 86400,
+          "rate_limit_window_sec": 7200}
+for k, v in streng.items():
+    auth.store.set_setting(k, str(v))
+    assert auth.sec(k) == v, (k, auth.sec(k))
+# Jenseits der Grenze: an die Grenze, nicht auf die Vorgabe — die Richtung der Verschärfung bleibt.
+auth.store.set_setting("password_min_length", "200")
+assert auth.sec("password_min_length") == 128, auth.sec("password_min_length")
+auth.store.set_setting("lockout_window_sec", str(10**9))
+assert auth.sec("lockout_window_sec") == 30 * 86400, auth.sec("lockout_window_sec")
+# Was sec() dann liefert, nimmt das Panel auch an — die Logzeile rät zu nichts Unmöglichem.
+assert c.post("/auth/admin/api/security", json={**streng, "password_min_length": 128}).status_code == 200
+for k, v in streng.items():
+    assert auth.sec(k) == v, (k, auth.sec(k))
+auth.set_security("max_login_attempts", 1)                     # ein Versuch: hart, aber zulässig
+for k, v in security.SECURITY_DEFAULTS.items():
+    auth.set_security(k, v)
+print("  ✓ A1: strengere Altwerte bleiben, Werte jenseits der Grenze landen an der Grenze")
+# (Mutationsprobe: in manager.sec() wieder `return security.SECURITY_DEFAULTS[key]` statt
+#  klemme_haertung → rot; SECURITY_GRENZEN max_login_attempts wieder (3, …) → rot.)
+
+# ---------- A4: Infinity ist ein 400, kein 500 ----------
+r = c.post("/auth/admin/api/security", content=b'{"max_login_attempts": Infinity}',
+           headers={"content-type": "application/json"})
+assert r.status_code == 400, r.status_code
+try:
+    auth.set_security("max_login_attempts", float("inf"))
+    raise AssertionError("set_security nahm inf an")
+except ConfigError:
+    pass
+assert auth.sec("max_login_attempts") == security.SECURITY_DEFAULTS["max_login_attempts"]
+print("  ✓ A4: Infinity im Panel → 400, in set_security → ConfigError")
+# (Mutationsprobe: OverflowError aus dem except in pruefe_haertung nehmen → rot.)
 
 # ---------- R6-8: Key-Route antwortet 400 statt 500 ----------
 for boese in ({"name": "x", "roles": ["gibtsnicht"]}, {"name": "x", "expires_days": 0},

@@ -376,7 +376,7 @@ Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
 
 ### `sec(key) -> 'int'`
 
-Härtungs-Wert: Store-Setting (Panel) ODER Default.
+Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
 
 ### `seed_demo() -> 'None'`
 

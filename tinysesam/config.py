@@ -334,7 +334,7 @@ class TinySesamConfig:
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
-    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers
+    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste
 
     # --- App-Integration ---
     # Öffentliche Base-URL — die eine Adresse, unter der die App von außen erreichbar ist.

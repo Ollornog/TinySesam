@@ -485,38 +485,53 @@ def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
         return
     from urllib.parse import urlsplit
     rp_id = str(getattr(config, "rp_id", "") or "").strip().lower()
-    origin = str(getattr(config, "origin", "") or "").strip()
-    teile = urlsplit(origin)
-    host = (teile.hostname or "").lower()
-    if teile.scheme not in ("http", "https") or not host or teile.path not in ("", "/") \
-            or teile.query or teile.fragment or origin.endswith("/"):
-        fehler.append(
-            f"origin={origin!r} ist kein Origin. Verlangt ist genau Schema, Host und ggf. Port "
-            "(\"https://auth.example.com\"), ohne Pfad und ohne Schrägstrich am Ende — der "
-            "Browser vergleicht Zeichen für Zeichen.")
+    roh = getattr(config, "origin", "")
+    roh = "" if roh is None else roh
+    # py_webauthn nimmt als `expected_origin` auch eine Liste (A5): Wer die Anmeldeseite unter
+    # mehreren Namen ausliefert, trägt sie alle ein. Geprüft wird dann jeder Eintrag einzeln —
+    # `str(liste)` ist nie ein Origin, und so wurde aus einer funktionierenden Config ein Fehler.
+    origins = [str(o).strip() for o in roh] if isinstance(roh, (list, tuple)) else [str(roh).strip()]
+    if not origins:
+        fehler.append("origin ist eine leere Liste — mindestens ein Origin wie "
+                      "\"https://auth.example.com\" muss dastehen, sonst scheitert jeder Passkey.")
         return
+    hosts = []
+    for origin in origins:
+        teile = urlsplit(origin)
+        host = (teile.hostname or "").lower()
+        if teile.scheme not in ("http", "https") or not host or teile.path not in ("", "/") \
+                or teile.query or teile.fragment or origin.endswith("/"):
+            fehler.append(
+                f"origin={origin!r} ist kein Origin. Verlangt ist genau Schema, Host und ggf. Port "
+                "(\"https://auth.example.com\"), ohne Pfad und ohne Schrägstrich am Ende — der "
+                "Browser vergleicht Zeichen für Zeichen.")
+            return
+        hosts.append(host)
     if not rp_id or "://" in rp_id or ":" in rp_id or "/" in rp_id:
         fehler.append(f"rp_id={rp_id!r} muss ein Hostname ohne Schema und Port sein, z.B. "
                       "\"auth.example.com\" oder die Domain darüber (\"example.com\").")
-    elif not (host == rp_id or host.endswith("." + rp_id)):
-        fehler.append(
-            f"rp_id={rp_id!r} passt nicht zu origin={origin!r}: Die rp_id muss der Host des "
-            "Origins sein oder eine Domain darüber. So lehnt jeder Browser die Passkey-Zeremonie "
-            "ab.")
+    else:
+        for origin, host in zip(origins, hosts):
+            if not (host == rp_id or host.endswith("." + rp_id)):
+                fehler.append(
+                    f"rp_id={rp_id!r} passt nicht zu origin={origin!r}: Die rp_id muss der Host "
+                    "des Origins sein oder eine Domain darüber. So lehnt jeder Browser die "
+                    "Passkey-Zeremonie ab.")
     basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
     if basis:
         b = urlsplit(basis)
         soll = f"{b.scheme}://{b.netloc}"
-        if origin.lower() != soll.lower():
+        if soll.lower() not in [o.lower() for o in origins]:
             # Warnung, kein Fehler: Wer die Anmeldeseite unter einem zweiten eigenen Namen
             # ausliefert (base_url nur für die Mail-Links), kann es so wollen.
+            anzeige = origins[0] if len(origins) == 1 else origins
             warnungen.append(
-                f"origin={origin!r} weicht von base_url ab ({soll}). Die Anmeldeseite läuft unter "
+                f"origin={anzeige!r} weicht von base_url ab ({soll}). Die Anmeldeseite läuft unter "
                 "base_url, und der Browser meldet genau diesen Origin — mit dem Wert hier "
                 "scheitert jeder Passkey. Meist steht hier noch die Vorgabe für die Entwicklung.")
-    elif host in ("localhost", "127.0.0.1", "::1") and rp_id == "localhost":
+    elif all(h in ("localhost", "127.0.0.1", "::1") for h in hosts) and rp_id == "localhost":
         warnungen.append(
-            f"passkey_enabled=True mit den Entwicklerwerten rp_id={rp_id!r}, origin={origin!r}. "
+            f"passkey_enabled=True mit den Entwicklerwerten rp_id={rp_id!r}, origin={roh!r}. "
             "Ausserhalb der eigenen Maschine scheitert damit jeder Passkey — produktiv beide auf "
             "die öffentliche Adresse setzen (und base_url dazu).")
 

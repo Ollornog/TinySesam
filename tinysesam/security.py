@@ -136,17 +136,23 @@ SECURITY_DEFAULTS = {
 #: `max_login_attempts=0` (jedes Konto gilt sofort als gesperrt) oder ein `lockout_window_sec`
 #: von Jahren. Die Untergrenzen halten den Betrieb am Leben, die Obergrenzen den Schutz:
 #: `password_min_length` unter 8 ist kein Tuning, sondern das Abschalten der Passwortregel.
+#:
+#: Die Grenzen verbieten das Stilllegen, nicht das Verschärfen: Ein einziger Versuch
+#: (`count >= 1` sperrt nach dem ersten Fehler) oder eine Sperre von Wochen ist eine harte, aber
+#: legitime Wahl — erst `0` bzw. Jahre machen daraus einen Ausfall. `rate_limit_max` bleibt bei
+#: 3, weil eine Anmeldung mit zweitem Faktor mehrere Anfragen braucht; darunter kommt niemand
+#: mehr durch.
 SECURITY_GRENZEN = {
-    "max_login_attempts": (3, 1000),
-    "lockout_window_sec": (60, 86400),
+    "max_login_attempts": (1, 1000),
+    "lockout_window_sec": (60, 30 * 86400),
     "ip_attempt_factor": (1, 100),
     "rate_limit_max": (3, 100000),
-    "rate_limit_window_sec": (1, 3600),
+    "rate_limit_window_sec": (1, 86400),
     "password_min_length": (8, 128),
-    "pin_max_attempts": (3, 100),
-    "password_change_max_attempts": (3, 100),
-    "reauth_max_attempts": (3, 100),
-    "resource_max_attempts": (3, 100),
+    "pin_max_attempts": (1, 100),
+    "password_change_max_attempts": (1, 100),
+    "reauth_max_attempts": (1, 100),
+    "resource_max_attempts": (1, 100),
 }
 
 
@@ -163,7 +169,9 @@ def pruefe_haertung(key: str, value) -> int:
         raise ValueError(f"{key}: {value!r} ist keine Zahl")
     try:
         zahl = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `int(float("inf"))` — Starlettes JSON nimmt das Literal `Infinity` an,
+        # und ohne diesen Fall wurde daraus ein 500 statt eines 400 (A4).
         raise ValueError(f"{key}: {value!r} ist keine ganze Zahl") from None
     if isinstance(value, float) and value != zahl:
         raise ValueError(f"{key}: {value!r} ist keine ganze Zahl")
@@ -171,6 +179,22 @@ def pruefe_haertung(key: str, value) -> int:
     if not unten <= zahl <= oben:
         raise ValueError(f"{key}={zahl} liegt ausserhalb von {unten}…{oben}")
     return zahl
+
+
+def klemme_haertung(key: str, value) -> int:
+    """Einen Altwert aus der Datenbank, den `pruefe_haertung` abweist, an die nächste Grenze ziehen.
+
+    Nicht auf die Vorgabe zurücksetzen: Ein Bestandswert jenseits der Grenze liegt fast immer auf
+    der STRENGEN Seite (2 Versuche, eine Woche Sperre), und die Vorgabe wäre dann die schwächere
+    Einstellung — ein Upgrade darf die Härtung nicht still lockern (A1). Die Grenze ist der
+    strengste Wert, der den Betrieb nicht stilllegt, und das Panel nimmt sie an. Nur was gar
+    keine Zahl ist, fällt auf die Vorgabe."""
+    try:
+        zahl = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return SECURITY_DEFAULTS[key]
+    unten, oben = SECURITY_GRENZEN[key]
+    return min(max(zahl, unten), oben)
 
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
 # Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
