@@ -333,4 +333,51 @@ ok("F-16: …und nicht doppelt, wenn er schon im Pfad steht")
 for _d in (db16, db16b):
     os.remove(_d)
 
+# ---------- F-11: die NameID bindet, nicht der Name ----------
+# Bei SAML ist die stabile Kennung die NameID (oder ein Attribut, wenn der IdP transiente
+# NameIDs schickt). Ohne sie hing die Zuordnung am Benutzernamen aus einem Attribut — und wer
+# den im Verzeichnis ändert, bekam ein fremdes lokales Konto.
+db11, auth11, app11 = build(saml_attr_username="uid")
+c11 = TestClient(app11)
+
+
+def _saml_anmelden(auth, app, nameid, attrs):
+    auth.saml = FakeSAML(nameid=nameid, attrs=attrs)
+    return TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
+                                follow_redirects=False)
+
+
+# (1) Neues Konto wird an die NameID gebunden.
+assert _saml_anmelden(auth11, app11, "nid-alice", {"uid": ["alice"]}).status_code == 303
+_uid_a = auth11.store.get_user_by_name("alice")["id"]
+assert auth11.store.get_federated_kennung("saml", _uid_a) == "nid-alice"
+ok("F-11: ein über SAML angelegtes Konto wird an die NameID gebunden")
+
+# (2) Der IdP nennt denselben Menschen anders — dieselbe NameID, dasselbe Konto.
+assert _saml_anmelden(auth11, app11, "nid-alice", {"uid": ["alice.neu"]}).status_code == 303
+assert auth11.store.get_user_by_name("alice.neu") is None, "es entstand ein zweites Konto"
+ok("F-11: ein neuer Name bei gleicher NameID führt in dasselbe Konto")
+
+# (3) Der Angriff: fremde NameID unter dem alten Namen.
+_r = _saml_anmelden(auth11, app11, "nid-FREMD", {"uid": ["alice"]})
+assert _r.status_code == 403, f"HTTP {_r.status_code} — das fremde Konto kam durch"
+assert any(e["event"] == "saml_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: eine fremde NameID unter altem Namen wird abgewiesen")
+
+# (4) `saml_attr_id`: Wenn der IdP transiente NameIDs schickt, bindet ein Attribut.
+db11b, auth11b, app11b = build(saml_attr_username="uid", saml_attr_id="employeeNumber")
+assert _saml_anmelden(auth11b, app11b, "transient-4711",
+                      {"uid": ["bob"], "employeeNumber": ["p-0815"]}).status_code == 303
+_uid_b = auth11b.store.get_user_by_name("bob")["id"]
+assert auth11b.store.get_federated_kennung("saml", _uid_b) == "p-0815", \
+    "die transiente NameID wurde gebunden statt des Attributs"
+# Beim nächsten Login ist die NameID eine andere — das Attribut bleibt.
+assert _saml_anmelden(auth11b, app11b, "transient-9999",
+                      {"uid": ["bob"], "employeeNumber": ["p-0815"]}).status_code == 303
+assert auth11b.store.get_user_by_name("bob")["id"] == _uid_b
+ok("F-11: saml_attr_id bindet das Attribut — eine transiente NameID wechselt bei jedem Login")
+
+for _d in (db11, db11b):
+    os.remove(_d)
+
 print("\nSAML OK ✅")

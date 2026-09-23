@@ -745,6 +745,15 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > the same host). The certificate is checked by default (`ldap_tls_verify`), and the service
 > account binds **after** the TLS upgrade, not before it.
 
+> **Identities are bound by a stable key, not by a name.** A username isn't forgery-proof:
+> rename someone in the directory, or recreate a deleted account under the same name, and until
+> 0.19.0 you'd land in the same local account with its roles. LDAP now binds `entryUUID` /
+> `objectGUID` (`ldap_attr_id`), SAML the `NameID` (`saml_attr_id` for IdPs that issue transient
+> ones). An account already bound to a *different* key is never taken over — that case is
+> refused and audited. Accounts from before this version bind themselves on their next sign-in,
+> once, also audited. If the directory supplies no stable key, the name still decides and a log
+> line says so; `federation_require_stable_id=True` turns that into a refusal.
+
 > **Referrals are never followed** — and that is visible in the log. ldap3 follows a
 > `SearchResultDone resultCode=10` on its own and binds on the host named by the *answer*, with the
 > same credentials (that was finding F-28: the service account's DN and cleartext password arrived

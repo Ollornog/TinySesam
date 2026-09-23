@@ -11,6 +11,31 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
 ### Sicherheit
 
+- **LDAP und SAML binden an eine stabile Kennung, nicht an den Benutzernamen** (F-11, Schema 9).
+  Ein Name ist nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto
+  unter demselben Namen neu anlegt, bekam bis 0.19.0 **dasselbe lokale Konto mitsamt seinen
+  Rollen** — ohne das lokale Passwort zu kennen. Zusammen mit der ungeprüften SP-Identität
+  (F-16) war das die Kontoübernahme, die der Auditbericht als kritisch einstufte. OIDC hatte mit
+  `issuer`+`sub` von Anfang an eine eigene Zuordnung; LDAP und SAML hatten keine.
+
+  Zugeordnet wird jetzt über `objectGUID`/`entryUUID` (LDAP, `ldap_attr_id`) beziehungsweise die
+  `NameID` (SAML, `saml_attr_id` für IdPs mit transienten NameIDs). Vier Lagen, und die dritte
+  ist der Riegel: Kennung bekannt → dieses Konto, **auch bei geändertem Namen**. Kennung
+  unbekannt und Name frei → anlegen und binden. Kennung unbekannt, aber das Konto dieses Namens
+  trägt schon eine **andere** Kennung → **abweisen**, mit Audit-Zeile. Kennung unbekannt und das
+  Konto noch ungebunden → **nachbinden**, einmal, ebenfalls protokolliert.
+
+  Die Nachbindung ist der Bestandsweg: Konten aus der Zeit vor dieser Fassung haben keine
+  Kennung, und irgendwann muss jedes einmal daran. Sie verlässt sich ein letztes Mal auf den
+  Namen — danach nie wieder. Wer im Verzeichnis wirklich umgezogen ist, löst die Bindung
+  ausdrücklich (`auth.loese_fremde_bindung("ldap", uid)`); dass das ein bewusster Schritt ist
+  und kein Nebeneffekt einer Anmeldung, ist der Punkt.
+
+  **Liefert das Verzeichnis keine stabile Kennung**, bleibt es beim Namen — dem ungeschützten
+  Zustand —, und das sagt eine Zeile je Quelle im Sicherheits-Log.
+  `federation_require_stable_id=True` macht daraus eine Abweisung. Vorgabe ist die weiche
+  Fassung, damit nach dem Update niemand vor verschlossener Tür steht.
+
 - **Die SAML-Selbstauskunft hört nicht mehr auf den Anfragenden** (F-16). python3-saml baut aus
   `https`, `http_host` und `script_name` die Adresse, die es für die eigene hält, und vergleicht
   damit die `Destination` der Assertion. Diese drei Angaben kamen aus `X-Forwarded-Proto` und dem

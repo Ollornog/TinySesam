@@ -764,6 +764,16 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > Verzeichnis auf demselben Host). Das Zertifikat wird per Vorgabe geprüft (`ldap_tls_verify`),
 > und das Dienstkonto bindet **nach** dem TLS-Upgrade, nicht davor.
 
+> **Identitäten hängen an einer stabilen Kennung, nicht an einem Namen.** Ein Benutzername ist
+> nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben
+> Namen neu anlegt, landete bis 0.19.0 im selben lokalen Konto mitsamt seinen Rollen. LDAP bindet
+> jetzt `entryUUID`/`objectGUID` (`ldap_attr_id`), SAML die `NameID` (`saml_attr_id` für IdPs mit
+> transienten NameIDs). Ein Konto, das schon an eine **andere** Kennung gebunden ist, wird nie
+> übernommen — dieser Fall wird abgewiesen und protokolliert. Konten von vor dieser Fassung
+> binden sich beim nächsten Login selbst nach, einmal, ebenfalls protokolliert. Liefert das
+> Verzeichnis keine Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
+> `federation_require_stable_id=True` macht daraus eine Abweisung.
+
 > **Verweisen (Referrals) folgt TinySesam nie** — und das steht jetzt im Log. ldap3 verfolgt einen
 > `SearchResultDone resultCode=10` von sich aus und bindet auf dem Host, den die *Antwort* nennt,
 > mit denselben Zugangsdaten (Fund F-28: DN und Klartext-Passwort des Dienstkontos kamen bei einem
