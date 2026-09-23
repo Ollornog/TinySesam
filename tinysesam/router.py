@@ -1214,7 +1214,7 @@ def build_router(auth) -> APIRouter:
         async def saml_acs(request: Request):
             # Ratenbegrenzt wie jeder andere Anmelde-Einstieg (F-22). Die ACS nimmt ohne CSRF und
             # ohne Sitzung einen POST an und wirft ihn durch die XML-Signaturprüfung — die
-            # teuerste Arbeit, die ein Unangemeldeter hier auslösen kann, und bis 0.20.0 die
+            # teuerste Arbeit, die ein Unangemeldeter hier auslösen kann, und bis 0.19.x die
             # einzige Anmelderoute ohne Drossel.
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):

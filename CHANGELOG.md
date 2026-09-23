@@ -87,6 +87,204 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
   war `ldap://` ohne StartTLS der Auslieferungszustand, und die Konfigurationsprüfung sagte dazu
   nichts. Jetzt scheitert der Aufbau mit einem Text, der beide Auswege nennt.
 
+### T-13: die übrigen Befunde des Auditberichts
+
+Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Begründung offen
+(Backlog T-13). Jeder Fix wurde danach gezielt angegriffen und nachgebessert.
+
+**Verhaltensänderungen — vor dem Update lesen:**
+
+- **Jeder ist nach dem Update einmal abgemeldet.** Sitzungs-, CSRF- und Freigabe-Cookie heissen
+  jetzt `__Host-tinysesam_*` (wo der Browser es zulässt). Eigenes JS liest den CSRF-Namen aus
+  `auth.csrf_cookie_name`. Abschalten: `cookie_host_prefix=False`.
+- **Abmelden ist ein POST** (`POST /auth/logout` mit CSRF). Ein `GET` von fremder Seite fragt nach.
+- **Anmelde- und Bestätigungslinks lösen erst per Knopf ein** (POST), nicht mehr beim Öffnen —
+  Mail-Scanner verbrauchen sie so nicht mehr.
+- **Login-Sperre zählt je Konto+IP**; ein Fremder sperrt kein Konto mehr aus. Neue Schwelle
+  `account_attempt_factor` je Konto über alle IPs.
+- **LDAP-Gruppen vergleichen nach DN-Bestandteilen**, nicht per Teilstring. Ein Schlüssel, der nur
+  noch als Teilstring träfe, meldet sich einmal im Sicherheits-Log.
+- **Passwort-Reset per Mail widerruft die API-Keys**; reine SSO-Konten bekommen keinen Reset-Link.
+- **`set_security()` prüft Grenzen** und wirft `ConfigError` statt still zu übernehmen.
+- **Neue Blockliste für Passwörter** an jeder Setzstelle (offline, erweiterbar).
+- **SMTP prüft das Zertifikat** (`smtp_ca_file` für eigene CA).
+- **Nie bestätigte Konten** räumt `gc()` nach Ablauf des Links weg.
+
+#### Sitzung, Cookies, CSRF
+
+**Sicherheit**
+- Sitzungs-, CSRF- und Freigabe-Cookie heißen jetzt `__Host-tinysesam_session`, `__Host-tinysesam_csrf` und `__Host-tinysesam_runlock`, wo der Browser das zulässt (Secure, kein `cookie_domain`, `cookie_path="/"`). Die Flow-Cookies von OIDC, SAML und Passkey tragen das Präfix auch (dort auch bei gesetztem `cookie_domain`). Eine Nachbar-Subdomain kann damit keine Cookies mehr unterschieben (Cookie-Tossing, Login-CSRF). Abschalten mit `cookie_host_prefix=False`. **Bruch:** Nach dem Update ist jeder einmal abgemeldet. Eigenes JS liest den Namen aus `auth.csrf_cookie_name` statt aus `csrf_cookie`. (H-1, F-02, A-1, A-7)
+- Die CSRF-Prüfung prüft vor dem Token-Vergleich die Herkunft: Bei `Sec-Fetch-Site: same-origin` ist sie bestanden, sonst muss `Origin` ein eigener Host sein. Fremde Herkunft und Nachbar-Subdomains bekommen 403. Hinter einem Proxy, der den Host umschreibt, ohne `X-Forwarded-Host` zu setzen, scheitern nur Browser ohne `Sec-Fetch-Site` (Safari vor 16.4). Dafür `base_url` setzen oder notfalls `csrf_origin_check=False`. (H-2, A-3)
+- Eine Bereichs-Freischaltung vergibt jedes Mal ein neues Freigabe-Token, ein untergeschobenes Token hält danach nichts mehr (F-01). Der Logout beendet auch die Bereichs-Freigaben dieses Browsers (F-08).
+- Ein Step-up (Reauth oder erneuter Faktor) gibt der Sitzung ein neues Token. Laufzeit, Anmeldezeitpunkt und Cookie-Art („Angemeldet bleiben“ ja oder nein) bleiben erhalten. (F-06, A-2)
+- `GET /auth/logout` von einer fremden Seite meldet nicht mehr ab, sondern fragt nach. Neu ist `POST /auth/logout` mit CSRF-Prüfung. (F-07)
+- `POST /auth/sessions/revoke` verlangt eine frische Bestätigung (`X-TinySesam-Reauth`). `GET /auth/sessions` verlangt eine echte Sitzung, ein API-Key reicht nicht. (F-09)
+- `csrf_enabled=False` zusammen mit `cookie_samesite='none'` bricht den Aufbau ab. (F-03)
+- `cookie_secure=False` bei einem Request über HTTPS (auch hinter einem TLS-Proxy) steht einmal je Instanz im Sicherheits-Log. (F-04)
+
+**Geändert**
+- Faktor-Änderungen (TOTP, PIN, Passkey) melden in der Antwort `other_sessions`. Die Kontoseite und die TOTP-Einrichtung bieten danach an, die übrigen Sitzungen zu beenden. Ist die Bestätigung zu alt, führt der Weg über die Reauth zurück zur Kontoseite (`?revoke_others=1`), dort wird noch einmal gefragt. (B1-7, A-5)
+- `set_cookie(response, token)` richtet die Cookie-Art ohne `remember` jetzt nach der Sitzung, zu der das Token gehört. Vorher war die Vorgabe immer „persistent“. Mit ausdrücklichem `remember` bleibt alles wie bisher. (A-2)
+- Neu: `auth.session_cookie_name`, `auth.csrf_cookie_name`, `auth.resource_cookie_name`, `auth.flow_cookie_name(basis)` sowie die Config-Felder `cookie_host_prefix` und `csrf_origin_check`.
+
+#### Kopfzeilen und Injection in Seiten
+
+**Sicherheit**
+- Jede Antwort einer TinySesam-Route trägt jetzt `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-store` und `Vary: Cookie`. Das gilt auch für geworfene Fehler (401/403/Umleitungen über `exc.headers`), für das 422 der Eingabeprüfung und für die Fehlerseiten sowie den JSON-500 aus `install_error_pages`. Das 422 baut weiter der Handler, den die App dafür registriert hat. Routen des Gastgebers bleiben unberührt (Routen-Klasse statt Middleware). Bei `csp='strict'` kommt `X-Frame-Options: SAMEORIGIN` dazu. (R8-5, R4-08, R5-2, A2)
+- Das Admin-Panel läuft unter derselben Nonce-CSP wie die übrigen Seiten, ohne Inline-Handler und ohne `style=`. (R8-1)
+- Escaping: `rp_name` im Admin-Panel (R8-3), Key-, Passkey- und Sitzungsfelder auf der Konto-Seite (`esc0` ersetzt alle fünf HTML-Sonderzeichen, R8-6), Benutzername im Showcase auf `/demo` (R8-2).
+- `csp`: Ein Tippfehler wie `'Strict'` oder eine Policy ohne eine einzige bekannte Direktive bricht den Aufbau ab, statt die CSP still abzuschalten. `pruefen()` meldet das auch nachträglich. Eine unbekannte Direktive neben bekannten (z. B. `require-sri-for`, `disown-opener`) erzeugt nur eine Warnung, denn der Browser wendet den Rest der Policy an. (B3-2, A3)
+
+**Behoben**
+- Die Härtungskopfzeilen in `exc.headers` schreiben vorhandene Schlüssel nicht mehr klein. Ein Exception-Handler des Gastgebers, der `exc.headers["Location"]` liest, leitet beim Admin-Panel ohne Sitzung wieder korrekt um. (A1)
+
+#### OIDC, SAML, LDAP (inkl. Proxy-Vorlagen)
+
+**Sicherheit**
+- **OIDC: PKCE (S256) ist immer an** (F-20, H-12). Der Verifier bleibt auf dem Server, ein abgefangener Code lässt sich ohne ihn nicht einlösen.
+- **OIDC: ID-Token ohne `exp` wird abgewiesen** (F-25). Ein paar Sekunden Uhrvorlauf beim IdP werden toleriert (`leeway=60`, F-26).
+- **OIDC: Eine Fehlerantwort des IdP bei Discovery oder JWKS wird nicht mehr zwischengespeichert** (F-24).
+- **SAML: SHA-1 in Signatur oder Digest wird abgewiesen** (F-21).
+- **SAML: Die ACS ist ratenbegrenzt, und jede fachliche Abweisung (Gruppe, kein Konto, gesperrt) steht mit Grund und IP im Audit-Log** (F-22).
+- **LDAP: Gruppen werden nicht mehr per Teilstring verglichen** (F-19). `group_match` wirkt jetzt auch für LDAP. Ein `memberOf`-DN trifft als ganzer DN, als Teil-DN von vorn (`cn=admins,ou=groups`) oder über den CN (`admins`), jeweils nur mit ganzen Bestandteilen. `admin` trifft also nicht mehr `cn=nicht-admin,…`. Das gilt auch für `ldap_allowed_groups`. **Verhaltensänderung:** Ein Schlüssel, der nur als Teilstring griff (z. B. `ou=groups` oder `staff` für `cn=staffextern`), greift nicht mehr. Das Sicherheits-Log meldet ihn beim ersten betroffenen Login einmal. `group_match="substring"` holt den alten Vergleich zurück.
+- **LDAP: Ein Verzeichnis-Ausfall ist kein Fehlversuch** (F-23). Die Login-Route antwortet mit 503 und schreibt eine Audit-Zeile `ldap_unavailable`. Gegen LDAP-Nutzer wird weder eine Sperre noch ein `failed login` für fail2ban verbucht. Ein falsches **lokales** Passwort zählt auch während des Ausfalls als Fehlversuch, sonst wäre das lokale Notfallkonto unbegrenzt ratbar (A-1). Verbindungs-Timeout 10 s.
+- **Kein Reset-Link für reine SSO-Konten** (H-4): Konten, die an OIDC, LDAP oder SAML gebunden sind und kein lokales Passwort haben, bekommen keinen Reset-Link. Die Antwort nach außen bleibt gleich. Kommt ein Konto aus einem Verzeichnis ohne stabile Kennung, merkt sich TinySesam beim Login trotzdem die Herkunft (A-4). Kommt später eine echte Kennung, ersetzt sie diesen Vermerk.
+- **Proxy-Vorlagen: Die TinySesam-Cookies gehen nicht mehr an die geschützte App** (B-20, A-2, A-5). Caddy und beide nginx-Vorlagen entfernen alle `tinysesam_*`-Cookies (Sitzung, Freigabe, CSRF, auch mit `__Host-`/`__Secure-`) vor der App bzw. vor PHP und lassen andere Cookies stehen. Traefik kann einzelne Cookies nicht entfernen. `traefik.yml` benennt die Lücke und bringt die Middleware `tinysesam-cookies-weg` für Apps ohne eigene Cookies mit. **Bestandsinstallationen: die eigene Proxy-Konfiguration nachziehen.** Wer Cookies umbenannt hat, trägt die Namen ins Muster ein.
+- **nginx-Vorlagen setzen `X-Forwarded-For` im Sub-Request selbst** (NEU-1). Vorher kam der vom Client mitgeschickte Wert bei TinySesam an und bestimmte Rate-Limit, IP-Sperre und fail2ban.
+
+**Geändert**
+- LDAP-Anmeldungen und lokale Anmeldungen sind im Audit-Log getrennt (`login_ldap` / `login_lokal`), `login_fail` nennt `quelle=` (F-29).
+- Die Konfigurationsprüfung nennt `ldap_enabled` nicht mehr als Abhilfe für „keine Methode“ und warnt bei LDAP ohne `password_enabled` (F-30).
+- Caddy-Vorlage: Kommentar und Test zur Go-kanonischen Schreibweise in `{rp.header.…}` (H-16).
+
+#### Mail-Wege und Registrierung
+
+**Sicherheit**
+- **Einmal-Links lösen nicht mehr per GET ein (R4-02).** `GET /auth/magic/{token}` und `GET /auth/verify/{token}` zeigen nur noch eine Bestätigungsseite (neue Seite `magic_confirm`). Eingelöst wird per `POST` mit CSRF-Token. Mail-Scanner und Vorschau-Bots verbrauchen den Link damit nicht mehr und melden niemanden an. **Zu tun:** Wer die Seite `magic_confirm` per `set_template` ersetzt oder den Link selbst per GET einlöst, stellt auf POST um.
+- **Keine Konto-Erkundung über die Registrierung (R4-03, Nachbesserung A1).** Mit `signup_verify_email` antwortet eine vergebene Adresse wie eine freie, und der Inhaber bekommt einen Hinweis ohne Token. Der Benutzername wird jetzt vor der Adresse geprüft. Bei vergebener Adresse belegt ein gesperrter Platzhalter ohne Adresse den Namen, und `gc()` entfernt ihn nach Ablauf. Ein Benutzername darf dabei keine fremde E-Mail-Adresse sein (neue Meldung `err.username_is_address`). Ohne Bestätigung bleibt es bei 409.
+- **Drossel je Zieladresse (R4-04, Nachbesserung A2):** `mail_per_address_max` / `mail_per_address_window_sec` (3 je 15 min) für Anmelde-Link und Reset. Abgewiesen wird unsichtbar, im Audit-Log steht `mail_ratelimit`. Der Registrierungshinweis hat einen eigenen Topf, damit Fremde den Inhaber nicht von seinen eigenen Links aussperren können.
+- **Versand nach der Antwort (R4-05, B6-6).** Die eingebauten Routen verschicken über einen eigenen Mail-Arbeiter (`mailer.Postausgang`) mit gedeckelter Warteschlange. Das beseitigt das Timing-Orakel, und ein hängender Mailserver belegt den Threadpool nicht mehr.
+- **E-Mail-Normalisierung (R4-06, Nachbesserungen A5/A6).** `norm_email` faltet per NFKC und schreibt Umlaut-Domains als A-Label. `valid_email` weist unsichtbare Zeichen und Schriftmischung ab, lässt aber die Schriften einer Sprache zusammen zu (Kanji mit Kana, Hanja mit Hangul, Han mit Bopomofo). Bestandsadressen in Unicode-Form findet die Suche weiterhin, auch wenn die Eingabe als A-Label kommt.
+- **Nie bestätigte Konten werden aufgeräumt (R4-09).** `gc()` und `tinysesam gc` entfernen sie, sobald der Bestätigungslink abgelaufen ist (Zähler `unverified_accounts`).
+- **Links gehen an die gespeicherte Adresse (R4-11)**, nicht an die Eingabe.
+- **Gescheiterter Versand (B6-5, B6-12).** Der Token läuft sofort ab. Scheitert die Bestätigungsmail einer Registrierung, wird das Konto zurückgenommen, statt mit HTTP 500 als Leiche liegen zu bleiben.
+- **Ungültige Einmal-Token hinterlassen eine Spur (B5-18, Nachbesserung A3).** Sie stehen im Audit-Log als `token_invalid`, global gedeckelt auf 20 je Minute plus eine Zeile `token_invalid_throttled`. Im Sicherheits-Log steht jede als `failed verification` (nicht die Login-Jail). `GET /auth/reset` ohne Token zählt nicht.
+- **SMTP-TLS prüft Zertifikat und Hostnamen (B3-1, Nachbesserung A4).** Eine eigene CA gibt man über `smtp_ca_file` an. **BRUCH – Zu tun:** Ein Relay mit selbstsigniertem Zertifikat braucht jetzt `smtp_ca_file`, und ein Relay per IP-Adresse braucht als `smtp_host` den Namen aus dem Zertifikat. Sonst geht keine Mail mehr hinaus. Ein fehlender `smtp_ca_file`-Pfad ist ein Aufbaufehler. `smtp_host` als IP-Adresse löst beim Start eine Warnung aus. Ein Zertifikatsfehler beim Versand nennt im Log die Abhilfe.
+
+#### Sperren und Drosselung
+
+- **Sperren atomar (R7-2, R3-2, R3-7):** Login, TOTP, PIN, Bereichs-PIN, Step-up und Passwortwechsel prüfen und verbuchen einen Versuch jetzt in einem Schritt (`versuch_beginnen()`, `Store.reserve_attempt` mit `BEGIN IMMEDIATE`). Eine parallele Salve kommt nicht mehr über die Sperrgrenze.
+- **Keine Fremd-Aussperrung mehr (R7-6/H-8):** Die erste Schwelle des Login-Lockouts gilt je Paar aus Konto und IP (`max_login_attempts`). Je Konto gilt über alle IPs eine höhere Schwelle (neu: `account_attempt_factor`, Vorgabe 3). Ein einzelner Fremder sperrt den Inhaber nicht mehr aus, verteiltes Raten bleibt begrenzt. **Verhaltensänderung.**
+- **Konto-Schwelle zählt unter der gefalteten Kennung (R7-6/H-8, Nachprüfung):** Gezählt wurde unter der roh eingetippten Kennung. Varianten wie `' opfer'` oder `'OPFER\t'` trafen dasselbe Konto, füllten aber je einen eigenen Zähler, und die Konto-Schwelle band damit nichts. Jetzt zählen, räumen und entsperren (`tinysesam unlock`) alle Wege unter derselben Kennung, getrimmt und klein (`norm_kennung`).
+- **Bereichs-PIN (R7-3):** je IP `resource_max_attempts`, je Bereich das `account_attempt_factor`-fache davon. Ein Fremder sperrt einen Bereich nicht mehr für alle. **Verhaltensänderung.**
+- **Volle Anmeldung räumt alle Anmelde-Fehlversuche (R7-1):** neu `sperre_aufheben()`, für Benutzername und E-Mail. Die eigenen Töpfe von Kontoseite, Step-up und Bereich bleiben stehen.
+- **Reset hebt die Passwort-Sperre auf (R4-13/H-10):** Die Zahl steht im Audit-Log, TOTP- und PIN-Fehlversuche bleiben stehen.
+- **Redis-Ausfall (B6-1, B6-2):** Rückfall auf einen In-Memory-Limiter statt „alles erlauben“, Ping beim Start, je eine Meldung für Ausfall und Rückkehr, Pause nach einem Fehler, kurze Socket-Timeouts.
+- **In-Memory-RateLimiter gedeckelt (R7-5):** höchstens `max_keys` Schlüssel (LRU).
+- **`/auth/claim-admin` gedrosselt (B5-16):** Fehlgriffe landen im Audit-Log (`admin_claim_fail`) und im Sicherheits-Log als `failed verification`.
+- `is_pin_locked` meldet seine Abweisung. Die Bereichs-PIN schreibt `grund=falsches_bereichsgeheimnis` statt `kein_konto`.
+
+#### Passwort und Faktoren
+
+**Geändert — Passwortregel an jeder Setzstelle (T-13: B2-5/H-17, R4-07, B2-13; Nacharbeit A-3, A-5, A-6, A-7)**
+- **Neue Passwörter werden überall gegen eine offline geführte Blockliste geprüft.** Das gilt für Registrierung, Reset, Kontoseite, Admin-Panel und `tinysesam passwd`. Abgelehnt werden bekannte Passwörter (auch aufgehübscht, z.B. `Passwort2026!`) und triviale Muster: Wiederholungen, Zähl- und Tastaturreihen, auch absteigend, mit Umbruch oder zusammengesetzt (`0987654321`, `12341234`, `asdfasdf`, `11112222`, `qwerasdf`). Ebenso Kontextwörter: `rp_name`, Benutzername und Namensteil der E-Mail, **auch in ihren Teilen** (`Mustermann1990!` für `max.mustermann@…`). Zusammensetzungsregeln gibt es keine (NIST SP 800-63B). **Verhaltensänderung:** Bisher angenommene schwache Passwörter werden jetzt mit 400 abgelehnt. Das Admin-Panel prüfte bis dahin gar nicht.
+- **Höchstlänge 256 Zeichen** für neue Passwörter an allen Setzstellen (R4-07).
+- **Neu: `password_blocklist_file`**, eine eigene Blockliste (ein Passwort je Zeile, `#` = Kommentar). Zeilen, die kein UTF-8 sind, werden als Latin-1 gelesen. Gemischte Leak-Listen wie `rockyou.txt` laden damit, statt den Start abzubrechen. Eine fehlende oder unlesbare Datei bricht den Start mit `ConfigError` ab.
+- **`tinysesam passwd` hält dieselbe Regel ein:** Neu sind `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
+
+**Hinzugefügt — Benachrichtigung bei Faktor-Änderungen (T-13: B2-2/H-6)**
+- **`auth.on_security_event = hook`**, Aufruf als `hook(ereignis, konto, details)` für `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used` (mit Rest), `passkey_added`, `passkey_removed` und `api_key_created`. Opt-in, TinySesam verschickt selbst nichts. Ein Fehler im Hook macht die Änderung nicht rückgängig, landet aber im Sicherheits-Log. Beschrieben in SECURITY.md.
+
+**Geändert — TOTP-Einrichtung (T-13: B2-3, B2-12/R3-6; Nacharbeit A-1, A-4)**
+- **Der Einrichtungscode gilt genau einmal.** Nach der Bestätigung meldet er an `/auth/totp` nicht mehr an. **Verhaltensänderung für Integratoren:** Tests, die `totp_confirm(uid, now())` und danach `verify_totp(uid, now())` mit demselben Code rufen, werden rot. Dort mit dem Code des vorigen Zeitschritts bestätigen.
+- **Pflicht-Einrichtung unter `login_chain=["password","totp"]`:** Die Bestätigung schließt den TOTP-Schritt der Anmeldung gleich mit ab (neues Sitzungs-Token, JSON `{"ok": true, "next": …}`), und die Seite leitet zum Ziel weiter. `next` wandert durch die Einrichtung. Vorher hätte der verbrauchte Code an `/auth/totp` den Login-Lockout und die fail2ban-Jail gefüttert.
+- **`POST /auth/totp/setup`** ist gedrosselt, hat einen eigenen Sperrtopf (`totp_setup_max_attempts`, getrennt vom Login-Lockout) und protokolliert (Audit `totp_enable`). Bei schon bestätigtem TOTP antwortet er mit **409** wie GET und `/start`. `totp_confirm` lehnt ein bestätigtes TOTP ab: kein falsches `totp_enabled`, kein zweiter Code-Prüfer.
+
+**Geändert — Recovery-Codes und Reset (T-13: B2-7, R4-14; Nacharbeit A-8)**
+- Ein verbrauchter Recovery-Code erzeugt die Audit-Zeile `recovery_used` mit Rest, eine Sicherheits-Log-Zeile und das Ereignis `recovery_code_used`. Die Kontoseite zeigt den Rest und warnt ab drei.
+- **Der Passwort-Reset per Mail widerruft die API-Keys** wie der Admin-Reset (Verhaltensänderung).
+- `POST /auth/reset` prüft den Link vor der Passwortregel. Ein ungültiger oder abgelaufener Link meldet sofort „Link ungültig“ statt „Passwort zu leicht“.
+
+**Sicherheit — bekannte Grenze (T-13: H-14/H-15)**
+- TOTP-Geheimnisse liegen unverschlüsselt in der Datenbank. Das ist jetzt in SECURITY.md als Grenze beschrieben, mit Betriebsempfehlung. Die Verschlüsselung selbst ist zurückgestellt.
+
+#### Audit und Forensik
+
+- **Audit-Log: wer, von wo, was genau (T-13).** `audit()` ergänzt IP und angemeldetes Konto aus der laufenden Anfrage. TOTP-, Recovery-, PIN-, Key-, Reset- und Verify-Zeilen nennen deshalb Konto und IP, und `tinysesam audit --user X` findet sie (B5-02). Wenn ein Admin im Panel einen Key anlegt oder widerruft oder eine Einladung verschickt, steht `akteur=<admin>` samt IP im Log (B5-04, R6-3). Wird ein Key benutzt, entsteht `apikey_use` (gedrosselt je Key, IP und Stunde); wird er abgewiesen, entsteht `apikey_denied` mit Grund und eine seclog-Zeile. Das gilt auch an POST-Routen mit CSRF-Ausnahme (B5-05). `totp_enable` wird beim Bestätigen geschrieben, `recovery_used` mit Restzahl beim Einlösen (B5-07). `user_roles` und `security_update` protokollieren den Stand vorher → nachher (R6-7). Wer Audit-Log oder Sitzungsliste im Panel liest, hinterlässt selbst eine Zeile (B5-12).
+- **Log-Injection geschlossen (B5-06, B5-14).** `tinysesam audit` und der Logger `tinysesam.security` machen Steuerzeichen in jedem Argument unschädlich. Das umfasst C0, DEL, C1 (NEL, CSI), U+2028/U+2029 und Bidi-Steuerzeichen.
+- **Die ip-Spalte enthält eine IP (B5-15).** `X-Forwarded-For` wird nur als gültige, kanonische Adresse übernommen, eine IPv6-Zonenangabe (`%…`) fällt dabei weg. Wer über einen durchreichenden Proxy die Zone je Anfrage wechselt, entgeht damit weder Rate-Limit noch IP-Sperre.
+- **Abgewiesene Forward-Auth (B5-17).** Eine 401 mit ungültigem Nachweis erzeugt gedrosselt `forward_denied`. `forward_denied` und `forward_role_denied` schreiben die URL ohne Query und Fragment (`?…`), damit Freigabe-Token und Codes nicht im Log landen.
+- **Aufbewahrung und Löschen (B5-11, H-13).** Neu sind `audit_retention_days` (greift über `gc()` und `tinysesam gc --audit-days N`) und `audit_ip_pseudonymize` (kürzt auf /24 bzw. /48). `delete_user` ersetzt das Konto im Audit-Log durch `gelöscht#<id>`: in der Spalte `username`, auch bei Anmeldeversuchen unter der E-Mail-Adresse (deren Versuchszeilen werden gelöscht), außerdem bei `akteur=` und bei der Adresse im Detailtext. Gleichnamige Wörter in fremden Zeilen, etwa `admin=0->1`, bleiben stehen.
+- **Panel: fremde Passkeys widerrufen, Konten löschen (B5-08).** Das eigene Konto und der letzte Admin lassen sich nicht löschen.
+- **Kontoseite: letzte Ereignisse (H-7).** Die Liste zeigt Zeit, Ereignis und IP, aber keinen Detailtext. Hat ein Admin das Ereignis ausgelöst, steht dort „durch einen Administrator“ statt seiner IP.
+
+#### Admin und Konfigurationsprüfung
+
+**Sicherheit**
+
+- **Admin-Panel: Der letzte aktive Admin lässt sich nicht mehr entmachten** (R6-1). Die Anfrage bekommt 400. Gesperrte Konten und Service-Konten zählen nicht als „anderer Admin“.
+- **Kein Admin-Service-Konto mehr über das Panel** (R6-2). Beim Anlegen und über die Rollen-Route gibt es 400, vorher wurde das still verworfen bzw. still gesetzt.
+- **Härtungs-Schwellen haben Grenzen** (R6-4, B2-9, `security.SECURITY_GRENZEN`). Bisher konnte ein Tippfehler die Instanz dauerhaft stilllegen, etwa `rate_limit_max=0` (jede Anmeldung abgewiesen, auch die zum Zurückdrehen) oder `max_login_attempts=0`. Das Panel prüft jetzt nach dem Prinzip alles oder nichts. Die Grenzen verbieten das Stilllegen, nicht das Verschärfen: Versuchszähler ab 1, `lockout_window_sec` 60 s bis 30 Tage, `rate_limit_max` ab 3, `rate_limit_window_sec` bis 1 Tag, `password_min_length` 8 bis 128.
+  **Verhaltensänderung:** `set_security()` wirft bei unbekanntem Schlüssel oder Wert ausserhalb der Grenzen `ConfigError`. Bis 0.19.x fiel ein unbekannter Schlüssel still weg, und jeder Wert wurde übernommen. Ein Altwert in der Datenbank jenseits der Grenzen wird **an die nächste Grenze gezogen**, nicht auf die Vorgabe gesetzt. So lockert ein Upgrade keine strengere Einstellung, nur ein unlesbarer Wert fällt auf die Vorgabe. Beim ersten Lesen steht dazu eine Zeile im Security-Log. `Infinity` im Panel ergibt 400 statt 500.
+- **Ein API-Key mintet keinen Key mehr** (R6-6). Die Panel-Key-Route verlangt eine Sitzung. Das Admin-Flag fällt bei jeder Key-Art ausser `mensch` weg (fail-closed), vorher nur bei `automat`.
+- **Unbrauchbarer Scope oder Ablauf beim Key-Anlegen ergibt 400 mit Grund statt HTTP 500** (R6-8), im Panel wie unter `/auth/apikeys`.
+- **Login-URL am Forward-Auth** (R5-1): Bei `cookie_secure=True` stuft `X-Forwarded-Proto: http` das Schema nicht mehr herab (ausser Loopback). Eine Benutzerangabe aus `X-Original-URL` (`https://fremd.example@app.example.com`) landet nicht mehr vor dem Host.
+- **`trusted_proxies`: Ein ungültiger Eintrag entwertet nicht mehr die ganze Liste** (B3-3). Jeder Eintrag wird einzeln geprüft, und die Konfigurationsprüfung weist Hostnamen und Tippfehler ab.
+- **Nachträgliche Config-Änderungen werden vor dem Routenbau geprüft** (B3-14, A2). `router()` und `admin_router()` prüfen alles erneut, was den Konstruktor hätte scheitern lassen: `konfigpruefung`, Cookie-Felder und die Riegel des Konstruktors (`admin_identifiers` neben offener Registrierung/Auto-Anlage, `login_identifier`, `forward_headers`, `totp_required`). Vorher baute zum Beispiel `auth.cfg.allow_signup = True` nach dem Konstruktor neben `admin_identifiers=["chef"]` einen Router, in dem sich der erste Besucher als Erst-Admin registrierte. `pruefen()` liefert weiter eine Liste.
+
+**Geändert**
+
+- **Neue Konfigurationsfehler, die bestehende Configs am Start scheitern lassen können. Vor dem Upgrade prüfen:**
+  - `stepup_methods` mit einem unbekannten Verfahren (`"topt"`) oder einem abgeschalteten (`"pin"` ohne `pin_enabled`) (B3-6). Vorher fiel die Bestätigung still auf das Passwort zurück.
+  - `trusted_proxies` mit einem Eintrag, der kein IP-Netz ist (B3-3).
+  - `passkey_enabled`: `origin` ist kein Origin (Pfad, Schrägstrich am Ende) oder `rp_id` passt nicht dazu (B3-10). Weicht `origin` von `base_url` ab oder stehen noch die Entwicklerwerte da, gibt es eine Warnung. `origin` darf wie bei py_webauthn eine **Liste** sein, jeder Eintrag wird geprüft.
+  - Zahlenfelder ausserhalb ihrer Grenzen (B3-12, `konfigpruefung.ZAHLENGRENZEN`), zum Beispiel `session_ttl_hours=0`, `magiclink_ttl_min=0`, `recovery_code_count=0` oder ein negatives `stepup_max_age_sec`. `True` statt einer Zahl ist ebenfalls ein Fehler.
+  - `signup_verify_email=True` ohne `signup_require_email=True` (B3-16). Wer keine Adresse angab, war ohne Bestätigung sofort aktiv. Ebenfalls Fehler: `cookie_domain`, die den Host von `base_url` nicht umfasst, und `admin_path`/`login_path`/`oidc_callback_path` ohne führendes `/`. Warnungen gibt es für vertauschte Sitzungsdauern und für `signup_invite_only` ohne `allow_signup`.
+  - `demo_mode=True` neben OIDC/SAML/LDAP/Forward-Auth und auf einer Datenbank mit Bestandskonten, die nie eine Demo war (B3-8). Eine echte Demo startet weiter, auch mit registrierten Besuchern.
+- **Warnung bei offenem Forward-Auth-Tor** (H-11, B3-9): Auto-Anlage ohne `*_allowed_groups` bzw. ohne `oidc_clients`, oder offene Selbst-Registrierung vor Forward-Auth. Das mitgelieferte Compose und die Gateway-Doku sagen, wo der Kreis begrenzt wird.
+- **Wird `base_url` nach dem Konstruktor geleert, antworten die Mail-Routen und die Admin-Einladung mit HTTP 503 statt mit einem ungefangenen 500.** Die 503 kommt aus der Route (`router._mail_basis`). → **Integrator:** Den Absatz „**Der 500 bleibt.** … und die 500 als das, was heute herauskommt“ im Eintrag zu `require_public_base()` (CHANGELOG.md um Zeile 495-500) entsprechend auf 503 korrigieren.
+
+**Doku**
+
+- **KONFIGURATION.md: Beschreibungen verrutschten nicht mehr** (B3-15). Der Generator hängt eingerückte Fortsetzungszeilen an das richtige Feld und entfernt den `#:`-Doppelpunkt. Die Datei ist neu erzeugt, ebenso API.md.
+
+#### Betrieb und Laufzeit
+
+**Geändert**
+- **`/healthz` schreibt jetzt, statt nur zu lesen** (B6-4): Eine nur lesbare Datenbank oder eine tote Verbindung meldet **503** `{"status": "degraded"}` statt dauerhaft 200. Wer TinySesam als Bibliothek einbindet, baut denselben Check mit dem neuen `auth.store.schreibprobe()`. Wirklich geschrieben wird höchstens alle 5 s (`Store.SCHREIBPROBE_SEK`), dazwischen prüft die Probe nur die Verbindung. Eine Flut auf den offenen Pfad belegt so nicht die Schreibsperre und nutzt keine SD-Karte ab. Eine gerade nur lesbar gewordene Datenbank fällt spätestens nach 5 s auf.
+- **HEALTHCHECK im Abbild wartet 12 s/15 s statt 4 s/5 s**: länger als die Wartezeit auf eine gesperrte Datenbank, damit eine kurze Sperre (Checkpoint, Sicherung) den Container nicht als unhealthy markiert.
+- **`busy_timeout` ausdrücklich 10 s** (`Store.BUSY_TIMEOUT_MS`, B6-11) statt der stillen 5 s von Python: Ein zweiter Schreiber lässt eine Anmeldung warten und bricht sie nicht mit `database is locked` ab.
+- **Gesperrte Konten bekommen `403 api.account_disabled` statt einer Sitzung** (H-18): Anmelde-Link, Passkey und jeder andere Faktor legen einem gesperrten Konto keine Sitzung mehr an. TOTP macht eine halbe Sitzung nach der Sperre nicht mehr vollwertig. Die Sperre im Panel verwirft offene Einmal-Token (neu: `Store.revoke_user_magic_tokens()`), ein alter Bestätigungslink hebt sie also nicht mehr auf.
+- **Monotone Zeitquelle für alle Fristen in der Datenbank** (B6-9, neu: `tinysesam.store.jetzt()`): Springt die Systemuhr zurück (NTP, Pi ohne Pufferbatterie, VM-Snapshot), leben abgelaufene Sitzungen, Einmal-Token und Step-ups nicht mehr auf. Über einen Neustart trägt die Datenbank den Stand: Sie sichert ihn höchstens jede Minute im Setting `uhr_stand`. Grenze: Was in der letzten Minute vor dem Neustart ablief oder während einer Ruhezeit ganz ohne Schreiben, gilt nach einem Boot mit altem Datum wieder, bis die Uhr aufgeholt hat. Sprang die Uhr falsch nach vorn, bleiben Zeitstempel dort, bis die Wanduhr aufholt.
+- **Für Tests einbettender Apps:** `time.time` wird bei jedem Aufruf nachgeschlagen und nicht beim Import gebunden. `mock.patch`, `monkeypatch` und freezegun stellen TinySesams Uhr also mit vor. Zurückdrehen lässt sie sich so nicht: Nach dem Entpatchen zählt sie vom vorgestellten Stand weiter (der Schutz aus B6-9).
+- **Fehlt `[argon2]` zur Laufzeit** (B6-8), nennt der Start die Zahl der betroffenen Hashes samt `pip install 'tinysesam[argon2]'`. Im Betrieb erscheint die Abhilfe einmal je Prozess im Log (neu: `Store.zaehle_argon2_hashes()`).
+
+**Behoben**
+- `pop_flow()` gibt WebAuthn-Challenge und OIDC-`state` genau einmal heraus, auch bei zwei gleichzeitigen Callbacks und über Prozessgrenzen hinweg (R3-8).
+
+**Doku**
+- Neu: `docs/BETRIEB.md` mit Ausfallverhalten (B6-13), Sitzungs- und Föderationsverwaltung (F-10), Anmeldewegen und ihrer Stärke (B1-11) sowie den offenen ASVS-L3-Punkten (B1-12). `test_repo` prüft die Zahlen der Seite gegen den Code, auch das Verhältnis HEALTHCHECK zu `busy_timeout`.
+
+#### Lieferkette und Veröffentlichung
+
+**Sicherheit**
+
+- **Schwachstellen-Tor in der CI** (B4-2). Der neue Workflow `audit.yml` fährt `pip-audit --strict` über die neueste und über die niedrigste erlaubte Auflösung (`lowest-direct`) aller Extras. Dazu kommt jede gehashte Sperrliste. Er läuft bei jedem PR, auf `main` und nächtlich. Bis 0.19.0 wurde ein PR mit einer verwundbaren Auflösung grün, denn eine Dependabot-Meldung ist kein Tor. Seine eigenen Werkzeuge holt das Tor aus einer gepinnten, gehashten Liste.
+- **Die Sperrliste des Abbilds wird auf Vollständigkeit geprüft** (B4-7, Nachprüfung). Das Abbild installiert mit `--no-deps`. Bringt ein Dependabot-Bump eine neue Abhängigkeit mit, fehlt sie in der Liste, und pip merkt das nicht. Das Abbild bräche dann erst beim Start ab. Jetzt laufen `pip check` und der Import im Dockerfile. `audit.yml` fährt dieselben Schritte bei jedem PR auf Python 3.14.
+- **Kein pip im Endabbild, wieder wahr.** Seit dem Wechsel auf 3.14 zeigten die Löschpfade noch auf `python3.12`, pip lag also wieder im Abbild. Die Pfade stehen jetzt als Muster da, und ein Test verlangt die Python-Reihe aus dem `FROM`.
+- **Wer eine Identität hält, führt keinen fremden Code aus** (B4-4). `release.yml` ist aufgeteilt. Prüfen und Bauen laufen nur mit Leserecht. Release, PyPI und die Beglaubigung des Abbilds laufen ohne Checkout und ohne pip. Bis 0.19.0 lief `pip install ".[all]"` im selben Job, der mit `id-token: write` beglaubigte. Jede Abhängigkeit hätte damit eine Attestation auf die Identität des Workflows ausstellen können. `tests/test_repo.py` liest die Rechte in jeder Schreibweise: Block, Flow-Map, `write-all` und von der Workflow-Ebene geerbt. Solche Jobs dürfen in `run:` nur eine kurze Liste von Befehlen starten, und lokale Actions sind dort verboten.
+- **Werkzeuge der Actions in fester Fassung** (B4-6). `setup-qemu` und `setup-buildx` zogen `tonistiigi/binfmt:latest` (läuft privilegiert), `buildkit:buildx-stable-1` und das buildx des Runners. Jetzt ist jedes dieser Werkzeuge mit Version und Digest gepinnt. `build` und `setuptools` kommen aus einer gehashten Liste, und gebaut wird ohne Isolierung.
+- **Das Gateway-Abbild ist reproduzierbar** (B4-7). Es installiert aus `deploy/gateway/requirements.txt`, gepinnt samt Hashes und universal für amd64 und arm64. TinySesam selbst wird ohne Netz installiert. Es gibt kein `pip install --upgrade pip` mehr, und der Bau läuft mit `SOURCE_DATE_EPOCH` und `rewrite-timestamp`.
+- **Scorecard-Kriterien bewacht** (B4-14). Dangerous-Workflow, Token-Permissions, Pinned-Dependencies (Teil), SAST, Security-Policy, License, Dependency-Update-Tool, CI-Tests und Binary-Artifacts werden offline geprüft. Der Injektions-Wächter prüft jeden `${{ … }}`-Ausdruck, der `github.event` oder `github.head_ref` anfasst. Das gilt auch innerhalb von `toJSON()` oder `format()` und im `script:` von `actions/github-script`.
+
+**Geändert**
+
+- **Verhaltensänderung: Der Referenz-Stack ist gehärtet** (B4-11). `deploy/forward-auth/docker-compose.yml` pinnt Caddy auf Version und Digest statt auf `caddy:2`. Beide Dienste laufen `read_only`, mit `cap_drop: [ALL]` und `no-new-privileges`. Caddy bekommt nur `NET_BIND_SERVICE` zurück. → **Zu tun**, wenn du das Compose übernommen hast: Alles, was ein Dienst zur Laufzeit schreibt, braucht ein Volume oder ein `tmpfs`. Eigene Zusätze, die weitere Capabilities brauchen, müssen sie ausdrücklich zurückholen.
+- **Wheel und sdist sind bit-reproduzierbar** (B4-8). Beide Artefakte werden mit `SOURCE_DATE_EPOCH` = Zeitstempel des Commits gebaut und danach mit `scripts/_artefakte_normalisieren.py` normalisiert. Das sdist bekommt feste Zeitstempel, Reihenfolge, Eigentümer, Rechte und einen festen gzip-Kopf. Im Wheel werden die Dateirechte festgelegt, denn setuptools übernimmt sonst die umask des Checkouts (0002 auf Ubuntu/Mint, 0022 auf dem Runner). Nachbauen geht so: dieselben Schritte auf dem Tag ausführen, dann `sha256sum -c SHA256SUMS`.
+- **Dependabot hebt, was gepinnt ist** (B4-3, B4-12). Der pip-Eintrag für `/` war wirkungslos, weil Dependabot offene `>=`-Böden nie anhebt. Er ist ersetzt durch Einträge für die gehashten Sperrlisten und für den Compose-Stack. Die Böden prüft jetzt das Audit-Tor.
+- **Das sdist enthält nichts Gitignoriertes mehr** (B4-13). `MANIFEST.in` spiegelt `.gitignore`. Vorher landete bei `python -m build` aus einem benutzten Arbeitsbaum zum Beispiel eine `examples/app.db` oder eine `.env` im Paket.
+- **`SECURITY.md` nennt erreichbare Meldewege und Fristen** (B4-10). Es gibt zwei Wege: das private Advisory und eine E-Mail für alle ohne GitHub-Konto. Die Fristen lauten 7, 14 und 90 Tage, in beiden Sprachen gleich.
+
 ## [0.19.0] — 2026-09-22
 
 **Sicherheits-Release.** Das dritte Audit (Red/Blue, 139 bestätigte Befunde) hatte 16 Punkte als

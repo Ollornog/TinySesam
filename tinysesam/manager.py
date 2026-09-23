@@ -112,7 +112,7 @@ def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False)
     """Passt der Schlüssel aus `*_group_role_map`/`ldap_allowed_groups` auf diese Gruppe?
 
     `teilstring=True` ist der alte Vergleich (`schluessel in gruppe`) und nur noch auf
-    ausdrücklichen Wunsch da (`group_match="substring"`). Bis 0.20.0 galt er für LDAP IMMER,
+    ausdrücklichen Wunsch da (`group_match="substring"`). Bis 0.19.x galt er für LDAP IMMER,
     egal was `group_match` sagte (F-19): `admin` passte dann auf `cn=nicht-admin,…` und
     `staff` auf `cn=staffextern,…` — wer im Verzeichnis eine Gruppe benennen darf, bekam
     Rolle und Admin-Flag.
@@ -148,7 +148,7 @@ def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False)
 def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
     """Einmal je Schlüssel sagen, wenn er nur noch per Teilstring treffen würde (A-3).
 
-    Bis 0.20.0 verglich LDAP immer per Teilstring (F-19). Ein Schlüssel, der damals griff und
+    Bis 0.19.x verglich LDAP immer per Teilstring (F-19). Ein Schlüssel, der damals griff und
     heute nicht mehr, kostet nach dem Update still Rollen oder — in `ldap_allowed_groups` — den
     ganzen Zugang. Statisch ist das nicht zu erkennen (es hängt an den DNs des Verzeichnisses),
     also fällt es beim ersten Login auf, bei dem es passiert."""
