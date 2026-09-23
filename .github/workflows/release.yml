@@ -111,10 +111,13 @@ jobs:
       # dieselben Prüfsummen wie hier. Drei Zutaten:
       #   - die Werkzeuge gepinnt samt Hashes (.github/bau/requirements.txt) und `--no-isolation`,
       #     sonst holte sich `build` das gerade neueste setuptools;
-      #   - `SOURCE_DATE_EPOCH` = Zeitstempel des Commits (Wheel);
-      #   - das sdist danach normalisiert (Zeitstempel, Reihenfolge, Eigentümer, gzip-Kopf).
+      #   - `SOURCE_DATE_EPOCH` = Zeitstempel des Commits (Zeitstempel im Wheel);
+      #   - beide Artefakte danach normalisiert: das sdist (Zeitstempel, Reihenfolge, Eigentümer,
+      #     Rechte, gzip-Kopf), das Wheel (Dateirechte — setuptools übernimmt die des Checkouts,
+      #     und die hängen von der umask ab: 0002 auf Ubuntu/Mint, 0022 auf dem Runner).
       # Nachbauen: dieselben drei Schritte auf dem Tag, dann `sha256sum -c SHA256SUMS`.
-      # `tests/test_packaging.py` baut zweimal mit verschiedenen Datei-Zeitstempeln und vergleicht.
+      # `tests/test_packaging.py` baut zweimal mit verschiedenen Datei-Zeitstempeln und -rechten
+      # und vergleicht.
       - name: Pakete bauen
         run: |
           python -m venv "$RUNNER_TEMP/bau"
@@ -122,7 +125,7 @@ jobs:
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
           "$RUNNER_TEMP/bau/bin/python" -m build --no-isolation   # dist/*.whl und dist/*.tar.gz
-          python scripts/_sdist_normalisieren.py dist/*.tar.gz
+          python scripts/_artefakte_normalisieren.py dist/*.whl dist/*.tar.gz
 
       - name: Prüfsummen
         run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS

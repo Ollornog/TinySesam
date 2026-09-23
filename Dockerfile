@@ -36,10 +36,18 @@ COPY tinysesam ./tinysesam
 # Kein `pip install --upgrade pip` mehr: Das zog bei jedem Bau die gerade neueste Fassung. Das pip
 # des Basis-Abbilds ist durch den Digest festgelegt und wird am Ende ohnehin entfernt.
 # `SOURCE_DATE_EPOCH` (setzt der Release-Workflow) macht die .pyc-Dateien zeitstempelfrei.
+#
+# `--no-deps` heisst auch: Fehlt in der Sperrliste eine transitive Abhängigkeit, installiert pip
+# trotzdem ohne Murren. Dependabot hebt in einer gehashten Liste nur einzelne Zeilen und trägt
+# keine neue Abhängigkeit nach — ein Bump, der eine mitbringt, ergäbe ein Abbild, das erst beim
+# Start mit ModuleNotFoundError abbricht. `pip check` und der Import fangen das beim BAU ab;
+# audit.yml fährt dieselben Schritte bei jedem PR, damit es gar nicht erst bis zum Release kommt.
 ARG SOURCE_DATE_EPOCH
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --require-hashes --no-deps -r requirements.txt \
     && /opt/venv/bin/pip install --no-cache-dir --no-deps --no-index --no-build-isolation . \
+    && /opt/venv/bin/pip check \
+    && /opt/venv/bin/python -c "import tinysesam.gateway" \
     && /opt/venv/bin/pip uninstall --yes setuptools
 
 # ---------- Laufen ----------
@@ -57,12 +65,14 @@ COPY --from=build /opt/venv /opt/venv
 # hat TinySesam auch kein Selbst-Update mehr (siehe CHANGELOG 0.12.0).
 # Das venv bringt ein EIGENES pip mit — das System-pip zu löschen genügt nicht. Ein Test hat
 # das gefunden, nachdem das Abbild bereits „ohne pip" hieß.
-RUN rm -rf /usr/local/lib/python3.12/site-packages/pip \
-           /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
-           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12 \
-           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.12 \
-           /opt/venv/lib/python3.12/site-packages/pip \
-           /opt/venv/lib/python3.12/site-packages/pip-*.dist-info
+# Die Pfade per Muster statt mit fester Python-Reihe: Bis 2026-09-23 stand hier `python3.12` —
+# nach dem Sprung auf 3.14 (#74) griff davon nichts mehr, pip lag wieder im venv.
+RUN rm -rf /usr/local/lib/python3.*/site-packages/pip \
+           /usr/local/lib/python3.*/site-packages/pip-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.* \
+           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.* \
+           /opt/venv/lib/python3.*/site-packages/pip \
+           /opt/venv/lib/python3.*/site-packages/pip-*.dist-info
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _kit import hygiene  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
-import _sdist_normalisieren  # noqa: E402
+import _artefakte_normalisieren  # noqa: E402
 
 # Ohne setuptools lässt sich nichts bauen — und ohne Bau prüft dieser Test nichts. Ein
 # stilles „übersprungen" wäre hier die schlechteste Antwort: Es sähe grün aus und wäre leer.
@@ -78,12 +78,14 @@ def attrappen_aus_gitignore() -> list[str]:
     return pfade
 
 
-def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = ()) -> tuple[str, str, str]:
+def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = (),
+         gruppe_schreibt: bool = False) -> tuple[str, str, str]:
     """(verzeichnis, wheel, sdist) — aus einer Kopie der versionierten Dateien.
 
     `verschiebung` setzt die Datei-Zeitstempel der Kopie um so viele Sekunden anders — so sieht
-    ein zweiter Checkout desselben Commits aus. `attrappen` legt ungetrackte Dateien dazu, so wie
-    sie in einem benutzten Arbeitsbaum liegen.
+    ein zweiter Checkout desselben Commits aus. `gruppe_schreibt` gibt jeder Datei g+w, so wie ein
+    Checkout unter umask 0002 (Ubuntu/Mint) sie anlegt. `attrappen` legt ungetrackte Dateien dazu,
+    so wie sie in einem benutzten Arbeitsbaum liegen.
     """
     arbeit = tempfile.mkdtemp(prefix="tinysesam-pack-")
     quelle, ziel = os.path.join(arbeit, "src"), os.path.join(arbeit, "dist")
@@ -99,6 +101,10 @@ def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = ()) -> tuple[st
         if verschiebung:
             stempel = os.stat(pfad).st_mtime + verschiebung
             os.utime(pfad, (stempel, stempel))
+        # Die Rechte in BEIDE Richtungen setzen: Die Quelle selbst liegt je nach umask schon auf
+        # 0664 oder 0644 — nur „g+w dazu" wäre auf einem 0002-Rechner kein Unterschied.
+        modus = os.stat(pfad).st_mode
+        os.chmod(pfad, (modus | 0o020) if gruppe_schreibt else (modus & ~0o022))
 
     vorher, sde = os.getcwd(), os.environ.get("SOURCE_DATE_EPOCH")
     try:
@@ -112,8 +118,10 @@ def baue(verschiebung: float = 0.0, attrappen: tuple[str, ...] = ()) -> tuple[st
             os.environ.pop("SOURCE_DATE_EPOCH", None)
         else:
             os.environ["SOURCE_DATE_EPOCH"] = sde
-    # Derselbe Schritt wie im Release-Workflow — ohne ihn wäre das sdist nicht reproduzierbar.
-    _sdist_normalisieren.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
+    # Derselbe Schritt wie im Release-Workflow — ohne ihn hinge das sdist an Zeitstempeln und
+    # Rechten des Checkouts, das Wheel an dessen Rechten (umask).
+    _artefakte_normalisieren.sdist_normalisieren(os.path.join(ziel, sdist), BAUZEIT)
+    _artefakte_normalisieren.wheel_normalisieren(os.path.join(ziel, whl))
     return arbeit, os.path.join(ziel, whl), os.path.join(ziel, sdist)
 
 
@@ -319,21 +327,38 @@ try:
     ok(f"keine der {len(ATTRAPPEN)} gitignorierten Attrappen im sdist oder Wheel")
 
     # ---------- Bit-reproduzierbar: zweiter Checkout, gleiche Prüfsummen (B4-8) ----------
-    # Ein zweiter Bau mit anderen Datei-Zeitstempeln — so unterscheiden sich zwei Checkouts
-    # desselben Commits. Mit gleicher `SOURCE_DATE_EPOCH` müssen Wheel und sdist Byte für Byte
-    # gleich sein, sonst kann niemand die veröffentlichte Prüfsumme nachstellen.
+    # Ein zweiter Bau mit anderen Datei-Zeitstempeln und g+w-Rechten — so unterscheiden sich zwei
+    # Checkouts desselben Commits (anderer Zeitpunkt, andere umask). Mit gleicher
+    # `SOURCE_DATE_EPOCH` müssen Wheel und sdist Byte für Byte gleich sein, sonst kann niemand die
+    # veröffentlichte Prüfsumme nachstellen. Bis zur Nachprüfung (A-3) kopierte der zweite Bau die
+    # Rechte mit — der Unterschied 0644/0664 im Wheel fiel so nie auf.
     import hashlib  # noqa: E402
-    ZWEITER, WHEEL2, SDIST2 = baue(verschiebung=86400.0, attrappen=ATTRAPPEN)
+    ZWEITER, WHEEL2, SDIST2 = baue(verschiebung=86400.0, attrappen=ATTRAPPEN, gruppe_schreibt=True)
 
     def _sha(pfad: str) -> str:
         return hashlib.sha256(pathlib.Path(pfad).read_bytes()).hexdigest()
 
-    assert _sha(WHEEL) == _sha(WHEEL2), "Wheel nicht reproduzierbar (SOURCE_DATE_EPOCH wirkt nicht)"
+    assert _sha(WHEEL) == _sha(WHEEL2), ("Wheel nicht reproduzierbar (SOURCE_DATE_EPOCH oder "
+                                         "die Rechte-Normalisierung wirkt nicht)")
     assert _sha(SDIST) == _sha(SDIST2), ("sdist nicht reproduzierbar — "
-                                         "scripts/_sdist_normalisieren.py greift nicht")
-    rel_text = pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8")
-    for noetig in ("SOURCE_DATE_EPOCH", "scripts/_sdist_normalisieren.py"):
-        assert noetig in rel_text, f"der Release-Workflow baut ohne {noetig} — nicht reproduzierbar"
+                                         "scripts/_artefakte_normalisieren.py greift nicht")
+    # Der Release-Workflow macht dasselbe, in dieser Reihenfolge und im selben Schritt: Zeit
+    # exportieren, ohne Isolierung bauen, beide Artefakte normalisieren. Ein blosses „kommt irgendwo
+    # vor" (bis zur Nachprüfung, A-6) hielt weder die Reihenfolge noch `--no-isolation` fest.
+    rel_zeilen = [hygiene.ohne_yaml_kommentar(z).strip() for z in
+                  pathlib.Path(ROOT, ".github/workflows/release.yml").read_text(encoding="utf-8").splitlines()]
+    bau = next((i for i, z in enumerate(rel_zeilen) if re.search(r"-m\s+build\b", z)), None)
+    assert bau is not None, "release.yml baut nicht mit `-m build`"
+    assert "--no-isolation" in rel_zeilen[bau], f"release.yml baut mit Isolierung: {rel_zeilen[bau]}"
+    anfang = max(i for i in range(bau) if re.match(r"^(- )?(name|run|uses):", rel_zeilen[i]))
+    ende = next((i for i in range(bau + 1, len(rel_zeilen))
+                 if re.match(r"^- (name|uses|run):", rel_zeilen[i])), len(rel_zeilen))
+    davor, danach = rel_zeilen[anfang:bau], rel_zeilen[bau + 1:ende]
+    assert "export SOURCE_DATE_EPOCH" in davor, "release.yml: SOURCE_DATE_EPOCH nicht vor dem Bau exportiert"
+    assert any(re.match(r"^SOURCE_DATE_EPOCH=\"\$\(git log -1 --format=%ct\)\"$", z) for z in davor), \
+        "release.yml: SOURCE_DATE_EPOCH nicht aus dem Commit-Zeitstempel"
+    assert any("scripts/_artefakte_normalisieren.py" in z and "dist/*.whl" in z and "dist/*.tar.gz" in z
+               for z in danach), "release.yml: Wheel und sdist werden nach dem Bau nicht normalisiert"
     ok(f"Wheel und sdist bit-reproduzierbar (sha256 {_sha(SDIST)[:12]}…), Release baut genauso")
 
     # ---------- Veröffentlicht wird ohne Geheimnis ----------

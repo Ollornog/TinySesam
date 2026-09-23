@@ -402,16 +402,9 @@ def _jobs(text: str) -> dict[str, list[str]]:
     return jobs
 
 
-# B4-4 — Wer eine Identität oder ein Schreibrecht hält, führt keinen fremden Code aus. Ein Job mit
-# `id-token: write` (Sigstore, PyPI, Pages) oder `contents: write` (Releases) checkt nicht aus und
-# startet weder pip noch python noch ein Bauwerkzeug. Bis 0.19.0 lief die ganze Suite samt
-# `pip install ".[all]"` im Job, der auch beglaubigte — jede Abhängigkeit hätte eine Attestation
-# auf die Identität des Workflows ausstellen können.
-FREMDCODE = re.compile(r"\b(pip3?|python3?|uv|uvx|pipx|npm|npx|make|docker)\b|\./|-m build|\.sh\b")
-
-
-def _kommandos(zeilen: list[str]) -> list[str]:
-    """Die Shell-Zeilen aller `run:`-Schritte — einzeilig und als Block (`run: |`)."""
+def _kommandos(zeilen: list[str], schluessel: tuple[str, ...] = ("run",)) -> list[str]:
+    """Die Zeilen aller `run:`-Schritte (bzw. der Schlüssel in `schluessel`) — einzeilig und als
+    Block (`run: |`)."""
     aus, block_tiefe = [], None
     for z in zeilen:
         tiefe = len(z) - len(z.lstrip())
@@ -421,7 +414,7 @@ def _kommandos(zeilen: list[str]) -> list[str]:
             else:
                 aus.append(z.strip())
                 continue
-        m = re.match(r"^(\s+)(?:- )?run:\s*(.*)$", z)
+        m = re.match(rf"^(\s+)(?:- )?(?:{'|'.join(schluessel)}):\s*(.*)$", z)
         if m:
             if m.group(2) in ("|", ">", "|-", ">-"):
                 block_tiefe = len(m.group(1))
@@ -430,25 +423,127 @@ def _kommandos(zeilen: list[str]) -> list[str]:
     return [k for k in aus if k]
 
 
-_geprueft_identitaet = 0
+# B4-4 — Wer eine Identität oder ein Schreibrecht hält, führt keinen fremden Code aus. Bis 0.19.0
+# lief die ganze Suite samt `pip install ".[all]"` im Job, der auch beglaubigte — jede
+# Abhängigkeit hätte eine Attestation auf die Identität des Workflows ausstellen können.
+#
+# Welche Rechte ein Job hält, wird aus JEDER Schreibweise gelesen: Block (`id-token: write`),
+# Flow-Map (`{id-token: write}`), `write-all`, und geerbt von der Workflow-Ebene, wenn der Job
+# selbst nichts setzt. Bis zur Nachprüfung (A-2) sah der Riegel nur die Blockschreibweise und nur
+# `id-token`/`contents` — ein neuer Job mit `permissions: write-all` lief komplett durch.
+def _rechte_wert(wert: str, folgend: list[str], tiefe: int) -> set[str]:
+    """Die Schreibrechte aus einem `permissions:`-Wert; `*` steht für write-all."""
+    wert = wert.strip().strip("'\"")
+    if wert == "write-all":
+        return {"*"}
+    if wert in ("read-all", "{}"):
+        return set()
+    if wert.startswith("{"):
+        paare = [p.split(":", 1) for p in wert.strip("{}").split(",") if ":" in p]
+        return {k.strip() for k, v in paare if v.strip().strip("'\"") == "write"}
+    assert not wert, f"unbekannter permissions-Wert {wert!r} — Wächter anpassen"
+    rechte = set()
+    for z in folgend:
+        if z.strip() and len(z) - len(z.lstrip()) <= tiefe:
+            break
+        m = re.match(r"^\s+([a-z-]+):\s*(\S+)", z)
+        if m and m.group(2).strip("'\"") == "write":
+            rechte.add(m.group(1))
+    return rechte
+
+
+def _rechte_oben(text: str) -> set[str]:
+    zeilen = _code(text.split("\njobs:", 1)[0])
+    for i, z in enumerate(zeilen):
+        m = re.match(r"^permissions:\s*(.*)$", z)
+        if m:
+            return _rechte_wert(m.group(1), zeilen[i + 1:], 0)
+    return {"*"}   # ohne Angabe gilt die Repo-Vorgabe — im schlimmsten Fall Schreibrecht
+
+
+def _rechte_job(zeilen: list[str], geerbt: set[str]) -> set[str]:
+    for i, z in enumerate(zeilen):
+        m = re.match(r"^    permissions:\s*(.*)$", z)
+        if m:
+            return _rechte_wert(m.group(1), zeilen[i + 1:], 4)
+    return geerbt
+
+
+# Befehle, die ein Job mit Identität oder Schreibrecht in `run:` ausführen darf — eine Positivliste,
+# keine Sperrliste: `curl … | bash`, `git clone … && node …` oder ein neues Werkzeug fielen durch
+# jede Wortliste (A-5). Geprüft wird jedes Glied einer Befehlskette und jede `$( … )`-Ersetzung.
+ERLAUBT_MIT_RECHT = {"echo", "printf", "gh release", "gh attestation", "git log"}
+
+
+def _befehle(zeile: str) -> list[str]:
+    """Die einzelnen Befehle einer Shell-Zeile — getrennt an ; && || | ( $( und `.
+
+    Was hinter einer schliessenden Klammer folgt, gehört zum äusseren Befehl (`echo "$(git log)"
+    >> datei`) und wird verworfen; eine Pipe in Anführungszeichen wird dabei als eigener Befehl
+    gelesen und damit rot — lieber zu streng als zu blind.
+    """
+    aus = []
+    for teil in re.split(r"\$\(|`|&&|\|\||[;|(]", zeile):
+        woerter = teil.split(")", 1)[0].split()
+        while woerter and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", woerter[0]):
+            woerter.pop(0)           # VAR=wert vor dem Befehl
+        if woerter:
+            aus.append(" ".join(woerter[:2]))
+    return aus
+
+
+def _erlaubt(befehl: str) -> bool:
+    return befehl.split()[0] in ERLAUBT_MIT_RECHT or befehl in ERLAUBT_MIT_RECHT
+
+
+# Schreibrechte, die mit Checkout auskommen MÜSSEN — je Job genau diese Rechte und der Grund. Der
+# Checkout ist erlaubt, fremder Code in `run:` weiterhin nicht. Kommt ein Recht dazu, wird der Job
+# rot (die Menge muss exakt stimmen).
+CHECKOUT_MIT_RECHT = {
+    (".github/workflows/codeql.yml", "analyse"): ({"security-events"},
+                                                   "CodeQL braucht den Quelltext; kein `run:`"),
+    (".github/workflows/release.yml", "image"): ({"packages"},
+                                                 "Build-Kontext fürs Abbild; pip läuft im BuildKit-"
+                                                 "Container, der das Token nicht sieht"),
+}
+
+_geprueft_identitaet, _ausnahmen_gesehen = 0, set()
 for wf in WORKFLOWS:
-    for job, zeilen in _jobs(read(wf)).items():
-        block = "\n".join(zeilen)
-        if not re.search(r"^\s+(id-token|contents):\s*write\b", block, re.M):
+    text = read(wf)
+    oben = _rechte_oben(text)
+    # Oben auf Workflow-Ebene steht nie ein Schreibrecht — das erbte sonst jeder Job.
+    assert not oben, f"{wf}: Schreibrecht auf Workflow-Ebene ({sorted(oben)}) — gehört an den Job"
+    jobs = _jobs(text)
+    assert jobs, f"{wf}: keine Jobs erkannt — Parser prüfen"
+    for job, zeilen in jobs.items():
+        rechte = _rechte_job(zeilen, oben)
+        if not rechte:
             continue
         _geprueft_identitaet += 1
-        assert "actions/checkout" not in block, (
-            f"{wf} Job `{job}` hält ein Schreibrecht/eine Identität UND checkt das Repo aus — "
-            "Bau und Beglaubigung gehören in getrennte Jobs")
+        block = "\n".join(zeilen)
+        ausnahme = CHECKOUT_MIT_RECHT.get((wf, job))
+        if ausnahme:
+            _ausnahmen_gesehen.add((wf, job))
+            assert rechte == ausnahme[0], (f"{wf} Job `{job}`: Rechte {sorted(rechte)} statt "
+                                           f"{sorted(ausnahme[0])} — die Ausnahme gilt nur dafür")
+        else:
+            assert "actions/checkout" not in block, (
+                f"{wf} Job `{job}` hält {sorted(rechte)} UND checkt das Repo aus — Bau und "
+                "Beglaubigung gehören in getrennte Jobs")
+        # Lokale Actions und Docker-Actions bringen Code mit, den kein SHA-Pin festhält.
+        assert not re.search(r"^\s+(?:- )?uses:\s*['\"]?(\./|docker://)", block, re.M), \
+            f"{wf} Job `{job}` hält {sorted(rechte)} und nutzt eine lokale/Docker-Action"
+        assert not re.search(r"^\s+(?:- )?shell:", block, re.M), \
+            f"{wf} Job `{job}` hält {sorted(rechte)} und setzt eine eigene `shell:`"
         for k in _kommandos(zeilen):
-            assert not FREMDCODE.search(k), (f"{wf} Job `{job}` hält ein Schreibrecht/eine "
-                                             f"Identität und führt Code aus: {k}")
-    # Oben auf Workflow-Ebene steht nie ein Schreibrecht — das erbte sonst jeder Job.
-    oben = read(wf).split("\njobs:", 1)[0]
-    assert not re.search(r"^\s+[a-z-]+:\s*write\b", "\n".join(_code(oben)), re.M), \
-        f"{wf}: Schreibrecht auf Workflow-Ebene — gehört an den einen Job, der es braucht"
-assert _geprueft_identitaet >= 4, f"nur {_geprueft_identitaet} Jobs mit Identität gefunden — Parser prüfen"
-print(f"  {_geprueft_identitaet} Jobs mit Identität/Schreibrecht: kein Checkout, kein pip, kein Bau")
+            for befehl in _befehle(k):
+                assert _erlaubt(befehl), (f"{wf} Job `{job}` hält {sorted(rechte)} und führt "
+                                          f"`{befehl}` aus: {k}")
+assert _ausnahmen_gesehen == set(CHECKOUT_MIT_RECHT), \
+    f"Ausnahmen ohne Job: {set(CHECKOUT_MIT_RECHT) - _ausnahmen_gesehen} — Liste aufräumen"
+assert _geprueft_identitaet >= 6, f"nur {_geprueft_identitaet} Jobs mit Schreibrecht gefunden — Parser prüfen"
+print(f"  {_geprueft_identitaet} Jobs mit Identität/Schreibrecht (jede Schreibweise): nur "
+      f"{'/'.join(sorted(ERLAUBT_MIT_RECHT))}, Checkout nur mit begründeter Ausnahme")
 
 # B4-6 — Actions, die zur Laufzeit ein Werkzeug nachladen. Der SHA-Pin hält die Action fest, nicht
 # das Werkzeug: Ohne Angabe zieht setup-qemu den `latest`-Tag von tonistiigi/binfmt (privilegiert!),
@@ -492,11 +587,25 @@ for wf in (".github/workflows/release.yml", ".github/workflows/audit.yml"):
         block = "\n".join(zeilen)
         if "tests/run_all.py" in block:
             continue
-        for z in zeilen:
-            if re.search(r"\bpip\b.*\binstall\b", z):
-                assert "--require-hashes" in z, (f"{wf} Job `{job}`: `pip install` ohne "
-                                                 f"--require-hashes: {z.strip()}")
-print("  Bau- und Prüfwerkzeuge im Release/Audit nur aus gehashten Listen")
+        for z in _kommandos(zeilen):
+            # Jede Schreibweise von pip: `pip3`, `pip3.14`, `"$venv/pip"`, `python -m pip`. Bis zur
+            # Nachprüfung (A-6) traf `\bpip\b` kein `pip3` — `pip3 install build` rutschte durch.
+            if re.search(r"(\bpip[0-9.]*|\bpython[0-9.]*\s+-m\s+pip)[\"']?\s+install\b", z):
+                assert "--require-hashes" in z or ("--no-index" in z and "--no-deps" in z), (
+                    f"{wf} Job `{job}`: pip install weder gehasht noch ohne Netz: {z}")
+            # Werkzeuge, die an der gehashten Liste vorbei aus dem Index installieren.
+            assert not re.search(r"\b(uvx|pipx|easy_install|conda|mamba|pyproject-build)\b"
+                                 r"|\buv[\"']?\s+(tool|run|add|sync|pip\s+(install|sync))\b", z), \
+                f"{wf} Job `{job}`: Werkzeug am Hash vorbei: {z}"
+            # Ohne `--no-isolation` holt sich `build` das gerade neueste setuptools in eine eigene
+            # Umgebung — die gehashte Liste wäre dann Dekoration.
+            if re.search(r"-m\s+build\b", z):
+                assert re.search(r"\s(--no-isolation|-n)\b", z), \
+                    f"{wf} Job `{job}`: `-m build` mit Bau-Isolierung (zieht setuptools frei): {z}"
+_bau_job = _jobs(read(".github/workflows/release.yml")).get("bauen", [])
+assert any(re.search(r"-m\s+build\b", k) for k in _kommandos(_bau_job)), \
+    "release.yml: Job `bauen` baut nicht mehr mit `-m build` — Wächter anpassen"
+print("  Bau- und Prüfwerkzeuge im Release/Audit nur aus gehashten Listen, Bau ohne Isolierung")
 
 # B4-7 — Das Abbild installiert, was die Sperrliste sagt, Byte für Byte. Der Digest-Pin im FROM
 # hält nur das Basis-Abbild; ein `pip install ".[gateway]"` löste bei jedem Bau neu auf.
@@ -510,6 +619,34 @@ _eigen = [z for z in _df.splitlines() if re.search(r"pip install .*\s\.\s*(\\|$)
 assert _eigen and all("--no-index" in z and "--no-deps" in z for z in _eigen), \
     f"TinySesam selbst wird mit Netz oder Auflösung installiert: {_eigen}"
 assert f"!{SPERRLISTE}" in read(".dockerignore"), f".dockerignore lässt {SPERRLISTE} nicht durch"
+# `--no-deps` installiert auch eine unvollständige Liste ohne Murren (A-1 der Nachprüfung): Fehlt
+# eine transitive Abhängigkeit — etwa weil Dependabot eine Zeile hob, die eine neue mitbringt —,
+# bricht das Abbild erst beim Start ab. `pip check` und der Import gehören deshalb in denselben
+# RUN, nach beide Installationen und vor das Entfernen von setuptools; audit.yml fährt dieselben
+# Schritte bei jedem PR, sonst fiele es erst beim Release auf (kein PR-Lauf baut das Abbild).
+_run = re.sub(r"\\\n\s*", " ", _df)
+_kette = next((z for z in _run.splitlines() if "-r requirements.txt" in z), "")
+_stufen = [s.strip() for s in _kette.split("&&")]
+_pos = {n: next((i for i, s in enumerate(_stufen) if re.search(m, s)), -1) for n, m in (
+    ("sperrliste", r"--require-hashes"), ("eigen", r"--no-index"), ("check", r"/pip check$"),
+    ("import", r"python -c \"import tinysesam\.gateway\"$"), ("setuptools", r"uninstall"))}
+assert -1 not in _pos.values(), f"Dockerfile: Schritt fehlt im Installations-RUN: {_pos}"
+assert _pos["sperrliste"] < _pos["eigen"] < _pos["check"] < _pos["import"] < _pos["setuptools"], \
+    f"Dockerfile: `pip check`/Import nicht nach der Installation und vor dem Aufräumen: {_pos}"
+_audit_lauf = _kommandos(_code(read(".github/workflows/audit.yml")))
+for _m in (rf"pip\"? install --require-hashes --no-deps -r {re.escape(SPERRLISTE)}$",
+           r"pip\"? install --no-deps --no-index --no-build-isolation \.$",
+           r"pip\"? check$", r"python\"? -c \"import tinysesam\.gateway\"$", r"^python3\.(\d+) -m venv"):
+    assert any(re.search(_m, k) for k in _audit_lauf), f"audit.yml: Probe der Sperrliste ohne `{_m}`"
+# Die Probe läuft in der Python-Reihe des Abbilds (die Sperrliste ist für sie aufgelöst).
+_reihe = re.search(r"^FROM python:(3\.\d+)", dockerfile, re.M).group(1)
+assert any(k.startswith(f"python{_reihe} -m venv") for k in _audit_lauf), \
+    f"audit.yml: Probe der Sperrliste nicht auf Python {_reihe} (FROM im Dockerfile)"
+# pip wird per Muster entfernt, nicht mit fester Reihe: Nach dem Sprung von 3.12 auf 3.14 (#74)
+# zeigten alle `python3.12`-Pfade ins Leere, und pip lag wieder im Endabbild.
+for _reihe_fest in set(re.findall(r"(?:python|pip)(3\.\d+)", _df)):
+    assert _reihe_fest == _reihe, (f"Dockerfile nennt Python {_reihe_fest}, das Abbild ist "
+                                   f"{_reihe} — Pfade per Muster (`python3.*`) schreiben")
 
 
 def _sperrliste(rel: str) -> dict[str, str]:
@@ -543,6 +680,25 @@ for _anf in _braucht:
     assert _v(_lock[_n]) >= _v(_m.group(2)), (f"{SPERRLISTE}: {_n}=={_lock[_n]} liegt unter der "
                                               f"Grenze {_anf} — neu erzeugen")
 assert "setuptools" in _lock, f"{SPERRLISTE}: setuptools fehlt — ohne Bau-Isolierung braucht das Abbild es"
+# Offline-Teil der Vollständigkeit: Jeder Name in einem `# via` muss selbst in der Liste stehen
+# (oder die Wurzel sein). Wer einen Block von Hand löscht, lässt dessen `via`-Verweise bei den
+# Abhängigkeiten zurück. Grenze: Ein Blatt ohne eigene Abhängigkeiten und eine NEUE Abhängigkeit
+# nach einem Bump sieht das nicht — die fängt erst `pip check` in audit.yml (siehe oben).
+_via, _in_via = set(), False
+for _z in read(SPERRLISTE).splitlines():
+    _s = _z.strip()
+    _vm = re.match(r"^# via(?:\s+(\S+))?", _s)
+    if _vm:
+        _in_via = not _vm.group(1)
+        if _vm.group(1):
+            _via.add(_vm.group(1).lower())
+    elif _in_via and re.match(r"^#\s{2,}\S", _s):
+        _via.add(_s.lstrip("#").split()[0].lower())
+    else:
+        _in_via = False
+_via -= {"tinysesam", "-r"}
+assert _via and _via <= set(_lock), (f"{SPERRLISTE}: `# via` nennt Pakete, die fehlen: "
+                                     f"{sorted(_via - set(_lock))} — neu erzeugen")
 print(f"  Gateway-Abbild: {len(_lock)} Pakete aus gehashter Sperrliste, deckt pyproject ab, kein pip-Upgrade")
 
 # B4-2 — Das Schwachstellen-Tor: jede gehashte Liste und beide Auflösungen gehen durch pip-audit,
@@ -634,13 +790,19 @@ print(f"  SECURITY: zwei Meldewege, Fristen {'/'.join(_en)} Tage in beiden Sprac
 _scorecard = {}
 _alle_wf = {wf: "\n".join(_code(read(wf))) for wf in WORKFLOWS}
 # Dangerous-Workflow: kein Trigger, der fremden Code mit Rechten ausführt; kein Ausdruck aus dem
-# Ereignis in einem Shell-Schritt (Skript-Injektion über Titel, Zweignamen, Kommentare).
+# Ereignis in einem Shell-Schritt oder einem `actions/github-script`-`script:` (Skript-Injektion
+# über Titel, Zweignamen, Kommentare). Geprüft wird JEDER `${{ … }}`-Ausdruck, der das Ereignis
+# anfasst — auch in einer Funktion: Bis zur Nachprüfung (A-7) sah der Wächter nur
+# `${{ github.event… }}` direkt, `${{ toJSON(github.event…) }}` oder `format('{0}', github.head_ref)`
+# gingen durch.
+_EREIGNIS = re.compile(r"\bgithub\s*(?:\.\s*|\[\s*['\"])(?:event|head_ref)\b")
 for wf, t in _alle_wf.items():
     assert not re.search(r"\b(pull_request_target|workflow_run|issue_comment)\b", t), \
         f"{wf}: gefährlicher Trigger (Scorecard Dangerous-Workflow)"
-    for k in _kommandos(t.splitlines()):
-        assert not re.search(r"\$\{\{\s*github\.(event\.|head_ref)", k), \
-            f"{wf}: Ereignis-Ausdruck im Shell-Schritt (Skript-Injektion): {k}"
+    for k in _kommandos(t.splitlines(), ("run", "script")):
+        for ausdruck in re.findall(r"\$\{\{(.*?)\}\}", k):
+            assert not _EREIGNIS.search(ausdruck), \
+                f"{wf}: Ereignis-Ausdruck im Shell-/Skript-Schritt (Skript-Injektion): {k}"
 _scorecard["Dangerous-Workflow"] = True
 # Token-Permissions: jeder Workflow setzt oben `permissions:` und dort nichts mit write (oben geprüft).
 _scorecard["Token-Permissions"] = all(re.search(r"^permissions:", t, re.M) for t in _alle_wf.values())
