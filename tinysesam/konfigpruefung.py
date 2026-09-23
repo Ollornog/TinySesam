@@ -378,6 +378,34 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "eingesteckter Stick genügt. Das ist eine bewusste Entscheidung für einen Bestand "
             "alter Authentikatoren; für einen neuen gehört der Wert auf 'required'.")
 
+    # --- LDAP-Transport (F-12) ---
+    if _an(config, "ldap_enabled"):
+        _url = str(getattr(config, "ldap_url", "") or "").strip().lower()
+        _tls_an = _url.startswith("ldaps://") or _an(config, "ldap_start_tls")
+        if _url and not _tls_an and not _an(config, "ldap_allow_plaintext"):
+            fehler.append(
+                f"ldap_url={_url!r} spricht im Klartext und ldap_start_tls ist False. Dann gehen "
+                "das Passwort des Dienstkontos UND jedes Benutzerpasswort unverschlüsselt über "
+                "das Netz — bei jeder Anmeldung. Abhilfe: ldaps:// in der URL (Port 636) oder "
+                "ldap_start_tls=True (Port 389). Ist das Verzeichnis auf demselben Host und der "
+                "Verkehr verlässt ihn nie, sagt ldap_allow_plaintext=True das ausdrücklich.")
+        if _an(config, "ldap_allow_plaintext") and not _tls_an:
+            warnungen.append(
+                "ldap_allow_plaintext=True: Der LDAP-Verkehr ist unverschlüsselt. Das Passwort "
+                "des Dienstkontos und jedes Benutzerpasswort sind damit für jeden mitlesbar, der "
+                "auf dem Weg sitzt. Nur vertretbar, wenn dieser Weg die Maschine nicht verlässt.")
+        if _tls_an and not _an(config, "ldap_tls_verify"):
+            warnungen.append(
+                "ldap_tls_verify=False: Das Zertifikat des Verzeichnisses wird nicht geprüft. "
+                "Verschlüsselt heisst dann nur: nicht mitlesbar von jemandem, der nicht "
+                "dazwischensitzt. Wer den Verkehr umlenkt, hält ein eigenes Zertifikat hin und "
+                "bekommt beide Passwörter. Bei eigener CA gehört sie in ldap_tls_ca_file.")
+        _ca = str(getattr(config, "ldap_tls_ca_file", "") or "").strip()
+        if _ca and not os.path.exists(_ca):
+            fehler.append(
+                f"ldap_tls_ca_file={_ca!r} gibt es nicht. Die Verbindung zum Verzeichnis "
+                "scheitert dann bei jeder Anmeldung — und zwar erst im Betrieb.")
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
