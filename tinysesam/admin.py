@@ -87,6 +87,13 @@ def build_admin_router(auth) -> APIRouter:
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
         else:
+            # Dieselbe Passwortregel wie an jeder anderen Setzstelle (Fund B2-13): Bis T-13 nahm
+            # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
+            # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
+            if b.get("password"):
+                mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
+                if mangel:
+                    raise HTTPException(400, mangel)
             uid = auth.create_user(username, password=b.get("password") or None,
                                    is_admin=bool(b.get("is_admin")), roles=roles,
                                    display_name=b.get("display_name"), email=email)
@@ -118,6 +125,11 @@ def build_admin_router(auth) -> APIRouter:
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
+        ziel = auth.store.get_user(uid)
+        mangel = auth.passwort_mangel(b["password"], username=ziel["username"] if ziel else None,
+                                      email=ziel["email"] if ziel else None, api=True)
+        if mangel:
+            raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen

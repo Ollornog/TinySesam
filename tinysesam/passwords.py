@@ -2,6 +2,7 @@
 damit TinySesam auch ohne argon2-cffi läuft. Beide sind speicher-hart und sicher."""
 from __future__ import annotations
 import hashlib, os, base64, hmac
+from typing import Optional
 
 try:
     from argon2 import PasswordHasher
@@ -118,3 +119,100 @@ def needs_rehash(stored: str) -> bool:
         except Exception:
             return False
     return False
+
+
+# ---------- Passwortregel beim Setzen (Länge, Blockliste, Kontextwörter) ----------
+#: Obergrenze für ein neues Passwort. NIST SP 800-63B verlangt, mindestens 64 Zeichen
+#: zuzulassen — 256 lässt Passphrasen und Passwortmanagern reichlich Platz. Ohne Grenze
+#: (R4-07) nahmen alle drei Setzstellen beliebig lange Eingaben an, und jede davon ging
+#: vollständig in den Hash; eine Obergrenze ist die übliche, prüfbare Zusage.
+PASSWORT_MAX_LAENGE = 256
+
+#: Eingebaute Blockliste — die Passwörter, die in jeder veröffentlichten Leak-Auswertung ganz
+#: oben stehen, plus die deutschsprachigen Klassiker. Bewusst **offline**: Eine Anfrage an
+#: einen fremden Dienst (etwa die k-Anonymity-API von HIBP) würde bei jeder Registrierung
+#: nach aussen telefonieren; das entscheidet der Betreiber, nicht die Bibliothek (Fund B2-5,
+#: Empfehlung H-17). Die Liste ist klein, weil sie mit der Mindestlänge zusammenspielt —
+#: länger wird sie über `password_blocklist_file`. Verglichen wird kleingeschrieben.
+BLOCKLISTE = frozenset("""
+password password1 password12 password123 password1234 passw0rd p@ssw0rd p@ssword
+passwort passwort1 passwort12 passwort123 passwort1234 kennwort kennwort1 kennwort123
+geheimnis geheimnis1 geheimnis123
+123456 1234567 12345678 123456789 1234567890 12345678910 0123456789 987654321 87654321
+111111 1111111 11111111 000000 00000000 123123 123123123 123321 654321 666666 121212
+112233 159753 147258369 123qwe 1q2w3e 1q2w3e4r 1q2w3e4r5t 1qaz2wsx zaq12wsx
+qwerty qwerty1 qwerty12 qwerty123 qwertyuiop qwertz qwertz1 qwertz123 qwertzuiop
+asdfgh asdfghjk asdfghjkl yxcvbnm zxcvbnm abc123 abcd1234 abcdef abcdefg abcdefgh
+iloveyou iloveyou1 letmein letmein1 welcome welcome1 welcome123 willkommen willkommen1
+hallo123 hallohallo admin admin123 admin1234 administrator root1234 changeme changeme1
+default secret secret123 test1234 testtest test123456 master master123 superman
+football baseball dragon monkey sunshine princess shadow michael jennifer trustno1
+starwars whatever freedom computer internet samsung pokemon batman ichliebedich
+schatz schatzi schalke04 fussball fußball sommer2024 sommer2025 sommer2026
+winter2024 winter2025 winter2026 frühling2026 herbst2026 dezember januar
+""".split())
+
+def mit_kernen(eintraege) -> frozenset:
+    """Eine Blockliste samt der Wortkerne ihrer Einträge (ab vier Buchstaben).
+
+    Steht `Firmenname2026` auf der Liste, soll `Firmenname!!` nicht durchgehen — verglichen wird
+    deshalb auch Kern gegen Kern. Kürzere Kerne (`abc` aus `abc123`) blieben draussen: Sie
+    stecken in zu vielen brauchbaren Passwörtern."""
+    klein = {str(e).strip().lower() for e in eintraege if str(e).strip()}
+    return frozenset(klein | {k for k in map(_kern, klein) if len(k) >= 4})
+
+
+#: Wörter, die für einen Dienst dieser Art ohnehin jeder zuerst probiert.
+KONTEXT_GRUNDWORTE = ("tinysesam", "password", "passwort", "login", "admin")
+
+
+def _kern(pw: str) -> str:
+    """Der Wortkern eines Passworts: kleingeschrieben, ohne Ziffern und Sonderzeichen.
+
+    Daran scheitern die üblichen Aufhübschungen (`Passwort2026!`, `Anna1990`, `admin#1`) —
+    sie hängen nur Ziffern und Zeichen an ein Wort, das auf der Liste steht."""
+    return "".join(z for z in pw.lower() if z.isalpha())
+
+
+def _trivial(pw: str) -> bool:
+    """Ein Zeichen wiederholt (`aaaaaaaa`) oder eine lückenlose Zeichenfolge (`45678901`)."""
+    if len(set(pw)) <= 1:
+        return True
+    schritte = {ord(b) - ord(a) for a, b in zip(pw, pw[1:])}
+    return schritte in ({1}, {-1}) or (pw.isdigit() and schritte <= {1, -9})
+
+
+def passwort_mangel(pw: str, min_laenge: int, *, kontext=(), blockliste=()) -> "Optional[tuple]":
+    """Was stimmt mit diesem neuen Passwort nicht? `None` = in Ordnung.
+
+    Rückgabe `(grund, parameter)` mit `grund` in `"short"`, `"long"`, `"weak"` — die Texte
+    macht der Aufrufer, damit dieselbe Regel für Seite, JSON-Antwort und CLI gilt. Geprüft
+    wird, was NIST SP 800-63B für ein gewähltes Passwort verlangt: Länge, Abgleich gegen eine
+    Liste bekannter Passwörter und gegen **kontextbezogene Wörter** (Dienstname, Benutzername,
+    E-Mail-Adresse). Keine Zusammensetzungsregeln (Grossbuchstabe, Sonderzeichen) — die
+    verbietet dieselbe Norm, weil sie nur vorhersehbare Muster erzeugen.
+
+    `kontext`: Wörter, die für DIESES Konto naheliegen. `blockliste`: zusätzliche Einträge
+    des Betreibers (aufbereitet mit `mit_kernen`).
+    """
+    pw = pw or ""
+    if len(pw) < int(min_laenge):
+        return "short", {"n": int(min_laenge)}
+    if len(pw) > PASSWORT_MAX_LAENGE:
+        return "long", {"n": PASSWORT_MAX_LAENGE}
+    klein = pw.lower()
+    kern = _kern(pw)
+    if klein in _BLOCK or klein in blockliste or _trivial(pw):
+        return "weak", {}
+    if kern and (kern in _BLOCK or kern in blockliste):
+        return "weak", {}
+    for wort in tuple(KONTEXT_GRUNDWORTE) + tuple(kontext or ()):
+        w = _kern(str(wort or ""))
+        # Unter vier Buchstaben trägt ein Kontextwort nichts — `al` stünde in jedem zweiten Wort.
+        # Auch verdoppelt (`admin-admin`) ist es nur das eine Wort.
+        if kern and len(w) >= 4 and len(kern) % len(w) == 0 and kern == w * (len(kern) // len(w)):
+            return "weak", {}
+    return None
+
+
+_BLOCK = mit_kernen(BLOCKLISTE)

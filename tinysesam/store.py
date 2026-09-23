@@ -549,8 +549,12 @@ class Store:
 
     # ---------- TOTP ----------
     def set_totp(self, user_id, secret, confirmed=False):
+        # `last_step` gehört zum Geheimnis: Ein neues beginnt ohne verbrauchten Schritt. Sonst
+        # sperrte der Bestätigungscode eines verworfenen Versuchs den ersten Code des neuen,
+        # wenn beide in dasselbe 30-Sekunden-Fenster fallen.
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
-                   "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, confirmed=excluded.confirmed",
+                   "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
+                   "confirmed=excluded.confirmed, last_step=NULL",
                    (user_id, secret, 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):

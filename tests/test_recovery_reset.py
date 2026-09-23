@@ -4,6 +4,7 @@ import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+import time
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -36,7 +37,7 @@ JSON = {"Accept": "application/json"}
 
 # ---------- Recovery-Codes: einlösbar im TOTP-Schritt, one-shot ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 codes = auth.generate_recovery_codes(uid)
 assert len(codes) == 6 and auth.recovery_codes_remaining(uid) == 6
 ok("generate_recovery_codes → 6 Codes")
@@ -138,6 +139,59 @@ except _CfgErr as e:
     assert "base_url" in str(e), e
 os.remove(_db2)
 print("  (C-2) base_url wird getrimmt, ohne Schema abgewiesen ok")
+
+# ---------- B2-7: ein verbrauchter Recovery-Code wird nachgehalten und gemeldet ----------
+# (Mutationsprobe: in `verify_recovery_code` direkt `return self.store.consume_recovery_code(…)`
+# wie vor T-13 → rot: keine Audit-Zeile, kein Ereignis.)
+db_r = os.path.join(tempfile.mkdtemp(), "r.db")
+auth_r = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_r, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False, recovery_code_count=4,
+                                   password_reset_enabled=True, base_url="https://auth.example.com"))
+post_r = []
+auth_r.set_mailer(lambda to, s, t, html=None: post_r.append(t))
+ereig_r = []
+auth_r.on_security_event = lambda e, k, d: ereig_r.append((e, d))
+uid_r = auth_r.create_user("rita", "rita-geheim-1", email="rita@example.com")
+geheim_r = auth_r.totp_begin(uid_r)["secret"]
+auth_r.totp_confirm(uid_r, pyotp.TOTP(geheim_r).at(time.time() - 30))
+codes_r = auth_r.generate_recovery_codes(uid_r)
+app_r = FastAPI()
+app_r.include_router(auth_r.router())
+cr = TestClient(app_r)
+cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1"}, follow_redirects=False)
+assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
+zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
+assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
+assert ("recovery_code_used", {"verbleibend": 3}) in ereig_r, ereig_r
+seite = cr.get("/auth/account").text
+assert "Nur noch 3 Recovery-Codes" in seite, "die Kontoseite nennt den knappen Rest nicht"
+auth_r.generate_recovery_codes(uid_r)
+assert "4 Recovery-Codes übrig" in cr.get("/auth/account").text
+assert [e for e, _ in ereig_r] == ["totp_enabled", "recovery_codes_generated", "recovery_code_used",
+                                   "recovery_codes_generated"], ereig_r
+ok("B2-7: Recovery-Verbrauch → Audit mit Rest, Ereignis, Anzeige auf der Kontoseite")
+
+# ---------- R4-14: der Selbstbedienungs-Reset widerruft die API-Keys ----------
+# (Mutationsprobe: `revoke_user_api_keys` in reset_submit streichen → rot.)
+key_r = auth_r.create_api_key(uid_r, name="ci")["key"]
+assert auth_r.verify_api_key(key_r)[0] is not None
+auth_r.send_password_reset("rita@example.com", auth_r.cfg.base_url)
+tok_r = re.search(r"/auth/reset\?token=([\w\-]+)", post_r[-1]).group(1)
+# Erst die Regel: ein schwaches Passwort wird abgelehnt und lässt den Link gültig.
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "Rita2024!"})
+assert r.status_code == 400 and "leicht zu erraten" in r.text
+assert auth_r.peek_magic(tok_r, purpose="reset_password"), "ein abgelehntes Passwort entwertet den Link"
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "ein-frisches-passwort"}, follow_redirects=False)
+assert r.status_code == 303
+assert auth_r.verify_api_key(key_r)[0] is None, "der API-Key überlebt den Reset"
+assert auth_r.store.count_active_api_keys(uid_r) == 0
+assert any(z["event"] == "password_reset" and "api_keys_revoked=1" in (z["detail"] or "")
+           for z in auth_r.store.recent_audit(20))
+assert ereig_r[-1][0] == "password_changed"
+ok("R4-14: Passwort-Reset per Mail widerruft die API-Keys (und prüft die Passwortregel)")
+auth_r.totp_disable(uid_r)
+assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
+os.remove(db_r)
 
 os.remove(db)
 print("\nRECOVERY + RESET OK ✅")

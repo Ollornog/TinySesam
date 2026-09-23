@@ -17,7 +17,7 @@ import time
 import json
 import hashlib
 import secrets
-from typing import Any, Literal, NoReturn, Optional, cast
+from typing import Any, Callable, Literal, NoReturn, Optional, cast
 
 from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
@@ -28,6 +28,7 @@ from .errors import ConfigError, StateError
 from .config import TinySesamConfig
 from .store import Store, norm_email
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
+from . import passwords as _pw
 from .templates import Templates
 from . import totp as _totp
 from . import security
@@ -245,6 +246,13 @@ class TinySesam:
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
+        #: Opt-in-Benachrichtigung bei Sicherheitsereignissen am eigenen Konto (Fund B2-2,
+        #: Empfehlung H-6) — siehe `SICHERHEITSEREIGNISSE`. Aufruf `hook(ereignis, konto,
+        #: details)`; `konto` hat `id`, `username`, `email`, `display_name`. TinySesam
+        #: verschickt selbst nichts: welche Mail, welcher Kanal, welche Sprache, entscheidet
+        #: die App.
+        self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
+        self._blockliste = self._blockliste_laden(config.password_blocklist_file)
         self.oidc = None
         self.webauthn = None
         self.ldap = None
@@ -606,6 +614,7 @@ class TinySesam:
             # In den Audit-Eintrag, nicht nur verwerfen: Wer das versucht, soll sichtbar sein.
             detail += f" verworfene_rollen={','.join(abgeschnitten)}"
         self.audit("apikey_create", detail=detail)
+        self.sicherheitsereignis("api_key_created", user_id, key_id=kid, name=name or "")
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
                 "roles": roles, "verworfene_rollen": abgeschnitten, "kind": kind}
 
@@ -667,8 +676,85 @@ class TinySesam:
         self.audit("apikey_revoke", detail=f"key={key_id}")
 
     def set_password(self, user_id, password):
-        """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers)."""
+        """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
+
+        Die Passwortregel (`passwort_mangel`) prüft hier **nicht** — das tun die Setzstellen
+        (Registrierung, Reset, Kontoseite, Admin-Panel, CLI), weil nur sie eine lesbare Antwort
+        geben können. Wer diese Methode aus eigenem Code ruft, fragt vorher `passwort_mangel()`.
+        Benachrichtigt wird immer (`password_changed`), egal über welchen Weg."""
         self.store.set_password_hash(user_id, hash_password(password))
+        self.sicherheitsereignis("password_changed", user_id)
+
+    @staticmethod
+    def _blockliste_laden(pfad) -> frozenset:
+        """Die Betreiber-Blockliste (`password_blocklist_file`) einlesen — einmal, beim Start.
+
+        Fehlt die Datei, bricht der Start ab (`ConfigError`) statt still ohne Liste
+        weiterzulaufen: Wer eine Liste angibt, verlässt sich auf sie."""
+        if not pfad:
+            return frozenset()
+        try:
+            with open(pfad, encoding="utf-8") as f:
+                return _pw.mit_kernen(z for z in f if z.strip() and not z.lstrip().startswith("#"))
+        except OSError as e:
+            raise ConfigError(f"password_blocklist_file {pfad!r} lässt sich nicht lesen: {e}") from e
+
+    def passwort_mangel(self, password, *, username=None, email=None, api: bool = False) -> Optional[str]:
+        """Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der
+        übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
+
+        Eine Regel für alle Setzstellen: Registrierung, Passwort-Reset, Kontoseite und das
+        Admin-Panel (dort fehlte bis zu T-13 jede Prüfung, Fund B2-13). Sie prüft Mindest-
+        (`password_min_length`) und Höchstlänge (R4-07), die eingebaute plus die eigene
+        Blockliste und kontextbezogene Wörter — Dienstname (`rp_name`), Benutzername und der
+        Namensteil der E-Mail-Adresse (B2-5/H-17). Einzelheiten: `passwords.passwort_mangel`."""
+        kontext = [self.cfg.rp_name, username or ""]
+        if email:
+            kontext.append(str(email).split("@", 1)[0])
+        befund = _pw.passwort_mangel(password or "", self.sec("password_min_length"),
+                                     kontext=kontext, blockliste=self._blockliste)
+        if befund is None:
+            return None
+        grund, werte = befund
+        schluessel = {"short": ("api.password_short", "err.pw_short"),
+                      "long": ("api.password_long", "err.pw_long"),
+                      "weak": ("api.password_weak", "err.pw_weak")}[grund]
+        return self.t(schluessel[0] if api else schluessel[1], **werte)
+
+    # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
+    #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
+    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. NIST SP 800-63B verlangt,
+    #: den Inhaber über solche Änderungen zu benachrichtigen; bis T-13 erfuhr er von keiner
+    #: (Fund B2-2): Ein Angreifer mit einer Sitzung konnte TOTP abschalten, einen Passkey
+    #: hinzufügen oder das Passwort ändern, und der Inhaber sah es erst beim nächsten Login —
+    #: wenn überhaupt.
+    SICHERHEITSEREIGNISSE = (
+        "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
+        "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
+        "api_key_created",
+    )
+
+    def sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
+        """`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
+
+        Ein Fehler im Hook bricht den Vorgang **nicht** ab — die Änderung ist zu diesem Zeitpunkt
+        schon geschrieben, und ein ausgefallener Mailserver darf den Passwortwechsel nicht
+        scheitern lassen. Er landet aber im Sicherheits-Log: Eine Benachrichtigung, die still
+        ausbleibt, ist schlechter als keine, auf die sich niemand verlässt. Der Hook läuft
+        synchron im Request; wer Mails verschickt, reiht sie besser in eine Warteschlange ein."""
+        hook = self.on_security_event
+        if hook is None:
+            return
+        zeile = self.store.get_user(user_id)
+        if zeile is None:
+            return
+        konto = {"id": zeile["id"], "username": zeile["username"], "email": zeile["email"],
+                 "display_name": zeile["display_name"]}
+        try:
+            hook(ereignis, konto, dict(details))
+        except Exception as e:
+            security.seclog.warning("on_security_event fehlgeschlagen ereignis=%s user_id=%s: %s",
+                                    ereignis, zeile["id"], security.fuer_log(repr(e)))
 
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage."""
@@ -1153,6 +1239,7 @@ class TinySesam:
         if len(pin) < self.cfg.pin_min_length:
             raise ConfigError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
         self.store.set_pin_hash(user_id, hash_password(pin))
+        self.sicherheitsereignis("pin_set", user_id)
 
     def has_pin(self, user_id) -> bool:
         """Hat dieses Konto eine PIN eingerichtet?"""
@@ -1162,6 +1249,7 @@ class TinySesam:
         """Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt)."""
         self.store.delete_pin(user_id)
         self.audit("pin_disable", detail=f"user={user_id}")
+        self.sicherheitsereignis("pin_disabled", user_id)
 
     def check_pin(self, username, pin) -> Optional[dict]:
         """Wie `check_password`, nur mit der persönlichen PIN."""
@@ -1297,6 +1385,18 @@ class TinySesam:
         return self._methoden_sperre(username, ip, "resource", self.sec("resource_max_attempts"),
                                      ip_faktor=self.sec("ip_attempt_factor"))
 
+    def is_totp_setup_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
+
+        Die Route `POST /auth/totp/setup` prüfte bis T-13 beliebig viele Codes, ohne Drossel,
+        ohne Sperre und ohne Protokollzeile (Funde B2-12, R3-6) — die einzige OTP-Prüfstelle,
+        an der das so war. Raten bringt dort wenig (wer einrichtet, sieht das Geheimnis), aber
+        eine Prüfstelle ohne Bremse und ohne Spur ist genau die, nach der niemand mehr schaut.
+        Wie `reauth` **nur pro Konto** (`totp_setup_max_attempts`) und getrennt vom
+        Login-Lockout: Fünf Tippfehler beim Einrichten sollen nicht die Anmeldung sperren.
+        """
+        return self._methoden_sperre(username, ip, "totp_setup", self.sec("totp_setup_max_attempts"))
+
     def _methoden_sperre(self, username, ip, method, limit, ip_faktor=0) -> bool:
         """Gemeinsamer Rumpf der methodengebundenen Sperren (`is_*_locked`).
 
@@ -1382,22 +1482,37 @@ class TinySesam:
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 
     def totp_confirm(self, user_id, code) -> bool:
-        """Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an."""
+        """Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an.
+
+        Der Bestätigungscode wird **verbraucht** wie jeder andere (Fund B2-3): Bis T-13 prüfte
+        diese Stelle nur `verify()` und buchte den Zeitschritt nicht. Derselbe Code, eben zur
+        Einrichtung eingetippt (und dabei womöglich abgelesen), meldete danach an
+        `/auth/totp` noch bis zu 90 Sekunden an — die Einmal-Zusage aus T-9 galt nur für die
+        Anmeldung, nicht für die Einrichtung. Wer unter `login_chain=["password","totp"]`
+        einrichtet, gibt deshalb im nächsten Schritt den FOLGENDEN Code ein."""
         t = self.store.get_totp(user_id)
-        if t and _totp.verify(t["secret"], code):
-            self.store.confirm_totp(user_id)
-            return True
-        return False
+        if not t or not code:
+            return False
+        schritt = _totp.passender_schritt(t["secret"], code)
+        if schritt is None or not self.store.totp_step_verbrauchen(user_id, schritt):
+            return False
+        self.store.confirm_totp(user_id)
+        self.audit("totp_setup_confirm", detail=f"user={user_id}")
+        self.sicherheitsereignis("totp_enabled", user_id)
+        return True
 
     def totp_disable(self, user_id):
         """TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert)."""
         offen = self.store.count_recovery_codes(user_id)   # vor dem Löschen zählen
+        hatte = self.store.has_confirmed_totp(user_id)
         self.store.delete_totp(user_id)
         self.store.delete_recovery_codes(user_id)   # ohne TOTP sind Recovery-Codes gegenstandslos
         # Das Abschalten eines zweiten Faktors ist das, was ein Angreifer als Erstes tut, wenn er
         # eine Sitzung hat. Ohne Eintrag ist es hinterher nicht nachvollziehbar — bis 2026-09-21
         # hinterliess es keine Spur, obwohl dabei TOTP UND alle Recovery-Codes fallen.
         self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
+        if hatte:
+            self.sicherheitsereignis("totp_disabled", user_id, recovery_codes_geloescht=offen)
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
     #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 7 Byte = **112 Bit**.
@@ -1410,6 +1525,9 @@ class TinySesam:
     #: Bestehende Codes bleiben gültig (gespeichert wird ohnehin nur der Hash); neu erzeugte
     #: sind länger.
     RECOVERY_BYTES = 7
+    #: Ab so wenigen verbleibenden Codes zeigt die Kontoseite eine Warnung und das
+    #: Sicherheits-Log eine Zeile — wer sie aufbraucht, soll rechtzeitig neue erzeugen.
+    RECOVERY_WARNSCHWELLE = 3
 
     def generate_recovery_codes(self, user_id, n=None) -> list:
         """Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL."""
@@ -1418,6 +1536,7 @@ class TinySesam:
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
         self.audit("recovery_generate", detail=f"user={user_id} n={n}")
+        self.sicherheitsereignis("recovery_codes_generated", user_id, anzahl=n)
         return codes
 
     @staticmethod
@@ -1429,7 +1548,17 @@ class TinySesam:
         """Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal."""
         if not code:
             return False
-        return self.store.consume_recovery_code(user_id, self._rc_hash(code))
+        if not self.store.consume_recovery_code(user_id, self._rc_hash(code)):
+            return False
+        # Ein verbrauchter Code heisst: Der Authenticator fehlte — oder jemand anderes hat einen
+        # Code. Beides soll der Inhaber erfahren, und der Betreiber soll es von einer
+        # TOTP-Anmeldung unterscheiden können (Fund B2-7). Bis T-13 blieb davon nichts: keine
+        # Audit-Zeile, kein Hinweis, wie viele Codes noch übrig sind.
+        rest = self.store.count_recovery_codes(user_id)
+        self.audit("recovery_used", detail=f"user={user_id} verbleibend={rest}")
+        security.seclog.warning("recovery code used user_id=%s verbleibend=%s", user_id, rest)
+        self.sicherheitsereignis("recovery_code_used", user_id, verbleibend=rest)
+        return True
 
     def recovery_codes_remaining(self, user_id) -> int:
         """Wie viele Einmal-Codes dieses Konto noch hat."""

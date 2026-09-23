@@ -51,6 +51,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `password_enabled` | `bool` | `True` | Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN) |
+| `password_blocklist_file` | `str` | `""` | Eigene Blockliste für neue Passwörter: Pfad zu einer Textdatei, ein Passwort je Zeile (UTF-8, `#` am Zeilenanfang = Kommentar). Ergänzt die kleine eingebaute Liste — wer die gängigen Leak-Listen (z.B. die 100 000 häufigsten) abgleichen will, legt sie hier ab. Offline: TinySesam fragt keinen fremden Dienst. Leer = nur die eingebaute Liste. |
 | `passkey_enabled` | `bool` | `False` | WebAuthn / Passkeys (passwortlos) — braucht [passkey] |
 | `passkey_user_verification` | `str` | `"required"` | : Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er : signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch : ein Nein (B2-10). : : Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter : Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz** : des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand : gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person : kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein : Authenticator konnte also nein sagen und galt trotzdem. : : `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und : meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`. |
 | `pin_enabled` | `bool` | `False` | persönliche PIN pro User (Benutzer + PIN) |
@@ -270,4 +271,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-135 Felder, erzeugt aus `tinysesam/config.py`.
+136 Felder, erzeugt aus `tinysesam/config.py`.

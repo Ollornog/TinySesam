@@ -160,7 +160,15 @@ def build_router(auth) -> APIRouter:
         if not u:
             raise HTTPException(401)
         auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
-        return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
+        # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
+        # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
+        # Login-Lockout nicht füllen.
+        ip = auth.client_ip(request)
+        if not auth.rate_ok(ip, login=False) or auth.is_totp_setup_locked(u["username"], ip):
+            raise HTTPException(429, auth.t("api.too_many"))
+        ok = auth.totp_confirm(u["id"], code)
+        auth.record_login(u["username"], ip, ok, "totp_setup")
+        return JSONResponse({"ok": ok})
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
@@ -495,16 +503,28 @@ def build_router(auth) -> APIRouter:
         def reset_submit(request: Request, token: str = Form(""), password: str = Form(""),
                          csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
-            if len(password) < auth.sec("password_min_length"):
-                return auth.render_page("reset", request=request, status=400, token=token,
-                                        error=auth.t("err.pw_short", n=auth.sec("password_min_length")))
+            # Die Regel braucht das Konto (Kontextwörter) — also erst nachsehen, OHNE den Token
+            # zu verbrauchen: Ein abgelehntes Passwort soll den Link nicht entwerten.
+            vorab = auth.peek_magic(token, purpose="reset_password") or {}
+            konto = auth.store.get_user(vorab["user_id"]) if vorab.get("user_id") else None
+            mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
+                                          email=konto["email"] if konto else None)
+            if mangel:
+                return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
             auth.store.delete_user_sessions(uid)   # alle alten Sitzungen beenden
-            auth.audit("password_reset", detail=f"uid={uid}")
+            # Und die API-Keys (R4-14). Wer sein Passwort über „vergessen" zurücksetzt, hat sein
+            # Konto verloren oder fürchtet, dass es übernommen ist — derselbe Fall wie der
+            # Admin-Reset, der die Keys seit 0.18.0 widerruft. Ein Key ist eine zweite,
+            # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
+            # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
+            # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
+            keys = auth.store.revoke_user_api_keys(uid)
+            auth.audit("password_reset", detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
             return RedirectResponse(f"{cfg.login_path}?next=/", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -544,8 +564,9 @@ def build_router(auth) -> APIRouter:
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
             if not password:
                 return err(auth.t("err.required"))
-            if len(password) < auth.sec("password_min_length"):
-                return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
+            mangel = auth.passwort_mangel(password, username=username, email=email)
+            if mangel:
+                return err(mangel)
             roles, is_admin = list(cfg.signup_default_roles), False
             email_final = norm_email(email)
             if inv:
@@ -700,8 +721,9 @@ def build_router(auth) -> APIRouter:
         if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
-        if len(new) < auth.sec("password_min_length"):
-            raise HTTPException(400, auth.t("api.password_short", n=auth.sec("password_min_length")))
+        mangel = auth.passwort_mangel(new, username=u["username"], email=u.get("email"), api=True)
+        if mangel:
+            raise HTTPException(400, mangel)
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
@@ -723,6 +745,8 @@ def build_router(auth) -> APIRouter:
                 return RedirectResponse(f"{cfg.login_path}?next=/auth/account", 303)
             return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
+                                    recovery_left=auth.recovery_codes_remaining(u["id"]),
+                                    recovery_warn=auth.RECOVERY_WARNSCHWELLE,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path)
 

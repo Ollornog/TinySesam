@@ -308,9 +308,18 @@ def _account(auth, ctx) -> str:
     # TOTP / 2FA
     if auth.cfg.totp_enabled:
         if ctx.get("has_totp"):
+            # Wie viele Einmal-Codes bleiben, sagt die Seite von sich aus (B2-7): Ein
+            # verbrauchter Code wurde bis T-13 nirgends nachgehalten, und wer den letzten
+            # aufbrauchte, erfuhr es erst, als er ihn brauchte.
+            rest = ctx.get("recovery_left")
+            hinweis = ""
+            if rest is not None:
+                knapp = rest <= ctx.get("recovery_warn", 3)
+                hinweis = (f" <small class={'err' if knapp else 'ok'} id=rc_left>"
+                           f"{_e(t('acc.recovery_low' if knapp else 'acc.recovery_left', n=rest))}</small>")
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
                     f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
-                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
+                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{hinweis}")
         else:
             totp = f"<a class=btnlink href='/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"

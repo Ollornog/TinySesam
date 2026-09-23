@@ -34,6 +34,14 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   eingesammelt wird `admin_claim_token_file` (Rechte `0600`) nehmen, sofort einlösen, und wo gar
   kein Token in einer URL stehen soll, den ersten Admin über `auth.ensure_admin(...)` oder
   `admin_identifiers` setzen.
+- **Bekannte Grenze — TOTP-Geheimnisse liegen unverschlüsselt in der Datenbank.** Passwörter,
+  PINs, Recovery-Codes und API-Keys stehen dort nur als Hash; das TOTP-Geheimnis kann das nicht,
+  denn der Server muss daraus jeden Code nachrechnen. Wer die SQLite-Datei (oder eine Sicherung
+  davon) lesen kann, erzeugt damit für jedes Konto gültige Codes — der zweite Faktor hängt dann
+  nur noch am Passwort. Eine Verschlüsselung mit einem Schlüssel ausserhalb der Datenbank ist
+  geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
+  (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
+  Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
 
 ## Unterstützte Versionen
 

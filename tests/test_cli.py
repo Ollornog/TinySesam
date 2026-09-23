@@ -77,6 +77,14 @@ assert code == 1 and "zu kurz" in aus
 assert auth.check_password("admin", "und-noch-eins")
 ok("password_min_length gilt auch hier")
 
+# Dieselbe Regel wie im Web (B2-5/B2-13): Blockliste, Benutzername, Höchstlänge.
+for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", "leicht zu erraten"),
+                        ("y" * 257, "zu lang")):
+    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
+    assert code == 1 and _text in aus, (_schwach[:20], aus)
+assert auth.check_password("admin", "und-noch-eins")
+ok("passwd: Blockliste, Kontowort und Höchstlänge gelten auch offline")
+
 code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
 ok("unbekanntes Kommando → usage, Exit 2")

@@ -39,7 +39,7 @@ def _passwd(argv) -> int:
     # (Demo-Seeding, Erst-Admin-Token) — beides hat in einem Wartungsbefehl nichts verloren.
     import os
     from .store import Store
-    from .passwords import hash_password
+    from .passwords import hash_password, passwort_mangel
     from .security import SECURITY_DEFAULTS
 
     # Ohne diese Prüfung legt sqlite3 die Datei stillschweigend an und der Tippfehler im Pfad
@@ -64,8 +64,16 @@ def _passwd(argv) -> int:
         minlen = int(store.get_setting("password_min_length") or SECURITY_DEFAULTS["password_min_length"])
     except (TypeError, ValueError):
         minlen = SECURITY_DEFAULTS["password_min_length"]
-    if len(pw) < minlen:
-        print(f"Passwort zu kurz (min. {minlen}).", file=sys.stderr)
+    # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername) —
+    # das CLI ist ein Setzweg wie die anderen. Ohne Config kennt es `password_blocklist_file`
+    # und `rp_name` nicht; die eingebaute Liste gilt trotzdem.
+    mangel = passwort_mangel(pw, minlen, kontext=(a.username, (user["email"] or "").split("@", 1)[0]))
+    if mangel:
+        grund, werte = mangel
+        print({"short": f"Passwort zu kurz (min. {werte.get('n')}).",
+               "long": f"Passwort zu lang (max. {werte.get('n')}).",
+               "weak": "Passwort zu leicht zu erraten (bekannt, trivial oder aus dem Kontonamen)."}[grund],
+              file=sys.stderr)
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))

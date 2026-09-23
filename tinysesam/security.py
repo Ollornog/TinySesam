@@ -126,6 +126,7 @@ SECURITY_DEFAULTS = {
     "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
     "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
+    "totp_setup_max_attempts": 5,   # eigener Zähler für die Bestätigung der TOTP-Einrichtung
 }
 
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
@@ -155,6 +156,7 @@ EIGENE_SPERRE = {
     "password_change": "is_password_change_locked",
     "reauth": "is_reauth_locked",
     "resource": "is_resource_locked",
+    "totp_setup": "is_totp_setup_locked",
 }
 
 NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)

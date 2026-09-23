@@ -119,6 +119,7 @@ def register_passkey_routes(router, auth):
         # entstand er spurlos — wer ihn sich heimlich einrichtete, hinterliess nichts (B5-01).
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
+        auth.sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
         return {"ok": True}
 
     # ---------- Passwortloser Login (discoverable credential) ----------
@@ -214,4 +215,5 @@ def register_passkey_routes(router, auth):
         auth.store.delete_webauthn(int(b["id"]), u["id"])
         # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
         auth.audit("passkey_delete", u["username"], auth.client_ip(request), f"id={b['id']}")
+        auth.sicherheitsereignis("passkey_removed", u["id"], passkey_id=int(b["id"]))
         return {"ok": True}

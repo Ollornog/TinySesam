@@ -1781,7 +1781,7 @@ r.check("eine Registrierung mit freien Kennungen geht weiterhin durch", frisch.s
 auth_n3, app_n3 = _app(allow_signup=True, signup_require_email=True,
                        login_identifier="email", csrf_enabled=False)
 solo = TestClient(app_n3).post("/auth/register",
-                               data={"password": "Solo12345!", "email": "solo@example.com",
+                               data={"password": "Einzel-Weg-2468!", "email": "solo@example.com",
                                      "next": "/"}, follow_redirects=False)
 r.check("im E-Mail-Modus bleibt die Adresse zugleich Benutzername", solo.status_code == 303,
         f"HTTP {solo.status_code}: {solo.text[:120]}")
@@ -1938,11 +1938,12 @@ r.check("eine Datenbank ohne Kreuz-Kollision schweigt",
 # Passwort allein. CSRF schützt hier nichts: Ein GET trägt kein Token, und `SameSite=Lax`
 # (Vorgabe) schickt das Sitzungscookie bei einer Top-Level-Navigation mit.
 import pyotp  # noqa: E402
+import time
 
 auth_b21, app_b21 = _app()
 uid_b21 = auth_b21.create_user("nina", password="geheim12345", email="nina@example.com")
 geheim_b21 = auth_b21.totp_begin(uid_b21)["secret"]
-auth_b21.totp_confirm(uid_b21, pyotp.TOTP(geheim_b21).now())
+auth_b21.totp_confirm(uid_b21, pyotp.TOTP(geheim_b21).at(time.time() - 30))
 codes_b21 = auth_b21.generate_recovery_codes(uid_b21)
 c_b21 = TestClient(app_b21, base_url="https://app.example.com")
 c_b21.get("/auth/login")
@@ -2037,7 +2038,7 @@ r.check("...und ein Klick auf einen fremden Link genauso wenig",
         quer_b7.status_code == 200 and auth_b7.store.get_totp(uid_b7)["secret"] == vorher_b7,
         "der GET hat das Geheimnis ersetzt")
 r.check("...die Bestätigung mit dem Code aus DIESEM Geheimnis schaltet scharf",
-        auth_b7.totp_confirm(uid_b7, pyotp.TOTP(vorher_b7).now())
+        auth_b7.totp_confirm(uid_b7, pyotp.TOTP(vorher_b7).at(time.time() - 30))
         and auth_b7.store.has_confirmed_totp(uid_b7),
         "der legitime Weg ist unterbrochen")
 
@@ -2054,7 +2055,7 @@ r.check("...und der Start-Knopf richtet ein",
         and auth_ok.store.get_totp(uid_ok) is not None, "die Einrichtung ist zugemauert")
 neu_ok = auth_ok.store.get_totp(uid_ok)["secret"]
 r.check("...und die Bestätigung schaltet den Faktor scharf",
-        auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).now())
+        auth_ok.totp_confirm(uid_ok, pyotp.TOTP(neu_ok).at(time.time() - 30))
         and auth_ok.store.has_confirmed_totp(uid_ok))
 
 # … und nach dem regulären Abschalten wieder neu einrichten (sonst wäre der Fix eine Sackgasse).
@@ -2068,7 +2069,7 @@ r.check("nach dem regulären Abschalten ist die Einrichtung wieder offen",
 auth_v, _ = _app()
 uid_v = auth_v.create_user("vera", password="geheim12345")
 geheim_v = auth_v.totp_begin(uid_v)["secret"]
-auth_v.totp_confirm(uid_v, pyotp.TOTP(geheim_v).now())
+auth_v.totp_confirm(uid_v, pyotp.TOTP(geheim_v).at(time.time() - 30))
 auth_v.generate_recovery_codes(uid_v)
 auth_v.store.delete_totp(uid_v)          # nur das Geheimnis weg — die Codes bleiben zurück
 auth_v.totp_begin(uid_v)

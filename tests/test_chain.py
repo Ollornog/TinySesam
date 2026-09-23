@@ -4,6 +4,7 @@ import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+import time
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -79,7 +80,7 @@ os.remove(db)
 # ---------- Globale Kette ["password","totp"] mit echtem TOTP ----------
 db, auth, uid, app = fresh(chain=["password", "totp"], strict=True)
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c = TestClient(app)
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp")

@@ -214,6 +214,10 @@ Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
 
 HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost).
 
+### `is_totp_setup_locked(username, ip) -> 'bool'`
+
+Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
+
 ### `issue_csrf(response: 'Response') -> 'str'`
 
 CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.), die nicht über `render_page()` laufen. Rückgabe gehört ins Formularfeld `_csrf` bzw. den Header `X-CSRF-Token`. Ist CSRF abgeschaltet, passiert nichts und der Rückgabewert ist leer.
@@ -277,6 +281,10 @@ Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine
 ### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
 
 Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
+
+### `passwort_mangel(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
+
+Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
@@ -438,6 +446,10 @@ Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der D
 
 Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str \| Response.
 
+### `sicherheitsereignis(ereignis: 'str', user_id, **details) -> 'None'`
+
+`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
+
 ### `start_session(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'`
 
 Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig.
@@ -562,4 +574,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
