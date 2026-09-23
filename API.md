@@ -234,6 +234,10 @@ Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal
 
 Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
+### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
+
+Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg).
+
 ### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
 True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
@@ -558,4 +562,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-122 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

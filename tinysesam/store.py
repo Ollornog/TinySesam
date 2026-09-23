@@ -101,6 +101,19 @@ CREATE TABLE IF NOT EXISTS oidc_identity (
     user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (issuer, subject)
 );
+-- Fremde Identität → lokales Konto, über eine STABILE Kennung des Verzeichnisses (F-11).
+-- OIDC hat dafür `oidc_identity` (issuer+sub); LDAP und SAML banden bis 0.19.0 allein über den
+-- Benutzernamen. Ein Name ist aber nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein
+-- gelöschtes Konto unter demselben Namen neu anlegt, bekommt dasselbe lokale Konto mitsamt
+-- seinen Rollen. Die Kennung hier ist objectGUID/entryUUID (LDAP) bzw. die NameID (SAML) — sie
+-- überlebt eine Umbenennung und wird nicht wiederverwendet.
+CREATE TABLE IF NOT EXISTS federated_identity (
+    quelle      TEXT NOT NULL,              -- 'ldap' | 'saml'
+    kennung     TEXT NOT NULL,              -- die stabile Kennung aus dem Verzeichnis
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    gebunden_at INTEGER NOT NULL,           -- wann die Bindung entstand (auch: nachgebunden)
+    PRIMARY KEY (quelle, kennung)
+);
 CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
                                                -- Cookie des Browsers. Wer die Datei liest, bekommt
@@ -264,7 +277,7 @@ class Store:
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
     #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 9
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -618,6 +631,32 @@ class Store:
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
         return r["user_id"] if r else None
+
+    # ---------- Föderierte Identitäten über eine stabile Kennung (F-11) ----------
+    def link_federated(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> None:
+        """Eine fremde Identität an ein lokales Konto binden (oder die Bindung erneuern)."""
+        self._exec("INSERT OR REPLACE INTO federated_identity(quelle, kennung, user_id, gebunden_at)"
+                   " VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
+
+    def get_federated_user(self, quelle: str, kennung: str) -> Optional[int]:
+        r = self._one("SELECT user_id FROM federated_identity WHERE quelle=? AND kennung=?",
+                      (quelle, kennung))
+        return r["user_id"] if r else None
+
+    def get_federated_kennung(self, quelle: str, user_id: int) -> Optional[str]:
+        """Die Kennung, mit der dieses Konto für diese Quelle gebunden ist — None, wenn keine.
+
+        Der Rückweg ist der eigentliche Riegel: Trägt ein Konto schon eine Kennung, darf es
+        **nicht** an eine zweite gebunden werden. Genau das wäre der Fall, wenn im Verzeichnis
+        ein gelöschtes Konto unter demselben Namen neu entsteht."""
+        r = self._one("SELECT kennung FROM federated_identity WHERE quelle=? AND user_id=?",
+                      (quelle, user_id))
+        return r["kennung"] if r else None
+
+    def unlink_federated(self, quelle: str, user_id: int) -> int:
+        """Die Bindung eines Kontos für eine Quelle lösen (Betreiber-Weg nach einem Umzug)."""
+        return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
+                          (quelle, user_id)).rowcount
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in

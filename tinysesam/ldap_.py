@@ -150,7 +150,7 @@ class LDAPClient:
                                else ldap3.AUTO_BIND_NO_TLS),
                     **_OHNE_REFERRALS)
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
-                attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
+                attrs = _attributliste(cfg)
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)
                 if not svc.entries:
                     _verweis_melden(svc, "die Benutzersuche", username)
@@ -165,22 +165,64 @@ class LDAPClient:
                 conn.start_tls()
             if not conn.bind():
                 return None
-            attrs = [a for a in (cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr) if a]
+            attrs = _attributliste(cfg)
             conn.search(user_dn, "(objectClass=*)", search_scope=ldap3.BASE, attributes=attrs)
             entry = conn.entries[0] if conn.entries else None
             if entry is None:
                 # Auch hier: Ein Verweis auf der Attribut-Suche lässt E-Mail, Name und Gruppen
                 # fehlen — mit ldap_allowed_groups ist das eine Abweisung ohne erkennbaren Grund.
                 _verweis_melden(conn, "die Attribut-Suche", username)
-            info: dict = {"username": username, "email": None, "name": username, "groups": []}
+            info: dict = {"username": username, "email": None, "name": username, "groups": [],
+                          "id": None}
             if entry is not None:
                 info["email"] = _first(entry, cfg.ldap_attr_email)
                 info["name"] = _first(entry, cfg.ldap_attr_name) or username
                 info["groups"] = _list(entry, cfg.ldap_group_attr)
+                info["id"] = _stabile_kennung(entry, cfg)
             conn.unbind()
             return info
         except Exception:
             return None
+
+
+#: Attribute, in denen Verzeichnisse ihre stabile Kennung führen — in dieser Reihenfolge
+#: probiert, wenn `ldap_attr_id` leer ist. `entryUUID` ist der Standard (RFC 4530, OpenLDAP,
+#: lldap), `objectGUID` die Fassung von Active Directory. Ein Benutzername gehört NICHT dazu:
+#: Er ist der Wert, den diese Kennung gerade ersetzen soll (F-11).
+STABILE_KENNUNG_ATTRIBUTE = ("entryUUID", "objectGUID")
+
+
+def _attributliste(cfg) -> list:
+    """Alle Attribute, die geholt werden müssen — inklusive der stabilen Kennung.
+
+    Sie fehlte hier bis 0.19.0, weil sie niemand las. Wird sie nicht angefordert, liefert der
+    Server sie auch nicht: Die Bindung wäre dann still ohne Kennung, also wieder über den Namen.
+    """
+    namen = [cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr]
+    namen += [cfg.ldap_attr_id] if cfg.ldap_attr_id else list(STABILE_KENNUNG_ATTRIBUTE)
+    gesehen, raus = set(), []
+    for a in namen:
+        if a and a.lower() not in gesehen:
+            gesehen.add(a.lower())
+            raus.append(a)
+    return raus
+
+
+def _stabile_kennung(entry, cfg):
+    """Die stabile Kennung aus dem Eintrag — als Text, damit sie in die Datenbank passt.
+
+    `objectGUID` kommt bei Active Directory als Bytes; roh abgelegt wäre sie je nach ldap3-Fassung
+    einmal so und einmal anders zu lesen. Deshalb hier eine feste Darstellung.
+    """
+    kandidaten = [cfg.ldap_attr_id] if cfg.ldap_attr_id else list(STABILE_KENNUNG_ATTRIBUTE)
+    for attr in kandidaten:
+        wert = _first(entry, attr)
+        if wert in (None, ""):
+            continue
+        if isinstance(wert, (bytes, bytearray)):
+            return wert.hex()
+        return str(wert)
+    return None
 
 
 def _first(entry, attr):

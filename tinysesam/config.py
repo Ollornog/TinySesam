@@ -220,6 +220,12 @@ class TinySesamConfig:
     csrf_cookie: str = "tinysesam_csrf" # Name des CSRF-Cookies
 
     # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---
+    #: Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**:
+    #: Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr
+    #: anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten
+    #: Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht
+    #: daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann.
+    federation_require_stable_id: bool = False
     ldap_enabled: bool = False        # Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap]
     ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636
     ldap_start_tls: bool = False      # Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL
@@ -242,6 +248,12 @@ class TinySesamConfig:
     ldap_bind_password: str = ""      # Passwort des Service-Accounts — gehört in eine Umgebungsvariable
     ldap_user_base: str = ""              # Suchbasis (bei Search-then-Bind)
     ldap_user_filter: str = "(uid={username})" # Suchfilter für das Konto; `{username}` wird eingesetzt
+    #: Das Attribut mit der **stabilen** Kennung des Verzeichniseintrags (F-11). Leer = der
+    #: Reihe nach `entryUUID` (OpenLDAP, lldap) und `objectGUID` (Active Directory) versuchen.
+    #: Daran hängt die Zuordnung zum lokalen Konto — ein Benutzername taugt dafür nicht: Wer im
+    #: Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben Namen neu anlegt, bekäme
+    #: sonst dasselbe lokale Konto mitsamt seinen Rollen.
+    ldap_attr_id: str = ""
     ldap_attr_email: str = "mail"     # LDAP-Attribut mit der E-Mail-Adresse
     ldap_attr_name: str = "cn"        # LDAP-Attribut mit dem Anzeigenamen
     ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
@@ -310,6 +322,11 @@ class TinySesamConfig:
     saml_attr_username: str = ""          # Attribut mit dem Benutzernamen; leer = NameID
     saml_attr_email: str = "email"    # SAML-Attribut mit der E-Mail-Adresse
     saml_attr_name: str = "displayName" # SAML-Attribut mit dem Anzeigenamen
+    #: Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion.
+    #: Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus
+    #: dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist
+    #: als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt.
+    saml_attr_id: str = ""
     saml_attr_groups: str = "groups"  # SAML-Attribut mit den Gruppen (für saml_group_role_map)
     saml_allowed_groups: list[str] = field(default_factory=list)  # leer = alle
     saml_auto_create: bool = True     # Unbekannte Nutzer beim ersten erfolgreichen SAML-Login anlegen
