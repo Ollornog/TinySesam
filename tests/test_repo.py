@@ -297,9 +297,46 @@ matrix_abweichung = hygiene.pruefe_python_matrix(ROOT, FILES)
 assert not matrix_abweichung, "Python-Matrix weicht von der Kit-Quelle ab:\n  " + "\n  ".join(matrix_abweichung)
 untergrenze = hygiene.pruefe_requires_python(ROOT)
 assert not untergrenze, "\n  ".join(untergrenze)
+# Kit 0.14.0: Jeder `actions/checkout` setzt `persist-credentials: false`. **Ebene:** eigene
+# Härtung, kein belegter Standard — GitHub empfiehlt es nirgends ausdrücklich. Was es bringt:
+# Mit der Vorgabe liegt das Token für JEDEN späteren Schritt im Job lesbar da, und nach dem
+# Checkout läuft hier fremder Code (`pip install -e`, Actions Dritter). Keine Ausnahme nötig:
+# Kein Job dieses Repos pusht oder taggt per git — nachgemessen, nicht angenommen.
+ohne_pc = hygiene.pruefe_persist_credentials(ROOT, FILES)
+assert not ohne_pc, "checkout ohne persist-credentials:\n  " + "\n  ".join(ohne_pc)
+
+# Kit 0.14.0: Ist die Dateiliste überhaupt vollständig? Eine leere Liste macht JEDE Prüfung
+# danach grün, und der echte Fall war nicht „leer": Über `git archive` fehlten anderswo 6 von
+# 1326 Dateien — das ganze `.github/`, also genau die Workflows, die zwei Prüfungen oben lesen.
+# `root=` ist Pflicht, sonst wird nur gegen eine Mindestzahl verglichen statt gegen `git ls-tree`.
+luecken = hygiene.pruefe_dateiliste_plausibel(FILES, root=ROOT)
+assert not luecken, "die geprüfte Dateiliste ist unvollständig:\n  " + "\n  ".join(luecken)
+
+# Kit 0.14.0: Hostnamen OHNE `https://` davor. `pruefe_adressen` sucht nur URLs mit Schema, und
+# das Infrastruktur-Muster verlangt drei Namensteile — eine blanke Second-Level-Domain fällt
+# durch beide. In einem fremden Repo stand so ein realer Firmenname.
+#
+# Der `grundstock` ist EINMAL DURCHGESEHEN, nicht erzeugt: Jeder Eintrag steht hier, weil jemand
+# nachgesehen hat, warum die Adresse im Repo vorkommt. Automatisch befüllt wäre er die Baseline,
+# die den nächsten echten Fund mit abnickt.
+BLANKE_ADRESSEN_OK = [
+    "ghcr.io",                 # die Registry, aus der das eigene Abbild kommt (Dockerfile, compose)
+    "pypi.org",                # der Paketindex, gegen den test_packaging prüft
+    "python.org",              # Quellenangabe in der Kit-Datei python_matrix.json
+    "devguide.python.org",     # dito — der Release-Kalender, aus dem die Matrix folgt
+    "flaticon.com",            # Quellenangabe für das Favicon (Lizenzpflicht, gehört sichtbar hin)
+    "ollornog.github.io",      # die eigene Projektseite: Identität, keine Infrastruktur
+    # Die beiden letzten sind KEINE Adressen, sondern sehen nur so aus:
+    "ab.de",                   # tests/test_identifier.py: `assert not valid_email("ab.de")`
+    "admin.app",               # tinysesam/messages.py: ein Übersetzungsschlüssel, kein Host
+]
+blank = hygiene.pruefe_blanke_adressen(ROOT, FILES, POLICY, zusaetzliche_hosts=OEFFENTLICHE_DIENSTE,
+                                       grundstock=BLANKE_ADRESSEN_OK)
+assert not blank, "blanke Hostnamen ausserhalb der durchgesehenen Liste:\n  " + "\n  ".join(blank)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.13.2: jede Prüfung gerufen, keine Ausnahme mehr nötig")
+print("  Kit 0.16.1: jede Prüfung gerufen, keine Ausnahme nötig")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
