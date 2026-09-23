@@ -177,7 +177,7 @@ def build_router(auth) -> APIRouter:
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
-    def totp_setup(request: Request):
+    def totp_setup(request: Request, next: str = "/"):
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
@@ -199,10 +199,10 @@ def build_router(auth) -> APIRouter:
         # verlangte beides: bei bestätigtem TOTP verweigern UND nur auf ausdrückliche
         # Anforderung (POST mit CSRF-Token) beginnen. Das Geheimnis entsteht deshalb erst in
         # `POST /auth/totp/setup/start`; diese Seite zeigt bloss den Knopf dafür.
-        return auth.render_page("totp_setup", request=request, data=None)
+        return auth.render_page("totp_setup", request=request, data=None, next=auth.safe_next(next))
 
     @r.post("/auth/totp/setup/start", response_class=HTMLResponse)
-    def totp_setup_start(request: Request, csrf_tok: str = Form("", alias="_csrf")):
+    def totp_setup_start(request: Request, next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
         """Die Einrichtung ausdrücklich starten — hier (und nur hier) entsteht das Geheimnis."""
         auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
@@ -214,16 +214,49 @@ def build_router(auth) -> APIRouter:
         auth.require_session(request, u)
         if auth.store.has_confirmed_totp(u["id"]):
             raise HTTPException(409, auth.t("api.totp_active"))
-        return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]))
+        return auth.render_page("totp_setup", request=request, data=auth.totp_begin(u["id"]),
+                                next=auth.safe_next(next))
 
     @r.post("/auth/totp/setup")
-    def totp_setup_confirm(request: Request, code: str = Form(...)):
+    def totp_setup_confirm(request: Request, code: str = Form(...), next: str = Form("/")):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        u = auth.current_user(request) or auth.totp_enrollment_user(request)
+        voll = auth.current_user(request)
+        # Vor der Bestätigung fragen — danach hat das Konto ein bestätigtes TOTP, und
+        # `totp_enrollment_user` sagt None.
+        einschreibung = None if voll else auth.totp_enrollment_user(request)
+        u = voll or einschreibung
         if not u:
             raise HTTPException(401)
         auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
-        return JSONResponse({"ok": auth.totp_confirm(u["id"], code)})
+        # Wie GET und /start (A-4): Ein aktives TOTP wird hier nicht „noch einmal bestätigt".
+        # Sonst meldete die Stelle `totp_enabled` für nichts und prüfte nebenbei Codes des
+        # aktiven Faktors mit eigenem Versuchstopf.
+        if auth.store.has_confirmed_totp(u["id"]):
+            raise HTTPException(409, auth.t("api.totp_active"))
+        # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
+        # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
+        # Login-Lockout nicht füllen.
+        ip = auth.client_ip(request)
+        if not auth.rate_ok(ip, login=False) or auth.is_totp_setup_locked(u["username"], ip):
+            raise HTTPException(429, auth.t("api.too_many"))
+        ok = auth.totp_confirm(u["id"], code)
+        auth.record_login(u["username"], ip, ok, "totp_setup")
+        if not (ok and einschreibung):
+            return JSONResponse({"ok": ok})
+        # Pflicht-Einrichtung unter der Kette (A-1): Der Bestätigungscode IST der TOTP-Schritt.
+        # Er ist jetzt verbraucht; hätte der Nutzer ihn an /auth/totp noch einmal getippt, wäre
+        # das ein Fehlversuch gewesen — fünfmal, und der Login-Lockout samt fail2ban-Zeilen
+        # sperrte das Konto, das sich gerade korrekt eingerichtet hat.
+        auth.record_login(u["username"], ip, True, "totp")
+        sitzungs_token = request.cookies.get(cfg.session_cookie)
+        erneuert = auth.complete_totp(sitzungs_token)
+        weiter = erneuert or sitzungs_token
+        antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
+            request, weiter, u["id"], auth.safe_next(next))})
+        if erneuert:
+            auth.set_cookie(antwort, erneuert)
+            auth.csrf_rotieren(antwort)
+        return antwort
 
     @r.post("/auth/totp/disable")
     def totp_off(request: Request):
@@ -616,9 +649,19 @@ def build_router(auth) -> APIRouter:
         def reset_submit(request: Request, token: str = Form(""), password: str = Form(""),
                          csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
-            if len(password) < auth.sec("password_min_length"):
-                return auth.render_page("reset", request=request, status=400, token=token,
-                                        error=auth.t("err.pw_short", n=auth.sec("password_min_length")))
+            # Die Regel braucht das Konto (Kontextwörter) — also erst nachsehen, OHNE den Token
+            # zu verbrauchen: Ein abgelehntes Passwort soll den Link nicht entwerten.
+            vorab = auth.peek_magic(token, purpose="reset_password") or {}
+            if not vorab.get("user_id"):
+                # Ein toter Link zuerst (A-8): Sonst hiess es bei abgelaufenem Link und schwachem
+                # Passwort „zu leicht", und erst der zweite Versuch verriet, dass der Link nicht
+                # mehr gilt. Verraten wird damit nichts Neues — der GET sagt dasselbe.
+                return auth.render_page("magic_invalid", request=request, status=400)
+            konto = auth.store.get_user(vorab["user_id"])
+            mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
+                                          email=konto["email"] if konto else None)
+            if mangel:
+                return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
                 auth.token_abgewiesen("reset_password", request)
@@ -631,8 +674,16 @@ def build_router(auth) -> APIRouter:
             # vorgesehenen Weg ging, stand danach mit dem NEUEN Passwort vor derselben 429.
             # Damit ist der Reset der Weg aus der Sperre, der nicht an ihr hängt (H-10).
             weg = auth.sperre_aufheben(uid, methoden=("password",))
+            # Und die API-Keys (R4-14). Wer sein Passwort über „vergessen" zurücksetzt, hat sein
+            # Konto verloren oder fürchtet, dass es übernommen ist — derselbe Fall wie der
+            # Admin-Reset, der die Keys seit 0.18.0 widerruft. Ein Key ist eine zweite,
+            # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
+            # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
+            # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
+            keys = auth.store.revoke_user_api_keys(uid)
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
-                       f"uid={uid} fehlversuche_verworfen={weg}")
+                       f"uid={uid} fehlversuche_verworfen={weg}"
+                       + (f" api_keys_revoked={keys}" if keys else ""))
             return RedirectResponse(f"{cfg.login_path}?next=/", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -674,8 +725,9 @@ def build_router(auth) -> APIRouter:
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
             if not password:
                 return err(auth.t("err.required"))
-            if len(password) < auth.sec("password_min_length"):
-                return err(auth.t("err.pw_short", n=auth.sec("password_min_length")))
+            mangel = auth.passwort_mangel(password, username=username, email=email)
+            if mangel:
+                return err(mangel)
             roles, is_admin = list(cfg.signup_default_roles), False
             email_final = norm_email(email)
             if inv:
@@ -917,8 +969,9 @@ def build_router(auth) -> APIRouter:
         if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
-        if len(new) < auth.sec("password_min_length"):
-            raise HTTPException(400, auth.t("api.password_short", n=auth.sec("password_min_length")))
+        mangel = auth.passwort_mangel(new, username=u["username"], email=u.get("email"), api=True)
+        if mangel:
+            raise HTTPException(400, mangel)
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
@@ -940,6 +993,8 @@ def build_router(auth) -> APIRouter:
                 return RedirectResponse(f"{cfg.login_path}?next=/auth/account", 303)
             return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
+                                    recovery_left=auth.recovery_codes_remaining(u["id"]),
+                                    recovery_warn=auth.RECOVERY_WARNSCHWELLE,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]))

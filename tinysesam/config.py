@@ -40,6 +40,12 @@ class TinySesamConfig:
 
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True     # Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN)
+    # Eigene Blockliste für neue Passwörter: Pfad zu einer Textdatei, ein Passwort je Zeile
+    # (UTF-8, Zeilen in anderer Kodierung gelten als Latin-1; `#` am Zeilenanfang = Kommentar).
+    # Ergänzt die kleine eingebaute Liste — wer die gängigen Leak-Listen (z.B. die 100 000
+    # häufigsten) abgleichen will, legt sie hier ab. Offline: TinySesam fragt keinen fremden
+    # Dienst. Leer = nur die eingebaute Liste. `tinysesam passwd` liest sie mit `--blocklist-file`.
+    password_blocklist_file: str = ""
     # Vorgabe AUS, weil `webauthn` nicht im Kern steckt, sondern im Extra [passkey].
     # Stand bis 2026-09-21 auf True — damit stuerzte `pip install tinysesam` mit
     # Vorgabe-Konfiguration beim Bau des Routers ab (ModuleNotFoundError: webauthn).

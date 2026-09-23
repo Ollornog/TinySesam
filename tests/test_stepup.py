@@ -86,7 +86,7 @@ ok("API-Key: require_user ok, require(mfa=True) → 403 (kein interaktiver Fakto
 
 # ---------- admin_require_mfa mit TOTP-User ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 auth.cfg.admin_require_mfa = True
 c3 = TestClient(app)
 # Login → TOTP-Schritt → voll eingeloggt (frisch)
@@ -123,7 +123,7 @@ auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp
                                   stepup_max_age_sec=900))
 uid2 = auth2.create_user("opfer", password="geheim123")
 sec2 = auth2.totp_begin(uid2)["secret"]
-assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).now())
+assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).at(time.time() - 30))
 auth2.set_pin(uid2, "2468")
 auth2.store.add_webauthn(uid2, "credid-r3-3", "pubkey", 0, ["internal"], "Testschlüssel")
 pk2 = auth2.store.list_webauthn(uid2)[0]["id"]
@@ -207,7 +207,7 @@ auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie
                                   passkey_enabled=HAT_PASSKEY))
 uid3 = auth3.create_user("opfer", password="geheim123")
 sec3 = auth3.totp_begin(uid3)["secret"]
-assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).now())
+assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).at(time.time() - 30))
 auth3.set_pin(uid3, "1357")
 auth3.store.add_webauthn(uid3, "credid-r3-3-api", "pubkey", 0, ["internal"], "Testschlüssel")
 pk3 = auth3.store.list_webauthn(uid3)[0]["id"]

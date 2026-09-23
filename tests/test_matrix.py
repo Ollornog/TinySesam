@@ -7,6 +7,7 @@ import tempfile
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pyotp
+import time
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -56,7 +57,7 @@ for path in ("/auth/pin", "/auth/magic/request", "/auth/register", "/auth/resour
 assert c.get("/auth/login").status_code == 200
 ok("alle Features an → alle Routen erreichbar, keine Kollision")
 secret = a.totp_begin(uid)["secret"]
-a.totp_confirm(uid, pyotp.TOTP(secret).now())
+a.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 
 # PIN-Login → TOTP-Schritt (klassisch: PIN identifiziert, TOTP als 2. Faktor)
 r = c.post("/auth/pin", data={"username": "admin", "pin": "2468", "next": "/"}, follow_redirects=False)

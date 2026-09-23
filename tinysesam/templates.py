@@ -308,9 +308,18 @@ def _account(auth, ctx) -> str:
     # TOTP / 2FA
     if auth.cfg.totp_enabled:
         if ctx.get("has_totp"):
+            # Wie viele Einmal-Codes bleiben, sagt die Seite von sich aus (B2-7): Ein
+            # verbrauchter Code wurde bis T-13 nirgends nachgehalten, und wer den letzten
+            # aufbrauchte, erfuhr es erst, als er ihn brauchte.
+            rest = ctx.get("recovery_left")
+            hinweis = ""
+            if rest is not None:
+                knapp = rest <= ctx.get("recovery_warn", 3)
+                hinweis = (f" <small class={'err' if knapp else 'ok'} id=rc_left>"
+                           f"{_e(t('acc.recovery_low' if knapp else 'acc.recovery_left', n=rest))}</small>")
             totp = (f"<span class=ok>{_e(t('acc.totp_active'))}</span> "
                     f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
-                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>")
+                    f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{hinweis}")
         else:
             totp = f"<a class=btnlink href='/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
@@ -681,6 +690,7 @@ def _totp_setup(auth, ctx) -> str:
         body = (f"<h1>{_e(t('setup.title'))}</h1>"
                 f"<div class=hint>{_e(t('setup.start_hint'))}</div>"
                 f"<form method=post action='/auth/totp/setup/start'>{_cf(ctx)}"
+                f"<input type=hidden name=next value='{_e(ctx.get('next') or '/')}'>"
                 f"<button type=submit>{_e(t('setup.start'))}</button></form>")
         return _page(auth, t("setup.title"), body)
     qr = f"<img class=qr src='{data['qr']}'>" if data.get("qr") else ""
@@ -690,7 +700,7 @@ def _totp_setup(auth, ctx) -> str:
             f"<div class=hint>{_e(t('setup.scan'))}</div>"
             f"{qr}"
             f"<div class=hint>{_e(t('setup.manual'))}</div><div class=mono>{_e(data['secret'])}</div>"
-            f"<form id=tstotp>"
+            f"<form id=tstotp data-next='{_e(ctx.get('next') or '/')}'>"
             f"<label>{_e(t('setup.code'))}</label>"
             f"<input name=code class=code inputmode=numeric maxlength=6 autofocus>"
             f"<button type=submit>{_e(t('setup.activate'))}</button></form>"
@@ -698,8 +708,12 @@ def _totp_setup(auth, ctx) -> str:
             "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.cfg.csrf_cookie) + "=([^;]+)/)||[])[1]||''}"
             "async function conf(e){e.preventDefault();const c=e.target.code.value;"
             "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
-            "body:'code='+encodeURIComponent(c)});const j=await r.json();"
-            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';return false}}"
+            "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(e.target.dataset.next||'/')});"
+            "const j=await r.json();"
+            f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
+            # Unter der Pflicht-Kette ist die Anmeldung mit der Bestätigung fertig (A-1) —
+            # weiter zum Ziel statt einer Seite, die zum erneuten Code-Tippen einlädt.
+            "if(j.ok&&j.next){location.href=j.next}return false}"
             "document.getElementById('tstotp').addEventListener('submit',conf)</script>")
     return _page(auth, t("setup.title"), body)
 

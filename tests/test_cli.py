@@ -77,6 +77,33 @@ assert code == 1 and "zu kurz" in aus
 assert auth.check_password("admin", "und-noch-eins")
 ok("password_min_length gilt auch hier")
 
+# Dieselbe Regel wie im Web (B2-5/B2-13): Blockliste, Benutzername, Höchstlänge.
+for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", "leicht zu erraten"),
+                        ("y" * 257, "zu lang")):
+    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
+    assert code == 1 and _text in aus, (_schwach[:20], aus)
+assert auth.check_password("admin", "und-noch-eins")
+ok("passwd: Blockliste, Kontowort und Höchstlänge gelten auch offline")
+
+# A-7: Die Betreiber-Blockliste und der Dienstname galten offline nicht — ein Passwort von der
+# eigenen Liste liess sich per CLI setzen. Jetzt über dieselben Werte wie in der Config.
+_liste = os.path.join(tempfile.mkdtemp(), "block.txt")
+with open(_liste, "wb") as _f:
+    _f.write(b"# Kommentar\nfirmengeheimnis\nsch\xf6nwetter99\n")   # zweite Zeile ist Latin-1
+for _args, _pw in ((("--blocklist-file", _liste), "Firmengeheimnis2026!"),
+                   (("--blocklist-file", _liste), "Schönwetter99"),
+                   (("--rp-name", "Beispielportal"), "Beispielportal1!")):
+    code, aus = cli("passwd", "--db", db, "--stdin", *_args, "admin", stdin=_pw + "\n")
+    assert code == 1 and "leicht zu erraten" in aus, (_args, _pw, aus)
+_von_der_liste = "Firmengeheimnis2026!"
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_von_der_liste + "\n")
+assert code == 0, aus    # Gegenprobe: ohne Schalter kennt das CLI die Liste nicht
+code, aus = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _liste + ".fehlt", "admin",
+                stdin="noch-ein-anderes\n")
+assert code == 1 and "lässt sich nicht lesen" in aus, aus
+assert auth.check_password("admin", _von_der_liste)
+ok("passwd liest --blocklist-file (auch Latin-1-Zeilen) und --rp-name wie die Config")
+
 code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
 ok("unbekanntes Kommando → usage, Exit 2")

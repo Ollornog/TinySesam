@@ -213,5 +213,29 @@ print("  ✓ R6-6: unbekannte Key-Art trägt kein Admin-Flag; Panel-Key nur aus 
 # (Mutationsproben: `art != "mensch"` → `art == "automat"` in current_user → (a) rot;
 #  die `_via`-Prüfung in admin.user_key_create entfernen → (b) rot.)
 
+# ---------- B2-13: das Panel hält dieselbe Passwortregel ein ----------
+# Bis T-13 nahm der Admin-Weg jedes Passwort an — `1` für ein neues Konto, `password` beim
+# Zurücksetzen. (Mutationsprobe: die beiden `passwort_mangel`-Aufrufe in admin.py streichen → rot.)
+r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "1"})
+assert r.status_code == 400 and "zu kurz" in r.json()["detail"], r.text
+r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "password123"})
+assert r.status_code == 400 and "leicht zu erraten" in r.json()["detail"], r.text
+r = c.post("/auth/admin/api/users", json={"username": "karl", "password": "Karl1990!"})
+assert r.status_code == 400, "der Benutzername ist ein Kontextwort"
+assert auth.store.get_user_by_name("neu1") is None and auth.store.get_user_by_name("karl") is None
+r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "brauchbar-und-lang"})
+assert r.status_code == 200, r.text
+_bob = auth.store.get_user_by_name("bob")["id"]
+r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "Letmein-2024"})
+assert r.status_code == 400 and "leicht zu erraten" in r.json()["detail"], r.text
+r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "x" * 300})
+assert r.status_code == 400 and "zu lang" in r.json()["detail"], r.text
+assert auth.check_password("bob", "bobpw"), "abgelehnt heisst: das alte Passwort gilt weiter"
+r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "ein-gutes-neues"})
+assert r.status_code == 200 and auth.check_password("bob", "ein-gutes-neues")
+# Ohne Passwort anlegen bleibt erlaubt (SSO-/Passkey-Konten).
+assert c.post("/auth/admin/api/users", json={"username": "nurssso"}).status_code == 200
+print("  ✓ B2-13: Anlegen und Zurücksetzen im Panel prüfen Länge, Blockliste und Kontextwörter")
+
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")

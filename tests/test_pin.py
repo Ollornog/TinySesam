@@ -72,7 +72,7 @@ auth.store.clear_fails(username="admin")
 
 # PIN + TOTP kombiniert: PIN-Login führt in den TOTP-Schritt
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c2 = TestClient(app)
 r = c2.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]

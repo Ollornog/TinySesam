@@ -250,6 +250,7 @@ SECURITY_DEFAULTS = {
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
     "mail_per_address_max": 3,      # Mails je Zieladresse im Fenster (Anmelde-Link, Reset, Hinweis) — R4-04
     "mail_per_address_window_sec": 900,  # … Fenster dazu; die IP-Drossel allein schützt kein fremdes Postfach
+    "totp_setup_max_attempts": 5,   # eigener Zähler für die Bestätigung der TOTP-Einrichtung
 }
 
 #: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
@@ -347,6 +348,7 @@ EIGENE_SPERRE = {
     "password_change": "is_password_change_locked",
     "reauth": "is_reauth_locked",
     "resource": "is_resource_locked",
+    "totp_setup": "is_totp_setup_locked",
 }
 
 NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
