@@ -852,12 +852,12 @@ class TinySesam:
             return False
         if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
             raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
-        name, mail = str(u["username"]), (u["email"] or "")
-        self.store.delete_user_sessions(user_id)
-        self.store.delete_user(user_id)
-        self.store.delete_attempts_for(name, (mail,))
-        ersatz = f"gelöscht#{user_id}"
-        n = self.store.audit_anonymisieren(name, ersatz, (mail,))
+        # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
+        # und die Rücknahme einer Registrierung löschen (Integrationsfunde 12/18).
+        entfernt = self.store.konto_entfernen(user_id)
+        if entfernt is None:
+            return False
+        ersatz, n = entfernt
         self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
         return True
 
@@ -871,12 +871,18 @@ class TinySesam:
         Hat ein ANDERER die Zeile ausgelöst (`akteur=` im Detail, s. `audit()`), steht dort
         dessen IP — die des Admins. Die bleibt weg; `by_admin` sagt stattdessen, dass es nicht
         der Kontoinhaber war.
+
+        Gezählt wird erst ab der Anlage des Kontos. Der Filter geht über den NAMEN, und ein Name
+        kann vorher einem anderen gehört haben: einem gelöschten Konto, dessen Zeilen ein älterer
+        Stand nicht anonymisiert hat (Integrationsfund 12), oder niemandem — dann steht dort der
+        Fehlversuch eines Fremden unter dem damals freien Namen, samt seiner IP.
         """
-        name = self._kontoname(user_id)
-        if not name:
+        u = self.store.get_user(user_id) if user_id is not None else None
+        if not u:
             return []
         aus = []
-        for z in self.store.recent_audit(max(1, int(limit)), username=name):
+        for z in self.store.recent_audit(max(1, int(limit)), username=str(u["username"]),
+                                         seit=u["created_at"]):
             fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
             aus.append({"ts": z["ts"], "event": z["event"],
                         "ip": None if fremd else z["ip"], "by_admin": fremd})
@@ -1100,8 +1106,9 @@ class TinySesam:
         for sid in filter(None, raw.split(",")):
             u = self.store.get_user(int(sid))
             if u and u["username"] in self.DEMO_USERS:
-                self.store.delete_user_sessions(u["id"])
-                self.store.delete_user(u["id"])
+                # Über den einen Löschweg (H-13): Legt `seed_demo` die Namen später neu an, sähe
+                # das neue Konto sonst die Ereignisse des alten als seine eigenen (H-7).
+                self.store.konto_entfernen(u["id"])
                 n += 1
         self.store.set_setting("demo_users", "")
         return n
@@ -1396,6 +1403,28 @@ class TinySesam:
             return None     # Grund steht schon im Audit-Log (Anlegen/Kennung)
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
+
+    # ---------- Passkeys verwalten ----------
+    def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
+        """Einen Passkey eines Kontos entfernen — Löschen, Audit-Zeile und `passkey_removed` in einem.
+
+        Beide Wege laufen hierüber: die Selbstbedienung (`/auth/passkey/delete`) und der Widerruf
+        durch einen Admin im Panel. Vorher hatte jeder seine eigenen Zeilen, und nach dem
+        Zusammenführen zweier Zweige meldete nur die Selbstbedienung das Ereignis — ausgerechnet
+        der Widerruf an einem FREMDEN Konto, den ein übernommenes Admin-Konto vornimmt, blieb
+        für den Inhaber still (Integrationsfund 3). Die Audit-Zeile steht unter dem Inhaber;
+        handelt ein anderer, ergänzt `audit()` `akteur=` aus der laufenden Anfrage.
+
+        Gibt False zurück, wenn das Konto keinen Passkey mit dieser ID hat — dann wird weder
+        gelöscht noch protokolliert noch gemeldet (vorher schrieb die Selbstbedienung auch für
+        einen erfundenen Passkey eine Zeile und ein Ereignis)."""
+        if not any(int(c["id"]) == int(passkey_id) for c in self.store.list_webauthn(user_id)):
+            return False
+        self.store.delete_webauthn(int(passkey_id), user_id)
+        # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
+        self.audit("passkey_delete", self._kontoname(user_id), ip, f"id={int(passkey_id)}")
+        self.sicherheitsereignis("passkey_removed", user_id, passkey_id=int(passkey_id))
+        return True
 
     # ---------- PIN-Login (persönliche PIN pro User) ----------
     def set_pin(self, user_id, pin):
@@ -3010,13 +3039,11 @@ class TinySesam:
         # räumt `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen (R4-09).
         # Ohne diesen Schritt blieb eine Adresse, die jemand fremdes registriert und nie
         # bestätigt hatte, für immer belegt: Der echte Inhaber bekam „E-Mail vergeben".
-        unbestaetigt = self.store.unbestaetigte_konten()
-        for uid in unbestaetigt:
-            u = self.store.get_user(uid)
-            self.store.delete_user(uid)
-            self.audit("signup_expired", u["username"] if u else None, detail=f"uid={uid}")
+        # Dieselbe Schleife wie `tinysesam gc` — sie steht im Store, damit beide über den einen
+        # Löschweg gehen (H-13, Integrationsfunde 12/18). Vorher hatte `gc()` eine eigene Kopie,
+        # die das Konto an der Anonymisierung vorbei löschte.
         zahlen = {
-            "unverified_accounts": len(unbestaetigt),
+            "unverified_accounts": self.store.gc_unbestaetigte_konten(),
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),

@@ -27,9 +27,16 @@ def _cfg(**kw):
 def _pages(auth):
     return {
         "login": auth.render_page("login", request=None, next="/"),
+        # MIT `events`: Die Route übergibt sie immer, und genau der Abschnitt „Letzte Ereignisse"
+        # trug ein `style=`-Attribut, das die strenge CSP blockt. Ohne `events` fehlte er hier,
+        # und die Prüfung darunter blieb grün (Integrationsfund 9).
+        # (Mutationsprobe: in templates.py wieder `<p class=msg style='margin:0 0 8px'>` → rot.)
         "account": auth.render_page("account", request=None,
                                     user={"username": "u", "display_name": "U", "id": 1},
-                                    methods=["password", "pin", "passkey"]),
+                                    methods=["password", "pin", "passkey"],
+                                    events=[{"ts": 1767225600, "event": "login", "ip": "198.51.100.7"},
+                                            {"ts": 1767225700, "event": "apikey_create", "ip": None,
+                                             "by_admin": True}]),
         "totp": auth.render_page("totp", request=None, next="/"),
         "error": auth.render_page("error", request=None, code=404, message="x"),
     }
@@ -54,6 +61,8 @@ for name, resp in _pages(auth).items():
     assert tags and tags == nonced, f"{name}: {nonced}/{tags} script/style genonced"
     assert not re.search(r'\son(click|submit)=', body), f"{name}: Inline-Handler geblieben"
     assert not re.search(r'\sstyle=', body), f"{name}: style=-Attribut geblieben"
+    # Vorbedingung: Der Abschnitt ist wirklich da — sonst prüfte die Zeile darüber nichts.
+    assert name != "account" or "id=eventlist" in body, "account: „Letzte Ereignisse“ fehlt"
 ok("strict: Header + Nonce auf jedem <script>/<style>, keine Inline-Handler/style=")
 
 # 2) Pro Antwort ein frischer Nonce

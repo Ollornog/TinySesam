@@ -400,6 +400,14 @@ def _now() -> int:
     return _UHR.jetzt()
 
 
+def ersatzname(user_id) -> str:
+    """Wer ein gelöschtes Konto im Audit-Log vertritt (H-13): `gelöscht#<id>`.
+
+    Eine Stelle für das Format — jeder Löschweg schreibt seine Schlusszeile darunter, auch
+    einer, der das Konto schon nicht mehr vorfindet (sonst stünde dort wieder der Klarname)."""
+    return f"gelöscht#{int(user_id)}"
+
+
 class Store:
     #: Rechte für eine NEU angelegte Datenbank. Hier stehen Passwort-Hashes, TOTP-Geheimnisse
     #: und E-Mail-Adressen; auf einem geteilten Host konnte sie bis 0.18.0 jeder lesen (0644,
@@ -738,8 +746,38 @@ class Store:
         return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?, ?) ORDER BY id LIMIT 1",
                          (kanonisch, alt, unicode_form))
 
+    def konto_entfernen(self, user_id) -> Optional[tuple[str, int]]:
+        """Ein Konto löschen — der EINE Löschweg, über den jeder Aufrufer geht (H-13).
+
+        Konto samt Zugangsdaten und Sitzungen, die Anmeldeversuche unter Name und Adresse, und
+        im Audit-Log wird aus dem Namen `gelöscht#<id>` (`audit_anonymisieren`). Ein gelöschtes
+        Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht.
+
+        Warum hier und nicht im Manager: Bis zur T-13-Integration gab es vier Löschwege mit zwei
+        verschiedenen Zusagen. `TinySesam.delete_user` anonymisierte, `gc()`, `tinysesam gc` (das
+        direkt auf dem Store arbeitet) und die Rücknahme bei gescheitertem Bestätigungsversand
+        riefen `delete_user` und liessen Name, fremde IP und die Adresse des Opfers stehen — ein
+        späterer Namensvetter sah die Registrierung des Fremden als eigenes Ereignis
+        (Integrationsfunde 12/18). Der Store ist die tiefste Stelle, die alle Wege teilen.
+
+        Gibt `(ersatzname, anonymisierte Zeilen)` zurück — unter dem Ersatznamen schreibt der
+        Aufrufer seine eigene Zeile (`user_delete`, `signup_expired`, `verify_send_error`) —,
+        None, wenn es das Konto nicht gibt."""
+        u = self.get_user(user_id)
+        if u is None:
+            return None
+        name, mail = str(u["username"]), (u["email"] or "")
+        self.delete_user(user_id)
+        self.delete_attempts_for(name, (mail,))
+        ersatz = ersatzname(user_id)
+        return ersatz, self.audit_anonymisieren(name, ersatz, (mail,))
+
     def delete_user(self, user_id):
-        """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""
+        """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
+
+        Wer ein Konto löscht, ruft `konto_entfernen` (oder `TinySesam.delete_user`): Hier bleibt
+        der Name im Audit-Log stehen, und die Anmeldeversuche bleiben liegen. Ein Test hält fest,
+        dass es keinen weiteren Aufrufer gibt."""
         with self._lock:
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
                           "webauthn_cred", "oidc_identity", "federated_identity", "session",
@@ -1418,9 +1456,11 @@ class Store:
         damit `tinysesam gc` (arbeitet direkt auf dem Store) dieselbe Reihenfolge fährt."""
         ids = self.unbestaetigte_konten()
         for uid in ids:
-            u = self.get_user(uid)
-            self.delete_user(uid)
-            self.audit_log("signup_expired", u["username"] if u else None, None, f"uid={uid}")
+            # Über den einen Löschweg (H-13, Integrationsfunde 12/18): Die Registrierung des
+            # Fremden samt IP und die Fehlversuche des echten Adressinhabers stünden sonst
+            # weiter unter Name und Adresse — und die Schlusszeile trüge den Klarnamen.
+            self.konto_entfernen(uid)
+            self.audit_log("signup_expired", ersatzname(uid), None, f"uid={uid}")
         return len(ids)
 
     def gc_magic_tokens(self) -> int:
@@ -1568,19 +1608,25 @@ class Store:
             self.db.commit()
         return n
 
-    def recent_audit(self, limit=100, username: str | None = None):
+    def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None):
         """Die jüngsten Audit-Einträge, neueste zuerst.
 
         `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
         letzten N Einträge dieses Kontos" und „die Einträge dieses Kontos unter den letzten N" —
         und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
-        Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster.
+        Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
+        filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL.
         """
+        bedingungen: list[str] = []
+        werte: list[object] = []
         if username:
-            return self._all(
-                "SELECT * FROM audit WHERE lower(username)=lower(?) ORDER BY id DESC LIMIT ?",
-                (username, limit))
-        return self._all("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))
+            bedingungen.append("lower(username)=lower(?)")
+            werte.append(username)
+        if seit:
+            bedingungen.append("ts >= ?")
+            werte.append(int(seit))
+        wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
+        return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
 
     # ---------- API-Keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,

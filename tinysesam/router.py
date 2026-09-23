@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .errors import ConfigError
 from . import security
-from .store import norm_email, valid_email
+from .store import ersatzname, norm_email, valid_email
 from . import security
 from .passwords import hash_password
 
@@ -698,6 +698,13 @@ def build_router(auth) -> APIRouter:
                 # Ein toter Link zuerst (A-8): Sonst hiess es bei abgelaufenem Link und schwachem
                 # Passwort „zu leicht", und erst der zweite Versuch verriet, dass der Link nicht
                 # mehr gilt. Verraten wird damit nichts Neues — der GET sagt dasselbe.
+                # Und dieselbe Spur wie der GET (B5-18, Integrationsfund 4): Hier kehrt JEDER tote
+                # Token zurück — geraten, abgelaufen, schon eingelöst. Der Aufruf hinter
+                # `redeem_magic` unten erreicht nur noch den Wettlauf zwischen peek und redeem;
+                # stand er allein, liessen sich Reset-Token per POST ohne Audit- und
+                # fail2ban-Zeile durchprobieren. Ohne Token kein vorgelegter Link (A3).
+                if token:
+                    auth.token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             konto = auth.store.get_user(vorab["user_id"])
             mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
@@ -851,15 +858,18 @@ def build_router(auth) -> APIRouter:
             # E-Mail-Bestätigung nötig? (nicht bei Einladung — die gilt als bestätigt)
             if verify and email_final:
                 auth.store.set_disabled(uid, True)
-                konto = username
 
                 def _zuruecknehmen(grund):
                     # B6-5: Ohne zugestellte Bestätigung ist das Konto eine Leiche — gesperrt,
                     # nie freischaltbar, und es hält Namen und Adresse besetzt. Bis 0.19 kam
                     # dazu eine HTTP-500. Es wird deshalb wieder entfernt; die Registrierung
                     # lässt sich danach einfach wiederholen.
-                    auth.store.delete_user(uid)
-                    auth.audit("verify_send_error", konto, ip, detail=f"{grund}, Konto entfernt")
+                    # Über den einen Löschweg (H-13, Integrationsfunde 12/18): Sonst stünden
+                    # `signup` und diese Zeile samt IP weiter unter dem Namen, und wer ihn später
+                    # registriert, sähe sie auf seiner Kontoseite als eigene Ereignisse (H-7).
+                    auth.store.konto_entfernen(uid)
+                    auth.audit("verify_send_error", ersatzname(uid), ip,
+                               detail=f"{grund}, Konto entfernt")
 
                 def _versand():
                     try:

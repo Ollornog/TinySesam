@@ -346,6 +346,10 @@ Wie viele Einmal-Codes dieses Konto noch hat.
 
 Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt).
 
+### `remove_passkey(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'`
+
+Einen Passkey eines Kontos entfernen — Löschen, Audit-Zeile und `passkey_removed` in einem.
+
 ### `remove_resource_secret(name)`
 
 Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperren).
@@ -622,4 +626,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-138 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+139 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

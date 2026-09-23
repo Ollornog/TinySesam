@@ -82,6 +82,7 @@
     "record_login": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '')",
     "recovery_codes_remaining": "(user_id) -> 'int'",
     "redeem_magic": "(raw, purpose=None) -> 'Optional[dict]'",
+    "remove_passkey": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
     "remove_resource_secret": "(name)",
     "render_page": "(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'",
     "require": "(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)",

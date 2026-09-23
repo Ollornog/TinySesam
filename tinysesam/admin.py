@@ -61,6 +61,20 @@ def build_admin_router(auth) -> APIRouter:
                    if u["is_admin"] and not u["disabled"] and not u["is_service"]
                    and int(u["id"]) != int(uid))
 
+    def rollen_aus(b: dict) -> list:
+        """`roles` aus dem Body: eine Liste aus Texten — sonst 400, und zwar VOR jedem Schreiben.
+
+        Die Datenbank nimmt jedes JSON; eine Rolle `1` oder `null` fiel erst beim Protokollieren
+        auf (`','.join`), NACHDEM Rollen und Admin-Flag geschrieben waren: HTTP 500 ohne
+        Audit-Zeile (Integrationsfund 8). Ein Text wie `"admin"` wurde von `list()` still in
+        Buchstaben zerlegt. Fehlt das Feld (oder ist es leer), heisst das „keine Rollen"."""
+        roh = b.get("roles")
+        if not roh:
+            return []
+        if not isinstance(roh, list) or not all(isinstance(x, str) for x in roh):
+            raise HTTPException(400, auth.t("api.invalid", grund="roles"))
+        return list(roh)
+
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
                 "email": u["email"], "is_admin": bool(u["is_admin"]), "is_service": bool(u["is_service"]),
@@ -96,7 +110,7 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.username_req"))
         if auth.kennung_vergeben(username):
             raise HTTPException(409, auth.t("api.user_exists"))
-        roles = b.get("roles") or []
+        roles = rollen_aus(b)
         # Service-Konto + Admin (R6-2): Früher fiel `is_admin` hier still weg, über die
         # Rollen-Route liess sich das Flag danach aber doch setzen. Ein solches Konto kann sich
         # nicht anmelden, seine Keys tragen das Flag nie (R6-5) — es zählt nur als „es gibt
@@ -169,6 +183,7 @@ def build_admin_router(auth) -> APIRouter:
         ziel = auth.store.get_user(uid)
         if ziel is None:
             raise HTTPException(404)
+        rollen = rollen_aus(b)          # geprüft VOR jedem Schreibzugriff, wie R6-1 darunter
         if "is_admin" in b:
             neu = bool(b["is_admin"])
             if neu and ziel["is_service"]:
@@ -182,14 +197,17 @@ def build_admin_router(auth) -> APIRouter:
                 raise HTTPException(400, auth.t("api.last_admin"))
         # Vorher/Nachher ins Protokoll (R6-7): „uid=5" sagte, DASS sich Rechte änderten, nicht
         # welche. Ob jemand Admin wurde, ist aber genau die Frage nach einem Vorfall.
+        # `str` je Rolle: Ein Altbestand aus der Zeit vor der Prüfung (oder aus eigenem Code) darf
+        # die Zeile nicht sprengen — sie entsteht NACH dem Schreiben, und ein Fehler hier hiess
+        # „geändert, aber nicht protokolliert" (Integrationsfund 8).
         vorher = ziel
-        rollen_vorher = sorted(auth.user_roles(vorher)) if vorher else []
+        rollen_vorher = sorted(map(str, auth.user_roles(vorher))) if vorher else []
         admin_vorher = bool(vorher["is_admin"]) if vorher else False
-        auth.set_roles(uid, b.get("roles") or [])
+        auth.set_roles(uid, rollen)
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
         nachher = auth.store.get_user(uid)
-        rollen_nachher = sorted(auth.user_roles(nachher)) if nachher else []
+        rollen_nachher = sorted(map(str, auth.user_roles(nachher))) if nachher else []
         admin_nachher = bool(nachher["is_admin"]) if nachher else False
         detail = (f"uid={uid} rollen={','.join(rollen_vorher) or '-'}"
                   f"->{','.join(rollen_nachher) or '-'}")
@@ -211,12 +229,12 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/passkeys/{cid}/delete")
     def user_passkey_delete(request: Request, uid: int, cid: int):
         guard(request)
-        if not any(c["id"] == cid for c in auth.store.list_webauthn(uid)):
+        # Über denselben Weg wie die Selbstbedienung (Integrationsfund 3): Löschen, Audit-Zeile
+        # unter dem Inhaber (der Admin als akteur=, so findet `tinysesam audit --user <inhaber>`
+        # den Widerruf) und `passkey_removed` an `on_security_event` — der Inhaber erfährt,
+        # dass ihm ein Faktor genommen wurde, auch wenn es ein anderer war.
+        if not auth.remove_passkey(uid, cid):
             raise HTTPException(404, auth.t("api.not_found"))
-        auth.store.delete_webauthn(cid, uid)
-        # `username` = das betroffene Konto, der Admin steht als akteur= im Detail — so findet
-        # `tinysesam audit --user <inhaber>` den Widerruf.
-        auth.audit("passkey_delete", auth._kontoname(uid), None, f"id={cid}")
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/delete")
@@ -301,7 +319,9 @@ def build_admin_router(auth) -> APIRouter:
             # Der Einladungslink geht per Mail an einen Dritten und trägt ein gültiges
             # Token — er darf nie aus dem Host-Header gebaut werden (R4-01).
             base = _mail_basis(auth, request)
-            res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
+            # Dieselbe Prüfung wie beim Anlegen: Die Rollen landen erst beim Einlösen im Konto —
+            # eine kaputte Rolle fiele dann dem Eingeladenen vor die Füsse, nicht dem Admin.
+            res = auth.create_invite(email or None, base, roles=rollen_aus(b),
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
 
@@ -529,7 +549,16 @@ const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
-const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
+// Eine Abweisung (4xx/5xx) kommt IMMER als {detail:"<Text>"} zurück, auch ohne JSON-Körper. Vorher
+// sah p() nur den Körper: savesec meldete „gespeichert", obwohl der Server 400 sagte, pw „Passwort
+// gesetzt" trotz abgelehnter Regel, saveroles lud still neu (Integrationsfund 10).
+const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})})
+  .then(async r=>{let j=null;try{j=await r.json()}catch(e){}
+    if(r.ok)return j||{};
+    return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
+// Den Grund einer Abweisung zeigen — true, wenn es eine war. Jede Aktion, die p() ruft, geht hier
+// durch (ein Test hält das fest), damit die nächste neue Aktion nicht wieder still scheitert.
+const abgewiesen=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 // Ein Knopf bekommt seine Aktion als data-on (Name) und data-a (Argumente als JSON), nie als
 // onclick. Zwei Gruende: Die CSP des Panels erlaubt Skript nur per Nonce, ein Inline-Handler
@@ -568,9 +597,9 @@ async function users(){
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
   if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
-  const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||L["err.generic"])}
-async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
-async function pw(id){const v=prompt(L["prompt.pw"]);if(v)await p(`/api/users/${id}/password`,{password:v})&&alert(L.pw_set)}
+  const r=await p("/api/users",b);if(!abgewiesen(r))users()}
+async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;abgewiesen(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
+async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!abgewiesen(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
@@ -586,7 +615,7 @@ async function saveroles(id){
   const roles = ROLES.length
     ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
-  await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked});users();
+  abgewiesen(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
@@ -596,20 +625,20 @@ async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
       <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  if(r.key)prompt(L.key_once,r.key);keys(id,"")}
+  if(!abgewiesen(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
 async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
     <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
       <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
-async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){await p(`/api/users/${uid}/passkeys/${cid}/delete`);pks(uid,name)}}
-async function deluser(id){if(!confirm(L["confirm.delete"]))return;const r=await p(`/api/users/${id}/delete`);if(r.ok)users();else alert(r.detail||L["err.generic"])}
-async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
+async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){abgewiesen(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
+async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!abgewiesen(await p(`/api/users/${id}/delete`)))users()}
+async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){abgewiesen(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
       <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn ${on("revs",s.full)}>${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
-async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
+async function revs(t){abgewiesen(await p("/api/sessions/revoke",{token:t}));sessions()}
 function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
@@ -618,7 +647,7 @@ async function security(){const s=await g("/api/security");const v=await g("/api
     `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
      <div class="muted small">${esc(L.update_note)}</div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert(L.saved)}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!abgewiesen(await p("/api/security",b)))alert(L.saved)}
 
 
 async function audit(){const a=await g("/api/audit?limit=120");

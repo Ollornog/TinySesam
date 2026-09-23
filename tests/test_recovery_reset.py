@@ -239,6 +239,43 @@ for _tok in ("quatsch", tok_r):
     assert r.status_code == 400 and auth_r.t("magic.invalid") in r.text, r.text[:300]
     assert "leicht zu erraten" not in r.text
 ok("A-8: ungültiger oder verbrauchter Link → „Link ungültig“ vor der Passwortregel")
+
+# Integrationsfund 4 (A-8 × B5-18): Der A-8-Vorabcheck kehrte früh zurück, OHNE
+# `token_abgewiesen` — der Aufruf aus B5-18 stand nur hinter `redeem_magic` und war für einen
+# toten Token unerreichbar. Wer Reset-Token per POST durchprobierte oder einen benutzten Link
+# wieder einspielte, erschien weder im Audit-Log noch in der fail2ban-Verify-Jail; der GET schon.
+# (Mutationsprobe: den `token_abgewiesen`-Aufruf im A-8-Zweig von `reset_submit` streichen → rot.)
+import io as _io  # noqa: E402
+import logging as _logging  # noqa: E402
+from tinysesam import security as _security  # noqa: E402
+
+
+def _token_spuren():
+    return len(auth_r.store._all("SELECT id FROM audit WHERE event='token_invalid' "
+                                 "AND detail LIKE 'zweck=reset_password%'"))
+
+
+_puffer_r = _io.StringIO()
+_haken_r = _logging.StreamHandler(_puffer_r)
+_security.seclog.addHandler(_haken_r)
+try:
+    _vorher_r = _token_spuren()
+    for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # geraten, Passwort taugt
+                      ("erfunden-2", "x"),                       # geraten, Passwort zu kurz
+                      (tok_r, "noch-ein-frisches-passwort")):     # schon eingelöst
+        r = cr.post("/auth/reset", data={"token": _tok, "password": _pw})
+        assert r.status_code == 400, (_tok, r.status_code)
+    _neu_r = _token_spuren() - _vorher_r
+    _log_r = [z for z in _puffer_r.getvalue().splitlines()
+              if z.startswith(_security.LOG_PRUEFUNG) and "token_reset_password" in z]
+    assert _neu_r == 3 and len(_log_r) == 3, (_neu_r, _puffer_r.getvalue())
+    # Ohne Token ist das kein vorgelegter Link (A3) — keine Zeile, wie beim GET.
+    assert cr.post("/auth/reset", data={"token": "", "password": "egal-was"}).status_code == 400
+    assert _token_spuren() - _vorher_r == 3 and len(
+        [z for z in _puffer_r.getvalue().splitlines() if "token_reset_password" in z]) == 3
+finally:
+    _security.seclog.removeHandler(_haken_r)
+ok("Fund 4: POST /auth/reset mit totem Token → token_invalid im Audit + „failed verification“ (wie der GET)")
 auth_r.totp_disable(uid_r)
 assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
 os.remove(db_r)

@@ -1322,4 +1322,219 @@ r.check("PKCE: der Callback tauscht mit DEM Verifier, der zur Challenge gehört"
 r.check("PKCE: der Verifier steht nie in der Adresszeile",
         _v_p and _v_p not in _start_p.headers["location"])
 
+# ══ Angriff auf die T-13-Integration: Lücken an den Nähten der Zweige ══════════════════════════
+# Jeder Zweig war für sich stimmig; die Lücken entstanden, weil ein Zweig einen Weg einführte und
+# ein anderer eine Zusage, die diesen Weg nicht kannte. Die Blöcke hier prüfen deshalb die ZUSAGE
+# über alle Wege, die es heute gibt — und je ein Wächter hält fest, dass es nur EINEN Weg gibt,
+# damit der nächste Zweig nicht still einen zweiten dazubaut.
+import ast as _ast  # noqa: E402
+import importlib.util as _ilu  # noqa: E402
+
+
+def _aufrufe_ausserhalb(methode: str, empfaenger, erlaubt: set) -> list:
+    """Wo in `tinysesam/` steht ein Aufruf `<empfaenger>.<methode>(…)` ausserhalb von `erlaubt`?
+
+    `erlaubt` sind Paare (innerste Klasse, innerste Funktion). Per AST und nicht per Textsuche:
+    Docstrings und Kommentare nennen die Methode ebenfalls, und eine verschachtelte Funktion wie
+    `_zuruecknehmen` muss als sie selbst erkannt werden, nicht als die Route um sie herum."""
+    funde = []
+    for pfad in sorted((ROOT / "tinysesam").glob("*.py")):
+        baum = _ast.parse(pfad.read_text(encoding="utf-8"))
+
+        def gehe(knoten, klasse=None, funktion=None):
+            for kind in _ast.iter_child_nodes(knoten):
+                k, f = klasse, funktion
+                if isinstance(kind, _ast.ClassDef):
+                    k = kind.name
+                elif isinstance(kind, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    f = kind.name
+                if (isinstance(kind, _ast.Call) and isinstance(kind.func, _ast.Attribute)
+                        and kind.func.attr == methode and empfaenger(kind.func.value, k)
+                        and (k, f) not in erlaubt):
+                    funde.append(f"{pfad.name}:{kind.lineno} ({k}.{f})")
+                gehe(kind, k, f)
+        gehe(baum)
+    return funde
+
+
+def _ist_store(knoten, klasse) -> bool:
+    """`auth.store.x`, `self.store.x`, `store.x` — und im Store selbst `self.x`."""
+    return ((isinstance(knoten, _ast.Attribute) and knoten.attr == "store")
+            or (isinstance(knoten, _ast.Name) and knoten.id == "store")
+            or (isinstance(knoten, _ast.Name) and knoten.id == "self" and klasse == "Store"))
+
+
+# Der Wächter muss selbst anschlagen können — sonst misst er nichts (Negativtest).
+r.check("Wächter-Selbsttest: ein Aufruf ausserhalb der Erlaubnis wird gefunden",
+        any("admin.py" in f for f in _aufrufe_ausserhalb("delete_user_sessions", _ist_store, set()))
+        and not _aufrufe_ausserhalb("gibt_es_nicht", _ist_store, set()))
+
+# ── Fund 3: der Admin-Widerruf eines Passkeys meldet sich beim Inhaber ────────────────────────
+# Der Zweig audit brachte die Panel-Route, der Zweig faktoren hängte `passkey_removed` nur an die
+# Selbstbedienung. Nach dem Merge war der einzige Faktor-Wechsel ohne Benachrichtigung genau der,
+# den ein übernommenes Admin-Konto an einem FREMDEN Konto vornimmt.
+# (Mutationsproben: in `remove_passkey` den `sicherheitsereignis`-Aufruf streichen → rot; die
+#  Panel-Route wieder direkt `store.delete_webauthn` + `audit` rufen lassen → rot, Hook UND Wächter.)
+auth_f3, app_f3 = _app(csrf_enabled=False)
+_f3_chef = auth_f3.create_user("chef", password="Geheim12345!", is_admin=True)
+_f3_anna = auth_f3.create_user("anna", password="Geheim12345!")
+_f3_ereig = []
+auth_f3.on_security_event = lambda e, k, d: _f3_ereig.append((e, k["username"], dict(d)))
+auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-a", b"pk", 0, [], "Laptop")
+auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-b", b"pk", 0, [], "Telefon")
+_f3_pk, _f3_pk2 = [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)]
+_f3_c = TestClient(app_f3, client=("198.51.100.70", 1))
+_f3_c.cookies.set(auth_f3.cfg.session_cookie,
+                  auth_f3.store.create_session(_f3_chef, 3600, True, "password"))
+_f3_r = _f3_c.post(f"/auth/admin/api/users/{_f3_anna}/passkeys/{_f3_pk}/delete")
+r.check("Fund 3: der Admin-Widerruf entfernt den Passkey und meldet passkey_removed an den Inhaber",
+        _f3_r.status_code == 200
+        and [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)] == [_f3_pk2]
+        and [(e, u) for e, u, _ in _f3_ereig] == [("passkey_removed", "anna")]
+        and _f3_ereig[0][2].get("passkey_id") == _f3_pk,
+        f"HTTP {_f3_r.status_code}, Hook {_f3_ereig}")
+_f3_audit = [(z["username"], z["detail"]) for z in auth_f3.store.recent_audit(20)
+             if z["event"] == "passkey_delete"]
+r.check("Fund 3: … die Audit-Zeile steht unter dem Inhaber, der Admin als akteur=",
+        _f3_audit == [("anna", f"id={_f3_pk} akteur=chef")], f"{_f3_audit}")
+_f3_ereig.clear()
+_f3_r2 = _f3_c.post(f"/auth/admin/api/users/{_f3_anna}/passkeys/{_f3_pk}/delete")
+r.check("Fund 3: ein Passkey, den das Konto nicht (mehr) hat → 404, keine Meldung, keine Zeile",
+        _f3_r2.status_code == 404 and _f3_ereig == []
+        and len([z for z in auth_f3.store.recent_audit(20) if z["event"] == "passkey_delete"]) == 1,
+        f"HTTP {_f3_r2.status_code}, Hook {_f3_ereig}")
+# Derselbe Weg ohne HTTP — und für ein fremdes Konto greift er nicht.
+r.check("Fund 3: remove_passkey trifft nur Passkeys DIESES Kontos",
+        auth_f3.remove_passkey(_f3_chef, _f3_pk2) is False
+        and [c["id"] for c in auth_f3.store.list_webauthn(_f3_anna)] == [_f3_pk2] and _f3_ereig == [])
+if _ilu.find_spec("webauthn") is not None:
+    # Die Selbstbedienung läuft über dieselbe Methode (vorher: eigene Zeilen in webauthn_.py —
+    # und ein fremder oder erfundener Passkey schrieb trotzdem Zeile UND Ereignis).
+    auth_f3s, app_f3s = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
+                             origin="http://localhost")
+    _f3s_anna = auth_f3s.create_user("anna", password="Geheim12345!")
+    _f3s_ereig = []
+    auth_f3s.on_security_event = lambda e, k, d: _f3s_ereig.append((e, k["username"], dict(d)))
+    auth_f3s.store.add_webauthn(_f3s_anna, b"cred-f3s", b"pk", 0, [], "Laptop")
+    _f3s_pk = auth_f3s.store.list_webauthn(_f3s_anna)[0]["id"]
+    _f3s_c = TestClient(app_f3s, client=("203.0.113.70", 1))
+    _f3s_c.cookies.set(auth_f3s.cfg.session_cookie,
+                       auth_f3s.store.create_session(_f3s_anna, 3600, True, "password"))
+    _f3s_fremd = _f3s_c.post("/auth/passkey/delete", json={"id": _f3s_pk + 99})
+    _f3s_r = _f3s_c.post("/auth/passkey/delete", json={"id": _f3s_pk})
+    r.check("Fund 3: Selbstbedienung — unbekannter Passkey 404 ohne Ereignis, eigener 200 mit Ereignis",
+            _f3s_fremd.status_code == 404 and _f3s_r.status_code == 200
+            and _f3s_ereig == [("passkey_removed", "anna", {"passkey_id": _f3s_pk})]
+            and [(z["username"], z["detail"]) for z in auth_f3s.store.recent_audit(20)
+                 if z["event"] == "passkey_delete"] == [("anna", f"id={_f3s_pk}")],
+            f"{_f3s_fremd.status_code}/{_f3s_r.status_code}, Hook {_f3s_ereig}")
+_f3_weg = _aufrufe_ausserhalb("delete_webauthn", _ist_store, {("TinySesam", "remove_passkey")})
+r.check("Fund 3 (Wächter): einen Passkey löscht nur TinySesam.remove_passkey — jede Route geht darüber",
+        not _f3_weg, f"direkte Aufrufe: {_f3_weg}")
+
+# ── Funde 12/18: EIN Löschweg für Konten (H-13 × R4-09/B6-5) ──────────────────────────────────
+# H-13 (Zweig audit) nahm ein gelöschtes Konto nur in `TinySesam.delete_user` aus dem Audit-Log.
+# Der Zweig mailwege brachte weitere Löschwege — `gc()`, `tinysesam gc` (Store) und die Rücknahme
+# bei gescheitertem Bestätigungsversand (B6-5) —, die direkt `store.delete_user` riefen. Name,
+# fremde IP und die Adresse des Opfers blieben im Log, und die Kontoseite eines späteren
+# Namensvetters zeigte die Registrierung des Fremden samt IP als eigenes Ereignis (H-7).
+# (Mutationsproben: in `Store.konto_entfernen` `audit_anonymisieren` streichen → rot für alle
+#  Wege; `gc_unbestaetigte_konten` wieder `self.delete_user` rufen lassen → rot, Spuren UND
+#  Wächter; `signup_expired` wieder mit dem Klarnamen schreiben → rot; `_zuruecknehmen` wieder
+#  `store.delete_user` rufen lassen → rot, Spuren UND Wächter.)
+_F12_NAME, _F12_MAIL = "squatter", "opfer@example.com"
+
+
+def _f12_spuren(a) -> tuple:
+    """Was vom gelöschten Konto noch unter Name oder Adresse im Log und in den Versuchen steht."""
+    kennungen = (_F12_NAME, _F12_MAIL)
+    zeilen = [(z["event"], z["username"], z["detail"]) for z in a.store._all("SELECT * FROM audit")
+              if (z["username"] or "").lower() in kennungen
+              or any(k in (z["detail"] or "").lower() for k in kennungen)]
+    versuche = [z["username"] for z in a.store._all("SELECT username FROM login_attempt")
+                if (z["username"] or "").lower() in kennungen]
+    return zeilen, versuche
+
+
+def _f12_unbestaetigt():
+    """Ein Konto, wie es die Registrierung mit Bestätigungspflicht hinterlässt, samt Spuren: die
+    Registrierung des Fremden (mit seiner IP) und ein Fehlversuch des echten Adressinhabers."""
+    a, app_ = _app(csrf_enabled=False)
+    uid = a.create_user(_F12_NAME, password="Geheim12345!", email=_F12_MAIL)
+    a.store.set_disabled(uid, True)
+    a.create_magic_token("verify_email", user_id=uid)
+    a.audit("signup", _F12_NAME, "203.0.113.66")
+    TestClient(app_, client=("198.51.100.7", 1)).post(
+        "/auth/login", data={"username": _F12_MAIL, "password": "falsch-falsch"})
+    a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=?", (uid,))
+    vorher = _f12_spuren(a)
+    assert vorher[0] and vorher[1], f"Vorbedingung: Spuren müssen da sein, sonst misst das nichts: {vorher}"
+    return a, app_, uid
+
+
+for _f12_weg, _f12_lauf in (("gc()", lambda a: a.gc()["unverified_accounts"]),
+                            ("tinysesam gc (Store)", lambda a: a.store.gc_unbestaetigte_konten())):
+    _f12_a, _, _f12_uid = _f12_unbestaetigt()
+    _f12_n = _f12_lauf(_f12_a)
+    _f12_rest = _f12_spuren(_f12_a)
+    r.check(f"Funde 12/18: {_f12_weg} entfernt das Konto und nimmt es aus Audit-Log und Versuchen",
+            _f12_n == 1 and _f12_a.store.get_user(_f12_uid) is None and _f12_rest == ([], []),
+            f"n={_f12_n}, übrig: {_f12_rest}")
+    _f12_ablauf = [z["username"] for z in _f12_a.store.recent_audit(20) if z["event"] == "signup_expired"]
+    r.check(f"Funde 12/18: {_f12_weg} schreibt signup_expired unter dem Ersatznamen",
+            _f12_ablauf == [f"gelöscht#{_f12_uid}"], f"{_f12_ablauf}")
+
+# Und die Kontoseite der echten Carol danach (Fund 12 im Wortlaut): nur ihre eigenen Zeilen.
+_f12_a, _f12_app, _ = _f12_unbestaetigt()
+_f12_a.gc()
+_f12_neu = _f12_a.create_user(_F12_NAME, password="Geheim12345!", email="echt@example.com")
+_f12_a.audit("signup", _F12_NAME, "198.51.100.8")
+_f12_eigene = [(e["event"], e["ip"]) for e in _f12_a.own_events(_f12_neu)]
+r.check("Fund 12: ein späterer Namensvetter sieht die Registrierung des Fremden nicht",
+        _f12_eigene == [("signup", "198.51.100.8")], f"{_f12_eigene}")
+
+# B6-5: der Bestätigungsversand scheitert → das Konto wird zurückgenommen, ebenfalls über den Weg.
+_f12_b, _f12_bapp = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                         csrf_enabled=False)
+
+
+def _f12_kaputt(*a, **k):
+    raise OSError("Mailserver weg")
+
+
+_f12_b.set_mailer(_f12_kaputt)
+_f12_bc = TestClient(_f12_bapp, client=("203.0.113.66", 1), raise_server_exceptions=False)
+_f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password": "Geheim12345!",
+                                                "email": _F12_MAIL, "next": "/"})
+_f12_brest = _f12_spuren(_f12_b)
+_f12_bzeile = [z["username"] for z in _f12_b.store.recent_audit(20) if z["event"] == "verify_send_error"]
+r.check("Funde 12/18: die B6-5-Rücknahme nimmt das Konto aus dem Log, verify_send_error unter Ersatznamen",
+        _f12_br.status_code == 200 and _f12_b.store.get_user_by_name(_F12_NAME) is None
+        and _f12_brest == ([], []) and len(_f12_bzeile) == 1
+        and _f12_bzeile[0].startswith("gelöscht#"), f"HTTP {_f12_br.status_code}, übrig {_f12_brest}, {_f12_bzeile}")
+
+# purge_demo (Demo-Modus aus) — derselbe Weg, auch wenn der Fund ihn nicht nannte.
+_f12_d, _ = _app(demo_mode=True)
+_f12_d.audit("login", "demo", "198.51.100.9")
+_f12_d.purge_demo()
+r.check("Funde 12/18: purge_demo nimmt die Demo-Konten ebenso aus dem Log",
+        not [z for z in _f12_d.store._all("SELECT * FROM audit") if z["username"] in _f12_d.DEMO_USERS],
+        f"{[dict(z) for z in _f12_d.store._all('SELECT * FROM audit')]}")
+
+_f12_weg = _aufrufe_ausserhalb("delete_user", _ist_store, {("Store", "konto_entfernen")})
+r.check("Funde 12/18 (Wächter): ein Konto löscht nur Store.konto_entfernen — kein Weg an H-13 vorbei",
+        not _f12_weg, f"direkte Aufrufe: {_f12_weg}")
+
+# Zeilen, die VOR dem Konto entstanden, gehören nicht ihm — auch aus Beständen, die ein älterer
+# Stand an H-13 vorbei gelöscht hat, und ein Fehlversuch unter einem damals freien Namen.
+# (Mutationsprobe: in `own_events` `seit=` nicht übergeben → rot.)
+_f12_c, _ = _app()
+_f12_c.store.audit_log("login_fail", "berta", "203.0.113.66", "password")
+_f12_c.store._exec("UPDATE audit SET ts=ts-3600 WHERE username='berta'")
+_f12_berta = _f12_c.create_user("berta", password="Geheim12345!")
+_f12_c.audit("signup", "berta", "198.51.100.10")
+_f12_bev = [(e["event"], e["ip"]) for e in _f12_c.own_events(_f12_berta)]
+r.check("Fund 12: die Kontoseite zeigt keine Zeilen von vor der Anlage des Kontos",
+        _f12_bev == [("signup", "198.51.100.10")], f"{_f12_bev}")
+
 sys.exit(r.done())

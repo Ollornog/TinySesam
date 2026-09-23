@@ -61,7 +61,9 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`. TinySesam sends nothing itself; send the mail from the hook (ideally via a
+  `api_key_created`. That includes changes an administrator makes to someone else's account in the
+  panel (password reset, API key, revoking a passkey) — write the mail so it does not assume the
+  holder did it. TinySesam sends nothing itself; send the mail from the hook (ideally via a
   queue — it runs synchronously in the request). An exception in the hook never undoes the change,
   but lands in the security log.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
