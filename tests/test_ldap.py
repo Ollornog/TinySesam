@@ -20,7 +20,8 @@ class FakeLDAP:
         if not u or u["password"] != password:
             return None
         return {"username": username, "email": u.get("email"),
-                "name": u.get("name", username), "groups": u.get("groups", [])}
+                "name": u.get("name", username), "groups": u.get("groups", []),
+                "id": u.get("id")}   # stabile Kennung des Verzeichnisses (F-11)
 
 
 def build(**cfgkw):
@@ -644,5 +645,77 @@ assert _ldap_befunde(ldap_url="ldaps://dir.example.com") == ([], [])
 assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_verify=False)[1]) == 1
 assert len(_ldap_befunde(ldap_url="ldaps://dir.example.com", ldap_tls_ca_file="/gibt/es/nicht.pem")[0]) == 1
 ok("F-12: Klartext ohne ausdrückliche Erlaubnis ist ein Aufbaufehler, kein Betriebsproblem")
+
+# ---------- F-11: die Zuordnung hängt an einer stabilen Kennung, nicht am Namen ----------
+# Ein Benutzername ist nicht fälschungssicher. Wer im Verzeichnis umbenennt oder ein gelöschtes
+# Konto unter demselben Namen neu anlegt, bekam bis 0.19.0 dasselbe lokale Konto mitsamt seinen
+# Rollen — ohne das lokale Passwort zu kennen.
+db11, auth11, c11 = build(ldap_auto_create=True)
+
+# (1) Neues Konto: wird angelegt UND gebunden.
+auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-alice", "email": "a@corp"}})
+assert auth11.check_ldap("alice", "pw") is not None
+_uid_a = auth11.store.get_user_by_name("alice")["id"]
+assert auth11.store.get_federated_kennung("ldap", _uid_a) == "uuid-alice"
+ok("F-11: ein neu angelegtes Konto wird an die Kennung des Verzeichnisses gebunden")
+
+# (2) Umbenennung im Verzeichnis: dieselbe Kennung, neuer Name → dasselbe Konto.
+auth11.ldap = FakeLDAP({"alice.neu": {"password": "pw", "id": "uuid-alice"}})
+_u = auth11.check_ldap("alice.neu", "pw")
+assert _u is not None and _u["id"] == _uid_a, f"Umbenennung ergab ein anderes Konto: {_u}"
+assert auth11.store.get_user_by_name("alice.neu") is None, "es wurde ein zweites Konto angelegt"
+ok("F-11: eine Umbenennung im Verzeichnis ist kein Kontowechsel")
+
+# (3) DER ANGRIFF: neue Kennung unter dem alten Namen → abgewiesen.
+auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FREMD"}})
+assert auth11.check_ldap("alice", "pw") is None, \
+    "ein neues Verzeichniskonto unter demselben Namen hat das lokale Konto übernommen"
+assert any(e["event"] == "ldap_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: ein neues Verzeichniskonto unter altem Namen erbt das lokale Konto NICHT")
+
+# (4) Bestandsfall: ein Konto ohne Bindung wird beim nächsten Login nachgebunden (PO-Entscheid).
+_uid_b = auth11.create_user("bestand")
+assert auth11.store.get_federated_kennung("ldap", _uid_b) is None
+auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-bestand"}})
+assert auth11.check_ldap("bestand", "pw") is not None
+assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-bestand"
+assert any(e["event"] == "ldap_kennung_gebunden" for e in auth11.store.recent_audit(limit=10))
+ok("F-11: ein Bestandskonto wird beim nächsten Login nachgebunden — einmal, mit Audit-Zeile")
+
+# …und danach greift der Riegel aus (3) auch für dieses Konto.
+auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-anders"}})
+assert auth11.check_ldap("bestand", "pw") is None
+ok("F-11: …danach ist auch dieses Konto gegen den Namenswechsel geschützt")
+
+# Der Betreiber kann die Bindung lösen, wenn im Verzeichnis wirklich umgezogen wurde.
+assert auth11.loese_fremde_bindung("ldap", _uid_b) == 1
+assert auth11.check_ldap("bestand", "pw") is not None
+assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-anders"
+ok("F-11: der Betreiber löst die Bindung — ein bewusster Schritt, kein Nebeneffekt")
+
+# Ohne Kennung bleibt es beim Namen (Bestandsverzeichnisse), aber es wird gesagt.
+db11b, auth11b, c11b = build(ldap_auto_create=True)
+auth11b.ldap = FakeLDAP({"ohne": {"password": "pw"}})     # kein "id"
+import io as _io11, logging as _log11                                      # noqa: E402
+from tinysesam import security as _sec11                                   # noqa: E402
+_sec11.einmal_melden_zuruecksetzen()
+_puffer11 = _io11.StringIO()
+_haken11 = _log11.StreamHandler(_puffer11)
+_sec11.seclog.addHandler(_haken11)
+try:
+    assert auth11b.check_ldap("ohne", "pw") is not None
+finally:
+    _sec11.seclog.removeHandler(_haken11)
+assert "keine stabile Kennung" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
+ok("F-11: ein Verzeichnis ohne stabile Kennung meldet sich, sperrt aber niemanden aus")
+
+# …es sei denn, der Betreiber verlangt sie.
+db11c, auth11c, c11c = build(ldap_auto_create=True, federation_require_stable_id=True)
+auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
+assert auth11c.check_ldap("ohne", "pw") is None
+ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab")
+
+for _d in (db11, db11b, db11c):
+    os.remove(_d)
 
 print("\nLDAP-BACKEND OK ✅")

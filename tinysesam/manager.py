@@ -951,6 +951,101 @@ class TinySesam:
         return u
 
     # ---------- LDAP / lldap (Passwort-Backend) ----------
+    #: Quellen, die eine fremde Identität über eine stabile Kennung binden (F-11). OIDC steht
+    #: nicht dabei: Es hat mit `issuer`+`sub` seit jeher eine eigene, stabilere Zuordnung.
+    FOEDERIERTE_QUELLEN = ("ldap", "saml")
+
+    def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
+                                     anlegen) -> Optional[dict]:
+        """Ein lokales Konto zu einer fremden Identität finden, binden oder anlegen (F-11).
+
+        `kennung` ist die **stabile** Kennung aus dem Verzeichnis (objectGUID/entryUUID bei LDAP,
+        NameID bei SAML), `username` der Name, über den bis 0.19.0 allein zugeordnet wurde.
+        `anlegen()` legt ein neues Konto an und gibt dessen ID zurück oder `None`.
+
+        Vier Lagen, und die dritte ist der eigentliche Riegel:
+
+        1. **Die Kennung ist gebunden** → dieses Konto, auch wenn der Name sich geändert hat.
+           Genau dafür ist die Bindung da: Eine Umbenennung im Verzeichnis ist kein Kontowechsel.
+        2. **Kennung unbekannt, Name frei** → anlegen und binden.
+        3. **Kennung unbekannt, Name gehört einem Konto, das schon eine ANDERE Kennung trägt**
+           → **abweisen**. Das ist der Angriff: Im Verzeichnis entsteht unter dem Namen einer
+           gelöschten Person ein neues Konto, und ohne diesen Riegel erbte es deren lokale Rollen.
+        4. **Kennung unbekannt, Name gehört einem noch ungebundenen Konto** → nachbinden. Das ist
+           der Bestandsfall: Konten aus der Zeit vor F-11 haben keine Kennung, und irgendwann
+           muss jedes von ihnen einmal daran kommen. Der PO hat diesen Weg für diese Runde
+           ausdrücklich freigegeben; er verlässt sich noch einmal auf den Namen, aber nur ein
+           einziges Mal je Konto, und er hinterlässt eine Audit-Zeile.
+
+        Ohne Kennung (das Verzeichnis liefert keine) bleibt es beim Namen — dem ungeschützten
+        Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
+        daraus eine Abweisung.
+        """
+        jetzt = int(time.time())
+        kennung = str(kennung or "").strip()
+        if not kennung:
+            if self.cfg.federation_require_stable_id:
+                security.seclog.warning(
+                    "%s: keine stabile Kennung in der Antwort (user=%s) — abgewiesen, weil "
+                    "federation_require_stable_id=True. Das Attribut steht in %s_attr_id.",
+                    quelle, security.fuer_log(username), quelle)
+                self.audit(f"{quelle}_ohne_kennung", username, detail="abgewiesen")
+                return None
+            if security.einmal_melden(f"fed_ohne_kennung:{quelle}"):
+                security.seclog.warning(
+                    "%s liefert keine stabile Kennung — die Zuordnung hängt am Benutzernamen, "
+                    "wie vor 0.20.0. Wer im Verzeichnis umbenennt oder ein gelöschtes Konto "
+                    "unter demselben Namen neu anlegt, bekommt damit dasselbe lokale Konto. "
+                    "Abhilfe: %s_attr_id setzen (entryUUID, objectGUID) und danach "
+                    "federation_require_stable_id=True.", quelle, quelle)
+            gebunden_uid = None
+        else:
+            gebunden_uid = self.store.get_federated_user(quelle, kennung)
+
+        if gebunden_uid:
+            u = self.store.get_user(gebunden_uid)
+            return self._als_dict(u) if u else None
+
+        u = self.store.get_user_by_name(username)
+        if u is None:
+            uid = anlegen()
+            if uid is None:
+                return None
+            if kennung:
+                self.store.link_federated(quelle, kennung, uid, jetzt)
+            neu = self.store.get_user(uid)
+            return self._als_dict(neu) if neu else None
+
+        if kennung:
+            vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+            if vorhandene and vorhandene != kennung:
+                # Lage 3: Das Konto gehört jemand anderem, auch wenn der Name derselbe ist.
+                security.seclog.warning(
+                    "%s: Konto %s ist schon an eine andere Kennung gebunden — die Anmeldung mit "
+                    "einer neuen Kennung unter demselben Namen wird abgewiesen. Im Verzeichnis "
+                    "wurde vermutlich umbenannt oder ein Konto neu angelegt. Der Betreiber löst "
+                    "die Bindung, wenn das gewollt ist.", quelle, security.fuer_log(username))
+                self.audit(f"{quelle}_kennung_wechsel", str(u["username"]),
+                           detail="abgewiesen: Konto traegt bereits eine andere Kennung")
+                return None
+            if not vorhandene:
+                # Lage 4: Nachbindung — ein einziges Mal je Konto, und sie steht im Protokoll.
+                self.store.link_federated(quelle, kennung, u["id"], jetzt)
+                self.audit(f"{quelle}_kennung_gebunden", str(u["username"]),
+                           detail="nachgebunden beim Login")
+        return self._als_dict(self.store.get_user(u["id"]))
+
+    def loese_fremde_bindung(self, quelle: str, user_id: int) -> int:
+        """Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg).
+
+        Gebraucht, wenn im Verzeichnis wirklich umgezogen wurde — dann ist die alte Kennung tot
+        und das Konto soll die neue bekommen. Dass das ein bewusster Schritt ist und kein
+        Nebeneffekt einer Anmeldung, ist der Punkt."""
+        weg = self.store.unlink_federated(quelle, user_id)
+        u = self.store.get_user(user_id)
+        self.audit(f"{quelle}_kennung_geloest", str(u["username"]) if u else None)
+        return weg
+
     def check_ldap(self, username, password) -> Optional[dict]:
         """Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben.
         Zählt wie ein Passwort-Login (Faktor 'password').
@@ -982,8 +1077,7 @@ class TinySesam:
             groups = info.get("groups") or []
             if not any(a and any(a in str(g) for g in groups) for a in allowed):
                 return None
-        u = self.store.get_user_by_name(username)
-        if not u:
+        def _anlegen():
             if not self.cfg.ldap_auto_create:
                 return None
             try:
@@ -992,17 +1086,18 @@ class TinySesam:
                 # die Vorgabe `True`, wäre der Riegel oben nur für DIESEN Login zu — der
                 # nächste Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey),
                 # reist ohne Beleg an, liest den Vermerk und befördert doch (B-umgehung-1 aus T-13).
-                uid = self.create_user(username, display_name=info.get("name") or username,
-                                       email=info.get("email"), email_verified=False)
+                return self.create_user(username, display_name=info.get("name") or username,
+                                        email=info.get("email"), email_verified=False)
             except ConfigError:
                 # Name oder Adresse gehören lokal schon jemandem (Fund R4-12). Fail-closed:
                 # lieber keine Anmeldung als ein Konto, das eine fremde Kennung besetzt.
                 self.audit("ldap_ident_taken", username)
                 return None
-            u = self.store.get_user(uid)
-            if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
-                return None
-        elif u["disabled"]:
+
+        # Zugeordnet wird über die STABILE Kennung des Verzeichnisses, nicht über den Namen
+        # (F-11). Der Name bleibt der Rückfall für Konten, die noch keine Bindung haben.
+        u = self._fremde_identitaet_aufloesen("ldap", info.get("id") or "", username, _anlegen)
+        if not u or u["disabled"]:
             return None
         self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map,
                               substring=True)   # memberOf liefert ganze DNs
@@ -1027,8 +1122,7 @@ class TinySesam:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
                 return None
-        u = self.store.get_user_by_name(username)
-        if not u:
+        def _anlegen():
             if not cfg.saml_auto_create:
                 return None
             try:
@@ -1036,16 +1130,18 @@ class TinySesam:
                 # Beleg, also wird sie auch ohne Beleg abgelegt. Sonst trüge der Vermerk am
                 # Konto einen Freifahrtschein für jeden späteren Anmeldeweg, der selbst
                 # nichts belegt.
-                uid = self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
-                                       email=first(attrs, cfg.saml_attr_email), email_verified=False)
+                return self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
+                                        email=first(attrs, cfg.saml_attr_email), email_verified=False)
             except ConfigError:
                 # Wie bei LDAP (Fund R4-12): eine schon vergebene Kennung legt kein Konto an.
                 self.audit("saml_ident_taken", username)
                 return None
-            u = self.store.get_user(uid)
-            if u is None:                      # gerade angelegt — kann nur bei einem Defekt fehlen
-                return None
-        elif u["disabled"]:
+
+        # Die stabile Kennung ist die `NameID` — oder ein Attribut, wenn der IdP transiente
+        # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
+        kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
+        u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen)
+        if not u or u["disabled"]:
             return None
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
