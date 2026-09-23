@@ -69,11 +69,104 @@ assert len(sent) == 1
 # sonst nimmt magiclink_enabled=False die E-Mail-Bestätigung mit (siehe unten).
 token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
 assert "/auth/magic/" not in sent[0]["text"]
-r = c.get(f"/auth/verify/{token}", follow_redirects=False)
+# R4-02: Der GET (Mail-Scanner, Vorschau) zeigt nur eine Bestätigungsseite und verbraucht NICHTS.
+for _ in range(3):
+    r = c.get(f"/auth/verify/{token}", follow_redirects=False)
+    assert r.status_code == 200 and "action='/auth/verify/" in r.text, (r.status_code, r.text[:200])
+assert auth.store.get_user(uid)["disabled"] == 1, "ein GET darf das Konto nicht freischalten"
+assert auth.peek_magic(token, purpose="verify_email"), "ein GET darf den Token nicht verbrauchen"
+ok("R4-02: GET auf den Bestätigungslink verbraucht nichts (Mail-Scanner)")
+r = c.post(f"/auth/verify/{token}", follow_redirects=False)
 assert r.status_code == 303
 assert auth.store.get_user(uid)["disabled"] == 0     # aktiviert
-assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 400   # one-shot
+assert c.post(f"/auth/verify/{token}", follow_redirects=False).status_code == 400   # one-shot
+assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 400    # auch die Seite sagt es
 ok("signup_verify_email: eigener Endpunkt /auth/verify/{token}, einmal einlösbar")
+
+# B5-18: Ein ungültiger Token hinterlässt eine Spur (Audit + Sicherheits-Log, NICHT die Login-Jail)
+import logging, io
+from tinysesam import security as _sec
+_puffer = io.StringIO()
+_h = logging.StreamHandler(_puffer)
+_sec.seclog.addHandler(_h)
+try:
+    c.get("/auth/verify/erfunden-123", follow_redirects=False)
+finally:
+    _sec.seclog.removeHandler(_h)
+_zeilen = auth.store._all("SELECT * FROM audit WHERE event='token_invalid'")
+assert _zeilen and "verify_email" in (_zeilen[0]["detail"] or ""), _zeilen
+assert "failed verification" in _puffer.getvalue() and "failed login" not in _puffer.getvalue(), _puffer.getvalue()
+ok("B5-18: ungültiger Einmal-Token → Audit token_invalid + `failed verification` (keine Login-Jail)")
+os.remove(db)
+
+# ---------- R4-03: eine vergebene Adresse antwortet wie eine freie (mit Bestätigung) ----------
+db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
+auth.create_user("inhaber", password="supergeheim", email="da@example.com")
+frei = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim",
+                                      "email": "frei@example.com", "next": "/"})
+vergeben = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim",
+                                          "email": "Da@Example.com", "next": "/"})
+assert frei.status_code == vergeben.status_code == 200, (frei.status_code, vergeben.status_code)
+_rumpf = lambda t: re.sub(r"(nonce|value)=['\"][^'\"]*['\"]", "", t)
+assert _rumpf(frei.text) == _rumpf(vergeben.text), "Antwort unterscheidet sich — Enumeration"
+assert auth.store.get_user_by_name("neu2") is None, "kein zweites Konto"
+_an_inhaber = [m for m in sent if m["to"] == "da@example.com"]
+assert len(_an_inhaber) == 1 and "/auth/verify/" not in _an_inhaber[0]["text"] \
+    and "https://auth.example.com/auth/login" in _an_inhaber[0]["text"], _an_inhaber
+ok("R4-03: vergebene Adresse → gleiche Antwort, Inhaber bekommt einen Hinweis (ohne Token)")
+# Ohne Bestätigung meldet der Erfolgsfall sofort an — dort bleibt 409 (Grenze, im Code benannt)
+db2, auth2, app2, sent2, c2 = build(allow_signup=True)
+auth2.create_user("inhaber", password="supergeheim", email="da@example.com")
+assert c2.post("/auth/register", data={"username": "neu2", "password": "supergeheim",
+                                       "email": "da@example.com", "next": "/"}).status_code == 409
+os.remove(db2)
+ok("R4-03: ohne Bestätigung bleibt es bei 409 (Erfolg meldet sofort an — nicht zu verbergen)")
+os.remove(db)
+
+# ---------- B6-5: scheitert der Bestätigungsversand, bleibt keine Kontoleiche und kein 500 ----------
+db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
+def _kaputt(*a, **k):
+    raise OSError("Mailserver weg")
+auth.set_mailer(_kaputt)
+cx = TestClient(app, raise_server_exceptions=False)
+r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim",
+                                    "email": "pech@example.com", "next": "/"})
+assert r.status_code == 200, r.status_code
+assert auth.store.get_user_by_name("pech") is None, "Konto muss zurückgenommen sein"
+_ev = [z["event"] for z in auth.store._all("SELECT event FROM audit")]
+assert "verify_send_error" in _ev, _ev
+# … und die Registrierung lässt sich wiederholen, sobald der Mailer wieder geht
+auth.set_mailer(lambda to, s_, t, html=None: sent.append({"to": to, "text": t}))
+r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim",
+                                    "email": "pech@example.com", "next": "/"})
+assert r.status_code == 200 and auth.store.get_user_by_name("pech") is not None
+ok("B6-5: Mailer-Fehler bei der Registrierung → kein 500, Konto zurückgenommen, erneut möglich")
+os.remove(db)
+
+# ---------- R4-09: nie bestätigte Konten räumt gc() weg — und NUR die ----------
+db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
+c.post("/auth/register", data={"username": "squatter", "password": "supergeheim",
+                               "email": "opfer@example.com", "next": "/"})
+sq = auth.store.get_user_by_name("squatter")["id"]
+# Gegenprobe 1: ein vom Admin gesperrtes Bestandskonto ohne Bestätigungstoken
+alt = auth.create_user("gesperrt", password="supergeheim", email="g@example.com")
+auth.store.set_disabled(alt, True)
+# Gegenprobe 2: ein bestätigtes und später gesperrtes Konto (eingelöster Token daneben)
+c.post("/auth/register", data={"username": "echt", "password": "supergeheim",
+                               "email": "echt@example.com", "next": "/"})
+echt = auth.store.get_user_by_name("echt")["id"]
+_tok = re.search(r"/auth/verify/([\w\-]+)", sent[-1]["text"]).group(1)
+assert auth.redeem_magic(_tok, purpose="verify_email")
+auth.store._exec("UPDATE magic_token SET expires_at=0")
+auth.store.set_disabled(echt, True)
+assert auth.gc()["unverified_accounts"] == 1
+assert auth.store.get_user(sq) is None, "nie bestätigtes Konto nach Ablauf entfernt"
+assert auth.store.get_user(alt) is not None, "gesperrtes Bestandskonto bleibt"
+assert auth.store.get_user(echt) is not None, "bestätigtes Konto bleibt"
+assert c.post("/auth/register", data={"username": "richtig", "password": "supergeheim",
+                                      "email": "opfer@example.com", "next": "/"}).status_code == 200
+assert auth.store.get_user_by_name("richtig") is not None, "die Adresse ist wieder frei"
+ok("R4-09: gc() entfernt nie bestätigte Konten nach Ablauf des Links — nur diese")
 os.remove(db)
 
 # … und der funktioniert OHNE Magic-Link. Das war der eigentliche Fehler: beides hing am selben
@@ -83,7 +176,7 @@ c.post("/auth/register", data={"username": "ohne", "password": "supergeheim",
                                "email": "o@example.com", "next": "/"})
 uid = auth.store.get_user_by_name("ohne")["id"]
 token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
-assert c.get(f"/auth/verify/{token}", follow_redirects=False).status_code == 303
+assert c.post(f"/auth/verify/{token}", follow_redirects=False).status_code == 303
 assert auth.store.get_user(uid)["disabled"] == 0
 assert c.get("/auth/magic/request").status_code == 404     # Magic-Link ist wirklich aus
 ok("E-Mail-Bestätigung funktioniert ohne Magic-Link")

@@ -266,6 +266,10 @@ Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — eg
 
 TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
 
+### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
+
+`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
+
 ### `next_login_step(user_id, done)`
 
 Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
@@ -394,9 +398,13 @@ Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
 
 Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
+### `send_signup_notice(email, base_url) -> 'bool'`
+
+Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
+
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
 
 ### `session_from_request(request)`
 
@@ -453,6 +461,10 @@ Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschla
 ### `t(key, **fmt) -> 'str'`
 
 Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}.
+
+### `token_abgewiesen(zweck, request: 'Optional[Request]' = None, grund='ungueltig')`
+
+Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
 ### `totp_begin(user_id)`
 
@@ -562,4 +574,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-123 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+126 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

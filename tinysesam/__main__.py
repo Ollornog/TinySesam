@@ -200,6 +200,7 @@ def _gc(argv) -> int:
         return 1
     import time as _t
     zahlen = {
+        "unverified_accounts": store.gc_unbestaetigte_konten(),   # vor den Tokens (R4-09)
         "sessions": store.gc_sessions(),
         "flow": store.gc_flow(),
         "magic_tokens": store.gc_magic_tokens(),

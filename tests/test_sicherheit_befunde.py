@@ -1568,6 +1568,9 @@ _a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, pas
 _mails_api: list = []
 _a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
 _a_api.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+# Diese Runde schickt ein Dutzend Mails an dieselbe Adresse; gemessen wird die Basis, nicht die
+# Drossel je Zieladresse (R4-04, eigener Test in test_magic.py) — die bekommt hier Luft.
+_a_api.set_security("mail_per_address_max", 100)
 
 
 def _tokenzeilen(auth_x) -> int:
@@ -1653,6 +1656,7 @@ _a_pfad, _app_pfad = _app(passkey_enabled=False, trusted_redirect_hosts=["portal
 _mails_pfad: list = []
 _a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text))
 _a_pfad.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+_a_pfad.set_security("mail_per_address_max", 100)   # wie oben: gemessen wird der Pfad, nicht R4-04
 def _links(texte) -> list:
     """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
     return [g for t in texte for g in re.findall(r"https://portal\.example\.com[^\s'\"]*", t)]

@@ -4,7 +4,7 @@ Bewusst stdlib-`sqlite3` (kein ORM): leichtgewichtig, keine zusätzliche Abhäng
 Thread-safe über ein Lock + `check_same_thread=False` (FastAPI-Worker teilen sich die Instanz).
 """
 from __future__ import annotations
-import sqlite3, threading, time, secrets, json, logging, hashlib, os, stat
+import sqlite3, threading, time, secrets, json, logging, hashlib, os, stat, unicodedata
 from typing import Optional
 
 SCHEMA = """
@@ -198,20 +198,64 @@ CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
 """
 
 
+#: Zeichen, in denen sich IDNA 2003 (stdlib-Codec) und IDNA 2008 unterscheiden: Der stdlib-Codec
+#: macht aus `straße.example` ein `strasse.example` — eine ANDERE Domain. Enthält eine Domain eines davon,
+#: bleibt sie in Unicode-Form statt falsch umgeschrieben zu werden.
+_IDNA_ABWEICHLER = frozenset("ßς\u200c\u200d")
+
+
+def _domain_kanonisch(domain: str) -> str:
+    """Eine Domain in die A-Label-Form (`xn--…`) bringen, wenn das eindeutig geht (R4-06).
+
+    Sonst stehen `bücher.example` und `xn--bcher-kva.example` als zwei verschiedene Adressen in der
+    Datenbank, obwohl beide dasselbe Postfach meinen — zwei Konten, zwei „vergeben"-Prüfungen,
+    die einander nicht sehen. Was sich nicht sicher umschreiben lässt, bleibt unverändert."""
+    if domain.isascii() or any(z in _IDNA_ABWEICHLER for z in domain):
+        return domain
+    try:
+        return domain.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return domain
+
+
 def norm_email(email) -> Optional[str]:
-    """E-Mail kanonisch speichern: getrimmt und klein. `None` bleibt `None` (Konto ohne Adresse)."""
-    e = (email or "").strip().lower()
-    return e or None
+    """E-Mail kanonisch speichern: NFKC, getrimmt, klein, Domain als A-Label. `None` bleibt `None`.
+
+    NFKC faltet Kompatibilitätszeichen (R4-06): `ａｄｍｉｎ@example.com` in Vollbreite ist danach
+    dasselbe wie `admin@example.com` — vorher waren es zwei Kennungen, die im Panel gleich
+    aussahen."""
+    e = unicodedata.normalize("NFKC", str(email or "")).strip().lower()
+    if not e:
+        return None
+    lokal, at, domain = e.rpartition("@")
+    if at and domain:
+        e = f"{lokal}@{_domain_kanonisch(domain)}"
+    return e
+
+
+def _schriften(text: str) -> set:
+    """Die Schriftsysteme der Buchstaben in `text` (erstes Wort des Unicode-Namens: LATIN,
+    CYRILLIC, GREEK …). Ziffern und Satzzeichen zählen nicht."""
+    return {unicodedata.name(z, "?").split(" ", 1)[0] for z in text if z.isalpha()}
 
 
 def valid_email(email) -> bool:
     """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
-    Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`)."""
+    Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`).
+
+    Abgewiesen wird ausserdem, was zum Verwechseln gebaut ist (R4-06): unsichtbare Zeichen
+    (Steuer- und Formatzeichen wie Zero-Width-Joiner) und ein Teil, der Schriften mischt —
+    `аdmin@example.com` mit kyrillischem `а` sieht im Panel aus wie das Admin-Postfach. Eine
+    Adresse ganz in einer Schrift (`müller@…`, `иван@…`) bleibt erlaubt."""
     e = (email or "").strip()
     if not e or " " in e or e.count("@") != 1:
         return False
+    if any(unicodedata.category(z) in ("Cc", "Cf") for z in e):
+        return False
     local, _, domain = e.partition("@")
-    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
+    if not (bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")):
+        return False
+    return all(len(_schriften(teil)) <= 1 for teil in [local, *domain.split(".")])
 
 
 def _now() -> int:
@@ -467,10 +511,14 @@ class Store:
         return self._one("SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,))
 
     def get_user_by_email(self, email) -> Optional[sqlite3.Row]:
-        email = norm_email(email)
-        if not email:
+        kanonisch = norm_email(email)
+        if not kanonisch:
             return None
-        return self._one("SELECT * FROM users WHERE email=? COLLATE NOCASE ORDER BY id LIMIT 1", (email,))
+        # Auch die Form von vor R4-06 (nur getrimmt und klein) suchen: Eine gespeicherte Adresse
+        # mit Umlaut-Domain steht im Bestand noch in Unicode-Form und würde sonst nicht gefunden.
+        alt = str(email or "").strip().lower()
+        return self._one("SELECT * FROM users WHERE email COLLATE NOCASE IN (?, ?) ORDER BY id LIMIT 1",
+                         (kanonisch, alt))
 
     def delete_user(self, user_id):
         """User + alle seine Zugangsdaten entfernen. Der Audit-Log bleibt (Nachvollziehbarkeit)."""
@@ -964,6 +1012,47 @@ class Store:
                 (_now(), token_hash, _now()))
             self.db.commit()
             return cur.rowcount == 1
+
+    def expire_magic_token(self, token_hash) -> bool:
+        """Einen noch unbenutzten Token sofort ablaufen lassen (Versand gescheitert, B6-12).
+
+        Bewusst „abgelaufen" und nicht „benutzt": `used_at` heisst „eingelöst" — bei einem
+        Bestätigungstoken also „Adresse belegt". Ein nie zugestellter Link hat nichts belegt,
+        und die Bereinigung unbestätigter Konten (`unbestaetigte_konten`) muss ihn als
+        abgelaufen sehen.
+        """
+        return self._exec("UPDATE magic_token SET expires_at=? WHERE token_hash=? AND used_at IS NULL",
+                          (_now() - 1, token_hash)).rowcount == 1
+
+    def unbestaetigte_konten(self) -> list:
+        """Konten aus einer Registrierung, deren Bestätigungslink abgelaufen ist, ohne dass sie je
+        bestätigt wurden (R4-09). Nur diese Kombination zählt — gesperrt, noch nie angemeldet,
+        ein unbenutzter und abgelaufener `verify_email`-Token, und KEIN gültiger oder schon
+        eingelöster daneben. Ein vom Admin gesperrtes Bestandskonto trägt keinen solchen Token
+        und bleibt deshalb unberührt."""
+        now = _now()
+        return [r["id"] for r in self._all(
+            "SELECT DISTINCT u.id FROM users u JOIN magic_token m ON m.user_id = u.id "
+            "WHERE m.purpose = 'verify_email' AND m.used_at IS NULL AND m.expires_at < ? "
+            "  AND u.disabled = 1 AND u.first_login_at IS NULL "
+            "  AND NOT EXISTS (SELECT 1 FROM magic_token m2 WHERE m2.user_id = u.id "
+            "      AND m2.purpose = 'verify_email' AND (m2.used_at IS NOT NULL OR m2.expires_at >= ?))",
+            (now, now))]
+
+    def gc_unbestaetigte_konten(self) -> int:
+        """Nie bestätigte Konten entfernen (R4-09) — VOR `gc_magic_tokens` rufen.
+
+        Das Merkmal „nie bestätigt" ist der abgelaufene Bestätigungstoken; räumt
+        `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen. Ohne diesen
+        Schritt blieb eine Adresse, die jemand Fremdes registriert und nie bestätigt hatte, für
+        immer belegt: Der echte Inhaber bekam „E-Mail vergeben". Hier und nicht im Manager,
+        damit `tinysesam gc` (arbeitet direkt auf dem Store) dieselbe Reihenfolge fährt."""
+        ids = self.unbestaetigte_konten()
+        for uid in ids:
+            u = self.get_user(uid)
+            self.delete_user(uid)
+            self.audit_log("signup_expired", u["username"] if u else None, None, f"uid={uid}")
+        return len(ids)
 
     def gc_magic_tokens(self) -> int:
         return self._exec("DELETE FROM magic_token WHERE expires_at < ? OR used_at IS NOT NULL", (_now(),)).rowcount

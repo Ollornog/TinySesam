@@ -88,7 +88,7 @@ assert c.post("/auth/login", data={"username": "nurmail", "password": "x"}).stat
 c.post("/auth/magic/request", data={"email": "m@example.com", "next": "/"})
 import re
 tok = re.search(r"/auth/magic/([\w\-]+)", sent[0]).group(1)
-assert c.get(f"/auth/magic/{tok}", follow_redirects=False).status_code == 303
+assert c.post(f"/auth/magic/{tok}", follow_redirects=False).status_code == 303   # R4-02: POST löst ein
 os.remove(db)
 ok("nur Magic-Link (Passwort aus): Passwort-Login 404, Magic-Login funktioniert allein")
 
