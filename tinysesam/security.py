@@ -128,6 +128,50 @@ SECURITY_DEFAULTS = {
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
 }
 
+#: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
+#:
+#: Ohne Grenzen legte ein Tippfehler im Panel die Instanz still, und zwar dauerhaft: Mit
+#: `rate_limit_max=0` weist `rate_ok` jede Anmeldung ab — auch die der Administratorin, die den
+#: Wert zurückdrehen müsste. Der Wert steht in der Datenbank und überlebt jeden Neustart. Ebenso
+#: `max_login_attempts=0` (jedes Konto gilt sofort als gesperrt) oder ein `lockout_window_sec`
+#: von Jahren. Die Untergrenzen halten den Betrieb am Leben, die Obergrenzen den Schutz:
+#: `password_min_length` unter 8 ist kein Tuning, sondern das Abschalten der Passwortregel.
+SECURITY_GRENZEN = {
+    "max_login_attempts": (3, 1000),
+    "lockout_window_sec": (60, 86400),
+    "ip_attempt_factor": (1, 100),
+    "rate_limit_max": (3, 100000),
+    "rate_limit_window_sec": (1, 3600),
+    "password_min_length": (8, 128),
+    "pin_max_attempts": (3, 100),
+    "password_change_max_attempts": (3, 100),
+    "reauth_max_attempts": (3, 100),
+    "resource_max_attempts": (3, 100),
+}
+
+
+def pruefe_haertung(key: str, value) -> int:
+    """Einen Härtungs-Wert prüfen und als int zurückgeben — oder `ValueError` mit lesbarem Text.
+
+    Eine Stelle für Panel, `set_security()` und das Lesen aus der Datenbank: Zwei Fassungen der
+    Grenzen liefen sonst auseinander, und die schwächere entschiede."""
+    if key not in SECURITY_DEFAULTS:
+        raise ValueError(f"{key!r} ist keine Härtungs-Schwelle. Bekannt sind: "
+                         f"{', '.join(sorted(SECURITY_DEFAULTS))}")
+    # bool ist in Python ein int — `True` als „1 Versuch" wäre ein stiller Tippfehler.
+    if isinstance(value, bool):
+        raise ValueError(f"{key}: {value!r} ist keine Zahl")
+    try:
+        zahl = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl") from None
+    if isinstance(value, float) and value != zahl:
+        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl")
+    unten, oben = SECURITY_GRENZEN[key]
+    if not unten <= zahl <= oben:
+        raise ValueError(f"{key}={zahl} liegt ausserhalb von {unten}…{oben}")
+    return zahl
+
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
 # Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
 # STATTDESSEN bremst.
@@ -311,12 +355,35 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
     return normalisiere_basis(roh)
 
 
+def ungueltige_netze(trusted_nets) -> list:
+    """Die Einträge einer `trusted_proxies`-Liste, die kein IP-Netz sind (B3-3)."""
+    schlecht = []
+    for n in trusted_nets or []:
+        try:
+            ipaddress.ip_network(str(n).strip(), strict=False)
+        except ValueError:
+            schlecht.append(n)
+    return schlecht
+
+
 def is_trusted(ip: str, trusted_nets) -> bool:
+    # Je Eintrag prüfen, nicht die ganze Liste in einem `try` (B3-3): Ein einziger ungültiger
+    # Eintrag (ein Hostname, ein Tippfehler) warf vorher mitten im `any()` und entwertete damit
+    # ALLE übrigen — der Proxy galt als fremd, jeder Nutzer erschien unter seiner IP. Die
+    # Warnung darauf riet dann, das Proxy-Netz einzutragen, das längst dastand.
+    # `konfigpruefung` weist so eine Liste beim Aufbau ab; hier ist der Boden für eine Liste,
+    # die danach geändert wurde.
     try:
         addr = ipaddress.ip_address(ip)
-        return any(addr in ipaddress.ip_network(n, strict=False) for n in trusted_nets)
-    except Exception:
+    except ValueError:
         return False
+    for n in trusted_nets or []:
+        try:
+            if addr in ipaddress.ip_network(str(n).strip(), strict=False):
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
 
 
 # Peers, über die schon geklagt wurde — eine Fehlkonfiguration meldet sich einmal, nicht pro

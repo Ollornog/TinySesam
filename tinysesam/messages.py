@@ -53,6 +53,10 @@ MESSAGES = {
         "api.too_many": 'Too many attempts — please wait.',
         "api.password_short": 'Password too short (min. {n})',
         "api.saml_denied": 'SAML: no access',
+        "api.last_admin": 'This is the last active admin — appoint another admin first',
+        "api.service_admin": 'A service account cannot be an admin: it has no interactive sign-in, and its keys never carry admin rights',
+        "api.invalid": 'Invalid value: {grund}',
+        "api.base_missing": 'This function is not configured on this server (public address missing). Please inform the operator.',
 
         # --- generic / errors ---
         "or": "or",
@@ -289,6 +293,10 @@ MESSAGES = {
         "api.too_many": 'zu viele Versuche — bitte warten',
         "api.password_short": 'Passwort zu kurz (min. {n})',
         "api.saml_denied": 'SAML: kein Zugriff',
+        "api.last_admin": 'Das ist der letzte aktive Admin — erst einen weiteren Admin ernennen',
+        "api.service_admin": 'Ein Service-Konto kann kein Admin sein: Es hat keine interaktive Anmeldung, und seine Keys tragen nie Adminrechte',
+        "api.invalid": 'Ungültiger Wert: {grund}',
+        "api.base_missing": 'Diese Funktion ist auf diesem Server nicht eingerichtet (öffentliche Adresse fehlt). Bitte den Betreiber informieren.',
 
         "or": "oder",
         "back": "Zurück",

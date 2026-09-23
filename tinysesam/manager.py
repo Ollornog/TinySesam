@@ -311,6 +311,19 @@ class TinySesam:
             _verlange("webauthn", "passkey_enabled", "passkey")
             from . import webauthn_ as wa
             self.webauthn = wa
+        if config.demo_mode and not self.store.get_setting("demo_users") \
+                and self.store.user_count() > 0:
+            # Die eine technische Schranke, die eine echte Demo nie trifft (B3-8): Eine Demo
+            # beginnt auf einer LEEREN Datenbank — dort legt sie ihre Konten an und merkt sie
+            # sich (`demo_users`), jeder spätere Start erkennt sie wieder, auch mit inzwischen
+            # registrierten Besuchern. Wer `demo_mode` dagegen erstmals auf einer Datenbank
+            # einschaltet, die schon Konten hat, schaltet ihn auf Bestandsdaten ein — also
+            # produktiv. Vorher entstand dann still ein Admin-Konto mit bekanntem Passwort.
+            raise ConfigError(
+                "demo_mode=True auf einer Datenbank, die schon Konten hat und nie eine Demo war "
+                f"({config.db_path!r}). Die Demo legt ein Admin-Konto mit bekanntem Passwort an — "
+                "auf Bestandsdaten ist das eine Hintertür. Für eine Demo eine eigene, leere "
+                "Datenbank nehmen (db_path).")
         if config.demo_mode:
             security.seclog.warning(
                 "DEMO-MODUS aktiv: Beispielkonten %s mit bekanntem Passwort. NICHT produktiv betreiben.",
@@ -1867,7 +1880,10 @@ class TinySesam:
                     d = dict(u)
                     d["_via"] = "apikey"
                     d["_key_art"] = art
-                    if art == "automat" and d.get("is_admin"):
+                    # `!= "mensch"` statt `== "automat"`: fail-closed für jede Art, die es nicht
+                    # gibt (ein Tippfehler in der Spalte, ein Wert aus einer fremden Fassung).
+                    # Vorher behielt ein Key mit `kind="Automat"` das Admin-Flag (R6-6).
+                    if art != "mensch" and d.get("is_admin"):
                         # Der Kern von R6-5: Ein Automaten-Key trägt das Admin-Flag seines
                         # Besitzers NICHT. Vorher war jeder Key eines Admins eine vollständige
                         # Admin-Schreib-API — ohne zweiten Faktor, ohne CSRF-Schicht. Die Rollen
@@ -2030,9 +2046,19 @@ class TinySesam:
     def sec(self, key) -> int:
         """Härtungs-Wert: Store-Setting (Panel) ODER Default."""
         v = self.store.get_setting(key)
+        if v is None:
+            return security.SECURITY_DEFAULTS[key]
         try:
-            return int(v) if v is not None else security.SECURITY_DEFAULTS[key]
-        except Exception:
+            return security.pruefe_haertung(key, v)
+        except ValueError as e:
+            # Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer
+            # Fassung ohne Grenzen, oder direkt geschrieben): die Vorgabe gilt, und das wird
+            # gesagt. Ihn weiter anzuwenden hiesse, eine stillgelegte Instanz stillgelegt zu
+            # lassen — genau den Zustand, den die Grenzen verhindern (R6-4).
+            if security.einmal_melden("sec:" + key):
+                security.seclog.warning(
+                    "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt die Vorgabe %s. "
+                    "Im Admin-Panel neu setzen.", e, security.SECURITY_DEFAULTS[key])
             return security.SECURITY_DEFAULTS[key]
 
     def all_security(self) -> dict:
@@ -2040,9 +2066,17 @@ class TinySesam:
         return {k: self.sec(k) for k in security.SECURITY_DEFAULTS}
 
     def set_security(self, key, value):
-        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank."""
-        if key in security.SECURITY_DEFAULTS:
-            self.store.set_setting(key, int(value))
+        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank.
+
+        Unbekannter Schlüssel oder Wert ausserhalb von `security.SECURITY_GRENZEN` → `ConfigError`,
+        und nichts wird geschrieben. Bis 0.19.x fiel ein unbekannter Schlüssel still weg und jeder
+        Wert wurde übernommen — `rate_limit_max=0` sperrte danach jede Anmeldung, auch die, mit
+        der man den Wert hätte zurückdrehen können (R6-4)."""
+        try:
+            zahl = security.pruefe_haertung(key, value)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        self.store.set_setting(key, zahl)
 
     def set_rate_limiter(self, limiter):
         """Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool."""
@@ -2262,7 +2296,7 @@ class TinySesam:
             # abgeleitete Basis der Prüfung nicht stand, bleibt die Login-URL relativ — der
             # Browser löst sie gegen den aufgerufenen Host auf, ein fremder Name kommt so
             # nicht in die Umleitung.
-            kandidat = f"{proto}://{host}" if host else ""
+            kandidat = f"{self._login_schema(proto, host)}://{host}" if host else ""
         base = self.public_base(kandidat=kandidat)
         if base and not self.cfg.cookie_domain:
             # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
@@ -2273,7 +2307,11 @@ class TinySesam:
             if (o.scheme in ("http", "https") and o.hostname
                     and o.hostname != (urlsplit(base).hostname or "")
                     and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
-                base = f"{o.scheme}://{o.netloc}"
+                # Durch dieselbe Formprüfung wie jede andere Basis (R5-1): `o.netloc` ist roh und
+                # trug eine Benutzerangabe (`https://fremd.example@app.example.com`) unverändert
+                # in die Login-URL; das Schema kam ungeprüft aus X-Forwarded-Proto/X-Original-URL.
+                base = security.normalisiere_basis(
+                    f"{self._login_schema(o.scheme, o.hostname)}://{o.netloc}") or base
         ziel = f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
         # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
         # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
@@ -2283,6 +2321,26 @@ class TinySesam:
         if anwendung:
             ziel += f"&app={quote(anwendung, safe='')}"
         return ziel
+
+    def _login_schema(self, schema: str, host: str) -> str:
+        """Das Schema der Login-URL, wenn es aus der Anfrage kommt (R5-1).
+
+        Ohne `base_url` stammt es aus `X-Forwarded-Proto` bzw. `X-Original-URL` — Eingaben, die
+        nicht nur der Proxy setzt. Mit `cookie_secure=True` ist `http` dort nie richtig: Das
+        Sitzungs-Cookie käme über http gar nicht an, das Passwort aber ginge im Klartext über das
+        Netz. Also https, ausser bei Loopback (lokaler Aufbau ohne Zertifikat)."""
+        schema = (schema or "").strip().lower()
+        if schema not in ("http", "https"):
+            schema = "https"
+        if schema == "http" and self.cfg.cookie_secure:
+            from urllib.parse import urlsplit
+            try:
+                name = urlsplit("//" + (host or "")).hostname or ""
+            except ValueError:
+                name = ""
+            if not security.eigener_host(name):      # ohne Liste: nur Loopback zählt
+                schema = "https"
+        return schema
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     def oidc_anwendung(self, url_oder_host: str) -> str:
@@ -2608,14 +2666,33 @@ class TinySesam:
         return security.safe_next(next_, self.cfg.login_redirect, hosts or None)
 
     # ---------- FastAPI-Integration ----------
+    def _nachpruefen(self) -> None:
+        """Die Config noch einmal prüfen, bevor aus ihr Routen entstehen (B3-14).
+
+        Der Konstruktor prüft und hält danach eine **Referenz** auf das Config-Objekt. Wer
+        dazwischen etwas umstellt (`auth.cfg.cookie_samesite = "Strict"`, `auth.cfg.base_url = ""`),
+        umging bisher jeden Wächter — `TinySesamConfig.pruefen()` gab es dafür, aufgerufen hat es
+        niemand. Hier ist der letzte Punkt, an dem ein Fehler noch beim Start auffällt statt beim
+        ersten Klick. Warnungen hat der Konstruktor schon gesagt; hier zählt nur, was den Aufbau
+        hätte scheitern lassen."""
+        fehler, _ = self.cfg._befunde()
+        if fehler:
+            raise ConfigError("Die Konfiguration wurde nach dem Aufbau geändert und geht so nicht "
+                              "auf:\n  - " + "\n  - ".join(fehler))
+
     def router(self):
-        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig."""
+        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
+
+        Prüft die Config vorher noch einmal (`_nachpruefen`) — eine nach dem Konstruktor
+        kaputt gestellte Config scheitert hier mit `ConfigError`, nicht erst im Betrieb."""
+        self._nachpruefen()
         from .router import build_router
         return build_router(self)
 
     def admin_router(self):
         """Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port
         montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel."""
+        self._nachpruefen()
         from .admin import build_admin_router
         return build_admin_router(self)
 

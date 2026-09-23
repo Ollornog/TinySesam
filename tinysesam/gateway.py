@@ -11,7 +11,9 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_BASE_URL             (Pflicht)  öffentliche URL DIESES Gateways, z.B. https://auth.example.com
     TINYSESAM_COOKIE_DOMAIN                    z.B. .example.com  (SSO über Subdomains)
     TINYSESAM_PROTECTED_HOSTS                  Komma-Liste erlaubter Redirect-Ziele: app.example.com,wiki.example.com
-    TINYSESAM_ALLOWED_GROUPS                   Komma-Liste; leer = alle
+    TINYSESAM_ALLOWED_GROUPS                   Komma-Liste. Leer = JEDES Konto beim Provider kommt
+                                               durch das Tor — ohne Freigabe je Client (unten)
+                                               warnt der Start deshalb laut (B3-9)
     TINYSESAM_TRUSTED_PROXIES                  Komma-Liste; Default 127.0.0.1/32,::1/128
     TINYSESAM_OIDC_CLIENTS                     JSON: mehrere Anwendungen, je eine mit eigenem
                                                Client beim selben Provider (T-14). Beispiel:

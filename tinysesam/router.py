@@ -13,6 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+from .errors import ConfigError
 from .store import norm_email, valid_email
 
 
@@ -357,7 +358,7 @@ def build_router(auth) -> APIRouter:
             # Benutzer-Enumeration richtig und verdeckte hier einen Totalausfall. Ein fehlender
             # `base_url` ist nicht adressbezogen: Der Abbruch verrät nichts über das Postfach,
             # und `konfigpruefung` verhindert diesen Zustand ohnehin beim Aufbau.
-            base = auth.require_public_base(request)
+            base = _mail_basis(auth, request)
             try:
                 auth.send_login_link(email.strip(), base, nxt)
             except Exception:
@@ -478,7 +479,7 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if not auth.rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
-            base = auth.require_public_base(request)   # fail closed, siehe /auth/magic/request
+            base = _mail_basis(auth, request)   # fail closed, siehe /auth/magic/request
             try:
                 auth.send_password_reset(email.strip(), base)
             except Exception:
@@ -575,7 +576,7 @@ def build_router(auth) -> APIRouter:
                 return err(auth.t("err.verify_no_mailer"), 500)
             # Vor dem Anlegen prüfen, nicht danach: sonst entstünde ein deaktiviertes Konto,
             # das mangels Bestätigungsmail nie freigeschaltet werden kann.
-            verify_base = auth.require_public_base(request) if verify else ""
+            verify_base = _mail_basis(auth, request) if verify else ""
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                    email=email_final or None)
             if inv:
@@ -936,9 +937,14 @@ def build_router(auth) -> APIRouter:
             # `kind` entscheidet, was der Key kann (R6-5): "automat" arbeitet allein, trägt
             # aber nie das Admin-Flag; "mensch" gilt nur zusammen mit einer Sitzung desselben
             # Kontos. Die Vorgabe ist die engere der beiden.
-            return auth.create_api_key(u["id"], name=b.get("name"),
-                                       expires_days=b.get("expires_days"), roles=b.get("roles"),
-                                       kind=str(b.get("kind") or "automat"))
+            # Ein unbrauchbarer Scope, „unbefristet" ohne Erlaubnis oder eine unbekannte Art
+            # sind Eingabefehler, kein Serverfehler — dieselbe Klasse wie R6-8 im Panel.
+            try:
+                return auth.create_api_key(u["id"], name=b.get("name"),
+                                           expires_days=b.get("expires_days"), roles=b.get("roles"),
+                                           kind=str(b.get("kind") or "automat"))
+            except (ConfigError, ValueError, TypeError) as e:
+                raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
 
         @r.post("/auth/apikeys/{key_id}/revoke")
         def apikeys_revoke(request: Request, key_id: int):
@@ -952,6 +958,26 @@ def build_router(auth) -> APIRouter:
         r.include_router(auth.admin_router(), prefix=cfg.admin_path)
 
     return r
+
+
+def _mail_basis(auth, request) -> str:
+    """Die Basis für einen verschickten Link — oder HTTP 503, nie ein 500 und nie ein stiller 200.
+
+    `konfigpruefung` lässt eine Mail-Funktion ohne `base_url` gar nicht erst starten. Wird die
+    Config NACH dem Konstruktor geändert (`auth.cfg.base_url = ""`), wirft
+    `require_public_base()` zur Request-Zeit `ConfigError` — und den fing keine Route: Der
+    Nutzer bekam „internal server error", der Betreiber einen Stacktrace ohne Hinweis, dass es
+    an der Konfiguration liegt. 503 sagt, was es ist: Der Dienst ist so nicht einsatzbereit.
+    Der Grund steht einmal im Sicherheits-Log (nicht je Anfrage), die Antwort verrät nichts
+    über das Postfach und nichts über den Aufbau.
+    """
+    from . import security
+    try:
+        return auth.require_public_base(request)
+    except ConfigError as e:
+        if security.einmal_melden("mail_basis"):
+            security.seclog.error("Verschickter Link nicht möglich, Anfrage mit 503 beantwortet: %s", e)
+        raise HTTPException(503, auth.t("api.base_missing"))
 
 
 def _key_art(k) -> str:

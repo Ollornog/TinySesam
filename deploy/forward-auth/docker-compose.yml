@@ -29,7 +29,11 @@ services:
       TINYSESAM_BASE_URL: "https://auth.example.com"
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
-      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
+      # Wer durch das Tor darf, muss IRGENDWO begrenzt sein — sonst kommt jedes Konto beim
+      # Provider in jede Anwendung (deny-by-default, B3-9). Hier geschieht das über die
+      # Freigabe je Client beim Provider (TINYSESAM_OIDC_CLIENTS unten). Wer nur EINEN Client
+      # fährt, begrenzt mit Gruppen; ohne beides warnt TinySesam beim Start.
+      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"
       #
       # Zwei Anwendungen, zwei Clients, EINE Installation (T-14). Wer in welche darf, steht
       # beim Provider — dort hängt die Freigabe am Client. Ohne eigene Clients gäbe es nur eine
