@@ -9,7 +9,7 @@
   "version": 2,
   "private_muster": [
     "(?<![\\w.])/home/[a-z_][a-z0-9_-]*",
-    "\\b[a-z0-9-]+\\.(?!example\\b)[a-z0-9-]{3,}\\.(?:de|at|ch|eu)\\b",
+    "(?<![\\w.-])(?!www\\.)(?:[a-z0-9-]+\\.)+(?!example\\b)[a-z0-9-]{3,}\\.(?:de|at|ch|eu)\\b",
     "\\b10\\.\\d+\\.\\d+\\.\\d+(?!/)",
     "\\b192\\.168\\.\\d+\\.\\d+(?!/)",
     "\\b172\\.(?:1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+(?!/)",
@@ -25,7 +25,15 @@
     "privates Netz 172.16/12 (ohne Maske)",
     "CGNAT / Overlay-Netz",
     "Container-Nummern",
-    "Hypervisor-API-Token"
+    "Hypervisor-API-Token",
+    "2026-09-23, Muster der Dienst-Subdomain geschaerft: `www` als ERSTE Bezeichnung ist",
+    "ausgenommen. Eine Subdomain namens www ist per Definition die Website selbst, nie ein",
+    "interner Dienst — das Muster traf vorher jede Quellenangabe der Form www.<name>.de.",
+    "Gemessen an einem Regelkatalog mit Normen-Fundstellen (www.baua.de u.ae.): der fachliche",
+    "Kern des Produkts wurde als Leck gemeldet.",
+    "Dabei bewusst ueber den Vorschlag hinausgegangen: nur `\\b(?!www\\.)` liesse `mail.www.<x>.de`",
+    "durch, weil die Suche dann an einer spaeteren Bezeichnung ansetzt. Deshalb Anker auf den",
+    "ANFANG des Hostnamens `(?<![\\w.-])` plus mehrteiliger Rumpf `(?:[a-z0-9-]+\\.)+`."
   ],
   "_namen_kommentar": [
     "Der GitHub-Owner steht hier BEWUSST NICHT. Er ist Identitaet, nicht Infrastruktur:",
@@ -34,7 +42,14 @@
     "('paperless.<domain>.de' trifft, '<domain>.de' allein nicht).",
     "Er stand einmal in der Liste und fiel nur deshalb nicht auf, weil die",
     "Identitaets-Maskierung die URL-Zeilen zufaellig traf - in einem Repo mit Impressum",
-    "und Pages-URL schlug er sofort an."
+    "und Pages-URL schlug er sofort an.",
+    "2026-09-22: vier Pruefsummen aus dem eigenen Zaun eines weiteren Repos uebernommen",
+    "(gleiches Format: sha256 der kleingeschriebenen Form, erste 16 Zeichen). Der Abgleich",
+    "lief in BEIDE Richtungen und war dort unangenehmer: sechs Namen aus diesem Kit kannte",
+    "die dortige Fassung nicht — ein zweites System ist nicht nur doppelt, sondern doppelt",
+    "unvollstaendig. Es zieht deshalb auf diese Liste um und loescht die eigene.",
+    "(Der Repo-Name steht hier bewusst NICHT: diese Datei wandert per sync in oeffentliche",
+    "Repos, und der Name ist selbst einer der geschuetzten. Der Zaun hat genau das gefangen.)"
   ],
   "private_namen_sha256_16": [
     "061429fadd2701e3",
@@ -43,10 +58,14 @@
     "6bb8c80cfa0e95ae",
     "84ef0efe0a878ba1",
     "a227c36a926bd7f6",
+    "a5b367bcd6d2c02e",
+    "a81a73017f17239a",
     "a994ffcab684f9e2",
     "cb034381b0eee532",
+    "d0ff9830f233311d",
     "e177ac5b0aa46203",
-    "e71b5222584b6528"
+    "e71b5222584b6528",
+    "fb5fe538ef4d7f6a"
   ],
   "erlaubte_identitaet": "github\\.com/[A-Za-z0-9-]+/(?:{projekte})|ghcr\\.io/[a-z0-9-]+/[a-z0-9-]+|GITHUB_REPOSITORY_OWNER|github\\.repository_owner|OWNER_LC",
   "erlaubte_hosts": [
@@ -138,7 +157,14 @@
     "`resident_key=` wurde als Geheimnis gemeldet — das Zuweisungsmuster greift bei",
     "`_key=`, und die bestehende Punkt-Regel war auf Kleinbuchstaben beschraenkt.",
     "Sie ist eng genug: ein JWT beginnt mit `ey`, Base64 kennt keinen Punkt, und jedes",
-    "Segment muss mit einem Buchstaben beginnen. Gemeldet von der TinySesam-Session."
+    "Segment muss mit einem Buchstaben beginnen. Gemeldet von der TinySesam-Session.",
+    "HINWEIS: Der Fall 'rechts steht ein AUFRUF statt eines Literals' wird NICHT ueber eine",
+    "Platzhalter-Regel geloest, sondern ueber den KONTEXT (_wert_ist_aufruf in hygiene.py):",
+    "entscheidend ist, was dem Wert FOLGT (`::`, `->`, `(`). Der erste Versuch war eine",
+    "Platzhalter-Regel `^[A-Za-z_]\\w*$` — sie liess JWT, Passwort und Zeichen-Gemisch durch,",
+    "weil eine Regel, die nur den WERT sieht, einen Bezeichner nicht von einem Geheimnis ohne",
+    "Sonderzeichen unterscheiden kann. Merksatz: einen Fehlalarm am Geheimnis-Zaun ueber den",
+    "Kontext abstellen, nie ueber den Wert — sonst macht man den Zaun schwaecher statt genauer."
   ],
   "artefakt_teile": [
     ".egg-info",
@@ -195,5 +221,25 @@
     "obwohl er genau die Norm befolgt. Ein Fehlalarm zaehlt als Fehler: er erzieht dazu,",
     "die Pruefung zu umgehen statt ihr zu glauben.",
     "Quelle: https://www.rfc-editor.org/rfc/rfc2606.txt"
+  ],
+  "generierte_dateien": [
+    "(^|/)composer\\.lock$",
+    "(^|/)package-lock\\.json$",
+    "(^|/)yarn\\.lock$",
+    "(^|/)poetry\\.lock$",
+    "(^|/)uv\\.lock$",
+    "(^|/)Cargo\\.lock$",
+    "(^|/)go\\.sum$",
+    "(^|/)_ide_helper(_models)?\\.php$",
+    "(^|/)\\.phpstorm\\.meta\\.php$"
+  ],
+  "_generierte_dateien_bedeutung": [
+    "Dateien, die ein WERKZEUG schreibt und deren Inhalt von Dritten kommt: Lock-Dateien und",
+    "IDE-Helfer. Sie lassen sich nicht 'neutral machen' — wer die Adresse darin aendert, bricht",
+    "die Datei. Von pruefe_adressen und pruefe_blanke_adressen ausgenommen.",
+    "⚠️ NICHT von pruefe_geheimnisse: ein Token in einer Lock-Datei ist trotzdem ein Token,",
+    "und genau dort schaut niemand hin. Die Ausnahme gilt fuer ADRESSEN, nicht fuer Werte.",
+    "Anlass 2026-09-23: ~1400 Adress-Treffer in einem PHP-Repo, fast alle aus composer.lock",
+    "und _ide_helper.php (packagist.org, tidelift.com, tools.ietf.org)."
   ]
 }

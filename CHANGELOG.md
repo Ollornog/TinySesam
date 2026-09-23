@@ -11,6 +11,20 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
 ### Sicherheit
 
+- **Jeder `actions/checkout` setzt `persist-credentials: false`** (neun Stellen, keine Ausnahme).
+  **Ebene dieser Regel: eigene Härtung, kein belegter Standard** — GitHub empfiehlt es nirgends
+  ausdrücklich. Was sie bringt: Mit der Vorgabe legt checkout das Token so ab, dass **jeder
+  spätere Schritt im selben Job** es lesen kann. Seit v6 liegt es unter `$RUNNER_TEMP` statt in
+  `.git/config`, das Risiko ist also kleiner als die oft zitierte Begründung nahelegt — es
+  verschwindet aber nicht, und nach dem Checkout läuft hier fremder Code (`pip install -e`,
+  Actions Dritter). Keine Ausnahme nötig, weil kein Job dieses Repos per git pusht oder taggt;
+  nachgemessen, nicht angenommen.
+
+- **Dependabot bündelt nur noch patch und minor** (`update-types`). Ein Major landete sonst im
+  monatlichen Sammel-PR und würde mit ihm durchgewinkt: Dieselbe Prüfung, die für drei harmlose
+  Patches genügt, entschiede dann auch über einen Versionssprung mit Bruch. Majors kommen einzeln
+  — dort ist der CHANGELOG des Pakets die Arbeit, nicht der grüne Haken der CI.
+
 - **LDAP und SAML binden an eine stabile Kennung, nicht an den Benutzernamen** (F-11, Schema 9).
   Ein Name ist nicht fälschungssicher: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto
   unter demselben Namen neu anlegt, bekam bis 0.19.0 **dasselbe lokale Konto mitsamt seinen

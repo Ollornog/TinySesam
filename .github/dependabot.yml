@@ -22,8 +22,14 @@ updates:
       interval: monthly
     groups:
       # Ein PR je Monat statt einem je Paket — sonst ertrinkt ein Solo-Projekt in Rauschen.
+      #
+      # **Nur patch und minor.** Ein Major landete sonst im Sammel-PR und würde mit ihm
+      # durchgewinkt: Dieselbe Prüfung, die für drei harmlose Patches genügt, entscheidet dann
+      # auch über einen Versionssprung mit Bruch. Majors kommen deshalb einzeln — dort ist der
+      # CHANGELOG des Pakets die eigentliche Arbeit, nicht der grüne Haken der CI.
       alle:
         patterns: ["*"]
+        update-types: ["patch", "minor"]
 
   # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
   - package-ecosystem: docker
