@@ -18,7 +18,7 @@
 # Per DIGEST gepinnt, nicht per Tag: `python:3.12-slim` zeigt heute hierhin und morgen
 # woanders — zwei Bauläufe desselben Commits ergäben verschiedene Abbilder. Anheben:
 #   docker manifest inspect python:3.12-slim   (bzw. Dependabot, s. dependabot.yml)
-FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS build
+FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 AS build
 
 # Aus dem Build-Kontext installieren, NICHT aus dem Netz: das Abbild soll genau den Stand
 # enthalten, der hier daneben liegt — nicht das, was `main` gerade zufällig ist.
@@ -31,7 +31,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir ".[gateway]"
 
 # ---------- Laufen ----------
-FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9
+FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
 
 RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin tinysesam \
     && mkdir -p /data && chown tinysesam:tinysesam /data
