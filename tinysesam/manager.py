@@ -149,141 +149,7 @@ def _gueltige_regeln(regeln) -> list:
 
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
-        if config.login_identifier not in ("username", "email", "both"):
-            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
-        if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
-            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
-                             "sonst entstehen Konten, die sich nicht anmelden können")
-        # Alle übrigen Widersprüche auf einmal — beim Aufbau, nicht beim ersten Login. Die
-        # Prüfungen oben werfen einzeln, weil jede für sich eine eigene Geschichte erzählt;
-        # was danach kommt, sammelt konfigpruefung.py und meldet es gemeinsam. Wer drei Dinge
-        # falsch hat, soll sie einmal lesen und nicht dreimal starten.
-        befunde, hinweise = konfigpruefung.pruefe(config)
-        for hinweis in hinweise:
-            security.seclog.warning("Konfiguration: %s", hinweis)
-        if befunde:
-            raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
-
-        if config.cookie_samesite not in ("lax", "strict", "none"):
-            raise ConfigError(
-                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
-                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
-                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
-        if config.cookie_samesite == "none" and not config.cookie_secure:
-            raise ConfigError(
-                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
-                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
-        if not isinstance(config.csp, str):
-            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
-        if config.https_mode not in ("off", "warn", "force"):
-            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
-                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
-                             "also still ab")
-        # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
-        # erlaubt. Zusammen mit https_mode='force' widerspricht es sich aber: Die App leitet
-        # dann jeden Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne
-        # Secure-Flag heraus.
-        #
-        # Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über
-        # die Außenwelt behauptet. Eine frühere Fassung schlug auch bei
-        # `base_url='https://…' + cookie_secure=False` an; das klang plausibel, war aber falsch:
-        # `base_url` ist eine Zusage über die öffentliche Adresse (SAML/OIDC bauen daraus
-        # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
-        # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
-        # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
-        # `totp_required` war seit jeher ein Schalter ohne Draht: Er stand in der Config, in
-        # beiden READMEs („2FA erzwingen") und auf der Website — und wurde an keiner Stelle im
-        # Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor erzwungen zu haben und hatte
-        # ihn nicht. Ein wirkungsloser Sicherheitsschalter ist gefährlicher als gar keiner, denn
-        # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
-        # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
-        if getattr(config, "totp_required", False):
-            raise ConfigError(
-                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
-                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
-                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
-                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
-        if not config.cookie_secure and config.https_mode == "force":
-            raise ConfigError(
-                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
-                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
-                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
-                "(lokal/ohne Zertifikat).")
-
-        # Erst-Admin per Allowlist + offene Selbst-Registrierung: Die Allowlist verbürgt nur,
-        # WELCHER Name Admin wird — nicht, WER diesen Namen bekommt. Steht `admin_identifiers`
-        # auf einer frischen Instanz mit `allow_signup=True`, registriert sich der Erste, der
-        # die Adresse errät, genau darunter und ist beim ersten Login Admin. Das ist derselbe
-        # Fehler, den der Bootstrap eigentlich vermeiden soll ("der Erste gewinnt") — nur eine
-        # Stufe später.
-        #
-        # Tragfähig ist die Kombination nur, wenn die Identität aus der Registrierung selbst
-        # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
-        # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
-        # Namen, wer das Postfach hat.
-        #
-        # Offen ist diese Tür nicht nur bei `allow_signup`. Jedes Verfahren, das beim ersten
-        # Login selbst ein Konto anlegt, legt es unter einem Namen an, den der fremde IdP
-        # liefert: `oidc.py` nimmt `preferred_username`, SAML das NameID-/Attributfeld, LDAP
-        # den Anmeldenamen. Das ist dieselbe Lage wie bei der offenen Registrierung — nur
-        # bestimmt den Namen dort der Besucher und hier der IdP, und bei einem IdP mit
-        # Selbstregistrierung ist das dieselbe Person.
-        offene_tueren = []
-        if config.allow_signup:
-            offene_tueren.append("allow_signup=True")
-        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
-                                  ("saml_enabled", "saml_auto_create", "SAML"),
-                                  ("ldap_enabled", "ldap_auto_create", "LDAP")):
-            if getattr(config, an, False) and getattr(config, anlegen, False):
-                offene_tueren.append(f"{anlegen}=True ({name})")
-        if config.admin_identifiers and offene_tueren:
-            ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
-            namen = [i for i in ids if "@" not in i]
-            if namen:
-                raise ConfigError(
-                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
-                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
-                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
-                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
-                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
-                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
-                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
-                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
-        if config.admin_identifiers and config.allow_signup:
-            if not (config.signup_require_email and config.signup_verify_email):
-                raise ConfigError(
-                    "admin_identifiers zusammen mit allow_signup=True verlangt "
-                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
-                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
-                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
-                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
-        # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
-        # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
-        # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
-        if config.forward_headers:
-            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
-            # Erst die Form, dann die Namen. `{"user": None}` rutschte durch (`namen or []`
-            # machte daraus eine leere Liste) und kippte später JEDEN Forward-Auth-Request in
-            # ein 500; `{"user": 123}` tötete den Konstruktor mit einem rohen `TypeError`, den
-            # ein `except ConfigError` nicht fängt.
-            for feld, wert in config.forward_headers.items():
-                if isinstance(wert, str):
-                    continue
-                if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
-                    continue
-                raise ConfigError(
-                    f"forward_headers[{feld!r}] muss ein Header-Name sein oder eine Liste davon "
-                    f"— ist aber {type(wert).__name__}. Beispiel: "
-                    '{"user": "Remote-User"} oder {"user": ["Remote-User", "X-Auth-User"]}')
-            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
-            if unbekannt:
-                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
-                                 f"{sorted(erlaubt)}")
-            for feld, namen in config.forward_headers.items():
-                for name in ([namen] if isinstance(namen, str) else namen or []):
-                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
-                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
-                                         "Header-Name")
+        self._riegel(config, beim_aufbau=True)
         self.cfg = config
         self.store = Store(config.db_path)
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
@@ -366,6 +232,19 @@ class TinySesam:
             _verlange("webauthn", "passkey_enabled", "passkey")
             from . import webauthn_ as wa
             self.webauthn = wa
+        if config.demo_mode and not self.store.get_setting("demo_users") \
+                and self.store.user_count() > 0:
+            # Die eine technische Schranke, die eine echte Demo nie trifft (B3-8): Eine Demo
+            # beginnt auf einer LEEREN Datenbank — dort legt sie ihre Konten an und merkt sie
+            # sich (`demo_users`), jeder spätere Start erkennt sie wieder, auch mit inzwischen
+            # registrierten Besuchern. Wer `demo_mode` dagegen erstmals auf einer Datenbank
+            # einschaltet, die schon Konten hat, schaltet ihn auf Bestandsdaten ein — also
+            # produktiv. Vorher entstand dann still ein Admin-Konto mit bekanntem Passwort.
+            raise ConfigError(
+                "demo_mode=True auf einer Datenbank, die schon Konten hat und nie eine Demo war "
+                f"({config.db_path!r}). Die Demo legt ein Admin-Konto mit bekanntem Passwort an — "
+                "auf Bestandsdaten ist das eine Hintertür. Für eine Demo eine eigene, leere "
+                "Datenbank nehmen (db_path).")
         if config.demo_mode:
             security.seclog.warning(
                 "DEMO-MODUS aktiv: Beispielkonten %s mit bekanntem Passwort. NICHT produktiv betreiben.",
@@ -2167,7 +2046,10 @@ class TinySesam:
                     d = dict(u)
                     d["_via"] = "apikey"
                     d["_key_art"] = art
-                    if art == "automat" and d.get("is_admin"):
+                    # `!= "mensch"` statt `== "automat"`: fail-closed für jede Art, die es nicht
+                    # gibt (ein Tippfehler in der Spalte, ein Wert aus einer fremden Fassung).
+                    # Vorher behielt ein Key mit `kind="Automat"` das Admin-Flag (R6-6).
+                    if art != "mensch" and d.get("is_admin"):
                         # Der Kern von R6-5: Ein Automaten-Key trägt das Admin-Flag seines
                         # Besitzers NICHT. Vorher war jeder Key eines Admins eine vollständige
                         # Admin-Schreib-API — ohne zweiten Faktor, ohne CSRF-Schicht. Die Rollen
@@ -2331,21 +2213,40 @@ class TinySesam:
         return security.client_ip(request, self.cfg.trusted_proxies)
 
     def sec(self, key) -> int:
-        """Härtungs-Wert: Store-Setting (Panel) ODER Default."""
+        """Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`."""
         v = self.store.get_setting(key)
-        try:
-            return int(v) if v is not None else security.SECURITY_DEFAULTS[key]
-        except Exception:
+        if v is None:
             return security.SECURITY_DEFAULTS[key]
+        try:
+            return security.pruefe_haertung(key, v)
+        except ValueError as e:
+            # Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer
+            # Fassung ohne Grenzen, oder direkt geschrieben). Ihn weiter anzuwenden hiesse, eine
+            # stillgelegte Instanz stillgelegt zu lassen (R6-4); ihn auf die Vorgabe zu setzen,
+            # lockerte still jede strengere Bestandseinstellung (A1). Also die nächste Grenze.
+            wert = security.klemme_haertung(key, v)
+            if security.einmal_melden("sec:" + key):
+                security.seclog.warning(
+                    "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt %s. Der Wert lässt "
+                    "sich im Admin-Panel bestätigen oder ändern.", e, wert)
+            return wert
 
     def all_security(self) -> dict:
         """Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht)."""
         return {k: self.sec(k) for k in security.SECURITY_DEFAULTS}
 
     def set_security(self, key, value):
-        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank."""
-        if key in security.SECURITY_DEFAULTS:
-            self.store.set_setting(key, int(value))
+        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank.
+
+        Unbekannter Schlüssel oder Wert ausserhalb von `security.SECURITY_GRENZEN` → `ConfigError`,
+        und nichts wird geschrieben. Bis 0.19.x fiel ein unbekannter Schlüssel still weg und jeder
+        Wert wurde übernommen — `rate_limit_max=0` sperrte danach jede Anmeldung, auch die, mit
+        der man den Wert hätte zurückdrehen können (R6-4)."""
+        try:
+            zahl = security.pruefe_haertung(key, value)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        self.store.set_setting(key, zahl)
 
     def set_rate_limiter(self, limiter):
         """Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool."""
@@ -2643,7 +2544,7 @@ class TinySesam:
             # abgeleitete Basis der Prüfung nicht stand, bleibt die Login-URL relativ — der
             # Browser löst sie gegen den aufgerufenen Host auf, ein fremder Name kommt so
             # nicht in die Umleitung.
-            kandidat = f"{proto}://{host}" if host else ""
+            kandidat = f"{self._login_schema(proto, host)}://{host}" if host else ""
         base = self.public_base(kandidat=kandidat)
         if base and not self.cfg.cookie_domain:
             # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
@@ -2654,7 +2555,11 @@ class TinySesam:
             if (o.scheme in ("http", "https") and o.hostname
                     and o.hostname != (urlsplit(base).hostname or "")
                     and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
-                base = f"{o.scheme}://{o.netloc}"
+                # Durch dieselbe Formprüfung wie jede andere Basis (R5-1): `o.netloc` ist roh und
+                # trug eine Benutzerangabe (`https://fremd.example@app.example.com`) unverändert
+                # in die Login-URL; das Schema kam ungeprüft aus X-Forwarded-Proto/X-Original-URL.
+                base = security.normalisiere_basis(
+                    f"{self._login_schema(o.scheme, o.hostname)}://{o.netloc}") or base
         ziel = f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
         # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
         # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
@@ -2664,6 +2569,26 @@ class TinySesam:
         if anwendung:
             ziel += f"&app={quote(anwendung, safe='')}"
         return ziel
+
+    def _login_schema(self, schema: str, host: str) -> str:
+        """Das Schema der Login-URL, wenn es aus der Anfrage kommt (R5-1).
+
+        Ohne `base_url` stammt es aus `X-Forwarded-Proto` bzw. `X-Original-URL` — Eingaben, die
+        nicht nur der Proxy setzt. Mit `cookie_secure=True` ist `http` dort nie richtig: Das
+        Sitzungs-Cookie käme über http gar nicht an, das Passwort aber ginge im Klartext über das
+        Netz. Also https, ausser bei Loopback (lokaler Aufbau ohne Zertifikat)."""
+        schema = (schema or "").strip().lower()
+        if schema not in ("http", "https"):
+            schema = "https"
+        if schema == "http" and self.cfg.cookie_secure:
+            from urllib.parse import urlsplit
+            try:
+                name = urlsplit("//" + (host or "")).hostname or ""
+            except ValueError:
+                name = ""
+            if not security.eigener_host(name):      # ohne Liste: nur Loopback zählt
+                schema = "https"
+        return schema
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     def oidc_anwendung(self, url_oder_host: str) -> str:
@@ -3040,14 +2965,185 @@ class TinySesam:
         return security.safe_next(next_, self.cfg.login_redirect, hosts or None)
 
     # ---------- FastAPI-Integration ----------
+    def _riegel(self, config: TinySesamConfig, *, beim_aufbau: bool) -> None:
+        """Alle Prüfungen, die den Aufbau scheitern lassen — beim Konstruktor und noch einmal vor
+        `router()`/`admin_router()` (A2).
+
+        Sie standen bis dahin nur im Konstruktor; `_nachpruefen` kannte nur `konfigpruefung` und
+        die Cookie-Felder. Wer danach `auth.cfg.allow_signup = True` setzte, baute neben
+        `admin_identifiers=["chef"]` einen Router, in dem sich der erste Besucher als „chef"
+        registrierte und Erst-Admin wurde. `beim_aufbau=False` lässt nur `konfigpruefung` weg —
+        die hat `_nachpruefen` über `TinySesamConfig._befunde()` schon gefahren, samt Warnungen."""
+        if config.login_identifier not in ("username", "email", "both"):
+            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
+        if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
+            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
+                             "sonst entstehen Konten, die sich nicht anmelden können")
+        # Alle übrigen Widersprüche auf einmal — beim Aufbau, nicht beim ersten Login. Die
+        # Prüfungen oben werfen einzeln, weil jede für sich eine eigene Geschichte erzählt;
+        # was danach kommt, sammelt konfigpruefung.py und meldet es gemeinsam. Wer drei Dinge
+        # falsch hat, soll sie einmal lesen und nicht dreimal starten.
+        if beim_aufbau:
+            befunde, hinweise = konfigpruefung.pruefe(config)
+            for hinweis in hinweise:
+                security.seclog.warning("Konfiguration: %s", hinweis)
+            if befunde:
+                raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
+
+        if config.cookie_samesite not in ("lax", "strict", "none"):
+            raise ConfigError(
+                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
+                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
+                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
+        if config.cookie_samesite == "none" and not config.cookie_secure:
+            raise ConfigError(
+                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
+                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
+        if not isinstance(config.csp, str):
+            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
+        if config.https_mode not in ("off", "warn", "force"):
+            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
+                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
+                             "also still ab")
+        # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
+        # erlaubt. Zusammen mit https_mode='force' widerspricht es sich aber: Die App leitet
+        # dann jeden Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne
+        # Secure-Flag heraus.
+        #
+        # Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über
+        # die Außenwelt behauptet. Eine frühere Fassung schlug auch bei
+        # `base_url='https://…' + cookie_secure=False` an; das klang plausibel, war aber falsch:
+        # `base_url` ist eine Zusage über die öffentliche Adresse (SAML/OIDC bauen daraus
+        # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
+        # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
+        # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
+        # `totp_required` war seit jeher ein Schalter ohne Draht: Er stand in der Config, in
+        # beiden READMEs („2FA erzwingen") und auf der Website — und wurde an keiner Stelle im
+        # Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor erzwungen zu haben und hatte
+        # ihn nicht. Ein wirkungsloser Sicherheitsschalter ist gefährlicher als gar keiner, denn
+        # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
+        # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
+        if getattr(config, "totp_required", False):
+            raise ConfigError(
+                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
+                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
+                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
+                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
+        if not config.cookie_secure and config.https_mode == "force":
+            raise ConfigError(
+                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
+                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
+                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
+                "(lokal/ohne Zertifikat).")
+
+        # Erst-Admin per Allowlist + offene Selbst-Registrierung: Die Allowlist verbürgt nur,
+        # WELCHER Name Admin wird — nicht, WER diesen Namen bekommt. Steht `admin_identifiers`
+        # auf einer frischen Instanz mit `allow_signup=True`, registriert sich der Erste, der
+        # die Adresse errät, genau darunter und ist beim ersten Login Admin. Das ist derselbe
+        # Fehler, den der Bootstrap eigentlich vermeiden soll ("der Erste gewinnt") — nur eine
+        # Stufe später.
+        #
+        # Tragfähig ist die Kombination nur, wenn die Identität aus der Registrierung selbst
+        # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
+        # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
+        # Namen, wer das Postfach hat.
+        #
+        # Offen ist diese Tür nicht nur bei `allow_signup`. Jedes Verfahren, das beim ersten
+        # Login selbst ein Konto anlegt, legt es unter einem Namen an, den der fremde IdP
+        # liefert: `oidc.py` nimmt `preferred_username`, SAML das NameID-/Attributfeld, LDAP
+        # den Anmeldenamen. Das ist dieselbe Lage wie bei der offenen Registrierung — nur
+        # bestimmt den Namen dort der Besucher und hier der IdP, und bei einem IdP mit
+        # Selbstregistrierung ist das dieselbe Person.
+        offene_tueren = []
+        if config.allow_signup:
+            offene_tueren.append("allow_signup=True")
+        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
+                                  ("saml_enabled", "saml_auto_create", "SAML"),
+                                  ("ldap_enabled", "ldap_auto_create", "LDAP")):
+            if getattr(config, an, False) and getattr(config, anlegen, False):
+                offene_tueren.append(f"{anlegen}=True ({name})")
+        if config.admin_identifiers and offene_tueren:
+            ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
+            namen = [i for i in ids if "@" not in i]
+            if namen:
+                raise ConfigError(
+                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
+                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
+                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
+                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
+                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
+                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
+                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
+                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
+        if config.admin_identifiers and config.allow_signup:
+            if not (config.signup_require_email and config.signup_verify_email):
+                raise ConfigError(
+                    "admin_identifiers zusammen mit allow_signup=True verlangt "
+                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
+                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
+                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
+                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
+        # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
+        # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
+        # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
+        if config.forward_headers:
+            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
+            # Erst die Form, dann die Namen. `{"user": None}` rutschte durch (`namen or []`
+            # machte daraus eine leere Liste) und kippte später JEDEN Forward-Auth-Request in
+            # ein 500; `{"user": 123}` tötete den Konstruktor mit einem rohen `TypeError`, den
+            # ein `except ConfigError` nicht fängt.
+            for feld, wert in config.forward_headers.items():
+                if isinstance(wert, str):
+                    continue
+                if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
+                    continue
+                raise ConfigError(
+                    f"forward_headers[{feld!r}] muss ein Header-Name sein oder eine Liste davon "
+                    f"— ist aber {type(wert).__name__}. Beispiel: "
+                    '{"user": "Remote-User"} oder {"user": ["Remote-User", "X-Auth-User"]}')
+            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
+            if unbekannt:
+                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
+                                 f"{sorted(erlaubt)}")
+            for feld, namen in config.forward_headers.items():
+                for name in ([namen] if isinstance(namen, str) else namen or []):
+                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
+                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
+                                         "Header-Name")
+
+    def _nachpruefen(self) -> None:
+        """Die Config noch einmal prüfen, bevor aus ihr Routen entstehen (B3-14).
+
+        Der Konstruktor prüft und hält danach eine **Referenz** auf das Config-Objekt. Wer
+        dazwischen etwas umstellt (`auth.cfg.cookie_samesite = "Strict"`, `auth.cfg.base_url = ""`),
+        umging bisher jeden Wächter — `TinySesamConfig.pruefen()` gab es dafür, aufgerufen hat es
+        niemand. Hier ist der letzte Punkt, an dem ein Fehler noch beim Start auffällt statt beim
+        ersten Klick. Warnungen hat der Konstruktor schon gesagt; hier zählt nur, was den Aufbau
+        hätte scheitern lassen — und zwar ALLES davon: `konfigpruefung` samt Cookie-Feldern und
+        die Riegel des Konstruktors (`_riegel`, A2)."""
+        fehler, _ = self.cfg._befunde()
+        if not fehler:
+            try:
+                self._riegel(self.cfg, beim_aufbau=False)
+            except ConfigError as e:
+                fehler = [str(e)]
+        if fehler:
+            raise ConfigError("Die Konfiguration wurde nach dem Aufbau geändert und geht so nicht "
+                              "auf:\n  - " + "\n  - ".join(fehler))
+
     def router(self):
-        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig."""
+        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
+
+        Prüft die Config vorher noch einmal (`_nachpruefen`) — eine nach dem Konstruktor
+        kaputt gestellte Config scheitert hier mit `ConfigError`, nicht erst im Betrieb."""
+        self._nachpruefen()
         from .router import build_router
         return build_router(self)
 
     def admin_router(self):
         """Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port
         montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel."""
+        self._nachpruefen()
         from .admin import build_admin_router
         return build_admin_router(self)
 

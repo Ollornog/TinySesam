@@ -17,9 +17,10 @@ import secrets
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
-from .errors import StateError
+from .errors import ConfigError, StateError
 from .manager import _inject_nonce
-from .router import _key_art, gehaertete_route
+from .router import _key_art, _mail_basis, gehaertete_route
+from . import security
 from .store import norm_email, valid_email
 from .templates import brand, favicon_link
 from .theme import TOKENS
@@ -51,6 +52,15 @@ def build_admin_router(auth) -> APIRouter:
         """
         wer = auth.current_user(request)
         auth.audit(ereignis, wer["username"] if wer else None, auth.client_ip(request), detail)
+
+    def andere_aktive_admins(uid: int) -> int:
+        """Wie viele aktive, interaktive Admins bleiben, wenn `uid` keiner mehr ist?
+
+        Gezählt wird, wer sich wirklich als Admin anmelden kann: nicht gesperrt, kein
+        Service-Konto (das hat keine Sitzung, und seine Keys tragen das Flag nie, R6-5)."""
+        return sum(1 for u in auth.store.list_users()
+                   if u["is_admin"] and not u["disabled"] and not u["is_service"]
+                   and int(u["id"]) != int(uid))
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -88,6 +98,13 @@ def build_admin_router(auth) -> APIRouter:
         if auth.kennung_vergeben(username):
             raise HTTPException(409, auth.t("api.user_exists"))
         roles = b.get("roles") or []
+        # Service-Konto + Admin (R6-2): Früher fiel `is_admin` hier still weg, über die
+        # Rollen-Route liess sich das Flag danach aber doch setzen. Ein solches Konto kann sich
+        # nicht anmelden, seine Keys tragen das Flag nie (R6-5) — es zählt nur als „es gibt
+        # einen Admin" und schliesst damit den Erst-Admin-Weg, ohne dass jemand Admin ist.
+        # Laut abweisen statt still verwerfen: Wer beides ankreuzt, hat etwas anderes gemeint.
+        if b.get("is_service") and b.get("is_admin"):
+            raise HTTPException(400, auth.t("api.service_admin"))
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
         else:
@@ -138,9 +155,23 @@ def build_admin_router(auth) -> APIRouter:
     async def user_roles(request: Request, uid: int):
         guard(request)
         b = await auth.json_body(request)
+        ziel = auth.store.get_user(uid)
+        if ziel is None:
+            raise HTTPException(404)
+        if "is_admin" in b:
+            neu = bool(b["is_admin"])
+            if neu and ziel["is_service"]:
+                raise HTTPException(400, auth.t("api.service_admin"))      # R6-2, s. user_create
+            # Den letzten Admin nicht entmachten (R6-1). Ohne Admin öffnet sich der
+            # Erst-Admin-Weg wieder: Ein neues Einmal-Token entsteht, und wer es liest — im Log,
+            # in der Konsole — wird Admin. Das Panel ist danach für niemanden mehr erreichbar,
+            # der es zurückdrehen könnte. Geprüft VOR jedem Schreibzugriff, damit die Rollen
+            # nicht halb gesetzt stehen bleiben.
+            if not neu and ziel["is_admin"] and not andere_aktive_admins(uid):
+                raise HTTPException(400, auth.t("api.last_admin"))
         # Vorher/Nachher ins Protokoll (R6-7): „uid=5" sagte, DASS sich Rechte änderten, nicht
         # welche. Ob jemand Admin wurde, ist aber genau die Frage nach einem Vorfall.
-        vorher = auth.store.get_user(uid)
+        vorher = ziel
         rollen_vorher = sorted(auth.user_roles(vorher)) if vorher else []
         admin_vorher = bool(vorher["is_admin"]) if vorher else False
         auth.set_roles(uid, b.get("roles") or [])
@@ -197,10 +228,24 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
-        guard(request)
+        wer = guard(request)
+        # Dieselbe Regel wie an der Selbstbedienungs-Route (`_nur_mit_sitzung`, R6-6):
+        # Schlüssel gibt ein Mensch aus, kein Schlüssel. Hier fehlte sie — der Panel-Pfad war
+        # der Umweg, auf dem ein Key einen neuen Key mintet, und zwar für ein BELIEBIGES Konto.
+        # Heute hält schon R6-5 (ein Automaten-Key trägt kein Admin-Flag, ein Menschen-Key
+        # gilt nur neben der Sitzung); diese Zeile hängt nicht davon ab, dass das so bleibt.
+        if wer.get("_via") != "session":
+            raise HTTPException(403, auth.t("api.key_needs_session"))
         b = await auth.json_body(request)
         # Die Audit-Zeile schreibt `create_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
-        return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"))
+        # `create_api_key` wirft `ConfigError` für einen Scope ohne gültige Rolle und für
+        # „unbefristet" ohne Erlaubnis; eine unbrauchbare Zahl ist ein `ValueError`. Ungefangen
+        # war das ein HTTP 500 (R6-8) — der Admin sah „internal server error" statt des Grundes.
+        try:
+            return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"),
+                                       roles=b.get("roles"))
+        except (ConfigError, ValueError, TypeError) as e:
+            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
@@ -244,7 +289,7 @@ def build_admin_router(auth) -> APIRouter:
             email = (b.get("email") or "").strip()
             # Der Einladungslink geht per Mail an einen Dritten und trägt ein gültiges
             # Token — er darf nie aus dem Host-Header gebaut werden (R4-01).
-            base = auth.require_public_base(request)
+            base = _mail_basis(auth, request)
             res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
@@ -290,7 +335,15 @@ def build_admin_router(auth) -> APIRouter:
         # Vorher/Nachher (R6-7): Wer `max_login_attempts` von 5 auf 5000 stellt, schaltet die
         # Sperre faktisch ab — im Protokoll stand bisher nur, DASS etwas gespeichert wurde.
         vorher = auth.all_security()
-        for k, v in (await auth.json_body(request)).items():
+        werte = await auth.json_body(request)
+        # Erst ALLE prüfen, dann schreiben: Ein ungültiger Wert in der Mitte liess sonst die
+        # Hälfte gespeichert zurück. Und ohne Grenzen legte ein Tippfehler die Instanz still
+        # (`rate_limit_max=0` sperrt jede Anmeldung, auch die zum Zurückdrehen — R6-4).
+        try:
+            geprueft = {k: security.pruefe_haertung(k, v) for k, v in werte.items()}
+        except ValueError as e:
+            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
+        for k, v in geprueft.items():
             auth.set_security(k, v)
         nachher = auth.all_security()
         geaendert = [f"{k}={vorher[k]}->{nachher[k]}" for k in sorted(nachher)

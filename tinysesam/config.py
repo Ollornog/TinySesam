@@ -339,7 +339,7 @@ class TinySesamConfig:
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
-    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers
+    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste
 
     # --- App-Integration ---
     # Öffentliche Base-URL — die eine Adresse, unter der die App von außen erreichbar ist.
@@ -513,6 +513,13 @@ class TinySesamConfig:
         (leer = in Ordnung). Ein Einfrieren der Dataclass wäre die härtere Lösung — sie würde
         aber auch das Erlaubte verbieten.
         """
+        fehler, warnungen = self._befunde()
+        return fehler + warnungen
+
+    def _befunde(self) -> tuple[list[str], list[str]]:
+        """(Fehler, Warnungen) getrennt — `pruefen()` gibt beides in einer Liste zurück, und aus
+        der liess sich nicht mehr lesen, was den Aufbau hätte scheitern lassen. `TinySesam.router()`
+        braucht genau diese Unterscheidung (B3-14)."""
         from .konfigpruefung import pruefe
         fehler, warnungen = pruefe(self)
         if self.cookie_samesite not in ("lax", "strict", "none"):
@@ -525,7 +532,10 @@ class TinySesamConfig:
             fehler.append(f"https_mode={self.https_mode!r} — erlaubt sind 'off', 'warn', 'force'")
         if not isinstance(self.csp, str):
             fehler.append(f"csp muss ein String sein, ist {type(self.csp).__name__}")
-        return fehler + warnungen
+        if not self.cookie_secure and self.https_mode == "force":
+            fehler.append("https_mode='force' mit cookie_secure=False — das Sitzungs-Cookie ginge "
+                          "ohne Secure-Flag hinaus")
+        return fehler, warnungen
 
     def enabled_methods(self) -> list[str]:
         """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier

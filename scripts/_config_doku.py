@@ -49,24 +49,41 @@ def felder():
 
     abschnitt = "Allgemein"
     davor: list[str] = []
+    ergebnis: list[list[str]] = []
+    # War die Zeile davor ein Feld MIT Kommentar dahinter? Dann gehört eine eingerückte
+    # Kommentarzeile direkt darunter zu DIESEM Feld (Fortsetzung), nicht zum nächsten (B3-15).
+    # Vorher landete z.B. „warn = läuft auch OHNE Zertifikat" aus `https_mode` in der
+    # Beschreibung von `login_identifier` — ein sicherheitsrelevantes Feld mit fremdem Text.
+    fortsetzung = False
     for zeile in rumpf.splitlines():
         blank = zeile.strip()
         kopf = re.match(r"^#\s*---\s*(.+?)\s*---\s*$", blank)
         if kopf:
-            abschnitt, davor = kopf.group(1), []
+            abschnitt, davor, fortsetzung = kopf.group(1), [], False
             continue
         if blank.startswith("#"):
-            davor.append(blank.lstrip("#").strip())
+            # `#:` ist die Doc-Kommentar-Form; der Doppelpunkt gehört nicht in den Text.
+            text = blank.lstrip("#").lstrip(":").strip()
+            einrueckung = len(zeile) - len(zeile.lstrip())
+            if fortsetzung and einrueckung > 4:
+                ergebnis[-1][4] = (ergebnis[-1][4] + " " + text).strip()
+            else:
+                fortsetzung = False
+                davor.append(text)
             continue
+        fortsetzung = False
         feld = re.match(r"^\s{4}([a-z_][a-z0-9_]*)\s*:\s*([^=]+?)\s*=\s*(.+?)\s*(?:#\s*(.*))?$", zeile)
         if not feld:
             if blank:
                 davor = []
             continue
         name, typ, vorgabe, hinter = feld.groups()
-        beschreibung = (hinter or " ".join(davor)).strip()
+        beschreibung = (hinter or " ".join(t for t in davor if t)).strip()
+        fortsetzung = bool(hinter)
         davor = []
-        yield abschnitt, name, typ.strip(), vorgabe.strip(), beschreibung
+        ergebnis.append([abschnitt, name, typ.strip(), vorgabe.strip(), beschreibung])
+    for eintrag in ergebnis:
+        yield tuple(eintrag)
 
 
 def bauen() -> str:

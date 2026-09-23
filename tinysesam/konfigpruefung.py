@@ -477,6 +477,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _csp_hinweis = csp_warnung(getattr(config, "csp", "strict"))
     if _csp_hinweis:
         warnungen.append(_csp_hinweis)
+    _zahlengrenzen(config, fehler)
+    _proxies_und_passkey(config, fehler, warnungen)
+    _stepup(config, fehler, warnungen)
+    _offene_tore(config, warnungen)
+    _kombinationen(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
@@ -499,3 +504,235 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "aufbewahrt wird.")
 
     return fehler, warnungen
+
+
+#: Zahlenfelder der Config → erlaubter Bereich, beide Grenzen eingeschlossen (B3-12).
+#:
+#: Vorher hatte kein einziges eine Grenze, und die Fehlbilder sind alle still: `session_ttl_hours=0`
+#: lässt jede Sitzung im Moment ihrer Entstehung ablaufen (Anmeldung „klappt", der nächste Klick
+#: ist wieder die Login-Seite), `magiclink_ttl_min=0` verschickt tote Links, `recovery_code_count=0`
+#: stellt keine Codes aus und meldet trotzdem Erfolg, ein negatives `stepup_max_age_sec` macht
+#: jede Step-up-Bestätigung sofort alt. Die Obergrenzen fangen den Einheitenfehler (Minuten statt
+#: Stunden, Sekunden statt Minuten), der eine Frist unbemerkt ver-sechzigfacht.
+ZAHLENGRENZEN = {
+    "pin_min_length": (4, 64),
+    "apikey_default_days": (0, 3650),
+    "admin_claim_ttl_min": (0, 7 * 24 * 60),
+    "resource_unlock_ttl_hours": (1, 24 * 30),
+    "magiclink_ttl_min": (1, 24 * 60),
+    "smtp_port": (1, 65535),
+    "smtp_timeout": (1, 300),
+    "recovery_code_count": (1, 100),
+    "mfa_enrollment_grace_days": (0, 365),
+    "stepup_max_age_sec": (0, 7 * 86400),
+    "session_ttl_hours": (1, 24 * 400),
+    "session_ttl_transient_hours": (1, 24 * 400),
+}
+
+
+def _zahlengrenzen(config, fehler: list) -> None:
+    for feld, (unten, oben) in ZAHLENGRENZEN.items():
+        if not hasattr(config, feld):
+            fehler.append(f"Die Konfigurationsprüfung nennt das Feld {feld!r}, das es in "
+                          "TinySesamConfig nicht gibt — ein Fehler in TinySesam selbst.")
+            continue
+        wert = getattr(config, feld)
+        # bool ist ein int: `session_ttl_hours=True` hiesse eine Stunde, gemeint war es nie.
+        if isinstance(wert, bool) or not isinstance(wert, int):
+            fehler.append(f"{feld}={wert!r} ist keine ganze Zahl.")
+            continue
+        if not unten <= wert <= oben:
+            fehler.append(f"{feld}={wert} liegt ausserhalb von {unten}…{oben}. Häufigster Grund "
+                          "ist eine verwechselte Einheit (der Feldname nennt sie).")
+
+
+def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
+    # --- trusted_proxies (B3-3) ---
+    # Ein ungültiger Eintrag warf zur Laufzeit mitten in der Prüfung und entwertete die GANZE
+    # Liste; die Warnung danach riet, das Proxy-Netz einzutragen, das längst dastand. Ein
+    # Hostname ist der häufigste Fall — Proxys werden hier als Netz angegeben, nicht als Name.
+    schlecht = security.ungueltige_netze(getattr(config, "trusted_proxies", None) or [])
+    if schlecht:
+        fehler.append(
+            f"trusted_proxies enthält Einträge, die kein IP-Netz sind: {schlecht}. Erwartet "
+            "werden Adressen oder Netze wie '203.0.113.5' oder '198.51.100.0/24' — keine Hostnamen. "
+            "Ein ungültiger Eintrag darf nicht mitgelesen werden: Er entschiede sonst, ob der "
+            "Proxy als vertrauenswürdig gilt.")
+
+    # --- WebAuthn: rp_id und origin (B3-10) ---
+    # Beide Felder tragen Entwicklerwerte als Vorgabe (`localhost`, `http://localhost:8000`).
+    # Produktiv vergessen scheitert JEDE Passkey-Zeremonie — erst im Browser, mit einer Meldung,
+    # die nach einem Problem des Authenticators aussieht. Geprüft wird, was sich ohne die
+    # Aussenwelt beweisen lässt: Form, Zusammenpassen, und der Abgleich mit `base_url`.
+    if not _an(config, "passkey_enabled"):
+        return
+    from urllib.parse import urlsplit
+    rp_id = str(getattr(config, "rp_id", "") or "").strip().lower()
+    roh = getattr(config, "origin", "")
+    roh = "" if roh is None else roh
+    # py_webauthn nimmt als `expected_origin` auch eine Liste (A5): Wer die Anmeldeseite unter
+    # mehreren Namen ausliefert, trägt sie alle ein. Geprüft wird dann jeder Eintrag einzeln —
+    # `str(liste)` ist nie ein Origin, und so wurde aus einer funktionierenden Config ein Fehler.
+    origins = [str(o).strip() for o in roh] if isinstance(roh, (list, tuple)) else [str(roh).strip()]
+    if not origins:
+        fehler.append("origin ist eine leere Liste — mindestens ein Origin wie "
+                      "\"https://auth.example.com\" muss dastehen, sonst scheitert jeder Passkey.")
+        return
+    hosts = []
+    for origin in origins:
+        teile = urlsplit(origin)
+        host = (teile.hostname or "").lower()
+        if teile.scheme not in ("http", "https") or not host or teile.path not in ("", "/") \
+                or teile.query or teile.fragment or origin.endswith("/"):
+            fehler.append(
+                f"origin={origin!r} ist kein Origin. Verlangt ist genau Schema, Host und ggf. Port "
+                "(\"https://auth.example.com\"), ohne Pfad und ohne Schrägstrich am Ende — der "
+                "Browser vergleicht Zeichen für Zeichen.")
+            return
+        hosts.append(host)
+    if not rp_id or "://" in rp_id or ":" in rp_id or "/" in rp_id:
+        fehler.append(f"rp_id={rp_id!r} muss ein Hostname ohne Schema und Port sein, z.B. "
+                      "\"auth.example.com\" oder die Domain darüber (\"example.com\").")
+    else:
+        for origin, host in zip(origins, hosts):
+            if not (host == rp_id or host.endswith("." + rp_id)):
+                fehler.append(
+                    f"rp_id={rp_id!r} passt nicht zu origin={origin!r}: Die rp_id muss der Host "
+                    "des Origins sein oder eine Domain darüber. So lehnt jeder Browser die "
+                    "Passkey-Zeremonie ab.")
+    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
+    if basis:
+        b = urlsplit(basis)
+        soll = f"{b.scheme}://{b.netloc}"
+        if soll.lower() not in [o.lower() for o in origins]:
+            # Warnung, kein Fehler: Wer die Anmeldeseite unter einem zweiten eigenen Namen
+            # ausliefert (base_url nur für die Mail-Links), kann es so wollen.
+            anzeige = origins[0] if len(origins) == 1 else origins
+            warnungen.append(
+                f"origin={anzeige!r} weicht von base_url ab ({soll}). Die Anmeldeseite läuft unter "
+                "base_url, und der Browser meldet genau diesen Origin — mit dem Wert hier "
+                "scheitert jeder Passkey. Meist steht hier noch die Vorgabe für die Entwicklung.")
+    elif all(h in ("localhost", "127.0.0.1", "::1") for h in hosts) and rp_id == "localhost":
+        warnungen.append(
+            f"passkey_enabled=True mit den Entwicklerwerten rp_id={rp_id!r}, origin={roh!r}. "
+            "Ausserhalb der eigenen Maschine scheitert damit jeder Passkey — produktiv beide auf "
+            "die öffentliche Adresse setzen (und base_url dazu).")
+
+
+#: Was in `stepup_methods` stehen darf, und welcher Schalter das Verfahren einschaltet.
+STEPUP_VERFAHREN = {"totp": "totp_enabled", "pin": "pin_enabled", "password": "password_enabled"}
+
+
+def _stepup(config, fehler: list, warnungen: list) -> None:
+    # B3-6: `stepup_methods` ist ein Wunsch, und ein Wunsch, den es nicht gibt, wird still
+    # übergangen — `["topt"]` fiel auf „alles, was der Nutzer hat" zurück, also auf das Passwort,
+    # mit dem er sich gerade angemeldet hat. Der zweite Faktor vor dem sensiblen Bereich war weg,
+    # und nichts hat es gesagt. Mit `stepup_strict=True` war es umgekehrt: niemand kam je hinein.
+    gewuenscht = [str(m) for m in (getattr(config, "stepup_methods", None) or [])]
+    unbekannt = [m for m in gewuenscht if m not in STEPUP_VERFAHREN]
+    if unbekannt:
+        fehler.append(
+            f"stepup_methods nennt {unbekannt} — das sind keine Step-up-Verfahren. Erlaubt sind "
+            f"{sorted(STEPUP_VERFAHREN)}. Ein unbekannter Name wird nicht übersprungen, sondern "
+            "abgewiesen: Übersprungen fiele die Bestätigung auf das Passwort zurück.")
+    aus = [m for m in gewuenscht if m in STEPUP_VERFAHREN and not _an(config, STEPUP_VERFAHREN[m])]
+    if aus:
+        fehler.append(
+            f"stepup_methods verlangt {aus}, aber "
+            + ", ".join(f"{STEPUP_VERFAHREN[m]}=False" for m in aus)
+            + ". Dieser Wunsch kann nie erfüllt werden — ohne stepup_strict fällt die Bestätigung "
+            "still auf ein anderes Verfahren zurück, mit stepup_strict bleibt der Bereich zu.")
+    if _an(config, "stepup_strict") and not gewuenscht:
+        warnungen.append(
+            "stepup_strict=True ohne stepup_methods ist wirkungslos: Die Schranke gilt nur für "
+            "genannte Verfahren. Gemeint war vermutlich z.B. stepup_methods=['totp'].")
+
+
+def _offene_tore(config, warnungen: list) -> None:
+    """Deny-by-default für das Tor vor fremden Anwendungen (H-11, B3-9).
+
+    Forward-Auth beantwortet für jede angemeldete Sitzung „durch" — ohne `?roles=` am Proxy
+    reicht es also, ein Konto zu HABEN. Woher Konten kommen, entscheidet damit über den Kreis:
+    Legt ein IdP-Weg Konten selbst an und begrenzt keine Gruppe, ist jedes Konto beim Provider
+    ein Schlüssel für jede geschützte Anwendung; bei offener Registrierung jeder Besucher.
+
+    Warnung, kein Fehler: Genau so ist ein Gateway vor einem Provider mit eigenem, geschlossenem
+    Nutzerkreis gedacht, und die Freigabe je Anwendung kann auch beim Provider liegen
+    (`oidc_clients`, T-14). Ein Fehler hiesse, diesen Aufbau zu verbieten — das zu entscheiden
+    wäre ein neuer Schalter (bewusstes „alle"), nicht eine Prüfung.
+    """
+    if not _an(config, "forward_auth_enabled"):
+        return
+    offen = []
+    for an, anlegen, gruppen, name in (("oidc_enabled", "oidc_auto_create", "oidc_allowed_groups", "OIDC"),
+                                       ("saml_enabled", "saml_auto_create", "saml_allowed_groups", "SAML"),
+                                       ("ldap_enabled", "ldap_auto_create", "ldap_allowed_groups", "LDAP")):
+        if not (_an(config, an) and _an(config, anlegen)) or getattr(config, gruppen, None):
+            continue
+        if name == "OIDC" and getattr(config, "oidc_clients", None):
+            # Je Anwendung ein eigener Client (T-14): Die Freigabe liegt beim Provider, und
+            # `/auth/forward` prüft sie je Host. Das ist ein geschlossenes Tor — nur eben eines,
+            # dessen Schlüssel der Provider verwaltet.
+            continue
+        offen.append(f"{name} ({anlegen}=True, {gruppen} leer)")
+    if offen:
+        warnungen.append(
+            "Forward-Auth mit offenem Tor: " + "; ".join(offen) + ". Jedes Konto beim Anbieter "
+            "wird beim ersten Login angelegt und kommt danach durch JEDE geschützte Anwendung, "
+            "die am Proxy kein ?roles= verlangt. Den Kreis begrenzen: *_allowed_groups setzen "
+            "(beim Gateway TINYSESAM_ALLOWED_GROUPS), am Proxy ?roles= verlangen, oder die "
+            "Freigabe je Anwendung beim Provider regeln (oidc_clients).")
+    if _an(config, "allow_signup") and not _an(config, "signup_invite_only"):
+        warnungen.append(
+            "Forward-Auth mit offener Selbst-Registrierung: Jeder Besucher legt sich ein Konto an "
+            "und kommt damit durch jede geschützte Anwendung, die am Proxy kein ?roles= verlangt. "
+            "signup_invite_only=True, allow_signup=False oder Rollen am Proxy verlangen.")
+
+
+def _kombinationen(config, fehler: list, warnungen: list) -> None:
+    """Kombinationen, die einzeln erlaubt sind und zusammen nicht tun, was sie sagen (B3-16)."""
+    # E-Mail-Bestätigung ohne Pflicht-Adresse: Wer das Feld leer lässt, bekommt ein SOFORT
+    # aktives Konto — die Bestätigung gilt nur für die, die eine Adresse angeben. Die Schranke
+    # hat also eine Tür daneben.
+    if _an(config, "allow_signup") and _an(config, "signup_verify_email") \
+            and not _an(config, "signup_require_email"):
+        fehler.append(
+            "signup_verify_email=True, aber signup_require_email=False: Wer bei der Registrierung "
+            "keine Adresse angibt, ist ohne jede Bestätigung sofort aktiv. Entweder "
+            "signup_require_email=True oder auf die Bestätigung verzichten.")
+    if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
+        warnungen.append("signup_invite_only=True ohne allow_signup=True ist wirkungslos — die "
+                         "Registrierung ist ohnehin aus.")
+    lang, kurz = getattr(config, "session_ttl_hours", 0), getattr(config, "session_ttl_transient_hours", 0)
+    if isinstance(lang, int) and isinstance(kurz, int) and kurz > lang:
+        warnungen.append(
+            f"session_ttl_transient_hours={kurz} ist länger als session_ttl_hours={lang}: Ohne "
+            "„Angemeldet bleiben\" bliebe man länger angemeldet als mit.")
+    for feld in ("admin_path", "login_path", "oidc_callback_path"):
+        wert = str(getattr(config, feld, "") or "")
+        if wert and not wert.startswith("/"):
+            fehler.append(f"{feld}={wert!r} muss mit '/' beginnen — sonst ist es kein Pfad, und "
+                          "Routen wie Links zeigen ins Leere.")
+    # cookie_domain, die den eigenen Host nicht umfasst: Der Browser verwirft das Cookie, jede
+    # Anmeldung „klappt" und der nächste Klick ist wieder die Login-Seite.
+    dom = str(getattr(config, "cookie_domain", "") or "").strip().lower().lstrip(".")
+    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
+    if dom and basis:
+        from urllib.parse import urlsplit
+        host = (urlsplit(basis).hostname or "").lower()
+        if host and not (host == dom or host.endswith("." + dom)):
+            fehler.append(
+                f"cookie_domain={getattr(config, 'cookie_domain')!r} umfasst den Host von base_url "
+                f"({host}) nicht. Der Browser verwirft ein Cookie für eine fremde Domain — "
+                "niemand bliebe angemeldet.")
+    # Demo-Modus neben einem echten Anmeldeweg (B3-8): Die Demo-Konten haben ein bekanntes
+    # Passwort, eines ist Admin. Neben OIDC/SAML/LDAP ist das keine Demo mehr, sondern eine
+    # Produktivinstanz mit einer Hintertür.
+    if _an(config, "demo_mode"):
+        echt = [feld for feld in ("oidc_enabled", "saml_enabled", "ldap_enabled", "forward_auth_enabled")
+                if _an(config, feld)]
+        if echt:
+            fehler.append(
+                f"demo_mode=True zusammen mit {', '.join(echt)}: Die Demo legt ein Admin-Konto mit "
+                "bekanntem Passwort an. Neben einem echten Anmeldeweg oder vor fremden Anwendungen "
+                "ist das eine Hintertür, keine Vorführung.")

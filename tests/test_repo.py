@@ -946,6 +946,18 @@ _gen = subprocess.run([sys.executable, "scripts/_config_doku.py", "--dry-run"],
 assert _gen.returncode == 0, ("KONFIGURATION.md ist veraltet — "
                               "`python3 scripts/_config_doku.py` fahren")
 _konf = _lies("KONFIGURATION.md")
+# B3-15: Beschreibungen verrutschten. Die eingerückte Fortsetzung eines Hinter-Kommentars landete
+# beim NÄCHSTEN Feld — `login_identifier` begann mit dem Text von `https_mode`, `admin_identifiers`
+# brach mitten im Satz ab. Gemessen an drei Feldern, die genau diese Form haben, und an der
+# `#:`-Form, deren Doppelpunkt vorher im Text stand.
+def _zeile(feld):
+    return next(z for z in _konf.splitlines() if z.startswith(f"| `{feld}` "))
+assert "warn = läuft auch OHNE Zertifikat" in _zeile("https_mode"), _zeile("https_mode")
+assert "warn =" not in _zeile("login_identifier") and "Womit meldet" in _zeile("login_identifier"), \
+    _zeile("login_identifier")
+assert "SOLANGE es keinen Admin gibt" in _zeile("admin_identifiers"), _zeile("admin_identifiers")
+assert "NUR als Zusatzfaktor" in _zeile("pin_login"), _zeile("pin_login")
+assert not _re.search(r"\| : ", _konf), "`#:`-Doppelpunkt steht noch im Text"
 _stumm = _re.findall(r"^\| `([a-z0-9_]+)` .* \| — \|$", _konf, _re.M)
 assert not _stumm, ("Diese Config-Felder haben keinen erklärenden Kommentar in config.py:\n  " +
                     "\n  ".join(_stumm[:8]) +

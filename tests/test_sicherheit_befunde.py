@@ -1200,7 +1200,9 @@ r.check("forward_auth allein bleibt eine Warnung (die Umleitung bleibt relativ)"
         f"Fehler={[x[:50] for x in _f_fa]!r} Warnungen={[x[:50] for x in _w_fa]!r}")
 
 # (2) Zweites Schloss für die Config, die NACH dem Konstruktor geändert wurde (sie wird zur
-# Request-Zeit gelesen): kein stiller Erfolg, sondern ein ConfigError mit klarer Meldung.
+# Request-Zeit gelesen): kein stiller Erfolg, sondern ein Abbruch mit klarer Meldung — seit der
+# Nacharbeit zu „base_url nach dem Konstruktor geleert" als HTTP 503 aus der Route
+# (`router._mail_basis`), nicht mehr als ungefangener ConfigError.
 from tinysesam import ConfigError as _CfgErr  # noqa: E402
 
 for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "Passwort vergessen"),
@@ -1211,20 +1213,19 @@ for _pfad, _daten, _name in (("/auth/forgot", {"email": "opfer@example.com"}, "P
     try:
         _antwort_l = c_l.post(_pfad, data=_daten)
         _ergebnis = f"HTTP {_antwort_l.status_code}, Erfolgsseite: {'unterwegs' in _antwort_l.text}"
-        _hart = False
+        _hart = _antwort_l.status_code == 503 and "unterwegs" not in _antwort_l.text
     except _CfgErr as _e:
-        _ergebnis, _hart = str(_e)[:60], True
-    r.check(f"{_name} ohne Basis: ConfigError statt „Mail ist unterwegs\"",
+        _ergebnis, _hart = f"ungefangen: {str(_e)[:60]}", False
+    r.check(f"{_name} ohne Basis: 503 statt „Mail ist unterwegs\" (und statt eines 500)",
             _hart and not post_l,
             f"{_ergebnis} — 200 mit Erfolgsseite verdeckt den Totalausfall (A-regression-1)")
 
-# Und was der Betreiber dabei WIRKLICH zu sehen bekommt. Die Prüfung darüber fängt den
-# `ConfigError` selbst ab (TestClient reicht ihn durch); im Betrieb tut das niemand — keine Route
-# fängt ihn, also macht der ASGI-Server daraus einen HTTP 500. Der CHANGELOG versprach an dieser
-# Stelle zunächst mehr: „wo bisher eine Erfolgsseite oder ein 500 stand". Der stille 200 ist weg
-# (das ist der Gewinn), der 500 nicht. Beides steht deshalb hier: die Zusage, und die Messung
-# dessen, was stattdessen herauskommt. Fängt eine Route die Ausnahme künftig ab und rendert eine
-# Fehlerseite, wird die zweite Zeile rot — dann gehört der CHANGELOG-Satz mitgeändert.
+# Und was der Betreiber dabei WIRKLICH zu sehen bekommt — im Betrieb, ohne TestClient, der eine
+# Ausnahme durchreicht. Bis zur Nacharbeit fing keine Route den `ConfigError`, und der ASGI-Server
+# machte daraus einen HTTP 500 (so stand es im CHANGELOG). Jetzt fängt `_mail_basis()` ihn und
+# antwortet 503: Der Dienst ist so nicht einsatzbereit, und das sagt die Antwort auch. Gemessen
+# wird beides: kein stiller Erfolg, und genau 503 — nicht 500, nicht 200.
+# (Mutationsprobe: `_mail_basis` durch `auth.require_public_base(request)` ersetzen → 500, rot.)
 auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_reset_enabled=True,
                          passkey_enabled=False, base_url=ECHT)
 _post_500: list = []
@@ -1237,10 +1238,22 @@ r.check("kein stiller Erfolg: ohne Basis meldet /auth/forgot nicht „Mail ist u
         _antwort_500.status_code != 200 and not _post_500,
         f"HTTP {_antwort_500.status_code}, Mails={len(_post_500)} — dieselbe Antwort verhindert "
         "die Benutzer-Enumeration und verdeckte deshalb den Totalausfall (A-regression-1)")
-r.check("...und ungefangen endet der Abbruch als HTTP 500 (so steht es im CHANGELOG)",
-        _antwort_500.status_code == 500,
-        f"HTTP {_antwort_500.status_code} — keine Route fängt den ConfigError; wenn doch, ist der "
-        "CHANGELOG-Satz zu diesem Punkt zu aktualisieren")
+r.check("...sondern HTTP 503 aus der Route, kein ungefangener 500",
+        _antwort_500.status_code == 503,
+        f"HTTP {_antwort_500.status_code} — 500 heisst: der ConfigError läuft wieder ungefangen "
+        "bis zum ASGI-Server (CHANGELOG-Satz dazu mitändern)")
+# Einladung aus dem Panel: dieselbe Klasse, derselbe Riegel.
+auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
+                         base_url=ECHT)
+auth_inv.set_mailer(lambda *a, **k: None)
+auth_inv.ensure_admin("chefin", "Geheim12345!")
+_ci = TestClient(app_inv, raise_server_exceptions=False)
+_ci.post("/auth/login", data={"username": "chefin", "password": "Geheim12345!"})
+auth_inv.cfg.base_url = ""
+_inv = _ci.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
+r.check("Admin-Einladung ohne Basis: 503, kein 500 und kein Link",
+        _inv.status_code == 503 and "claim" not in _inv.text and "/auth/" not in _inv.text,
+        f"HTTP {_inv.status_code}: {_inv.text[:120]!r}")
 
 # Befund A-regression-4: Dieselben Stellen antworteten sonst mit 500 mitten im Anmeldeversuch —
 # `/auth/oidc/start` ist der Einstieg, auf den ein Gateway jeden Besucher schickt. Jetzt steht
@@ -2393,4 +2406,228 @@ r.check("Wächter: er findet die bekannten Absender überhaupt",
 r.check("jeder Absender von Mail-Links steht in der gemessenen Liste",
         _absender <= _GEMESSEN, f"ungemessen: {sorted(_absender - _GEMESSEN)} — in `_wege` aufnehmen")
 
+
+# ── Konfigurationsprüfung, T-13-Bereich „Admin und Konfiguration" ──────────────
+from tinysesam import konfigpruefung as _kp2, security as _sec2  # noqa: E402
+
+
+def _befund(**cfg):
+    """(Fehler, Warnungen) für eine Config mit Wegwerf-Datenbank."""
+    cfg.setdefault("db_path", ":memory:")
+    return _kp2.pruefe(TinySesamConfig(**cfg))
+
+
+def _nennt(liste, *woerter):
+    return any(all(w in x for w in woerter) for x in liste)
+
+
+# B3-3: ein ungültiger trusted_proxies-Eintrag entwertet nicht mehr die ganze Liste …
+r.check("B3-3: gültiger Eintrag trägt neben einem ungültigen",
+        _sec2.is_trusted("198.51.100.7", ["proxy.intern", "198.51.100.0/24"]),
+        "ein Hostname in der Liste warf, und der echte Proxy galt als fremd")
+# (Mutationsprobe: is_trusted wieder mit einem `try` um das ganze any() → rot.)
+r.check("...und die Konfigurationsprüfung weist die Liste ab",
+        _nennt(_befund(trusted_proxies=["proxy.intern", "198.51.100.0/24"])[0], "trusted_proxies", "proxy.intern"))
+r.check("...die Vorgabe und echte Netze bleiben ohne Befund",
+        not _nennt(sum(_befund(trusted_proxies=["198.51.100.0/24", "::1"]), []), "trusted_proxies"))
+
+# B3-6: stepup_methods wird geprüft — ein Tippfehler entfernt den zweiten Faktor nicht mehr still.
+r.check("B3-6: unbekanntes Step-up-Verfahren ist ein Fehler",
+        _nennt(_befund(stepup_methods=["topt"])[0], "stepup_methods", "topt"))
+r.check("...ein abgeschaltetes ebenso (pin ohne pin_enabled)",
+        _nennt(_befund(stepup_methods=["pin"])[0], "pin_enabled=False"))
+r.check("...gültige Werte bleiben ohne Befund",
+        not _nennt(sum(_befund(stepup_methods=["totp", "pin"], pin_enabled=True), []), "stepup_methods"))
+try:
+    TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), stepup_methods=["topt"]))
+    _b36 = False
+except _CfgErr:
+    _b36 = True
+r.check("...und der Aufbau scheitert daran", _b36)
+
+# B3-10: rp_id/origin werden betrachtet.
+r.check("B3-10: rp_id, die nicht zum origin passt, ist ein Fehler",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.org", origin="https://auth.example.com")[0],
+               "rp_id", "passt nicht"))
+r.check("...origin mit Pfad ist kein Origin",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com",
+                       origin="https://auth.example.com/login")[0], "ist kein Origin"))
+r.check("...Entwicklerwerte neben einer öffentlichen base_url werden gemeldet",
+        _nennt(_befund(passkey_enabled=True, base_url="https://auth.example.com")[1], "origin", "base_url"))
+r.check("...passende Werte bleiben ohne Befund",
+        not _nennt(sum(_befund(passkey_enabled=True, rp_id="example.com", origin="https://auth.example.com",
+                               base_url="https://auth.example.com"), []), "origin"))
+
+# B3-12: Zahlenfelder mit Grenzen.
+for _feld, _wert in (("session_ttl_hours", 0), ("magiclink_ttl_min", 0), ("recovery_code_count", 0),
+                     ("stepup_max_age_sec", -1), ("smtp_port", 70000), ("pin_min_length", 2),
+                     ("session_ttl_hours", True)):
+    r.check(f"B3-12: {_feld}={_wert!r} ist ein Fehler", _nennt(_befund(**{_feld: _wert})[0], _feld))
+r.check("...die Vorgaben selbst liegen alle in ihren Grenzen",
+        not any(f in x for x in _befund()[0] for f in _kp2.ZAHLENGRENZEN))
+# (Mutationsprobe: `_zahlengrenzen(config, fehler)` in pruefe() auskommentieren → rot.)
+
+# H-11 / B3-9: deny-by-default am Forward-Auth-Tor.
+_gw = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
+                                   base_url="https://auth.example.com", db_path=":memory:")
+r.check("H-11/B3-9: Gateway-Preset ohne Gruppen und ohne Clients warnt vor dem offenen Tor",
+        _nennt(_kp2.pruefe(_gw)[1], "offenem Tor", "OIDC"))
+_gw2 = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
+                                    base_url="https://auth.example.com", db_path=":memory:",
+                                    allowed_groups=["mitarbeiter"])
+r.check("...mit allowed_groups schweigt die Warnung", not _nennt(_kp2.pruefe(_gw2)[1], "offenem Tor"))
+r.check("...offene Registrierung vor Forward-Auth wird gemeldet",
+        _nennt(_befund(forward_auth_enabled=True, allow_signup=True)[1], "Selbst-Registrierung"))
+r.check("...ohne Forward-Auth kein Tor, keine Meldung",
+        not _nennt(_befund(allow_signup=True)[1], "Selbst-Registrierung"))
+
+# B3-16: Kombinationen.
+r.check("B3-16: E-Mail-Bestätigung ohne Pflicht-Adresse ist ein Fehler",
+        _nennt(_befund(allow_signup=True, signup_verify_email=True, signup_require_email=False,
+                       base_url="https://auth.example.com")[0], "signup_require_email=False"))
+r.check("...cookie_domain, die base_url nicht umfasst, ist ein Fehler",
+        _nennt(_befund(cookie_domain=".example.org", base_url="https://auth.example.com")[0], "cookie_domain"))
+r.check("...admin_path ohne führenden Schrägstrich ist ein Fehler",
+        _nennt(_befund(admin_path="admin")[0], "admin_path"))
+r.check("...kürzere Sitzung ohne „Angemeldet bleiben“ als mit wird gemeldet",
+        _nennt(_befund(session_ttl_hours=2, session_ttl_transient_hours=12)[1], "session_ttl_transient_hours"))
+
+# B3-8: Demo-Modus hat technische Schranken.
+r.check("B3-8: demo_mode neben einem echten Anmeldeweg ist ein Fehler",
+        _nennt(_befund(demo_mode=True, forward_auth_enabled=True)[0], "demo_mode"))
+_demo_db = str(Path(tempfile.mkdtemp()) / "t.db")
+_bestand = TinySesam(TinySesamConfig(db_path=_demo_db))
+_bestand.create_user("echt", password="Geheim12345!")
+try:
+    TinySesam(TinySesamConfig(db_path=_demo_db, demo_mode=True))
+    _b38 = False
+except _CfgErr:
+    _b38 = True
+r.check("...demo_mode auf einer Datenbank mit Bestandskonten scheitert beim Aufbau",
+        _b38 and _bestand.store.get_user_by_name("demoadmin") is None,
+        "vorher entstand dort still ein Admin mit bekanntem Passwort")
+# Gegenprobe: Eine echte Demo startet wieder, auch mit inzwischen registrierten Besuchern.
+_demo_db2 = str(Path(tempfile.mkdtemp()) / "t.db")
+_d1 = TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
+_d1.create_user("besucher", password="Geheim12345!")
+try:
+    TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
+    _b38b = True
+except _CfgErr:
+    _b38b = False
+r.check("...eine echte Demo startet trotzdem neu (auch mit Besuchern)", _b38b)
+# (Mutationsprobe: die Bestandsprüfung vor seed_demo im Konstruktor entfernen → rot.)
+
+# B3-14: pruefen() hat einen Aufrufer — router() prüft vor dem Bau erneut.
+_a314, _ = _app()
+_a314.cfg.cookie_samesite = "Strict"
+try:
+    _a314.router()
+    _b314 = False
+except _CfgErr as _e:
+    _b314 = "cookie_samesite" in str(_e)
+r.check("B3-14: eine nach dem Konstruktor kaputt gestellte Config scheitert an router()", _b314)
+_a314b, _ = _app()
+_a314b.cfg.base_url = "https://auth.example.com"          # erlaubte Änderung
+_a314b.cfg.lang = "de"
+try:
+    _a314b.router()
+    _b314b = True
+except _CfgErr:
+    _b314b = False
+r.check("...eine erlaubte Änderung (Sprache, Adresse) baut weiter", _b314b)
+r.check("...und pruefen() liefert weiter eine Liste (Fehler + Warnungen)",
+        isinstance(TinySesamConfig(db_path=":memory:").pruefen(), list))
+# (Mutationsprobe: `self._nachpruefen()` in router() entfernen → rot.)
+
+# A2: Auch die Riegel des Konstruktors gelten vor router()/admin_router(), nicht nur konfigpruefung.
+# Angriff: admin_identifiers=["chef"] ist sicher, solange Konten nicht von selbst entstehen. Wer
+# NACH dem Konstruktor allow_signup einschaltete, baute trotzdem einen Router — der erste Besucher
+# registrierte sich als „chef" und war Erst-Admin mit Zugriff auf die Admin-API.
+def _nachtraeglich(aenderung, **cfg):
+    a, _ = _app(**cfg)
+    for k, v in aenderung.items():
+        setattr(a.cfg, k, v)
+    ergebnis = []
+    for bau in (a.router, a.admin_router):
+        try:
+            bau()
+            ergebnis.append("")
+        except _CfgErr as e:
+            ergebnis.append(str(e))
+    return ergebnis
+
+
+for _titel, _aend, _cfg, _wort in (
+        ("admin_identifiers + allow_signup", {"allow_signup": True}, {"admin_identifiers": ["chef"]},
+         "admin_identifiers"),
+        ("admin_identifiers + oidc_auto_create", {"oidc_enabled": True, "oidc_auto_create": True},
+         {"admin_identifiers": ["chef"], "base_url": "https://auth.example.com"}, "admin_identifiers"),
+        ("login_identifier='bogus'", {"login_identifier": "bogus"}, {}, "login_identifier"),
+        ("forward_headers mit Zeilenumbruch", {"forward_headers": {"user": "X-User\r\nSet-Cookie: a=b"}}, {},
+         "forward_headers"),
+        ("totp_required=True", {"totp_required": True}, {}, "totp_required")):
+    _erg = _nachtraeglich(_aend, **_cfg)
+    r.check(f"A2: nachträglich {_titel} scheitert an router() und admin_router()",
+            all(_wort in x and "nach dem Aufbau" in x for x in _erg), f"{_erg}")
+# Der Angriff selbst: Mit dem Riegel entsteht gar kein Router, also auch keine Registrierung.
+_a2, _ = _app(admin_identifiers=["chef"], csrf_enabled=False, signup_require_email=False)
+_a2.cfg.allow_signup = True
+_admin_api = None
+try:
+    _app2 = FastAPI()
+    _app2.include_router(_a2.router())
+    with TestClient(_app2) as _c2:
+        _c2.post("/auth/register", data={"username": "chef", "password": "Fremder-123456"})
+        _c2.post("/auth/login", data={"username": "chef", "password": "Fremder-123456"})
+        _admin_api = _c2.get("/auth/admin/api/users").status_code
+except _CfgErr:
+    pass
+_chef = _a2.store.get_user_by_name("chef")
+r.check("...und niemand registriert sich als 'chef' zum Erst-Admin",
+        (_chef is None or not _chef["is_admin"]) and _admin_api != 200,
+        f"Konto={dict(_chef) if _chef else None}, Admin-API={_admin_api}")
+r.check("...eine erlaubte Änderung neben admin_identifiers baut weiter",
+        _nachtraeglich({"lang": "en"}, admin_identifiers=["chef"]) == ["", ""])
+# (Mutationsprobe: den `_riegel`-Aufruf in _nachpruefen entfernen → rot.)
+
+# A5: origin darf eine Liste sein — py_webauthn nimmt als expected_origin auch mehrere.
+_zwei = ["https://a.example.com", "https://b.example.com"]
+_f5, _w5 = _befund(passkey_enabled=True, rp_id="example.com", origin=_zwei, base_url="https://a.example.com")
+r.check("A5: origin als Liste passender Origins ist kein Fehler",
+        not _nennt(_f5, "origin") and not _nennt(_w5, "origin"), f"{_f5} {_w5}")
+# (Mutationsprobe: in _proxies_und_passkey wieder `str(origin)` statt der Liste prüfen → rot.)
+r.check("...ein schlechter Eintrag in der Liste bleibt ein Fehler",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com",
+                       origin=["https://a.example.com", "https://b.example.com/pfad"])[0], "ist kein Origin"))
+r.check("...ein Eintrag ausserhalb der rp_id ebenso",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com",
+                       origin=["https://a.example.com", "https://a.example.org"])[0], "passt nicht"))
+r.check("...eine leere Liste auch",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=[])[0], "leere Liste"))
+r.check("...und base_url ausserhalb der Liste wird weiter gemeldet",
+        _nennt(_befund(passkey_enabled=True, rp_id="example.com", origin=_zwei,
+                       base_url="https://c.example.com")[1], "base_url"))
+
+# R5-1: Schema und Benutzerangabe der Login-URL kommen nicht mehr ungeprüft aus der Anfrage.
+_a51, _app51 = _app(forward_auth_enabled=True, trusted_redirect_hosts=["app.example.com"],
+                    cookie_secure=True)
+with TestClient(_app51) as _c51:
+    _l1 = _c51.get("/auth/forward", headers={"x-forwarded-proto": "http",
+                                             "x-forwarded-host": "app.example.com",
+                                             "x-forwarded-uri": "/x"}).headers.get("x-tinysesam-location", "")
+    _l2 = _c51.get("/auth/forward", headers={"host": "127.0.0.1",
+                                             "x-original-url": "http://fremd.example@app.example.com/x"}
+                   ).headers.get("x-tinysesam-location", "")
+r.check("R5-1: X-Forwarded-Proto: http stuft die Login-URL bei cookie_secure nicht herab",
+        _l1.startswith("https://app.example.com/auth/login"), _l1)
+r.check("...eine Benutzerangabe aus X-Original-URL landet nicht vor dem Host der Login-URL",
+        _l2.startswith("https://app.example.com/auth/login") and "fremd.example@" not in _l2.split("?")[0],
+        _l2)
+_a51b, _app51b = _app(forward_auth_enabled=True, cookie_secure=False)
+with TestClient(_app51b) as _c51b:
+    _l3 = _c51b.get("/auth/forward", headers={"host": "127.0.0.1:8000", "x-forwarded-proto": "http"}
+                    ).headers.get("x-tinysesam-location", "")
+r.check("...lokal (Loopback, ohne Zertifikat) bleibt http erlaubt", _l3.startswith("http://127.0.0.1:8000/"), _l3)
+# (Mutationsprobe: `_login_schema` durch das rohe Schema ersetzen → die ersten beiden rot.)
 sys.exit(r.done())
