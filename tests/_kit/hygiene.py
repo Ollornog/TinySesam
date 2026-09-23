@@ -420,6 +420,109 @@ def _ist_eigene_identitaet(host: str, policy: dict) -> bool:
     return labels[:-2] in ([], ["www"])
 
 
+# Ladende Elemente: was der Browser VON SICH AUS holt, weil es im Markup steht.
+# Ein `href` gilt NUR bei `<link>` — bei `<a>` nie. Siehe Docstring unten, warum das
+# der ganze Trick ist.
+_FREMD_MUSTER: list[tuple[str, re.Pattern[str]]] = [
+    ("src=", re.compile(r"""\bsrc(?:set)?\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    ("<link href=", re.compile(
+        r"""<link\b(?:[^>]*?\s)?href\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I | re.S)),
+    ("css url()", re.compile(r"""url\(\s*["']?\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    ("@import", re.compile(r"""@import\s+(?:url\()?\s*["']\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    ("fetch()/import()", re.compile(
+        r"""(?:\bfetch|\bimport)\s*\(\s*["'`]\s*(https?:)?//([a-z0-9.-]+)""", re.I)),
+    ("<iframe src=", re.compile(r"""<iframe\b[^>]*?\bsrc\s*=\s*["']\s*(https?:)?//([a-z0-9.-]+)""",
+                               re.I | re.S)),
+]
+
+# XML-Namensraeume sind keine Ressourcenabrufe — der Browser laedt sie nie.
+_NAMENSRAUM = re.compile(r"w3\.org/(?:2000/svg|1999/xhtml|1999/xlink|XML/1998/namespace)", re.I)
+
+
+def pruefe_keine_fremdressourcen(root: str, dateien: list[str], policy: dict,
+                                 ausgenommen: dict[str, str] | None = None) -> list[str]:
+    """Holt der Browser eines Besuchers etwas von Dritten, weil es in UNSEREM Markup steht?
+
+    WARUM (PO-Regel 2026-09-23, `context/fremdressourcen.md`): Eine Fremdanforderung uebertraegt
+    die IP eines Besuchers an einen Dritten, den er nicht kennt und nicht gefragt wurde — allein
+    durch den Seitenaufruf, ohne Klick. Das LG Muenchen I hat dafuer Schadensersatz zugesprochen
+    (20.01.2022, 3 O 17493/20, dynamisch nachgeladene Schriften), und die Begruendung war: ein
+    berechtigtes Interesse scheidet aus, **weil die lokale Einbindung moeglich ist**.
+
+    Dazu zwei Gruende, die ohne Recht auskommen: der Dritte kann ausfallen, umziehen oder die Datei
+    stillschweigend austauschen — und was fremd eingebunden ist, steht in keiner Lock-Datei, also
+    sieht es kein Dependabot, keine Integritaetspruefung, kein CHANGELOG.
+
+    ⚠️ **DER GANZE TRICK IST DIE TRENNLINIE, und sie entscheidet, ob die Pruefung ueberlebt.**
+
+        Ein Link ist eine Tuer. Ein `src` ist ein Bote, den wir ungefragt losschicken.
+
+    Beanstandet wird nur, wer den Abruf **von sich aus** ausloest: `src`/`srcset`, `<link href>`,
+    `url()`, `@import`, `fetch()`/`import()`, `<iframe src>`. **Ein `<a href>` NIE** — Impressum,
+    Quellenangaben, Norm-Fundstellen und Badges sind erlaubt und teils rechtlich geboten. Eine
+    Pruefung, die Impressumslinks anmeckert, wird nach dem dritten Fehlalarm abgeschaltet, und dann
+    schuetzt sie gar nichts mehr. Deshalb prueft `_FREMD_MUSTER` `href` ausdruecklich nur innerhalb
+    von `<link …>`.
+
+    **Markdown ist ausgenommen**, und zwar begruendet, nicht aus Bequemlichkeit: eine `README.md`
+    wird nicht von uns ausgeliefert, sondern von der Plattform gerendert, die Bilder ohnehin ueber
+    ihren eigenen Proxy holt — und die Regel nennt Badges im README ausdruecklich erlaubt.
+
+    `ausgenommen` ist ein dict `{"<pfad>:<host>": "Grund (Ablaufdatum)"}`. Ein Grund ist Pflicht.
+    ⚠️ Es gibt Dinge, die man nicht selbst ausliefern KANN (Zahlungs-Widget, Captcha, Kartendienst
+    mit Schluessel) — dafuer ist das dict da. Es ist NICHT dafuer da, einen Hotlink zu dulden, der
+    sich herunterladen liesse: *eine Freigabe fuer eine Stelle, die man beseitigen koennte, ist
+    keine Ausnahme, sondern eine Billigung, und sie deckt jeden weiteren Hotlink mit ab.*
+    Solche Freigaben fallen **mit** der Ursache, nicht nach ihr — im selben Commit.
+
+    **Was diese Pruefung NICHT sieht** (benannte Grenze, damit niemand sie fuer vollstaendig haelt):
+    Adressen, die JavaScript zur Laufzeit zusammenbaut. Der Quelltext sieht nicht, was der Browser
+    am Ende anfordert. Dafuer braucht es den zweiten Blickwinkel — die laufende Seite mit einem
+    CDP-Netzwerkprotokoll, jede tatsaechlich angeforderte Herkunft gegen eine Liste. Das gehoert in
+    die Browser-Tests, nicht hierher. Beide Blickwinkel sind noetig, keiner ersetzt den anderen.
+    """
+    ausgenommen = ausgenommen or {}
+    treffer = []
+    for schluessel, grund in sorted(ausgenommen.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {schluessel!r} ohne Begruendung — ein Grund ist Pflicht")
+
+    eigene = frozenset(policy.get("eigene_domains_sha256_16", []))
+    endungen = (".html", ".htm", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".vue",
+                ".php", ".j2", ".jinja", ".jinja2", ".twig", ".erb", ".hbs", ".svg")
+    benutzt = set()
+    for rel, inhalt in _texte(root, dateien, policy):
+        if not rel.endswith(endungen) or _ist_generiert(rel, policy):
+            continue
+        for art, pat in _FREMD_MUSTER:
+            for m in pat.finditer(inhalt):
+                host = m.group(2).lower()
+                umfeld = inhalt[max(0, m.start() - 60):m.end() + 60]
+                if _NAMENSRAUM.search(umfeld):
+                    continue
+                # Eigener Ursprung ist kein Dritter.
+                if _ist_eigene_identitaet(host, policy) or host in ("localhost", "127.0.0.1"):
+                    continue
+                labels = host.split(".")
+                if len(labels) >= 2 and hashlib.sha256(
+                        labels[-2].encode()).hexdigest()[:16] in eigene:
+                    continue
+                schluessel = f"{rel}:{host}"
+                if schluessel in ausgenommen:
+                    benutzt.add(schluessel)
+                    continue
+                zeile = inhalt[:m.start()].count("\n") + 1
+                treffer.append(
+                    f"{rel}:{zeile}: {art} laedt von {host} — der Browser des Besuchers "
+                    f"holt das von sich aus und uebertraegt dabei seine IP an einen Dritten. "
+                    f"Selbst ausliefern (Lizenz pruefen, Nachweis daneben) oder nicht verwenden")
+
+    for schluessel in sorted(set(ausgenommen) - benutzt):
+        treffer.append(f"Ausnahme {schluessel!r} trifft nichts mehr — die Stelle ist weg. "
+                       f"Eintrag entfernen, sonst deckt er den naechsten Fall ab")
+    return sorted(set(treffer))
+
+
 def pruefe_adressen(root: str, dateien: list[str], policy: dict,
                     zusaetzliche_hosts: list[str] | None = None,
                     belegstellen: list[str] | None = None) -> list[str]:
