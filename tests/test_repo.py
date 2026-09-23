@@ -94,6 +94,16 @@ assert not _fehlend, f"BETRIEB.md: Anmeldeweg ohne Zeile in der Stärke-Tabelle:
 print(f"  docs/BETRIEB.md: Wartezeit {_busy // 1000} s, /healthz und alle {len(_faktoren)} "
       "identifizierenden Faktoren stimmen mit dem Code")
 
+# Der HEALTHCHECK des Abbilds muss länger warten als die Datenbank: `/healthz` schreibt und steht
+# wie jede Anmeldung bis zu BUSY_TIMEOUT_MS hinter einem fremden Schreiber. Mit 4 s brach der
+# Check bei einer 6-s-Sperre ab, obwohl der Dienst danach 200 lieferte (A-B6-4-healthz-sperre).
+_df = read("Dockerfile")
+_hc_docker = int(re.search(r"HEALTHCHECK [^\n]*--timeout=(\d+)s", _df).group(1))
+_hc_client = int(re.search(r"HTTPConnection\(.*?timeout=(\d+)\)", _df).group(1))
+assert _hc_client * 1000 > _busy, f"Health-Client wartet {_hc_client} s, die Datenbank bis {_busy} ms"
+assert _hc_docker > _hc_client, f"Docker bricht nach {_hc_docker} s ab, vor dem Client ({_hc_client} s)"
+print(f"  Dockerfile: HEALTHCHECK wartet {_hc_client} s/{_hc_docker} s, länger als busy_timeout")
+
 # ---------- Generierte Artefakte gehören nicht ins Repo ----------
 artefakte = hygiene.pruefe_artefakte(FILES, POLICY)
 assert not artefakte, f"generierte Artefakte sind versioniert: {artefakte[:5]}"

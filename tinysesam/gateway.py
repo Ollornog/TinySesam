@@ -187,6 +187,12 @@ def build_app(cfg: Optional[TinySesamConfig] = None):
         Docker den Container dauerhaft als `healthy` führte — kein Neustart, kein Alarm. Ein
         Wächter, der den wahrscheinlichsten Ausfall nicht sehen kann, ist keiner.
 
+        Ohne Anmeldung erreichbar heisst auch: flutbar. Deshalb schreibt die Probe höchstens alle
+        `Store.SCHREIBPROBE_SEK` wirklich, dazwischen prüft sie nur die Verbindung — sonst belegte
+        jeder Aufruf die Schreibsperre, auf die Anmeldungen warten. Sie wartet wie jede Anmeldung
+        bis zu `Store.BUSY_TIMEOUT_MS` hinter einem fremden Schreiber; der HEALTHCHECK im
+        Dockerfile gibt ihr dafür mehr Zeit.
+
         Verraten wird trotzdem nichts: bei einem Defekt nur `status: "degraded"` und 503, nie
         die Fehlermeldung (die stünde sonst unauthentifiziert im Netz).
         """

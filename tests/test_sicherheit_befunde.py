@@ -2137,6 +2137,84 @@ finally:
     _store_mod._UHR = _alte_uhr
     logging.getLogger("tinysesam").removeHandler(_uhr_h)
 
+# Über einen Neustart bis zum zuletzt GESICHERTEN Stand, nicht nur bis zum letzten Ereignis
+# (A-B6-9-neustart): Ein Link und eine Sitzung, zwei Stunden vor dem Neustart abgelaufen, ohne
+# dass danach etwas angelegt wurde. Der Pi bootet mit einem Datum ein Jahr zurück. Vorher kannte
+# `Store()` nur MAX(created_at/ts) und hob die Uhr auf den Zeitpunkt der Anlage — beide galten
+# wieder für ihre volle Restfrist.
+_T = 1_800_000_000.0
+_wand_n = [_T]
+
+
+def _neustart_nach_2h(sichern):
+    """Legt Link + Sitzung bei T an, lässt 2 h vergehen, `sichern(store)` sichert (oder nicht),
+    startet mit einem Jahr zurückgestellter Uhr neu. → (link gilt?, sitzung gilt?, uhr_stand)"""
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _wand_n[0])
+    _wand_n[0] = _T
+    a = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "n.db"),
+                                  cookie_secure=False))
+    uid = a.create_user("pi", password="geheim12345")
+    roh = a.create_magic_token("login", user_id=uid, ttl_min=15)
+    tok = a.store.create_session(uid, 1800, False, "password")
+    _wand_n[0] = _T + 7200
+    sichern(a.store)
+    a.store.db.close()
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
+    a.store = _store_mod.Store(a.cfg.db_path)
+    gilt = (a.peek_magic(roh, purpose="login") is not None, a.store.get_session(tok) is not None)
+    # Ein Schreiber, dessen Uhr NICHT gehoben ist (ein zweiter Prozess auf derselben Datei, vor
+    # der Sicherung gestartet), darf den gesicherten Stand nicht nach unten überschreiben.
+    _store_mod._UHR = _store_mod._Uhr(wand=lambda: _T - 365 * 86400)
+    a.store.UHR_SICHERN_SEK = 0
+    a.create_user("nach-dem-boot")
+    stand = int(a.store.get_setting(a.store.UHR_STAND) or 0)
+    a.store.db.close()
+    return gilt + (stand,)
+
+
+def _per_healthcheck(st):
+    st._geschrieben = None                   # die Probe ist fällig, wie alle 30 s im Container
+    st.schreibprobe()
+
+
+def _per_schreibzugriff(st):
+    st.UHR_SICHERN_SEK = 0                   # „eine Minute ist vergangen"
+    st.set_setting("irgendwas", "1")
+
+
+logging.getLogger("tinysesam").addHandler(_uhr_h)
+try:
+    _hc = _neustart_nach_2h(_per_healthcheck)
+    _sz = _neustart_nach_2h(_per_schreibzugriff)
+finally:
+    _store_mod._UHR = _alte_uhr
+    logging.getLogger("tinysesam").removeHandler(_uhr_h)
+r.check("nach einem Neustart bleibt, was NACH dem letzten Ereignis ablief, abgelaufen "
+        "(Stand aus der Schreibprobe des Healthchecks)",
+        _hc[:2] == (False, False), f"Link gilt: {_hc[0]}, Sitzung gilt: {_hc[1]}")
+r.check("…ebenso mit dem Stand, den ein gewöhnlicher Schreibzugriff mitsichert",
+        _sz[:2] == (False, False), f"Link gilt: {_sz[0]}, Sitzung gilt: {_sz[1]}")
+r.check("ein Schreiber mit ungehobener Uhr setzt den gesicherten Stand nicht zurück",
+        _hc[2] >= _T + 7200 and _sz[2] >= _T + 7200, f"uhr_stand={_hc[2]}/{_sz[2]}")
+
+# `time.time` wird nicht beim Import gebunden (A-B6-9-zeitpatch): Eine einbettende App, die in
+# ihren Tests die Zeit vorstellt, stellt damit auch TinySesams Uhr vor. Gebunden sah TinySesam den
+# Patch nie — Sitzungen und Tokens liefen im Test der App nie ab.
+from unittest import mock  # noqa: E402
+import time as _time  # noqa: E402
+_store_mod._UHR = _store_mod._Uhr()          # frische Uhr: der Sprung soll im Prozess nicht bleiben
+try:
+    auth_p, _ = _app()
+    uid_p = auth_p.create_user("zeitpatch", password="geheim12345")
+    tok_p = auth_p.store.create_session(uid_p, 60, False, "password")
+    _echt_t = _time.time()
+    with mock.patch("time.time", lambda: _echt_t + 3600):
+        _gilt_p = auth_p.store.get_session(tok_p) is not None
+finally:
+    _store_mod._UHR = _alte_uhr
+r.check("mock.patch('time.time') nach vorn lässt eine Sitzung ablaufen",
+        not _gilt_p, "TinySesam sieht die gepatchte Zeit nicht (beim Import gebunden)")
+
 
 # ── pop_flow gab dieselbe Challenge zweimal heraus (R3-8) ────────────────────
 # Lesen und Löschen waren zwei Schritte. Zwei Callbacks mit demselben OIDC-`state` (zwei

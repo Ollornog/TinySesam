@@ -230,23 +230,30 @@ class _Uhr:
     mit der vergangenen **monotonen** Zeit (`time.monotonic()` kennt keine Sprünge). Nach einem
     Sprung um eine Stunde zurück zählt sie also normal weiter, statt eine Stunde stehenzubleiben
     — Fristen laufen weiter ab. Über einen Neustart trägt die Datenbank selbst den Stand:
-    `Store()` hebt die Uhr auf den jüngsten Zeitstempel, den sie findet (`mindestens()`).
+    `Store()` hebt die Uhr auf den jüngsten Zeitstempel, den sie findet (`mindestens()`) —
+    darunter den Stand, den `Store` höchstens jede Minute mitschreibt (`uhr_stand`, bei jedem
+    Schreibzugriff und bei jeder Schreibprobe des Healthchecks). Was in der letzten Minute vor
+    einem Neustart ablief oder in einer Zeit, in der gar nichts geschrieben wurde, kann danach
+    also bis zu diesem Abstand länger gelten — nicht aber seine volle Restfrist.
 
     Der Preis: Sprang die Wanduhr einmal falsch nach VORN, bleibt die Uhr dort, bis die Wanduhr
     aufholt — Fristen sind dann intern stimmig, nur eben in der Zukunft datiert. Das ist die
     sichere Richtung, und es steht als Warnung im Log.
 
     `wand`/`mono` sind austauschbar, damit ein Test einen Sprung stellen kann, ohne die Uhr des
-    ganzen Prozesses zu verbiegen.
+    ganzen Prozesses zu verbiegen. Ohne Angabe werden `time.time`/`time.monotonic` bei JEDEM
+    Aufruf nachgeschlagen, nicht beim Import gebunden: Eine einbettende App, die in ihren Tests
+    `time.time` patcht (`mock.patch`, `monkeypatch`, freezegun), stellt damit auch diese Uhr
+    vor. Zurückdrehen lässt sie sich so nicht — das ist genau der Schutz oben.
     """
 
     #: Ab welchem Rückstand der Wanduhr eine Warnung geschrieben wird (Sekunden). Darunter ist
     #: es normales NTP-Zittern.
     WARN_AB_SEK = 5
 
-    def __init__(self, wand=time.time, mono=time.monotonic):
-        self.wand = wand
-        self.mono = mono
+    def __init__(self, wand=None, mono=None):
+        self.wand = wand or (lambda: time.time())
+        self.mono = mono or (lambda: time.monotonic())
         self._lock = threading.Lock()
         self._stand = 0.0          # zuletzt ausgegebene Zeit (Wanduhr-Skala)
         self._mono = None          # monotone Zeit bei dieser Ausgabe
@@ -276,8 +283,9 @@ class _Uhr:
             logging.getLogger("tinysesam").warning(
                 "Die Systemuhr steht %d s hinter der zuletzt benutzten Zeit (Rückwärtssprung "
                 "oder falsches Datum nach dem Start). TinySesam zählt monoton weiter, damit "
-                "abgelaufene Sitzungen und Einmal-Token nicht wieder gelten — Uhrzeit (NTP) "
-                "prüfen.", int(rueckstand))
+                "abgelaufene Sitzungen und Einmal-Token nicht wieder gelten (nach einem "
+                "Neustart ab dem zuletzt gesicherten Stand, höchstens eine Minute alt) — "
+                "Uhrzeit (NTP) prüfen.", int(rueckstand))
         elif rueckstand <= self.WARN_AB_SEK:
             self._gemeldet = False
 
@@ -325,6 +333,8 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
         self._lock = threading.Lock()
+        self._uhr_gesichert: Optional[float] = None   # monotone Zeit des letzten gesicherten Uhrstands
+        self._geschrieben: Optional[float] = None     # monotone Zeit des letzten erfolgreichen Commits
         with self._lock:
             self.db.executescript(SCHEMA)
             self.db.commit()
@@ -346,7 +356,8 @@ class Store:
         abfragen = ("SELECT MAX(created_at) AS t FROM session",
                     "SELECT MAX(created_at) AS t FROM magic_token",
                     "SELECT ts AS t FROM audit ORDER BY id DESC LIMIT 1",
-                    "SELECT ts AS t FROM login_attempt ORDER BY id DESC LIMIT 1")
+                    "SELECT ts AS t FROM login_attempt ORDER BY id DESC LIMIT 1",
+                    f"SELECT CAST(value AS INTEGER) AS t FROM setting WHERE key='{self.UHR_STAND}'")
         werte = []
         for sql in abfragen:
             try:
@@ -518,7 +529,46 @@ class Store:
         with self._lock:
             cur = self.db.execute(sql, args)
             self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
             return cur
+
+    #: Setting-Schlüssel des gesicherten Uhrstands (s. `_Uhr`) und wie oft er höchstens
+    #: geschrieben wird (Sekunden).
+    UHR_STAND = "uhr_stand"
+    UHR_SICHERN_SEK = 60
+
+    def _uhr_stand_schreiben(self) -> None:
+        """`uhr_stand` auf `jetzt()` heben — nur nach OBEN (ohne Commit, unter `_lock`).
+
+        Schon `_migrate()` schreibt, bevor `Store()` die Uhr aus der Datenbank gehoben hat;
+        dort ist `jetzt()` noch die falsche Wanduhr eines Boots mit altem Datum. Ein blindes
+        Überschreiben löschte damit genau den Stand, der die Uhr gleich heben soll."""
+        jetzt_s = _now()
+        self.db.execute("INSERT OR IGNORE INTO setting(key, value) VALUES (?, ?)",
+                        (self.UHR_STAND, str(jetzt_s)))
+        self.db.execute("UPDATE setting SET value=? WHERE key=? AND CAST(value AS INTEGER) < ?",
+                        (str(jetzt_s), self.UHR_STAND, jetzt_s))
+
+    def _uhr_mitschreiben(self) -> None:
+        """Den Stand der Uhr sichern — höchstens einmal je `UHR_SICHERN_SEK` (unter `_lock`).
+
+        Ohne ihn kannte ein Neustart nur das letzte Ereignis in der Datenbank: Was danach ablief,
+        galt nach einem Boot mit altem Datum wieder für seine volle Restfrist (B6-9). Eigener
+        Commit NACH dem eigentlichen Schreiben: Scheitert er (Volume voll), darf das den schon
+        bestätigten Schreibzugriff nicht mitreissen — der Stand ist Beiwerk."""
+        m = time.monotonic()
+        if self._uhr_gesichert is not None and m - self._uhr_gesichert < self.UHR_SICHERN_SEK:
+            return
+        try:
+            self._uhr_stand_schreiben()
+            self.db.commit()
+            self._uhr_gesichert = m
+        except sqlite3.Error:
+            try:
+                self.db.rollback()
+            except sqlite3.Error:
+                pass
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
@@ -1015,9 +1065,9 @@ class Store:
             n += int(r["n"] or 0) if r else 0
         return n
 
-    #: Schlüssel der Schreibprobe in `flow`. Mit `expires_at=0` ist die Zeile nie gültiger
-    #: Flow-State und fällt beim nächsten `gc_flow()` weg.
-    SCHREIBPROBE = "healthz:schreibprobe"
+    #: So lange gilt ein erfolgreicher Commit als Beleg, dass die Datenbank beschreibbar ist
+    #: (Sekunden). Innerhalb dieser Frist prüft `schreibprobe()` nur noch die Verbindung.
+    SCHREIBPROBE_SEK = 5
 
     def schreibprobe(self) -> None:
         """Eine echte Schreibtransaktion — der Kern des Healthchecks (B6-4).
@@ -1027,9 +1077,24 @@ class Store:
         ist (`SQLITE_FULL`) — genau dort, wo jede Anmeldung an ihrem ersten `INSERT INTO
         session` scheitert. Gemeldet wird deshalb erst gesund, wenn ein Commit durchgeht.
         Wirft die sqlite3-Ausnahme unverändert; was davon nach aussen dringt, entscheidet der
-        Aufrufer."""
-        self._exec("INSERT OR REPLACE INTO flow(key, data, expires_at) VALUES (?, '{}', 0)",
-                   (self.SCHREIBPROBE,))
+        Aufrufer.
+
+        Geschrieben wird der Stand der Uhr (`uhr_stand`) — so sichert der Healthcheck ihn
+        nebenbei auch in Zeiten, in denen sonst nichts geschrieben wird. Aber höchstens alle
+        `SCHREIBPROBE_SEK`: `/healthz` ist ohne Anmeldung erreichbar, und je Aufruf ein Commit
+        mit fsync unter `_lock` hiesse, wer ihn flutet, belegt die Schreibsperre, auf die
+        Anmeldungen warten, und nutzt SD-Karten ab. Liegt der letzte erfolgreiche Commit (auch
+        ein fremder über `_exec`) kürzer zurück, genügt ein Lesezugriff — eine geschlossene oder
+        verschwundene Verbindung fällt dabei weiterhin sofort auf, ein Wechsel auf „nur lesbar"
+        spätestens nach `SCHREIBPROBE_SEK`."""
+        with self._lock:
+            m = time.monotonic()
+            if self._geschrieben is not None and m - self._geschrieben < self.SCHREIBPROBE_SEK:
+                self.db.execute("SELECT 1").fetchone()
+                return
+            self._uhr_stand_schreiben()
+            self.db.commit()
+            self._geschrieben = self._uhr_gesichert = m
 
     # ---------- Runtime-Settings (Panel-editierbar) ----------
     def get_setting(self, key) -> Optional[str]:
