@@ -127,7 +127,9 @@ def build_admin_router(auth) -> APIRouter:
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_lock"))
-        auth.store.set_disabled(uid, disabled)
+        # Mit Betreiber-Vermerk: Kein Bestätigungslink hebt diese Sperre auf, auch einer nicht,
+        # der erst nach ihr entsteht (H-18, zweite Angriffsrunde) — s. `Store.set_disabled`.
+        auth.store.set_disabled(uid, disabled, durch_betreiber=True)
         keys = 0
         if disabled:
             auth.store.delete_user_sessions(uid)

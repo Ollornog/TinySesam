@@ -553,7 +553,19 @@ def build_router(auth) -> APIRouter:
                 auth.token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
-            auth.store.set_disabled(uid, False)          # Konto aktivieren
+            # Nur die Sperre der AUSSTEHENDEN Bestätigung aufheben, nie die des Betreibers (H-18,
+            # zweite Angriffsrunde). Bis dahin setzte diese Route `disabled` bedingungslos auf 0:
+            # Entstand der Token erst nach einer Sperre im Panel — eine App schiebt
+            # `send_verify_email` in den Postausgang —, fand die Sperre nichts zu verwerfen, und
+            # der Link schaltete das Konto wieder frei und meldete an.
+            if not auth.store.bestaetigung_freischalten(uid):
+                konto = auth._kontoname(uid)
+                if konto is None:                        # Konto inzwischen gelöscht
+                    auth.token_abgewiesen("verify_email", request)
+                    return auth.render_page("magic_invalid", request=request, status=400)
+                auth.audit("verify_blocked", konto, auth.client_ip(request),
+                           "Konto vom Betreiber gesperrt")
+                return auth.render_page("magic_invalid", request=request, status=403)
             # Konto und IP gehören in die Zeile (B5-02): Hier wird ein Konto freigeschaltet, und
             # ohne Namen fand `tinysesam audit --user X` den Vorgang nicht.
             auth.audit("email_verified", auth._kontoname(uid), auth.client_ip(request),
@@ -865,8 +877,11 @@ def build_router(auth) -> APIRouter:
                 # Der Token entsteht HIER, in der Anfrage; nur der Versand wartet auf den
                 # Postausgang. Eine Sperre durch den Betreiber verwirft offene Token (H-18) —
                 # entstand er erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
-                # der verspätete Link hob sie danach auf. Zeitlich neutral: Der Weg für eine
-                # vergebene Adresse (R4-03) legt seinen Token ebenfalls in der Anfrage an.
+                # der verspätete Link hob sie danach auf. Zeitlich neutral nur gegenüber dem
+                # Platzhalter-Zweig einer vergebenen Adresse (R4-03, Name ≠ Adresse), der seinen
+                # Token ebenfalls in der Anfrage anlegt. Ist der Name die Adresse (immer bei
+                # login_identifier='email'), schreibt der Vergeben-Zweig nur die Audit-Zeile —
+                # dieses Zeitorakel bestand schon vorher und steht im Backlog (T-13).
                 try:
                     senden = auth._verify_mail(uid, email_final, verify_base)
                 except Exception:

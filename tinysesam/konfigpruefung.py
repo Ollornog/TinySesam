@@ -95,6 +95,21 @@ def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
 
 
+def _ganzzahl(config, feld: str, fehlt: int = 0):
+    """Ein Zahlenfeld für eine Kombinationsprüfung lesen — oder None, wenn es keine ganze Zahl ist.
+
+    Typ und Bereich meldet `_zahlengrenzen` (samt `True`, Text, `inf`, `nan`); die Kombination
+    wird dann nicht bewertet. Ein `int()` auf den Rohwert liess die ganze Prüfung abstürzen,
+    bevor die Typmeldung kam, und `TinySesam(cfg)` warf ValueError/OverflowError statt eines
+    gesammelten ConfigError (zweite Angriffsrunde, konfig)."""
+    wert = getattr(config, feld, fehlt)
+    if wert is None:
+        return fehlt
+    if isinstance(wert, bool) or not isinstance(wert, int):
+        return None
+    return wert
+
+
 #: Die Direktiven, die eine Content-Security-Policy kennt (CSP Level 3 plus die verbreiteten
 #: Altlasten). Eine eigene Policy braucht mindestens eine davon; jede andere gibt eine Warnung.
 CSP_DIREKTIVEN = frozenset({
@@ -354,7 +369,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "und ein Log-Versand mitnimmt — wer es liest, wird Admin. Für den Token eine eigene "
             "Datei nehmen (z.B. /run/<dienst>/admin-claim.token) oder das Feld leer lassen, dann "
             "geht der Wert auf stderr.")
-    if token_datei and (int(getattr(config, "admin_claim_ttl_min", 0) or 0) <= 0
+    _claim_ttl = _ganzzahl(config, "admin_claim_ttl_min")
+    if token_datei and ((_claim_ttl is not None and _claim_ttl <= 0)
                         or not _an(config, "admin_enabled")):
         warnungen.append(
             "admin_claim_token_file ist gesetzt, aber der Token-Weg ist aus "
@@ -394,9 +410,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _clients = getattr(config, "oidc_clients", None) or {}
     # Typ und Bereich prüft ZAHLENGRENZEN (unten, samt negativer Werte); hier nur die
     # Kombination. Ein `int()` auf einen Text liess die ganze Prüfung abstürzen.
-    _revalidate = getattr(config, "oidc_revalidate_minutes", 0)
-    if isinstance(_revalidate, bool) or not isinstance(_revalidate, int):
-        _revalidate = 0
+    _revalidate = _ganzzahl(config, "oidc_revalidate_minutes") or 0
     if _clients and not _an(config, "oidc_enabled"):
         fehler.append(
             "oidc_clients nennt " + ", ".join(sorted(str(h) for h in _clients)) + ", aber "
@@ -408,6 +422,17 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "betrifft die Freigabe je Anwendung — ohne mehrere Clients gibt es keine, und der "
             "Wert bleibt folgenlos. Gemeint war vermutlich session_ttl_hours (Lebensdauer der "
             "Sitzung) oder stepup_max_age_sec (Frische für heikle Routen).")
+    # Die Obergrenze in ZAHLENGRENZEN (30 Tage) fängt eine Frist in Sekunden erst ab einem Tag
+    # (86400). Die Vorgabe des Presets, eine Stunde, in Sekunden geschrieben (3600) ging still
+    # durch — Nachprüfung alle 60 Stunden, ein Entzug beim Provider kam 60-mal später an. Eine
+    # Frist über einem Tag ist ungewöhnlich genug, um nach der Einheit zu fragen; 300 oder 900
+    # (fünf oder 15 Minuten in Sekunden) fängt keine Grenze.
+    if _revalidate > 24 * 60:
+        warnungen.append(
+            f"oidc_revalidate_minutes={_revalidate} heisst: Nachprüfung beim Provider alle "
+            f"{_revalidate / 60:g} Stunden. Das Feld zählt Minuten — war die Frist in Sekunden "
+            "gemeint (eine Stunde = 60, nicht 3600)? Ist die lange Frist gewollt, bleibt es bei "
+            "dieser Warnung.")
     _vertraute = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
     for host, eintrag in _clients.items():
         h = str(host).strip().lower()
@@ -445,7 +470,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "(Vorgabe, erlaubt bis zum ersten vollständigen Login), 'grace' (erlaubt "
             "mfa_enrollment_grace_days ab Kontoanlage), 'strict' (nie — die Einrichtung kommt "
             "dann vom Betreiber).")
-    if _art == "grace" and int(getattr(config, "mfa_enrollment_grace_days", 0) or 0) <= 0:
+    _gnade = _ganzzahl(config, "mfa_enrollment_grace_days")
+    if _art == "grace" and _gnade is not None and _gnade <= 0:
         fehler.append(
             "mfa_enrollment='grace', aber mfa_enrollment_grace_days ist 0 oder kleiner. Damit "
             "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
@@ -578,6 +604,7 @@ ZAHLENGRENZEN = {
     "audit_retention_days": (0, 3660),
     # 0 = keine Nachprüfung. Ein Entzug beim Provider, der erst nach mehr als 30 Tagen ankommt,
     # ist keine Nachprüfung mehr; `86400` (ein Tag in Sekunden statt Minuten) fällt so auf.
+    # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
     "oidc_revalidate_minutes": (0, 30 * 24 * 60),
 }
 

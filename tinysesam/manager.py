@@ -26,7 +26,7 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email, norm_kennung, jetzt as _jetzt
+from .store import Store, norm_email, norm_kennung, jetzt as _jetzt, versuchsfrist as _versuchsfrist
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
@@ -2242,6 +2242,10 @@ class TinySesam:
         """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
         Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
+        Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die
+        ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel,
+        `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst
+        nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18).
         """
         senden = self._verify_mail(user_id, email, base_url)
         if senden is None:
@@ -3015,8 +3019,10 @@ class TinySesam:
         """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
         Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
         Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht
-        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich."""
-        older = _jetzt() - int(attempts_older_than_sec)
+        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
+        `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in
+        Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird."""
+        older = _jetzt() - _versuchsfrist(attempts_older_than_sec)
         # VOR den Tokens: Das Merkmal „nie bestätigt" ist der abgelaufene Bestätigungstoken —
         # räumt `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen (R4-09).
         # Ohne diesen Schritt blieb eine Adresse, die jemand fremdes registriert und nie

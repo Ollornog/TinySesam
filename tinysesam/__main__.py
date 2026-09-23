@@ -226,6 +226,14 @@ def _gc(argv) -> int:
     unten, oben = ZAHLENGRENZEN["audit_retention_days"]
     if not unten <= a.audit_days <= oben:
         ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
+    # Dasselbe für die Login-Versuche (zweite Angriffsrunde): ±10**20 brach nach den ersten
+    # Löschschritten ab, ein negativer Wert räumte auch das laufende Sperrfenster weg.
+    from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
+    try:
+        versuchsfrist(a.attempts_older_than)
+    except ValueError:
+        ap.error(f"--attempts-older-than muss zwischen 0 und {VERSUCHSFRIST_MAX_SEK} liegen "
+                 "(Sekunden; 0 räumt alle Fehlversuche)")
     store = _oeffne(a.db)
     if store is None:
         return 1

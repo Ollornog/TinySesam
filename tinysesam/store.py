@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin      INTEGER NOT NULL DEFAULT 0,
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
     is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
+    -- 0 = aktiv. 1 = gesperrt, weil die Bestätigung der Adresse aussteht (Registrierung, oder
+    -- `set_disabled(uid, True)` einer einbettenden App) — die hebt der Bestätigungslink auf.
+    -- 2 = gesperrt durch den Betreiber (Admin-Panel) — die hebt KEIN Link auf, nur der Betreiber.
     disabled      INTEGER NOT NULL DEFAULT 0,
     -- Wann war dieses Konto zum ERSTEN Mal vollständig angemeldet? NULL = noch nie (R3-1).
     -- Daran hängt das Selbst-Enrollment: Verlangt die Kette einen zweiten Faktor, darf ein
@@ -340,10 +343,16 @@ class _Uhr:
     (und beim Verlassen von `freeze_time` einer zurück). Ein Monotonie-Schritt, der rückwärts
     geht oder größer ist als `MONO_SCHRITT_MAX_SEK`, zählt deshalb nicht als vergangene Zeit:
     Unter freezegun folgt die Uhr der eingefrorenen Wanduhr nach vorn (`tick()`/`move_to()`
-    eingeschlossen), nach dem Verlassen bleibt sie auf dem vorgestellten Stand, bis die echte
-    Zeit aufholt. Den Preis zahlt nur ein Rückwärtssprung der Wanduhr, der in eine Pause von
-    mehr als einem Jahr ohne jeden Aufruf fällt: Dann gilt die zurückgesprungene Wanduhr, aber
-    nie weniger als der zuletzt ausgegebene Stand.
+    eingeschlossen); nach dem Verlassen läuft sie vom vorgestellten Stand aus mit der echten
+    monotonen Zeit weiter — wie nach `mock.patch`. Der Vorsprung bleibt also: für die Lebensdauer
+    des Prozesses (die echte Zeit holt ihn nicht ein, beide laufen gleich schnell) und über
+    `uhr_stand` in dieser Datenbank für jede spätere Öffnung, solange die Pause dazwischen kürzer
+    ist als der Vorsprung. Das ist die sichere Richtung; ein Test, der die Uhr weit vorstellt,
+    nimmt deshalb eine eigene Wegwerf-Datenbank. Den Preis der Plausibilitätsgrenze zahlt nur
+    ein Rückwärtssprung der Wanduhr, der in eine Pause von mehr als einem Jahr ohne jeden Aufruf
+    fällt: Dann gilt die zurückgesprungene Wanduhr, aber nie weniger als der zuletzt ausgegebene
+    Stand. Dieselbe Regel gilt für die monotonen Stempel des `Store` (`_frisch`): Ein negativer
+    Abstand ist abgelaufen, nicht frisch.
     """
 
     #: Ab welchem Rückstand der Wanduhr eine Warnung geschrieben wird (Sekunden). Darunter ist
@@ -417,6 +426,32 @@ _UHR = _Uhr()
 def jetzt() -> int:
     """Aktuelle Zeit (Unix-Sekunden), die nie rückwärts läuft — s. `_Uhr`."""
     return _UHR.jetzt()
+
+
+#: Längste Frist, nach der `gc` alte Login-Versuche löscht (Sekunden): zehn Jahre wie
+#: `audit_retention_days`. Die Grenze ist kein Vorschlag für die Aufbewahrung — die Sperre sieht
+#: ohnehin nur ihr Fenster —, sondern hält die Zahl im Bereich, den SQLite rechnen kann.
+VERSUCHSFRIST_MAX_SEK = 3660 * 86400
+
+
+def versuchsfrist(sekunden) -> int:
+    """`attempts_older_than_sec` von `gc` prüfen — BEVOR irgendetwas gelöscht wird.
+
+    Ohne Grenze brach ±10**20 mit `OverflowError` ab, als Sitzungen, Flows, Tokens und Unlocks
+    schon weg waren; ein negativer Wert löschte jeden Fehlversuch, auch die im laufenden
+    Sperrfenster, und hob damit jede Kontosperre auf. 0 bleibt erlaubt: der dokumentierte Weg,
+    alle Fehlversuche zu räumen. `True` ist keine Frist (hiesse eine Sekunde). `ValueError`, wenn
+    der Wert nicht passt."""
+    try:
+        if isinstance(sekunden, bool):
+            raise ValueError
+        zahl = int(sekunden)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"attempts_older_than_sec={sekunden!r} ist keine ganze Zahl von Sekunden.") from None
+    if not 0 <= zahl <= VERSUCHSFRIST_MAX_SEK:
+        raise ValueError(f"attempts_older_than_sec={zahl} liegt ausserhalb von 0…{VERSUCHSFRIST_MAX_SEK} "
+                         "(Sekunden). 0 räumt alle Fehlversuche.")
+    return zahl
 
 
 def _now() -> int:
@@ -669,6 +704,18 @@ class Store:
         self.db.execute("UPDATE setting SET value=? WHERE key=? AND CAST(value AS INTEGER) < ?",
                         (str(jetzt_s), self.UHR_STAND, jetzt_s))
 
+    @staticmethod
+    def _frisch(seit, m, frist) -> bool:
+        """Liegt der monotone Stempel `seit` weniger als `frist` Sekunden vor `m`?
+
+        Ein NEGATIVER Abstand zählt als abgelaufen, nicht als frisch: freezegun liefert
+        `time.monotonic` auf der Epoch-Skala (≈1,8e9). Ein Schreibzugriff unter `freeze_time`
+        hinterliess die Stempel dort, und danach war jeder Abstand negativ, also immer „kürzer als
+        die Frist“ — `uhr_stand` wurde im ganzen Prozess nicht mehr gesichert, die Schreibprobe
+        prüfte nur noch die Verbindung (zweite Angriffsrunde, dieselbe Klasse wie in `_Uhr.jetzt`).
+        Ein Abstand über jeder Frist ist ohnehin abgelaufen."""
+        return seit is not None and 0 <= m - seit < frist
+
     def _uhr_mitschreiben(self) -> None:
         """Den Stand der Uhr sichern — höchstens einmal je `UHR_SICHERN_SEK` (unter `_lock`).
 
@@ -677,7 +724,7 @@ class Store:
         Commit NACH dem eigentlichen Schreiben: Scheitert er (Volume voll), darf das den schon
         bestätigten Schreibzugriff nicht mitreissen — der Stand ist Beiwerk."""
         m = time.monotonic()
-        if self._uhr_gesichert is not None and m - self._uhr_gesichert < self.UHR_SICHERN_SEK:
+        if self._frisch(self._uhr_gesichert, m, self.UHR_SICHERN_SEK):
             return
         try:
             self._uhr_stand_schreiben()
@@ -802,8 +849,44 @@ class Store:
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
 
-    def set_disabled(self, user_id, disabled: bool):
-        self._exec("UPDATE users SET disabled=? WHERE id=?", (1 if disabled else 0, user_id))
+    #: Werte von `users.disabled` neben 0 (aktiv): die Sperre einer ausstehenden Bestätigung und
+    #: die Sperre durch den Betreiber. Getrennt, weil `/auth/verify/…` die eine aufhebt und die
+    #: andere nie (H-18, zweite Angriffsrunde): Entstand der Bestätigungstoken erst NACH einer
+    #: Sperre durch den Betreiber — etwa im Postausgang einer einbettenden App, die
+    #: `send_verify_email` dorthin schiebt —, fand die Sperre nichts zu verwerfen, und der Link
+    #: setzte `disabled` danach bedingungslos auf 0.
+    GESPERRT_BESTAETIGUNG = 1
+    GESPERRT_BETREIBER = 2
+
+    def set_disabled(self, user_id, disabled: bool, durch_betreiber: bool = False):
+        """Konto sperren oder entsperren.
+
+        `durch_betreiber=True` ist die Sperre des Betreibers (Admin-Panel): Kein Bestätigungslink
+        hebt sie auf, nur ein ausdrückliches `set_disabled(uid, False)`. Ohne den Vermerk ist es
+        die Sperre einer ausstehenden Bestätigung, die `bestaetigung_freischalten` aufhebt — und
+        die stuft eine schon bestehende Sperre des Betreibers nicht herab.
+
+        Sperren aus Fassungen vor dieser Unterscheidung tragen 1. Ihre offenen Einmal-Token hat
+        die Sperre damals schon verworfen (H-18); ein Link, der erst danach entsteht (die App ruft
+        `send_verify_email` für ein gesperrtes Konto), hebt sie noch auf — eine erneute Sperre im
+        Panel trägt den Vermerk."""
+        if not disabled:
+            self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
+        elif durch_betreiber:
+            self._exec("UPDATE users SET disabled=? WHERE id=?", (self.GESPERRT_BETREIBER, user_id))
+        else:
+            self._exec("UPDATE users SET disabled=max(disabled, ?) WHERE id=?",
+                       (self.GESPERRT_BESTAETIGUNG, user_id))
+
+    def bestaetigung_freischalten(self, user_id) -> bool:
+        """Die Sperre einer ausstehenden Bestätigung aufheben — nie die des Betreibers.
+
+        True, wenn das Konto danach aktiv ist (auch: es war gar nicht gesperrt). False, wenn
+        eine Sperre bleibt; dann hat der Betreiber gesperrt, und nur er hebt es wieder auf."""
+        self._exec("UPDATE users SET disabled=0 WHERE id=? AND disabled=?",
+                   (user_id, self.GESPERRT_BESTAETIGUNG))
+        zeile = self._one("SELECT disabled FROM users WHERE id=?", (user_id,))
+        return bool(zeile) and not zeile["disabled"]
 
     def set_admin(self, user_id, is_admin: bool):
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
@@ -1257,7 +1340,7 @@ class Store:
         spätestens nach `SCHREIBPROBE_SEK`."""
         with self._lock:
             m = time.monotonic()
-            if self._geschrieben is not None and m - self._geschrieben < self.SCHREIBPROBE_SEK:
+            if self._frisch(self._geschrieben, m, self.SCHREIBPROBE_SEK):
                 self.db.execute("SELECT 1").fetchone()
                 return
             self._uhr_stand_schreiben()
@@ -1421,7 +1504,8 @@ class Store:
         bestätigt wurden (R4-09). Nur diese Kombination zählt — gesperrt, noch nie angemeldet,
         ein unbenutzter und abgelaufener `verify_email`-Token, und KEIN gültiger oder schon
         eingelöster daneben. Ein vom Admin gesperrtes Bestandskonto trägt keinen solchen Token
-        und bleibt deshalb unberührt."""
+        und bleibt deshalb unberührt — und eines mit dem Betreiber-Vermerk (`disabled=2`) auch
+        dann, wenn ihm eine App danach noch einen Bestätigungslink geschickt hat."""
         now = _now()
         return [r["id"] for r in self._all(
             "SELECT DISTINCT u.id FROM users u JOIN magic_token m ON m.user_id = u.id "

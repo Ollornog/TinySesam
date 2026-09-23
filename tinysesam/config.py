@@ -329,8 +329,10 @@ class TinySesamConfig:
     #: aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab,
     #: ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt.
     #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind
-    #: 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr, und ein Wert in Sekunden
-    #: statt Minuten fällt auf.
+    #: 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag
+    #: oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die
+    #: Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden
+    #: (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen.
     oidc_revalidate_minutes: int = 0
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
