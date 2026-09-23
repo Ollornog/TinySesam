@@ -344,7 +344,8 @@ def _account(auth, ctx) -> str:
         import datetime as _dt
         zeilen = "".join(
             f"<li><code>{_e(_dt.datetime.fromtimestamp(int(ev['ts']), _dt.timezone.utc).strftime('%Y-%m-%d %H:%M'))}"
-            f" UTC</code> {_e(ev['event'])} <small>{_e(ev.get('ip') or '')}</small></li>"
+            f" UTC</code> {_e(ev['event'])} <small>"
+            f"{_e(t('acc.events_by_admin') if ev.get('by_admin') else (ev.get('ip') or ''))}</small></li>"
             for ev in events) or f"<li>{_e(t('acc.events_none'))}</li>"
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.events'))}</h2>"

@@ -1028,10 +1028,16 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username) -> int:
-        """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13)."""
-        return self._exec("DELETE FROM login_attempt WHERE lower(username)=lower(?)",
-                          (username,)).rowcount
+    def delete_attempts_for(self, username, weitere=()) -> int:
+        """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
+
+        `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
+        E-Mail-Adresse — `find_user` nimmt sie an, und der Versuch steht dann unter ihr)."""
+        n = 0
+        for wert in (username, *[w for w in weitere if w]):
+            n += self._exec("DELETE FROM login_attempt WHERE lower(username)=lower(?)",
+                            (wert,)).rowcount
+        return n
 
     def gc_audit(self, older_than_ts: int) -> int:
         """Audit-Zeilen vor einem Zeitpunkt löschen (`audit_retention_days`, B5-11)."""
@@ -1042,25 +1048,44 @@ class Store:
 
         Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
         die Forensik stehen; WER es war, steht danach nur noch als `ersatz` da. `weitere` sind
-        zusätzliche Kennungen (die E-Mail-Adresse), die im Detailtext vorkommen können.
+        zusätzliche Kennungen (die E-Mail-Adresse): Unter ihr stehen Anmeldeversuche in der
+        Spalte `username` (`find_user` nimmt die Adresse an), und im Detailtext kommt sie vor.
+
+        Im Detailtext wird der BENUTZERNAME nur dort ersetzt, wo einer steht — `akteur=<name>`
+        und der Kopf von `user_create`. Ein freies Ersetzen jedes gleichlautenden Wortes traf
+        fremde Zeilen: Mit dem Konto `admin` wurde aus `admin=0->1` in der Rollenänderung eines
+        ANDEREN Kontos `gelöscht#2=0->1`, mit `password` die Methode jedes Fehlversuchs. Eine
+        Kennung mit `@` ist dagegen unverwechselbar und wird überall ersetzt.
         """
         if not username:
             return 0
         import re as _re
+        kennungen = [str(w) for w in (username, *weitere) if w]
         with self._lock:
-            n = self.db.execute("UPDATE audit SET username=? WHERE lower(username)=lower(?)",
-                                (ersatz, username)).rowcount
-            for wert in (username, *[w for w in weitere if w]):
-                # Nur als ganzes Wort ersetzen: Ein Konto „al" darf nicht jedes „alt" und
-                # „grund=falsches_geheimnis" im Log verstümmeln.
-                muster = _re.compile(r"(?<![\w@.-])" + _re.escape(str(wert)) + r"(?![\w@.-])",
-                                     _re.IGNORECASE)
+            n = 0
+            for wert in kennungen:
+                n += self.db.execute("UPDATE audit SET username=? WHERE lower(username)=lower(?)",
+                                     (ersatz, wert)).rowcount
+            for wert in kennungen:
+                w = _re.escape(wert)
+                ende = r"(?![\w@.=-])"
+                if "@" in wert:
+                    muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
+                else:
+                    muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
                 zeilen = self.db.execute(
-                    "SELECT id, detail FROM audit WHERE instr(lower(detail), lower(?)) > 0",
-                    (str(wert),)).fetchall()
+                    "SELECT id, event, detail FROM audit WHERE instr(lower(detail), lower(?)) > 0",
+                    (wert,)).fetchall()
                 for z in zeilen:
-                    neu = muster.sub(ersatz, z["detail"] or "")
-                    if neu != z["detail"]:
+                    alt = z["detail"] or ""
+                    if "@" in wert:
+                        neu = muster.sub(ersatz, alt)
+                    else:
+                        neu = muster.sub("akteur=" + ersatz, alt)
+                        if z["event"] == "user_create":   # Detail: „<name> service=…"
+                            neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1,
+                                          flags=_re.IGNORECASE)
+                    if neu != alt:
                         self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu, z["id"]))
             self.db.commit()
         return n

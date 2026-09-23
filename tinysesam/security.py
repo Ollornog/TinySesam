@@ -14,6 +14,23 @@ from collections import defaultdict, deque
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
 
+#: Unicode-Formatzeichen, die die Leserichtung umdrehen (Bidi-Overrides/-Isolates). Sie brechen
+#: keine Zeile, lassen aber im Terminal eine andere stehen, als gespeichert ist (A-7).
+_BIDI = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+                  "\u2066\u2067\u2068\u2069")
+
+
+def _zeilenbrecher(z: str) -> bool:
+    """Ein Zeichen, das in einer Logzeile nichts zu suchen hat.
+
+    Nicht nur ASCII < 0x20 und DEL: Auch die C1-Steuerzeichen (U+0080–U+009F, darunter NEL als
+    Zeilenumbruch und CSI als Terminal-Befehl), der Zeilen- und Absatztrenner U+2028/U+2029 —
+    `str.splitlines()` und manche Anzeigen brechen daran — und die Bidi-Steuerzeichen.
+    """
+    o = ord(z)
+    return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
+
+
 def fuer_log(wert) -> str:
     """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
 
@@ -28,7 +45,7 @@ def fuer_log(wert) -> str:
     Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
     keine Anmeldung, sondern ein Versuch, das Log zu fluten).
     """
-    text = "".join(z for z in str(wert if wert is not None else "") if z >= " " and z != "\x7f")
+    text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
     return (text[:64] + "…") if len(text) > 64 else text
 
 
@@ -39,8 +56,28 @@ def zeilenfest(wert) -> str:
     auffallen, DASS jemand einen Zeilenumbruch in einen Benutzernamen geschrieben hat (B5-06).
     """
     text = str(wert if wert is not None else "")
-    return "".join(z if (z >= " " and z != "\x7f") else
+    return "".join(z if not _zeilenbrecher(z) else
                    {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(z, "?") for z in text)
+
+
+def url_fuer_log(url) -> str:
+    """Eine URL ohne Query und Fragment, zeilenfest und gedeckelt — für das Audit-Log.
+
+    Hinter dem `?` stehen bei geschützten Anwendungen oft Geheimnisse: Freigabe-Links
+    (`?token=…`), OAuth-Codes, signierte Download-Parameter. Im Audit-Log blieben sie dauerhaft
+    lesbar, auch im Panel. Für die Frage „wohin wollte die Anfrage" genügen Host und Pfad; dass
+    eine Query dabei war, zeigt ein `?…`.
+    """
+    text = str(url or "")
+    teile = urlsplit(text) if "://" in text else None
+    if teile is not None and teile.netloc:
+        rest = "?…" if (teile.query or teile.fragment) else ""
+        text = f"{teile.scheme}://{teile.netloc}{teile.path}{rest}"
+    else:
+        kopf, trenner, _ = text.partition("?")
+        kopf, trenner2, _ = kopf.partition("#")
+        text = kopf + ("?…" if (trenner or trenner2) else "")
+    return zeilenfest(text)[:200]
 
 
 class _ZeilenSchutz(logging.Filter):
@@ -86,9 +123,17 @@ def ip_normiert(wert) -> str | None:
     elif roh.count(":") == 1:
         roh = roh.split(":", 1)[0]
     try:
-        return str(ipaddress.ip_address(roh))
+        addr = ipaddress.ip_address(roh)
     except ValueError:
         return None
+    if getattr(addr, "scope_id", None) is not None:
+        # Die Zonenangabe (`fe80::1%eth0`) fällt weg. `ipaddress` nimmt hinter dem `%` jeden
+        # Text an — auch einen Zeilenumbruch —, und jede Zone wäre ein eigener Schlüssel: Über
+        # einen Proxy, der den Client-Header durchreicht, dreht ein Angreifer sie je Anfrage
+        # weiter und entgeht so Rate-Limit, IP-Sperre und Log-Drossel. Die Zone benennt nur die
+        # Schnittstelle des Absenders, nicht den Client.
+        addr = ipaddress.IPv6Address(addr.packed)
+    return str(addr)
 
 
 def ip_pseudonym(ip: str) -> str:

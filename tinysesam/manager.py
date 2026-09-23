@@ -753,7 +753,8 @@ class TinySesam:
         """Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
 
         Die Audit-Zeilen bleiben stehen (was geschah, wann, von welcher IP), nur der Name wird zu
-        `gelöscht#<id>`, auch dort, wo er oder die E-Mail-Adresse im Detailtext steht. Ein
+        `gelöscht#<id>` — auch bei Anmeldeversuchen unter der E-Mail-Adresse und dort, wo Name
+        (`akteur=`) oder Adresse im Detailtext stehen (s. `Store.audit_anonymisieren`). Ein
         gelöschtes Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht; ein Log,
         dem die Zeilen fehlen, taugt nicht mehr zur Aufarbeitung.
 
@@ -769,7 +770,7 @@ class TinySesam:
         name, mail = str(u["username"]), (u["email"] or "")
         self.store.delete_user_sessions(user_id)
         self.store.delete_user(user_id)
-        self.store.delete_attempts_for(name)
+        self.store.delete_attempts_for(name, (mail,))
         ersatz = f"gelöscht#{user_id}"
         n = self.store.audit_anonymisieren(name, ersatz, (mail,))
         self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
@@ -781,12 +782,20 @@ class TinySesam:
         Nur Zeit, Ereignis und IP — das Detail bleibt beim Betreiber: Bei einer Admin-Aktion
         nennt es fremde Konten, und eine Anzeige für den Kontoinhaber soll nicht mehr zeigen als
         sein eigenes Konto. Genau das, was man dort sucht: „War das ich?"
+
+        Hat ein ANDERER die Zeile ausgelöst (`akteur=` im Detail, s. `audit()`), steht dort
+        dessen IP — die des Admins. Die bleibt weg; `by_admin` sagt stattdessen, dass es nicht
+        der Kontoinhaber war.
         """
         name = self._kontoname(user_id)
         if not name:
             return []
-        return [{"ts": z["ts"], "event": z["event"], "ip": z["ip"]}
-                for z in self.store.recent_audit(max(1, int(limit)), username=name)]
+        aus = []
+        for z in self.store.recent_audit(max(1, int(limit)), username=name):
+            fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
+            aus.append({"ts": z["ts"], "event": z["event"],
+                        "ip": None if fremd else z["ip"], "by_admin": fremd})
+        return aus
 
     def admin_exists(self) -> bool:
         """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
@@ -1690,6 +1699,11 @@ class TinySesam:
             return False
         if self.store.get_session(request.cookies.get(self.cfg.session_cookie) or ""):
             return False        # Cookie im Spiel → CSRF gilt, egal was im Header steht
+        # Die IP vor der Key-Prüfung festhalten: Diese Prüfung läuft VOR `current_user`, und
+        # `verify_api_key` protokolliert Nutzung und Abweisung (B5-05). Ohne den Aufruf stand ein
+        # widerrufener Key an einer POST-Route ohne Adresse im Log, und ein gültiger doppelt —
+        # einmal ohne, einmal mit IP, weil die IP Teil des Drosselschlüssels ist.
+        self._anfrage_merken(request)
         return self.verify_api_key(key)[0] is not None
 
     def require_csrf(self, request: Request, submitted):

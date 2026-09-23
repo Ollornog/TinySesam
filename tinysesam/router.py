@@ -642,7 +642,7 @@ def build_router(auth) -> APIRouter:
             ip = auth.client_ip(request)
             if auth._einmal_je(("forward401", ip, grund), 300):
                 auth.audit("forward_denied", None, ip,
-                           f"grund={grund} url={security.zeilenfest(orig)[:200]}")
+                           f"grund={grund} url={security.url_fuer_log(orig)}")
 
         def _forward(request: Request):
             u = auth.current_user(request)   # Session ODER API-Key
@@ -677,7 +677,7 @@ def build_router(auth) -> APIRouter:
                     # Eine 403 im Proxy-Log sagt nicht, wer woran gescheitert ist. Das Panel hat
                     # das Audit-Log ohnehin — also dorthin, wo man später nachsieht.
                     auth.audit("forward_role_denied", u["username"], auth.client_ip(request),
-                               f"url={orig} fehlt={';'.join(','.join(g) for g in fehlend)}")
+                               f"url={security.url_fuer_log(orig)} fehlt={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
                 # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
                 return Response(status_code=200, headers=auth.forward_response_headers(u))
