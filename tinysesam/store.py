@@ -204,6 +204,18 @@ def norm_email(email) -> Optional[str]:
     return e or None
 
 
+def norm_kennung(kennung) -> str:
+    """Die Login-Kennung so, wie der Sperrzähler sie führt: getrimmt und klein.
+
+    Muss mindestens so grob falten wie `TinySesam.find_user` (strip, `norm_email`, NOCASE):
+    Jede Schreibweise, die dasselbe Konto trifft, gehört in denselben Zähl-Topf. Sonst stellt
+    sich ein verteilter Angreifer mit `' opfer'`, `'opfer '`, `'\topfer'` … beliebig viele
+    frische Töpfe auf, und die Konto-Schwelle über alle Adressen bindet nichts. `lower()`
+    faltet gröber als NOCASE (auch ausserhalb von ASCII) — zwei Namen, die nur darin
+    abweichen, teilen sich dann einen Topf. Das ist strenger, nie lockerer."""
+    return str(kennung or "").strip().lower()
+
+
 def valid_email(email) -> bool:
     """Bewusst nachsichtig: genau ein @, links und rechts was dran, rechts ein Punkt, keine Leerzeichen.
     Ob die Adresse existiert, beantwortet nur der Bestätigungslink (`signup_verify_email`)."""

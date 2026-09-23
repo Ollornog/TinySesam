@@ -26,7 +26,7 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email
+from .store import Store, norm_email, norm_kennung
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from .templates import Templates
 from . import totp as _totp
@@ -1321,10 +1321,22 @@ class TinySesam:
         Pro Konto und nicht pro Paar aus Konto und Adresse: Eine PIN hat oft nur vier Stellen,
         ein verteilter Angreifer hätte sie mit Paar-Zählung in Stunden durch."""
         since = self._fenster_beginn() if since is None else since
+        username = norm_kennung(username)
         grenze = self.sec("pin_max_attempts")
         return [("lockout_pin", grenze, dict(since=since, username=username, method="pin")),
                 ("lockout_pin_ip", grenze * self.sec("ip_attempt_factor"),
                  dict(since=since, ip=ip, method="pin"))]
+
+    @staticmethod
+    def _topf(username, method) -> str:
+        """Unter welchem Namen ein Versuch zählt: die Kennung so gefaltet wie `find_user` sie liest.
+
+        Gezählt wurde bis zur dritten Runde unter dem ROH eingetippten Text, gesucht aber
+        getrimmt und ohne Gross-/Kleinschreibung. `' opfer'`, `'opfer '`, `'\topfer'` trafen
+        dasselbe Konto und füllten je einen eigenen Topf — die Konto-Schwelle gegen verteiltes
+        Raten (R7-6/H-8) band damit nichts. Ausgenommen ist der Bereichs-Pseudoname
+        `res:<name>`: Den setzt der Server aus einem Bereich, den es geben muss."""
+        return username if method == "resource" else norm_kennung(username)
 
     def _fenster_beginn(self) -> int:
         return int(time.time()) - self.sec("lockout_window_sec")
@@ -1343,8 +1355,12 @@ class TinySesam:
         Raten über viele Adressen; die erreicht ein Einzelner nicht mehr, weil ihn das Paar
         vorher stoppt. Je Adresse bleibt die NAT-Schwelle (`ip_attempt_factor`-fach) gegen
         das Durchprobieren vieler Konten.
+
+        Der Konto-Schlüssel ist `_topf(username)`, nicht der rohe Text — sonst stellt sich ein
+        Angreifer mit Leerzeichen und Schreibweisen beliebig viele Töpfe für dasselbe Konto auf.
         """
         since = self._fenster_beginn()
+        username = self._topf(username, method)
         if method in ("password_change", "reauth"):
             grenze = self.sec(f"{method}_max_attempts")
             return [(f"lockout_{method}", grenze, dict(since=since, username=username, method=method))]
@@ -1391,7 +1407,8 @@ class TinySesam:
         regeln = self._regeln(username, ip, method)
         if auch_pin:
             regeln = regeln + self._regeln_pin(username, ip)
-        versuch, grund = self.store.reserve_attempt(username, ip, method, _gueltige_regeln(regeln))
+        versuch, grund = self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                                    _gueltige_regeln(regeln))
         if versuch is None:
             self._abgewiesen(username, ip, grund,
                              login=method not in security.NICHT_LOGIN_METHODEN)
@@ -2190,8 +2207,9 @@ class TinySesam:
         `versuch` ist die ID aus `versuch_beginnen()`: Dann steht der Versuch schon als
         Fehlversuch in der Tabelle und wird hier nur abgeschlossen, statt ein zweites Mal
         gezählt zu werden."""
+        topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
         if versuch is None:
-            self.store.record_attempt(username, ip, success, method)
+            self.store.record_attempt(topf, ip, success, method)
         else:
             self.store.finish_attempt(versuch, bool(success))
         if success:
@@ -2199,7 +2217,7 @@ class TinySesam:
             # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
             # den zweiten Faktor ratbar. Alles übrige räumt erst die VOLLSTÄNDIGE Anmeldung
             # (`sperre_aufheben`).
-            self.store.clear_fails(username=username, method=method)   # 'login'-Audit erst beim vollen Abschluss
+            self.store.clear_fails(username=topf, method=method)   # 'login'-Audit erst beim vollen Abschluss
         else:
             # Der GRUND gehört ins serverseitige Protokoll. Die HTTP-Antwort bleibt bewusst
             # gleich (keine Konto-Erkundung) — im Audit-Log liest aber nur der Betreiber mit,
@@ -2244,7 +2262,7 @@ class TinySesam:
             return 0
         weg = 0
         since = 0
-        for kennung in {str(u["username"] or ""), str(u["email"] or "")} - {""}:
+        for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)

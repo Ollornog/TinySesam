@@ -254,8 +254,11 @@ def _unlock(argv) -> int:
     if not store.get_user_by_name(a.username):
         print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
-    offen = store.count_fails(0, username=a.username)
-    store.clear_fails(username=a.username)
+    # Gezählt wird unter der gefalteten Kennung (`norm_kennung`), also auch so räumen.
+    from .store import norm_kennung
+    topf = norm_kennung(a.username)
+    offen = store.count_fails(0, username=topf)
+    store.clear_fails(username=topf)
     store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen}")
     print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
     return 0

@@ -409,6 +409,38 @@ assert r.status_code == 429, f"verteiltes Raten über viele Adressen bleibt unbe
 print("  ✓ …die Konto-Schwelle greift weiter, wenn viele Adressen zusammen raten")
 os.remove(db_f)
 
+# Die Konto-Schwelle zählt unter der Kennung, die `find_user` liest — nicht unter dem rohen Text.
+# Bis zur dritten Runde trafen ' opfer', 'OPFER\t', '\xa0opfer' … dasselbe Konto, füllten aber je
+# einen eigenen Topf: Ein Adress-Pool mit einer Schreibweise je Adresse riet unbegrenzt, und die
+# Probe oben sah es nicht, weil sie nur die kanonische Kennung tippte. (Mutationsprobe: in
+# `TinySesam._topf` den rohen `username` zurückgeben → 60 Versuche erreichen die Prüfung.)
+db_v = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_v = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_v, cookie_secure=False,
+                                   passkey_enabled=False, oidc_enabled=False))
+auth_v.create_user("opfer", "Opfer-Passwort-1", email="opfer@example.com")
+app_v = FastAPI()
+app_v.include_router(auth_v.router())
+G = auth_v.sec("max_login_attempts")
+DECKEL = G * auth_v.sec("account_attempt_factor")
+varianten = [" opfer", "opfer ", "\topfer", "OPFER", " Opfer\t", "\xa0opfer", "opfer\n", "  oPfEr  ",
+             "\nOPFER", "opfer ", " opfer ", "Opfer"]
+assert all(auth_v.find_user(v) for v in varianten), "die Varianten treffen nicht mehr dasselbe Konto"
+geprueft = 0
+for i, v in enumerate(varianten):
+    ci = TestClient(app_v, client=(f"2001:db8:1::{i:x}", 40000))
+    for _ in range(G):
+        geprueft += ci.post("/auth/login", data={"username": v, "password": "rate"}).status_code == 401
+assert geprueft <= DECKEL, \
+    f"R7-6/H-8: {geprueft} Versuche über Schreibweisen der Kennung, zugesagt sind höchstens {DECKEL}"
+r = TestClient(app_v, client=("203.0.113.22", 40000)).post(
+    "/auth/login", data={"username": "opfer", "password": "Opfer-Passwort-1"})
+assert r.status_code == 429, f"die Konto-Schwelle hat bei {geprueft} Versuchen nicht gegriffen: {r.status_code}"
+print(f"  ✓ …auch über Leerzeichen und Schreibweisen der Kennung: {geprueft} geprüft, dann zu")
+# Aufheben muss denselben Topf treffen: Die Fehlversuche stehen unter 'opfer', nicht unter '  oPfEr  '.
+assert auth_v.sperre_aufheben(auth_v.find_user("opfer")["id"]) == geprueft
+assert auth_v.store.count_fails(0, username="opfer") == 0
+os.remove(db_v)
+
 # ---------- R7-1: Der Lockout zählt methodenblind — also räumt eine volle Anmeldung auch so ----------
 # Passwort, PIN und TOTP füllen denselben Topf; ein Erfolg räumte bis T-13 nur die eigene
 # Methode. Wer nach zwei vertippten Passwörtern per PIN VOLLSTÄNDIG hineinkam, trug die zwei
