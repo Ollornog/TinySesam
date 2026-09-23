@@ -53,6 +53,30 @@ def _host_aus(wert: str) -> str:
         return ""
 
 
+class _DictKopfzeilen:
+    """Die drei Zugriffe, die `_kopfzeilen_in` braucht, über einem gewöhnlichen dict.
+
+    Nachsehen ohne Rücksicht auf Groß-/Kleinschreibung, Schreiben auf den Schlüssel, der schon da
+    ist — sonst unter der übergebenen Schreibweise. So bleibt `exc.headers["Location"]` lesbar.
+    """
+    def __init__(self, d: dict):
+        self.d = d
+
+    def _schluessel(self, name: str):
+        return next((k for k in self.d if k.lower() == name.lower()), None)
+
+    def get(self, name: str, vorgabe=None):
+        k = self._schluessel(name)
+        return vorgabe if k is None else self.d[k]
+
+    def setdefault(self, name: str, wert: str):
+        if self._schluessel(name) is None:
+            self.d[name] = wert
+
+    def __setitem__(self, name: str, wert: str):
+        self.d[self._schluessel(name) or name] = wert
+
+
 def _inject_nonce(html_str: str, nonce: str) -> str:
     return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
 
@@ -2424,11 +2448,14 @@ class TinySesam:
         die Routen-Klasse bekommt sie nie zu sehen. Beide übernehmen aber `exc.headers`; also
         wandern die Kopfzeilen dort hinein. Das 401 von `/auth/admin` ohne Sitzung ist genau so
         eine Antwort.
+
+        `exc.headers` bleibt ein gewöhnliches dict mit den Schlüsseln, wie die Route sie schrieb.
+        Ein Umweg über `MutableHeaders` schrieb sie klein — ein Handler des Gastgebers mit
+        `exc.headers["Location"]` fand die Umleitung dann nicht mehr und lieferte einen 307 ohne
+        Ziel (A1). Deshalb: Groß-/Kleinschreibung nur beim Nachsehen ignorieren, nie beim Schreiben.
         """
-        from starlette.datastructures import MutableHeaders
-        h = MutableHeaders(headers=dict(exc.headers or {}))
-        self._kopfzeilen_in(h)
-        exc.headers = dict(h.items())
+        exc.headers = dict(exc.headers or {})
+        self._kopfzeilen_in(_DictKopfzeilen(exc.headers))
 
     def _kopfzeilen_in(self, h) -> None:
         h.setdefault("X-Content-Type-Options", "nosniff")
@@ -2701,7 +2728,8 @@ class TinySesam:
             if _wants_html(request):
                 return self.render_page("error", status=500, request=request, code=500,
                                        message=self.t("error.oops"))
-            return JSONResponse({"detail": "internal server error"}, status_code=500)
+            # Der JSON-Zweig ging an `render_page` vorbei und kam ohne jede Härtungskopfzeile (A2).
+            return self._kopfzeilen(JSONResponse({"detail": "internal server error"}, status_code=500))
 
     def install_https(self, app):
         """HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' →

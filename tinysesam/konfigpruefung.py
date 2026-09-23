@@ -87,7 +87,7 @@ def _an(config, feld: str) -> bool:
 
 
 #: Die Direktiven, die eine Content-Security-Policy kennt (CSP Level 3 plus die verbreiteten
-#: Altlasten). Eine eigene Policy muss aus ihnen bestehen — mehr prüft TinySesam nicht.
+#: Altlasten). Eine eigene Policy braucht mindestens eine davon; jede andere gibt eine Warnung.
 CSP_DIREKTIVEN = frozenset({
     "default-src", "script-src", "script-src-elem", "script-src-attr", "style-src",
     "style-src-elem", "style-src-attr", "img-src", "font-src", "connect-src", "media-src",
@@ -98,30 +98,57 @@ CSP_DIREKTIVEN = frozenset({
 })
 
 
+def _csp_namen(wert) -> list[str] | None:
+    """Die Direktivnamen einer eigenen Policy, klein geschrieben — None für 'strict'/'off'/leer."""
+    if not isinstance(wert, str):
+        return None
+    roh = wert.strip()
+    if roh in ("", "strict", "off"):
+        return None
+    return [teil.split()[0].lower() for teil in roh.split(";") if teil.strip()]
+
+
 def csp_fehler(wert) -> str:
     """Der Befund zu `csp`, leer wenn in Ordnung (B3-2).
 
     Alles ausser 'strict' und 'off' ging bis 0.19.0 ungeprüft 1:1 in den Header. Ein Tippfehler
     wie 'Strict' oder 'stirct' war damit eine „eigene Policy" ohne eine einzige Direktive — der
     Browser verwirft so einen Header, und die Seiten liefen **ohne jede CSP**, ohne dass es
-    irgendwo auffiel. Geprüft wird deshalb nur die Form: jede Direktive muss eine bekannte sein.
-    Ob die Policy inhaltlich taugt, bleibt Sache dessen, der sie schreibt.
+    irgendwo auffiel. Ein Fehler ist deshalb nur die Policy ohne eine **einzige** bekannte
+    Direktive. Steht eine unbekannte neben bekannten, überspringt der Browser nur sie und wendet
+    den Rest an — das ist `csp_warnung` (A3: `require-sri-for`, `disown-opener` hielten eine
+    bisher wirksame Policy sonst vom Start ab).
     """
-    if not isinstance(wert, str):
-        return ""                  # meldet der Konstruktor eigens — kein doppelter Befund
+    namen = _csp_namen(wert)
+    if namen is None:
+        return ""                  # kein String meldet der Konstruktor eigens
     roh = wert.strip()
-    if roh in ("", "strict", "off"):
-        return ""
     if roh.lower() in ("strict", "off"):
         return (f"csp={wert!r} — gemeint ist wohl {roh.lower()!r} (klein geschrieben). So wäre es "
                 "eine eigene Policy ohne Direktive, und der Browser liefe ohne jede CSP.")
-    namen = [teil.split()[0].lower() for teil in roh.split(";") if teil.strip()]
-    unbekannt = [n for n in namen if n not in CSP_DIREKTIVEN]
-    if not namen or unbekannt:
-        return (f"csp={wert!r} ist weder 'strict' noch 'off' noch eine Policy aus bekannten "
-                f"Direktiven (unbekannt: {', '.join(unbekannt) or '—'}). Der Browser verwirft so "
-                "einen Header, und die Seiten liefen ohne jede CSP.")
+    if not any(n in CSP_DIREKTIVEN for n in namen):
+        return (f"csp={wert!r} ist weder 'strict' noch 'off' noch eine Policy mit einer bekannten "
+                "Direktive. Der Browser verwirft so einen Header, und die Seiten liefen ohne jede "
+                "CSP.")
     return ""
+
+
+def csp_warnung(wert) -> str:
+    """Unbekannte Direktiven neben bekannten: kein Fehler, aber wohl ein Tippfehler.
+
+    Der Browser wendet die Policy ohne sie an. Bei 'scirpt-src' greift dann `default-src` statt
+    der gemeinten Regel — das soll im Log stehen. Eine echte, nur hier nicht gelistete Direktive
+    geht ebenso durch.
+    """
+    namen = _csp_namen(wert)
+    if not namen or csp_fehler(wert):
+        return ""
+    unbekannt = [n for n in namen if n not in CSP_DIREKTIVEN]
+    if not unbekannt:
+        return ""
+    return (f"csp={wert!r} enthält Direktiven, die TinySesam nicht kennt: {', '.join(unbekannt)}. "
+            "Der Browser überspringt, was er nicht kennt, und wendet den Rest an — bei einem "
+            "Tippfehler gilt die gemeinte Regel also nicht.")
 
 
 def pruefe(config) -> tuple[list[str], list[str]]:
@@ -447,6 +474,9 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _csp_fund = csp_fehler(getattr(config, "csp", "strict"))
     if _csp_fund:
         fehler.append(_csp_fund)
+    _csp_hinweis = csp_warnung(getattr(config, "csp", "strict"))
+    if _csp_hinweis:
+        warnungen.append(_csp_hinweis)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     for feld, wofuer in BRAUCHT_MAILER.items():
