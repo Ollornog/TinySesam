@@ -223,6 +223,20 @@ class TinySesamConfig:
     ldap_enabled: bool = False        # Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap]
     ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636
     ldap_start_tls: bool = False      # Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL
+    #: Das Zertifikat des Verzeichnisses prüfen? Vorgabe **ja** (F-12). Ohne die Prüfung ist
+    #: verschlüsselt nur „nicht mitlesbar von jemandem, der nicht dazwischensitzt": Wer den
+    #: Verkehr umlenkt, hält ein eigenes Zertifikat hin, bekommt das Passwort des Dienstkontos
+    #: und jedes Benutzerpassworts, und reicht die Antwort weiter — niemand merkt etwas.
+    #: Bis 0.19.0 gab es die Prüfung gar nicht.
+    ldap_tls_verify: bool = True
+    #: Eigene CA-Datei (PEM) für das Verzeichnis-Zertifikat. Leer = der Speicher des Systems.
+    #: Der übliche Weg bei einem internen Verzeichnis mit eigener CA.
+    ldap_tls_ca_file: str = ""
+    #: Darf ganz ohne TLS gesprochen werden (`ldap://` ohne StartTLS)? Vorgabe **nein**. Dann
+    #: gingen das Passwort des Dienstkontos und jedes Benutzerpasswort im Klartext über das Netz.
+    #: True ist eine bewusste Entscheidung für ein Verzeichnis auf demselben Host (Loopback) und
+    #: meldet sich beim Start.
+    ldap_allow_plaintext: bool = False
     ldap_user_dn_template: str = ""       # Direkt-Bind, z.B. "uid={username},ou=people,dc=example,dc=com" (lldap)
     ldap_bind_dn: str = ""                # ODER Service-Account für Search-then-Bind
     ldap_bind_password: str = ""      # Passwort des Service-Accounts — gehört in eine Umgebungsvariable
