@@ -87,7 +87,7 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
   war `ldap://` ohne StartTLS der Auslieferungszustand, und die Konfigurationsprüfung sagte dazu
   nichts. Jetzt scheitert der Aufbau mit einem Text, der beide Auswege nennt.
 
-### T-13: die übrigen Befunde des Auditberichts
+### Sicherheit — T-13: die übrigen Befunde des Auditberichts
 
 Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Begründung offen
 (Backlog T-13). Jeder Fix wurde danach gezielt angegriffen und nachgebessert.
