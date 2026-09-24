@@ -380,9 +380,15 @@ assert not schluessel, "Policy-Schlüssel ohne Leser:\n  " + "\n  ".join(schlues
 fremd = hygiene.pruefe_keine_fremdressourcen(ROOT, FILES, POLICY)
 assert not fremd, "Ressourcen von Dritten im Markup:\n  " + "\n  ".join(fremd)
 
+# Kit 0.21: Von AUSSEN gefragt, ob jede Testdatei überhaupt läuft. Ein nicht verkabelter Test
+# besteht seine eigene Aufruf-Prüfung (die Zeile darunter) dadurch, dass er schweigt. Hier
+# sammelt `tests/run_all.py` per glob — die Prüfung erkennt das und fragt dann nicht je Datei.
+testdateien = hygiene.pruefe_testdateien_gerufen(ROOT)
+assert not testdateien, "Testdatei ohne Läufer:\n  " + "\n  ".join(testdateien)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.18.0: jede Prüfung gerufen, keine Ausnahme nötig")
+print("  Kit 0.21.1: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"

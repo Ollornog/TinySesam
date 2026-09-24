@@ -21,7 +21,7 @@
     "Autor, Kontaktmail und Repo-URL sind erlaubt; alles, was die KARTE des Netzwerks zeigt,",
     "nicht. Dienst-Subdomains stehen NICHT hier, sondern im Domain-Anker (eigene_domains_*).",
     "",
-    "DIENSTKONTEN IM HEIMVERZEICHNIS-MUSTER (2026-09-23, gemeldet von der SpecDoor-Session):",
+    "DIENSTKONTEN IM HEIMVERZEICHNIS-MUSTER (2026-09-23, gemeldet von der einem Kundenrepo-Session):",
     "'/home/application/.ssh' in einem Installationsskript ist der Pfad eines DIENSTKONTOS im",
     "Container — er nennt keinen Menschen und kein Netz. '/home/<vorname>/…' nennt beides.",
     "Jeder Name der Liste hat eine Quelle, sonst gehoert er nicht hinein:",
@@ -113,7 +113,19 @@
     "BEWUSSTE LUECKEN (lieber benannt als verschwiegen): ein Geheimnis, das nur aus",
     "Grossbuchstaben und Unterstrichen besteht, und eines aus reinem Kleinbuchstaben-",
     "Schlangenschrift (my_secret_value) fallen durch. Beide Formen kommen bei echten",
-    "Ausstellern nicht vor, bei Platzhaltern staendig."
+    "Ausstellern nicht vor, bei Platzhaltern staendig.",
+    "",
+    "ZWEI LUECKEN, GEMESSEN AM ECHTEN FALL (2026-09-23): In der gesyncten Doku stand ein",
+    "NetBird-PAT im Klartext — seit Juni. Nachgerechnet haette das Kit ihn NICHT gefunden:",
+    "  * das Zuweisungsmuster kannte 'pat' nicht (die Zeile hiess '**PAT**: ...'),",
+    "  * und 'nbp_' stand in keinem Format.",
+    "Beides ergaenzt. 'pat' ist sicher, weil das Muster einen Nicht-Buchstaben davor und",
+    "':' oder '=' dahinter verlangt: 'pattern:' und 'compat:' loesen NICHT aus (negativ",
+    "getestet). Der Fund war Zufall — er kam heraus, weil jemand den Token SUCHTE, nicht",
+    "weil etwas ihn meldete.",
+    "MERKSATZ: Ein Musterkatalog kennt nur die Formate, die schon einmal wehgetan haben.",
+    "Wer einen neuen Aussteller einfuehrt, traegt sein Format hier ein — sonst ist der",
+    "Waechter fuer genau dieses Geheimnis blind."
   ],
   "geheimnis_formate": [
     "ghp_[A-Za-z0-9]{20,}",
@@ -126,6 +138,7 @@
     "AKIA[0-9A-Z]{16}",
     "(?:^|[^A-Za-z0-9])sk-(?:ant-)?[A-Za-z0-9_-]{20,}",
     "xox[abprs]-[A-Za-z0-9-]{10,}",
+    "nbp_[A-Za-z0-9]{20,}",
     "PVEAPIToken=[A-Za-z0-9]"
   ],
   "_geheimnis_formate_bedeutung": [
@@ -141,7 +154,7 @@
     "Slack-Token",
     "Proxmox-API-Token; ein Platzhalter dahinter ({TOKEN_ID}, ${VAR}) trifft bewusst nicht"
   ],
-  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:api[_-]?key|access[_-]?key|secret|token|passwd|password|passphrase|credential|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
+  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:api[_-]?key|access[_-]?key|secret|token|passwd|password|passphrase|credential|pat|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
   "geheimnis_platzhalter": [
     "^[A-Z][A-Z0-9_]*$",
     "^[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)+$",
@@ -174,7 +187,7 @@
     "Sonderzeichen unterscheiden kann. Merksatz: einen Fehlalarm am Geheimnis-Zaun ueber den",
     "Kontext abstellen, nie ueber den Wert — sonst macht man den Zaun schwaecher statt genauer.",
     "",
-    "SCHRAEGSTRICH ALS TRENNER (2026-09-23, gemeldet von der SpecDoor-Session): Das",
+    "SCHRAEGSTRICH ALS TRENNER (2026-09-23, gemeldet von der einem Kundenrepo-Session): Das",
     "Zuweisungsmuster traf deutsche PROSA ueber Schluessel — 'Override-Tabelle (Key =",
     "Originaltext/-Key, ...)' und 'Keys = TodoQueue/DoorAttention'. Das trifft jedes Repo mit",
     "deutschsprachiger Doku ueber Keys, Token oder Sitzungen.",
