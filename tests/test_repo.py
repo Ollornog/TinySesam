@@ -999,7 +999,8 @@ _api = subprocess.run([sys.executable, "scripts/_api_doku.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
 assert _api.returncode == 0, "API.md ist veraltet — `python3 scripts/_api_doku.py` fahren"
 _apidoc = _lies("API.md")
-_leer = _re.findall(r"^### `([a-z_][a-z0-9_]*)\(.*\n\n—$", _apidoc, _re.M)
+# Methoden `### \`name(…)\``, Properties `### \`name\` — Property …` (seit 0.20.1 eingefroren).
+_leer = _re.findall(r"^### `([a-z_][a-z0-9_]*)(?:\(|` — Property).*\n\n—$", _apidoc, _re.M)
 assert not _leer, ("Diese Methoden haben keinen Docstring:\n  " + "\n  ".join(_leer[:8]) +
                    "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
 print(f"  API-Nachschlag: {_apidoc.count(chr(10) + '### ')} Einträge, jeder erklärt, Abzug aktuell")

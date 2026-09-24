@@ -180,6 +180,23 @@ def _auf_stderr(zeile: str) -> None:
         pass            # kein stderr (pythonw, geschlossener Deskriptor) — kein Grund abzubrechen
 
 
+#: Was als CSRF-Token aus einem Cookie übernommen wird (0.20.1). Nur URL-sichere Zeichen — nichts,
+#: was in einem HTML-Attribut, einem Header oder einer Cookie-Zeile etwas anrichtet —, mindestens
+#: so lang wie das, was TinySesam selbst würfelt (`token_urlsafe(24)`: 32 Zeichen, 192 Bit),
+#: höchstens 128. Ein Cookie, das anders aussieht, wird ersetzt statt in ein Formular geschrieben.
+_CSRF_FORM = re.compile(r"[A-Za-z0-9_-]{32,128}")
+
+#: Unter diesem Schlüssel im ASGI-Scope merkt sich eine Anfrage das Token, das sie NEU gewürfelt
+#: hat — damit `csrf_token(request)` vor dem Rendern und `ensure_csrf(request, antwort)` danach
+#: dasselbe liefern. Der Scope gehört genau einer Anfrage; nichts läuft in eine andere über.
+_CSRF_SCOPE = "tinysesam.csrf_neu"
+
+#: Wie viele eben angemeldete, noch nicht ins Cookie gesetzte Sitzungen sich ein Prozess merkt.
+#: Zwischen `_sitzung_anlegen()` und `set_cookie()` liegt eine Anfrage; die Grenze fängt nur
+#: eigene Routen ab, die eine Sitzung anlegen und nie ein Cookie setzen.
+_FRISCH_MAX = 1024
+
+
 def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
     """Der Konstruktor lässt nur diese drei Werte zu (s. TinySesam.__init__); hier steht es
     noch einmal für den Typprüfer, dem die Zusage von dort nicht folgt."""
@@ -236,6 +253,12 @@ class TinySesam:
                 security.seclog.error("%s (%d betroffene Hashes)", _passwords.ARGON2_FEHLT, betroffen)
         self.store.audit_ip_pseudonym = bool(config.audit_ip_pseudonymize)
         self._protokoll_drossel: dict = {}   # siehe `_einmal_je`
+        # Eben voll angemeldete Sitzungen (Handle), deren Cookie noch nicht gesetzt ist — siehe
+        # `_sitzung_anlegen` und `set_cookie` (CSRF-Rotation beim Anmelden, 0.20.1).
+        from collections import OrderedDict
+        import threading
+        self._frische_anmeldungen: "OrderedDict[str, None]" = OrderedDict()
+        self._frisch_lock = threading.Lock()
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
@@ -2042,15 +2065,116 @@ class TinySesam:
 
     # ---------- CSRF (Double-Submit) ----------
     def issue_csrf(self, response: Response) -> str:
-        """CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.), die nicht
-        über `render_page()` laufen. Rückgabe gehört ins Formularfeld `_csrf` bzw. den Header
-        `X-CSRF-Token`. Ist CSRF abgeschaltet, passiert nichts und der Rückgabewert ist leer."""
+        """Ein NEUES CSRF-Token würfeln und als Cookie setzen; Rückgabe ist das Token. Für eine
+        Seite mit Formular ist `ensure_csrf()` der Weg — dieses hier entwertet die Formulare in
+        allen anderen offenen Reitern.
+
+        Gedacht für das bewusste Erneuern (`csrf_rotieren()`). Ersetzt eine CSRF-Zeile, die die
+        Antwort schon trägt, statt eine zweite anzuhängen. Ist CSRF abgeschaltet, passiert
+        nichts und der Rückgabewert ist leer."""
         if not self.cfg.csrf_enabled:
             return ""
         token = secrets.token_urlsafe(24)
+        self._csrf_cookie_setzen(response, token)
+        return token
+
+    def ensure_csrf(self, request: Request, response: Response) -> str:
+        """Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
+
+        Der Weg für eigene Seiten einer einbettenden App (0.20.1): Ein vorhandenes, gültiges
+        Token bleibt — die Formulare in anderen Reitern gelten weiter, und die Antwort bekommt
+        keine Set-Cookie-Zeile. Fehlt es oder sieht der Cookie-Wert nicht wie ein Token aus
+        (`_CSRF_FORM`), wird ein neues gesetzt, mit denselben Attributen wie bei `issue_csrf()`.
+        Hat diese Antwort das Token schon gedreht (`set_cookie()` nach einer Anmeldung) oder
+        gelöscht (`logout()`), gilt das: nach der Anmeldung das neue, nach dem Abmelden ein
+        frisches — nie das alte aus dem Request. Ist CSRF abgeschaltet: nichts, Rückgabe "".
+
+        Zwei Formen, je nachdem, wann die Antwort entsteht:
+
+        * FastAPI-Antwortparameter (`def seite(request: Request, response: Response)`, die Seite
+          als Rückgabewert): `csrf = auth.ensure_csrf(request, response)`, dann rendern.
+        * Fertige Antwort (Jinja `TemplateResponse`): `csrf = auth.csrf_token(request)` vor dem
+          Rendern, danach `auth.ensure_csrf(request, antwort)` — beide liefern in derselben
+          Anfrage dasselbe Token.
+
+        Eigenes JS kennt den Cookie-Namen nicht von selbst — `auth.csrf_cookie_name` ist Python.
+        Die Seite reicht ihn mit (Template-Variable oder `<meta>`), oder das JS nimmt den Wert
+        aus dem Formularfeld `_csrf` und schickt ihn als `X-CSRF-Token`."""
+        if not self.cfg.csrf_enabled:
+            return ""
+        in_antwort = self._csrf_in_antwort(response)
+        if in_antwort is not None and _CSRF_FORM.fullmatch(in_antwort):
+            return in_antwort                       # eben gedreht oder schon gesetzt
+        if in_antwort is not None:
+            # In dieser Antwort gelöscht (Abmelden) oder mit Unbrauchbarem gesetzt — das Token
+            # aus dem Request gilt damit nicht mehr, also ein frisches.
+            token = self._csrf_neu(request)
+        else:
+            token, neu = self._csrf_der_anfrage(request)
+            if not neu:
+                return token
+        self._csrf_cookie_setzen(response, token)
+        return token
+
+    def _csrf_der_anfrage(self, request) -> tuple:
+        """(token, neu): das gültige Token aus dem Cookie, sonst ein neues — je Anfrage genau
+        eins, damit `csrf_token()` und `ensure_csrf()` sich einig sind. Gemeinsam für
+        `render_page`, `csrf_token`, `ensure_csrf` und das Admin-Panel: Wo einer ein Cookie
+        übernähme, das ein anderer ersetzt, bekämen zwei Seiten zwei Token."""
+        cur = request.cookies.get(self.csrf_cookie_name) if request is not None else None
+        if cur and _CSRF_FORM.fullmatch(cur):
+            return cur, False
+        scope = getattr(request, "scope", None)
+        gemerkt = scope.get(_CSRF_SCOPE) if isinstance(scope, dict) else None
+        if gemerkt:
+            return gemerkt, True
+        return self._csrf_neu(request), True
+
+    @staticmethod
+    def _csrf_neu(request) -> str:
+        token = secrets.token_urlsafe(24)
+        scope = getattr(request, "scope", None)
+        if isinstance(scope, dict):
+            scope[_CSRF_SCOPE] = token
+        return token
+
+    def _csrf_cookie_setzen(self, response, token: str) -> None:
+        """DIE Stelle, die das CSRF-Cookie schreibt — ersetzt eine Zeile, die diese Antwort
+        schon dafür trägt, statt eine zweite anzuhängen. NICHT httponly: Die eingebauten
+        JS-Aufrufe lesen das Cookie und senden `X-CSRF-Token`."""
+        self._set_cookie_entfernen(response, self.csrf_cookie_name)
         response.set_cookie(self.csrf_cookie_name, token, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
-        return token
+
+    def _csrf_cookie_loeschen(self, response) -> None:
+        """Das CSRF-Cookie beim Browser löschen — mit Secure und Pfad wie beim Setzen, sonst
+        verwirft der Browser das Löschen eines `__Host-`-Cookies still."""
+        self._set_cookie_entfernen(response, self.csrf_cookie_name)
+        response.delete_cookie(self.csrf_cookie_name, path=self.cfg.cookie_path,
+                               secure=self.cfg.cookie_secure,
+                               samesite=_samesite(self.cfg.cookie_samesite))
+
+    def _csrf_in_antwort(self, response) -> Optional[str]:
+        """Der Wert, den diese Antwort schon für das CSRF-Cookie setzt: None = keine Zeile,
+        "" = gelöscht."""
+        praefix = self.csrf_cookie_name.encode("latin-1") + b"="
+        wert = None
+        for schluessel, zeile in getattr(response, "raw_headers", None) or []:
+            if schluessel.lower() == b"set-cookie" and zeile.startswith(praefix):
+                wert = zeile[len(praefix):].split(b";", 1)[0].strip().decode("latin-1")
+        if wert is None:
+            return None
+        return "" if wert in ("", '""') else wert
+
+    @staticmethod
+    def _set_cookie_entfernen(response, name: str) -> None:
+        """Set-Cookie-Zeilen für genau diesen Namen aus der Antwort nehmen. Die Liste wird an
+        Ort und Stelle geändert: `response.headers` hält einen Verweis auf dieselbe Liste."""
+        roh = getattr(response, "raw_headers", None)
+        if roh is None:
+            return
+        praefix = name.encode("latin-1") + b"="
+        roh[:] = [(k, v) for k, v in roh if not (k.lower() == b"set-cookie" and v.startswith(praefix))]
 
     def verify_csrf(self, request: Request, submitted) -> bool:
         """Passt das mitgeschickte CSRF-Token zum Cookie? Vergleich in konstanter Zeit."""
@@ -2456,13 +2580,49 @@ class TinySesam:
         """Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig."""
         done = [method]
         mfa_ok = self._session_ok(user_id, done)
-        token = self.store.create_session(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember, factors=done)
+        token = self._sitzung_anlegen(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember,
+                                      factors=done)
         if mfa_ok:   # voller Login abgeschlossen → Audit
             u = self.store.get_user(user_id)
             self.store.audit_log("login", u["username"] if u else None, ip, method)
             self._vermerke_erstlogin(user_id)
             self.sperre_aufheben(user_id)
         return token, mfa_ok
+
+    def _sitzung_anlegen(self, user_id, ttl, mfa_ok, method, ip=None, ua=None, remember=True,
+                         factors=None) -> str:
+        """DIE Stelle, an der eine Sitzungszeile entsteht — und die volle wird vorgemerkt.
+
+        Eine Sitzung, die hier schon vollwertig entsteht, ist eine Anmeldung: Erstfaktor ohne
+        Kette, der letzte Schritt einer Kette (`apply_factor`, `complete_totp`), ein
+        Identitätswechsel. Das Setzen ihres Cookies (`set_cookie()`) dreht dann das CSRF-Token
+        in derselben Antwort (0.20.1) — egal, über welche Route die Anmeldung kam, auch über eine
+        eigene der App (`start_session` + `set_cookie`). Ein Step-up legt keine Zeile an
+        (`store.rotate_session`) und dreht deshalb nichts. Ein Wächter in `tests/test_csrf.py`
+        (E3) hält fest, dass `store.create_session` nur hier gerufen wird."""
+        token = self.store.create_session(user_id, ttl, mfa_ok, method, ip, ua, remember,
+                                          factors=factors)
+        if mfa_ok:
+            self._anmeldung_vormerken(token)
+        return token
+
+    def _anmeldung_vormerken(self, token: str) -> None:
+        h = self.store.session_hash(token)
+        with self._frisch_lock:
+            self._frische_anmeldungen[h] = None
+            while len(self._frische_anmeldungen) > _FRISCH_MAX:
+                self._frische_anmeldungen.popitem(last=False)
+
+    def _anmeldung_einloesen(self, token) -> bool:
+        """War dieses Token eben eine Anmeldung? Einmal ja, danach nein."""
+        if not token:
+            return False
+        h = self.store.session_hash(token)
+        with self._frisch_lock:
+            if h in self._frische_anmeldungen:
+                del self._frische_anmeldungen[h]
+                return True
+        return False
 
     def _vermerke_erstlogin(self, user_id: int) -> None:
         """Den ersten vollständigen Login festhalten (R3-1).
@@ -2526,7 +2686,7 @@ class TinySesam:
                 # change." Vorher behielt sie ihr Token: Wer dem Opfer vor dem Login ein Cookie
                 # setzen konnte (Subdomain, Klartext-HTTP), hielt nach dessen zweitem Faktor
                 # eine voll authentisierte Sitzung.
-                neu_token = self.store.create_session(
+                neu_token = self._sitzung_anlegen(
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
                 self.store.delete_session_by_handle(s["token_hash"])
@@ -2591,7 +2751,7 @@ class TinySesam:
             self.sperre_aufheben(s["user_id"])
             # Rechtewechsel → neues Token (OWASP Session Management). Gibt es zurück, damit der
             # Aufrufer das Cookie setzen kann — das alte Token gehört zu einer gelöschten Zeile.
-            neu_token = self.store.create_session(
+            neu_token = self._sitzung_anlegen(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
             self.store.delete_session_by_handle(s["token_hash"])
@@ -2793,6 +2953,12 @@ class TinySesam:
         CSRF Prevention Cheat Sheet empfiehlt deshalb eine Bindung an „a session-dependent value
         that changes with each login". Das Token beim Anmelden zu erneuern ist davon der billige
         Teil und kostet nichts.
+
+        Seit 0.20.1 ruft `set_cookie()` die Methode selbst, sobald das Token zu einer eben
+        angemeldeten Sitzung gehört — jeder Anmeldeweg, auch eine eigene Route der App mit
+        `start_session` + `set_cookie`. Bis 0.20.0 geschah das nur am Ende eines TOTP-Schritts,
+        obwohl dieser Docstring es für jeden Login versprach. Direkt rufen muss sie nur, wer eine
+        Anmeldung ohne `set_cookie()` baut. Ersetzt eine CSRF-Zeile, die die Antwort schon trägt.
         """
         return self.issue_csrf(response)
 
@@ -2852,7 +3018,11 @@ class TinySesam:
 
     @property
     def csrf_cookie_name(self) -> str:
-        """Der tatsächliche Name des CSRF-Cookies — den muss eigenes JS lesen.
+        """Der tatsächliche Name des CSRF-Cookies — eigenes JS bekommt ihn von der Seite.
+
+        JS kann diese Property nicht lesen: Die Seite reicht den Namen mit (Template-Variable
+        oder `<meta>`), oder das JS nimmt das Token aus dem Formularfeld `_csrf`, das
+        `ensure_csrf()` liefert.
 
         Mit `__Host-` auch bei gesetztem `cookie_domain`: Das CSRF-Cookie setzt TinySesam nie
         mit Domain (`issue_csrf`, `render_page`, Admin-Panel), es ist immer host-only. Ohne
@@ -2874,7 +3044,11 @@ class TinySesam:
         Art hat der Nutzer beim ersten Faktor gewählt. Vorher galt hier stumpf `True` — eine
         Sitzung ohne „Angemeldet bleiben" bekam nach dem Einlösen eines Magic-Links ein Cookie
         für sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte.
-        Gibt es keine Sitzung zum Token, bleibt es beim persistenten Cookie wie bisher."""
+        Gibt es keine Sitzung zum Token, bleibt es beim persistenten Cookie wie bisher.
+
+        Ist das Token eine eben entstandene Anmeldung (`start_session`, der letzte Schritt einer
+        Kette), setzt dieselbe Antwort auch ein neues CSRF-Token (0.20.1). Wer danach in dieser
+        Antwort ein Formular rendert, holt das Token mit `ensure_csrf(request, response)`."""
         if remember is None:
             s = self.store.get_session(token)
             remember = bool(s["remember"]) if s else True
@@ -2885,6 +3059,11 @@ class TinySesam:
         if remember:
             kw["max_age"] = self._ttl(True)   # type: ignore[assignment]  # kw trägt gemischte Typen
         response.set_cookie(self.session_cookie_name, token, **kw)
+        # Eine Anmeldung dreht das CSRF-Token (OWASP: „changes with each login"). Zentral hier,
+        # nicht je Route: Jede Anmeldung setzt dieses Cookie, und jede volle Sitzung ist bei
+        # ihrer Entstehung vorgemerkt (`_sitzung_anlegen`). Ein Step-up dreht nicht.
+        if self._anmeldung_einloesen(token):
+            self.csrf_rotieren(response)
 
     def rotate_session(self, request, response) -> Optional[str]:
         """Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
@@ -2991,7 +3170,8 @@ class TinySesam:
 
     def logout(self, request, response):
         """Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und
-        beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
+        die Cookies löschen — Sitzung, Freigabe und seit 0.20.1 auch das CSRF-Cookie, dazu die
+        Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
         Die Freigaben gehören dazu (F-08): Bis 0.20 überlebten sie das Abmelden um bis zu
         `resource_unlock_ttl_hours`. Wer sich am geteilten Rechner abmeldet, erwartet, dass
@@ -3004,6 +3184,11 @@ class TinySesam:
         if freigabe:
             self.store.delete_resource_unlocks(freigabe)
             self._cookie_loeschen(response, self.resource_cookie_name)
+        # Das CSRF-Token endet mit der Sitzung (0.20.1): Bis 0.20.0 überlebte es Abmelden und
+        # Neuanmelden bis zum Schliessen des Browsers. Die nächste Seite setzt ein frisches;
+        # `ensure_csrf()` in derselben Antwort ebenso.
+        if self.cfg.csrf_enabled or request.cookies.get(self.csrf_cookie_name):
+            self._csrf_cookie_loeschen(response)
         # Auch hier, nicht nur in der Routen-Klasse: `logout()` ist öffentlich und wird aus
         # eigenen Routen der App gerufen, an denen die Klasse nicht hängt.
         self._altnamen_loeschen(request, response)
@@ -3473,11 +3658,13 @@ class TinySesam:
         self.templates.set(name, fn)
 
     def csrf_token(self, request: Optional[Request] = None) -> str:
-        """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln."""
+        """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln.
+
+        Setzt KEIN Cookie. Ein neu gewürfeltes Token merkt sich die Anfrage: Ein späteres
+        `ensure_csrf(request, antwort)` setzt genau dieses (der Weg für fertige Antworten wie
+        Jinjas `TemplateResponse`). Ein Cookie, das nicht wie ein Token aussieht, zählt nicht."""
         if request is not None and self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.csrf_cookie_name)
-            if cur:
-                return cur
+            return self._csrf_der_anfrage(request)[0]
         return secrets.token_urlsafe(24)
 
     def render_page(self, template, status=200, request: Optional[Request] = None, **ctx) -> Response:
@@ -3488,9 +3675,7 @@ class TinySesam:
         if request is not None:
             self._pruefe_secure_flag(request)
         if self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.csrf_cookie_name) if request is not None else None
-            tok = cur or secrets.token_urlsafe(24)
-            fresh = cur is None
+            tok, fresh = self._csrf_der_anfrage(request)
             ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
         # Ein Nonce je Antwort. Die eingebauten Seiten kommen ohne Inline-Handler/style= aus;
         # der Nonce wandert zentral in jedes <script>/<style> (kein Faedeln durch die Templates)
@@ -3507,9 +3692,7 @@ class TinySesam:
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
         if tok is not None and fresh:
-            # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
-            resp.set_cookie(self.csrf_cookie_name, tok, secure=self.cfg.cookie_secure,
-                            samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
+            self._csrf_cookie_setzen(resp, tok)
         # Auch hier, nicht nur in der Route: Fehlerseiten aus `install_error_pages` laufen an
         # keiner TinySesam-Route vorbei und tragen sonst keine einzige Härtungskopfzeile.
         return self._kopfzeilen(resp)

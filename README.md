@@ -240,6 +240,66 @@ is quietly broken. `session_ok=False` means the session exists but is not comple
 The token returned by `complete_totp` replaces the old one, also on step-up — put it into the
 cookie. Ignore it, and the cookie holds a dead session: the user is signed out.
 
+### CSRF in your own pages
+
+Every form your app renders itself needs the token in a hidden `_csrf` field (or, for `fetch`,
+in the `X-CSRF-Token` header), and the browser needs the matching cookie.
+`auth.ensure_csrf(request, response)` does both: a valid token the browser already has is reused
+— forms in other tabs stay valid and the response gets no `Set-Cookie` — otherwise it sets a new
+one, with the same attributes as `issue_csrf()`. It returns the token for the form.
+
+```python
+@app.get("/settings", response_class=HTMLResponse)
+def settings(request: Request, response: Response, user=Depends(auth.require_user)):
+    csrf = auth.ensure_csrf(request, response)          # FastAPI copies the cookie over
+    return templates.get_template("settings.html").render(
+        csrf=csrf, csrf_cookie=auth.csrf_cookie_name)
+```
+
+With a finished response (Jinja's `TemplateResponse`), get the token before rendering and hand
+the cookie to the response afterwards — within one request both calls return the same token:
+
+```python
+csrf = auth.csrf_token(request)
+resp = templates.TemplateResponse(request, "settings.html",
+                                  {"csrf": csrf, "csrf_cookie": auth.csrf_cookie_name})
+auth.ensure_csrf(request, resp)
+return resp
+```
+
+In the template — JavaScript cannot read a Python property, so the page hands the cookie name
+over (or the script takes the value from the `_csrf` field):
+
+```html
+<meta name="csrf-cookie" content="{{ csrf_cookie }}">
+<form method="post" action="/settings">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+</form>
+<script>
+  function csrf() {            // read when sending: a sign-in in another tab changes the cookie
+    const name = document.querySelector('meta[name="csrf-cookie"]').content;
+    const pair = document.cookie.split("; ").find(c => c.startsWith(name + "="));
+    return pair ? pair.slice(name.length + 1) : "";
+  }
+  fetch("/settings", {method: "POST", headers: {"X-CSRF-Token": csrf()}});
+</script>
+```
+
+The receiving route checks with `auth.require_csrf(request, value)` — the form field or the
+header: 403 if it does not match the cookie or the request comes from a foreign origin.
+
+The cookie is called `__Host-tinysesam_csrf` wherever the browser allows the prefix, otherwise
+`tinysesam_csrf` — never hard-code it. A cookie value that does not look like a token (wrong
+characters, too short, too long) is replaced rather than copied into a form.
+`issue_csrf(response)` always rolls a **new** token and invalidates the forms in every other
+tab; it is for deliberate renewal, not for rendering a page.
+
+**Signing in and out changes the token.** Every sign-in — each built-in path and your own route
+with `start_session` + `set_cookie` — sets a fresh token in the same response, and
+`auth.logout()` deletes it. A form rendered in that same response takes its token from
+`ensure_csrf(request, response)` *after* `set_cookie`/`logout`; the next request carries the new
+cookie anyway. A step-up (`/auth/reauth`, `rotate_session`) keeps the token.
+
 ## Look & feel
 
 Every built-in page (login, PIN, TOTP, account, admin panel, error pages) is styled from **one set of
@@ -394,6 +454,24 @@ systemctl start tinysesam
 > (recognised by their audit rows), and addresses of its pending sign-ups count as unverified until
 > confirmed; the log carries a warning. Nothing else is reconciled — the safe way back is the backup.
 
+**Coming from 0.17.x or older?** `tinysesam backup` only exists since 0.18.0, and the first start
+of the new release already migrates. So take the backup with the *new* version before it starts —
+`backup` opens the source read-only and leaves it in the old schema:
+
+```bash
+# Container: pull the new tag, back up, only then start it (service name as in your compose file)
+docker compose pull
+docker compose run --rm --no-deps --entrypoint tinysesam tinysesam \
+    backup --db /data/gateway.db /data/gateway-before-update.db
+docker compose up -d
+
+# Library: after installing the new version, before restarting the service
+python -m tinysesam backup --db auth.db auth-before-update.db
+```
+
+Or stop the service and copy `auth.db` together with `auth.db-wal` and `auth.db-shm` (where they
+exist) into a separate directory; to go back, put all three back with the service stopped.
+
 ### Diagnosing "I can't get in"
 
 ```bash
@@ -472,7 +550,9 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **CSRF:** double-submit token (`csrf_enabled`, on by default) on all state-changing POSTs — the
   built-in forms/JS handle this automatically (`_csrf` field or `X-CSRF-Token` header);
   API-key requests are exempt (no cookie risk). In addition to `SameSite=Lax`.
-  Rendering your own templates? `token = auth.issue_csrf(response)` sets the cookie and returns the value.
+  Every sign-in issues a fresh token, signing out deletes it; a step-up keeps it.
+  Rendering your own pages? `csrf = auth.ensure_csrf(request, response)` reuses the browser's
+  token or sets one — see "CSRF in your own pages" above.
 - **Rate limit across processes:** optional Redis (`redis_url`, extra `[redis]`) for multi-worker; otherwise in-memory.
 - **User enumeration:** login/PIN check against a dummy hash even for an unknown user (no timing leak).
 - **After a password change** the user’s remaining sessions are ended (admin reset: all).
@@ -534,8 +614,10 @@ A pass means: built by this repository's release workflow, from the commit the a
 No key to hand out and none to lose — the signature is tied to the workflow's own identity. A full example with Caddy
 lives in `deploy/forward-auth/docker-compose.yml`.
 
-Update: bump the tag, `docker compose pull && docker compose up -d`. Rollback: put the old tag
-back. **There is deliberately no `latest`** — a moving tag turns every restart into a gamble.
+Update: bump the tag, `docker compose pull && docker compose up -d` — if the release migrates
+the database, take the backup in between (see "Restoring a backup"; from 0.17.x or older with
+the new image). Rollback: put the old tag back, after a migration together with that backup.
+**There is deliberately no `latest`** — a moving tag turns every restart into a gamble.
 If you're serious, pin the digest (`ghcr.io/ollornog/tinysesam@sha256:…`, printed in the release
 workflow log): a tag can be moved, a digest cannot.
 

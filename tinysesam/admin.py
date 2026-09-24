@@ -422,9 +422,8 @@ def build_admin_router(auth) -> APIRouter:
             # Erklärung. Gegen einen Angreifer schützte das nie — getroffen wurde der eigene
             # Nutzer. (War als B-1 auf „nach 1.0" vertagt; durch die neuen CSRF-Prüfungen im
             # Panel trifft es inzwischen mehr Wege als bei der Meldung.)
-            if cfg.csrf_enabled and not request.cookies.get(auth.csrf_cookie_name):
-                resp.set_cookie(auth.csrf_cookie_name, auth.csrf_token(request), secure=cfg.cookie_secure,
-                                samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+            # Seit 0.20.1 über `ensure_csrf()` — dieselbe Prüfung, dieselben Attribute wie überall.
+            auth.ensure_csrf(request, resp)
             return resp
 
     return ar

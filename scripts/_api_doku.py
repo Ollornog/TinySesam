@@ -71,6 +71,19 @@ def bauen() -> str:
     for name, fn in methoden:
         teile.append(f"### `{name}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
 
+    # Properties (seit 0.20.1 eingefroren wie die Methoden): Die Cookie-Namen sind die
+    # dokumentierte Ersatz-API für feste Namen — eine Seite, die sie verschweigt, schickt
+    # Integratoren zurück in den Quelltext.
+    teile.append("## `TinySesam` — Eigenschaften\n\n"
+                 "Ohne Klammern gelesen (`auth.csrf_cookie_name`). Zur Laufzeit "
+                 "berechnet: Sie folgen der Konfiguration, auch wenn `cfg` nach dem Aufbau "
+                 "geändert wird.\n\n")
+    eigenschaften = [(n, p) for n, p in inspect.getmembers(TinySesam, lambda w: isinstance(w, property))
+                     if not n.startswith("_")]
+    for name, prop in eigenschaften:
+        teile.append(f"### `{name}` — Property `{signatur(prop.fget)[2:].strip()}`\n\n"
+                     f"{erster_satz(prop)}\n\n")
+
     teile.append("## `TinySesamConfig` — Presets\n\n")
     presets = [(n, f) for n, f in inspect.getmembers(TinySesamConfig, callable)
                if not n.startswith("_")]
@@ -94,7 +107,8 @@ def bauen() -> str:
         basen = ", ".join(f"`{b.__name__}`" for b in klasse.__bases__)
         teile.append(f"### `{name}` (erbt von {basen})\n\n{erster_satz(klasse)}\n\n")
 
-    teile.append(f"---\n\n{len(methoden)} Methoden, {len(presets)} Presets, {len(typen)} "
+    teile.append(f"---\n\n{len(methoden)} Methoden, {len(eigenschaften)} Eigenschaften, "
+                 f"{len(presets)} Presets, {len(typen)} "
                  "Fehlertypen — erzeugt aus den Docstrings.\n")
     return "".join(teile)
 

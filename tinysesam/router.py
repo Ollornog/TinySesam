@@ -214,11 +214,9 @@ def build_router(auth) -> APIRouter:
         weiter = erneuert or sitzungs_token
         antwort = RedirectResponse(auth.login_redirect_after(request, weiter, pu["id"], nxt), 303)
         if erneuert:
+            # Wird die Sitzung hier voll (Login), dreht `set_cookie` auch das CSRF-Token; beim
+            # Step-up nicht — es würde nur die Formulare der anderen offenen Reiter entwerten.
             auth.set_cookie(antwort, erneuert)
-            if not s["mfa_ok"]:
-                # Beim Login ein frisches CSRF-Token. Beim Step-up nicht — wie `/auth/reauth`:
-                # Es würde nur die Formulare in den anderen offenen Reitern entwerten.
-                auth.csrf_rotieren(antwort)
         return antwort
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
@@ -314,8 +312,7 @@ def build_router(auth) -> APIRouter:
             request, weiter, u["id"], auth.safe_next(next)),
             "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0})
         if erneuert:
-            auth.set_cookie(antwort, erneuert)
-            auth.csrf_rotieren(antwort)
+            auth.set_cookie(antwort, erneuert)   # dreht beim Login auch das CSRF-Token
         return antwort
 
     @r.post("/auth/totp/disable")

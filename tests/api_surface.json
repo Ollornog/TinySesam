@@ -32,6 +32,7 @@
     "delete_user": "(user_id: 'int') -> 'bool'",
     "disable_pin": "(user_id)",
     "ensure_admin": "(username, password) -> 'bool'",
+    "ensure_csrf": "(request: 'Request', response: 'Response') -> 'str'",
     "factor_entry": "(step, nxt='/') -> 'str'",
     "find_user": "(identifier) -> 'Optional[dict]'",
     "flow_cookie_name": "(basis: 'str') -> 'str'",
@@ -139,6 +140,11 @@
     "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
     "version": "() -> 'str'",
     "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'"
+  },
+  "TinySesam.eigenschaften": {
+    "csrf_cookie_name": "() -> 'str'",
+    "resource_cookie_name": "() -> 'str'",
+    "session_cookie_name": "() -> 'str'"
   },
   "TinySesam.konstanten": {
     "APIKEY_AUDIT_FENSTER": "3600",
