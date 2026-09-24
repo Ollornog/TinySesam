@@ -19,7 +19,7 @@ def build(**cfgkw):
                                      # nicht mehr aus dem Host-Header (überschreibbar).
                                      **{"base_url": "https://auth.example.com", **cfgkw}))
     auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
-    auth.ensure_admin("admin", "geheim123")
+    auth.ensure_admin("admin", "geheim123-lang-genug")
     app = FastAPI()
     app.include_router(auth.router())
 
@@ -41,7 +41,7 @@ ok("allow_signup=False → /auth/register existiert nicht (404)")
 # ---------- Einfache Registrierung → sofort eingeloggt ----------
 db, auth, app, sent, c = build(allow_signup=True)
 assert "Konto erstellen" in c.get("/auth/register").text
-r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim", "email": "neu@example.com", "next": "/geheim"},
+r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug", "email": "neu@example.com", "next": "/geheim"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/geheim"
 assert c.get("/geheim", headers=JSON).json() == {"u": "neu"}
@@ -49,10 +49,10 @@ assert c.get("/geheim", headers=JSON).json() == {"u": "neu"}
 r = c.post("/auth/register", data={"username": "x", "password": "1", "next": "/"})
 assert r.status_code == 400
 # E-Mail ist Pflicht (signup_require_email, Default an)
-r = c.post("/auth/register", data={"username": "y", "password": "supergeheim", "next": "/"})
+r = c.post("/auth/register", data={"username": "y", "password": "supergeheim-lang-genug", "next": "/"})
 assert r.status_code == 400
 # vergebener Name (mit eigener, freier E-Mail → scheitert wirklich am Namen)
-r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim",
+r = c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug",
                                    "email": "anders@example.com", "next": "/"})
 assert r.status_code == 409
 os.remove(db)
@@ -60,7 +60,7 @@ ok("allow_signup=True: Konto anlegen → eingeloggt; Validierung greift")
 
 # ---------- E-Mail-Verifikation: Konto erst nach Link aktiv ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True)
-r = c.post("/auth/register", data={"username": "verify", "password": "supergeheim", "email": "v@example.com", "next": "/"})
+r = c.post("/auth/register", data={"username": "verify", "password": "supergeheim-lang-genug", "email": "v@example.com", "next": "/"})
 assert "Bestätigung" in r.text or "bestätig" in r.text.lower()
 uid = auth.store.get_user_by_name("verify")["id"]
 assert auth.store.get_user(uid)["disabled"] == 1     # noch gesperrt
@@ -101,10 +101,10 @@ os.remove(db)
 
 # ---------- R4-03: eine vergebene Adresse antwortet wie eine freie (mit Bestätigung) ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-auth.create_user("inhaber", password="supergeheim", email="da@example.com")
-frei = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim",
+auth.create_user("inhaber", password="supergeheim-lang-genug", email="da@example.com")
+frei = c.post("/auth/register", data={"username": "neu1", "password": "supergeheim-lang-genug",
                                       "email": "frei@example.com", "next": "/"})
-vergeben = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim",
+vergeben = c.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
                                           "email": "Da@Example.com", "next": "/"})
 assert frei.status_code == vergeben.status_code == 200, (frei.status_code, vergeben.status_code)
 _rumpf = lambda t: re.sub(r"(nonce|value)=['\"][^'\"]*['\"]", "", t)
@@ -118,8 +118,8 @@ assert len(_an_inhaber) == 1 and "/auth/verify/" not in _an_inhaber[0]["text"] \
 ok("R4-03: vergebene Adresse → gleiche Antwort, Inhaber bekommt einen Hinweis (ohne Token)")
 # Ohne Bestätigung meldet der Erfolgsfall sofort an — dort bleibt 409 (Grenze, im Code benannt)
 db2, auth2, app2, sent2, c2 = build(allow_signup=True)
-auth2.create_user("inhaber", password="supergeheim", email="da@example.com")
-assert c2.post("/auth/register", data={"username": "neu2", "password": "supergeheim",
+auth2.create_user("inhaber", password="supergeheim-lang-genug", email="da@example.com")
+assert c2.post("/auth/register", data={"username": "neu2", "password": "supergeheim-lang-genug",
                                        "email": "da@example.com", "next": "/"}).status_code == 409
 os.remove(db2)
 ok("R4-03: ohne Bestätigung bleibt es bei 409 (Erfolg meldet sofort an — nicht zu verbergen)")
@@ -131,7 +131,7 @@ def _kaputt(*a, **k):
     raise OSError("Mailserver weg")
 auth.set_mailer(_kaputt)
 cx = TestClient(app, raise_server_exceptions=False)
-r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim",
+r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim-lang-genug",
                                     "email": "pech@example.com", "next": "/"})
 assert r.status_code == 200, r.status_code
 assert auth.store.get_user_by_name("pech") is None, "Konto muss zurückgenommen sein"
@@ -139,7 +139,7 @@ _ev = [z["event"] for z in auth.store._all("SELECT event FROM audit")]
 assert "verify_send_error" in _ev, _ev
 # … und die Registrierung lässt sich wiederholen, sobald der Mailer wieder geht
 auth.set_mailer(lambda to, s_, t, html=None: sent.append({"to": to, "text": t}))
-r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim",
+r = cx.post("/auth/register", data={"username": "pech", "password": "supergeheim-lang-genug",
                                     "email": "pech@example.com", "next": "/"})
 assert r.status_code == 200 and auth.store.get_user_by_name("pech") is not None
 ok("B6-5: Mailer-Fehler bei der Registrierung → kein 500, Konto zurückgenommen, erneut möglich")
@@ -147,14 +147,14 @@ os.remove(db)
 
 # ---------- R4-09: nie bestätigte Konten räumt gc() weg — und NUR die ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-c.post("/auth/register", data={"username": "squatter", "password": "supergeheim",
+c.post("/auth/register", data={"username": "squatter", "password": "supergeheim-lang-genug",
                                "email": "opfer@example.com", "next": "/"})
 sq = auth.store.get_user_by_name("squatter")["id"]
 # Gegenprobe 1: ein vom Admin gesperrtes Bestandskonto ohne Bestätigungstoken
-alt = auth.create_user("gesperrt", password="supergeheim", email="g@example.com")
+alt = auth.create_user("gesperrt", password="supergeheim-lang-genug", email="g@example.com")
 auth.store.set_disabled(alt, True)
 # Gegenprobe 2: ein bestätigtes und später gesperrtes Konto (eingelöster Token daneben)
-c.post("/auth/register", data={"username": "echt", "password": "supergeheim",
+c.post("/auth/register", data={"username": "echt", "password": "supergeheim-lang-genug",
                                "email": "echt@example.com", "next": "/"})
 echt = auth.store.get_user_by_name("echt")["id"]
 _tok = re.search(r"/auth/verify/([\w\-]+)", sent[-1]["text"]).group(1)
@@ -165,7 +165,7 @@ assert auth.gc()["unverified_accounts"] == 1
 assert auth.store.get_user(sq) is None, "nie bestätigtes Konto nach Ablauf entfernt"
 assert auth.store.get_user(alt) is not None, "gesperrtes Bestandskonto bleibt"
 assert auth.store.get_user(echt) is not None, "bestätigtes Konto bleibt"
-assert c.post("/auth/register", data={"username": "richtig", "password": "supergeheim",
+assert c.post("/auth/register", data={"username": "richtig", "password": "supergeheim-lang-genug",
                                       "email": "opfer@example.com", "next": "/"}).status_code == 200
 assert auth.store.get_user_by_name("richtig") is not None, "die Adresse ist wieder frei"
 ok("R4-09: gc() entfernt nie bestätigte Konten nach Ablauf des Links — nur diese")
@@ -177,8 +177,8 @@ os.remove(db)
 # per 409, ob der erste ein Konto angelegt hatte.
 for _modus in ("both", "username"):
     db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, login_identifier=_modus)
-    auth.create_user("opfer", password="supergeheim", email="vergeben@example.com")
-    _reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim",
+    auth.create_user("opfer", password="supergeheim-lang-genug", email="vergeben@example.com")
+    _reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-lang-genug",
                                                        "email": e, "next": "/"}).status_code
     assert _reg("admin", "vergeben@example.com") == _reg("admin", "frei@example.com") == 409, _modus
     assert _reg("zz1", "vergeben@example.com") == _reg("zz2", "frei2@example.com") == 200, _modus
@@ -194,8 +194,8 @@ for _modus in ("both", "username"):
     os.remove(db)
 # Name = eigene Adresse bleibt erlaubt und läuft über die Adress-Prüfung (gleiche Antwort)
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True)
-auth.create_user("opfer", password="supergeheim", email="vergeben@example.com")
-_reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim",
+auth.create_user("opfer", password="supergeheim-lang-genug", email="vergeben@example.com")
+_reg = lambda n, e: c.post("/auth/register", data={"username": n, "password": "supergeheim-lang-genug",
                                                    "email": e, "next": "/"}).status_code
 assert _reg("vergeben@example.com", "vergeben@example.com") == _reg("frei@example.com", "frei@example.com") == 200
 os.remove(db)
@@ -204,9 +204,9 @@ ok("A1: vergebener Name, Wegwerfname und Adresse im Namensfeld verraten die Adre
 # ---------- Angriff A2: Hinweismails verbrauchen nicht das Kontingent des Inhabers ----------
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                                password_reset_enabled=True)
-auth.create_user("opfer", password="supergeheim", email="opfer@example.com")
+auth.create_user("opfer", password="supergeheim-lang-genug", email="opfer@example.com")
 for _i in range(5):
-    c.post("/auth/register", data={"username": f"angr{_i}", "password": "supergeheim",
+    c.post("/auth/register", data={"username": f"angr{_i}", "password": "supergeheim-lang-genug",
                                    "email": "opfer@example.com", "next": "/"})
 _hinweise = [m for m in sent if m["to"] == "opfer@example.com"]
 assert len(_hinweise) == 3, len(_hinweise)          # die Hinweise selbst bleiben gedrosselt
@@ -254,7 +254,7 @@ db, auth, app, sent, c = build(allow_signup=True)
 auth.store._exec("INSERT INTO users(username, email, created_at) VALUES ('alt', 'user@bücher.example', 0)")
 assert auth.store.get_user_by_email("user@xn--bcher-kva.example")["username"] == "alt"
 assert auth.store.get_user_by_email("USER@XN--BCHER-KVA.example")["username"] == "alt"
-assert c.post("/auth/register", data={"username": "neu", "password": "supergeheim",
+assert c.post("/auth/register", data={"username": "neu", "password": "supergeheim-lang-genug",
                                       "email": "user@xn--bcher-kva.example", "next": "/"}).status_code == 409
 assert auth.store._exec("SELECT COUNT(*) FROM users WHERE username IN ('alt','neu')").fetchone()[0] == 1
 os.remove(db)
@@ -263,7 +263,7 @@ ok("A5: A-Label-Eingabe findet die Bestandsadresse in Unicode-Form — kein zwei
 # … und der funktioniert OHNE Magic-Link. Das war der eigentliche Fehler: beides hing am selben
 # Endpunkt, also verlor man mit dem Anmelde-Link auch die Bestätigung.
 db, auth, app, sent, c = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=False)
-c.post("/auth/register", data={"username": "ohne", "password": "supergeheim",
+c.post("/auth/register", data={"username": "ohne", "password": "supergeheim-lang-genug",
                                "email": "o@example.com", "next": "/"})
 uid = auth.store.get_user_by_name("ohne")["id"]
 token = re.search(r"/auth/verify/([\w\-]+)", sent[0]["text"]).group(1)
@@ -288,7 +288,7 @@ assert r.status_code == 303 and "/auth/register?invite=" in r.headers["location"
 page = c.get(f"/auth/register?invite={token}").text
 assert "gast@example.com" in page
 # Registrieren → Konto mit Rollen aus der Einladung, eingeloggt
-r = c.post("/auth/register", data={"username": "gast", "password": "supergeheim", "invite": token, "next": "/geheim"},
+r = c.post("/auth/register", data={"username": "gast", "password": "supergeheim-lang-genug", "invite": token, "next": "/geheim"},
            follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/geheim"
 u = auth.store.get_user_by_name("gast")

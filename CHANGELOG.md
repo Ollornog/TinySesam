@@ -4,7 +4,52 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+**Die sechs offenen T-13-Punkte, nach Entscheidung des Betreibers.** Wer TinySesam in der Vorgabe
+betreibt (ohne `login_chain`), merkt eines sofort: **Neue Passwörter brauchen 15 Zeichen.**
+Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wandert auf Schema 11
+(neue Tabelle `fehlserie`); 0.20.x öffnet sie danach mit einer Warnung, schreibt aber weiter.
+
+### Sicherheit
+
+- **Anmeldung gesperrt nach 100 Fehlversuchen in Folge (B2-6).** Die bisherigen Schwellen zählen nur
+  im Fenster (`lockout_window_sec`) — wer langsamer rät als die Schwelle, riet beliebig lange. Jetzt
+  verlängert jeder gescheiterte Anmeldeversuch unter einem Namen eine Serie; an der Grenze
+  (`account_max_consecutive_failures`, Panel, 10…100000) ist die Anmeldung gesperrt, auch mit dem
+  richtigen Passwort, und die Sperre **läuft nicht ab**. Sie endet mit einer vollständigen Anmeldung
+  (auch über Passkey, Anmelde-Link oder OIDC), einem Passwort-Reset, einem neuen Passwort aus dem
+  Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das Konto gibt oder nicht — die Meldung
+  („Zu viele Fehlversuche in Folge …") verrät nichts. Ein Fehlgriff, der keine Anmeldung ist
+  (Passwortwechsel, Step-up, Bereichs-PIN), zählt nicht. `gc()` räumt nicht ausgelöste Serien nach
+  90 Tagen Ruhe, ausgelöste nie.
+- **Passwort-Mindestlänge 15, wenn das Passwort allein anmelden kann (B2-4, NIST SP 800-63B).** Neue
+  Schwelle `password_min_length_single_factor` (Panel, Vorgabe 15). Sie gilt, solange die globale
+  Kette keinen zweiten Faktor erzwingt — also in der Vorgabe. Mit `login_chain=["password","totp"]`
+  o. ä. bleibt `password_min_length` (8). Wer die strengere Regel nicht will, stellt die neue Schwelle
+  auf 8. Das CLI kennt die Konfiguration nicht und nimmt die strengere.
+- **Ein vom Identity Provider vergebenes Admin-Flag geht wieder, wenn er die Gruppe nicht mehr
+  liefert (H-5).** Gemappte Rollen wurden schon entzogen, das Admin-Flag war „nur grant". Es trägt
+  jetzt einen Vermerk (`users.is_admin=2`, weiterhin ein Wahrheitswert); nur dieses Flag nimmt der
+  Provider beim nächsten Login wieder, mit Zeile `idp_admin_revoke`. Ein Admin aus Panel, CLI,
+  `admin_identifiers` oder `/auth/claim-admin` bleibt unberührt. Flags aus der Zeit davor tragen den
+  Vermerk nicht und bleiben ebenfalls stehen.
+- **Eine IdP-Adresse ohne Beleg wird nicht verwendet (H-3).** Bisher übernahm OIDC eine Adresse ohne
+  `email_verified=true` ins Konto und reichte sie als `Remote-Email` weiter, nur ohne Rechte in
+  TinySesam — eine geschützte App, die Nutzer über die Adresse zuordnet, sah den Vermerk nie. Jetzt:
+  kein Kontoname aus ihr, keine Adresse im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
+  später, wird sie nachgetragen, sofern sie frei ist. Ein Provider, der den Claim nie schickt (Entra
+  ID), braucht `oidc_email_verified_default=True`. SAML und LDAP sind unverändert (sie liefern keinen
+  Beleg; offen zur Entscheidung).
+- **E-Mail-Kollision beim OIDC-Login (F-27)** war bereits abgefangen (409, `oidc_ident_taken`) und
+  hat jetzt einen Test; eine unbelegte fremde Adresse kollidiert seit H-3 gar nicht mehr.
+
 ### Geändert
+
+- **PIN als Erstfaktor bleibt erlaubt — als Entscheidung festgehalten (B2-8, ADR-8).** Nichts ändert
+  sich am Verhalten; die PIN-Versuche (`pin_max_attempts`) stehen im Panel jetzt direkt bei der
+  Login-Sperre, PIN-Fehlgriffe zählen in die Serie (B2-6). README und `docs/BETRIEB.md` zeigen das
+  Muster „allgemeine Seite mit PIN, Detailseite mit `require(factors=["pin", "password"])`".
+- Reihenfolge der Härtungswerte im Panel: was zusammen eingestellt wird, steht zusammen.
+
 
 - **Der Knopf im Release-Workflow ist ein Trockenlauf.** Von Hand ausgelöst (`workflow_dispatch`)
   prüft und baut `release.yml` alles, auch das Abbild für beide Plattformen, veröffentlicht aber

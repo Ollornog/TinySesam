@@ -13,7 +13,7 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))   # csrf_enabled default True
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "geheim123-lang-genug")
 uid = auth.store.get_user_by_name("admin")["id"]
 app = FastAPI()
 app.include_router(auth.router())
@@ -41,13 +41,13 @@ assert field and cookie and field == cookie
 ok("Login-Seite: CSRF-Cookie == verstecktes _csrf-Feld (double-submit)")
 
 # ---------- POST OHNE Token → 403 ----------
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/"}, follow_redirects=False)
 assert r.status_code == 403, r.status_code
 ok("Login-POST ohne CSRF-Token → 403")
 
 # ---------- POST MIT Token → ok ----------
 field, cookie = csrf_token(c)
-r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/", "_csrf": field},
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/", "_csrf": field},
            follow_redirects=False)
 assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "admin"}
 ok("Login-POST mit gültigem CSRF-Token → 303")
@@ -56,7 +56,7 @@ ok("Login-POST mit gültigem CSRF-Token → 303")
 _m_db = os.path.join(tempfile.mkdtemp(), "t.db")
 _m = TinySesam(TinySesamConfig(db_path=_m_db, passkey_enabled=False, cookie_secure=False,
                                magiclink_enabled=True, base_url="https://auth.example.com"))
-_m_uid = _m.create_user("mia", password="geheim12345", email="mia@example.com")
+_m_uid = _m.create_user("mia", password="geheim12345-lang-genug", email="mia@example.com")
 _m_app = FastAPI(); _m_app.include_router(_m.router())
 _mc = TestClient(_m_app)
 _m_tok = _m.create_magic_token("login", user_id=_m_uid, email="mia@example.com", payload={"next": "/"})
@@ -68,9 +68,9 @@ os.remove(_m_db)
 ok("R4-02: Bestätigungsseite trägt das CSRF-Feld; POST ohne Token 403, mit Token eingelöst")
 
 # ---------- JSON-Endpoint ohne Header → 403, mit Header → ok ----------
-assert c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"}).status_code == 403
+assert c.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "neuespasswort-lang"}).status_code == 403
 tok = c.cookies.get("tinysesam_csrf")
-r = c.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"},
+r = c.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "neuespasswort-lang"},
            headers={"X-CSRF-Token": tok})
 assert r.status_code == 200, r.status_code
 ok("JSON-POST: ohne X-CSRF-Token → 403, mit → 200")
@@ -78,7 +78,7 @@ ok("JSON-POST: ohne X-CSRF-Token → 403, mit → 200")
 # ---------- falscher Token → 403 ----------
 c.get("/auth/logout")                 # ausloggen, damit die Login-Seite wieder ein Formular zeigt
 csrf_token(c)                          # frisches CSRF-Cookie holen
-r = c.post("/auth/login", data={"username": "admin", "password": "neuespasswort", "_csrf": "falsch"})
+r = c.post("/auth/login", data={"username": "admin", "password": "neuespasswort-lang", "_csrf": "falsch"})
 assert r.status_code == 403
 ok("falscher CSRF-Token → 403")
 
@@ -101,7 +101,7 @@ _db = os.path.join(tempfile.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
                                allow_signup=True, signup_require_email=False,
                                login_identifier="username"))
-_a.create_user("max", password="geheim12345")
+_a.create_user("max", password="geheim12345-lang-genug")
 _app = FastAPI()
 _app.include_router(_a.router())
 _a.install_error_pages(_app)
@@ -115,13 +115,13 @@ assert "tinysesam_csrf" in _r1.headers.get("set-cookie", ""), "erstes Rendern se
 for _p in ("/auth/login", "/auth/register", "/gibtsnicht"):
     assert "tinysesam_csrf" not in _c.get(_p).headers.get("set-cookie", ""), _p
 
-_r = _c.post("/auth/login", data={"username": "max", "password": "geheim12345", "next": "/", "_csrf": _tok},
+_r = _c.post("/auth/login", data={"username": "max", "password": "geheim12345-lang-genug", "next": "/", "_csrf": _tok},
              follow_redirects=False)
 assert _r.status_code == 303, f"Token der offenen Seite muss gültig bleiben, war {_r.status_code}"
 
 # Schutz bleibt scharf
-assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345", "_csrf": "falsch"}).status_code == 403
-assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345"}).status_code == 403
+assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345-lang-genug", "_csrf": "falsch"}).status_code == 403
+assert _c.post("/auth/login", data={"username": "max", "password": "geheim12345-lang-genug"}).status_code == 403
 os.remove(_db)
 print("  CSRF-Token bleibt über Seitenwechsel gültig; falsches/fehlendes Token weiterhin 403")
 
@@ -138,7 +138,7 @@ _db = os.path.join(tempfile.mkdtemp(), "t.db")
 def _instanz(**kw):
     a = TinySesam(TinySesamConfig(db_path=_db, lang="de", passkey_enabled=False, cookie_secure=False,
                                   apikey_enabled=True, **kw))
-    a.ensure_admin("admin", "geheim123")
+    a.ensure_admin("admin", "geheim123-lang-genug")
     ap = FastAPI()
     ap.include_router(a.router())
     return a, ap
@@ -150,7 +150,7 @@ _a, _app = _instanz(trusted_redirect_hosts=["portal.example.com"])
 def _login(kopf, app=None):
     cl = TestClient(app or _app)
     feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
-    return cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+    return cl.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
                                         "_csrf": feld}, headers=kopf, follow_redirects=False).status_code
 
 
@@ -220,8 +220,8 @@ try:
     # JSON-Weg (json_body) prüft genauso.
     cl = TestClient(_app)
     feld = re.search(r"name=_csrf value='([^']+)'", cl.get("/auth/login").text).group(1)
-    cl.post("/auth/login", data={"username": "admin", "password": "geheim123", "_csrf": feld})
-    r = cl.post("/auth/password", json={"current": "geheim123", "new": "anderespasswort1"},
+    cl.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "_csrf": feld})
+    r = cl.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "anderespasswort1"},
                 headers={"X-CSRF-Token": feld, "Origin": "https://angreifer.example"})
     assert r.status_code == 403, r.status_code
     ok("H-2: auch der JSON-Weg (X-CSRF-Token) weist fremde Herkunft ab")
@@ -250,8 +250,8 @@ _fa = TinySesam(TinySesamConfig(db_path=_fa_db, lang="de", passkey_enabled=False
                                 cookie_secure=True, base_url="https://auth.example.com",
                                 cookie_domain=".example.com", forward_auth_enabled=True,
                                 trusted_redirect_hosts=["app.example.com"]))
-_fa.ensure_admin("admin", "geheim123")
-_fa.create_user("mallory", password="angreifer-pw-1")
+_fa.ensure_admin("admin", "geheim123-lang-genug")
+_fa.create_user("mallory", password="angreifer-pw-15")
 _fa_app = FastAPI()
 _fa_app.include_router(_fa.router())
 assert _fa.session_cookie_name == "tinysesam_session", "Sitzung mit cookie_domain: ohne Präfix"
@@ -262,7 +262,7 @@ _zeile = [z for z in _seite.headers.get_list("set-cookie") if z.startswith("__Ho
 assert len(_zeile) == 1 and "domain" not in _zeile[0].lower() and "secure" in _zeile[0].lower() \
     and "path=/" in _zeile[0].lower(), _seite.headers.get_list("set-cookie")
 _feld = re.search(r"name=_csrf value='([^']+)'", _seite.text).group(1)
-assert _fa_c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+assert _fa_c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
                                        "_csrf": _feld}, follow_redirects=False).status_code == 303
 ok("H-1: mit cookie_domain heisst das CSRF-Cookie __Host-…, ohne Domain; der Login geht")
 
@@ -271,7 +271,7 @@ def _geworfen(kopf):
     """Login-CSRF mit einem untergeschobenen Domain-Cookie `tinysesam_csrf=BEKANNT`."""
     cl = TestClient(_fa_app, base_url="https://auth.example.com")
     cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
-    return cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-1",
+    return cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-15",
                                         "next": "/", "_csrf": "BEKANNT"},
                    headers=kopf, follow_redirects=False).status_code
 
@@ -282,7 +282,7 @@ assert _geworfen({"Origin": "https://app.example.com", "Sec-Fetch-Site": "same-s
 # Und mit der Sitzung des Opfers: Die geschützte App beendet dessen andere Sitzungen nicht.
 _opfer = TestClient(_fa_app, base_url="https://auth.example.com")
 _f = re.search(r"name=_csrf value='([^']+)'", _opfer.get("/auth/login").text).group(1)
-_opfer.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+_opfer.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/",
                                  "_csrf": _f}, follow_redirects=False)
 _opfer.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
 _r = _opfer.post("/auth/sessions/revoke", content='{"scope":"others","_csrf":"BEKANNT"}',
@@ -302,8 +302,8 @@ _np = TinySesam(TinySesamConfig(db_path=_np_db, lang="de", passkey_enabled=False
                                 cookie_secure=True, base_url="https://auth.example.com",
                                 cookie_domain=".example.com", forward_auth_enabled=True,
                                 cookie_host_prefix=False, trusted_redirect_hosts=["app.example.com"]))
-_np.ensure_admin("admin", "geheim123")
-_np.create_user("mallory", password="angreifer-pw-1")
+_np.ensure_admin("admin", "geheim123-lang-genug")
+_np.create_user("mallory", password="angreifer-pw-15")
 _np_app = FastAPI()
 _np_app.include_router(_np.router())
 assert _np.csrf_cookie_name == "tinysesam_csrf"
@@ -312,7 +312,7 @@ assert _np.csrf_cookie_name == "tinysesam_csrf"
 def _ohne_praefix(kopf):
     cl = TestClient(_np_app, base_url="https://auth.example.com")
     cl.cookies.set("tinysesam_csrf", "BEKANNT", domain=".example.com", path="/")
-    r = cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-1",
+    r = cl.post("/auth/login", data={"username": "mallory", "password": "angreifer-pw-15",
                                      "next": "/", "_csrf": "BEKANNT"},
                 headers=kopf, follow_redirects=False)
     return r.status_code, [z.split("=", 1)[0] for z in r.headers.get_list("set-cookie")]
@@ -477,7 +477,7 @@ def _instanz(**kw):
         a.logout(request, antwort)
         return antwort
 
-    a.create_user("erika", password="geheim12345", email="erika@example.com")
+    a.create_user("erika", password="geheim12345-lang-genug", email="erika@example.com")
     return a, ap
 
 
@@ -637,7 +637,7 @@ def _bleibt(name, cl, schritt, warum="ein Step-up entwertet keine anderen Reiter
     ok(f"{name}: CSRF-Token bleibt ({warum})")
 
 
-def _passwort(cl, user="erika", pw="geheim12345"):
+def _passwort(cl, user="erika", pw="geheim12345-lang-genug"):
     seite = cl.get("/auth/login", follow_redirects=False)     # angemeldet: 303 statt Formular
     f = _feld(seite.text) if seite.status_code == 200 else cl.cookies.get(CK)
     return cl.post("/auth/login", data={"username": user, "password": pw, "next": "/", "_csrf": f},
@@ -651,12 +651,12 @@ _c.get("/auth/login")
 _dreht("Passwort", _c, _passwort)
 # Step-up per Passwort (Reauth) auf der vollen Sitzung dreht nicht.
 _bleibt("Step-up /auth/reauth", _c, lambda cl: cl.post(
-    "/auth/reauth", data={"password": "geheim12345", "next": "/", "_csrf": cl.cookies.get(CK)},
+    "/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/", "_csrf": cl.cookies.get(CK)},
     follow_redirects=False))
 # Erneut anmelden als dieselbe Person mit voller Sitzung ist ein Step-up, als eine andere ein Login.
-_a.create_user("otto", password="geheim67890")
+_a.create_user("otto", password="geheim67890-lang-genug")
 _dreht("Identitätswechsel (andere Person meldet sich an)", _c,
-       lambda cl: _passwort(cl, "otto", "geheim67890"))
+       lambda cl: _passwort(cl, "otto", "geheim67890-lang-genug"))
 
 # Registrierung mit sofortiger Anmeldung
 _a, _ap = _instanz(allow_signup=True, signup_require_email=False, login_identifier="username")

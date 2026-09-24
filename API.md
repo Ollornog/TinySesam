@@ -56,7 +56,7 @@ Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anh�
 
 ### `apply_idp_groups(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)`
 
-IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant, nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben.
+IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben. Ziel '__admin__' setzt das Admin-Flag und nimmt es wieder, wenn es vom Provider stammt (H-5).
 
 ### `audit(event, username=None, ip=None, detail=None)`
 

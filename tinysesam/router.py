@@ -110,7 +110,11 @@ def build_router(auth) -> APIRouter:
         # Fehlversuch in der Tabelle; `record_login(..., versuch=…)` macht ihn zum Erfolg.
         versuch = auth.versuch_beginnen(username, ip, "password")
         if versuch is None:
-            return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.locked"))
+            # Eine Serien-Sperre (B2-6) läuft nicht ab — „vorübergehend" wäre gelogen, und der
+            # Nutzer braucht den Weg hinaus. Die Meldung verrät nichts über die Existenz des
+            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht.
+            text = auth.t("err.locked_serie" if auth._serie_voll(username) else "err.locked")
+            return auth.render_page("login", request=request, status=429, next=nxt, error=text)
         u = auth.check_password(username, password)
         aus_verzeichnis = False
         if not u and cfg.ldap_enabled:
@@ -206,7 +210,8 @@ def build_router(auth) -> APIRouter:
         # Atomar wie am Login (R3-2): Die Prüfung liegt sonst zwischen Sperre und Zählung.
         versuch = auth.versuch_beginnen(pu["username"], ip, "totp") if auth.rate_ok(ip) else None
         if versuch is None:
-            return auth.render_page("totp", request=request, status=429, next=nxt, error=auth.t("err.retry"))
+            text = auth.t("err.locked_serie" if auth._serie_voll(pu["username"]) else "err.retry")
+            return auth.render_page("totp", request=request, status=429, next=nxt, error=text)
         # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
         if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
             auth.record_login(pu["username"], ip, False, "totp", versuch=versuch)
@@ -400,7 +405,7 @@ def build_router(auth) -> APIRouter:
             # ist das dankbarste Ziel einer parallelen Salve.
             versuch = auth.versuch_beginnen(ident, ip, "pin")
             if versuch is None:
-                return fail(auth.t("err.locked"), 429)
+                return fail(auth.t("err.locked_serie" if auth._serie_voll(ident) else "err.locked"), 429)
             if me:
                 u = auth.get_user(me["id"]) if auth.verify_user_pin(me["id"], pin) else None
             else:

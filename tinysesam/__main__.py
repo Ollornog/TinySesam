@@ -69,7 +69,13 @@ def _passwd(argv) -> int:
             return 1
     # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam.sec()`: Roh gelesen galt ein
     # Altwert ohne Grenzen (4, 0) hier weiter, während das Web ihn auf 8 zog.
-    minlen = haertung_lesen(store, "password_min_length")
+    #
+    # Und die STRENGERE der beiden Längen (B2-4): Das CLI liest keine Konfiguration und weiss
+    # deshalb nicht, ob eine Kette einen zweiten Faktor erzwingt. Im Zweifel gilt die Regel für
+    # ein Passwort, das allein anmelden kann; wer das nicht will, stellt
+    # `password_min_length_single_factor` im Panel herunter.
+    minlen = max(haertung_lesen(store, "password_min_length"),
+                 haertung_lesen(store, "password_min_length_single_factor"))
     # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername,
     # E-Mail-Name) — das CLI ist ein Setzweg wie die anderen. Blockliste und Dienstname des
     # Betreibers kommen über `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
@@ -91,6 +97,10 @@ def _passwd(argv) -> int:
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))
+    # Neu gebunden: Eine Serien-Sperre (B2-6) endet hier wie bei jedem anderen Reset.
+    from .store import norm_kennung
+    for kennung in {norm_kennung(a.username), norm_kennung(user["email"] or "")} - {""}:
+        store.fehlserie_loeschen(kennung)
     note = ""
     if not a.keep_sessions:
         # Standard nach jedem Credential-Wechsel: offene Sitzungen gelten nicht weiter.
@@ -306,7 +316,12 @@ def _unlock(argv) -> int:
     topf = norm_kennung(a.username)
     offen = store.count_fails(0, username=topf)
     store.clear_fails(username=topf)
-    store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen}")
+    # Auch die Serien-Sperre (B2-6), unter Name UND Adresse — gezählt wird unter dem, was
+    # jemand eingetippt hat.
+    konto = store.get_user_by_name(a.username)
+    serie = sum(store.fehlserie_loeschen(k) for k in
+                {topf, norm_kennung(konto["email"] if konto else "")} - {""})
+    store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen} in_folge={serie}")
     print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
     return 0
 

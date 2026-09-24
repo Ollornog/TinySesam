@@ -98,8 +98,15 @@ Seite gehört und sich nicht ändert:
 - **Freigaben je Anwendung** (mehrere OIDC-Clients): `auth.store.drop_oidc_grants_for_user(user_id,
   client=None)` entzieht sie sofort, ohne die Sitzung zu beenden — der Weg, wenn der Provider
   jemanden von einer Anwendung ausgeschlossen hat.
-- **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen, aber
-  nicht entzogen, wenn sie beim Provider wegfallen (H-5).
+- **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen und
+  entzogen, wenn sie beim Provider wegfallen — gemappte Rollen seit jeher, seit H-5 auch das
+  Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
+  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt. Wirksam wird der Entzug bei der
+  nächsten Anmeldung über den Provider, nicht sofort (offener Punkt „Widerruf folgt dem IdP").
+- **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,
+  keine Adresse im Konto, kein `Remote-Email` (H-3). Liefert der Provider den Beleg später, wird sie
+  nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
+  prüft: `oidc_email_verified_default=True`.
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   SAML und LDAP liefern keinen). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
@@ -115,7 +122,7 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Weg (Faktor) | Was er belegt | TOTP danach (ohne Kette) | Anmerkung |
 |---|---|---|---|
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
-| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort; Sperre über `pin_max_attempts` |
+| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
 | Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet | ohne TOTP ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |

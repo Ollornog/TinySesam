@@ -596,22 +596,24 @@ def register_oidc_routes(router, auth):
         mail, mail_bestaetigt, beleg_ausdruecklich = _email_mit_beleg(
             claims, nutzerinfo, cfg.oidc_email_verified_default)
         if mail and not mail_bestaetigt:
-            # Die Adresse wird trotzdem geführt. Sie zu verwerfen war die erste Fassung dieses
-            # Fixes, und sie kostete mehr, als sie schützte: Ein IdP ohne den optionalen Claim
-            # (Entra ID) liess damit jedes neu angelegte Konto `oidc-<sub>` heissen statt wie die
-            # Adresse, und `Remote-Email` ging leer an die geschützte App — dieselbe Person
-            # landete nach dem Update in einem anderen Konto der App. Was die Adresse nicht mehr
-            # darf, ist Rechte tragen: Der fehlende Beleg wird am Konto vermerkt
-            # (`email_verified=0`) und gilt von dort für jeden Anmeldeweg dieses Kontos.
+            # Eine Adresse OHNE Beleg wird nicht verwendet (H-3, PO-Entscheid 2026-09-24): kein
+            # Kontoname daraus, keine Adresse im neuen Konto, also auch kein `Remote-Email` an die
+            # geschützte App. Bis dahin wurde sie übernommen und nur als unbestätigt vermerkt —
+            # aber eine nachgelagerte App, die Nutzer über die Adresse zuordnet, sah den Vermerk
+            # nie: Wer sich beim Provider eine fremde Adresse eintrug, kam dort als deren Inhaber an.
+            #
+            # Der Preis: Ein Provider, der den optionalen Claim nie schickt (Entra ID), liefert
+            # dann keine Adressen mehr. Für ihn gibt es die ausdrückliche Aussage des Betreibers
+            # `oidc_email_verified_default=True` — „dieser Provider prüft jede Adresse" —, die
+            # `_email_mit_beleg` wie einen Beleg behandelt. Ein ausdrückliches `false` bleibt
+            # immer unbestätigt.
             security.seclog.warning(
                 "OIDC: Der Provider meldet %s ohne Beleg (email_verified fehlt oder ist nicht "
-                "wahr) — die Adresse wird als unbestätigt übernommen und trägt keine Rechte. "
-                "Das Admin-Recht aus admin_identifiers hängt in keinem Fall daran; der belegte "
-                "Bootstrap-Weg ist /auth/claim-admin. Schickt dieser IdP den Claim nie und "
-                "verantwortet der Betreiber die Adressen selbst: "
+                "wahr) — die Adresse wird NICHT verwendet (kein Kontoname, kein Remote-Email). "
+                "Prüft dieser Provider jede Adresse, schickt aber den Claim nicht: "
                 "oidc_email_verified_default=True.", security.fuer_log(mail))
             auth.audit("oidc_email_unverified", str(mail), auth.client_ip(request),
-                       "übernommen=1 rechte=0")
+                       "verwendet=0")
 
         uid = auth.store.get_oidc_user(issuer, sub)
         if not uid:
@@ -619,10 +621,12 @@ def register_oidc_routes(router, auth):
                 auth.audit("oidc_no_account", str(info.get("email") or sub or "?"),
                            auth.client_ip(request), "oidc_auto_create=False")
                 raise HTTPException(403, auth.t("api.oidc_nolink"))
-            # Ersatzname notfalls aus der Adresse — auch aus einer unbestätigten: **ein Name ist
-            # keine Berechtigung.** Ein Allowlist-Name aus fremder Hand ist hier ohnehin
-            # unmöglich, den verbietet der Konstruktor-Wächter, sobald ein IdP Konten anlegt.
-            username = info.get("preferred_username") or mail or ("oidc-" + sub[:8])
+            # Ersatzname notfalls aus der Adresse — aber nur aus einer belegten (H-3). Bis
+            # 2026-09-24 auch aus einer unbestätigten („ein Name ist keine Berechtigung"); eine
+            # App hinter Forward-Auth, die über `Remote-User` zuordnet, sah darin aber genau die
+            # fremde Adresse, die hier nicht verwendet werden soll.
+            belegte_mail = mail if mail_bestaetigt else None
+            username = info.get("preferred_username") or belegte_mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
             # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
@@ -634,7 +638,7 @@ def register_oidc_routes(router, auth):
                 # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
                 # Konto sich das nächste Mal anmeldet.
                 uid = auth.create_user(username, display_name=info.get("name") or username,
-                                       email=mail, email_verified=mail_bestaetigt)
+                                       email=belegte_mail, email_verified=bool(belegte_mail))
             except errors.ConfigError:
                 # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
                 # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
@@ -654,7 +658,19 @@ def register_oidc_routes(router, auth):
             # selbst gesetzt hat (Admin, CLI, Registrierung mit Bestätigungsmail), verlöre sonst
             # seinen Beleg, nur weil ein IdP den optionalen Claim nicht mitschickt.
             konto = auth.store.get_user(uid)
-            if konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
+            if konto and not str(konto["email"] or "").strip() and mail_bestaetigt:
+                # Das Gegenstück zu H-3: Ein Konto, das ohne Adresse angelegt wurde, weil der
+                # Provider sie nicht belegte, bekommt sie, sobald er es tut — sofern sie frei ist.
+                # Gehört sie schon einem anderen Konto, bleibt es ohne (fail-closed, wie beim
+                # Anlegen); der Betreiber sieht die Zeile.
+                if auth.kennung_vergeben(mail, exclude_id=uid):
+                    auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
+                               "nachgetragen=0")
+                else:
+                    auth.store.set_email(uid, mail, verified=True)
+                    auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
+                               "beleg=1")
+            elif konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)
 

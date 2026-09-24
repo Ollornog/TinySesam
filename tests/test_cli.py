@@ -43,9 +43,9 @@ code, aus = cli("version")
 assert code == 0 and aus.strip()
 ok("version gibt die installierte Version aus")
 
-code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="neues-geheim\n")
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="neues-geheim-lang-genug\n")
 assert code == 0, aus
-assert auth.check_password("admin", "neues-geheim")
+assert auth.check_password("admin", "neues-geheim-lang-genug")
 assert not auth.check_password("admin", "altes-geheim")
 ok("passwd setzt das Passwort (der Weg zurück ohne Mailer und ohne zweiten Admin)")
 
@@ -56,7 +56,7 @@ assert auth.store.get_session(tok) is None
 ok("offene Sitzungen werden beendet (--keep-sessions lässt sie stehen)")
 
 tok = auth.store.create_session(uid, 3600, True, "password")
-cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="und-noch-eins\n")
+cli("passwd", "--db", db, "--stdin", "--keep-sessions", "admin", stdin="und-noch-eins-lang\n")
 assert auth.store.get_session(tok) is not None
 ok("--keep-sessions behält sie")
 
@@ -74,15 +74,26 @@ ok("falscher DB-Pfad → klare Meldung, keine leere Datenbank als Nebenwirkung")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="kurz\n")
 assert code == 1 and "zu kurz" in aus
-assert auth.check_password("admin", "und-noch-eins")
+assert auth.check_password("admin", "und-noch-eins-lang")
 ok("password_min_length gilt auch hier")
+
+# Ohne Konfiguration weiss das CLI nicht, ob eine Kette einen zweiten Faktor erzwingt — es nimmt
+# die strengere Länge (B2-4): 15 Zeichen, solange niemand sie im Panel herunterstellt.
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Vierzehn-Zeich\n")   # 14 Zeichen
+assert code == 1 and "zu kurz (min. 15)" in aus, aus
+ok("passwd nimmt die Einfaktor-Länge (15), weil es die Kette nicht kennt")
+# (Mutationsprobe: in `_passwd` nur `password_min_length` lesen → rot.)
+
+# Ab hier geht es um die Regel hinter der Länge (Blockliste, Kontext, Altwerte) — die kurzen
+# Beispiele dürfen nicht schon an der Einfaktor-Länge scheitern.
+auth.store.set_setting("password_min_length_single_factor", "8")
 
 # Dieselbe Regel wie im Web (B2-5/B2-13): Blockliste, Benutzername, Höchstlänge.
 for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", "leicht zu erraten"),
                         ("y" * 257, "zu lang")):
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
     assert code == 1 and _text in aus, (_schwach[:20], aus)
-assert auth.check_password("admin", "und-noch-eins")
+assert auth.check_password("admin", "und-noch-eins-lang")
 ok("passwd: Blockliste, Kontowort und Höchstlänge gelten auch offline")
 
 # A-7: Die Betreiber-Blockliste und der Dienstname galten offline nicht — ein Passwort von der
@@ -120,6 +131,7 @@ auth.store.set_setting("password_min_length", "12")                 # gültiger 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 Zeichen
 assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
 auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # zurück zur Vorgabe
+auth.store._exec("DELETE FROM setting WHERE key='password_min_length_single_factor'")
 ok("passwd liest die Mindestlänge wie das Web (Altwert jenseits der Grenze gilt als Grenze)")
 # (Mutationsprobe: in `_passwd` wieder `int(store.get_setting("password_min_length") or …)` statt
 # `haertung_lesen` → rot.)

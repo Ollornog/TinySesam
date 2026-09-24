@@ -340,6 +340,23 @@ TinySesamConfig.local_accounts(          # nur Benutzername + Passwort, nirgends
 - `Depends(auth.require(factors=["password", "pin"]))` → eine geordnete Kette pro Route. Wer schon
   eingeloggt ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite.
 
+**Die PIN als Weg hinein ist eine bewusste Option.** Mit `pin_enabled=True` ist die PIN in der Vorgabe
+ein Erstfaktor (`pin_login=True`) — praktisch für eine allgemeine Seite, während eine Detailseite mehr
+verlangt:
+
+```python
+@app.get("/uebersicht")                                 # die PIN genügt
+def uebersicht(user=Depends(auth.require())): ...
+
+@app.get("/details")                                    # PIN, danach das Passwort
+def details(user=Depends(auth.require(factors=["pin", "password"]))): ...
+```
+
+Eine vierstellige PIN hat 10.000 Werte. Das Raten bremsen ihr eigener Zähler (`pin_max_attempts` je
+Konto, die Adress-Schwelle beim `ip_attempt_factor`-fachen) und die Sperre nach Fehlversuchen in
+Folge (`account_max_consecutive_failures`, siehe *Härtung*) — beide stehen im Admin-Panel direkt bei
+der Login-Sperre. Nicht gewollt? `pin_login=False`.
+
 ## Den ersten Admin bestimmen
 
 Offene Registrierung plus „der erste Account wird Admin" ist ein Wettlauf: wer die frische Instanz
@@ -517,6 +534,18 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
   im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
+- **Fehlversuche in Folge, ohne Fenster** (`account_max_consecutive_failures`, Vorgabe 100): Jeder
+  gescheiterte Anmeldeversuch unter einem Namen verlängert eine Serie; an der Grenze ist die Anmeldung
+  gesperrt — und anders als bei den Fenster-Schwellen läuft diese Sperre nicht ab. Sie endet mit einer
+  vollständigen Anmeldung über einen anderen Weg (Passkey, Anmelde-Link, OIDC), einem Passwort-Reset,
+  einem neuen Passwort aus dem Admin-Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das
+  Konto gibt oder nicht — die Sperre verrät also nichts. NIST SP 800-63B begrenzt Fehlversuche in
+  Folge auf 100: Langsames Raten unter jeder Fenster-Schwelle läuft nicht mehr ewig.
+- **Passwortlänge nach Faktor-Lage:** Ein neues Passwort braucht `password_min_length_single_factor`
+  (Vorgabe 15, NIST SP 800-63B), wenn es allein anmelden kann — keine `login_chain` oder eine, die nur
+  `password` verlangt —, und `password_min_length` (Vorgabe 8), wenn die globale Kette einen zweiten
+  Faktor erzwingt. Bestehende Passwörter bleiben gültig; die Regel gilt, wo eines gesetzt wird. Das CLI
+  (`tinysesam passwd`) liest keine Konfiguration und nimmt die strengere.
 - **Methodengebundene Zähler neben dem Login-Lockout:** Die PIN (kurzer Keyspace,
   `pin_max_attempts`), die Alt-Passwort-Abfrage der Kontoseite (`password_change_max_attempts`),
   die Step-up-Bestätigung (`reauth_max_attempts`) und die Bereichs-PIN (`resource_max_attempts`)
@@ -1001,7 +1030,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**46 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**47 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

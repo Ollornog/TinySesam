@@ -13,7 +13,7 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "geheim123-lang-genug")
 uid = auth.store.get_user_by_name("admin")["id"]
 app = FastAPI()
 app.include_router(auth.router())
@@ -28,9 +28,9 @@ def geheim(u=Depends(auth.require_user)):
 c1 = TestClient(app)   # Sitzung A (ändert das Passwort)
 c2 = TestClient(app)   # Sitzung B (soll rausfliegen)
 for c in (c1, c2):
-    c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+    c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/"}, follow_redirects=False)
 assert c1.get("/geheim").status_code == 200 and c2.get("/geheim").status_code == 200
-c1.post("/auth/password", json={"current": "geheim123", "new": "neuespasswort"})
+c1.post("/auth/password", json={"current": "geheim123-lang-genug", "new": "neuespasswort-lang"})
 assert c1.get("/geheim").status_code == 200, "eigene Sitzung bleibt"
 assert c2.get("/geheim").status_code == 401, "andere Sitzung beendet"
 ok("Selbst-PW-Änderung: andere Sitzungen beendet, aktuelle bleibt")

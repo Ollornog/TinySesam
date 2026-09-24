@@ -48,7 +48,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 
 auth = TinySesam(TinySesamConfig(db_path=db, security_log=logdatei, cookie_secure=False,
                                  passkey_enabled=False, csrf_enabled=False))
-auth.create_user("anna", "geheim123")
+auth.create_user("anna", "geheim123-lang-genug")
 assert os.path.exists(logdatei)
 ok("security_log gesetzt → Datei wird angelegt")
 
@@ -161,7 +161,7 @@ try:
     app = FastAPI()
     app.include_router(auth3.router())
     c = TestClient(app)
-    r = c.post("/auth/register", data={"username": "betreiber", "password": "geheim123"},
+    r = c.post("/auth/register", data={"username": "betreiber", "password": "geheim123-lang-genug"},
                follow_redirects=False)
     assert r.status_code == 303, r.status_code
     r = c.get(f"/auth/claim-admin?token={tok3}", follow_redirects=False)

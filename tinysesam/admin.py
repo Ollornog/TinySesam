@@ -171,6 +171,9 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
+        # Neu gebunden: Passwort-Fehlversuche und eine Serien-Sperre (B2-6) enden hier, wie beim
+        # Selbstbedienungs-Reset. Sonst stünde das Konto nach dem Reset weiter vor der Tür.
+        auth.sperre_aufheben(uid, methoden=("password",))
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.

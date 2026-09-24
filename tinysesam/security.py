@@ -237,14 +237,17 @@ def attach_security_log(path: str) -> bool:
 
 # Härtungs-Defaults — im Admin-Panel überschreibbar (store.setting). Nur diese Keys sind einstellbar.
 SECURITY_DEFAULTS = {
+    # Die Reihenfolge ist die des Panels: Was zusammen eingestellt wird, steht zusammen.
     "max_login_attempts": 5,        # Fehlversuche je Konto UND IP (Paar) im Fenster → Lockout
     "lockout_window_sec": 900,      # Beobachtungs-/Sperrfenster (15 min)
     "ip_attempt_factor": 3,         # IP-Lockout-Schwelle = max_login_attempts * Faktor (mehrere User hinter NAT)
     "account_attempt_factor": 3,    # Konto-Schwelle über alle IPs = max_login_attempts * Faktor (verteiltes Raten)
+    "account_max_consecutive_failures": 100,  # Fehlversuche IN FOLGE je Konto, ohne Fenster (B2-6, NIST)
+    "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
     "rate_limit_max": 30,           # max Requests pro IP …
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
-    "password_min_length": 8,
-    "pin_max_attempts": 5,          # eigener, methoden-scoped Fehlversuch-Zähler für PIN (kurzer Keyspace)
+    "password_min_length": 8,       # Mindestlänge, wenn das Passwort Teil einer Kette mit 2. Faktor ist
+    "password_min_length_single_factor": 15,  # … wenn es allein anmelden kann (B2-4, NIST 800-63B)
     "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
     "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
@@ -274,6 +277,10 @@ SECURITY_GRENZEN = {
     "rate_limit_max": (3, 100000),
     "rate_limit_window_sec": (1, 86400),
     "password_min_length": (8, 128),
+    "password_min_length_single_factor": (8, 128),
+    # Unten 10: Eine Serien-Sperre ist hart (sie läuft nicht ab), wenige Tippfehler dürfen sie
+    # nicht auslösen — dafür gibt es die Fenster-Schwellen. Oben 100000 heisst praktisch „aus".
+    "account_max_consecutive_failures": (10, 100000),
     "pin_max_attempts": (1, 100),
     "password_change_max_attempts": (1, 100),
     "reauth_max_attempts": (1, 100),

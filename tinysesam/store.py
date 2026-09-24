@@ -198,6 +198,12 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
     success  INTEGER NOT NULL,
     method   TEXT
 );
+CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
+    topf    TEXT PRIMARY KEY,                -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
+    anzahl  INTEGER NOT NULL,
+    seit    INTEGER NOT NULL,                -- erster Fehlversuch der laufenden Serie
+    zuletzt INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Aktionen)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ts       INTEGER NOT NULL,
@@ -594,7 +600,9 @@ class Store:
     #: 10 — `users.topf_name`/`topf_mail` mit Index und Triggern, Indizes für die Suche nach Name
     #:      und Adresse (NOCASE); Bestand: Sperren aus dem Panel auf den Betreiber-Vermerk
     #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
-    SCHEMA_VERSION = 10
+    #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
+    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist
+    SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
     #: gerechnet. Wer die Faltung in `norm_kennung` ändert, hebt `SCHEMA_VERSION` und setzt diesen
@@ -1341,6 +1349,14 @@ class Store:
     def set_admin(self, user_id, is_admin: bool):
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
 
+    def set_admin_vom_idp(self, user_id):
+        """Admin-Flag mit dem Vermerk „vom Identity Provider vergeben" (`is_admin=2`, H-5).
+
+        Nur dieser Wert darf beim nächsten Login wieder entzogen werden, wenn der Provider die
+        Gruppe nicht mehr liefert. Eine 1 (Panel, CLI, `admin_identifiers`, `/auth/claim-admin`)
+        rührt kein Provider an. Überall sonst gilt das Flag als Wahrheitswert — 2 ist Admin wie 1."""
+        self._exec("UPDATE users SET is_admin=2 WHERE id=? AND is_admin=0", (user_id,))
+
     def user_count(self) -> int:
         return self._one("SELECT COUNT(*) c FROM users")["c"]
 
@@ -1928,6 +1944,48 @@ class Store:
 
     def gc_attempts(self, older_than) -> int:
         return self._exec("DELETE FROM login_attempt WHERE ts < ?", (older_than,)).rowcount
+
+    # ---------- Fehlversuche in Folge (B2-6) ----------
+    # Die Tabelle `login_attempt` kennt nur Fenster: `gc()` räumt sie nach einem Tag, und jede
+    # Schwelle dort zählt ab `lockout_window_sec`. Wer langsam rät — vier Versuche je Fenster,
+    # rund um die Uhr —, blieb unter jeder Schwelle, beliebig lange. NIST SP 800-63B verlangt
+    # deshalb eine Grenze für Fehlversuche IN FOLGE, die mit der Zeit nicht verfällt. Sie steht
+    # hier, eigens und ohne Zeitfenster; zurückgesetzt wird sie nur durch eine vollständige
+    # Anmeldung, einen Reset oder den Betreiber (`manager.sperre_aufheben`).
+    def fehlserie(self, topf) -> int:
+        """Wie viele Fehlversuche in Folge stehen für diese (gefaltete) Kennung? 0 = keine Serie."""
+        if not topf:
+            return 0
+        zeile = self._one("SELECT anzahl FROM fehlserie WHERE topf=?", (topf,))
+        return int(zeile["anzahl"]) if zeile else 0
+
+    def fehlserie_erhoehen(self, topf) -> int:
+        """Einen Fehlversuch an die Serie hängen; gibt den neuen Stand zurück."""
+        if not topf:
+            return 0
+        jetzt = _now()
+        self._exec("INSERT INTO fehlserie(topf, anzahl, seit, zuletzt) VALUES (?, 1, ?, ?) "
+                   "ON CONFLICT(topf) DO UPDATE SET anzahl = anzahl + 1, zuletzt = excluded.zuletzt",
+                   (topf, jetzt, jetzt))
+        return self.fehlserie(topf)
+
+    def fehlserie_loeschen(self, topf) -> int:
+        """Die Serie beenden; gibt zurück, wie lang sie war."""
+        if not topf:
+            return 0
+        vorher = self.fehlserie(topf)
+        self._exec("DELETE FROM fehlserie WHERE topf=?", (topf,))
+        return vorher
+
+    def gc_fehlserien(self, older_than, grenze) -> int:
+        """Alte, NICHT ausgelöste Serien räumen (`zuletzt` vor `older_than`, `anzahl < grenze`).
+
+        Eine ausgelöste Serie bleibt: Sie ist eine Sperre, und die hebt nur eine Anmeldung, ein
+        Reset oder der Betreiber auf — nicht das Warten. Ohne Grenze liefe die Tabelle mit
+        erfundenen Namen voll; mit ihr kostet jede bleibende Zeile einen Angreifer `grenze`
+        Fehlversuche, jeder durch die Fenster-Schwellen gebremst."""
+        return self._exec("DELETE FROM fehlserie WHERE zuletzt < ? AND anzahl < ?",
+                          (int(older_than), int(grenze))).rowcount
 
     # ---------- Magic-/Einmal-Token ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):

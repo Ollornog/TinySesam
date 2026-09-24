@@ -10,7 +10,7 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
-# ---------- apply_idp_groups: sync gemappter Rollen, manuelle bleiben, __admin__ grant-only ----------
+# ---------- apply_idp_groups: sync gemappter Rollen, manuelle bleiben, __admin__ folgt dem IdP (H-5) ----------
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(db_path=db, csrf_enabled=False, cookie_secure=False))
 uid = auth.create_user("bob", roles=["manual"])   # manuell vergebene Rolle
@@ -20,14 +20,17 @@ mapping = {"editors": "editor", "admins": "__admin__", "viewers": "viewer"}
 # (verglichen wird EXAKT — Default seit group_match="exact")
 auth.apply_idp_groups(uid, ["editors", "admins"], mapping)
 u = auth.store.get_user(uid)
-assert set(auth.user_roles(u)) == {"manual", "editor"} and u["is_admin"] == 1
-ok("Gruppen→Rollen: editor gesetzt, manuelle Rolle bleibt, __admin__ → Admin-Flag")
+# is_admin=2: „vom Identity Provider vergeben" — nur so ein Flag darf er später wieder nehmen.
+assert set(auth.user_roles(u)) == {"manual", "editor"} and u["is_admin"] == 2
+ok("Gruppen→Rollen: editor gesetzt, manuelle Rolle bleibt, __admin__ → Admin-Flag (Vermerk: vom IdP)")
 
-# nächster Login ohne editors-Gruppe → editor entfällt (managed sync), manual bleibt, Admin bleibt (grant-only)
+# nächster Login ohne editors- und admins-Gruppe → editor entfällt, manual bleibt, und das
+# Admin-Flag, das der IdP vergeben hat, geht mit (H-5, PO-Entscheid 2026-09-24). Bis dahin
+# stand hier „Admin bleibt (kein Auto-Entzug)" — genau das war der Befund.
 auth.apply_idp_groups(uid, ["viewers"], mapping)
 u = auth.store.get_user(uid)
-assert set(auth.user_roles(u)) == {"manual", "viewer"} and u["is_admin"] == 1
-ok("erneuter Login: gemappte Rollen synchronisiert (editor weg, viewer da); Admin bleibt (kein Auto-Entzug)")
+assert set(auth.user_roles(u)) == {"manual", "viewer"} and not u["is_admin"]
+ok("erneuter Login: gemappte Rollen synchronisiert (editor weg, viewer da); vom IdP vergebenes Admin-Flag entzogen")
 
 # leeres Mapping → No-Op
 before = auth.user_roles(auth.store.get_user(uid))
@@ -42,7 +45,7 @@ ok("Default exakt: Teiltreffer verleiht keine Rolle")
 
 # Teilstring bleibt für DNs möglich — explizit
 auth.apply_idp_groups(uid, ["cn=admins,ou=g,dc=x"], {"cn=admins,ou=g": "__admin__"}, substring=True)
-assert auth.store.get_user(uid)["is_admin"] == 1
+assert auth.store.get_user(uid)["is_admin"] == 2
 ok("substring=True: DN-Teiltreffer greift (so nutzt LDAP es)")
 os.remove(db)
 
