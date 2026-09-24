@@ -778,6 +778,17 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
             "signup_verify_email=True, aber signup_require_email=False: Wer bei der Registrierung "
             "keine Adresse angibt, ist ohne jede Bestätigung sofort aktiv. Entweder "
             "signup_require_email=True oder auf die Bestätigung verzichten.")
+    # ASVS 6.3.8 (B1-12): Ohne Bestätigung meldet eine freie Registrierung sofort an, eine
+    # vergebene Adresse antwortet mit 409 — der Unterschied lässt sich nicht verstecken, und
+    # jeder erfährt so, welche Adressen hier ein Konto haben. Mit Bestätigung antworten beide
+    # gleich (R4-03), auch in der Laufzeit.
+    if _an(config, "allow_signup") and not _an(config, "signup_invite_only") \
+            and not _an(config, "signup_verify_email") \
+            and (_an(config, "signup_require_email") or getattr(config, "login_identifier", "") == "email"):
+        warnungen.append(
+            "Offene Registrierung ohne signup_verify_email: Eine vergebene Adresse antwortet mit "
+            "409, eine freie meldet sofort an — jeder Besucher erfährt so, welche Adressen hier ein "
+            "Konto haben (ASVS 6.3.8). Mit signup_verify_email=True antworten beide gleich.")
     if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
         warnungen.append("signup_invite_only=True ohne allow_signup=True ist wirkungslos — die "
                          "Registrierung ist ohnehin aus.")

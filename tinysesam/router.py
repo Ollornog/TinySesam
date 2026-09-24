@@ -10,6 +10,7 @@ Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufge
 (`auth.oidc`, `auth.webauthn`, `auth.saml`): Ein gesetzter Schalter, dessen Extra oder Pflichtfeld
 fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
+import secrets
 from fastapi import APIRouter, Request, Form, HTTPException
 from starlette.exceptions import HTTPException as _StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
@@ -20,7 +21,6 @@ from .errors import ConfigError
 from . import security
 from .store import ersatzname, norm_email, valid_email
 from . import security
-from .passwords import hash_password
 
 
 async def _antwort_des_handlers(request: Request, exc: Exception):
@@ -916,12 +916,17 @@ def build_router(auth) -> APIRouter:
                     # die Adresse frei war. `gc()` entfernt den Platzhalter mit Ablauf des
                     # Tokens, genau wie ein nie bestätigtes echtes Konto (R4-09). Das Anlegen
                     # samt Passwort-Hash gleicht zugleich die Laufzeit an.
-                    if name_ist_adresse:
-                        hash_password(password)   # Name = Adresse: nichts zu belegen, nur Laufzeit
-                    else:
-                        platzhalter = auth.create_user(username, password=password, roles=[])
-                        auth.store.set_disabled(platzhalter, True)
-                        auth.create_magic_token("verify_email", user_id=platzhalter)
+                    # Ist der Name die Adresse (immer bei login_identifier='email'), ist der Name
+                    # selbst vergeben — der Platzhalter bekommt dann einen Zufallsnamen. Bis
+                    # 2026-09-24 schrieb dieser Zweig nur die Audit-Zeile, der freie dagegen Konto,
+                    # Sperre und Token: messbar an der Antwortzeit, ein Orakel „Adresse vergeben?"
+                    # (T-13, B1-12 / ASVS 6.3.8). Jetzt dieselbe Arbeit in beiden Zweigen; `gc()`
+                    # räumt den Platzhalter mit dem Ablauf seines Tokens (R4-09).
+                    platzhalter = auth.create_user(
+                        f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
+                        password=password, roles=[])
+                    auth.store.set_disabled(platzhalter, True)
+                    auth.create_magic_token("verify_email", user_id=platzhalter)
                     adresse = email_final
 
                     def _hinweis():

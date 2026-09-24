@@ -565,6 +565,50 @@ r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"anzahl": 1, "gr
 #  None → (b) rot; Index streichen → (c) rot; `_andere_nach_abschluss` leer → (d) rot;
 #  `sicherheitsereignis` in `_keys_widerrufen` streichen → (e) rot.)
 
+# ── B1-12 / ASVS 6.3.8: die Registrierung verrät keine Adressen (auch nicht in der Laufzeit) ─
+def _reg_app():
+    a, app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                  login_identifier="email")
+    a.set_mailer(lambda to, betreff, text, html=None: None)
+    return a, app
+
+
+a638, app638 = _reg_app()
+a638.create_user("vergeben@example.com", password=PW, email="vergeben@example.com")
+_zaehler = {"n": 0}
+_orig_exec = a638.store._exec
+
+
+def _zaehlend(sql, args=()):
+    _zaehler["n"] += 1
+    return _orig_exec(sql, args)
+
+
+a638.store._exec = _zaehlend
+c638 = TestClient(app638)
+_zaehler["n"] = 0
+frei = c638.post("/auth/register", data={"email": "frei@example.com", "password": FUENFZEHN + "x"})
+_n_frei = _zaehler["n"]
+_zaehler["n"] = 0
+vergeben = c638.post("/auth/register", data={"email": "vergeben@example.com", "password": FUENFZEHN + "x"})
+_n_vergeben = _zaehler["n"]
+a638.store._exec = _orig_exec
+r.check("ASVS 6.3.8: freie und vergebene Adresse antworten gleich (Status und Seite)",
+        frei.status_code == vergeben.status_code == 200
+        and _re.sub(r"nonce=\"[^\"]+\"", "", frei.text) == _re.sub(r"nonce=\"[^\"]+\"", "", vergeben.text),
+        f"{frei.status_code}/{vergeben.status_code}")
+r.check("… und machen dieselbe Arbeit in der Anfrage (gleich viele Schreibzugriffe — kein Laufzeit-Orakel)",
+        _n_frei == _n_vergeben, f"frei {_n_frei}, vergeben {_n_vergeben}")
+_platz = [u for u in a638.store.list_users() if str(u["username"]).startswith("reserviert-")]
+r.check("… der Platzhalter ist gesperrt, trägt keine Adresse und verschwindet mit gc()",
+        len(_platz) == 1 and _platz[0]["disabled"] and not _platz[0]["email"])
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+_, _w638 = _kp.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example", allow_signup=True,
+                                      signup_require_email=True))
+r.check("… ohne Bestätigung geht das nicht — die Konfigurationsprüfung sagt es (6.3.8)",
+        any("6.3.8" in w for w in _w638), str(_w638)[:200])
+# (Mutationsprobe: im Vergeben-Zweig wieder nur `hash_password` statt Platzhalter → Schreibzugriffe rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()
