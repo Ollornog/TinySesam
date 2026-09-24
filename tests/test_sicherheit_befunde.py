@@ -2325,7 +2325,7 @@ _st23.set_setting("x", "0")
 
 def _unter_freezegun_schreiben():
     # freezegun liefert `time.monotonic` auf der Epoch-Skala; nachgestellt ohne die Abhängigkeit.
-    with mock.patch("time.monotonic", lambda: _time.time()):
+    with mock.patch("time.monotonic", _time.time):
         _st23.set_setting("x", "fg")
 
 

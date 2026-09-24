@@ -292,7 +292,8 @@ import re as _re  # noqa: E402
 import subprocess as _sp  # noqa: E402
 
 _panel = c.get("/auth/admin").text
-_skripte = [s for s in _re.findall(r"<script[^>]*>(.*?)</script>", _panel, _re.S) if "const ACT={" in s]
+_skripte = [s for s in _re.findall(r"<script\b[^>]*>(.*?)</script\s*>", _panel, _re.S | _re.I)
+            if "const ACT={" in s]
 assert len(_skripte) == 1, "Panel-Skript nicht gefunden"
 _js = _skripte[0]
 # Ohne Laufzeit: Jede Aktion, die `p()` ruft, führt das Ergebnis über `abgewiesen` — die nächste

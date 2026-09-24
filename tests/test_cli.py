@@ -163,10 +163,10 @@ _SETTING_METHODEN = ("get_setting", "all_settings")
 # Umgekehrt meldete er englischen Fliesstext der Form „… from setting …“ (heute keiner im Paket):
 # Dann nennt er Datei und Zeile, und die Formulierung wird geändert.
 _SQL_SETTING = _re.compile(
-    r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|/\*.*?\*/)*"
+    r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|/\*(?:[^*]|\*(?!/))*\*/)*"
     r"(?:(?:\"[^\"]*\"|`[^`]*`|\[[^\]]*\]|\w+)\s*\.\s*)?[\"'`\[]?setting(?![\w$])", _re.S)
-_SQL_ANFANG = _re.compile(r"(?is)^(?:\s|--[^\n]*\n|/\*.*?\*/)*(?:select|with|update|insert|replace|delete|explain)\b")
-_SQL_TABELLE_OFFEN = _re.compile(r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|/\*.*?\*/)+[\"'`\[]?\s*(?:\{|%)", _re.S)
+_SQL_ANFANG = _re.compile(r"(?is)^(?:\s|--[^\n]*\n|/\*(?:[^*]|\*(?!/))*\*/)*(?:select|with|update|insert|replace|delete|explain)\b")
+_SQL_TABELLE_OFFEN = _re.compile(r"(?i)(?<![\w$])(?:from|join|update|into)(?:\s|/\*(?:[^*]|\*(?!/))*\*/)+[\"'`\[]?\s*(?:\{|%)", _re.S)
 
 
 def _sql_text(k):

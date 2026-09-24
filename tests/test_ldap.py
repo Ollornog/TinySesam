@@ -1075,7 +1075,7 @@ _auth_p.ldap = _launisch = _LaunischesLDAP()
 try:
     _auth_p.check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
-    pass
+    pass   # der Merker ist danach scharf — nur das zählt hier
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "kaputt"
 try:
@@ -1097,7 +1097,7 @@ _launisch.modus = "weg"
 try:
     _auth_p.check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
-    pass
+    pass   # der Merker ist danach scharf — nur das zählt hier
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "abgebrochen"
 try:
@@ -1296,7 +1296,7 @@ if HAT_LDAP3:
                     else:
                         return
             except (OSError, EOFError):
-                pass
+                pass   # Attrappen-Server: der Client hat aufgelegt
             finally:
                 conn.close()
 
@@ -1383,7 +1383,7 @@ if HAT_LDAP3:
             conn.recv(8192)                        # ExtendedRequest StartTLS — und zu
             conn.close()
         except OSError:
-            pass
+            pass   # Attrappen-Server: der Client hat aufgelegt
 
     threading.Thread(target=_schliesst_bei_starttls, args=(_st,), daemon=True).start()
     try:
