@@ -371,6 +371,12 @@ class TinySesamConfig:
     #: Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden
     #: (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen.
     oidc_revalidate_minutes: int = 0
+    #: Widerruf folgt dem Provider (4a): Alle so viele Minuten tauscht TinySesam bei der nächsten
+    #: Anfrage das Refresh-Token der OIDC-Sitzung. Verweigert der Provider (gesperrt, gelöscht, der
+    #: Anwendung entzogen), endet die Sitzung; Gruppen und das vom Provider vergebene Admin-Flag
+    #: werden dabei neu bewertet. Ein nicht erreichbarer Provider meldet niemanden ab. Braucht einen
+    #: Provider, der Refresh-Tokens ausgibt (ggf. Scope `offline_access`). 0 = aus.
+    oidc_session_refresh_minutes: int = 15
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
     saml_enabled: bool = False        # SAML-2.0-Anmeldung gegen einen IdP — braucht [saml] und libxmlsec1

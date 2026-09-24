@@ -703,6 +703,87 @@ r.check("… ein kaputter Schlüssel (kein Base64 von 32 Byte) ist ein Fehler, k
 #  in `geheimnisse_heben` streichen → „bricht den Start ab" rot; das Heben streichen → „Klartext …
 #  wird beim Start verschlüsselt" rot.)
 
+
+
+def _jetzt_minus(auth):
+    """Sekunden bis zur nächsten Nachprüfung der (einzigen) OIDC-Sitzung."""
+    import time as _t
+    z = auth.store._one("SELECT geprueft_at FROM oidc_sitzung")
+    return int(z["geprueft_at"]) + int(auth.cfg.oidc_session_refresh_minutes) * 60 - int(_t.time())
+
+
+# ── 4a: Widerruf folgt dem Provider (Refresh-Token alle N Minuten) ─────────────────────────
+a4a, app4a = _oidc({"sub": "r-1", "preferred_username": "refresher", "groups": ["admins"]},
+                   oidc_group_role_map=KARTE)
+a4a.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+    _Claims({"sub": "r-1", "preferred_username": "refresher", "groups": ["admins"], "nonce": nonce}),
+    {"access_token": "at", "refresh_token": "rt-1"})
+_antworten = []
+_gerufen = []
+
+
+def _refresh(rt, sub):
+    _gerufen.append((rt, sub))
+    return _antworten.pop(0)
+
+
+a4a.oidc.refresh = _refresh
+c4a = TestClient(app4a, raise_server_exceptions=False)
+_start = c4a.get("/auth/oidc/start", follow_redirects=False)
+_st = parse_qs(urlparse(_start.headers["location"]).query)["state"][0]
+c4a.get(f"/auth/oidc/callback?code=x&state={_st}", follow_redirects=False)
+_roh4a = a4a.store._one("SELECT refresh FROM oidc_sitzung")
+r.check("4a: das Refresh-Token liegt zur Sitzung, verschlüsselt",
+        _roh4a is not None and _roh4a["refresh"].startswith("v1:") and "rt-1" not in _roh4a["refresh"])
+r.check("… innerhalb der Frist fragt TinySesam den Provider nicht",
+        c4a.get("/auth/me").status_code == 200 and _gerufen == [])
+
+
+def _altern():
+    a4a.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+
+
+_uid4a = a4a.store.get_user_by_name("refresher")["id"]
+_altern()
+_antworten.append(("ok", {"sub": "r-1", "groups": ["admins"]}, {"refresh_token": "rt-2"}))
+r.check("4a: nach der Frist wird getauscht; der Provider sagt ja → die Sitzung bleibt",
+        c4a.get("/auth/me").status_code == 200 and _gerufen == [("rt-1", "r-1")])
+r.check("… ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)",
+        a4a.store.get_oidc_sitzung(a4a.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"])["refresh"] == "rt-2")
+_altern()
+_antworten.append(("ok", {"sub": "r-1", "groups": []}, {}))
+c4a.get("/auth/me")
+r.check("4a + H-5: nimmt der Provider die Admin-Gruppe, ist das Flag binnen der Frist weg — nicht erst beim Login",
+        not a4a.store.get_user(_uid4a)["is_admin"])
+_altern()
+_antworten.append(("ok", {"sub": "r-1"}, {}))                   # kein Gruppen-Claim
+a4a.set_roles(_uid4a, ["editor"])
+c4a.get("/auth/me")
+r.check("… fehlt der Gruppen-Claim ganz, bleiben die Rollen (fehlend ≠ keine Gruppen)",
+        "editor" in a4a.user_roles(a4a.store.get_user(_uid4a)))
+_altern()
+_antworten.append(("fehler", {}, {"error": "ConnectError"}))
+r.check("4a: ist der Provider nicht erreichbar, bleibt die Sitzung (ein Ausfall meldet niemanden ab)",
+        c4a.get("/auth/me").status_code == 200)
+r.check("… und es wird in einer Minute neu versucht, nicht erst nach der vollen Frist",
+        _jetzt_minus(a4a) <= 15 * 60 - 60 + 5)
+_altern()
+_antworten.append(("abgelehnt", {}, {"error": "invalid_grant"}))
+r.check("4a: verweigert der Provider (gesperrt, gelöscht, entzogen), ist die Sitzung weg",
+        c4a.get("/auth/me").status_code == 401
+        and a4a.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
+        and any(z["event"] == "oidc_widerruf" for z in a4a.store.recent_audit(20)))
+a4b, app4b = _oidc({"sub": "r-2", "preferred_username": "ohne"}, oidc_session_refresh_minutes=0)
+a4b.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+    _Claims({"sub": "r-2", "preferred_username": "ohne", "nonce": nonce}),
+    {"access_token": "at", "refresh_token": "rt-x"})
+_oidc_login(app4b)
+r.check("4a einstellbar: oidc_session_refresh_minutes=0 legt nichts ab",
+        a4b.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung")["n"] == 0)
+# (Mutationsproben: `_oidc_nachpruefen` immer True → „Sitzung weg" rot; die Gruppen-Neubewertung
+#  streichen → „Flag … weg" rot; `in info` streichen → „fehlend ≠ keine Gruppen" rot; die
+#  Wiederholung in einer Minute streichen → „in einer Minute" rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

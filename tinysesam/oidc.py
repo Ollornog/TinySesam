@@ -293,6 +293,55 @@ class OIDCClient:
             raise HTTPException(400, t("api.oidc_nonce"))
         return claims, tok
 
+    def refresh(self, refresh_token: str, erwartetes_sub: str) -> tuple:
+        """Ein Refresh-Token beim Provider tauschen (4a, „Widerruf folgt dem IdP").
+
+        Rückgabe `(status, info, tok)`: `"ok"` mit den frischen Angaben (ID-Token-Claims, sonst
+        UserInfo) · `"abgelehnt"` — der Provider verweigert (RFC 6749 5.2: `invalid_grant` u. a.;
+        der Nutzer ist gesperrt, gelöscht, der Anwendung entzogen oder das Token widerrufen) ·
+        `"fehler"` — der Provider ist nicht erreichbar oder antwortet Unsinn. Nur `"abgelehnt"`
+        beendet die Sitzung; ein Ausfall des Providers soll niemanden abmelden."""
+        try:
+            import httpx
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
+        daten = {"grant_type": "refresh_token", "refresh_token": refresh_token,
+                 "client_id": self.client_id, "client_secret": self.client_secret}
+        try:
+            antwort = httpx.post(self.meta()["token_endpoint"], timeout=15, data=daten)
+            tok = antwort.json()
+        except Exception as e:   # noqa: BLE001 — Netz, JSON: der Provider antwortet nicht brauchbar
+            return "fehler", {}, {"error": type(e).__name__}
+        if not isinstance(tok, dict):
+            return "fehler", {}, {"error": "antwort"}
+        if antwort.status_code in (400, 401) or tok.get("error") in (
+                "invalid_grant", "unauthorized_client", "invalid_client", "access_denied"):
+            return "abgelehnt", {}, tok
+        if antwort.status_code >= 300 or "error" in tok:
+            return "fehler", {}, tok
+        claims: dict = {}
+        if tok.get("id_token"):
+            optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
+                        "aud": {"essential": True, "value": self.client_id},
+                        "exp": {"essential": True}}
+            try:
+                geprueft = self._dekoder().decode(tok["id_token"], self._jwkset(), claims_options=optionen)
+                geprueft.validate(leeway=self.UHR_TOLERANZ)
+                self._pruefe_publikum(geprueft, lambda schluessel, **fmt: schluessel)
+            except Exception:   # noqa: BLE001 — ein Token, das wir nicht prüfen können, gilt nicht
+                return "fehler", {}, {"error": "id_token"}
+            claims = dict(geprueft)
+            if str(claims.get("sub") or "") != str(erwartetes_sub):
+                # Ein anderes Subjekt als bei der Anmeldung: nicht dieselbe Person.
+                return "abgelehnt", {}, {"error": "sub"}
+        info: dict = {}
+        if tok.get("access_token"):
+            try:
+                info = self.userinfo(tok["access_token"], erwartetes_sub=erwartetes_sub) or {}
+            except Exception:   # noqa: BLE001 — ohne UserInfo zählt das ID-Token allein
+                info = {}
+        return "ok", {**info, **claims}, tok
+
     def _pruefe_publikum(self, claims, t) -> None:
         """`aud` und `azp` nach OIDC Core 3.1.3.7, Punkt 3 bis 5 (F-15).
 
@@ -719,6 +768,10 @@ def register_oidc_routes(router, auth):
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
                                               email_bestaetigt=mail_bestaetigt)
+        # 4a: Das Refresh-Token merken — mit ihm fragt TinySesam den Provider regelmässig, ob die
+        # Person noch darf (`oidc_session_refresh_minutes`). Ohne Refresh-Token geht das nicht.
+        if tok.get("refresh_token"):
+            auth._oidc_sitzung_merken(token, ziel, str(sub), str(tok["refresh_token"]))
         # Der Provider hat für DIESE Anwendung zugestimmt — das wird an der Sitzung vermerkt.
         # Für jede andere Anwendung sagt dieser Vermerk nichts; dort fragt `/auth/forward`
         # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).

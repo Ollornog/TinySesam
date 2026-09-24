@@ -2870,6 +2870,7 @@ class TinySesam:
                 neu_token = self._sitzung_anlegen(
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+                self.store.oidc_sitzung_umhaengen(s["token_hash"], self.store.session_hash(neu_token))
                 self.store.delete_session_by_handle(s["token_hash"])
                 self._andere_nach_abschluss(s, neu_token)
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
@@ -2955,6 +2956,7 @@ class TinySesam:
             neu_token = self._sitzung_anlegen(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+            self.store.oidc_sitzung_umhaengen(s["token_hash"], self.store.session_hash(neu_token))
             self.store.delete_session_by_handle(s["token_hash"])
             self._andere_nach_abschluss(s, neu_token)
             return neu_token
@@ -2973,8 +2975,68 @@ class TinySesam:
         return self.complete_totp(token)
 
     def session_from_request(self, request):
-        """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle."""
-        return self.store.get_session(request.cookies.get(self.session_cookie_name))
+        """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
+
+        Eine OIDC-Sitzung wird hier alle `oidc_session_refresh_minutes` beim Provider nachgeprüft
+        (4a): Verweigert er, ist die Sitzung weg, und dieser Request gilt als nicht angemeldet."""
+        s = self.store.get_session(request.cookies.get(self.session_cookie_name))
+        if s is not None and not self._oidc_nachpruefen(s):
+            return None
+        return s
+
+    def _oidc_sitzung_merken(self, token, client, sub, refresh_token) -> None:
+        """Das Refresh-Token zur (eben entstandenen) Sitzung legen (4a)."""
+        if not int(self.cfg.oidc_session_refresh_minutes or 0) or not token:
+            return
+        self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token)
+
+    def _oidc_nachpruefen(self, s) -> bool:
+        """Folgt die Sitzung dem Provider noch? False = die Sitzung ist beendet (4a).
+
+        Alle `oidc_session_refresh_minutes` tauscht die nächste Anfrage das Refresh-Token:
+        * verweigert der Provider (gesperrt, gelöscht, entgruppt, der Anwendung entzogen) → die
+          Sitzung endet, mit Zeile im Audit-Log;
+        * liefert er frische Angaben → Gruppen, erlaubte Gruppen und das vom Provider vergebene
+          Admin-Flag werden neu bewertet (H-5 wirkt damit binnen Minuten, nicht erst beim
+          nächsten Login) — aber nur, wenn der Gruppen-Claim überhaupt dabei ist: Fehlt er, hiesse
+          „keine Gruppen" sonst, jede gemappte Rolle zu entziehen;
+        * ist er nicht erreichbar → nichts ändert sich, neuer Versuch in einer Minute. Ein Ausfall
+          des Providers soll niemanden abmelden."""
+        frist = int(self.cfg.oidc_session_refresh_minutes or 0) * 60
+        if not frist or self.oidc is None:
+            return True
+        z = self.store.get_oidc_sitzung(s["token_hash"])
+        if z is None:
+            return True
+        jetzt = _jetzt()
+        if jetzt - int(z["geprueft_at"]) < frist:
+            return True
+        status, info, tok = self.oidc_clients[z["client"]].refresh(z["refresh"], z["sub"])
+        konto = self.store.get_user(s["user_id"])
+        name = konto["username"] if konto else None
+        if status == "fehler":
+            self.store.oidc_sitzung_geprueft(s["token_hash"], jetzt - frist + 60)
+            security.seclog.warning("OIDC-Nachprüfung: Provider nicht erreichbar (%s) — Sitzung bleibt, "
+                                    "neuer Versuch in einer Minute. user=%s",
+                                    security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
+            return True
+        if status == "abgelehnt":
+            self.store.delete_session_by_handle(s["token_hash"])
+            self.store.audit_log("oidc_widerruf", name, s["ip"],
+                                 f"client={z['client']} grund={security.fuer_log(str(tok.get('error', '?')))}")
+            return False
+        self.store.oidc_sitzung_geprueft(s["token_hash"], jetzt, tok.get("refresh_token"))
+        eintrag = self.oidc_clients.eintrag(z["client"])
+        if self.cfg.oidc_group_claim in info:
+            roh = info.get(self.cfg.oidc_group_claim) or []
+            gruppen = roh if isinstance(roh, list) else [roh]
+            erlaubte = eintrag["allowed_groups"]
+            if erlaubte and not (set(erlaubte) & set(map(str, gruppen))):
+                self.store.delete_session_by_handle(s["token_hash"])
+                self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={z['client']} grund=gruppe")
+                return False
+            self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
+        return True
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.

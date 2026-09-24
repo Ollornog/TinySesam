@@ -163,6 +163,13 @@ CREATE TABLE IF NOT EXISTS oidc_grant (
     roles      TEXT NOT NULL DEFAULT '[]',    -- Rollen, die der Provider FÜR DIESE Anwendung ergab
     PRIMARY KEY (token_hash, client)
 );
+CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung (4a, Widerruf folgt dem IdP)
+    token_hash  TEXT PRIMARY KEY REFERENCES session(token_hash) ON DELETE CASCADE,
+    client      TEXT NOT NULL,                -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
+    sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
+    refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
+    geprueft_at INTEGER NOT NULL              -- letzter erfolgreicher Tausch
+);
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
     key        TEXT PRIMARY KEY,
     data       TEXT NOT NULL,               -- JSON
@@ -613,7 +620,8 @@ class Store:
     #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
     #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
     #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
-    #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05)
+    #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
+    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -1593,6 +1601,40 @@ class Store:
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
     # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
+    def set_oidc_sitzung(self, handle, client, sub, refresh) -> None:
+        """Das Refresh-Token einer OIDC-Sitzung ablegen — verschlüsselt (4a)."""
+        if self.tresor is None:
+            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at) VALUES (?,?,?,?,?) "
+                   "ON CONFLICT(token_hash) DO UPDATE SET client=excluded.client, sub=excluded.sub, "
+                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at",
+                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now()))
+
+    def get_oidc_sitzung(self, handle) -> Optional[dict]:
+        """Die OIDC-Zeile einer Sitzung, das Refresh-Token entschlüsselt, oder None."""
+        z = self._one("SELECT * FROM oidc_sitzung WHERE token_hash=?", (self._handle(handle),))
+        if z is None:
+            return None
+        d = dict(z)
+        if self.tresor is not None:
+            d["refresh"] = self.tresor.entschluesseln(d["refresh"])
+        return d
+
+    def oidc_sitzung_geprueft(self, handle, zeit: int, neuer_refresh=None) -> None:
+        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)."""
+        if neuer_refresh and self.tresor is not None:
+            self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=?",
+                       (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle)))
+        else:
+            self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=?",
+                       (int(zeit), self._handle(handle)))
+
+    def oidc_sitzung_umhaengen(self, alt, neu) -> None:
+        """Die OIDC-Zeile an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —
+        VOR dem Löschen der alten, sonst nähme der Fremdschlüssel sie mit."""
+        self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
+                   (self._handle(neu), self._handle(alt)))
+
     def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
         """Freigabe eintragen oder bestätigen. `granted_at` bleibt bei einer Bestätigung stehen —
         die Frage „seit wann darf diese Sitzung in diese Anwendung" beantwortet sonst niemand mehr."""
@@ -1742,6 +1784,7 @@ class Store:
                     self.db.rollback()
                     return None
                 self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
                 self.db.commit()
             except Exception:
