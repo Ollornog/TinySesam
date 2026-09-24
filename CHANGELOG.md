@@ -76,6 +76,22 @@ auffällt:
   wie H-3 bei OIDC — keine Adresse im Konto, kein `Remote-Email`, und bei SAML weicht ein
   Kontoname mit `@` (auch `＠`) einem Ersatznamen. **Die LDAP-Vorgabe nimmt den Schutz aus F-14
   bewusst zurück**: Wo Nutzer ihr `mail`-Attribut selbst ändern dürfen, gehört sie auf `False`.
+  Bei nicht vertrauter Quelle wird ein Name, der eine Adresse ist, nie über den Namen einem
+  vorhandenen Konto zugeordnet (sonst übernähme `bob@example.com` aus einem IdP mit
+  Selbstregistrierung das lokale Konto `bob@example.com`); ohne stabile Kennung wird er
+  abgewiesen. Dasselbe gilt für LDAP, wenn der Suchfilter über `mail` findet (Ersatzname `ldap-…`).
+- **Kontonamen mit Steuer- oder Formatzeichen gibt es nicht mehr** (vorbestehend, Angriff auf die
+  dritte Runde). `chefin\x01` war für TinySesam ein anderer Name als `chefin`, die Header-Säuberung
+  der Forward-Auth machte daraus aber `Remote-User: chefin` — die geschützte App sah ein fremdes
+  Konto. `create_user` weist solche Namen ab (Registrierung und Panel mit 400), föderierte Wege
+  weichen auf einen Ersatznamen aus, und ein Bestand mit solchem Namen bekommt von `/auth/forward`
+  keine Freigabe mehr (403).
+- **4a: Ein Fehler des Clients ist kein Nein zum Konto.** `invalid_client` (z. B. nach einer
+  Secret-Rotation), `unauthorized_client` oder eine 400/401 ohne Code beendeten bisher Sitzungen —
+  und hätten seit Fund 8 die Keys aller Betroffenen stillgelegt. Jetzt zählt nur `invalid_grant`
+  und `access_denied`; der Rest gilt wie ein nicht erreichbarer Provider. Eine Zeile eines Clients,
+  der aus `oidc_clients` genommen wurde, wird verworfen statt mit dem Vorgabe-Client getauscht.
+  Ein Ja, dessen Frage vor einem Nein abging, überschreibt das Nein nicht (Wettlauf zweier Tausche).
 
 ### Sicherheit
 

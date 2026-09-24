@@ -27,7 +27,8 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email, norm_kennung, jetzt as _jetzt, versuchsfrist as _versuchsfrist
+from .store import (Store, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
+                    versuchsfrist as _versuchsfrist)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
@@ -531,6 +532,14 @@ class TinySesam:
         `ConfigError`. Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr."""
         username = (username or "").strip()
         email = norm_email(email)
+        if name_ungueltig(username):
+            # Zentral hier, weil jeder Anlegeweg hier endet (Registrierung, Panel, CLI, OIDC,
+            # SAML, LDAP): Ein Name mit Steuerzeichen wird in `Remote-User` zu einem ANDEREN
+            # Namen (s. `name_ungueltig`). Die föderierten Wege weichen vorher auf einen
+            # Ersatznamen aus; wer hier landet, bekommt eine Abweisung.
+            fehler = ConfigError("Benutzername enthält Steuer- oder Formatzeichen")
+            fehler.feld = "username"
+            raise fehler
         for feld, schluessel, kennung in (("Benutzername", "username", username),
                                           ("E-Mail-Adresse", "email", email)):
             besitzer = self.kennung_vergeben(kennung) if kennung else None
@@ -801,7 +810,7 @@ class TinySesam:
             return None                       # Zeile ohne die Spalte: nur vor `_migrate`
         if not self.store.ist_oidc_konto(u["id"]):
             return None
-        if stand == 0:
+        if int(stand if stand is not None else 1) <= 0:
             return "idp_nein"
         frist = int(self.cfg.oidc_apikey_confirm_days or 0) * 86400
         if frist and (stand is None or _jetzt() - int(stand) > frist):
@@ -1404,7 +1413,7 @@ class TinySesam:
     _OHNE_KENNUNG = "~ohne-kennung:"
 
     def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
-                                     anlegen) -> Optional[dict]:
+                                     anlegen, name_zuordnen: bool = True) -> Optional[dict]:
         """Ein lokales Konto zu einer fremden Identität finden, binden oder anlegen (F-11).
 
         `kennung` ist die **stabile** Kennung aus dem Verzeichnis (objectGUID/entryUUID bei LDAP,
@@ -1428,6 +1437,13 @@ class TinySesam:
         Ohne Kennung (das Verzeichnis liefert keine) bleibt es beim Namen — dem ungeschützten
         Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
         daraus eine Abweisung.
+
+        `name_zuordnen=False`: Der Name ist keine Aussage über die Person — eine unbelegte
+        Adresse aus einer Quelle, der der Betreiber nicht traut (`*_email_trusted=False`). Dann
+        gibt es weder Lage 4 (nachbinden über den Namen) noch eine Zuordnung ohne Kennung: Wer
+        beim IdP die Adresse eines lokalen Kontos als Namen einträgt, übernähme sonst genau
+        dieses Konto (Angriff auf die dritte Runde). Ohne Kennung wird abgewiesen, mit Kennung
+        gebunden oder neu angelegt — nie über den Namen.
         """
         jetzt = _jetzt()
         kennung = str(kennung or "").strip()
@@ -1438,6 +1454,14 @@ class TinySesam:
             security.seclog.warning("%s: Kennung in Platzhalter-Form abgewiesen (user=%s)",
                                     quelle, security.fuer_log(username))
             self.audit(f"{quelle}_kennung_ungueltig", username, detail="Platzhalter-Form")
+            return None
+        if not kennung and not name_zuordnen:
+            security.seclog.warning(
+                "%s: Name ist eine unbelegte Adresse und es gibt keine stabile Kennung (user=%s) — "
+                "abgewiesen. Eine Zuordnung über diesen Namen wäre eine Übernahme. Abhilfe: "
+                "%s_attr_id setzen oder der Quelle trauen (%s_email_trusted).",
+                quelle, security.fuer_log(username), quelle, quelle)
+            self.audit(f"{quelle}_ohne_kennung", username, detail="abgewiesen: Adresse als Name")
             return None
         if not kennung:
             if self.cfg.federation_require_stable_id:
@@ -1462,7 +1486,7 @@ class TinySesam:
             u = self.store.get_user(gebunden_uid)
             return self._als_dict(u) if u else None
 
-        u = self.store.get_user_by_name(username)
+        u = self.store.get_user_by_name(username) if name_zuordnen else None
         if u is None:
             uid = anlegen()
             if uid is None:
@@ -1514,8 +1538,12 @@ class TinySesam:
         Zählt wie ein Passwort-Login (Faktor 'password').
 
         Die übernommene Adresse (`info["email"]`) ist ein Verzeichnisattribut ohne Beleg — in
-        vielen Verzeichnissen pflegt sie der Nutzer selbst. Das hat **zwei** Folgen, und beide
-        sind nötig:
+        vielen Verzeichnissen pflegt sie der Nutzer selbst. Seit dem PO-Entscheid 2026-09-24 sagt
+        der Betreiber, ob er ihr traut (`ldap_email_trusted`, Vorgabe ja): Dann gilt sie als
+        belegt und trägt Rechte. Traut er ihr nicht, wird sie nicht verwendet, und eine
+        eingetippte Adresse wird nicht Kontoname (Ersatzname `ldap-…`, keine Zuordnung über den
+        Namen). Für diesen Fall — und das war bis dahin die Regel — galt und gilt, **zwei**
+        Folgen, beide nötig:
 
         * Ein neu angelegtes Konto bekommt die Adresse mit `email_verified=False` — der Vermerk
           am Konto behauptet nicht, was niemand belegt hat.
@@ -1579,6 +1607,18 @@ class TinySesam:
                 self.audit("ldap_group_denied", username,
                            detail=f"verlangt={sorted(str(a) for a in allowed)}")
                 return None
+        # Nicht vertraut und die Eingabe ist eine Adresse (ein Suchfilter über `mail`, "Anmeldung mit
+        # Name oder E-Mail"): Dann ist der Name dieselbe unbelegte Adresse — als Kontoname und
+        # `Remote-User` besetzte er die Kennung der Inhaberin, und über den Namen gebunden
+        # übernähme er deren Konto (Angriff auf die dritte Runde). Wie bei SAML: Ersatzname,
+        # keine Zuordnung über den Namen.
+        kennung_ldap = info.get("id") or ""
+        ldap_name = username
+        name_zuordnen = True
+        if name_ungueltig(username) or (not self.cfg.ldap_email_trusted and "@" in norm_kennung(username)):
+            ldap_name = "ldap-" + hashlib.sha256((kennung_ldap or username).encode()).hexdigest()[:8]
+            name_zuordnen = False
+
         def _anlegen():
             if not self.cfg.ldap_auto_create:
                 return None
@@ -1591,7 +1631,12 @@ class TinySesam:
                 # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er dem Verzeichnis
                 # traut (`ldap_email_trusted`, Vorgabe ja): dann mit Beleg, sonst gar nicht (H-3).
                 vertraut = bool(self.cfg.ldap_email_trusted)
-                return self.create_user(username, display_name=info.get("name") or username,
+                name = ldap_name
+                i = 1
+                while name != username and self.kennung_vergeben(name):
+                    i += 1
+                    name = f"{ldap_name}{i}"
+                return self.create_user(name, display_name=info.get("name") or name,
                                         email=info.get("email") if vertraut else None,
                                         email_verified=vertraut and bool(info.get("email")))
             except ConfigError:
@@ -1602,7 +1647,8 @@ class TinySesam:
 
         # Zugeordnet wird über die STABILE Kennung des Verzeichnisses, nicht über den Namen
         # (F-11). Der Name bleibt der Rückfall für Konten, die noch keine Bindung haben.
-        u = self._fremde_identitaet_aufloesen("ldap", info.get("id") or "", username, _anlegen)
+        u = self._fremde_identitaet_aufloesen("ldap", kennung_ldap, username, _anlegen,
+                                              name_zuordnen=name_zuordnen)
         if not u or u["disabled"]:
             return None
         self._adresse_aus_quelle_belegen(u, info.get("email"), self.cfg.ldap_email_trusted)
@@ -1616,8 +1662,10 @@ class TinySesam:
         """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
         Die Adresse aus dem Attribut trägt keinen Beleg (SAML kennt kein `email_verified`).
-        Deshalb legt dieser Weg mit `email_verified=False` an, und der Faktor `saml` steht in
-        `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird über diesen Weg nie zum Erst-Admin,
+        Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er ihr traut
+        (`saml_email_trusted`, Vorgabe nein). Ohne Vertrauen wird sie nicht verwendet, ein
+        Kontoname mit `@` weicht einem Ersatznamen, und über einen solchen Namen wird nie ein
+        vorhandenes Konto zugeordnet. Der Faktor `saml` steht in `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird über diesen Weg nie zum Erst-Admin,
         auch wenn ein Aufrufer den Beleg nicht nennt — und auch nicht über einen zweiten,
         selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13).
 
@@ -1642,8 +1690,10 @@ class TinySesam:
         # Gilt nur für NEUE Konten; ein gebundenes behält seinen Namen. Geprüft wird gefaltet
         # (`＠` U+FF20 wird zu `@`, R2-1).
         neu_name = username
-        if not vertraut and "@" in norm_kennung(username):
+        name_zuordnen = True
+        if name_ungueltig(username) or (not vertraut and "@" in norm_kennung(username)):
             neu_name = "saml-" + hashlib.sha256((kennung or username).encode()).hexdigest()[:8]
+            name_zuordnen = False
         if cfg.saml_allowed_groups:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
@@ -1673,7 +1723,8 @@ class TinySesam:
                 self.audit("saml_ident_taken", username)
                 return None
 
-        u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen)
+        u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen,
+                                              name_zuordnen=name_zuordnen)
         if u and u["disabled"]:
             self.audit("saml_denied", str(u["username"]), ip, "grund=konto_gesperrt")
             return None
@@ -3133,16 +3184,28 @@ class TinySesam:
         handle, client = s["token_hash"], z["client"]
         konto = self.store.get_user(s["user_id"])
         name = konto["username"] if konto else None
+        if not self.oidc_clients.bekannt(client):
+            # Die Anwendung wurde aus `oidc_clients` genommen. Der Rückfall auf den Vorgabe-Client
+            # tauschte ein fremdes Refresh-Token mit falschen Zugangsdaten — der Provider sagte
+            # Nein, und das träfe das Konto (Angriff auf die dritte Runde). Die Zeile geht, die
+            # Sitzung bleibt bis zu ihrem Ablauf.
+            self.store.oidc_sitzung_verwerfen(handle, client)
+            security.seclog.warning("OIDC-Nachprüfung: Client %s ist nicht mehr eingerichtet — "
+                                    "Zeile verworfen, kein Nein. user=%s",
+                                    security.fuer_log(client), security.fuer_log(name))
+            return
         try:
             refresh = self.store.tresor.entschluesseln(z["refresh"])
         except Exception:   # noqa: BLE001 — falscher Schlüssel: der Start prüft das; hier nichts verbrennen
             self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60)
             return
+        gefragt = _jetzt()
         status, info, tok = self.oidc_clients[client].refresh(refresh, z["sub"])
         jetzt = _jetzt()
         if status == "fehler":
             self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60)
-            security.seclog.warning("OIDC-Nachprüfung: Provider nicht erreichbar (%s) — Sitzung bleibt, "
+            security.seclog.warning("OIDC-Nachprüfung ohne Ergebnis (%s): Provider nicht erreichbar oder "
+                                    "ein Fehler des Clients (Zugangsdaten, Grant) — Sitzung bleibt, "
                                     "neuer Versuch in einer Minute. user=%s",
                                     security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
             return
@@ -3152,7 +3215,7 @@ class TinySesam:
             self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund={fehler}")
             self._idp_nein(s["user_id"], name, s["ip"], client, fehler)
             return
-        self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
+        lebt = self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
         eintrag = self.oidc_clients.eintrag(client)
         if self.cfg.oidc_group_claim in info:
             roh = info.get(self.cfg.oidc_group_claim) or []
@@ -3164,7 +3227,10 @@ class TinySesam:
                 self._idp_nein(s["user_id"], name, s["ip"], client, "gruppe")
                 return
             self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
-        self.store.idp_bestaetigen(s["user_id"])
+        if lebt:
+            # Nur, wenn die Sitzung noch da ist: Ein paralleles Nein über einen anderen Client
+            # kann sie inzwischen beendet haben — dann bestätigt dieses Ja nichts mehr.
+            self.store.idp_bestaetigen(s["user_id"], gefragt)
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
@@ -3292,6 +3358,19 @@ class TinySesam:
         req, _ = self._global_chain()
         if not (req and "totp" in req):
             return None
+        if self.cfg.magiclink_require_second_factor and self.store.list_webauthn(u["id"]):
+            # Die Begründung oben setzt einen Erstfaktor voraus, der ein Geheimnis beweist. Hat
+            # die Sitzung nur den Anmelde-Link (das Postfach) erbracht, und hat das Konto schon
+            # einen Passkey, richtete sich sonst das Postfach selbst einen zweiten Faktor ein und
+            # umginge den Passkey (ASVS 6.3.6, Angriff auf die dritte Runde). Konten OHNE zweiten
+            # Faktor dürfen es weiter — das ist der bewusste Preis von Option C.
+            s = self.session_from_request(request)
+            done = json.loads(s["factors_done"] or "[]") if s else []
+            if not (set(done) & (set(self.IDENTIFYING) - {"magic"})):
+                konto = self.store.get_user(u["id"])
+                self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
+                           detail="nur Anmelde-Link, Konto hat einen Passkey")
+                return None
         if not self.darf_mfa_einrichten(u["id"]):
             # Kein stilles Nein: Wer hier scheitert, hat das richtige Passwort und steht vor
             # einer Tür, die sich nicht öffnet. Die Zeile sagt dem Betreiber, welcher Weg bleibt.
@@ -3981,6 +4060,14 @@ class TinySesam:
         die E-Mail-Adresse nicht rausgeben" eine Weglassung und kein zweiter Schalter. Ein Feld darf
         auf mehrere Namen zeigen, wenn eine App den einen und ein Zwischenstück den anderen liest.
         """
+        if name_ungueltig(user["username"]):
+            # Die Säuberung unten nähme das Zeichen heraus und schickte den Namen eines ANDEREN
+            # Kontos (`chefin\x01` → `chefin`). Fail-closed: lieber keine Freigabe als eine
+            # fremde Identität. Neue Namen lässt `create_user` so gar nicht mehr zu; das hier
+            # trifft Bestand aus der Zeit davor und Namen, die am Store vorbei geschrieben wurden.
+            security.seclog.warning("forward-auth abgewiesen: Kontoname mit Steuerzeichen (user_id=%s)",
+                                    user["id"])
+            raise HTTPException(403, self.t("api.name_invalid"))
         werte = {
             "user": str(user["username"] or ""),
             "name": str(user["display_name"] or user["username"] or ""),

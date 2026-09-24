@@ -960,8 +960,20 @@ r.check("… mit Zeile im Audit-Log (wie viele Keys es betrifft)",
         _zeile8 is not None and "anzahl=1" in _zeile8["detail"], str(_zeile8 and dict(_zeile8)))
 r.check("… gelöscht oder widerrufen ist nichts",
         not a8.store._one("SELECT revoked FROM api_key")["revoked"])
+# Das Nein liegt als NEGATIVER Zeitpunkt; ein Ja weckt nur, wenn seine Frage danach abging. Hier
+# liegt das Nein fünf Sekunden zurück, die Anmeldung beginnt jetzt.
+a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (-(int(_zeit.time()) - 5), uid8))
 r.check("… und die nächste Anmeldung über den Provider weckt ihn wieder",
         _erneut_ueber_idp(c8).status_code == 303 and a8.verify_api_key(key8)[0] is not None)
+# Der Wettlauf: Die Frage ging VOR dem Nein ab (zwei Sitzungen, zwei Arbeiter), das Ja wird
+# aber danach angewandt. Es darf das Nein nicht überschreiben.
+a8.store.idp_verweigert(uid8)
+_frage_vorher = int(_zeit.time()) - 10
+r.check("Fund 8: ein Ja, dessen Frage VOR dem Nein abging, weckt die Keys nicht (Wettlauf)",
+        not a8.store.idp_bestaetigen(uid8, _frage_vorher) and a8.verify_api_key(key8)[0] is None)
+a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (-(int(_zeit.time()) - 5), uid8))
+r.check("… eines, dessen Frage danach abging, schon",
+        a8.store.idp_bestaetigen(uid8, int(_zeit.time())) and a8.verify_api_key(key8)[0] is not None)
 
 # Frist ohne Sitzung (Skript-only): 30 Tage Vorgabe.
 a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (int(_zeit.time()) - 29 * 86400, uid8))
@@ -992,7 +1004,7 @@ a8b.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
 a8b._oidc_nachpruefen(a8b.store._one("SELECT * FROM session"))
 a8b._oidc_ausgang.abwarten()
 r.check("… ein Entzug der erlaubten Gruppe ist ein Nein: der Key ruht",
-        a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_bestaetigt_at"] == 0)
+        a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_bestaetigt_at"] < 0)
 
 # Konten ohne OIDC-Bindung betrifft das nicht — auch nicht mit einem Stand, der „Nein" hiesse.
 lokal8 = a8.create_user("lokal8", password=PW)
@@ -1007,6 +1019,7 @@ _alt8 = Store(_pfad8)
 _alt8.create_user("bestand-oidc", None, None, False, [], False)
 _alt8.link_oidc("https://idp.example", "sub-b", 1)
 _alt8.db.execute("ALTER TABLE users DROP COLUMN idp_bestaetigt_at")
+_alt8.db.execute("DELETE FROM setting WHERE key='idp_bestand_gesetzt'")   # eine 0.20-Datei kennt ihn nicht
 _alt8.db.commit()
 _alt8.db.close()
 _neu8 = Store(_pfad8)
@@ -1019,6 +1032,17 @@ _neu8.db.close()
 r.check("Fund 8, Bestand: Die Frist eines OIDC-Kontos beginnt mit dem Update — und nur einmal",
         _stand8 is not None and abs(_stand8 - int(_zeit.time())) < 60
         and Store(_pfad8).get_user(1)["idp_bestaetigt_at"] is None, f"{_stand8}")
+# Abbruch mitten im Update: Die Spalte ist schon da (das ALTER ist sofort dauerhaft), Stand und
+# Merker nicht. Der nächste Start holt es nach.
+_pfad8c = str(Path(tempfile.mkdtemp()) / "abbruch8.db")
+_ab8 = Store(_pfad8c)
+_ab8.create_user("abbruch-oidc", None, None, False, [], False)
+_ab8.link_oidc("https://idp.example", "sub-c", 1)
+_ab8.db.execute("DELETE FROM setting WHERE key='idp_bestand_gesetzt'")
+_ab8.db.commit()
+_ab8.db.close()
+r.check("Fund 8, Bestand: nach einem Abbruch (Spalte da, Merker nicht) setzt der nächste Start den Stand",
+        Store(_pfad8c).get_user(1)["idp_bestaetigt_at"] is not None)
 # (Mutationsproben: `_key_ruht` in `verify_api_key` streichen → „ruht" rot; `idp_bestaetigen` im
 #  Callback streichen → „weckt ihn wieder" rot; die Frist-Prüfung streichen → „31: ruht" rot;
 #  `_idp_nein` im Gruppen-Zweig streichen → Gruppen-Entzug rot; die Bindungs-Prüfung streichen →
@@ -1085,6 +1109,156 @@ r.check("… andere Wege bleiben, wie sie waren (Passwort in der Kette [\"magic\
         _pw3.get("/drin", follow_redirects=False).status_code != 200)
 # (Mutationsproben: `_link_braucht` in `_session_ok` streichen → die ersten zwei rot; die
 #  Passkey-Zeile streichen → Passkey-Konto rot; den Schalter nicht lesen → „einstellbar" rot.)
+
+# ── Angriff auf die dritte Runde: Funde und ihre Riegel ────────────────────────────────────
+from fastapi import HTTPException as _HTTPEx  # noqa: E402
+from tinysesam import konfigpruefung as _kp3  # noqa: E402
+from tinysesam.oidc import OIDCClient as _OC3  # noqa: E402
+
+
+class _LDAP3:
+    def __init__(self, eintraege):
+        self.e = eintraege
+
+    def authenticate(self, username, password):
+        z = self.e.get(username)
+        return dict(z, username=username, groups=[]) if z and password == "x" else None
+
+
+# S1 (hoch): SAML nicht vertraut — ein Name, der die Adresse eines lokalen Kontos ist, bindet es nicht.
+a_s1, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
+               saml_idp_x509cert="MII", login_identifier="email")
+opfer_s1 = a_s1.create_user("bob@example.com", password=PW, email="bob@example.com", is_admin=True)
+neu_s1 = a_s1.check_saml("bob@example.com", {"email": ["bob@example.com"]})
+r.check("Angriff R3/S1: SAML (nicht vertraut) mit der Adresse eines lokalen Kontos als NameID übernimmt es nicht",
+        neu_s1 is not None and neu_s1["id"] != opfer_s1 and neu_s1["username"].startswith("saml-")
+        and not neu_s1["is_admin"] and a_s1.store.get_federated_kennung("saml", opfer_s1) is None,
+        str(neu_s1))
+a_s1.check_saml("BOB@EXAMPLE.COM", {"email": ["bob@example.com"]})
+r.check("… auch nicht in anderer Schreibweise", a_s1.store.get_federated_kennung("saml", opfer_s1) is None)
+
+# S3: ohne stabile Kennung wird ein Adress-Name abgewiesen — nicht bei jedem Login ein neues Konto.
+a_s3, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
+               saml_idp_x509cert="MII", saml_attr_id="objectGUID")
+_vorher_s3 = len(a_s3.store.list_users())
+_e1 = a_s3.check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
+_e2 = a_s3.check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
+r.check("Angriff R3/S3: SAML nicht vertraut, Adress-Name ohne Kennung → abgewiesen, kein Konto je Login",
+        _e1 is None and _e2 is None and len(a_s3.store.list_users()) == _vorher_s3)
+
+# S2 (mittel): LDAP nicht vertraut, Anmeldung mit einer Adresse (Filter über mail).
+a_s2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False,
+               login_identifier="both")
+chefin_s2 = a_s2.create_user("chefin@example.com", password=PW, email="chefin@example.com")
+a_s2.ldap = _LDAP3({"chefin@example.com": {"id": "uuid-mallory", "email": "chefin@example.com", "name": "M"}})
+neu_s2 = a_s2.check_ldap("chefin@example.com", "x")
+r.check("Angriff R3/S2: LDAP nicht vertraut — die eingetippte Adresse wird weder Kontoname noch bindet sie ein Konto",
+        neu_s2 is not None and neu_s2["id"] != chefin_s2 and neu_s2["username"].startswith("ldap-")
+        and not neu_s2["email"] and a_s2.store.get_federated_kennung("ldap", chefin_s2) is None, str(neu_s2))
+
+# S4 (hoch, vorbestehend): Steuerzeichen im Kontonamen.
+a_s4, app_s4 = _app(allow_signup=True)
+try:
+    a_s4.create_user("chefin\x01", password=PW)
+    _s4_create = False
+except ConfigError:
+    _s4_create = True
+_s4_reg = TestClient(app_s4).post("/auth/register", data={"username": "chefin​", "password": PW + "xyz",
+                                                         "next": "/"}, follow_redirects=False)
+r.check("Angriff R3/S4: kein Konto mit Steuer-/Formatzeichen im Namen (create_user, Registrierung)",
+        _s4_create and _s4_reg.status_code == 400 and a_s4.store.get_user_by_name("chefin​") is None,
+        f"create={_s4_create} reg={_s4_reg.status_code}")
+a_s4.create_user("chefin", password=PW)
+_alt_s4 = a_s4.store.create_user("chefin\x01", None, None, False, [], False)       # Bestand am Riegel vorbei
+try:
+    a_s4.forward_response_headers(a_s4.get_user(_alt_s4))
+    _s4_fwd = False
+except _HTTPEx as e:
+    _s4_fwd = e.status_code == 403
+r.check("… und ein solcher Bestand bekommt keinen Remote-User (fail-closed statt `chefin`)", _s4_fwd)
+a_s4o, app_s4o = _oidc({"sub": "s4-sub", "preferred_username": "chefin\x01", "email": "c4@example.com",
+                        "email_verified": True})
+_oidc_login(app_s4o)
+_s4o = [u["username"] for u in a_s4o.store.list_users()]
+r.check("… ein IdP-Name mit Steuerzeichen wird verworfen (hier gilt die belegte Adresse)",
+        _s4o == ["c4@example.com"], str(_s4o))
+a_s4s, app_s4s = _oidc({"sub": "\x01s4", "preferred_username": ""})
+_s4s_antwort = _oidc_login(app_s4s)
+_s4s = [u["username"] for u in a_s4s.store.list_users()]
+r.check("… und eine `sub` mit Steuerzeichen ergibt einen gehashten Ersatznamen, keine Abweisung",
+        _s4s_antwort.status_code == 303 and len(_s4s) == 1 and _s4s[0].startswith("oidc-")
+        and "\x01" not in _s4s[0], f"{_s4s_antwort.status_code} {_s4s}")
+
+# F8-2: Fehler des Clients sind kein Nein zum Konto.
+import httpx as _httpx3  # noqa: E402
+
+
+class _Antwort3:
+    def __init__(self, code, body):
+        self.status_code, self._b = code, body
+
+    def json(self):
+        return self._b
+
+
+_post3 = _httpx3.post
+_oc3 = _OC3.__new__(_OC3)
+_oc3.client_id, _oc3.client_secret = "c", "s"
+_oc3.meta = lambda: {"token_endpoint": "https://idp.example/token", "issuer": "https://idp.example"}
+_erg3 = {}
+try:
+    for code, body in ((401, {"error": "invalid_client"}), (400, {"error": "unauthorized_client"}),
+                       (400, {}), (400, {"error": "invalid_grant"}), (400, {"error": "access_denied"})):
+        _httpx3.post = lambda *a, _c=code, _b=body, **k: _Antwort3(_c, _b)
+        _erg3[(code, body.get("error", "-"))] = _oc3.refresh("rt", "sub")[0]
+finally:
+    _httpx3.post = _post3
+r.check("Angriff R3/F8-2: invalid_client, unauthorized_client, 400 ohne Code → „fehler\"; invalid_grant, access_denied → Nein",
+        [_erg3[k] for k in sorted(_erg3)] and _erg3[(401, "invalid_client")] == "fehler"
+        and _erg3[(400, "unauthorized_client")] == "fehler" and _erg3[(400, "-")] == "fehler"
+        and _erg3[(400, "invalid_grant")] == "abgelehnt" and _erg3[(400, "access_denied")] == "abgelehnt", str(_erg3))
+# … und eine Zeile eines nicht mehr eingerichteten Clients wird verworfen, nicht als Nein getauscht.
+a_f2, _, _ = _oidc_mit_refresh("f2-konto")
+_uid_f2 = a_f2.store.get_user_by_name("f2-konto")["id"]
+_h_f2 = a_f2.store._one("SELECT token_hash FROM session")["token_hash"]
+a_f2.store.set_oidc_sitzung(_h_f2, "app-weg", "f2-konto", "rt-weg")
+a_f2.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})     # der Rückfall sagte Nein
+a_f2.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60 WHERE client='app-weg'")
+a_f2._oidc_nachpruefen(a_f2.store._one("SELECT * FROM session"))
+a_f2._oidc_ausgang.abwarten()
+r.check("… eine Zeile eines entfernten Clients geht, die Sitzung bleibt, das Konto bekommt kein Nein",
+        a_f2.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung WHERE client='app-weg'")["n"] == 0
+        and a_f2.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 1
+        and (a_f2.store.get_user(_uid_f2)["idp_bestaetigt_at"] or 0) > 0)
+
+# 3c/M1: Kette ["magic","totp"], Konto mit Passkey ohne TOTP — das Postfach richtet sich kein TOTP ein.
+a_m1, ap_m1 = _link_app(login_chain=["magic", "totp"])
+u_m1 = a_m1.create_user("pk-kette", password=PW, email="pkk@example.com")
+a_m1.store.add_webauthn(u_m1, b"cred-m1", b"pub", 0, "[]", "Laptop")
+c_m1, _ = _link_login(a_m1, ap_m1, "pk-kette")
+_setup_m1 = c_m1.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False)
+r.check("Angriff R3/M1: nur Anmelde-Link + Konto mit Passkey → keine TOTP-Selbsteinrichtung",
+        _setup_m1.status_code != 200 and not a_m1.store.has_confirmed_totp(u_m1)
+        and any(z["event"] == "mfa_enrollment_denied" for z in a_m1.store.recent_audit(20)),
+        f"HTTP {_setup_m1.status_code}")
+a_m2, ap_m2 = _link_app(login_chain=["magic", "totp"])
+a_m2.create_user("frisch-kette", password=PW, email="fk@example.com")
+c_m2, _ = _link_login(a_m2, ap_m2, "frisch-kette")
+r.check("… ein Konto ohne zweiten Faktor darf es weiter (der Preis von C)",
+        c_m2.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
+
+# S5: Die Konfigurationsprüfung sagt, was die Laufzeit tut.
+_w_v = " ".join(_kp3.pruefe(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
+                                             ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True))[1])
+_w_n = " ".join(_kp3.pruefe(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
+                                             ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
+                                             ldap_email_trusted=False))[1])
+r.check("Angriff R3/S5: Konfig-Prüfung — vertraute Quelle: „wird Erst-Admin\"; nicht vertraut: „NIE\"",
+        "vertraute Quelle" in _w_v and "NIE" not in _w_v and "NIE" in _w_n, _w_v[:200])
+# (Mutationsproben stehen im Commit: name_zuordnen ignoriert → S1 rot; Abweisung ohne Kennung weg →
+#  S3 rot; LDAP-Ersatzname weg → S2 rot; name_ungueltig in create_user weg → S4 rot; Header-Riegel
+#  weg → „fail-closed" rot; Client-Fehler wieder als Nein → F8-2 rot; `bekannt` weg → „entfernter
+#  Client" rot; Passkey-Prüfung in totp_enrollment_user weg → M1 rot.)
 
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")

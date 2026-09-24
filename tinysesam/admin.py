@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse
 from .errors import ConfigError, StateError
 from .router import _key_art, _mail_basis, gehaertete_route
 from . import security
-from .store import norm_email, valid_email
+from .store import name_ungueltig, norm_email, valid_email
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
 
@@ -124,6 +124,8 @@ def build_admin_router(auth) -> APIRouter:
             username = email or ""
         if not username:
             raise HTTPException(400, auth.t("api.username_req"))
+        if name_ungueltig(username):
+            raise HTTPException(400, auth.t("err.username_invalid"))
         if auth.kennung_vergeben(username):
             raise HTTPException(409, auth.t("api.user_exists"))
         roles = rollen_aus(b)

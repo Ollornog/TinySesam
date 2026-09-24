@@ -314,6 +314,17 @@ def _eine_schrift(teil: str) -> bool:
     return len(s) <= 1 or any(s <= gruppe for gruppe in _SCHRIFT_GRUPPEN)
 
 
+def name_ungueltig(name) -> bool:
+    """Enthält ein Benutzername Steuer-, Format- oder Trennzeichen (Cc/Cf/Zl/Zp)?
+
+    Solche Zeichen trennen zwei Kennungen, die für einen Menschen und für einen HTTP-Header gleich
+    aussehen: `chefin\\x01` ist für `kennung_vergeben` ein anderer Name als `chefin`, aber die
+    Header-Säuberung der Forward-Auth nimmt das Steuerzeichen heraus — die geschützte App bekam
+    `Remote-User: chefin` von einem fremden Konto (Angriff auf die dritte Runde). Dieselbe Regel
+    wie für Adressen (`valid_email`)."""
+    return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
+
+
 def norm_kennung(kennung) -> str:
     """Die Login-Kennung so, wie der Sperrzähler sie führt: NFKC, getrimmt, klein — und eine
     Adresse so kanonisch wie `norm_email` sie speichert.
@@ -687,13 +698,11 @@ class Store:
                     raise RuntimeError("SCHEMA enthält keine Tabelle fehlserie")
                 self.db.execute("DROP TABLE fehlserie")
                 self.db.execute(ddl.group(0))
-            neu_angelegt = set()
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in cols:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
-                        neu_angelegt.add((table, name))
 
             # Sitzungs-Tokens lagen bis 0.18.0 im Klartext in der Datei. Der Hash lässt sich aus
             # dem Klartext ausrechnen — bestehende Anmeldungen überleben die Umstellung also, die
@@ -764,15 +773,22 @@ class Store:
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
-            if ("users", "idp_bestaetigt_at") in neu_angelegt:
+            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_bestand_gesetzt'").fetchone() is None:
                 # Die Frist für die API-Keys eines OIDC-Kontos (Fund 8) beginnt für den Bestand
                 # mit dem Update — sonst ruhten nach dem Update sofort alle Keys, bis jeder sich
-                # einmal über den Provider angemeldet hat. Genau einmal, beim Anlegen der Spalte:
-                # Liefe es bei jedem Start, schenkte jeder Neustart einem Konto ohne Bestätigung
-                # eine neue Frist. Hier und nicht direkt nach dem ALTER: Ein UPDATE öffnet in
+                # einmal über den Provider angemeldet hat. Genau einmal: Liefe es bei jedem Start,
+                # schenkte jeder Neustart einem Konto ohne Bestätigung eine neue Frist.
+                #
+                # Am Merker, nicht an „Spalte in diesem Lauf angelegt": Das ALTER ist sofort
+                # dauerhaft, dieses UPDATE erst mit dem Schluss-Commit. Ein Abbruch dazwischen
+                # (OOM, Neustart mitten im Update) hinterliess die Spalte ohne Stand, und kein
+                # Start holte ihn nach (Angriff auf die dritte Runde). Merker und Stand gehen im
+                # selben Commit. Hier und nicht direkt nach dem ALTER: Ein UPDATE öffnet in
                 # Pythons sqlite3 eine Transaktion, und das `BEGIN IMMEDIATE` oben schlüge fehl.
                 self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
+                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
+                                (str(_now()),))
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -1633,14 +1649,30 @@ class Store:
         """Ist dieses Konto an eine OIDC-Identität gebunden (Fund 8)?"""
         return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? LIMIT 1", (user_id,)))
 
-    def idp_bestaetigen(self, user_id) -> None:
-        """Der Provider hat das Konto eben bestätigt (Login über ihn, Refresh-Tausch mit Ja)."""
-        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (_now(), user_id))
+    def idp_bestaetigen(self, user_id, gefragt_at: Optional[int] = None) -> bool:
+        """Der Provider hat das Konto bestätigt (Login über ihn, Refresh-Tausch mit Ja).
+
+        `gefragt_at` ist der Zeitpunkt, zu dem die Frage an den Provider ABGING. Ein Nein, das
+        danach eingetragen wurde, bleibt stehen: Zwei Tausche laufen parallel (zwei Sitzungen,
+        zwei Clients), und ein Ja, das vor der Sperre beantwortet, aber nach dem Nein angewandt
+        wird, weckte sonst die Keys eines gesperrten Kontos (Angriff auf die dritte Runde).
+        Rückgabe: ob geschrieben wurde."""
+        jetzt = _now()
+        gefragt = int(gefragt_at if gefragt_at is not None else jetzt)
+        return self._exec(
+            "UPDATE users SET idp_bestaetigt_at=? WHERE id=? AND (idp_bestaetigt_at IS NULL "
+            "OR idp_bestaetigt_at > 0 OR -idp_bestaetigt_at < ?)", (jetzt, user_id, gefragt)).rowcount > 0
 
     def idp_verweigert(self, user_id) -> None:
         """Der Provider hat Nein gesagt: Die API-Keys des Kontos ruhen bis zur nächsten
-        Bestätigung (Fund 8). 0 statt NULL — NULL heisst „nie bestätigt", 0 heisst „verweigert"."""
-        self._exec("UPDATE users SET idp_bestaetigt_at=0 WHERE id=?", (user_id,))
+        Bestätigung (Fund 8). Gespeichert als NEGATIVER Zeitpunkt des Neins — NULL heisst „nie
+        bestätigt", ≤ 0 „verweigert", und der Zeitpunkt entscheidet, ob ein später angewandtes Ja
+        jünger ist (`idp_bestaetigen`)."""
+        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
+
+    def oidc_sitzung_verwerfen(self, handle, client) -> None:
+        """Eine OIDC-Zeile ohne eingerichteten Client verwerfen — die Sitzung selbst bleibt."""
+        self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
@@ -1718,14 +1750,16 @@ class Store:
         return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
                           "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
 
-    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None) -> None:
-        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)."""
+    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None) -> bool:
+        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation).
+        Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein)."""
         if neuer_refresh and self.tresor is not None:
-            self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=? AND client=?",
-                       (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle), client))
+            return self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=? AND client=?",
+                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle),
+                               client)).rowcount > 0
         else:
-            self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=?",
-                       (int(zeit), self._handle(handle), client))
+            return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=?",
+                              (int(zeit), self._handle(handle), client)).rowcount > 0
 
     def oidc_sitzung_umhaengen(self, alt, neu) -> None:
         """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —

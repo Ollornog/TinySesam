@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .errors import ConfigError
 from . import security
-from .store import ersatzname, norm_email, valid_email
+from .store import ersatzname, name_ungueltig, norm_email, valid_email
 from . import security
 
 
@@ -161,8 +161,9 @@ def build_router(auth) -> APIRouter:
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
-        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Es gibt
-        # dafür keinen Beleg, und deshalb reist hier ausdrücklich „kein Beleg" mit: Eine
+        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
+        # Betreiber dem Verzeichnis (`ldap_email_trusted`, Vorgabe), entscheidet der Beleg am
+        # Konto (None); sonst reist hier ausdrücklich „kein Beleg" mit: Eine
         # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
         # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
@@ -890,6 +891,8 @@ def build_router(auth) -> APIRouter:
                 username = email_final or ""
             if not username:
                 return err(auth.t("err.username_required"))
+            if name_ungueltig(username):
+                return err(auth.t("err.username_invalid"))
             # Benutzername = die eigene Adresse? Dann prüft die Adress-Prüfung unten beides.
             name_ist_adresse = bool(email_final) and norm_email(username) == email_final
             # Mit Bestätigung darf ein Benutzername keine FREMDE Adresse sein (Angriff A1): Die
@@ -1379,8 +1382,9 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "/")
             # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
-            # Adresse geprüft hat. Deshalb reist hier ausdrücklich „kein Beleg" mit — eine
-            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Der Faktor `saml`
+            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) reist hier deshalb „kein
+            # Beleg" mit — eine Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit
+            # dem Schalter zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
             # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),

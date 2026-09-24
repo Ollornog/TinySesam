@@ -162,7 +162,10 @@ Seite gehört und sich nicht ändert:
   (keine OIDC-Bindung, nicht betroffen). Bestand: Die Frist beginnt mit dem Update. `0` schaltet nur
   die Frist ab, das Nein zählt weiter. Mit Keycloak beachten: Läuft dort die SSO-Sitzung per
   Leerlauf ab, antwortet der Refresh ebenfalls `invalid_grant` — dann endet auch die
-  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login.
+  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login. **Ein Nein ist nur `invalid_grant`
+  oder `access_denied`**; ein Fehler des Clients (`invalid_client` nach einer Secret-Rotation,
+  `unauthorized_client`) zählt wie ein nicht erreichbarer Provider und steht als Warnung im
+  Sicherheits-Log. Wird eine Anwendung aus `oidc_clients` genommen, verwirft 4a ihre Zeilen.
 - **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
   Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
   räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
@@ -188,6 +191,11 @@ Seite gehört und sich nicht ändert:
   F-14; die Vorgabe „vertraut" nimmt diesen Schutz bewusst zurück). Vertraut belegt ein Login nur
   dieselbe Adresse, die schon am Konto steht, und nur nach oben; ein neuer Wert im Verzeichnis
   ändert die Adresse eines bestehenden Kontos nicht. Bestehende Konten behalten, was sie haben.
+  Bei nicht vertrauter Quelle wird ein Name, der eine Adresse ist (SAML-NameID emailAddress, eine
+  LDAP-Anmeldung mit der Adresse über einen Filter wie `(|(uid={username})(mail={username}))`),
+  **nie über den Namen** einem vorhandenen Konto zugeordnet — nur über die stabile Kennung, sonst
+  abgewiesen. Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese Namen nicht will und dem
+  IdP traut, setzt den Schalter.
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
