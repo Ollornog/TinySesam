@@ -579,7 +579,7 @@ def register_oidc_routes(router, auth):
         auth._flow_cookie_setzen(resp, _OIDCFLOW, wert, max_age=600)
 
     @router.get("/auth/oidc/start")
-    def oidc_start(request: Request, next: str = "/", app: str = ""):
+    def oidc_start(request: Request, next: str = "", app: str = ""):
         # Jeder Aufruf hinterlässt eine `flow`-Zeile (600 s), gelöscht wird sie nur beim
         # erfolgreichen Rückweg oder von `gc`. Im Gateway-Betrieb ist das genau der Einstieg,
         # auf den der Proxy jeden nicht angemeldeten Besucher schickt — jeder Abbruch, jeder
@@ -804,7 +804,7 @@ def register_oidc_routes(router, auth):
         # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).
         auth.vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
         target = auth.login_redirect_after(request, token, uid,
-                                           auth.safe_next(flow.get("next") or cfg.login_redirect))
+                                           auth.safe_next(flow.get("next") or "", request))
         resp = RedirectResponse(target, 303)
         if is_new:
             auth.set_cookie(resp, token)

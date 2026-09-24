@@ -45,6 +45,11 @@ class Templates:
         return fn(auth, ctx)
 
 
+#: Platzhalter vor jedem Pfad der App in den eingebauten Seiten (Formulare, Links, fetch-Aufrufe).
+#: `TinySesam.render_page` setzt dafür den Montage-Präfix (`root_path`) ein (T-15); ein eigenes
+#: Template, das ihn nicht nennt, bleibt unberührt.
+PRAEFIX_PLATZHALTER = "__TS_P__"
+
 _CSS = TOKENS + """
 /* WICHTIG: alles unterhalb von .tsmain gekapselt. Sonst faerbt das Karten-CSS auf `brand_header`
    und `brand_footer` der Host-App ab (nackte button/input/h1-Selektoren). */
@@ -242,7 +247,7 @@ def _login(auth, ctx) -> str:
     pw_ac = "new-password" if cfg.demo_mode else "current-password"
     pw = ""
     if "password" in methods:
-        pw = (f"<form method=post action='{_e(cfg.login_path)}'>"
+        pw = (f"<form method=post action='__TS_P__{_e(cfg.login_path)}'>"
               f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
               f"<label>{_e(id_label)}</label><input name=username required autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>"
               f"<label>{_e(t('login.password'))}</label><input name=password required type=password autocomplete={pw_ac}>"
@@ -250,7 +255,7 @@ def _login(auth, ctx) -> str:
               f"<button type=submit>{_e(t('login.submit'))}</button></form>")
     pin = ""
     if "pin" in methods:
-        pin = (f"{_or if pw else ''}<form method=post action='/auth/pin'>"
+        pin = (f"{_or if pw else ''}<form method=post action='__TS_P__/auth/pin'>"
                f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
                f"<label>{_e(id_label)}</label><input name=username autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false{'' if pw else ' autofocus'}>"
                f"<label>{_e(t('login.pin'))}</label><input name=pin required type=password inputmode=numeric autocomplete=off class=code>"
@@ -258,19 +263,19 @@ def _login(auth, ctx) -> str:
                f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>")
     magic = ""
     if "magic" in methods:
-        magic = f"<a class=btn2 href='/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
-    oidc = (f"<a class=btn2 href='/auth/oidc/start?next={_e(next_)}'>{_e(cfg.oidc_name)}</a>"
+        magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
+    oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_e(next_)}'>{_e(cfg.oidc_name)}</a>"
             if "oidc" in methods else "")
-    saml = (f"<a class=btn2 href='/auth/saml/login?next={_e(next_)}'>{_e(cfg.saml_name)}</a>"
+    saml = (f"<a class=btn2 href='__TS_P__/auth/saml/login?next={_e(next_)}'>{_e(cfg.saml_name)}</a>"
             if "saml" in methods else "")
     passkey = f"<button class=btn2 type=button id=pkbtn>{_e(t('login.passkey'))}</button>" if "passkey" in methods else ""
     others = oidc + saml + passkey + magic
     sep = _or if others and (pw or pin) else ""
     links = []
     if cfg.allow_signup:
-        links.append(f"<a href='/auth/register?next={_e(next_)}'>{_e(t('login.signup'))}</a>")
+        links.append(f"<a href='__TS_P__/auth/register?next={_e(next_)}'>{_e(t('login.signup'))}</a>")
     if getattr(cfg, "password_reset_enabled", False) and cfg.magiclink_enabled:
-        links.append(f"<a href='/auth/forgot'>{_e(t('login.forgot'))}</a>")
+        links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
@@ -282,12 +287,12 @@ def _totp(auth, ctx) -> str:
     t = auth.t
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('totp.title'))}</h1>{err}"
-            f"<form method=post action='/auth/totp'>"
+            f"<form method=post action='__TS_P__/auth/totp'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(t('totp.label'))}</label>"
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/logout'>{_e(t('cancel'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div>")
     return _page(auth, t("totp.title"), body)
 
 
@@ -333,7 +338,7 @@ def _account(auth, ctx) -> str:
                     f"<button class=warn data-act=deltotp>{_e(t('acc.totp_off'))}</button> "
                     f"<button data-act=recovery>{_e(t('acc.recovery'))}</button>{hinweis}")
         else:
-            totp = f"<a class=btnlink href='/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
+            totp = f"<a class=btnlink href='__TS_P__/auth/totp/setup'>{_e(t('acc.totp_setup'))}</a>"
         sections.append(f"<div class=sec><h2>{_e(t('acc.totp'))}</h2>{totp}<span id=totp_msg class=msg></span>"
                         "<pre id=rc_out class=rcout></pre></div>")
 
@@ -375,7 +380,7 @@ def _account(auth, ctx) -> str:
             f"<p class='msg evhint'>{_e(t('acc.events_hint'))}</p>"
             f"<ul id=eventlist>{zeilen}</ul></div>")
 
-    admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
+    admin_link = (f"<a href='{_e('__TS_P__' + ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
                   if ctx.get("is_admin") else "")
 
     css = """
@@ -405,7 +410,7 @@ def _account(auth, ctx) -> str:
     static = bool(ctx.get("static"))
     pkjs = "" if static else (_PASSKEY_REGISTER_JS if "passkey" in methods else "")
     body = (f"<header><h1>{_e(t('acc.title'))} · {name}</h1>"
-            f"<div>{admin_link} <a href='/auth/logout'>{_e(t('logout'))}</a></div></header>"
+            f"<div>{admin_link} <a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div></header>"
             + "".join(sections)
             + ("" if static else _ACCOUNT_JS.replace("__CSRFCK__", _e(auth.csrf_cookie_name))
                + _revoke_js(auth, "location.pathname+'?revoke_others=1'") + _ACCOUNT_RUECKKEHR_JS
@@ -425,35 +430,35 @@ async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Typ
   if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
   return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
-async function changepw(){const r=await J('/auth/password',{current:pw_cur.value,new:pw_new.value});
+async function changepw(){const r=await J('__TS_P__/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
-async function setpin(){const r=await J('/auth/pin/set',{pin:pin_new.value});await offer(r);
+async function setpin(){const r=await J('__TS_P__/auth/pin/set',{pin:pin_new.value});await offer(r);
   say('pin_msg',r.ok?'✓ gesetzt':(await r.json()).detail||'Fehler',r.ok);if(r.ok)setTimeout(()=>location.reload(),600)}
 // Erst prüfen, dann melden: Beide Knöpfe sagten früher UNBEDINGT „erledigt" und luden neu —
 // auch bei 403 (abgelaufene Step-up-Frische, fehlendes CSRF-Token) oder 500. Der Nutzer sah
 // „entfernt", der Faktor stand noch.
-async function delpin(){const r=await J('/auth/pin/disable');await offer(r);
+async function delpin(){const r=await J('__TS_P__/auth/pin/disable');await offer(r);
   say('pin_msg',r.ok?'✓ entfernt':(await r.json().catch(()=>({}))).detail||'Fehler',r.ok);
   if(r.ok)setTimeout(()=>location.reload(),600)}
 async function deltotp(){if(!confirm('2FA wirklich deaktivieren?'))return;
-  const r=await J('/auth/totp/disable');await offer(r);
+  const r=await J('__TS_P__/auth/totp/disable');await offer(r);
   if(r.ok)location.reload();else say('totp_msg',(await r.json().catch(()=>({}))).detail||'Fehler',false)}
 async function recovery(){if(!confirm('Neue Recovery-Codes erzeugen? Alte werden ung\\u00fcltig.'))return;
-  const r=await (await J('/auth/totp/recovery')).json();
+  const r=await (await J('__TS_P__/auth/totp/recovery')).json();
   if(r.codes){document.getElementById('rc_out').textContent='Jetzt sicher notieren (einmalig sichtbar):\\n'+r.codes.join('\\n')}else say('totp_msg',r.detail||'Fehler',false)}
 async function loadkeys(){const el=document.getElementById('keylist');if(!el)return;
-  const ks=await (await fetch('/auth/apikeys')).json().catch(()=>[]);
+  const ks=await (await fetch('__TS_P__/auth/apikeys')).json().catch(()=>[]);
   if(!Array.isArray(ks)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ks.map(k=>`<li>${esc0(k.prefix)} ${esc0(k.name)} ${k.revoked?'<span class=bad>(widerrufen)</span>':`<button class=warn data-act=revk data-id="${esc0(k.id)}">widerrufen</button>`}</li>`).join('')||'<li>keine</li>'}
-async function mkkey(){const r=await (await J('/auth/apikeys',{name:key_name.value})).json();
+async function mkkey(){const r=await (await J('__TS_P__/auth/apikeys',{name:key_name.value})).json();
   if(r.key)prompt('API-Key — JETZT kopieren:',r.key);loadkeys()}
-async function revk(id){await J('/auth/apikeys/'+id+'/revoke');loadkeys()}
+async function revk(id){await J('__TS_P__/auth/apikeys/'+id+'/revoke');loadkeys()}
 async function loadpk(){const el=document.getElementById('pklist');if(!el)return;
-  const ps=await (await fetch('/auth/passkey/list')).json();
+  const ps=await (await fetch('__TS_P__/auth/passkey/list')).json();
   el.innerHTML=ps.map(p=>`<li>${esc0(p.name||'Passkey')} <button class=warn data-act=delpk data-id="${esc0(p.id)}">löschen</button></li>`).join('')||'<li>keine</li>'}
-async function delpk(id){await offer(await J('/auth/passkey/delete',{id}));loadpk()}
+async function delpk(id){await offer(await J('__TS_P__/auth/passkey/delete',{id}));loadpk()}
 async function loadsess(){const el=document.getElementById('sesslist');if(!el)return;
-  const ss=await (await fetch('/auth/sessions')).json().catch(()=>[]);
+  const ss=await (await fetch('__TS_P__/auth/sessions')).json().catch(()=>[]);
   if(!Array.isArray(ss)){el.innerHTML='<li>—</li>';return}
   el.innerHTML=ss.map(s=>`<li>${new Date(s.created_at*1000).toLocaleString('de-DE')} · ${esc0(s.method)} · ${esc0(s.ip)||'?'} ${s.current?'<b>(diese)</b>':''}<br><small class=msg>${esc0(s.user_agent)}</small></li>`).join('')||'<li>keine</li>'}
 // Jeder Wert aus der API geht durch esc0, bevor er in innerHTML landet (R8-6): Key- und
@@ -474,7 +479,7 @@ _PASSKEY_REGISTER_JS = """
 <script>
 async function addpk(){
   try{
-    const o=await (await fetch('/auth/passkey/register/begin',{method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
+    const o=await (await fetch('__TS_P__/auth/passkey/register/begin',{method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
     o.challenge=Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     o.user.id=Uint8Array.from(atob(o.user.id.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     (o.excludeCredentials||[]).forEach(c=>c.id=Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')),x=>x.charCodeAt(0)));
@@ -483,7 +488,7 @@ async function addpk(){
     const payload={id:cred.id,rawId:enc(cred.rawId),type:cred.type,response:{
       clientDataJSON:enc(cred.response.clientDataJSON),attestationObject:enc(cred.response.attestationObject),
       transports:(cred.response.getTransports&&cred.response.getTransports())||[]}};
-    const r=await fetch('/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
+    const r=await fetch('__TS_P__/auth/passkey/register/finish',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
     say('pk_msg',r.ok?'✓ hinzugefügt':'fehlgeschlagen',r.ok);loadpk();await offer(r);loadsess();
   }catch(e){say('pk_msg','abgebrochen: '+e,false)}
 }
@@ -498,7 +503,7 @@ def _register(auth, ctx) -> str:
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
                 f"<div class=ok>{_e(t('reg.verify'))}</div>"
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
-                f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
+                f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
         return _page(auth, t("reg.verify_title"), body)
     cfg = auth.cfg
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
@@ -513,7 +518,7 @@ def _register(auth, ctx) -> str:
     user_field = ("" if email_mode else
                   f"<label>{_e(t('reg.user'))}</label><input name=username required autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
     body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
-            f"<form method=post action='/auth/register'>"
+            f"<form method=post action='__TS_P__/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
             f"{user_field}"
@@ -522,7 +527,7 @@ def _register(auth, ctx) -> str:
                f"{' autofocus' if email_mode else ''} autocomplete=email>" if email_used else "") +
             f"<label>{_e(t('reg.password'))}</label><input name=password required type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
-            f"<div class=hint><a href='/auth/login'>{_e(t('reg.have'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('reg.have'))}</a></div>")
     return _page(auth, t("reg.title"), body)
 
 
@@ -533,17 +538,17 @@ def _magic_request(auth, ctx) -> str:
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
                 f"<div class=ok>{_e(t('magic.sent'))}</div>"
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
-                f"<a class=btn2 href='/auth/login'>{_e(t('magic.back_login'))}</a>")
+                f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.back_login'))}</a>")
         return _page(auth, t("magic.sent_title"), body)
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('magic.title'))}</h1>{err}"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
-            f"<form method=post action='/auth/magic/request'>"
+            f"<form method=post action='__TS_P__/auth/magic/request'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label>"
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
-            f"<div class=hint><a href='/auth/login'>{_e(t('back'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
     return _page(auth, t("magic.title"), body)
 
 
@@ -554,14 +559,14 @@ def _forgot(auth, ctx) -> str:
         return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
                       f"<div class=ok>{_e(t('magic.sent'))}</div>"
-                      f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
+                      f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('forgot.title'))}</h1>{err}"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
-            f"<form method=post action='/auth/forgot'>{_cf(ctx)}"
+            f"<form method=post action='__TS_P__/auth/forgot'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
-            f"<div class=hint><a href='/auth/login'>{_e(t('back'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
     return _page(auth, t("forgot.title"), body)
 
 
@@ -570,7 +575,7 @@ def _reset(auth, ctx) -> str:
     t = auth.t
     err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
     body = (f"<h1>{_e(t('reset.title'))}</h1>{err}"
-            f"<form method=post action='/auth/reset'>"
+            f"<form method=post action='__TS_P__/auth/reset'>"
             f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>{_cf(ctx)}"
             f"<label>{_e(t('reset.new'))}</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
@@ -618,7 +623,7 @@ def _revoke_js(auth, zurueck: str) -> str:
     ziel = (f"location.href=re+'?next='+encodeURIComponent({zurueck});return new Promise(()=>{{}})"
             if zurueck else f"alert({json.dumps(t('api.stepup'))});return false")
     return ("<script>"
-            "async function tsRevokeOthers(){const r=await fetch('/auth/sessions/revoke',{method:'POST',"
+            "async function tsRevokeOthers(){const r=await fetch('__TS_P__/auth/sessions/revoke',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},"
             "body:JSON.stringify({scope:'others'})});"
             "const re=r.headers.get('X-TinySesam-Reauth');"
@@ -628,7 +633,7 @@ def _revoke_js(auth, zurueck: str) -> str:
             "await tsRevokeOthers();"
             # Grenze d: mitten in der Kette — vermerken, eingelöst beim Abschluss.
             f"if(r.ok&&j.other_sessions_after>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
-            "await fetch('/auth/sessions/revoke-after-login',{method:'POST',"
+            "await fetch('__TS_P__/auth/sessions/revoke-after-login',{method:'POST',"
             "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:'{}'})}</script>")
 
 
@@ -647,7 +652,7 @@ def _logout(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('logout'))}</h1>"
             f"<div class=hint>{_e(t('logout.confirm'))}</div>"
-            f"<form method=post action='/auth/logout'>{_cf(ctx)}"
+            f"<form method=post action='__TS_P__/auth/logout'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('logout'))}</button></form>"
             f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
     return _page(auth, t("logout"), body)
@@ -657,7 +662,7 @@ def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
             f"<div class=err>{_e(t('magic.invalid'))}</div>"
-            f"<a class=btn2 href='/auth/login'>{_e(t('magic.to_login'))}</a>")
+            f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
     return _page(auth, t("magic.invalid_title"), body)
 
 
@@ -673,7 +678,7 @@ def _resource_unlock(auth, ctx) -> str:
         lbl = t("res.word")
     body = (f"<h1>{_e(ctx.get('label'))}</h1>"
             f"<div class=hint>{_e(t('res.hint', kind=lbl))}</div>{err}"
-            f"<form method=post action='/auth/resource/{_e(ctx.get('name'))}'>"
+            f"<form method=post action='__TS_P__/auth/resource/{_e(ctx.get('name'))}'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(lbl)}</label>{field}"
             f"<button type=submit>{_e(t('res.submit'))}</button></form>")
@@ -712,13 +717,13 @@ def _reauth(auth, ctx) -> str:
     methods = ["password"] if methods is None else list(methods)
     kopf = (f"<h1>{_e(t('reauth.title'))}</h1>"
             f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}")
-    fuss = f"<div class=hint><a href='/auth/logout'>{_e(t('logout'))}</a></div>"
+    fuss = f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>"
     if not methods:
         return _page(auth, t("reauth.title"), kopf + fuss)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
     body = (kopf
-            + f"<form method=post action='/auth/reauth'>"
+            + f"<form method=post action='__TS_P__/auth/reauth'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             + fuss)
@@ -735,14 +740,14 @@ def _pin(auth, ctx) -> str:
                   f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>")
     hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
     body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
-            f"<form method=post action='/auth/pin'>"
+            f"<form method=post action='__TS_P__/auth/pin'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{user_field}"
             f"<label>{_e(t('login.pin'))}</label>"
             f"<input name=pin type=password inputmode=numeric autocomplete=off class=code"
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
-            f"<div class=hint><a href='{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
     return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx))
 
 
@@ -758,7 +763,7 @@ def _totp_setup(auth, ctx) -> str:
     if not data:
         body = (f"<h1>{_e(t('setup.title'))}</h1>"
                 f"<div class=hint>{_e(t('setup.start_hint'))}</div>"
-                f"<form method=post action='/auth/totp/setup/start'>{_cf(ctx)}"
+                f"<form method=post action='__TS_P__/auth/totp/setup/start'>{_cf(ctx)}"
                 f"<input type=hidden name=next value='{_e(ctx.get('next') or '/')}'>"
                 f"<button type=submit>{_e(t('setup.start'))}</button></form>")
         return _page(auth, t("setup.title"), body)
@@ -776,7 +781,7 @@ def _totp_setup(auth, ctx) -> str:
             f"<div class=hint id=msg></div>"
             "<script>function tsCsrf(){return (document.cookie.match(/(?:^|; )" + _e(auth.csrf_cookie_name) + "=([^;]+)/)||[])[1]||''}"
             "async function conf(e){e.preventDefault();const c=e.target.code.value;"
-            "const r=await fetch('/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
+            "const r=await fetch('__TS_P__/auth/totp/setup',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-Token':tsCsrf()},"
             "body:'code='+encodeURIComponent(c)+'&next='+encodeURIComponent(e.target.dataset.next||'/')});"
             "const j=await r.clone().json();"
             f"document.getElementById('msg').textContent=j.ok?'{ok_msg}':'{bad_msg}';"
@@ -786,7 +791,7 @@ def _totp_setup(auth, ctx) -> str:
             # weiter zum Ziel statt einer Seite, die zum erneuten Code-Tippen einlädt.
             "if(j.ok&&j.next){location.href=j.next}return false}"
             "document.getElementById('tstotp').addEventListener('submit',conf)</script>"
-            + _revoke_js(auth, "'/auth/account?revoke_others=1'"
+            + _revoke_js(auth, "'__TS_P__/auth/account?revoke_others=1'"
                          if getattr(auth.cfg, "account_enabled", False) else ""))
     return _page(auth, t("setup.title"), body)
 
@@ -796,7 +801,7 @@ _PASSKEY_LOGIN_JS = """
 <script>
 document.getElementById('pkbtn')?.addEventListener('click', async () => {
   try {
-    const o = await (await fetch('/auth/passkey/login/begin', {method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
+    const o = await (await fetch('__TS_P__/auth/passkey/login/begin', {method:'POST',headers:{'X-CSRF-Token':tsCsrf()}})).json();
     o.challenge = Uint8Array.from(atob(o.challenge.replace(/-/g,'+').replace(/_/g,'/')), c=>c.charCodeAt(0));
     (o.allowCredentials||[]).forEach(c => c.id = Uint8Array.from(atob(c.id.replace(/-/g,'+').replace(/_/g,'/')), x=>x.charCodeAt(0)));
     const cred = await navigator.credentials.get({publicKey:o});
@@ -804,8 +809,8 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
     const payload = {id:cred.id, rawId:enc(cred.rawId), type:cred.type, response:{
       clientDataJSON:enc(cred.response.clientDataJSON), authenticatorData:enc(cred.response.authenticatorData),
       signature:enc(cred.response.signature), userHandle:cred.response.userHandle?enc(cred.response.userHandle):null}};
-    const r = await fetch('/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
-    if (r.ok) location.href = (await r.json()).redirect || '/'; else alert('Passkey-Login fehlgeschlagen');
+    const r = await fetch('__TS_P__/auth/passkey/login/finish?next=__NEXT__', {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:JSON.stringify(payload)});
+    if (r.ok) location.href = (await r.json()).redirect || '__TS_P__/'; else alert('Passkey-Login fehlgeschlagen');
   } catch(e){ alert('Passkey abgebrochen: '+e); }
 });
 </script>

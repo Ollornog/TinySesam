@@ -446,9 +446,9 @@ class TinySesamConfig:
     # ein Host, wählt der Anfragende per Host-Header aus.
     # Mit Unterpfad montiert (root_path) gehört das Präfix HIER hinein:
     # "https://example.com/sso" — es gilt für die VERSCHICKTEN LINKS, die es genau einmal tragen.
-    # Die eingebauten Seiten tragen es nicht (ihre Ziele stehen wurzel-absolut: /auth/register,
-    # /auth/forgot, ...), hinter einem Proxy, der das Präfix abschneidet, landet die Anmeldung
-    # also im 404, während die Mails funktionieren — backlog/T-15.
+    # Die eingebauten Seiten und ihre Umleitungen nehmen es seit T-15 aus dem `root_path` der
+    # Anfrage (uvicorn --root-path hinter einem Proxy, der /sso abschneidet, oder eine
+    # Starlette-Montage) — dafür ist hier nichts einzustellen.
     # Wo base_url leer bleiben darf (nur Passwort/Passkey/PIN/LDAP,
     # höchstens forward_auth_enabled), wird eine abgeleitete Basis geprüft: nur ein Host aus
     # trusted_redirect_hosts oder Loopback zählt, und der root_path des Servers kommt mit.

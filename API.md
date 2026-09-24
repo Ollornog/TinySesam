@@ -326,6 +326,10 @@ Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrier
 
 User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0).
 
+### `pfad(request: 'Optional[Request]', pfad: 'str') -> 'str'`
+
+Einen Pfad der App (`/auth/login`, `login_path`, `admin_path`, …) in den Pfad umrechnen, den der Browser braucht — mit dem Montage-Präfix davor (T-15).
+
 ### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
 
 Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
@@ -418,7 +422,7 @@ Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
 
 Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
 
-### `safe_next(next_: 'str') -> 'str'`
+### `safe_next(next_: 'str', request: 'Optional[Request]' = None) -> 'str'`
 
 ?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
 
@@ -654,4 +658,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-142 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+143 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

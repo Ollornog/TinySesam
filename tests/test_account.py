@@ -275,7 +275,9 @@ if _node:
               "/auth/passkey/list": [{"id": 3, "name": _boese}],
               "/auth/sessions": [{"created_at": 0, "method": _boese, "ip": _boese,
                                   "user_agent": _boese, "current": 0}]}
-    _skript = _ACCOUNT_JS.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+    # Wie `render_page` für eine App an der Wurzel: der Montage-Präfix (T-15) ist dann leer.
+    from tinysesam.templates import PRAEFIX_PLATZHALTER as _PP  # noqa: E402
+    _skript = _ACCOUNT_JS.split("<script>", 1)[1].rsplit("</script>", 1)[0].replace(_PP, "")
     _probe = ("const E={};const document={cookie:'',addEventListener(){},"
               "getElementById:i=>E[i]||(E[i]={innerHTML:''})};"
               f"const D={_json.dumps(_daten)};"

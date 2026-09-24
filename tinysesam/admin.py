@@ -479,8 +479,10 @@ def build_admin_router(auth) -> APIRouter:
             # das Panel, das Konten anlegt und Rechte vergibt, ohne CSP und ohne Schutz gegen
             # Einbetten. Möglich wurde es erst, als die Inline-Handler verschwanden (`data-on`).
             nonce = secrets.token_urlsafe(16)
-            resp = HTMLResponse(_inject_nonce(
-                render_panel(auth, request.url.path.rstrip("/"), warn=warn), nonce))
+            # `__TS_P__` im Kopf (App, Logout) wird der Montage-Präfix (T-15); die API-Basis `B`
+            # kommt aus dem Pfad der Anfrage und trägt ihn schon.
+            seite = render_panel(auth, request.url.path.rstrip("/"), warn=warn)
+            resp = HTMLResponse(_inject_nonce(seite.replace("__TS_P__", auth._praefix(request)), nonce))
             policy = auth._csp_header(nonce)
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
@@ -605,7 +607,7 @@ __BRANDCSS__
 __HEADER__
 <div class=tsadmin>
 __WARN__
-<header><h1>🧠 __RP__ · Admin</h1><a href="/" id=applink>← App</a><a href="/auth/logout" id=outlink>Logout</a></header>
+<header><h1>🧠 __RP__ · Admin</h1><a href="__TS_P__/" id=applink>← App</a><a href="__TS_P__/auth/logout" id=outlink>Logout</a></header>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 <script>
