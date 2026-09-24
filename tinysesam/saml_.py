@@ -86,6 +86,13 @@ class SAMLClient:
                 "wantAssertionsSigned": True,
                 "wantMessagesSigned": False,
                 "requestedAuthnContext": False,
+                # SHA-1 in Signatur- oder Digest-Verfahren wird abgewiesen (F-21). python3-saml
+                # nimmt `rsa-sha1`/`dsa-sha1`/`sha1` von sich aus an (Vorgabe False) — obwohl
+                # SHA-1-Kollisionen seit SHAttered (2017) praktisch sind und XML-DSig sie seit
+                # RFC 6931 als veraltet führt. Bewusst ohne Schalter, wie bei den ID-Token-
+                # Verfahren in oidc.py: Jeder verbreitete IdP (ADFS, Entra, Keycloak, Okta)
+                # signiert seit Jahren mit SHA-256; wer noch SHA-1 bekommt, stellt den IdP um.
+                "rejectDeprecatedAlgorithm": True,
             },
         }
 

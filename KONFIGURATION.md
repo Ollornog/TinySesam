@@ -40,9 +40,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `admin_implies_roles` | `bool` | `True` | Erfüllt ein Admin JEDE require_role(...)-Prüfung? Default True (klassisches Verhalten). ACHTUNG: hängen die Rechte einer App allein an einer IdP-Gruppe, ist das eine stille Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`. |
-| `group_match` | `str` | `"exact"` | Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen? "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs). LDAP nutzt automatisch substring, weil dort ganze DNs ankommen. |
+| `group_match` | `str` | `"exact"` | Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen? "exact" (Default, sicher) oder "substring" (alter Teilstring-Vergleich, nur auf Wunsch). LDAP vergleicht bei "exact" einen memberOf-DN nach Bestandteilen: ganzer DN, "cn=staff" oder "staff". |
 | `available_roles` | `list[str]` | `list` | Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback). |
-| `oidc_group_role_map` | `dict` | `dict` | IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant). Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert. |
+| `oidc_group_role_map` | `dict` | `dict` | IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant). Vergleich nach `group_match` (Vorgabe exakt). Managed Rollen werden je Login synchronisiert. |
 | `saml_group_role_map` | `dict` | `dict` | SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}` |
 | `ldap_group_role_map` | `dict` | `dict` | LDAP-Gruppe (DN oder Name) → lokale Rolle |
 
@@ -51,32 +51,33 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `password_enabled` | `bool` | `True` | Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN) |
+| `password_blocklist_file` | `str` | `""` | Eigene Blockliste für neue Passwörter: Pfad zu einer Textdatei, ein Passwort je Zeile (UTF-8, Zeilen in anderer Kodierung gelten als Latin-1; `#` am Zeilenanfang = Kommentar). Ergänzt die kleine eingebaute Liste — wer die gängigen Leak-Listen (z.B. die 100 000 häufigsten) abgleichen will, legt sie hier ab. Offline: TinySesam fragt keinen fremden Dienst. Leer = nur die eingebaute Liste. `tinysesam passwd` liest sie mit `--blocklist-file`. |
 | `passkey_enabled` | `bool` | `False` | WebAuthn / Passkeys (passwortlos) — braucht [passkey] |
-| `passkey_user_verification` | `str` | `"required"` | : Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er : signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch : ein Nein (B2-10). : : Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter : Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz** : des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand : gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person : kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein : Authenticator konnte also nein sagen und galt trotzdem. : : `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und : meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`. |
+| `passkey_user_verification` | `str` | `"required"` | Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch ein Nein (B2-10). Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz** des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein Authenticator konnte also nein sagen und galt trotzdem. `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`. |
 | `pin_enabled` | `bool` | `False` | persönliche PIN pro User (Benutzer + PIN) |
-| `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. |
+| `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. False = PIN existiert, dient aber NUR als Zusatzfaktor (Route-Kette) bzw. Step-up für sensible Bereiche. |
 | `pin_min_length` | `int` | `4` | Mindestlänge beim Setzen einer PIN |
 | `stepup_methods` | `list[str]` | `list` | Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche. Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren. |
 | `stepup_strict` | `bool` | `False` | Aus dem Wunsch eine Schranke machen: True = wer keines der genannten Verfahren eingerichtet hat, kommt NICHT herein (statt mit dem Passwort zu bestätigen, mit dem er sich gerade angemeldet hat — das ist kein Step-up). Vorgabe False, weil der Bereich sonst für Bestands- konten über Nacht verschlossen wäre; wer `stepup_methods` setzt, um etwas zu erzwingen, will in aller Regel True dazu. |
 | `oidc_enabled` | `bool` | `False` | externer IdProvider (PocketID …) |
 | `oidc_callback_path` | `str` | `"/auth/oidc/callback"` | Pfad des Callbacks. Muss beim IdP als Redirect-URI hinterlegt sein (base_url + dieser Pfad). Beim Start loggt TinySesam die erwartete URI — Tippfehler fallen sonst erst nach dem Login auf. |
 | `apikey_enabled` | `bool` | `True` | Zugang per API-Key (maschinell/Daemons, an User/Service-Account) |
-| `apikey_default_days` | `int` | `90` | : Lebensdauer eines Automaten-Keys in Tagen, wenn der Aufrufer keine nennt. Ein Key ohne : Ablauf ist ein Geheimnis, das niemand mehr zurücknimmt: Er überlebt den Menschen, der ihn : ausgestellt hat, das Projekt, für das er gedacht war, und den Rechner, auf dem er liegt. |
-| `apikey_allow_unlimited` | `bool` | `False` | : Darf ein Automaten-Key ohne Ablauf entstehen (`expires_days=0`)? Vorgabe nein. True ist : eine bewusste Entscheidung des Betreibers und wird beim Anlegen protokolliert — es gibt : Fälle dafür (ein Gerät, das niemand anfassen kann), sie sind nur selten. |
+| `apikey_default_days` | `int` | `90` | Lebensdauer eines Automaten-Keys in Tagen, wenn der Aufrufer keine nennt. Ein Key ohne Ablauf ist ein Geheimnis, das niemand mehr zurücknimmt: Er überlebt den Menschen, der ihn ausgestellt hat, das Projekt, für das er gedacht war, und den Rechner, auf dem er liegt. |
+| `apikey_allow_unlimited` | `bool` | `False` | Darf ein Automaten-Key ohne Ablauf entstehen (`expires_days=0`)? Vorgabe nein. True ist eine bewusste Entscheidung des Betreibers und wird beim Anlegen protokolliert — es gibt Fälle dafür (ein Gerät, das niemand anfassen kann), sie sind nur selten. |
 | `admin_enabled` | `bool` | `True` | Admin-Panel automatisch unter admin_path mounten |
 | `admin_path` | `str` | `"/auth/admin"` | Standard-Mountpunkt; auth.admin_router() lässt es auch woanders montieren |
 | `admin_ui_enabled` | `bool` | `True` | eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel) |
 | `account_enabled` | `bool` | `True` | eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar) |
 | `forward_auth_enabled` | `bool` | `False` | /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik) |
 | `forward_headers` | `dict` | `dict` | Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups. Sonst **Feld → Headername** (oder Liste von Namen); was hier nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups. {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"} Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders). |
-| `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; |
-| `login_identifier` | `str` | `"both"` | warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
+| `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) |
+| `login_identifier` | `str` | `"both"` | Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
 
 ## Erst-Admin (Bootstrap) — bewusst NICHT "der erste registrierte User wird Admin"
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login |
+| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt. Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
 | `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
 
@@ -120,6 +121,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `smtp_starttls` | `bool` | `True` | 587 = STARTTLS; für 465 smtp_ssl=True setzen |
 | `smtp_ssl` | `bool` | `False` | SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS |
 | `smtp_timeout` | `int` | `15` | Sekunden, bis ein hängender Mailserver aufgibt |
+| `smtp_ca_file` | `str` | `""` | eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer |
 | `mail_subject_prefix` | `str` | `""` | optionaler Betreff-Präfix, z.B. "[MeineApp] " |
 
 ## TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent)
@@ -141,8 +143,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `login_chain` | `list[str]` | `list` | Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B. ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)). Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User. |
-| `mfa_enrollment` | `str` | `"first_login"` | : Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1) : : `login_chain=["password", "totp"]` liest sich wie „ohne zweiten Faktor kommt niemand : rein". Bis 0.18.x stimmte das nicht: Ein Konto ohne TOTP durfte es an genau dieser Stelle : selbst einrichten — wer also nur das Passwort hatte, band seinen eigenen Authenticator ein : und war voll drin. Die Kette schützte damit alle ausser denen, für die sie gedacht war. : : * ``"first_login"`` (Vorgabe): erlaubt, solange das Konto noch **nie** vollständig :   angemeldet war. Ein frisch angelegtes Konto richtet sich beim ersten Mal ein — danach :   nie wieder. Ohne Frist: Wer sein neues Konto erst in drei Wochen benutzt, soll nicht vor :   einer verschlossenen Tür stehen. : * ``"grace"``: erlaubt innerhalb von `mfa_enrollment_grace_days` nach der Kontoanlage. : * ``"strict"``: nie. Die Einrichtung kommt dann vom Betreiber :   (`auth.grant_mfa_enrollment(uid)`, Admin-Panel oder Einladung). : : Verlangt die Kette gar keinen zweiten Faktor, greift nichts davon — ein freiwilliges TOTP : richtet jeder Angemeldete jederzeit selbst ein, wie bisher. |
-| `mfa_enrollment_grace_days` | `int` | `7` | : Nur für `mfa_enrollment="grace"`: Tage ab Kontoanlage. |
+| `mfa_enrollment` | `str` | `"first_login"` | Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1) `login_chain=["password", "totp"]` liest sich wie „ohne zweiten Faktor kommt niemand rein". Bis 0.18.x stimmte das nicht: Ein Konto ohne TOTP durfte es an genau dieser Stelle selbst einrichten — wer also nur das Passwort hatte, band seinen eigenen Authenticator ein und war voll drin. Die Kette schützte damit alle ausser denen, für die sie gedacht war. * ``"first_login"`` (Vorgabe): erlaubt, solange das Konto noch **nie** vollständig angemeldet war. Ein frisch angelegtes Konto richtet sich beim ersten Mal ein — danach nie wieder. Ohne Frist: Wer sein neues Konto erst in drei Wochen benutzt, soll nicht vor einer verschlossenen Tür stehen. * ``"grace"``: erlaubt innerhalb von `mfa_enrollment_grace_days` nach der Kontoanlage. * ``"strict"``: nie. Die Einrichtung kommt dann vom Betreiber (`auth.grant_mfa_enrollment(uid)`, Admin-Panel oder Einladung). Verlangt die Kette gar keinen zweiten Faktor, greift nichts davon — ein freiwilliges TOTP richtet jeder Angemeldete jederzeit selbst ein, wie bisher. |
+| `mfa_enrollment_grace_days` | `int` | `7` | Nur für `mfa_enrollment="grace"`: Tage ab Kontoanlage. |
 | `login_chain_strict` | `bool` | `True` | Reihenfolge erzwingen (True) oder beliebig (False) |
 
 ## Step-up / per-Route-MFA (Sudo-Frische)
@@ -163,13 +165,14 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `cookie_secure` | `bool` | `True` | nur über HTTPS senden |
 | `cookie_samesite` | `str` | `"lax"` | lax\|strict\|none |
 | `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
-| `cookie_domain` | `str` | `""` | leer = Host-only; für SSO über Subdomains z.B. ".example.com" |
+| `cookie_domain` | `str` | `""` | Leer = Host-only. Für SSO über Subdomains z.B. ".example.com" — dann vertraut TinySesam jedem Host unter dieser Domain: Jeder kann ein Sitzungs-Cookie für die ganze Domain setzen und den Browser so in ein fremdes Konto schieben (bekannte Grenze, SECURITY.md). Leer schützt davor nur, solange das Sitzungs-Cookie `__Host-` trägt (`cookie_host_prefix`). |
+| `cookie_host_prefix` | `bool` | `True` | `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Das CSRF-Cookie ist immer host-only und trägt das Präfix auch bei gesetztem `cookie_domain`. Ein so benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie tossing). Fehlt das Präfix am Sitzungs-Cookie (`cookie_domain` gesetzt, dieser Schalter aus, `cookie_path` ≠ "/" oder `cookie_secure=False`), trägt es nur seinen blanken Namen (`tinysesam_session`), und jeder Host unter der Domain kann eines unterschieben (bekannte Grenze, SECURITY.md). Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`. Eigenes JS liest den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`. |
 
 ## Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…)
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `csp` | `str` | `"strict"` | Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=); pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert. "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt) eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt Gilt NUR für die von TinySesam gerenderten String-Seiten, nicht für eigene Response-Overrides (die setzen ihre CSP selbst). |
+| `csp` | `str` | `"strict"` | Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=); pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert. "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt) eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt. Ohne eine einzige bekannte Direktive ('Strict', 'stirct') bricht der Aufbau ab, statt die CSP still abzuschalten; eine unbekannte neben bekannten ('scirpt-src', 'require-sri-for') gibt eine Warnung Gilt für die von TinySesam gerenderten Seiten und das Admin-Panel, nicht für eigene Response-Overrides (die setzen ihre CSP selbst). Bei 'strict' kommt X-Frame-Options: SAMEORIGIN dazu; nosniff, Referrer-Policy, no-store und Vary: Cookie tragen alle TinySesam-Antworten unabhängig von diesem Schalter. |
 
 ## CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax)
 
@@ -177,28 +180,29 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `csrf_enabled` | `bool` | `True` | State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token) |
 | `csrf_cookie` | `str` | `"tinysesam_csrf"` | Name des CSRF-Cookies |
+| `csrf_origin_check` | `bool` | `True` | Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Sec-Fetch-Site: same-origin` genügt, sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url — NICHT trusted_redirect_hosts: das sind Redirect-Ziele, im Forward-Auth-Aufbau die geschützten Apps); `Sec-Fetch-Site: same-site` oder `cross-site` ohne eigenen Origin (auch `Origin: null`) wird abgewiesen. Fehlt ein brauchbarer Origin und sagt `Sec-Fetch-Site` `none` oder fehlt, entscheidet allein das Token. `Sec-Fetch-Site` fehlt nicht nur bei alten Browsern und Skripten, sondern bei jedem Browser über HTTP (außer localhost): Browser schicken `Sec-Fetch-*` nur an HTTPS. Mit `cookie_secure=False` kommt deshalb auch `Origin: null` einer Nachbar-Subdomain bis zum Token durch, und das CSRF-Cookie trägt dann kein `__Host-` — die Prüfung schützt über HTTP nicht vor Login-CSRF aus der Nachbarschaft (dort lässt sich ohnehin das Sitzungs-Cookie unterschieben, bekannte Grenze in SECURITY.md). Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern Browser ohne `Sec-Fetch-Site` (Safari vor 16.4, jeder Browser über HTTP) — dafür base_url setzen. |
 
 ## LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password')
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `federation_require_stable_id` | `bool` | `False` | : Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**: : Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr : anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten : Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht : daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann. |
+| `federation_require_stable_id` | `bool` | `False` | Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**: Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann. |
 | `ldap_enabled` | `bool` | `False` | Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap] |
 | `ldap_url` | `str` | `""` | ldap://host:389 oder ldaps://host:636 |
 | `ldap_start_tls` | `bool` | `False` | Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL |
-| `ldap_tls_verify` | `bool` | `True` | : Das Zertifikat des Verzeichnisses prüfen? Vorgabe **ja** (F-12). Ohne die Prüfung ist : verschlüsselt nur „nicht mitlesbar von jemandem, der nicht dazwischensitzt": Wer den : Verkehr umlenkt, hält ein eigenes Zertifikat hin, bekommt das Passwort des Dienstkontos : und jedes Benutzerpassworts, und reicht die Antwort weiter — niemand merkt etwas. : Bis 0.19.0 gab es die Prüfung gar nicht. |
-| `ldap_tls_ca_file` | `str` | `""` | : Eigene CA-Datei (PEM) für das Verzeichnis-Zertifikat. Leer = der Speicher des Systems. : Der übliche Weg bei einem internen Verzeichnis mit eigener CA. |
-| `ldap_allow_plaintext` | `bool` | `False` | : Darf ganz ohne TLS gesprochen werden (`ldap://` ohne StartTLS)? Vorgabe **nein**. Dann : gingen das Passwort des Dienstkontos und jedes Benutzerpasswort im Klartext über das Netz. : True ist eine bewusste Entscheidung für ein Verzeichnis auf demselben Host (Loopback) und : meldet sich beim Start. |
+| `ldap_tls_verify` | `bool` | `True` | Das Zertifikat des Verzeichnisses prüfen? Vorgabe **ja** (F-12). Ohne die Prüfung ist verschlüsselt nur „nicht mitlesbar von jemandem, der nicht dazwischensitzt": Wer den Verkehr umlenkt, hält ein eigenes Zertifikat hin, bekommt das Passwort des Dienstkontos und jedes Benutzerpassworts, und reicht die Antwort weiter — niemand merkt etwas. Bis 0.19.0 gab es die Prüfung gar nicht. |
+| `ldap_tls_ca_file` | `str` | `""` | Eigene CA-Datei (PEM) für das Verzeichnis-Zertifikat. Leer = der Speicher des Systems. Der übliche Weg bei einem internen Verzeichnis mit eigener CA. |
+| `ldap_allow_plaintext` | `bool` | `False` | Darf ganz ohne TLS gesprochen werden (`ldap://` ohne StartTLS)? Vorgabe **nein**. Dann gingen das Passwort des Dienstkontos und jedes Benutzerpasswort im Klartext über das Netz. True ist eine bewusste Entscheidung für ein Verzeichnis auf demselben Host (Loopback) und meldet sich beim Start. |
 | `ldap_user_dn_template` | `str` | `""` | Direkt-Bind, z.B. "uid={username},ou=people,dc=example,dc=com" (lldap) |
 | `ldap_bind_dn` | `str` | `""` | ODER Service-Account für Search-then-Bind |
 | `ldap_bind_password` | `str` | `""` | Passwort des Service-Accounts — gehört in eine Umgebungsvariable |
 | `ldap_user_base` | `str` | `""` | Suchbasis (bei Search-then-Bind) |
 | `ldap_user_filter` | `str` | `"(uid={username})"` | Suchfilter für das Konto; `{username}` wird eingesetzt |
-| `ldap_attr_id` | `str` | `""` | : Das Attribut mit der **stabilen** Kennung des Verzeichniseintrags (F-11). Leer = der : Reihe nach `entryUUID` (OpenLDAP, lldap) und `objectGUID` (Active Directory) versuchen. : Daran hängt die Zuordnung zum lokalen Konto — ein Benutzername taugt dafür nicht: Wer im : Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben Namen neu anlegt, bekäme : sonst dasselbe lokale Konto mitsamt seinen Rollen. |
+| `ldap_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung des Verzeichniseintrags (F-11). Leer = der Reihe nach `entryUUID` (OpenLDAP, lldap) und `objectGUID` (Active Directory) versuchen. Daran hängt die Zuordnung zum lokalen Konto — ein Benutzername taugt dafür nicht: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben Namen neu anlegt, bekäme sonst dasselbe lokale Konto mitsamt seinen Rollen. |
 | `ldap_attr_email` | `str` | `"mail"` | LDAP-Attribut mit der E-Mail-Adresse |
 | `ldap_attr_name` | `str` | `"cn"` | LDAP-Attribut mit dem Anzeigenamen |
 | `ldap_group_attr` | `str` | `"memberOf"` | Attribut mit Gruppen-Zugehörigkeit |
-| `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (Teilstring-Match) |
+| `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring) |
 | `ldap_auto_create` | `bool` | `True` | unbekannten LDAP-User lokal anlegen (ohne lokales Passwort) |
 
 ## OIDC
@@ -220,8 +224,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `oidc_clients` | `dict` | `dict` | : Geschützter Host → eigener OIDC-Client beim selben Provider. Leer = eine Anwendung, der : Einzel-Client oben gilt für alles (Verhalten bis 0.18.0, unverändert). : : Warum überhaupt: Wer in welche Anwendung darf, entscheidet der **Provider** — bei PocketID : über die Gruppenfreigabe je OIDC-Client. Diese Freigabe hängt am Client, nicht am Benutzer. : Mit einem einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen: Wer bei : irgendeiner drin ist, ist bei allen drin. Die bisherige Abhilfe war eine eigene : TinySesam-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs für : dieselben Menschen. : : Aufbau je Eintrag: ``{"app.example.com": {"client_id": "...", "client_secret": "...", : "scopes": "openid profile email", "allowed_groups": [...], "group_role_map": {...}}}``. : Fehlt ein optionaler Schlüssel, gilt der Wert des Einzel-Clients. Der **Issuer ist für : alle Clients derselbe** — mehrere Provider in einer Instanz sind nicht vorgesehen, und die : Konfigurationsprüfung sagt das auch. |
-| `oidc_revalidate_minutes` | `int` | `0` | : Nach wie vielen Minuten eine erteilte Freigabe beim Provider nachgeprüft wird. 0 = nie : (Verhalten bis 0.18.0). Der Provider entscheidet über die Freigabe, also muss ein Entzug : dort auch ankommen: Ohne Nachprüfung gilt sie bis zum Ablauf der Sitzung — in der Vorgabe : sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in : aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab, : ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt. : ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. |
+| `oidc_clients` | `dict` | `dict` | Geschützter Host → eigener OIDC-Client beim selben Provider. Leer = eine Anwendung, der Einzel-Client oben gilt für alles (Verhalten bis 0.18.0, unverändert). Warum überhaupt: Wer in welche Anwendung darf, entscheidet der **Provider** — bei PocketID über die Gruppenfreigabe je OIDC-Client. Diese Freigabe hängt am Client, nicht am Benutzer. Mit einem einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen: Wer bei irgendeiner drin ist, ist bei allen drin. Die bisherige Abhilfe war eine eigene TinySesam-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs für dieselben Menschen. Aufbau je Eintrag: ``{"app.example.com": {"client_id": "...", "client_secret": "...", "scopes": "openid profile email", "allowed_groups": [...], "group_role_map": {...}}}``. Fehlt ein optionaler Schlüssel, gilt der Wert des Einzel-Clients. Der **Issuer ist für alle Clients derselbe** — mehrere Provider in einer Instanz sind nicht vorgesehen, und die Konfigurationsprüfung sagt das auch. |
+| `oidc_revalidate_minutes` | `int` | `0` | Nach wie vielen Minuten eine erteilte Freigabe beim Provider nachgeprüft wird. 0 = nie (Verhalten bis 0.18.0). Der Provider entscheidet über die Freigabe, also muss ein Entzug dort auch ankommen: Ohne Nachprüfung gilt sie bis zum Ablauf der Sitzung — in der Vorgabe sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab, ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt. ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen. |
 
 ## SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …)
 
@@ -237,7 +241,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `saml_attr_username` | `str` | `""` | Attribut mit dem Benutzernamen; leer = NameID |
 | `saml_attr_email` | `str` | `"email"` | SAML-Attribut mit der E-Mail-Adresse |
 | `saml_attr_name` | `str` | `"displayName"` | SAML-Attribut mit dem Anzeigenamen |
-| `saml_attr_id` | `str` | `""` | : Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion. : Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus : dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist : als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt. |
+| `saml_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion. Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt. |
 | `saml_attr_groups` | `str` | `"groups"` | SAML-Attribut mit den Gruppen (für saml_group_role_map) |
 | `saml_allowed_groups` | `list[str]` | `list` | leer = alle |
 | `saml_auto_create` | `bool` | `True` | Unbekannte Nutzer beim ersten erfolgreichen SAML-Login anlegen |
@@ -248,7 +252,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `rp_id` | `str` | `"localhost"` | Registrable Domain (z.B. app.example.com) — OHNE Schema/Port |
 | `rp_name` | `str` | `"TinySesam"` | Anzeigename der Relying Party |
-| `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers |
+| `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste |
 
 ## App-Integration
 
@@ -267,7 +271,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `redis_url` | `str` | `""` | z.B. redis://localhost:6379/0 |
 | `trusted_redirect_hosts` | `list[str]` | `list` | Hosts, auf die ?next= absolut zeigen darf (Open-Redirect-Schutz; leer = nur relative Pfade). Der Host der eigenen base_url zählt immer mit und muss hier nicht wiederholt werden. |
 | `security_log` | `str` | `""` | Datei, in die der Logger "tinysesam.security" zusätzlich schreibt — das Lesefutter für fail2ban (deploy/fail2ban/), z.B. /var/log/tinysesam/security.log. Leer = nur an den Logger; wer das Logging selbst einrichtet, lässt es leer. Ist die Datei nicht schreibbar, warnt TinySesam und läuft weiter. NEU angelegt wird sie mit 0640 statt mit der umask (auch die nach einer Rotation), denn darin stehen Benutzernamen und IP-Adressen; eine schon vorhandene welt-lesbare Datei wird gemeldet, aber nicht umgeschrieben. Soll ein DRITTER Benutzer mitlesen (Log-Versand, weder Eigentümer noch in der Gruppe), führt der Weg über die Gruppe: logrotate-Zeile `create 0640 tinysesam adm` (steht so in deploy/fail2ban/tinysesam-jail.conf). Ohne sie entsteht die Datei bei der nächsten Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den Lesezugriff — nicht beim Update, sondern erst bei der Rotation. |
+| `audit_retention_days` | `int` | `0` | Aufbewahrung des Audit-Logs in Tagen: `auth.gc()` löscht ältere Zeilen (B5-11). 0 = keine Frist, das Log wächst wie bisher unbegrenzt. Im Audit-Log stehen Benutzernamen und IPs, also personenbezogene Daten — eine Frist ist Sache des Betreibers (Zweck und Dauer gehören in sein Verarbeitungsverzeichnis). Die Vorgabe löscht deshalb nichts von selbst. Das Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile. Erlaubt sind 0 bis 3660 (zehn Jahre) — ein Wert in Sekunden statt Tagen wird abgewiesen, nicht still angenommen. |
+| `audit_ip_pseudonymize` | `bool` | `False` | IPs im Audit-Log auf ihr Netz kürzen (IPv4 /24, IPv6 /48). Gilt für neue Zeilen; Sperre, Rate-Limit und security_log (fail2ban) sehen weiterhin die volle Adresse, sonst träfe eine Sperre das ganze Netz. |
 
 ---
 
-135 Felder, erzeugt aus `tinysesam/config.py`.
+141 Felder, erzeugt aus `tinysesam/config.py`.

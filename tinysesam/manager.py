@@ -13,11 +13,11 @@ from __future__ import annotations
 import os
 import re
 import sys
-import time
 import json
 import hashlib
 import secrets
-from typing import Any, Literal, NoReturn, Optional, cast
+import contextvars
+from typing import Any, Callable, Literal, NoReturn, Optional, cast
 
 from fastapi import Request, HTTPException
 from fastapi.responses import HTMLResponse
@@ -26,17 +26,28 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import Store, norm_email
+from .store import Store, norm_email, norm_kennung, jetzt as _jetzt, versuchsfrist as _versuchsfrist
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
-from .templates import Templates
+from . import passwords as _passwords
+from . import passwords as _pw
+from .templates import Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
+
+#: IP und angemeldetes Konto der Anfrage, die gerade bearbeitet wird (B5-02, B5-04).
+#:
+#: Die Konto-Methoden (`totp_disable`, `create_api_key`, `create_invite`, …) bekommen keinen
+#: Request — sie sind auch ohne einen aufrufbar. Ihre Audit-Zeilen standen deshalb ohne IP und
+#: ohne Konto da (`detail="user=5"`), und `tinysesam audit --user X` fand sie nicht. Gesetzt
+#: wird der Wert dort, wo TinySesam die Anfrage ohnehin auflöst (`current_user` und
+#: Verwandte); `audit()` liest ihn. Ein ContextVar, keine Instanzvariable: Er gilt je Anfrage
+#: (je asyncio-Task bzw. je Threadpool-Aufruf) und kann nicht in eine parallele überlaufen.
+_ANFRAGE: contextvars.ContextVar = contextvars.ContextVar("tinysesam_anfrage", default=None)
 
 
 # Setzt nonce="…" in jedes <script>/<style>, das noch keins hat. Zentral, statt den Nonce
 # durch jede Template-Funktion zu faedeln. Sicher, weil keine der eingebauten Seiten den
 # String "<script"/"<style" INNERHALB eines JS-Strings ausgibt (geprueft) — nur echte Tags.
-_NONCE_TAG = re.compile(r'<(script|style)(?![^>]*\bnonce=)(?=[\s>])')
 
 
 def _host_aus(wert: str) -> str:
@@ -53,8 +64,105 @@ def _host_aus(wert: str) -> str:
         return ""
 
 
-def _inject_nonce(html_str: str, nonce: str) -> str:
-    return _NONCE_TAG.sub(rf'<\g<1> nonce="{nonce}"', html_str)
+class _DictKopfzeilen:
+    """Die drei Zugriffe, die `_kopfzeilen_in` braucht, über einem gewöhnlichen dict.
+
+    Nachsehen ohne Rücksicht auf Groß-/Kleinschreibung, Schreiben auf den Schlüssel, der schon da
+    ist — sonst unter der übergebenen Schreibweise. So bleibt `exc.headers["Location"]` lesbar.
+    """
+    def __init__(self, d: dict):
+        self.d = d
+
+    def _schluessel(self, name: str):
+        return next((k for k in self.d if k.lower() == name.lower()), None)
+
+    def get(self, name: str, vorgabe=None):
+        k = self._schluessel(name)
+        return vorgabe if k is None else self.d[k]
+
+    def setdefault(self, name: str, wert: str):
+        if self._schluessel(name) is None:
+            self.d[name] = wert
+
+    def __setitem__(self, name: str, wert: str):
+        self.d[self._schluessel(name) or name] = wert
+
+
+def _dn_teile(wert: str) -> list[str]:
+    """Einen DN an den UNmaskierten Kommas zerlegen (`cn=a\\,b,ou=x` hat zwei Teile, nicht drei)."""
+    teile, aktuell, maskiert = [], [], False
+    for zeichen in str(wert):
+        if maskiert:
+            aktuell.append(zeichen)
+            maskiert = False
+        elif zeichen == "\\":
+            aktuell.append(zeichen)
+            maskiert = True
+        elif zeichen == ",":
+            teile.append("".join(aktuell).strip())
+            aktuell = []
+        else:
+            aktuell.append(zeichen)
+    teile.append("".join(aktuell).strip())
+    return teile
+
+
+def gruppe_passt(schluessel, gruppe, teilstring: bool = False, dn: bool = False) -> bool:
+    """Passt der Schlüssel aus `*_group_role_map`/`ldap_allowed_groups` auf diese Gruppe?
+
+    `teilstring=True` ist der alte Vergleich (`schluessel in gruppe`) und nur noch auf
+    ausdrücklichen Wunsch da (`group_match="substring"`). Bis 0.19.x galt er für LDAP IMMER,
+    egal was `group_match` sagte (F-19): `admin` passte dann auf `cn=nicht-admin,…` und
+    `staff` auf `cn=staffextern,…` — wer im Verzeichnis eine Gruppe benennen darf, bekam
+    Rolle und Admin-Flag.
+
+    `dn=True` (LDAP, `memberOf` liefert ganze DNs) vergleicht **genau**, aber nach Bestandteilen:
+    der ganze DN, ein **Anfang** aus ganzen RDNs (`cn=staff` oder `cn=staff,ou=groups` — der
+    Teil-DN ohne Basis, wie ihn die README als Beispiel zeigt) oder der Wert des ersten RDN
+    (`staff`). Gross/klein zählt dort nicht — LDAP vergleicht Namen so, und `CN=Staff,OU=Groups`
+    ist dieselbe Gruppe. So bleibt die gewohnte Schreibweise gültig, ohne dass ein Namensteil
+    eine fremde Gruppe trifft: verglichen werden nur ganze Bestandteile, vorn beginnend.
+    """
+    s, g = str(schluessel), str(gruppe)
+    if not s:
+        return False
+    if teilstring:
+        return s in g
+    if s == g:
+        return True
+    if not dn or "=" not in g:
+        return False
+    g_teile = [t.lower() for t in _dn_teile(g)]
+    if "=" in s:
+        # Ganzer DN oder Teil-DN von vorn (A-3): `cn=admins,ou=g` trifft
+        # `cn=admins,ou=g,dc=example,dc=com`. Bis zum ersten Fix dieser Runde deckte das der
+        # Teilstring ab; ohne diesen Zweig fiel ein so geschriebener Schlüssel nach dem Update
+        # still weg — Admin-Mapping weg, oder als ldap_allowed_groups jeder Nutzer abgewiesen.
+        s_teile = [t.lower() for t in _dn_teile(s)]
+        return g_teile[:len(s_teile)] == s_teile
+    _, _, wert = g_teile[0].partition("=")
+    return s.strip().lower() == wert.strip()
+
+
+def _teilstring_hinweis(schluessel, gruppen, feld: str) -> None:
+    """Einmal je Schlüssel sagen, wenn er nur noch per Teilstring treffen würde (A-3).
+
+    Bis 0.19.x verglich LDAP immer per Teilstring (F-19). Ein Schlüssel, der damals griff und
+    heute nicht mehr, kostet nach dem Update still Rollen oder — in `ldap_allowed_groups` — den
+    ganzen Zugang. Statisch ist das nicht zu erkennen (es hängt an den DNs des Verzeichnisses),
+    also fällt es beim ersten Login auf, bei dem es passiert."""
+    s = str(schluessel)
+    if not s or not any(s in str(g) for g in gruppen):
+        return
+    if any(gruppe_passt(s, g, dn=True) for g in gruppen):
+        return
+    if security.einmal_melden(f"ldap_teilstring:{feld}:{s}"):
+        security.seclog.warning(
+            "LDAP: der Schlüssel %r in %s trifft nur noch als Teilstring (%s) und greift seit "
+            "0.20.0 nicht mehr — verglichen wird nach DN-Bestandteilen. Schreibweise ändern "
+            "(ganzer DN, Teil-DN von vorn wie 'cn=admins,ou=groups', oder nur der CN) oder "
+            "group_match='substring' setzen.", security.fuer_log(s), feld,
+            security.fuer_log(next(str(g) for g in gruppen if s in str(g)))[:200])
 
 
 def _auf_stderr(zeile: str) -> None:
@@ -103,151 +211,50 @@ SCHALTER_BRAUCHT_EXTRA = {
 }
 
 
+
+def _gueltige_regeln(regeln) -> list:
+    """Nur die Regeln, deren Schlüssel belegt sind.
+
+    Eine Regel „je Konto" ohne Konto würde sonst stillschweigend zu einer „je Adresse" mit
+    falscher Grenze (`count_fails` lässt einen leeren Filter einfach weg)."""
+    return [r for r in regeln
+            if all(r[2].get(k) for k in ("username", "ip") if k in r[2])]
+
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
-        if config.login_identifier not in ("username", "email", "both"):
-            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
-        if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
-            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
-                             "sonst entstehen Konten, die sich nicht anmelden können")
-        # Alle übrigen Widersprüche auf einmal — beim Aufbau, nicht beim ersten Login. Die
-        # Prüfungen oben werfen einzeln, weil jede für sich eine eigene Geschichte erzählt;
-        # was danach kommt, sammelt konfigpruefung.py und meldet es gemeinsam. Wer drei Dinge
-        # falsch hat, soll sie einmal lesen und nicht dreimal starten.
-        befunde, hinweise = konfigpruefung.pruefe(config)
-        for hinweis in hinweise:
-            security.seclog.warning("Konfiguration: %s", hinweis)
-        if befunde:
-            raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
-
-        if config.cookie_samesite not in ("lax", "strict", "none"):
-            raise ConfigError(
-                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
-                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
-                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
-        if config.cookie_samesite == "none" and not config.cookie_secure:
-            raise ConfigError(
-                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
-                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
-        if not isinstance(config.csp, str):
-            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
-        if config.https_mode not in ("off", "warn", "force"):
-            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
-                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
-                             "also still ab")
-        # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
-        # erlaubt. Zusammen mit https_mode='force' widerspricht es sich aber: Die App leitet
-        # dann jeden Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne
-        # Secure-Flag heraus.
-        #
-        # Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über
-        # die Außenwelt behauptet. Eine frühere Fassung schlug auch bei
-        # `base_url='https://…' + cookie_secure=False` an; das klang plausibel, war aber falsch:
-        # `base_url` ist eine Zusage über die öffentliche Adresse (SAML/OIDC bauen daraus
-        # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
-        # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
-        # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
-        # `totp_required` war seit jeher ein Schalter ohne Draht: Er stand in der Config, in
-        # beiden READMEs („2FA erzwingen") und auf der Website — und wurde an keiner Stelle im
-        # Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor erzwungen zu haben und hatte
-        # ihn nicht. Ein wirkungsloser Sicherheitsschalter ist gefährlicher als gar keiner, denn
-        # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
-        # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
-        if getattr(config, "totp_required", False):
-            raise ConfigError(
-                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
-                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
-                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
-                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
-        if not config.cookie_secure and config.https_mode == "force":
-            raise ConfigError(
-                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
-                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
-                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
-                "(lokal/ohne Zertifikat).")
-
-        # Erst-Admin per Allowlist + offene Selbst-Registrierung: Die Allowlist verbürgt nur,
-        # WELCHER Name Admin wird — nicht, WER diesen Namen bekommt. Steht `admin_identifiers`
-        # auf einer frischen Instanz mit `allow_signup=True`, registriert sich der Erste, der
-        # die Adresse errät, genau darunter und ist beim ersten Login Admin. Das ist derselbe
-        # Fehler, den der Bootstrap eigentlich vermeiden soll ("der Erste gewinnt") — nur eine
-        # Stufe später.
-        #
-        # Tragfähig ist die Kombination nur, wenn die Identität aus der Registrierung selbst
-        # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
-        # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
-        # Namen, wer das Postfach hat.
-        #
-        # Offen ist diese Tür nicht nur bei `allow_signup`. Jedes Verfahren, das beim ersten
-        # Login selbst ein Konto anlegt, legt es unter einem Namen an, den der fremde IdP
-        # liefert: `oidc.py` nimmt `preferred_username`, SAML das NameID-/Attributfeld, LDAP
-        # den Anmeldenamen. Das ist dieselbe Lage wie bei der offenen Registrierung — nur
-        # bestimmt den Namen dort der Besucher und hier der IdP, und bei einem IdP mit
-        # Selbstregistrierung ist das dieselbe Person.
-        offene_tueren = []
-        if config.allow_signup:
-            offene_tueren.append("allow_signup=True")
-        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
-                                  ("saml_enabled", "saml_auto_create", "SAML"),
-                                  ("ldap_enabled", "ldap_auto_create", "LDAP")):
-            if getattr(config, an, False) and getattr(config, anlegen, False):
-                offene_tueren.append(f"{anlegen}=True ({name})")
-        if config.admin_identifiers and offene_tueren:
-            ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
-            namen = [i for i in ids if "@" not in i]
-            if namen:
-                raise ConfigError(
-                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
-                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
-                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
-                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
-                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
-                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
-                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
-                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
-        if config.admin_identifiers and config.allow_signup:
-            if not (config.signup_require_email and config.signup_verify_email):
-                raise ConfigError(
-                    "admin_identifiers zusammen mit allow_signup=True verlangt "
-                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
-                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
-                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
-                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
-        # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
-        # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
-        # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
-        if config.forward_headers:
-            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
-            # Erst die Form, dann die Namen. `{"user": None}` rutschte durch (`namen or []`
-            # machte daraus eine leere Liste) und kippte später JEDEN Forward-Auth-Request in
-            # ein 500; `{"user": 123}` tötete den Konstruktor mit einem rohen `TypeError`, den
-            # ein `except ConfigError` nicht fängt.
-            for feld, wert in config.forward_headers.items():
-                if isinstance(wert, str):
-                    continue
-                if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
-                    continue
-                raise ConfigError(
-                    f"forward_headers[{feld!r}] muss ein Header-Name sein oder eine Liste davon "
-                    f"— ist aber {type(wert).__name__}. Beispiel: "
-                    '{"user": "Remote-User"} oder {"user": ["Remote-User", "X-Auth-User"]}')
-            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
-            if unbekannt:
-                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
-                                 f"{sorted(erlaubt)}")
-            for feld, namen in config.forward_headers.items():
-                for name in ([namen] if isinstance(namen, str) else namen or []):
-                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
-                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
-                                         "Header-Name")
+        self._riegel(config, beim_aufbau=True)
         self.cfg = config
         self.store = Store(config.db_path)
+        # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
+        # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
+        # Beim Start zählen und sagen, wie viele es trifft; der Start selbst bleibt möglich
+        # (Passkey, OIDC und SSO hängen nicht daran, und ein Dienst, der wegen eines fehlenden
+        # Pakets gar nicht mehr hochkommt, wäre der grössere Ausfall).
+        if not _passwords.argon2_verfuegbar():
+            betroffen = self.store.zaehle_argon2_hashes()
+            if betroffen:
+                security.seclog.error("%s (%d betroffene Hashes)", _passwords.ARGON2_FEHLT, betroffen)
+        self.store.audit_ip_pseudonym = bool(config.audit_ip_pseudonymize)
+        self._protokoll_drossel: dict = {}   # siehe `_einmal_je`
         self.templates = Templates()
         self._messages: dict = {}
         self._mailer_override = None
+        from .mailer import Postausgang
+        self._postausgang = Postausgang()
+        #: Opt-in-Benachrichtigung bei Sicherheitsereignissen am eigenen Konto (Fund B2-2,
+        #: Empfehlung H-6) — siehe `SICHERHEITSEREIGNISSE`. Aufruf `hook(ereignis, konto,
+        #: details)`; `konto` hat `id`, `username`, `email`, `display_name`. TinySesam
+        #: verschickt selbst nichts: welche Mail, welcher Kanal, welche Sprache, entscheidet
+        #: die App.
+        self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
+        self._blockliste = self._blockliste_laden(config.password_blocklist_file)
         self.oidc = None
         self.webauthn = None
         self.ldap = None
+        # Der Ausfall-Merker hängt am Manager, nicht am Client: Er gilt auch für einen selbst
+        # gesetzten Client (`auth.ldap = eigener_client`) — Begründung bei `AusfallMerker`.
+        from .ldap_ import AusfallMerker
+        self._ldap_ausfall = AusfallMerker()
         self.saml = None
         if config.security_log:
             security.attach_security_log(config.security_log)
@@ -311,6 +318,19 @@ class TinySesam:
             _verlange("webauthn", "passkey_enabled", "passkey")
             from . import webauthn_ as wa
             self.webauthn = wa
+        if config.demo_mode and not self.store.get_setting("demo_users") \
+                and self.store.user_count() > 0:
+            # Die eine technische Schranke, die eine echte Demo nie trifft (B3-8): Eine Demo
+            # beginnt auf einer LEEREN Datenbank — dort legt sie ihre Konten an und merkt sie
+            # sich (`demo_users`), jeder spätere Start erkennt sie wieder, auch mit inzwischen
+            # registrierten Besuchern. Wer `demo_mode` dagegen erstmals auf einer Datenbank
+            # einschaltet, die schon Konten hat, schaltet ihn auf Bestandsdaten ein — also
+            # produktiv. Vorher entstand dann still ein Admin-Konto mit bekanntem Passwort.
+            raise ConfigError(
+                "demo_mode=True auf einer Datenbank, die schon Konten hat und nie eine Demo war "
+                f"({config.db_path!r}). Die Demo legt ein Admin-Konto mit bekanntem Passwort an — "
+                "auf Bestandsdaten ist das eine Hintertür. Für eine Demo eine eigene, leere "
+                "Datenbank nehmen (db_path).")
         if config.demo_mode:
             security.seclog.warning(
                 "DEMO-MODUS aktiv: Beispielkonten %s mit bekanntem Passwort. NICHT produktiv betreiben.",
@@ -381,11 +401,18 @@ class TinySesam:
         ein Schalter, den ein Betrieb später umlegt; eine Kollision, die heute schläft, wäre dann
         sofort scharf. Rückgabe ist das Konto, dem die Kennung gehört, sonst None. `exclude_id`
         lässt ein Konto aus — für Prüfungen an einem bestehenden Konto.
+
+        Und über den **Zähl-Topf** des Sperrzählers (`Store.konto_mit_topf`): `Émile` und
+        `émile` sind für SQLite-NOCASE (nur ASCII) zwei Namen, für `norm_kennung` einer. Zwei
+        solche Konten teilten sich die Konto-Schwelle gegen verteiltes Raten — und wurde das eine
+        entfernt (auch anonym auslösbar: Registrierung, die `gc()` abräumt), gingen die
+        Fehlversuche des anderen mit. Ein solcher Namensvetter gilt deshalb als vergeben.
         """
         kennung = (kennung or "").strip()
         if not kennung:
             return None
-        for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung)):
+        for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung),
+                        self.store.konto_mit_topf(kennung, ausser=exclude_id)):
             if treffer is not None and treffer["id"] != exclude_id:
                 return self._als_dict(treffer)
         return None
@@ -410,10 +437,12 @@ class TinySesam:
         siehe `maybe_promote_admin`). Das ist der Fall jedes Anmeldewegs, der für die Adresse
         nicht einsteht: ein IdP ohne den Claim `email_verified`, **und grundsätzlich SAML und
         LDAP** — dort gibt es gar kein Attribut, das eine Prüfung behauptet.
-        Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber oder eine Bestätigungsmail
-        für die Adresse einsteht (Admin-API, Erst-Admin, Service-Konten, Einladung, Registrierung
-        — dort verlangt der Konstruktor-Wächter `signup_verify_email`, sobald eine
-        Allowlist-Adresse im Spiel ist).
+        Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber für die Adresse einsteht
+        (Admin-API, Erst-Admin, Service-Konten, Einladung an diese Adresse). Die
+        Selbst-Registrierung legt die eingetippte Adresse mit `False` an; den Beleg setzt erst der
+        eingelöste Bestätigungslink (`/auth/verify`), ohne Bestätigungspflicht bleibt es beim
+        `False`. Wer selbst registriert und `send_verify_email` schickt, übergibt ebenfalls
+        `False` — sonst gilt die Adresse als belegt, bevor jemand den Link eingelöst hat.
 
         Eine vergebene Kennung wirft `ConfigError` mit dem Wortlaut „<Feld> ist bereits
         vergeben" und gesetztem `e.feld` (`"username"`/`"email"`) plus `e.besitzer_id` —
@@ -475,23 +504,26 @@ class TinySesam:
         """Die Rollen eines Kontos ersetzen."""
         self.store.set_roles(user_id, roles)
 
-    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None):
+    def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None,
+                         dn: bool = False):
         """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
         nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
         entfernt), manuell vergebene Rollen bleiben.
 
-        Verglichen wird standardmäßig **exakt** (`config.group_match`). Teilstring nur, wo er nötig
-        ist — bei LDAP kommen ganze `memberOf`-DNs an. Sonst würde `admin` auch auf `nicht-admin`
-        passen: eine stille Rechteausweitung."""
+        Verglichen wird standardmäßig **exakt** (`config.group_match`). Sonst würde `admin` auch
+        auf `nicht-admin` passen: eine stille Rechteausweitung. `dn=True` (LDAP) vergleicht einen
+        Gruppen-DN nach seinen Bestandteilen statt als Text (`gruppe_passt`): ganzer DN, erster
+        RDN (`cn=staff`) oder dessen Wert (`staff`) — nie ein Teilstring."""
         if not mapping:
             return
         if substring is None:
             substring = self.cfg.group_match == "substring"
         gs = [str(g) for g in (groups or [])]
-        if substring:
-            matched = {role for key, role in mapping.items() if any(str(key) in g for g in gs)}
-        else:
-            matched = {role for key, role in mapping.items() if str(key) in gs}
+        matched = {role for key, role in mapping.items()
+                   if any(gruppe_passt(key, g, substring, dn) for g in gs)}
+        if dn and not substring:
+            for key in mapping:
+                _teilstring_hinweis(key, gs, "ldap_group_role_map")
         managed = {role for role in mapping.values() if role != "__admin__"}
         current = set(self.store.get_roles(user_id))
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
@@ -569,7 +601,7 @@ class TinySesam:
                     "keinen anderen Weg gibt, apikey_allow_unlimited=True.")
             expires_at = None
         else:
-            expires_at = int(time.time()) + expires_days * 86400
+            expires_at = _jetzt() + expires_days * 86400
 
         abgeschnitten = []
         if roles is not None:
@@ -605,7 +637,8 @@ class TinySesam:
         if abgeschnitten:
             # In den Audit-Eintrag, nicht nur verwerfen: Wer das versucht, soll sichtbar sein.
             detail += f" verworfene_rollen={','.join(abgeschnitten)}"
-        self.audit("apikey_create", detail=detail)
+        self.audit("apikey_create", self._kontoname(user_id), detail=detail)
+        self.sicherheitsereignis("api_key_created", user_id, key_id=kid, name=name or "")
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
                 "roles": roles, "verworfene_rollen": abgeschnitten, "kind": kind}
 
@@ -620,14 +653,21 @@ class TinySesam:
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
-        if not row or row["revoked"]:
+        if not row:
+            self._key_protokoll(None, "unbekannt")
             return None, None
-        if row["expires_at"] and row["expires_at"] < int(time.time()):
+        if row["revoked"]:
+            self._key_protokoll(row, "widerrufen")
+            return None, None
+        if row["expires_at"] and row["expires_at"] < _jetzt():
+            self._key_protokoll(row, "abgelaufen")
             return None, None
         u = self.store.get_user(row["user_id"])
         if not u or u["disabled"]:
+            self._key_protokoll(row, "konto_gesperrt")
             return None, None
         self.store.touch_api_key(row["id"])
+        self._key_protokoll(row, None)
         try:
             self._letzte_key_art = str(row["kind"] or "automat")
         except (IndexError, KeyError):
@@ -637,6 +677,53 @@ class TinySesam:
         except Exception:
             kr = []
         return u, (kr or None)
+
+    #: Wie lange dieselbe Key-Nutzung (Key, IP, Ausgang) nicht erneut ins Audit-Log geht (B5-05).
+    #: Ein Key ist für Automatiken da, die ihn im Sekundentakt vorlegen; eine Zeile je Anfrage
+    #: begrübe das übrige Log. Eine je Stunde und Adresse beantwortet die Fragen, die man nach
+    #: einem Abfluss stellt: seit wann, von wo, und kam eine NEUE Adresse dazu.
+    APIKEY_AUDIT_FENSTER = 3600
+    _DROSSEL_MAX = 10000
+
+    def _einmal_je(self, schluessel, fenster_sek: float) -> bool:
+        """True, wenn `schluessel` im Fenster noch nicht protokolliert wurde — und merkt ihn vor.
+
+        Für Ereignisse, die in Salven kommen (Key-Nutzung, abgewiesene Forward-Auth). Je Prozess;
+        mehrere Worker schreiben also je eine Zeile, das ist gewollt billiger als ein Abgleich.
+        """
+        jetzt = _jetzt()
+        if jetzt - self._protokoll_drossel.get(schluessel, 0) < fenster_sek:
+            return False
+        if len(self._protokoll_drossel) >= self._DROSSEL_MAX:
+            self._protokoll_drossel.clear()   # Deckel: wer Adressen durchprobiert, füllt keinen Speicher
+        self._protokoll_drossel[schluessel] = jetzt
+        return True
+
+    def _key_protokoll(self, row, grund: Optional[str]) -> None:
+        """Eine Key-Nutzung (grund=None) oder -Abweisung protokollieren — gedrosselt (B5-05).
+
+        Bis hierhin kannte das System von einem Key nur `last_used`: kein Wer, kein Woher, und
+        ein abgewiesener Key hinterliess gar nichts. Gerade der ist aber das Signal — ein
+        widerrufener Key, der weiter anklopft, heisst: Er liegt noch irgendwo, oder er ist
+        abgeflossen. Die IP kommt aus der laufenden Anfrage (`_ANFRAGE`).
+        """
+        a = _ANFRAGE.get() or {}
+        ip = a.get("ip")
+        kid = row["id"] if row is not None else None
+        if not self._einmal_je(("apikey", kid, ip, grund), self.APIKEY_AUDIT_FENSTER):
+            return
+        besitzer = self._kontoname(row["user_id"]) if row is not None else None
+        try:
+            art = str(row["kind"] or "automat") if row is not None else "?"
+        except (IndexError, KeyError):
+            art = "automat"
+        if grund is None:
+            self.store.audit_log("apikey_use", besitzer, ip, f"key={kid} art={art}")
+            return
+        detail = f"key={kid} grund={grund}" if kid is not None else f"grund={grund}"
+        self.store.audit_log("apikey_denied", besitzer, ip, detail)
+        security.seclog.warning("api key denied user=%s ip=%s grund=%s",
+                                security.fuer_log(besitzer or "-"), security.fuer_log(ip), grund)
 
     def api_key_art(self, key) -> str:
         """Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen."""
@@ -663,12 +750,93 @@ class TinySesam:
 
     def revoke_api_key(self, key_id, user_id=None):
         """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
+        besitzer = self.store.api_key_owner(key_id)
         self.store.revoke_api_key(key_id, user_id)
-        self.audit("apikey_revoke", detail=f"key={key_id}")
+        self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
 
     def set_password(self, user_id, password):
-        """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers)."""
+        """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
+
+        Die Passwortregel (`passwort_mangel`) prüft hier **nicht** — das tun die Setzstellen
+        (Registrierung, Reset, Kontoseite, Admin-Panel, CLI), weil nur sie eine lesbare Antwort
+        geben können. Wer diese Methode aus eigenem Code ruft, fragt vorher `passwort_mangel()`.
+        Benachrichtigt wird immer (`password_changed`), egal über welchen Weg."""
         self.store.set_password_hash(user_id, hash_password(password))
+        self.sicherheitsereignis("password_changed", user_id)
+
+    @staticmethod
+    def _blockliste_laden(pfad) -> frozenset:
+        """Die Betreiber-Blockliste (`password_blocklist_file`) einlesen — einmal, beim Start.
+
+        Fehlt die Datei, bricht der Start ab (`ConfigError`) statt still ohne Liste
+        weiterzulaufen: Wer eine Liste angibt, verlässt sich auf sie. Zeilen, die kein UTF-8
+        sind, liest `blockliste_lesen` als Latin-1 — sonst kam hier ein roher
+        `UnicodeDecodeError` statt einer brauchbaren Liste (A-3)."""
+        if not pfad:
+            return frozenset()
+        try:
+            return _pw.blockliste_lesen(pfad)
+        except OSError as e:
+            raise ConfigError(f"password_blocklist_file {pfad!r} lässt sich nicht lesen: {e}") from e
+
+    def passwort_mangel(self, password, *, username=None, email=None, api: bool = False) -> Optional[str]:
+        """Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der
+        übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
+
+        Eine Regel für alle Setzstellen: Registrierung, Passwort-Reset, Kontoseite und das
+        Admin-Panel (dort fehlte bis zu T-13 jede Prüfung, Fund B2-13). Sie prüft Mindest-
+        (`password_min_length`) und Höchstlänge (R4-07), die eingebaute plus die eigene
+        Blockliste und kontextbezogene Wörter — Dienstname (`rp_name`), Benutzername und der
+        Namensteil der E-Mail-Adresse (B2-5/H-17). Einzelheiten: `passwords.passwort_mangel`."""
+        kontext = [self.cfg.rp_name, username or ""]
+        if email:
+            kontext.append(str(email).split("@", 1)[0])
+        befund = _pw.passwort_mangel(password or "", self.sec("password_min_length"),
+                                     kontext=kontext, blockliste=self._blockliste)
+        if befund is None:
+            return None
+        grund, werte = befund
+        schluessel = {"short": ("api.password_short", "err.pw_short"),
+                      "long": ("api.password_long", "err.pw_long"),
+                      "weak": ("api.password_weak", "err.pw_weak")}[grund]
+        return self.t(schluessel[0] if api else schluessel[1], **werte)
+
+    # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
+    #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
+    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Ausnahme: API-Keys nur bei der
+    #: Anlage; ihren Widerruf (einzeln, im Panel, gesammelt bei Reset, Sperre und
+    #: `sessions/revoke`) meldet kein Ereignis, er steht nur im Audit-Log (offen, docs/BETRIEB.md
+    #: zu ASVS 6.3.7). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
+    #: benachrichtigen; bis T-13 erfuhr er von keiner (Fund B2-2): Ein Angreifer mit einer
+    #: Sitzung konnte TOTP abschalten, einen Passkey hinzufügen oder das Passwort ändern, und der
+    #: Inhaber sah es erst beim nächsten Login — wenn überhaupt.
+    SICHERHEITSEREIGNISSE = (
+        "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
+        "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
+        "api_key_created",
+    )
+
+    def sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
+        """`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
+
+        Ein Fehler im Hook bricht den Vorgang **nicht** ab — die Änderung ist zu diesem Zeitpunkt
+        schon geschrieben, und ein ausgefallener Mailserver darf den Passwortwechsel nicht
+        scheitern lassen. Er landet aber im Sicherheits-Log: Eine Benachrichtigung, die still
+        ausbleibt, ist schlechter als keine, auf die sich niemand verlässt. Der Hook läuft
+        synchron im Request; wer Mails verschickt, reiht sie besser in eine Warteschlange ein."""
+        hook = self.on_security_event
+        if hook is None:
+            return
+        zeile = self.store.get_user(user_id)
+        if zeile is None:
+            return
+        konto = {"id": zeile["id"], "username": zeile["username"], "email": zeile["email"],
+                 "display_name": zeile["display_name"]}
+        try:
+            hook(ereignis, konto, dict(details))
+        except Exception as e:
+            security.seclog.warning("on_security_event fehlgeschlagen ereignis=%s user_id=%s: %s",
+                                    ereignis, zeile["id"], security.fuer_log(repr(e)))
 
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage."""
@@ -681,6 +849,76 @@ class TinySesam:
     # Bewusst NICHT "der erste registrierte User wird Admin": bei offener Registrierung gewinnt,
     # wer als Erstes da ist — auch ein Fremder, der die frische Instanz findet. Stattdessen zwei
     # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt.
+    def delete_user(self, user_id: int) -> bool:
+        """Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
+
+        Die Audit-Zeilen bleiben stehen (was geschah, wann, von welcher IP), nur der Name wird zu
+        `gelöscht#<id>` — auch bei Anmeldeversuchen unter der E-Mail-Adresse und dort, wo Name
+        (`akteur=`) oder Adresse im Detailtext stehen (s. `Store.audit_anonymisieren`). Ein
+        gelöschtes Konto, dessen Name weiter in jeder Zeile steht, ist nicht gelöscht; ein Log,
+        dem die Zeilen fehlen, taugt nicht mehr zur Aufarbeitung.
+
+        Die Anmeldeversuche verschwinden unter jeder Schreibweise, unter der der Sperr-Topf sie
+        zählt (NFKC, IDNA, s. `Store.delete_attempts_for`). Ausnahme: ein Topf, den ein
+        verbleibendes Konto teilt (`ｃｌａｒａ` und `clara`) — der bleibt bis zum gewöhnlichen
+        Aufräumen stehen, sonst höbe das Löschen des einen die Sperre des anderen auf.
+
+        Ersetzt wird, was ab der Anlage des Kontos entstand; eine BELEGTE Adresse auch in
+        älteren Zeilen (etwa in der Einladung, die zu dem Konto führte) — sie gehört dem Konto
+        nachweislich (`Store.adresse_belegt`). Die Adresse eines offenen Kontos (Link nie
+        eingelöst) oder einer Registrierung ohne Bestätigungspflicht ist nicht belegt; sie hat
+        womöglich ein Fremder eingetippt. Ein Name gehörte vor der Anlage niemandem oder jemand
+        anderem; ein Fehlversuch darunter bleibt, wie er war (s. `Store.konto_entfernen`).
+
+        Der letzte Admin lässt sich nicht löschen (`StateError`) — sonst stünde die Instanz ohne
+        Verwaltung da, und der Erst-Admin-Weg öffnete sich für den Nächstbesten. Gibt False
+        zurück, wenn es das Konto nicht gibt.
+        """
+        u = self.store.get_user(user_id)
+        if not u:
+            return False
+        if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
+            raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
+        # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
+        # und die Rücknahme einer Registrierung löschen (Integrationsfunde 12/18). Nur hier, bei
+        # der bewussten Löschung, gilt eine belegte Adresse auch vor der Anlage als die des
+        # Kontos — die anderen Wege kann ein Fremder auslösen (`Store.adresse_belegt`).
+        entfernt = self.store.konto_entfernen(user_id, adresse_unbefristet=True)
+        if entfernt is None:
+            return False
+        ersatz, n = entfernt
+        self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
+        return True
+
+    def own_events(self, user_id: int, limit: int = 20) -> list:
+        """Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
+
+        Nur Zeit, Ereignis und IP — das Detail bleibt beim Betreiber: Bei einer Admin-Aktion
+        nennt es fremde Konten, und eine Anzeige für den Kontoinhaber soll nicht mehr zeigen als
+        sein eigenes Konto. Genau das, was man dort sucht: „War das ich?"
+
+        Hat ein ANDERER die Zeile ausgelöst (`akteur=` im Detail, s. `audit()`), steht dort
+        dessen IP — die des Admins. Die bleibt weg; `by_admin` sagt stattdessen, dass es nicht
+        der Kontoinhaber war.
+
+        Gezählt wird erst ab der Anlage des Kontos (`Store.anlage_grenze`). Der Filter geht über
+        den NAMEN, und ein Name kann vorher einem anderen gehört haben: einem gelöschten Konto,
+        dessen Zeilen ein älterer Stand nicht anonymisiert hat (Integrationsfund 12), oder
+        niemandem — dann steht dort der Fehlversuch eines Fremden unter dem damals freien Namen,
+        samt seiner IP.
+        """
+        u = self.store.get_user(user_id) if user_id is not None else None
+        if not u:
+            return []
+        aus = []
+        seit, seit_id = self.store.anlage_grenze(u)   # dieselbe Grenze wie `konto_entfernen`
+        for z in self.store.recent_audit(max(1, int(limit)), username=str(u["username"]),
+                                         seit=seit, seit_id=seit_id):
+            fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
+            aus.append({"ts": z["ts"], "event": z["event"],
+                        "ip": None if fremd else z["ip"], "by_admin": fremd})
+        return aus
+
     def admin_exists(self) -> bool:
         """Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht."""
         return any(u["is_admin"] for u in self.store.list_users())
@@ -761,14 +999,16 @@ class TinySesam:
                     "email_verified; SAML und LDAP kennen keinen; sonst der Vermerk am Konto). "
                     "Die Adresse bleibt am Konto, sie trägt nur diese Entscheidung nicht. "
                     "Belegter Weg: /auth/claim-admin.",
-                    user["username"], user["email"], faktor or "?")
+                    security.fuer_log(user["username"]), security.fuer_log(user["email"]),
+                    faktor or "?")
                 self.audit("admin_bootstrap_denied", user["username"], detail=grund)
                 return False
         if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
-        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s", user["username"])
+        security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s",
+                                security.fuer_log(user["username"]))
         return True
 
     def _admin_claim_bekanntgeben(self, token: str) -> None:
@@ -830,7 +1070,7 @@ class TinySesam:
         if not self.cfg.admin_enabled or self.cfg.admin_claim_ttl_min <= 0 or self.admin_exists():
             return None
         raw = self.store.get_setting("admin_claim")
-        now = int(time.time())
+        now = _jetzt()
         if raw:
             token, exp = raw.split(":", 1)
             if int(exp) > now:
@@ -847,13 +1087,20 @@ class TinySesam:
         if not raw:
             return False
         want, exp = raw.split(":", 1)
-        if int(exp) <= int(time.time()) or not secrets.compare_digest(token, want):
+        if int(exp) <= _jetzt() or not secrets.compare_digest(token, want):
             return False
         self.store.set_setting("admin_claim", "")     # einmalig
         self.store.set_admin(user["id"], True)
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
-        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s", user["username"])
+        security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s",
+                                security.fuer_log(user["username"]))
         return True
+
+    def admin_claim_fehlgriff(self, username, ip) -> None:
+        """Einen gescheiterten Erst-Admin-Claim festhalten — Audit-Log und Sicherheits-Log (B5-16)."""
+        self.audit("admin_claim_fail", username, ip)
+        security.seclog.warning("%s user=%s ip=%s method=claim_admin", security.LOG_PRUEFUNG,
+                                security.fuer_log(username), security.fuer_log(ip))
 
     # ---------- Demo-Modus ----------
     DEMO_USERS = ("demo", "demoadmin")
@@ -890,8 +1137,9 @@ class TinySesam:
         for sid in filter(None, raw.split(",")):
             u = self.store.get_user(int(sid))
             if u and u["username"] in self.DEMO_USERS:
-                self.store.delete_user_sessions(u["id"])
-                self.store.delete_user(u["id"])
+                # Über den einen Löschweg (H-13): Legt `seed_demo` die Namen später neu an, sähe
+                # das neue Konto sonst die Ereignisse des alten als seine eigenen (H-7).
+                self.store.konto_entfernen(u["id"])
                 n += 1
         self.store.set_setting("demo_users", "")
         return n
@@ -954,6 +1202,12 @@ class TinySesam:
     #: Quellen, die eine fremde Identität über eine stabile Kennung binden (F-11). OIDC steht
     #: nicht dabei: Es hat mit `issuer`+`sub` seit jeher eine eigene, stabilere Zuordnung.
     FOEDERIERTE_QUELLEN = ("ldap", "saml")
+    #: Platzhalter-Kennung für ein Konto, das über eine Quelle OHNE stabile Kennung kam (A-4).
+    #: Die Zeile in `federated_identity` sagt nur „dieses Konto stammt aus LDAP/SAML" — sonst
+    #: zählte es für `nur_foederiert()` als lokal und bekäme einen Reset-Link, dessen Passwort
+    #: danach vor dem Verzeichnis gewinnt. Je Konto eindeutig (Primärschlüssel quelle+kennung),
+    #: nie für eine Zuordnung gelesen, und eine echte Kennung ersetzt ihn beim nächsten Login.
+    _OHNE_KENNUNG = "~ohne-kennung:"
 
     def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
                                      anlegen) -> Optional[dict]:
@@ -981,8 +1235,16 @@ class TinySesam:
         Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
         daraus eine Abweisung.
         """
-        jetzt = int(time.time())
+        jetzt = _jetzt()
         kennung = str(kennung or "").strip()
+        if kennung.startswith(self._OHNE_KENNUNG):
+            # Eine Kennung in der Form des Platzhalters würde über `get_federated_user` genau
+            # das Konto treffen, dessen ID sie nennt. Aus einem echten Verzeichnis kommt so etwas
+            # nicht (UUID/GUID) — also ist es ein manipuliertes Attribut.
+            security.seclog.warning("%s: Kennung in Platzhalter-Form abgewiesen (user=%s)",
+                                    quelle, security.fuer_log(username))
+            self.audit(f"{quelle}_kennung_ungueltig", username, detail="Platzhalter-Form")
+            return None
         if not kennung:
             if self.cfg.federation_require_stable_id:
                 security.seclog.warning(
@@ -1011,13 +1273,20 @@ class TinySesam:
             uid = anlegen()
             if uid is None:
                 return None
-            if kennung:
-                self.store.link_federated(quelle, kennung, uid, jetzt)
+            self.store.link_federated(quelle, kennung or f"{self._OHNE_KENNUNG}{uid}", uid, jetzt)
             neu = self.store.get_user(uid)
             return self._als_dict(neu) if neu else None
 
-        if kennung:
-            vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        if not kennung:
+            if not vorhandene:
+                # Herkunft festhalten, auch ohne Kennung (A-4) — siehe _OHNE_KENNUNG.
+                self.store.link_federated(quelle, f"{self._OHNE_KENNUNG}{u['id']}", u["id"], jetzt)
+        else:
+            if vorhandene and vorhandene.startswith(self._OHNE_KENNUNG):
+                # Nur der Herkunfts-Platzhalter, keine Kennung: wie ungebunden (Lage 4).
+                self.store.unlink_federated(quelle, u["id"])
+                vorhandene = None
             if vorhandene and vorhandene != kennung:
                 # Lage 3: Das Konto gehört jemand anderem, auch wenn der Name derselbe ist.
                 security.seclog.warning(
@@ -1068,14 +1337,53 @@ class TinySesam:
         bestimmen (F-14)."""
         if not self.ldap:
             return None
-        info = self.ldap.authenticate(username, password)
+        from .ldap_ import AnfrageAbgebrochen, VerzeichnisNichtErreichbar, eingabe_zu_lang
+        # Länger als jede echte Anmeldung: nicht ans Verzeichnis, sondern wie ein falsches
+        # Passwort (Fehlversuch, `failed login`). Hier und nicht erst im Client, damit es auch für
+        # einen selbst gesetzten Client gilt — und bevor der Merker einen Probenplatz vergibt.
+        # Vorher schickte die Login-Route jede Länge durch: Ein Passwort mit 270 000 Zeichen
+        # liess slapd die Verbindung beenden (s. `ldap_.AnfrageAbgebrochen`).
+        if eingabe_zu_lang(username, password):
+            return None
+        # Nach einem Ausfall wird das Verzeichnis eine Weile gar nicht erst gefragt: Die Route
+        # hat den Versuch schon vorgebucht (R7-2) und nimmt ihn erst zurück, wenn der Ausfall
+        # gemeldet ist — ohne den Merker schwebte er bei jedem Anlauf bis zum Timeout und
+        # sperrte derweil Unbeteiligte (Begründung bei `ldap_.AusfallMerker`).
+        merker = self._ldap_ausfall
+        probe = merker.zugang()
+        try:
+            info = self.ldap.authenticate(username, password)
+        except AnfrageAbgebrochen:
+            # Nur DIESE Anfrage ist gescheitert, schnell und nach dem Senden ihrer Eingaben —
+            # kein Beleg für einen Ausfall. Den Merker scharf zu schalten, gäbe jedem Absender
+            # einer präparierten Anmeldung einen Schalter, der LDAP für alle abstellt. War sie die
+            # Probe, fragt die nächste Anmeldung nach.
+            if probe:
+                merker.freigeben()
+            raise
+        except VerzeichnisNichtErreichbar as e:
+            merker.ausgefallen(e, war_probe=probe)
+            raise
+        except BaseException:
+            if probe:
+                merker.freigeben()
+            raise
+        merker.erreicht()
         if not info:
             return None
-        # Gruppen-Gate (Teilstring-Match gegen memberOf/Gruppen-Werte)
+        # Gruppen-Gate gegen memberOf — nach DN-Bestandteilen, nicht als Teilstring (F-19):
+        # `staff` liess sonst auch `cn=staffextern,…` durch. `group_match="substring"` holt
+        # den alten Vergleich ausdrücklich zurück.
         allowed = self.cfg.ldap_allowed_groups
+        teilstring = self.cfg.group_match == "substring"
         if allowed:
             groups = info.get("groups") or []
-            if not any(a and any(a in str(g) for g in groups) for a in allowed):
+            if not teilstring:
+                for a in allowed:
+                    _teilstring_hinweis(a, groups, "ldap_allowed_groups")
+            if not any(gruppe_passt(a, g, teilstring, dn=True) for a in allowed for g in groups):
+                self.audit("ldap_group_denied", username,
+                           detail=f"verlangt={sorted(str(a) for a in allowed)}")
                 return None
         def _anlegen():
             if not self.cfg.ldap_auto_create:
@@ -1099,31 +1407,40 @@ class TinySesam:
         u = self._fremde_identitaet_aufloesen("ldap", info.get("id") or "", username, _anlegen)
         if not u or u["disabled"]:
             return None
-        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map,
-                              substring=True)   # memberOf liefert ganze DNs
+        # memberOf liefert ganze DNs → Vergleich nach Bestandteilen (F-19). Bis 0.20.0 stand
+        # hier `substring=True` fest verdrahtet, und `group_match` war für LDAP wirkungslos.
+        self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
     # ---------- SAML (Attribute → lokaler User) ----------
-    def check_saml(self, nameid, attrs) -> Optional[dict]:
+    def check_saml(self, nameid, attrs, ip: Optional[str] = None) -> Optional[dict]:
         """Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
 
         Die Adresse aus dem Attribut trägt keinen Beleg (SAML kennt kein `email_verified`).
         Deshalb legt dieser Weg mit `email_verified=False` an, und der Faktor `saml` steht in
         `FOEDERIERTE_FAKTOREN`: Eine Allowlist-ADRESSE wird über diesen Weg nie zum Erst-Admin,
         auch wenn ein Aufrufer den Beleg nicht nennt — und auch nicht über einen zweiten,
-        selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13)."""
+        selbst eingerichteten Faktor beim nächsten Login (B-umgehung-1 aus T-13).
+
+        Jede fachliche Abweisung hinterlässt eine Audit-Zeile mit Grund (F-22): Bis 0.20.0
+        endeten Gruppen-Gate, fehlendes Konto und gesperrtes Konto stumm in einer 403 — „ich komme
+        nicht rein" war serverseitig nicht zu beantworten. `ip` reicht die ACS-Route durch."""
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
         username = (username or nameid or "").strip()
         if not username:
+            self.audit("saml_denied", None, ip, "grund=kein_name")
             return None
         if cfg.saml_allowed_groups:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
+                self.audit("saml_denied", username, ip,
+                           f"grund=gruppe verlangt={sorted(cfg.saml_allowed_groups)}")
                 return None
         def _anlegen():
             if not cfg.saml_auto_create:
+                self.audit("saml_denied", username, ip, "grund=kein_konto saml_auto_create=False")
                 return None
             try:
                 # Wie bei LDAP (B-umgehung-1 aus T-13): Die Adresse aus der Assertion kommt ohne
@@ -1141,10 +1458,35 @@ class TinySesam:
         # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
         kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
         u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen)
-        if not u or u["disabled"]:
+        if u and u["disabled"]:
+            self.audit("saml_denied", str(u["username"]), ip, "grund=konto_gesperrt")
             return None
+        if not u:
+            return None     # Grund steht schon im Audit-Log (Anlegen/Kennung)
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
+
+    # ---------- Passkeys verwalten ----------
+    def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
+        """Einen Passkey eines Kontos entfernen — Löschen, Audit-Zeile und `passkey_removed` in einem.
+
+        Beide Wege laufen hierüber: die Selbstbedienung (`/auth/passkey/delete`) und der Widerruf
+        durch einen Admin im Panel. Vorher hatte jeder seine eigenen Zeilen, und nach dem
+        Zusammenführen zweier Zweige meldete nur die Selbstbedienung das Ereignis — ausgerechnet
+        der Widerruf an einem FREMDEN Konto, den ein übernommenes Admin-Konto vornimmt, blieb
+        für den Inhaber still (Integrationsfund 3). Die Audit-Zeile steht unter dem Inhaber;
+        handelt ein anderer, ergänzt `audit()` `akteur=` aus der laufenden Anfrage.
+
+        Gibt False zurück, wenn das Konto keinen Passkey mit dieser ID hat — dann wird weder
+        gelöscht noch protokolliert noch gemeldet (vorher schrieb die Selbstbedienung auch für
+        einen erfundenen Passkey eine Zeile und ein Ereignis)."""
+        if not any(int(c["id"]) == int(passkey_id) for c in self.store.list_webauthn(user_id)):
+            return False
+        self.store.delete_webauthn(int(passkey_id), user_id)
+        # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
+        self.audit("passkey_delete", self._kontoname(user_id), ip, f"id={int(passkey_id)}")
+        self.sicherheitsereignis("passkey_removed", user_id, passkey_id=int(passkey_id))
+        return True
 
     # ---------- PIN-Login (persönliche PIN pro User) ----------
     def set_pin(self, user_id, pin):
@@ -1153,6 +1495,7 @@ class TinySesam:
         if len(pin) < self.cfg.pin_min_length:
             raise ConfigError(f"PIN zu kurz (min. {self.cfg.pin_min_length})")
         self.store.set_pin_hash(user_id, hash_password(pin))
+        self.sicherheitsereignis("pin_set", user_id)
 
     def has_pin(self, user_id) -> bool:
         """Hat dieses Konto eine PIN eingerichtet?"""
@@ -1161,7 +1504,8 @@ class TinySesam:
     def disable_pin(self, user_id):
         """Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt)."""
         self.store.delete_pin(user_id)
-        self.audit("pin_disable", detail=f"user={user_id}")
+        self.audit("pin_disable", self._kontoname(user_id), detail=f"user={user_id}")
+        self.sicherheitsereignis("pin_disabled", user_id)
 
     def check_pin(self, username, pin) -> Optional[dict]:
         """Wie `check_password`, nur mit der persönlichen PIN."""
@@ -1231,15 +1575,15 @@ class TinySesam:
             return []              # gewünscht, aber nichts davon eingerichtet → verschlossen
         return avail               # der alte Weg: das beste, was der Nutzer hat
 
-    def is_pin_locked(self, username, ip) -> bool:
-        """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked()."""
-        since = int(time.time()) - self.sec("lockout_window_sec")
-        limit = self.sec("pin_max_attempts")
-        if username and self.store.count_fails(since, username=username, method="pin") >= limit:
-            return True
-        if ip and self.store.count_fails(since, ip=ip, method="pin") >= limit * self.sec("ip_attempt_factor"):
-            return True
-        return False
+    def is_pin_locked(self, username, ip, login: bool = True) -> bool:
+        """Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
+
+        Die Abweisung wird hier gemeldet (`_abgewiesen`), wie bei jeder anderen Sperre: Bis
+        T-13 wies diese als einzige stumm ab, und das Sicherheits-Log schwieg genau dann, wenn
+        fail2ban lesen sollte. `login=False` für die Step-up-Seite — dort ist die PIN keine
+        Anmeldung, die Zeile trägt dann `failed verification`.
+        """
+        return self._sperre_pruefen(self._regeln_pin(username, ip), username, ip, login)
 
     def is_password_change_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
@@ -1262,8 +1606,8 @@ class TinySesam:
         Sicherheits-Log genau dann, wenn fail2ban die IP bannen soll (Begründung bei
         `_abgewiesen`).
         """
-        return self._methoden_sperre(username, ip, "password_change",
-                                     self.sec("password_change_max_attempts"))
+        return self._sperre_pruefen(self._regeln(username, ip, "password_change"),
+                                    username, ip, login=False)
 
     def is_reauth_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
@@ -1276,7 +1620,7 @@ class TinySesam:
         das eigene Konto, eine IP-Schwelle träfe hinter NAT nur Unbeteiligte (`ip` geht bloss
         in die Protokollzeile). Gedrosselt bleibt der Weg über `rate_ok(ip)`.
         """
-        return self._methoden_sperre(username, ip, "reauth", self.sec("reauth_max_attempts"))
+        return self._sperre_pruefen(self._regeln(username, ip, "reauth"), username, ip, login=False)
 
     def is_resource_locked(self, username, ip) -> bool:
         """Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
@@ -1288,30 +1632,132 @@ class TinySesam:
         (`max_login_attempts * ip_attempt_factor`) und verriegelten die Anmeldung von Konten,
         die nie etwas falsch gemacht hatten.
 
-        Die IP-Schwelle bleibt hier — anders als bei `password_change`/`reauth` — erhalten
-        (`resource_max_attempts * ip_attempt_factor`): Dieser Weg steht Unangemeldeten offen,
-        das Opfer ist also kein bestimmter Angemeldeter, und ohne IP-Dimension könnte ein
-        Angreifer über viele Bereichsnamen beliebig weiterraten. Sie sperrt jetzt aber nur
-        noch das, was sie schützt — Bereiche, keine Anmeldungen.
+        Zwei Schwellen, und ihre Reihenfolge ist der Punkt (R7-3): **je Adresse**
+        `resource_max_attempts`, **je Bereich** das `account_attempt_factor`-fache davon. Bis
+        T-13 war es umgekehrt — der Bereich sperrte schon nach `resource_max_attempts`, egal von
+        wem. Ein einzelner Fremder verriegelte so mit fünf Fehlgriffen den Bereich für ALLE,
+        auch für die, die das Geheimnis kennen. Jetzt stoppt ihn seine eigene Adresse, lange
+        bevor der Bereich zugeht; dafür braucht es mehrere Anschlüsse. Ganz fallen lassen lässt
+        sich die Bereichsschwelle nicht: Ohne sie rät ein verteilter Angreifer eine vierstellige
+        PIN in Stunden, weil jede Adresse ihre eigenen Versuche mitbringt.
         """
-        return self._methoden_sperre(username, ip, "resource", self.sec("resource_max_attempts"),
-                                     ip_faktor=self.sec("ip_attempt_factor"))
+        return self._sperre_pruefen(self._regeln(username, ip, "resource"), username, ip, login=False)
 
-    def _methoden_sperre(self, username, ip, method, limit, ip_faktor=0) -> bool:
-        """Gemeinsamer Rumpf der methodengebundenen Sperren (`is_*_locked`).
+    def is_totp_setup_locked(self, username, ip) -> bool:
+        """Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
 
-        `ip_faktor=0` heisst: **keine** IP-Dimension — die Methode trifft nur den, der rät
-        (siehe `is_password_change_locked`). Nur wo ein Fremder von aussen raten kann, zählt
-        zusätzlich die Adresse mit (`is_resource_locked`).
+        Die Route `POST /auth/totp/setup` prüfte bis T-13 beliebig viele Codes, ohne Drossel,
+        ohne Sperre und ohne Protokollzeile (Funde B2-12, R3-6) — die einzige OTP-Prüfstelle,
+        an der das so war. Raten bringt dort wenig (wer einrichtet, sieht das Geheimnis), aber
+        eine Prüfstelle ohne Bremse und ohne Spur ist genau die, nach der niemand mehr schaut.
+        Wie `reauth` **nur pro Konto** (`totp_setup_max_attempts`) und getrennt vom
+        Login-Lockout: Fünf Tippfehler beim Einrichten sollen nicht die Anmeldung sperren.
+
+        Nur lesend: Die Route nimmt `versuch_beginnen(…, "totp_setup")`, das prüft und bucht in
+        einem Schritt — mit dieser Methode vorab und `record_login()` danach kam eine parallele
+        Salve an der Grenze vorbei.
         """
-        since = int(time.time()) - self.sec("lockout_window_sec")
-        if username and self.store.count_fails(since, username=username, method=method) >= limit:
-            self._abgewiesen(username, ip, f"lockout_{method}", login=False)
-            return True
-        if ip_faktor and ip and self.store.count_fails(since, ip=ip, method=method) >= limit * ip_faktor:
-            self._abgewiesen(username, ip, f"lockout_{method}_ip", login=False)
-            return True
+        return self._sperre_pruefen(self._regeln(username, ip, "totp_setup"), username, ip, login=False)
+
+    # ---------- Die Sperr-Regeln: eine Quelle für Prüfen und atomares Verbuchen ----------
+    def _regeln_pin(self, username, ip, since=None) -> list:
+        """Der eigene PIN-Topf: pro Konto `pin_max_attempts`, pro Adresse das `ip_attempt_factor`-fache.
+
+        Pro Konto und nicht pro Paar aus Konto und Adresse: Eine PIN hat oft nur vier Stellen,
+        ein verteilter Angreifer hätte sie mit Paar-Zählung in Stunden durch."""
+        since = self._fenster_beginn() if since is None else since
+        username = norm_kennung(username)
+        grenze = self.sec("pin_max_attempts")
+        return [("lockout_pin", grenze, dict(since=since, username=username, method="pin")),
+                ("lockout_pin_ip", grenze * self.sec("ip_attempt_factor"),
+                 dict(since=since, ip=ip, method="pin"))]
+
+    @staticmethod
+    def _topf(username, method) -> str:
+        """Unter welchem Namen ein Versuch zählt: die Kennung so gefaltet wie `find_user` sie liest.
+
+        Gezählt wurde bis zur dritten Runde unter dem ROH eingetippten Text, gesucht aber
+        getrimmt und ohne Gross-/Kleinschreibung. `' opfer'`, `'opfer '`, `'\topfer'` trafen
+        dasselbe Konto und füllten je einen eigenen Topf — die Konto-Schwelle gegen verteiltes
+        Raten (R7-6/H-8) band damit nichts. Ausgenommen ist der Bereichs-Pseudoname
+        `res:<name>`: Den setzt der Server aus einem Bereich, den es geben muss."""
+        return username if method == "resource" else norm_kennung(username)
+
+    def _fenster_beginn(self) -> int:
+        return _jetzt() - self.sec("lockout_window_sec")
+
+    def _regeln(self, username, ip, method) -> list:
+        """Welche Zähler gelten für einen Versuch dieser Methode? Liste `(grund, grenze, filter)`.
+
+        `is_*_locked()` prüft sie, `versuch_beginnen()` prüft sie UND bucht atomar — beide lesen
+        dieselbe Liste, damit die beiden Wege nie verschieden streng sind.
+
+        **Anmeldung** (alles ausser `security.NICHT_LOGIN_METHODEN`, R7-6/H-8): Die erste
+        Schwelle zählt je **Paar aus Konto und Adresse** (`max_login_attempts`). Bis T-13 zählte
+        sie je Konto allein — dann sperrte jeder Fremde jedes Konto, dessen Namen er kannte,
+        mit fünf Anfragen für ein Fenster aus, samt dem Inhaber mit dem richtigen Passwort. Je
+        Konto bleibt eine zweite, höhere Schwelle (`account_attempt_factor`-fach) gegen das
+        Raten über viele Adressen; die erreicht ein Einzelner nicht mehr, weil ihn das Paar
+        vorher stoppt. Je Adresse bleibt die NAT-Schwelle (`ip_attempt_factor`-fach) gegen
+        das Durchprobieren vieler Konten.
+
+        Der Konto-Schlüssel ist `_topf(username)`, nicht der rohe Text — sonst stellt sich ein
+        Angreifer mit Leerzeichen und Schreibweisen beliebig viele Töpfe für dasselbe Konto auf.
+        """
+        since = self._fenster_beginn()
+        username = self._topf(username, method)
+        if method in ("password_change", "reauth", "totp_setup"):
+            grenze = self.sec(f"{method}_max_attempts")
+            return [(f"lockout_{method}", grenze, dict(since=since, username=username, method=method))]
+        if method == "resource":
+            grenze = self.sec("resource_max_attempts")
+            return [("lockout_resource_ip", grenze, dict(since=since, ip=ip, method=method)),
+                    ("lockout_resource", grenze * self.sec("account_attempt_factor"),
+                     dict(since=since, username=username, method=method))]
+        ohne = security.NICHT_LOGIN_METHODEN
+        grenze = self.sec("max_login_attempts")
+        regeln = []
+        if username and ip:
+            regeln.append(("lockout_user", grenze,
+                           dict(since=since, username=username, ip=ip, exclude_methods=ohne)))
+        regeln += [
+            ("lockout_account", grenze * self.sec("account_attempt_factor"),
+             dict(since=since, username=username, exclude_methods=ohne)),
+            ("lockout_ip", grenze * self.sec("ip_attempt_factor"),
+             dict(since=since, ip=ip, exclude_methods=ohne)),
+        ]
+        if method == "pin":
+            regeln += self._regeln_pin(username, ip, since)
+        return regeln
+
+    def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
+        """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`)."""
+        for grund, grenze, filt in _gueltige_regeln(regeln):
+            if self.store.count_fails(**filt) >= grenze:
+                self._abgewiesen(username, ip, grund, login=login)
+                return True
         return False
+
+    def versuch_beginnen(self, username, ip, method, auch_pin: bool = False) -> Optional[int]:
+        """Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
+
+        Rückgabe: eine Versuchs-ID, die an `record_login(..., versuch=id)` zurückgeht, oder
+        `None` — gesperrt (bereits gemeldet). Ersetzt die Folge `is_locked()` → prüfen →
+        `record_login()`, die eine parallele Salve an der Sperre vorbeiliess (R3-2, R3-7,
+        R7-2; Begründung bei `Store.reserve_attempt`).
+
+        `auch_pin=True` hängt den PIN-Topf mit an — für die Step-up-Seite, auf der eine PIN
+        bestätigt, deren Versuche aber im Topf `reauth` landen.
+        """
+        regeln = self._regeln(username, ip, method)
+        if auch_pin:
+            regeln = regeln + self._regeln_pin(username, ip)
+        versuch, grund = self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                                    _gueltige_regeln(regeln))
+        if versuch is None:
+            self._abgewiesen(username, ip, grund,
+                             login=method not in security.NICHT_LOGIN_METHODEN)
+        return versuch
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
@@ -1361,7 +1807,8 @@ class TinySesam:
         if self.store.has_confirmed_totp(user_id):
             # Der Versuch selbst ist die interessante Zeile: Bis 0.18.0 hinterliess dieser Weg
             # keine Spur, obwohl er den zweiten Faktor entfernte.
-            self.audit("totp_setup_denied", detail=f"user={user_id} grund=bereits_bestaetigt")
+            self.audit("totp_setup_denied", self._kontoname(user_id),
+                       detail=f"user={user_id} grund=bereits_bestaetigt")
             raise StateError(
                 f"Konto {user_id} hat bereits ein bestätigtes TOTP — erst abschalten "
                 f"(totp_disable), dann neu einrichten.")
@@ -1374,30 +1821,54 @@ class TinySesam:
         verwaist = self.store.count_recovery_codes(user_id)
         if verwaist:
             self.store.delete_recovery_codes(user_id)
-            self.audit("recovery_verwaist_geloescht", detail=f"user={user_id} n={verwaist}")
+            self.audit("recovery_verwaist_geloescht", str(u["username"]),
+                       detail=f"user={user_id} n={verwaist}")
         secret = _totp.new_secret()
         self.store.set_totp(user_id, secret, confirmed=False)
-        self.audit("totp_setup_start", detail=f"user={user_id}")
+        self.audit("totp_setup_start", str(u["username"]), detail=f"user={user_id}")
         uri = _totp.provisioning_uri(secret, u["username"], self.cfg.rp_name)
         return {"secret": secret, "uri": uri, "qr": _totp.qr_data_uri(uri)}
 
     def totp_confirm(self, user_id, code) -> bool:
-        """Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an."""
+        """Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an.
+
+        Der Bestätigungscode wird **verbraucht** wie jeder andere (Fund B2-3): Bis T-13 prüfte
+        diese Stelle nur `verify()` und buchte den Zeitschritt nicht. Derselbe Code, eben zur
+        Einrichtung eingetippt (und dabei womöglich abgelesen), meldete danach an
+        `/auth/totp` noch bis zu 90 Sekunden an — die Einmal-Zusage aus T-9 galt nur für die
+        Anmeldung, nicht für die Einrichtung. Wer unter `login_chain=["password","totp"]`
+        einrichtet, bekommt den TOTP-Schritt mit dieser Bestätigung gleich gutgeschrieben (die
+        Route erledigt das, A-1) — sonst wäre der eben getippte Code dort ein Fehlversuch.
+
+        Ein **schon bestätigtes** TOTP bestätigt diese Methode nicht noch einmal (A-4): Sie meldete
+        sonst `totp_enabled` für etwas, das niemand eingerichtet hat, und war nebenbei ein
+        zweiter Code-Prüfer für den aktiven Faktor mit eigenem Versuchstopf."""
         t = self.store.get_totp(user_id)
-        if t and _totp.verify(t["secret"], code):
-            self.store.confirm_totp(user_id)
-            return True
-        return False
+        if not t or not code or t["confirmed"]:
+            return False
+        schritt = _totp.passender_schritt(t["secret"], code)
+        if schritt is None or not self.store.totp_step_verbrauchen(user_id, schritt):
+            return False
+        self.store.confirm_totp(user_id)
+        # Ab hier gilt ein neuer zweiter Faktor — das Gegenstück zu `totp_disable` und
+        # bisher die einzige Faktor-Änderung ohne Zeile (B5-07). Gerade sie ist es, die ein
+        # Angreifer mit einer übernommenen Sitzung vornimmt, um wiederzukommen.
+        self.audit("totp_enable", self._kontoname(user_id), detail=f"user={user_id}")
+        self.sicherheitsereignis("totp_enabled", user_id)
+        return True
 
     def totp_disable(self, user_id):
         """TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert)."""
         offen = self.store.count_recovery_codes(user_id)   # vor dem Löschen zählen
+        hatte = self.store.has_confirmed_totp(user_id)
         self.store.delete_totp(user_id)
         self.store.delete_recovery_codes(user_id)   # ohne TOTP sind Recovery-Codes gegenstandslos
         # Das Abschalten eines zweiten Faktors ist das, was ein Angreifer als Erstes tut, wenn er
         # eine Sitzung hat. Ohne Eintrag ist es hinterher nicht nachvollziehbar — bis 2026-09-21
         # hinterliess es keine Spur, obwohl dabei TOTP UND alle Recovery-Codes fallen.
-        self.audit("totp_disable", detail=f"user={user_id} recovery_codes_geloescht={offen}")
+        self.audit("totp_disable", self._kontoname(user_id), detail=f"user={user_id} recovery_codes_geloescht={offen}")
+        if hatte:
+            self.sicherheitsereignis("totp_disabled", user_id, recovery_codes_geloescht=offen)
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
     #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 7 Byte = **112 Bit**.
@@ -1410,6 +1881,9 @@ class TinySesam:
     #: Bestehende Codes bleiben gültig (gespeichert wird ohnehin nur der Hash); neu erzeugte
     #: sind länger.
     RECOVERY_BYTES = 7
+    #: Ab so wenigen verbleibenden Codes zeigt die Kontoseite eine Warnung und das
+    #: Sicherheits-Log eine Zeile — wer sie aufbraucht, soll rechtzeitig neue erzeugen.
+    RECOVERY_WARNSCHWELLE = 3
 
     def generate_recovery_codes(self, user_id, n=None) -> list:
         """Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL."""
@@ -1417,7 +1891,8 @@ class TinySesam:
         codes = ["-".join(secrets.token_hex(self.RECOVERY_BYTES) for _ in range(2)) for _ in range(n)]
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
-        self.audit("recovery_generate", detail=f"user={user_id} n={n}")
+        self.audit("recovery_generate", self._kontoname(user_id), detail=f"user={user_id} n={n}")
+        self.sicherheitsereignis("recovery_codes_generated", user_id, anzahl=n)
         return codes
 
     @staticmethod
@@ -1429,13 +1904,38 @@ class TinySesam:
         """Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal."""
         if not code:
             return False
-        return self.store.consume_recovery_code(user_id, self._rc_hash(code))
+        if not self.store.consume_recovery_code(user_id, self._rc_hash(code)):
+            return False
+        # Eigene Zeile (B5-07/B2-7). Ein verbrauchter Code heisst: Der Authenticator fehlte — oder jemand anderes hat einen
+        # Code. Beides soll der Inhaber erfahren, und der Betreiber soll es von einer
+        # TOTP-Anmeldung unterscheiden können (Fund B2-7). Bis T-13 blieb davon nichts: keine
+        # Audit-Zeile, kein Hinweis, wie viele Codes noch übrig sind.
+        rest = self.store.count_recovery_codes(user_id)
+        self.audit("recovery_used", self._kontoname(user_id), detail=f"user={user_id} verbleibend={rest}")
+        security.seclog.warning("recovery code used user_id=%s verbleibend=%s", user_id, rest)
+        self.sicherheitsereignis("recovery_code_used", user_id, verbleibend=rest)
+        return True
 
     def recovery_codes_remaining(self, user_id) -> int:
         """Wie viele Einmal-Codes dieses Konto noch hat."""
         return self.store.count_recovery_codes(user_id)
 
     # ---------- Passwort-Reset (Forgot-Password) ----------
+    def nur_foederiert(self, user_id) -> bool:
+        """Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
+
+        Liefert das Verzeichnis keine stabile Kennung, bindet der Login einen Herkunfts-Platzhalter
+        (`_OHNE_KENNUNG`, A-4) — auch so ein Konto zählt hier als föderiert.
+
+        Grenze: Ein LDAP- oder SAML-Konto, das sich seit dem Update auf diese Fassung nicht
+        angemeldet hat, trägt noch keine Zeile und zählt hier als lokal.
+
+        Nicht hier geregelt: Der Magic-Login-Link (`magiclink_enabled`) geht auch an ein reines
+        SSO-Konto — das ist ein vom Betreiber eingeschalteter Anmeldeweg, kein Passwort, das
+        bleibt; ob er für solche Konten abgeschaltet gehört, ist eine Produktentscheidung."""
+        return (self.store.has_foreign_identity(user_id)
+                and not self.store.get_password_hash(user_id))
+
     def send_password_reset(self, email, base_url) -> bool:
         """Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer
         gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem
@@ -1444,18 +1944,34 @@ class TinySesam:
         Geprüft wird als Erstes — vor der Kontosuche, damit „Ausnahme statt False" nicht
         verrät, ob es die Adresse gibt, und vor der Token-Vergabe, damit kein unbrauchbarer
         Token zurückbleibt.
+
+        Die Mail geht an die **gespeicherte** Adresse, nicht an die Eingabe (R4-11): Die Suche
+        ist nachsichtig (Gross-/Kleinschreibung, Leerzeichen), der Versand darf es nicht sein.
+        Scheitert der Versand, wird der Token sofort entwertet (B6-12) und der Fehler geht an
+        den Aufrufer weiter.
         """
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
-        raw = self.create_magic_token("reset_password", user_id=u["id"], email=email)
+        if self.nur_foederiert(u["id"]):
+            # Ein reines SSO-Konto bekommt keinen Reset-Link (H-4). Er setzte ein LOKALES
+            # Passwort — ein zweiter Weg an IdP bzw. Verzeichnis vorbei: Sperre, Gruppenentzug
+            # und MFA-Pflicht des Providers griffen dann nicht mehr, und bei LDAP gewinnt das
+            # lokale Passwort sogar vor dem Verzeichnis (`check_password` zuerst). Die Antwort
+            # nach aussen bleibt dieselbe (keine Konto-Erkundung); der Grund steht im Audit-Log.
+            self.audit("reset_sso_only", u["username"], detail="kein lokales Passwort, föderiert")
+            return False
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "reset_password"):
+            return False
+        raw = self.create_magic_token("reset_password", user_id=u["id"], email=ziel)
         url = self.magic_url(raw, base_url, "reset_password")
         mins = self.cfg.magiclink_ttl_min
-        self.send_mail(email, "Passwort zurücksetzen",
-                       f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                       html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
+        self._token_mail(raw, ziel, "Passwort zurücksetzen",
+                         f"Zum Zurücksetzen deines Passworts diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                         html=f'<p>Passwort zurücksetzen (gültig {mins} Minuten):</p><p><a href="{url}">Neues Passwort setzen</a></p>')
         return True
 
     # ---------- Faktor-Ketten-Engine ----------
@@ -1520,7 +2036,7 @@ class TinySesam:
             raise HTTPException(400, self.t("api.json_object"))
         if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request):
             token = request.headers.get("x-csrf-token") or data.get("_csrf")
-            if not self.verify_csrf(request, token):
+            if not self._herkunft_ok(request) or not self.verify_csrf(request, token):
                 raise HTTPException(403, self.t("api.csrf"))
         return data
 
@@ -1532,7 +2048,7 @@ class TinySesam:
         if not self.cfg.csrf_enabled:
             return ""
         token = secrets.token_urlsafe(24)
-        response.set_cookie(self.cfg.csrf_cookie, token, secure=self.cfg.cookie_secure,
+        response.set_cookie(self.csrf_cookie_name, token, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         return token
 
@@ -1541,7 +2057,7 @@ class TinySesam:
         if not self.cfg.csrf_enabled:
             return True
         import hmac
-        cookie = request.cookies.get(self.cfg.csrf_cookie)
+        cookie = request.cookies.get(self.csrf_cookie_name)
         return bool(cookie) and bool(submitted) and hmac.compare_digest(str(cookie), str(submitted))
 
     def _csrf_entbehrlich(self, request: Request) -> bool:
@@ -1564,8 +2080,13 @@ class TinySesam:
         key = self._extract_api_key(request)
         if not key:
             return False
-        if self.store.get_session(request.cookies.get(self.cfg.session_cookie) or ""):
+        if self.store.get_session(request.cookies.get(self.session_cookie_name) or ""):
             return False        # Cookie im Spiel → CSRF gilt, egal was im Header steht
+        # Die IP vor der Key-Prüfung festhalten: Diese Prüfung läuft VOR `current_user`, und
+        # `verify_api_key` protokolliert Nutzung und Abweisung (B5-05). Ohne den Aufruf stand ein
+        # widerrufener Key an einer POST-Route ohne Adresse im Log, und ein gültiger doppelt —
+        # einmal ohne, einmal mit IP, weil die IP Teil des Drosselschlüssels ist.
+        self._anfrage_merken(request)
         return self.verify_api_key(key)[0] is not None
 
     def require_csrf(self, request: Request, submitted):
@@ -1574,8 +2095,95 @@ class TinySesam:
         Ausgenommen sind nur Requests, die wirklich per API-Key angemeldet sind — s.
         `_csrf_entbehrlich`."""
         if self.cfg.csrf_enabled and not self._csrf_entbehrlich(request) \
-                and not self.verify_csrf(request, submitted):
+                and not (self._herkunft_ok(request) and self.verify_csrf(request, submitted)):
             raise HTTPException(403, self.t("api.csrf"))
+
+    def _eigene_hosts(self, request: Request) -> set:
+        """Die Hostnamen, unter denen diese Instanz im Browser steht.
+
+        Host-Header und X-Forwarded-Host kann ein fremdes Skript im Browser des Opfers nicht
+        setzen — sie sagen also, wohin der Browser WOLLTE. Dazu `base_url`, damit ein Proxy,
+        der den Host umschreibt, nicht aussperrt.
+
+        `trusted_redirect_hosts` gehören NICHT dazu. Sie sind erlaubte Ziele für `?next=`, und
+        im Forward-Auth-Aufbau sind das die geschützten Apps — fremder Code aus Sicht von
+        TinySesam. Als eigener Origin gezählt, bestand ein Formular-POST einer kompromittierten
+        App die Herkunftsprüfung (Login-CSRF, Sitzungsaktionen im Namen des Opfers)."""
+        from urllib.parse import urlsplit
+
+        def name(netloc):
+            try:
+                return (urlsplit("//" + netloc.strip()).hostname or "") if netloc else ""
+            except ValueError:
+                return ""
+        h = request.headers
+        hosts = {name(h.get("host", "")), name((h.get("x-forwarded-host") or "").split(",")[0]),
+                 name(request.url.netloc)}
+        if self.cfg.base_url:
+            hosts.add(urlsplit(self.cfg.base_url).hostname or "")
+        hosts.discard("")
+        return hosts
+
+    def _herkunft_ok(self, request: Request) -> bool:
+        """Vorprüfung vor dem Double-Submit-Vergleich (H-2, F-02).
+
+        Das Token allein beweist nur, dass Cookie und Formularfeld zusammenpassen. Wer über eine
+        Nachbar-Subdomain ein Cookie setzen kann (cookie tossing), setzt das passende Paar gleich
+        mit und schickt das Opfer per Formular in SEIN Konto (Login-CSRF). Der Browser verrät
+        aber, woher der Request kommt: `Origin` bei jedem POST, `Sec-Fetch-Site` bei jedem
+        Request an eine sichere Adresse (HTTPS oder `localhost`; über HTTP schickt kein Browser
+        `Sec-Fetch-*`, so will es die Fetch-Metadata-Spezifikation). Die kann eine fremde Seite
+        nicht fälschen.
+
+        * `Sec-Fetch-Site: same-origin` → ja. Das sagt der Browser selbst, gemessen an der
+          Adresse, die ER sieht — damit bleibt eine App hinter einem Proxy bedienbar, der den
+          Host umschreibt, ohne X-Forwarded-Host zu setzen (nginx-Vorgabe), auch ohne
+          `base_url` (A-3). Eine Nachbar-Subdomain bekommt hier `same-site`, nie `same-origin`.
+        * `Origin` gesetzt → er muss ein eigener Host sein, sonst nein. `same-site` von einer
+          Nachbar-Subdomain mit ihrem eigenen Origin fällt hier heraus.
+        * kein brauchbarer `Origin` (fehlt oder `null`), aber `Sec-Fetch-Site: same-site` oder
+          `cross-site` → nein. `null` bekommt eine Nachbar-Subdomain schon, wenn sie ihre Seite
+          mit `Referrer-Policy: no-referrer` ausliefert; `same-site` sagt der Browser trotzdem.
+          Bis zur Nacharbeit fiel hier nur `cross-site` heraus, und wo das CSRF-Cookie kein
+          `__Host-` tragen kann, entschied für die Nachbar-Subdomain wieder allein das Token.
+          Das schließt diese Regel nur über HTTPS (siehe den letzten Punkt).
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` sagt `none` (vom Nutzer selbst
+          angestoßen, keine Seite kann das auslösen) → das Token entscheidet allein.
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` fehlt → das Token entscheidet
+          ebenfalls allein. Das ist nicht nur der alte Browser, das Skript oder der TestClient,
+          sondern **jeder Browser über HTTP** (`cookie_secure=False`, außer `localhost`). Dort
+          kommt eine Nachbar-Subdomain mit `Origin: null` (Seite mit
+          `Referrer-Policy: no-referrer`) bis zum Token durch, und ohne `Secure` trägt das
+          CSRF-Cookie kein `__Host-`, lässt sich also unterschieben. Über HTTP schützt diese
+          Prüfung deshalb nicht vor Login-CSRF aus der Nachbarschaft. Abweisen brächte dort wenig:
+          In derselben Konfiguration lässt sich schon das Sitzungs-Cookie selbst unterschieben
+          (bekannte Grenze, SECURITY.md).
+        """
+        if not self.cfg.csrf_origin_check:
+            return True
+        from urllib.parse import urlsplit
+        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "same-origin":
+            return True
+        origin = (request.headers.get("origin") or "").strip()
+        if origin and origin != "null":
+            try:
+                host = (urlsplit(origin).hostname or "").lower()
+            except ValueError:
+                host = ""
+            if host and host in self._eigene_hosts(request):
+                return True
+            security.seclog.warning(
+                "csrf origin rejected origin=%s ip=%s — fremde Herkunft. Steht die App hinter "
+                "einem Proxy, der den Host umschreibt: base_url setzen.",
+                security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
+            return False
+        seite = (request.headers.get("sec-fetch-site") or "").strip().lower()
+        if seite in ("same-site", "cross-site"):
+            security.seclog.warning("csrf origin rejected sec-fetch-site=%s origin=%s ip=%s",
+                                    seite, "null" if origin else "-",
+                                    security.fuer_log(self.client_ip(request)))
+            return False
+        return True
 
     # ---------- E-Mail-Versand ----------
     def set_mailer(self, fn):
@@ -1592,13 +2200,92 @@ class TinySesam:
         fn = self._mailer_override or SMTPMailer(self.cfg)
         fn(to, subject, text, html)
 
+    def _mail_ziel_ok(self, adresse, zweck, topf="mail") -> bool:
+        """Darf an diese Adresse noch eine Mail? Gedrosselt je **Ziel**, nicht je Absender (R4-04).
+
+        Die IP-Drossel der Routen schützt den Server, nicht das Postfach: Wer über wechselnde
+        Adressen „Passwort vergessen" für ein fremdes Konto anstösst, füllte dessen Postfach
+        unbegrenzt. Die Abweisung ist nach aussen unsichtbar (dieselbe Antwort wie sonst) und
+        steht im Audit-Log, damit der Betreiber die Flut sieht.
+
+        `topf` trennt Kontingente: Anmelde-Link und Reset teilen sich einen (beide bringen den
+        Inhaber ins Konto — wer sie für ihn anstösst, schickt ihm brauchbare Links). Der Hinweis
+        der Registrierung hat einen eigenen (Angriff A2): Ihn löst jeder Fremde aus, er trägt
+        keinen Token, und im gemeinsamen Topf verbrauchten drei fremde Registrierungen das
+        Kontingent, mit dem der Inhaber sich selbst einen Link schickt — bei Betrieb nur mit
+        Anmelde-Link eine wiederholbare Aussperrung.
+        """
+        schluessel = f"{topf}:" + (norm_email(adresse) or "")
+        if self.rl.allow(schluessel, self.sec("mail_per_address_max"),
+                         self.sec("mail_per_address_window_sec")):
+            return True
+        self.audit("mail_ratelimit", detail=f"{zweck} an={adresse}")
+        return False
+
+    @staticmethod
+    def _token_hash(raw) -> str:
+        return hashlib.sha256(str(raw).encode()).hexdigest()
+
+    def _token_mail(self, raw, to, subject, text, html=None):
+        """Eine Mail mit Einmal-Token verschicken. Scheitert der Versand, ist der Token sofort
+        verbraucht (B6-12): Sonst lag ein gültiger, nie zugestellter Link bis zum Ablauf in der
+        Datenbank — ein Beweisstück ohne Empfänger, und bei einem Relay, das die Mail doch noch
+        nachreicht, ein Link, von dem der Absender glaubt, es gebe ihn nicht.
+
+        Ist der Token vor dem Versand schon verworfen oder eingelöst, geht keine Mail hinaus:
+        Liegt zwischen Anlage und Versand der Postausgang, kann der Betreiber das Konto in der
+        Zwischenzeit gesperrt haben (H-18) — die Mail trüge dann nur noch einen toten Link."""
+        zeile = self.store.get_magic_token(self._token_hash(raw))
+        if not zeile or zeile["used_at"]:
+            return
+        try:
+            self.send_mail(to, subject, text, html)
+        except Exception:
+            self.store.expire_magic_token(self._token_hash(raw))
+            raise
+
+    def nach_der_antwort(self, resp, auftrag, bei_ueberlauf=None):
+        """`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter
+        (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück."""
+        from starlette.background import BackgroundTask
+        resp.background = BackgroundTask(self._postausgang.nachher(auftrag, bei_ueberlauf))
+        return resp
+
+    #: Deckel für `token_invalid`-Zeilen im Audit-Log: höchstens so viele je Fenster (global).
+    _TOKEN_AUDIT_MAX = 20
+    _TOKEN_AUDIT_FENSTER_SEC = 60
+
+    def token_abgewiesen(self, zweck, request: Optional[Request] = None, grund="ungueltig"):
+        """Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
+
+        Bisher hinterliess das keine Spur: Wer Reset- oder Anmelde-Token durchprobierte, sah der
+        Betreiber nirgends. Audit-Zeile für den Betreiber, Sicherheits-Log mit dem Wort der
+        Nicht-Login-Prüfungen (`failed verification`) — ein veralteter Link im eigenen
+        Postfach ist kein Anmeldeversuch und darf niemanden per fail2ban aussperren.
+        """
+        ip = self.client_ip(request) if request is not None else None
+        # Das Sicherheits-Log bekommt jede Zeile: Es rotiert, und die Verify-Jail von fail2ban
+        # bannt daraus genau den, der Links durchprobiert.
+        self._abgewiesen(None, ip, f"token_{zweck}", login=False)
+        # Das Audit-Log dagegen räumt `gc()` nie auf, und die Routen sind anonym und ungedrosselt
+        # (Angriff A3): Jeder GET auf /auth/magic/<Unsinn> schrieb dauerhaft eine Datenbankzeile —
+        # eine Festplatte liess sich so füllen. Gedeckelt wird deshalb global je Zeitfenster,
+        # nicht je IP (die wechselt ein Angreifer), und wenn der Deckel greift, steht genau
+        # EINE Zeile dazu im Audit — sonst sähe der Betreiber die Flut nicht.
+        fenster = self._TOKEN_AUDIT_FENSTER_SEC
+        if self.rl.allow("audit:token_invalid", self._TOKEN_AUDIT_MAX, fenster):
+            self.audit("token_invalid", ip=ip, detail=f"zweck={zweck} grund={grund}")
+        elif self.rl.allow("audit:token_invalid_gedrosselt", 1, fenster):
+            self.audit("token_invalid_throttled", ip=ip,
+                       detail=f"mehr als {self._TOKEN_AUDIT_MAX} in {fenster}s — weitere nur im Sicherheits-Log")
+
     # ---------- Magic-/Einmal-Token ----------
     def create_magic_token(self, purpose, user_id=None, email=None, ttl_min=None, payload=None) -> str:
         """Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB."""
         raw = secrets.token_urlsafe(32)
         h = hashlib.sha256(raw.encode()).hexdigest()
         ttl = int(ttl_min if ttl_min is not None else self.cfg.magiclink_ttl_min) * 60
-        self.store.add_magic_token(h, purpose, int(time.time()) + ttl, user_id, email, payload)
+        self.store.add_magic_token(h, purpose, _jetzt() + ttl, user_id, email, payload)
         return raw
 
     #: Wo ein Token eingelöst wird — je Zweck ein eigener Endpunkt. Bis 0.15 liefen alle vier
@@ -1643,7 +2330,7 @@ class TinySesam:
         if not raw:
             return None
         row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
-        if not row or row["used_at"] or row["expires_at"] < int(time.time()):
+        if not row or row["used_at"] or row["expires_at"] < _jetzt():
             return None
         if purpose and row["purpose"] != purpose:
             return None
@@ -1656,31 +2343,80 @@ class TinySesam:
         wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
         Geprüft wird vor der Token-Vergabe, damit ein abgewiesener Aufruf keinen
-        Einladungs-Token hinterlässt.
+        Einladungs-Token hinterlässt. Scheitert der Versand, ist der Token entwertet (B6-12).
         """
         base_url = self._gepruefte_basis(base_url)
         raw = self.create_magic_token("invite", email=email, ttl_min=ttl_min,
                                       payload={"roles": list(roles or []), "is_admin": bool(is_admin)})
         url = self.magic_url(raw, base_url, "invite")
         if email and self.mail_configured():
-            self.send_mail(email, "Deine Einladung",
-                           f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
-                           html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
+            self._token_mail(raw, email, "Deine Einladung",
+                             f"Du wurdest eingeladen, ein Konto anzulegen:\n\n{url}\n",
+                             html=f'<p>Du wurdest eingeladen, ein Konto anzulegen:</p><p><a href="{url}">Konto erstellen</a></p>')
         self.audit("invite_create", detail=email)
         return {"url": url, "token": raw}
 
     def send_verify_email(self, user_id, email, base_url) -> bool:
         """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+        Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
+        Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die
+        ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel,
+        `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst
+        nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18).
+        Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des
+        Kontos ist.
         """
+        senden = self._verify_mail(user_id, email, base_url)
+        if senden is None:
+            return False
+        senden()
+        return True
+
+    def _verify_mail(self, user_id, email, base_url):
+        """Den Bestätigungstoken JETZT anlegen und den Versand als Funktion zurückgeben — oder
+        None, wenn kein Mailer da ist. `base_url` wird geprüft wie bei `send_verify_email`.
+
+        Getrennt, weil die Registrierung nur den Versand in den Postausgang schiebt (R4-05/B6-6),
+        nicht die Token-Vergabe: Die Sperre durch den Betreiber verwirft offene Token (H-18).
+        Entstand der Token erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
+        der verspätete Link hob sie danach wieder auf (T-13-Angriff, mail × betrieb)."""
         base_url = self._gepruefte_basis(base_url)
         if not (email and self.mail_configured()):
-            return False
+            return None
         raw = self.create_magic_token("verify_email", user_id=user_id, email=email)
         url = self.magic_url(raw, base_url, "verify_email")
-        self.send_mail(email, "E-Mail bestätigen",
-                       f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
-                       html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+
+        def senden():
+            self._token_mail(raw, email, "E-Mail bestätigen",
+                             f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
+                             html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
+        return senden
+
+    def send_signup_notice(self, email, base_url) -> bool:
+        """Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
+
+        Die Registrierung antwortet bei eingeschalteter Bestätigung für eine vergebene Adresse
+        genauso wie für eine freie („Bestätigungsmail ist unterwegs") — sonst verriet sie per
+        409 und Text, welche Adressen ein Konto haben. Der echte Inhaber bekommt stattdessen
+        diese Mail: kein Token, nur der Weg zur Anmeldung. Gedrosselt wie jede Mail (R4-04), aber
+        im eigenen Topf — sonst sperrte sie den Inhaber von seinen eigenen Links aus (A2).
+        """
+        base_url = self._gepruefte_basis(base_url)
+        u = self.store.get_user_by_email(email)
+        if not u or u["is_service"] or not self.mail_configured():
+            return False
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "signup_notice", topf="hinweis"):
+            return False
+        login = f"{base_url}{self.cfg.login_path}"
+        self.send_mail(ziel, "Registrierung mit deiner Adresse",
+                       f"Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.\n\n"
+                       f"Warst du das, melde dich hier an:\n{login}\n\n"
+                       f"Wenn nicht, kannst du diese E-Mail ignorieren.",
+                       html=f'<p>Jemand wollte mit dieser Adresse ein neues Konto anlegen. Es gibt aber schon eines.</p>'
+                            f'<p><a href="{login}">Zur Anmeldung</a></p>'
+                            f'<p>Wenn du das nicht warst, kannst du diese E-Mail ignorieren.</p>')
         return True
 
     def send_login_link(self, email, base_url, next="/") -> bool:
@@ -1689,20 +2425,25 @@ class TinySesam:
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
 
         Geprüft wird als Erstes — vor der Kontosuche, damit die Ausnahme keine Adresse verrät.
+        Versandt wird an die gespeicherte Adresse (R4-11), gedrosselt je Ziel (R4-04); ein
+        gescheiterter Versand entwertet den Token (B6-12).
         """
         base_url = self._gepruefte_basis(base_url)
         u = self.store.get_user_by_email(email)
         if not u or u["disabled"] or u["is_service"]:
             return False
-        raw = self.create_magic_token("login", user_id=u["id"], email=email, payload={"next": next})
+        ziel = u["email"]
+        if not self._mail_ziel_ok(ziel, "login"):
+            return False
+        raw = self.create_magic_token("login", user_id=u["id"], email=ziel, payload={"next": next})
         url = self.magic_url(raw, base_url)
         mins = self.cfg.magiclink_ttl_min
-        self.send_mail(email, "Dein Anmelde-Link",
-                       f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
-                       f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
-                       html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
-                            f'<p><a href="{url}">Jetzt anmelden</a></p>'
-                            f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
+        self._token_mail(raw, ziel, "Dein Anmelde-Link",
+                         f"Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):\n\n{url}\n\n"
+                         f"Wenn du das nicht angefordert hast, ignoriere diese E-Mail.",
+                         html=f'<p>Zum Anmelden diesen Link öffnen (gültig {mins} Minuten):</p>'
+                              f'<p><a href="{url}">Jetzt anmelden</a></p>'
+                              f'<p style="color:#888">Wenn du das nicht angefordert hast, ignoriere diese E-Mail.</p>')
         return True
 
     # ---------- Sessions ----------
@@ -1720,6 +2461,7 @@ class TinySesam:
             u = self.store.get_user(user_id)
             self.store.audit_log("login", u["username"] if u else None, ip, method)
             self._vermerke_erstlogin(user_id)
+            self.sperre_aufheben(user_id)
         return token, mfa_ok
 
     def _vermerke_erstlogin(self, user_id: int) -> None:
@@ -1730,7 +2472,7 @@ class TinySesam:
         schliesst dieses Fenster — und zwar beim ERSTEN vollständigen Login, egal auf welchem
         Weg er zustande kam. Ein offenes Einrichtungsfenster wird dabei geschlossen: Es war für
         genau diesen einen Vorgang gedacht."""
-        if not self.store.mark_first_login(user_id, int(time.time())):
+        if not self.store.mark_first_login(user_id, _jetzt()):
             return
         u = self.store.get_user(user_id)
         try:
@@ -1750,7 +2492,17 @@ class TinySesam:
         SAML und LDAP kennen keinen Beleg und reichen `False` durch) — hier entscheidet sich
         der Erst-Admin, und eine unbelegte Adresse darf ihn nicht tragen. Der Faktor geht
         mit an `maybe_promote_admin`: Für einen föderierten Faktor gilt dort fail-closed,
-        ein vergessenes Argument befördert also nicht."""
+        ein vergessenes Argument befördert also nicht.
+
+        Ein gesperrtes Konto bekommt hier nie eine Sitzung (403) — egal, welcher Weg den Faktor
+        geprüft hat. Jeder Anmeldeweg endet in dieser Methode; die Prüfung in den einzelnen
+        Wegen bleibt, aber die Klasse hängt nicht mehr daran, dass jeder neue Weg sie kennt
+        (H-18: Anmelde-Link und Passkey legten für ein gesperrtes Konto eine Sitzung an, die
+        erst `current_user()` wieder verwarf)."""
+        konto = self.store.get_user(user_id)
+        if not konto or konto["disabled"]:
+            self.audit("login_disabled", str(konto["username"]) if konto else None, ip, factor)
+            raise HTTPException(403, self.t("api.account_disabled"))
         s = self.session_from_request(request)
         if s and s["user_id"] == user_id:
             # gleiche Identität → Faktor an laufende Sitzung anhängen (Ketten-/Route-Schritt).
@@ -1767,6 +2519,7 @@ class TinySesam:
                 u = self.store.get_user(user_id)
                 self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
                 self._vermerke_erstlogin(user_id)
+                self.sperre_aufheben(user_id)
                 # **Neues Token beim Rechtewechsel.** Die Sitzung wird hier vom halben Login
                 # zur vollwertigen — OWASP Session Management Cheat Sheet: „The session ID must
                 # be renewed or regenerated by the web application after any privilege level
@@ -1778,9 +2531,16 @@ class TinySesam:
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
                 self.store.delete_session_by_handle(s["token_hash"])
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
+            if ok and was_ok:
+                # Die Sitzung war schon vollwertig, der Faktor frischt sie nur auf — das ist ein
+                # Step-up (mfa_at ist eben neu gesetzt worden). Auch der bekommt ein neues Token
+                # (F-06, ASVS 5.0 7.2.4); Laufzeit und Anmeldezeitpunkt bleiben dabei.
+                gedreht = self.store.rotate_session(s["token_hash"])
+                if gedreht:
+                    return gedreht, ok, True
             # Zurück geht das Klartext-Token aus dem Cookie — der Aufrufer baut daraus
             # Redirects und Cookies. In der Sitzungs-Zeile steht nur noch das Handle.
-            return request.cookies.get(self.cfg.session_cookie), ok, False
+            return request.cookies.get(self.session_cookie_name), ok, False
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
@@ -1795,10 +2555,14 @@ class TinySesam:
         return self.factor_entry(step, nxt) if step else nxt
 
     def complete_totp(self, token) -> Optional[str]:
-        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein
+        neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`,
+        `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
-        Gibt ein **neues Sitzungs-Token** zurück, wenn die Sitzung dadurch vollwertig wird —
-        dann gehört es ins Cookie. Sonst `None` (nichts zu tun).
+        Ein neues Token gibt es, wenn die Sitzung dadurch vollwertig wird oder, schon vollwertig,
+        frisch bestätigt ist (Step-up, F-06). Sonst `None` (nichts zu tun). Seit F-06 gilt das
+        auch für den Step-up: Eine eigene Oberfläche, die den Rückgabewert dort ignoriert, hält
+        danach eine tote Sitzung im Cookie. Beim Login (halb → voll) war das schon immer so.
 
         Heißt seit 0.18.0 so, weil der alte Name `complete_mfa` mehr versprach, als die Methode
         tut — MFA ist die ganze Kette, hier geht es um genau einen Faktor. `complete_mfa` bleibt
@@ -1807,6 +2571,12 @@ class TinySesam:
         """
         s = self.store.get_session(token)
         if not s:
+            return None
+        konto = self.store.get_user(s["user_id"])
+        if not konto or konto["disabled"]:
+            # Zwischen erstem Faktor und TOTP gesperrt: Die halbe Sitzung endet hier, statt
+            # zur vollwertigen zu werden (H-18, dieselbe Regel wie in `apply_factor`).
+            self.store.delete_session_by_handle(s["token_hash"])
             return None
         war_ok = bool(s["mfa_ok"])
         done = json.loads(s["factors_done"] or "[]")
@@ -1818,26 +2588,43 @@ class TinySesam:
             u = self.store.get_user(s["user_id"])
             self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
         if ok and not war_ok:
+            self.sperre_aufheben(s["user_id"])
             # Rechtewechsel → neues Token (OWASP Session Management). Gibt es zurück, damit der
-            # Aufrufer das Cookie setzen kann; wer den Rückgabewert ignoriert, behält das alte
-            # Verhalten, denn die Sitzung wandert mit.
+            # Aufrufer das Cookie setzen kann — das alte Token gehört zu einer gelöschten Zeile.
             neu_token = self.store.create_session(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
             self.store.delete_session_by_handle(s["token_hash"])
             return neu_token
+        if ok and war_ok:
+            # Die Sitzung war schon vollwertig; `set_session_factors` hat eben `mfa_at` neu
+            # gesetzt — das ist ein Step-up, und der dreht das Token wie `/auth/reauth` und
+            # `apply_factor` (F-06, ASVS 5.0 7.2.4). Vorher blieb es: Ein mitgelesenes Cookie
+            # bekam so frische Sudo-Rechte. Laufzeit und Anmeldezeitpunkt bleiben.
+            return self.store.rotate_session(s["token_hash"])
         return None
 
     def complete_mfa(self, token):
-        """Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht."""
+        """Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token
+        gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht
+        brechen."""
         return self.complete_totp(token)
 
     def session_from_request(self, request):
         """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle."""
-        return self.store.get_session(request.cookies.get(self.cfg.session_cookie))
+        return self.store.get_session(request.cookies.get(self.session_cookie_name))
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist."""
+        # Erst die IP merken, dann auflösen: Auch ein abgewiesener API-Key (B5-05) soll mit der
+        # Adresse im Protokoll stehen, von der er kam.
+        self._anfrage_merken(request)
+        u = self._current_user_ermitteln(request)
+        if u:
+            self._anfrage_merken(request, u)
+        return u
+
+    def _current_user_ermitteln(self, request) -> Optional[dict]:
         # 1) Session (Mensch, inkl. MFA)
         s = self.session_from_request(request)
         if s and s["mfa_ok"]:
@@ -1867,7 +2654,10 @@ class TinySesam:
                     d = dict(u)
                     d["_via"] = "apikey"
                     d["_key_art"] = art
-                    if art == "automat" and d.get("is_admin"):
+                    # `!= "mensch"` statt `== "automat"`: fail-closed für jede Art, die es nicht
+                    # gibt (ein Tippfehler in der Spalte, ein Wert aus einer fremden Fassung).
+                    # Vorher behielt ein Key mit `kind="Automat"` das Admin-Flag (R6-6).
+                    if art != "mensch" and d.get("is_admin"):
                         # Der Kern von R6-5: Ein Automaten-Key trägt das Admin-Flag seines
                         # Besitzers NICHT. Vorher war jeder Key eines Admins eine vollständige
                         # Admin-Schreib-API — ohne zweiten Faktor, ohne CSRF-Schicht. Die Rollen
@@ -1887,7 +2677,10 @@ class TinySesam:
         s = self.session_from_request(request)
         if not s or s["mfa_ok"]:
             return None
-        return self._als_dict(self.store.get_user(s["user_id"]))
+        u = self._als_dict(self.store.get_user(s["user_id"]))
+        if u:
+            self._anfrage_merken(request, u)
+        return u
 
     def totp_enrollment_user(self, request) -> Optional[dict]:
         """Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
@@ -1903,8 +2696,10 @@ class TinySesam:
 
         Sicherheitlich ist das kein Nachlass: Wer hier steht, hat den Erstfaktor bereits erbracht,
         und ohne die Kette (klassischer Modus) hätte ihn dasselbe Passwort ohnehin vollständig
-        angemeldet. Die Einrichtung allein meldet niemanden an — der Faktor gilt erst, wenn im
-        nächsten Schritt ein Code aus dem frischen Geheimnis stimmt.
+        angemeldet. Die Einrichtung allein meldet niemanden an — der Faktor gilt erst, wenn ein
+        Code aus dem frischen Geheimnis stimmt. Das ist der Bestätigungscode selbst: Die Route
+        `POST /auth/totp/setup` schliesst den TOTP-Schritt damit ab (A-1), denn der Code ist
+        verbraucht und an `/auth/totp` nur noch ein Fehlversuch.
         """
         u = self.pending_user(request)
         if not u or self.store.has_confirmed_totp(u["id"]):
@@ -1948,7 +2743,7 @@ class TinySesam:
         das Risiko ein anderes — dort ist der erste Anmeldende der rechtmässige, so wie bei einem
         Einladungslink auch.
         """
-        jetzt = int(time.time()) if jetzt is None else int(jetzt)
+        jetzt = _jetzt() if jetzt is None else int(jetzt)
         u = self.store.get_user(user_id)
         if not u:
             return False
@@ -1977,7 +2772,7 @@ class TinySesam:
         Der Weg des Betreibers, wenn jemand sein Gerät verloren hat oder `mfa_enrollment="strict"`
         gilt. Bewusst zeitlich begrenzt: ein dauerhaft offenes Fenster wäre die alte Lücke unter
         neuem Namen."""
-        bis = int(time.time()) + max(1, int(minutes)) * 60
+        bis = _jetzt() + max(1, int(minutes)) * 60
         self.store.set_mfa_enroll_until(user_id, bis)
         u = self.store.get_user(user_id)
         self.audit("mfa_enrollment_granted", str(u["username"]) if u else None,
@@ -2001,26 +2796,217 @@ class TinySesam:
         """
         return self.issue_csrf(response)
 
-    def set_cookie(self, response, token, remember: bool = True):
+    # ---------- Cookie-Namen (H-1) ----------
+    def _cookie_name(self, basis: str, host_only: bool = False) -> str:
+        """`__Host-` davor, wo der Browser es zulässt (Secure, kein Domain, Pfad `/`).
+
+        Ein `__Host-`-Cookie kann nur der eigene Host über HTTPS setzen — eine Nachbar-Subdomain
+        kann es weder anlegen noch mit einem `Domain=.example.com`-Cookie gleichen Namens
+        überschatten. Genau darauf baut das Unterschieben eines Sitzungs-, CSRF- oder
+        Freigabe-Tokens (F-01, F-02). Zur Request-Zeit berechnet, weil `cfg` nach dem Aufbau
+        geändert werden darf.
+
+        `host_only=True` für Cookies, die nie mit `cookie_domain` gesetzt werden (das
+        CSRF-Cookie und die Flow-Cookies von OIDC, SAML und Passkey) — die dürfen das Präfix
+        auch dann tragen.
+
+        Der Pfad muss wörtlich `/` sein: Bei `cookie_path=""` schickt `set_cookie` gar kein
+        `Path`-Attribut, und ein `__Host-`-Cookie ohne `Path=/` verwirft der Browser still —
+        dann käme etwa das CSRF-Cookie nie an und jeder POST scheiterte (A-7)."""
+        c = self.cfg
+        if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure
+                and (host_only or not c.cookie_domain)
+                and c.cookie_path == "/" and not basis.startswith("__")):
+            return "__Host-" + basis
+        return basis
+
+    def flow_cookie_name(self, basis: str) -> str:
+        """Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
+        Das Flow-Cookie bindet einen Anmeldevorgang an den Browser, der ihn begonnen hat. Kann
+        eine Nachbar-Subdomain es per `Domain=.example.com` setzen, schiebt sie dem Opfer den
+        Flow des Angreifers unter und lockt es auf die Callback-URL — Login-CSRF, obwohl das
+        Sitzungs-Cookie selbst schon gepräfixt ist."""
+        return self._cookie_name(basis, host_only=True)
+
+    def _flow_cookie_setzen(self, response, basis: str, wert: str, max_age: int,
+                           samesite: Optional[str] = None) -> None:
+        """Ein Flow-Cookie setzen: httponly, host-only, kurzlebig."""
+        response.set_cookie(self.flow_cookie_name(basis), wert, max_age=max_age, httponly=True,
+                            secure=self.cfg.cookie_secure,
+                            samesite=_samesite(samesite or self.cfg.cookie_samesite),
+                            path=self.cfg.cookie_path)
+
+    def _flow_cookie_loeschen(self, response, basis: str,
+                             samesite: Optional[str] = None) -> None:
+        # Mit Secure: Ein `__Host-`-Set-Cookie ohne Secure nimmt der Browser nicht an, auch
+        # nicht das löschende.
+        response.delete_cookie(self.flow_cookie_name(basis), path=self.cfg.cookie_path,
+                               secure=self.cfg.cookie_secure, httponly=True,
+                               samesite=_samesite(samesite or self.cfg.cookie_samesite))
+
+    @property
+    def session_cookie_name(self) -> str:
+        """Der tatsächliche Name des Sitzungs-Cookies (mit `__Host-`, wo möglich)."""
+        return self._cookie_name(self.cfg.session_cookie)
+
+    @property
+    def csrf_cookie_name(self) -> str:
+        """Der tatsächliche Name des CSRF-Cookies — den muss eigenes JS lesen.
+
+        Mit `__Host-` auch bei gesetztem `cookie_domain`: Das CSRF-Cookie setzt TinySesam nie
+        mit Domain (`issue_csrf`, `render_page`, Admin-Panel), es ist immer host-only. Ohne
+        Präfix konnte im Forward-Auth-Aufbau jede geschützte App ein `tinysesam_csrf` für die
+        ganze Domain setzen und das Double-Submit mit ihrem eigenen Wert bestehen."""
+        return self._cookie_name(self.cfg.csrf_cookie, host_only=True)
+
+    @property
+    def resource_cookie_name(self) -> str:
+        """Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN."""
+        return self._cookie_name(self.cfg.resource_cookie)
+
+    def set_cookie(self, response, token, remember: Optional[bool] = None):
         """Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL);
-        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen)."""
+        remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
+
+        Ohne `remember` richtet sich die Art nach der Sitzung, zu der das Token gehört (A-2):
+        Ein Step-up oder ein Ketten-Schritt dreht das Token einer LAUFENDEN Sitzung, und deren
+        Art hat der Nutzer beim ersten Faktor gewählt. Vorher galt hier stumpf `True` — eine
+        Sitzung ohne „Angemeldet bleiben" bekam nach dem Einlösen eines Magic-Links ein Cookie
+        für sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte.
+        Gibt es keine Sitzung zum Token, bleibt es beim persistenten Cookie wie bisher."""
+        if remember is None:
+            s = self.store.get_session(token)
+            remember = bool(s["remember"]) if s else True
         kw = dict(httponly=True, secure=self.cfg.cookie_secure,
                   samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain
         if remember:
             kw["max_age"] = self._ttl(True)   # type: ignore[assignment]  # kw trägt gemischte Typen
-        response.set_cookie(self.cfg.session_cookie, token, **kw)
+        response.set_cookie(self.session_cookie_name, token, **kw)
+
+    def rotate_session(self, request, response) -> Optional[str]:
+        """Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
+
+        Für jeden Rechtewechsel, der KEINE neue Sitzung anlegt — der Step-up. OWASP Session
+        Management: „The session ID must be renewed … after any privilege level change";
+        ASVS 5.0 7.2.4 verlangt das ausdrücklich auch bei der Re-Authentisierung. Wer das alte
+        Token mitgelesen hat, hält danach eine tote Sitzung statt einer frisch bestätigten.
+        Laufzeit und Anmeldezeitpunkt bleiben; das Cookie behält seine Art (persistent oder
+        nicht). Gibt das neue Token zurück, oder None ohne Sitzung.
+
+        Räumt dabei die Cookies unter den Namen von vor dem `__Host-`-Präfix ab (H-1) — wie
+        `logout()` auch dann, wenn eine eigene Route der App die Methode ruft."""
+        s = self.session_from_request(request)
+        if not s:
+            return None
+        neu = self.store.rotate_session(s["token_hash"])
+        if neu:
+            self.set_cookie(response, neu, remember=bool(s["remember"]))
+            self._altnamen_loeschen(request, response)
+        return neu
+
+    def andere_sitzungen(self, request, user, token: Optional[str] = None) -> int:
+        """Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
+
+        Die Antwort jeder Faktor-Änderung trägt die Zahl als `other_sessions`: ASVS 5.0 7.4.3
+        verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
+        beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld.
+
+        Bekannte Grenze: Die Pflicht-Einrichtung von TOTP mitten in einer Kette
+        (`password → totp → pin`) meldet 0, weil die Sitzung danach noch halb ist und eine halbe
+        Sitzung die übrigen nicht beenden darf. Der PIN-Schritt danach bietet auch nichts an; das
+        Angebot entfällt dort ganz, der Weg ist die Sitzungsliste auf der Kontoseite.
+
+        `token`: das Klartext-Token der eigenen Sitzung, wenn es in DIESER Antwort gewechselt
+        hat (die Pflicht-Einrichtung von TOTP schliesst die Anmeldung ab und dreht dabei das
+        Token). Das Cookie des Requests nennt dann eine Sitzung, die es nicht mehr gibt — gegen
+        sie gezählt, liefe die neue eigene Sitzung als „andere" mit."""
+        s = self.store.get_session(token) if token else self.session_from_request(request)
+        eigen = s["token_hash"] if s else None
+        return sum(1 for z in self.store.list_sessions(user["id"]) if z["token_hash"] != eigen)
+
+    def _cookie_loeschen(self, response, name):
+        # Secure muss mit: Ein Browser nimmt ein `__Host-`-Set-Cookie ohne Secure nicht an —
+        # auch nicht das, das es löschen soll.
+        kw = dict(path=self.cfg.cookie_path, secure=self.cfg.cookie_secure, httponly=True,
+                  samesite=_samesite(self.cfg.cookie_samesite))
+        if self.cfg.cookie_domain:
+            kw["domain"] = self.cfg.cookie_domain
+        response.delete_cookie(name, **kw)
+
+    def _altnamen(self) -> list:
+        """Die Namen von Sitzungs-, CSRF- und Freigabe-Cookie aus der Zeit vor dem
+        `__Host-`-Präfix (H-1) — nur die, bei denen das Präfix jetzt tatsächlich greift. Wo es
+        nicht greift, IST der alte Name der aktuelle. Die Flow-Cookies fehlen bewusst: Sie
+        leben nur Minuten."""
+        paare = ((self.session_cookie_name, self.cfg.session_cookie),
+                 (self.csrf_cookie_name, self.cfg.csrf_cookie),
+                 (self.resource_cookie_name, self.cfg.resource_cookie))
+        return [basis for name, basis in paare if name != basis]
+
+    def _altnamen_loeschen(self, request, response) -> None:
+        """Cookies unter den Altnamen beim Browser löschen, wenn diese Antwort die Sitzung
+        schreibt (Anmelden, Abmelden, Step-up).
+
+        Gerufen von der Routen-Klasse (jede eingebaute Route), von `logout()` und von
+        `rotate_session()` — die beiden öffentlichen Methoden haben den Request. `set_cookie()`
+        hat ihn nicht: Eine eigene Anmelderoute der App (`start_session` + `set_cookie`) lässt
+        die Altnamen stehen, bis der Browser das nächste Mal über eine dieser Stellen läuft oder
+        sie ablaufen. TinySesam liest sie ohnehin nicht mehr.
+
+        TinySesam liest sie nach dem Umstieg auf `__Host-` nicht mehr, aber der Browser schickte
+        sie bis zu ihrem Ablauf weiter mit (Sitzung bis zu sieben Tage) — an TinySesam und an
+        jede App dahinter. Mit den neuen Namen zusammen waren das mehr tinysesam-Cookies, als
+        die nginx-Vorlagen herausfiltern konnten (B-20). Gelöscht wird nur, was der Browser
+        mitgeschickt hat, und host-only: So waren sie gesetzt, denn das Präfix greift nur ohne
+        `cookie_domain` (das CSRF-Cookie trug nie eine Domain). Läuft auf demselben Host eine
+        zweite Instanz mit gleichem Basisnamen und ohne Präfix, verliert sie ihr Cookie — zwei
+        Instanzen auf einem Host brauchen ohnehin eigene Namen (`session_cookie`).
+
+        Die Sitzung und die Freigaben hinter den alten Cookies enden mit: Das Token darin war
+        sonst bis zu sieben Tage weiter gültig — unter dem neuen Namen vorgezeigt, meldete es
+        an, und es war gerade das Cookie, das an die Apps durchrutschte. Wer es vorzeigt, darf
+        es auch beenden; das ist dieselbe Regel wie beim Abmelden."""
+        alt = [n for n in self._altnamen() if n in request.cookies]
+        if not alt:
+            return
+        gesetzt = {wert.split(b"=", 1)[0].strip().decode("latin-1")
+                   for schluessel, wert in getattr(response, "raw_headers", [])
+                   if schluessel.lower() == b"set-cookie"}
+        if self.session_cookie_name not in gesetzt:
+            return
+        for name in alt:
+            if name in gesetzt:
+                continue
+            wert = request.cookies.get(name) or ""
+            if wert and name == self.cfg.session_cookie:
+                self.store.delete_session(wert)
+            elif wert and name == self.cfg.resource_cookie:
+                self.store.delete_resource_unlocks(wert)
+            response.delete_cookie(name, path=self.cfg.cookie_path,
+                                   secure=self.cfg.cookie_secure, httponly=True,
+                                   samesite=_samesite(self.cfg.cookie_samesite))
 
     def logout(self, request, response):
-        """Die Sitzung dieses Requests beenden und das Cookie löschen."""
+        """Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und
+        beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
+
+        Die Freigaben gehören dazu (F-08): Bis 0.20 überlebten sie das Abmelden um bis zu
+        `resource_unlock_ttl_hours`. Wer sich am geteilten Rechner abmeldet, erwartet, dass
+        danach nichts mehr offen ist — auch nicht der mit einer PIN gesperrte Bereich."""
         s = self.session_from_request(request)
         if s:
             self.store.delete_session_by_handle(s["token_hash"])
-        kw = dict(path=self.cfg.cookie_path)
-        if self.cfg.cookie_domain:
-            kw["domain"] = self.cfg.cookie_domain
-        response.delete_cookie(self.cfg.session_cookie, **kw)
+        self._cookie_loeschen(response, self.session_cookie_name)
+        freigabe = request.cookies.get(self.resource_cookie_name)
+        if freigabe:
+            self.store.delete_resource_unlocks(freigabe)
+            self._cookie_loeschen(response, self.resource_cookie_name)
+        # Auch hier, nicht nur in der Routen-Klasse: `logout()` ist öffentlich und wird aus
+        # eigenen Routen der App gerufen, an denen die Klasse nicht hängt.
+        self._altnamen_loeschen(request, response)
 
     # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
     def client_ip(self, request: Request) -> str:
@@ -2028,21 +3014,28 @@ class TinySesam:
         return security.client_ip(request, self.cfg.trusted_proxies)
 
     def sec(self, key) -> int:
-        """Härtungs-Wert: Store-Setting (Panel) ODER Default."""
-        v = self.store.get_setting(key)
-        try:
-            return int(v) if v is not None else security.SECURITY_DEFAULTS[key]
-        except Exception:
-            return security.SECURITY_DEFAULTS[key]
+        """Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
+
+        Gelesen über `security.haertung_lesen` — denselben Weg nimmt das CLI (`tinysesam passwd`);
+        ein Bestandswert jenseits der Grenzen gilt dort wie hier als die nächste Grenze."""
+        return security.haertung_lesen(self.store, key)
 
     def all_security(self) -> dict:
         """Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht)."""
         return {k: self.sec(k) for k in security.SECURITY_DEFAULTS}
 
     def set_security(self, key, value):
-        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank."""
-        if key in security.SECURITY_DEFAULTS:
-            self.store.set_setting(key, int(value))
+        """Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank.
+
+        Unbekannter Schlüssel oder Wert ausserhalb von `security.SECURITY_GRENZEN` → `ConfigError`,
+        und nichts wird geschrieben. Bis 0.19.x fiel ein unbekannter Schlüssel still weg und jeder
+        Wert wurde übernommen — `rate_limit_max=0` sperrte danach jede Anmeldung, auch die, mit
+        der man den Wert hätte zurückdrehen können (R6-4)."""
+        try:
+            zahl = security.pruefe_haertung(key, value)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        self.store.set_setting(key, zahl)
 
     def set_rate_limiter(self, limiter):
         """Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool."""
@@ -2082,34 +3075,48 @@ class TinySesam:
         return erlaubt
 
     def is_locked(self, username, ip) -> bool:
-        """Zu viele Fehlversuche im Fenster — pro User ODER pro IP (IP-Schwelle höher wg. NAT).
+        """Zu viele Fehlversuche im Fenster — je Paar aus Konto und IP, je Konto, je IP.
+
+        Die Schwellen stehen in `_regeln` (Begründung dort): das Paar bei `max_login_attempts`,
+        das Konto allein beim `account_attempt_factor`-fachen, die Adresse allein beim
+        `ip_attempt_factor`-fachen (NAT). Ohne `ip` gilt nur die Konto-Schwelle.
 
         Gezählt wird alles in `login_attempt`, was ein **Anmeldeversuch** war; die Methoden aus
         `security.NICHT_LOGIN_METHODEN` bleiben draussen. Sonst sperrt ein Fehlgriff, der gar
-        keine Anmeldung war, die Anmeldung mit — und zwar für einen Nutzer, der die Sperre nicht
-        abtragen kann (ein Erfolg räumt nur die eigene Methode weg). Der Zähler dieser Methoden
-        geht nicht verloren, er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
-        """
-        since = int(time.time()) - self.sec("lockout_window_sec")
-        ohne = security.NICHT_LOGIN_METHODEN
-        if username and self.store.count_fails(since, username=username,
-                                               exclude_methods=ohne) >= self.sec("max_login_attempts"):
-            self._abgewiesen(username, ip, "lockout_user")
-            return True
-        if ip and self.store.count_fails(since, ip=ip, exclude_methods=ohne) >= \
-                self.sec("max_login_attempts") * self.sec("ip_attempt_factor"):
-            self._abgewiesen(username, ip, "lockout_ip")
-            return True
-        return False
+        keine Anmeldung war, die Anmeldung mit. Der Zähler dieser Methoden geht nicht verloren,
+        er hat nur seinen eigenen Topf (z.B. `is_password_change_locked`).
 
-    def record_login(self, username, ip, success, method):
-        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg."""
-        self.store.record_attempt(username, ip, success, method)
+        Nur lesend: Die Routen nehmen `versuch_beginnen()`, das prüft und bucht in einem Schritt.
+        """
+        return self._sperre_pruefen(self._regeln(username, ip, "password"), username, ip, login=True)
+
+    def record_login(self, username, ip, success, method, versuch: Optional[int] = None,
+                     quelle: str = ""):
+        """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
+
+        `versuch` ist die ID aus `versuch_beginnen()`: Dann steht der Versuch schon als
+        Fehlversuch in der Tabelle und wird hier nur abgeschlossen, statt ein zweites Mal
+        gezählt zu werden.
+
+        `quelle` sagt dem Audit-Log, WER das Geheimnis geprüft hat, wo die Methode es nicht
+        verrät (F-29): LDAP schreibt bewusst den Faktor `password` — Sperre und Kette sollen
+        beide Wege gleich behandeln —, im Protokoll muss der Betreiber sie aber trennen können.
+        Ein Erfolg mit `quelle` schreibt eine eigene Zeile `login_<quelle>` (`login_ldap`,
+        `login_lokal`), ein Fehlversuch hängt `quelle=…` an `login_fail` an (`lokal+ldap`: beide
+        wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe."""
+        topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
+        if versuch is None:
+            self.store.record_attempt(topf, ip, success, method)
+        else:
+            self.store.finish_attempt(versuch, bool(success))
+        if success and quelle:
+            self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:
             # NUR die Fehlversuche derselben Methode: Ein Passwort-Erfolg sagt nichts darueber,
             # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
-            # den zweiten Faktor ratbar.
-            self.store.clear_fails(username=username, method=method)   # 'login'-Audit erst beim vollen Abschluss
+            # den zweiten Faktor ratbar. Alles übrige räumt erst die VOLLSTÄNDIGE Anmeldung
+            # (`sperre_aufheben`).
+            self.store.clear_fails(username=topf, method=method)   # 'login'-Audit erst beim vollen Abschluss
         else:
             # Der GRUND gehört ins serverseitige Protokoll. Die HTTP-Antwort bleibt bewusst
             # gleich (keine Konto-Erkundung) — im Audit-Log liest aber nur der Betreiber mit,
@@ -2117,7 +3124,8 @@ class TinySesam:
             # vertippt" bisher dasselbe: `login_fail … password`. Das ist der häufigste
             # Supportfall, und er war mit Bordmitteln nicht zu beantworten.
             self.store.audit_log("login_fail", username, ip,
-                                 f"{method} grund={self._fehl_grund(username)}")
+                                 f"{method} grund={self._fehl_grund(username, method)}"
+                                 + (f" quelle={quelle}" if quelle else ""))
             # fail2ban parst diese Zeile (ip=…)
             # `fuer_log`: Der Benutzername kommt aus einem Formularfeld. Ungefiltert liess
             # sich damit eine zweite Logzeile mit fremder IP erzeugen und fail2ban gegen Dritte
@@ -2130,8 +3138,47 @@ class TinySesam:
             security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
                                     security.fuer_log(username), security.fuer_log(ip), method)
 
-    def _fehl_grund(self, username) -> str:
+    def sperre_aufheben(self, user_id, methoden=None) -> int:
+        """Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
+
+        Ohne `methoden`: nach einer **vollständigen** Anmeldung (R7-1). Der Login-Lockout zählt
+        methodenblind — Passwort, PIN und TOTP füllen denselben Topf —, ein Erfolg räumte aber
+        nur die eigene Methode weg. Wer sich nach drei vertippten TOTP-Codes per PIN anmeldete,
+        trug die drei weiter mit sich, und das Konto war nie wieder „frisch". Eine vollständige
+        Anmeldung hat jeden verlangten Faktor bestanden; danach gibt es nichts mehr, wogegen
+        die alten Fehlversuche schützen. Die eigenen Töpfe (`NICHT_LOGIN_METHODEN`) bleiben:
+        Sie gehören zu Vorgängen NACH der Anmeldung.
+
+        Mit `methoden`: nur diese. Der Selbstbedienungs-Reset (R4-13) räumt `("password",)`:
+        Er beweist Zugriff aufs Postfach und ersetzt das Passwort — über PIN und TOTP sagt er
+        nichts. Räumte er auch deren Fehlversuche, bekäme jeder mit Zugriff aufs Postfach bei
+        jedem Reset frische Rateversuche gegen den zweiten Faktor.
+
+        Gezählt wurde unter der Kennung, die jemand eingetippt hat — Benutzername ODER E-Mail.
+        Geräumt wird deshalb unter beiden.
+        """
+        u = self.store.get_user(user_id)
+        if not u:
+            return 0
+        weg = 0
+        since = 0
+        for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
+            if methoden is None:
+                ohne = security.NICHT_LOGIN_METHODEN
+                weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
+                self.store.clear_fails(username=kennung, exclude_methods=ohne)
+            else:
+                for m in methoden:
+                    weg += self.store.count_fails(since, username=kennung, method=m)
+                    self.store.clear_fails(username=kennung, method=m)
+        return weg
+
+    def _fehl_grund(self, username, method=None) -> str:
         """Warum ist die Anmeldung gescheitert — für das Protokoll, nicht für die Antwort."""
+        if method == "resource":
+            # Der Pseudo-Name `res:<name>` ist nie ein Konto. `kein_konto` stand deshalb bei
+            # JEDEM Fehlgriff an einer Bereichs-PIN — eine Zeile, die niemand auswerten kann.
+            return "falsches_bereichsgeheimnis"
         u = self.find_user(username)
         if not u:
             return "kein_konto"
@@ -2142,21 +3189,66 @@ class TinySesam:
         return "falsches_geheimnis"
 
     def audit(self, event, username=None, ip=None, detail=None):
-        """Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet."""
+        """Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
+
+        Was der Aufrufer nicht nennt, ergänzt `audit()` aus der laufenden Anfrage (B5-02): die
+        IP, das angemeldete Konto als `username`, wenn keins genannt ist, und `akteur=<name>` im
+        Detail, wenn das angemeldete Konto ein ANDERES ist als das betroffene — der Admin, der
+        einem fremden Konto einen Key ausstellt. `username` ist damit immer das Konto, um das es
+        geht; `tinysesam audit --user X` findet auch das, was andere an X getan haben.
+        """
+        a = _ANFRAGE.get()
+        if a:
+            if ip is None:
+                ip = a.get("ip")
+            akteur = a.get("akteur")
+            if akteur:
+                if username is None:
+                    username = akteur
+                elif str(username).lower() != str(akteur).lower():
+                    detail = f"{detail} akteur={akteur}" if detail else f"akteur={akteur}"
         self.store.audit_log(event, username, ip, detail)
+
+    def _kontoname(self, user_id) -> Optional[str]:
+        """Der Benutzername zu einer ID — für Audit-Zeilen, die sonst nur `user=<id>` trügen."""
+        u = self.store.get_user(user_id) if user_id is not None else None
+        return str(u["username"]) if u else None
+
+    def _anfrage_merken(self, request, u=None) -> None:
+        """IP und angemeldetes Konto der laufenden Anfrage für `audit()` festhalten (`_ANFRAGE`)."""
+        try:
+            ip = self.client_ip(request)
+        except Exception:        # Attrappe ohne Header/Client — dann eben ohne IP
+            ip = None
+        _ANFRAGE.set({"ip": ip, "akteur": str(u["username"]) if u else None})
 
     def gc(self, attempts_older_than_sec: int = 86400) -> dict:
         """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
         Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
-        Das Audit-Log bleibt (bewusst) unangetastet. Gibt Anzahl gelöschter Zeilen je Bereich."""
-        older = int(time.time()) - int(attempts_older_than_sec)
-        return {
+        Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht
+        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
+        `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in
+        Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird."""
+        older = _jetzt() - _versuchsfrist(attempts_older_than_sec)
+        # VOR den Tokens: Das Merkmal „nie bestätigt" ist der abgelaufene Bestätigungstoken —
+        # räumt `gc_magic_tokens` ihn zuerst weg, ist das Konto nicht mehr zu erkennen (R4-09).
+        # Ohne diesen Schritt blieb eine Adresse, die jemand fremdes registriert und nie
+        # bestätigt hatte, für immer belegt: Der echte Inhaber bekam „E-Mail vergeben".
+        # Dieselbe Schleife wie `tinysesam gc` — sie steht im Store, damit beide über den einen
+        # Löschweg gehen (H-13, Integrationsfunde 12/18). Vorher hatte `gc()` eine eigene Kopie,
+        # die das Konto an der Anonymisierung vorbei löschte.
+        zahlen = {
+            "unverified_accounts": self.store.gc_unbestaetigte_konten(),
             "sessions": self.store.gc_sessions(),
             "flow": self.store.gc_flow(),
             "magic_tokens": self.store.gc_magic_tokens(),
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
         }
+        tage = int(self.cfg.audit_retention_days or 0)
+        if tage > 0:
+            zahlen["audit"] = self.store.gc_audit(_jetzt() - tage * 86400)
+        return zahlen
 
     def version(self) -> str:
         """Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst;
@@ -2262,7 +3354,7 @@ class TinySesam:
             # abgeleitete Basis der Prüfung nicht stand, bleibt die Login-URL relativ — der
             # Browser löst sie gegen den aufgerufenen Host auf, ein fremder Name kommt so
             # nicht in die Umleitung.
-            kandidat = f"{proto}://{host}" if host else ""
+            kandidat = f"{self._login_schema(proto, host)}://{host}" if host else ""
         base = self.public_base(kandidat=kandidat)
         if base and not self.cfg.cookie_domain:
             # Host aus orig_url, nicht erneut aus den Headern: forwarded_url() hat X-Original-URL
@@ -2273,7 +3365,11 @@ class TinySesam:
             if (o.scheme in ("http", "https") and o.hostname
                     and o.hostname != (urlsplit(base).hostname or "")
                     and o.hostname in (self.cfg.trusted_redirect_hosts or [])):
-                base = f"{o.scheme}://{o.netloc}"
+                # Durch dieselbe Formprüfung wie jede andere Basis (R5-1): `o.netloc` ist roh und
+                # trug eine Benutzerangabe (`https://fremd.example@app.example.com`) unverändert
+                # in die Login-URL; das Schema kam ungeprüft aus X-Forwarded-Proto/X-Original-URL.
+                base = security.normalisiere_basis(
+                    f"{self._login_schema(o.scheme, o.hostname)}://{o.netloc}") or base
         ziel = f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
         # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
         # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
@@ -2283,6 +3379,26 @@ class TinySesam:
         if anwendung:
             ziel += f"&app={quote(anwendung, safe='')}"
         return ziel
+
+    def _login_schema(self, schema: str, host: str) -> str:
+        """Das Schema der Login-URL, wenn es aus der Anfrage kommt (R5-1).
+
+        Ohne `base_url` stammt es aus `X-Forwarded-Proto` bzw. `X-Original-URL` — Eingaben, die
+        nicht nur der Proxy setzt. Mit `cookie_secure=True` ist `http` dort nie richtig: Das
+        Sitzungs-Cookie käme über http gar nicht an, das Passwort aber ginge im Klartext über das
+        Netz. Also https, ausser bei Loopback (lokaler Aufbau ohne Zertifikat)."""
+        schema = (schema or "").strip().lower()
+        if schema not in ("http", "https"):
+            schema = "https"
+        if schema == "http" and self.cfg.cookie_secure:
+            from urllib.parse import urlsplit
+            try:
+                name = urlsplit("//" + (host or "")).hostname or ""
+            except ValueError:
+                name = ""
+            if not security.eigener_host(name):      # ohne Liste: nur Loopback zählt
+                schema = "https"
+        return schema
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     def oidc_anwendung(self, url_oder_host: str) -> str:
@@ -2300,7 +3416,7 @@ class TinySesam:
     def vermerke_oidc_freigabe(self, token: str, client: str, rollen=None) -> None:
         """Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken."""
         self.store.put_oidc_grant(self.store.session_hash(token), client or "*",
-                                  int(time.time()), rollen)
+                                  _jetzt(), rollen)
 
     def oidc_freigabe_gueltig(self, token_hash: str, client: str) -> tuple:
         """Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
@@ -2322,7 +3438,7 @@ class TinySesam:
         if not grant:
             return False, "fehlt"
         frist = int(self.cfg.oidc_revalidate_minutes or 0) * 60
-        if frist and (int(time.time()) - int(grant["checked_at"])) > frist:
+        if frist and (_jetzt() - int(grant["checked_at"])) > frist:
             return False, "veraltet"
         return True, ""
 
@@ -2341,8 +3457,9 @@ class TinySesam:
     #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
     #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
     #: wurde eingetragen und nie aufgerufen.
-    SEITEN = ("account", "error", "forgot", "login", "magic_invalid", "magic_request", "pin",
-              "reauth", "register", "reset", "resource_unlock", "totp", "totp_setup")
+    SEITEN = ("account", "error", "forgot", "login", "logout", "magic_confirm", "magic_invalid",
+              "magic_request", "pin", "reauth", "register", "reset", "resource_unlock", "totp",
+              "totp_setup")
 
     def set_template(self, name, fn):
         """Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str | Response.
@@ -2358,7 +3475,7 @@ class TinySesam:
     def csrf_token(self, request: Optional[Request] = None) -> str:
         """Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln."""
         if request is not None and self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.cfg.csrf_cookie)
+            cur = request.cookies.get(self.csrf_cookie_name)
             if cur:
                 return cur
         return secrets.token_urlsafe(24)
@@ -2368,8 +3485,10 @@ class TinySesam:
         Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene
         Formulare ungültig (klassische „Formular abgelaufen"-Falle)."""
         tok, fresh = None, False
+        if request is not None:
+            self._pruefe_secure_flag(request)
         if self.cfg.csrf_enabled:
-            cur = request.cookies.get(self.cfg.csrf_cookie) if request is not None else None
+            cur = request.cookies.get(self.csrf_cookie_name) if request is not None else None
             tok = cur or secrets.token_urlsafe(24)
             fresh = cur is None
             ctx.setdefault("csrf", tok)      # Templates betten <input name=_csrf> ein / JS liest das Cookie
@@ -2389,9 +3508,84 @@ class TinySesam:
                 resp.headers.setdefault("Content-Security-Policy", policy)
         if tok is not None and fresh:
             # NICHT httponly: die eingebauten JS-Aufrufe lesen das Cookie und senden X-CSRF-Token
-            resp.set_cookie(self.cfg.csrf_cookie, tok, secure=self.cfg.cookie_secure,
+            resp.set_cookie(self.csrf_cookie_name, tok, secure=self.cfg.cookie_secure,
                             samesite=_samesite(self.cfg.cookie_samesite), path=self.cfg.cookie_path)
+        # Auch hier, nicht nur in der Route: Fehlerseiten aus `install_error_pages` laufen an
+        # keiner TinySesam-Route vorbei und tragen sonst keine einzige Härtungskopfzeile.
+        return self._kopfzeilen(resp)
+
+    def _kopfzeilen(self, resp: Response) -> Response:
+        """Die Härtungskopfzeilen jeder TinySesam-Antwort (R8-1, R8-5, R4-08, R5-2).
+
+        Bis 0.19.0 trug nur die gerenderte Seite eine CSP; alles andere — Admin-Panel, JSON-API,
+        Umleitungen mit Token in der Adresse — kam ohne jede Kopfzeile. `setdefault`, damit eine
+        Route (oder ein Override), die bewusst etwas anderes setzt, gewinnt.
+
+        * `nosniff` — eine JSON-Antwort mit Benutzereingabe darin wird nie als HTML gedeutet.
+        * `Referrer-Policy: same-origin` — Reset-, Anmelde- und Einladungsseiten tragen das Token
+          in der Adresse; ein Bild oder Link nach aussen nähme es sonst als `Referer` mit.
+          Bewusst nicht `no-referrer`: Damit setzt der Browser bei jedem gleich-origin-POST
+          `Origin: null`, und eine Origin-Prüfung im Proxy davor wiese das Login-Formular ab.
+        * `Cache-Control: no-store` + `Vary: Cookie` — die Antworten hängen an der Sitzung
+          (Konto, Sitzungsliste, `/auth/me`); ein geteilter Cache davor darf sie weder aufheben
+          noch dem nächsten Besucher geben.
+        * `X-Frame-Options: SAMEORIGIN` — nur bei `csp='strict'`, deren `frame-ancestors 'self'`
+          es für ältere Browser wiederholt. Eine eigene Policy oder `off` (der Proxy setzt die
+          CSP) entscheidet selbst, wer einbetten darf; ein festes XFO würde das überstimmen.
+        """
+        self._kopfzeilen_in(resp.headers)
         return resp
+
+    _secure_flag_gemeldet = False
+
+    def _pruefe_secure_flag(self, request: Request) -> None:
+        """`cookie_secure=False`, obwohl der Browser über HTTPS kommt? Einmal laut sagen (F-04).
+
+        Die häufigste Produktionsform ist ein TLS-Proxy vor einer App, die selbst nur HTTP sieht.
+        Wer dort `cookie_secure=False` stehen lässt (weil es lokal ohne Zertifikat nötig war),
+        verschickt das Sitzungs-Cookie ohne Secure-Flag — und nichts meldete das: Die
+        Konfigurationsprüfung schweigt bewusst (`base_url` ist keine Aussage über den
+        Transport), und das Panel warnt nur bei fehlendem HTTPS. Der Request selbst weiss es
+        aber: Schema `https` oder `X-Forwarded-Proto: https`. Loopback zählt hier NICHT als
+        sicher (anders als in `is_secure`) — lokal ohne Zertifikat ist genau der erlaubte Fall.
+        Eine Zeile je Instanz, damit das Log nicht vollläuft."""
+        if self.cfg.cookie_secure or self._secure_flag_gemeldet:
+            return
+        proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if request.url.scheme != "https" and proto != "https":
+            return
+        self._secure_flag_gemeldet = True
+        security.seclog.warning(
+            "Konfiguration: cookie_secure=False, aber der Browser kommt über HTTPS — Sitzungs- und "
+            "CSRF-Cookie gehen ohne Secure-Flag hinaus und damit auch über jede Klartext-Verbindung "
+            "zum selben Host. cookie_secure=True setzen (das ist die Vorgabe).")
+
+    def _kopfzeilen_fehler(self, exc) -> None:
+        """Dieselben Kopfzeilen für eine `HTTPException` aus einer TinySesam-Route.
+
+        Die Antwort baut dort der Exception-Handler des Gastgebers (oder Starlettes Vorgabe) —
+        die Routen-Klasse bekommt sie nie zu sehen. Beide übernehmen aber `exc.headers`; also
+        wandern die Kopfzeilen dort hinein. Das 401 von `/auth/admin` ohne Sitzung ist genau so
+        eine Antwort.
+
+        `exc.headers` bleibt ein gewöhnliches dict mit den Schlüsseln, wie die Route sie schrieb.
+        Ein Umweg über `MutableHeaders` schrieb sie klein — ein Handler des Gastgebers mit
+        `exc.headers["Location"]` fand die Umleitung dann nicht mehr und lieferte einen 307 ohne
+        Ziel (A1). Deshalb: Groß-/Kleinschreibung nur beim Nachsehen ignorieren, nie beim Schreiben.
+        """
+        exc.headers = dict(exc.headers or {})
+        self._kopfzeilen_in(_DictKopfzeilen(exc.headers))
+
+    def _kopfzeilen_in(self, h) -> None:
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("Referrer-Policy", "same-origin")
+        h.setdefault("Cache-Control", "no-store")
+        vary = h.get("vary", "")
+        if "cookie" not in [v.strip().lower() for v in vary.split(",")]:
+            h["Vary"] = f"{vary}, Cookie" if vary.strip() else "Cookie"
+        if ((self.cfg.csp or "").strip() == "strict"
+                and h.get("content-type", "").startswith("text/html")):
+            h.setdefault("X-Frame-Options", "SAMEORIGIN")
 
     def _csp_header(self, nonce: str) -> str:
         """Die CSP für die eigenen Seiten. 'strict' = alles same-origin, Skript/Style nur per
@@ -2608,14 +3802,185 @@ class TinySesam:
         return security.safe_next(next_, self.cfg.login_redirect, hosts or None)
 
     # ---------- FastAPI-Integration ----------
+    def _riegel(self, config: TinySesamConfig, *, beim_aufbau: bool) -> None:
+        """Alle Prüfungen, die den Aufbau scheitern lassen — beim Konstruktor und noch einmal vor
+        `router()`/`admin_router()` (A2).
+
+        Sie standen bis dahin nur im Konstruktor; `_nachpruefen` kannte nur `konfigpruefung` und
+        die Cookie-Felder. Wer danach `auth.cfg.allow_signup = True` setzte, baute neben
+        `admin_identifiers=["chef"]` einen Router, in dem sich der erste Besucher als „chef"
+        registrierte und Erst-Admin wurde. `beim_aufbau=False` lässt nur `konfigpruefung` weg —
+        die hat `_nachpruefen` über `TinySesamConfig._befunde()` schon gefahren, samt Warnungen."""
+        if config.login_identifier not in ("username", "email", "both"):
+            raise ConfigError("login_identifier muss 'username', 'email' oder 'both' sein")
+        if config.login_identifier == "email" and config.allow_signup and not config.signup_require_email:
+            raise ConfigError("login_identifier='email' braucht signup_require_email=True — "
+                             "sonst entstehen Konten, die sich nicht anmelden können")
+        # Alle übrigen Widersprüche auf einmal — beim Aufbau, nicht beim ersten Login. Die
+        # Prüfungen oben werfen einzeln, weil jede für sich eine eigene Geschichte erzählt;
+        # was danach kommt, sammelt konfigpruefung.py und meldet es gemeinsam. Wer drei Dinge
+        # falsch hat, soll sie einmal lesen und nicht dreimal starten.
+        if beim_aufbau:
+            befunde, hinweise = konfigpruefung.pruefe(config)
+            for hinweis in hinweise:
+                security.seclog.warning("Konfiguration: %s", hinweis)
+            if befunde:
+                raise ConfigError("Die Konfiguration geht so nicht auf:\n  - " + "\n  - ".join(befunde))
+
+        if config.cookie_samesite not in ("lax", "strict", "none"):
+            raise ConfigError(
+                "cookie_samesite muss 'lax', 'strict' oder 'none' sein (klein geschrieben). "
+                "Starlette prüft den Wert erst beim ersten Cookie — und unter `python -O` gar "
+                "nicht, dann stünde der Tippfehler im Set-Cookie-Header.")
+        if config.cookie_samesite == "none" and not config.cookie_secure:
+            raise ConfigError(
+                "cookie_samesite='none' verlangt cookie_secure=True — ein Browser verwirft ein "
+                "SameSite=None-Cookie ohne Secure-Flag, die Anmeldung käme nie an.")
+        if not isinstance(config.csp, str):
+            raise ConfigError("csp muss ein String sein ('strict', 'off' oder eine eigene Policy)")
+        if config.https_mode not in ("off", "warn", "force"):
+            raise ConfigError("https_mode muss 'off', 'warn' oder 'force' sein — alles andere "
+                             "gilt als 'kein Redirect', ein Tippfehler schaltet den HTTPS-Zwang "
+                             "also still ab")
+        # cookie_secure=False ist für lokale Aufbauten ohne Zertifikat richtig und bleibt
+        # erlaubt. Zusammen mit https_mode='force' widerspricht es sich aber: Die App leitet
+        # dann jeden Request auf HTTPS um und gibt das Session-Cookie trotzdem ohne
+        # Secure-Flag heraus.
+        #
+        # Geprüft wird nur, was die App über ihr EIGENES Verhalten sagt — nicht, was sie über
+        # die Außenwelt behauptet. Eine frühere Fassung schlug auch bei
+        # `base_url='https://…' + cookie_secure=False` an; das klang plausibel, war aber falsch:
+        # `base_url` ist eine Zusage über die öffentliche Adresse (SAML/OIDC bauen daraus
+        # Callbacks), nicht über den Transport zwischen Browser und App. Vier eigene Suiten
+        # brauchen genau diese Kombination (öffentliche HTTPS-URL, TestClient auf http://) —
+        # ein Wächter, der im eigenen Haus viermal falsch anschlägt, tut es bei Nutzern erst recht.
+        # `totp_required` war seit jeher ein Schalter ohne Draht: Er stand in der Config, in
+        # beiden READMEs („2FA erzwingen") und auf der Website — und wurde an keiner Stelle im
+        # Code gelesen. Wer ihn setzte, glaubte den zweiten Faktor erzwungen zu haben und hatte
+        # ihn nicht. Ein wirkungsloser Sicherheitsschalter ist gefährlicher als gar keiner, denn
+        # er beendet die Suche nach dem richtigen Weg. Deshalb sagt es die Bibliothek jetzt laut,
+        # statt ihn weiter stumm zu ignorieren — und nennt den Weg, der wirklich greift.
+        if getattr(config, "totp_required", False):
+            raise ConfigError(
+                "totp_required hat nie etwas bewirkt — der Schalter wurde an keiner Stelle "
+                "gelesen. Wer TOTP verbindlich verlangen will, nimmt die Faktor-Kette: "
+                "login_chain=['password', 'totp'] (mit login_chain_strict=True). Ohne Kette "
+                "gilt die klassische Policy: TOTP wird verlangt, sobald es eingerichtet ist.")
+        if not config.cookie_secure and config.https_mode == "force":
+            raise ConfigError(
+                "https_mode='force' und cookie_secure=False widersprechen sich: Die App "
+                "leitet jeden Request auf HTTPS um, gibt das Session-Cookie aber ohne "
+                "Secure-Flag heraus. Entweder cookie_secure=True, oder https_mode='warn' "
+                "(lokal/ohne Zertifikat).")
+
+        # Erst-Admin per Allowlist + offene Selbst-Registrierung: Die Allowlist verbürgt nur,
+        # WELCHER Name Admin wird — nicht, WER diesen Namen bekommt. Steht `admin_identifiers`
+        # auf einer frischen Instanz mit `allow_signup=True`, registriert sich der Erste, der
+        # die Adresse errät, genau darunter und ist beim ersten Login Admin. Das ist derselbe
+        # Fehler, den der Bootstrap eigentlich vermeiden soll ("der Erste gewinnt") — nur eine
+        # Stufe später.
+        #
+        # Tragfähig ist die Kombination nur, wenn die Identität aus der Registrierung selbst
+        # belegt ist: eine E-Mail-Adresse (kein reiner Benutzername, den niemand bestätigt),
+        # bei der Registrierung Pflicht UND per Bestätigungslink verifiziert. Dann hat den
+        # Namen, wer das Postfach hat.
+        #
+        # Offen ist diese Tür nicht nur bei `allow_signup`. Jedes Verfahren, das beim ersten
+        # Login selbst ein Konto anlegt, legt es unter einem Namen an, den der fremde IdP
+        # liefert: `oidc.py` nimmt `preferred_username`, SAML das NameID-/Attributfeld, LDAP
+        # den Anmeldenamen. Das ist dieselbe Lage wie bei der offenen Registrierung — nur
+        # bestimmt den Namen dort der Besucher und hier der IdP, und bei einem IdP mit
+        # Selbstregistrierung ist das dieselbe Person.
+        offene_tueren = []
+        if config.allow_signup:
+            offene_tueren.append("allow_signup=True")
+        for an, anlegen, name in (("oidc_enabled", "oidc_auto_create", "OIDC"),
+                                  ("saml_enabled", "saml_auto_create", "SAML"),
+                                  ("ldap_enabled", "ldap_auto_create", "LDAP")):
+            if getattr(config, an, False) and getattr(config, anlegen, False):
+                offene_tueren.append(f"{anlegen}=True ({name})")
+        if config.admin_identifiers and offene_tueren:
+            ids = [str(i).strip() for i in config.admin_identifiers if str(i).strip()]
+            namen = [i for i in ids if "@" not in i]
+            if namen:
+                raise ConfigError(
+                    f"admin_identifiers={namen} sind Benutzernamen, und Konten entstehen hier "
+                    f"von selbst ({', '.join(offene_tueren)}): Einen Benutzernamen bestätigt "
+                    "niemand — wer sich als Erster so anmeldet, wird Erst-Admin. Bei offener "
+                    "Registrierung stattdessen eine E-Mail-Adresse eintragen (mit "
+                    "signup_require_email=True und signup_verify_email=True); bei einem IdP "
+                    "den Einmal-Token-Weg nutzen (/auth/claim-admin, s. admin_claim_ttl_min) "
+                    "oder das Auto-Anlegen abschalten und das Konto vorher selbst vergeben "
+                    "(bei OIDC grenzt oidc_allowed_groups den Kreis zusätzlich ein).")
+        if config.admin_identifiers and config.allow_signup:
+            if not (config.signup_require_email and config.signup_verify_email):
+                raise ConfigError(
+                    "admin_identifiers zusammen mit allow_signup=True verlangt "
+                    "signup_require_email=True UND signup_verify_email=True — sonst trägt "
+                    "jeder die Admin-Adresse bei der Registrierung einfach ein und wird beim "
+                    "ersten Login Admin. Alternativ allow_signup=False oder der Einmal-Token-Weg "
+                    "(/auth/claim-admin, s. admin_claim_ttl_min).")
+        # Ein Tippfehler im Feldnamen ("mail" statt "email") würde den Header sonst einfach
+        # weglassen — still, und erst beim Debuggen der fremden App zu sehen. Header-Namen werden
+        # gegen das erlaubte Zeichenset geprüft: ein Wert mit Zeilenumbruch wäre Header-Injection.
+        if config.forward_headers:
+            erlaubt = set(self.FORWARD_HEADERS_DEFAULT)
+            # Erst die Form, dann die Namen. `{"user": None}` rutschte durch (`namen or []`
+            # machte daraus eine leere Liste) und kippte später JEDEN Forward-Auth-Request in
+            # ein 500; `{"user": 123}` tötete den Konstruktor mit einem rohen `TypeError`, den
+            # ein `except ConfigError` nicht fängt.
+            for feld, wert in config.forward_headers.items():
+                if isinstance(wert, str):
+                    continue
+                if isinstance(wert, (list, tuple)) and all(isinstance(x, str) for x in wert):
+                    continue
+                raise ConfigError(
+                    f"forward_headers[{feld!r}] muss ein Header-Name sein oder eine Liste davon "
+                    f"— ist aber {type(wert).__name__}. Beispiel: "
+                    '{"user": "Remote-User"} oder {"user": ["Remote-User", "X-Auth-User"]}')
+            unbekannt = [k for k in config.forward_headers if k not in erlaubt]
+            if unbekannt:
+                raise ConfigError(f"forward_headers: unbekanntes Feld {unbekannt} — erlaubt sind "
+                                 f"{sorted(erlaubt)}")
+            for feld, namen in config.forward_headers.items():
+                for name in ([namen] if isinstance(namen, str) else namen or []):
+                    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", name):
+                        raise ConfigError(f"forward_headers[{feld!r}]: {name!r} ist kein gültiger "
+                                         "Header-Name")
+
+    def _nachpruefen(self) -> None:
+        """Die Config noch einmal prüfen, bevor aus ihr Routen entstehen (B3-14).
+
+        Der Konstruktor prüft und hält danach eine **Referenz** auf das Config-Objekt. Wer
+        dazwischen etwas umstellt (`auth.cfg.cookie_samesite = "Strict"`, `auth.cfg.base_url = ""`),
+        umging bisher jeden Wächter — `TinySesamConfig.pruefen()` gab es dafür, aufgerufen hat es
+        niemand. Hier ist der letzte Punkt, an dem ein Fehler noch beim Start auffällt statt beim
+        ersten Klick. Warnungen hat der Konstruktor schon gesagt; hier zählt nur, was den Aufbau
+        hätte scheitern lassen — und zwar ALLES davon: `konfigpruefung` samt Cookie-Feldern und
+        die Riegel des Konstruktors (`_riegel`, A2)."""
+        fehler, _ = self.cfg._befunde()
+        if not fehler:
+            try:
+                self._riegel(self.cfg, beim_aufbau=False)
+            except ConfigError as e:
+                fehler = [str(e)]
+        if fehler:
+            raise ConfigError("Die Konfiguration wurde nach dem Aufbau geändert und geht so nicht "
+                              "auf:\n  - " + "\n  - ".join(fehler))
+
     def router(self):
-        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig."""
+        """Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
+
+        Prüft die Config vorher noch einmal (`_nachpruefen`) — eine nach dem Konstruktor
+        kaputt gestellte Config scheitert hier mit `ConfigError`, nicht erst im Betrieb."""
+        self._nachpruefen()
         from .router import build_router
         return build_router(self)
 
     def admin_router(self):
         """Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port
         montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel."""
+        self._nachpruefen()
         from .admin import build_admin_router
         return build_admin_router(self)
 
@@ -2653,7 +4018,8 @@ class TinySesam:
             if _wants_html(request):
                 return self.render_page("error", status=500, request=request, code=500,
                                        message=self.t("error.oops"))
-            return JSONResponse({"detail": "internal server error"}, status_code=500)
+            # Der JSON-Zweig ging an `render_page` vorbei und kam ohne jede Härtungskopfzeile (A2).
+            return self._kopfzeilen(JSONResponse({"detail": "internal server error"}, status_code=500))
 
     def install_https(self, app):
         """HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' →
@@ -2689,7 +4055,7 @@ class TinySesam:
         if not s or not s["mfa_ok"]:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if not s["mfa_at"] or (int(time.time()) - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
+            if not s["mfa_at"] or (_jetzt() - s["mfa_at"]) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -2713,7 +4079,7 @@ class TinySesam:
         if not s:
             return False
         if self.cfg.stepup_max_age_sec > 0:
-            if (int(time.time()) - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
+            if (_jetzt() - (s["created_at"] or 0)) > self.cfg.stepup_max_age_sec:
                 return False
         return True
 
@@ -2888,18 +4254,27 @@ class TinySesam:
 
     def resource_unlocked(self, request: Request, name) -> bool:
         """Ist diese Ressource für diesen Browser gerade freigeschaltet?"""
-        return self.store.is_resource_unlocked(request.cookies.get(self.cfg.resource_cookie), name)
+        return self.store.is_resource_unlocked(request.cookies.get(self.resource_cookie_name), name)
 
     def unlock_resource(self, request: Request, response, name):
-        """Eine Ressource für diesen Browser freischalten und das Cookie setzen."""
-        token = request.cookies.get(self.cfg.resource_cookie) or secrets.token_urlsafe(32)
+        """Eine Ressource für diesen Browser freischalten und das Cookie setzen.
+
+        Jede Freischaltung bekommt ein **neues** Token (F-01). Vorher übernahm sie das Token aus
+        dem Cookie des Browsers: Wer dem Opfer vorher ein eigenes untergeschoben hatte
+        (Nachbar-Subdomain, Klartext-HTTP), kannte danach das Token eines freigeschalteten
+        Browsers — Session-Fixation, nur für die Bereichs-PIN. Was dieser Browser schon offen
+        hatte, zieht auf das neue Token um."""
+        alt = request.cookies.get(self.resource_cookie_name)
+        token = secrets.token_urlsafe(32)
+        if alt:
+            self.store.move_resource_unlocks(alt, token)
         ttl = self.cfg.resource_unlock_ttl_hours * 3600
-        self.store.add_resource_unlock(token, name, int(time.time()) + ttl)
+        self.store.add_resource_unlock(token, name, _jetzt() + ttl)
         kw = dict(httponly=True, secure=self.cfg.cookie_secure, samesite=_samesite(self.cfg.cookie_samesite),
                   path=self.cfg.cookie_path, max_age=ttl)
         if self.cfg.cookie_domain:
             kw["domain"] = self.cfg.cookie_domain
-        response.set_cookie(self.cfg.resource_cookie, token, **kw)
+        response.set_cookie(self.resource_cookie_name, token, **kw)
 
     def require_resource(self, name: str):
         """FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich.

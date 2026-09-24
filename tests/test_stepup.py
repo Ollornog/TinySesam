@@ -75,6 +75,159 @@ assert r.status_code == 303 and r.headers["location"] == "/sudo"
 assert c.get("/sudo", headers=JSON).status_code == 200
 ok("Reauth per Passwort → sudo wieder erreichbar")
 
+# ---------- F-06: der Step-up erneuert das Sitzungs-Token ----------
+# Wer das alte Cookie mitgelesen hat, darf nach der Bestätigung keine Sudo-Sitzung halten.
+# Laufzeit und Anmeldezeitpunkt bleiben — ein Step-up verlängert die Sitzung nicht.
+stale()
+vorher = c.cookies.get("tinysesam_session")
+zeile_vorher = auth.store.get_session(vorher)
+r = c.post("/auth/reauth", data={"password": "geheim123", "next": "/sudo"}, follow_redirects=False)
+assert r.status_code == 303 and "tinysesam_session=" in r.headers.get("set-cookie", ""), r.headers
+nachher = c.cookies.get("tinysesam_session")
+assert nachher and nachher != vorher, "Reauth muss ein neues Token ausgeben"
+assert auth.store.get_session(vorher) is None, "das alte Token muss tot sein"
+zeile = auth.store.get_session(nachher)
+assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
+assert zeile["remember"] == zeile_vorher["remember"] and zeile["mfa_ok"] == 1
+assert c.get("/sudo", headers=JSON).status_code == 200
+dieb = TestClient(app)
+dieb.cookies.set("tinysesam_session", vorher)
+assert dieb.get("/normal", headers=JSON).status_code == 401, "altes Cookie trägt nicht mehr"
+ok("F-06: Reauth rotiert das Token (altes tot, Laufzeit und created_at unverändert)")
+
+# Dasselbe, wenn der Step-up über einen erneuten Login mit einem Faktor läuft (apply_factor auf
+# einer schon vollwertigen Sitzung): neues Token, alte Sitzung weg, keine zweite daneben.
+vorher = c.cookies.get("tinysesam_session")
+anzahl = len(auth.store.list_sessions(uid))
+r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"},
+           follow_redirects=False)
+assert r.status_code == 303 and c.cookies.get("tinysesam_session") != vorher
+assert auth.store.get_session(vorher) is None and len(auth.store.list_sessions(uid)) == anzahl
+ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungszahl gleich")
+
+# Der dritte Step-up-Weg: POST /auth/totp auf einer VOLLEN Sitzung (Routen-Kette mit TOTP, oder
+# jemand ruft die Seite einfach auf). `complete_totp` machte die Sitzung wieder frisch, drehte
+# das Token aber nur beim Übergang halb → voll — ein vorher mitgelesenes Cookie bekam so frische
+# Sudo-Rechte. Eigene Instanz: Ein TOTP am Admin oben änderte jeden Login dieser Suite.
+# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` → rotate_session streichen → rot.)
+db_t = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
+uid_t = auth_t.create_user("eva", password="Eva-Geheim-2026")
+assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
+codes_t = auth_t.generate_recovery_codes(uid_t)   # zwei Codes ohne Warten auf das nächste TOTP-Fenster
+app_t = FastAPI()
+app_t.include_router(auth_t.router())
+
+
+@app_t.get("/sudo")
+def sudo_t(u=Depends(auth_t.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+c_t = TestClient(app_t)
+c_t.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/"},
+         follow_redirects=False)
+assert c_t.post("/auth/totp", data={"code": codes_t[0], "next": "/"}, follow_redirects=False
+                ).status_code == 303
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "nach TOTP voll angemeldet"
+vorher = c_t.cookies.get("tinysesam_session")
+auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_t.store.session_hash(vorher)))
+assert c_t.get("/sudo", headers=JSON).status_code == 403, "Frische muss abgelaufen sein"
+zeile_vorher = auth_t.store.get_session(vorher)
+anzahl = len(auth_t.store.list_sessions(uid_t))
+r = c_t.post("/auth/totp", data={"code": codes_t[1], "next": "/sudo"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/sudo", (r.status_code, r.headers)
+assert any(z.startswith("tinysesam_session=") for z in r.headers.get_list("set-cookie")), \
+    "Step-up über /auth/totp setzt kein neues Sitzungs-Cookie"
+nachher = c_t.cookies.get("tinysesam_session")
+assert nachher and nachher != vorher and auth_t.store.get_session(vorher) is None, "altes Token lebt"
+zeile = auth_t.store.get_session(nachher)
+assert zeile["created_at"] == zeile_vorher["created_at"] and zeile["expires_at"] == zeile_vorher["expires_at"]
+assert len(auth_t.store.list_sessions(uid_t)) == anzahl, "Step-up legt eine zweite Sitzung an"
+assert c_t.get("/sudo", headers=JSON).status_code == 200
+dieb = TestClient(app_t)
+dieb.cookies.set("tinysesam_session", vorher)
+assert dieb.get("/sudo", headers=JSON).status_code == 401, "das mitgelesene Cookie trägt noch"
+ok("F-06: Step-up über /auth/totp auf voller Sitzung rotiert das Token (altes tot, Laufzeit gleich)")
+
+# Eigene Oberfläche (README „Your own login page"): `complete_totp` gibt beim Step-up jetzt ein
+# neues Token zurück, und das alte ist danach tot. Wer den Rückgabewert ins Cookie setzt, bleibt
+# angemeldet — der Weg, den die Doku zeigen muss. (Wer ihn ignoriert, hat seit F-06 eine tote
+# Sitzung im Cookie; beim Login halb → voll war das schon immer so.)
+# (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` streichen → rot, schon im Block
+# davor; hier bliebe das alte Token am Leben.)
+from fastapi import Request as _Req, Response as _Resp   # noqa: E402
+
+
+@app_t.post("/eigen/stepup")
+def eigen_stepup(request: _Req, code: str = ""):
+    antwort = _Resp()
+    tok = request.cookies.get(auth_t.session_cookie_name)
+    s = auth_t.session_from_request(request)
+    if s and auth_t.verify_recovery_code(s["user_id"], code):
+        neu = auth_t.complete_totp(tok)
+        if neu:
+            auth_t.set_cookie(antwort, neu)
+    return antwort
+
+
+vorher = c_t.cookies.get("tinysesam_session")
+auth_t.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_t.store.session_hash(vorher)))
+assert c_t.get("/sudo", headers=JSON).status_code == 403
+codes_t2 = auth_t.generate_recovery_codes(uid_t)
+assert c_t.post("/eigen/stepup", params={"code": codes_t2[0]}).status_code == 200
+assert c_t.cookies.get("tinysesam_session") != vorher and auth_t.store.get_session(vorher) is None
+assert c_t.get("/sudo", headers=JSON).status_code == 200, "eigener Step-up nach Doku-Muster meldet ab"
+ok("F-06: eigene Step-up-Route mit `neu = complete_totp(tok); set_cookie(resp, neu)` bleibt angemeldet")
+os.remove(db_t)
+
+# Beim Step-up über /auth/totp dreht TinySesam das Sitzungs-Token, das CSRF-Token aber nicht —
+# wie `/auth/reauth`: Ein neues entwertete nur die Formulare in den anderen offenen Reitern.
+# Beim Login (halb → voll) dagegen ein frisches (csrf_rotieren, cookie injection).
+# (Mutationsprobe: in router.totp_submit das `if not s["mfa_ok"]` vor csrf_rotieren streichen → rot.)
+db_x = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
+                                   cookie_secure=False, stepup_max_age_sec=900))
+uid_x = auth_x.create_user("eva", password="Eva-Geheim-2026")
+assert auth_x.totp_confirm(uid_x, pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"]).now())
+codes_x = auth_x.generate_recovery_codes(uid_x)
+app_x = FastAPI()
+app_x.include_router(auth_x.router())
+
+
+@app_x.get("/sudo")
+def sudo_x(u=Depends(auth_x.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+def _gesetzt(antwort):
+    return {z.split("=", 1)[0] for z in antwort.headers.get_list("set-cookie")}
+
+
+c_x = TestClient(app_x)
+_feld = re.search(r"name=_csrf value='([^']+)'", c_x.get("/auth/login").text).group(1)
+c_x.post("/auth/login", data={"username": "eva", "password": "Eva-Geheim-2026", "next": "/",
+                              "_csrf": _feld}, follow_redirects=False)
+r = c_x.post("/auth/totp", data={"code": codes_x[0], "next": "/", "_csrf": c_x.cookies.get("tinysesam_csrf")},
+             follow_redirects=False)
+assert r.status_code == 303 and {"tinysesam_session", "tinysesam_csrf"} <= _gesetzt(r), \
+    ("beim Login (halb → voll) gehört ein frisches CSRF-Token dazu", _gesetzt(r))
+csrf_vorher = c_x.cookies.get("tinysesam_csrf")
+tok_x = c_x.cookies.get("tinysesam_session")
+auth_x.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                   (int(time.time()) - 100000, auth_x.store.session_hash(tok_x)))
+assert c_x.get("/sudo", headers=JSON).status_code == 403
+r = c_x.post("/auth/totp", data={"code": codes_x[1], "next": "/sudo", "_csrf": csrf_vorher},
+             follow_redirects=False)
+assert r.status_code == 303 and "tinysesam_session" in _gesetzt(r), (r.status_code, _gesetzt(r))
+assert "tinysesam_csrf" not in _gesetzt(r), "der Step-up dreht das CSRF-Token (andere Reiter brechen)"
+assert c_x.cookies.get("tinysesam_csrf") == csrf_vorher and c_x.get("/sudo", headers=JSON).status_code == 200
+ok("F-06: Step-up über /auth/totp dreht das Sitzungs-, nicht das CSRF-Token; der Login dreht beide")
+os.remove(db_x)
+
 # ---------- API-Key erfüllt Step-up NICHT ----------
 key = auth.create_api_key(uid, name="k")["key"]
 assert c.get("/normal", headers={**JSON, "Authorization": f"Bearer {key}"}).status_code == 200
@@ -86,7 +239,7 @@ ok("API-Key: require_user ok, require(mfa=True) → 403 (kein interaktiver Fakto
 
 # ---------- admin_require_mfa mit TOTP-User ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 auth.cfg.admin_require_mfa = True
 c3 = TestClient(app)
 # Login → TOTP-Schritt → voll eingeloggt (frisch)
@@ -123,7 +276,7 @@ auth2 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db2, rp
                                   stepup_max_age_sec=900))
 uid2 = auth2.create_user("opfer", password="geheim123")
 sec2 = auth2.totp_begin(uid2)["secret"]
-assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).now())
+assert auth2.totp_confirm(uid2, pyotp.TOTP(sec2).at(time.time() - 30))
 auth2.set_pin(uid2, "2468")
 auth2.store.add_webauthn(uid2, "credid-r3-3", "pubkey", 0, ["internal"], "Testschlüssel")
 pk2 = auth2.store.list_webauthn(uid2)[0]["id"]
@@ -207,7 +360,7 @@ auth3 = TinySesam(TinySesamConfig(lang="de", db_path=db3, rp_name="Test", cookie
                                   passkey_enabled=HAT_PASSKEY))
 uid3 = auth3.create_user("opfer", password="geheim123")
 sec3 = auth3.totp_begin(uid3)["secret"]
-assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).now())
+assert auth3.totp_confirm(uid3, pyotp.TOTP(sec3).at(time.time() - 30))
 auth3.set_pin(uid3, "1357")
 auth3.store.add_webauthn(uid3, "credid-r3-3-api", "pubkey", 0, ["internal"], "Testschlüssel")
 pk3 = auth3.store.list_webauthn(uid3)[0]["id"]
@@ -305,7 +458,7 @@ geheim = re.search(r"<div class=mono>([A-Z2-7]+)</div>", seite.text)
 assert geheim, seite.text[:200]
 r = c7.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim.group(1)).now()},
             headers={"X-CSRF-Token": c7.cookies.get("tinysesam_csrf") or "", "Accept": "application/json"})
-assert r.status_code == 200 and r.json() == {"ok": True}, r.text[:120]
+assert r.status_code == 200 and r.json() == {"ok": True, "other_sessions": 0}, r.text[:120]
 assert auth4.store.has_confirmed_totp(uid4), "die Einrichtung aus der Sitzung muss durchgehen"
 ok("Sitzung desselben Kontos: TOTP einrichten geht unverändert (Geheimnis, Bestätigung)")
 
@@ -366,6 +519,139 @@ r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"}, follow_redi
 assert r.status_code == 303, f"Bestätigung nach Entsperren scheitert: {r.status_code}"
 ok("…entsperrbar, danach bestätigt dasselbe Konto wieder")
 os.remove(db5)
+
+
+# ---------- H-18 (b): jede Selbstverwaltungsroute ist eingeordnet und hält ihre Klasse ----------
+# R3-3 hat fünf Routen an die Step-up-Frische gebunden — einzeln. Eine sechste Route, die einen
+# Faktor anlegt oder abbaut, fiele keinem Test auf. Deshalb: Jede POST-Route des Routers, die
+# nicht zum Anmeldefluss gehört, steht in genau einer Klasse, und jede Klasse wird gemessen.
+# Eine neue Route ohne Einordnung macht diese Prüfung rot — das ist der Zweck.
+db6 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, rp_name="Test",
+                                  passkey_enabled=HAT_PASSKEY, oidc_enabled=False,
+                                  cookie_secure=False, stepup_max_age_sec=900, pin_enabled=True,
+                                  apikey_enabled=True, account_enabled=True,
+                                  resource_locks_enabled=True))
+app6 = FastAPI()
+router6 = auth6.router()
+app6.include_router(router6)
+uid6 = auth6.create_user("selbst", password="Geheim12345!")
+auth6.set_pin(uid6, "471193")
+_sec6 = auth6.totp_begin(uid6)["secret"]
+assert auth6.totp_confirm(uid6, pyotp.TOTP(_sec6).now())
+key6 = auth6.create_api_key(uid6, "bot")["key"]
+
+#: Anmeldefluss: Diese Routen SIND die Bestätigung, sie verwalten nichts.
+ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request", "/auth/reauth",
+                "/auth/forgot", "/auth/reset", "/auth/register", "/auth/resource/{name}",
+                "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish",
+                "/auth/logout"}   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
+#: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
+STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
+          "/auth/passkey/delete", "/auth/sessions/revoke"}   # sessions/revoke: F-09
+#: Das alte Passwort ist die Bestätigung (gedrosselt, gesperrt, protokolliert — R4-10).
+PASSWORT = {"/auth/password"}
+#: Einrichtung eines Faktors: nur mit interaktiver Sitzung, nie mit API-Key (R3-1/R3-3).
+NUR_SITZUNG = {"/auth/totp/setup/start", "/auth/totp/setup", "/auth/passkey/register/begin",
+               "/auth/passkey/register/finish"}
+#: Bekannt offen — mit Begründung. Wird eine davon gebunden, gehört sie nach STEPUP.
+OFFEN = {"/auth/apikeys": "Key-Ausgabe ohne Step-up (gemeldet mit H-18)",
+         "/auth/apikeys/{key_id}/revoke": "Key-Widerruf ohne Step-up (gemeldet mit H-18)"}
+
+# Aus dem Router selbst, nicht aus `app6.routes`: Neuere FastAPI-Fassungen legen eingebundene
+# Router dort als ein Objekt ohne Pfad ab — die Liste wäre leer und die Prüfung still grün.
+_post6 = {rt.path for rt in router6.routes
+          if "POST" in (getattr(rt, "methods", None) or ())
+          and not str(getattr(rt, "path", "")).startswith(auth6.cfg.admin_path)}
+_klassen = [ANMELDEFLUSS, STEPUP, PASSWORT, NUR_SITZUNG, set(OFFEN)]
+_uneingeordnet = sorted(p for p in _post6 if not any(p in k for k in _klassen))
+assert not _uneingeordnet, f"Selbstverwaltungsroute ohne Einordnung: {_uneingeordnet}"
+_doppelt = [p for p in _post6 if sum(p in k for k in _klassen) > 1]
+assert not _doppelt, _doppelt
+assert STEPUP & _post6 and NUR_SITZUNG & _post6, f"Wächter ohne Treffer: Router-Aufbau geändert? {sorted(_post6)}"
+ok(f"H-18: alle {len(_post6)} POST-Routen eingeordnet (Anmeldefluss, Step-up, Passwort, Sitzung, offen)")
+
+
+def _abgestanden_client():
+    """Voll angemeldet, aber Anmeldung UND letzte Bestätigung liegen lange zurück."""
+    cl = TestClient(app6)
+    tok = auth6.store.create_session(uid6, 3600, True, "password")
+    alt = int(time.time()) - 100000
+    auth6.store._exec("UPDATE session SET mfa_at=?, created_at=? WHERE token_hash=?",
+                      (alt, alt, auth6.store.session_hash(tok)))
+    cl.cookies.set(auth6.session_cookie_name, tok)
+    return cl
+
+
+_nutzlast = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"data": {"code": "000000"}},
+             "/auth/password": {"json": {"current": "falsch-falsch", "new": "Neu1234567890!"}},
+             "/auth/sessions/revoke": {"json": {"scope": "others"}},
+             "/auth/apikeys": {"json": {"name": "neu"}}}
+for pfad in sorted(STEPUP & _post6):
+    r = _abgestanden_client().post(pfad, headers=JSON, **_nutzlast.get(pfad, {}))
+    assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \
+        f"{pfad}: abgelaufene Bestätigung kam durch ({r.status_code}) — Step-up fehlt"
+for pfad in sorted(NUR_SITZUNG & _post6):
+    r = TestClient(app6).post(pfad, headers={**JSON, "X-API-Key": key6}, **_nutzlast.get(pfad, {}))
+    assert r.status_code in (401, 403), f"{pfad}: API-Key richtet einen Faktor ein ({r.status_code})"
+r = _abgestanden_client().post("/auth/password", headers=JSON, **_nutzlast["/auth/password"])
+assert r.status_code == 403 and auth6.check_password("selbst", "Geheim12345!"), \
+    f"/auth/password ohne das alte Passwort: {r.status_code}"
+for pfad in sorted(set(OFFEN) & _post6):
+    ziel = pfad.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
+    r = _abgestanden_client().post(ziel, headers=JSON, **_nutzlast.get(pfad, {}))
+    assert r.status_code == 200, (
+        f"{pfad} verlangt jetzt eine Bestätigung ({r.status_code}) — aus OFFEN nach STEPUP "
+        f"verschieben ({OFFEN[pfad]})")
+ok(f"H-18: {len(STEPUP & _post6)} Routen verlangen Step-up, {len(NUR_SITZUNG & _post6)} nur eine "
+   f"Sitzung, {len(set(OFFEN) & _post6)} bekannt offen ({', '.join(sorted(set(OFFEN.values())))})")
+os.remove(db6)
+
+# ---------- A-2: der Step-up behält die Art des Sitzungs-Cookies ----------
+# Seit F-06 dreht ein Step-up das Token, und der Aufrufer setzt das Cookie neu. Mit der
+# Vorgabe `remember=True` bekam eine Sitzung OHNE „Angemeldet bleiben" dabei ein Cookie für
+# sieben Tage, das das Schließen des Browsers am geteilten Rechner überlebte; umgekehrt machte
+# die PIN-Route mit leerem Formularfeld aus einer gemerkten Sitzung ein Session-Cookie.
+db6 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth6 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db6, passkey_enabled=False,
+                                  oidc_enabled=False, cookie_secure=False, magiclink_enabled=True,
+                                  pin_enabled=True, base_url="https://auth.example.com"))
+auth6.set_mailer(lambda *a, **k: None)
+auth6.ensure_admin("admin", "geheim123")
+uid6 = auth6.store.get_user_by_name("admin")["id"]
+auth6.set_pin(uid6, "24680")
+app6 = FastAPI()
+app6.include_router(auth6.router())
+
+
+def _sitzungs_cookie(antwort):
+    zeilen = [z for z in antwort.headers.get_list("set-cookie") if z.startswith("tinysesam_session=")]
+    assert len(zeilen) == 1, antwort.headers.get_list("set-cookie")
+    return zeilen[0].lower()
+
+
+for merken in ("", "on"):
+    c6 = TestClient(app6)
+    r = c6.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/",
+                                     "remember": merken}, follow_redirects=False)
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), _sitzungs_cookie(r)
+    vorher = c6.cookies.get("tinysesam_session")
+    roh = auth6.create_magic_token("login", user_id=uid6, email="x@example.com", ttl_min=15,
+                                   payload={"next": "/"})
+    r = c6.post(f"/auth/magic/{roh}", follow_redirects=False)   # R4-02: erst der POST löst ein
+    assert c6.cookies.get("tinysesam_session") != vorher, "Step-up muss rotieren (F-06)"
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
+        f"Magic-Step-up (remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
+    # PIN mit dem GEGENTEIL im Formular — die Sitzung hat ihre Art beim ersten Faktor bekommen.
+    r = c6.post("/auth/pin", data={"username": "admin", "pin": "24680", "next": "/",
+                                   "remember": "" if merken else "on"}, follow_redirects=False)
+    assert r.status_code == 303, r.status_code
+    assert ("max-age" in _sitzungs_cookie(r)) == bool(merken), \
+        f"PIN-Step-up (Sitzung remember={merken!r}) ändert die Cookie-Art: {_sitzungs_cookie(r)}"
+    zeile = auth6.store.get_session(c6.cookies.get("tinysesam_session"))
+    assert bool(zeile["remember"]) == bool(merken)
+ok("A-2: Step-up per Magic-Link und PIN behält die Cookie-Art der Sitzung (merken ja/nein)")
+os.remove(db6)
 
 os.remove(db)
 os.remove(db2)

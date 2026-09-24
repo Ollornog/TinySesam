@@ -228,13 +228,15 @@ user = auth.check_password(username, password)
 token, fertig = auth.start_session(user["id"], "password")   # Tupel, nicht nur ein Token
 auth.set_cookie(resp, token)
 if not fertig:                    # es fehlt noch ein zweiter Faktor
-    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
 ```
 
 `start_session` gibt `(token, session_ok)` zurück. Auspacken — wer das Tupel direkt in
 `set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie, und es fliegt keine
 Ausnahme: Die Anmeldung ist still kaputt. `session_ok=False` heisst: Die Sitzung existiert, ist
 aber noch nicht vollständig.
+Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch beim Step-up — es gehört ins
+Cookie. Wer es ignoriert, hat eine tote Sitzung im Cookie, und der Nutzer ist abgemeldet.
 
 ## Look & Feel
 
@@ -385,10 +387,15 @@ systemctl start tinysesam
 > **Ein Rückschritt braucht eine Sicherung im alten Schema.** Jede Fassung, die Spalten
 > hinzufügt, migriert die Datenbank beim ersten Start — 0.18.0 tat es einmal (Schema 5), 0.19.0
 > hebt sie auf **Schema 8** (Freigaben je Anwendung, Key-Art, Erst-Login und
-> Einrichtungsfenster); die nächste Fassung fügt **Schema 9** hinzu (stabile
-> Verzeichnis-Kennungen für LDAP/SAML). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
+> Einrichtungsfenster); die nächste Fassung hebt sie auf **Schema 10** (9: stabile
+> Verzeichnis-Kennungen für LDAP/SAML; 10: Zähl-Töpfe und die Suche nach Name und Adresse mit
+> Index, Sperren aus dem Panel früherer Fassungen tragen danach den Betreiber-Vermerk). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
 > Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem Update
 > ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die zurückspielen.
+> Lief älterer Code doch auf der neuen Datei, holt der nächste Start der neuen Fassung zweierlei
+> nach: Sperren aus dem Panel der älteren tragen danach den Betreiber-Vermerk (erkannt an ihren
+> Audit-Zeilen), und Adressen ihrer offenen Registrierungen gelten bis zur Bestätigung als
+> unbelegt; im Log steht dann eine Warnung. Mehr gleicht er nicht ab — der sichere Rückweg ist die Sicherung.
 
 ### „Ich komme nicht rein" — nachsehen
 

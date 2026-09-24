@@ -49,6 +49,12 @@ app.example.com {
 			# nur die Auth-Antwort-Header übernehmen
 			# Andere Namen (z.B. X-WEBAUTH-USER für Grafana): TinySesamConfig(forward_headers={...})
 			# setzen und sie hier mitziehen — übernommen wird nur, was hier steht.
+			#
+			# Header-Form in `{rp.header.…}` (H-16): Caddy sucht den Namen Zeichen für Zeichen
+			# in der Form, die Gos textproto daraus macht — jedes Wort gross, der Rest klein
+			# (`Remote-User`, `X-Tinysesam-Location`). Eine andere Schreibweise ergibt einen
+			# LEEREN Wert, ohne Fehler und ohne Logzeile. tests/test_bestandsdaten.py prüft jeden
+			# Platzhalter dieser Datei gegen genau diese Form.
 			@ok status 200
 			handle_response @ok {
 				request_header Remote-User {rp.header.Remote-User}
@@ -76,6 +82,21 @@ app.example.com {
 				respond "Kein Zugriff: fehlende Rolle." 403
 			}
 		}
-		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} # die eigentliche Upstream-App
+		# Die eigentliche Upstream-App — OHNE die Cookies von TinySesam (B-20).
+		# Der Browser schickt es an jeden Host unter cookie_domain mit, und ungefiltert las es
+		# jede geschützte App mit: Eine kompromittierte oder schlicht geschwätzige App (Debug-
+		# Seite, Fehlerbericht, Log mit Anfrage-Headern) gab damit eine Sitzung heraus, die für
+		# ALLE anderen Apps und für das Konto bei TinySesam gilt. Die App braucht das Cookie
+		# nicht — wer angemeldet ist, sagen ihr die Remote-*-Header.
+		# Dasselbe gilt für das Freigabe-Cookie `tinysesam_runlock` (entsperrte Ressourcen), und
+		# das CSRF-Cookie ist der App ebenso wenig bestimmt — also alle `tinysesam_*`.
+		# Die erste Zeile entfernt jedes Vorkommen (auch mit __Host-/__Secure-Präfix), die
+		# zweite ein dabei übrig gebliebenes führendes `; `. Andere Cookies bleiben unberührt.
+		# Umbenannte Cookies (TinySesamConfig(session_cookie=…, resource_cookie=…,
+		# csrf_cookie=…)) hier ins Muster mitziehen.
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			header_up Cookie "^[;\s]+" ""
+		}
 	}
 }

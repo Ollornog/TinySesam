@@ -4,6 +4,7 @@ import tempfile, os
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+import time
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -79,7 +80,7 @@ os.remove(db)
 # ---------- Globale Kette ["password","totp"] mit echtem TOTP ----------
 db, auth, uid, app = fresh(chain=["password", "totp"], strict=True)
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c = TestClient(app)
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp")
@@ -149,6 +150,116 @@ c_a = _bis_zum_zweiten_faktor(app_a)
 assert c_a.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
                ).headers.get("location", "").startswith("/auth/totp/setup")
 ok("R3-1: ein noch nie benutztes Konto richtet den zweiten Faktor selbst ein (Vorgabe)")
+
+# A-1: Die Bestätigung der Pflicht-Einrichtung schliesst den TOTP-Schritt gleich mit ab. Seit der
+# Einrichtungscode verbraucht wird (B2-3), war derselbe Code an /auth/totp ein Fehlversuch —
+# wer ihn (wie früher) noch einmal tippte, füllte den Login-Lockout samt fail2ban-Zeilen und
+# sperrte nach fünf Versuchen das eben eingerichtete Konto.
+# (Mutationsprobe: den Einschreibungs-Zweig in router.totp_setup_confirm streichen → rot.)
+import io as _io_e, logging as _logging_e, re as _re                     # noqa: E402
+from tinysesam import security as _sec_e                                  # noqa: E402
+
+db_e, auth_e, uid_e, app_e = _kette_ohne_totp()
+c_e = _bis_zum_zweiten_faktor(app_e)
+assert "value='/ziel'" in c_e.get("/auth/totp/setup?next=/ziel").text
+_seite = c_e.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+assert "data-next='/ziel'" in _seite, "das Ziel geht auf dem Weg durch die Einrichtung verloren"
+assert "location.href=j.next" in _seite, "die Seite folgt dem Ziel nach der Bestätigung nicht"
+_geheim = _re.search(r"class=mono>([A-Z2-7]+)<", _seite).group(1)
+_ereig_e = []
+auth_e.on_security_event = lambda e, k, d: _ereig_e.append(e)
+_code = pyotp.TOTP(_geheim).now()
+_puffer_e = _io_e.StringIO()
+_haken_e = _logging_e.StreamHandler(_puffer_e)
+_sec_e.seclog.addHandler(_haken_e)
+try:
+    _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/ziel"})
+    assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/ziel",
+                                                       "other_sessions": 0}, _ant.text
+    _s = auth_e.store.get_session(c_e.cookies.get(auth_e.cfg.session_cookie))
+    assert _s and _s["mfa_ok"], "nach der Pflicht-Einrichtung hängt die Sitzung noch im MFA-Schritt"
+    # Der alte Weg — denselben Code an /auth/totp noch einmal — ist damit überflüssig: Die
+    # Einrichtungsseite leitet mit `next` direkt zum Ziel weiter.
+    assert not auth_e.is_locked("neu", "testclient")
+    assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "nicht voll angemeldet"
+finally:
+    _sec_e.seclog.removeHandler(_haken_e)
+assert "failed login" not in _puffer_e.getvalue(), _puffer_e.getvalue()
+assert _ereig_e == ["totp_enabled"], _ereig_e
+ok("A-1: Pflicht-Einrichtung unter der Kette meldet mit der Bestätigung an (kein Fehlversuch danach)")
+
+# A-4: Ein schon aktives TOTP wird nicht „noch einmal bestätigt" — weder über die Route (409 wie
+# GET und /start) noch über die Methode. Vorher: 200 {"ok": true}, ein falsches Ereignis
+# `totp_enabled` und ein zweiter Code-Prüfer für den aktiven Faktor.
+# (Mutationsprobe: `or t["confirmed"]` in totp_confirm ODER den 409-Wächter streichen → rot.)
+_folge = pyotp.TOTP(_geheim).at(_zeit.time() + 30)
+_ant = c_e.post("/auth/totp/setup", data={"code": _folge})
+assert _ant.status_code == 409, (_ant.status_code, _ant.text)
+assert not auth_e.totp_confirm(uid_e, _folge), "totp_confirm bestätigt ein aktives TOTP erneut"
+assert _ereig_e == ["totp_enabled"], _ereig_e
+assert sum(z["event"] == "totp_enable" for z in auth_e.store.recent_audit(50)) == 1
+assert auth_e.verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
+ok("A-4: bestätigtes TOTP → 409 an /auth/totp/setup, kein zweites totp_enabled")
+
+# B1-7 auch in der Pflicht-Einrichtung: Die Bestätigung meldet `other_sessions`, und zwar gemessen
+# an der NEUEN Sitzung. Der Fall, in dem das zählt, ist „Gerät verloren": Gerät A ist noch voll
+# angemeldet, der Betreiber nimmt das TOTP weg und öffnet ein Einrichtungsfenster, Gerät B
+# richtet neu ein. Ohne das Feld leitete die Seite sofort weiter, ohne das Beenden von A
+# anzubieten. Gezählt gegen das alte Cookie stünde hier 2: Dessen halbe Sitzung hat
+# `complete_totp` eben gelöscht, und die neue zählte als „andere" mit.
+# (Mutationsprobe: other_sessions im Einschreibungszweig streichen → rot; gegen das alte Cookie
+# zählen, also `andere_sitzungen(request, u)` ohne token → rot, schon oben bei A-1 mit 1 statt 0.)
+auth_e.totp_disable(uid_e)
+auth_e.grant_mfa_enrollment(uid_e, minutes=30)
+c_b = _bis_zum_zweiten_faktor(app_e)
+_seite_b = c_b.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_geheim_b = _re.search(r"class=mono>([A-Z2-7]+)<", _seite_b).group(1)
+_ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_b).now(), "next": "/ziel"})
+assert _ant_b.status_code == 200, _ant_b.text
+assert _ant_b.json() == {"ok": True, "next": "/ziel", "other_sessions": 1}, _ant_b.json()
+assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "Gerät A ist noch drin"
+assert c_b.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 200
+assert c_e.get("/auth/account", follow_redirects=False).status_code != 200, "Gerät A blieb angemeldet"
+ok("B1-7: Pflicht-Einrichtung meldet die übrigen Sitzungen, gezählt an der neuen Sitzung")
+os.remove(db_e)
+
+# …aber nur, wenn die Sitzung mit dieser Bestätigung voll ist. In einer längeren Kette
+# (password → totp → pin) ist sie danach noch halb, und POST /auth/sessions/revoke antwortet
+# einer halben Sitzung mit 401. Die Seite fragte trotzdem „übrige Sitzungen beenden?“, das
+# Beenden scheiterte still, und die Seite sprang zum PIN-Schritt — der Nutzer hielt das
+# verlorene Gerät für abgemeldet. Kein Angebot ist ehrlicher als ein Angebot, das nicht hält.
+# (Mutationsprobe: `if erneuert else 0` im Einschreibungszweig streichen → rot.)
+db_k = os.path.join(tempfile.mkdtemp(), "t.db")
+auth_k = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_k, rp_name="Test",
+                                   passkey_enabled=False, oidc_enabled=False, cookie_secure=False,
+                                   pin_enabled=True, login_chain=["password", "totp", "pin"],
+                                   mfa_enrollment="strict"))
+uid_k = auth_k.create_user("neu", password="geheim123")
+auth_k.set_pin(uid_k, "2468")
+_geheim_k = auth_k.totp_begin(uid_k)["secret"]
+assert auth_k.totp_confirm(uid_k, pyotp.TOTP(_geheim_k).now())
+_codes_k = auth_k.generate_recovery_codes(uid_k)
+app_k = FastAPI()
+app_k.include_router(auth_k.router())
+c_ka = _bis_zum_zweiten_faktor(app_k)                       # Gerät A: die ganze Kette
+assert c_ka.post("/auth/totp", data={"code": _codes_k[0], "next": "/"},
+                 follow_redirects=False).headers["location"].startswith("/auth/pin")
+c_ka.post("/auth/pin", data={"username": "neu", "pin": "2468", "next": "/"}, follow_redirects=False)
+assert c_ka.get("/auth/account", follow_redirects=False).status_code == 200
+auth_k.totp_disable(uid_k)                                  # Gerät verloren
+auth_k.grant_mfa_enrollment(uid_k, minutes=30)
+c_kb = _bis_zum_zweiten_faktor(app_k)                       # Gerät B richtet neu ein
+_seite_k = c_kb.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
+_geheim_kb = _re.search(r"class=mono>([A-Z2-7]+)<", _seite_k).group(1)
+_ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_kb).now(), "next": "/ziel"})
+assert _ant_k.status_code == 200, _ant_k.text
+_s_k = auth_k.store.get_session(c_kb.cookies.get(auth_k.cfg.session_cookie))
+assert _s_k and not _s_k["mfa_ok"], "die Sitzung ist nach dem TOTP-Schritt schon voll"
+assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/ziel", "other_sessions": 0}, \
+    f"Angebot, das die halbe Sitzung nicht einlösen kann: {_ant_k.json()}"
+assert c_kb.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 401
+ok("B1-7: in einer längeren Kette kein Angebot, solange die Sitzung noch halb ist")
+os.remove(db_k)
 
 # …aber nur bis zum ersten vollständigen Login. Danach ist der Weg zu — genau der Fall, in dem
 # jemand das Passwort eines BESTEHENDEN Kontos hat.

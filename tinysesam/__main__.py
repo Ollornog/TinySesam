@@ -1,7 +1,8 @@
 """CLI: `python -m tinysesam <kommando>` (auch als Konsolenskript `tinysesam`).
 
     version                          die installierte Version
-    passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung)
+    passwd --db auth.db <benutzer>   Passwort offline neu setzen (Wartung; --blocklist-file,
+                                     --rp-name: dieselbe Passwortregel wie die Config)
     backup --db auth.db <ziel>       konsistente Kopie ziehen (NICHT die Datei kopieren!)
     restore --db auth.db <quelle>    eine Sicherung zurückspielen (Dienst vorher stoppen!)
     gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
@@ -33,14 +34,20 @@ def _passwd(argv) -> int:
                     help="Passwort von der Standardeingabe lesen statt interaktiv fragen")
     ap.add_argument("--keep-sessions", action="store_true",
                     help="offene Sitzungen des Kontos NICHT beenden (Vorgabe: beenden)")
+    # Das CLI liest keine Config — was dort für die Passwortregel steht, bekommt es hier.
+    # Ohne diese beiden Schalter galt offline eine schwächere Regel als im Web (A-7).
+    ap.add_argument("--blocklist-file", default="",
+                    help="eigene Blockliste wie config.password_blocklist_file")
+    ap.add_argument("--rp-name", default="",
+                    help="Dienstname wie config.rp_name (gilt als Kontextwort)")
     a = ap.parse_args(argv)
 
     # Store statt TinySesam: kein FastAPI nötig, und die Instanz hätte Nebenwirkungen
     # (Demo-Seeding, Erst-Admin-Token) — beides hat in einem Wartungsbefehl nichts verloren.
     import os
     from .store import Store
-    from .passwords import hash_password
-    from .security import SECURITY_DEFAULTS
+    from .passwords import hash_password, passwort_mangel, blockliste_lesen
+    from .security import haertung_lesen
 
     # Ohne diese Prüfung legt sqlite3 die Datei stillschweigend an und der Tippfehler im Pfad
     # käme als „Kein Konto 'admin'" zurück — die ratloseste aller Fehlermeldungen.
@@ -60,12 +67,27 @@ def _passwd(argv) -> int:
         if pw != getpass.getpass("Wiederholen:    "):
             print("Die beiden Eingaben sind verschieden.", file=sys.stderr)
             return 1
-    try:
-        minlen = int(store.get_setting("password_min_length") or SECURITY_DEFAULTS["password_min_length"])
-    except (TypeError, ValueError):
-        minlen = SECURITY_DEFAULTS["password_min_length"]
-    if len(pw) < minlen:
-        print(f"Passwort zu kurz (min. {minlen}).", file=sys.stderr)
+    # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam.sec()`: Roh gelesen galt ein
+    # Altwert ohne Grenzen (4, 0) hier weiter, während das Web ihn auf 8 zog.
+    minlen = haertung_lesen(store, "password_min_length")
+    # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername,
+    # E-Mail-Name) — das CLI ist ein Setzweg wie die anderen. Blockliste und Dienstname des
+    # Betreibers kommen über `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
+    blockliste: frozenset = frozenset()
+    if a.blocklist_file:
+        try:
+            blockliste = blockliste_lesen(a.blocklist_file)
+        except OSError as e:
+            print(f"Blockliste {a.blocklist_file!r} lässt sich nicht lesen: {e}", file=sys.stderr)
+            return 1
+    mangel = passwort_mangel(pw, minlen, blockliste=blockliste,
+                             kontext=(a.username, (user["email"] or "").split("@", 1)[0], a.rp_name))
+    if mangel:
+        grund, werte = mangel
+        print({"short": f"Passwort zu kurz (min. {werte.get('n')}).",
+               "long": f"Passwort zu lang (max. {werte.get('n')}).",
+               "weak": "Passwort zu leicht zu erraten (bekannt, trivial oder aus dem Kontonamen)."}[grund],
+              file=sys.stderr)
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))
@@ -189,23 +211,43 @@ def _gc(argv) -> int:
     ap = argparse.ArgumentParser(
         prog="tinysesam gc",
         description="Abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche löschen.",
-        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht — das Audit-Log bleibt "
-               "bewusst unangetastet.")
+        epilog="Läuft nicht von selbst. Für einen Timer/Cron gedacht. Das Audit-Log bleibt "
+               "unangetastet, solange --audit-days nicht gesetzt ist.")
     ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
     ap.add_argument("--attempts-older-than", type=int, default=86400, metavar="SEK",
                     help="Login-Versuche älter als N Sekunden löschen (Vorgabe: 86400)")
+    ap.add_argument("--audit-days", type=int, default=0, metavar="TAGE",
+                    help="Audit-Einträge älter als N Tage löschen (Vorgabe: 0 = keine; "
+                         "Gegenstück zu config.audit_retention_days)")
     a = ap.parse_args(argv)
+    # Dieselbe Grenze wie `audit_retention_days` — geprüft, bevor irgendetwas gelöscht wird.
+    # 10**20 brach sonst mit OverflowError ab, als Sitzungen und Tokens schon weg waren.
+    from .konfigpruefung import ZAHLENGRENZEN
+    unten, oben = ZAHLENGRENZEN["audit_retention_days"]
+    if not unten <= a.audit_days <= oben:
+        ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
+    # Dasselbe für die Login-Versuche (zweite Angriffsrunde): ±10**20 brach nach den ersten
+    # Löschschritten ab, ein negativer Wert räumte auch das laufende Sperrfenster weg.
+    from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
+    try:
+        versuchsfrist(a.attempts_older_than)
+    except ValueError:
+        ap.error(f"--attempts-older-than muss zwischen 0 und {VERSUCHSFRIST_MAX_SEK} liegen "
+                 "(Sekunden; 0 räumt alle Fehlversuche)")
     store = _oeffne(a.db)
     if store is None:
         return 1
     import time as _t
     zahlen = {
+        "unverified_accounts": store.gc_unbestaetigte_konten(),   # vor den Tokens (R4-09)
         "sessions": store.gc_sessions(),
         "flow": store.gc_flow(),
         "magic_tokens": store.gc_magic_tokens(),
         "resource_unlocks": store.gc_resource_unlocks(),
         "login_attempts": store.gc_attempts(int(_t.time()) - a.attempts_older_than),
     }
+    if a.audit_days > 0:
+        zahlen["audit"] = store.gc_audit(int(_t.time()) - a.audit_days * 86400)
     print(" ".join(f"{k}={v}" for k, v in zahlen.items()))
     return 0
 
@@ -231,10 +273,15 @@ def _audit(argv) -> int:
     if not zeilen:
         print("Keine Einträge." if not a.user else f"Keine Einträge zu '{a.user}'.")
         return 0
+    # Jedes Feld durch `zeilenfest` (B5-06): Benutzername und Detail stammen aus Formularen und
+    # fremden Antworten. Ein `\n` darin druckte hier eine zweite, frei erfundene Zeile — mit
+    # Zeitstempel, Ereignis und IP nach Wahl — genau in der Ansicht, auf die man sich im
+    # Anlassfall verlässt. Ein Steuerzeichen (ESC) konnte zudem das Terminal selbst umstellen.
+    from .security import zeilenfest as _z
     for z in reversed(zeilen):
         zeit = _dt.datetime.fromtimestamp(z["ts"]).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{zeit}  {z['event']:22} {(z['username'] or '-'):16} "
-              f"{(z['ip'] or '-'):18} {z['detail'] or ''}")
+        print(f"{zeit}  {_z(z['event']):22} {_z(z['username'] or '-'):16} "
+              f"{_z(z['ip'] or '-'):18} {_z(z['detail'] or '')}")
     return 0
 
 
@@ -254,8 +301,11 @@ def _unlock(argv) -> int:
     if not store.get_user_by_name(a.username):
         print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
         return 1
-    offen = store.count_fails(0, username=a.username)
-    store.clear_fails(username=a.username)
+    # Gezählt wird unter der gefalteten Kennung (`norm_kennung`), also auch so räumen.
+    from .store import norm_kennung
+    topf = norm_kennung(a.username)
+    offen = store.count_fails(0, username=topf)
+    store.clear_fails(username=topf)
     store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen}")
     print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
     return 0

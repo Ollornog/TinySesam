@@ -82,8 +82,97 @@ BASE_URL_EMPFOHLEN = {
 }
 
 
+def _ist_ip(wert: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(wert)
+        return True
+    except ValueError:
+        return False
+
+
 def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
+
+
+def _ganzzahl(config, feld: str, fehlt: int | None = 0):
+    """Ein Zahlenfeld für eine Kombinationsprüfung lesen — oder None, wenn es keine ganze Zahl ist.
+
+    Typ und Bereich meldet `_zahlengrenzen` (samt `True`, Text, `inf`, `nan`); die Kombination
+    wird dann nicht bewertet. Ein `int()` auf den Rohwert liess die ganze Prüfung abstürzen,
+    bevor die Typmeldung kam, und `TinySesam(cfg)` warf ValueError/OverflowError statt eines
+    gesammelten ConfigError (zweite Angriffsrunde, konfig)."""
+    wert = getattr(config, feld, fehlt)
+    if wert is None:
+        return fehlt
+    if isinstance(wert, bool) or not isinstance(wert, int):
+        return None
+    return wert
+
+
+#: Die Direktiven, die eine Content-Security-Policy kennt (CSP Level 3 plus die verbreiteten
+#: Altlasten). Eine eigene Policy braucht mindestens eine davon; jede andere gibt eine Warnung.
+CSP_DIREKTIVEN = frozenset({
+    "default-src", "script-src", "script-src-elem", "script-src-attr", "style-src",
+    "style-src-elem", "style-src-attr", "img-src", "font-src", "connect-src", "media-src",
+    "object-src", "frame-src", "child-src", "worker-src", "manifest-src", "prefetch-src",
+    "fenced-frame-src", "base-uri", "form-action", "frame-ancestors", "navigate-to", "sandbox",
+    "upgrade-insecure-requests", "block-all-mixed-content", "report-uri", "report-to",
+    "require-trusted-types-for", "trusted-types", "webrtc", "plugin-types", "referrer",
+})
+
+
+def _csp_namen(wert) -> list[str] | None:
+    """Die Direktivnamen einer eigenen Policy, klein geschrieben — None für 'strict'/'off'/leer."""
+    if not isinstance(wert, str):
+        return None
+    roh = wert.strip()
+    if roh in ("", "strict", "off"):
+        return None
+    return [teil.split()[0].lower() for teil in roh.split(";") if teil.strip()]
+
+
+def csp_fehler(wert) -> str:
+    """Der Befund zu `csp`, leer wenn in Ordnung (B3-2).
+
+    Alles ausser 'strict' und 'off' ging bis 0.19.0 ungeprüft 1:1 in den Header. Ein Tippfehler
+    wie 'Strict' oder 'stirct' war damit eine „eigene Policy" ohne eine einzige Direktive — der
+    Browser verwirft so einen Header, und die Seiten liefen **ohne jede CSP**, ohne dass es
+    irgendwo auffiel. Ein Fehler ist deshalb nur die Policy ohne eine **einzige** bekannte
+    Direktive. Steht eine unbekannte neben bekannten, überspringt der Browser nur sie und wendet
+    den Rest an — das ist `csp_warnung` (A3: `require-sri-for`, `disown-opener` hielten eine
+    bisher wirksame Policy sonst vom Start ab).
+    """
+    namen = _csp_namen(wert)
+    if namen is None:
+        return ""                  # kein String meldet der Konstruktor eigens
+    roh = wert.strip()
+    if roh.lower() in ("strict", "off"):
+        return (f"csp={wert!r} — gemeint ist wohl {roh.lower()!r} (klein geschrieben). So wäre es "
+                "eine eigene Policy ohne Direktive, und der Browser liefe ohne jede CSP.")
+    if not any(n in CSP_DIREKTIVEN for n in namen):
+        return (f"csp={wert!r} ist weder 'strict' noch 'off' noch eine Policy mit einer bekannten "
+                "Direktive. Der Browser verwirft so einen Header, und die Seiten liefen ohne jede "
+                "CSP.")
+    return ""
+
+
+def csp_warnung(wert) -> str:
+    """Unbekannte Direktiven neben bekannten: kein Fehler, aber wohl ein Tippfehler.
+
+    Der Browser wendet die Policy ohne sie an. Bei 'scirpt-src' greift dann `default-src` statt
+    der gemeinten Regel — das soll im Log stehen. Eine echte, nur hier nicht gelistete Direktive
+    geht ebenso durch.
+    """
+    namen = _csp_namen(wert)
+    if not namen or csp_fehler(wert):
+        return ""
+    unbekannt = [n for n in namen if n not in CSP_DIREKTIVEN]
+    if not unbekannt:
+        return ""
+    return (f"csp={wert!r} enthält Direktiven, die TinySesam nicht kennt: {', '.join(unbekannt)}. "
+            "Der Browser überspringt, was er nicht kennt, und wendet den Rest an — bei einem "
+            "Tippfehler gilt die gemeinte Regel also nicht.")
 
 
 def pruefe(config) -> tuple[list[str], list[str]]:
@@ -100,11 +189,23 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     except Exception:
         aktive = [name for name in ANMELDEND if _an(config, VERFAHREN[name])]
     if not aktive:
+        # `ldap_enabled=True` steht NICHT in der Abhilfe (F-30): LDAP ist kein eigenes Feld auf
+        # der Login-Seite, sondern prüft das Passwortformular gegen das Verzeichnis. Die Meldung
+        # nannte es trotzdem — und wer es befolgte, bekam dieselbe Meldung wieder.
         fehler.append(
             "Keine einzige Anmelde-Methode ist eingeschaltet — die Login-Seite hätte kein "
             "einziges Feld, niemand kann sich anmelden. Mindestens eines von: "
-            + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND)
-            + " (bei PIN zusätzlich pin_login=True, sonst ist sie nur Step-up).")
+            + ", ".join(f"{VERFAHREN[n]}=True" for n in ANMELDEND if n != "ldap")
+            + " (bei PIN zusätzlich pin_login=True, sonst ist sie nur Step-up). LDAP allein "
+            "genügt nicht: ldap_enabled=True prüft das Passwortformular gegen das Verzeichnis "
+            "und braucht deshalb password_enabled=True.")
+    if _an(config, "ldap_enabled") and not _an(config, "password_enabled"):
+        # Warnung, kein Fehler: Mit einem zweiten Verfahren (OIDC, Passkey) startet der Aufbau
+        # sinnvoll — nur der LDAP-Weg ist dann tot, und das soll der Betreiber wissen.
+        warnungen.append(
+            "ldap_enabled=True, aber password_enabled=False. LDAP hat kein eigenes Formular, es "
+            "prüft das Passwortfeld der Login-Seite gegen das Verzeichnis — ohne "
+            "password_enabled=True meldet sich niemand über LDAP an.")
 
     # Warnung, nicht Fehler: Die Clients für OIDC, SAML und LDAP lassen sich ersetzen
     # (`auth.ldap = eigener_client`), und genau so arbeiten auch die eigenen Suiten. Ein harter
@@ -268,7 +369,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "und ein Log-Versand mitnimmt — wer es liest, wird Admin. Für den Token eine eigene "
             "Datei nehmen (z.B. /run/<dienst>/admin-claim.token) oder das Feld leer lassen, dann "
             "geht der Wert auf stderr.")
-    if token_datei and (int(getattr(config, "admin_claim_ttl_min", 0) or 0) <= 0
+    _claim_ttl = _ganzzahl(config, "admin_claim_ttl_min")
+    if token_datei and ((_claim_ttl is not None and _claim_ttl <= 0)
                         or not _an(config, "admin_enabled")):
         warnungen.append(
             "admin_claim_token_file ist gesetzt, aber der Token-Weg ist aus "
@@ -306,21 +408,31 @@ def pruefe(config) -> tuple[list[str], list[str]]:
 
     # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
-    _revalidate = int(getattr(config, "oidc_revalidate_minutes", 0) or 0)
+    # Typ und Bereich prüft ZAHLENGRENZEN (unten, samt negativer Werte); hier nur die
+    # Kombination. Ein `int()` auf einen Text liess die ganze Prüfung abstürzen.
+    _revalidate = _ganzzahl(config, "oidc_revalidate_minutes") or 0
     if _clients and not _an(config, "oidc_enabled"):
         fehler.append(
             "oidc_clients nennt " + ", ".join(sorted(str(h) for h in _clients)) + ", aber "
             "oidc_enabled ist False. Die Zuordnung Host→Client wäre wirkungslos: Es gäbe keinen "
             "OIDC-Weg, über den eine Freigabe entstehen könnte.")
-    if _revalidate and not _clients:
+    if _revalidate > 0 and not _clients:
         warnungen.append(
             f"oidc_revalidate_minutes={_revalidate}, aber oidc_clients ist leer. Die Nachprüfung "
             "betrifft die Freigabe je Anwendung — ohne mehrere Clients gibt es keine, und der "
             "Wert bleibt folgenlos. Gemeint war vermutlich session_ttl_hours (Lebensdauer der "
             "Sitzung) oder stepup_max_age_sec (Frische für heikle Routen).")
-    if _revalidate < 0:
-        fehler.append(f"oidc_revalidate_minutes={_revalidate} ist negativ. 0 schaltet die "
-                      "Nachprüfung ab, jede positive Zahl ist eine Frist in Minuten.")
+    # Die Obergrenze in ZAHLENGRENZEN (30 Tage) fängt eine Frist in Sekunden erst ab einem Tag
+    # (86400). Die Vorgabe des Presets, eine Stunde, in Sekunden geschrieben (3600) ging still
+    # durch — Nachprüfung alle 60 Stunden, ein Entzug beim Provider kam 60-mal später an. Eine
+    # Frist über einem Tag ist ungewöhnlich genug, um nach der Einheit zu fragen; 300 oder 900
+    # (fünf oder 15 Minuten in Sekunden) fängt keine Grenze.
+    if _revalidate > 24 * 60:
+        warnungen.append(
+            f"oidc_revalidate_minutes={_revalidate} heisst: Nachprüfung beim Provider alle "
+            f"{_revalidate / 60:g} Stunden. Das Feld zählt Minuten — war die Frist in Sekunden "
+            "gemeint (eine Stunde = 60, nicht 3600)? Ist die lange Frist gewollt, bleibt es bei "
+            "dieser Warnung.")
     _vertraute = [str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])]
     for host, eintrag in _clients.items():
         h = str(host).strip().lower()
@@ -358,11 +470,26 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "(Vorgabe, erlaubt bis zum ersten vollständigen Login), 'grace' (erlaubt "
             "mfa_enrollment_grace_days ab Kontoanlage), 'strict' (nie — die Einrichtung kommt "
             "dann vom Betreiber).")
-    if _art == "grace" and int(getattr(config, "mfa_enrollment_grace_days", 0) or 0) <= 0:
+    _gnade = _ganzzahl(config, "mfa_enrollment_grace_days")
+    if _art == "grace" and _gnade is not None and _gnade <= 0:
         fehler.append(
             "mfa_enrollment='grace', aber mfa_enrollment_grace_days ist 0 oder kleiner. Damit "
             "verhält sich 'grace' wie 'strict', nur unauffälliger — entweder eine Frist setzen "
             "oder gleich mfa_enrollment='strict' schreiben.")
+
+    # --- CSRF-Schutz ganz aus (F-03) ---
+    # Einzeln ist jeder Wert vertretbar: `csrf_enabled=False`, weil SameSite=Lax die
+    # Cross-Site-POSTs schon abfängt; `cookie_samesite='none'` für eine eingebettete App, weil
+    # das CSRF-Token dann schützt. Zusammen bleibt NICHTS: Das Sitzungs-Cookie fährt bei jedem
+    # fremden Formular mit, und niemand prüft ein Token. Das ist kein Kompromiss, das ist ein Loch.
+    if (not _an(config, "csrf_enabled")
+            and str(getattr(config, "cookie_samesite", "lax") or "").lower() == "none"):
+        fehler.append(
+            "csrf_enabled=False zusammen mit cookie_samesite='none': Dann schickt der Browser "
+            "das Sitzungs-Cookie bei jedem Formular einer fremden Seite mit, und kein Token "
+            "hält dagegen — jede zustandsändernde Route ist per CSRF auslösbar. Entweder "
+            "csrf_enabled=True (nötig, sobald SameSite=None gebraucht wird) oder "
+            "cookie_samesite='lax'.")
 
     # --- Nutzerprüfung bei Passkeys (B2-10) ---
     _uv = str(getattr(config, "passkey_user_verification", "required") or "required")
@@ -406,7 +533,35 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 f"ldap_tls_ca_file={_ca!r} gibt es nicht. Die Verbindung zum Verzeichnis "
                 "scheitert dann bei jeder Anmeldung — und zwar erst im Betrieb.")
 
+    _csp_fund = csp_fehler(getattr(config, "csp", "strict"))
+    if _csp_fund:
+        fehler.append(_csp_fund)
+    _csp_hinweis = csp_warnung(getattr(config, "csp", "strict"))
+    if _csp_hinweis:
+        warnungen.append(_csp_hinweis)
+    _zahlengrenzen(config, fehler)
+    _proxies_und_passkey(config, fehler, warnungen)
+    _stepup(config, fehler, warnungen)
+    _offene_tore(config, warnungen)
+    _kombinationen(config, fehler, warnungen)
+
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
+    # --- SMTP-TLS (B3-1, Angriff A4): Seit das Zertifikat geprüft wird, scheitert ein falscher
+    # CA-Pfad oder ein Relay per IP-Adresse bei JEDER Mail — und zwar still, nur als
+    # *_send_error im Audit-Log. Beides lässt sich schon beim Aufbau erkennen.
+    _smtp_ca = str(getattr(config, "smtp_ca_file", "") or "").strip()
+    if _smtp_ca and not os.path.isfile(_smtp_ca):
+        fehler.append(
+            f"smtp_ca_file={_smtp_ca!r} gibt es nicht. Die TLS-Prüfung des Mailservers scheitert "
+            "dann bei jeder Mail — Anmelde-Links, Resets und Bestätigungen gingen nie hinaus, "
+            "und das erst im Betrieb.")
+    _smtp_host = str(getattr(config, "smtp_host", "") or "").strip().strip("[]")
+    if hat_mailer and _ist_ip(_smtp_host):
+        warnungen.append(
+            f"smtp_host={_smtp_host!r} ist eine IP-Adresse. Das Zertifikat des Mailservers wird "
+            "gegen den Hostnamen geprüft; trägt es die IP nicht als Subject Alternative Name, "
+            "scheitert jeder Versand. Abhilfe: den Namen eintragen, auf den das Zertifikat "
+            "ausgestellt ist (bei eigener CA zusätzlich smtp_ca_file).")
     for feld, wofuer in BRAUCHT_MAILER.items():
         if _an(config, feld) and not hat_mailer:
             warnungen.append(
@@ -414,4 +569,252 @@ def pruefe(config) -> tuple[list[str], list[str]]:
                 "hinaus und das Verfahren endet still. Entweder smtp_host setzen oder zur "
                 "Laufzeit auth.set_mailer(...) aufrufen — dann ist diese Meldung gegenstandslos.")
 
+    # `audit_retention_days` prüft ZAHLENGRENZEN (unten): Eine negative Frist wäre in `gc()` ein
+    # Zeitpunkt in der Zukunft — das ganze Audit-Log fiele beim nächsten Lauf weg. Die eigene
+    # Prüfung, die hier stand, kannte nur `< 0` und liess `True`, Sekunden statt Tagen und
+    # Riesenwerte (OverflowError in gc()) durch.
+
     return fehler, warnungen
+
+
+#: Zahlenfelder der Config → erlaubter Bereich, beide Grenzen eingeschlossen (B3-12).
+#:
+#: Vorher hatte kein einziges eine Grenze, und die Fehlbilder sind alle still: `session_ttl_hours=0`
+#: lässt jede Sitzung im Moment ihrer Entstehung ablaufen (Anmeldung „klappt", der nächste Klick
+#: ist wieder die Login-Seite), `magiclink_ttl_min=0` verschickt tote Links, `recovery_code_count=0`
+#: stellt keine Codes aus und meldet trotzdem Erfolg, ein negatives `stepup_max_age_sec` macht
+#: jede Step-up-Bestätigung sofort alt. Die Obergrenzen fangen den Einheitenfehler (Minuten statt
+#: Stunden, Sekunden statt Minuten), der eine Frist unbemerkt ver-sechzigfacht.
+ZAHLENGRENZEN = {
+    "pin_min_length": (4, 64),
+    "apikey_default_days": (0, 3650),
+    "admin_claim_ttl_min": (0, 7 * 24 * 60),
+    "resource_unlock_ttl_hours": (1, 24 * 30),
+    "magiclink_ttl_min": (1, 24 * 60),
+    "smtp_port": (1, 65535),
+    "smtp_timeout": (1, 300),
+    "recovery_code_count": (1, 100),
+    "mfa_enrollment_grace_days": (0, 365),
+    "stepup_max_age_sec": (0, 7 * 86400),
+    "session_ttl_hours": (1, 24 * 400),
+    "session_ttl_transient_hours": (1, 24 * 400),
+    # 0 = keine Frist. Zehn Jahre (samt Schalttagen) reichen für jede Aufbewahrungspflicht;
+    # darüber liegt fast immer die Frist in Sekunden (2592000 für 30 Tage), die nie griffe.
+    # `True` galt hier als ein Tag, und gc() löschte das Audit-Log bis auf den letzten Tag.
+    "audit_retention_days": (0, 3660),
+    # 0 = keine Nachprüfung. Ein Entzug beim Provider, der erst nach mehr als 30 Tagen ankommt,
+    # ist keine Nachprüfung mehr; `86400` (ein Tag in Sekunden statt Minuten) fällt so auf.
+    # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
+    "oidc_revalidate_minutes": (0, 30 * 24 * 60),
+}
+
+
+def _zahlengrenzen(config, fehler: list) -> None:
+    for feld, (unten, oben) in ZAHLENGRENZEN.items():
+        if not hasattr(config, feld):
+            fehler.append(f"Die Konfigurationsprüfung nennt das Feld {feld!r}, das es in "
+                          "TinySesamConfig nicht gibt — ein Fehler in TinySesam selbst.")
+            continue
+        wert = getattr(config, feld)
+        # bool ist ein int: `session_ttl_hours=True` hiesse eine Stunde, gemeint war es nie.
+        if isinstance(wert, bool) or not isinstance(wert, int):
+            fehler.append(f"{feld}={wert!r} ist keine ganze Zahl.")
+            continue
+        if not unten <= wert <= oben:
+            fehler.append(f"{feld}={wert} liegt ausserhalb von {unten}…{oben}. Häufigster Grund "
+                          "ist eine verwechselte Einheit (der Feldname nennt sie).")
+
+
+def _proxies_und_passkey(config, fehler: list, warnungen: list) -> None:
+    # --- trusted_proxies (B3-3) ---
+    # Ein ungültiger Eintrag warf zur Laufzeit mitten in der Prüfung und entwertete die GANZE
+    # Liste; die Warnung danach riet, das Proxy-Netz einzutragen, das längst dastand. Ein
+    # Hostname ist der häufigste Fall — Proxys werden hier als Netz angegeben, nicht als Name.
+    schlecht = security.ungueltige_netze(getattr(config, "trusted_proxies", None) or [])
+    if schlecht:
+        fehler.append(
+            f"trusted_proxies enthält Einträge, die kein IP-Netz sind: {schlecht}. Erwartet "
+            "werden Adressen oder Netze wie '203.0.113.5' oder '198.51.100.0/24' — keine Hostnamen. "
+            "Ein ungültiger Eintrag darf nicht mitgelesen werden: Er entschiede sonst, ob der "
+            "Proxy als vertrauenswürdig gilt.")
+
+    # --- WebAuthn: rp_id und origin (B3-10) ---
+    # Beide Felder tragen Entwicklerwerte als Vorgabe (`localhost`, `http://localhost:8000`).
+    # Produktiv vergessen scheitert JEDE Passkey-Zeremonie — erst im Browser, mit einer Meldung,
+    # die nach einem Problem des Authenticators aussieht. Geprüft wird, was sich ohne die
+    # Aussenwelt beweisen lässt: Form, Zusammenpassen, und der Abgleich mit `base_url`.
+    if not _an(config, "passkey_enabled"):
+        return
+    from urllib.parse import urlsplit
+    rp_id = str(getattr(config, "rp_id", "") or "").strip().lower()
+    roh = getattr(config, "origin", "")
+    roh = "" if roh is None else roh
+    # py_webauthn nimmt als `expected_origin` auch eine Liste (A5): Wer die Anmeldeseite unter
+    # mehreren Namen ausliefert, trägt sie alle ein. Geprüft wird dann jeder Eintrag einzeln —
+    # `str(liste)` ist nie ein Origin, und so wurde aus einer funktionierenden Config ein Fehler.
+    origins = [str(o).strip() for o in roh] if isinstance(roh, (list, tuple)) else [str(roh).strip()]
+    if not origins:
+        fehler.append("origin ist eine leere Liste — mindestens ein Origin wie "
+                      "\"https://auth.example.com\" muss dastehen, sonst scheitert jeder Passkey.")
+        return
+    hosts = []
+    for origin in origins:
+        teile = urlsplit(origin)
+        host = (teile.hostname or "").lower()
+        if teile.scheme not in ("http", "https") or not host or teile.path not in ("", "/") \
+                or teile.query or teile.fragment or origin.endswith("/"):
+            fehler.append(
+                f"origin={origin!r} ist kein Origin. Verlangt ist genau Schema, Host und ggf. Port "
+                "(\"https://auth.example.com\"), ohne Pfad und ohne Schrägstrich am Ende — der "
+                "Browser vergleicht Zeichen für Zeichen.")
+            return
+        hosts.append(host)
+    if not rp_id or "://" in rp_id or ":" in rp_id or "/" in rp_id:
+        fehler.append(f"rp_id={rp_id!r} muss ein Hostname ohne Schema und Port sein, z.B. "
+                      "\"auth.example.com\" oder die Domain darüber (\"example.com\").")
+    else:
+        for origin, host in zip(origins, hosts):
+            if not (host == rp_id or host.endswith("." + rp_id)):
+                fehler.append(
+                    f"rp_id={rp_id!r} passt nicht zu origin={origin!r}: Die rp_id muss der Host "
+                    "des Origins sein oder eine Domain darüber. So lehnt jeder Browser die "
+                    "Passkey-Zeremonie ab.")
+    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
+    if basis:
+        b = urlsplit(basis)
+        soll = f"{b.scheme}://{b.netloc}"
+        if soll.lower() not in [o.lower() for o in origins]:
+            # Warnung, kein Fehler: Wer die Anmeldeseite unter einem zweiten eigenen Namen
+            # ausliefert (base_url nur für die Mail-Links), kann es so wollen.
+            anzeige = origins[0] if len(origins) == 1 else origins
+            warnungen.append(
+                f"origin={anzeige!r} weicht von base_url ab ({soll}). Die Anmeldeseite läuft unter "
+                "base_url, und der Browser meldet genau diesen Origin — mit dem Wert hier "
+                "scheitert jeder Passkey. Meist steht hier noch die Vorgabe für die Entwicklung.")
+    elif all(h in ("localhost", "127.0.0.1", "::1") for h in hosts) and rp_id == "localhost":
+        warnungen.append(
+            f"passkey_enabled=True mit den Entwicklerwerten rp_id={rp_id!r}, origin={roh!r}. "
+            "Ausserhalb der eigenen Maschine scheitert damit jeder Passkey — produktiv beide auf "
+            "die öffentliche Adresse setzen (und base_url dazu).")
+
+
+#: Was in `stepup_methods` stehen darf, und welcher Schalter das Verfahren einschaltet.
+STEPUP_VERFAHREN = {"totp": "totp_enabled", "pin": "pin_enabled", "password": "password_enabled"}
+
+
+def _stepup(config, fehler: list, warnungen: list) -> None:
+    # B3-6: `stepup_methods` ist ein Wunsch, und ein Wunsch, den es nicht gibt, wird still
+    # übergangen — `["topt"]` fiel auf „alles, was der Nutzer hat" zurück, also auf das Passwort,
+    # mit dem er sich gerade angemeldet hat. Der zweite Faktor vor dem sensiblen Bereich war weg,
+    # und nichts hat es gesagt. Mit `stepup_strict=True` war es umgekehrt: niemand kam je hinein.
+    gewuenscht = [str(m) for m in (getattr(config, "stepup_methods", None) or [])]
+    unbekannt = [m for m in gewuenscht if m not in STEPUP_VERFAHREN]
+    if unbekannt:
+        fehler.append(
+            f"stepup_methods nennt {unbekannt} — das sind keine Step-up-Verfahren. Erlaubt sind "
+            f"{sorted(STEPUP_VERFAHREN)}. Ein unbekannter Name wird nicht übersprungen, sondern "
+            "abgewiesen: Übersprungen fiele die Bestätigung auf das Passwort zurück.")
+    aus = [m for m in gewuenscht if m in STEPUP_VERFAHREN and not _an(config, STEPUP_VERFAHREN[m])]
+    if aus:
+        fehler.append(
+            f"stepup_methods verlangt {aus}, aber "
+            + ", ".join(f"{STEPUP_VERFAHREN[m]}=False" for m in aus)
+            + ". Dieser Wunsch kann nie erfüllt werden — ohne stepup_strict fällt die Bestätigung "
+            "still auf ein anderes Verfahren zurück, mit stepup_strict bleibt der Bereich zu.")
+    if _an(config, "stepup_strict") and not gewuenscht:
+        warnungen.append(
+            "stepup_strict=True ohne stepup_methods ist wirkungslos: Die Schranke gilt nur für "
+            "genannte Verfahren. Gemeint war vermutlich z.B. stepup_methods=['totp'].")
+
+
+def _offene_tore(config, warnungen: list) -> None:
+    """Deny-by-default für das Tor vor fremden Anwendungen (H-11, B3-9).
+
+    Forward-Auth beantwortet für jede angemeldete Sitzung „durch" — ohne `?roles=` am Proxy
+    reicht es also, ein Konto zu HABEN. Woher Konten kommen, entscheidet damit über den Kreis:
+    Legt ein IdP-Weg Konten selbst an und begrenzt keine Gruppe, ist jedes Konto beim Provider
+    ein Schlüssel für jede geschützte Anwendung; bei offener Registrierung jeder Besucher.
+
+    Warnung, kein Fehler: Genau so ist ein Gateway vor einem Provider mit eigenem, geschlossenem
+    Nutzerkreis gedacht, und die Freigabe je Anwendung kann auch beim Provider liegen
+    (`oidc_clients`, T-14). Ein Fehler hiesse, diesen Aufbau zu verbieten — das zu entscheiden
+    wäre ein neuer Schalter (bewusstes „alle"), nicht eine Prüfung.
+    """
+    if not _an(config, "forward_auth_enabled"):
+        return
+    offen = []
+    for an, anlegen, gruppen, name in (("oidc_enabled", "oidc_auto_create", "oidc_allowed_groups", "OIDC"),
+                                       ("saml_enabled", "saml_auto_create", "saml_allowed_groups", "SAML"),
+                                       ("ldap_enabled", "ldap_auto_create", "ldap_allowed_groups", "LDAP")):
+        if not (_an(config, an) and _an(config, anlegen)) or getattr(config, gruppen, None):
+            continue
+        if name == "OIDC" and getattr(config, "oidc_clients", None):
+            # Je Anwendung ein eigener Client (T-14): Die Freigabe liegt beim Provider, und
+            # `/auth/forward` prüft sie je Host. Das ist ein geschlossenes Tor — nur eben eines,
+            # dessen Schlüssel der Provider verwaltet.
+            continue
+        offen.append(f"{name} ({anlegen}=True, {gruppen} leer)")
+    if offen:
+        warnungen.append(
+            "Forward-Auth mit offenem Tor: " + "; ".join(offen) + ". Jedes Konto beim Anbieter "
+            "wird beim ersten Login angelegt und kommt danach durch JEDE geschützte Anwendung, "
+            "die am Proxy kein ?roles= verlangt. Den Kreis begrenzen: *_allowed_groups setzen "
+            "(beim Gateway TINYSESAM_ALLOWED_GROUPS), am Proxy ?roles= verlangen, oder die "
+            "Freigabe je Anwendung beim Provider regeln (oidc_clients).")
+    if _an(config, "allow_signup") and not _an(config, "signup_invite_only"):
+        warnungen.append(
+            "Forward-Auth mit offener Selbst-Registrierung: Jeder Besucher legt sich ein Konto an "
+            "und kommt damit durch jede geschützte Anwendung, die am Proxy kein ?roles= verlangt. "
+            "signup_invite_only=True, allow_signup=False oder Rollen am Proxy verlangen.")
+
+
+def _kombinationen(config, fehler: list, warnungen: list) -> None:
+    """Kombinationen, die einzeln erlaubt sind und zusammen nicht tun, was sie sagen (B3-16)."""
+    # E-Mail-Bestätigung ohne Pflicht-Adresse: Wer das Feld leer lässt, bekommt ein SOFORT
+    # aktives Konto — die Bestätigung gilt nur für die, die eine Adresse angeben. Die Schranke
+    # hat also eine Tür daneben.
+    if _an(config, "allow_signup") and _an(config, "signup_verify_email") \
+            and not _an(config, "signup_require_email"):
+        fehler.append(
+            "signup_verify_email=True, aber signup_require_email=False: Wer bei der Registrierung "
+            "keine Adresse angibt, ist ohne jede Bestätigung sofort aktiv. Entweder "
+            "signup_require_email=True oder auf die Bestätigung verzichten.")
+    if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
+        warnungen.append("signup_invite_only=True ohne allow_signup=True ist wirkungslos — die "
+                         "Registrierung ist ohnehin aus.")
+    # Über `_ganzzahl` wie jede Kombination (tests/test_sicherheit_befunde.py prüft das): Text,
+    # inf, nan und True meldet `_zahlengrenzen`; hier bleibt die Kombination dann unbewertet.
+    lang = _ganzzahl(config, "session_ttl_hours", None)
+    kurz = _ganzzahl(config, "session_ttl_transient_hours", None)
+    if lang is not None and kurz is not None and kurz > lang:
+        warnungen.append(
+            f"session_ttl_transient_hours={kurz} ist länger als session_ttl_hours={lang}: Ohne "
+            "„Angemeldet bleiben\" bliebe man länger angemeldet als mit.")
+    for feld in ("admin_path", "login_path", "oidc_callback_path"):
+        wert = str(getattr(config, feld, "") or "")
+        if wert and not wert.startswith("/"):
+            fehler.append(f"{feld}={wert!r} muss mit '/' beginnen — sonst ist es kein Pfad, und "
+                          "Routen wie Links zeigen ins Leere.")
+    # cookie_domain, die den eigenen Host nicht umfasst: Der Browser verwirft das Cookie, jede
+    # Anmeldung „klappt" und der nächste Klick ist wieder die Login-Seite.
+    dom = str(getattr(config, "cookie_domain", "") or "").strip().lower().lstrip(".")
+    basis = security.normalisiere_basis(str(getattr(config, "base_url", "") or "").strip())
+    if dom and basis:
+        from urllib.parse import urlsplit
+        host = (urlsplit(basis).hostname or "").lower()
+        if host and not (host == dom or host.endswith("." + dom)):
+            fehler.append(
+                f"cookie_domain={getattr(config, 'cookie_domain')!r} umfasst den Host von base_url "
+                f"({host}) nicht. Der Browser verwirft ein Cookie für eine fremde Domain — "
+                "niemand bliebe angemeldet.")
+    # Demo-Modus neben einem echten Anmeldeweg (B3-8): Die Demo-Konten haben ein bekanntes
+    # Passwort, eines ist Admin. Neben OIDC/SAML/LDAP ist das keine Demo mehr, sondern eine
+    # Produktivinstanz mit einer Hintertür.
+    if _an(config, "demo_mode"):
+        echt = [feld for feld in ("oidc_enabled", "saml_enabled", "ldap_enabled", "forward_auth_enabled")
+                if _an(config, feld)]
+        if echt:
+            fehler.append(
+                f"demo_mode=True zusammen mit {', '.join(echt)}: Die Demo legt ein Admin-Konto mit "
+                "bekanntem Passwort an. Neben einem echten Anmeldeweg oder vor fremden Anwendungen "
+                "ist das eine Hintertür, keine Vorführung.")

@@ -59,8 +59,9 @@ def register_passkey_routes(router, auth):
             cfg.passkey_user_verification)
 
     def _set_flow_cookie(resp, fk):
-        resp.set_cookie(_WAFLOW, fk, max_age=300, httponly=True, secure=cfg.cookie_secure,
-                        samesite=cfg.cookie_samesite, path=cfg.cookie_path)
+        # `__Host-` davor, wo möglich (A-1): Ein von einer Nachbar-Subdomain untergeschobenes
+        # Flow-Cookie hängte das Opfer an die Challenge des Angreifers.
+        auth._flow_cookie_setzen(resp, _WAFLOW, fk, max_age=300)
 
     # ---------- Registrierung (eingeloggter User) ----------
     @router.post("/auth/passkey/register/begin")
@@ -95,7 +96,7 @@ def register_passkey_routes(router, auth):
     async def reg_finish(request: Request, name: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
         u = auth.require_session(request)   # derselbe Riegel wie beim begin
-        fk = request.cookies.get(_WAFLOW)
+        fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("wareg:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_reg_expired"))
@@ -119,7 +120,12 @@ def register_passkey_routes(router, auth):
         # entstand er spurlos — wer ihn sich heimlich einrichtete, hinterliess nichts (B5-01).
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
-        return {"ok": True}
+        auth.sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
+        resp = JSONResponse({"ok": True, "other_sessions": auth.andere_sitzungen(request, u)})  # B1-7
+        # Der Flow ist verbraucht (pop_flow) — das Cookie dazu bindet nichts mehr und ginge nur
+        # noch an jede App mit (B-20). OIDC und SAML löschen ihres am Rückweg ebenso.
+        auth._flow_cookie_loeschen(resp, _WAFLOW)
+        return resp
 
     # ---------- Passwortloser Login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
@@ -141,7 +147,7 @@ def register_passkey_routes(router, auth):
     @router.post("/auth/passkey/login/finish")
     async def login_finish(request: Request, next: str = "/"):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        fk = request.cookies.get(_WAFLOW)
+        fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_login_expired"))
@@ -193,6 +199,7 @@ def register_passkey_routes(router, auth):
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)
+        auth._flow_cookie_loeschen(resp, _WAFLOW)   # Flow verbraucht, s. reg_finish
         return resp
 
     # ---------- Verwaltung ----------
@@ -211,7 +218,18 @@ def register_passkey_routes(router, auth):
         # veraltete Sitzung und jeden API-Key durchgelassen.
         u = auth.require_mfa(request)
         b = await auth.json_body(request)
-        auth.store.delete_webauthn(int(b["id"]), u["id"])
-        # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
-        auth.audit("passkey_delete", u["username"], auth.client_ip(request), f"id={b['id']}")
-        return {"ok": True}
+        # Eine ganze Zahl oder eine Ziffernfolge, sonst 400. `int()` allein nahm `true` als
+        # Passkey 1 und `1.9` als 1, und `1e400`/`Infinity` (json.loads: float('inf')) warfen
+        # OverflowError — HTTP 500 statt der zugesagten 400.
+        roh = b.get("id")
+        if isinstance(roh, str) and roh.isascii() and roh.isdigit():
+            roh = int(roh)
+        if isinstance(roh, bool) or not isinstance(roh, int):
+            raise HTTPException(400, auth.t("api.invalid", grund="id"))
+        passkey_id = roh
+        # Löschen, Audit-Zeile (B5-01) und `passkey_removed` in einem — derselbe Weg wie der
+        # Widerruf im Admin-Panel (Integrationsfund 3). Ein Passkey, den das Konto nicht hat,
+        # ist 404 und hinterlässt weder Zeile noch Ereignis.
+        if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
+            raise HTTPException(404, auth.t("api.not_found"))
+        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7

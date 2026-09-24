@@ -231,12 +231,14 @@ user = auth.check_password(username, password)
 token, done = auth.start_session(user["id"], "password")   # tuple, not just a token
 auth.set_cookie(resp, token)
 if not done:                      # a second factor is still missing
-    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
 ```
 
 `start_session` returns `(token, session_ok)`. Unpack it — passing the tuple straight into
 `set_cookie` writes the string `"('abc…', True)"` into the cookie, and nothing raises: the sign-in
 is quietly broken. `session_ok=False` means the session exists but is not complete yet.
+The token returned by `complete_totp` replaces the old one, also on step-up — put it into the
+cookie. Ignore it, and the cookie holds a dead session: the user is signed out.
 
 ## Look & feel
 
@@ -382,11 +384,15 @@ systemctl start tinysesam
 
 > **Rolling back needs a backup in the old schema.** Each release that adds columns migrates the
 > database on first start — 0.18.0 did it once (schema 5), 0.19.0 takes it to **schema 8**
-> (per-app OIDC grants, key kind, first login and enrollment window); the next release adds
-> **schema 9** (stable directory keys for LDAP/SAML). Older code then opens the
+> (per-app OIDC grants, key kind, first login and enrollment window); the next release takes it
+> to **schema 10** (9: stable directory keys for LDAP/SAML; 10: indexed lockout buckets and
+> name/address lookups, and panel locks from earlier releases become operator locks). Older code then opens the
 > file without complaining, `/healthz` stays green and accounts are readable — but every session
 > operation raises. Take a backup *before* the update (`tinysesam backup` leaves the source
-> untouched) and restore that one.
+> untouched) and restore that one. If older code did run on the new file, the next start of the
+> new release catches up on two things: locks set in the older panel become operator locks
+> (recognised by their audit rows), and addresses of its pending sign-ups count as unverified until
+> confirmed; the log carries a warning. Nothing else is reconciled — the safe way back is the backup.
 
 ### Diagnosing "I can't get in"
 
