@@ -11,12 +11,13 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
 ### Geändert
 
-- **Testbasis auf Kit 0.21.1** (von 0.18.0). Neu verdrahtet: `pruefe_testdateien_gerufen` fragt
+- **Testbasis auf Kit 0.21.5** (von 0.18.0). Neu verdrahtet: `pruefe_testdateien_gerufen` fragt
   von aussen, ob jede Testdatei einen Läufer hat — ein nicht verkabelter Test besteht seine eigene
   Aufruf-Prüfung dadurch, dass er schweigt. Der Geheimnis-Zaun kennt `pat`-Zuweisungen und das
   `nbp_`-Format; der Namens-Zaun prüft auch Wortbestandteile. Die CI hält vor der Suite den Stand
   des Baums fest und prüft danach gegen ihn: Seit Kit 0.20.1 meldet der Rückstands-Check ohne
-  Vorher-Stand nur noch „nicht entscheidbar" (Exit 2) statt eines belegten Rückstands.
+  Vorher-Stand nur noch „nicht entscheidbar" (Exit 2) statt eines belegten Rückstands. Seit
+  0.21.2 zählt ein Sammler (`tests/run_all.py`) nur, wenn ein Läufer ihn auch ruft.
 
 - **Das Container-Abbild baut auf Python 3.14** statt 3.12 (`python:3.14-slim`, per Digest
   gepinnt). 3.14 ist die Obergrenze der unterstützten Matrix; vor dem Wechsel geprüft, dass alle
