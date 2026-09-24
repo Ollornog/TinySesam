@@ -848,8 +848,21 @@ class TinySesam:
     def revoke_api_key(self, key_id, user_id=None):
         """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
         besitzer = self.store.api_key_owner(key_id)
+        vorher = self.store.count_active_api_keys(besitzer) if besitzer is not None else 0
         self.store.revoke_api_key(key_id, user_id)
         self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
+        if besitzer is not None and self.store.count_active_api_keys(besitzer) < vorher:
+            self.sicherheitsereignis("api_key_revoked", besitzer, key_id=key_id)
+
+    def _keys_widerrufen(self, user_id, grund: str) -> int:
+        """Alle gültigen Keys eines Kontos entwerten — und den Inhaber benachrichtigen (Grenze e).
+
+        Der eine Weg für Reset, Sperre, Admin-Passwort und `sessions/revoke`: Vorher stand der
+        Widerruf dort nur im Audit-Log, der Inhaber erfuhr nichts."""
+        n = self.store.revoke_user_api_keys(user_id)
+        if n:
+            self.sicherheitsereignis("api_keys_revoked", user_id, anzahl=n, grund=grund)
+        return n
 
     def set_password(self, user_id, password):
         """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
@@ -937,17 +950,16 @@ class TinySesam:
 
     # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
     #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
-    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Ausnahme: API-Keys nur bei der
-    #: Anlage; ihren Widerruf (einzeln, im Panel, gesammelt bei Reset, Sperre und
-    #: `sessions/revoke`) meldet kein Ereignis, er steht nur im Audit-Log (offen, docs/BETRIEB.md
-    #: zu ASVS 6.3.7). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
+    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Seit T-13 (Grenze e) auch der
+    #: Widerruf von API-Keys: einzeln (`api_key_revoked`) und gesammelt bei Reset, Sperre und
+    #: `sessions/revoke` (`api_keys_revoked`, mit Anzahl und Grund). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
     #: benachrichtigen; bis T-13 erfuhr er von keiner (Fund B2-2): Ein Angreifer mit einer
     #: Sitzung konnte TOTP abschalten, einen Passkey hinzufügen oder das Passwort ändern, und der
     #: Inhaber sah es erst beim nächsten Login — wenn überhaupt.
     SICHERHEITSEREIGNISSE = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
-        "api_key_created",
+        "api_key_created", "api_key_revoked", "api_keys_revoked",
     )
 
     def sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
@@ -2848,6 +2860,7 @@ class TinySesam:
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
                 self.store.delete_session_by_handle(s["token_hash"])
+                self._andere_nach_abschluss(s, neu_token)
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
             if ok and was_ok:
                 # Die Sitzung war schon vollwertig, der Faktor frischt sie nur auf — das ist ein
@@ -2862,6 +2875,25 @@ class TinySesam:
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
+
+    def _andere_nach_abschluss(self, alte_zeile, neu_token) -> None:
+        """War an der halben Sitzung vermerkt, die übrigen zu beenden (Grenze d), dann jetzt — mit
+        der vollen Sitzung, die eben entstanden ist, als einziger, die bleibt.
+
+        Anlass: Die Pflicht-Einrichtung von TOTP mitten in einer Kette (`password → totp → pin`)
+        endet mit einer HALBEN Sitzung, und eine halbe darf die übrigen nicht beenden. Das Angebot
+        nach ASVS 7.4.3 entfiel dort bisher ganz. Jetzt fragt die Seite wie sonst auch, und die
+        Zustimmung wird hier eingelöst, sobald die Anmeldung vollständig ist."""
+        try:
+            gewollt = bool(alte_zeile["andere_beenden"])
+        except (IndexError, KeyError):
+            gewollt = False
+        if not gewollt:
+            return
+        self.store.delete_user_sessions_except(alte_zeile["user_id"], self.store.session_hash(neu_token))
+        u = self.store.get_user(alte_zeile["user_id"])
+        self.store.audit_log("sessions_revoke", u["username"] if u else None, alte_zeile["ip"],
+                             "scope=others nach_einschreibung=1")
 
     def login_redirect_after(self, request, token, user_id, nxt):
         """Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors."""
@@ -2913,6 +2945,7 @@ class TinySesam:
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
             self.store.delete_session_by_handle(s["token_hash"])
+            self._andere_nach_abschluss(s, neu_token)
             return neu_token
         if ok and war_ok:
             # Die Sitzung war schon vollwertig; `set_session_factors` hat eben `mfa_at` neu
@@ -3286,10 +3319,10 @@ class TinySesam:
         verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
         beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld.
 
-        Bekannte Grenze: Die Pflicht-Einrichtung von TOTP mitten in einer Kette
-        (`password → totp → pin`) meldet 0, weil die Sitzung danach noch halb ist und eine halbe
-        Sitzung die übrigen nicht beenden darf. Der PIN-Schritt danach bietet auch nichts an; das
-        Angebot entfällt dort ganz, der Weg ist die Sitzungsliste auf der Kontoseite.
+        Die Pflicht-Einrichtung von TOTP mitten in einer Kette (`password → totp → pin`) meldet
+        hier 0, weil die Sitzung danach noch halb ist und eine halbe die übrigen nicht beenden
+        darf — sie meldet die Zahl als `other_sessions_after`, und die Zustimmung wird beim
+        Abschluss der Kette eingelöst (`_andere_nach_abschluss`, Grenze d).
 
         `token`: das Klartext-Token der eigenen Sitzung, wenn es in DIESER Antwort gewechselt
         hat (die Pflicht-Einrichtung von TOTP schliesst die Anmeldung ab und dreht dabei das
@@ -3569,7 +3602,10 @@ class TinySesam:
         if not u:
             return 0
         weg = 0
-        since = 0
+        # Ab der Anlage des Kontos (Grenze a aus dem Integrationsangriff): Sonst räumte die erste
+        # vollständige Anmeldung eines frisch registrierten Kontos auch die Fehlversuche, die vor
+        # seiner Anlage unter derselben Adresse oder demselben Namen gezählt wurden.
+        since = int(u["created_at"] or 0)
         for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
             # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
             # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
@@ -3583,11 +3619,11 @@ class TinySesam:
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
-                self.store.clear_fails(username=kennung, exclude_methods=ohne)
+                self.store.clear_fails(username=kennung, exclude_methods=ohne, seit=since)
             else:
                 for m in methoden:
                     weg += self.store.count_fails(since, username=kennung, method=m)
-                    self.store.clear_fails(username=kennung, method=m)
+                    self.store.clear_fails(username=kennung, method=m, seit=since)
         return weg
 
     def _serie_beenden(self, user_id) -> int:

@@ -472,6 +472,99 @@ r.check("F-05: wer aktiv ist, bleibt drin (50 + 50 min, aber nie 60 am Stück)",
 # (Mutationsproben: die Leerlauf-Prüfung in `get_session` streichen → „nach 8 h … weg" rot; das
 #  Nachschreiben von `zuletzt` streichen → „wer aktiv ist, bleibt drin" rot.)
 
+# ── Grenzen a–e aus dem Integrationsangriff (PO: bauen) ─────────────────────────────────
+import re as _re  # noqa: E402
+import pyotp  # noqa: E402
+
+# (a) Eine vollständige Anmeldung räumt nur Fehlversuche ab der Anlage des Kontos.
+auth_a8, app_a8 = _app()
+for _ in range(3):
+    auth_a8.record_login("vorher@example.com", "198.51.100.20", False, "password")
+auth_a8.store._exec("UPDATE login_attempt SET ts = ts - 3600")
+uid_a8 = auth_a8.create_user("neukonto", password=PW, email="vorher@example.com")
+_login(TestClient(app_a8), "neukonto", PW)
+r.check("Grenze a: Fehlversuche unter der Adresse von VOR der Anlage bleiben nach dem ersten Login stehen",
+        auth_a8.store.count_fails(0, username="vorher@example.com") == 3,
+        str(auth_a8.store.count_fails(0, username="vorher@example.com")))
+auth_a8.record_login("neukonto", "198.51.100.21", False, "password")
+_login(TestClient(app_a8), "neukonto", PW)
+r.check("… die eigenen (nach der Anlage) räumt er wie bisher",
+        auth_a8.store.count_fails(0, username="neukonto") == 0)
+
+# (b) Das Panel unterscheidet die beiden Sperren.
+auth_b8, app_b8 = _app()
+auth_b8.create_user("panelchef", password=PW, is_admin=True)
+wartet = auth_b8.create_user("wartet", password=PW)
+betr = auth_b8.create_user("betreiber-gesperrt", password=PW)
+auth_b8.store.set_disabled(wartet, True)
+auth_b8.store.set_disabled(betr, True, durch_betreiber=True)
+cb8 = TestClient(app_b8)
+_login(cb8, "panelchef", PW)
+liste = {u["username"]: u for u in cb8.get("/auth/admin/api/users").json()}
+r.check("Grenze b: das Panel nennt den Grund der Sperre (Bestätigung/App vs. Betreiber)",
+        liste["wartet"]["disabled_by"] == "confirmation" and liste["betreiber-gesperrt"]["disabled_by"] == "operator"
+        and liste["panelchef"]["disabled_by"] is None, str({k: v["disabled_by"] for k, v in liste.items()}))
+
+# (c) Die Audit-Suchen laufen über einen Index.
+_plan = auth_b8.store.db.execute(
+    "EXPLAIN QUERY PLAN SELECT id FROM audit WHERE event IN ('signup','signup_taken') "
+    "AND lower(username) = lower(?) AND ts BETWEEN ? AND ?", ("x", 1, 2)).fetchall()
+r.check("Grenze c: `anlage_grenze` sucht über den Index statt durch das ganze Audit-Log",
+        any("idx_audit_name_ts" in str(tuple(z)) for z in _plan), str([tuple(z) for z in _plan]))
+
+# (d) Kette password → totp → pin mit Pflicht-Einrichtung: das Angebot, die übrigen Sitzungen zu
+#     beenden, wird eingelöst, sobald die Kette voll ist.
+auth_d8, app_d8 = _app(login_chain=["password", "totp", "pin"], pin_enabled=True)
+uid_d8 = auth_d8.create_user("kette", password=PW)
+auth_d8.set_pin(uid_d8, "4812")
+alt_token = auth_d8.store.create_session(uid_d8, 3600, True, "password")   # das verlorene Gerät
+cd8 = TestClient(app_d8)
+_login(cd8, "kette", PW)
+_seite = cd8.post("/auth/totp/setup/start", data={"next": "/"})
+_geheim = _re.search(r"secret=([A-Z2-7]+)", _seite.text) or _re.search(r"\b([A-Z2-7]{32})\b", _seite.text)
+_bestaetigt = cd8.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim.group(1)).now(), "next": "/"}).json()
+r.check("Grenze d: die Einschreibung mitten in der Kette meldet die übrigen Sitzungen (other_sessions_after)",
+        _bestaetigt.get("ok") and _bestaetigt.get("other_sessions_after") == 1, str(_bestaetigt))
+_vermerk = cd8.post("/auth/sessions/revoke-after-login", json={})
+r.check("… die Zustimmung wird vermerkt, aber noch nichts beendet",
+        _vermerk.status_code == 200 and auth_d8.store.get_session(alt_token) is not None)
+cd8.post("/auth/pin", data={"username": "kette", "pin": "4812"}, follow_redirects=False)   # halbe Sitzung: mit Namen
+r.check("… und mit dem letzten Faktor (PIN) enden die übrigen Sitzungen",
+        auth_d8.store.get_session(alt_token) is None and cd8.get("/auth/me").status_code == 200)
+auth_v8, app_v8 = _app()                                      # ohne Kette: Passwort = volle Sitzung
+auth_v8.create_user("voll", password=PW)
+cvoll = TestClient(app_v8)
+_login(cvoll, "voll", PW)
+r.check("… eine volle Sitzung kann den Vermerk nicht setzen (dafür gibt es /auth/sessions/revoke)",
+        cvoll.post("/auth/sessions/revoke-after-login", json={}).status_code in (400, 401))
+
+# (e) Der Widerruf von API-Keys benachrichtigt den Inhaber.
+auth_e8, app_e8 = _app()
+ereignisse = []
+auth_e8.on_security_event = lambda ereignis, konto, details: ereignisse.append((ereignis, details))
+uid_e8 = auth_e8.create_user("keyhalter", password=PW)
+k1 = auth_e8.create_api_key(uid_e8, name="ci")
+auth_e8.revoke_api_key(k1["id"])
+auth_e8.revoke_api_key(k1["id"])                              # zweimal: nur ein Ereignis
+auth_e8.create_api_key(uid_e8, name="a")
+auth_e8.create_api_key(uid_e8, name="b")
+auth_e8._keys_widerrufen(uid_e8, "test")
+namen = [e for e, _ in ereignisse]
+r.check("Grenze e: ein einzelner Widerruf meldet api_key_revoked (genau einmal)",
+        namen.count("api_key_revoked") == 1, str(namen))
+r.check("… ein gesammelter meldet api_keys_revoked mit Anzahl",
+        ("api_keys_revoked", {"anzahl": 2, "grund": "test"}) in ereignisse, str(ereignisse))
+chef_e8 = auth_e8.create_user("chef-e8", password=PW, is_admin=True)
+auth_e8.create_api_key(uid_e8, name="c")
+ce8 = TestClient(app_e8)
+_login(ce8, "chef-e8", PW)
+ce8.post(f"/auth/admin/api/users/{uid_e8}/disable", json={"disabled": True})
+r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"anzahl": 1, "grund": "sperre"}) in ereignisse,
+        str(ereignisse[-2:]))
+# (Mutationsproben: `seit=since` in `sperre_aufheben` streichen → (a) rot; `disabled_by` fest auf
+#  None → (b) rot; Index streichen → (c) rot; `_andere_nach_abschluss` leer → (d) rot;
+#  `sicherheitsereignis` in `_keys_widerrufen` streichen → (e) rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

@@ -324,7 +324,10 @@ def build_router(auth) -> APIRouter:
         # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
         antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next)),
-            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0})
+            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0,
+            # Grenze d: Bleibt die Sitzung halb, fragt die Seite trotzdem — eingelöst wird beim
+            # Abschluss der Kette (`/auth/sessions/revoke-after-login`).
+            "other_sessions_after": 0 if erneuert else auth.andere_sitzungen(request, u)})
         if erneuert:
             auth.set_cookie(antwort, erneuert)   # dreht beim Login auch das CSRF-Token
         return antwort
@@ -805,7 +808,7 @@ def build_router(auth) -> APIRouter:
             # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
             # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
             # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
-            keys = auth.store.revoke_user_api_keys(uid)
+            keys = auth._keys_widerrufen(uid, "passwort_reset")
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
                        f"uid={uid} fehlversuche_verworfen={weg}"
                        + (f" api_keys_revoked={keys}" if keys else ""))
@@ -1173,6 +1176,20 @@ def build_router(auth) -> APIRouter:
                         "user_agent": (s["user_agent"] or "")[:120], "current": s["token_hash"] == cur_tok})
         return out
 
+    @r.post("/auth/sessions/revoke-after-login")
+    async def sessions_revoke_after_login(request: Request):
+        """Die übrigen Sitzungen beenden, SOBALD diese halbe Anmeldung vollständig ist (Grenze d).
+
+        Nur für eine halbe Sitzung: Eine volle nimmt `/auth/sessions/revoke`. Beendet wird hier
+        nichts — vermerkt wird die Zustimmung, eingelöst erst nach dem letzten Faktor. Wer nur den
+        ersten Faktor hat, kann damit also nichts beenden, was er nicht ohnehin voll könnte."""
+        await auth.json_body(request)                     # CSRF wie jede Schreib-Route
+        s = auth.session_from_request(request)
+        if not s or s["mfa_ok"]:
+            raise HTTPException(400, auth.t("api.invalid", grund="keine halbe Anmeldung"))
+        auth.store.set_session_andere_beenden(s["token_hash"])
+        return {"ok": True}
+
     @r.post("/auth/sessions/revoke")
     async def own_sessions_revoke(request: Request):
         # Sitzungen beenden verlangt eine frische Bestätigung (F-09, ASVS 5.0 7.5.2: „having
@@ -1191,7 +1208,7 @@ def build_router(auth) -> APIRouter:
         keys_widerrufen = 0
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
-            keys_widerrufen = auth.store.revoke_user_api_keys(u["id"])
+            keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
         else:
             cur = auth.session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)

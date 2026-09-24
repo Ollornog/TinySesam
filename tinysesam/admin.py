@@ -88,7 +88,13 @@ def build_admin_router(auth) -> APIRouter:
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
                 "email": u["email"], "is_admin": bool(u["is_admin"]), "is_owner": bool(u["is_owner"]),
                 "is_service": bool(u["is_service"]),
-                "roles": json.loads(u["roles"] or "[]"), "disabled": bool(u["disabled"]), "created_at": u["created_at"]}
+                "roles": json.loads(u["roles"] or "[]"), "disabled": bool(u["disabled"]),
+                # Warum gesperrt (Grenze b): 1 = die Bestätigung der Adresse steht aus (hebt der
+                # Bestätigungslink auf), 2 = der Betreiber (hebt nur er auf). Bisher sah beides im
+                # Panel gleich aus — und wer eine Betreiber-Sperre für eine offene Bestätigung
+                # hielt, wartete auf einen Link, der nie etwas freigibt.
+                "disabled_by": {1: "confirmation", 2: "operator"}.get(int(u["disabled"] or 0)),
+                "created_at": u["created_at"]}
 
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
@@ -163,7 +169,7 @@ def build_admin_router(auth) -> APIRouter:
             # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
             # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
             # niemand mehr weiss.
-            keys = auth.store.revoke_user_api_keys(uid)
+            keys = auth._keys_widerrufen(uid, "sperre")
             # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
             # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
             auth.store.revoke_user_magic_tokens(uid)
@@ -192,7 +198,7 @@ def build_admin_router(auth) -> APIRouter:
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
-        keys = auth.store.revoke_user_api_keys(uid)
+        keys = auth._keys_widerrufen(uid, "admin_passwort")
         protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
         return {"ok": True, "api_keys_revoked": keys}
 
@@ -630,7 +636,7 @@ async function users(){
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
       <td>${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
-      <td>${u.disabled?`<span class="badge red">${esc(L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
+      <td>${u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
         <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
         <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>

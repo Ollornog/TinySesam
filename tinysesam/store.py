@@ -148,7 +148,8 @@ CREATE TABLE IF NOT EXISTS session (
     remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
     ip         TEXT,
     user_agent TEXT,
-    zuletzt    INTEGER                        -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
+    zuletzt    INTEGER,                       -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
+    andere_beenden INTEGER NOT NULL DEFAULT 0 -- halbe Sitzung: bei Abschluss der Kette die übrigen beenden (Grenze d)
 );
 -- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
 -- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
@@ -220,6 +221,10 @@ CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Ak
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
+-- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
+-- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
+CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
@@ -629,7 +634,8 @@ class Store:
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
                         ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
                         # NULL für Bestandssitzungen: gilt als `created_at` (F-05).
-                        ("zuletzt", "INTEGER")],
+                        ("zuletzt", "INTEGER"),
+                        ("andere_beenden", "INTEGER NOT NULL DEFAULT 0")],
             "totp_cred": [("last_step", "INTEGER")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
@@ -1657,6 +1663,10 @@ class Store:
             self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (jetzt, r["token_hash"]))
         return r
 
+    def set_session_andere_beenden(self, handle):
+        """Vermerken: Wird diese (halbe) Sitzung voll, enden die übrigen des Kontos (Grenze d)."""
+        self._exec("UPDATE session SET andere_beenden=1 WHERE token_hash=?", (self._handle(handle),))
+
     def set_session_mfa(self, handle, ok=True):
         self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
                    (1 if ok else 0, (_now() if ok else None), self._handle(handle)))
@@ -1986,7 +1996,7 @@ class Store:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
         self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
 
-    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None):
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None):
         """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 
         `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
@@ -2005,6 +2015,11 @@ class Store:
         elif exclude_methods:
             platz = ",".join("?" for _ in exclude_methods)
             wo, args_m = f" AND (method IS NULL OR method NOT IN ({platz}))", tuple(exclude_methods)
+        if seit is not None:
+            # Nur ab einem Zeitpunkt (Grenze a): Eine vollständige Anmeldung räumt, was DIESEM
+            # Konto galt — nicht die Fehlversuche unter seinem Namen oder seiner Adresse von vor
+            # seiner Anlage (die galten niemandem oder jemand anderem).
+            wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
         if username:
             self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
                        (username,) + args_m)
