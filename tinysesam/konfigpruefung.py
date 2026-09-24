@@ -95,7 +95,7 @@ def _an(config, feld: str) -> bool:
     return bool(getattr(config, feld, False))
 
 
-def _ganzzahl(config, feld: str, fehlt: int = 0):
+def _ganzzahl(config, feld: str, fehlt: int | None = 0):
     """Ein Zahlenfeld für eine Kombinationsprüfung lesen — oder None, wenn es keine ganze Zahl ist.
 
     Typ und Bereich meldet `_zahlengrenzen` (samt `True`, Text, `inf`, `nan`); die Kombination
@@ -782,8 +782,11 @@ def _kombinationen(config, fehler: list, warnungen: list) -> None:
     if _an(config, "signup_invite_only") and not _an(config, "allow_signup"):
         warnungen.append("signup_invite_only=True ohne allow_signup=True ist wirkungslos — die "
                          "Registrierung ist ohnehin aus.")
-    lang, kurz = getattr(config, "session_ttl_hours", 0), getattr(config, "session_ttl_transient_hours", 0)
-    if isinstance(lang, int) and isinstance(kurz, int) and kurz > lang:
+    # Über `_ganzzahl` wie jede Kombination (tests/test_sicherheit_befunde.py prüft das): Text,
+    # inf, nan und True meldet `_zahlengrenzen`; hier bleibt die Kombination dann unbewertet.
+    lang = _ganzzahl(config, "session_ttl_hours", None)
+    kurz = _ganzzahl(config, "session_ttl_transient_hours", None)
+    if lang is not None and kurz is not None and kurz > lang:
         warnungen.append(
             f"session_ttl_transient_hours={kurz} ist länger als session_ttl_hours={lang}: Ohne "
             "„Angemeldet bleiben\" bliebe man länger angemeldet als mit.")

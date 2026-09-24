@@ -968,8 +968,10 @@ class Store:
         Jeder Schreibweg läuft deshalb hierüber (oder über `_exec`, das es auch tut); wer die
         Transaktion selbst führt (`reserve_attempt`, `rotate_session`, `_uhr_mitschreiben`, der
         innere Block von `_migrate`), setzt jeden Commit in ein `try`, dessen breites `except`
-        (oder `finally`) zurückrollt. tests/test_hardening2.py prüft das per Syntaxbaum für jeden
-        Commit in dieser Klasse — nicht bloss, ob irgendwo in der Funktion `rollback()` steht."""
+        (ohne Typ, `Exception` oder `BaseException` — `sqlite3.Error` fängt einen Bindefehler wie
+        OverflowError nicht) oder `finally` zurückrollt. tests/test_hardening2.py prüft das per
+        Syntaxbaum für jeden Commit in dieser Klasse — nicht bloss, ob irgendwo in der Funktion
+        `rollback()` steht."""
         with self._lock:
             try:
                 yield
@@ -1028,11 +1030,14 @@ class Store:
             self._uhr_stand_schreiben()
             self.db.commit()
             self._uhr_gesichert = m
-        except sqlite3.Error:
-            try:
-                self.db.rollback()
-            except sqlite3.Error:
-                pass   # nichts offen, nichts zurückzurollen — der Uhrstand ist nur Vorsorge
+        except Exception as fehler:
+            # Zurückgerollt wird bei JEDEM Fehlschlag, geschluckt nur der Datenbankfehler (der
+            # Uhrstand ist Vorsorge). Bis zur Schlussrunde fing hier `except sqlite3.Error:` —
+            # ein Bindefehler wie OverflowError ist keiner und liess die Transaktion offen;
+            # gerettet hat es nur das äussere `_schreibend` von `_exec`.
+            self._verwerfen()
+            if not isinstance(fehler, sqlite3.Error):
+                raise
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
