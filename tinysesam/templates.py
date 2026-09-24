@@ -360,6 +360,8 @@ def _account(auth, ctx) -> str:
     # angemeldet wurde, meldet sich — das Protokoll lag bisher nur beim Betreiber. Serverseitig
     # gerendert (kein weiterer Endpunkt), Zeit als UTC, weil die Seite die Zone des Lesers
     # nicht kennt. `events` fehlt im ctx einer eigenen Vorlage/Vorschau → Abschnitt entfällt.
+    # Der Abstand kommt aus einer Klasse im Seiten-<style>, nicht aus `style=`: Die strenge CSP
+    # erlaubt Stile nur per Nonce, und die gilt nicht für Attribute (Integrationsfund 9).
     events = ctx.get("events")
     if events is not None:
         import datetime as _dt
@@ -370,7 +372,7 @@ def _account(auth, ctx) -> str:
             for ev in events) or f"<li>{_e(t('acc.events_none'))}</li>"
         sections.append(
             f"<div class=sec><h2>{_e(t('acc.events'))}</h2>"
-            f"<p class=msg style='margin:0 0 8px'>{_e(t('acc.events_hint'))}</p>"
+            f"<p class='msg evhint'>{_e(t('acc.events_hint'))}</p>"
             f"<ul id=eventlist>{zeilen}</ul></div>")
 
     admin_link = (f"<a href='{_e(ctx.get('admin_path', '/auth/admin'))}'>{_e(t('acc.admin'))}</a>"
@@ -391,6 +393,7 @@ def _account(auth, ctx) -> str:
     .tsmain .btnlink{background:var(--ts-neutral);color:var(--ts-neutral-ink);border-radius:8px;
          text-decoration:none;padding:9px 14px}
     .tsmain .msg{margin-left:8px;font-size:12px;color:var(--ts-muted)}
+    .tsmain .msg.evhint{margin:0 0 8px}
     .tsmain .msg.good,.tsmain .ok{color:var(--ts-ok-ink);background:none;padding:0}
     .tsmain .msg.bad,.tsmain .bad{color:var(--ts-err-ink)}
     .tsmain ul{list-style:none;padding:0;margin:0 0 8px}

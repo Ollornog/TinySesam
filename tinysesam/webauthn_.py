@@ -213,8 +213,18 @@ def register_passkey_routes(router, auth):
         # veraltete Sitzung und jeden API-Key durchgelassen.
         u = auth.require_mfa(request)
         b = await auth.json_body(request)
-        auth.store.delete_webauthn(int(b["id"]), u["id"])
-        # Einen Faktor zu verlieren ist genau das, was man später nachlesen will (B5-01).
-        auth.audit("passkey_delete", u["username"], auth.client_ip(request), f"id={b['id']}")
-        auth.sicherheitsereignis("passkey_removed", u["id"], passkey_id=int(b["id"]))
+        # Eine ganze Zahl oder eine Ziffernfolge, sonst 400. `int()` allein nahm `true` als
+        # Passkey 1 und `1.9` als 1, und `1e400`/`Infinity` (json.loads: float('inf')) warfen
+        # OverflowError — HTTP 500 statt der zugesagten 400.
+        roh = b.get("id")
+        if isinstance(roh, str) and roh.isascii() and roh.isdigit():
+            roh = int(roh)
+        if isinstance(roh, bool) or not isinstance(roh, int):
+            raise HTTPException(400, auth.t("api.invalid", grund="id"))
+        passkey_id = roh
+        # Löschen, Audit-Zeile (B5-01) und `passkey_removed` in einem — derselbe Weg wie der
+        # Widerruf im Admin-Panel (Integrationsfund 3). Ein Passkey, den das Konto nicht hat,
+        # ist 404 und hinterlässt weder Zeile noch Ereignis.
+        if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
+            raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7

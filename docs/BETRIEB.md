@@ -131,11 +131,13 @@ tut es.
 
 ## Was für ASVS Level 3 fehlt
 
-TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) sind für Level 3 offen (B1-12):
+TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Drei
+davon sind offen oder nur teilweise erfüllt. 6.3.7 erfüllt der Hook `on_security_event`, sobald die
+App ihn setzt:
 
 | ASVS | Anforderung | Stand |
 |---|---|---|
-| 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | fehlt — Fehlversuche stehen im Audit- und Sicherheits-Log, der Nutzer erfährt nichts (Vorschlag H-6: Hook `on_security_event`) |
+| 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | fehlt — Fehlversuche stehen im Audit- und Sicherheits-Log, der Nutzer erfährt nichts. `on_security_event` meldet Faktorwechsel, keine Fehlversuche |
 | 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | nicht erfüllt, sobald `magiclink_enabled` ohne erzwungene Kette läuft (s. Tabelle oben); abschaltbar |
-| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | fehlt — Passwort-, PIN-, TOTP- und Passkey-Änderungen werden protokolliert, nicht gemeldet (ebenfalls H-6) |
+| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey, API-Key), auch wenn ein Admin im Panel eingreift. Die Mail verschickt der Hook, TinySesam selbst verschickt nichts (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
 | 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | teilweise — gleiche Antwort und Rechenzeit am Login (`dummy_verify`), Registrierung verrät Kennungen noch (R4-03) |

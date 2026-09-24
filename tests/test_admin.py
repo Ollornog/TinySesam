@@ -242,5 +242,123 @@ assert r.status_code == 200 and auth.check_password("bob", "ein-gutes-neues")
 assert c.post("/auth/admin/api/users", json={"username": "nurssso"}).status_code == 200
 print("  ✓ B2-13: Anlegen und Zurücksetzen im Panel prüfen Länge, Blockliste und Kontextwörter")
 
+# ---------- Integrationsfund 8: Rollen, die keine Texte sind → 400 VOR jedem Schreibzugriff ----------
+# Die Vorher/Nachher-Zeile (R6-7) entstand erst NACH `set_roles`/`set_admin`, mit `','.join`.
+# Bei `roles=[1]` warf das: HTTP 500, das Admin-Flag stand schon in der Datenbank, und die
+# Audit-Zeile fehlte — ein Konto wurde Admin, ohne dass es im Protokoll stand. Und solange die
+# Rollen kaputt blieben, lief jede weitere Änderung an dem Konto ebenso ungeschrieben durch.
+# (Mutationsproben: den `rollen_aus`-Aufruf in `user_roles` streichen → rot (200, `[1]` gespeichert);
+#  die Detailzeile wieder mit `sorted(...)` ohne `str` bauen → rot beim Altbestand unten.)
+import json as _json  # noqa: E402
+
+
+def _zeilen(ereignis):
+    return len([z for z in auth.store.recent_audit(500) if z["event"] == ereignis])
+
+
+_carl = auth.create_user("carl", password="carl-geheim-1")
+_vorher8 = _zeilen("user_roles")
+for _koerper in ({"roles": [1], "is_admin": True}, {"roles": [None], "is_admin": True},
+                 {"roles": "admin", "is_admin": True}, {"roles": {"a": 1}}, {"roles": ["ok", 2]}):
+    r = c.post(f"/auth/admin/api/users/{_carl}/roles", json=_koerper)
+    assert r.status_code == 400 and "roles" in r.json()["detail"], (_koerper, r.status_code, r.text)
+    _z = auth.store.get_user(_carl)
+    assert _json.loads(_z["roles"]) == [] and not _z["is_admin"], (_koerper, dict(_z))
+assert _zeilen("user_roles") == _vorher8, "abgewiesen heisst: nichts geschrieben, nichts zu protokollieren"
+# Anlegen und Einladen nehmen dieselbe Prüfung — sonst stünde die kaputte Rolle in der
+# Datenbank und träfe die nächste Rollenänderung.
+r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": [1]})
+assert r.status_code == 400 and auth.store.get_user_by_name("dora") is None, r.text
+r = c.post("/auth/admin/api/users", json={"username": "dora", "roles": ["leser"]})
+assert r.status_code == 200 and auth.user_roles(auth.store.get_user_by_name("dora")) == ["leser"], r.text
+# Altbestand (aus einer Zeit ohne Prüfung): die Änderung geht durch UND steht im Protokoll.
+auth.store._exec("UPDATE users SET roles=? WHERE id=?", ("[1, null]", _carl))
+r = c.post(f"/auth/admin/api/users/{_carl}/roles", json={"roles": ["x"], "is_admin": False})
+assert r.status_code == 200, (r.status_code, r.text)
+_z8 = [z["detail"] for z in auth.store.recent_audit(20) if z["event"] == "user_roles"]
+assert _zeilen("user_roles") == _vorher8 + 1 and "rollen=1,None->x" in _z8[0], _z8
+print("  ✓ Fund 8: Rollen ohne Text → 400 vor jedem Schreiben; Altbestand wird protokolliert statt 500")
+
+# ---------- Integrationsfund 10: das Panel zeigt, was der Server abweist ----------
+# Der Server weist seit R6-1/R6-4/B2-13 ab (letzter Admin, Härtungswert ausserhalb der Grenzen,
+# schwaches Passwort) — das Panel-JS sah nur den Körper: `savesec` meldete „gespeichert", `pw`
+# „Passwort gesetzt", `saveroles` lud still neu. Die Admin-Person glaubte, es sei geschehen.
+# (Mutationsproben: in `savesec` wieder `await p(…);alert(L.saved)` → rot; in `p` den Blick auf
+#  `r.ok` entfernen → rot — mit node in der Laufzeitprobe, ohne node in der Strukturprüfung von
+#  `p()` darunter. Vorher entfiel die Laufzeitprobe ohne node still, und das Image von ci-local
+#  hat kein node: Dort blieb genau diese Mutation grün.)
+import os as _os  # noqa: E402
+import re as _re  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+_panel = c.get("/auth/admin").text
+_skripte = [s for s in _re.findall(r"<script[^>]*>(.*?)</script>", _panel, _re.S) if "const ACT={" in s]
+assert len(_skripte) == 1, "Panel-Skript nicht gefunden"
+_js = _skripte[0]
+# Ohne Laufzeit: Jede Aktion, die `p()` ruft, führt das Ergebnis über `abgewiesen` — die nächste
+# neue Aktion fällt sonst wieder in dasselbe Loch.
+# Gezählt werden die Aktionen aus ACT (nur die ruft ein Knopf auf), ohne Kommentarzeilen.
+_act = set(_re.search(r"const ACT=\{([^}]*)\}", _js).group(1).split(","))
+_stuecke = {m.group(1): "\n".join(z for z in m.group(0).splitlines() if not z.lstrip().startswith("//"))
+            for m in _re.finditer(r"(?:async )?function (\w+)\(.*?(?=\n(?:async )?function \w+\(|\nconst ACT=)",
+                                  _js, _re.S)}
+_schreibend = [n for n in sorted(_act) if _re.search(r"(?<![\w.])p\(", _stuecke.get(n, ""))]
+_ohne = [n for n in _schreibend if "abgewiesen(" not in _stuecke[n]]
+assert not _ohne, f"Aktionen ohne Anzeige der Abweisung: {_ohne}"
+assert len(_schreibend) >= 10 and _act <= set(_stuecke), (_schreibend, _act - set(_stuecke))
+# Und `p()` selbst: Ohne den Blick auf `r.ok` gibt sie bei 400/500 den Körper zurück, und
+# `abgewiesen()` sieht bei einem 500 ohne JSON-Körper nichts. Die Laufzeitprobe unten braucht
+# node; diese Prüfung läuft immer.
+_p_def = _re.search(r"^const p=\(u,b\)=>(.*?)^(?:const|function|async function) ", _js, _re.S | _re.M)
+assert _p_def, "p() nicht gefunden"
+_p_code = "\n".join(z for z in _p_def.group(1).splitlines() if not z.lstrip().startswith("//"))
+assert _re.search(r"if\s*\(\s*r\.ok\s*\)\s*return", _p_code), f"p() liest r.ok nicht: {_p_code}"
+assert _re.search(r"return\s*\{\s*detail\s*:", _p_code) and 'L["err.generic"]' in _p_code, \
+    f"p() gibt eine Abweisung nicht als {{detail}} mit Rückfalltext zurück: {_p_code}"
+
+_node = _shutil.which("node")
+if _node:
+    _probe = ("const A=[];let ANTWORT=null;const E={};\n"
+              "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"
+              "getElementById:i=>E[i]||(E[i]={value:'0',checked:false,textContent:'',innerHTML:''})};\n"
+              "const alert=m=>A.push(String(m));const confirm=()=>true;const prompt=()=>'neu-und-lang';\n"
+              # Das Panel liest Eingabefelder über ihre ID als globale Namen (Browser-Verhalten).
+              "const kn={value:'k'},ke={value:''};\n"
+              "const fetch=async()=>({ok:ANTWORT[0]<400,status:ANTWORT[0],"
+              "json:async()=>{if(ANTWORT[1]===null)throw new Error('kein JSON');return ANTWORT[1]}});\n"
+              + _js.replace("tabs();users();", "")
+              + "\nusers=async()=>{};keys=async()=>{};pks=async()=>{};sessions=async()=>{};\n"
+              "const FAELLE=[['savesec',[['rate_limit_max']]],['saveroles',[1]],['pw',[1]],['dis',[1,true]],"
+              "['delpk',[1,2,'x']],['revk',[1,1,'x']],['mkkey',[1]],['deluser',[1]]];\n"
+              "(async()=>{const E2={};for(const [name,args] of FAELLE){\n"
+              "  for(const [k,antw] of [['400',[400,{detail:'Grund vom Server'}]],['500',[500,null]],"
+              "['200',[200,{ok:true}]]]){\n"
+              "    ANTWORT=antw;A.length=0;await (globalThis[name]||eval(name))(...args);"
+              "E2[name+' '+k]=[...A]}}\n"
+              "  process.stdout.write(JSON.stringify(E2))})();\n")
+    _aus = _sp.run([_node, "-e", _probe], capture_output=True, text=True, timeout=30)
+    assert _aus.returncode == 0, _aus.stderr[-600:]
+    _erg = _json.loads(_aus.stdout)
+    _Lp = _json.loads(_re.search(r"const L=(\{.*?\});", _js).group(1))   # die Texte des Panels
+    for _name in ("savesec", "saveroles", "pw", "dis", "delpk", "revk", "mkkey", "deluser"):
+        assert _erg[f"{_name} 400"] == ["Grund vom Server"], (_name, _erg[f"{_name} 400"])
+        assert len(_erg[f"{_name} 500"]) == 1 and _erg[f"{_name} 500"][0] not in ("", "undefined"), \
+            (_name, _erg[f"{_name} 500"])
+    assert _erg["savesec 200"] == [_Lp["saved"]] and _erg["pw 200"] == [_Lp["pw_set"]] \
+        and _erg["saveroles 200"] == [], _erg
+    assert _Lp["saved"] not in _erg["savesec 400"] + _erg["savesec 500"], _erg
+    assert _erg["pw 500"] == [_Lp["err.generic"]], _erg
+    print("  ✓ Fund 10 (node): 400/500 zeigen den Grund statt „gespeichert“, 200 bleibt still bzw. meldet Erfolg")
+elif _os.environ.get("GITHUB_ACTIONS") == "true":
+    # Auf dem GitHub-Runner (ubuntu-latest) ist node vorhanden. Fehlt es dort, ist die Umgebung
+    # kaputt — dann nicht still weniger prüfen („Skip ist kein Grün").
+    raise AssertionError("node fehlt auf dem CI-Runner — die Laufzeitprobe zu Fund 10 liefe nicht")
+else:
+    print("  ⚠ Fund 10 (node): Laufzeitprobe NICHT gelaufen — node fehlt; geprüft sind nur die "
+          "Struktur der Aktionen und p()")
+print("  ✓ Fund 10 (Struktur): jede Panel-Aktion, die schreibt, führt das Ergebnis über abgewiesen(),"
+      " und p() liest r.ok")
+
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")

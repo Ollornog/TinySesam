@@ -63,9 +63,11 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`. TinySesam verschickt selbst nichts; die Mail geht aus dem Hook (am besten über
-  eine Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung nie
-  rückgängig, landet aber im Sicherheits-Log.
+  `api_key_created`. Das gilt auch für Änderungen, die ein Admin im Panel an einem fremden Konto
+  vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die Mail also so
+  schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. TinySesam verschickt selbst
+  nichts; die Mail geht aus dem Hook (am besten über eine Warteschlange — er läuft synchron im
+  Request). Ein Fehler im Hook macht die Änderung nie rückgängig, landet aber im Sicherheits-Log.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
