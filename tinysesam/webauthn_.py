@@ -145,7 +145,7 @@ def register_passkey_routes(router, auth):
         return resp
 
     @router.post("/auth/passkey/login/finish")
-    async def login_finish(request: Request, next: str = "/"):
+    async def login_finish(request: Request, next: str = ""):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
         fk = request.cookies.get(auth.flow_cookie_name(_WAFLOW))
         flow = auth.store.pop_flow("walogin:" + fk) if fk else None
@@ -195,7 +195,7 @@ def register_passkey_routes(router, auth):
         # die IP-Sperre haette alle Nutzer hinter demselben Proxy in einen Topf geworfen.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
-        target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next))
+        target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next, request))
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)

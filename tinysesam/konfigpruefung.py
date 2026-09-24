@@ -423,6 +423,24 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
             "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
 
+    # Pfade der App tragen seit T-15 keinen Montage-Präfix mehr — TinySesam setzt ihn aus dem Pfad
+    # der base_url davor. Wer ihn für die alte Fassung von Hand eingetragen hat (`/sso/auth/login`),
+    # bekäme jetzt `/sso/sso/auth/login` (404). Eine Warnung, kein Fehler: Ein Pfad der App kann
+    # rein zufällig so heissen wie der Präfix.
+    from urllib.parse import urlsplit as _urlsplit
+    _praefix = _urlsplit(str(getattr(config, "base_url", "") or "")).path.rstrip("/")
+    if _praefix:
+        _pfade = {"login_path": str(getattr(config, "login_path", "") or ""),
+                  "login_redirect": str(getattr(config, "login_redirect", "") or ""),
+                  "logout_redirect": str(getattr(config, "logout_redirect", "") or ""),
+                  "admin_path": str(getattr(config, "admin_path", "") or "")}
+        doppelt = [f"{feld}={wert!r}" for feld, wert in _pfade.items() if wert.startswith(_praefix + "/")]
+        if doppelt:
+            warnungen.append(
+                f"{', '.join(doppelt)} beginnt mit dem Präfix der base_url ({_praefix}). Diese Felder "
+                "sind Pfade der App ohne Präfix — TinySesam setzt ihn seit 0.21 selbst davor, sonst "
+                f"entsteht {_praefix}{_praefix}/…. Den Präfix aus dem Wert nehmen.")
+
     # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
     # Typ und Bereich prüft ZAHLENGRENZEN (unten, samt negativer Werte); hier nur die

@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 13/14 erledigt
-* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 1/2 erledigt
+* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 2/2 erledigt
 
 ## Aufgaben
 
@@ -26,7 +26,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-12](T-12-codeql-bestand.md)** CodeQL-Bestand bewerten und die offenen Alerts im Backlog führen · M-1
 * ☐ **[T-13](T-13-audit-2026-09-22-runde-3.md)** Befunde des dritten Audits (Red Team, Blue Team, Online-Recherche) abarbeiten · M-1
 * ☑ **[T-14](T-14-mehrere-oidc-clients.md)** Mehrere OIDC-Clients in einer Instanz — die Freigabe je App liegt beim Identity Provider · M-1
-* ☐ **[T-15](T-15-unterpfad-montage.md)** Eingebaute Seiten unter einem Unterpfad montierbar machen · M-2
+* ☑ **[T-15](T-15-unterpfad-montage.md)** Eingebaute Seiten unter einem Unterpfad montierbar machen · M-2
 
 ## Fehler
 

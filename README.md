@@ -809,10 +809,12 @@ All optional (on/off by config), usable individually and combined, front end rep
   with more than one host listed, the `Host` header would still pick which one ends up in the
   link. **Mounted under a sub-path** (`root_path`), the prefix belongs in `base_url`:
   `base_url="https://example.com/sso"` — and it applies to the **mailed links**, which carry it
-  exactly once. The built-in pages do *not* carry it: their form targets and links are
-  root-absolute (`/auth/register`, `/auth/forgot`, …), so behind a proxy that strips `/sso` the
-  sign-in itself ends up in a 404 while the mails work. See
-  [T-15](https://github.com/Ollornog/TinySesam/blob/main/backlog/T-15-unterpfad-montage.md). The same one rule holds for the methods
+  exactly once. The built-in pages and their redirects take the same prefix from the path of
+  `base_url` (without `base_url`: from the request's `root_path` — `uvicorn --root-path /sso` behind
+  a proxy that strips `/sso`, or a Starlette `Mount("/sso", app)`). `login_path`, `login_redirect`,
+  `logout_redirect` and `admin_path` are paths of the app *without* the prefix. (Not `FastAPI(root_path=...)` on the app
+  itself: that setting leaves the request path without the prefix, and `next=` targets built from
+  it would point outside the mount.) The same one rule holds for the methods
   themselves, not just for the built-in routes: `magic_url`, `send_password_reset`,
   `send_login_link`, `send_verify_email` and `create_invite` all go through `public_base()`. With
   `base_url` set it wins — even over a second host of your own listed in `trusted_redirect_hosts`.
@@ -1013,7 +1015,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**48 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**49 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

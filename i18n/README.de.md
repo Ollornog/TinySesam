@@ -830,10 +830,13 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   kein Ersatz: Steht dort mehr als ein Host, bestimmte weiterhin der `Host`-Header, welcher davon
   in den Link kommt. **Unter einem Unterpfad montiert** (`root_path`) gehört das Präfix in
   `base_url`: `base_url="https://example.com/sso"` — und es gilt für die **verschickten Links**,
-  die es genau einmal tragen. Die eingebauten Seiten tragen es *nicht*: Ihre Formularziele und
-  Verweise stehen wurzel-absolut (`/auth/register`, `/auth/forgot`, …), hinter einem Proxy, der
-  `/sso` abschneidet, landet also die Anmeldung im 404, während die Mails funktionieren
-  ([`backlog/T-15`](../backlog/T-15-unterpfad-montage.md)). Dieselbe eine Regel gilt für die
+  die es genau einmal tragen. Die eingebauten Seiten und ihre Umleitungen nehmen denselben Präfix
+  aus dem Pfad der `base_url` (ohne `base_url`: aus dem `root_path` der Anfrage — `uvicorn
+  --root-path /sso` hinter einem Proxy, der `/sso` abschneidet, oder `Mount("/sso", app)`).
+  `login_path`, `login_redirect`, `logout_redirect` und `admin_path` sind Pfade der App *ohne*
+  den Präfix.
+  (Nicht `FastAPI(root_path=...)` an der App selbst: Damit fehlt der Präfix im Pfad der Anfrage,
+  und daraus gebildete `next=`-Ziele zeigten aus der Montage heraus.) Dieselbe eine Regel gilt für die
   Methoden selbst, nicht nur für die eingebauten Routen: `magic_url`, `send_password_reset`,
   `send_login_link`, `send_verify_email` und `create_invite` gehen alle durch `public_base()`.
   Steht `base_url`, gewinnt sie — auch gegen einen zweiten eigenen Host aus
@@ -1040,7 +1043,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**48 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**49 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

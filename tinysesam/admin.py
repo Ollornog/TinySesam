@@ -479,8 +479,10 @@ def build_admin_router(auth) -> APIRouter:
             # das Panel, das Konten anlegt und Rechte vergibt, ohne CSP und ohne Schutz gegen
             # Einbetten. Möglich wurde es erst, als die Inline-Handler verschwanden (`data-on`).
             nonce = secrets.token_urlsafe(16)
-            resp = HTMLResponse(_inject_nonce(
-                render_panel(auth, request.url.path.rstrip("/"), warn=warn), nonce))
+            # `__TS_P__` im Kopf (App, Logout) wird der Montage-Präfix (T-15); die API-Basis `B`
+            # kommt aus dem Pfad der Anfrage und trägt ihn schon.
+            seite = render_panel(auth, request.url.path.rstrip("/"), warn=warn, praefix=auth._praefix(request))
+            resp = HTMLResponse(_inject_nonce(seite, nonce))
             policy = auth._csp_header(nonce)
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
@@ -524,7 +526,7 @@ def panel_texts(auth) -> dict:
     return texts
 
 
-def render_panel(auth, base: str, warn: str = "") -> str:
+def render_panel(auth, base: str, warn: str = "", praefix: str = "") -> str:
     """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel.
 
@@ -532,7 +534,8 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     Anfrage umschaltet (`?lang=`), bekommt das Panel übersetzt mitgeliefert.
     """
     cfg = auth.cfg
-    return (_PAGE.replace("__TOKENS__", TOKENS)
+    # `__TS_P__` zuerst und nur im Gerüst — Marke, Warnung und Kopf/Fuss kommen danach (T-15).
+    return (_PAGE.replace("__TS_P__", praefix).replace("__TOKENS__", TOKENS)
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
@@ -605,7 +608,7 @@ __BRANDCSS__
 __HEADER__
 <div class=tsadmin>
 __WARN__
-<header><h1>🧠 __RP__ · Admin</h1><a href="/" id=applink>← App</a><a href="/auth/logout" id=outlink>Logout</a></header>
+<header><h1>🧠 __RP__ · Admin</h1><a href="__TS_P__/" id=applink>← App</a><a href="__TS_P__/auth/logout" id=outlink>Logout</a></header>
 <div class=tabs id=tabs></div>
 <div class=wrap id=view></div>
 <script>

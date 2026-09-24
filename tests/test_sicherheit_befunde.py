@@ -1739,10 +1739,10 @@ r.check("die Prüfung ist idempotent (zweimal angewandt wächst der Pfad nicht)"
 
 # Befund B-regression-3: Was eine Montage unter einem Unterpfad WIRKLICH trägt — gemessen an
 # einer echten Montage (`FastAPI(root_path="/sso")`), nicht an einer nachgebauten URL. Der
-# verschickte Link trägt das Präfix; die eingebauten Seiten tragen es NICHT, ihre Ziele stehen
-# wurzel-absolut in `templates.py`. Genau so steht es seit dieser Runde in README, KONFIGURATION
-# und CHANGELOG. Dieser Test hält die Doku ehrlich: Wird die Grenze verschoben (backlog/T-15),
-# wird er rot — und dann gehört die Einschränkung aus der Doku heraus, nicht der Test weg.
+# verschickte Link trägt das Präfix genau einmal; seit T-15 tragen es auch die eingebauten Seiten
+# und ihre Umleitungen (`auth.pfad`, Platzhalter `__TS_P__` in `templates.py`). Bis dahin stand die
+# Grenze in README, KONFIGURATION und CHANGELOG, und dieser Test hielt sie ehrlich; die volle
+# Messung (Mount und uvicorn --root-path, alle Seiten) steht in tests/test_unterpfad.py.
 _a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"),
                                    cookie_secure=False, csrf_enabled=False, passkey_enabled=False,
                                    password_reset_enabled=True,
@@ -1761,10 +1761,12 @@ r.check("echte Montage unter /sso: der Mail-Link trägt das Präfix genau einmal
         f"{_link_mnt!r} — ohne Präfix ist es ein 404, mehrfach auch")
 _seite_mnt = _c_mnt.get("/auth/login", headers={"accept": "text/html"}).text
 _ziel_mnt = _c_mnt.get("/auth/account", headers={"accept": "text/html"}).headers.get("location", "")
-r.check("...die eingebauten Seiten bleiben wurzel-absolut (ausgesprochene Grenze, backlog/T-15)",
-        "action='/auth/login'" in _seite_mnt and _ziel_mnt.startswith("/auth/login?next="),
-        f"{_ziel_mnt!r} — trägt die Seite jetzt das Präfix, gehört die Einschränkung aus "
-        "README/KONFIGURATION/CHANGELOG heraus")
+_wurzel_mnt = re.findall(r"(?:href|action)='(/[^']*)'", _seite_mnt)
+r.check("...und die eingebauten Seiten tragen es auch (T-15): Formular, Links, Umleitung",
+        "action='/sso/auth/login'" in _seite_mnt and _wurzel_mnt
+        and all(z.startswith("/sso/") for z in _wurzel_mnt)
+        and _ziel_mnt.startswith("/sso/auth/login?next=/sso/auth/account"),
+        f"{_ziel_mnt!r} / ohne Präfix: {[z for z in _wurzel_mnt if not z.startswith('/sso/')]}")
 
 # Und die Regel selbst, mechanisch: Wo `public_base()` eine Basis liefert, liefert
 # `_gepruefte_basis()` GENAU dieselbe, und wo sie leer bleibt, wirft die Methode. Zwei Wege,

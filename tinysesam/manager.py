@@ -32,7 +32,7 @@ from .store import (Store, name_ungueltig, norm_email, norm_kennung, jetzt as _j
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
-from .templates import Templates, inject_nonce as _inject_nonce
+from .templates import PRAEFIX_PLATZHALTER as _PRAEFIX_PLATZHALTER, Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
 
@@ -3101,7 +3101,7 @@ class TinySesam:
         if s and s["mfa_ok"]:
             return nxt
         step = self.next_login_step(user_id, done)
-        return self.factor_entry(step, nxt) if step else nxt
+        return self.pfad(request, self.factor_entry(step, nxt)) if step else nxt
 
     def complete_totp(self, token) -> Optional[str]:
         """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein
@@ -4221,7 +4221,14 @@ class TinySesam:
                 # in die Login-URL; das Schema kam ungeprüft aus X-Forwarded-Proto/X-Original-URL.
                 base = security.normalisiere_basis(
                     f"{self._login_schema(o.scheme, o.hostname)}://{o.netloc}") or base
-        ziel = f"{str(base).rstrip('/')}{self.cfg.login_path}?next={quote(orig_url or '/', safe='')}"
+        # Ursprung der Basis + Pfad der Login-Seite MIT Präfix (T-15): Die Basis kann den Präfix
+        # schon tragen (base_url) oder gar nicht (abgeleitet, neu gebaut für den angefragten Host) —
+        # `pfad()` setzt ihn aus der einen Quelle, deshalb zählt von der Basis nur Schema und Host.
+        ursprung = ""
+        if base:
+            teile = urlsplit(str(base))
+            ursprung = f"{teile.scheme}://{teile.netloc}"
+        ziel = f"{ursprung}{self.pfad(request, self.cfg.login_path)}?next={quote(orig_url or '/', safe='')}"
         # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
         # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
         # Ohne die Angabe liefe jede Anmeldung über den Vorgabe-Client, und die Freigabe, die der
@@ -4318,6 +4325,10 @@ class TinySesam:
         Namen: siehe `TinySesam.SEITEN` (je nach aktivierten Features erscheinen nicht alle).
         String → HTML mit Status; Response → 1:1. Ein unbekannter Name ist ein Fehler, kein
         stilles Nichts.
+
+        Unter einem Unterpfad (T-15): `ctx["praefix"]` ist der Präfix, den ein Pfad von TinySesam
+        im Browser braucht (`f"{ctx['praefix']}/auth/logout"`). `ctx["next"]` und `ctx["action"]`
+        sind schon Pfade des Browsers; `ctx["admin_path"]` ist ein Pfad der App (Präfix davor).
         """
         if name not in self.SEITEN:
             raise ConfigError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.SEITEN)}")
@@ -4350,10 +4361,19 @@ class TinySesam:
         # es setzt seine CSP selbst; ctx['nonce'] steht ihm zur Verfuegung.
         nonce = secrets.token_urlsafe(16)
         ctx.setdefault("nonce", nonce)
+        # Für eigene Templates (set_template): der Präfix, den App-Pfade im Browser brauchen (T-15).
+        ctx.setdefault("praefix", self._praefix(request))
+        eingebaut = not self.templates.ueberschrieben(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
             resp = out
         else:
+            # Die eingebauten Seiten schreiben vor jeden Pfad der App `__TS_P__` (Formulare, Links,
+            # fetch-Aufrufe) — hier wird daraus der Montage-Präfix (T-15). NUR bei ihnen: Die Ausgabe
+            # eines eigenen Templates bleibt byte-gleich (Gegenprüfung: ein Platzhalter in Daten
+            # hätte dort ein geprüftes Ziel nachträglich verändert).
+            if eingebaut:
+                out = str(out).replace(_PRAEFIX_PLATZHALTER, ctx["praefix"])
             resp = HTMLResponse(_inject_nonce(out, nonce), status_code=status)
             policy = self._csp_header(nonce)
             if policy:
@@ -4485,9 +4505,8 @@ class TinySesam:
         Mail-Links ohne Präfix — und wer ihn danach noch einmal anhängt, Links mit vierfachem.
         Das Ergebnis ist die **fertige** Basis: Es wird nichts mehr daran angefügt.
 
-        Die Zusage reicht so weit und nicht weiter: **die verschickten Links** tragen den
-        Unterpfad. Die eingebauten Seiten tragen ihn nicht (ihre Ziele stehen wurzel-absolut in
-        `templates.py`) — siehe `backlog/T-15-unterpfad-montage.md`.
+        Die verschickten Links tragen den Unterpfad über diese Basis; die eingebauten Seiten und
+        Umleitungen seit T-15 über `_praefix()`/`pfad()` — aus derselben `base_url`.
 
         Wer eine Basis braucht und ohne sie nicht weiterarbeiten darf, nimmt
         `require_public_base()` — diese Methode hier gibt "" zurück und überlässt die
@@ -4634,8 +4653,58 @@ class TinySesam:
                 "auth.public_base(request) die geprüfte Basis (leer = abbrechen).")
         return basis
 
-    def safe_next(self, next_: str) -> str:
+    #: Was als Montage-Präfix (`root_path`) in Seiten und Umleitungen darf (T-15). Der Wert kommt
+    #: vom ASGI-Server (`--root-path`) oder aus einer Starlette-Montage, nicht vom Browser — er
+    #: landet aber unmaskiert in Attributen und Skripten, deshalb nur diese Zeichen.
+    _PRAEFIX_FORM = re.compile(r"(?:/[A-Za-z0-9._~-]+)*")
+
+    def _praefix(self, request: Optional[Request]) -> str:
+        """Der Präfix, unter dem TinySesams Seiten im Browser liegen, ohne Schrägstrich am Ende.
+
+        Eine Quelle für alle eingebauten Seiten und Umleitungen (T-15): Unter `uvicorn --root-path
+        /sso` hinter einem Proxy, der `/sso` abschneidet, oder als `Mount("/sso", app)` zeigten sie
+        bis dahin aus der Montage heraus (`/auth/login` statt `/sso/auth/login` → 404).
+
+        **Zuerst der Pfad der `base_url`** — sie ist die öffentliche Adresse von TinySesam und trägt
+        den Präfix laut Doku ohnehin. Nur so stimmt der Präfix auch dort, wo die laufende Anfrage
+        ihn nicht kennt: in einem Guard der Host-App ausserhalb der TinySesam-Montage (`root_path`
+        ist dort leer) und hinter einem Proxy, der ohne `--root-path` abschneidet (Gegenprüfung).
+        Ohne `base_url` der `root_path` der Anfrage. Ein Wert in unerwarteter Form wird nicht
+        benutzt (laut, einmal) — lieber ein 404 als ein Präfix, der Markup in eine Seite trägt."""
+        if self.cfg.base_url:
+            from urllib.parse import urlsplit
+            roh = urlsplit(self.cfg.base_url).path.rstrip("/")
+        elif request is None:
+            return ""
+        else:
+            roh = str(request.scope.get("root_path") or "").rstrip("/")
+        if not roh:
+            return ""
+        if not self._PRAEFIX_FORM.fullmatch(roh):
+            if security.einmal_melden("praefix_form"):
+                security.seclog.warning("root_path %s hat eine unerwartete Form und wird für Seiten und "
+                                        "Umleitungen nicht benutzt (erlaubt: /teil/teil aus A–Z a–z 0–9 . _ ~ -).",
+                                        security.fuer_log(roh))
+            return ""
+        return roh
+
+    def pfad(self, request: Optional[Request], pfad: str) -> str:
+        """Einen Pfad der App (`/auth/login`, `login_path`, `admin_path`, …) in den Pfad umrechnen,
+        den der Browser braucht — mit dem Montage-Präfix davor (T-15).
+
+        Nur für Pfade, die relativ zur App gemeint sind. Ein `next`-Ziel ist schon ein Pfad des
+        Browsers (es kommt aus `request.url.path`, und dort steht der Präfix bereits) und bekommt
+        keinen zweiten. Absolute URLs und protokoll-relative Angaben bleiben, wie sie sind."""
+        p = str(pfad or "")
+        if not p.startswith("/") or p.startswith("//"):
+            return p
+        return self._praefix(request) + p
+
+    def safe_next(self, next_: str, request: Optional[Request] = None) -> str:
         """?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
+
+        Mit `request` bekommt der Rückfall `login_redirect` den Montage-Präfix (T-15); das
+        übergebene Ziel selbst bleibt, wie es ist — es ist bereits ein Pfad des Browsers.
 
         Der Host der eigenen `base_url` zählt immer mit: ein Redirect auf die eigene öffentliche
         Adresse ist per Definition kein Open Redirect. Sonst müsste man beim Forward-Auth auf
@@ -4649,7 +4718,12 @@ class TinySesam:
             own = urlsplit(self.cfg.base_url).hostname or ""
             if own and own not in hosts:
                 hosts.append(own)
-        return security.safe_next(next_, self.cfg.login_redirect, hosts or None)
+        rueckfall = self.pfad(request, self.cfg.login_redirect)
+        if _PRAEFIX_PLATZHALTER in str(next_ or ""):
+            # Der Platzhalter der eingebauten Seiten hat in einem Ziel nichts verloren: Beim Ersetzen
+            # würde `/__TS_P__/evil.example` zu `//evil.example` (Gegenprüfung T-15).
+            return rueckfall
+        return security.safe_next(next_, rueckfall, hosts or None)
 
     # ---------- FastAPI-Integration ----------
     def _riegel(self, config: TinySesamConfig, *, beim_aufbau: bool) -> None:
@@ -4884,7 +4958,7 @@ class TinySesam:
         if "text/html" in request.headers.get("accept", ""):
             from urllib.parse import quote
             nxt = quote(request.url.path, safe="/")
-            raise HTTPException(307, headers={"Location": f"{self.cfg.login_path}?next={nxt}"})
+            raise HTTPException(307, headers={"Location": f"{self.pfad(request, self.cfg.login_path)}?next={nxt}"})
         raise HTTPException(401, self.t("api.not_signed_in"))
 
     def _deny_stepup(self, request: Request) -> NoReturn:
@@ -4892,8 +4966,9 @@ class TinySesam:
         if "text/html" in request.headers.get("accept", ""):
             from urllib.parse import quote
             nxt = quote(request.url.path, safe="/")
-            raise HTTPException(307, headers={"Location": f"/auth/reauth?next={nxt}"})
-        raise HTTPException(403, self.t("api.stepup"), headers={"X-TinySesam-Reauth": "/auth/reauth"})
+            raise HTTPException(307, headers={"Location": f"{self.pfad(request, '/auth/reauth')}?next={nxt}"})
+        raise HTTPException(403, self.t("api.stepup"),
+                            headers={"X-TinySesam-Reauth": self.pfad(request, "/auth/reauth")})
 
     # ---------- Step-up-Frische ----------
     def stepup_fresh(self, request: Request, user: Optional[dict] = None) -> bool:
@@ -4938,7 +5013,7 @@ class TinySesam:
         if step is None:
             self._deny(request)
         if "text/html" in request.headers.get("accept", ""):
-            raise HTTPException(307, headers={"Location": self.factor_entry(step, request.url.path)})
+            raise HTTPException(307, headers={"Location": self.pfad(request, self.factor_entry(step, request.url.path))})
         raise HTTPException(401, self.t("api.factor"), headers={"X-TinySesam-Factor": step})
 
     def _enforce_route_chain(self, request: Request, factors, strict) -> dict:
@@ -5134,7 +5209,7 @@ class TinySesam:
                 if "text/html" in request.headers.get("accept", ""):
                     from urllib.parse import quote
                     nxt = quote(request.url.path, safe="/")
-                    raise HTTPException(307, headers={"Location": f"/auth/resource/{name}?next={nxt}"})
+                    raise HTTPException(307, headers={"Location": f"{self.pfad(request, '/auth/resource/' + name)}?next={nxt}"})
                 raise HTTPException(401, self.t("api.resource_locked"))
             return True
         return dep
