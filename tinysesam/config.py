@@ -226,7 +226,9 @@ class TinySesamConfig:
     #: Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die
     #: Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder
     #: Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`.
-    #: Eigenes JS liest den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`.
+    #: Eigener Code nimmt den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`; eigenes
+    #: JS bekommt ihn von der Seite (Template-Variable oder `<meta>`) oder liest das Token aus dem
+    #: Formularfeld, das `auth.ensure_csrf()` liefert.
     cookie_host_prefix: bool = True
 
     # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---

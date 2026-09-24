@@ -5,6 +5,8 @@ bricht (`backlog/M-1-api-stabil-1-0.md`). Ohne Messung ist das eine Behauptung: 
 Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGELOG auf.
 
 Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
+Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
+die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte.
 Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 
     python tests/test_api_surface.py --update      # Änderung übernehmen, danach committen
@@ -83,7 +85,15 @@ def oberflaeche() -> dict:
     konstanten = {name: repr(wert) for name, wert in vars(TinySesam).items()
                   if not name.startswith("_") and not callable(wert)
                   and not isinstance(wert, (property, staticmethod, classmethod))}
+    # Properties gehören ebenso dazu (0.20.1): `session_cookie_name`, `csrf_cookie_name`,
+    # `resource_cookie_name` sind die dokumentierte Ersatz-API für feste Cookie-Namen. Erfasst
+    # wird der Rückgabetyp des Getters; ein Setter hängt „(schreibbar)" an.
+    eigenschaften = {name: signatur(wert.fget) + (" (schreibbar)" if wert.fset else "")
+                     for name, wert in inspect.getmembers(TinySesam,
+                                                          lambda w: isinstance(w, property))
+                     if not name.startswith("_")}
     return {"TinySesam": manager, "TinySesam.konstanten": konstanten,
+            "TinySesam.eigenschaften": eigenschaften,
             "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte}
 
@@ -164,8 +174,35 @@ def beurteile(alt: dict, neu: dict):
     return brueche, erweiterungen
 
 
+#: Diese Properties MÜSSEN in der Oberfläche stehen — der CHANGELOG von 0.20.0 schickt jede
+#: einbettende App zu ihnen („den CSRF-Cookie-Namen aus `auth.csrf_cookie_name` lesen").
+PFLICHT_EIGENSCHAFTEN = ("session_cookie_name", "csrf_cookie_name", "resource_cookie_name")
+
+
+def selbstpruefung(jetzt: dict) -> None:
+    """Misst der Wächter die Properties überhaupt? (0.20.1)
+
+    Bis 0.20.0 schloss `oberflaeche()` sie ausdrücklich aus (`isinstance(wert, property)`), und
+    `getmembers(…, callable)` sieht sie ohnehin nicht. Ein Umbenennen von `csrf_cookie_name` —
+    genau des Namens, den eigenes JS und eigene Routen brauchen — fiel damit keinem Wächter auf.
+    Läuft auch vor `--update`: Sonst liesse sich der Ausschluss samt neuem Abzug einchecken.
+    (Mutationsprobe: in `oberflaeche()` den Bereich `TinySesam.eigenschaften` streichen → rot.)
+    """
+    eig = jetzt.get("TinySesam.eigenschaften", {})
+    fehlt = [n for n in PFLICHT_EIGENSCHAFTEN if n not in eig]
+    assert not fehlt, f"Properties fehlen in der eingefrorenen Oberfläche: {fehlt}"
+    # Gegenprobe am Vergleich selbst: Ein umbenanntes Property ist ein BRUCH, keine Erweiterung.
+    umbenannt = json.loads(json.dumps(jetzt))
+    umbenannt["TinySesam.eigenschaften"]["csrf_cookie"] = \
+        umbenannt["TinySesam.eigenschaften"].pop("csrf_cookie_name")
+    brueche, _ = beurteile(jetzt, umbenannt)
+    assert any("csrf_cookie_name ist fort" in b for b in brueche), brueche
+    ok(f"Properties eingefroren ({len(eig)}), ein Umbenennen gälte als Bruch")
+
+
 def main(argv):
     jetzt = oberflaeche()
+    selbstpruefung(jetzt)
 
     if "--update" in argv:
         with open(ABLAGE, "w", encoding="utf-8") as fh:

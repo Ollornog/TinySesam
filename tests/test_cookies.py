@@ -22,9 +22,11 @@ Nicht abgedeckt, bewusst:
 * `tinysesam_waflow` (webauthn_.py) nur, wenn das Extra [passkey] da ist (Block D2c). Ein
   harter `webauthn`-Import ließe run_all.py die GANZE Suite überspringen, sobald das Extra
   fehlt, und die Flags oben wären ungeprüft — deshalb fehlt ohne das Extra nur dieser Block.
-* Der CSRF-Setzer in `admin.py`. Es gibt drei (`manager.render_page`, `manager.issue_csrf`,
-  `admin.py`); die ersten beiden prüft diese Suite. Der dritte bräuchte das gemountete
-  Admin-Panel — das steht in test_adminmount.py und gehört dorthin, nicht hierher.
+* Der CSRF-Setzer im Admin-Panel. Seit 0.20.1 schreibt eine einzige Stelle das CSRF-Cookie
+  (`manager._csrf_cookie_setzen`) — für `render_page`, `issue_csrf`, `ensure_csrf` und das
+  Panel, das über `ensure_csrf` geht. Diese Suite prüft die ersten beiden; `ensure_csrf` misst
+  test_csrf.py gegen die Attribute von `issue_csrf`, das Panel bräuchte das gemountete Panel
+  (test_adminmount.py).
 """
 import importlib.util
 import os
@@ -427,6 +429,9 @@ else:
     assert "__Host-tinysesam_waflow" in geloescht(r), f"Flow-Cookie bleibt nach dem Login: {gesetzte_cookies(r)}"
     ok("Passkey-Login: das Flow-Cookie (httponly, __Host-) endet mit dem Flow")
 
+    # Der Login hat das CSRF-Token gedreht (0.20.1) — das von vor der Anmeldung gilt nicht mehr.
+    # Bis 0.20.0 lief dieser Block mit dem alten weiter; genau das hielt die fehlende Rotation fest.
+    kopf["X-CSRF-Token"] = c.cookies.get("__Host-tinysesam_csrf")
     r = c.post("/auth/passkey/register/begin", headers=kopf)
     assert r.status_code == 200 and "__Host-tinysesam_waflow" in gesetzte_cookies(r), r.text[:120]
     r = c.post("/auth/passkey/register/finish", content=json.dumps({"id": "neu", "response": {}}),
