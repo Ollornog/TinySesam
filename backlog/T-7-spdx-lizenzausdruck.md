@@ -2,7 +2,7 @@
 id: T-7
 type: Task
 title: "Lizenzangabe auf den SPDX-Ausdruck umstellen (Frist: 18.02.2027)"
-status: offen
+status: erledigt
 milestone: M-2
 tags: [packaging, frist]
 created: 2026-09-21
@@ -35,6 +35,16 @@ und eine Suite, die nur auf dem Papier grün ist, wäre der schlechtere Tausch.
 Die veröffentlichten Artefakte entstehen davon unberührt mit dem neuesten setuptools (`python -m
 build` baut isoliert) — die Metadaten im Index sind also heute schon die aktuellen
 (Metadata 2.4).
+
+## Erledigt 2026-09-25
+
+Alle Umgebungen, in denen gebaut wird, bringen setuptools ≥ 77 mit (CI-Abbild `ci-python-web`: 84,
+GitHub-Jobs installieren das neueste, der Release baut isoliert). Umgestellt: `license = "MIT"`,
+`license-files = ["LICENSE"]`, `build-system.requires = ["setuptools>=77"]`, Lizenz-Classifier
+entfernt. `tests/test_packaging.py` prüft `License-Expression` und `License-File`, lehnt einen
+Lizenz-Classifier daneben ab und bricht mit älterem setuptools laut ab statt kryptisch. Der Bau
+meldet keine Deprecation mehr. Mutationen: anderer Ausdruck → rot; Classifier zurück → der Bau
+selbst lehnt ab.
 
 ## Fertig, wenn
 

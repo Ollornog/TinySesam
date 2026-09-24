@@ -167,6 +167,10 @@ auffällt:
 
 ### Geändert
 
+- **Lizenz als SPDX-Ausdruck (PEP 639, T-7):** `license = "MIT"` mit `license-files`, der
+  Lizenz-Classifier entfällt. Bauen braucht damit setuptools ≥ 77 (`build-system.requires`); die
+  alte Tabellenform nimmt setuptools ab dem 18.02.2027 nicht mehr an.
+
 - **PIN als Erstfaktor bleibt erlaubt — als Entscheidung festgehalten (B2-8, ADR-8).** Nichts ändert
   sich am Verhalten; die PIN-Versuche (`pin_max_attempts`) stehen im Panel jetzt direkt bei der
   Login-Sperre, PIN-Fehlgriffe zählen in die Serie (B2-6). README und `docs/BETRIEB.md` zeigen das

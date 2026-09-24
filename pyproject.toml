@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,10 +9,12 @@ version = "0.20.1"
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
 requires-python = ">=3.12"
-# Bewusst die Tabellenform statt des SPDX-Ausdrucks aus PEP 639: der verlangt setuptools>=77,
-# und gebaut wird auch mit älteren (das CI-Abbild bringt 68 mit). Umstellen, sobald überall
-# eine neuere Fassung liegt — dann `license = "MIT"` + `license-files = ["LICENSE"]`.
-license = { text = "MIT" }
+# SPDX-Ausdruck nach PEP 639 (T-7): Die Tabellenform `{ text = "MIT" }` nimmt setuptools ab dem
+# 18.02.2027 nicht mehr an. Braucht setuptools >= 77 — das liegt seit 2026-09 in jeder Umgebung,
+# in der gebaut wird (CI-Abbild, GitHub-Jobs, isolierter Bau). Der Lizenz-Classifier entfällt:
+# PEP 639 verbietet ihn neben dem Ausdruck.
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "ollornog" }]
 keywords = ["fastapi", "authentication", "auth", "oidc", "webauthn", "passkey", "totp", "2fa",
             "magic-link", "forward-auth", "sso", "session"]
@@ -22,7 +24,6 @@ classifiers = [
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     # Jede hier genannte Fassung wird von der CI auch gefahren — `tests/test_packaging.py`
     # hält beides zusammen. Ein Classifier ist ein Versprechen, keine Hoffnung.
