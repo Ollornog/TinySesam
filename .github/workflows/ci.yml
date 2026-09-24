@@ -117,6 +117,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
         run: pip install -e '.[all]' uvicorn websockets setuptools wheel mypy
+      # Vorher-Stand festhalten: Seit Kit 0.20.1 meldet der Check ohne ihn einen veränderten
+      # Baum nur noch als „nicht entscheidbar" (Exit 2) — der Job würde zwar rot, sagte aber
+      # nicht, dass es die Suite war. Mit dem Stand ist ein Rückstand belegt (Exit 1).
+      - name: Vorher-Stand des Baums
+        run: scripts/_residue_check.sh snapshot > "$RUNNER_TEMP/baum-vorher.txt"
       - name: Erster Lauf
         run: scripts/check.sh
       - name: Zweiter Lauf (muss ebenfalls grün sein)
@@ -125,4 +130,4 @@ jobs:
       # `git status --porcelain`, der `.ci-allow-dirty` nicht kannte — das verbindliche
       # Gate widersprach damit dem lokalen Netz.
       - name: Baum muss unverändert sein
-        run: scripts/_residue_check.sh check
+        run: scripts/_residue_check.sh check --seit "$RUNNER_TEMP/baum-vorher.txt"
