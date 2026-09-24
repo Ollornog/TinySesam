@@ -466,6 +466,10 @@ Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TT
 
 Eigenen Mail-Versand einhängen: fn(to, subject, text, html=None). Überschreibt SMTP.
 
+### `set_owner(user_id: 'int', owner: 'bool') -> 'bool'`
+
+Die Owner-Rolle vergeben (`owner=True`) oder abgeben (`False`). False = kein solches Konto.
+
 ### `set_password(user_id, password)`
 
 Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
@@ -650,4 +654,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-141 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+142 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

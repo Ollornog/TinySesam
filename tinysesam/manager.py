@@ -423,29 +423,11 @@ class TinySesam:
                 "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
                 len(kollisionen), beispiele,
                 " (weitere folgen)" if len(kollisionen) > 3 else "")
-        self._owner_sicherstellen()
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
 
     # ---------- Owner ----------
-    def _owner_sicherstellen(self) -> None:
-        """Gibt es Admins, aber keinen Owner (Bestand vor dem Owner-Modell), wird der älteste
-        Admin Owner — bevorzugt einer, den jemand von Hand gesetzt hat (`is_admin=1`), aktiv und
-        kein Service-Konto. Einmal, laut, mit Zeile im Audit-Log. Ohne Admin bleibt es beim
-        Erst-Admin-Weg, der den ersten Owner mit vergibt (`_erster_owner`)."""
-        if self.store.owner_count() > 0:
-            return
-        kandidaten = sorted((u for u in self.store.list_users() if u["is_admin"] and not u["is_service"]),
-                            key=lambda u: (u["is_admin"] != 1, bool(u["disabled"]), int(u["id"])))
-        if not kandidaten:
-            return
-        u = kandidaten[0]
-        self.store.set_owner(u["id"], True)
-        self.store.audit_log("owner_grant", u["username"], None, "quelle=bestand aeltester_admin")
-        security.seclog.warning("Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner "
-                                "vergibt ein Owner im Admin-Panel.", security.fuer_log(u["username"]))
-
     def _erster_owner(self, user_id) -> None:
         """Der erste Admin einer Instanz wird auch ihr erster Owner (Bootstrap-Wege)."""
         if self.store.owner_count() == 0:

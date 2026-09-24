@@ -527,6 +527,14 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Brute-force throttling:** failed attempts per **user *and* IP** are counted; after `max_login_attempts`
   within the `lockout_window_sec` window the login is locked — this also blocks the *correct* password.
   Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
+- **Owners, idle timeout, encrypted TOTP secrets, IdP revocation:** owners are admins that cannot be
+  deleted, disabled or demoted (at least one, hand-overable, `tinysesam owner` as the emergency
+  path); sessions without "stay signed in" end after 8 h of inactivity (`session_idle_minutes`); TOTP
+  secrets are stored AES-256-GCM-encrypted — **back up the key** (`TINYSESAM_SECRETS_KEY`,
+  `secrets_key_file` or `<db>.key`) separately; an OIDC session re-checks its refresh token every
+  `oidc_session_refresh_minutes` and ends when the provider says no. Details: `docs/BETRIEB.md`.
+- **Lockout notice** (ASVS 6.3.5): with a mailer configured, the verified address of a locked-out
+  account gets one notice per lockout window (opt-out `notify_login_failures=False`).
 - **Consecutive failures, no window** (`account_max_consecutive_failures`, default 100): every
   failed sign-in attempt under a name extends a series; at the limit sign-in is locked — and unlike
   the window thresholds this lock does not expire. It ends with a successful full sign-in over
@@ -1005,7 +1013,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**47 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**48 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

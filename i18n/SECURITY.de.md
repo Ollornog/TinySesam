@@ -81,13 +81,15 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`. Das gilt auch für Änderungen, die ein Admin im Panel an einem fremden Konto
-  vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die Mail also so
-  schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. API-Keys meldet der Hook nur
-  bei der Anlage: Der Widerruf eines Keys (durch den Inhaber, durch einen Admin oder gesammelt beim
-  Reset, bei der Sperre und bei `sessions/revoke` mit `scope=all`) löst kein Ereignis aus und steht
-  nur im Audit-Log. TinySesam verschickt selbst nichts; die Mail geht aus dem Hook (am besten
-  über eine Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
+  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`) und `api_keys_revoked`
+  (`details={"anzahl": n, "grund": …}` — gesammelt beim Reset, bei der Sperre, beim Admin-Passwort
+  und bei `sessions/revoke` mit `scope=all`). Das gilt auch für Änderungen, die ein Admin im Panel an
+  einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die
+  Mail also so schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. Ausser dem Hook
+  verschickt TinySesam mit konfiguriertem Versand genau eine Mail selbst: den Hinweis an die
+  (belegte) Adresse eines Kontos, das wegen Fehlversuchen gesperrt wurde (ASVS 6.3.5; abschaltbar mit
+  `notify_login_failures=False`). Eigene Mails gehen aus dem Hook (am besten über eine
+  Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
   nie rückgängig, landet aber im Sicherheits-Log.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese

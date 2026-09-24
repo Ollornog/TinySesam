@@ -8,7 +8,7 @@ geschieht, steht für Betreiber in `docs/BETRIEB.md` (Ausfallverhalten).
 """
 from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
-from typing import Optional
+from typing import Any, Optional
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -659,7 +659,7 @@ class Store:
                       # NULL = noch nicht gerechnet; weiter unten für den Bestand nachgetragen.
                       # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
                       ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
-                      # 0 für den Bestand; wer Owner wird, entscheidet `TinySesam._owner_sicherstellen`.
+                      # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
@@ -751,6 +751,7 @@ class Store:
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -844,6 +845,30 @@ class Store:
         if not (zahl.isascii() and zahl.isdigit()) or zahl != str(int(zahl)):
             return None
         return int(zahl)
+
+    def _owner_nachziehen(self) -> None:
+        """Gibt es Admins, aber keinen Owner (Bestand vor dem Owner-Modell), wird der älteste Admin
+        Owner — bevorzugt einer, den jemand von Hand gesetzt hat (`is_admin=1`), aktiv und kein
+        Service-Konto. Einmal, mit Zeile im Audit-Log. Läuft in der Migration (unter der
+        Schreibsperre, direkt auf der Verbindung) — VOR der Wasserlinie der Bestandsschritte, damit
+        ihre eigene Zeile nicht als „neu seit dem letzten Start" gilt. Ohne Admin bleibt es beim
+        Erst-Admin-Weg, der den ersten Owner mit vergibt."""
+        spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
+        if "is_owner" not in spalten:
+            return
+        if self.db.execute("SELECT 1 FROM users WHERE is_owner=1 LIMIT 1").fetchone():
+            return
+        u = self.db.execute(
+            "SELECT id, username FROM users WHERE is_admin <> 0 AND is_service = 0 "
+            "ORDER BY (is_admin <> 1), (disabled <> 0), id LIMIT 1").fetchone()
+        if u is None:
+            return
+        self.db.execute("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (u["id"],))
+        self.db.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                        (_now(), "owner_grant", u["username"], None, "quelle=bestand aeltester_admin"))
+        logging.getLogger("tinysesam").warning(
+            "Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner vergibt ein Owner im "
+            "Admin-Panel.", u["username"])
 
     def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
         """Bestandsdaten auf Schema 10 heben (ohne Commit, unter `_lock` — Teil von `_migrate`).
@@ -1439,7 +1464,7 @@ class Store:
     # ---------- TOTP ----------
     #: Ver-/Entschlüsselung der TOTP-Geheimnisse (H-14/H-15, `geheimnis.Tresor`). Setzt der Manager;
     #: ein Store ohne Tresor (CLI-Werkzeuge) fasst die Geheimnisse nicht an.
-    tresor = None
+    tresor: Any = None
 
     def set_totp(self, user_id, secret, confirmed=False):
         # `last_step` gehört zum Geheimnis: Ein neues beginnt ohne verbrauchten Schritt. Sonst

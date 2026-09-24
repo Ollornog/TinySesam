@@ -77,11 +77,13 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`. That includes changes an administrator makes to someone else's account in the
-  panel (password reset, issuing an API key, revoking a passkey) — write the mail so it does not
-  assume the holder did it. API keys are reported only when created: revoking one (by the holder,
-  by an administrator, or in bulk on a reset, a block or `sessions/revoke` with `scope=all`) raises
-  no event and shows up in the audit log only. TinySesam sends nothing itself; send the mail from
+  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`) and `api_keys_revoked`
+  (`details={"anzahl": n, "grund": …}` — in bulk on a reset, a block, an admin password reset or
+  `sessions/revoke` with `scope=all`). That includes changes an administrator makes to someone
+  else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
+  mail so it does not assume the holder did it. Apart from the hook, TinySesam sends one mail itself
+  when a mailer is configured: a notice to the (verified) address of an account that got locked by
+  failed sign-in attempts (ASVS 6.3.5; opt-out `notify_login_failures=False`). Send your mails from
   the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
   never undoes the change, but lands in the security log.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the

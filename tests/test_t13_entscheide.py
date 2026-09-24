@@ -624,6 +624,8 @@ for _ in range(a635.sec("max_login_attempts") + 2):
 a635._hinweis_ausgang.abwarten()
 r.check("ASVS 6.3.5: bei konfiguriertem Versand bekommt die Inhaberin einen Hinweis (Vorgabe an, opt-out)",
         len(post635) == 1 and post635[0][0] == "inhaberin@example.com", str(post635))
+r.check("… der Hinweis trägt keinen Link (es gibt keine Basis, die ein Angreifer biegen könnte)",
+        post635 and "://" not in post635[0][2], post635[0][2][:120] if post635 else "")
 r.check("… genau einen je Sperrfenster, nicht einen je abgewiesenem Versuch",
         len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
 for _ in range(a635.sec("max_login_attempts") + 2):

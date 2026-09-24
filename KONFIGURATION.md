@@ -123,12 +123,14 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `smtp_timeout` | `int` | `15` | Sekunden, bis ein hängender Mailserver aufgibt |
 | `smtp_ca_file` | `str` | `""` | eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer |
 | `mail_subject_prefix` | `str` | `""` | optionaler Betreff-Präfix, z.B. "[MeineApp] " |
+| `notify_login_failures` | `bool` | `True` | Den Inhaber benachrichtigen, wenn sein Konto wegen Fehlversuchen gesperrt wird (ASVS 6.3.5, B1-12). Wirkt nur mit konfiguriertem Versand und nur an eine BELEGTE Adresse; höchstens ein Hinweis je Konto und Sperrfenster. Opt-out: False. |
 
 ## TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent)
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `totp_enabled` | `bool` | `True` | User dürfen TOTP einrichten |
+| `secrets_key_file` | `str` | `""` | Schlüsseldatei für die Verschlüsselung der TOTP-Geheimnisse (H-14/H-15; 32 Byte, Base64). Vorrang hat die Umgebungsvariable TINYSESAM_SECRETS_KEY; ohne beides legt TinySesam `<db_path>.key` an (0600). Ohne Schlüssel sind alle TOTP-Einrichtungen verloren — getrennt von der Datenbank sichern (docs/BETRIEB.md). |
 | `totp_required` | `bool` | `False` | ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
 | `recovery_code_count` | `int` | `10` | Anzahl Einmal-Recovery-Codes je Erzeugung (verlorener Authenticator) |
 
@@ -162,6 +164,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `session_ttl_hours` | `int` | `24 * 7` | TTL bei „Angemeldet bleiben" (persistentes Cookie) |
 | `session_ttl_transient_hours` | `int` | `12` | TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen) |
 | `remember_me_enabled` | `bool` | `True` | „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent) |
+| `session_idle_minutes` | `int` | `8 * 60` | Inaktivität ohne „Angemeldet bleiben" (Minuten, 0 = aus) |
+| `session_idle_minutes_remember` | `int` | `0` | Inaktivität MIT „Angemeldet bleiben" (Minuten, 0 = aus) |
 | `cookie_secure` | `bool` | `True` | nur über HTTPS senden |
 | `cookie_samesite` | `str` | `"lax"` | lax\|strict\|none |
 | `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
@@ -226,6 +230,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `oidc_clients` | `dict` | `dict` | Geschützter Host → eigener OIDC-Client beim selben Provider. Leer = eine Anwendung, der Einzel-Client oben gilt für alles (Verhalten bis 0.18.0, unverändert). Warum überhaupt: Wer in welche Anwendung darf, entscheidet der **Provider** — bei PocketID über die Gruppenfreigabe je OIDC-Client. Diese Freigabe hängt am Client, nicht am Benutzer. Mit einem einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen: Wer bei irgendeiner drin ist, ist bei allen drin. Die bisherige Abhilfe war eine eigene TinySesam-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs für dieselben Menschen. Aufbau je Eintrag: ``{"app.example.com": {"client_id": "...", "client_secret": "...", "scopes": "openid profile email", "allowed_groups": [...], "group_role_map": {...}}}``. Fehlt ein optionaler Schlüssel, gilt der Wert des Einzel-Clients. Der **Issuer ist für alle Clients derselbe** — mehrere Provider in einer Instanz sind nicht vorgesehen, und die Konfigurationsprüfung sagt das auch. |
 | `oidc_revalidate_minutes` | `int` | `0` | Nach wie vielen Minuten eine erteilte Freigabe beim Provider nachgeprüft wird. 0 = nie (Verhalten bis 0.18.0). Der Provider entscheidet über die Freigabe, also muss ein Entzug dort auch ankommen: Ohne Nachprüfung gilt sie bis zum Ablauf der Sitzung — in der Vorgabe sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab, ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt. ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen. |
+| `oidc_session_refresh_minutes` | `int` | `15` | Widerruf folgt dem Provider (4a): Alle so viele Minuten tauscht TinySesam bei der nächsten Anfrage das Refresh-Token der OIDC-Sitzung. Verweigert der Provider (gesperrt, gelöscht, der Anwendung entzogen), endet die Sitzung; Gruppen und das vom Provider vergebene Admin-Flag werden dabei neu bewertet. Ein nicht erreichbarer Provider meldet niemanden ab. Braucht einen Provider, der Refresh-Tokens ausgibt (ggf. Scope `offline_access`). 0 = aus. |
 
 ## SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …)
 
@@ -276,4 +281,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-141 Felder, erzeugt aus `tinysesam/config.py`.
+146 Felder, erzeugt aus `tinysesam/config.py`.

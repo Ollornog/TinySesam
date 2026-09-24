@@ -220,8 +220,8 @@ class TinySesamConfig:
     #: Sitzung gestellt hat, ist abgemeldet — zusätzlich zur absoluten Laufzeit oben. 0 = aus.
     #: Vorgabe 8 h für Sitzungen OHNE „Angemeldet bleiben"; mit gilt die zweite Zahl (Vorgabe aus:
     #: wer „Angemeldet bleiben" wählt, hat die lange Sitzung ausdrücklich gewollt).
-    session_idle_minutes: int = 8 * 60
-    session_idle_minutes_remember: int = 0
+    session_idle_minutes: int = 8 * 60        # Inaktivität ohne „Angemeldet bleiben" (Minuten, 0 = aus)
+    session_idle_minutes_remember: int = 0    # Inaktivität MIT „Angemeldet bleiben" (Minuten, 0 = aus)
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten
