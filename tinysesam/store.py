@@ -648,9 +648,11 @@ class Store:
             # einen 500. Die Serien darin gehen verloren; das ist der kleinere Schaden.
             _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(fehlserie)")}
             if _fs and "art" not in _fs:
+                ddl = re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);", SCHEMA, re.S)
+                if ddl is None:     # steht in SCHEMA; fehlt sie dort, ist das ein Fehler hier
+                    raise RuntimeError("SCHEMA enthält keine Tabelle fehlserie")
                 self.db.execute("DROP TABLE fehlserie")
-                self.db.execute(re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);",
-                                          SCHEMA, re.S).group(0))
+                self.db.execute(ddl.group(0))
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in cols:
