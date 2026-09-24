@@ -46,10 +46,18 @@ import _artefakte_normalisieren  # noqa: E402
 # Ohne setuptools lässt sich nichts bauen — und ohne Bau prüft dieser Test nichts. Ein
 # stilles „übersprungen" wäre hier die schlechteste Antwort: Es sähe grün aus und wäre leer.
 try:
+    import setuptools
     from setuptools import build_meta
 except ImportError:  # pragma: no cover
     print("  setuptools fehlt — ohne Bau-Backend ist diese Suite nicht aussagekräftig.")
     print("  → pip install setuptools wheel")
+    sys.exit(1)
+# Der SPDX-Lizenzausdruck (PEP 639, T-7) braucht setuptools >= 77. Mit einem älteren scheitert
+# der Bau unten mit einer Meldung über `project.license`, die niemand auf die Version bezieht —
+# deshalb hier laut und mit dem Grund.
+if int(setuptools.__version__.split(".")[0]) < 77:  # pragma: no cover
+    print(f"  setuptools {setuptools.__version__} ist zu alt — der Lizenzausdruck braucht >= 77.")
+    print("  → pip install -U setuptools")
     sys.exit(1)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,14 +171,13 @@ try:
 
     assert f"tinysesam-{VERSION}.dist-info/entry_points.txt" in wheel_dateien, \
         "das Konsolenkommando `tinysesam` fehlt im Wheel"
-    # WO die Lizenz liegt, hängt am Bau-Werkzeug: bis setuptools 76 direkt im `dist-info`,
-    # ab 77 (PEP 639) unter `dist-info/licenses/`. Beides ist richtig — nur fehlen darf sie nicht.
-    # Genau daran ist dieser Test beim ersten CI-Lauf gescheitert: lokal baut ein älteres
-    # setuptools als auf dem Runner, und eine Zusage, die nur eine der beiden Fassungen kennt,
-    # prüft in Wahrheit die Version des Werkzeugs.
-    lizenzen = [n for n in wheel_dateien if ".dist-info/" in n and "LICENSE" in n.upper()]
-    assert lizenzen, ("die Lizenz liegt nicht im Wheel — erwartet unter <name>.dist-info/LICENSE "
-                      "(setuptools < 77) oder <name>.dist-info/licenses/LICENSE (ab 77)")
+    # Seit T-7 (setuptools >= 77, PEP 639) liegt die Lizenz unter `dist-info/licenses/`, und die
+    # Metadaten nennen sie als `License-File`. Bis dahin lag sie je nach Bau-Werkzeug direkt im
+    # `dist-info` — der Test kannte beide Orte, weil lokal ein älteres setuptools baute.
+    lizenzen = [n for n in wheel_dateien if ".dist-info/licenses/" in n and "LICENSE" in n.upper()]
+    assert lizenzen, "die Lizenz liegt nicht im Wheel — erwartet unter <name>.dist-info/licenses/LICENSE"
+    assert "LICENSE" in (META.get_all("License-File") or []), \
+        f"die Metadaten nennen die Lizenzdatei nicht (License-File: {META.get_all('License-File')})"
     ok(f"Wheel enthält Konsolenkommando und Lizenz ({lizenzen[0].split('.dist-info/')[1]})")
 
     # ---------- Version: eine Zahl, überall dieselbe ----------
@@ -266,7 +273,10 @@ try:
         assert pflicht in urls, f"[project.urls] ohne '{pflicht}' — die Leiste im Index bleibt leer"
         assert urls[pflicht].startswith("https://"), f"{pflicht} zeigt nicht auf https"
     assert META["Summary"] and len(META["Summary"]) > 20, "Kurzbeschreibung fehlt oder ist zu knapp"
-    assert "MIT" in " ".join(KLASSEN), "Lizenz-Classifier fehlt"
+    # Die Lizenz steht als SPDX-Ausdruck in den Metadaten (PEP 639) — und NICHT zusätzlich als
+    # Classifier: Beides nebeneinander lehnt PEP 639 ab, und der Index zeigt sonst zwei Quellen.
+    assert META["License-Expression"] == "MIT", f"License-Expression ist {META['License-Expression']!r}"
+    assert not [k for k in KLASSEN if k.startswith("License ::")], "Lizenz-Classifier neben dem SPDX-Ausdruck"
     ok(f"Projektseite vollständig: {', '.join(sorted(urls))}")
 
     # ---------- Die lange Beschreibung wird gerendert, nicht als Text abgeladen ----------
