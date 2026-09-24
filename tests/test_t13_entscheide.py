@@ -472,6 +472,37 @@ r.check("F-05: wer aktiv ist, bleibt drin (50 + 50 min, aber nie 60 am Stück)",
 # (Mutationsproben: die Leerlauf-Prüfung in `get_session` streichen → „nach 8 h … weg" rot; das
 #  Nachschreiben von `zuletzt` streichen → „wer aktiv ist, bleibt drin" rot.)
 
+# Die Wahl übersteht den Abschluss einer Kette: Passwort (mit Haken) → TOTP legt eine NEUE volle
+# Sitzung an (Rechtewechsel, neues Token); `_nachfolger` trägt die Wahl hinüber. Ohne das fiele
+# jede „Angemeldet bleiben"-Sitzung mit zweitem Faktor still auf die 8-h-Grenze zurück.
+import time as _uhr_k  # noqa: E402
+
+import pyotp as _pyotp  # noqa: E402
+auth_k, app_k = _app(login_chain=["password", "totp"])
+
+
+@app_k.get("/drin")
+def _drin_k(user=Depends(auth_k.require())):
+    return {"ok": True}
+
+
+uid_k = auth_k.create_user("zweifach", password=PW)
+_geheim_k = auth_k.totp_begin(uid_k)["secret"]
+auth_k.totp_confirm(uid_k, _pyotp.TOTP(_geheim_k).at(_uhr_k.time() - 30))
+ckk = TestClient(app_k)
+ckk.post("/auth/login", data={"username": "zweifach", "password": PW, "remember": "1"}, follow_redirects=False)
+_halb_k = auth_k.store._one("SELECT token_hash, bleiben_gewaehlt FROM session")
+ckk.post("/auth/totp", data={"code": _pyotp.TOTP(_geheim_k).now(), "next": "/"}, follow_redirects=False)
+_voll_k = auth_k.store._all("SELECT token_hash, bleiben_gewaehlt, mfa_ok FROM session")
+r.check("F-05: „Angemeldet bleiben“ übersteht den zweiten Faktor (neue volle Sitzung trägt die Wahl)",
+        _halb_k["bleiben_gewaehlt"] == 1 and len(_voll_k) == 1
+        and _voll_k[0]["token_hash"] != _halb_k["token_hash"] and _voll_k[0]["bleiben_gewaehlt"] == 1,
+        str([dict(z) for z in _voll_k]))
+auth_k.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+r.check("… und damit gilt nach Passwort + TOTP weiter nur die absolute Laufzeit",
+        ckk.get("/drin", follow_redirects=False).status_code == 200)
+# (Mutationsprobe: die Übertragung in `_nachfolger` streichen → beide rot.)
+
 # ── Grenzen a–e aus dem Integrationsangriff (PO: bauen) ─────────────────────────────────
 import re as _re  # noqa: E402
 import pyotp  # noqa: E402

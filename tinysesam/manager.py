@@ -2877,14 +2877,16 @@ class TinySesam:
     def _nachfolger(self, alte_zeile, neu_token) -> None:
         """Was an der halben Sitzung hängt, geht auf die volle über, die sie ersetzt — VOR dem
         Löschen der alten: die OIDC-Zeilen (4a, sonst nähme der Fremdschlüssel sie mit) und die
-        ausdrückliche Wahl „Angemeldet bleiben" (F-05)."""
+        ausdrückliche Wahl „Angemeldet bleiben" (F-05).
+
+        `alte_zeile` ist eine ganze Zeile aus `get_session` (`SELECT *`); die Spalte gibt es seit
+        der Migration auf Schema 11 immer. Fehlte sie doch, soll das laut scheitern — ein
+        stilles Übergehen verlöre die Wahl und damit die lange Leerlauf-Frist, ohne dass es
+        jemand merkt."""
         neu = self.store.session_hash(neu_token)
         self.store.oidc_sitzung_umhaengen(alte_zeile["token_hash"], neu)
-        try:
-            if alte_zeile["bleiben_gewaehlt"]:
-                self.store.set_session_bleiben(neu)
-        except (IndexError, KeyError):
-            pass
+        if alte_zeile["bleiben_gewaehlt"]:
+            self.store.set_session_bleiben(neu)
 
     def _andere_nach_abschluss(self, alte_zeile, neu_token) -> None:
         """War an der halben Sitzung vermerkt, die übrigen zu beenden (Grenze d), dann jetzt — mit
@@ -2893,12 +2895,9 @@ class TinySesam:
         Anlass: Die Pflicht-Einrichtung von TOTP mitten in einer Kette (`password → totp → pin`)
         endet mit einer HALBEN Sitzung, und eine halbe darf die übrigen nicht beenden. Das Angebot
         nach ASVS 7.4.3 entfiel dort bisher ganz. Jetzt fragt die Seite wie sonst auch, und die
-        Zustimmung wird hier eingelöst, sobald die Anmeldung vollständig ist."""
-        try:
-            gewollt = bool(alte_zeile["andere_beenden"])
-        except (IndexError, KeyError):
-            gewollt = False
-        if not gewollt:
+        Zustimmung wird hier eingelöst, sobald die Anmeldung vollständig ist. Die Spalte gibt es
+        seit Schema 11 immer (wie bei `_nachfolger`: fehlt sie, scheitert es laut)."""
+        if not alte_zeile["andere_beenden"]:
             return
         self.store.delete_user_sessions_except(alte_zeile["user_id"], self.store.session_hash(neu_token))
         u = self.store.get_user(alte_zeile["user_id"])

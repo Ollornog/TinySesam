@@ -76,7 +76,7 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
         with open(pfad, encoding="ascii") as f:
             return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     except FileNotFoundError:
-        pass
+        pass              # erster Start: es gibt noch keine — sie wird gleich angelegt
     # Atomar und exklusiv anlegen: erst eine vollständige Zwischendatei (0600, fsync), dann ein
     # Hardlink auf den Zielnamen — der gelingt genau einem Prozess. Mehrere Worker, die gleichzeitig
     # zum ersten Mal starten, lasen sonst eine halb geschriebene Datei oder scheiterten am
@@ -96,6 +96,10 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
             with open(pfad, encoding="ascii") as f:
                 return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     finally:
+        # Die Zwischendatei hat ihren Zweck erfüllt (gelinkt oder verloren) — weg damit; der Link
+        # lässt sie stehen, im Normalfall liegt sie also noch da. Fehlt sie trotzdem (ein fremder
+        # Aufräumer im Verzeichnis), ist nichts zu tun: Ziel war nur, dass sie nicht bleibt. Und
+        # ein Fehler hier darf die Ausnahme aus dem `try` nicht verdecken.
         try:
             os.unlink(zwischen)
         except FileNotFoundError:
