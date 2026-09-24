@@ -173,14 +173,17 @@ def build_router(auth) -> APIRouter:
     @r.get("/auth/totp", response_class=HTMLResponse)
     def totp_page(request: Request, next: str = "/", error: str = ""):
         nxt = auth.safe_next(next)
-        user = auth.pending_user(request) or auth.current_user(request)
+        # Das Konto aus dem Cookie, wie beim Absenden (0.20.1, `session_user`): Ein API-Key hat
+        # hier keinen TOTP-Schritt.
+        voll = auth.session_user(request)
+        user = auth.pending_user(request) or voll
         if not user:
             return RedirectResponse(cfg.login_path, 303)
         if not auth.store.has_confirmed_totp(user["id"]):
             # Faktor totp verlangt, aber nicht eingerichtet → zur Einrichtung. Erlaubt ist das
             # für voll Angemeldete und für den Ketten-Fall (siehe totp_enrollment_user) — sonst
             # wäre login_chain=["password","totp"] für jedes Konto ohne TOTP eine Sackgasse.
-            if auth.current_user(request) or auth.totp_enrollment_user(request):
+            if voll or auth.totp_enrollment_user(request):
                 return RedirectResponse(f"/auth/totp/setup?next={_q(nxt)}", 303)
             return RedirectResponse(cfg.login_path, 303)
         return auth.render_page("totp", request=request, next=nxt, error=error)
@@ -193,7 +196,10 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("totp", status=400, request=request, next=nxt,
                                     error=auth.t("err.required"))
         s = auth.session_from_request(request)
-        pu = auth.pending_user(request) or auth.current_user(request)
+        # Geprüft wird der Code des Kontos, dessen Sitzung danach weiterkommt — beide aus dem
+        # Cookie (0.20.1, `session_user`). `current_user()` fiel hier auf einen API-Key zurück,
+        # wenn das Konto der Sitzung gesperrt war; dann hätte der Code des Key-Kontos gezählt.
+        pu = auth.pending_user(request) or auth.session_user(request)
         if not s or not pu:
             return RedirectResponse(cfg.login_path, 303)
         ip = auth.client_ip(request)
@@ -264,14 +270,17 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/totp/setup")
     def totp_setup_confirm(request: Request, code: str = Form(...), next: str = Form("/")):
         auth.require_csrf(request, request.headers.get("x-csrf-token"))
-        voll = auth.current_user(request)
+        # Beide Konten aus dem Cookie (0.20.1, `session_user`): Der Einschreibungs-Zweig unten
+        # schliesst mit `complete_totp` die Sitzung ab.
+        voll = auth.session_user(request)
         # Vor der Bestätigung fragen — danach hat das Konto ein bestätigtes TOTP, und
         # `totp_enrollment_user` sagt None.
         einschreibung = None if voll else auth.totp_enrollment_user(request)
-        u = voll or einschreibung
-        if not u:
-            raise HTTPException(401)
-        auth.require_session(request, u)   # wie beim GET: kein Maschinen-Credential
+        # Ohne beides: ein API-Key bekommt die Absage mit Grund (403 `api.needs_session`, wie
+        # beim GET), wer gar nichts vorzeigt, die übliche Absage von `require_session` (401;
+        # nur ein Aufruf mit `Accept: text/html` wird zur Anmeldung geleitet — das Formular
+        # der Seite schickt per `fetch`, also ohne).
+        u = auth.require_session(request, voll or einschreibung)
         # Wie GET und /start (A-4): Ein aktives TOTP wird hier nicht „noch einmal bestätigt".
         # Sonst meldete die Stelle `totp_enabled` für nichts und prüfte nebenbei Codes des
         # aktiven Faktors mit eigenem Versuchstopf.
@@ -347,7 +356,7 @@ def build_router(auth) -> APIRouter:
             """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) ohne Benutzerfeld;
             für Gäste als eigenständige Seite — die Login-Seite bietet die PIN ohnehin an."""
             nxt = auth.safe_next(next)
-            u = auth.current_user(request)
+            u = auth.session_user(request)    # wie beim Absenden: ein API-Key ist ein Gast
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
             if not cfg.pin_login:
@@ -363,7 +372,13 @@ def build_router(auth) -> APIRouter:
             remember_me = _remember(cfg, remember)
             ip = auth.client_ip(request)
             # Schon eingeloggt → die PIN gehört zur laufenden Sitzung, kein Benutzerfeld nötig.
-            me = auth.current_user(request)
+            # „Eingeloggt" heisst hier: eine volle SITZUNG (0.20.1, `session_user`). Mit
+            # `current_user()` galt eine reine API-Key-Anfrage als eingeloggt — der Riegel
+            # `pin_login=False` unten griff nicht, geprüft wurde die PIN des Key-Kontos, und
+            # `apply_factor` legte mangels Sitzung eine neue, volle an: Automaten-Key + PIN
+            # ergaben eine interaktive Sitzung samt Admin-Flag, das der Key allein nie trägt.
+            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_login`.
+            me = auth.session_user(request)
             page = "pin" if me else "login"
 
             def fail(msg, status):
@@ -628,29 +643,29 @@ def build_router(auth) -> APIRouter:
         return RedirectResponse(cfg.admin_path, 303)
 
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
-    def _nur_sitzung(u):
-        """Bestätigt wird eine Sitzung, nie ein API-Key (0.20.1).
+    def _nur_sitzung(request: Request):
+        """Das Konto, dessen Sitzung hier bestätigt wird — aus der Sitzung, nie aus einem API-Key (0.20.1).
 
-        Die Route prüft den Faktor des Kontos aus `current_user()` und frischt danach die Sitzung
-        aus dem Cookie auf. Bei einer HALBEN Sitzung (erster Faktor ja, TOTP offen) fällt
+        Die Route prüfte den Faktor des Kontos aus `current_user()` und frischte danach die
+        Sitzung aus dem Cookie auf. Bei einer HALBEN Sitzung (erster Faktor ja, TOTP offen) fällt
         `current_user()` auf den API-Key zurück — geprüft wurde dann das Konto des Keys, voll
         gemacht die Sitzung aus dem Cookie: Die halbe Sitzung eines anderen wurde mit dem eigenen
         Key und dem eigenen Passwort voll, und im eigenen Konto ersetzten Automaten-Key und Passwort
-        den zweiten Faktor (samt dem Admin-Flag, das der Key allein nicht trägt). Frische kann ein
-        Key ohnehin nie erreichen (`stepup_fresh`); kommt das Konto nicht aus der Sitzung, gibt es
-        hier nichts zu bestätigen. Kommt es aus ihr, dann aus der VOLLEN Sitzung eben dieses Cookies
-        — derselben, die unten auffrischt. `!= "session"` statt `== "apikey"`: fail-closed für jede
-        Herkunft, die es heute nicht gibt.
+        den zweiten Faktor (samt dem Admin-Flag, das der Key allein nicht trägt). Jetzt kommt das
+        Konto aus `session_user()` — der VOLLEN Sitzung eben dieses Cookies, derselben, die unten
+        auffrischt. Frische kann ein Key ohnehin nie erreichen (`stepup_fresh`); zeigt die Anfrage
+        ohne Sitzung einen vor, sagt die Antwort das (403) statt auf die Login-Seite zu leiten.
         """
-        if u.get("_via") != "session":
+        u = auth.session_user(request)
+        if u is None and cfg.apikey_enabled and auth._extract_api_key(request):
             raise HTTPException(403, auth.t("api.stepup_session"))
+        return u
 
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):
-        u = auth.current_user(request)
+        u = _nur_sitzung(request)
         if not u:
             return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
-        _nur_sitzung(u)
         methods = auth.stepup_options(u)
         # Leere Liste heisst `stepup_strict=True` und nichts Passendes eingerichtet. Ohne eigene
         # Meldung stünde hier eine Seite ohne einziges Eingabefeld — der Nutzer sähe nicht, was
@@ -663,10 +678,9 @@ def build_router(auth) -> APIRouter:
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
                       next: str = Form("/"), csrf_tok: str = Form("", alias="_csrf")):
         auth.require_csrf(request, csrf_tok)
-        u = auth.current_user(request)
+        u = _nur_sitzung(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
-        _nur_sitzung(u)
         nxt = auth.safe_next(next)
         ip = auth.client_ip(request)
         methods = auth.stepup_options(u)
@@ -1183,7 +1197,9 @@ def build_router(auth) -> APIRouter:
 
     # ---------- Logout / me ----------
     def _abmelden(request: Request):
-        u = auth.current_user(request) or auth.pending_user(request)
+        # Protokolliert wird das Konto, dessen Sitzung hier endet — aus dem Cookie (0.20.1,
+        # `session_user`), nicht das eines mitgeschickten API-Keys.
+        u = auth.session_user(request) or auth.pending_user(request)
         # OIDC-Provider-Logout (optional): vor dem lokalen Logout prüfen, ob die Sitzung via OIDC lief
         oidc_logout_url = None
         if cfg.oidc_rp_logout and auth.oidc:

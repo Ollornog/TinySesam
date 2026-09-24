@@ -7,7 +7,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 Nachschlag zu 0.20.0. Zwei Abnehmer haben beim Heben Befunde **in** TinySesam gemeldet: Beide
 mussten für das CSRF-Cookie ihrer eigenen Seiten TinySesam nachbauen, und die Zusage „frisches
 CSRF-Token beim Login" galt nur am Ende eines TOTP-Schritts. Der Angriff auf diese Änderungen fand
-dazu eine vorbestehende Lücke im Step-up (`/auth/reauth`, siehe „Sicherheit"). Kein
+dazu eine vorbestehende Lücke im Step-up (`/auth/reauth`, siehe „Sicherheit"), eine zweite Runde
+dieselbe Klasse in `/auth/pin`: Aus Automaten-Key und PIN wurde eine volle Admin-Sitzung. Kein
 Schema-Wechsel, keine neue Konfiguration.
 
 **Vor dem Update:** nichts einzustellen. Zu wissen:
@@ -26,9 +27,22 @@ Schema-Wechsel, keine neue Konfiguration.
    ein Key dort nie etwas — Step-up-Frische erreicht er nicht —, aber die Route nahm ihn an und
    liess sich damit missbrauchen (siehe „Sicherheit"). Wer sie aus einer Automatik ruft, erhält
    jetzt die Abweisung statt einer wirkungslosen 303.
+4. **Für `/auth/pin` ist ein API-Key ein Gast.** Ohne volle Sitzung antwortet der POST bei
+   `pin_login=False` mit 404 und der GET leitet zur Anmeldung; bei `pin_login=True` braucht die
+   PIN das Benutzerfeld wie bei jedem Gast. Als Zusatzfaktor ohne Benutzerfeld gilt die PIN nur
+   noch für eine Sitzung. Dasselbe gilt für den TOTP-Schritt, die TOTP-Einrichtung und das
+   Abmelden: Sie sehen nur das Konto aus dem Cookie. **Eigene Routen**, die `apply_factor()` für
+   „das angemeldete Konto" rufen oder die Sitzung auffrischen, nehmen das Konto aus dem neuen
+   `auth.session_user(request)` statt aus `current_user()` (siehe „Sicherheit").
 
 ### Hinzugefügt
 
+- **`auth.session_user(request) -> Optional[dict]`** — das Konto der vollen Sitzung dieses
+  Requests, nie aus einem API-Key; eine halbe Sitzung liefert None (die liest `pending_user()`).
+  `current_user()` fällt ohne volle Sitzung auf den Key zurück und ist damit die falsche Quelle
+  für jede Stelle, die einen Faktor auf die Sitzung anwendet (`apply_factor`, `complete_totp`),
+  sie auffrischt oder beendet (siehe „Sicherheit"). Die eingebauten Routen nehmen das Konto dort
+  seitdem von hier; die Regel steht im Docstring beider Methoden.
 - **`auth.ensure_csrf(request, response) -> str`** — ein gültiges CSRF-Cookie sicherstellen und
   das Token fürs Formular holen, ohne TinySesam nachzubauen. Ein vorhandenes, gültiges Token
   bleibt (keine Set-Cookie-Zeile, die Formulare anderer Reiter gelten weiter); sonst setzt es ein
@@ -92,6 +106,29 @@ Schema-Wechsel, keine neue Konfiguration.
   403 (`api.stepup_session`), bevor ein Faktor geprüft wird; ein Key kann Step-up-Frische
   ohnehin nie erreichen (`stepup_fresh()`). `tests/test_stepup.py` stellt beide Wege nach und
   prüft, dass der Step-up einer vollen Sitzung per TOTP weiterläuft.
+- **`/auth/pin` machte aus Automaten-Key und PIN eine volle Admin-Sitzung — auch bei
+  `pin_login=False`** (vorbestehend, nachgestellt auf 0.20.0; zweite Angriffsrunde gegen 0.20.1,
+  dieselbe Klasse wie `/auth/reauth` darüber). `pin_submit` las „schon angemeldet" aus
+  `current_user()`, und das fällt ohne volle Sitzung auf den API-Key zurück. Eine reine
+  Key-Anfrage ohne Cookie galt damit als angemeldet: Der Riegel `pin_login=False` („die PIN ist
+  kein Erstfaktor") griff nicht, geprüft wurde die PIN des Key-Kontos, und `apply_factor()` legte
+  mangels Sitzung eine neue, volle an — samt dem Admin-Flag, das ein Automaten-Key nie trägt
+  (R6-5), und damit Admin-Panel, Schlüsselverwaltung und Faktor-Anlage. Mit der halben Sitzung
+  einer anderen Person im Cookie ersetzte dieselbe Anfrage deren Cookie. Voraussetzung waren ein
+  gültiger Key (`apikey_enabled`), `pin_enabled` und die PIN des Key-Kontos; bei `pin_login=True`
+  ist die PIN ohnehin ein Erstfaktor, der Key brachte dort nichts. **Jetzt zentral statt je
+  Route:** Das Konto einer Stelle mit Sitzungswirkung kommt aus `auth.session_user()` (neu, siehe
+  „Hinzugefügt"), für die ein Key „nicht angemeldet" ist — in `/auth/pin` (GET und POST),
+  `/auth/reauth` (der Riegel von oben läuft jetzt darüber), dem TOTP-Schritt, der
+  TOTP-Einrichtung und dem Abmelden. Beim Durchgehen der Klasse fielen zwei harmlosere Stellen
+  mit auf: Der TOTP-Schritt prüfte auf der vollen Sitzung eines gesperrten Kontos den Code des
+  Key-Kontos, und das Abmelden protokollierte bei Key ohne Sitzung dessen Konto. Ein Wächter in
+  `tests/test_stepup.py` liest jede Funktion des Pakets: Wer eine Sitzung anlegt, ihr einen
+  Faktor anhängt, sie auffrischt oder beendet, darf sein Konto weder direkt noch über einen
+  lokalen Helfer aus `current_user()`, `require_user()`, `require_role()` oder `require_admin()`
+  nehmen; Selbstproben halten fest, dass er jede zugesagte Form auch sieht. Die Verhaltensprobe
+  daneben stellt den Weg nach (Key + PIN → 404, keine Sitzung, kein Admin; halbe fremde Sitzung
+  bleibt unverändert; die PIN als Zusatzfaktor einer vollen Sitzung läuft weiter).
 
 ### Behoben
 

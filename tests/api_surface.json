@@ -109,6 +109,7 @@
     "send_signup_notice": "(email, base_url) -> 'bool'",
     "send_verify_email": "(user_id, email, base_url) -> 'bool'",
     "session_from_request": "(request)",
+    "session_user": "(request) -> 'Optional[dict]'",
     "set_cookie": "(response, token, remember: 'Optional[bool]' = None)",
     "set_mailer": "(fn)",
     "set_password": "(user_id, password)",

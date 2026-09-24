@@ -1,5 +1,7 @@
 """Phase 2: Step-up / per-Route-MFA (Flag am Guard), Reauth-Frische, admin_require_mfa."""
+import ast
 import os
+import pathlib
 import re
 import tempfile, os, time
 from fastapi import FastAPI, Depends
@@ -665,7 +667,10 @@ os.remove(db6)
 # Ein API-Key kann Step-up-Frische ohnehin nie erreichen (`stepup_fresh`), die Route hat für
 # ihn nichts zu bestätigen: 403 `api.stepup_session`, bevor ein Faktor geprüft wird.
 # (Mutationsprobe: den Riegel in `reauth_submit` streichen → (a) und (b) rot; den in
-# `reauth_page` streichen → der GET-Teil rot.)
+# `reauth_page` streichen → der GET-Teil rot. Seit der zweiten Runde ist der Riegel
+# `_nur_sitzung(request)` mit `session_user()`: dort wieder `current_user()` in
+# `reauth_submit` → (a) rot und der Wächter unten; in `reauth_page` → der GET-Teil rot; die 403
+# in `_nur_sitzung` gestrichen → (a) rot.)
 db7 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth7 = TinySesam(TinySesamConfig(lang="de", db_path=db7, rp_name="Test", cookie_secure=False,
                                   oidc_enabled=False, passkey_enabled=False, apikey_enabled=True))
@@ -746,6 +751,189 @@ s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
 assert s and s["mfa_ok"] and int(time.time()) - s["mfa_at"] < 60, "Step-up hat die Sitzung nicht aufgefrischt"
 ok("0.20.1: Step-up einer vollen Sitzung per TOTP läuft weiter")
 os.remove(db7)
+
+# ---------- 0.20.1: /auth/pin nimmt „schon angemeldet" aus der Sitzung, nie aus einem API-Key ----------
+# Angriff (zweite Runde gegen 0.20.1, vorbestehend bis 0.20.0), dieselbe Klasse wie
+# `/auth/reauth` oben: `pin_submit` las „schon eingeloggt" aus `current_user()`. Eine reine
+# API-Key-Anfrage (kein Cookie) galt damit als angemeldet: Der Riegel `pin_login=False` (die
+# PIN ist kein Erstfaktor) griff nicht, geprüft wurde die PIN des Key-Kontos, und
+# `apply_factor()` legte mangels Sitzung eine NEUE, volle Sitzung an. Aus dem Automaten-Key,
+# der das Admin-Flag nie trägt (R6-5), wurden so Key + PIN eine Admin-Sitzung mit Panel,
+# Schlüsselverwaltung und Faktor-Anlage. Mit einer halben fremden Sitzung im Cookie ersetzte
+# dieselbe Anfrage deren Cookie durch die des Key-Kontos.
+# (Mutationsprobe: in `pin_submit` wieder `me = auth.current_user(request)` → (a), (b) und
+# (d) rot, dazu der Wächter unten; in `pin_page` → (c) rot.)
+db8 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth8 = TinySesam(TinySesamConfig(lang="de", db_path=db8, rp_name="Test", cookie_secure=False,
+                                  oidc_enabled=False, passkey_enabled=False, apikey_enabled=True,
+                                  pin_enabled=True, pin_login=False, stepup_max_age_sec=900))
+auth8.ensure_admin("chef", "Geheim-Chef-2026")
+uid8 = auth8.store.get_user_by_name("chef")["id"]
+auth8.set_pin(uid8, "4711")
+uid8_opfer = auth8.create_user("opfer", password="Geheim-Opfer-8")
+_geheim8 = auth8.totp_begin(uid8_opfer)["secret"]
+assert auth8.totp_confirm(uid8_opfer, pyotp.TOTP(_geheim8).at(time.time() - 30))
+KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automat")["key"]}
+app8 = FastAPI()
+app8.include_router(auth8.router())
+r = TestClient(app8).get("/auth/me", headers={**JSON, **KEY8})
+assert r.status_code == 200 and r.json()["is_admin"] is False, \
+    ("Vorbedingung: gültiger Automaten-Key ohne Admin-Flag", r.status_code, r.text[:120])
+_sitzungen8 = len(auth8.store.list_sessions())
+
+# (a) Key + PIN, kein Cookie (für einen echten Key entfällt die CSRF-Prüfung): 404 wie jeder Gast.
+c8a = TestClient(app8)
+r = c8a.post("/auth/pin", data={"pin": "4711", "next": "/"}, headers=KEY8, follow_redirects=False)
+assert r.status_code == 404, (r.status_code, r.headers.get("location"), r.text[:120])
+assert not c8a.cookies.get("tinysesam_session"), "Key + PIN haben ein Sitzungs-Cookie bekommen"
+assert len(auth8.store.list_sessions()) == _sitzungen8, "Key + PIN haben eine Sitzung angelegt"
+assert c8a.get("/auth/admin/api/users", headers=JSON).status_code in (401, 403)
+# (b) dasselbe mit Benutzerfeld — der Key macht aus dem Gast keinen Angemeldeten.
+r = c8a.post("/auth/pin", data={"pin": "4711", "username": "chef", "next": "/"}, headers=KEY8,
+             follow_redirects=False)
+assert r.status_code == 404, (r.status_code, r.text[:120])
+assert len(auth8.store.list_sessions()) == _sitzungen8
+# (c) Der GET bietet dem Key kein PIN-Formular an (es wäre ohnehin ein 404 beim Absenden).
+r = c8a.get("/auth/pin", headers={**KEY8, "Accept": "text/html"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"].startswith("/auth/login"), \
+    (r.status_code, r.headers.get("location"))
+ok("0.20.1: /auth/pin mit Automaten-Key + PIN bei pin_login=False → 404, keine Sitzung, kein Admin")
+
+# (d) Halbe Sitzung eines anderen im Cookie + eigener Key + eigene PIN: Das Cookie bleibt, wie es war.
+c8d = TestClient(app8)
+c8d.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+r = c8d.post("/auth/login", data={"username": "opfer", "password": "Geheim-Opfer-8", "next": "/",
+                                  "_csrf": c8d.cookies.get("tinysesam_csrf") or ""},
+             follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
+_halb8 = c8d.cookies.get("tinysesam_session")
+r = c8d.post("/auth/pin", data={"pin": "4711", "next": "/", "_csrf": c8d.cookies.get("tinysesam_csrf")},
+             headers=KEY8, follow_redirects=False)
+assert r.status_code == 404, (r.status_code, r.text[:120])
+assert c8d.cookies.get("tinysesam_session") == _halb8, "das Cookie der halben Sitzung wurde ersetzt"
+_s8 = auth8.store.get_session(_halb8)
+assert _s8 and _s8["user_id"] == uid8_opfer and not _s8["mfa_ok"], "die halbe Sitzung hat sich verändert"
+ok("0.20.1: halbe fremde Sitzung + Key + PIN → 404, Cookie und Sitzung unverändert")
+
+# (e) Der legitime Weg bleibt: volle Sitzung, PIN als Zusatzfaktor bei pin_login=False.
+c8e = TestClient(app8)
+c8e.get("/auth/login", headers={"Accept": "text/html"})
+assert c8e.post("/auth/login", data={"username": "chef", "password": "Geheim-Chef-2026", "next": "/",
+                                     "_csrf": c8e.cookies.get("tinysesam_csrf") or ""},
+                follow_redirects=False).status_code == 303
+assert "name=pin" in c8e.get("/auth/pin", headers={"Accept": "text/html"}).text
+r = c8e.post("/auth/pin", data={"pin": "4711", "next": "/", "_csrf": c8e.cookies.get("tinysesam_csrf")},
+             follow_redirects=False)
+assert r.status_code == 303, (r.status_code, r.text[:120])
+_s8 = auth8.store.get_session(c8e.cookies.get("tinysesam_session"))
+assert _s8 and _s8["user_id"] == uid8 and "pin" in _s8["factors_done"], dict(_s8) if _s8 else None
+ok("0.20.1: volle Sitzung + PIN als Zusatzfaktor läuft bei pin_login=False weiter")
+os.remove(db8)
+
+# ---------- Wächter: keine Stelle mit Sitzungswirkung nimmt ihr Konto aus einer Key-Quelle ----------
+# Die Klasse hinter `/auth/reauth` und `/auth/pin`: Eine Route prüft einen Faktor für das Konto
+# aus `current_user()` und wendet ihn auf die Sitzung an. `current_user()` fällt ohne volle
+# Sitzung auf den API-Key zurück — geprüft wird dann das Konto des Keys, und die Wirkung trifft
+# das Cookie oder legt eine neue Sitzung an. Die Regel steht an EINER Stelle: Wer eine Sitzung
+# anlegt, ihr einen Faktor anhängt, sie auffrischt oder beendet, nimmt das Konto aus
+# `session_user()` (oder `pending_user()`/`totp_enrollment_user()`, oder aus dem Faktor selbst).
+# Geprüft wird jede Funktion des Pakets; lokale Helfer (ein nackter Aufruf wie `_nur_sitzung(…)`)
+# zählen mit, auch eine Erwähnung ohne Aufruf (`Depends(auth.current_user)`).
+# `require_session`/`require_mfa` stehen bewusst NICHT in der Liste: Sie weisen einen Key ab.
+# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `pin_submit`,
+# `totp_submit`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
+# dank der Helfer-Verfolgung (ohne sie grün, deshalb die Probe `helfer` im Selbsttest);
+# `session_user()` selbst auf `current_user()` umgebogen → der Wächter bleibt grün, die
+# Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
+SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",
+          "set_session_mfa", "set_session_factors", "logout"}
+KEY_QUELLEN = {"current_user", "_current_user_ermitteln", "require_user", "require_role",
+               "require_admin", "_enforce"}
+
+
+def _eigene_knoten(fn):
+    """Die Knoten im Rumpf von `fn` — ohne verschachtelte Funktionen, die zählen für sich."""
+    offen = list(ast.iter_child_nodes(fn))
+    while offen:
+        k = offen.pop()
+        if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        yield k
+        offen.extend(ast.iter_child_nodes(k))
+
+
+def _sitzungswirkung(quelltext, datei="?"):
+    """(Namen der Funktionen mit Sitzungswirkung, Verstösse) für einen Modul-Quelltext."""
+    fns = [k for k in ast.walk(ast.parse(quelltext)) if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    je_name: dict = {}
+    for fn in fns:
+        je_name.setdefault(fn.name, []).append(fn)
+    direkt = {}
+    for fn in fns:
+        senke, quelle, helfer = False, set(), set()
+        for k in _eigene_knoten(fn):
+            if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr in SENKEN:
+                senke = True
+            if isinstance(k, ast.Call) and isinstance(k.func, ast.Name) and k.func.id in je_name:
+                helfer.add(k.func.id)
+            name = k.attr if isinstance(k, ast.Attribute) else k.id if isinstance(k, ast.Name) else None
+            if name in KEY_QUELLEN:
+                quelle.add(name)
+        direkt[id(fn)] = (senke, quelle, helfer)
+
+    def huelle(fn, gesehen):
+        """(Senke erreichbar?, erreichbare Key-Quellen) über lokale Helfer, zyklenfest."""
+        if id(fn) in gesehen:
+            return False, set()
+        gesehen.add(id(fn))
+        senke, quelle, helfer = direkt[id(fn)]
+        quelle = set(quelle)
+        for h in helfer:
+            for ziel in je_name[h]:
+                s2, q2 = huelle(ziel, gesehen)
+                senke, quelle = senke or s2, quelle | q2
+        return senke, quelle
+
+    wirkend, verstoesse = set(), []
+    for fn in fns:
+        senke, quelle = huelle(fn, set())
+        if senke:
+            wirkend.add(fn.name)
+            if quelle:
+                verstoesse.append(f"{datei}:{fn.lineno} {fn.name} ← {sorted(quelle)}")
+    return wirkend, verstoesse
+
+
+# Selbsttest: Der Wächter muss die Klasse in jeder Form sehen, die er zusagt — sonst ist sein
+# Grün keine Aussage (eine abgeschaltete Helfer-Verfolgung fiel sonst niemandem auf).
+_PROBEN = {
+    "direkt": ("def r(request):\n    me = auth.current_user(request)\n"
+               "    auth.apply_factor(request, me['id'], 'pin')\n", True),
+    "helfer": ("def _h(request):\n    return auth.current_user(request)\n"
+               "def r(request, resp):\n    u = _h(request)\n    auth.rotate_session(request, resp)\n", True),
+    "depends": ("def r(request, u=Depends(auth.require_user)):\n    auth.logout(request, resp)\n", True),
+    "sauber": ("def r(request):\n    me = auth.session_user(request)\n"
+               "    auth.apply_factor(request, me['id'], 'pin')\n", False),
+    "verschachtelt": ("def aussen():\n    auth.current_user(x)\n"
+                      "    def innen(request):\n        auth.complete_totp(t)\n", False),
+}
+for _probe, (_text, _erwartet_rot) in _PROBEN.items():
+    assert bool(_sitzungswirkung(_text)[1]) == _erwartet_rot, f"Wächter-Selbsttest '{_probe}' falsch"
+
+_paket = pathlib.Path(__file__).resolve().parent.parent / "tinysesam"
+_wirkend, _verstoesse = set(), []
+for _datei in sorted(_paket.glob("*.py")):
+    _w, _v = _sitzungswirkung(_datei.read_text(encoding="utf-8"), _datei.name)
+    _wirkend |= _w
+    _verstoesse += _v
+assert not _verstoesse, ("Konto aus einer Quelle, die einen API-Key annimmt, an einer Stelle mit "
+                         "Sitzungswirkung — `session_user()` nehmen: " + "; ".join(_verstoesse))
+# Ohne Treffer misst der Wächter nichts: Die bekannten Stellen müssen gefunden werden.
+_erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm", "login_submit",
+             "_abmelden", "apply_factor"}
+assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
+ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
+   f"({len(_PROBEN)} Selbstproben)")
 
 os.remove(db)
 os.remove(db2)

@@ -454,6 +454,10 @@ Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da 
 
 Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
 
+### `session_user(request) -> 'Optional[dict]'`
+
+Das Konto der vollen Sitzung dieses Requests — wie `current_user()`, nur nie aus einem API-Key.
+
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
 Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
@@ -646,4 +650,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-140 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+141 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

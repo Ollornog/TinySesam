@@ -2778,7 +2778,10 @@ class TinySesam:
         return self.store.get_session(request.cookies.get(self.session_cookie_name))
 
     def current_user(self, request) -> Optional[dict]:
-        """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist."""
+        """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
+
+        Nicht die Quelle für eine Route, die einen Faktor auf die laufende Sitzung anwendet, sie
+        auffrischt oder beendet — dort gehört das Konto aus `session_user()` (0.20.1)."""
         # Erst die IP merken, dann auflösen: Auch ein abgewiesener API-Key (B5-05) soll mit der
         # Adresse im Protokoll stehen, von der er kam.
         self._anfrage_merken(request)
@@ -2787,15 +2790,45 @@ class TinySesam:
             self._anfrage_merken(request, u)
         return u
 
-    def _current_user_ermitteln(self, request) -> Optional[dict]:
-        # 1) Session (Mensch, inkl. MFA)
-        s = self.session_from_request(request)
+    def session_user(self, request) -> Optional[dict]:
+        """Das Konto der vollen Sitzung dieses Requests — wie `current_user()`, nur nie aus einem API-Key.
+
+        **Die Quelle für jede Route mit Sitzungswirkung** (0.20.1): Wer einen Faktor prüft und
+        ihn danach auf die Sitzung anwendet (`apply_factor`, `complete_totp`), sie auffrischt
+        (Step-up) oder beendet, nimmt das Konto von hier. `current_user()` fällt ohne volle
+        Sitzung auf den API-Key zurück. In einer solchen Route prüfte der Faktor dann das Konto
+        des Keys, und die Wirkung traf das Cookie: `/auth/reauth` machte die halbe Sitzung eines
+        anderen voll, `/auth/pin` hob bei `pin_login=False` den Riegel „PIN ist kein Erstfaktor"
+        aus und legte aus Automaten-Key und PIN eine volle Sitzung an — samt dem Admin-Flag, das
+        der Key allein nie trägt (R6-5). Für diese Routen ist ein Key „nicht angemeldet".
+
+        Eine halbe Sitzung (erster Faktor ja, Kette offen) liefert None; die liest
+        `pending_user()`. Ein Wächter in `tests/test_stepup.py` hält fest, dass keine Stelle
+        des Pakets mit Sitzungswirkung ihr Konto aus einer Quelle nimmt, die einen Key annimmt.
+        Dieselbe Regel gilt für eigene Routen der App, die `apply_factor()` für „das
+        angemeldete Konto" rufen."""
+        self._anfrage_merken(request)
+        u = self._konto_der_sitzung(self.session_from_request(request))
+        if u:
+            self._anfrage_merken(request, u)
+        return u
+
+    def _konto_der_sitzung(self, s) -> Optional[dict]:
+        """Das Konto einer VOLLEN Sitzungszeile, gesperrte Konten ausgenommen — oder None."""
         if s and s["mfa_ok"]:
             u = self.store.get_user(s["user_id"])
             if u and not u["disabled"]:
                 d = dict(u)
                 d["_via"] = "session"
                 return d
+        return None
+
+    def _current_user_ermitteln(self, request) -> Optional[dict]:
+        # 1) Session (Mensch, inkl. MFA) — dieselbe Auflösung wie `session_user()`
+        s = self.session_from_request(request)
+        d = self._konto_der_sitzung(s)
+        if d:
+            return d
         # 2) API-Key (maschinell / Daemon) — der Key IST der Faktor, kein MFA
         if self.cfg.apikey_enabled:
             key = self._extract_api_key(request)
