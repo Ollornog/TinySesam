@@ -162,10 +162,12 @@ Seite gehört und sich nicht ändert:
   (keine OIDC-Bindung, nicht betroffen). Bestand: Die Frist beginnt mit dem Update. `0` schaltet nur
   die Frist ab, das Nein zählt weiter. Mit Keycloak beachten: Läuft dort die SSO-Sitzung per
   Leerlauf ab, antwortet der Refresh ebenfalls `invalid_grant` — dann endet auch die
-  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login. **Ein Nein ist nur `invalid_grant`
-  oder `access_denied`**; ein Fehler des Clients (`invalid_client` nach einer Secret-Rotation,
-  `unauthorized_client`) zählt wie ein nicht erreichbarer Provider und steht als Warnung im
-  Sicherheits-Log. Wird eine Anwendung aus `oidc_clients` genommen, verwirft 4a ihre Zeilen.
+  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login. **Ein Fehler des Clients ist kein
+  Nein**: `invalid_client` (nach einer Secret-Rotation), `unauthorized_client`,
+  `unsupported_grant_type`, jede 401 und jede 5xx zählen wie ein nicht erreichbarer Provider und
+  stehen als Warnung im Sicherheits-Log; jede andere 4xx ist ein Nein. Wird eine Anwendung aus
+  `oidc_clients` genommen oder beim Provider neu angelegt (andere `client_id`), verwirft 4a ihre
+  Zeilen — die Sitzungen laufen dann bis zu ihrem Ablauf, ohne Nachprüfung.
 - **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
   Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
   räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
@@ -191,11 +193,14 @@ Seite gehört und sich nicht ändert:
   F-14; die Vorgabe „vertraut" nimmt diesen Schutz bewusst zurück). Vertraut belegt ein Login nur
   dieselbe Adresse, die schon am Konto steht, und nur nach oben; ein neuer Wert im Verzeichnis
   ändert die Adresse eines bestehenden Kontos nicht. Bestehende Konten behalten, was sie haben.
-  Bei nicht vertrauter Quelle wird ein Name, der eine Adresse ist (SAML-NameID emailAddress, eine
-  LDAP-Anmeldung mit der Adresse über einen Filter wie `(|(uid={username})(mail={username}))`),
-  **nie über den Namen** einem vorhandenen Konto zugeordnet — nur über die stabile Kennung, sonst
-  abgewiesen. Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese Namen nicht will und dem
-  IdP traut, setzt den Schalter.
+  Bei nicht vertrauter Quelle wird ein unbelegter Name **nie über den Namen** einem vorhandenen
+  Konto zugeordnet — nur über die stabile Kennung, sonst abgewiesen. Unbelegt: bei SAML ein Name
+  mit `@` (NameID emailAddress) oder einer aus dem Adress-Attribut selbst (`saml_attr_username` =
+  `saml_attr_email`); bei LDAP eine Eingabe, die dem `mail`-Wert des gefundenen Eintrags gleicht
+  (ein Filter wie `(|(uid={username})(mail={username}))`, auch mit `mail=chefin` ohne `@`). Ein UPN
+  als Bind-Kennung bleibt Kontoname. Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese
+  Namen nicht will und dem IdP traut, setzt den Schalter. Eine Kennung mit Rand-Leerraum oder
+  Steuerzeichen weist TinySesam ab, statt sie zu trimmen (sie fiele sonst auf eine fremde Bindung).
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 

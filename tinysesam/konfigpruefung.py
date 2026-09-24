@@ -419,8 +419,9 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             and f"({_mail_attr.lower()}=" in _filter.lower():
         warnungen.append(
             f"ldap_user_filter sucht über {_mail_attr}, aber ldap_email_trusted=False: Wer sich mit "
-            "einer Adresse anmeldet, bekommt einen Ersatznamen (ldap-…) statt der Adresse als "
-            "Kontonamen, und ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
+            f"seinem {_mail_attr}-Wert anmeldet, bekommt einen Ersatznamen (ldap-…) statt dieses "
+            "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
+            "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
 
     # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}

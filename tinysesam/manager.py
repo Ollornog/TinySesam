@@ -428,6 +428,19 @@ class TinySesam:
                 "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
                 len(kollisionen), beispiele,
                 " (weitere folgen)" if len(kollisionen) > 3 else "")
+        # Kontonamen mit Steuer-/Formatzeichen (seit 2026-09-24 nicht mehr anlegbar) im Bestand:
+        # Die Forward-Auth weist die ab, deren Zeichen die Header-Säuberung entfernen würde (sonst
+        # wäre `Remote-User` ein fremder Name). Gesagt wird es beim Start, nicht erst je Anfrage.
+        auffaellig = [z for z in self.store._all("SELECT id, username FROM users")
+                      if name_ungueltig(z["username"])]
+        if auffaellig:
+            security.seclog.warning(
+                "%d Kontoname(n) mit Steuer- oder Formatzeichen im Bestand (user_id %s). Neue legt "
+                "TinySesam so nicht mehr an; Namen mit C0-Steuerzeichen bekommen an der "
+                "Forward-Auth keine Freigabe (Remote-User wäre ein anderer Name). Umbenennen geht "
+                "nur direkt in der Datenbank (UPDATE users SET username=… WHERE id=…) — der neue "
+                "Name muss in Benutzernamen UND Adressen frei sein.",
+                len(auffaellig), ", ".join(str(z["id"]) for z in auffaellig[:10]))
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
@@ -1446,7 +1459,16 @@ class TinySesam:
         gebunden oder neu angelegt — nie über den Namen.
         """
         jetzt = _jetzt()
-        kennung = str(kennung or "").strip()
+        roh = str(kennung or "")
+        kennung = roh.strip()
+        if roh != kennung or name_ungueltig(roh):
+            # Eine Kennung mit Rand-Leerraum oder Steuerzeichen fiele nach dem Trimmen auf die
+            # Bindung eines ANDEREN Kontos (`chefin\u2028` → `chefin`, Gegenprüfung). Aus einem
+            # echten Verzeichnis kommt so etwas nicht — abweisen statt passend machen.
+            security.seclog.warning("%s: Kennung mit Rand- oder Steuerzeichen abgewiesen (user=%s)",
+                                    quelle, security.fuer_log(username))
+            self.audit(f"{quelle}_kennung_ungueltig", username, detail="Rand-/Steuerzeichen")
+            return None
         if kennung.startswith(self._OHNE_KENNUNG):
             # Eine Kennung in der Form des Platzhalters würde über `get_federated_user` genau
             # das Konto treffen, dessen ID sie nennt. Aus einem echten Verzeichnis kommt so etwas
@@ -1615,7 +1637,12 @@ class TinySesam:
         kennung_ldap = info.get("id") or ""
         ldap_name = username
         name_zuordnen = True
-        if name_ungueltig(username) or (not self.cfg.ldap_email_trusted and "@" in norm_kennung(username)):
+        # Maßgeblich ist, ob die Eingabe der unbelegte Wert IST — nicht, ob sie wie eine Adresse
+        # aussieht: `mail` ist ein freies Attribut (RFC 4524), ein Angreifer setzt es auch auf
+        # `chefin` (Gegenprüfung); ein UPN mit `@` dagegen ist die Bind-Kennung und belegt.
+        mail_wert = norm_kennung(info.get("email") or "")
+        if name_ungueltig(username) or (not self.cfg.ldap_email_trusted and mail_wert
+                                        and norm_kennung(username) == mail_wert):
             ldap_name = "ldap-" + hashlib.sha256((kennung_ldap or username).encode()).hexdigest()[:8]
             name_zuordnen = False
 
@@ -1675,7 +1702,10 @@ class TinySesam:
         from .saml_ import first, as_list
         cfg = self.cfg
         username = first(attrs, cfg.saml_attr_username) if cfg.saml_attr_username else None
-        username = (username or nameid or "").strip()
+        roh_name = str(username or nameid or "")
+        # Geprüft wird der UNGETRIMMTE Wert: `strip()` entfernt auch U+2028, U+0085 und Unicode-
+        # Leerzeichen — `chefin\u2028` würde sonst `chefin` (Gegenprüfung).
+        username = roh_name.strip()
         if not username:
             self.audit("saml_denied", None, ip, "grund=kein_name")
             return None
@@ -1691,7 +1721,13 @@ class TinySesam:
         # (`＠` U+FF20 wird zu `@`, R2-1).
         neu_name = username
         name_zuordnen = True
-        if name_ungueltig(username) or (not vertraut and "@" in norm_kennung(username)):
+        # Unbelegt ist der Name, wenn er eine Adresse ist — oder wenn er aus dem Adress-Attribut
+        # selbst stammt (`saml_attr_username` = `saml_attr_email`): Dann trägt er, was der Nutzer
+        # dort eingetragen hat, auch `chefin` ohne `@` (Gegenprüfung).
+        unbelegt = (not vertraut) and (
+            "@" in norm_kennung(username)
+            or (bool(cfg.saml_attr_username) and cfg.saml_attr_username == cfg.saml_attr_email))
+        if name_ungueltig(roh_name) or unbelegt:
             neu_name = "saml-" + hashlib.sha256((kennung or username).encode()).hexdigest()[:8]
             name_zuordnen = False
         if cfg.saml_allowed_groups:
@@ -3136,10 +3172,12 @@ class TinySesam:
         return s
 
     def _oidc_sitzung_merken(self, token, client, sub, refresh_token) -> None:
-        """Das Refresh-Token zur (eben entstandenen) Sitzung legen (4a)."""
+        """Das Refresh-Token zur (eben entstandenen) Sitzung legen (4a) — mit der client_id, an
+        die es ging."""
         if not int(self.cfg.oidc_session_refresh_minutes or 0) or not token:
             return
-        self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token)
+        self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token,
+                                    client_id=self.oidc_clients[client].client_id)
 
     def _oidc_nachpruefen(self, s) -> bool:
         """Folgt die Sitzung dem Provider noch? False = die Sitzung ist beendet (4a).
@@ -3184,26 +3222,35 @@ class TinySesam:
         handle, client = s["token_hash"], z["client"]
         konto = self.store.get_user(s["user_id"])
         name = konto["username"] if konto else None
-        if not self.oidc_clients.bekannt(client):
-            # Die Anwendung wurde aus `oidc_clients` genommen. Der Rückfall auf den Vorgabe-Client
-            # tauschte ein fremdes Refresh-Token mit falschen Zugangsdaten — der Provider sagte
-            # Nein, und das träfe das Konto (Angriff auf die dritte Runde). Die Zeile geht, die
-            # Sitzung bleibt bis zu ihrem Ablauf.
+        try:
+            ausgestellt_fuer = z["client_id"]
+        except (IndexError, KeyError):
+            ausgestellt_fuer = None
+        if not self.oidc_clients.bekannt(client) or (
+                ausgestellt_fuer and ausgestellt_fuer != self.oidc_clients[client].client_id):
+            # Die Anwendung wurde aus `oidc_clients` genommen, oder der Client wurde beim Provider
+            # neu angelegt (andere client_id). Der Tausch liefe mit falschen Zugangsdaten, der
+            # Provider sagte Nein, und das träfe das Konto (Angriff auf die dritte Runde und
+            # Gegenprüfung). Die Zeile geht, die Sitzung bleibt bis zu ihrem Ablauf.
             self.store.oidc_sitzung_verwerfen(handle, client)
-            security.seclog.warning("OIDC-Nachprüfung: Client %s ist nicht mehr eingerichtet — "
+            security.seclog.warning("OIDC-Nachprüfung: Client %s ist nicht mehr (so) eingerichtet — "
                                     "Zeile verworfen, kein Nein. user=%s",
                                     security.fuer_log(client), security.fuer_log(name))
             return
         try:
             refresh = self.store.tresor.entschluesseln(z["refresh"])
         except Exception:   # noqa: BLE001 — falscher Schlüssel: der Start prüft das; hier nichts verbrennen
-            self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60)
+            self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60,
+                                             alt_verschluesselt=z["refresh"])
             return
         gefragt = _jetzt()
         status, info, tok = self.oidc_clients[client].refresh(refresh, z["sub"])
         jetzt = _jetzt()
+        # Während des Tauschs kann die Sitzung ein neues Token bekommen haben (Step-up, Abschluss
+        # eines Faktors) — ihr heutiges Handle steht an der Zeile, gefunden über das Token.
+        handle = self.store.oidc_sitzung_handle(client, z["refresh"]) or handle
         if status == "fehler":
-            self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60)
+            self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60, alt_verschluesselt=z["refresh"])
             security.seclog.warning("OIDC-Nachprüfung ohne Ergebnis (%s): Provider nicht erreichbar oder "
                                     "ein Fehler des Clients (Zugangsdaten, Grant) — Sitzung bleibt, "
                                     "neuer Versuch in einer Minute. user=%s",
@@ -3215,7 +3262,8 @@ class TinySesam:
             self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund={fehler}")
             self._idp_nein(s["user_id"], name, s["ip"], client, fehler)
             return
-        lebt = self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
+        lebt = self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"),
+                                                alt_verschluesselt=z["refresh"])
         eintrag = self.oidc_clients.eintrag(client)
         if self.cfg.oidc_group_claim in info:
             roh = info.get(self.cfg.oidc_group_claim) or []
@@ -3358,18 +3406,21 @@ class TinySesam:
         req, _ = self._global_chain()
         if not (req and "totp" in req):
             return None
-        if self.cfg.magiclink_require_second_factor and self.store.list_webauthn(u["id"]):
-            # Die Begründung oben setzt einen Erstfaktor voraus, der ein Geheimnis beweist. Hat
-            # die Sitzung nur den Anmelde-Link (das Postfach) erbracht, und hat das Konto schon
-            # einen Passkey, richtete sich sonst das Postfach selbst einen zweiten Faktor ein und
-            # umginge den Passkey (ASVS 6.3.6, Angriff auf die dritte Runde). Konten OHNE zweiten
-            # Faktor dürfen es weiter — das ist der bewusste Preis von Option C.
+        if self.store.list_webauthn(u["id"]):
+            # Hat das Konto schon einen starken zweiten Faktor (Passkey), richtet es sich einen
+            # weiteren nur ein, wer ihn in DIESER Sitzung vorgelegt hat — oder in einem Fenster,
+            # das der Betreiber ausdrücklich geöffnet hat (verlorenes Gerät; das Fenster gewinnt
+            # wie in `darf_mfa_einrichten`). Sonst richtete sich das Postfach selbst einen zweiten
+            # Faktor ein und umginge den Passkey: über den Anmelde-Link (ASVS 6.3.6, Angriff auf die
+            # dritte Runde) oder über „Passwort vergessen" und dann das neue Passwort (Gegenprüfung).
+            # Konten OHNE zweiten Faktor dürfen es weiter — das ist der bewusste Preis von Option C.
             s = self.session_from_request(request)
             done = json.loads(s["factors_done"] or "[]") if s else []
-            if not (set(done) & (set(self.IDENTIFYING) - {"magic"})):
-                konto = self.store.get_user(u["id"])
+            konto = self.store.get_user(u["id"])
+            fenster = konto["mfa_enroll_until"] if konto else None
+            if "passkey" not in done and not (fenster and int(fenster) > _jetzt()):
                 self.audit("mfa_enrollment_denied", str(konto["username"]) if konto else None,
-                           detail="nur Anmelde-Link, Konto hat einen Passkey")
+                           detail="Konto hat einen Passkey, der in dieser Sitzung fehlt")
                 return None
         if not self.darf_mfa_einrichten(u["id"]):
             # Kein stilles Nein: Wer hier scheitert, hat das richtige Passwort und steht vor
@@ -4060,11 +4111,12 @@ class TinySesam:
         die E-Mail-Adresse nicht rausgeben" eine Weglassung und kein zweiter Schalter. Ein Feld darf
         auf mehrere Namen zeigen, wenn eine App den einen und ein Zwischenstück den anderen liest.
         """
-        if name_ungueltig(user["username"]):
+        if any(z < " " or z == "\x7f" for z in str(user["username"] or "")):
             # Die Säuberung unten nähme das Zeichen heraus und schickte den Namen eines ANDEREN
             # Kontos (`chefin\x01` → `chefin`). Fail-closed: lieber keine Freigabe als eine
-            # fremde Identität. Neue Namen lässt `create_user` so gar nicht mehr zu; das hier
-            # trifft Bestand aus der Zeit davor und Namen, die am Store vorbei geschrieben wurden.
+            # fremde Identität. Genau die Zeichen, die `_header_wert` entfernt (C0, DEL) — ein
+            # ZWNJ in einem persischen Bestandsnamen geht verlustfrei durch und kollidiert nicht
+            # (Gegenprüfung). Neue Namen lässt `create_user` so gar nicht mehr zu.
             security.seclog.warning("forward-auth abgewiesen: Kontoname mit Steuerzeichen (user_id=%s)",
                                     user["id"])
             raise HTTPException(403, self.t("api.name_invalid"))

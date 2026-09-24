@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung
     sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
     refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
     geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
+    client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
     PRIMARY KEY (token_hash, client)
 );
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
@@ -665,6 +666,9 @@ class Store:
                         ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
                         ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
             "totp_cred": [("last_step", "INTEGER")],
+            # Die client_id, an die ein Refresh-Token ging: Legt der Betreiber den Client beim
+            # Provider neu an, lehnt der jedes alte Token ab — das ist kein Nein zum Konto.
+            "oidc_sitzung": [("client_id", "TEXT")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
             # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
@@ -1670,6 +1674,12 @@ class Store:
         jünger ist (`idp_bestaetigen`)."""
         self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
 
+    def oidc_sitzung_handle(self, client, alt_verschluesselt) -> Optional[str]:
+        """Das HEUTIGE Handle der Sitzung, deren Zeile dieses (verschlüsselte) Token trägt."""
+        r = self._one("SELECT token_hash FROM oidc_sitzung WHERE client=? AND refresh=?",
+                      (client, alt_verschluesselt))
+        return r["token_hash"] if r else None
+
     def oidc_sitzung_verwerfen(self, handle, client) -> None:
         """Eine OIDC-Zeile ohne eingerichteten Client verwerfen — die Sitzung selbst bleibt."""
         self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
@@ -1713,7 +1723,7 @@ class Store:
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
     # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
-    def set_oidc_sitzung(self, handle, client, sub, refresh) -> None:
+    def set_oidc_sitzung(self, handle, client, sub, refresh, client_id: Optional[str] = None) -> None:
         """Das Refresh-Token einer OIDC-Sitzung für DIESEN Client ablegen — verschlüsselt (4a).
 
         Je Client eine Zeile: Mit mehreren Anwendungen darf ein späterer Login über einen anderen
@@ -1721,10 +1731,10 @@ class Store:
         welcher Provider-Eintrag noch nachgeprüft wird (Angriff auf die zweite Runde, Fund 7)."""
         if self.tresor is None:
             raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
-        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at) VALUES (?,?,?,?,?) "
-                   "ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
-                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at",
-                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now()))
+        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id) "
+                   "VALUES (?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
+                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id",
+                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id))
 
     def get_oidc_sitzungen(self, handle) -> list:
         """Die OIDC-Zeilen einer Sitzung — das Refresh-Token VERSCHLÜSSELT (entschlüsselt wird
@@ -1750,16 +1760,23 @@ class Store:
         return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
                           "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
 
-    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None) -> bool:
+    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None,
+                              alt_verschluesselt: Optional[str] = None) -> bool:
         """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation).
-        Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein)."""
+        Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein).
+
+        Mit `alt_verschluesselt` (dem gespeicherten, verschlüsselten Token, mit dem getauscht
+        wurde) wird die Zeile darüber gefunden statt über das Handle: Bekommt die Sitzung während
+        des Tauschs ein neues Token (Step-up, Abschluss eines Faktors), hängt die Zeile am neuen
+        Handle — das alte träfe nichts, und das vom Provider rotierte Refresh-Token ginge
+        verloren; der nächste Tausch mit dem alten wäre bei PocketID ein Nein. Der Chiffretext ist
+        durch seine Nonce eindeutig."""
+        wo, wert = ("refresh=?", alt_verschluesselt) if alt_verschluesselt else ("token_hash=?", self._handle(handle))
         if neuer_refresh and self.tresor is not None:
-            return self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=? AND client=?",
-                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle),
-                               client)).rowcount > 0
-        else:
-            return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=?",
-                              (int(zeit), self._handle(handle), client)).rowcount > 0
+            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE {wo} AND client=?",
+                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), wert, client)).rowcount > 0
+        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=? WHERE {wo} AND client=?",
+                          (int(zeit), wert, client)).rowcount > 0
 
     def oidc_sitzung_umhaengen(self, alt, neu) -> None:
         """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —

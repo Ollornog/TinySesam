@@ -1208,15 +1208,19 @@ _oc3.meta = lambda: {"token_endpoint": "https://idp.example/token", "issuer": "h
 _erg3 = {}
 try:
     for code, body in ((401, {"error": "invalid_client"}), (400, {"error": "unauthorized_client"}),
-                       (400, {}), (400, {"error": "invalid_grant"}), (400, {"error": "access_denied"})):
+                       (400, {"error": "unsupported_grant_type"}), (401, {}), (503, {}),
+                       (400, {}), (400, {"error": "invalid_request"}), (400, {"error": "invalid_grant"}),
+                       (400, {"error": "access_denied"})):
         _httpx3.post = lambda *a, _c=code, _b=body, **k: _Antwort3(_c, _b)
         _erg3[(code, body.get("error", "-"))] = _oc3.refresh("rt", "sub")[0]
 finally:
     _httpx3.post = _post3
-r.check("Angriff R3/F8-2: invalid_client, unauthorized_client, 400 ohne Code → „fehler\"; invalid_grant, access_denied → Nein",
-        [_erg3[k] for k in sorted(_erg3)] and _erg3[(401, "invalid_client")] == "fehler"
-        and _erg3[(400, "unauthorized_client")] == "fehler" and _erg3[(400, "-")] == "fehler"
-        and _erg3[(400, "invalid_grant")] == "abgelehnt" and _erg3[(400, "access_denied")] == "abgelehnt", str(_erg3))
+_soll3 = {(401, "invalid_client"): "fehler", (400, "unauthorized_client"): "fehler",
+          (400, "unsupported_grant_type"): "fehler", (401, "-"): "fehler", (503, "-"): "fehler",
+          (400, "-"): "abgelehnt", (400, "invalid_request"): "abgelehnt",      # Dex: widerrufenes Token
+          (400, "invalid_grant"): "abgelehnt", (400, "access_denied"): "abgelehnt"}
+r.check("Angriff R3/F8-2: Client-Fehler, 401 und 5xx → „fehler\"; jede andere 4xx (auch Dex' invalid_request) → Nein",
+        _erg3 == _soll3, str({k: v for k, v in _erg3.items() if _soll3.get(k) != v}))
 # … und eine Zeile eines nicht mehr eingerichteten Clients wird verworfen, nicht als Nein getauscht.
 a_f2, _, _ = _oidc_mit_refresh("f2-konto")
 _uid_f2 = a_f2.store.get_user_by_name("f2-konto")["id"]
@@ -1259,6 +1263,119 @@ r.check("Angriff R3/S5: Konfig-Prüfung — vertraute Quelle: „wird Erst-Admin
 #  S3 rot; LDAP-Ersatzname weg → S2 rot; name_ungueltig in create_user weg → S4 rot; Header-Riegel
 #  weg → „fail-closed" rot; Client-Fehler wieder als Nein → F8-2 rot; `bekannt` weg → „entfernter
 #  Client" rot; Passkey-Prüfung in totp_enrollment_user weg → M1 rot.)
+
+# ── Gegenprüfung der Fixes (dritte Runde): Umwege und Regressionen ──────────────────────────
+import logging as _log3  # noqa: E402
+
+# V1: LDAP nicht vertraut — ein mail-Wert OHNE „@" ist genauso unbelegt.
+a_v1, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
+chefin_v1 = a_v1.create_user("chefin", password=PW, is_admin=True)
+a_v1.ldap = _LDAP3({"chefin": {"id": "uuid-mallory", "email": "chefin", "name": "M"}})
+neu_v1 = a_v1.check_ldap("chefin", "x")
+r.check("Gegenprüfung R3/V1: LDAP nicht vertraut, Eingabe = eigener mail-Wert ohne „@\" → keine Übernahme",
+        neu_v1 is not None and neu_v1["id"] != chefin_v1 and neu_v1["username"].startswith("ldap-")
+        and a_v1.store.get_federated_kennung("ldap", chefin_v1) is None, str(neu_v1))
+# V2: … und ein UPN (Bind-Kennung, nicht der mail-Wert) bleibt Kontoname, auch ohne Kennung.
+a_v2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
+a_v2.ldap = _LDAP3({"bob@corp.example": {"id": "", "email": "b.mail@corp.example", "name": "Bob"}})
+neu_v2 = a_v2.check_ldap("bob@corp.example", "x")
+r.check("… ein UPN, der nicht der mail-Wert ist, meldet wie vor dem Fix an (keine Regression)",
+        neu_v2 is not None and neu_v2["username"] == "bob@corp.example" and not neu_v2["email"], str(neu_v2))
+
+# V3: Forward-Auth sperrt nur, was die Säuberung wirklich entfernt; Startbefund für den Bestand.
+a_v3, _ = _app()
+_zwnj = a_v3.store.create_user("علی‌رضا", None, None, False, [], False)
+_c0 = a_v3.store.create_user("chefin\x01", None, None, False, [], False)
+try:
+    _kopf_v3 = a_v3.forward_response_headers(a_v3.get_user(_zwnj))
+except _HTTPEx:
+    _kopf_v3 = None
+r.check("Gegenprüfung R3/V3: ein Bestandsname mit ZWNJ bekommt seinen Remote-User (kollidiert nicht)",
+        _kopf_v3 is not None and "‌".encode("utf-8").decode("latin-1") in _kopf_v3["Remote-User"])
+_fang_v3 = []
+_h_v3 = _log3.Handler()
+_h_v3.emit = lambda rec: _fang_v3.append(rec.getMessage())
+_log3.getLogger("tinysesam.security").addHandler(_h_v3)
+try:
+    TinySesam(TinySesamConfig(db_path=a_v3.cfg.db_path, cookie_secure=False, base_url="http://testserver"))
+finally:
+    _log3.getLogger("tinysesam.security").removeHandler(_h_v3)
+r.check("… und der Start nennt Bestandsnamen mit Steuer-/Formatzeichen",
+        any("Kontoname(n) mit Steuer- oder Formatzeichen" in m and str(_c0) in m for m in _fang_v3))
+
+# V4: SAML-Kennung mit Rand-Steuerzeichen trifft keine fremde Bindung.
+a_v4, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
+               saml_idp_x509cert="MII", saml_email_trusted=True)
+echt_v4 = a_v4.check_saml("chefin", {})
+fremd_v4 = a_v4.check_saml("chefin ", {})
+r.check("Gegenprüfung R3/V4: NameID `chefin` + U+2028 landet nicht im Konto der gebundenen `chefin`",
+        echt_v4 is not None and fremd_v4 is None, f"{echt_v4 and echt_v4['id']} / {fremd_v4}")
+
+# V5: SAML nicht vertraut, der Name kommt aus dem Adress-Attribut selbst (auch ohne „@").
+a_v5, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
+               saml_idp_x509cert="MII", saml_attr_username="email")
+chefin_v5 = a_v5.create_user("chefin", password=PW, is_admin=True)
+neu_v5 = a_v5.check_saml("opaque-mallory", {"email": ["chefin"]})
+r.check("Gegenprüfung R3/V5: SAML-Name aus dem Adress-Attribut (`chefin`) bindet das lokale Konto nicht",
+        neu_v5 is not None and neu_v5["id"] != chefin_v5 and neu_v5["username"].startswith("saml-")
+        and a_v5.store.get_federated_kennung("saml", chefin_v5) is None, str(neu_v5))
+
+# I2: Client beim Provider neu angelegt (andere client_id) — kein Nein, die Zeile geht.
+a_i2, _, _ = _oidc_mit_refresh("i2-konto")
+_uid_i2 = a_i2.store.get_user_by_name("i2-konto")["id"]
+a_i2.store._exec("UPDATE oidc_sitzung SET client_id='alte-client-id', geprueft_at = geprueft_at - 16 * 60")
+a_i2.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})
+a_i2._oidc_nachpruefen(a_i2.store._one("SELECT * FROM session"))
+a_i2._oidc_ausgang.abwarten()
+r.check("Gegenprüfung R3/I2: Token einer alten client_id → Zeile verworfen, Sitzung bleibt, kein Nein",
+        a_i2.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung")["n"] == 0
+        and a_i2.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 1
+        and (a_i2.store.get_user(_uid_i2)["idp_bestaetigt_at"] or 0) > 0)
+
+# I3 + I4: Passkey-Konto richtet sich TOTP nur mit Passkey in der Sitzung oder im Betreiber-Fenster ein.
+a_i3, ap_i3 = _link_app(login_chain=["password", "totp"])
+u_i3 = a_i3.create_user("pk-reset", password=PW, email="pkr@example.com")
+a_i3.store.add_webauthn(u_i3, b"cred-i3", b"pub", 0, "[]", "Laptop")
+c_i3 = TestClient(ap_i3)
+c_i3.post("/auth/login", data={"username": "pk-reset", "password": PW, "next": "/"}, follow_redirects=False)
+r.check("Gegenprüfung R3/I3: Passkey-Konto, nur Passwort in der Sitzung (z. B. nach „Passwort vergessen\") → keine Einrichtung",
+        c_i3.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code != 200)
+_h_i3 = a_i3.store._one("SELECT token_hash FROM session")["token_hash"]
+a_i3.store.set_session_factors(_h_i3, ["password", "passkey"], mfa_ok=False)
+r.check("… mit dem Passkey in derselben Sitzung darf der Inhaber",
+        c_i3.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
+a_i4, ap_i4 = _link_app(login_chain=["magic", "totp"])
+u_i4 = a_i4.create_user("pk-verloren", password=PW, email="pkv@example.com")
+a_i4.store.add_webauthn(u_i4, b"cred-i4", b"pub", 0, "[]", "Altes Handy")
+a_i4.grant_mfa_enrollment(u_i4, 60)
+c_i4, _ = _link_login(a_i4, ap_i4, "pk-verloren")
+r.check("Gegenprüfung R3/I4: ein vom Betreiber geöffnetes Fenster gewinnt (verlorenes Gerät, nur Link)",
+        c_i4.post("/auth/totp/setup/start", data={"next": "/"}, follow_redirects=False).status_code == 200)
+
+# I5: Bekommt die Sitzung während des Tauschs ein neues Token, geht das rotierte Refresh-Token nicht verloren.
+a_i5, _, _ = _oidc_mit_refresh("i5-konto")
+_alt_i5 = a_i5.store._one("SELECT token_hash FROM session")["token_hash"]
+
+
+def _tausch_mit_rotation(rt, sub):
+    # Mitten im Tausch: Step-up o. ä. gibt der Sitzung ein neues Token, die OIDC-Zeile zieht mit.
+    a_i5.store._exec("UPDATE session SET token_hash='neu-i5' WHERE token_hash=?", (_alt_i5,))
+    a_i5.store._exec("UPDATE oidc_sitzung SET token_hash='neu-i5' WHERE token_hash=?", (_alt_i5,))
+    return "ok", {"sub": sub}, {"refresh_token": "rt-rotiert"}
+
+
+a_i5.oidc.refresh = _tausch_mit_rotation
+a_i5.store._exec("PRAGMA foreign_keys=OFF")
+a_i5.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a_i5._oidc_nachpruefen(a_i5.store._one("SELECT * FROM session"))
+a_i5._oidc_ausgang.abwarten()
+_z_i5 = a_i5.store._one("SELECT refresh FROM oidc_sitzung WHERE token_hash='neu-i5'")
+r.check("Gegenprüfung R3/I5: Rotation während des Tauschs — das neue Refresh-Token landet an der Zeile",
+        _z_i5 is not None and a_i5.store.tresor.entschluesseln(_z_i5["refresh"]) == "rt-rotiert")
+# (Mutationsproben: LDAP wieder an „@" statt am mail-Wert → V1 rot, V2 rot; Forward-Riegel wieder
+#  name_ungueltig → V3 rot; Startbefund weg → V3b rot; Kennung trimmen → V4 rot; client_id-Vergleich
+#  weg → I2 rot; „nicht magic" statt „passkey" → I3 rot; Fenster-Prüfung weg → I4 rot;
+#  alt_verschluesselt weg → I5 rot.)
 
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")

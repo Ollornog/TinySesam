@@ -315,16 +315,22 @@ class OIDCClient:
             return "fehler", {}, {"error": type(e).__name__}
         if not isinstance(tok, dict):
             return "fehler", {}, {"error": "antwort"}
-        # Nur eine Aussage über das KONTO ist ein Nein: `invalid_grant` (Token widerrufen,
-        # abgelaufen, Nutzer gesperrt) und `access_denied` (der Anwendung entzogen, PocketID). Ein
-        # Fehler des CLIENTS — `invalid_client` nach einer Secret-Rotation, `unauthorized_client`,
-        # ein abgeschalteter Grant, eine 400/401 ohne Code — sagt nichts über die Person und zählt
-        # als „fehler": Sonst beendete eine Fehlkonfiguration alle Sitzungen und legte seit Fund 8
-        # die API-Keys aller Betroffenen still (Angriff auf die dritte Runde).
-        if str(tok.get("error") or "") in ("invalid_grant", "access_denied"):
-            return "abgelehnt", {}, tok
+        # Ein Fehler des CLIENTS sagt nichts über die Person: `invalid_client` nach einer
+        # Secret-Rotation (RFC 6749 5.2: dafür steht auch die 401), `unauthorized_client`, ein
+        # abgeschalteter Grant. Er zählt wie ein nicht erreichbarer Provider — sonst beendete
+        # eine Fehlkonfiguration alle Sitzungen und legte seit Fund 8 die API-Keys aller
+        # Betroffenen still (Angriff auf die dritte Runde). Jede andere 4xx ist ein Nein: Die
+        # Anfrage ist wohlgeformt, also meint der Provider das Token — Dex meldet ein widerrufenes
+        # oder abgelaufenes als `400 invalid_request` (Gegenprüfung der Fixes), andere schicken
+        # gar keinen Code. Eine Liste der Nein-Codes liesse jeden solchen Provider durch.
+        fehler_code = str(tok.get("error") or "")
+        if antwort.status_code >= 500 or antwort.status_code == 401 or fehler_code in (
+                "invalid_client", "unauthorized_client", "unsupported_grant_type"):
+            return "fehler", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
+        if 400 <= antwort.status_code < 500:
+            return "abgelehnt", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
         if antwort.status_code >= 300 or "error" in tok:
-            return "fehler", {}, {**tok, "error": str(tok.get("error") or f"http_{antwort.status_code}")}
+            return "fehler", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
         claims: dict = {}
         if tok.get("id_token"):
             optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
