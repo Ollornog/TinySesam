@@ -322,6 +322,12 @@ bestand_id = auth.create_user("bestand", "Bestand-Passwort-2026x", email="u2@exa
 auth.store.db.execute("UPDATE users SET email='u2@bücher.example' WHERE id=?", (bestand_id,))
 auth.store.db.commit()
 assert auth.find_user("u2@bücher.example")["id"] == bestand_id, "Vorbedingung: Bestandsadresse wird gefunden"
+# Die Konten eine Minute älter machen: Der Löschweg (`Store.konto_entfernen`) räumt nur Versuche
+# NACH der Sekunde der Anlage — was in ihr geschah, lässt sich nicht zuordnen und bleibt stehen.
+# Hier geht es um die Faltung, nicht um diese Grenze.
+auth.store.db.execute("UPDATE users SET created_at = created_at - 60 WHERE id IN (?, ?, ?)",
+                      (berta_id, finn_id, bestand_id))
+auth.store.db.commit()
 for i, kennung in enumerate(("ｂｅｒｔａ", "ﬁnn", "u2@bücher.example", "BESTAND")):
     for ip in ("198.51.100.1", "198.51.100.2"):
         r = login(TestClient(c.app, client=(ip, 40000 + i)), kennung, "falsch-geraten-1")
@@ -343,12 +349,15 @@ print("  H-13: delete_user räumt die Versuche auch unter NFKC-/IDNA-gefalteter 
 # ist nur ASCII-NOCASE eindeutig), zählen aber in einem Topf: Wer `ｃｌａｒａ` tippt, rät gegen
 # dasselbe, was `clara` schützt. Das Löschen des einen darf die Sperre des anderen nicht
 # zurücksetzen — sonst wäre „Konto anlegen, raten, Konto löschen lassen" ein Weg an der
-# Konto-Schwelle vorbei. (Mutationsprobe: in `delete_attempts_for` die Ausnahme für `geteilt`
-# streichen → rot.)
+# Konto-Schwelle vorbei. (Mutationsprobe: in `delete_attempts_for` die Ausnahme für einen Topf, den
+# `konto_mit_topf` einem verbleibenden Konto zuordnet, streichen → rot.)
 auth, c, db = build()
 auth.set_security("rate_limit_max", 1000)
 voll_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
-clara_id = auth.create_user("clara", "Clara-Ascii-2026x")
+# Neu anlegen lässt sich der Namensvetter nicht mehr (`kennung_vergeben` fragt den Topf) — er
+# kommt aus einem Bestand von vorher, deshalb am Manager vorbei direkt in den Store.
+clara_id = auth.store.create_user("clara")
+auth.set_password(clara_id, "Clara-Ascii-2026x")
 fehl = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
 for i in range(fehl):
     login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
