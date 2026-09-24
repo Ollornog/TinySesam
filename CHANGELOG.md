@@ -13,31 +13,37 @@ auffällt:
 - **Neue Pflichtabhängigkeit `cryptography`**; TOTP-Geheimnisse liegen jetzt verschlüsselt. Ohne
   `TINYSESAM_SECRETS_KEY`/`secrets_key_file` legt TinySesam `<db>.key` neben der Datenbank an —
   **diesen Schlüssel getrennt sichern**, ohne ihn müssen alle Konten TOTP neu einrichten.
-- **Sitzungen ohne „Angemeldet bleiben" enden nach 8 Stunden Inaktivität** (`session_idle_minutes`).
-- **Es gibt Owner**: Der älteste von Hand gesetzte Admin wird beim ersten Start Owner.
+- **Sitzungen ohne ausdrücklich gewähltes „Angemeldet bleiben" enden nach 8 Stunden Inaktivität**
+  (`session_idle_minutes`) — auch OIDC- und Link-Sitzungen.
+- **Es gibt Owner**: Der älteste aktive, von Hand gesetzte Admin wird beim ersten Start Owner.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
 
 - **Owner.** Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; die Rolle
   lässt sich weitergeben, mehrere können Owner sein, es gibt immer mindestens einen. Nur ein Owner
-  vergibt sie — und nur ein Owner ändert ein Owner-Konto (Passwort, Keys, Passkeys, Sperre, Rollen).
-  Der erste Admin einer Instanz ist ihr erster Owner; im Bestand wird der älteste von Hand gesetzte
-  Admin Owner (Zeile `owner_grant` im Audit-Log). Ein Owner ist immer ein Admin „von Hand" — kein
+  vergibt sie — und nur ein Owner ändert ein Owner-Konto (Passwort, Keys, Passkeys, Sitzungen,
+  Sperre, Rollen); der Schutz gilt auch im Code (`set_disabled`, `delete_user`). Der erste Admin
+  einer Instanz ist ihr erster Owner; im Bestand wird der älteste aktive, von Hand gesetzte Admin
+  Owner (kein Service-Konto, nicht gesperrt; Zeile `owner_grant` im Audit-Log) — gibt es keinen,
+  nennt das Log den Notweg. Ein Owner ist immer ein Admin „von Hand" — kein
   Identity Provider nimmt ihm das Recht (H-5). Notweg: `tinysesam owner --db … <name>`.
   Panel: Spalte und Knopf „Zum Owner machen / Owner abgeben". API: `auth.set_owner(uid, bool)`.
-- **Inaktivitäts-Timeout (F-05, ASVS 7.3.1).** `session_idle_minutes` (Vorgabe 8 h) für Sitzungen
-  ohne „Angemeldet bleiben", `session_idle_minutes_remember` (Vorgabe aus) mit. Die letzte Anfrage
+- **Inaktivitäts-Timeout (F-05, ASVS 7.3.1).** `session_idle_minutes` (Vorgabe 8 h) für jede
+  Sitzung, bei der „Angemeldet bleiben" nicht ausdrücklich gewählt wurde (auch dauerhafte aus OIDC
+  oder einem Anmelde-Link), `session_idle_minutes_remember` (Vorgabe aus) für die gewählten. Die letzte Anfrage
   steht an der Sitzung (`session.zuletzt`, höchstens einmal je Minute geschrieben).
 - **Widerruf folgt dem Identity Provider (4a).** Das Refresh-Token einer OIDC-Sitzung liegt
-  verschlüsselt an ihr; alle `oidc_session_refresh_minutes` (Vorgabe 15) tauscht die nächste
-  Anfrage es beim Provider. Verweigert er (gesperrt, gelöscht, entgruppt, der Anwendung entzogen),
+  verschlüsselt an ihr, je Client eine Zeile; alle `oidc_session_refresh_minutes` (Vorgabe 15)
+  stösst die nächste Anfrage den Tausch beim Provider an — im Hintergrund, ohne auf ihn zu warten,
+  und von vielen parallelen Anfragen genau eine (Rotation). Gesperrte Konten fragt niemand nach. Verweigert er (gesperrt, gelöscht, entgruppt, der Anwendung entzogen),
   endet die Sitzung (`oidc_widerruf` im Audit-Log); Gruppen, erlaubte Gruppen und das vom Provider
   vergebene Admin-Flag werden neu bewertet — H-5 wirkt damit binnen Minuten. Ein nicht erreichbarer
   Provider meldet niemanden ab (neuer Versuch nach einer Minute). Braucht einen Provider, der
   Refresh-Tokens ausgibt.
 - **Hinweis an den Inhaber, wenn sein Konto wegen Fehlversuchen gesperrt wird (ASVS 6.3.5).** Mit
-  konfiguriertem Versand an die belegte Adresse, höchstens einer je Sperrfenster, ohne Link.
+  konfiguriertem Versand an die belegte Adresse, höchstens einer je Sperrfenster (gezählt im
+  Audit-Log, also über alle Worker), ohne Link.
   Opt-out: `notify_login_failures=False`. Nachgeschlagen und verschickt wird im Hintergrund, über
   einen eigenen Postausgang — die Antwort verrät weder Existenz noch Laufzeit.
 - **Sicherheitsereignisse für den Widerruf von API-Keys**: `api_key_revoked`, `api_keys_revoked`
@@ -48,8 +54,10 @@ auffällt:
 - **TOTP-Geheimnisse ruhend verschlüsselt, Pflicht (H-14/H-15).** AES-256-GCM (`cryptography`); der
   Schlüssel kommt aus `TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key` (0600, neben der
   Datenbank — dann laut gewarnt). Bestand wird beim Start verschlüsselt; ein Schlüssel, der nicht
-  passt, bricht den Start ab, statt jede TOTP-Anmeldung still scheitern zu lassen. `tinysesam
-  backup` erinnert daran, den Schlüssel getrennt zu sichern.
+  passt, bricht den Start ab, statt jede TOTP-Anmeldung still scheitern zu lassen (geprüft auch an
+  den Refresh-Tokens). Die Schlüsseldatei entsteht atomar, auch mit mehreren Workern. `tinysesam
+  backup` erinnert daran, den Schlüssel getrennt zu sichern. SQLite überschreibt Gelöschtes
+  (`secure_delete`), damit ersetzter Klartext nicht in freien Seiten der Datei bleibt.
 - **Registrierung ohne Laufzeit-Orakel (ASVS 6.3.8).** Mit Bestätigung und Name = Adresse schrieb
   der Zweig „Adresse vergeben" nur eine Audit-Zeile, der freie Zweig Konto, Sperre und Token —
   messbar an der Antwortzeit. Jetzt dieselbe Arbeit (Platzhalter mit Zufallsnamen, von `gc()`
