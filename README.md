@@ -174,7 +174,9 @@ group): `admin_implies_roles=False` globally, or `require_role("editor", admin_i
 `/auth/pin/set`, `/auth/pin/disable` and `/auth/passkey/delete` require a step-up confirmation no
 older than `stepup_max_age_sec` — otherwise 403 plus `X-TinySesam-Reauth: /auth/reauth` (browsers
 are redirected there). An **API key can never satisfy it**: a machine credential never performs an
-interactive factor, so it cannot take one away either.
+interactive factor, so it cannot take one away either. `/auth/reauth` itself answers a key with a
+403 as well (`api.stepup_session`): there is nothing for it to confirm, and a key plus a password
+must not stand in for the second factor of a half-finished sign-in (fixed in 0.20.1).
 
 **Setting a factor up needs an interactive session.** `GET/POST /auth/totp/setup` and
 `POST /auth/passkey/register/{begin,finish}` require a session as well — an API key gets a 403
@@ -296,9 +298,13 @@ tab; it is for deliberate renewal, not for rendering a page.
 
 **Signing in and out changes the token.** Every sign-in — each built-in path and your own route
 with `start_session` + `set_cookie` — sets a fresh token in the same response, and
-`auth.logout()` deletes it. A form rendered in that same response takes its token from
-`ensure_csrf(request, response)` *after* `set_cookie`/`logout`; the next request carries the new
-cookie anyway. A step-up (`/auth/reauth`, `rotate_session`) keeps the token.
+`auth.logout()` deletes it. A form rendered in that same response works only with the response
+parameter (first example): it takes its token from `ensure_csrf(request, response)` *after*
+`set_cookie`/`logout`. A finished response (second example) is rendered before
+`set_cookie`/`logout` changes the token, so its form carries the old one and every submit gets a
+403. A response that signs in or out therefore renders no form that way — redirect (303) instead,
+and the next request renders with the new cookie, as the built-in sign-ins do. A step-up
+(`/auth/reauth`, `rotate_session`) keeps the token.
 
 ## Look & feel
 

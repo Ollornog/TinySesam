@@ -171,7 +171,9 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 eine Step-up-Bestätigung, die nicht älter ist als `stepup_max_age_sec` — sonst 403 samt
 `X-TinySesam-Reauth: /auth/reauth` (Browser werden dorthin geschickt). Ein **API-Key erfüllt das
 nie**: Ein maschinelles Credential erbringt keinen interaktiven Faktor und kann folglich auch
-keinen abbauen.
+keinen abbauen. Auch `/auth/reauth` selbst antwortet einem Key mit 403 (`api.stepup_session`): Er
+hat dort nichts zu bestätigen, und Key plus Passwort dürfen nicht den zweiten Faktor einer halb
+fertigen Anmeldung ersetzen (behoben in 0.20.1).
 
 **Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
 `POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
@@ -295,9 +297,13 @@ ist zum bewussten Erneuern da, nicht zum Rendern einer Seite.
 
 **Anmelden und Abmelden wechseln das Token.** Jede Anmeldung — jeder eingebaute Weg und eine
 eigene Route mit `start_session` + `set_cookie` — setzt in derselben Antwort ein frisches Token,
-`auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, holt sein Token
-*nach* `set_cookie`/`logout` aus `ensure_csrf(request, response)`; die nächste Anfrage bringt das
-neue Cookie ohnehin mit. Ein Step-up (`/auth/reauth`, `rotate_session`) behält das Token.
+`auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, geht nur mit dem
+Antwortparameter (erstes Beispiel): Es holt sein Token *nach* `set_cookie`/`logout` aus
+`ensure_csrf(request, response)`. Eine fertige Antwort (zweites Beispiel) ist gerendert, bevor
+`set_cookie`/`logout` das Token wechselt — ihr Formular trägt das alte, jedes Absenden endet mit
+403. Eine Antwort, die an- oder abmeldet, rendert deshalb so kein Formular, sondern leitet um
+(303); die Folgeanfrage rendert mit dem neuen Cookie, wie bei den eingebauten Anmeldungen. Ein
+Step-up (`/auth/reauth`, `rotate_session`) behält das Token.
 
 ## Look & Feel
 

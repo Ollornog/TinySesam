@@ -653,6 +653,100 @@ for merken in ("", "on"):
 ok("A-2: Step-up per Magic-Link und PIN behält die Cookie-Art der Sitzung (merken ja/nein)")
 os.remove(db6)
 
+# ---------- 0.20.1: /auth/reauth bestätigt nur eine Sitzung, nie einen API-Key ----------
+# Angriff (Nachbesserung 0.20.1, vorbestehend bis 0.20.0): Die Route prüfte den Faktor des
+# Kontos aus `current_user()` und setzte danach die Sitzung aus `session_from_request()` auf
+# „voll". Bei einer HALBEN Sitzung (Passwort ja, TOTP offen) fällt `current_user()` auf den
+# API-Key zurück — Autorisierung und Wirkung trafen zwei verschiedene Konten:
+#   (a) Halbe Sitzung des Opfers + eigener Automaten-Key + eigenes Passwort → die Sitzung des
+#       OPFERS war voll angemeldet, sein TOTP nie gefragt.
+#   (b) Dasselbe im eigenen Konto: Automaten-Key (trägt das Admin-Flag nicht, R6-5) + Passwort
+#       → volle Admin-Sitzung ohne TOTP. Key + Passwort ersetzten den zweiten Faktor.
+# Ein API-Key kann Step-up-Frische ohnehin nie erreichen (`stepup_fresh`), die Route hat für
+# ihn nichts zu bestätigen: 403 `api.stepup_session`, bevor ein Faktor geprüft wird.
+# (Mutationsprobe: den Riegel in `reauth_submit` streichen → (a) und (b) rot; den in
+# `reauth_page` streichen → der GET-Teil rot.)
+db7 = os.path.join(tempfile.mkdtemp(), "t.db")
+auth7 = TinySesam(TinySesamConfig(lang="de", db_path=db7, rp_name="Test", cookie_secure=False,
+                                  oidc_enabled=False, passkey_enabled=False, apikey_enabled=True))
+auth7.ensure_admin("chefin", "Geheim-Admin-1")
+uid7_adm = auth7.store.get_user_by_name("chefin")["id"]
+uid7_opfer = auth7.create_user("opfer", password="Geheim-Opfer-1")
+uid7_taeter = auth7.create_user("taeter", password="Geheim-Taeter-1")
+_geheim7 = {}
+for _u7 in (uid7_adm, uid7_opfer):
+    _geheim7[_u7] = auth7.totp_begin(_u7)["secret"]
+    assert auth7.totp_confirm(_u7, pyotp.TOTP(_geheim7[_u7]).at(time.time() - 30))
+key7_taeter = auth7.create_api_key(uid7_taeter, name="ci")["key"]
+key7_adm = auth7.create_api_key(uid7_adm, name="ci")["key"]
+app7 = FastAPI()
+app7.include_router(auth7.router())
+
+
+def _halb_angemeldet(name, passwort):
+    """Erster Faktor erbracht, TOTP offen — die Lage mitten in der Anmeldung."""
+    cl = TestClient(app7)
+    cl.get("/auth/login", headers={"Accept": "text/html"})     # holt das CSRF-Cookie
+    r = cl.post("/auth/login", data={"username": name, "password": passwort, "next": "/",
+                                     "_csrf": cl.cookies.get("tinysesam_csrf") or ""},
+                follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), \
+        (r.status_code, r.headers.get("location"))
+    s = auth7.store.get_session(cl.cookies.get("tinysesam_session"))
+    assert s and not s["mfa_ok"], "Vorbedingung: die Sitzung ist halb"
+    assert cl.get("/auth/me", headers=JSON).status_code == 401, "Vorbedingung: halb = nicht angemeldet"
+    return cl
+
+
+def _reauth_mit_key(cl, key, passwort):
+    return cl.post("/auth/reauth", data={"password": passwort, "next": "/",
+                                         "_csrf": cl.cookies.get("tinysesam_csrf") or ""},
+                   headers={**JSON, "X-API-Key": key}, follow_redirects=False)
+
+
+# (a) fremdes Konto
+c7 = _halb_angemeldet("opfer", "Geheim-Opfer-1")
+r = _reauth_mit_key(c7, key7_taeter, "Geheim-Taeter-1")
+assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
+    (r.status_code, r.text[:120])
+s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
+assert s and not s["mfa_ok"], "die halbe Sitzung des Opfers wurde per fremdem Key voll gemacht"
+assert c7.get("/auth/me", headers=JSON).status_code == 401, "Opfer ohne TOTP angemeldet"
+# (b) eigenes Konto: Key + Passwort ersetzen den zweiten Faktor nicht
+c7 = _halb_angemeldet("chefin", "Geheim-Admin-1")
+r = _reauth_mit_key(c7, key7_adm, "Geheim-Admin-1")
+assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
+    (r.status_code, r.text[:120])
+s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
+assert s and not s["mfa_ok"], "Automaten-Key + Passwort haben TOTP ersetzt"
+assert c7.get("/auth/admin", headers={"Accept": "text/html"},
+              follow_redirects=False).status_code != 200, "Admin-Panel ohne TOTP erreichbar"
+# GET: ein Key allein bekommt keine Bestätigungsseite (es gäbe nichts zu bestätigen).
+r = TestClient(app7).get("/auth/reauth", headers={**JSON, "X-API-Key": key7_taeter},
+                         follow_redirects=False)
+assert r.status_code == 403 and r.json().get("detail") == auth7.t("api.stepup_session"), \
+    (r.status_code, r.text[:120])
+ok("0.20.1: /auth/reauth mit API-Key → 403, eine halbe Sitzung (fremd oder eigen) bleibt halb")
+
+# Der legitime Weg bleibt offen: volle Sitzung, Frische abgelaufen, Bestätigung per TOTP.
+c7 = _halb_angemeldet("opfer", "Geheim-Opfer-1")
+_totp7 = pyotp.TOTP(_geheim7[uid7_opfer])
+r = c7.post("/auth/totp", data={"code": _totp7.now(), "next": "/",
+                                "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
+            follow_redirects=False)
+assert r.status_code == 303 and c7.get("/auth/me", headers=JSON).status_code == 200, r.status_code
+auth7.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
+                  (int(time.time()) - 100000, auth7.store.session_hash(c7.cookies.get("tinysesam_session"))))
+assert c7.get("/auth/reauth", headers={"Accept": "text/html"}).status_code == 200
+r = c7.post("/auth/reauth", data={"code": _totp7.at(int(time.time()) + 30), "next": "/",
+                                  "_csrf": c7.cookies.get("tinysesam_csrf") or ""},
+            follow_redirects=False)
+assert r.status_code == 303, (r.status_code, r.text[:120])
+s = auth7.store.get_session(c7.cookies.get("tinysesam_session"))
+assert s and s["mfa_ok"] and int(time.time()) - s["mfa_at"] < 60, "Step-up hat die Sitzung nicht aufgefrischt"
+ok("0.20.1: Step-up einer vollen Sitzung per TOTP läuft weiter")
+os.remove(db7)
+
 os.remove(db)
 os.remove(db2)
 os.remove(db3)

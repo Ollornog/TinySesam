@@ -356,7 +356,7 @@ from urllib.parse import parse_qs as _parse_qs, urlparse as _urlparse  # noqa: E
 
 import pyotp  # noqa: E402
 from fastapi import Form, Request, Response  # noqa: E402
-from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
 
 CK = "__Host-tinysesam_csrf"
 BASIS = "https://testserver"
@@ -441,6 +441,39 @@ def _instanz(**kw):
     @ap.post("/app/nur-abmelden")
     def nur_abmelden(request: Request):
         antwort = JSONResponse({})
+        a.logout(request, antwort)
+        return antwort
+
+    # Weg 2 und An-/Abmelden in DERSELBEN Antwort — die Grenze, die die Doku seit der
+    # Nachbesserung nennt: Die fertige Seite ist gerendert, bevor `set_cookie`/`logout` dreht.
+    @ap.post("/app/anmelden-fertig")
+    def anmelden_fertig(request: Request):
+        token, _ok = a.start_session(a.store.get_user_by_name("erika")["id"], "password")
+        csrf = a.csrf_token(request)
+        antwort = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
+        a.set_cookie(antwort, token)
+        antwort.headers["x-ensure"] = a.ensure_csrf(request, antwort)
+        return antwort
+
+    @ap.post("/app/abmelden-fertig")
+    def abmelden_fertig(request: Request):
+        csrf = a.csrf_token(request)
+        antwort = HTMLResponse(f"<input name=_csrf value='{csrf}'>")
+        a.logout(request, antwort)
+        antwort.headers["x-ensure"] = a.ensure_csrf(request, antwort)
+        return antwort
+
+    # Der Weg, den die Doku dafür nennt: an-/abmelden, umleiten, die Folgeanfrage rendert.
+    @ap.post("/app/anmelden-umleiten")
+    def anmelden_umleiten(request: Request):
+        token, _ok = a.start_session(a.store.get_user_by_name("erika")["id"], "password")
+        antwort = RedirectResponse("/app/fertig", 303)
+        a.set_cookie(antwort, token)
+        return antwort
+
+    @ap.post("/app/abmelden-umleiten")
+    def abmelden_umleiten(request: Request):
+        antwort = RedirectResponse("/app/fertig", 303)
         a.logout(request, antwort)
         return antwort
 
@@ -531,6 +564,37 @@ _r = _c3.post("/app/abmelden")
 assert len(_zeilen(_r)) == 1 and not _geloescht(_zeilen(_r)[0]), _set_cookies(_r)
 assert _wert(_zeilen(_r)[0]) == _r.headers["x-csrf"] not in (_neu, _alt)
 ok("logout() + ensure_csrf() in einer Antwort: genau eine Zeile, ein neues Token statt der Löschung")
+
+# Weg 2 (fertige Antwort) und An-/Abmelden in DERSELBEN Antwort geht nicht — die Grenze, die
+# README und `ensure_csrf` seit der Nachbesserung 0.20.1 nennen (Befund aus dem Angriff auf die
+# CSRF-Änderungen: die Zusage „beide liefern dasselbe Token" galt dort nicht, still). Die Seite ist
+# gerendert, bevor `set_cookie` das Token dreht bzw. `logout` es löscht; ihr Formular trägt das
+# alte und scheitert mit 403. Das ist fail-closed und bleibt so: Die Drehung beim Anmelden ist die
+# Sicherheitszusage, sie darf nicht davon abhängen, ob vorher ein Token ausgegeben wurde. Kein
+# Code-Fix, darum keine Mutationsprobe — der Block hält fest, was die Doku sagt. Wird er rot, weil
+# das Formular plötzlich gilt, ist entweder die Drehung weg oder die Doku veraltet.
+for _weg in ("anmelden", "abmelden"):
+    _cw = _client(_ap)
+    if _weg == "abmelden":
+        assert _cw.post("/app/anmelden").status_code == 200
+    _vorher = _feld(_cw.get("/app/formular").text)
+    _r = _cw.post(f"/app/{_weg}-fertig")
+    _nachher = _cw.cookies.get(CK)
+    assert _feld(_r.text) == _vorher != _nachher == _r.headers["x-ensure"], \
+        (_weg, _vorher, _feld(_r.text), _nachher, _r.headers.get("x-ensure"))
+    assert _cw.post("/app/speichern", data={"_csrf": _feld(_r.text)}).status_code == 403, _weg
+    # Der dokumentierte Weg: umleiten; die Folgeanfrage rendert mit dem neuen Cookie.
+    _cw = _client(_ap)
+    if _weg == "abmelden":
+        assert _cw.post("/app/anmelden").status_code == 200
+    _vorher = _feld(_cw.get("/app/formular").text)
+    _r = _cw.post(f"/app/{_weg}-umleiten", follow_redirects=False)
+    assert _r.status_code == 303, (_weg, _r.status_code)
+    _r = _cw.get("/app/fertig")
+    assert _feld(_r.text) == _cw.cookies.get(CK) != _vorher, (_weg, _feld(_r.text), _vorher)
+    assert _cw.post("/app/speichern", data={"_csrf": _feld(_r.text)}).status_code == 200, _weg
+ok("Weg 2 + An-/Abmelden in einer Antwort: Formular trägt das alte Token (403, dokumentiert); "
+   "umleiten geht")
 
 
 # ---------- E2. Jeder Anmeldeweg dreht das CSRF-Token (OWASP: „changes with each login") ----------

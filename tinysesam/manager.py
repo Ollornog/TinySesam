@@ -2095,7 +2095,10 @@ class TinySesam:
           als Rückgabewert): `csrf = auth.ensure_csrf(request, response)`, dann rendern.
         * Fertige Antwort (Jinja `TemplateResponse`): `csrf = auth.csrf_token(request)` vor dem
           Rendern, danach `auth.ensure_csrf(request, antwort)` — beide liefern in derselben
-          Anfrage dasselbe Token.
+          Anfrage dasselbe Token. **Nicht in einer Antwort, die an- oder abmeldet:** Die Seite
+          ist gerendert, bevor `set_cookie()`/`logout()` das Token wechselt, ihr Formular trüge
+          das alte (403 beim Absenden). Dort umleiten; die Folgeanfrage rendert mit dem neuen
+          Cookie. Mit dem Antwortparameter geht es: erst `set_cookie()`, dann `ensure_csrf()`.
 
         Eigenes JS kennt den Cookie-Namen nicht von selbst — `auth.csrf_cookie_name` ist Python.
         Die Seite reicht ihn mit (Template-Variable oder `<meta>`), oder das JS nimmt den Wert
@@ -3048,7 +3051,9 @@ class TinySesam:
 
         Ist das Token eine eben entstandene Anmeldung (`start_session`, der letzte Schritt einer
         Kette), setzt dieselbe Antwort auch ein neues CSRF-Token (0.20.1). Wer danach in dieser
-        Antwort ein Formular rendert, holt das Token mit `ensure_csrf(request, response)`."""
+        Antwort ein Formular rendert, holt das Token mit `ensure_csrf(request, response)` — über
+        den FastAPI-Antwortparameter. Eine fertige Antwort ist dann schon gerendert und ihr
+        Formular trüge das alte Token: dort umleiten statt ein Formular ausliefern."""
         if remember is None:
             s = self.store.get_session(token)
             remember = bool(s["remember"]) if s else True
@@ -3662,7 +3667,8 @@ class TinySesam:
 
         Setzt KEIN Cookie. Ein neu gewürfeltes Token merkt sich die Anfrage: Ein späteres
         `ensure_csrf(request, antwort)` setzt genau dieses (der Weg für fertige Antworten wie
-        Jinjas `TemplateResponse`). Ein Cookie, das nicht wie ein Token aussieht, zählt nicht."""
+        Jinjas `TemplateResponse` — nicht für eine, die an- oder abmeldet, s. `ensure_csrf`). Ein
+        Cookie, das nicht wie ein Token aussieht, zählt nicht."""
         if request is not None and self.cfg.csrf_enabled:
             return self._csrf_der_anfrage(request)[0]
         return secrets.token_urlsafe(24)

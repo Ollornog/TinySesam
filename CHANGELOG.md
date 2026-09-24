@@ -6,8 +6,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 Nachschlag zu 0.20.0. Zwei Abnehmer haben beim Heben Befunde **in** TinySesam gemeldet: Beide
 mussten für das CSRF-Cookie ihrer eigenen Seiten TinySesam nachbauen, und die Zusage „frisches
-CSRF-Token beim Login" galt nur am Ende eines TOTP-Schritts. Kein Schema-Wechsel, keine neue
-Konfiguration.
+CSRF-Token beim Login" galt nur am Ende eines TOTP-Schritts. Der Angriff auf diese Änderungen fand
+dazu eine vorbestehende Lücke im Step-up (`/auth/reauth`, siehe „Sicherheit"). Kein
+Schema-Wechsel, keine neue Konfiguration.
 
 **Vor dem Update:** nichts einzustellen. Zu wissen:
 
@@ -18,20 +19,30 @@ Konfiguration.
 2. **Wer für eigene Seiten `csrf_cookie_name` + `issue_csrf()` + eine kopierte Set-Cookie-Zeile
    kombiniert**, kann das durch `auth.ensure_csrf(request, response)` ersetzen. Wer nach einer
    eigenen Anmeldung in **derselben** Antwort ein Formular rendert, holt dessen Token mit
-   `ensure_csrf()` **nach** `set_cookie()`.
+   `ensure_csrf()` **nach** `set_cookie()` — über den FastAPI-Antwortparameter. Eine fertige
+   Antwort (Jinjas `TemplateResponse`) ist dann schon gerendert, ihr Formular trüge das alte
+   Token (403): Eine Antwort, die an- oder abmeldet, leitet um, statt ein Formular auszuliefern.
+3. **`/auth/reauth` antwortet einem API-Key mit 403** (`api.stepup_session`). Bestätigen konnte
+   ein Key dort nie etwas — Step-up-Frische erreicht er nicht —, aber die Route nahm ihn an und
+   liess sich damit missbrauchen (siehe „Sicherheit"). Wer sie aus einer Automatik ruft, erhält
+   jetzt die Abweisung statt einer wirkungslosen 303.
 
 ### Hinzugefügt
 
-- **`auth.ensure_csrf(request, response) -> str`** — ein gültiges CSRF-Cookie sicherstellen und das
-  Token fürs Formular holen, ohne TinySesam nachzubauen. Ein vorhandenes, gültiges Token bleibt
-  (keine Set-Cookie-Zeile, die Formulare anderer Reiter gelten weiter); sonst setzt es ein neues,
-  mit denselben Attributen wie `issue_csrf()`. Hat die Antwort das Token schon gedreht (Anmeldung)
-  oder gelöscht (Abmelden), liefert es das neue bzw. setzt ein frisches — nie das alte aus dem
-  Request. Für fertige Antworten (Jinjas `TemplateResponse`): `csrf_token(request)` vor dem
-  Rendern, `ensure_csrf(request, antwort)` danach; beide liefern in derselben Anfrage dasselbe
-  Token. Beispiele für Template und JS in beiden READMEs („CSRF auf eigenen Seiten"). Bisher gab
-  es nur `issue_csrf()` (würfelt immer neu — die „Formular abgelaufen"-Falle in den anderen
-  Reitern) und `csrf_token()` (setzt kein Cookie).
+- **`auth.ensure_csrf(request, response) -> str`** — ein gültiges CSRF-Cookie sicherstellen und
+  das Token fürs Formular holen, ohne TinySesam nachzubauen. Ein vorhandenes, gültiges Token
+  bleibt (keine Set-Cookie-Zeile, die Formulare anderer Reiter gelten weiter); sonst setzt es ein
+  neues, mit denselben Attributen wie `issue_csrf()`. Hat die Antwort das Token schon gedreht
+  (Anmeldung) oder gelöscht (Abmelden), liefert es das neue bzw. setzt ein frisches — nie das alte
+  aus dem Request. Für fertige Antworten (Jinjas `TemplateResponse`): `csrf_token(request)` vor
+  dem Rendern, `ensure_csrf(request, antwort)` danach; beide liefern in derselben Anfrage dasselbe
+  Token — nicht in einer Antwort, die an- oder abmeldet: Die Seite ist gerendert, bevor das Token
+  wechselt, ihr Formular trüge das alte. Dort umleiten (nachgetragen nach dem Angriff auf die
+  Änderung: die Zusage „dasselbe Token" hatte an dieser Stelle still nicht gegolten, fail-closed
+  mit 403; `tests/test_csrf.py` hält die Grenze und den Ausweg fest). Beispiele für Template und
+  JS in beiden READMEs („CSRF auf eigenen Seiten"). Bisher gab es nur `issue_csrf()` (würfelt
+  immer neu — die „Formular abgelaufen"-Falle in den anderen Reitern) und `csrf_token()` (setzt
+  kein Cookie).
 - **Die Properties stehen in der eingefrorenen API-Oberfläche** — `session_cookie_name`,
   `csrf_cookie_name`, `resource_cookie_name` (`tests/api_surface.json`, neuer Bereich
   `TinySesam.eigenschaften`; `API.md` mit eigenem Abschnitt). Der Wächter schloss Properties bis
@@ -67,6 +78,20 @@ Konfiguration.
   403, neues gilt, die Folgeseite rendert mit dem neuen), ein Wächter über den Quelltext hält fest,
   dass Sitzungen nur in `_sitzung_anlegen()` entstehen und das Sitzungs-Cookie nur in
   `set_cookie()` gesetzt wird.
+- **`/auth/reauth` bestätigt nur noch eine Sitzung, nie einen API-Key — Key und Passwort ersetzten
+  dort den zweiten Faktor** (vorbestehend, nachgestellt auf 0.20.0; gefunden beim Angriff auf die
+  CSRF-Änderungen). Die Route prüfte den Faktor des Kontos aus `current_user()` und machte danach
+  die Sitzung aus dem Cookie voll. Bei einer **halben** Sitzung (erster Faktor erbracht, TOTP
+  offen) fällt `current_user()` auf den API-Key zurück, Prüfung und Wirkung trafen also
+  verschiedene Dinge: Mit dem Sitzungs-Cookie einer halb angemeldeten fremden Person, dem eigenen
+  Automaten-Key und dem eigenen Passwort war deren Sitzung voll angemeldet, ohne dass ihr TOTP je
+  gefragt wurde. Im eigenen Konto ersetzten Automaten-Key und Passwort das TOTP und brachten das
+  Admin-Flag zurück, das ein Automaten-Key allein nicht trägt (R6-5). Voraussetzung waren ein
+  gültiger API-Key (`apikey_enabled`) und — für das fremde Konto — dessen halbes Sitzungs-Cookie.
+  Jetzt antworten `GET` und `POST /auth/reauth` einem Konto, das nicht aus der Sitzung kommt, mit
+  403 (`api.stepup_session`), bevor ein Faktor geprüft wird; ein Key kann Step-up-Frische
+  ohnehin nie erreichen (`stepup_fresh()`). `tests/test_stepup.py` stellt beide Wege nach und
+  prüft, dass der Step-up einer vollen Sitzung per TOTP weiterläuft.
 
 ### Behoben
 

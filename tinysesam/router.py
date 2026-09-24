@@ -628,11 +628,29 @@ def build_router(auth) -> APIRouter:
         return RedirectResponse(cfg.admin_path, 303)
 
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
+    def _nur_sitzung(u):
+        """Bestätigt wird eine Sitzung, nie ein API-Key (0.20.1).
+
+        Die Route prüft den Faktor des Kontos aus `current_user()` und frischt danach die Sitzung
+        aus dem Cookie auf. Bei einer HALBEN Sitzung (erster Faktor ja, TOTP offen) fällt
+        `current_user()` auf den API-Key zurück — geprüft wurde dann das Konto des Keys, voll
+        gemacht die Sitzung aus dem Cookie: Die halbe Sitzung eines anderen wurde mit dem eigenen
+        Key und dem eigenen Passwort voll, und im eigenen Konto ersetzten Automaten-Key und Passwort
+        den zweiten Faktor (samt dem Admin-Flag, das der Key allein nicht trägt). Frische kann ein
+        Key ohnehin nie erreichen (`stepup_fresh`); kommt das Konto nicht aus der Sitzung, gibt es
+        hier nichts zu bestätigen. Kommt es aus ihr, dann aus der VOLLEN Sitzung eben dieses Cookies
+        — derselben, die unten auffrischt. `!= "session"` statt `== "apikey"`: fail-closed für jede
+        Herkunft, die es heute nicht gibt.
+        """
+        if u.get("_via") != "session":
+            raise HTTPException(403, auth.t("api.stepup_session"))
+
     @r.get("/auth/reauth", response_class=HTMLResponse)
     def reauth_page(request: Request, next: str = "/", error: str = ""):
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(f"{cfg.login_path}?next={_q(auth.safe_next(next))}", 303)
+        _nur_sitzung(u)
         methods = auth.stepup_options(u)
         # Leere Liste heisst `stepup_strict=True` und nichts Passendes eingerichtet. Ohne eigene
         # Meldung stünde hier eine Seite ohne einziges Eingabefeld — der Nutzer sähe nicht, was
@@ -648,6 +666,7 @@ def build_router(auth) -> APIRouter:
         u = auth.current_user(request)
         if not u:
             return RedirectResponse(cfg.login_path, 303)
+        _nur_sitzung(u)
         nxt = auth.safe_next(next)
         ip = auth.client_ip(request)
         methods = auth.stepup_options(u)
