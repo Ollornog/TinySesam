@@ -748,29 +748,37 @@ def _altern():
 _uid4a = a4a.store.get_user_by_name("refresher")["id"]
 _altern()
 _antworten.append(("ok", {"sub": "r-1", "groups": ["admins"]}, {"refresh_token": "rt-2"}))
+_erste = c4a.get("/auth/me").status_code
+a4a._oidc_ausgang.abwarten()                                  # getauscht wird im Hintergrund (Fund 6)
 r.check("4a: nach der Frist wird getauscht; der Provider sagt ja → die Sitzung bleibt",
-        c4a.get("/auth/me").status_code == 200 and _gerufen == [("rt-1", "r-1")])
+        _erste == 200 and c4a.get("/auth/me").status_code == 200 and _gerufen == [("rt-1", "r-1")])
 r.check("… ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)",
         a4a.store.get_oidc_sitzung(a4a.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"])["refresh"] == "rt-2")
 _altern()
 _antworten.append(("ok", {"sub": "r-1", "groups": []}, {}))
 c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
 r.check("4a + H-5: nimmt der Provider die Admin-Gruppe, ist das Flag binnen der Frist weg — nicht erst beim Login",
         not a4a.store.get_user(_uid4a)["is_admin"])
 _altern()
 _antworten.append(("ok", {"sub": "r-1"}, {}))                   # kein Gruppen-Claim
 a4a.set_roles(_uid4a, ["editor"])
 c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
 r.check("… fehlt der Gruppen-Claim ganz, bleiben die Rollen (fehlend ≠ keine Gruppen)",
         "editor" in a4a.user_roles(a4a.store.get_user(_uid4a)))
 _altern()
 _antworten.append(("fehler", {}, {"error": "ConnectError"}))
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
 r.check("4a: ist der Provider nicht erreichbar, bleibt die Sitzung (ein Ausfall meldet niemanden ab)",
         c4a.get("/auth/me").status_code == 200)
 r.check("… und es wird in einer Minute neu versucht, nicht erst nach der vollen Frist",
         _jetzt_minus(a4a) <= 15 * 60 - 60 + 5)
 _altern()
 _antworten.append(("abgelehnt", {}, {"error": "invalid_grant"}))
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
 r.check("4a: verweigert der Provider (gesperrt, gelöscht, entzogen), ist die Sitzung weg",
         c4a.get("/auth/me").status_code == 401
         and a4a.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
@@ -785,6 +793,116 @@ r.check("4a einstellbar: oidc_session_refresh_minutes=0 legt nichts ab",
 # (Mutationsproben: `_oidc_nachpruefen` immer True → „Sitzung weg" rot; die Gruppen-Neubewertung
 #  streichen → „Flag … weg" rot; `in info` streichen → „fehlend ≠ keine Gruppen" rot; die
 #  Wiederholung in einer Minute streichen → „in einer Minute" rot.)
+
+# ── Befunde aus dem Angriff auf die zweite Runde (4a, Schlüssel, Leerlauf, Hinweis) ─────────
+import threading as _th  # noqa: E402
+import time as _zeit  # noqa: E402
+
+
+def _oidc_mit_refresh(sub, **cfg):
+    a, app = _oidc({"sub": sub, "preferred_username": sub}, **cfg)
+    a.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+        _Claims({"sub": sub, "preferred_username": sub, "nonce": nonce}),
+        {"access_token": "at", "refresh_token": "rt-" + sub})
+    c = TestClient(app, raise_server_exceptions=False)
+    st = parse_qs(urlparse(c.get("/auth/oidc/start", follow_redirects=False).headers["location"]).query)["state"][0]
+    c.get(f"/auth/oidc/callback?code=x&state={st}", follow_redirects=False)
+    return a, app, c
+
+
+# Fund 5: parallele Anfragen nach der Frist → genau EIN Tausch (Rotation beim Provider).
+a5r, _, c5r = _oidc_mit_refresh("parallel")
+_tausche = []
+a5r.oidc.refresh = lambda rt, sub: (_tausche.append(rt) or ("ok", {"sub": sub}, {}))
+a5r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+_s5 = a5r.store._one("SELECT * FROM session")
+for _ in range(4):
+    a5r._oidc_nachpruefen(_s5)
+a5r._oidc_ausgang.abwarten()
+r.check("Fund 5: vier Anfragen nach der Frist tauschen das Refresh-Token genau einmal", len(_tausche) == 1,
+        str(_tausche))
+
+# Fund 6: ein hängender Provider hält die Anfrage nicht fest.
+a6r, _, c6r = _oidc_mit_refresh("haengt")
+a6r.oidc.refresh = lambda rt, sub: (_zeit.sleep(1.5), ("ok", {"sub": sub}, {}))[1]
+a6r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+_t0 = _zeit.monotonic()
+_st6 = c6r.get("/auth/me").status_code
+_dauer = _zeit.monotonic() - _t0
+a6r._oidc_ausgang.abwarten()
+r.check("Fund 6: die Anfrage wartet nicht auf den Provider (Tausch im Hintergrund)",
+        _st6 == 200 and _dauer < 1.0, f"{_dauer:.2f}s")
+
+# Fund 7: je Client eine Zeile — ein Login über einen zweiten Client überschreibt die erste nicht.
+_h7 = a6r.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"]
+a6r.store.set_oidc_sitzung(_h7, "app-b", "haengt", "rt-b")
+r.check("Fund 7: mehrere Clients einer Sitzung — jede Zeile bleibt und wird nachgeprüft",
+        {z["client"] for z in a6r.store.get_oidc_sitzungen(_h7)} == {"*", "app-b"})
+
+# Fund 13: ein gesperrtes Konto fragt niemand beim Provider nach.
+a13, _, c13 = _oidc_mit_refresh("gesperrt13")
+_t13 = []
+a13.oidc.refresh = lambda rt, sub: (_t13.append(rt) or ("ok", {"sub": sub, "groups": ["admins"]}, {}))
+a13.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a13.store._exec("UPDATE users SET disabled = 2")
+c13.get("/auth/me")
+a13._oidc_ausgang.abwarten()
+r.check("Fund 13: für ein gesperrtes Konto wird nicht getauscht (F-17)", _t13 == [], str(_t13))
+
+# Fund 4: ein falscher Schlüssel bricht den Start auch ab, wenn es nur Refresh-Tokens gibt.
+_pfad4 = a5r.cfg.db_path
+a5r.store.db.close()
+_os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
+try:
+    _oidc({"sub": "x"}, db_path=_pfad4)
+    _f4 = False
+except ConfigError:
+    _f4 = True
+finally:
+    del _os.environ["TINYSESAM_SECRETS_KEY"]
+r.check("Fund 4: falscher Schlüssel + nur OIDC-Refresh-Tokens → der Start bricht ab", _f4)
+
+# Fund 9: das 8-h-Limit gilt für jede Sitzung ohne AUSDRÜCKLICHES „Angemeldet bleiben".
+a9, app9, c9 = _oidc_mit_refresh("leerlauf9")
+a9.store._exec("UPDATE session SET zuletzt = zuletzt - 9 * 3600")
+r.check("Fund 9: eine OIDC-Sitzung (dauerhaft, aber ohne Wahl) endet nach 8 h Inaktivität",
+        c9.get("/auth/me").status_code == 401)
+
+# Fund 10: mehrere Worker legen den Schlüssel gleichzeitig an — alle bekommen denselben.
+from tinysesam import geheimnis as _gh  # noqa: E402
+_db10 = str(Path(tempfile.mkdtemp()) / "race.db")
+_erg10, _fehler10 = [], []
+
+
+def _laden10():
+    try:
+        _erg10.append(_gh.schluessel_laden(_db10)[0])
+    except Exception as e:   # noqa: BLE001
+        _fehler10.append(repr(e))
+
+
+_faeden = [_th.Thread(target=_laden10) for _ in range(24)]
+for _f in _faeden:
+    _f.start()
+for _f in _faeden:
+    _f.join()
+r.check("Fund 10: 24 gleichzeitige Erststarts — kein Fehler, ein einziger Schlüssel",
+        not _fehler10 and len(set(_erg10)) == 1 and len(_erg10) == 24, f"{_fehler10[:2]} / {len(set(_erg10))}")
+
+# Fund 11: die Drossel des Sperr-Hinweises steht in der Datenbank — ein verdrängter Speicher-Schlüssel
+# (oder ein zweiter Worker) schickt keinen zweiten.
+a11, app11, post11 = _hinweis_app()
+a11.create_user("gedrosselt", password=PW, email="gedrosselt@example.com")
+a11._sperrhinweis("gedrosselt", "198.51.100.30", "lockout_user")
+a11._hinweis_ausgang.abwarten()
+a11.rl.allow = lambda *a, **k: True                             # wie nach der Verdrängung
+a11._sperrhinweis("gedrosselt", "198.51.100.31", "lockout_user")
+a11._hinweis_ausgang.abwarten()
+r.check("Fund 11: auch ohne Speicher-Drossel höchstens ein Hinweis je Sperrfenster", len(post11) == 1,
+        str(len(post11)))
+# (Mutationsproben: den Anspruch in `_oidc_nachpruefen` streichen → Fund 5 rot; den Tausch
+#  synchron statt über `_oidc_ausgang` → Fund 6 rot; die Audit-Drossel in `_senden` streichen →
+#  Fund 11 rot; `bleiben_gewaehlt` in `get_session` streichen → Fund 9 rot.)
 
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")

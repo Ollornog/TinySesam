@@ -168,6 +168,8 @@ def build_router(auth) -> APIRouter:
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
                                               email_bestaetigt=False if aus_verzeichnis else None)
+        if cfg.remember_me_enabled and remember_me:
+            auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
             auth.set_cookie(resp, token)   # Art des Cookies folgt der Sitzung (A-2)
@@ -418,6 +420,8 @@ def build_router(auth) -> APIRouter:
                 return fail(auth.t("err.credentials"), 401)
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
                                                   request.headers.get("user-agent"), remember_me)
+            if cfg.remember_me_enabled and remember_me:
+                auth.store.set_session_bleiben(auth.store.session_hash(token))  # F-05: ausdrücklich gewählt
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)

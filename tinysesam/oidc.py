@@ -308,7 +308,7 @@ class OIDCClient:
         daten = {"grant_type": "refresh_token", "refresh_token": refresh_token,
                  "client_id": self.client_id, "client_secret": self.client_secret}
         try:
-            antwort = httpx.post(self.meta()["token_endpoint"], timeout=15, data=daten)
+            antwort = httpx.post(self.meta()["token_endpoint"], timeout=10, data=daten)
             tok = antwort.json()
         except Exception as e:   # noqa: BLE001 — Netz, JSON: der Provider antwortet nicht brauchbar
             return "fehler", {}, {"error": type(e).__name__}

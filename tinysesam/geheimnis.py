@@ -77,10 +77,29 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
             return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     except FileNotFoundError:
         pass
+    # Atomar und exklusiv anlegen: erst eine vollständige Zwischendatei (0600, fsync), dann ein
+    # Hardlink auf den Zielnamen — der gelingt genau einem Prozess. Mehrere Worker, die gleichzeitig
+    # zum ersten Mal starten, lasen sonst eine halb geschriebene Datei oder scheiterten am
+    # O_EXCL (Angriff auf die zweite Runde, Fund 10: 85 von 240 Starts). Wer verliert, liest die
+    # Datei des Gewinners.
     roh = secrets.token_bytes(32)
-    fd = os.open(pfad, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="ascii") as f:
-        f.write(base64.b64encode(roh).decode("ascii") + "\n")
+    zwischen = f"{pfad}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    fd = os.open(zwischen, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as f:
+            f.write(base64.b64encode(roh).decode("ascii") + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(zwischen, pfad)
+        except FileExistsError:
+            with open(pfad, encoding="ascii") as f:
+                return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
+    finally:
+        try:
+            os.unlink(zwischen)
+        except FileNotFoundError:
+            pass
     log.warning(
         "TinySesam: Schlüssel für die TOTP-Geheimnisse neu erzeugt: %s (0600). Er liegt neben der "
         "Datenbank — das schützt gegen eine Datenbankdatei, die allein abfliesst, nicht gegen eine "

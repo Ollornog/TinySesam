@@ -277,6 +277,10 @@ class TinySesam:
         # Eigener, kleiner Postausgang für Sperr-Hinweise (ASVS 6.3.5): Ihn füllt, wer Fehlversuche
         # schickt — eine Flut soll Anmelde-Links und Resets im Hauptausgang nicht verdrängen.
         self._hinweis_ausgang = Postausgang(arbeiter=1, max_offen=50)
+        # Die OIDC-Nachprüfung (4a) tauscht Refresh-Tokens im Hintergrund: Ein hängender Provider
+        # hielte sonst jede fällige Anfrage bis zum Timeout fest — aus `async`-Routen samt Event-Loop
+        # (Angriff auf die zweite Runde, Fund 6, dieselbe Klasse wie B6-6).
+        self._oidc_ausgang = Postausgang(arbeiter=2, max_offen=200)
         #: Opt-in-Benachrichtigung bei Sicherheitsereignissen am eigenen Konto (Fund B2-2,
         #: Empfehlung H-6) — siehe `SICHERHEITSEREIGNISSE`. Aufruf `hook(ereignis, konto,
         #: details)`; `konto` hat `id`, `username`, `email`, `display_name`. TinySesam
@@ -2852,7 +2856,7 @@ class TinySesam:
                 neu_token = self._sitzung_anlegen(
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
-                self.store.oidc_sitzung_umhaengen(s["token_hash"], self.store.session_hash(neu_token))
+                self._nachfolger(s, neu_token)
                 self.store.delete_session_by_handle(s["token_hash"])
                 self._andere_nach_abschluss(s, neu_token)
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
@@ -2869,6 +2873,18 @@ class TinySesam:
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
+
+    def _nachfolger(self, alte_zeile, neu_token) -> None:
+        """Was an der halben Sitzung hängt, geht auf die volle über, die sie ersetzt — VOR dem
+        Löschen der alten: die OIDC-Zeilen (4a, sonst nähme der Fremdschlüssel sie mit) und die
+        ausdrückliche Wahl „Angemeldet bleiben" (F-05)."""
+        neu = self.store.session_hash(neu_token)
+        self.store.oidc_sitzung_umhaengen(alte_zeile["token_hash"], neu)
+        try:
+            if alte_zeile["bleiben_gewaehlt"]:
+                self.store.set_session_bleiben(neu)
+        except (IndexError, KeyError):
+            pass
 
     def _andere_nach_abschluss(self, alte_zeile, neu_token) -> None:
         """War an der halben Sitzung vermerkt, die übrigen zu beenden (Grenze d), dann jetzt — mit
@@ -2938,7 +2954,7 @@ class TinySesam:
             neu_token = self._sitzung_anlegen(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
-            self.store.oidc_sitzung_umhaengen(s["token_hash"], self.store.session_hash(neu_token))
+            self._nachfolger(s, neu_token)
             self.store.delete_session_by_handle(s["token_hash"])
             self._andere_nach_abschluss(s, neu_token)
             return neu_token
@@ -2975,50 +2991,75 @@ class TinySesam:
     def _oidc_nachpruefen(self, s) -> bool:
         """Folgt die Sitzung dem Provider noch? False = die Sitzung ist beendet (4a).
 
-        Alle `oidc_session_refresh_minutes` tauscht die nächste Anfrage das Refresh-Token:
-        * verweigert der Provider (gesperrt, gelöscht, entgruppt, der Anwendung entzogen) → die
-          Sitzung endet, mit Zeile im Audit-Log;
-        * liefert er frische Angaben → Gruppen, erlaubte Gruppen und das vom Provider vergebene
-          Admin-Flag werden neu bewertet (H-5 wirkt damit binnen Minuten, nicht erst beim
-          nächsten Login) — aber nur, wenn der Gruppen-Claim überhaupt dabei ist: Fehlt er, hiesse
-          „keine Gruppen" sonst, jede gemappte Rolle zu entziehen;
-        * ist er nicht erreichbar → nichts ändert sich, neuer Versuch in einer Minute. Ein Ausfall
-          des Providers soll niemanden abmelden."""
+        Alle `oidc_session_refresh_minutes` wird das Refresh-Token getauscht — je Client der
+        Sitzung, im Hintergrund (`_oidc_tausch`). Diese Anfrage beansprucht den fälligen Tausch
+        nur (`oidc_sitzung_beanspruchen`, genau eine von vielen parallelen) und läuft weiter; das
+        Ergebnis gilt ab der nächsten Anfrage. So blockiert ein hängender Provider nichts, und zwei
+        Anfragen tauschen nie dasselbe Token (Rotation beim Provider). Gesperrte Konten fragt
+        niemand beim Provider nach — sie kommen ohnehin nicht herein (F-17)."""
         frist = int(self.cfg.oidc_session_refresh_minutes or 0) * 60
         if not frist or self.oidc is None:
             return True
-        z = self.store.get_oidc_sitzung(s["token_hash"])
-        if z is None:
+        zeilen = self.store.get_oidc_sitzungen(s["token_hash"])
+        if not zeilen:
+            return True
+        konto = self.store.get_user(s["user_id"])
+        if not konto or konto["disabled"]:
             return True
         jetzt = _jetzt()
-        if jetzt - int(z["geprueft_at"]) < frist:
-            return True
-        status, info, tok = self.oidc_clients[z["client"]].refresh(z["refresh"], z["sub"])
+        for z in zeilen:
+            if jetzt - int(z["geprueft_at"]) < frist:
+                continue
+            if not self.store.oidc_sitzung_beanspruchen(s["token_hash"], z["client"], z["geprueft_at"], jetzt):
+                continue          # eine andere Anfrage tauscht gerade
+            if not self._oidc_ausgang.einreihen(lambda z=z: self._oidc_tausch(s, z, frist)):
+                # Warteschlange voll: Anspruch zurückgeben, die nächste Anfrage versucht es wieder.
+                self.store.oidc_sitzung_geprueft(s["token_hash"], z["client"], z["geprueft_at"])
+        return True
+
+    def _oidc_tausch(self, s, z, frist) -> None:
+        """Ein Refresh-Token beim Provider tauschen und das Ergebnis anwenden (4a, im Hintergrund).
+
+        * verweigert der Provider (gesperrt, gelöscht, entgruppt, der Anwendung entzogen) → die
+          Sitzung endet, mit Zeile im Audit-Log;
+        * liefert er frische Angaben → Gruppen, erlaubte Gruppen und das vom Provider vergebene
+          Admin-Flag werden neu bewertet (H-5 wirkt damit binnen Minuten) — aber nur, wenn der
+          Gruppen-Claim überhaupt dabei ist: Fehlt er, hiesse „keine Gruppen" sonst, jede gemappte
+          Rolle zu entziehen;
+        * ist er nicht erreichbar → nichts ändert sich, neuer Versuch in einer Minute. Ein Ausfall
+          des Providers soll niemanden abmelden."""
+        handle, client = s["token_hash"], z["client"]
         konto = self.store.get_user(s["user_id"])
         name = konto["username"] if konto else None
+        try:
+            refresh = self.store.tresor.entschluesseln(z["refresh"])
+        except Exception:   # noqa: BLE001 — falscher Schlüssel: der Start prüft das; hier nichts verbrennen
+            self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60)
+            return
+        status, info, tok = self.oidc_clients[client].refresh(refresh, z["sub"])
+        jetzt = _jetzt()
         if status == "fehler":
-            self.store.oidc_sitzung_geprueft(s["token_hash"], jetzt - frist + 60)
+            self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60)
             security.seclog.warning("OIDC-Nachprüfung: Provider nicht erreichbar (%s) — Sitzung bleibt, "
                                     "neuer Versuch in einer Minute. user=%s",
                                     security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
-            return True
+            return
         if status == "abgelehnt":
-            self.store.delete_session_by_handle(s["token_hash"])
+            self.store.delete_session_by_handle(handle)
             self.store.audit_log("oidc_widerruf", name, s["ip"],
-                                 f"client={z['client']} grund={security.fuer_log(str(tok.get('error', '?')))}")
-            return False
-        self.store.oidc_sitzung_geprueft(s["token_hash"], jetzt, tok.get("refresh_token"))
-        eintrag = self.oidc_clients.eintrag(z["client"])
+                                 f"client={client} grund={security.fuer_log(str(tok.get('error', '?')))}")
+            return
+        self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
+        eintrag = self.oidc_clients.eintrag(client)
         if self.cfg.oidc_group_claim in info:
             roh = info.get(self.cfg.oidc_group_claim) or []
             gruppen = roh if isinstance(roh, list) else [roh]
             erlaubte = eintrag["allowed_groups"]
             if erlaubte and not (set(erlaubte) & set(map(str, gruppen))):
-                self.store.delete_session_by_handle(s["token_hash"])
-                self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={z['client']} grund=gruppe")
-                return False
+                self.store.delete_session_by_handle(handle)
+                self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund=gruppe")
+                return
             self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
-        return True
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
@@ -3552,6 +3593,14 @@ class TinySesam:
         def _senden():
             u = self.find_user(username)
             if not u or u.get("is_service") or not u.get("email") or not _beleg_am_konto(u):
+                return
+            # Die eigentliche Drossel steht in der Datenbank, nicht im Speicher: Der Schlüssel oben
+            # liegt im gemeinsamen, gedeckelten Limiter und lässt sich mit genug fremden Schlüsseln
+            # verdrängen; mit mehreren Workern hat jeder seinen (Fund 11). Das Audit-Log gilt für
+            # alle Prozesse und vergisst nichts vor der Frist.
+            seit = _jetzt() - self.sec("lockout_window_sec")
+            if self.store._one("SELECT 1 FROM audit WHERE event='sperrhinweis' AND lower(username)=lower(?) "
+                               "AND ts >= ? LIMIT 1", (u["username"], seit)):
                 return
             betreff = "Gesperrte Anmeldung bei deinem Konto"
             text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "

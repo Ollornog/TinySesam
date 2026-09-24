@@ -330,7 +330,10 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
-        guard(request)
+        me = guard(request)
+        besitzer = auth.store.api_key_owner(kid)
+        if besitzer is not None:
+            owner_schutz(me, besitzer)     # die Keys eines Owners widerruft nur ein Owner
         # Die Audit-Zeile schreibt `revoke_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
@@ -352,11 +355,17 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/sessions/revoke")
     async def session_revoke(request: Request):
-        guard(request)
+        me = guard(request)
         b = await auth.json_body(request)
+        # Die Sitzungen eines Owners beendet nur ein Owner (Owner-Modell) — sonst meldete ein Admin
+        # den Owner beliebig oft ab.
         if b.get("token"):
+            zeile = auth.store._one("SELECT user_id FROM session WHERE token_hash=?", (str(b["token"]),))
+            if zeile is not None:
+                owner_schutz(me, int(zeile["user_id"]))
             auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
+            owner_schutz(me, int(b["user_id"]))
             auth.store.delete_user_sessions(int(b["user_id"]))
         protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "eine Sitzung")
         return {"ok": True}

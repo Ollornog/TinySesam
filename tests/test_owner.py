@@ -146,6 +146,64 @@ auth.apply_idp_groups(idp, [], {"admins": "__admin__"})
 r.check("ein Owner, der sein Admin-Recht vom IdP hatte, behält es, wenn der IdP die Gruppe nimmt",
         auth.store.get_user(idp)["is_admin"] == 1 and auth.store.get_user(idp)["is_owner"] == 1)
 
+# ── Befunde aus dem Angriff auf die zweite Runde ───────────────────────────────────────
+# Fund 1: Ein vom IdP vergebener Admin (2) wird beim nächsten Start NICHT Owner — sonst entzöge
+# ihm kein Provider mehr das Recht.
+pfad_i = str(Path(tempfile.mkdtemp()) / "idp.db")
+idp_a, _ = _app(db_path=pfad_i)
+idp_uid = idp_a.create_user("nur-idp-admin", password=PW)
+idp_a.apply_idp_groups(idp_uid, ["admins"], {"admins": "__admin__"})
+idp_a.store.db.close()
+idp_b, _ = _app(db_path=pfad_i)
+r.check("Fund 1: ein vom IdP vergebener Admin wird beim Neustart nicht Owner (bleibt entziehbar)",
+        idp_b.store.get_user(idp_uid)["is_owner"] == 0 and idp_b.store.get_user(idp_uid)["is_admin"] == 2)
+idp_b.apply_idp_groups(idp_uid, [], {"admins": "__admin__"})
+r.check("… und der Provider nimmt ihm das Recht weiterhin", not idp_b.store.get_user(idp_uid)["is_admin"])
+idp_b.store.db.close()
+# Fund 2: ein gesperrter Hand-Admin wird nicht Owner, ein aktiver schon.
+pfad_g = str(Path(tempfile.mkdtemp()) / "gesperrt.db")
+g_a, _ = _app(db_path=pfad_g)
+alt_admin = g_a.create_user("gefeuert", password=PW, is_admin=True)
+aktiv_admin = g_a.create_user("aktiv", password=PW, is_admin=True)
+g_a.store._exec("UPDATE users SET is_owner=0")
+g_a.store._exec("UPDATE users SET disabled=2 WHERE id=?", (alt_admin,))
+g_a.store.db.close()
+g_b, _ = _app(db_path=pfad_g)
+r.check("Fund 2: im Bestand wird der älteste AKTIVE Hand-Admin Owner, nicht ein gesperrter",
+        g_b.store.get_user(aktiv_admin)["is_owner"] == 1 and g_b.store.get_user(alt_admin)["is_owner"] == 0)
+g_b.store.db.close()
+# Fund 3: ein Admin ohne Owner-Rolle widerruft weder Keys noch Sitzungen des Owners.
+auth3, app3 = _app()
+auth3.ensure_admin("owner3", PW)
+o3 = auth3.store.get_user_by_name("owner3")["id"]
+auth3.create_user("admin3", password=PW, is_admin=True)
+key3 = auth3.create_api_key(o3, name="ci")
+c_owner3 = _client(app3, "owner3")
+c_admin3 = _client(app3, "admin3")
+r.check("Fund 3: ein Admin ohne Owner-Rolle widerruft keinen Key des Owners",
+        c_admin3.post(f"/auth/admin/api/keys/{key3['id']}/revoke").status_code == 403
+        and auth3.verify_api_key(key3["key"])[0] is not None)
+r.check("… und beendet seine Sitzungen nicht (weder je Konto noch je Handle)",
+        c_admin3.post("/auth/admin/api/sessions/revoke", json={"user_id": o3}).status_code == 403
+        and c_admin3.post("/auth/admin/api/sessions/revoke",
+                          json={"token": auth3.store.list_sessions(o3)[0]["token_hash"]}).status_code == 403
+        and c_owner3.get("/auth/me").status_code == 200)
+# Fund 12: auch der Code-Weg sperrt keinen Owner, und gc() löscht keinen.
+try:
+    auth3.store.set_disabled(o3, True, durch_betreiber=True)
+    code_sperre = True
+except StateError:
+    code_sperre = False
+r.check("Fund 12: `store.set_disabled` sperrt keinen Owner (StateError)", not code_sperre)
+wartend = auth3.create_user("wartend", password=PW, email="wartend@example.com")
+auth3.store.set_disabled(wartend, True)
+auth3.create_magic_token("verify_email", user_id=wartend)
+auth3.store._exec("UPDATE magic_token SET expires_at = 1 WHERE user_id=?", (wartend,))
+auth3.store._exec("UPDATE users SET is_owner=1 WHERE id=?", (wartend,))        # konstruiert: wartender Owner
+auth3.gc()
+r.check("… und `gc()` räumt keinen Owner ab, auch keinen, der auf eine Bestätigung wartet",
+        auth3.store.get_user(wartend) is not None)
+
 # ── Notweg über das CLI ────────────────────────────────────────────────────────────────
 from tinysesam.__main__ import main as _cli  # noqa: E402
 notfall = auth.create_user("notfall", password=PW)
