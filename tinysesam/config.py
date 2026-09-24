@@ -210,12 +210,18 @@ class TinySesamConfig:
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten
-    cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
+    #: Leer = Host-only. Für SSO über Subdomains z.B. ".example.com" — dann vertraut TinySesam
+    #: jedem Host unter dieser Domain: Jeder kann ein Sitzungs-Cookie für die ganze Domain
+    #: setzen und den Browser so in ein fremdes Konto schieben (bekannte Grenze, SECURITY.md).
+    cookie_domain: str = ""
     #: `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der
-    #: Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Ein so
-    #: benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie tossing).
-    #: Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden. Eigenes JS liest den
-    #: Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`.
+    #: Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Das
+    #: CSRF-Cookie ist immer host-only und trägt das Präfix auch bei gesetztem `cookie_domain`.
+    #: Ein so benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie
+    #: tossing). Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die
+    #: Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder
+    #: Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`.
+    #: Eigenes JS liest den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`.
     cookie_host_prefix: bool = True
 
     # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---
@@ -237,9 +243,11 @@ class TinySesamConfig:
     csrf_enabled: bool = True             # State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token)
     csrf_cookie: str = "tinysesam_csrf" # Name des CSRF-Cookies
     #: Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Sec-Fetch-Site: same-origin` genügt,
-    #: sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url,
-    #: trusted_redirect_hosts); `Sec-Fetch-Site: cross-site` ohne eigenen Origin wird
-    #: abgewiesen. Fehlen beide Header (alter Browser, Skript), entscheidet allein das Token.
+    #: sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url —
+    #: NICHT trusted_redirect_hosts: das sind Redirect-Ziele, im Forward-Auth-Aufbau die
+    #: geschützten Apps); `Sec-Fetch-Site: same-site` oder `cross-site` ohne eigenen Origin
+    #: (auch `Origin: null`) wird abgewiesen. Fehlen beide Header (alter Browser, Skript),
+    #: entscheidet allein das Token.
     #: Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern
     #: nur Browser ohne `Sec-Fetch-Site` (Safari vor 16.4) — dafür base_url setzen.
     csrf_origin_check: bool = True

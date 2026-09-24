@@ -121,7 +121,11 @@ def register_passkey_routes(router, auth):
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
         auth.sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
-        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+        resp = JSONResponse({"ok": True, "other_sessions": auth.andere_sitzungen(request, u)})  # B1-7
+        # Der Flow ist verbraucht (pop_flow) — das Cookie dazu bindet nichts mehr und ginge nur
+        # noch an jede App mit (B-20). OIDC und SAML löschen ihres am Rückweg ebenso.
+        auth._flow_cookie_loeschen(resp, _WAFLOW)
+        return resp
 
     # ---------- Passwortloser Login (discoverable credential) ----------
     @router.post("/auth/passkey/login/begin")
@@ -195,6 +199,7 @@ def register_passkey_routes(router, auth):
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)
+        auth._flow_cookie_loeschen(resp, _WAFLOW)   # Flow verbraucht, s. reg_finish
         return resp
 
     # ---------- Verwaltung ----------

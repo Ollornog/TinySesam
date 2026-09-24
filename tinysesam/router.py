@@ -68,6 +68,10 @@ def gehaertete_route(auth) -> type[APIRoute]:
                     antwort = await _antwort_des_handlers(request, exc)
                     if antwort is None:
                         raise
+                # Schreibt die Antwort die Sitzung (Anmelden auf jedem Weg, Abmelden, Step-up),
+                # gehen die Cookies unter den Namen von vor `__Host-` mit (H-1). Hier zentral,
+                # damit kein Anmeldeweg es vergessen kann.
+                auth._altnamen_loeschen(request, antwort)
                 return auth._kopfzeilen(antwort)
             return handler
     return _GehaerteteRoute
@@ -204,13 +208,17 @@ def build_router(auth) -> APIRouter:
         auth.record_login(pu["username"], ip, True, "totp", versuch=versuch)
         sitzungs_token = request.cookies.get(auth.session_cookie_name)   # Klartext nur hier, im Cookie
         # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
-        # Rechtewechsel. Dann muss das Cookie mit.
+        # Rechtewechsel. Ebenso beim Step-up auf einer schon vollen Sitzung (F-06). In beiden
+        # Fällen muss das Cookie mit.
         erneuert = auth.complete_totp(sitzungs_token)
         weiter = erneuert or sitzungs_token
         antwort = RedirectResponse(auth.login_redirect_after(request, weiter, pu["id"], nxt), 303)
         if erneuert:
             auth.set_cookie(antwort, erneuert)
-            auth.csrf_rotieren(antwort)      # beim Login ein frisches CSRF-Token
+            if not s["mfa_ok"]:
+                # Beim Login ein frisches CSRF-Token. Beim Step-up nicht — wie `/auth/reauth`:
+                # Es würde nur die Formulare in den anderen offenen Reitern entwerten.
+                auth.csrf_rotieren(antwort)
         return antwort
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
@@ -295,8 +303,16 @@ def build_router(auth) -> APIRouter:
         sitzungs_token = request.cookies.get(auth.session_cookie_name)
         erneuert = auth.complete_totp(sitzungs_token)
         weiter = erneuert or sitzungs_token
+        # B1-7 auch hier: Gerade die Einschreibung ist der Fall mit alten Sitzungen (Gerät
+        # verloren, Betreiber-Fenster). Gezählt an der NEUEN Sitzung — die alte, halbe hat
+        # `complete_totp` eben gelöscht (sonst liefe die neue als „andere" mit).
+        # Nur wenn die Sitzung damit voll ist (`erneuert`): Folgt in der Kette noch ein Schritt
+        # (password → totp → pin), bleibt sie halb, und das Beenden der übrigen Sitzungen
+        # scheiterte mit 401 — die Seite hätte gefragt, der Nutzer zugestimmt, und das verlorene
+        # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
         antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
-            request, weiter, u["id"], auth.safe_next(next))})
+            request, weiter, u["id"], auth.safe_next(next)),
+            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0})
         if erneuert:
             auth.set_cookie(antwort, erneuert)
             auth.csrf_rotieren(antwort)

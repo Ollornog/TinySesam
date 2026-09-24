@@ -355,6 +355,14 @@ _faelle = {
     "a=1; tinysesam_runlock=R; __Secure-tinysesam_csrf=C; b=2": "a=1; b=2",
     ("tinysesam_oidc_flow=1; tinysesam_saml_flow=2; tinysesam_waflow=3; tinysesam_session=4; "
      "tinysesam_runlock=5; tinysesam_csrf=6; x=7"): "x=7",
+    # Die Lage nach dem Umstieg auf `__Host-` (H-1): Die Altnamen liegen im Browser, bis sie
+    # ablaufen oder TinySesam sie beim nächsten Anmelden löscht, daneben die neuen — sieben
+    # tinysesam-Cookies. Die sechsstufige nginx-Kette liess das siebte (hier die neue Sitzung)
+    # zur App durch. (Mutationsprobe: die nginx-Kette auf sechs Stufen ohne Riegel → rot.)
+    ("tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
+     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; __Host-tinysesam_session=NEU; a=1"): "a=1",
+    ("a=1; tinysesam_session=ALT; tinysesam_csrf=A; tinysesam_runlock=A; __Host-tinysesam_csrf=c; "
+     "__Host-tinysesam_runlock=r; __Host-tinysesam_waflow=w; b=2; __Host-tinysesam_session=NEU"): "a=1; b=2",
 }
 r.check("Caddyfile: es gibt die Cookie-Regel vor der App (B-20)", bool(caddy_cookie_regeln()),
         "keine header_up-Cookie-Zeile — die App bekommt das Sitzungs-Cookie")
@@ -382,6 +390,25 @@ for datei in ("deploy/forward-auth/nginx.conf", "deploy/forward-auth/nginx-pfad.
                 if nginx_app_cookie(datei, ein) != aus}
     r.check(f"{datei}: die TinySesam-Cookies werden entfernt, andere bleiben unberührt (A-2)",
             not _nfalsch, f"{_nfalsch}")
+    # Wie viele tinysesam-Cookies ein Browser trägt, steht nicht fest: sechs Namen, jeder in der
+    # Übergangszeit nach H-1 doppelt (alt und `__Host-`), dazu umbenannte Cookies mehrerer
+    # Instanzen. Die Kette muss die Übergangslage ganz abdecken, und was darüber hinausgeht,
+    # darf nie zur App durchrutschen — dann lieber gar kein Cookie (fail closed). Gegen echtes
+    # nginx 1.31 nachgestellt: 12 Stück → nur die eigenen, 13 → leer.
+    # (Mutationsprobe: den Riegel `$ts_ck_zu` wirkungslos machen → rot ab 13 Cookies.)
+    _stufen = len(re.findall(r'^map \$\w+ \$ts_ck\d+ ', (ROOT / datei).read_text(encoding="utf-8"), re.M))
+    r.check(f"{datei}: die Kette deckt die Übergangslage ab (sechs Namen, alt und __Host-)",
+            _stufen >= 12, f"nur {_stufen} Stufen")
+    _durch = {}
+    for _n in range(0, 2 * _stufen + 3):
+        _ein = "; ".join([f"eigen{i}=v" for i in range(2)]
+                         + [f"{'__Host-' if i % 2 else ''}tinysesam_x{i}=geheim" for i in range(_n)]
+                         + ["eigen9=v"])
+        _aus = nginx_app_cookie(datei, _ein)
+        if "tinysesam_" in _aus or (_n <= _stufen and _aus != "eigen0=v; eigen1=v; eigen9=v"):
+            _durch[_n] = _aus
+    r.check(f"{datei}: beliebig viele tinysesam-Cookies — keins erreicht die App (fail closed)",
+            not _durch, f"{_durch}")
 _ngx = (ROOT / "deploy/forward-auth/nginx.conf").read_text(encoding="utf-8")
 _ngx_app = _ngx.split("location / {")[1].split("proxy_pass")[0]
 r.check("nginx.conf: die App bekommt das gefilterte Cookie", "proxy_set_header Cookie $ts_app_cookie;" in _ngx_app)

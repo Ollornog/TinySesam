@@ -42,7 +42,7 @@ Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
-### `andere_sitzungen(request, user) -> 'int'`
+### `andere_sitzungen(request, user, token: 'Optional[str]' = None) -> 'int'`
 
 Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
 
@@ -88,11 +88,11 @@ Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der
 
 ### `complete_mfa(token)`
 
-Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht.
+Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht brechen.
 
 ### `complete_totp(token) -> 'Optional[str]'`
 
-Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
 ### `consume_admin_claim(token, user) -> 'bool'`
 
@@ -268,7 +268,7 @@ Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite de
 
 ### `logout(request, response)`
 
-Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen.
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 

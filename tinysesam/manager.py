@@ -2096,8 +2096,13 @@ class TinySesam:
         """Die Hostnamen, unter denen diese Instanz im Browser steht.
 
         Host-Header und X-Forwarded-Host kann ein fremdes Skript im Browser des Opfers nicht
-        setzen — sie sagen also, wohin der Browser WOLLTE. Dazu `base_url` und
-        `trusted_redirect_hosts`, damit ein Proxy, der den Host umschreibt, nicht aussperrt."""
+        setzen — sie sagen also, wohin der Browser WOLLTE. Dazu `base_url`, damit ein Proxy,
+        der den Host umschreibt, nicht aussperrt.
+
+        `trusted_redirect_hosts` gehören NICHT dazu. Sie sind erlaubte Ziele für `?next=`, und
+        im Forward-Auth-Aufbau sind das die geschützten Apps — fremder Code aus Sicht von
+        TinySesam. Als eigener Origin gezählt, bestand ein Formular-POST einer kompromittierten
+        App die Herkunftsprüfung (Login-CSRF, Sitzungsaktionen im Namen des Opfers)."""
         from urllib.parse import urlsplit
 
         def name(netloc):
@@ -2110,7 +2115,6 @@ class TinySesam:
                  name(request.url.netloc)}
         if self.cfg.base_url:
             hosts.add(urlsplit(self.cfg.base_url).hostname or "")
-        hosts |= {str(x).strip().lower() for x in (self.cfg.trusted_redirect_hosts or []) if x}
         hosts.discard("")
         return hosts
 
@@ -2128,9 +2132,15 @@ class TinySesam:
           Host umschreibt, ohne X-Forwarded-Host zu setzen (nginx-Vorgabe), auch ohne
           `base_url` (A-3). Eine Nachbar-Subdomain bekommt hier `same-site`, nie `same-origin`.
         * `Origin` gesetzt → er muss ein eigener Host sein, sonst nein. `same-site` von einer
-          Nachbar-Subdomain fällt genau hier heraus.
-        * kein brauchbarer `Origin`, aber `Sec-Fetch-Site: cross-site` → nein.
-        * beides fehlt (alter Browser, Skript, TestClient) → das Token entscheidet allein.
+          Nachbar-Subdomain mit ihrem eigenen Origin fällt hier heraus.
+        * kein brauchbarer `Origin` (fehlt oder `null`), aber `Sec-Fetch-Site: same-site` oder
+          `cross-site` → nein. `null` bekommt eine Nachbar-Subdomain schon, wenn sie ihre Seite
+          mit `Referrer-Policy: no-referrer` ausliefert; `same-site` sagt der Browser trotzdem.
+          Bis zur Nacharbeit fiel hier nur `cross-site` heraus, und wo das CSRF-Cookie kein
+          `__Host-` tragen kann, entschied für die Nachbar-Subdomain wieder allein das Token.
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` fehlt oder sagt `none` (vom
+          Nutzer selbst angestossen, keine Seite kann das auslösen) → das Token entscheidet
+          allein. Ebenso, wenn beides fehlt (alter Browser, Skript, TestClient).
         """
         if not self.cfg.csrf_origin_check:
             return True
@@ -2150,8 +2160,10 @@ class TinySesam:
                 "einem Proxy, der den Host umschreibt: base_url setzen.",
                 security.fuer_log(origin[:200]), security.fuer_log(self.client_ip(request)))
             return False
-        if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
-            security.seclog.warning("csrf origin rejected sec-fetch-site=cross-site ip=%s",
+        seite = (request.headers.get("sec-fetch-site") or "").strip().lower()
+        if seite in ("same-site", "cross-site"):
+            security.seclog.warning("csrf origin rejected sec-fetch-site=%s origin=%s ip=%s",
+                                    seite, "null" if origin else "-",
                                     security.fuer_log(self.client_ip(request)))
             return False
         return True
@@ -2497,10 +2509,14 @@ class TinySesam:
         return self.factor_entry(step, nxt) if step else nxt
 
     def complete_totp(self, token) -> Optional[str]:
-        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen.
+        """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein
+        neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`,
+        `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
-        Gibt ein **neues Sitzungs-Token** zurück, wenn die Sitzung dadurch vollwertig wird —
-        dann gehört es ins Cookie. Sonst `None` (nichts zu tun).
+        Ein neues Token gibt es, wenn die Sitzung dadurch vollwertig wird oder, schon vollwertig,
+        frisch bestätigt ist (Step-up, F-06). Sonst `None` (nichts zu tun). Seit F-06 gilt das
+        auch für den Step-up: Eine eigene Oberfläche, die den Rückgabewert dort ignoriert, hält
+        danach eine tote Sitzung im Cookie. Beim Login (halb → voll) war das schon immer so.
 
         Heißt seit 0.18.0 so, weil der alte Name `complete_mfa` mehr versprach, als die Methode
         tut — MFA ist die ganze Kette, hier geht es um genau einen Faktor. `complete_mfa` bleibt
@@ -2528,17 +2544,24 @@ class TinySesam:
         if ok and not war_ok:
             self.sperre_aufheben(s["user_id"])
             # Rechtewechsel → neues Token (OWASP Session Management). Gibt es zurück, damit der
-            # Aufrufer das Cookie setzen kann; wer den Rückgabewert ignoriert, behält das alte
-            # Verhalten, denn die Sitzung wandert mit.
+            # Aufrufer das Cookie setzen kann — das alte Token gehört zu einer gelöschten Zeile.
             neu_token = self.store.create_session(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
             self.store.delete_session_by_handle(s["token_hash"])
             return neu_token
+        if ok and war_ok:
+            # Die Sitzung war schon vollwertig; `set_session_factors` hat eben `mfa_at` neu
+            # gesetzt — das ist ein Step-up, und der dreht das Token wie `/auth/reauth` und
+            # `apply_factor` (F-06, ASVS 5.0 7.2.4). Vorher blieb es: Ein mitgelesenes Cookie
+            # bekam so frische Sudo-Rechte. Laufzeit und Anmeldezeitpunkt bleiben.
+            return self.store.rotate_session(s["token_hash"])
         return None
 
     def complete_mfa(self, token):
-        """Historischer Name für `complete_totp()` — bleibt erhalten, damit nichts bricht."""
+        """Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token
+        gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht
+        brechen."""
         return self.complete_totp(token)
 
     def session_from_request(self, request):
@@ -2737,8 +2760,9 @@ class TinySesam:
         Freigabe-Tokens (F-01, F-02). Zur Request-Zeit berechnet, weil `cfg` nach dem Aufbau
         geändert werden darf.
 
-        `host_only=True` für Cookies, die nie mit `cookie_domain` gesetzt werden (die
-        Flow-Cookies von OIDC, SAML und Passkey) — die dürfen das Präfix auch dann tragen.
+        `host_only=True` für Cookies, die nie mit `cookie_domain` gesetzt werden (das
+        CSRF-Cookie und die Flow-Cookies von OIDC, SAML und Passkey) — die dürfen das Präfix
+        auch dann tragen.
 
         Der Pfad muss wörtlich `/` sein: Bei `cookie_path=""` schickt `set_cookie` gar kein
         `Path`-Attribut, und ein `__Host-`-Cookie ohne `Path=/` verwirft der Browser still —
@@ -2782,8 +2806,13 @@ class TinySesam:
 
     @property
     def csrf_cookie_name(self) -> str:
-        """Der tatsächliche Name des CSRF-Cookies — den muss eigenes JS lesen."""
-        return self._cookie_name(self.cfg.csrf_cookie)
+        """Der tatsächliche Name des CSRF-Cookies — den muss eigenes JS lesen.
+
+        Mit `__Host-` auch bei gesetztem `cookie_domain`: Das CSRF-Cookie setzt TinySesam nie
+        mit Domain (`issue_csrf`, `render_page`, Admin-Panel), es ist immer host-only. Ohne
+        Präfix konnte im Forward-Auth-Aufbau jede geschützte App ein `tinysesam_csrf` für die
+        ganze Domain setzen und das Double-Submit mit ihrem eigenen Wert bestehen."""
+        return self._cookie_name(self.cfg.csrf_cookie, host_only=True)
 
     @property
     def resource_cookie_name(self) -> str:
@@ -2819,22 +2848,31 @@ class TinySesam:
         ASVS 5.0 7.2.4 verlangt das ausdrücklich auch bei der Re-Authentisierung. Wer das alte
         Token mitgelesen hat, hält danach eine tote Sitzung statt einer frisch bestätigten.
         Laufzeit und Anmeldezeitpunkt bleiben; das Cookie behält seine Art (persistent oder
-        nicht). Gibt das neue Token zurück, oder None ohne Sitzung."""
+        nicht). Gibt das neue Token zurück, oder None ohne Sitzung.
+
+        Räumt dabei die Cookies unter den Namen von vor dem `__Host-`-Präfix ab (H-1) — wie
+        `logout()` auch dann, wenn eine eigene Route der App die Methode ruft."""
         s = self.session_from_request(request)
         if not s:
             return None
         neu = self.store.rotate_session(s["token_hash"])
         if neu:
             self.set_cookie(response, neu, remember=bool(s["remember"]))
+            self._altnamen_loeschen(request, response)
         return neu
 
-    def andere_sitzungen(self, request, user) -> int:
+    def andere_sitzungen(self, request, user, token: Optional[str] = None) -> int:
         """Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
 
         Die Antwort jeder Faktor-Änderung trägt die Zahl als `other_sessions`: ASVS 5.0 7.4.3
         verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
-        beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld."""
-        s = self.session_from_request(request)
+        beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld.
+
+        `token`: das Klartext-Token der eigenen Sitzung, wenn es in DIESER Antwort gewechselt
+        hat (die Pflicht-Einrichtung von TOTP schliesst die Anmeldung ab und dreht dabei das
+        Token). Das Cookie des Requests nennt dann eine Sitzung, die es nicht mehr gibt — gegen
+        sie gezählt, liefe die neue eigene Sitzung als „andere" mit."""
+        s = self.store.get_session(token) if token else self.session_from_request(request)
         eigen = s["token_hash"] if s else None
         return sum(1 for z in self.store.list_sessions(user["id"]) if z["token_hash"] != eigen)
 
@@ -2847,9 +2885,62 @@ class TinySesam:
             kw["domain"] = self.cfg.cookie_domain
         response.delete_cookie(name, **kw)
 
+    def _altnamen(self) -> list:
+        """Die Namen von Sitzungs-, CSRF- und Freigabe-Cookie aus der Zeit vor dem
+        `__Host-`-Präfix (H-1) — nur die, bei denen das Präfix jetzt tatsächlich greift. Wo es
+        nicht greift, IST der alte Name der aktuelle. Die Flow-Cookies fehlen bewusst: Sie
+        leben nur Minuten."""
+        paare = ((self.session_cookie_name, self.cfg.session_cookie),
+                 (self.csrf_cookie_name, self.cfg.csrf_cookie),
+                 (self.resource_cookie_name, self.cfg.resource_cookie))
+        return [basis for name, basis in paare if name != basis]
+
+    def _altnamen_loeschen(self, request, response) -> None:
+        """Cookies unter den Altnamen beim Browser löschen, wenn diese Antwort die Sitzung
+        schreibt (Anmelden, Abmelden, Step-up).
+
+        Gerufen von der Routen-Klasse (jede eingebaute Route), von `logout()` und von
+        `rotate_session()` — die beiden öffentlichen Methoden haben den Request. `set_cookie()`
+        hat ihn nicht: Eine eigene Anmelderoute der App (`start_session` + `set_cookie`) lässt
+        die Altnamen stehen, bis der Browser das nächste Mal über eine dieser Stellen läuft oder
+        sie ablaufen. TinySesam liest sie ohnehin nicht mehr.
+
+        TinySesam liest sie nach dem Umstieg auf `__Host-` nicht mehr, aber der Browser schickte
+        sie bis zu ihrem Ablauf weiter mit (Sitzung bis zu sieben Tage) — an TinySesam und an
+        jede App dahinter. Mit den neuen Namen zusammen waren das mehr tinysesam-Cookies, als
+        die nginx-Vorlagen herausfiltern konnten (B-20). Gelöscht wird nur, was der Browser
+        mitgeschickt hat, und host-only: So waren sie gesetzt, denn das Präfix greift nur ohne
+        `cookie_domain` (das CSRF-Cookie trug nie eine Domain). Läuft auf demselben Host eine
+        zweite Instanz mit gleichem Basisnamen und ohne Präfix, verliert sie ihr Cookie — zwei
+        Instanzen auf einem Host brauchen ohnehin eigene Namen (`session_cookie`).
+
+        Die Sitzung und die Freigaben hinter den alten Cookies enden mit: Das Token darin war
+        sonst bis zu sieben Tage weiter gültig — unter dem neuen Namen vorgezeigt, meldete es
+        an, und es war gerade das Cookie, das an die Apps durchrutschte. Wer es vorzeigt, darf
+        es auch beenden; das ist dieselbe Regel wie beim Abmelden."""
+        alt = [n for n in self._altnamen() if n in request.cookies]
+        if not alt:
+            return
+        gesetzt = {wert.split(b"=", 1)[0].strip().decode("latin-1")
+                   for schluessel, wert in getattr(response, "raw_headers", [])
+                   if schluessel.lower() == b"set-cookie"}
+        if self.session_cookie_name not in gesetzt:
+            return
+        for name in alt:
+            if name in gesetzt:
+                continue
+            wert = request.cookies.get(name) or ""
+            if wert and name == self.cfg.session_cookie:
+                self.store.delete_session(wert)
+            elif wert and name == self.cfg.resource_cookie:
+                self.store.delete_resource_unlocks(wert)
+            response.delete_cookie(name, path=self.cfg.cookie_path,
+                                   secure=self.cfg.cookie_secure, httponly=True,
+                                   samesite=_samesite(self.cfg.cookie_samesite))
+
     def logout(self, request, response):
         """Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und
-        beide Cookies löschen.
+        beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
         Die Freigaben gehören dazu (F-08): Bis 0.20 überlebten sie das Abmelden um bis zu
         `resource_unlock_ttl_hours`. Wer sich am geteilten Rechner abmeldet, erwartet, dass
@@ -2862,6 +2953,9 @@ class TinySesam:
         if freigabe:
             self.store.delete_resource_unlocks(freigabe)
             self._cookie_loeschen(response, self.resource_cookie_name)
+        # Auch hier, nicht nur in der Routen-Klasse: `logout()` ist öffentlich und wird aus
+        # eigenen Routen der App gerufen, an denen die Klasse nicht hängt.
+        self._altnamen_loeschen(request, response)
 
     # ---------- Härtung (Regulation / Rate-Limit / Audit) ----------
     def client_ip(self, request: Request) -> str:

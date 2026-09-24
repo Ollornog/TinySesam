@@ -6,7 +6,7 @@
     "admin_exists": "() -> 'bool'",
     "admin_router": "()",
     "all_security": "() -> 'dict'",
-    "andere_sitzungen": "(request, user) -> 'int'",
+    "andere_sitzungen": "(request, user, token: 'Optional[str]' = None) -> 'int'",
     "api_key_art": "(key) -> 'str'",
     "apply_factor": "(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
     "apply_idp_groups": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
