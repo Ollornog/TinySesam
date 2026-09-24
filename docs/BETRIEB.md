@@ -90,6 +90,7 @@ ein Admin dem Owner ein Passwort und wäre selbst einer.
 |---|---|
 | Owner vergeben / abgeben | Panel „Zum Owner machen" / „Owner abgeben" bzw. `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — nur als Owner; abgeben nur, wenn ein anderer bleibt |
 | Code | `auth.set_owner(uid, True|False)` (`StateError` beim letzten Owner, `ConfigError` bei Service-/gesperrtem Konto) |
+| Härtungswerte (Sperrschwellen, Rate-Limits, Passwortlängen, PIN-Versuche) | speichert nur ein Owner (`POST <admin_path>/api/security`, sonst 403); lesen darf jeder Admin. Ohne Owner im Bestand wie bisher jeder Admin |
 | Notweg (kein Owner kommt mehr heran) | `tinysesam owner --db <datei> <benutzer>` — wer die Datenbank hat, betreibt die Instanz ohnehin |
 | Erster Owner | der erste Admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); im Bestand der älteste **aktive**, von Hand gesetzte Admin — kein Service-Konto, nicht gesperrt (`owner_grant` im Audit-Log). Gibt es keinen (nur Admins vom Identity Provider oder gesperrte), bleibt die Instanz ohne Owner und das Log nennt den Notweg |
 

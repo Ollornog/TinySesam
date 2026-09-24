@@ -50,6 +50,7 @@ MESSAGES = {
         "api.stepup_relogin": 'Your sign-in is too old. This account has no factor it could confirm with — sign in again, then set the first one right away.',
         "api.resource_locked": 'Resource locked',
         "api.owner_only": 'Only an owner may change an owner account or hand out the owner role',
+        "api.owner_settings": 'Only an owner may change the hardening values',
         "api.owner_protected": 'An owner cannot be deleted, disabled or stripped of admin — hand over the owner role first',
         "api.last_owner": 'This is the last owner — make someone else owner first',
         "api.owner_inactive": 'Only an active, interactive account can become owner',
@@ -283,6 +284,7 @@ MESSAGES = {
         "admin.confirm.revoke": "Revoke (disable) this key?",
         "admin.end_session": "End",
         "admin.hardening": "Hardening (brute force / rate limit)",
+        "admin.hardening_owner": "Only owners can save these values — a stricter lockout could otherwise lock the owner out.",
         "admin.version": "Version",
         "admin.installed": "Installed:",
         "admin.update_note": "TinySesam does not update itself. For a new version: move the pinned "
@@ -330,6 +332,7 @@ MESSAGES = {
         "api.stepup_relogin": 'Die Anmeldung liegt zu lange zurück. Dieses Konto hat keinen Faktor, mit dem es bestätigen könnte — melde dich neu an und richte den ersten dann gleich ein.',
         "api.resource_locked": 'Ressource gesperrt',
         "api.owner_only": 'Ein Owner-Konto ändert nur ein Owner, und nur ein Owner vergibt die Rolle',
+        "api.owner_settings": 'Die Härtungswerte ändert nur ein Owner',
         "api.owner_protected": 'Ein Owner lässt sich nicht löschen, sperren oder entmachten — erst die Owner-Rolle abgeben',
         "api.last_owner": 'Das ist der letzte Owner — erst einen anderen zum Owner machen',
         "api.owner_inactive": 'Owner kann nur ein aktives, interaktives Konto werden',
@@ -552,6 +555,7 @@ MESSAGES = {
         "admin.confirm.revoke": "Key widerrufen (sperren)?",
         "admin.end_session": "Beenden",
         "admin.hardening": "Härtung (Brute-Force / Rate-Limit)",
+        "admin.hardening_owner": "Speichern können nur Owner — eine verschärfte Sperre könnte sonst den Owner aussperren.",
         "admin.version": "Version",
         "admin.installed": "Installiert:",
         "admin.update_note": "TinySesam aktualisiert sich nicht selbst. Neue Version: gepinnten Tag "
