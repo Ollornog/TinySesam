@@ -97,13 +97,11 @@ def schluessel_laden(db_path: str, schluessel_datei: str = "") -> tuple[bytes, s
                 return _schluessel_lesen(f.read(), f"Schlüsseldatei {pfad!r}"), "neben_db"
     finally:
         # Die Zwischendatei hat ihren Zweck erfüllt (gelinkt oder verloren) — weg damit; der Link
-        # lässt sie stehen, im Normalfall liegt sie also noch da. Fehlt sie trotzdem (ein fremder
-        # Aufräumer im Verzeichnis), ist nichts zu tun: Ziel war nur, dass sie nicht bleibt. Und
-        # ein Fehler hier darf die Ausnahme aus dem `try` nicht verdecken.
+        # lässt sie stehen, im Normalfall liegt sie also noch da.
         try:
             os.unlink(zwischen)
         except FileNotFoundError:
-            pass
+            pass          # ein fremder Aufräumer war schneller — Ziel war nur, dass sie nicht bleibt
     log.warning(
         "TinySesam: Schlüssel für die TOTP-Geheimnisse neu erzeugt: %s (0600). Er liegt neben der "
         "Datenbank — das schützt gegen eine Datenbankdatei, die allein abfliesst, nicht gegen eine "
