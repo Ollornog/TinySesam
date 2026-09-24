@@ -1102,9 +1102,9 @@ a3a.totp_confirm(u3a, pyotp.TOTP(_g3a).at(_zeit.time() - 30))
 c3a, _ = _link_login(a3a, ap3a, "totp-a")
 r.check("3c einstellbar: magiclink_require_second_factor=False — der Link genügt wieder (A)",
         c3a.get("/drin").json() == {"u": "totp-a"})
-_pw3, _pw3r = TestClient(ap3k), None
-_pw3r = _pw3.post("/auth/login", data={"username": "totp-konto", "password": PW, "next": "/drin"},
-                  follow_redirects=False)
+_pw3 = TestClient(ap3k)
+_pw3.post("/auth/login", data={"username": "totp-konto", "password": PW, "next": "/drin"},
+          follow_redirects=False)
 r.check("… andere Wege bleiben, wie sie waren (Passwort in der Kette [\"magic\"] allein: kein Login)",
         _pw3.get("/drin", follow_redirects=False).status_code != 200)
 # (Mutationsproben: `_link_braucht` in `_session_ok` streichen → die ersten zwei rot; die
