@@ -1910,8 +1910,8 @@ class Store:
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 stand = None
-                if serie is not None and serie[0]:
-                    topf_s, art_s, grenze_s = serie
+                topf_s, art_s, grenze_s = serie if serie is not None else (None, None, 0)
+                if topf_s:
                     if self._serie_summe(topf_s) >= grenze_s:
                         self.db.execute("ROLLBACK")
                         return None, "lockout_serie"
@@ -1925,7 +1925,7 @@ class Store:
                 cur = self.db.execute(
                     "INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,0,?)",
                     (_now(), username, ip, method))
-                if serie is not None and serie[0]:
+                if topf_s:
                     self._serie_plus(topf_s, art_s)
                     stand = self._serie_summe(topf_s)
                 self.db.execute("COMMIT")

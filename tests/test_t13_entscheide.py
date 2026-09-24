@@ -29,7 +29,6 @@ from fastapi import Depends, FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from tinysesam import ConfigError, TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam import security  # noqa: E402
 from tinysesam.store import Store  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
@@ -153,9 +152,10 @@ for _ in range(10):
 from tinysesam.__main__ import main as _cli  # noqa: E402
 # Das CLI endet über `sys.exit` — ungefangen beendete das diesen Test mit Exit 0, mitten im Lauf
 # und grün (Skip ist kein Grün).
+_code = 0
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     try:
-        _code = _cli(["unlock", "--db", auth.cfg.db_path, "wechsel"])
+        _cli(["unlock", "--db", auth.cfg.db_path, "wechsel"])
     except SystemExit as e:
         _code = e.code or 0
 r.check("B2-6: `tinysesam unlock` beendet die Serie", _code == 0 and auth.store.fehlserie("wechsel") == 0,
@@ -398,7 +398,7 @@ a5p, app5p = _oidc({"sub": "h5-p", "preferred_username": "panelfall", "groups": 
                    oidc_group_role_map=KARTE)
 _oidc_login(app5p)
 _pf = a5p.store.get_user_by_name("panelfall")
-_chefin_p = a5p.create_user("chefin", password=PW, is_admin=True)
+a5p.create_user("chefin", password=PW, is_admin=True)
 cpan = TestClient(app5p)
 cpan.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
 gespeichert = cpan.post(f"/auth/admin/api/users/{_pf['id']}/roles", json={"roles": ["editor"], "is_admin": True})
