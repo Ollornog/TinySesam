@@ -6,6 +6,13 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert
 
+- **Der Knopf im Release-Workflow ist ein Trockenlauf.** Von Hand ausgelöst (`workflow_dispatch`)
+  prüft und baut `release.yml` alles, auch das Abbild für beide Plattformen, veröffentlicht aber
+  nichts — kein Release, kein PyPI, kein Abbild in der Registry, keine Beglaubigung. Bisher wäre
+  der Knopf am Tag-Vergleich gescheitert (ein Zweigname ist kein Tag). Ohne Tag prüft
+  `scripts/_release.py --pruefen` die Versionsstände; `tests/test_repo.py` hält fest, dass jeder
+  veröffentlichende Job am Tag hängt.
+
 - **Testbasis auf Kit 0.21.7:** Die Kit-Prüfung, die `splitlines()` sucht, schliesst ihre Dateien wieder
   (CodeQL `file-not-closed`, in 0.20.1 als Kit-Fund abgewiesen und an der Quelle behoben).
 

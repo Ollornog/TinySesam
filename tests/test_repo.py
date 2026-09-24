@@ -643,6 +643,32 @@ assert any(re.search(r"-m\s+build\b", k) for k in _kommandos(_bau_job)), \
     "release.yml: Job `bauen` baut nicht mehr mit `-m build` — Wächter anpassen"
 print("  Bau- und Prüfwerkzeuge im Release/Audit nur aus gehashten Listen, Bau ohne Isolierung")
 
+# Der Knopf (`workflow_dispatch`) ist ein Trockenlauf: Jeder Job, der veröffentlicht oder eine
+# Identität hält, hängt am Tag; das Abbild wird ohne Tag gebaut, aber weder angemeldet noch
+# geschoben. Bis 2026-09-24 hätte der Knopf am Tag-Vergleich scheitern oder — ohne ihn — aus einem
+# Zweig veröffentlichen können. (Mutationsprobe: bei `release`, `pypi` oder `image-beglaubigen`
+# die `if:`-Zeile streichen, oder `push=${{ github.ref_type == 'tag' }}` auf `push=true` → rot.)
+_rel_jobs = _jobs(rel)
+_AM_TAG = "if: github.ref_type == 'tag'"
+for _j in ("release", "pypi", "image-beglaubigen"):
+    _zeilen = [z.strip() for z in _rel_jobs.get(_j, [])]
+    assert _AM_TAG in _zeilen, f"release.yml: Job `{_j}` veröffentlicht auch ohne Tag (Knopf = Trockenlauf)"
+for _j, _zeilen in _rel_jobs.items():
+    _rechte = " ".join(z.strip() for z in _zeilen)
+    if re.search(r"\b(id-token|contents|attestations): write\b", _rechte) or \
+            any(z.strip().startswith("environment:") for z in _zeilen):
+        assert _AM_TAG in [z.strip() for z in _zeilen], \
+            f"release.yml: Job `{_j}` hält eine Identität oder Schreibrecht, hängt aber nicht am Tag"
+_image = "\n".join(_rel_jobs.get("image", []))
+assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
+    "release.yml: das Abbild wird auch ohne Tag geschoben"
+_login = re.search(r"- name: An GHCR anmelden\n\s+" + re.escape(_AM_TAG), _image)
+assert _login, "release.yml: die GHCR-Anmeldung im Job `image` hängt nicht am Tag"
+_pruef = "\n".join(_rel_jobs.get("pruefen", []))
+assert "_release.py --pruefen" in _pruef and "if: github.ref_type != 'tag'" in _pruef, \
+    "release.yml: der Trockenlauf prüft nichts (scripts/_release.py --pruefen fehlt)"
+print("  release.yml: ohne Tag ein Trockenlauf — prüfen und bauen ja, veröffentlichen nie")
+
 # B4-7 — Das Abbild installiert, was die Sperrliste sagt, Byte für Byte. Der Digest-Pin im FROM
 # hält nur das Basis-Abbild; ein `pip install ".[gateway]"` löste bei jedem Bau neu auf.
 SPERRLISTE = "deploy/gateway/requirements.txt"
