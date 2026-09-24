@@ -23,7 +23,10 @@ auffällt:
 - **Owner.** Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; die Rolle
   lässt sich weitergeben, mehrere können Owner sein, es gibt immer mindestens einen. Nur ein Owner
   vergibt sie — und nur ein Owner ändert ein Owner-Konto (Passwort, Keys, Passkeys, Sitzungen,
-  Sperre, Rollen); der Schutz gilt auch im Code (`set_disabled`, `delete_user`). Der erste Admin
+  Sperre, Rollen); der Schutz gilt auch im Code (`set_disabled`, `delete_user`). **Die
+  Härtungswerte im Panel speichert nur ein Owner** — sonst verschärfte ein Admin die Sperre und
+  sperrte den Owner mit ein paar Fehlversuchen aus; lesen dürfen sie alle Admins, und ohne Owner
+  (Bestand nur mit IdP-Admins) bleibt es wie bisher. Der erste Admin
   einer Instanz ist ihr erster Owner; im Bestand wird der älteste aktive, von Hand gesetzte Admin
   Owner (kein Service-Konto, nicht gesperrt; Zeile `owner_grant` im Audit-Log) — gibt es keinen,
   nennt das Log den Notweg. Ein Owner ist immer ein Admin „von Hand" — kein

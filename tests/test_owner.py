@@ -204,6 +204,34 @@ auth3.gc()
 r.check("… und `gc()` räumt keinen Owner ab, auch keinen, der auf eine Bestätigung wartet",
         auth3.store.get_user(wartend) is not None)
 
+# ── Härtungswerte nur für Owner (PO-Entscheid 2026-09-24) ───────────────────────────────
+# Ohne das verschärfte ein Admin die Sperrschwellen und sperrte den Owner mit ein paar
+# Fehlversuchen unter dessen Namen aus — ein Umweg um „Owner lässt sich nicht sperren".
+auth_h, app_h = _app()
+auth_h.ensure_admin("chefin-h", PW)
+auth_h.create_user("admin-h", password=PW, is_admin=True)
+_vorher_h = auth_h.all_security()
+_admin_h = _client(app_h, "admin-h")
+_abgelehnt_h = _admin_h.post("/auth/admin/api/security", json={"max_login_attempts": 1})
+r.check("Härtung: ein Admin ohne Owner-Rolle ändert die Werte nicht (403, nichts gespeichert)",
+        _abgelehnt_h.status_code == 403 and auth_h.all_security() == _vorher_h,
+        f"HTTP {_abgelehnt_h.status_code}")
+r.check("… lesen darf er sie weiter",
+        _admin_h.get("/auth/admin/api/security").json() == _vorher_h)
+_owner_h = _client(app_h, "chefin-h")
+_ok_h = _owner_h.post("/auth/admin/api/security", json={"max_login_attempts": 7})
+r.check("… der Owner ändert sie", _ok_h.status_code == 200 and auth_h.all_security()["max_login_attempts"] == 7,
+        f"HTTP {_ok_h.status_code}")
+auth_o, app_o = _app()
+auth_o.create_user("nur-admin", password=PW, is_admin=True)
+auth_o.store._exec("UPDATE users SET is_owner=0")              # Bestand ohne Owner
+_frei_o = _client(app_o, "nur-admin").post("/auth/admin/api/security", json={"max_login_attempts": 9})
+r.check("… gibt es keinen Owner, ändert sie jeder Admin (sonst wären sie unerreichbar)",
+        _frei_o.status_code == 200 and auth_o.all_security()["max_login_attempts"] == 9,
+        f"HTTP {_frei_o.status_code}")
+# (Mutationsprobe: die Owner-Prüfung in `security_set` streichen → erste Prüfung rot;
+#  `owner_count() > 0` streichen → letzte rot.)
+
 # ── Notweg über das CLI ────────────────────────────────────────────────────────────────
 from tinysesam.__main__ import main as _cli  # noqa: E402
 notfall = auth.create_user("notfall", password=PW)

@@ -423,7 +423,15 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/security")
     async def security_set(request: Request):
-        guard(request)
+        me = guard(request)
+        # Die Härtungswerte ändert nur ein Owner (PO-Entscheid 2026-09-24). Sonst verschärfte ein
+        # Admin die Sperre (`max_login_attempts=1`, `account_max_consecutive_failures=10`) und
+        # sperrte mit ein paar Fehlversuchen unter dem Namen des Owners genau den aus, den das
+        # Owner-Modell schützen soll — ein Umweg um „Owner lässt sich nicht sperren". Lesen darf
+        # jeder Admin. Gibt es noch keinen Owner (Bestand nur mit Admins vom Identity Provider),
+        # ist niemand zu schützen: dann wie bisher jeder Admin, sonst wäre der Wert unerreichbar.
+        if not me.get("is_owner") and auth.store.owner_count() > 0:
+            raise HTTPException(403, auth.t("api.owner_settings"))
         # Vorher/Nachher (R6-7): Wer `max_login_attempts` von 5 auf 5000 stellt, schaltet die
         # Sperre faktisch ab — im Protokoll stand bisher nur, DASS etwas gespeichert wurde.
         vorher = auth.all_security()
@@ -501,7 +509,7 @@ _KEYS = (
     "passkeys no_passkeys confirm.delete confirm.pk_delete "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw pw_set roles_groups no_roles api_keys create_key last_used expires "
-    "never_expires revoke key_once end_session hardening version installed update_note"
+    "never_expires revoke key_once end_session hardening hardening_owner version installed update_note"
 ).split()
 
 
@@ -706,6 +714,7 @@ function clr(id){document.getElementById("r"+id).innerHTML=""}
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
   V(`<div class=card><h2>${esc(L.hardening)}</h2>`+
     Object.entries(s).map(([k,v])=>`<div class=row><label class=w230>${esc(k)}</label><input id="s_${esc(k)}" value="${esc(v)}" type=number class=w120></div>`).join("")+
+    `<div class="muted small">${esc(L.hardening_owner)}</div>`+
     `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
      <div class="muted small">${esc(L.update_note)}</div></div>`)}
