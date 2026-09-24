@@ -286,11 +286,9 @@ print("  ✓ Fund 8: Rollen ohne Text → 400 vor jedem Schreiben; Altbestand wi
 # (Mutationsproben: in `savesec` wieder `await p(…);alert(L.saved)` → rot; in `p` den Blick auf
 #  `r.ok` entfernen → rot — mit node in der Laufzeitprobe, ohne node in der Strukturprüfung von
 #  `p()` darunter. Vorher entfiel die Laufzeitprobe ohne node still, und das Image von ci-local
-#  hat kein node: Dort blieb genau diese Mutation grün. Schlussrunde: in `p` wieder
+#  hatte bis 2026-09-24 kein node: Dort blieb genau diese Mutation grün. Schlussrunde: in `p` wieder
 #  `return {detail:L["err.generic"]}` → rot, mit und ohne node; ebenso `(j&&j.detail)||…`.)
-import os as _os  # noqa: E402
 import re as _re  # noqa: E402
-import shutil as _shutil  # noqa: E402
 import subprocess as _sp  # noqa: E402
 
 _panel = c.get("/auth/admin").text
@@ -553,7 +551,12 @@ _p_gleichwertig = [
 _p_fehlalarm = [d for d in _p_gleichwertig if _p_pruefen(_p_mit(d))]
 assert not _p_fehlalarm, f"Strukturprüfung lehnt Gleichwertiges ab: {_p_fehlalarm}"
 
-_node = _shutil.which("node")
+from voraussetzung import pflicht_werkzeug  # noqa: E402
+
+# Fehlt node, ist das rot — überall, nicht nur auf GitHub (s. `pflicht_werkzeug`). Seit das
+# ci-local-Abbild node mitbringt, prüft Ebene 1 hier genauso viel wie das Gate.
+# (Mutationsprobe: mit PATH ohne node → rot; mit TINYSESAM_OHNE_NODE=1 → ⚠-Zeile.)
+_node = pflicht_werkzeug("node", "Fund 10: Laufzeitprobe der Panel-Aktionen")
 if _node:
     _probe = ("const A=[];let ANTWORT=null;const E={};\n"
               "const document={cookie:'',addEventListener(){},querySelectorAll:()=>[],"
@@ -586,13 +589,6 @@ if _node:
     assert _Lp["saved"] not in _erg["savesec 400"] + _erg["savesec 500"], _erg
     assert _erg["pw 500"] == [_Lp["err.generic"]], _erg
     print("  ✓ Fund 10 (node): 400/500 zeigen den Grund statt „gespeichert“, 200 bleibt still bzw. meldet Erfolg")
-elif _os.environ.get("GITHUB_ACTIONS") == "true":
-    # Auf dem GitHub-Runner (ubuntu-latest) ist node vorhanden. Fehlt es dort, ist die Umgebung
-    # kaputt — dann nicht still weniger prüfen („Skip ist kein Grün").
-    raise AssertionError("node fehlt auf dem CI-Runner — die Laufzeitprobe zu Fund 10 liefe nicht")
-else:
-    print("  ⚠ Fund 10 (node): Laufzeitprobe NICHT gelaufen — node fehlt; geprüft sind nur die "
-          "Struktur der Aktionen und p()")
 print("  ✓ Fund 10 (Struktur): jede Panel-Aktion, die schreibt, führt das Ergebnis über abgewiesen(),"
       " und p() liest r.ok und reicht den Grund des Servers durch")
 

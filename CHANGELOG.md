@@ -117,6 +117,18 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 - **Neue Blockliste für Passwörter** an jeder Setzstelle (offline, erweiterbar).
 - **SMTP prüft das Zertifikat** (`smtp_ca_file` für eigene CA).
 - **Nie bestätigte Konten** räumt `gc()` nach Ablauf des Links weg.
+- **Schema 10** (erster Start migriert): indizierte Zähl-Töpfe, Betreiber-Vermerk an Panel-Sperren.
+  Vorher sichern (`tinysesam backup`) — ein Rückschritt braucht die Sicherung.
+- **Das CSRF-Cookie heisst auch mit `cookie_domain` `__Host-tinysesam_csrf`.** Wer es selbst setzt
+  oder im JS liest, nimmt den Namen aus `auth.csrf_cookie_name` (nicht aus `cfg.csrf_cookie`).
+- **Bruch: `complete_totp()`/`complete_mfa()` drehen das Token auch beim Step-up** — das
+  Rückgabe-Token gehört ins Cookie, sonst ist der Nutzer abgemeldet.
+- **Text statt Zahl in Zahlenfeldern der Config ist ein Aufbaufehler** (z. B. `smtp_port="587"`
+  direkt aus einer Umgebungsvariable) — vorher selbst mit `int()` umwandeln.
+- **Die Selbst-Registrierung legt die Adresse als unbestätigt an**, bis der Link eingelöst ist
+  (Ausnahme: Einladung an genau diese Adresse).
+- **`trusted_redirect_hosts` zählen nicht mehr als eigener Origin** in der CSRF-Herkunftsprüfung;
+  hinter einem Proxy, der den Host umschreibt, `base_url` setzen.
 
 #### Sitzung, Cookies, CSRF
 
@@ -264,7 +276,7 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 - **`busy_timeout` ausdrücklich 10 s** (`Store.BUSY_TIMEOUT_MS`, B6-11) statt der stillen 5 s von Python: Ein zweiter Schreiber lässt eine Anmeldung warten und bricht sie nicht mit `database is locked` ab.
 - **Gesperrte Konten bekommen `403 api.account_disabled` statt einer Sitzung** (H-18): Anmelde-Link, Passkey und jeder andere Faktor legen einem gesperrten Konto keine Sitzung mehr an. TOTP macht eine halbe Sitzung nach der Sperre nicht mehr vollwertig. Die Sperre im Panel verwirft offene Einmal-Token (neu: `Store.revoke_user_magic_tokens()`), ein alter Bestätigungslink hebt sie also nicht mehr auf.
 - **Monotone Zeitquelle für alle Fristen in der Datenbank** (B6-9, neu: `tinysesam.store.jetzt()`): Springt die Systemuhr zurück (NTP, Pi ohne Pufferbatterie, VM-Snapshot), leben abgelaufene Sitzungen, Einmal-Token und Step-ups nicht mehr auf. Über einen Neustart trägt die Datenbank den Stand: Sie sichert ihn höchstens jede Minute im Setting `uhr_stand`. Grenze: Was in der letzten Minute vor dem Neustart ablief oder während einer Ruhezeit ganz ohne Schreiben, gilt nach einem Boot mit altem Datum wieder, bis die Uhr aufgeholt hat. Sprang die Uhr falsch nach vorn, bleiben Zeitstempel dort, bis die Wanduhr aufholt.
-- **Für Tests einbettender Apps:** `time.time` wird bei jedem Aufruf nachgeschlagen und nicht beim Import gebunden. `mock.patch`, `monkeypatch` und freezegun stellen TinySesams Uhr also mit vor. Zurückdrehen lässt sie sich so nicht: Nach dem Entpatchen zählt sie vom vorgestellten Stand weiter (der Schutz aus B6-9).
+- **Für Tests einbettender Apps:** `time.time` wird bei jedem Aufruf nachgeschlagen und nicht beim Import gebunden. `mock.patch`, `monkeypatch` und freezegun stellen TinySesams Uhr also mit vor. Zurückdrehen lässt sie sich so nicht: Nach dem Entpatchen zählt sie vom vorgestellten Stand weiter, unter freezegun bleibt sie dort, bis die echte Zeit aufholt (der Schutz aus B6-9).
 - **Fehlt `[argon2]` zur Laufzeit** (B6-8), nennt der Start die Zahl der betroffenen Hashes samt `pip install 'tinysesam[argon2]'`. Im Betrieb erscheint die Abhilfe einmal je Prozess im Log (neu: `Store.zaehle_argon2_hashes()`).
 
 **Behoben**
@@ -292,6 +304,53 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 - **Dependabot hebt, was gepinnt ist** (B4-3, B4-12). Der pip-Eintrag für `/` war wirkungslos, weil Dependabot offene `>=`-Böden nie anhebt. Er ist ersetzt durch Einträge für die gehashten Sperrlisten und für den Compose-Stack. Die Böden prüft jetzt das Audit-Tor.
 - **Das sdist enthält nichts Gitignoriertes mehr** (B4-13). `MANIFEST.in` spiegelt `.gitignore`. Vorher landete bei `python -m build` aus einem benutzten Arbeitsbaum zum Beispiel eine `examples/app.db` oder eine `.env` im Paket.
 - **`SECURITY.md` nennt erreichbare Meldewege und Fristen** (B4-10). Es gibt zwei Wege: das private Advisory und eine E-Mail für alle ohne GitHub-Konto. Die Fristen lauten 7, 14 und 90 Tage, in beiden Sprachen gleich.
+
+### Sicherheit — T-13: Angriff auf die Integration
+
+Die zehn Zweige wurden zusammengeführt und danach selbst angegriffen: 18 Funde an den Nahtstellen,
+je zweifach nachgestellt, behoben; die Fixes wurden erneut angegriffen und nachgebessert. Was
+davon beim Update zählt:
+
+- **Sperren:** Die Kontosperre zählt Unicode-Schreibweisen einer Adresse zusammen (NFKC, IDNA —
+  vorher gab es für `victim@example.com` 2^16 Töpfe). Die TOTP-Einrichtung prüft und bucht in
+  einem Schritt. Ein Verzeichnis-Ausfall wird 30 s lang nicht erneut gefragt
+  (`ldap_.AUSFALL_PAUSE_SEK`), danach fragt genau eine Anmeldung nach; so schweben vorgebuchte
+  Versuche nicht mehr bis zum Timeout. LDAP-Eingaben über 256 (Name) bzw. 1024 Zeichen
+  (Passwort) gehen nicht mehr ans Verzeichnis. Ein gescheiterter Schreibzugriff (etwa die
+  Schreibprobe von `/healthz`) lässt keine offene Transaktion mehr zurück, die jede Anmeldung mit
+  500 beantwortete.
+- **Ein Löschweg:** `gc()`, `tinysesam gc`, die Rücknahme einer Registrierung und `delete_user`
+  laufen über `Store.konto_entfernen`: Audit-Log anonymisiert, Anmeldeversuche weg — aber nur,
+  was ab der Anlage des Kontos entstand. Namensvetter wie `Émile`/`émile` gelten als vergeben.
+  Die Topf-Prüfung dafür ist indiziert (Schema 10); in der ersten Fassung machte sie die
+  Registrierung zum Laufzeit-Orakel für vergebene Adressen.
+- **Admin:** Der Widerruf eines fremden Passkeys meldet `passkey_removed`
+  (`auth.remove_passkey`). Rollen werden vor dem Schreiben geprüft (`roles=[1]` gab ein Admin-Flag
+  ohne Audit-Zeile). Das Panel zeigt den Grund einer Abweisung an, statt „gespeichert" zu melden.
+  Sperren im Panel tragen den Betreiber-Vermerk (`disabled=2`); kein Bestätigungslink hebt sie
+  auf, auch keiner, der erst danach entsteht, und die Migration hebt Sperren aus 0.19.x mit
+  offenem Link darauf (soweit das Audit-Log sie noch kennt).
+- **Spuren:** Ungültige Token an `POST /auth/reset` und `GET /auth/register?invite=` schreiben
+  wieder `token_invalid` / `failed verification`.
+- **Sitzung:** Der Step-up über `POST /auth/totp` dreht das Token (F-06). Die Herkunftsprüfung
+  weist über HTTPS `Origin: null` aus der Nachbarschaft ab; über HTTP senden Browser kein
+  `Sec-Fetch-Site`, dort entscheidet allein das Token. Cookies unter den Altnamen von vor
+  `__Host-` löscht jede eingebaute Route, die die Sitzung schreibt, dazu `auth.logout()` und
+  `auth.rotate_session()`. Die nginx-Vorlagen filtern zwölf TinySesam-Cookies und geben bei mehr
+  gar keinen Cookie weiter (fail closed) — **Zu tun:** übernommene `map`-Zeilen nachziehen.
+- **Konfiguration:** Grenzen für `audit_retention_days` (0–3660) und `oidc_revalidate_minutes`
+  (0–43200, Warnung über 1440); `tinysesam gc` prüft Fristen vor dem ersten Löschschritt;
+  `tinysesam passwd` liest die Mindestlänge über denselben Weg wie das Web
+  (`security.haertung_lesen`). Der Bestätigungstoken entsteht in der Anfrage, nur der Versand
+  wartet.
+- **Bekannte Grenzen** (SECURITY.md, BETRIEB.md, Backlog T-13): Mit `cookie_domain`,
+  `cookie_host_prefix=False`, anderem `cookie_path` oder über HTTP kann jeder Host unter der
+  Domain ein Sitzungs-Cookie unterschieben. In einer Kette `password → totp → pin` entfällt das
+  Angebot, die übrigen Sitzungen zu beenden. Im ersten Fenster eines LDAP-Ausfalls schweben
+  Versuche weiter bis zum Timeout. API-Keys melden `on_security_event` nur bei der Anlage.
+- **Tests:** Fehlt `node`, ist das rot statt still übersprungen (`TINYSESAM_OHNE_NODE=1` als
+  sichtbares Opt-out). Die Wächter über Transaktionen, Settings-Zugriffe, Zahlenfelder und
+  Löschwege erkennen die Klasse statt einer Schreibweise und tragen je eine Selbstprobe.
 
 ## [0.19.0] — 2026-09-22
 

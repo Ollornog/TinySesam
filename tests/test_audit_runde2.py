@@ -849,9 +849,10 @@ r.check("nach der HTML-Dekodierung liefert JSON.parse genau die Argumente zurüc
         _json_a.loads(_html.unescape(_wert[:-1])) == [1, angriff], _wert)
 
 # Wenn node da ist, dasselbe gegen die ECHTEN Helfer aus dem Panel — die stärkere Messung.
-import shutil as _sh2  # noqa: E402
+from voraussetzung import pflicht_werkzeug  # noqa: E402
 
-node = _sh2.which("node")
+# Fehlt node, ist das rot statt still weniger geprüft (s. `pflicht_werkzeug`).
+node = pflicht_werkzeug("node", "Panel-Helfer esc/on gegen präparierte Namen")
 if node:
     import json as _json2
 
