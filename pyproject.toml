@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tinysesam"
-version = "0.20.0"
+version = "0.20.1"
 # Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"

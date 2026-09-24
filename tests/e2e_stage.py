@@ -88,12 +88,32 @@ class Browser:
         self.proc.terminate()
         shutil.rmtree(self.profil, ignore_errors=True)
 
-    async def cmd(self, method, params=None):
+    async def cmd(self, method, params=None, frist=60):
+        """Einen DevTools-Befehl senden und auf SEINE Antwort warten — mit Frist.
+
+        Zwei Dinge, die einen Lauf sonst endlos hängen liessen (gefunden beim Bühnentest für
+        0.20.0, 15 Minuten ohne Ausgabe): Öffnet die Seite einen `confirm()`-Dialog — die
+        Kontoseite fragt seit B1-7 nach einer Faktor-Änderung, ob die übrigen Sitzungen enden
+        sollen —, beantwortet Chrome bis zum Schließen kein `Runtime.evaluate` mehr. Der Dialog
+        wird deshalb hier sofort abgelehnt (das Angebot ist nicht Gegenstand dieses Tests) und
+        gemeldet. Und jede Antwort hat eine Frist; ohne sie wartet ein Fehler still statt laut.
+        """
         self._n += 1
-        await self.ws.send(json.dumps({"id": self._n, "method": method, "params": params or {}}))
+        mein = self._n
+        await self.ws.send(json.dumps({"id": mein, "method": method, "params": params or {}}))
+        ende = time.time() + frist
         while True:
-            m = json.loads(await self.ws.recv())
-            if m.get("id") == self._n:
+            rest = ende - time.time()
+            if rest <= 0:
+                raise RuntimeError(f"{method}: keine Antwort nach {frist} s")
+            m = json.loads(await asyncio.wait_for(self.ws.recv(), rest))
+            if m.get("method") == "Page.javascriptDialogOpening":
+                print(f"    (Dialog abgelehnt: {m['params'].get('message', '')[:80]!r})")
+                self._n += 1
+                await self.ws.send(json.dumps({"id": self._n, "method": "Page.handleJavaScriptDialog",
+                                               "params": {"accept": False}}))
+                continue
+            if m.get("id") == mein:
                 if "error" in m:
                     raise RuntimeError(f"{method}: {m['error']}")
                 return m.get("result", {})
@@ -217,8 +237,12 @@ async def teil_passkey():
         assert (await b.cmd("WebAuthn.getCredentials", {"authenticatorId": auth_id}))["credentials"]
         ok(f"Passkey registriert ({liste} am Konto, 1 im Authenticator)")
 
-        await b.geh("/auth/logout", 2)
-        assert await b.angemeldet_als() is None
+        # Abmelden wie die eingebaute Oberfläche: POST mit CSRF (seit F-07; ein GET fragt je nach
+        # Herkunft nur nach).
+        tok = await b.csrf()
+        await b.js(f"fetch('/auth/logout', {{method: 'POST', headers: {{'X-CSRF-Token': {tok!r}}}}})"
+                   ".then(r => r.status)")
+        assert await b.angemeldet_als() is None, "Abmelden per POST hat nicht gegriffen"
         await b.geh("/auth/login", 2)
         await b.js("document.querySelector('#pkbtn').click(); true")
         assert await b.angemeldet_als(20) == user, "Passkey-Login fehlgeschlagen"

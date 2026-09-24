@@ -62,9 +62,9 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 TinySesam wird über seinen **Git-Tag** installiert — auf PyPI liegt es noch nicht (siehe unten):
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -171,7 +171,9 @@ hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_
 eine Step-up-Bestätigung, die nicht älter ist als `stepup_max_age_sec` — sonst 403 samt
 `X-TinySesam-Reauth: /auth/reauth` (Browser werden dorthin geschickt). Ein **API-Key erfüllt das
 nie**: Ein maschinelles Credential erbringt keinen interaktiven Faktor und kann folglich auch
-keinen abbauen.
+keinen abbauen. Auch `/auth/reauth` selbst antwortet einem Key mit 403 (`api.stepup_session`): Er
+hat dort nichts zu bestätigen, und Key plus Passwort dürfen nicht den zweiten Faktor einer halb
+fertigen Anmeldung ersetzen (behoben in 0.20.1).
 
 **Wer einen Faktor ANLEGT, braucht eine interaktive Sitzung.** `GET/POST /auth/totp/setup` und
 `POST /auth/passkey/register/{begin,finish}` verlangen ebenfalls eine Sitzung — ein API-Key
@@ -237,6 +239,71 @@ Ausnahme: Die Anmeldung ist still kaputt. `session_ok=False` heisst: Die Sitzung
 aber noch nicht vollständig.
 Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch beim Step-up — es gehört ins
 Cookie. Wer es ignoriert, hat eine tote Sitzung im Cookie, und der Nutzer ist abgemeldet.
+
+### CSRF auf eigenen Seiten
+
+Jedes Formular, das die App selbst rendert, braucht das Token in einem versteckten Feld `_csrf`
+(bei `fetch` im Header `X-CSRF-Token`), und der Browser braucht das passende Cookie.
+`auth.ensure_csrf(request, response)` erledigt beides: Ein gültiges Token, das der Browser schon
+hat, bleibt — die Formulare in anderen Reitern gelten weiter, und die Antwort bekommt kein
+`Set-Cookie` —, sonst setzt es ein neues, mit denselben Attributen wie `issue_csrf()`. Zurück kommt
+das Token fürs Formular.
+
+```python
+@app.get("/einstellungen", response_class=HTMLResponse)
+def einstellungen(request: Request, response: Response, user=Depends(auth.require_user)):
+    csrf = auth.ensure_csrf(request, response)          # FastAPI übernimmt das Cookie
+    return templates.get_template("einstellungen.html").render(
+        csrf=csrf, csrf_cookie=auth.csrf_cookie_name)
+```
+
+Bei einer fertigen Antwort (Jinjas `TemplateResponse`) das Token vor dem Rendern holen und das
+Cookie danach an die Antwort geben — in derselben Anfrage liefern beide Aufrufe dasselbe Token:
+
+```python
+csrf = auth.csrf_token(request)
+resp = templates.TemplateResponse(request, "einstellungen.html",
+                                  {"csrf": csrf, "csrf_cookie": auth.csrf_cookie_name})
+auth.ensure_csrf(request, resp)
+return resp
+```
+
+Im Template — JavaScript kann keine Python-Property lesen, also reicht die Seite den Cookie-Namen
+mit (oder das Skript nimmt den Wert aus dem Feld `_csrf`):
+
+```html
+<meta name="csrf-cookie" content="{{ csrf_cookie }}">
+<form method="post" action="/einstellungen">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+</form>
+<script>
+  function csrf() {            // beim Senden lesen: eine Anmeldung in einem anderen Reiter ändert das Cookie
+    const name = document.querySelector('meta[name="csrf-cookie"]').content;
+    const paar = document.cookie.split("; ").find(c => c.startsWith(name + "="));
+    return paar ? paar.slice(name.length + 1) : "";
+  }
+  fetch("/einstellungen", {method: "POST", headers: {"X-CSRF-Token": csrf()}});
+</script>
+```
+
+Die empfangende Route prüft mit `auth.require_csrf(request, wert)` — Formularfeld oder Header:
+403, wenn der Wert nicht zum Cookie passt oder die Anfrage von fremder Herkunft kommt.
+
+Das Cookie heisst `__Host-tinysesam_csrf`, wo der Browser das Präfix zulässt, sonst
+`tinysesam_csrf` — nie fest eintragen. Ein Cookie-Wert, der nicht wie ein Token aussieht (fremde
+Zeichen, zu kurz, zu lang), wird ersetzt statt in ein Formular übernommen. `issue_csrf(response)`
+würfelt immer ein **neues** Token und entwertet damit die Formulare in allen anderen Reitern — es
+ist zum bewussten Erneuern da, nicht zum Rendern einer Seite.
+
+**Anmelden und Abmelden wechseln das Token.** Jede Anmeldung — jeder eingebaute Weg und eine
+eigene Route mit `start_session` + `set_cookie` — setzt in derselben Antwort ein frisches Token,
+`auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, geht nur mit dem
+Antwortparameter (erstes Beispiel): Es holt sein Token *nach* `set_cookie`/`logout` aus
+`ensure_csrf(request, response)`. Eine fertige Antwort (zweites Beispiel) ist gerendert, bevor
+`set_cookie`/`logout` das Token wechselt — ihr Formular trägt das alte, jedes Absenden endet mit
+403. Eine Antwort, die an- oder abmeldet, rendert deshalb so kein Formular, sondern leitet um
+(303); die Folgeanfrage rendert mit dem neuen Cookie, wie bei den eingebauten Anmeldungen. Ein
+Step-up (`/auth/reauth`, `rotate_session`) behält das Token.
 
 ## Look & Feel
 
@@ -397,6 +464,25 @@ systemctl start tinysesam
 > Audit-Zeilen), und Adressen ihrer offenen Registrierungen gelten bis zur Bestätigung als
 > unbelegt; im Log steht dann eine Warnung. Mehr gleicht er nicht ab — der sichere Rückweg ist die Sicherung.
 
+**Von 0.17.x oder älter?** `tinysesam backup` gibt es erst seit 0.18.0, und schon der erste Start
+der neuen Fassung migriert. Die Sicherung also mit der *neuen* Fassung ziehen, bevor sie startet —
+`backup` öffnet die Quelle nur lesend und lässt sie im alten Schema:
+
+```bash
+# Container: neues Tag ziehen, sichern, erst dann starten (Dienstname wie in der eigenen compose-Datei)
+docker compose pull
+docker compose run --rm --no-deps --entrypoint tinysesam tinysesam \
+    backup --db /data/gateway.db /data/gateway-vor-update.db
+docker compose up -d
+
+# Bibliothek: nach dem Installieren der neuen Fassung, vor dem Neustart des Dienstes
+python -m tinysesam backup --db auth.db auth-vor-update.db
+```
+
+Oder den Dienst anhalten und `auth.db` zusammen mit `auth.db-wal` und `auth.db-shm` (soweit
+vorhanden) in ein eigenes Verzeichnis kopieren; zurück geht es mit allen dreien, bei angehaltenem
+Dienst.
+
 ### „Ich komme nicht rein" — nachsehen
 
 ```bash
@@ -475,9 +561,11 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   würde den Schlüssel `admin` auch auf eine Gruppe `nicht-admin` passen lassen.
 - **Audit-Log:** Login / Logout / Fehlversuche in der DB (`store.recent_audit()`), fürs Admin-Panel.
 - **CSRF:** Double-Submit-Token (`csrf_enabled`, Default an) auf allen state-ändernden POSTs — die
-  eingebauten Formulare/JS erledigen das automatisch (`_csrf`-Feld bzw. `X-CSRF-Token`-Header).
-  Wer eigene Templates rendert: `token = auth.issue_csrf(response)` setzt das Cookie und liefert den Wert;
+  eingebauten Formulare/JS erledigen das automatisch (`_csrf`-Feld bzw. `X-CSRF-Token`-Header);
   API-Key-Requests sind ausgenommen (kein Cookie-Risiko). Zusätzlich zu `SameSite=Lax`.
+  Jede Anmeldung setzt ein frisches Token, das Abmelden löscht es; ein Step-up behält es.
+  Wer eigene Seiten rendert: `csrf = auth.ensure_csrf(request, response)` übernimmt das Token des
+  Browsers oder setzt eins — siehe „CSRF auf eigenen Seiten" oben.
 - **Rate-Limit prozessübergreifend:** optional Redis (`redis_url`, Extra `[redis]`) für Multi-Worker; sonst In-Memory.
 - **User-Enumeration:** Login/PIN prüfen auch bei unbekanntem Benutzer gegen einen Dummy-Hash (kein Timing-Leak).
 - **Nach Passwortwechsel** werden die übrigen Sitzungen des Users beendet (Admin-Reset: alle).
@@ -497,7 +585,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc]==0.20.0
+tinysesam[oidc]==0.20.1
 ```
 
 Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
@@ -508,14 +596,14 @@ Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag
 für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1
 ```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
 und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tinysesam-0.20.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.1/tinysesam-0.20.1-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -523,7 +611,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.20.0
+ghcr.io/ollornog/tinysesam:v0.20.1
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -531,9 +619,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog
-gh attestation verify tinysesam-0.20.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog
+gh attestation verify tinysesam-0.20.1-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 
@@ -545,8 +633,10 @@ Es läuft als **Nicht-root** (uid 1000), enthält weder `pip` noch `git`, bringt
 `HEALTHCHECK` auf `/healthz` mit und startet direkt das Gateway — kein `command:` nötig.
 Ein vollständiges Beispiel mit Caddy liegt in `deploy/forward-auth/docker-compose.yml`.
 
-Update: Tag hochziehen, `docker compose pull && docker compose up -d`. Rollback: alten Tag
-zurückschreiben. **Ein `latest` gibt es bewusst nicht** — ein wandernder Tag macht jeden
+Update: Tag hochziehen, `docker compose pull && docker compose up -d` — migriert die Fassung die
+Datenbank, dazwischen sichern (siehe „Eine Sicherung zurückspielen"; von 0.17.x oder älter mit
+dem neuen Abbild). Rollback: alten Tag zurückschreiben, nach einer Migration zusammen mit dieser
+Sicherung. **Ein `latest` gibt es bewusst nicht** — ein wandernder Tag macht jeden
 Neustart zum Glücksspiel. Wer es ernst meint, pinnt den Digest
 (`ghcr.io/ollornog/tinysesam@sha256:…`, steht im Log des Release-Workflows): ein Tag lässt
 sich umhängen, ein Digest nicht.

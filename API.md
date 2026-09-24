@@ -146,6 +146,10 @@ Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor versch
 
 Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage.
 
+### `ensure_csrf(request: 'Request', response: 'Response') -> 'str'`
+
+Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
+
 ### `factor_entry(step, nxt='/') -> 'str'`
 
 Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran.
@@ -236,7 +240,7 @@ Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
 
 ### `issue_csrf(response: 'Response') -> 'str'`
 
-CSRF-Token erzeugen und als Cookie setzen — für eigene Templates (Jinja & Co.), die nicht über `render_page()` laufen. Rückgabe gehört ins Formularfeld `_csrf` bzw. den Header `X-CSRF-Token`. Ist CSRF abgeschaltet, passiert nichts und der Rückgabewert ist leer.
+Ein NEUES CSRF-Token würfeln und als Cookie setzen; Rückgabe ist das Token. Für eine Seite mit Formular ist `ensure_csrf()` der Weg — dieses hier entwertet die Formulare in allen anderen offenen Reitern.
 
 ### `json_body(request: 'Request') -> 'dict'`
 
@@ -268,7 +272,7 @@ Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite de
 
 ### `logout(request, response)`
 
-Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und beide Cookies löschen — dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und die Cookies löschen — Sitzung, Freigabe und seit 0.20.1 auch das CSRF-Cookie, dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
@@ -450,6 +454,10 @@ Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da 
 
 Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
 
+### `session_user(request) -> 'Optional[dict]'`
+
+Das Konto der vollen Sitzung dieses Requests — wie `current_user()`, nur nie aus einem API-Key.
+
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
 Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
@@ -574,6 +582,22 @@ Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; 
 
 Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 
+## `TinySesam` — Eigenschaften
+
+Ohne Klammern gelesen (`auth.csrf_cookie_name`). Zur Laufzeit berechnet: Sie folgen der Konfiguration, auch wenn `cfg` nach dem Aufbau geändert wird.
+
+### `csrf_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des CSRF-Cookies — eigenes JS bekommt ihn von der Seite.
+
+### `resource_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN.
+
+### `session_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des Sitzungs-Cookies (mit `__Host-`, wo möglich).
+
 ## `TinySesamConfig` — Presets
 
 ### `TinySesamConfig.active_directory(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
@@ -626,4 +650,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-139 Methoden, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+141 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

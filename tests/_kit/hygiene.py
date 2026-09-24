@@ -138,7 +138,7 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
 
     treffer = []
     for rel, inhalt in _texte(root, dateien, policy):
-        for n, zeile in enumerate(inhalt.splitlines(), 1):
+        for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
             sauber = erlaubt.sub("", zeile)
             for pat in muster:
                 if pat.search(sauber):
@@ -228,6 +228,23 @@ def _wert_ist_aufruf(zeile: str, treffer) -> bool:
     return rest.startswith(("::", "->", "(", "()"))
 
 
+def zeilen_wie_grep(inhalt: str) -> list[str]:
+    """Zeilen so schneiden, wie Editor, `grep` und der Mensch sie zaehlen: nur an ``\n``.
+
+    WARUM NICHT ``splitlines()`` (Register 2026-09-23, behoben 2026-09-24):
+    ``str.splitlines()`` trennt auch an U+2028 (LINE SEPARATOR), U+2029, U+0085, ``\v``,
+    ``\f`` und U+001C-1E. Steht eines davon irgendwo VOR einem Treffer, meldet der Waechter
+    eine Zeilennummer, die es im Editor nicht gibt — gemessen an
+    ``tests/test_audit_runde2.py``: gemeldet ``:1610``, gemeint war 1606. Der Befund war
+    richtig, nur der Ort verschoben, und man sucht an der falschen Stelle. Ein Waechter, der
+    den Fundort falsch nennt, kostet genau das Vertrauen, das er aufbauen soll.
+
+    ``rstrip("\r")`` haelt CRLF-Dateien sauber: ohne das truege jede Zeile ein ``\r`` am
+    Ende und ein Muster mit ``$`` wuerde nicht mehr passen.
+    """
+    return [z.rstrip("\r") for z in inhalt.split("\n")]
+
+
 def geheimnis_zeilen(inhalt: str, policy: dict) -> list[tuple[int, str]]:
     """(Zeilennummer, Art) je verdaechtiger Zeile. **Nie der Wert.**
 
@@ -238,7 +255,7 @@ def geheimnis_zeilen(inhalt: str, policy: dict) -> list[tuple[int, str]]:
     """
     formate, zuweisung, platzhalter = _geheimnis_regeln(policy)
     treffer = []
-    for n, zeile in enumerate(inhalt.splitlines(), 1):
+    for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
         for pat in formate:
             if pat.search(zeile):
                 treffer.append((n, "Format"))
@@ -599,7 +616,7 @@ def pruefe_kein_self_hosted_runner(root: str, dateien: list[str]) -> list[str]:
         if not rel.startswith(".github/workflows/"):
             continue
         inhalt = _lies(root, rel) or ""
-        for n, zeile in enumerate(inhalt.splitlines(), 1):
+        for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
             if "self-hosted" in ohne_yaml_kommentar(zeile):
                 treffer.append(f"{rel}:{n}")
     return treffer
@@ -684,7 +701,7 @@ def pruefe_actions_sha_gepinnt(root: str, dateien: list[str]) -> list[str]:
         if not rel.startswith(".github/workflows/") or not rel.endswith((".yml", ".yaml")):
             continue
         inhalt = _lies(root, rel) or ""
-        for n, zeile in enumerate(inhalt.splitlines(), 1):
+        for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
             m = _USES.match(zeile)
             if not m:
                 continue
@@ -798,7 +815,7 @@ def _matrix_listen(inhalt: str) -> list[tuple[int, str, list[str]]]:
     in den Schritten — also genau die Zeile, die die Matrix korrekt benutzt.
     """
     treffer: list[tuple[int, str, list[str]]] = []
-    zeilen = inhalt.splitlines()
+    zeilen = zeilen_wie_grep(inhalt)
     block_tiefe: int | None = None
     i = 0
     while i < len(zeilen):
@@ -1025,7 +1042,7 @@ def pruefe_changelog_kategorien(root: str, policy: dict, datei: str = "CHANGELOG
     erlaubt = policy["changelog_kategorien"]
     treffer, gesehen = [], set()
     innerhalb_code = False
-    for n, zeile in enumerate(inhalt.splitlines(), 1):
+    for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
         if zeile.lstrip().startswith("```"):
             innerhalb_code = not innerhalb_code
             continue
@@ -1051,7 +1068,7 @@ def pruefe_changelog_kategorien(root: str, policy: dict, datei: str = "CHANGELOG
 def _ueberschriften(text: str) -> list[tuple[int, str]]:
     """(Ebene, Titel) je Überschrift. Code-Blöcke bleiben außen vor — `# ...` darin ist ein Kommentar."""
     aus, innerhalb_code = [], False
-    for zeile in text.splitlines():
+    for zeile in zeilen_wie_grep(text):
         if zeile.lstrip().startswith("```"):
             innerhalb_code = not innerhalb_code
             continue
@@ -1443,7 +1460,7 @@ def pruefe_persist_credentials(root: str, dateien: list[str],
             continue
         datei = os.path.basename(rel)
         job = "?"
-        for i, zeile in enumerate(inhalt.splitlines()):
+        for i, zeile in enumerate(zeilen_wie_grep(inhalt)):
             ohne_kommentar = zeile.split("#", 1)[0]
             # Jobnamen stehen auf Einrückungstiefe 2 unter `jobs:`.
             m = re.match(r"^  ([A-Za-z_][\w-]*):\s*$", ohne_kommentar)
@@ -1456,7 +1473,7 @@ def pruefe_persist_credentials(root: str, dateien: list[str],
                 continue
             # `with:` gehört zum Schritt; der Schritt endet beim nächsten `- ` auf
             # derselben oder geringerer Einrückung. 12 Zeilen reichen dafür weit.
-            block = "\n".join(inhalt.splitlines()[i:i + 12])
+            block = "\n".join(zeilen_wie_grep(inhalt)[i:i + 12])
             naechster = re.search(r"\n\s*- ", block)
             if naechster:
                 block = block[:naechster.start()]
@@ -1541,7 +1558,7 @@ def _host_kandidaten(inhalt: str, ist_python: bool) -> set[str]:
                 if k.value in schluessel:
                     continue
                 roh |= aus_text(k.value)
-        for zeile in inhalt.splitlines():
+        for zeile in zeilen_wie_grep(inhalt):
             if "#" in zeile:
                 roh |= aus_text(zeile.split("#", 1)[1])
         return roh
@@ -1707,6 +1724,9 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
 # nicht die Bequemlichkeit des Repos ("haben wir noch nicht eingebaut") — das Zweite
 # gehoert als Ausnahme MIT Grund ins jeweilige Repo, wo es sichtbar bleibt.
 KIT_WERKZEUGE: list[tuple[str, str, str]] = [
+    ("hygiene", "pruefe_zeilennummern_wie_grep",
+     ("prueft den Kit-Quelltext selbst, nicht das aufrufende Repo — sie gehoert in repokits "
+      "eigene Suite, und dort laeuft sie")),
     ("headers", "pruefe_cookie_flags",
      "braucht geparste Set-Cookie-Koepfe einer echten Antwort"),
     ("headers", "pruefe_security_header",
@@ -1766,6 +1786,42 @@ def pruefe_policy_schluessel_gelesen(policy: dict,
                 f"oder verdrahten. Ein Wert, den niemand liest, ist eine Zusage, die nichts "
                 f"einloest; steht er an einer Stelle, die ein Repo nicht aendern DARF "
                 f"(Manifest), ist er ausserdem eine falsche Einladung.")
+    return treffer
+
+
+def pruefe_zeilennummern_wie_grep(kit_verzeichnis: str | None = None) -> list[str]:
+    """Keine Kit-Pruefung darf `splitlines()` benutzen, wo sie Zeilen zaehlt.
+
+    WARUM (Register 2026-09-23, behoben 2026-09-24): `splitlines()` trennt auch an U+2028,
+    U+2029, U+0085, ``\v``, ``\f`` und U+001C-1E. Ein einziges solches Zeichen in einer
+    Datei verschiebt JEDE danach gemeldete Zeilennummer — gemessen: gemeldet ``:1610``,
+    gemeint 1606. Zwoelf Stellen in diesem Modul waren betroffen, nicht eine; deshalb gibt
+    es [`zeilen_wie_grep`](#) und deshalb wird es hier erzwungen statt erinnert.
+
+    *Ein Waechter, der den Fundort falsch nennt, kostet genau das Vertrauen, das er
+    aufbauen soll — und man sucht an der falschen Stelle.*
+
+    Geprueft wird per **AST**, nicht im Zeilentext: ein `splitlines` im Docstring (dort
+    steht die Begruendung) ist kein Aufruf. Genau dieser Unterschied hat schon einmal einen
+    Fehlalarm erzeugt.
+    """
+    import ast as _ast
+    verz = kit_verzeichnis or os.path.dirname(os.path.abspath(__file__))
+    treffer: list[str] = []
+    for name in sorted(os.listdir(verz)):
+        if not name.endswith(".py") or name == "__init__.py":
+            continue
+        pfad = os.path.join(verz, name)
+        try:
+            baum = _ast.parse(open(pfad, encoding="utf-8").read())
+        except (OSError, SyntaxError) as fehler:
+            treffer.append(f"{name}: nicht lesbar ({fehler}) — nicht geprueft")
+            continue
+        for knoten in _ast.walk(baum):
+            if isinstance(knoten, _ast.Call) and isinstance(knoten.func, _ast.Attribute) \
+                    and knoten.func.attr == "splitlines":
+                treffer.append(f"{name}:{knoten.lineno}: splitlines() — "
+                               "zeilen_wie_grep() nehmen (U+2028 verschiebt die Nummer)")
     return treffer
 
 
@@ -1854,7 +1910,7 @@ FIXTURE_SAUBER = "fixture_geheimnis_sauber.txt"
 def _fixture_zeilen(kit_verzeichnis: str, name: str) -> list[str]:
     pfad = os.path.join(kit_verzeichnis, name)
     with open(pfad, encoding="utf-8") as fh:
-        return [z for z in fh.read().splitlines() if z and not z.startswith("#")]
+        return [z for z in zeilen_wie_grep(fh.read()) if z and not z.startswith("#")]
 
 
 def pruefe_fixture_deckt_muster(policy: dict,

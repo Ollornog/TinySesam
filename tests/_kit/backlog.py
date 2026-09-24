@@ -33,6 +33,10 @@ from __future__ import annotations
 import os
 import re
 
+# `zeilen_wie_grep` statt `splitlines()` — U+2028 verschiebt sonst jede Zeilennummer
+# (Register 2026-09-23). Eine Quelle, nicht zwei Fassungen desselben Schnitts.
+from . import hygiene
+
 BACKLOG_DIR = "backlog"
 
 TYPEN = {"Milestone", "Task", "Decision", "Bug"}
@@ -61,7 +65,7 @@ def frontmatter(text: str) -> tuple[dict, str]:
     if not m:
         return {}, text
     felder: dict = {}
-    for zeile in m.group(1).splitlines():
+    for zeile in hygiene.zeilen_wie_grep(m.group(1)):
         if not zeile.strip() or zeile.lstrip().startswith("#"):
             continue
         if zeile[:1] in " \t":          # verschachteltes YAML ist im Schema nicht vorgesehen

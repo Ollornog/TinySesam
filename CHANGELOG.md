@@ -2,6 +2,162 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.20.1] — 2026-09-24
+
+**Sicherheits-Nachschlag — zügig einspielen, wer einen zweiten Faktor oder API-Keys nutzt.** Über
+`/auth/reauth` ersetzten API-Key und Passwort den zweiten Faktor, über `/auth/pin` wurde aus
+Automaten-Key und PIN eine volle Admin-Sitzung (beide vorbestehend, siehe „Sicherheit").
+
+Nachschlag zu 0.20.0. Zwei Abnehmer haben beim Heben Befunde **in** TinySesam gemeldet: Beide
+mussten für das CSRF-Cookie ihrer eigenen Seiten TinySesam nachbauen, und die Zusage „frisches
+CSRF-Token beim Login" galt nur am Ende eines TOTP-Schritts. Der Angriff auf diese Änderungen fand
+dazu eine vorbestehende Lücke im Step-up (`/auth/reauth`, siehe „Sicherheit"), eine zweite Runde
+dieselbe Klasse in `/auth/pin`: Aus Automaten-Key und PIN wurde eine volle Admin-Sitzung. Kein
+Schema-Wechsel, keine neue Konfiguration.
+
+**Vor dem Update:** nichts einzustellen. Zu wissen:
+
+1. **Nach einer Anmeldung gilt das CSRF-Token von vorher nicht mehr.** Ein Formular, das in einem
+   anderen Reiter vor der Anmeldung geöffnet wurde, antwortet einmal mit 403. Tests, die ein vor
+   der Anmeldung gelesenes Token danach weiterschicken, ebenso — das Token nach der Anmeldung neu
+   aus dem Cookie lesen.
+2. **Wer für eigene Seiten `csrf_cookie_name` + `issue_csrf()` + eine kopierte Set-Cookie-Zeile
+   kombiniert**, kann das durch `auth.ensure_csrf(request, response)` ersetzen. Wer nach einer
+   eigenen Anmeldung in **derselben** Antwort ein Formular rendert, holt dessen Token mit
+   `ensure_csrf()` **nach** `set_cookie()` — über den FastAPI-Antwortparameter. Eine fertige
+   Antwort (Jinjas `TemplateResponse`) ist dann schon gerendert, ihr Formular trüge das alte
+   Token (403): Eine Antwort, die an- oder abmeldet, leitet um, statt ein Formular auszuliefern.
+3. **`/auth/reauth` antwortet einem API-Key mit 403** (`api.stepup_session`). Bestätigen konnte
+   ein Key dort nie etwas — Step-up-Frische erreicht er nicht —, aber die Route nahm ihn an und
+   liess sich damit missbrauchen (siehe „Sicherheit"). Wer sie aus einer Automatik ruft, erhält
+   jetzt die Abweisung statt einer wirkungslosen 303.
+4. **Für `/auth/pin` ist ein API-Key ein Gast.** Ohne volle Sitzung antwortet der POST bei
+   `pin_login=False` mit 404 und der GET leitet zur Anmeldung; bei `pin_login=True` braucht die
+   PIN das Benutzerfeld wie bei jedem Gast. Als Zusatzfaktor ohne Benutzerfeld gilt die PIN nur
+   noch für eine Sitzung. Dasselbe gilt für den TOTP-Schritt, die TOTP-Einrichtung und das
+   Abmelden: Sie sehen nur das Konto aus dem Cookie. **Eigene Routen**, die `apply_factor()` für
+   „das angemeldete Konto" rufen oder die Sitzung auffrischen, nehmen das Konto aus dem neuen
+   `auth.session_user(request)` statt aus `current_user()` (siehe „Sicherheit").
+
+### Hinzugefügt
+
+- **`auth.session_user(request) -> Optional[dict]`** — das Konto der vollen Sitzung dieses
+  Requests, nie aus einem API-Key; eine halbe Sitzung liefert None (die liest `pending_user()`).
+  `current_user()` fällt ohne volle Sitzung auf den Key zurück und ist damit die falsche Quelle
+  für jede Stelle, die einen Faktor auf die Sitzung anwendet (`apply_factor`, `complete_totp`),
+  sie auffrischt oder beendet (siehe „Sicherheit"). Die eingebauten Routen nehmen das Konto dort
+  seitdem von hier; die Regel steht im Docstring beider Methoden.
+- **`auth.ensure_csrf(request, response) -> str`** — ein gültiges CSRF-Cookie sicherstellen und
+  das Token fürs Formular holen, ohne TinySesam nachzubauen. Ein vorhandenes, gültiges Token
+  bleibt (keine Set-Cookie-Zeile, die Formulare anderer Reiter gelten weiter); sonst setzt es ein
+  neues, mit denselben Attributen wie `issue_csrf()`. Hat die Antwort das Token schon gedreht
+  (Anmeldung) oder gelöscht (Abmelden), liefert es das neue bzw. setzt ein frisches — nie das alte
+  aus dem Request. Für fertige Antworten (Jinjas `TemplateResponse`): `csrf_token(request)` vor
+  dem Rendern, `ensure_csrf(request, antwort)` danach; beide liefern in derselben Anfrage dasselbe
+  Token — nicht in einer Antwort, die an- oder abmeldet: Die Seite ist gerendert, bevor das Token
+  wechselt, ihr Formular trüge das alte. Dort umleiten (nachgetragen nach dem Angriff auf die
+  Änderung: die Zusage „dasselbe Token" hatte an dieser Stelle still nicht gegolten, fail-closed
+  mit 403; `tests/test_csrf.py` hält die Grenze und den Ausweg fest). Beispiele für Template und
+  JS in beiden READMEs („CSRF auf eigenen Seiten"). Bisher gab es nur `issue_csrf()` (würfelt
+  immer neu — die „Formular abgelaufen"-Falle in den anderen Reitern) und `csrf_token()` (setzt
+  kein Cookie).
+- **Die Properties stehen in der eingefrorenen API-Oberfläche** — `session_cookie_name`,
+  `csrf_cookie_name`, `resource_cookie_name` (`tests/api_surface.json`, neuer Bereich
+  `TinySesam.eigenschaften`; `API.md` mit eigenem Abschnitt). Der Wächter schloss Properties bis
+  hierher ausdrücklich aus: Ausgerechnet die Namen, zu denen der Abschnitt 0.20.0 jede einbettende
+  App schickt, liessen sich still umbenennen. Eine Selbstprüfung im Test verlangt die drei und
+  misst, dass ein Umbenennen als Bruch gemeldet wird — auch vor `--update`.
+
+### Geändert
+
+- **Testbasis auf Kit 0.21.6:** Die Hygiene-Prüfungen nennen Zeilennummern wie der Editor
+  (vorher verschob `splitlines()` sie hinter U+2028 und Verwandten).
+
+- **Ein CSRF-Cookie, das nicht wie ein Token aussieht, wird ersetzt** statt übernommen — in
+  `render_page()`, `csrf_token()`, `ensure_csrf()` und im Admin-Panel gleich: nur `A–Z a–z 0–9 _ -`,
+  32 bis 128 Zeichen. Vorher landete jeder Cookie-Wert unbesehen im Formularfeld. Der Vergleich
+  des Double-Submit (`verify_csrf`) ist unverändert.
+- **Das Admin-Panel setzt sein CSRF-Cookie über `ensure_csrf()`** und damit mit denselben
+  Attributen wie jeder andere Setzer.
+- **`issue_csrf()` und `csrf_rotieren()` ersetzen eine CSRF-Zeile**, die die Antwort schon trägt,
+  statt eine zweite anzuhängen.
+
+### Sicherheit
+
+- **Jede Anmeldung dreht das CSRF-Token, das Abmelden löscht es** — wie es der Docstring von
+  `csrf_rotieren()` zusagt („beim Login"; OWASP CSRF Prevention Cheat Sheet: „changes with each
+  login"). Gerufen wurde es nur am Ende eines TOTP-Schritts. Passwort, PIN, Anmelde-Link,
+  Registrierung, OIDC, SAML und Passkey liessen das Token stehen, und `auth.logout()` löschte das
+  Cookie nicht: Das Token überlebte Abmelden und Neuanmelden bis zum Schliessen des Browsers.
+  Jetzt zentral statt je Route: Jede Sitzungszeile entsteht in `_sitzung_anlegen()`, eine dort
+  schon voll angemeldete wird vorgemerkt, und `set_cookie()` dreht das Token in derselben Antwort.
+  Das gilt für jeden eingebauten Weg und für eine eigene Anmelderoute der App (`start_session` +
+  `set_cookie`). Ein Step-up (`/auth/reauth`, TOTP auf voller Sitzung, `rotate_session`) und der
+  erste Schritt einer Kette drehen nicht. `logout()` — damit auch `POST /auth/logout` und das
+  Abmelden per GET von der eigenen Seite — löscht das CSRF-Cookie mit Secure und Pfad; die nächste
+  Seite setzt ein frisches. `tests/test_csrf.py` fährt jeden Anmeldeweg einzeln durch (altes Token
+  403, neues gilt, die Folgeseite rendert mit dem neuen), ein Wächter über den Quelltext hält fest,
+  dass Sitzungen nur in `_sitzung_anlegen()` entstehen und das Sitzungs-Cookie nur in
+  `set_cookie()` gesetzt wird.
+- **`/auth/reauth` bestätigt nur noch eine Sitzung, nie einen API-Key — Key und Passwort ersetzten
+  dort den zweiten Faktor** (vorbestehend, nachgestellt auf 0.20.0; gefunden beim Angriff auf die
+  CSRF-Änderungen). Die Route prüfte den Faktor des Kontos aus `current_user()` und machte danach
+  die Sitzung aus dem Cookie voll. Bei einer **halben** Sitzung (erster Faktor erbracht, TOTP
+  offen) fällt `current_user()` auf den API-Key zurück, Prüfung und Wirkung trafen also
+  verschiedene Dinge: Mit dem Sitzungs-Cookie einer halb angemeldeten fremden Person, dem eigenen
+  Automaten-Key und dem eigenen Passwort war deren Sitzung voll angemeldet, ohne dass ihr TOTP je
+  gefragt wurde. Im eigenen Konto ersetzten Automaten-Key und Passwort das TOTP und brachten das
+  Admin-Flag zurück, das ein Automaten-Key allein nicht trägt (R6-5). Voraussetzung waren ein
+  gültiger API-Key (`apikey_enabled`) und — für das fremde Konto — dessen halbes Sitzungs-Cookie.
+  Jetzt antworten `GET` und `POST /auth/reauth` einem Konto, das nicht aus der Sitzung kommt, mit
+  403 (`api.stepup_session`), bevor ein Faktor geprüft wird; ein Key kann Step-up-Frische
+  ohnehin nie erreichen (`stepup_fresh()`). `tests/test_stepup.py` stellt beide Wege nach und
+  prüft, dass der Step-up einer vollen Sitzung per TOTP weiterläuft.
+- **`/auth/pin` machte aus Automaten-Key und PIN eine volle Admin-Sitzung — auch bei
+  `pin_login=False`** (vorbestehend, nachgestellt auf 0.20.0; zweite Angriffsrunde gegen 0.20.1,
+  dieselbe Klasse wie `/auth/reauth` darüber). `pin_submit` las „schon angemeldet" aus
+  `current_user()`, und das fällt ohne volle Sitzung auf den API-Key zurück. Eine reine
+  Key-Anfrage ohne Cookie galt damit als angemeldet: Der Riegel `pin_login=False` („die PIN ist
+  kein Erstfaktor") griff nicht, geprüft wurde die PIN des Key-Kontos, und `apply_factor()` legte
+  mangels Sitzung eine neue, volle an — samt dem Admin-Flag, das ein Automaten-Key nie trägt
+  (R6-5), und damit Admin-Panel, Schlüsselverwaltung und Faktor-Anlage. Mit der halben Sitzung
+  einer anderen Person im Cookie ersetzte dieselbe Anfrage deren Cookie. Voraussetzung waren ein
+  gültiger Key (`apikey_enabled`), `pin_enabled` und die PIN des Key-Kontos; bei `pin_login=True`
+  ist die PIN ohnehin ein Erstfaktor, der Key brachte dort nichts. **Jetzt zentral statt je
+  Route:** Das Konto einer Stelle mit Sitzungswirkung kommt aus `auth.session_user()` (neu, siehe
+  „Hinzugefügt"), für die ein Key „nicht angemeldet" ist — in `/auth/pin` (GET und POST),
+  `/auth/reauth` (der Riegel von oben läuft jetzt darüber), dem TOTP-Schritt, der
+  TOTP-Einrichtung und dem Abmelden. Beim Durchgehen der Klasse fielen zwei harmlosere Stellen
+  mit auf: Der TOTP-Schritt prüfte auf der vollen Sitzung eines gesperrten Kontos den Code des
+  Key-Kontos, und das Abmelden protokollierte bei Key ohne Sitzung dessen Konto. Ein Wächter in
+  `tests/test_stepup.py` liest jede Funktion des Pakets: Wer eine Sitzung anlegt, ihr einen
+  Faktor anhängt, sie auffrischt oder beendet, darf sein Konto weder direkt noch über einen
+  lokalen Helfer aus `current_user()`, `require_user()`, `require_role()` oder `require_admin()`
+  nehmen; Selbstproben halten fest, dass er jede zugesagte Form auch sieht. Die Verhaltensprobe
+  daneben stellt den Weg nach (Key + PIN → 404, keine Sitzung, kein Admin; halbe fremde Sitzung
+  bleibt unverändert; die PIN als Zusatzfaktor einer vollen Sitzung läuft weiter).
+
+### Behoben
+
+- **Doku: Sicherung vor dem Update, wenn die Installation bei 0.17.x oder älter steht.** Der
+  Hinweis „vor dem Update `tinysesam backup`" ging dort nicht auf: Den Unterbefehl gibt es erst
+  seit 0.18.0, und der erste Start des neuen Abbilds migriert schon. Beide READMEs und der
+  Abschnitt 0.20.0 nennen jetzt den Weg: die Sicherung mit der neuen Fassung vor ihrem Start
+  ziehen (`docker compose run --rm --no-deps --entrypoint tinysesam <dienst> backup …`, bei der
+  Bibliothek nach dem Installieren und vor dem Neustart), oder bei angehaltenem Dienst die `.db`
+  samt `-wal`/`-shm` kopieren. Nachgestellt an einer mit 0.16.0 angelegten Datei: Die Sicherung
+  trägt das alte Schema, die Quelle bleibt unverändert.
+- **Doku: der CSRF-Cookie-Name in eigenem JS.** „Eigenes JS liest den CSRF-Namen aus
+  `auth.csrf_cookie_name`" (0.20.0) verkürzte: JavaScript kann keine Python-Property lesen. Die
+  Seite reicht den Namen per Template-Variable oder `<meta>` weiter, oder das Skript nimmt das
+  Token aus dem Formularfeld von `ensure_csrf()`. Präzisiert im Abschnitt 0.20.0, in beiden
+  READMEs und in `KONFIGURATION.md` (`cookie_host_prefix`).
+- **Doku: 0.19.0 versprach bei der Faktor-Anlage zu viel.** Verhaltensänderung Nr. 3 sagte, auch
+  die Anlage (`totp/setup`, `passkey/register/*`) verlange eine frisch bestätigte Sitzung. Der Code
+  verlangt dort eine interaktive Sitzung (`require_session()`, kein API-Key), keine frische
+  Bestätigung — so steht es auch im Befund weiter unten. Der Satz ist datiert berichtigt, der Code
+  bleibt.
+
 ## [0.20.0] — 2026-09-24
 
 **Sicherheits-Release, mit Brüchen — jede Installation sollte es einspielen, aber nicht blind.**
@@ -12,11 +168,21 @@ die Zusammenführung selbst angegriffen und gehärtet.
 **Vor dem Update:**
 
 1. **Sicherung ziehen** (`tinysesam backup`). Die Datenbank wandert von Schema 8 auf **10**; ein
-   Rückschritt auf 0.19.x braucht die Sicherung.
+   Rückschritt auf 0.19.x braucht die Sicherung. **Von 0.17.x oder älter** (ergänzt in 0.20.1):
+   Den Unterbefehl gibt es erst seit 0.18.0, und schon der erste Start des neuen Abbilds migriert.
+   Die Sicherung deshalb mit der neuen Fassung ziehen, bevor sie startet — `docker compose pull`,
+   dann `docker compose run --rm --no-deps --entrypoint tinysesam <dienst> backup --db
+   /data/gateway.db /data/vor-update.db`, erst danach `docker compose up -d`; bei der Bibliothek
+   `python -m tinysesam backup --db … <ziel>` nach dem Installieren, vor dem Neustart. `backup`
+   öffnet die Quelle nur lesend. Oder den Dienst anhalten und die `.db` samt `-wal` und `-shm`
+   kopieren.
 2. **Jeder ist nach dem Update einmal abgemeldet** (`__Host-`-Cookies).
 3. **Eigenes JS und eigene Routen prüfen:** den CSRF-Cookie-Namen aus `auth.csrf_cookie_name`
-   lesen (nicht aus `cfg.csrf_cookie`, nicht fest `tinysesam_csrf`); das Rückgabe-Token von
-   `complete_totp()` ins Cookie setzen; Abmelden per `POST /auth/logout`.
+   lesen (nicht aus `cfg.csrf_cookie`, nicht fest `tinysesam_csrf`); eigenes JS bekommt ihn von
+   der Seite, per Template-Variable oder `<meta>` — eine Python-Property kann es nicht lesen
+   (präzisiert in 0.20.1; seit 0.20.1 setzt `auth.ensure_csrf()` Cookie und Token für eigene
+   Seiten). Das Rückgabe-Token von `complete_totp()` ins Cookie setzen; Abmelden per
+   `POST /auth/logout`.
 4. **Konfiguration prüfen:** `ldap://` ohne StartTLS ist ein Aufbaufehler, ebenso Text statt Zahl
    in Zahlenfeldern (`smtp_port="587"`). `base_url` setzen, wenn Mails oder SSO im Spiel sind.
 5. **Wer die nginx-Vorlage übernommen hat**, zieht die `map`-Zeilen nach.
@@ -126,8 +292,9 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 **Verhaltensänderungen — vor dem Update lesen:**
 
 - **Jeder ist nach dem Update einmal abgemeldet.** Sitzungs-, CSRF- und Freigabe-Cookie heissen
-  jetzt `__Host-tinysesam_*` (wo der Browser es zulässt). Eigenes JS liest den CSRF-Namen aus
-  `auth.csrf_cookie_name`. Abschalten: `cookie_host_prefix=False`.
+  jetzt `__Host-tinysesam_*` (wo der Browser es zulässt). Eigener Code nimmt den CSRF-Namen aus
+  `auth.csrf_cookie_name`; eigenes JS bekommt ihn von der Seite (Template-Variable oder `<meta>`,
+  präzisiert in 0.20.1 — dort auch `ensure_csrf()`). Abschalten: `cookie_host_prefix=False`.
 - **Abmelden ist ein POST** (`POST /auth/logout` mit CSRF). Ein `GET` von fremder Seite fragt nach.
 - **Anmelde- und Bestätigungslinks lösen erst per Knopf ein** (POST), nicht mehr beim Öffnen —
   Mail-Scanner verbrauchen sie so nicht mehr.
@@ -143,7 +310,8 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 - **Schema 10** (erster Start migriert): indizierte Zähl-Töpfe, Betreiber-Vermerk an Panel-Sperren.
   Vorher sichern (`tinysesam backup`) — ein Rückschritt braucht die Sicherung.
 - **Das CSRF-Cookie heisst auch mit `cookie_domain` `__Host-tinysesam_csrf`.** Wer es selbst setzt
-  oder im JS liest, nimmt den Namen aus `auth.csrf_cookie_name` (nicht aus `cfg.csrf_cookie`).
+  oder im JS liest, nimmt den Namen aus `auth.csrf_cookie_name` (nicht aus `cfg.csrf_cookie`); ins
+  JS gelangt er über die Seite, per Template-Variable oder `<meta>` (präzisiert in 0.20.1).
 - **Bruch: `complete_totp()`/`complete_mfa()` drehen das Token auch beim Step-up** — das
   Rückgabe-Token gehört ins Cookie, sonst ist der Nutzer abgemeldet.
 - **Text statt Zahl in Zahlenfeldern der Config ist ein Aufbaufehler** (z. B. `smtp_port="587"`
@@ -156,7 +324,7 @@ Zehn Bereiche, **161 Punkte behoben**, 2 waren schon erledigt, 6 bleiben mit Beg
 #### Sitzung, Cookies, CSRF
 
 **Sicherheit**
-- Sitzungs-, CSRF- und Freigabe-Cookie heißen jetzt `__Host-tinysesam_session`, `__Host-tinysesam_csrf` und `__Host-tinysesam_runlock`, wo der Browser das zulässt (Secure, kein `cookie_domain`, `cookie_path="/"`). Das CSRF-Cookie und die Flow-Cookies von OIDC, SAML und Passkey sind immer host-only und tragen das Präfix auch bei gesetztem `cookie_domain`. Wo das Präfix greift, kann eine Nachbar-Subdomain damit keine Cookies mehr unterschieben (Cookie-Tossing, Login-CSRF). Ohne `__Host-` am Sitzungs-Cookie, also mit `cookie_domain`, `cookie_host_prefix=False`, einem anderen `cookie_path` oder `cookie_secure=False`, kann sie das Sitzungs-Cookie weiter setzen (bekannte Grenze, SECURITY.md). Abschalten mit `cookie_host_prefix=False`. **Bruch:** Nach dem Update ist jeder einmal abgemeldet. Eigenes JS liest den Namen aus `auth.csrf_cookie_name` statt aus `csrf_cookie`. (H-1, F-02, A-1, A-7)
+- Sitzungs-, CSRF- und Freigabe-Cookie heißen jetzt `__Host-tinysesam_session`, `__Host-tinysesam_csrf` und `__Host-tinysesam_runlock`, wo der Browser das zulässt (Secure, kein `cookie_domain`, `cookie_path="/"`). Das CSRF-Cookie und die Flow-Cookies von OIDC, SAML und Passkey sind immer host-only und tragen das Präfix auch bei gesetztem `cookie_domain`. Wo das Präfix greift, kann eine Nachbar-Subdomain damit keine Cookies mehr unterschieben (Cookie-Tossing, Login-CSRF). Ohne `__Host-` am Sitzungs-Cookie, also mit `cookie_domain`, `cookie_host_prefix=False`, einem anderen `cookie_path` oder `cookie_secure=False`, kann sie das Sitzungs-Cookie weiter setzen (bekannte Grenze, SECURITY.md). Abschalten mit `cookie_host_prefix=False`. **Bruch:** Nach dem Update ist jeder einmal abgemeldet. Eigener Code nimmt den Namen aus `auth.csrf_cookie_name` statt aus `csrf_cookie`; eigenes JS bekommt ihn von der Seite, per Template-Variable oder `<meta>` (präzisiert in 0.20.1). (H-1, F-02, A-1, A-7)
 - Die CSRF-Prüfung prüft vor dem Token-Vergleich die Herkunft: Bei `Sec-Fetch-Site: same-origin` ist sie bestanden, sonst muss ein gesetzter `Origin` ein eigener Host sein. Fremde Herkunft und Nachbar-Subdomains bekommen 403. **Grenze:** Fehlt ein brauchbarer `Origin` (fehlt oder `null`) und fehlt auch `Sec-Fetch-Site`, entscheidet allein das Token. Das gilt für jeden Browser über HTTP (`cookie_secure=False`, außer `localhost`), denn Browser schicken `Sec-Fetch-Site` nur an HTTPS. Dort kommt eine Nachbar-Subdomain mit `Origin: null` also bis zum Token durch, und das CSRF-Cookie trägt ohne `Secure` kein `__Host-`. Über HTTP schützt die Herkunftsprüfung deshalb nicht vor Login-CSRF aus der Nachbarschaft. Hinter einem Proxy, der den Host umschreibt, ohne `X-Forwarded-Host` zu setzen, scheitern Browser ohne `Sec-Fetch-Site` (Safari vor 16.4, jeder Browser über HTTP). Dafür `base_url` setzen oder notfalls `csrf_origin_check=False`. (H-2, A-3)
 - Eine Bereichs-Freischaltung vergibt jedes Mal ein neues Freigabe-Token, ein untergeschobenes Token hält danach nichts mehr (F-01). Der Logout beendet auch die Bereichs-Freigaben dieses Browsers (F-08).
 - Ein Step-up (Reauth oder erneuter Faktor) gibt der Sitzung ein neues Token. Laufzeit, Anmeldezeitpunkt und Cookie-Art („Angemeldet bleiben“ ja oder nein) bleiben erhalten. (F-06, A-2)
@@ -406,8 +574,11 @@ aus dem der Punkt kommt.
    danach das Gruppen-Mapping. Wer einen IdP fährt, der den optionalen Claim nie schickt (Entra ID),
    und seine Adressen selbst verantwortet, setzt `oidc_email_verified_default=True`.
 3. **Die Selbstverwaltung der Faktoren steht hinter Step-up.** `totp/disable`, `totp/recovery`,
-   `pin/set`, `pin/disable`, `passkey/delete` — und seit dem Nachschlag auch die **Anlage**
-   (`totp/setup`, `passkey/register/*`) — verlangen eine frisch bestätigte Sitzung.
+   `pin/set`, `pin/disable`, `passkey/delete` verlangen eine frisch bestätigte Sitzung.
+   (Korrektur 0.20.1: Hier stand, seit dem Nachschlag verlange auch die **Anlage**
+   (`totp/setup`, `passkey/register/*`) eine frisch bestätigte Sitzung. Das stimmte nie — der Code
+   verlangt dort eine interaktive Sitzung (`require_session()`, kein API-Key), aber keine frische
+   Bestätigung; so steht es auch im Befund zur Faktor-Anlage weiter unten.)
    → **Zu tun:** nichts konfigurieren; wer eine **eigene** Konto-Seite baut, wertet den Hinweis-Header
    `X-TinySesam-Reauth` aus und schickt auf `/auth/reauth`, sonst scheitern die Knöpfe stumm mit 403.
 4. **Ein API-Key kommt auf diese Routen nicht mehr** — er ist ein Maschinen-Credential und erbringt
