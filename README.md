@@ -535,9 +535,10 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
   nothing. NIST SP 800-63B caps consecutive failures at 100: slow guessing below every window
   threshold no longer runs forever.
 - **Password length by factor situation:** a new password needs `password_min_length_single_factor`
-  (default 15, NIST SP 800-63B) when it can sign in on its own — no `login_chain`, or one with
-  nothing but `password` — and `password_min_length` (default 8) when the global chain enforces a
-  second factor. Existing passwords stay valid; the rule applies wherever one is set. The CLI
+  (default 15, NIST SP 800-63B) when it can sign in on its own — no `login_chain`, one with
+  nothing but `password`, or a chain whose second factor accounts may enrol themselves
+  (`mfa_enrollment` `first_login`/`grace`) — and `password_min_length` (default 8) only when the
+  chain enforces a second factor that the operator hands out (`mfa_enrollment="strict"`). Existing passwords stay valid; the rule applies wherever one is set. The CLI
   (`tinysesam passwd`) doesn't read the configuration and takes the stricter one.
 - **Method-scoped counters next to the login lockout:** the PIN (short keyspace,
   `pin_max_attempts`), the account page's current-password prompt

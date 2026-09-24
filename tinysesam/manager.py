@@ -271,6 +271,10 @@ class TinySesam:
         #: die App.
         self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
         self._blockliste = self._blockliste_laden(config.password_blocklist_file)
+        # Versuchs-ID → (Kennung, Methode, Serienstand nach der Buchung) für die in
+        # `versuch_beginnen` vorgebuchte Serie (B2-6). Im Speicher genügt: Stirbt der Prozess
+        # dazwischen, bleibt die Vorbuchung als Fehlversuch stehen — im Zweifel strenger.
+        self._serie_vorbuchungen: dict = {}
         self.oidc = None
         self.webauthn = None
         self.ldap = None
@@ -851,9 +855,19 @@ class TinySesam:
 
         Bewusst eine Aussage über die KONFIGURATION, nicht über das einzelne Konto: Wer heute
         TOTP hat, kann es morgen entfernen, und das Passwort bliebe mit der kürzeren Länge allein
-        stehen."""
+        stehen.
+
+        Und nur mit `mfa_enrollment="strict"`: Bei `"first_login"` (Vorgabe) und `"grace"` richtet
+        ein Konto den verlangten zweiten Faktor beim ersten Mal selbst ein — wer nur das Passwort
+        kennt, bindet dann seinen eigenen Authenticator und ist drin. Genau die Erstpasswörter
+        (Panel, Einladung, Registrierung) melden in diesem Fenster also allein an (gemessen im
+        Angriff auf B2-4). Erst wenn der Betreiber die Einrichtung vergibt, ist das Passwort nie
+        allein. Grenze: ein vom Betreiber geöffnetes Fenster (`grant_mfa_enrollment`) — das ist
+        seine bewusste Entscheidung für genau ein Konto."""
         kette = list(self.cfg.login_chain or ())
-        return not kette or not (set(kette) - {"password"})
+        if not kette or not (set(kette) - {"password"}):
+            return True
+        return self.cfg.mfa_enrollment != "strict"
 
     def _passwort_mindestlaenge(self) -> int:
         """Die Mindestlänge für ein NEUES Passwort (B2-4, NIST SP 800-63B-4, 3.1.1.2).
@@ -1829,18 +1843,33 @@ class TinySesam:
         `auch_pin=True` hängt den PIN-Topf mit an — für die Step-up-Seite, auf der eine PIN
         bestätigt, deren Versuche aber im Topf `reauth` landen.
         """
-        if method not in security.NICHT_LOGIN_METHODEN and self._serie_voll(username):
-            self._abgewiesen(username, ip, "lockout_serie", login=True)
-            return None
         regeln = self._regeln(username, ip, method)
         if auch_pin:
             regeln = regeln + self._regeln_pin(username, ip)
-        versuch, grund = self.store.reserve_attempt(self._topf(username, method), ip, method,
-                                                    _gueltige_regeln(regeln))
+        # Die Serie (B2-6) gehört in DIESELBE Transaktion wie der Versuch: geprüft und vorgebucht
+        # in `reserve_attempt`. Vorher davor gelesen und erst nach der Prüfung gezählt — eine
+        # parallele Salve an der Grenze durfte dann jeder Anfrage einen Versuch lang raten.
+        serie = None
+        if method not in security.NICHT_LOGIN_METHODEN:
+            serie = (norm_kennung(username), method, self.sec("account_max_consecutive_failures"))
+        versuch, antwort = self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                                      _gueltige_regeln(regeln), serie=serie)
         if versuch is None:
-            self._abgewiesen(username, ip, grund,
+            self._abgewiesen(username, ip, antwort,
                              login=method not in security.NICHT_LOGIN_METHODEN)
+        elif serie is not None:
+            self._serie_vorbuchungen[versuch] = (serie[0], method, antwort)
         return versuch
+
+    def _versuch_zuruecknehmen(self, versuch) -> None:
+        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
+
+        Mitsamt seiner Vorbuchung in der Serie (B2-6): Ein Ausfall ist kein Fehlversuch, weder
+        im Fenster noch in Folge."""
+        self.store.cancel_attempt(versuch)
+        gebucht = self._serie_vorbuchungen.pop(versuch, None)
+        if gebucht:
+            self.store.fehlserie_senken(gebucht[0], gebucht[1])
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
@@ -3388,10 +3417,15 @@ class TinySesam:
         `login_lokal`), ein Fehlversuch hängt `quelle=…` an `login_fail` an (`lokal+ldap`: beide
         wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe."""
         topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
+        vorgebucht = self._serie_vorbuchungen.pop(versuch, None) if versuch is not None else None
         if versuch is None:
             self.store.record_attempt(topf, ip, success, method)
         else:
             self.store.finish_attempt(versuch, bool(success))
+        if success and vorgebucht:
+            # Richtig — die Vorbuchung in der Serie gilt nicht. Die Serie davor bleibt: Ein
+            # richtiger erster Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`).
+            self.store.fehlserie_senken(vorgebucht[0], vorgebucht[1])
         if success and quelle:
             self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:
@@ -3421,10 +3455,15 @@ class TinySesam:
             security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
                                     security.fuer_log(username), security.fuer_log(ip), method)
             if method not in security.NICHT_LOGIN_METHODEN:
-                # Die Serie zählt je gefalteter Kennung, wie der Konto-Topf (`_topf`). Genau beim
+                # Die Serie zählt je gefalteter Kennung, wie der Konto-Topf (`_topf`). Vorgebucht
+                # hat sie `versuch_beginnen`; nur ein Weg ohne Vorbuchung zählt hier. Genau beim
                 # Erreichen der Grenze eine Zeile: ab da ist die Anmeldung dauerhaft zu, und der
-                # Betreiber muss wissen, warum sich jemand nicht mehr anmelden kann.
-                stand = self.store.fehlserie_erhoehen(norm_kennung(username))
+                # Betreiber muss wissen, warum sich jemand nicht mehr anmelden kann. Nur EINE
+                # Buchung kann die Grenze erreichen — die Buchungen laufen nacheinander.
+                if vorgebucht:
+                    stand = vorgebucht[2]
+                else:
+                    stand = self.store.fehlserie_erhoehen(norm_kennung(username), method)
                 if stand == self.sec("account_max_consecutive_failures"):
                     self.store.audit_log("lockout_serie", username, ip, f"fehlversuche_in_folge={stand}")
                     security.seclog.warning(
@@ -3457,10 +3496,13 @@ class TinySesam:
         weg = 0
         since = 0
         for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
-            # Die Serie (B2-6) endet in BEIDEN Fällen: nach einer vollständigen Anmeldung und nach
-            # einem Reset. Der Reset ist genau der Weg, den NIST für die ausgelöste Serie vorsieht
-            # (neu binden) — endete sie dort nicht, bliebe das Konto nach dem Reset gesperrt.
-            self.store.fehlserie_loeschen(kennung)
+            # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Reset (`methoden`)
+            # nur den Anteil seiner Methoden — derselbe Grund wie unten (R4-13): Der
+            # Selbstbedienungs-Reset beweist das Postfach, nicht den zweiten Faktor. Räumte er die
+            # TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und Passwort je Reset eine frische
+            # Serie gegen TOTP (gemessen im Angriff auf B2-6). Der Betreiber räumt ganz
+            # (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
+            self.store.fehlserie_loeschen(kennung, arten=methoden)
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
@@ -3470,6 +3512,16 @@ class TinySesam:
                     weg += self.store.count_fails(since, username=kennung, method=m)
                     self.store.clear_fails(username=kennung, method=m)
         return weg
+
+    def _serie_beenden(self, user_id) -> int:
+        """Die Serie eines Kontos ganz beenden (B2-6) — der Weg des Betreibers (Panel-Reset).
+
+        Unter Name UND Adresse: gezählt wird unter dem, was jemand eingetippt hat."""
+        u = self.store.get_user(user_id)
+        if not u:
+            return 0
+        return sum(self.store.fehlserie_loeschen(k)
+                   for k in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""})
 
     def _fehl_grund(self, username, method=None) -> str:
         """Warum ist die Anmeldung gescheitert — für das Protokoll, nicht für die Antwort."""

@@ -147,7 +147,7 @@ def build_router(auth) -> APIRouter:
                 if lokal and auth.store.get_password_hash(lokal["id"]):
                     auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
                 else:
-                    auth.store.cancel_attempt(versuch)
+                    auth._versuch_zuruecknehmen(versuch)
                 return auth.render_page("login", request=request, status=503, next=nxt,
                                         error=auth.t("err.directory_down"))
             aus_verzeichnis = u is not None

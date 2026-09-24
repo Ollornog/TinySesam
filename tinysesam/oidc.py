@@ -19,6 +19,7 @@ from .messages import translate
 
 
 from . import errors
+from .store import norm_email
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -626,7 +627,15 @@ def register_oidc_routes(router, auth):
             # App hinter Forward-Auth, die über `Remote-User` zuordnet, sah darin aber genau die
             # fremde Adresse, die hier nicht verwendet werden soll.
             belegte_mail = mail if mail_bestaetigt else None
-            username = info.get("preferred_username") or belegte_mail or ("oidc-" + sub[:8])
+            # Auch `preferred_username` kann eine Adresse sein (Keycloak „Email as username", Entra
+            # mit der UPN, Zitadel) — und ist dann dieselbe unbelegte Adresse unter anderem Namen.
+            # Durchgelassen, wurde sie Kontoname und `Remote-User`, und die Kennung war für die
+            # echte Inhaberin besetzt (Angriff auf H-3). Ein Name mit `@` gilt deshalb nur, wenn er
+            # die belegte Adresse ist; sonst der Ersatzname.
+            wunsch = str(info.get("preferred_username") or "").strip()
+            if "@" in wunsch and not (belegte_mail and norm_email(wunsch) == norm_email(belegte_mail)):
+                wunsch = ""
+            username = wunsch or belegte_mail or ("oidc-" + sub[:8])
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
             # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.

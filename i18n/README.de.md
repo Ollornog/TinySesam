@@ -542,9 +542,10 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
   Konto gibt oder nicht — die Sperre verrät also nichts. NIST SP 800-63B begrenzt Fehlversuche in
   Folge auf 100: Langsames Raten unter jeder Fenster-Schwelle läuft nicht mehr ewig.
 - **Passwortlänge nach Faktor-Lage:** Ein neues Passwort braucht `password_min_length_single_factor`
-  (Vorgabe 15, NIST SP 800-63B), wenn es allein anmelden kann — keine `login_chain` oder eine, die nur
-  `password` verlangt —, und `password_min_length` (Vorgabe 8), wenn die globale Kette einen zweiten
-  Faktor erzwingt. Bestehende Passwörter bleiben gültig; die Regel gilt, wo eines gesetzt wird. Das CLI
+  (Vorgabe 15, NIST SP 800-63B), wenn es allein anmelden kann — keine `login_chain`, eine, die nur
+  `password` verlangt, oder eine, deren zweiten Faktor Konten selbst einrichten dürfen
+  (`mfa_enrollment` `first_login`/`grace`) —, und `password_min_length` (Vorgabe 8) nur, wenn die
+  Kette einen zweiten Faktor erzwingt, den der Betreiber vergibt (`mfa_enrollment="strict"`). Bestehende Passwörter bleiben gültig; die Regel gilt, wo eines gesetzt wird. Das CLI
   (`tinysesam passwd`) liest keine Konfiguration und nimmt die strengere.
 - **Methodengebundene Zähler neben dem Login-Lockout:** Die PIN (kurzer Keyspace,
   `pin_max_attempts`), die Alt-Passwort-Abfrage der Kontoseite (`password_change_max_attempts`),

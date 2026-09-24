@@ -58,11 +58,18 @@ with TestClient(_app(allow_signup=True)[1]) as c:
     antwort = c.post("/auth/register", data={"username": "neuling", "password": VIERZEHN})
 r.check("… und die Registrierung hält sich daran", antwort.status_code == 400 and "min. 15" in antwort.text,
         f"HTTP {antwort.status_code}")
-for kette, erwartet in ((["password", "totp"], None), (["pin", "password"], None),
-                        (["password"], "min. 15")):
-    a_k, _ = _app(login_chain=kette, pin_enabled="pin" in kette)
+# Eine Kette mit zweitem Faktor schützt das Passwort nur, wenn niemand ihn selbst einrichten darf:
+# Bei `mfa_enrollment="first_login"` (Vorgabe) bindet, wer nur das Erstpasswort kennt, beim
+# ersten Login seinen eigenen Authenticator — das Passwort meldet dann allein an (Angriff auf B2-4).
+for kette, einschreiben, erwartet in ((["password", "totp"], "first_login", "min. 15"),
+                                      (["password", "totp"], "grace", "min. 15"),
+                                      (["password", "totp"], "strict", None),
+                                      (["pin", "password"], "strict", None),
+                                      (["password"], "strict", "min. 15")):
+    a_k, _ = _app(login_chain=kette, pin_enabled="pin" in kette, mfa_enrollment=einschreiben)
     befund = a_k.passwort_mangel(ELF)
-    r.check(f"B2-4: Kette {kette}: 11 Zeichen {'gehen durch' if erwartet is None else 'zu kurz'}",
+    r.check(f"B2-4: Kette {kette}, Einrichtung {einschreiben}: 11 Zeichen "
+            f"{'gehen durch' if erwartet is None else 'zu kurz'}",
             (befund is None) if erwartet is None else (erwartet in (befund or "")), str(befund))
 auth.set_security("password_min_length_single_factor", 8)
 r.check("B2-4 einstellbar: auf 8 gestellt, gilt wieder die Grundlänge",
@@ -164,6 +171,46 @@ for wert, gilt in ((9, False), (10, True), (100000, True), (100001, False)):
 # (Mutationsproben: die Serien-Prüfung in `versuch_beginnen` streichen → erste Prüfung rot;
 #  `fehlserie_loeschen` in `sperre_aufheben` streichen → Reset/Panel rot; in `gc_fehlserien` die
 #  Bedingung `anzahl < ?` streichen → „läuft nicht ab" rot.)
+
+# Befunde aus dem Angriff auf B2-6 — je einer ein eigener Test.
+auth, app = _app()
+for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
+             ("account_max_consecutive_failures", 10)):
+    auth.set_security(k, v)
+uid_a = auth.create_user("atom", password=PW)
+for _ in range(9):
+    auth.record_login("atom", "198.51.100.2", False, "password",
+                      versuch=auth.versuch_beginnen("atom", "198.51.100.2", "password"))
+offen = [auth.versuch_beginnen("atom", f"198.51.100.{10 + i}", "password") for i in range(5)]
+r.check("B2-6 atomar: an der Grenze kommt genau EIN laufender Versuch durch, nicht jeder",
+        sum(1 for v in offen if v is not None) == 1, str(offen))
+auth.record_login("atom", "198.51.100.10", True, "password", versuch=next(v for v in offen if v))
+r.check("… und ein richtiger Versuch nimmt seine Vorbuchung zurück, räumt aber nicht die Serie",
+        auth.store.fehlserie("atom") == 9, str(auth.store.fehlserie("atom")))
+v = auth.versuch_beginnen("atom", "198.51.100.3", "password")
+auth._versuch_zuruecknehmen(v)
+r.check("B2-6: ein zurückgenommener Versuch (Verzeichnis-Ausfall) zählt nicht",
+        auth.store.fehlserie("atom") == 9, str(auth.store.fehlserie("atom")))
+
+uid_t = auth.create_user("zweit", password=PW)
+for _ in range(10):
+    auth.record_login("zweit", "198.51.100.4", False, "totp",
+                      versuch=auth.versuch_beginnen("zweit", "198.51.100.4", "totp"))
+auth.sperre_aufheben(uid_t, methoden=("password",))            # Selbstbedienungs-Reset
+r.check("B2-6 + R4-13: der Selbstbedienungs-Reset räumt TOTP-Fehlgriffe der Serie NICHT",
+        auth.store.fehlserie("zweit") == 10 and auth.versuch_beginnen("zweit", "198.51.100.5", "password") is None,
+        str(auth.store.fehlserie("zweit")))
+chefin_t = auth.create_user("chefin-t", password=PW, is_admin=True)
+cpt = TestClient(app)
+cpt.post("/auth/login", data={"username": "chefin-t", "password": PW}, follow_redirects=False)
+neu_t = cpt.post(f"/auth/admin/api/users/{uid_t}/password", json={"password": "Vom-Betreiber-Gesetzt-1"})
+r.check("… der Betreiber räumt sie ganz (Passwort-Reset im Panel, auch den TOTP-Anteil)",
+        neu_t.status_code == 200 and auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
+# Und über den Weg, den die Routen nehmen: ein Nicht-Login-Versuch bucht nichts vor.
+v_pc = auth.versuch_beginnen("zweit", "198.51.100.6", "password_change")
+auth.record_login("zweit", "198.51.100.6", False, "password_change", versuch=v_pc)
+r.check("B2-6: ein Fehlgriff am Passwortwechsel (über versuch_beginnen) bucht keine Serie",
+        auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
 
 # ── B2-8: PIN als Erstfaktor — ausdrücklich erlaubt, mit eigener Grenze ─────────────────
 auth, app = _app(pin_enabled=True)
@@ -298,7 +345,16 @@ _oidc_login(app3f)
 r.check("… es sei denn, sie gehört inzwischen einem anderen Konto (dann bleibt es ohne)",
         not a3f.store.get_user_by_name("spaet2")["email"]
         and any(z["event"] == "oidc_email_taken" for z in a3f.store.recent_audit(50)))
-# (Mutationsprobe: in oidc.py `belegte_mail = mail` → die erste H-3-Prüfung rot.)
+for wunsch, belegt, erwartet in (("opfer@example.com", False, "oidc-"), ("opfer@example.com", True, "opfer@example.com"),
+                                 ("anderer@example.com", True, "opfer@example.com"), ("klarname", False, "klarname")):
+    a3g, app3g = _oidc({"sub": f"h3-pu-{wunsch}-{belegt}", "preferred_username": wunsch,
+                        "email": "opfer@example.com", "email_verified": belegt})
+    _oidc_login(app3g)
+    namen = [u["username"] for u in a3g.store.list_users()]
+    r.check(f"H-3: preferred_username={wunsch!r} bei {'belegter' if belegt else 'unbelegter'} Adresse → {erwartet}…",
+            len(namen) == 1 and namen[0].startswith(erwartet), str(namen))
+# (Mutationsproben: in oidc.py `belegte_mail = mail` → die erste H-3-Prüfung rot; die Prüfung auf
+#  `@` in `preferred_username` streichen → die Fälle mit Adresse als Namen rot.)
 
 # ── H-5: der IdP nimmt, was er gegeben hat ───────────────────────────────────────────────
 KARTE = {"admins": "__admin__", "redaktion": "editor"}
@@ -325,8 +381,29 @@ r.check("… und ein Mapping ohne Admin-Ziel entzieht nichts (es verwaltet kein 
 a5.apply_idp_groups(idp_admin, ["cn=admins,ou=g,dc=x"], {"cn=admins": "__admin__"}, dn=True)
 a5.apply_idp_groups(idp_admin, ["cn=andere,ou=g,dc=x"], {"cn=admins": "__admin__"}, dn=True)
 r.check("H-5 gilt auch für LDAP-DNs (derselbe Weg)", not a5.store.get_user(idp_admin)["is_admin"])
-# (Mutationsprobe: den `elif`-Zweig in apply_idp_groups streichen → „ist das Flag weg" rot;
-#  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot.)
+# Befund aus dem Angriff auf H-5: Das Panel schickt den Admin-Haken bei jedem Speichern der Rollen
+# mit — `set_admin(True)` machte aus der 2 still eine 1, und der Entzug griff nie mehr.
+a5p, app5p = _oidc({"sub": "h5-p", "preferred_username": "panelfall", "groups": ["admins"]},
+                   oidc_group_role_map=KARTE)
+_oidc_login(app5p)
+_pf = a5p.store.get_user_by_name("panelfall")
+_chefin_p = a5p.create_user("chefin", password=PW, is_admin=True)
+cpan = TestClient(app5p)
+cpan.post("/auth/login", data={"username": "chefin", "password": PW}, follow_redirects=False)
+gespeichert = cpan.post(f"/auth/admin/api/users/{_pf['id']}/roles", json={"roles": ["editor"], "is_admin": True})
+r.check("H-5: Rollen im Panel speichern lässt ein IdP-Admin-Flag, wie es ist (2)",
+        gespeichert.status_code == 200 and a5p.store.get_user(_pf["id"])["is_admin"] == 2,
+        f"HTTP {gespeichert.status_code}, is_admin={a5p.store.get_user(_pf['id'])['is_admin']}")
+_setze(a5p, {"sub": "h5-p", "preferred_username": "panelfall", "groups": []})
+_oidc_login(app5p)
+r.check("… und der nächste Login ohne Admin-Gruppe nimmt es", not a5p.store.get_user(_pf["id"])["is_admin"])
+_normal = a5p.create_user("normalo", password=PW)
+cpan.post(f"/auth/admin/api/users/{_normal}/roles", json={"roles": [], "is_admin": True})
+r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
+        a5p.store.get_user(_normal)["is_admin"] == 1)
+# (Mutationsproben: den `elif`-Zweig in apply_idp_groups streichen → „ist das Flag weg" rot;
+#  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
+#  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
 
 # ── Schema 11: eine Datei von 0.20.x bekommt die Tabelle beim Start ───────────────────────
 _pfad = str(Path(tempfile.mkdtemp()) / "alt.db")

@@ -199,10 +199,12 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
     method   TEXT
 );
 CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
-    topf    TEXT PRIMARY KEY,                -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
+    topf    TEXT NOT NULL,                   -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
+    art     TEXT NOT NULL,                   -- Methode (password, pin, totp …): ein Reset räumt nur seine
     anzahl  INTEGER NOT NULL,
     seit    INTEGER NOT NULL,                -- erster Fehlversuch der laufenden Serie
-    zuletzt INTEGER NOT NULL
+    zuletzt INTEGER NOT NULL,
+    PRIMARY KEY (topf, art)
 );
 CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Aktionen)
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1862,7 +1864,7 @@ class Store:
         q, args = self._fails_abfrage(since, username, ip, method, exclude_methods)
         return self._one(q, args)["c"]
 
-    def reserve_attempt(self, username, ip, method, regeln) -> tuple:
+    def reserve_attempt(self, username, ip, method, regeln, serie=None) -> tuple:
         """Sperren prüfen und den Versuch **in derselben Transaktion** vorab als Fehlversuch buchen.
 
         `regeln` ist eine Liste `(grund, grenze, filter)`; `filter` sind die Schlüsselwörter von
@@ -1878,6 +1880,11 @@ class Store:
         Prozesse (`uvicorn --workers N`) hinweg: Die Schreibsperre der Datei ordnet sie.
         Gelingt der Versuch, macht `finish_attempt` aus der Zeile einen Erfolg; ein Prozess,
         der dazwischen stirbt, hinterlässt einen Fehlversuch — im Zweifel strenger.
+
+        `serie=(topf, art, grenze)` bucht dazu die Serie der Fehlversuche in Folge (B2-6) vor —
+        in DERSELBEN Transaktion. Die erste Fassung las die Serie davor und zählte sie erst nach
+        der Prüfung: Eine parallele Salve an der Grenze las N-mal „noch nicht voll" und durfte
+        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung.
         """
         with self._lock:
             if self.db.in_transaction:
@@ -1892,6 +1899,12 @@ class Store:
                 self._verwerfen()
             self.db.execute("BEGIN IMMEDIATE")
             try:
+                stand = None
+                if serie is not None and serie[0]:
+                    topf_s, art_s, grenze_s = serie
+                    if self._serie_summe(topf_s) >= grenze_s:
+                        self.db.execute("ROLLBACK")
+                        return None, "lockout_serie"
                 for grund, grenze, filt in regeln:
                     if not filt.get("username") and not filt.get("ip"):
                         continue
@@ -1902,8 +1915,11 @@ class Store:
                 cur = self.db.execute(
                     "INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,0,?)",
                     (_now(), username, ip, method))
+                if serie is not None and serie[0]:
+                    self._serie_plus(topf_s, art_s)
+                    stand = self._serie_summe(topf_s)
                 self.db.execute("COMMIT")
-                return cur.lastrowid, None
+                return cur.lastrowid, stand
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
@@ -1950,42 +1966,72 @@ class Store:
     # Schwelle dort zählt ab `lockout_window_sec`. Wer langsam rät — vier Versuche je Fenster,
     # rund um die Uhr —, blieb unter jeder Schwelle, beliebig lange. NIST SP 800-63B verlangt
     # deshalb eine Grenze für Fehlversuche IN FOLGE, die mit der Zeit nicht verfällt. Sie steht
-    # hier, eigens und ohne Zeitfenster; zurückgesetzt wird sie nur durch eine vollständige
-    # Anmeldung, einen Reset oder den Betreiber (`manager.sperre_aufheben`).
+    # hier, eigens und ohne Zeitfenster, je Kennung UND Methode: Gesperrt wird auf der Summe,
+    # geräumt wird, was der Rückweg belegt (ein Selbstbedienungs-Reset nur den Passwort-Anteil,
+    # R4-13). Das Buchen liegt in `reserve_attempt`, atomar mit dem Versuch selbst.
+    def _serie_summe(self, topf) -> int:
+        zeile = self.db.execute("SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=?",
+                                (topf,)).fetchone()
+        return int(zeile["n"])
+
+    def _serie_plus(self, topf, art):
+        jetzt = _now()
+        self.db.execute("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
+                        "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, "
+                        "zuletzt = excluded.zuletzt", (topf, art or "", jetzt, jetzt))
+
     def fehlserie(self, topf) -> int:
-        """Wie viele Fehlversuche in Folge stehen für diese (gefaltete) Kennung? 0 = keine Serie."""
+        """Wie viele Fehlversuche in Folge stehen für diese (gefaltete) Kennung, über alle Methoden?"""
         if not topf:
             return 0
-        zeile = self._one("SELECT anzahl FROM fehlserie WHERE topf=?", (topf,))
-        return int(zeile["anzahl"]) if zeile else 0
+        with self._lock:
+            return self._serie_summe(topf)
 
-    def fehlserie_erhoehen(self, topf) -> int:
-        """Einen Fehlversuch an die Serie hängen; gibt den neuen Stand zurück."""
+    def fehlserie_erhoehen(self, topf, art="password") -> int:
+        """Einen Fehlversuch an die Serie hängen (Wege ohne Vorbuchung); gibt die neue Summe zurück."""
         if not topf:
             return 0
         jetzt = _now()
-        self._exec("INSERT INTO fehlserie(topf, anzahl, seit, zuletzt) VALUES (?, 1, ?, ?) "
-                   "ON CONFLICT(topf) DO UPDATE SET anzahl = anzahl + 1, zuletzt = excluded.zuletzt",
-                   (topf, jetzt, jetzt))
+        self._exec("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
+                   "ON CONFLICT(topf, art) DO UPDATE SET anzahl = anzahl + 1, zuletzt = excluded.zuletzt",
+                   (topf, art or "", jetzt, jetzt))
         return self.fehlserie(topf)
 
-    def fehlserie_loeschen(self, topf) -> int:
-        """Die Serie beenden; gibt zurück, wie lang sie war."""
+    def fehlserie_senken(self, topf, art) -> None:
+        """Eine Vorbuchung zurücknehmen: Der Versuch war richtig (oder gar keiner — Verzeichnis-Ausfall).
+
+        Nicht löschen: Ein richtiges Passwort bei offenem zweiten Faktor ist keine vollständige
+        Anmeldung. Die Serie davor bleibt, nur dieser Versuch zählt nicht."""
+        if not topf:
+            return
+        self._exec("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
+                   (topf, art or ""))
+
+    def fehlserie_loeschen(self, topf, arten=None) -> int:
+        """Die Serie beenden (`arten=None`: ganz, sonst nur diese Methoden); gibt zurück, wie viele es waren."""
         if not topf:
             return 0
-        vorher = self.fehlserie(topf)
-        self._exec("DELETE FROM fehlserie WHERE topf=?", (topf,))
-        return vorher
+        if arten is None:
+            weg = self.fehlserie(topf)
+            self._exec("DELETE FROM fehlserie WHERE topf=?", (topf,))
+            return weg
+        arten = [str(a) for a in arten]
+        platz = ",".join("?" for _ in arten)
+        zeile = self._one(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie WHERE topf=? AND art IN ({platz})",
+                          [topf, *arten])
+        self._exec(f"DELETE FROM fehlserie WHERE topf=? AND art IN ({platz})", [topf, *arten])
+        return int(zeile["n"])
 
     def gc_fehlserien(self, older_than, grenze) -> int:
-        """Alte, NICHT ausgelöste Serien räumen (`zuletzt` vor `older_than`, `anzahl < grenze`).
+        """Alte, NICHT ausgelöste Serien räumen (`zuletzt` vor `older_than`, Summe unter `grenze`).
 
         Eine ausgelöste Serie bleibt: Sie ist eine Sperre, und die hebt nur eine Anmeldung, ein
         Reset oder der Betreiber auf — nicht das Warten. Ohne Grenze liefe die Tabelle mit
         erfundenen Namen voll; mit ihr kostet jede bleibende Zeile einen Angreifer `grenze`
         Fehlversuche, jeder durch die Fenster-Schwellen gebremst."""
-        return self._exec("DELETE FROM fehlserie WHERE zuletzt < ? AND anzahl < ?",
-                          (int(older_than), int(grenze))).rowcount
+        return self._exec(
+            "DELETE FROM fehlserie WHERE topf IN (SELECT topf FROM fehlserie GROUP BY topf "
+            "HAVING MAX(zuletzt) < ? AND SUM(anzahl) < ?)", (int(older_than), int(grenze))).rowcount
 
     # ---------- Magic-/Einmal-Token ----------
     def add_magic_token(self, token_hash, purpose, expires_at, user_id=None, email=None, payload=None):

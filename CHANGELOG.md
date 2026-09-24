@@ -20,22 +20,32 @@ Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wan
   Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das Konto gibt oder nicht — die Meldung
   („Zu viele Fehlversuche in Folge …") verrät nichts. Ein Fehlgriff, der keine Anmeldung ist
   (Passwortwechsel, Step-up, Bereichs-PIN), zählt nicht. `gc()` räumt nicht ausgelöste Serien nach
-  90 Tagen Ruhe, ausgelöste nie.
+  90 Tagen Ruhe, ausgelöste nie. Geprüft und vorgebucht wird die Serie **in derselben Transaktion**
+  wie der Versuch (eine parallele Salve an der Grenze bekommt einen Versuch, nicht einen je Anfrage);
+  ein richtiger erster Faktor nimmt nur seine eigene Vorbuchung zurück, ein Verzeichnis-Ausfall
+  zählt nicht. Der **Selbstbedienungs-Reset räumt nur den Passwort-Anteil** der Serie — TOTP- und
+  PIN-Fehlgriffe bleiben stehen (derselbe Grund wie R4-13: Das Postfach beweist den zweiten Faktor
+  nicht). Der Betreiber räumt ganz: Passwort-Reset im Panel, `tinysesam unlock`.
 - **Passwort-Mindestlänge 15, wenn das Passwort allein anmelden kann (B2-4, NIST SP 800-63B).** Neue
   Schwelle `password_min_length_single_factor` (Panel, Vorgabe 15). Sie gilt, solange die globale
-  Kette keinen zweiten Faktor erzwingt — also in der Vorgabe. Mit `login_chain=["password","totp"]`
-  o. ä. bleibt `password_min_length` (8). Wer die strengere Regel nicht will, stellt die neue Schwelle
-  auf 8. Das CLI kennt die Konfiguration nicht und nimmt die strengere.
+  Kette keinen zweiten Faktor erzwingt — also in der Vorgabe — **und auch dann, wenn Konten den
+  verlangten zweiten Faktor selbst einrichten dürfen** (`mfa_enrollment` `first_login`/`grace`):
+  Wer nur das Erstpasswort kennt, bindet dort seinen eigenen Authenticator. Erst mit
+  `login_chain=[…zweiter Faktor…]` UND `mfa_enrollment="strict"` gilt `password_min_length` (8).
+  Wer die strengere Regel nicht will, stellt die neue Schwelle auf 8. Das CLI kennt die
+  Konfiguration nicht und nimmt die strengere.
 - **Ein vom Identity Provider vergebenes Admin-Flag geht wieder, wenn er die Gruppe nicht mehr
   liefert (H-5).** Gemappte Rollen wurden schon entzogen, das Admin-Flag war „nur grant". Es trägt
   jetzt einen Vermerk (`users.is_admin=2`, weiterhin ein Wahrheitswert); nur dieses Flag nimmt der
   Provider beim nächsten Login wieder, mit Zeile `idp_admin_revoke`. Ein Admin aus Panel, CLI,
   `admin_identifiers` oder `/auth/claim-admin` bleibt unberührt. Flags aus der Zeit davor tragen den
-  Vermerk nicht und bleiben ebenfalls stehen.
+  Vermerk nicht und bleiben ebenfalls stehen. Das Panel schreibt das Admin-Flag nur noch bei einer
+  echten Änderung — vorher machte jedes Speichern der Rollen aus der 2 still eine 1.
 - **Eine IdP-Adresse ohne Beleg wird nicht verwendet (H-3).** Bisher übernahm OIDC eine Adresse ohne
   `email_verified=true` ins Konto und reichte sie als `Remote-Email` weiter, nur ohne Rechte in
   TinySesam — eine geschützte App, die Nutzer über die Adresse zuordnet, sah den Vermerk nie. Jetzt:
-  kein Kontoname aus ihr, keine Adresse im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
+  kein Kontoname aus ihr (auch nicht über ein `preferred_username`, das diese Adresse ist — Keycloak
+  „Email as username", Entra-UPN), keine Adresse im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
   später, wird sie nachgetragen, sofern sie frei ist. Ein Provider, der den Claim nie schickt (Entra
   ID), braucht `oidc_email_verified_default=True`. SAML und LDAP sind unverändert (sie liefern keinen
   Beleg; offen zur Entscheidung).

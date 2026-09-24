@@ -103,6 +103,14 @@ Seite gehört und sich nicht ändert:
   Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
   CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt. Wirksam wird der Entzug bei der
   nächsten Anmeldung über den Provider, nicht sofort (offener Punkt „Widerruf folgt dem IdP").
+- **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
+  Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
+  räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
+  Verzeichnisnamen hebt `tinysesam unlock <name wie eingetippt>` auf (die Logzeile nennt ihn).
+- **`admin_identifiers` nach einem IdP-Entzug (H-5):** Entzieht der Provider dem letzten Admin das
+  Flag und steht dessen belegte Adresse in `admin_identifiers`, befördert der Erst-Admin-Weg ihn im
+  selben Login wieder — dann mit dem Vermerk „von Hand" (1). Das ist die Allowlist, wie der Betreiber
+  sie eingetragen hat; wer den Entzug will, nimmt die Adresse aus der Liste.
 - **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,
   keine Adresse im Konto, kein `Remote-Email` (H-3). Liefert der Provider den Beleg später, wird sie
   nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
