@@ -1724,6 +1724,9 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
 # nicht die Bequemlichkeit des Repos ("haben wir noch nicht eingebaut") — das Zweite
 # gehoert als Ausnahme MIT Grund ins jeweilige Repo, wo es sichtbar bleibt.
 KIT_WERKZEUGE: list[tuple[str, str, str]] = [
+    ("hygiene", "pruefe_dateien_geschlossen",
+     ("prueft den Kit-Quelltext selbst, nicht das aufrufende Repo — sie gehoert in repokits "
+      "eigene Suite, und dort laeuft sie")),
     ("hygiene", "pruefe_zeilennummern_wie_grep",
      ("prueft den Kit-Quelltext selbst, nicht das aufrufende Repo — sie gehoert in repokits "
       "eigene Suite, und dort laeuft sie")),
@@ -1813,7 +1816,12 @@ def pruefe_zeilennummern_wie_grep(kit_verzeichnis: str | None = None) -> list[st
             continue
         pfad = os.path.join(verz, name)
         try:
-            baum = _ast.parse(open(pfad, encoding="utf-8").read())
+            # `with`, nicht `open(...).read()`: CodeQL meldet sonst `py/file-not-closed`,
+            # und zwar in JEDEM Repo, das diese Kopie traegt — gemeldet aus der
+            # TinySesam-Session am Tag der Auslieferung. Der Fix gehoert in die Quelle,
+            # nicht in sieben abgewiesene Alerts.
+            with open(pfad, encoding="utf-8") as fh:
+                baum = _ast.parse(fh.read())
         except (OSError, SyntaxError) as fehler:
             treffer.append(f"{name}: nicht lesbar ({fehler}) — nicht geprueft")
             continue
@@ -1822,6 +1830,47 @@ def pruefe_zeilennummern_wie_grep(kit_verzeichnis: str | None = None) -> list[st
                     and knoten.func.attr == "splitlines":
                 treffer.append(f"{name}:{knoten.lineno}: splitlines() — "
                                "zeilen_wie_grep() nehmen (U+2028 verschiebt die Nummer)")
+    return treffer
+
+
+def pruefe_dateien_geschlossen(kit_verzeichnis: str | None = None) -> list[str]:
+    """Kein `open()` im Kit ausserhalb eines `with` — die Datei bliebe offen.
+
+    WARUM (2026-09-24, am Tag der Auslieferung von 0.21.6 gemeldet): `open(pfad).read()` in
+    einer frisch gebauten Pruefung liess CodeQL in TinySesam `py/file-not-closed` melden — und
+    weil das Kit als **Kopie** in jedes Repo wandert, haette derselbe Alert in jedem Repo mit
+    CodeQL aufgeschlagen. Sieben abgewiesene Alerts sind kein Fix; der Fix gehoert in die Quelle.
+
+    *Was das Kit ausliefert, vervielfaeltigt jeden Fehler — und jeden Fix.*
+
+    Geprueft wird per AST (ein `open(` im Docstring oder in einem Kommentar ist kein Aufruf).
+    CodeQL laeuft nur in den Repos, die es eingerichtet haben; diese Pruefung laeuft ueberall,
+    auch offline in `ci-local`.
+    """
+    import ast as _ast
+    verz = kit_verzeichnis or os.path.dirname(os.path.abspath(__file__))
+    treffer: list[str] = []
+    for name in sorted(os.listdir(verz)):
+        if not name.endswith(".py") or name == "__init__.py":
+            continue
+        pfad = os.path.join(verz, name)
+        try:
+            with open(pfad, encoding="utf-8") as fh:
+                baum = _ast.parse(fh.read())
+        except (OSError, SyntaxError) as fehler:
+            treffer.append(f"{name}: nicht lesbar ({fehler}) — nicht geprueft")
+            continue
+        im_with = set()
+        for knoten in _ast.walk(baum):
+            if isinstance(knoten, _ast.With):
+                for eintrag in knoten.items:
+                    for x in _ast.walk(eintrag.context_expr):
+                        im_with.add(id(x))
+        for knoten in _ast.walk(baum):
+            if isinstance(knoten, _ast.Call) and getattr(knoten.func, "id", None) == "open" \
+                    and id(knoten) not in im_with:
+                treffer.append(f"{name}:{knoten.lineno}: open() ohne `with` — die Datei bleibt "
+                               "offen (CodeQL: py/file-not-closed)")
     return treffer
 
 
