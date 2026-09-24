@@ -126,6 +126,131 @@ r.check("gehashte Freigabe überlebt einen Neustart",
         "die Bereinigung greift zu weit")
 s2.db.close()
 
+# ---------------------------------------------------------------- Schema 9 → 10
+# Was die Migration auf Schema 10 mit einem Bestand macht — an einer Datei im Stand von Schema 9
+# (heutiges Schema ohne das, was 10 hinzufügt; die Vorbedingung prüft, dass nichts davon übrig ist).
+#
+# (a) Betreiber-Sperren aus früheren Fassungen (S-5). Bis 0.19.x schrieb die Sperre im Panel
+#     `disabled=1` und verwarf die offenen Token NICHT. Nach dem Upgrade hob der alte
+#     Bestätigungslink einer ausstehenden Registrierung die Sperre auf und meldete an — die
+#     Aussage „ihre offenen Token hat die Sperre damals schon verworfen“ stimmte für kein Release.
+# (b) Die Zähl-Töpfe (S-1) werden für jede Bestandszeile gerechnet, Indizes und Trigger angelegt.
+# (c) Adressen offener Registrierungen verlieren den Vermerk „belegt“ (S-2), bis der Link kommt.
+# (Mutationsproben: den Panel-Schritt streichen → rot bei (a), der alte Link gibt 303; dort die
+#  Token nicht verwerfen → rot bei (a); nur `detail = 'uid=<id>'` erkennen, nicht `'uid=<id> …'`
+#  → rot bei (a); den Schritt für offene Registrierungen streichen → rot bei (c); in `/auth/verify`
+#  den Beleg nicht setzen → rot bei (c); den Topf-Schritt der Migration streichen → rot bei (b).)
+_s10_ordner = tempfile.mkdtemp()
+_s10_db = os.path.join(_s10_ordner, "schema9.db")
+_s10_cfg = dict(db_path=os.path.join(_s10_ordner, "quelle.db"), allow_signup=True,
+                signup_require_email=True, signup_verify_email=True, csrf_enabled=False,
+                base_url="https://auth.example.com")
+_s10_alt, _ = frisch(**_s10_cfg)
+_s10_alt.create_user("chefin", password="Geheim12345!", is_admin=True)
+_s10_ids, _s10_links = {}, {}
+for _name in ("verdacht", "wartend", "wieder", "altsperre"):
+    _uid = _s10_alt.store.create_user(_name, None, f"{_name}@example.org")   # Vermerk 1, wie damals
+    _s10_ids[_name] = _uid
+    _s10_alt.store.set_disabled(_uid, True)                                # damals: immer 1
+    if _name != "altsperre":
+        _s10_links[_name] = _s10_alt.create_magic_token("verify_email", user_id=_uid,
+                                                        email=f"{_name}@example.org")
+# Die Panel-Sperre von damals: Audit-Zeile mit `uid=<id>`, Token bleiben liegen.
+_s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['verdacht']} api_keys_revoked=1")
+_s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['altsperre']}")
+_s10_alt.store.audit_log("user_disable", "chefin", None, f"uid={_s10_ids['wieder']}")
+_s10_alt.store.audit_log("user_enable", "chefin", None, f"uid={_s10_ids['wieder']}")
+_s10_emile = _s10_alt.store.create_user("Émile", None, "Emile@Bücher.example")
+_s10_alt.store.db.close()
+# Die Datei im Stand von Schema 9: das Schema ohne die Topf-Spalten (Indizes und Trigger legt erst
+# `_migrate` an), die Daten per ATTACH aus der eben gefüllten Datei. Nicht per `ALTER TABLE …
+# DROP COLUMN`: SQLite sucht beim Entfernen der letzten Spalte das Komma davor rückwärts im Text
+# und findet eines im Kommentar darüber („incomplete input“).
+from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
+_s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT\n", "\n", _S10_SCHEMA, flags=re.S)
+os.close(os.open(_s10_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+_s10_roh = sqlite3.connect(_s10_db)
+_s10_roh.executescript(_s10_schema9)
+_s10_roh.execute("ATTACH DATABASE ? AS quelle", (_s10_cfg["db_path"],))
+for (_tab,) in _s10_roh.execute("SELECT name FROM main.sqlite_master WHERE type='table' "
+                                "AND name NOT LIKE 'sqlite_%'").fetchall():
+    _sp = ", ".join(z[1] for z in _s10_roh.execute(f"PRAGMA main.table_info({_tab})"))
+    _s10_roh.execute(f"INSERT INTO main.{_tab}({_sp}) SELECT {_sp} FROM quelle.{_tab}")
+_s10_roh.commit()
+_s10_roh.execute("DETACH DATABASE quelle")
+_s10_roh.execute("PRAGMA user_version = 9")
+_s10_rest = _s10_roh.execute("SELECT name FROM sqlite_master WHERE sql LIKE '%topf%' "
+                             "OR name LIKE 'ix_users_%'").fetchall()
+_s10_zahl = _s10_roh.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+_s10_roh.commit()
+_s10_roh.close()
+_s10_cfg["db_path"] = _s10_db
+r.check("Vorbedingung: die Datei steht auf Schema 9, ohne Topf-Spalten, Indizes und Trigger, mit allen Konten",
+        _s10_n == 1 and not _s10_rest and _s10_zahl == 6 and Store.SCHEMA_VERSION == 10,
+        f"Schnitt {_s10_n}, Reste {_s10_rest}, Konten {_s10_zahl}, SCHEMA_VERSION={Store.SCHEMA_VERSION}")
+
+_s10, _ = frisch(**_s10_cfg)                                      # = Upgrade auf Schema 10
+_s10_app = FastAPI()
+_s10_app.include_router(_s10.router())
+_s10_u = {n: _s10.store.get_user(i) for n, i in _s10_ids.items()}
+_s10_offen = {n: _s10.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE user_id=? AND used_at IS NULL",
+                                 (i,))["n"] for n, i in _s10_ids.items()}
+_s10_link = TestClient(_s10_app, client=("192.0.2.66", 1)).post(
+    f"/auth/verify/{_s10_links['verdacht']}", follow_redirects=False)
+r.check("S-5 (a): eine Panel-Sperre von damals trägt nach dem Upgrade den Betreiber-Vermerk, ihre "
+        "offenen Token sind verworfen — der alte Bestätigungslink schaltet nicht frei",
+        _s10_u["verdacht"]["disabled"] == 2 and _s10_offen["verdacht"] == 0
+        and _s10_u["altsperre"]["disabled"] == 2
+        and _s10_link.status_code != 303 and _s10.store.get_user(_s10_ids["verdacht"])["disabled"] == 2
+        and not _s10.store.list_sessions(_s10_ids["verdacht"]),
+        f"verdacht {dict(_s10_u['verdacht'])}, offen {_s10_offen}, Link HTTP {_s10_link.status_code}")
+_s10_wartet = TestClient(_s10_app, client=("192.0.2.67", 1)).post(
+    f"/auth/verify/{_s10_links['wartend']}", follow_redirects=False)
+r.check("S-5 (a): … eine ausstehende Registrierung ohne Panel-Sperre bleibt freischaltbar, eine "
+        "wieder entsperrte Sperre bleibt die der App (1)",
+        _s10_u["wartend"]["disabled"] == 1 and _s10_offen["wartend"] == 1
+        and _s10_wartet.status_code == 303 and _s10.store.get_user(_s10_ids["wartend"])["disabled"] == 0
+        and _s10_u["wieder"]["disabled"] == 1 and _s10_offen["wieder"] == 1,
+        f"wartend {dict(_s10_u['wartend'])}, Link HTTP {_s10_wartet.status_code}, wieder {dict(_s10_u['wieder'])}")
+r.check("S-2 (c): Adressen offener Registrierungen tragen nach dem Upgrade keinen Beleg, bis der "
+        "Link kommt — dann wieder",
+        _s10_u["verdacht"]["email_verified"] == 0 and _s10_u["wartend"]["email_verified"] == 0
+        and _s10.store.get_user(_s10_ids["wartend"])["email_verified"] == 1
+        and _s10.store.get_user(_s10_emile)["email_verified"] == 1,
+        f"verdacht {_s10_u['verdacht']['email_verified']}, wartend vorher "
+        f"{_s10_u['wartend']['email_verified']}, nachher {_s10.store.get_user(_s10_ids['wartend'])['email_verified']}")
+_s10_objekte = {z["name"] for z in _s10.store._all("SELECT name FROM sqlite_master WHERE tbl_name='users'")}
+_s10_e = _s10.store.get_user(_s10_emile)
+_s10_ohne = _s10.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")["n"]
+r.check("S-1 (b): jede Bestandszeile bekommt ihren Zähl-Topf, Indizes und Trigger stehen",
+        _s10_ohne == 0 and _s10_e["topf_name"] == "émile"
+        and _s10_e["topf_mail"] == "emile@xn--bcher-kva.example"
+        and {"ix_users_topf_name", "ix_users_topf_mail", "ix_users_name_nocase", "ix_users_email_nocase",
+             "trg_users_topf_name", "trg_users_topf_mail"} <= _s10_objekte
+        and (_s10.store.konto_mit_topf("émile") or {"id": None})["id"] == _s10_emile,
+        f"ohne Topf {_s10_ohne}, Émile {(_s10_e['topf_name'], _s10_e['topf_mail'])}, Objekte {_s10_objekte}")
+_s10.store.db.close()
+# Wer die Faltung in `norm_kennung` ändert, hebt das Schema — dann rechnet der Start ALLE Töpfe neu
+# (`Store.TOPF_SCHEMA`), nicht nur die fehlenden. Nachgestellt mit einem veralteten Topf in einer
+# Datei, deren Stempel unter `TOPF_SCHEMA` liegt.
+# (Mutationsprobe: in `_migrate` immer nur die NULL-Zeilen rechnen → rot.)
+_s10_veraltet = sqlite3.connect(_s10_db)
+_s10_veraltet.execute("UPDATE users SET topf_name='alte-faltung' WHERE id=?", (_s10_emile,))
+_s10_veraltet.execute(f"PRAGMA user_version = {Store.TOPF_SCHEMA - 1}")
+_s10_veraltet.commit()
+_s10_veraltet.close()
+_s10_neu = Store(_s10_db)
+r.check("S-1 (b): … ein Stempel unter TOPF_SCHEMA rechnet auch vorhandene Töpfe neu",
+        _s10_neu.get_user(_s10_emile)["topf_name"] == "émile",
+        f"{_s10_neu.get_user(_s10_emile)['topf_name']}")
+_s10_neu.db.close()
+_s10_zweit = Store(_s10_db)
+r.check("… ein zweiter Start ändert nichts mehr (Stempel 10, keine weitere Sperre, kein Vermerk)",
+        int(_s10_zweit.db.execute("PRAGMA user_version").fetchone()[0]) == 10
+        and _s10_zweit.get_user(_s10_ids["wieder"])["disabled"] == 1
+        and _s10_zweit.get_user(_s10_ids["wartend"])["email_verified"] == 1)
+_s10_zweit.db.close()
+
 # ---------------------------------------------------------------- audit --user
 # Das Kommando siebte die jüngsten Zeilen nach, statt in SQL zu filtern: Wer im Anlassfall suchte
 # (Brute-Force-Welle), bekam "Keine Einträge zu 'X'." und Exit 0, obwohl sie dastanden.

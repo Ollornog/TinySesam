@@ -437,10 +437,12 @@ class TinySesam:
         siehe `maybe_promote_admin`). Das ist der Fall jedes Anmeldewegs, der für die Adresse
         nicht einsteht: ein IdP ohne den Claim `email_verified`, **und grundsätzlich SAML und
         LDAP** — dort gibt es gar kein Attribut, das eine Prüfung behauptet.
-        Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber oder eine Bestätigungsmail
-        für die Adresse einsteht (Admin-API, Erst-Admin, Service-Konten, Einladung, Registrierung
-        — dort verlangt der Konstruktor-Wächter `signup_verify_email`, sobald eine
-        Allowlist-Adresse im Spiel ist).
+        Die Vorgabe `True` gilt für die Wege, bei denen der Betreiber für die Adresse einsteht
+        (Admin-API, Erst-Admin, Service-Konten, Einladung an diese Adresse). Die
+        Selbst-Registrierung legt die eingetippte Adresse mit `False` an; den Beleg setzt erst der
+        eingelöste Bestätigungslink (`/auth/verify`), ohne Bestätigungspflicht bleibt es beim
+        `False`. Wer selbst registriert und `send_verify_email` schickt, übergibt ebenfalls
+        `False` — sonst gilt die Adresse als belegt, bevor jemand den Link eingelöst hat.
 
         Eine vergebene Kennung wirft `ConfigError` mit dem Wortlaut „<Feld> ist bereits
         vergeben" und gesetztem `e.feld` (`"username"`/`"email"`) plus `e.besitzer_id` —
@@ -859,10 +861,12 @@ class TinySesam:
         verbleibendes Konto teilt (`ｃｌａｒａ` und `clara`) — der bleibt bis zum gewöhnlichen
         Aufräumen stehen, sonst höbe das Löschen des einen die Sperre des anderen auf.
 
-        Ersetzt wird, was ab der Anlage des Kontos entstand; eine BESTÄTIGTE Adresse auch in
+        Ersetzt wird, was ab der Anlage des Kontos entstand; eine BELEGTE Adresse auch in
         älteren Zeilen (etwa in der Einladung, die zu dem Konto führte) — sie gehört dem Konto
-        nachweislich. Ein Name gehörte vor der Anlage niemandem oder jemand anderem; ein
-        Fehlversuch darunter bleibt, wie er war (s. `Store.konto_entfernen`).
+        nachweislich (`Store.adresse_belegt`). Die Adresse eines offenen Kontos (Link nie
+        eingelöst) oder einer Registrierung ohne Bestätigungspflicht ist nicht belegt; sie hat
+        womöglich ein Fremder eingetippt. Ein Name gehörte vor der Anlage niemandem oder jemand
+        anderem; ein Fehlversuch darunter bleibt, wie er war (s. `Store.konto_entfernen`).
 
         Der letzte Admin lässt sich nicht löschen (`StateError`) — sonst stünde die Instanz ohne
         Verwaltung da, und der Erst-Admin-Weg öffnete sich für den Nächstbesten. Gibt False
@@ -875,8 +879,8 @@ class TinySesam:
             raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
         # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
         # und die Rücknahme einer Registrierung löschen (Integrationsfunde 12/18). Nur hier, bei
-        # der bewussten Löschung, gilt eine bestätigte Adresse auch vor der Anlage als die des
-        # Kontos — die anderen Wege kann ein Fremder auslösen.
+        # der bewussten Löschung, gilt eine belegte Adresse auch vor der Anlage als die des
+        # Kontos — die anderen Wege kann ein Fremder auslösen (`Store.adresse_belegt`).
         entfernt = self.store.konto_entfernen(user_id, adresse_unbefristet=True)
         if entfernt is None:
             return False
@@ -2347,6 +2351,8 @@ class TinySesam:
         ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel,
         `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst
         nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18).
+        Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des
+        Kontos ist.
         """
         senden = self._verify_mail(user_id, email, base_url)
         if senden is None:

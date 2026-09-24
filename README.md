@@ -382,8 +382,9 @@ systemctl start tinysesam
 
 > **Rolling back needs a backup in the old schema.** Each release that adds columns migrates the
 > database on first start — 0.18.0 did it once (schema 5), 0.19.0 takes it to **schema 8**
-> (per-app OIDC grants, key kind, first login and enrollment window); the next release adds
-> **schema 9** (stable directory keys for LDAP/SAML). Older code then opens the
+> (per-app OIDC grants, key kind, first login and enrollment window); the next release takes it
+> to **schema 10** (9: stable directory keys for LDAP/SAML; 10: indexed lockout buckets and
+> name/address lookups, and panel locks from earlier releases become operator locks). Older code then opens the
 > file without complaining, `/healthz` stays green and accounts are readable — but every session
 > operation raises. Take a backup *before* the update (`tinysesam backup` leaves the source
 > untouched) and restore that one.
