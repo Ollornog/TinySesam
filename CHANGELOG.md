@@ -13,8 +13,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   `scripts/_release.py --pruefen` die Versionsstände; `tests/test_repo.py` hält fest, dass jeder
   veröffentlichende Job am Tag hängt.
 
-- **Testbasis auf Kit 0.21.7:** Die Kit-Prüfung, die `splitlines()` sucht, schliesst ihre Dateien wieder
-  (CodeQL `file-not-closed`, in 0.20.1 als Kit-Fund abgewiesen und an der Quelle behoben).
+- **Testbasis auf Kit 0.21.8:** Die Kit-Prüfung, die `splitlines()` sucht, schliesst ihre Dateien wieder
+  (CodeQL `file-not-closed`, in 0.20.1 als Kit-Fund abgewiesen und an der Quelle behoben). Neu
+  verdrahtet: `pruefe_veroeffentlichen_am_tag` — in einem tag-getriggerten Workflow mit Knopf
+  veröffentlicht nichts ohne Tag (die allgemeine Fassung des Wächters aus dem Release-Trockenlauf).
 
 ## [0.20.1] — 2026-09-24
 

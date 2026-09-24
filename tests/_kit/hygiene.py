@@ -1693,6 +1693,11 @@ def pruefe_belegstellen_eng(root: str, dateien: list[str],
 # vergleicht die Tabelle gegen das Modul, damit auch das nicht am Vorsatz haengt.
 AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     ("manifest", "pruefe"),
+    # Gefordert, weil sie nichts braucht als das Repo — und weil ihr Zuschnitt ueber ALLE acht
+    # Repos gemessen ist (2026-09-24): 7 sauber, einer rot, und der Rote ist ein echter,
+    # dokumentierter Befund. Die naheliegende weite Fassung ("jeder Job mit write-Rechten haengt
+    # am Tag") haette 7 von 9 heissen Jobs falsch gemeldet — Pages-Deploy, CI-Abbild, Cleanup.
+    ("hygiene", "pruefe_veroeffentlichen_am_tag"),
     # Die SAMMELFUNKTION, nicht ihre Teile — sie ist die ausgelieferte Schnittstelle.
     #
     # ⚠️ KORREKTUR 0.17.1, und die Lehre ist bitter, weil sie meine eigene ist: 0.17.0
@@ -1830,6 +1835,159 @@ def pruefe_zeilennummern_wie_grep(kit_verzeichnis: str | None = None) -> list[st
                     and knoten.func.attr == "splitlines":
                 treffer.append(f"{name}:{knoten.lineno}: splitlines() — "
                                "zeilen_wie_grep() nehmen (U+2028 verschiebt die Nummer)")
+    return treffer
+
+
+# Was VEROEFFENTLICHT in einem Workflow? Erkannt an der HANDLUNG, nicht am Namen.
+#
+# Die Falle stammt aus der TinySesam-Session (2026-09-24): ihre erste Fassung erkannte den
+# PyPI-Job an `name: pypi` — und schlug bei `name: pypi-dist` an, einem ARTEFAKTNAMEN im
+# Bau-Job. *Ein Waechter, der am Namen erkennt, trifft alles, was aehnlich heisst.*
+_VEROEFFENTLICHT: list[tuple[str, str]] = [
+    (r"gh\s+release\s+create", "gh release create"),
+    (r"docker/login-action", "docker/login-action"),
+    (r"pypa/gh-action-pypi-publish", "pypi-publish"),
+    (r"actions/attest", "actions/attest*"),
+    (r"twine\s+upload", "twine upload"),
+    (r"docker/build-push-action", "build-push-action"),
+]
+_AM_TAG = re.compile(r"ref_type\s*==\s*'tag'|startsWith\(github\.ref,\s*'refs/tags")
+
+
+def _workflow_bloecke(inhalt: str) -> tuple[bool, list[dict]]:
+    """(ist_tag_workflow_mit_knopf, [{name, if, steps:[{text, if}]}]) — OHNE PyYAML.
+
+    Bewusst textuell: `yaml` liegt nur in `ci-ansible` und `ci-runner-tools`, NICHT in
+    `ci-python-web`, `ci-go` und `ci-php` (nachgemessen 2026-09-24). Eine Pruefung, die dort
+    mit ImportError endet oder sich ueberspringt, ist keine — "Skip ist kein Gruen".
+    """
+    zeilen = zeilen_wie_grep(inhalt)
+    tiefe = lambda z: len(z) - len(z.lstrip(" "))          # noqa: E731 — lokal, einzeilig
+
+    # --- on: … tags: + workflow_dispatch?
+    in_on = False
+    hat_tags = hat_knopf = False
+    for z in zeilen:
+        if re.match(r"^on:", z):
+            in_on = True
+            continue
+        if in_on:
+            if z.strip() and tiefe(z) == 0:
+                in_on = False
+            else:
+                if re.match(r"^\s+tags:", z):
+                    hat_tags = True
+                if re.match(r"^\s+workflow_dispatch:", z):
+                    hat_knopf = True
+    # Kurzform `on: [push]` traegt keine tags — dann greift die Pruefung nicht.
+
+    # --- jobs:
+    jobs: list[dict] = []
+    in_jobs = False
+    job: dict | None = None
+    job_tiefe = None
+    schritt: dict | None = None
+    for z in zeilen:
+        if re.match(r"^jobs:", z):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if z.strip() and tiefe(z) == 0:                    # naechster Top-Level-Schluessel
+            break
+        m = re.match(r"^(\s+)([A-Za-z_][\w-]*):\s*$", z)
+        if m and (job_tiefe is None or len(m.group(1)) == job_tiefe):
+            job_tiefe = len(m.group(1))
+            job = {"name": m.group(2), "if": "", "steps": []}
+            jobs.append(job)
+            schritt = None
+            continue
+        if job is None:
+            continue
+        # Schritt-Anfang: "- " tiefer als der Jobname
+        if re.match(r"^\s+-\s", z) and tiefe(z) > job_tiefe:
+            schritt = {"text": z, "if": ""}
+            job["steps"].append(schritt)
+            continue
+        mif = re.match(r"^\s+if:\s*(.*)$", z)
+        if mif:
+            if schritt is not None:
+                schritt["if"] += " " + mif.group(1)
+            else:
+                job["if"] += " " + mif.group(1)
+            continue
+        if schritt is not None:
+            schritt["text"] += "\n" + z
+        else:
+            job["if"] += ""                                 # andere Job-Schluessel: uninteressant
+            if re.match(r"^\s+environment:", z):
+                job["environment"] = z.split(":", 1)[1].strip() or "?"
+    return (bool(hat_tags and hat_knopf), jobs)
+
+
+def pruefe_veroeffentlichen_am_tag(root: str, dateien: list[str] | None = None) -> list[str]:
+    """In einem tag-getriggerten Workflow MIT `workflow_dispatch`: nichts veroeffentlicht ohne Tag.
+
+    WARUM (Register 2026-09-23/24, Muster aus der TinySesam-Session): Ein Workflow mit
+    `on: push: tags` wird von der normalen CI nie beruehrt — er sieht gepflegt aus, weil das Repo
+    gruen ist, aber das Gruen kommt von einem anderen Workflow. Der Ausweg ist ein
+    `workflow_dispatch`-Trockenlauf. Genau dort lag die Falle: fuenf von sechs Repos hatten den
+    Knopf, keines hatte ihn je gedrueckt — und ein Druck haette **aus einem Branch heraus
+    veroeffentlicht** (`gh release create`, `docker push` nach ghcr), weil nur `--verify-tag` davor
+    stand. *Ein Notausgang, der beim Oeffnen klemmt oder ins Freie fuehrt, ist keiner.*
+
+    **Der Zuschnitt ist gemessen, nicht geraten** (ueber alle acht Repos der Flotte, 2026-09-24):
+    Die naheliegende Regel „jeder Job mit `write`-Rechten haengt am Tag" haette **7 von 9** heissen
+    Jobs falsch gemeldet — der Pages-Deploy (`pages`/`id-token: write`, veroeffentlicht bei JEDEM
+    Push auf main und soll das), das CI-Abbild eines Kundenrepos und ein Registry-Cleanup
+    (`packages: write`, beides gewollt). Deshalb: geprueft wird **nur in tag-getriggerten Workflows
+    mit Knopf**, und dort **die Handlung** (Release anlegen, Registry-Anmeldung, schiebender Bau,
+    PyPI, Beglaubigung) — nicht das Recht und nicht der Name.
+
+    Gedeckt ist eine Handlung, wenn der **Job** oder der **Schritt** ein `if` mit
+    `github.ref_type == 'tag'` bzw. `startsWith(github.ref, 'refs/tags…')` traegt.
+    """
+    treffer: list[str] = []
+    verz = os.path.join(root, ".github", "workflows")
+    if not os.path.isdir(verz):
+        return treffer
+    for name in sorted(os.listdir(verz)):
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        inhalt = _lies(root, os.path.join(".github", "workflows", name))
+        if inhalt is None:
+            continue
+        tag_workflow, jobs = _workflow_bloecke(inhalt)
+        if not tag_workflow:
+            continue
+        for job in jobs:
+            job_am_tag = bool(_AM_TAG.search(job.get("if", "")))
+            if job.get("environment") and not job_am_tag:
+                treffer.append(f".github/workflows/{name}:{job['name']}: `environment: "
+                               f"{job['environment']}` ohne Tag-Bedingung am Job")
+            for s in job["steps"]:
+                if job_am_tag or _AM_TAG.search(s.get("if", "")):
+                    continue
+                for muster, bezeichnung in _VEROEFFENTLICHT:
+                    if not re.search(muster, s["text"]):
+                        continue
+                    if bezeichnung == "build-push-action":
+                        # Ein Bau, der NICHT schiebt, veroeffentlicht nichts. `push:` mit einem
+                        # Ausdruck (`${{ github.ref_type == 'tag' }}`) ist genau die Loesung und
+                        # darf nicht als Befund gelten.
+                        # Die GANZE Zeile nach `push:` lesen, nicht das erste Wort: bei
+                        # `push: ${{ github.ref_type == 'tag' }}` faengt `\S+` nur `${{` und
+                        # meldete DashMyBoard falsch (aufgefallen, weil eine zweite,
+                        # unabhaengige Messung mit PyYAML widersprach — zwei Implementierungen,
+                        # die sich uneinig sind, sind billiger als ein Fehlalarm im Gate).
+                        mp = re.search(r"push:\s*(.*)$", s["text"], re.M)
+                        wert = (mp.group(1) if mp else "").strip().strip("\"'")
+                        if wert.lower() in ("false", "") or "ref_type" in wert or "refs/tags" in wert:
+                            continue
+                    treffer.append(f".github/workflows/{name}:{job['name']}: "
+                                   f"`{bezeichnung}` ohne Tag-Bedingung — ein Trockenlauf "
+                                   f"wuerde damit VEROEFFENTLICHEN")
+                    break
     return treffer
 
 
