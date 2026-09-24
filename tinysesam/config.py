@@ -151,6 +151,10 @@ class TinySesamConfig:
     smtp_timeout: int = 15            # Sekunden, bis ein hängender Mailserver aufgibt
     smtp_ca_file: str = ""            # eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer
     mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
+    #: Den Inhaber benachrichtigen, wenn sein Konto wegen Fehlversuchen gesperrt wird (ASVS 6.3.5,
+    #: B1-12). Wirkt nur mit konfiguriertem Versand und nur an eine BELEGTE Adresse; höchstens ein
+    #: Hinweis je Konto und Sperrfenster. Opt-out: False.
+    notify_login_failures: bool = True
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten

@@ -609,6 +609,43 @@ r.check("… ohne Bestätigung geht das nicht — die Konfigurationsprüfung sag
         any("6.3.8" in w for w in _w638), str(_w638)[:200])
 # (Mutationsprobe: im Vergeben-Zweig wieder nur `hash_password` statt Platzhalter → Schreibzugriffe rot.)
 
+# ── B1-12 / ASVS 6.3.5: Hinweis an den Inhaber, wenn sein Konto gesperrt wird ─────────────
+def _hinweis_app(**cfg):
+    a, app = _app(**cfg)
+    post = []
+    a.set_mailer(lambda to, betreff, text, html=None: post.append((to, betreff, text)))
+    return a, app, post
+
+
+a635, app635, post635 = _hinweis_app()
+a635.create_user("inhaberin", password=PW, email="inhaberin@example.com")
+for _ in range(a635.sec("max_login_attempts") + 2):
+    _login(TestClient(app635), "inhaberin", "falsch-falsch-falsch")
+a635._hinweis_ausgang.abwarten()
+r.check("ASVS 6.3.5: bei konfiguriertem Versand bekommt die Inhaberin einen Hinweis (Vorgabe an, opt-out)",
+        len(post635) == 1 and post635[0][0] == "inhaberin@example.com", str(post635))
+r.check("… genau einen je Sperrfenster, nicht einen je abgewiesenem Versuch",
+        len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
+for _ in range(a635.sec("max_login_attempts") + 2):
+    _login(TestClient(app635), "niemand", "falsch-falsch-falsch")
+a635._hinweis_ausgang.abwarten()
+r.check("… ein unbekannter Name löst nichts aus (und in der Anfrage geschieht dasselbe)", len(post635) == 1)
+a635u, app635u, post635u = _hinweis_app()
+_u = a635u.create_user("unbelegt", password=PW, email="unbelegt@example.com")
+a635u.store.set_email_verified(_u, False)
+for _ in range(a635u.sec("max_login_attempts") + 2):
+    _login(TestClient(app635u), "unbelegt", "falsch-falsch-falsch")
+a635u._hinweis_ausgang.abwarten()
+r.check("… an eine UNBELEGTE Adresse geht nichts (H-3)", post635u == [], str(post635u))
+a635o, app635o, post635o = _hinweis_app(notify_login_failures=False)
+a635o.create_user("still", password=PW, email="still@example.com")
+for _ in range(a635o.sec("max_login_attempts") + 2):
+    _login(TestClient(app635o), "still", "falsch-falsch-falsch")
+a635o._hinweis_ausgang.abwarten()
+r.check("… opt-out: notify_login_failures=False schickt nichts", post635o == [], str(post635o))
+# (Mutationsproben: `_sperrhinweis` in `_abgewiesen` nicht rufen → erste Prüfung rot; die Drossel
+#  streichen → „genau einen" rot; `_beleg_am_konto` streichen → „UNBELEGTE" rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

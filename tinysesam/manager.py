@@ -16,6 +16,7 @@ import sys
 import json
 import hashlib
 import secrets
+import time
 import contextvars
 from typing import Any, Callable, Literal, NoReturn, Optional, cast
 
@@ -266,6 +267,9 @@ class TinySesam:
         self._mailer_override = None
         from .mailer import Postausgang
         self._postausgang = Postausgang()
+        # Eigener, kleiner Postausgang für Sperr-Hinweise (ASVS 6.3.5): Ihn füllt, wer Fehlversuche
+        # schickt — eine Flut soll Anmelde-Links und Resets im Hauptausgang nicht verdrängen.
+        self._hinweis_ausgang = Postausgang(arbeiter=1, max_offen=50)
         #: Opt-in-Benachrichtigung bei Sicherheitsereignissen am eigenen Konto (Fund B2-2,
         #: Empfehlung H-6) — siehe `SICHERHEITSEREIGNISSE`. Aufruf `hook(ereignis, konto,
         #: details)`; `konto` hat `id`, `username`, `email`, `display_name`. TinySesam
@@ -3468,10 +3472,47 @@ class TinySesam:
     # vorbei — sonst bannte ein angemeldeter Nutzer sich mit ein paar Tippfehlern auf der
     # eigenen Kontoseite selbst auf Firewall-Ebene aus, und jeder weitere Klick nach der
     # App-Sperre beschleunigte den Bann noch (Begründung bei `security.LOG_ANMELDUNG`).
+    #: Sperrgründe, die ein KONTO betreffen (nicht eine Adresse oder das Ratelimit): Nur sie lösen
+    #: den Hinweis an den Inhaber aus (ASVS 6.3.5).
+    _KONTO_SPERREN = ("lockout_user", "lockout_account", "lockout_serie", "lockout_pin")
+
     def _abgewiesen(self, username, ip, grund: str, login: bool = True):
         wort = security.LOG_ANMELDUNG if login else security.LOG_PRUEFUNG
         security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", wort,
                                 security.fuer_log(username) or "-", security.fuer_log(ip), grund)
+        if login and grund in self._KONTO_SPERREN and username:
+            self._sperrhinweis(username, ip, grund)
+
+    def _sperrhinweis(self, username, ip, grund) -> None:
+        """Den Inhaber benachrichtigen, dass sein Konto gesperrt wurde (ASVS 6.3.5, B1-12).
+
+        In der Anfrage geschieht für JEDEN Namen dasselbe — eine Drossel je Name, ein Auftrag in
+        den eigenen Postausgang —, ob es das Konto gibt oder nicht. Nachgeschlagen und verschickt
+        wird erst im Hintergrund: Sonst verriete die Antwortzeit, welche Namen ein Konto haben
+        (dieselbe Überlegung wie R4-05). Nur an eine belegte Adresse (H-3), nie an ein
+        Service-Konto; höchstens ein Hinweis je Name und Sperrfenster."""
+        if not self.cfg.notify_login_failures or not self.mail_configured():
+            return
+        schluessel = "sperrhinweis:" + norm_kennung(username)
+        if not self.rl.allow(schluessel, 1, self.sec("lockout_window_sec")):
+            return
+        zeit = _jetzt()
+
+        def _senden():
+            u = self.find_user(username)
+            if not u or u.get("is_service") or not u.get("email") or not _beleg_am_konto(u):
+                return
+            betreff = "Gesperrte Anmeldung bei deinem Konto"
+            text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
+                    f"die Anmeldung ist deshalb vorübergehend gesperrt"
+                    + (" — bis du dein Passwort zurücksetzt" if grund == "lockout_serie" else "")
+                    + f".\n\nZeitpunkt: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(zeit))}\n"
+                    f"Adresse der Versuche: {security.fuer_log(ip) or 'unbekannt'}\n\n"
+                    "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.")
+            self.send_mail(u["email"], betreff, text)
+            self.store.audit_log("sperrhinweis", u["username"], ip, f"grund={grund}")
+
+        self._hinweis_ausgang.einreihen(_senden)
 
     def rate_ok(self, ip, login: bool = True) -> bool:
         """Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
