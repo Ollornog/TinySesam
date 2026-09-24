@@ -42,6 +42,17 @@ name: release
 #
 # Vorher prüft der Job, dass der Tag zur Version im Paket passt. Ein Release mit
 # falscher Versionsnummer ist schlimmer als keins: es ist unauffällig falsch.
+#
+# ── Der Knopf (`workflow_dispatch`) ist ein TROCKENLAUF ─────────────────────────────────────
+# Von Hand ausgelöst (auf einem Zweig) prüft und baut der Workflow alles, veröffentlicht aber
+# nichts: kein Release, kein PyPI-Upload, kein Abbild in der Registry, keine Beglaubigung. Bis
+# 2026-09-24 hätte der Knopf nur eines von zwei Dingen getan — am Tag-Vergleich scheitern (bei
+# `workflow_dispatch` ist `GITHUB_REF_NAME` ein Zweigname) oder, wäre der Vergleich weg gewesen,
+# aus einem Zweig heraus veröffentlichen. Jetzt hängt JEDER veröffentlichende Schritt an
+# `github.ref_type == 'tag'`; ohne Tag prüft ein eigener Schritt, was prüfbar ist
+# (`scripts/_release.py --pruefen`: Paket, Modul, READMEs, Compose-Beispiel, CHANGELOG). So ist
+# der Trockenlauf eine Aussage und nicht „übersprungen" — und der Bau läuft genau so wie beim Tag
+# (der Teil, der beim ersten Tag nach zwei Monaten rot war).
 
 on:
   push:
@@ -75,6 +86,7 @@ jobs:
           python-version: "3.12"
 
       - name: Tag gegen die Paketversion prüfen
+        if: github.ref_type == 'tag'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(python -c 'import tomllib,pathlib;
@@ -84,6 +96,10 @@ jobs:
             exit 1
           fi
           echo "Tag und Paketversion stimmen überein: $pkg"
+
+      - name: "Trockenlauf: Versionsstände gegeneinander prüfen (ohne Tag)"
+        if: github.ref_type != 'tag'
+        run: python3 scripts/_release.py --pruefen
 
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
         run: |
@@ -151,6 +167,7 @@ jobs:
 
   release:
     needs: bauen
+    if: github.ref_type == 'tag'   # veröffentlicht — nie aus einem Trockenlauf
     runs-on: ubuntu-latest
     permissions:
       contents: write      # Release anlegen und Dateien anhängen
@@ -187,6 +204,7 @@ jobs:
   # ist unwiderruflich; ein GitHub-Release liesse sich zurücknehmen.
   pypi:
     needs: release
+    if: github.ref_type == 'tag'   # ausdrücklich, nicht nur über das übersprungene `release`
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -209,8 +227,13 @@ jobs:
   # Das Gateway-Abbild. Läuft erst, wenn das Release steht — ein Abbild ohne Release
   # wäre ein Artefakt, zu dem die Notizen fehlen. Gebaut wird OHNE Identität: Der Bau führt
   # pip im Abbild aus, die Beglaubigung macht der Job danach über den Digest.
+  # Im Trockenlauf wird das Abbild GEBAUT (beide Plattformen), aber nicht geschoben: `release`
+  # ist dann übersprungen, deshalb die ausdrückliche Bedingung statt der stillen Vorgabe.
   image:
-    needs: release
+    needs: [bauen, release]
+    if: >-
+      always() && needs.bauen.result == 'success' &&
+      (needs.release.result == 'success' || github.ref_type != 'tag')
     runs-on: ubuntu-latest
     permissions:
       contents: read       # Checkout
@@ -253,6 +276,7 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: An GHCR anmelden
+        if: github.ref_type == 'tag'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           registry: ghcr.io
@@ -269,13 +293,14 @@ jobs:
           # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
           # andere Version, ohne dass jemand etwas geändert hätte.
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
-          outputs: type=image,push=true,rewrite-timestamp=true
+          outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
           provenance: false
 
   # Beglaubigung des Abbilds — getrennt vom Bau, aus demselben Grund wie oben: Die Identität
   # liegt nur in einem Job, der weder auscheckt noch baut. Er kennt nur den Digest.
   image-beglaubigen:
     needs: image
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       packages: write      # Attestation und SBOM neben das Abbild in die Registry legen
