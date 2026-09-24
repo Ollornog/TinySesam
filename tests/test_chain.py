@@ -175,7 +175,8 @@ _sec_e.seclog.addHandler(_haken_e)
 try:
     _ant = c_e.post("/auth/totp/setup", data={"code": _code, "next": "/ziel"})
     assert _ant.status_code == 200 and _ant.json() == {"ok": True, "next": "/ziel",
-                                                       "other_sessions": 0}, _ant.text
+                                                       "other_sessions": 0,
+                                                       "other_sessions_after": 0}, _ant.text
     _s = auth_e.store.get_session(c_e.cookies.get(auth_e.cfg.session_cookie))
     assert _s and _s["mfa_ok"], "nach der Pflicht-Einrichtung hängt die Sitzung noch im MFA-Schritt"
     # Der alte Weg — denselben Code an /auth/totp noch einmal — ist damit überflüssig: Die
@@ -216,7 +217,7 @@ _seite_b = c_b.post("/auth/totp/setup/start", data={"next": "/ziel"}).text
 _geheim_b = _re.search(r"class=mono>([A-Z2-7]+)<", _seite_b).group(1)
 _ant_b = c_b.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_b).now(), "next": "/ziel"})
 assert _ant_b.status_code == 200, _ant_b.text
-assert _ant_b.json() == {"ok": True, "next": "/ziel", "other_sessions": 1}, _ant_b.json()
+assert _ant_b.json() == {"ok": True, "next": "/ziel", "other_sessions": 1, "other_sessions_after": 0}, _ant_b.json()
 assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "Gerät A ist noch drin"
 assert c_b.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 200
 assert c_e.get("/auth/account", follow_redirects=False).status_code != 200, "Gerät A blieb angemeldet"
@@ -255,10 +256,13 @@ _ant_k = c_kb.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim_kb).now(
 assert _ant_k.status_code == 200, _ant_k.text
 _s_k = auth_k.store.get_session(c_kb.cookies.get(auth_k.cfg.session_cookie))
 assert _s_k and not _s_k["mfa_ok"], "die Sitzung ist nach dem TOTP-Schritt schon voll"
-assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/ziel", "other_sessions": 0}, \
+# Kein SOFORT einzulösendes Angebot (`other_sessions` 0, die halbe Sitzung kann nichts beenden) —
+# seit Grenze d (2026-09-24) aber eines für den Abschluss: `other_sessions_after` zählt Gerät A.
+assert _ant_k.json() == {"ok": True, "next": "/auth/pin?next=/ziel", "other_sessions": 0,
+                         "other_sessions_after": 1}, \
     f"Angebot, das die halbe Sitzung nicht einlösen kann: {_ant_k.json()}"
 assert c_kb.post("/auth/sessions/revoke", json={"scope": "others"}).status_code == 401
-ok("B1-7: in einer längeren Kette kein Angebot, solange die Sitzung noch halb ist")
+ok("B1-7 + Grenze d: in einer längeren Kette kein Sofort-Angebot, aber eines für den Abschluss")
 os.remove(db_k)
 
 # …aber nur bis zum ersten vollständigen Login. Danach ist der Weg zu — genau der Fall, in dem

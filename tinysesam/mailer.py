@@ -127,6 +127,33 @@ class Postausgang:
         with self._lock:
             self._offen -= 1
 
+    def einreihen(self, auftrag) -> bool:
+        """`auftrag()` im eigenen Arbeiter starten, ohne auf ihn zu warten — für Stellen ohne
+        Antwort-Objekt (die Sperre im Login, ASVS 6.3.5). False, wenn die Warteschlange voll ist;
+        der Auftrag entfällt dann."""
+        if not self._reservieren():
+            log.warning("Hinweis-Warteschlange voll (%d) — Versand verworfen", self.max_offen)
+            return False
+
+        def _lauf():
+            try:
+                auftrag()
+            except Exception:   # noqa: BLE001
+                log.exception("Hinweis-Auftrag gescheitert")
+            finally:
+                self._freigeben()
+        zukunft = self._executor().submit(_lauf)
+        with self._lock:
+            self._laufend = [z for z in getattr(self, "_laufend", []) if not z.done()] + [zukunft]
+        return True
+
+    def abwarten(self, timeout: float = 10.0) -> None:
+        """Warten, bis alles Eingereihte gelaufen ist (für Tests und ein geordnetes Ende)."""
+        with self._lock:
+            laufend = list(getattr(self, "_laufend", []))
+        for z in laufend:
+            z.result(timeout=timeout)
+
     def nachher(self, auftrag, bei_ueberlauf=None):
         """Eine async Hintergrundaufgabe, die `auftrag()` im eigenen Arbeiter ausführt.
 

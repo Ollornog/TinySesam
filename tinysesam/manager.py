@@ -16,6 +16,7 @@ import sys
 import json
 import hashlib
 import secrets
+import time
 import contextvars
 from typing import Any, Callable, Literal, NoReturn, Optional, cast
 
@@ -242,6 +243,15 @@ class TinySesam:
         self._riegel(config, beim_aufbau=True)
         self.cfg = config
         self.store = Store(config.db_path)
+        self.store.leerlauf_sek = (max(0, int(config.session_idle_minutes or 0)) * 60,
+                                   max(0, int(config.session_idle_minutes_remember or 0)) * 60)
+        # TOTP-Geheimnisse nur verschlüsselt (H-14/H-15, Pflicht). Schlüssel aus der Umgebung, der
+        # Konfiguration oder neben der Datenbank; ein falscher bricht den Start ab.
+        from . import geheimnis as _geheimnis
+        _schluessel, self._schluessel_herkunft = _geheimnis.schluessel_laden(
+            config.db_path, config.secrets_key_file)
+        self.store.tresor = _geheimnis.Tresor(_schluessel)
+        self.store.geheimnisse_heben()
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
         # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
         # Beim Start zählen und sagen, wie viele es trifft; der Start selbst bleibt möglich
@@ -264,6 +274,13 @@ class TinySesam:
         self._mailer_override = None
         from .mailer import Postausgang
         self._postausgang = Postausgang()
+        # Eigener, kleiner Postausgang für Sperr-Hinweise (ASVS 6.3.5): Ihn füllt, wer Fehlversuche
+        # schickt — eine Flut soll Anmelde-Links und Resets im Hauptausgang nicht verdrängen.
+        self._hinweis_ausgang = Postausgang(arbeiter=1, max_offen=50)
+        # Die OIDC-Nachprüfung (4a) tauscht Refresh-Tokens im Hintergrund: Ein hängender Provider
+        # hielte sonst jede fällige Anfrage bis zum Timeout fest — aus `async`-Routen samt Event-Loop
+        # (Angriff auf die zweite Runde, Fund 6, dieselbe Klasse wie B6-6).
+        self._oidc_ausgang = Postausgang(arbeiter=2, max_offen=200)
         #: Opt-in-Benachrichtigung bei Sicherheitsereignissen am eigenen Konto (Fund B2-2,
         #: Empfehlung H-6) — siehe `SICHERHEITSEREIGNISSE`. Aufruf `hook(ereignis, konto,
         #: details)`; `konto` hat `id`, `username`, `email`, `display_name`. TinySesam
@@ -413,6 +430,39 @@ class TinySesam:
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
+
+    # ---------- Owner ----------
+    def _erster_owner(self, user_id) -> None:
+        """Der erste Admin einer Instanz wird auch ihr erster Owner (Bootstrap-Wege)."""
+        if self.store.owner_count() == 0:
+            self.store.set_owner(user_id, True)
+            u = self.store.get_user(user_id)
+            self.store.audit_log("owner_grant", u["username"] if u else None, None, "quelle=erst_admin")
+
+    def set_owner(self, user_id: int, owner: bool) -> bool:
+        """Die Owner-Rolle vergeben (`owner=True`) oder abgeben (`False`). False = kein solches Konto.
+
+        Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; es gibt immer
+        mindestens einen, und nur Owner vergeben die Rolle (das prüft die aufrufende Route). Die
+        Rolle abgeben geht nur, wenn ein ANDERER Owner bleibt (`StateError`). Service-Konten und
+        gesperrte Konten werden nicht Owner (`ConfigError`) — ein Owner muss sich anmelden können."""
+        u = self.store.get_user(user_id)
+        if not u:
+            return False
+        if owner:
+            if u["is_service"] or u["disabled"]:
+                raise ConfigError("Owner kann nur ein aktives, interaktives Konto werden.")
+            if not u["is_owner"]:
+                self.store.set_owner(user_id, True)
+                self.audit("owner_grant", u["username"])
+            return True
+        if u["is_owner"]:
+            if self.store.owner_count(ohne=user_id) == 0:
+                raise StateError(f"Konto {user_id} ist der letzte Owner. Erst einen anderen Owner "
+                                 "bestimmen, dann die Rolle abgeben.")
+            self.store.set_owner(user_id, False)
+            self.audit("owner_revoke", u["username"])
+        return True
 
     # ---------- User-Verwaltung ----------
     def kennung_vergeben(self, kennung, exclude_id=None) -> Optional[dict]:
@@ -795,8 +845,21 @@ class TinySesam:
     def revoke_api_key(self, key_id, user_id=None):
         """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
         besitzer = self.store.api_key_owner(key_id)
+        vorher = self.store.count_active_api_keys(besitzer) if besitzer is not None else 0
         self.store.revoke_api_key(key_id, user_id)
         self.audit("apikey_revoke", self._kontoname(besitzer), detail=f"key={key_id}")
+        if besitzer is not None and self.store.count_active_api_keys(besitzer) < vorher:
+            self.sicherheitsereignis("api_key_revoked", besitzer, key_id=key_id)
+
+    def _keys_widerrufen(self, user_id, grund: str) -> int:
+        """Alle gültigen Keys eines Kontos entwerten — und den Inhaber benachrichtigen (Grenze e).
+
+        Der eine Weg für Reset, Sperre, Admin-Passwort und `sessions/revoke`: Vorher stand der
+        Widerruf dort nur im Audit-Log, der Inhaber erfuhr nichts."""
+        n = self.store.revoke_user_api_keys(user_id)
+        if n:
+            self.sicherheitsereignis("api_keys_revoked", user_id, anzahl=n, grund=grund)
+        return n
 
     def set_password(self, user_id, password):
         """Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
@@ -884,17 +947,16 @@ class TinySesam:
 
     # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
     #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
-    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Ausnahme: API-Keys nur bei der
-    #: Anlage; ihren Widerruf (einzeln, im Panel, gesammelt bei Reset, Sperre und
-    #: `sessions/revoke`) meldet kein Ereignis, er steht nur im Audit-Log (offen, docs/BETRIEB.md
-    #: zu ASVS 6.3.7). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
+    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Seit T-13 (Grenze e) auch der
+    #: Widerruf von API-Keys: einzeln (`api_key_revoked`) und gesammelt bei Reset, Sperre und
+    #: `sessions/revoke` (`api_keys_revoked`, mit Anzahl und Grund). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
     #: benachrichtigen; bis T-13 erfuhr er von keiner (Fund B2-2): Ein Angreifer mit einer
     #: Sitzung konnte TOTP abschalten, einen Passkey hinzufügen oder das Passwort ändern, und der
     #: Inhaber sah es erst beim nächsten Login — wenn überhaupt.
     SICHERHEITSEREIGNISSE = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
-        "api_key_created",
+        "api_key_created", "api_key_revoked", "api_keys_revoked",
     )
 
     def sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
@@ -922,7 +984,8 @@ class TinySesam:
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage."""
         if self.store.user_count() == 0:
-            self.create_user(username, password, is_admin=True)
+            uid = self.create_user(username, password, is_admin=True)
+            self._erster_owner(uid)
             return True
         return False
 
@@ -958,6 +1021,9 @@ class TinySesam:
         u = self.store.get_user(user_id)
         if not u:
             return False
+        if u["is_owner"]:
+            raise StateError(f"Konto {user_id} ist Owner und kann nicht gelöscht werden — erst die "
+                             "Owner-Rolle abgeben (dazu muss ein anderer Owner bestehen).")
         if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
             raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
         # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
@@ -1087,6 +1153,7 @@ class TinySesam:
         if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
+        self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
         security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s",
                                 security.fuer_log(user["username"]))
@@ -1172,6 +1239,7 @@ class TinySesam:
             return False
         self.store.set_setting("admin_claim", "")     # einmalig
         self.store.set_admin(user["id"], True)
+        self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
         security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s",
                                 security.fuer_log(user["username"]))
@@ -2788,7 +2856,9 @@ class TinySesam:
                 neu_token = self._sitzung_anlegen(
                     user_id, self._ttl(bool(s["remember"])), True, s["method"],
                     s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+                self._nachfolger(s, neu_token)
                 self.store.delete_session_by_handle(s["token_hash"])
+                self._andere_nach_abschluss(s, neu_token)
                 return neu_token, ok, True      # is_new → der Aufrufer setzt das Cookie neu
             if ok and was_ok:
                 # Die Sitzung war schon vollwertig, der Faktor frischt sie nur auf — das ist ein
@@ -2803,6 +2873,36 @@ class TinySesam:
         token, ok = self.start_session(user_id, factor, ip, ua, remember)
         self.maybe_promote_admin(self.store.get_user(user_id), email_bestaetigt, faktor=factor)
         return token, ok, True
+
+    def _nachfolger(self, alte_zeile, neu_token) -> None:
+        """Was an der halben Sitzung hängt, geht auf die volle über, die sie ersetzt — VOR dem
+        Löschen der alten: die OIDC-Zeilen (4a, sonst nähme der Fremdschlüssel sie mit) und die
+        ausdrückliche Wahl „Angemeldet bleiben" (F-05).
+
+        `alte_zeile` ist eine ganze Zeile aus `get_session` (`SELECT *`); die Spalte gibt es seit
+        der Migration auf Schema 11 immer. Fehlte sie doch, soll das laut scheitern — ein
+        stilles Übergehen verlöre die Wahl und damit die lange Leerlauf-Frist, ohne dass es
+        jemand merkt."""
+        neu = self.store.session_hash(neu_token)
+        self.store.oidc_sitzung_umhaengen(alte_zeile["token_hash"], neu)
+        if alte_zeile["bleiben_gewaehlt"]:
+            self.store.set_session_bleiben(neu)
+
+    def _andere_nach_abschluss(self, alte_zeile, neu_token) -> None:
+        """War an der halben Sitzung vermerkt, die übrigen zu beenden (Grenze d), dann jetzt — mit
+        der vollen Sitzung, die eben entstanden ist, als einziger, die bleibt.
+
+        Anlass: Die Pflicht-Einrichtung von TOTP mitten in einer Kette (`password → totp → pin`)
+        endet mit einer HALBEN Sitzung, und eine halbe darf die übrigen nicht beenden. Das Angebot
+        nach ASVS 7.4.3 entfiel dort bisher ganz. Jetzt fragt die Seite wie sonst auch, und die
+        Zustimmung wird hier eingelöst, sobald die Anmeldung vollständig ist. Die Spalte gibt es
+        seit Schema 11 immer (wie bei `_nachfolger`: fehlt sie, scheitert es laut)."""
+        if not alte_zeile["andere_beenden"]:
+            return
+        self.store.delete_user_sessions_except(alte_zeile["user_id"], self.store.session_hash(neu_token))
+        u = self.store.get_user(alte_zeile["user_id"])
+        self.store.audit_log("sessions_revoke", u["username"] if u else None, alte_zeile["ip"],
+                             "scope=others nach_einschreibung=1")
 
     def login_redirect_after(self, request, token, user_id, nxt):
         """Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors."""
@@ -2853,7 +2953,9 @@ class TinySesam:
             neu_token = self._sitzung_anlegen(
                 s["user_id"], self._ttl(bool(s["remember"])), True, s["method"],
                 s["ip"], s["user_agent"], bool(s["remember"]), factors=done)
+            self._nachfolger(s, neu_token)
             self.store.delete_session_by_handle(s["token_hash"])
+            self._andere_nach_abschluss(s, neu_token)
             return neu_token
         if ok and war_ok:
             # Die Sitzung war schon vollwertig; `set_session_factors` hat eben `mfa_at` neu
@@ -2870,8 +2972,93 @@ class TinySesam:
         return self.complete_totp(token)
 
     def session_from_request(self, request):
-        """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle."""
-        return self.store.get_session(request.cookies.get(self.session_cookie_name))
+        """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
+
+        Eine OIDC-Sitzung wird hier alle `oidc_session_refresh_minutes` beim Provider nachgeprüft
+        (4a): Verweigert er, ist die Sitzung weg, und dieser Request gilt als nicht angemeldet."""
+        s = self.store.get_session(request.cookies.get(self.session_cookie_name))
+        if s is not None and not self._oidc_nachpruefen(s):
+            return None
+        return s
+
+    def _oidc_sitzung_merken(self, token, client, sub, refresh_token) -> None:
+        """Das Refresh-Token zur (eben entstandenen) Sitzung legen (4a)."""
+        if not int(self.cfg.oidc_session_refresh_minutes or 0) or not token:
+            return
+        self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token)
+
+    def _oidc_nachpruefen(self, s) -> bool:
+        """Folgt die Sitzung dem Provider noch? False = die Sitzung ist beendet (4a).
+
+        Alle `oidc_session_refresh_minutes` wird das Refresh-Token getauscht — je Client der
+        Sitzung, im Hintergrund (`_oidc_tausch`). Diese Anfrage beansprucht den fälligen Tausch
+        nur (`oidc_sitzung_beanspruchen`, genau eine von vielen parallelen) und läuft weiter; das
+        Ergebnis gilt ab der nächsten Anfrage. So blockiert ein hängender Provider nichts, und zwei
+        Anfragen tauschen nie dasselbe Token (Rotation beim Provider). Gesperrte Konten fragt
+        niemand beim Provider nach — sie kommen ohnehin nicht herein (F-17)."""
+        frist = int(self.cfg.oidc_session_refresh_minutes or 0) * 60
+        if not frist or self.oidc is None:
+            return True
+        zeilen = self.store.get_oidc_sitzungen(s["token_hash"])
+        if not zeilen:
+            return True
+        konto = self.store.get_user(s["user_id"])
+        if not konto or konto["disabled"]:
+            return True
+        jetzt = _jetzt()
+        for z in zeilen:
+            if jetzt - int(z["geprueft_at"]) < frist:
+                continue
+            if not self.store.oidc_sitzung_beanspruchen(s["token_hash"], z["client"], z["geprueft_at"], jetzt):
+                continue          # eine andere Anfrage tauscht gerade
+            if not self._oidc_ausgang.einreihen(lambda z=z: self._oidc_tausch(s, z, frist)):
+                # Warteschlange voll: Anspruch zurückgeben, die nächste Anfrage versucht es wieder.
+                self.store.oidc_sitzung_geprueft(s["token_hash"], z["client"], z["geprueft_at"])
+        return True
+
+    def _oidc_tausch(self, s, z, frist) -> None:
+        """Ein Refresh-Token beim Provider tauschen und das Ergebnis anwenden (4a, im Hintergrund).
+
+        * verweigert der Provider (gesperrt, gelöscht, entgruppt, der Anwendung entzogen) → die
+          Sitzung endet, mit Zeile im Audit-Log;
+        * liefert er frische Angaben → Gruppen, erlaubte Gruppen und das vom Provider vergebene
+          Admin-Flag werden neu bewertet (H-5 wirkt damit binnen Minuten) — aber nur, wenn der
+          Gruppen-Claim überhaupt dabei ist: Fehlt er, hiesse „keine Gruppen" sonst, jede gemappte
+          Rolle zu entziehen;
+        * ist er nicht erreichbar → nichts ändert sich, neuer Versuch in einer Minute. Ein Ausfall
+          des Providers soll niemanden abmelden."""
+        handle, client = s["token_hash"], z["client"]
+        konto = self.store.get_user(s["user_id"])
+        name = konto["username"] if konto else None
+        try:
+            refresh = self.store.tresor.entschluesseln(z["refresh"])
+        except Exception:   # noqa: BLE001 — falscher Schlüssel: der Start prüft das; hier nichts verbrennen
+            self.store.oidc_sitzung_geprueft(handle, client, _jetzt() - frist + 60)
+            return
+        status, info, tok = self.oidc_clients[client].refresh(refresh, z["sub"])
+        jetzt = _jetzt()
+        if status == "fehler":
+            self.store.oidc_sitzung_geprueft(handle, client, jetzt - frist + 60)
+            security.seclog.warning("OIDC-Nachprüfung: Provider nicht erreichbar (%s) — Sitzung bleibt, "
+                                    "neuer Versuch in einer Minute. user=%s",
+                                    security.fuer_log(str(tok.get("error", "?"))), security.fuer_log(name))
+            return
+        if status == "abgelehnt":
+            self.store.delete_session_by_handle(handle)
+            self.store.audit_log("oidc_widerruf", name, s["ip"],
+                                 f"client={client} grund={security.fuer_log(str(tok.get('error', '?')))}")
+            return
+        self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
+        eintrag = self.oidc_clients.eintrag(client)
+        if self.cfg.oidc_group_claim in info:
+            roh = info.get(self.cfg.oidc_group_claim) or []
+            gruppen = roh if isinstance(roh, list) else [roh]
+            erlaubte = eintrag["allowed_groups"]
+            if erlaubte and not (set(erlaubte) & set(map(str, gruppen))):
+                self.store.delete_session_by_handle(handle)
+                self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund=gruppe")
+                return
+            self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
@@ -3227,10 +3414,10 @@ class TinySesam:
         verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
         beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld.
 
-        Bekannte Grenze: Die Pflicht-Einrichtung von TOTP mitten in einer Kette
-        (`password → totp → pin`) meldet 0, weil die Sitzung danach noch halb ist und eine halbe
-        Sitzung die übrigen nicht beenden darf. Der PIN-Schritt danach bietet auch nichts an; das
-        Angebot entfällt dort ganz, der Weg ist die Sitzungsliste auf der Kontoseite.
+        Die Pflicht-Einrichtung von TOTP mitten in einer Kette (`password → totp → pin`) meldet
+        hier 0, weil die Sitzung danach noch halb ist und eine halbe die übrigen nicht beenden
+        darf — sie meldet die Zahl als `other_sessions_after`, und die Zustimmung wird beim
+        Abschluss der Kette eingelöst (`_andere_nach_abschluss`, Grenze d).
 
         `token`: das Klartext-Token der eigenen Sitzung, wenn es in DIESER Antwort gewechselt
         hat (die Pflicht-Einrichtung von TOTP schliesst die Anmeldung ab und dreht dabei das
@@ -3376,10 +3563,55 @@ class TinySesam:
     # vorbei — sonst bannte ein angemeldeter Nutzer sich mit ein paar Tippfehlern auf der
     # eigenen Kontoseite selbst auf Firewall-Ebene aus, und jeder weitere Klick nach der
     # App-Sperre beschleunigte den Bann noch (Begründung bei `security.LOG_ANMELDUNG`).
+    #: Sperrgründe, die ein KONTO betreffen (nicht eine Adresse oder das Ratelimit): Nur sie lösen
+    #: den Hinweis an den Inhaber aus (ASVS 6.3.5).
+    _KONTO_SPERREN = ("lockout_user", "lockout_account", "lockout_serie", "lockout_pin")
+
     def _abgewiesen(self, username, ip, grund: str, login: bool = True):
         wort = security.LOG_ANMELDUNG if login else security.LOG_PRUEFUNG
         security.seclog.warning("%s user=%s ip=%s method=blocked reason=%s", wort,
                                 security.fuer_log(username) or "-", security.fuer_log(ip), grund)
+        if login and grund in self._KONTO_SPERREN and username:
+            self._sperrhinweis(username, ip, grund)
+
+    def _sperrhinweis(self, username, ip, grund) -> None:
+        """Den Inhaber benachrichtigen, dass sein Konto gesperrt wurde (ASVS 6.3.5, B1-12).
+
+        In der Anfrage geschieht für JEDEN Namen dasselbe — eine Drossel je Name, ein Auftrag in
+        den eigenen Postausgang —, ob es das Konto gibt oder nicht. Nachgeschlagen und verschickt
+        wird erst im Hintergrund: Sonst verriete die Antwortzeit, welche Namen ein Konto haben
+        (dieselbe Überlegung wie R4-05). Nur an eine belegte Adresse (H-3), nie an ein
+        Service-Konto; höchstens ein Hinweis je Name und Sperrfenster."""
+        if not self.cfg.notify_login_failures or not self.mail_configured():
+            return
+        schluessel = "sperrhinweis:" + norm_kennung(username)
+        if not self.rl.allow(schluessel, 1, self.sec("lockout_window_sec")):
+            return
+        zeit = _jetzt()
+
+        def _senden():
+            u = self.find_user(username)
+            if not u or u.get("is_service") or not u.get("email") or not _beleg_am_konto(u):
+                return
+            # Die eigentliche Drossel steht in der Datenbank, nicht im Speicher: Der Schlüssel oben
+            # liegt im gemeinsamen, gedeckelten Limiter und lässt sich mit genug fremden Schlüsseln
+            # verdrängen; mit mehreren Workern hat jeder seinen (Fund 11). Das Audit-Log gilt für
+            # alle Prozesse und vergisst nichts vor der Frist.
+            seit = _jetzt() - self.sec("lockout_window_sec")
+            if self.store._one("SELECT 1 FROM audit WHERE event='sperrhinweis' AND lower(username)=lower(?) "
+                               "AND ts >= ? LIMIT 1", (u["username"], seit)):
+                return
+            betreff = "Gesperrte Anmeldung bei deinem Konto"
+            text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
+                    f"die Anmeldung ist deshalb vorübergehend gesperrt"
+                    + (" — bis du dein Passwort zurücksetzt" if grund == "lockout_serie" else "")
+                    + f".\n\nZeitpunkt: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(zeit))}\n"
+                    f"Adresse der Versuche: {security.fuer_log(ip) or 'unbekannt'}\n\n"
+                    "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.")
+            self.send_mail(u["email"], betreff, text)
+            self.store.audit_log("sperrhinweis", u["username"], ip, f"grund={grund}")
+
+        self._hinweis_ausgang.einreihen(_senden)
 
     def rate_ok(self, ip, login: bool = True) -> bool:
         """Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
@@ -3510,7 +3742,10 @@ class TinySesam:
         if not u:
             return 0
         weg = 0
-        since = 0
+        # Ab der Anlage des Kontos (Grenze a aus dem Integrationsangriff): Sonst räumte die erste
+        # vollständige Anmeldung eines frisch registrierten Kontos auch die Fehlversuche, die vor
+        # seiner Anlage unter derselben Adresse oder demselben Namen gezählt wurden.
+        since = int(u["created_at"] or 0)
         for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
             # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
             # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
@@ -3524,11 +3759,11 @@ class TinySesam:
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
-                self.store.clear_fails(username=kennung, exclude_methods=ohne)
+                self.store.clear_fails(username=kennung, exclude_methods=ohne, seit=since)
             else:
                 for m in methoden:
                     weg += self.store.count_fails(since, username=kennung, method=m)
-                    self.store.clear_fails(username=kennung, method=m)
+                    self.store.clear_fails(username=kennung, method=m, seit=since)
         return weg
 
     def _serie_beenden(self, user_id) -> int:

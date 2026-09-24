@@ -4,12 +4,67 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
-**Die sechs offenen T-13-Punkte, nach Entscheidung des Betreibers.** Wer TinySesam in der Vorgabe
-betreibt (ohne `login_chain`), merkt eines sofort: **Neue Passwörter brauchen 15 Zeichen.**
-Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wandert auf Schema 11
-(neue Tabelle `fehlserie`); 0.20.x öffnet sie danach mit einer Warnung, schreibt aber weiter.
+**Die offenen T-13-Punkte, nach Entscheidung des Betreibers — dazu Owner, Inaktivitäts-Timeout,
+verschlüsselte TOTP-Geheimnisse und der Widerruf über den Identity Provider.** Was beim Update
+auffällt:
+
+- **Neue Passwörter brauchen 15 Zeichen**, solange das Passwort allein anmelden kann (Vorgabe).
+  Bestehende bleiben gültig.
+- **Neue Pflichtabhängigkeit `cryptography`**; TOTP-Geheimnisse liegen jetzt verschlüsselt. Ohne
+  `TINYSESAM_SECRETS_KEY`/`secrets_key_file` legt TinySesam `<db>.key` neben der Datenbank an —
+  **diesen Schlüssel getrennt sichern**, ohne ihn müssen alle Konten TOTP neu einrichten.
+- **Sitzungen ohne ausdrücklich gewähltes „Angemeldet bleiben" enden nach 8 Stunden Inaktivität**
+  (`session_idle_minutes`) — auch OIDC- und Link-Sitzungen.
+- **Es gibt Owner**: Der älteste aktive, von Hand gesetzte Admin wird beim ersten Start Owner.
+- **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
+
+### Hinzugefügt
+
+- **Owner.** Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; die Rolle
+  lässt sich weitergeben, mehrere können Owner sein, es gibt immer mindestens einen. Nur ein Owner
+  vergibt sie — und nur ein Owner ändert ein Owner-Konto (Passwort, Keys, Passkeys, Sitzungen,
+  Sperre, Rollen); der Schutz gilt auch im Code (`set_disabled`, `delete_user`). Der erste Admin
+  einer Instanz ist ihr erster Owner; im Bestand wird der älteste aktive, von Hand gesetzte Admin
+  Owner (kein Service-Konto, nicht gesperrt; Zeile `owner_grant` im Audit-Log) — gibt es keinen,
+  nennt das Log den Notweg. Ein Owner ist immer ein Admin „von Hand" — kein
+  Identity Provider nimmt ihm das Recht (H-5). Notweg: `tinysesam owner --db … <name>`.
+  Panel: Spalte und Knopf „Zum Owner machen / Owner abgeben". API: `auth.set_owner(uid, bool)`.
+- **Inaktivitäts-Timeout (F-05, ASVS 7.3.1).** `session_idle_minutes` (Vorgabe 8 h) für jede
+  Sitzung, bei der „Angemeldet bleiben" nicht ausdrücklich gewählt wurde (auch dauerhafte aus OIDC
+  oder einem Anmelde-Link), `session_idle_minutes_remember` (Vorgabe aus) für die gewählten. Die letzte Anfrage
+  steht an der Sitzung (`session.zuletzt`, höchstens einmal je Minute geschrieben).
+- **Widerruf folgt dem Identity Provider (4a).** Das Refresh-Token einer OIDC-Sitzung liegt
+  verschlüsselt an ihr, je Client eine Zeile; alle `oidc_session_refresh_minutes` (Vorgabe 15)
+  stösst die nächste Anfrage den Tausch beim Provider an — im Hintergrund, ohne auf ihn zu warten,
+  und von vielen parallelen Anfragen genau eine (Rotation). Gesperrte Konten fragt niemand nach. Verweigert er (gesperrt, gelöscht, entgruppt, der Anwendung entzogen),
+  endet die Sitzung (`oidc_widerruf` im Audit-Log); Gruppen, erlaubte Gruppen und das vom Provider
+  vergebene Admin-Flag werden neu bewertet — H-5 wirkt damit binnen Minuten. Ein nicht erreichbarer
+  Provider meldet niemanden ab (neuer Versuch nach einer Minute). Braucht einen Provider, der
+  Refresh-Tokens ausgibt.
+- **Hinweis an den Inhaber, wenn sein Konto wegen Fehlversuchen gesperrt wird (ASVS 6.3.5).** Mit
+  konfiguriertem Versand an die belegte Adresse, höchstens einer je Sperrfenster (gezählt im
+  Audit-Log, also über alle Worker), ohne Link.
+  Opt-out: `notify_login_failures=False`. Nachgeschlagen und verschickt wird im Hintergrund, über
+  einen eigenen Postausgang — die Antwort verrät weder Existenz noch Laufzeit.
+- **Sicherheitsereignisse für den Widerruf von API-Keys**: `api_key_revoked`, `api_keys_revoked`
+  (Grenze e).
 
 ### Sicherheit
+
+- **TOTP-Geheimnisse ruhend verschlüsselt, Pflicht (H-14/H-15).** AES-256-GCM (`cryptography`); der
+  Schlüssel kommt aus `TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key` (0600, neben der
+  Datenbank — dann laut gewarnt). Bestand wird beim Start verschlüsselt; ein Schlüssel, der nicht
+  passt, bricht den Start ab, statt jede TOTP-Anmeldung still scheitern zu lassen (geprüft auch an
+  den Refresh-Tokens). Die Schlüsseldatei entsteht atomar, auch mit mehreren Workern. `tinysesam
+  backup` erinnert daran, den Schlüssel getrennt zu sichern. SQLite überschreibt Gelöschtes
+  (`secure_delete`), damit ersetzter Klartext nicht in freien Seiten der Datei bleibt.
+- **Registrierung ohne Laufzeit-Orakel (ASVS 6.3.8).** Mit Bestätigung und Name = Adresse schrieb
+  der Zweig „Adresse vergeben" nur eine Audit-Zeile, der freie Zweig Konto, Sperre und Token —
+  messbar an der Antwortzeit. Jetzt dieselbe Arbeit (Platzhalter mit Zufallsnamen, von `gc()`
+  geräumt). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig; die
+  Konfigurationsprüfung warnt davor.
+- **Eine vollständige Anmeldung räumt nur Fehlversuche ab der Kontoanlage** (Grenze a) — nicht die,
+  die vorher unter demselben Namen oder derselben Adresse gezählt wurden.
 
 - **Anmeldung gesperrt nach 100 Fehlversuchen in Folge (B2-6).** Die bisherigen Schwellen zählen nur
   im Fenster (`lockout_window_sec`) — wer langsamer rät als die Schwelle, riet beliebig lange. Jetzt
@@ -62,6 +117,13 @@ Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wan
   Login-Sperre, PIN-Fehlgriffe zählen in die Serie (B2-6). README und `docs/BETRIEB.md` zeigen das
   Muster „allgemeine Seite mit PIN, Detailseite mit `require(factors=["pin", "password"])`".
 - Reihenfolge der Härtungswerte im Panel: was zusammen eingestellt wird, steht zusammen.
+- **Das Panel nennt den Grund einer Sperre** (Grenze b): „gesperrt (Bestätigung / App)" (hebt der
+  Bestätigungslink auf) statt nur „gesperrt" (Betreiber).
+- **Indizes auf dem Audit-Log** (Grenze c) für die Suche nach Name und Zeit.
+- **Kette mit Pflicht-Einrichtung (password → totp → pin): das Angebot, die übrigen Sitzungen zu
+  beenden, kommt wieder** (Grenze d, ASVS 7.4.3). Die Seite fragt nach der Einrichtung; eingelöst
+  wird die Zustimmung, sobald der letzte Faktor bestätigt ist (`/auth/sessions/revoke-after-login`,
+  Antwortfeld `other_sessions_after`).
 
 
 - **Der Knopf im Release-Workflow ist ein Trockenlauf.** Von Hand ausgelöst (`workflow_dispatch`)

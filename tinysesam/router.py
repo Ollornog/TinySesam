@@ -10,6 +10,7 @@ Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufge
 (`auth.oidc`, `auth.webauthn`, `auth.saml`): Ein gesetzter Schalter, dessen Extra oder Pflichtfeld
 fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
+import secrets
 from fastapi import APIRouter, Request, Form, HTTPException
 from starlette.exceptions import HTTPException as _StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
@@ -20,7 +21,6 @@ from .errors import ConfigError
 from . import security
 from .store import ersatzname, norm_email, valid_email
 from . import security
-from .passwords import hash_password
 
 
 async def _antwort_des_handlers(request: Request, exc: Exception):
@@ -168,6 +168,8 @@ def build_router(auth) -> APIRouter:
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
                                               email_bestaetigt=False if aus_verzeichnis else None)
+        if cfg.remember_me_enabled and remember_me:
+            auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
             auth.set_cookie(resp, token)   # Art des Cookies folgt der Sitzung (A-2)
@@ -324,7 +326,10 @@ def build_router(auth) -> APIRouter:
         # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
         antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next)),
-            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0})
+            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0,
+            # Grenze d: Bleibt die Sitzung halb, fragt die Seite trotzdem — eingelöst wird beim
+            # Abschluss der Kette (`/auth/sessions/revoke-after-login`).
+            "other_sessions_after": 0 if erneuert else auth.andere_sitzungen(request, u)})
         if erneuert:
             auth.set_cookie(antwort, erneuert)   # dreht beim Login auch das CSRF-Token
         return antwort
@@ -415,6 +420,8 @@ def build_router(auth) -> APIRouter:
                 return fail(auth.t("err.credentials"), 401)
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
                                                   request.headers.get("user-agent"), remember_me)
+            if cfg.remember_me_enabled and remember_me:
+                auth.store.set_session_bleiben(auth.store.session_hash(token))  # F-05: ausdrücklich gewählt
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
@@ -805,7 +812,7 @@ def build_router(auth) -> APIRouter:
             # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
             # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
             # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
-            keys = auth.store.revoke_user_api_keys(uid)
+            keys = auth._keys_widerrufen(uid, "passwort_reset")
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
                        f"uid={uid} fehlversuche_verworfen={weg}"
                        + (f" api_keys_revoked={keys}" if keys else ""))
@@ -913,12 +920,17 @@ def build_router(auth) -> APIRouter:
                     # die Adresse frei war. `gc()` entfernt den Platzhalter mit Ablauf des
                     # Tokens, genau wie ein nie bestätigtes echtes Konto (R4-09). Das Anlegen
                     # samt Passwort-Hash gleicht zugleich die Laufzeit an.
-                    if name_ist_adresse:
-                        hash_password(password)   # Name = Adresse: nichts zu belegen, nur Laufzeit
-                    else:
-                        platzhalter = auth.create_user(username, password=password, roles=[])
-                        auth.store.set_disabled(platzhalter, True)
-                        auth.create_magic_token("verify_email", user_id=platzhalter)
+                    # Ist der Name die Adresse (immer bei login_identifier='email'), ist der Name
+                    # selbst vergeben — der Platzhalter bekommt dann einen Zufallsnamen. Bis
+                    # 2026-09-24 schrieb dieser Zweig nur die Audit-Zeile, der freie dagegen Konto,
+                    # Sperre und Token: messbar an der Antwortzeit, ein Orakel „Adresse vergeben?"
+                    # (T-13, B1-12 / ASVS 6.3.8). Jetzt dieselbe Arbeit in beiden Zweigen; `gc()`
+                    # räumt den Platzhalter mit dem Ablauf seines Tokens (R4-09).
+                    platzhalter = auth.create_user(
+                        f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
+                        password=password, roles=[])
+                    auth.store.set_disabled(platzhalter, True)
+                    auth.create_magic_token("verify_email", user_id=platzhalter)
                     adresse = email_final
 
                     def _hinweis():
@@ -1173,6 +1185,20 @@ def build_router(auth) -> APIRouter:
                         "user_agent": (s["user_agent"] or "")[:120], "current": s["token_hash"] == cur_tok})
         return out
 
+    @r.post("/auth/sessions/revoke-after-login")
+    async def sessions_revoke_after_login(request: Request):
+        """Die übrigen Sitzungen beenden, SOBALD diese halbe Anmeldung vollständig ist (Grenze d).
+
+        Nur für eine halbe Sitzung: Eine volle nimmt `/auth/sessions/revoke`. Beendet wird hier
+        nichts — vermerkt wird die Zustimmung, eingelöst erst nach dem letzten Faktor. Wer nur den
+        ersten Faktor hat, kann damit also nichts beenden, was er nicht ohnehin voll könnte."""
+        await auth.json_body(request)                     # CSRF wie jede Schreib-Route
+        s = auth.session_from_request(request)
+        if not s or s["mfa_ok"]:
+            raise HTTPException(400, auth.t("api.invalid", grund="keine halbe Anmeldung"))
+        auth.store.set_session_andere_beenden(s["token_hash"])
+        return {"ok": True}
+
     @r.post("/auth/sessions/revoke")
     async def own_sessions_revoke(request: Request):
         # Sitzungen beenden verlangt eine frische Bestätigung (F-09, ASVS 5.0 7.5.2: „having
@@ -1191,7 +1217,7 @@ def build_router(auth) -> APIRouter:
         keys_widerrufen = 0
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
-            keys_widerrufen = auth.store.revoke_user_api_keys(u["id"])
+            keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
         else:
             cur = auth.session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)

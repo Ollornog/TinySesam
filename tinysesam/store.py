@@ -8,7 +8,7 @@ geschieht, steht für Betreiber in `docs/BETRIEB.md` (Ausfallverhalten).
 """
 from __future__ import annotations
 import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
-from typing import Optional
+from typing import Any, Optional
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- behält sein Verhalten (das ALTER TABLE füllt jede vorhandene Zeile damit).
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_admin      INTEGER NOT NULL DEFAULT 0,
+    -- Owner (Entscheid 2026-09-24): immer Admin (von Hand, 1), nicht löschbar, nicht sperrbar, nicht
+    -- entmachtbar; die Rolle lässt sich weitergeben, es gibt mindestens einen. Nur Owner vergeben sie.
+    is_owner      INTEGER NOT NULL DEFAULT 0,
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
     is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
     -- 0 = aktiv. 1 = gesperrt, weil die Bestätigung der Adresse aussteht (Registrierung, oder
@@ -144,7 +147,10 @@ CREATE TABLE IF NOT EXISTS session (
     factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON-Liste erfüllter Faktoren (Ketten-Engine)
     remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
     ip         TEXT,
-    user_agent TEXT
+    user_agent TEXT,
+    zuletzt    INTEGER,                       -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
+    andere_beenden INTEGER NOT NULL DEFAULT 0, -- halbe Sitzung: bei Abschluss der Kette die übrigen beenden (Grenze d)
+    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0 -- „Angemeldet bleiben" AUSDRÜCKLICH gewählt (F-05: dann gilt die zweite Leerlauf-Grenze)
 );
 -- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
 -- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
@@ -156,6 +162,14 @@ CREATE TABLE IF NOT EXISTS oidc_grant (
     granted_at INTEGER NOT NULL,              -- erste Freigabe (bleibt stehen, auch über Nachprüfungen)
     checked_at INTEGER NOT NULL,              -- letzte Bestätigung durch den Provider
     roles      TEXT NOT NULL DEFAULT '[]',    -- Rollen, die der Provider FÜR DIESE Anwendung ergab
+    PRIMARY KEY (token_hash, client)
+);
+CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung je Client (4a, Widerruf folgt dem IdP)
+    token_hash  TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
+    client      TEXT NOT NULL,                -- Schlüssel aus cfg.oidc_clients, "*" = Einzel-Client
+    sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
+    refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
+    geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
     PRIMARY KEY (token_hash, client)
 );
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
@@ -216,6 +230,10 @@ CREATE TABLE IF NOT EXISTS audit (           -- Audit-Log (Login/Logout/Admin-Ak
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
+-- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
+-- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
+CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
@@ -528,6 +546,10 @@ class Store:
         self.db.execute(f"PRAGMA busy_timeout={int(self.BUSY_TIMEOUT_MS)}")
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
+        # Gelöschtes wird überschrieben, nicht nur freigegeben: Ein ersetztes Klartext-Geheimnis
+        # (vor der Verschlüsselung, H-14/H-15) oder ein gelöschtes Konto bliebe sonst in freien
+        # Seiten der Datei — und damit in jeder Sicherung — lesbar, je nach SQLite-Bau.
+        self.db.execute("PRAGMA secure_delete=ON")
         self._lock = threading.Lock()
         self._uhr_gesichert: Optional[float] = None   # monotone Zeit des letzten gesicherten Uhrstands
         self._geschrieben: Optional[float] = None     # monotone Zeit des letzten erfolgreichen Commits
@@ -603,7 +625,9 @@ class Store:
     #:      und Adresse (NOCASE); Bestand: Sperren aus dem Panel auf den Betreiber-Vermerk
     #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
     #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
-    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist
+    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
+    #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
+    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -622,7 +646,11 @@ class Store:
         Ansage statt eines rätselhaften Verhaltens."""
         adds = {
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
-                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
+                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
+                        # NULL für Bestandssitzungen: gilt als `created_at` (F-05).
+                        ("zuletzt", "INTEGER"),
+                        ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
+                        ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
             "totp_cred": [("last_step", "INTEGER")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
@@ -637,7 +665,9 @@ class Store:
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
                       # NULL = noch nicht gerechnet; weiter unten für den Bestand nachgetragen.
                       # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
-                      ("topf_name", "TEXT"), ("topf_mail", "TEXT")],
+                      ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
+                      # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
+                      ("is_owner", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -728,6 +758,7 @@ class Store:
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -821,6 +852,39 @@ class Store:
         if not (zahl.isascii() and zahl.isdigit()) or zahl != str(int(zahl)):
             return None
         return int(zahl)
+
+    def _owner_nachziehen(self) -> None:
+        """Gibt es Admins, aber keinen Owner (Bestand vor dem Owner-Modell), wird der älteste Admin
+        Owner — bevorzugt einer, den jemand von Hand gesetzt hat (`is_admin=1`), aktiv und kein
+        Service-Konto. Einmal, mit Zeile im Audit-Log. Läuft in der Migration (unter der
+        Schreibsperre, direkt auf der Verbindung) — VOR der Wasserlinie der Bestandsschritte, damit
+        ihre eigene Zeile nicht als „neu seit dem letzten Start" gilt. Ohne Admin bleibt es beim
+        Erst-Admin-Weg, der den ersten Owner mit vergibt."""
+        spalten = {r["name"] for r in self.db.execute("PRAGMA table_info(users)")}
+        if "is_owner" not in spalten:
+            return
+        if self.db.execute("SELECT 1 FROM users WHERE is_owner=1 LIMIT 1").fetchone():
+            return
+        # NUR ein aktiver, von Hand gesetzter Admin (`is_admin=1`). Ein vom Identity Provider
+        # vergebenes Flag (2) machte ihn sonst beim nächsten Start dauerhaft zum Owner — und damit
+        # zu einem Admin, den kein Provider mehr entzieht (Angriff auf die zweite Runde, Fund 1).
+        # Ein gesperrter Admin wäre ein Owner, der sich nicht anmelden kann (Fund 2).
+        u = self.db.execute(
+            "SELECT id, username FROM users WHERE is_admin = 1 AND is_service = 0 AND disabled = 0 "
+            "ORDER BY id LIMIT 1").fetchone()
+        if u is None:
+            if self.db.execute("SELECT 1 FROM users WHERE is_admin <> 0 LIMIT 1").fetchone():
+                logging.getLogger("tinysesam").warning(
+                    "Kein Owner: Es gibt Admins, aber keinen aktiven, von Hand gesetzten (nur vom "
+                    "Identity Provider vergebene oder gesperrte). Einen Owner bestimmen: "
+                    "`tinysesam owner --db <datei> <benutzer>`.")
+            return
+        self.db.execute("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (u["id"],))
+        self.db.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                        (_now(), "owner_grant", u["username"], None, "quelle=bestand aeltester_admin"))
+        logging.getLogger("tinysesam").warning(
+            "Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner vergibt ein Owner im "
+            "Admin-Panel.", u["username"])
 
     def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
         """Bestandsdaten auf Schema 10 heben (ohne Commit, unter `_lock` — Teil von `_migrate`).
@@ -1340,6 +1404,14 @@ class Store:
         dabei die offenen Token. Eine Sperre, deren Zeile schon gelöscht ist
         (`audit_retention_days`), bleibt 1; `POST <admin_path>/api/users/{id}/disable` mit
         `{"disabled": true}` setzt den Vermerk, ohne dazwischen zu entsperren."""
+        if disabled:
+            # Ein Owner lässt sich nicht sperren — auch nicht über den Code-Weg (Owner-Modell). Sonst
+            # zählte `owner_count` einen Owner, der sich nicht anmelden kann.
+            zeile = self._one("SELECT is_owner FROM users WHERE id=?", (user_id,))
+            if zeile is not None and zeile["is_owner"]:
+                from .errors import StateError
+                raise StateError(f"Konto {user_id} ist Owner und lässt sich nicht sperren — erst die "
+                                 "Owner-Rolle abgeben.")
         if not disabled:
             self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
         elif durch_betreiber:
@@ -1360,6 +1432,21 @@ class Store:
 
     def set_admin(self, user_id, is_admin: bool):
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
+
+    def set_owner(self, user_id, owner: bool):
+        """Owner-Kennzeichen setzen. Ein Owner ist immer Admin — und zwar von Hand (1): Kein Identity
+        Provider nimmt einem Owner das Admin-Recht (H-5 entzieht nur die 2). Die Regeln (mindestens
+        einer, nur Owner vergeben) prüft der Manager."""
+        if owner:
+            self._exec("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (user_id,))
+        else:
+            self._exec("UPDATE users SET is_owner=0 WHERE id=?", (user_id,))
+
+    def owner_count(self, ohne=None) -> int:
+        """Wie viele Owner gibt es (ohne das Konto `ohne`)?"""
+        zeile = self._one("SELECT COUNT(*) AS n FROM users WHERE is_owner=1 AND id <> ?",
+                          (int(ohne) if ohne is not None else -1,))
+        return int(zeile["n"])
 
     def set_admin_vom_idp(self, user_id):
         """Admin-Flag mit dem Vermerk „vom Identity Provider vergeben" (`is_admin=2`, H-5).
@@ -1399,20 +1486,64 @@ class Store:
         return self.get_pin_hash(user_id) is not None
 
     # ---------- TOTP ----------
+    #: Ver-/Entschlüsselung der TOTP-Geheimnisse (H-14/H-15, `geheimnis.Tresor`). Setzt der Manager;
+    #: ein Store ohne Tresor (CLI-Werkzeuge) fasst die Geheimnisse nicht an.
+    tresor: Any = None
+
     def set_totp(self, user_id, secret, confirmed=False):
         # `last_step` gehört zum Geheimnis: Ein neues beginnt ohne verbrauchten Schritt. Sonst
         # sperrte der Bestätigungscode eines verworfenen Versuchs den ersten Code des neuen,
         # wenn beide in dasselbe 30-Sekunden-Fenster fallen.
+        if self.tresor is None:
+            raise RuntimeError("TOTP-Geheimnisse werden nur verschlüsselt abgelegt — der Store hat "
+                               "keinen Schlüssel (geheimnis.Tresor).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, secret, 1 if confirmed else 0, _now()))
+                   (user_id, self.tresor.verschluesseln(secret), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
 
-    def get_totp(self, user_id) -> Optional[sqlite3.Row]:
-        return self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
+    def get_totp(self, user_id) -> Optional[dict]:
+        """Die TOTP-Zeile eines Kontos, das Geheimnis entschlüsselt (`secret`)."""
+        zeile = self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
+        if zeile is None:
+            return None
+        d = dict(zeile)
+        if self.tresor is not None:
+            d["secret"] = self.tresor.entschluesseln(d["secret"])
+        return d
+
+    def geheimnisse_heben(self) -> int:
+        """Klartext-Geheimnisse aus der Zeit vor der Verschlüsselung verschlüsseln (stilles Heben)
+        — und vorher prüfen, dass der Schlüssel zu den schon verschlüsselten passt. Passt er nicht,
+        `ConfigError`: Ein Start mit falschem Schlüssel liesse sonst jede TOTP-Anmeldung still
+        scheitern. Gibt zurück, wie viele gehoben wurden."""
+        from .errors import ConfigError
+        if self.tresor is None:
+            return 0
+        # Beide Tabellen mit Verschlüsseltem: Gibt es nur Refresh-Tokens (OIDC-Instanz ohne TOTP),
+        # startete ein falscher Schlüssel sonst — und jede Anfrage mit altem Cookie lief auf 500.
+        probe = self._one("SELECT secret AS wert FROM totp_cred WHERE secret LIKE 'v1:%' "
+                          "UNION ALL SELECT refresh FROM oidc_sitzung WHERE refresh LIKE 'v1:%' LIMIT 1")
+        if probe is not None:
+            try:
+                self.tresor.entschluesseln(probe["wert"])
+            except Exception:
+                raise ConfigError(
+                    "Der Schlüssel passt nicht zu den gespeicherten Geheimnissen (TOTP/OIDC; falsche "
+                    "TINYSESAM_SECRETS_KEY/secrets_key_file, oder die Schlüsseldatei neben der "
+                    "Datenbank fehlt bzw. ist eine andere). Den richtigen Schlüssel einsetzen — ohne ihn "
+                    "müssen alle Konten TOTP neu einrichten.") from None
+        klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
+        for z in klar:
+            self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
+                       (self.tresor.verschluesseln(z["secret"]), z["user_id"], z["secret"]))
+        if klar:
+            logging.getLogger("tinysesam").info(
+                "%d TOTP-Geheimnis(se) verschlüsselt (bisher Klartext in der Datenbank).", len(klar))
+        return len(klar)
 
     def delete_totp(self, user_id):
         self._exec("DELETE FROM totp_cred WHERE user_id=?", (user_id,))
@@ -1522,6 +1653,58 @@ class Store:
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
     # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
+    def set_oidc_sitzung(self, handle, client, sub, refresh) -> None:
+        """Das Refresh-Token einer OIDC-Sitzung für DIESEN Client ablegen — verschlüsselt (4a).
+
+        Je Client eine Zeile: Mit mehreren Anwendungen darf ein späterer Login über einen anderen
+        Client die Nachprüfung des ersten nicht überschreiben — sonst suchte der Nutzer selbst aus,
+        welcher Provider-Eintrag noch nachgeprüft wird (Angriff auf die zweite Runde, Fund 7)."""
+        if self.tresor is None:
+            raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at) VALUES (?,?,?,?,?) "
+                   "ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
+                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at",
+                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now()))
+
+    def get_oidc_sitzungen(self, handle) -> list:
+        """Die OIDC-Zeilen einer Sitzung — das Refresh-Token VERSCHLÜSSELT (entschlüsselt wird
+        erst, wenn getauscht wird; eine Anfrage vor Ablauf der Frist fasst den Schlüssel nicht an)."""
+        return [dict(z) for z in self._all("SELECT * FROM oidc_sitzung WHERE token_hash=?",
+                                          (self._handle(handle),))]
+
+    def get_oidc_sitzung(self, handle, client="*") -> Optional[dict]:
+        """Eine OIDC-Zeile, das Refresh-Token entschlüsselt, oder None (für Werkzeuge und Tests)."""
+        z = self._one("SELECT * FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+        if z is None:
+            return None
+        d = dict(z)
+        if self.tresor is not None:
+            d["refresh"] = self.tresor.entschluesseln(d["refresh"])
+        return d
+
+    def oidc_sitzung_beanspruchen(self, handle, client, alt: int, jetzt: int) -> bool:
+        """Den fälligen Tausch für GENAU eine Anfrage beanspruchen: `geprueft_at` von `alt` auf
+        `jetzt`, nur wenn es noch `alt` ist. Mehrere gleichzeitige Anfragen (auch über Worker) —
+        nur eine tauscht. Sonst tauschten alle dasselbe Refresh-Token, und ein Provider mit
+        Token-Rotation lehnte den zweiten Tausch ab: Die Sitzung endete ohne Grund (Fund 5)."""
+        return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
+                          "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
+
+    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None) -> None:
+        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)."""
+        if neuer_refresh and self.tresor is not None:
+            self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=? AND client=?",
+                       (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle), client))
+        else:
+            self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=?",
+                       (int(zeit), self._handle(handle), client))
+
+    def oidc_sitzung_umhaengen(self, alt, neu) -> None:
+        """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —
+        VOR dem Löschen der alten, sonst nähme der Fremdschlüssel sie mit."""
+        self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
+                   (self._handle(neu), self._handle(alt)))
+
     def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
         """Freigabe eintragen oder bestätigen. `granted_at` bleibt bei einer Bestätigung stehen —
         die Frage „seit wann darf diese Sitzung in diese Anwendung" beantwortet sonst niemand mehr."""
@@ -1578,11 +1761,18 @@ class Store:
         token = secrets.token_urlsafe(32)
         now = _now()
         self._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, "
-                   "method, factors_done, remember, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   "method, factors_done, remember, ip, user_agent, zuletzt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (self.session_hash(token), user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
                     (now if mfa_ok else None), method, json.dumps(list(factors or [])),
-                    1 if remember else 0, ip, ua))
+                    1 if remember else 0, ip, ua, now))
         return token
+
+    #: Inaktivitäts-Grenzen in Sekunden (ohne / mit „Angemeldet bleiben"), 0 = aus. Setzt der
+    #: Manager aus der Konfiguration (F-05); der Store allein kennt keine.
+    leerlauf_sek = (0, 0)
+    #: Wie oft `zuletzt` höchstens geschrieben wird: Jede Anfrage schreiben hiesse, dass jeder
+    #: Forward-Auth-Abruf die Datei sperrt. Eine Minute Unschärfe ist für Stunden-Grenzen nichts.
+    LEERLAUF_SCHRITT_SEK = 60
 
     @staticmethod
     def _handle(wert) -> str:
@@ -1609,10 +1799,34 @@ class Store:
         if not token:
             return None
         r = self._one("SELECT * FROM session WHERE token_hash=?", (self.session_hash(token),))
-        if r and r["expires_at"] < _now():
+        if not r:
+            return None
+        jetzt = _now()
+        if r["expires_at"] < jetzt:
             self.delete_session(token)
             return None
+        # Inaktivität (F-05): zusätzlich zur absoluten Laufzeit. Eine abgelaufene Sitzung wird
+        # gelöscht, nicht nur abgewiesen — sonst lebte sie mit dem nächsten Zugriff wieder auf.
+        # Die lange Grenze nur, wenn jemand „Angemeldet bleiben" AUSDRÜCKLICH gewählt hat. Eine
+        # Sitzung, die nur deshalb dauerhaft ist, weil der Weg keine Wahl kennt (OIDC, Passkey,
+        # Anmelde-Link) oder die Checkbox abgeschaltet ist, bekäme sonst nie ein Leerlauf-Ende
+        # (Angriff auf die zweite Runde, Fund 9).
+        grenze = self.leerlauf_sek[1 if (r["remember"] and r["bleiben_gewaehlt"]) else 0]
+        zuletzt = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
+        if grenze and jetzt - int(zuletzt) > grenze:
+            self.delete_session(token)
+            return None
+        if jetzt - int(zuletzt) >= self.LEERLAUF_SCHRITT_SEK:
+            self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (jetzt, r["token_hash"]))
         return r
+
+    def set_session_bleiben(self, handle):
+        """Vermerken: „Angemeldet bleiben" wurde ausdrücklich gewählt (F-05)."""
+        self._exec("UPDATE session SET bleiben_gewaehlt=1 WHERE token_hash=?", (self._handle(handle),))
+
+    def set_session_andere_beenden(self, handle):
+        """Vermerken: Wird diese (halbe) Sitzung voll, enden die übrigen des Kontos (Grenze d)."""
+        self._exec("UPDATE session SET andere_beenden=1 WHERE token_hash=?", (self._handle(handle),))
 
     def set_session_mfa(self, handle, ok=True):
         self._exec("UPDATE session SET mfa_ok=?, mfa_at=? WHERE token_hash=?",
@@ -1638,7 +1852,7 @@ class Store:
         token = secrets.token_urlsafe(32)
         neu = self.session_hash(token)
         spalten = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
-                   "remember, ip, user_agent")
+                   "remember, ip, user_agent, zuletzt, bleiben_gewaehlt")
         with self._lock:
             try:
                 cur = self.db.execute(
@@ -1648,6 +1862,7 @@ class Store:
                     self.db.rollback()
                     return None
                 self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
                 self.db.commit()
             except Exception:
@@ -1943,7 +2158,7 @@ class Store:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
         self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
 
-    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None):
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None):
         """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 
         `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
@@ -1962,6 +2177,11 @@ class Store:
         elif exclude_methods:
             platz = ",".join("?" for _ in exclude_methods)
             wo, args_m = f" AND (method IS NULL OR method NOT IN ({platz}))", tuple(exclude_methods)
+        if seit is not None:
+            # Nur ab einem Zeitpunkt (Grenze a): Eine vollständige Anmeldung räumt, was DIESEM
+            # Konto galt — nicht die Fehlversuche unter seinem Namen oder seiner Adresse von vor
+            # seiner Anlage (die galten niemandem oder jemand anderem).
+            wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
         if username:
             self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
                        (username,) + args_m)
@@ -2084,6 +2304,7 @@ class Store:
         return [r["id"] for r in self._all(
             "SELECT DISTINCT u.id FROM users u JOIN magic_token m ON m.user_id = u.id "
             "WHERE m.purpose = 'verify_email' AND m.used_at IS NULL AND m.expires_at < ? "
+            "  AND u.is_owner = 0 "
             "  AND u.disabled = 1 AND u.first_login_at IS NULL "
             "  AND NOT EXISTS (SELECT 1 FROM magic_token m2 WHERE m2.user_id = u.id "
             "      AND m2.purpose = 'verify_email' AND (m2.used_at IS NOT NULL OR m2.expires_at >= ?))",

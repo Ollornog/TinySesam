@@ -534,6 +534,15 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Brute-Force-Regulation:** Fehlversuche pro **User *und* IP** werden gezählt; nach `max_login_attempts`
   im `lockout_window_sec`-Fenster ist der Login gesperrt — blockt auch das *korrekte* Passwort.
   Gilt für Passwort- und TOTP-Login (IP-Schwelle höher wg. NAT: `ip_attempt_factor`).
+- **Owner, Inaktivität, verschlüsselte TOTP-Geheimnisse, Widerruf über den IdP:** Owner sind Admins,
+  die sich nicht löschen, sperren oder entmachten lassen (mindestens einer, weitergebbar, Notweg
+  `tinysesam owner`); Sitzungen ohne „Angemeldet bleiben" enden nach 8 h Inaktivität
+  (`session_idle_minutes`); TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt — **den Schlüssel
+  getrennt sichern** (`TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key`); eine
+  OIDC-Sitzung prüft ihr Refresh-Token alle `oidc_session_refresh_minutes` nach und endet, wenn der
+  Provider Nein sagt. Einzelheiten: `docs/BETRIEB.md`.
+- **Sperr-Hinweis** (ASVS 6.3.5): Mit konfiguriertem Versand bekommt die belegte Adresse eines
+  gesperrten Kontos einen Hinweis je Sperrfenster (Opt-out `notify_login_failures=False`).
 - **Fehlversuche in Folge, ohne Fenster** (`account_max_consecutive_failures`, Vorgabe 100): Jeder
   gescheiterte Anmeldeversuch unter einem Namen verlängert eine Serie; an der Grenze ist die Anmeldung
   gesperrt — und anders als bei den Fenster-Schwellen läuft diese Sperre nicht ab. Sie endet mit einer
@@ -1031,7 +1040,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**47 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**48 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

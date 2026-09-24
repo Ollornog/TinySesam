@@ -273,7 +273,9 @@ import inspect as _inspect  # noqa: E402
 from tinysesam.__main__ import main as _cli_main  # noqa: E402
 
 _kommandos = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_main)))
-assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock"}, \
+# `owner` (2026-09-24) legt kein Konto an und ändert keine Kennung — es setzt die Owner-Rolle eines
+# bestehenden Kontos (Notweg, wenn kein Owner mehr herankommt).
+assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner"}, \
     (f"CLI-Kommandos geändert: {sorted(_kommandos)} — kann eines davon jetzt Konten anlegen "
      "oder Kennungen ändern, gehören die Betreiber-Meldungen mitgeändert")
 ok("Erst-Admin-Warnung nennt ensure_admin statt des CLI (das keine Konten anlegt)")

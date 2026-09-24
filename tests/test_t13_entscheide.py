@@ -416,6 +416,525 @@ r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
 #  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
 #  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
 
+# ── F-05: Inaktivitäts-Timeout ────────────────────────────────────────────────────────────
+auth_i, app_i = _app()
+
+
+@app_i.get("/drin")
+def _drin(user=Depends(auth_i.require())):
+    return {"ok": True}
+
+
+r.check("F-05: Vorgabe 8 h Inaktivität ohne „Angemeldet bleiben“, mit: aus",
+        auth_i.store.leerlauf_sek == (8 * 3600, 0), str(auth_i.store.leerlauf_sek))
+auth_i.create_user("ruhig", password=PW)
+ci = TestClient(app_i)
+ci.post("/auth/login", data={"username": "ruhig", "password": PW}, follow_redirects=False)   # ohne remember
+r.check("… frisch angemeldet kommt man hinein", ci.get("/drin", follow_redirects=False).status_code == 200)
+auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 8 * 3600 - 5")
+r.check("… nach 8 h ohne Anfrage ist die Sitzung weg (nicht nur abgewiesen, gelöscht)",
+        ci.get("/drin", follow_redirects=False).status_code != 200
+        and auth_i.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0)
+ci2 = TestClient(app_i)
+ci2.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
+auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+r.check("… mit „Angemeldet bleiben“ zählt nur die absolute Laufzeit (Vorgabe)",
+        ci2.get("/drin", follow_redirects=False).status_code == 200)
+auth_j, app_j = _app(session_idle_minutes_remember=60)
+
+
+@app_j.get("/drin")
+def _drin_j(user=Depends(auth_j.require())):
+    return {"ok": True}
+
+
+auth_j.create_user("ruhig", password=PW)
+cj = TestClient(app_j)
+cj.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
+cj.get("/drin")
+_vorher = auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"]
+cj.get("/drin")
+r.check("F-05: eine zweite Anfrage in derselben Minute schreibt nicht (keine Sperre je Abruf)",
+        auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"] == _vorher)
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 61 * 60")
+r.check("F-05 einstellbar: auch für „Angemeldet bleiben“ (hier 60 min)",
+        cj.get("/drin", follow_redirects=False).status_code != 200)
+auth_j.create_user("aktiv", password=PW)
+ck = TestClient(app_j)
+ck.post("/auth/login", data={"username": "aktiv", "password": PW, "remember": "1"}, follow_redirects=False)
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60, created_at = created_at - 50 * 60 "
+                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
+ck.get("/drin")                                              # Aktivität setzt die Uhr neu
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60 "
+                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
+r.check("F-05: wer aktiv ist, bleibt drin (50 + 50 min, aber nie 60 am Stück)",
+        ck.get("/drin", follow_redirects=False).status_code == 200)
+# (Mutationsproben: die Leerlauf-Prüfung in `get_session` streichen → „nach 8 h … weg" rot; das
+#  Nachschreiben von `zuletzt` streichen → „wer aktiv ist, bleibt drin" rot.)
+
+# Die Wahl übersteht den Abschluss einer Kette: Passwort (mit Haken) → TOTP legt eine NEUE volle
+# Sitzung an (Rechtewechsel, neues Token); `_nachfolger` trägt die Wahl hinüber. Ohne das fiele
+# jede „Angemeldet bleiben"-Sitzung mit zweitem Faktor still auf die 8-h-Grenze zurück.
+import time as _uhr_k  # noqa: E402
+
+import pyotp as _pyotp  # noqa: E402
+auth_k, app_k = _app(login_chain=["password", "totp"])
+
+
+@app_k.get("/drin")
+def _drin_k(user=Depends(auth_k.require())):
+    return {"ok": True}
+
+
+uid_k = auth_k.create_user("zweifach", password=PW)
+_geheim_k = auth_k.totp_begin(uid_k)["secret"]
+auth_k.totp_confirm(uid_k, _pyotp.TOTP(_geheim_k).at(_uhr_k.time() - 30))
+ckk = TestClient(app_k)
+ckk.post("/auth/login", data={"username": "zweifach", "password": PW, "remember": "1"}, follow_redirects=False)
+_halb_k = auth_k.store._one("SELECT token_hash, bleiben_gewaehlt FROM session")
+ckk.post("/auth/totp", data={"code": _pyotp.TOTP(_geheim_k).now(), "next": "/"}, follow_redirects=False)
+_voll_k = auth_k.store._all("SELECT token_hash, bleiben_gewaehlt, mfa_ok FROM session")
+r.check("F-05: „Angemeldet bleiben“ übersteht den zweiten Faktor (neue volle Sitzung trägt die Wahl)",
+        _halb_k["bleiben_gewaehlt"] == 1 and len(_voll_k) == 1
+        and _voll_k[0]["token_hash"] != _halb_k["token_hash"] and _voll_k[0]["bleiben_gewaehlt"] == 1,
+        str([dict(z) for z in _voll_k]))
+auth_k.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+r.check("… und damit gilt nach Passwort + TOTP weiter nur die absolute Laufzeit",
+        ckk.get("/drin", follow_redirects=False).status_code == 200)
+# (Mutationsprobe: die Übertragung in `_nachfolger` streichen → beide rot.)
+
+# ── Grenzen a–e aus dem Integrationsangriff (PO: bauen) ─────────────────────────────────
+import re as _re  # noqa: E402
+import pyotp  # noqa: E402
+
+# (a) Eine vollständige Anmeldung räumt nur Fehlversuche ab der Anlage des Kontos.
+auth_a8, app_a8 = _app()
+for _ in range(3):
+    auth_a8.record_login("vorher@example.com", "198.51.100.20", False, "password")
+auth_a8.store._exec("UPDATE login_attempt SET ts = ts - 3600")
+uid_a8 = auth_a8.create_user("neukonto", password=PW, email="vorher@example.com")
+_login(TestClient(app_a8), "neukonto", PW)
+r.check("Grenze a: Fehlversuche unter der Adresse von VOR der Anlage bleiben nach dem ersten Login stehen",
+        auth_a8.store.count_fails(0, username="vorher@example.com") == 3,
+        str(auth_a8.store.count_fails(0, username="vorher@example.com")))
+auth_a8.record_login("neukonto", "198.51.100.21", False, "password")
+_login(TestClient(app_a8), "neukonto", PW)
+r.check("… die eigenen (nach der Anlage) räumt er wie bisher",
+        auth_a8.store.count_fails(0, username="neukonto") == 0)
+
+# (b) Das Panel unterscheidet die beiden Sperren.
+auth_b8, app_b8 = _app()
+auth_b8.create_user("panelchef", password=PW, is_admin=True)
+wartet = auth_b8.create_user("wartet", password=PW)
+betr = auth_b8.create_user("betreiber-gesperrt", password=PW)
+auth_b8.store.set_disabled(wartet, True)
+auth_b8.store.set_disabled(betr, True, durch_betreiber=True)
+cb8 = TestClient(app_b8)
+_login(cb8, "panelchef", PW)
+liste = {u["username"]: u for u in cb8.get("/auth/admin/api/users").json()}
+r.check("Grenze b: das Panel nennt den Grund der Sperre (Bestätigung/App vs. Betreiber)",
+        liste["wartet"]["disabled_by"] == "confirmation" and liste["betreiber-gesperrt"]["disabled_by"] == "operator"
+        and liste["panelchef"]["disabled_by"] is None, str({k: v["disabled_by"] for k, v in liste.items()}))
+
+# (c) Die Audit-Suchen laufen über einen Index.
+_plan = auth_b8.store.db.execute(
+    "EXPLAIN QUERY PLAN SELECT id FROM audit WHERE event IN ('signup','signup_taken') "
+    "AND lower(username) = lower(?) AND ts BETWEEN ? AND ?", ("x", 1, 2)).fetchall()
+r.check("Grenze c: `anlage_grenze` sucht über den Index statt durch das ganze Audit-Log",
+        any("idx_audit_name_ts" in str(tuple(z)) for z in _plan), str([tuple(z) for z in _plan]))
+
+# (d) Kette password → totp → pin mit Pflicht-Einrichtung: das Angebot, die übrigen Sitzungen zu
+#     beenden, wird eingelöst, sobald die Kette voll ist.
+auth_d8, app_d8 = _app(login_chain=["password", "totp", "pin"], pin_enabled=True)
+uid_d8 = auth_d8.create_user("kette", password=PW)
+auth_d8.set_pin(uid_d8, "4812")
+alt_token = auth_d8.store.create_session(uid_d8, 3600, True, "password")   # das verlorene Gerät
+cd8 = TestClient(app_d8)
+_login(cd8, "kette", PW)
+_seite = cd8.post("/auth/totp/setup/start", data={"next": "/"})
+_geheim = _re.search(r"secret=([A-Z2-7]+)", _seite.text) or _re.search(r"\b([A-Z2-7]{32})\b", _seite.text)
+_bestaetigt = cd8.post("/auth/totp/setup", data={"code": pyotp.TOTP(_geheim.group(1)).now(), "next": "/"}).json()
+r.check("Grenze d: die Einschreibung mitten in der Kette meldet die übrigen Sitzungen (other_sessions_after)",
+        _bestaetigt.get("ok") and _bestaetigt.get("other_sessions_after") == 1, str(_bestaetigt))
+_vermerk = cd8.post("/auth/sessions/revoke-after-login", json={})
+r.check("… die Zustimmung wird vermerkt, aber noch nichts beendet",
+        _vermerk.status_code == 200 and auth_d8.store.get_session(alt_token) is not None)
+cd8.post("/auth/pin", data={"username": "kette", "pin": "4812"}, follow_redirects=False)   # halbe Sitzung: mit Namen
+r.check("… und mit dem letzten Faktor (PIN) enden die übrigen Sitzungen",
+        auth_d8.store.get_session(alt_token) is None and cd8.get("/auth/me").status_code == 200)
+auth_v8, app_v8 = _app()                                      # ohne Kette: Passwort = volle Sitzung
+auth_v8.create_user("voll", password=PW)
+cvoll = TestClient(app_v8)
+_login(cvoll, "voll", PW)
+r.check("… eine volle Sitzung kann den Vermerk nicht setzen (dafür gibt es /auth/sessions/revoke)",
+        cvoll.post("/auth/sessions/revoke-after-login", json={}).status_code in (400, 401))
+
+# (e) Der Widerruf von API-Keys benachrichtigt den Inhaber.
+auth_e8, app_e8 = _app()
+ereignisse = []
+auth_e8.on_security_event = lambda ereignis, konto, details: ereignisse.append((ereignis, details))
+uid_e8 = auth_e8.create_user("keyhalter", password=PW)
+k1 = auth_e8.create_api_key(uid_e8, name="ci")
+auth_e8.revoke_api_key(k1["id"])
+auth_e8.revoke_api_key(k1["id"])                              # zweimal: nur ein Ereignis
+auth_e8.create_api_key(uid_e8, name="a")
+auth_e8.create_api_key(uid_e8, name="b")
+auth_e8._keys_widerrufen(uid_e8, "test")
+namen = [e for e, _ in ereignisse]
+r.check("Grenze e: ein einzelner Widerruf meldet api_key_revoked (genau einmal)",
+        namen.count("api_key_revoked") == 1, str(namen))
+r.check("… ein gesammelter meldet api_keys_revoked mit Anzahl",
+        ("api_keys_revoked", {"anzahl": 2, "grund": "test"}) in ereignisse, str(ereignisse))
+chef_e8 = auth_e8.create_user("chef-e8", password=PW, is_admin=True)
+auth_e8.create_api_key(uid_e8, name="c")
+ce8 = TestClient(app_e8)
+_login(ce8, "chef-e8", PW)
+ce8.post(f"/auth/admin/api/users/{uid_e8}/disable", json={"disabled": True})
+r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"anzahl": 1, "grund": "sperre"}) in ereignisse,
+        str(ereignisse[-2:]))
+# (Mutationsproben: `seit=since` in `sperre_aufheben` streichen → (a) rot; `disabled_by` fest auf
+#  None → (b) rot; Index streichen → (c) rot; `_andere_nach_abschluss` leer → (d) rot;
+#  `sicherheitsereignis` in `_keys_widerrufen` streichen → (e) rot.)
+
+# ── B1-12 / ASVS 6.3.8: die Registrierung verrät keine Adressen (auch nicht in der Laufzeit) ─
+def _reg_app():
+    a, app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
+                  login_identifier="email")
+    a.set_mailer(lambda to, betreff, text, html=None: None)
+    return a, app
+
+
+a638, app638 = _reg_app()
+a638.create_user("vergeben@example.com", password=PW, email="vergeben@example.com")
+_zaehler = {"n": 0}
+_orig_exec = a638.store._exec
+
+
+def _zaehlend(sql, args=()):
+    _zaehler["n"] += 1
+    return _orig_exec(sql, args)
+
+
+a638.store._exec = _zaehlend
+c638 = TestClient(app638)
+_zaehler["n"] = 0
+frei = c638.post("/auth/register", data={"email": "frei@example.com", "password": FUENFZEHN + "x"})
+_n_frei = _zaehler["n"]
+_zaehler["n"] = 0
+vergeben = c638.post("/auth/register", data={"email": "vergeben@example.com", "password": FUENFZEHN + "x"})
+_n_vergeben = _zaehler["n"]
+a638.store._exec = _orig_exec
+r.check("ASVS 6.3.8: freie und vergebene Adresse antworten gleich (Status und Seite)",
+        frei.status_code == vergeben.status_code == 200
+        and _re.sub(r"nonce=\"[^\"]+\"", "", frei.text) == _re.sub(r"nonce=\"[^\"]+\"", "", vergeben.text),
+        f"{frei.status_code}/{vergeben.status_code}")
+r.check("… und machen dieselbe Arbeit in der Anfrage (gleich viele Schreibzugriffe — kein Laufzeit-Orakel)",
+        _n_frei == _n_vergeben, f"frei {_n_frei}, vergeben {_n_vergeben}")
+_platz = [u for u in a638.store.list_users() if str(u["username"]).startswith("reserviert-")]
+r.check("… der Platzhalter ist gesperrt, trägt keine Adresse und verschwindet mit gc()",
+        len(_platz) == 1 and _platz[0]["disabled"] and not _platz[0]["email"])
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+_, _w638 = _kp.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://app.example", allow_signup=True,
+                                      signup_require_email=True))
+r.check("… ohne Bestätigung geht das nicht — die Konfigurationsprüfung sagt es (6.3.8)",
+        any("6.3.8" in w for w in _w638), str(_w638)[:200])
+# (Mutationsprobe: im Vergeben-Zweig wieder nur `hash_password` statt Platzhalter → Schreibzugriffe rot.)
+
+# ── B1-12 / ASVS 6.3.5: Hinweis an den Inhaber, wenn sein Konto gesperrt wird ─────────────
+def _hinweis_app(**cfg):
+    a, app = _app(**cfg)
+    post = []
+    a.set_mailer(lambda to, betreff, text, html=None: post.append((to, betreff, text)))
+    return a, app, post
+
+
+a635, app635, post635 = _hinweis_app()
+a635.create_user("inhaberin", password=PW, email="inhaberin@example.com")
+for _ in range(a635.sec("max_login_attempts") + 2):
+    _login(TestClient(app635), "inhaberin", "falsch-falsch-falsch")
+a635._hinweis_ausgang.abwarten()
+r.check("ASVS 6.3.5: bei konfiguriertem Versand bekommt die Inhaberin einen Hinweis (Vorgabe an, opt-out)",
+        len(post635) == 1 and post635[0][0] == "inhaberin@example.com", str(post635))
+r.check("… der Hinweis trägt keinen Link (es gibt keine Basis, die ein Angreifer biegen könnte)",
+        post635 and "://" not in post635[0][2], post635[0][2][:120] if post635 else "")
+r.check("… genau einen je Sperrfenster, nicht einen je abgewiesenem Versuch",
+        len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
+for _ in range(a635.sec("max_login_attempts") + 2):
+    _login(TestClient(app635), "niemand", "falsch-falsch-falsch")
+a635._hinweis_ausgang.abwarten()
+r.check("… ein unbekannter Name löst nichts aus (und in der Anfrage geschieht dasselbe)", len(post635) == 1)
+a635u, app635u, post635u = _hinweis_app()
+_u = a635u.create_user("unbelegt", password=PW, email="unbelegt@example.com")
+a635u.store.set_email_verified(_u, False)
+for _ in range(a635u.sec("max_login_attempts") + 2):
+    _login(TestClient(app635u), "unbelegt", "falsch-falsch-falsch")
+a635u._hinweis_ausgang.abwarten()
+r.check("… an eine UNBELEGTE Adresse geht nichts (H-3)", post635u == [], str(post635u))
+a635o, app635o, post635o = _hinweis_app(notify_login_failures=False)
+a635o.create_user("still", password=PW, email="still@example.com")
+for _ in range(a635o.sec("max_login_attempts") + 2):
+    _login(TestClient(app635o), "still", "falsch-falsch-falsch")
+a635o._hinweis_ausgang.abwarten()
+r.check("… opt-out: notify_login_failures=False schickt nichts", post635o == [], str(post635o))
+# (Mutationsproben: `_sperrhinweis` in `_abgewiesen` nicht rufen → erste Prüfung rot; die Drossel
+#  streichen → „genau einen" rot; `_beleg_am_konto` streichen → „UNBELEGTE" rot.)
+
+# ── H-14/H-15: TOTP-Geheimnisse ruhend verschlüsselt (Pflicht) ───────────────────────────
+import base64 as _b64  # noqa: E402
+import os as _os  # noqa: E402
+import stat as _stat  # noqa: E402
+
+a14, app14 = _app()
+u14 = a14.create_user("totpnutzer", password=PW)
+geheim14 = a14.totp_begin(u14)["secret"]
+roh14 = a14.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
+r.check("H-14/15: in der Datenbank steht das TOTP-Geheimnis verschlüsselt, nicht im Klartext",
+        roh14.startswith("v1:") and geheim14 not in roh14, roh14[:20])
+r.check("… und die Anmeldung damit funktioniert (Einrichtung mit echtem Code)",
+        a14.totp_confirm(u14, pyotp.TOTP(geheim14).now()))
+_keydatei = a14.cfg.db_path + ".key"
+r.check("… ohne Angabe liegt der Schlüssel neben der Datenbank, nur für den Besitzer lesbar (0600)",
+        _os.path.isfile(_keydatei) and _stat.S_IMODE(_os.stat(_keydatei).st_mode) == 0o600)
+
+# Bestand: ein Klartext-Geheimnis wird beim Start verschlüsselt (stilles Heben).
+_pfad14 = a14.cfg.db_path
+a14.store._exec("UPDATE totp_cred SET secret=? WHERE user_id=?", (geheim14, u14))   # wie vor 0.21
+a14.store.db.close()
+a14b, _ = _app(db_path=_pfad14)
+roh14b = a14b.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
+r.check("H-14/15: ein Klartext-Geheimnis aus der Zeit davor wird beim Start verschlüsselt",
+        roh14b.startswith("v1:") and a14b.store.get_totp(u14)["secret"] == geheim14)
+a14b.store.db.close()
+
+# Falscher Schlüssel → der Start bricht ab, statt still jede TOTP-Anmeldung scheitern zu lassen.
+_os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
+try:
+    _app(db_path=_pfad14)
+    _falsch = False
+except ConfigError:
+    _falsch = True
+finally:
+    del _os.environ["TINYSESAM_SECRETS_KEY"]
+r.check("H-14/15: ein Schlüssel, der nicht passt, bricht den Start ab (ConfigError)", _falsch)
+
+# Vorrang: Umgebung vor Datei vor „neben der Datenbank"; eine kaputte Angabe ist ein Fehler.
+_datei14 = str(Path(tempfile.mkdtemp()) / "schluessel")
+with open(_datei14, "w") as _f:
+    _f.write(_b64.b64encode(_os.urandom(32)).decode())
+a14c, _ = _app(secrets_key_file=_datei14)
+r.check("… secrets_key_file wird genommen, dann entsteht keine Datei neben der Datenbank",
+        a14c._schluessel_herkunft == "datei" and not _os.path.exists(a14c.cfg.db_path + ".key"))
+with open(_datei14, "w") as _f:
+    _f.write("zu-kurz")
+try:
+    _app(secrets_key_file=_datei14)
+    _kaputt = False
+except ConfigError:
+    _kaputt = True
+r.check("… ein kaputter Schlüssel (kein Base64 von 32 Byte) ist ein Fehler, kein stiller Ersatz", _kaputt)
+# (Mutationsproben: in `set_totp` unverschlüsselt speichern → erste Prüfung rot; die Schlüsselprobe
+#  in `geheimnisse_heben` streichen → „bricht den Start ab" rot; das Heben streichen → „Klartext …
+#  wird beim Start verschlüsselt" rot.)
+
+
+
+def _jetzt_minus(auth):
+    """Sekunden bis zur nächsten Nachprüfung der (einzigen) OIDC-Sitzung."""
+    import time as _t
+    z = auth.store._one("SELECT geprueft_at FROM oidc_sitzung")
+    return int(z["geprueft_at"]) + int(auth.cfg.oidc_session_refresh_minutes) * 60 - int(_t.time())
+
+
+# ── 4a: Widerruf folgt dem Provider (Refresh-Token alle N Minuten) ─────────────────────────
+a4a, app4a = _oidc({"sub": "r-1", "preferred_username": "refresher", "groups": ["admins"]},
+                   oidc_group_role_map=KARTE)
+a4a.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+    _Claims({"sub": "r-1", "preferred_username": "refresher", "groups": ["admins"], "nonce": nonce}),
+    {"access_token": "at", "refresh_token": "rt-1"})
+_antworten = []
+_gerufen = []
+
+
+def _refresh(rt, sub):
+    _gerufen.append((rt, sub))
+    return _antworten.pop(0)
+
+
+a4a.oidc.refresh = _refresh
+c4a = TestClient(app4a, raise_server_exceptions=False)
+_start = c4a.get("/auth/oidc/start", follow_redirects=False)
+_st = parse_qs(urlparse(_start.headers["location"]).query)["state"][0]
+c4a.get(f"/auth/oidc/callback?code=x&state={_st}", follow_redirects=False)
+_roh4a = a4a.store._one("SELECT refresh FROM oidc_sitzung")
+r.check("4a: das Refresh-Token liegt zur Sitzung, verschlüsselt",
+        _roh4a is not None and _roh4a["refresh"].startswith("v1:") and "rt-1" not in _roh4a["refresh"])
+r.check("… innerhalb der Frist fragt TinySesam den Provider nicht",
+        c4a.get("/auth/me").status_code == 200 and _gerufen == [])
+
+
+def _altern():
+    a4a.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+
+
+_uid4a = a4a.store.get_user_by_name("refresher")["id"]
+_altern()
+_antworten.append(("ok", {"sub": "r-1", "groups": ["admins"]}, {"refresh_token": "rt-2"}))
+_erste = c4a.get("/auth/me").status_code
+a4a._oidc_ausgang.abwarten()                                  # getauscht wird im Hintergrund (Fund 6)
+r.check("4a: nach der Frist wird getauscht; der Provider sagt ja → die Sitzung bleibt",
+        _erste == 200 and c4a.get("/auth/me").status_code == 200 and _gerufen == [("rt-1", "r-1")])
+r.check("… ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)",
+        a4a.store.get_oidc_sitzung(a4a.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"])["refresh"] == "rt-2")
+_altern()
+_antworten.append(("ok", {"sub": "r-1", "groups": []}, {}))
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
+r.check("4a + H-5: nimmt der Provider die Admin-Gruppe, ist das Flag binnen der Frist weg — nicht erst beim Login",
+        not a4a.store.get_user(_uid4a)["is_admin"])
+_altern()
+_antworten.append(("ok", {"sub": "r-1"}, {}))                   # kein Gruppen-Claim
+a4a.set_roles(_uid4a, ["editor"])
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
+r.check("… fehlt der Gruppen-Claim ganz, bleiben die Rollen (fehlend ≠ keine Gruppen)",
+        "editor" in a4a.user_roles(a4a.store.get_user(_uid4a)))
+_altern()
+_antworten.append(("fehler", {}, {"error": "ConnectError"}))
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
+r.check("4a: ist der Provider nicht erreichbar, bleibt die Sitzung (ein Ausfall meldet niemanden ab)",
+        c4a.get("/auth/me").status_code == 200)
+r.check("… und es wird in einer Minute neu versucht, nicht erst nach der vollen Frist",
+        _jetzt_minus(a4a) <= 15 * 60 - 60 + 5)
+_altern()
+_antworten.append(("abgelehnt", {}, {"error": "invalid_grant"}))
+c4a.get("/auth/me")
+a4a._oidc_ausgang.abwarten()
+r.check("4a: verweigert der Provider (gesperrt, gelöscht, entzogen), ist die Sitzung weg",
+        c4a.get("/auth/me").status_code == 401
+        and a4a.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
+        and any(z["event"] == "oidc_widerruf" for z in a4a.store.recent_audit(20)))
+a4b, app4b = _oidc({"sub": "r-2", "preferred_username": "ohne"}, oidc_session_refresh_minutes=0)
+a4b.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+    _Claims({"sub": "r-2", "preferred_username": "ohne", "nonce": nonce}),
+    {"access_token": "at", "refresh_token": "rt-x"})
+_oidc_login(app4b)
+r.check("4a einstellbar: oidc_session_refresh_minutes=0 legt nichts ab",
+        a4b.store._one("SELECT COUNT(*) AS n FROM oidc_sitzung")["n"] == 0)
+# (Mutationsproben: `_oidc_nachpruefen` immer True → „Sitzung weg" rot; die Gruppen-Neubewertung
+#  streichen → „Flag … weg" rot; `in info` streichen → „fehlend ≠ keine Gruppen" rot; die
+#  Wiederholung in einer Minute streichen → „in einer Minute" rot.)
+
+# ── Befunde aus dem Angriff auf die zweite Runde (4a, Schlüssel, Leerlauf, Hinweis) ─────────
+import threading as _th  # noqa: E402
+import time as _zeit  # noqa: E402
+
+
+def _oidc_mit_refresh(sub, **cfg):
+    a, app = _oidc({"sub": sub, "preferred_username": sub}, **cfg)
+    a.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+        _Claims({"sub": sub, "preferred_username": sub, "nonce": nonce}),
+        {"access_token": "at", "refresh_token": "rt-" + sub})
+    c = TestClient(app, raise_server_exceptions=False)
+    st = parse_qs(urlparse(c.get("/auth/oidc/start", follow_redirects=False).headers["location"]).query)["state"][0]
+    c.get(f"/auth/oidc/callback?code=x&state={st}", follow_redirects=False)
+    return a, app, c
+
+
+# Fund 5: parallele Anfragen nach der Frist → genau EIN Tausch (Rotation beim Provider).
+a5r, _, c5r = _oidc_mit_refresh("parallel")
+_tausche = []
+a5r.oidc.refresh = lambda rt, sub: (_tausche.append(rt) or ("ok", {"sub": sub}, {}))
+a5r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+_s5 = a5r.store._one("SELECT * FROM session")
+for _ in range(4):
+    a5r._oidc_nachpruefen(_s5)
+a5r._oidc_ausgang.abwarten()
+r.check("Fund 5: vier Anfragen nach der Frist tauschen das Refresh-Token genau einmal", len(_tausche) == 1,
+        str(_tausche))
+
+# Fund 6: ein hängender Provider hält die Anfrage nicht fest.
+a6r, _, c6r = _oidc_mit_refresh("haengt")
+a6r.oidc.refresh = lambda rt, sub: (_zeit.sleep(1.5), ("ok", {"sub": sub}, {}))[1]
+a6r.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+_t0 = _zeit.monotonic()
+_st6 = c6r.get("/auth/me").status_code
+_dauer = _zeit.monotonic() - _t0
+a6r._oidc_ausgang.abwarten()
+r.check("Fund 6: die Anfrage wartet nicht auf den Provider (Tausch im Hintergrund)",
+        _st6 == 200 and _dauer < 1.0, f"{_dauer:.2f}s")
+
+# Fund 7: je Client eine Zeile — ein Login über einen zweiten Client überschreibt die erste nicht.
+_h7 = a6r.store._one("SELECT token_hash FROM oidc_sitzung")["token_hash"]
+a6r.store.set_oidc_sitzung(_h7, "app-b", "haengt", "rt-b")
+r.check("Fund 7: mehrere Clients einer Sitzung — jede Zeile bleibt und wird nachgeprüft",
+        {z["client"] for z in a6r.store.get_oidc_sitzungen(_h7)} == {"*", "app-b"})
+
+# Fund 13: ein gesperrtes Konto fragt niemand beim Provider nach.
+a13, _, c13 = _oidc_mit_refresh("gesperrt13")
+_t13 = []
+a13.oidc.refresh = lambda rt, sub: (_t13.append(rt) or ("ok", {"sub": sub, "groups": ["admins"]}, {}))
+a13.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a13.store._exec("UPDATE users SET disabled = 2")
+c13.get("/auth/me")
+a13._oidc_ausgang.abwarten()
+r.check("Fund 13: für ein gesperrtes Konto wird nicht getauscht (F-17)", _t13 == [], str(_t13))
+
+# Fund 4: ein falscher Schlüssel bricht den Start auch ab, wenn es nur Refresh-Tokens gibt.
+_pfad4 = a5r.cfg.db_path
+a5r.store.db.close()
+_os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
+try:
+    _oidc({"sub": "x"}, db_path=_pfad4)
+    _f4 = False
+except ConfigError:
+    _f4 = True
+finally:
+    del _os.environ["TINYSESAM_SECRETS_KEY"]
+r.check("Fund 4: falscher Schlüssel + nur OIDC-Refresh-Tokens → der Start bricht ab", _f4)
+
+# Fund 9: das 8-h-Limit gilt für jede Sitzung ohne AUSDRÜCKLICHES „Angemeldet bleiben".
+a9, app9, c9 = _oidc_mit_refresh("leerlauf9")
+a9.store._exec("UPDATE session SET zuletzt = zuletzt - 9 * 3600")
+r.check("Fund 9: eine OIDC-Sitzung (dauerhaft, aber ohne Wahl) endet nach 8 h Inaktivität",
+        c9.get("/auth/me").status_code == 401)
+
+# Fund 10: mehrere Worker legen den Schlüssel gleichzeitig an — alle bekommen denselben.
+from tinysesam import geheimnis as _gh  # noqa: E402
+_db10 = str(Path(tempfile.mkdtemp()) / "race.db")
+_erg10, _fehler10 = [], []
+
+
+def _laden10():
+    try:
+        _erg10.append(_gh.schluessel_laden(_db10)[0])
+    except Exception as e:   # noqa: BLE001
+        _fehler10.append(repr(e))
+
+
+_faeden = [_th.Thread(target=_laden10) for _ in range(24)]
+for _f in _faeden:
+    _f.start()
+for _f in _faeden:
+    _f.join()
+r.check("Fund 10: 24 gleichzeitige Erststarts — kein Fehler, ein einziger Schlüssel",
+        not _fehler10 and len(set(_erg10)) == 1 and len(_erg10) == 24, f"{_fehler10[:2]} / {len(set(_erg10))}")
+
+# Fund 11: die Drossel des Sperr-Hinweises steht in der Datenbank — ein verdrängter Speicher-Schlüssel
+# (oder ein zweiter Worker) schickt keinen zweiten.
+a11, app11, post11 = _hinweis_app()
+a11.create_user("gedrosselt", password=PW, email="gedrosselt@example.com")
+a11._sperrhinweis("gedrosselt", "198.51.100.30", "lockout_user")
+a11._hinweis_ausgang.abwarten()
+a11.rl.allow = lambda *a, **k: True                             # wie nach der Verdrängung
+a11._sperrhinweis("gedrosselt", "198.51.100.31", "lockout_user")
+a11._hinweis_ausgang.abwarten()
+r.check("Fund 11: auch ohne Speicher-Drossel höchstens ein Hinweis je Sperrfenster", len(post11) == 1,
+        str(len(post11)))
+# (Mutationsproben: den Anspruch in `_oidc_nachpruefen` streichen → Fund 5 rot; den Tausch
+#  synchron statt über `_oidc_ausgang` → Fund 6 rot; die Audit-Drossel in `_senden` streichen →
+#  Fund 11 rot; `bleiben_gewaehlt` in `get_session` streichen → Fund 9 rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

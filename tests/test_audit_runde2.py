@@ -1922,6 +1922,16 @@ def _s1_schritte(a, fn) -> int:
 
 
 def _s1_messen(n: int) -> dict:
+    # Bei stehender Uhr: Das Löschen eines Kontos durchsucht das Audit-Log ab seiner Anlage
+    # (`ts > seit OR (ts = seit AND id >= …)`, über `idx_audit_ts`). Mit laufender Uhr las der
+    # Bereich je nach Lage der Sekundengrenze ein paar Zeilen aus derselben Sekunde mehr oder
+    # weniger — bis 120 Schritte, unabhängig von der Kontozahl, und der Test schwankte. Steht die
+    # Uhr, trägt jede Zeile dieselbe Sekunde, und gemessen wird nur noch, was die Kontozahl macht.
+    with _uhr_steht():
+        return _s1_messen_bei(n)
+
+
+def _s1_messen_bei(n: int) -> dict:
     a, app_ = _s1_app(n)
     ohne_topf = a.store._one("SELECT COUNT(*) AS n FROM users WHERE topf_name IS NULL "
                              "OR topf_mail IS NULL")["n"]

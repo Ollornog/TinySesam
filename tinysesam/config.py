@@ -151,9 +151,18 @@ class TinySesamConfig:
     smtp_timeout: int = 15            # Sekunden, bis ein hängender Mailserver aufgibt
     smtp_ca_file: str = ""            # eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer
     mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
+    #: Den Inhaber benachrichtigen, wenn sein Konto wegen Fehlversuchen gesperrt wird (ASVS 6.3.5,
+    #: B1-12). Wirkt nur mit konfiguriertem Versand und nur an eine BELEGTE Adresse; höchstens ein
+    #: Hinweis je Konto und Sperrfenster. Opt-out: False.
+    notify_login_failures: bool = True
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten
+    #: Schlüsseldatei für die Verschlüsselung der TOTP-Geheimnisse (H-14/H-15; 32 Byte, Base64).
+    #: Vorrang hat die Umgebungsvariable TINYSESAM_SECRETS_KEY; ohne beides legt TinySesam
+    #: `<db_path>.key` an (0600). Ohne Schlüssel sind alle TOTP-Einrichtungen verloren — getrennt
+    #: von der Datenbank sichern (docs/BETRIEB.md).
+    secrets_key_file: str = ""
     # ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie
     # gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette:
     #   login_chain=['password', 'totp']  (+ login_chain_strict=True)
@@ -207,6 +216,12 @@ class TinySesamConfig:
     session_ttl_hours: int = 24 * 7       # TTL bei „Angemeldet bleiben" (persistentes Cookie)
     session_ttl_transient_hours: int = 12 # TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen)
     remember_me_enabled: bool = True      # „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent)
+    #: Inaktivitäts-Timeout in Minuten (F-05, ASVS 7.3.1): Wer so lange keine Anfrage mit dieser
+    #: Sitzung gestellt hat, ist abgemeldet — zusätzlich zur absoluten Laufzeit oben. 0 = aus.
+    #: Vorgabe 8 h für Sitzungen OHNE „Angemeldet bleiben"; mit gilt die zweite Zahl (Vorgabe aus:
+    #: wer „Angemeldet bleiben" wählt, hat die lange Sitzung ausdrücklich gewollt).
+    session_idle_minutes: int = 8 * 60        # Inaktivität ohne „Angemeldet bleiben" (Minuten, 0 = aus)
+    session_idle_minutes_remember: int = 0    # Inaktivität MIT „Angemeldet bleiben" (Minuten, 0 = aus)
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten
@@ -356,6 +371,12 @@ class TinySesamConfig:
     #: Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden
     #: (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen.
     oidc_revalidate_minutes: int = 0
+    #: Widerruf folgt dem Provider (4a): Alle so viele Minuten tauscht TinySesam bei der nächsten
+    #: Anfrage das Refresh-Token der OIDC-Sitzung. Verweigert der Provider (gesperrt, gelöscht, der
+    #: Anwendung entzogen), endet die Sitzung; Gruppen und das vom Provider vergebene Admin-Flag
+    #: werden dabei neu bewertet. Ein nicht erreichbarer Provider meldet niemanden ab. Braucht einen
+    #: Provider, der Refresh-Tokens ausgibt (ggf. Scope `offline_access`). 0 = aus.
+    oidc_session_refresh_minutes: int = 15
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
     saml_enabled: bool = False        # SAML-2.0-Anmeldung gegen einen IdP — braucht [saml] und libxmlsec1

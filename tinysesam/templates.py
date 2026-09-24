@@ -625,7 +625,11 @@ def _revoke_js(auth, zurueck: str) -> str:
             f"if(r.status===403&&re){{{ziel}}}return r.ok}}"
             "async function offer(r){let j={};try{j=await r.clone().json()}catch(e){}"
             f"if(r.ok&&j.other_sessions>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
-            "await tsRevokeOthers()}</script>")
+            "await tsRevokeOthers();"
+            # Grenze d: mitten in der Kette — vermerken, eingelöst beim Abschluss.
+            f"if(r.ok&&j.other_sessions_after>0&&confirm({json.dumps(t('acc.sessions_offer'))}))"
+            "await fetch('/auth/sessions/revoke-after-login',{method:'POST',"
+            "headers:{'Content-Type':'application/json','X-CSRF-Token':tsCsrf()},body:'{}'})}</script>")
 
 
 # Zurück von der Reauth mit `?revoke_others=1`: noch einmal fragen, dann beenden. Nicht still

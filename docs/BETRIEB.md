@@ -57,7 +57,10 @@ sha256 (das **Handle**). Mit einem Handle lässt sich eine Sitzung benennen und 
 | Admin | Konto sperren | `POST <admin_path>/api/users/{id}/disable` — beendet alle Sitzungen, widerruft API-Keys und verwirft offene Einmal-Token (Anmelde-, Bestätigungs-, Reset-Link). Die Sperre trägt den Betreiber-Vermerk: Auch ein Bestätigungslink, der erst danach entsteht, hebt sie nicht auf — nur „Entsperren" im Panel (H-18). Sperren aus Fassungen bis 0.19.x hebt die Migration auf Schema 10 auf den Vermerk und verwirft dabei ihre offenen Token, sofern das Audit-Log die Sperre noch kennt — auch eine, die eine ältere Fassung nach einem Rückschritt auf eine Schema-10-Datei gesetzt hat: Jeder Start liest die Audit-Zeilen seit dem letzten Start nach (Setting `panel_sperren_bis`) und warnt im Log, wenn er fündig wird; eine ältere (schon weggeräumte Zeile, `audit_retention_days`) sperrt derselbe Aufruf mit `{"disabled": true}` erneut, ohne zu entsperren — das Panel bietet für ein gesperrtes Konto nur „Entsperren" an. |
 | Code | dasselbe ohne HTTP | `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)`; sperren mit dem Vermerk des Panels: `set_disabled(user_id, True, durch_betreiber=True)` — ohne den Vermerk ist es die Sperre einer ausstehenden Bestätigung, die der Bestätigungslink aufhebt. Sitzungen, Keys und Token räumt das nicht mit ab (`delete_user_sessions`, `revoke_user_api_keys`, `revoke_user_magic_tokens`) |
 
-Was eine Sitzung **von selbst** beendet: ihr Ablauf (`session_ttl_hours`, Vorgabe 7 Tage mit
+Was eine Sitzung **von selbst** beendet: Inaktivität (`session_idle_minutes`, Vorgabe 8 h — für
+jede Sitzung, bei der „Angemeldet bleiben" nicht **ausdrücklich** angehakt wurde, auch eine
+dauerhafte aus OIDC oder einem Anmelde-Link; `session_idle_minutes_remember`, Vorgabe aus), ein Nein des Identity Providers
+bei der Nachprüfung (4a, OIDC) und ihr Ablauf (`session_ttl_hours`, Vorgabe 7 Tage mit
 „Angemeldet bleiben", sonst `session_ttl_transient_hours`), die eigene Passwortänderung (alle
 anderen Sitzungen), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
 des Kontos. Eine Sitzung, deren Konto gesperrt ist, öffnet nichts mehr, auch wenn sie noch nicht
@@ -65,15 +68,50 @@ abgelaufen ist — und kein Anmeldeweg legt einem gesperrten Konto eine neue an 
 
 Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 
-- **Kein Inaktivitäts-Timeout.** Eine Sitzung lebt bis zu ihrem absoluten Ablauf, auch unbenutzt (F-05).
-- **Der Identity Provider.** Wird ein Nutzer dort gelöscht, gesperrt oder aus der Gruppe genommen,
-  bleibt seine TinySesam-Sitzung bis zum Ablauf gültig. Die Nachprüfung je Anwendung
+- **Mit „Angemeldet bleiben" kein Inaktivitäts-Timeout** (Vorgabe von
+  `session_idle_minutes_remember`): Die Sitzung lebt bis zu ihrem absoluten Ablauf, auch unbenutzt.
+- **Der Identity Provider ohne Refresh-Token.** Gibt er keine aus, bleibt die Sitzung nach einer
+  Sperre dort bis zum Ablauf gültig (4a greift nicht). Die Nachprüfung je Anwendung
   (`oidc_revalidate_minutes`, nur mit mehreren Clients) begrenzt das für Forward-Auth; sonst ist
   der Weg: im Panel sperren oder die Sitzungen des Kontos beenden.
 - **API-Keys** hängen an keiner Sitzung: „andere beenden" lässt sie stehen, „alles beenden", die
-  Sperre und der Admin-Reset widerrufen sie.
+  Sperre und der Admin-Reset widerrufen sie — **ein Nein des Identity Providers (4a) nicht**.
 - **Step-up** ist eine Frist an der Sitzung (`stepup_max_age_sec`, Vorgabe 15 min), keine eigene
   Sitzung: Sie verfällt, die Sitzung bleibt.
+
+## Owner
+
+Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens
+einen; die Rolle lässt sich weitergeben, mehrere können Owner sein. Nur ein Owner vergibt sie, und
+nur ein Owner ändert ein Owner-Konto (Passwort, API-Keys, Passkeys, Sitzungen, Sperre, Rollen) — sonst setzte
+ein Admin dem Owner ein Passwort und wäre selbst einer.
+
+| Was | Wie |
+|---|---|
+| Owner vergeben / abgeben | Panel „Zum Owner machen" / „Owner abgeben" bzw. `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — nur als Owner; abgeben nur, wenn ein anderer bleibt |
+| Code | `auth.set_owner(uid, True|False)` (`StateError` beim letzten Owner, `ConfigError` bei Service-/gesperrtem Konto) |
+| Notweg (kein Owner kommt mehr heran) | `tinysesam owner --db <datei> <benutzer>` — wer die Datenbank hat, betreibt die Instanz ohnehin |
+| Erster Owner | der erste Admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); im Bestand der älteste **aktive**, von Hand gesetzte Admin — kein Service-Konto, nicht gesperrt (`owner_grant` im Audit-Log). Gibt es keinen (nur Admins vom Identity Provider oder gesperrte), bleibt die Instanz ohne Owner und das Log nennt den Notweg |
+
+Ein Owner ist immer ein Admin „von Hand" (`is_admin=1`): Kein Identity Provider nimmt ihm das Recht (H-5).
+
+## Schlüssel der TOTP-Geheimnisse
+
+TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt in der Datenbank (H-14/H-15, Pflicht). Der
+Schlüssel (32 Byte, Base64) kommt aus `TINYSESAM_SECRETS_KEY`, sonst aus `secrets_key_file`, sonst
+aus `<db_path>.key` (beim ersten Start angelegt, 0600, mit Warnung im Log; atomar, auch wenn
+mehrere Worker gleichzeitig zum ersten Mal starten).
+
+- **Getrennt sichern.** Ohne den Schlüssel sind alle TOTP-Einrichtungen verloren; die Datenbank
+  allein nützt dafür nichts — und genau das ist der Zweck. `tinysesam backup` erinnert daran.
+- **Neben der Datenbank** schützt er gegen eine Datenbankdatei, die allein abfliesst, nicht gegen
+  eine Sicherung des ganzen Verzeichnisses. Für echte Trennung über die Umgebung oder eine Datei an
+  einem anderen Ort (Docker-Secret).
+- **Falscher Schlüssel** → der Start bricht ab (`ConfigError`), statt jede TOTP-Anmeldung still
+  scheitern zu lassen — geprüft an TOTP-Geheimnissen und Refresh-Tokens, also auch auf einer
+  Instanz ohne TOTP. Gelöschtes überschreibt SQLite (`secure_delete`), damit ein ersetzter
+  Klartext nicht in freien Seiten der Datei bleibt. Einen Schlüsselwechsel (Rotation) gibt es noch nicht.
+- Ebenfalls mit diesem Schlüssel: die Refresh-Tokens der OIDC-Sitzungen (unten).
 
 ## Föderierte Identitäten verwalten
 
@@ -101,8 +139,17 @@ Seite gehört und sich nicht ändert:
 - **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen und
   entzogen, wenn sie beim Provider wegfallen — gemappte Rollen seit jeher, seit H-5 auch das
   Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
-  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt. Wirksam wird der Entzug bei der
-  nächsten Anmeldung über den Provider, nicht sofort (offener Punkt „Widerruf folgt dem IdP").
+  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin.
+- **Widerruf folgt dem Provider (4a).** Eine OIDC-Sitzung trägt ihr Refresh-Token (verschlüsselt);
+  alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
+  Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt
+  ab der Anfrage danach), und von vielen parallelen Anfragen tauscht genau eine. Gesperrte Konten
+  fragt niemand nach. Verweigert der Provider, endet die Sitzung (`oidc_widerruf`) — ihre API-Keys
+  nicht; frische Gruppen werden neu bewertet (ein Gruppen-
+  Claim, der ganz fehlt, ändert nichts). Nicht erreichbar → Sitzung bleibt, neuer Versuch nach einer
+  Minute. **Voraussetzung:** Der Provider gibt Refresh-Tokens aus (bei manchen nur mit Scope
+  `offline_access`, dann `oidc_scopes` ergänzen). Gibt er keine, bleibt es beim Stand davor: Die
+  Sitzung läuft bis `session_ttl_hours`.
 - **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
   Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
   räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
@@ -146,13 +193,13 @@ tut es.
 
 ## Was für ASVS Level 3 fehlt
 
-TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Drei
-davon sind offen oder nur teilweise erfüllt. 6.3.7 erfüllt der Hook `on_security_event`, sobald die
-App ihn setzt — mit einer benannten Lücke beim Widerruf von API-Keys:
+TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Seit
+2026-09-24 sind drei davon erfüllt (6.3.5, 6.3.7, 6.3.8 mit Bestätigung), 6.3.6 bleibt eine
+Entscheidung des Betreibers:
 
 | ASVS | Anforderung | Stand |
 |---|---|---|
-| 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | fehlt — Fehlversuche stehen im Audit- und Sicherheits-Log, der Nutzer erfährt nichts. `on_security_event` meldet Faktorwechsel, keine Fehlversuche |
+| 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | erfüllt, sobald Versand konfiguriert ist: Greift eine Konto-Sperre (Fenster oder Serie), geht ein Hinweis an die belegte Adresse — höchstens einer je Sperrfenster, ohne Link (`notify_login_failures`, Vorgabe an). Nachgeschlagen und verschickt im Hintergrund, die Antwort verrät weder Existenz noch Laufzeit |
 | 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | nicht erfüllt, sobald `magiclink_enabled` ohne erzwungene Kette läuft (s. Tabelle oben); abschaltbar |
-| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift. API-Keys meldet er nur bei der Anlage (`api_key_created`). **Offen:** Der Widerruf eines Keys löst kein Ereignis aus, weder durch den Inhaber noch durch einen Admin im Panel noch gesammelt beim Reset, bei der Sperre oder bei `POST /auth/sessions/revoke` mit `scope=all`. Er steht nur im Audit-Log (`apikey_revoke` bzw. `api_keys_revoked=` in der Zeile des Vorgangs). Nachrangig, weil ein Widerruf Zugang wegnimmt statt welchen zu schaffen. Die Mail verschickt der Hook, TinySesam selbst verschickt nichts (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
-| 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | teilweise — gleiche Antwort und Rechenzeit am Login (`dummy_verify`), Registrierung verrät Kennungen noch (R4-03) |
+| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift, und seit 2026-09-24 auch beim Widerruf von API-Keys (`api_key_revoked`, gesammelt `api_keys_revoked`). Die Mail verschickt der Hook (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
+| 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | erfüllt mit `signup_verify_email=True`: gleiche Antwort und Rechenzeit am Login (`dummy_verify`) und an der Registrierung (dieselbe Arbeit in beiden Zweigen, 2026-09-24). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig (sofortige Anmeldung vs. 409) — die Konfigurationsprüfung warnt |

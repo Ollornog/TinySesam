@@ -41,6 +41,15 @@ def build_admin_router(auth) -> APIRouter:
             auth.require_csrf(request, request.headers.get("x-csrf-token"))
         return auth._enforce(request, admin=True, mfa=cfg.admin_require_mfa)
 
+    def owner_schutz(me, uid: int):
+        """Ein Owner-Konto ändert nur ein Owner (Owner-Modell). Sonst setzte ein Admin dem Owner ein
+        neues Passwort und wäre selbst Owner — der Schutz vor dem Löschen wäre dann eine Tür mit
+        offenem Fenster daneben."""
+        ziel = auth.store.get_user(uid)
+        if ziel and ziel["is_owner"] and not (me and me.get("is_owner")):
+            raise HTTPException(403, auth.t("api.owner_only"))
+        return ziel
+
     def protokoll(request: Request, ereignis: str, detail=None):
         """Eine Admin-Aktion protokollieren — mit Akteur und IP.
 
@@ -77,8 +86,15 @@ def build_admin_router(auth) -> APIRouter:
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
-                "email": u["email"], "is_admin": bool(u["is_admin"]), "is_service": bool(u["is_service"]),
-                "roles": json.loads(u["roles"] or "[]"), "disabled": bool(u["disabled"]), "created_at": u["created_at"]}
+                "email": u["email"], "is_admin": bool(u["is_admin"]), "is_owner": bool(u["is_owner"]),
+                "is_service": bool(u["is_service"]),
+                "roles": json.loads(u["roles"] or "[]"), "disabled": bool(u["disabled"]),
+                # Warum gesperrt (Grenze b): 1 = die Bestätigung der Adresse steht aus (hebt der
+                # Bestätigungslink auf), 2 = der Betreiber (hebt nur er auf). Bisher sah beides im
+                # Panel gleich aus — und wer eine Betreiber-Sperre für eine offene Bestätigung
+                # hielt, wartete auf einen Link, der nie etwas freigibt.
+                "disabled_by": {1: "confirmation", 2: "operator"}.get(int(u["disabled"] or 0)),
+                "created_at": u["created_at"]}
 
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
@@ -141,6 +157,9 @@ def build_admin_router(auth) -> APIRouter:
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_lock"))
+        ziel = owner_schutz(me, uid)
+        if disabled and ziel and ziel["is_owner"]:
+            raise HTTPException(400, auth.t("api.owner_protected"))
         # Mit Betreiber-Vermerk: Kein Bestätigungslink hebt diese Sperre auf, auch einer nicht,
         # der erst nach ihr entsteht (H-18, zweite Angriffsrunde) — s. `Store.set_disabled`.
         auth.store.set_disabled(uid, disabled, durch_betreiber=True)
@@ -150,7 +169,7 @@ def build_admin_router(auth) -> APIRouter:
             # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
             # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
             # niemand mehr weiss.
-            keys = auth.store.revoke_user_api_keys(uid)
+            keys = auth._keys_widerrufen(uid, "sperre")
             # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
             # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
             auth.store.revoke_user_magic_tokens(uid)
@@ -160,7 +179,7 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/password")
     async def user_password(request: Request, uid: int):
-        guard(request)
+        owner_schutz(guard(request), uid)
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
@@ -179,20 +198,22 @@ def build_admin_router(auth) -> APIRouter:
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
-        keys = auth.store.revoke_user_api_keys(uid)
+        keys = auth._keys_widerrufen(uid, "admin_passwort")
         protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
         return {"ok": True, "api_keys_revoked": keys}
 
     @ar.post("/api/users/{uid}/roles")
     async def user_roles(request: Request, uid: int):
-        guard(request)
+        me = guard(request)
         b = await auth.json_body(request)
-        ziel = auth.store.get_user(uid)
+        ziel = owner_schutz(me, uid)
         if ziel is None:
             raise HTTPException(404)
         rollen = rollen_aus(b)          # geprüft VOR jedem Schreibzugriff, wie R6-1 darunter
         if "is_admin" in b:
             neu = bool(b["is_admin"])
+            if not neu and ziel["is_owner"]:
+                raise HTTPException(400, auth.t("api.owner_protected"))
             if neu and ziel["is_service"]:
                 raise HTTPException(400, auth.t("api.service_admin"))      # R6-2, s. user_create
             # Den letzten Admin nicht entmachten (R6-1). Ohne Admin öffnet sich der
@@ -239,7 +260,7 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/passkeys/{cid}/delete")
     def user_passkey_delete(request: Request, uid: int, cid: int):
-        guard(request)
+        owner_schutz(guard(request), uid)
         # Über denselben Weg wie die Selbstbedienung (Integrationsfund 3): Löschen, Audit-Zeile
         # unter dem Inhaber (der Admin als akteur=, so findet `tinysesam audit --user <inhaber>`
         # den Widerruf) und `passkey_removed` an `on_security_event` — der Inhaber erfährt,
@@ -248,11 +269,30 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True}
 
+    @ar.post("/api/users/{uid}/owner")
+    async def user_owner(request: Request, uid: int):
+        """Owner-Rolle vergeben oder abgeben — nur ein Owner darf das."""
+        me = guard(request)
+        if not me.get("is_owner"):
+            raise HTTPException(403, auth.t("api.owner_only"))
+        b = await auth.json_body(request)
+        try:
+            if not auth.set_owner(uid, bool(b.get("owner", True))):
+                raise HTTPException(404, auth.t("api.not_found"))
+        except StateError:
+            raise HTTPException(400, auth.t("api.last_owner"))
+        except ConfigError:
+            raise HTTPException(400, auth.t("api.owner_inactive"))
+        return {"ok": True}
+
     @ar.post("/api/users/{uid}/delete")
     def user_delete(request: Request, uid: int):
         me = guard(request)
         if uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_delete"))
+        ziel = owner_schutz(me, uid)
+        if ziel and ziel["is_owner"]:
+            raise HTTPException(409, auth.t("api.owner_protected"))
         try:
             if not auth.delete_user(uid):
                 raise HTTPException(404, auth.t("api.not_found"))
@@ -269,6 +309,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
         wer = guard(request)
+        owner_schutz(wer, uid)
         # Dieselbe Regel wie an der Selbstbedienungs-Route (`_nur_mit_sitzung`, R6-6):
         # Schlüssel gibt ein Mensch aus, kein Schlüssel. Hier fehlte sie — der Panel-Pfad war
         # der Umweg, auf dem ein Key einen neuen Key mintet, und zwar für ein BELIEBIGES Konto.
@@ -289,7 +330,10 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
-        guard(request)
+        me = guard(request)
+        besitzer = auth.store.api_key_owner(kid)
+        if besitzer is not None:
+            owner_schutz(me, besitzer)     # die Keys eines Owners widerruft nur ein Owner
         # Die Audit-Zeile schreibt `revoke_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
@@ -311,11 +355,17 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/sessions/revoke")
     async def session_revoke(request: Request):
-        guard(request)
+        me = guard(request)
         b = await auth.json_body(request)
+        # Die Sitzungen eines Owners beendet nur ein Owner (Owner-Modell) — sonst meldete ein Admin
+        # den Owner beliebig oft ab.
         if b.get("token"):
+            zeile = auth.store._one("SELECT user_id FROM session WHERE token_hash=?", (str(b["token"]),))
+            if zeile is not None:
+                owner_schutz(me, int(zeile["user_id"]))
             auth.store.delete_session_by_handle(b["token"])
         elif b.get("user_id"):
+            owner_schutz(me, int(b["user_id"]))
             auth.store.delete_user_sessions(int(b["user_id"]))
         protokoll(request, "session_revoke", f"user_id={b.get('user_id')}" if b.get("user_id") else "eine Sitzung")
         return {"ok": True}
@@ -593,21 +643,23 @@ async function users(){
     <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
-      <td>${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
+      <td>${u.is_owner?'<span class="badge grn">owner</span> ':''}${u.is_admin?'<span class="badge grn">admin</span> ':''}${u.is_service?'<span class="badge svc">service</span>':'<span class=badge>user</span>'}</td>
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
-      <td>${u.disabled?`<span class="badge red">${esc(L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
+      <td>${u.disabled?`<span class="badge red">${esc(u.disabled_by==="confirmation"?L.disabled_confirmation:L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
         <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
         <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
         <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
         <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
         <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
+        <button class=sec ${on("own",u.id,!u.is_owner)}>${esc(u.is_owner?L["btn.owner_off"]:L["btn.owner_on"])}</button>
         <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
   if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
   const r=await p("/api/users",b);if(!abgewiesen(r))users()}
+async function own(id,o){if(!confirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;abgewiesen(await p(`/api/users/${id}/owner`,{owner:o}));users()}
 async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;abgewiesen(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
 async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!abgewiesen(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
 async function roles(id,cur,isadmin){

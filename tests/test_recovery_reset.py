@@ -141,7 +141,9 @@ a_s.record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff 
 assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
     "Vorbedingung: das Konto ist gesperrt"
 c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
-tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", post_s[0]).group(1)
+# Die Reset-Mail — nicht die erste: Seit ASVS 6.3.5 geht der Sperr-Hinweis vorher hinaus.
+a_s._hinweis_ausgang.abwarten()
+tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", next(m for m in post_s if "/auth/reset?token=" in m)).group(1)
 assert c_s.post("/auth/reset", data={"token": tok_s, "password": "neues-geheimnis-2"},
                 follow_redirects=False).status_code == 303, "der Reset selbst hängt an der Sperre"
 r = c_s.post("/auth/login", data={"username": "gesperrt", "password": "neues-geheimnis-2"},
@@ -230,7 +232,8 @@ assert auth_r.verify_api_key(key_r)[0] is None, "der API-Key überlebt den Reset
 assert auth_r.store.count_active_api_keys(uid_r) == 0
 assert any(z["event"] == "password_reset" and "api_keys_revoked=1" in (z["detail"] or "")
            for z in auth_r.store.recent_audit(20))
-assert ereig_r[-1][0] == "password_changed"
+# Seit Grenze e meldet der Reset auch den gesammelten Key-Widerruf — nach dem Passwortwechsel.
+assert [e for e, _ in ereig_r[-2:]] == ["password_changed", "api_keys_revoked"], ereig_r[-2:]
 ok("R4-14: Passwort-Reset per Mail widerruft die API-Keys (und prüft die Passwortregel)")
 
 # A-8: Ein toter Link geht der Passwortregel vor — sonst hiess es „zu leicht", und erst der

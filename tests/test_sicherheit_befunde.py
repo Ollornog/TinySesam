@@ -2656,6 +2656,9 @@ import ast as _ast  # noqa: E402
 # `_token_mail` ist nur die Hülle um `send_mail` (B6-12: Token verfällt, wenn der Versand
 # scheitert) — den Text samt Link bauen ihre Aufrufer, und die stehen in `_wege`.
 _GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url", "_token_mail"}
+# Der Sperr-Hinweis (ASVS 6.3.5, `_sperrhinweis` mit dem inneren `_senden`) trägt KEINEN Link — es
+# gibt keine Basis zu messen. Dass das so bleibt, prüft tests/test_t13_entscheide.py (kein „://").
+_GEMESSEN |= {"_sperrhinweis", "_senden"}
 _absender = set()
 for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
     _baum = _ast.parse(_datei.read_text(encoding="utf-8"))

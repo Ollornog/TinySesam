@@ -547,7 +547,10 @@ key6 = auth6.create_api_key(uid6, "bot")["key"]
 ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request", "/auth/reauth",
                 "/auth/forgot", "/auth/reset", "/auth/register", "/auth/resource/{name}",
                 "/auth/saml/acs", "/auth/passkey/login/begin", "/auth/passkey/login/finish",
-                "/auth/logout"}   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
+                "/auth/logout",   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
+                # Grenze d: nur für eine HALBE Anmeldung, vermerkt nur — beendet wird erst, wenn der
+                # letzte Faktor bestätigt ist; eine volle Sitzung nimmt /auth/sessions/revoke.
+                "/auth/sessions/revoke-after-login"}
 #: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
           "/auth/passkey/delete", "/auth/sessions/revoke"}   # sessions/revoke: F-09
