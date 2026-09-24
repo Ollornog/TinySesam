@@ -760,6 +760,10 @@ class TinySesam:
         if not u or u["disabled"]:
             self._key_protokoll(row, "konto_gesperrt")
             return None, None
+        ruht = self._key_ruht(u)
+        if ruht:
+            self._key_protokoll(row, ruht)
+            return None, None
         self.store.touch_api_key(row["id"])
         self._key_protokoll(row, None)
         try:
@@ -771,6 +775,47 @@ class TinySesam:
         except Exception:
             kr = []
         return u, (kr or None)
+
+    def _key_ruht(self, u) -> Optional[str]:
+        """Ruhen die API-Keys dieses Kontos, weil der Identity Provider es nicht (mehr) trägt?
+        Rückgabe: der Grund (`idp_nein`, `idp_unbestaetigt`) oder None (Fund 8).
+
+        Nur für Konten mit OIDC-Bindung, und nur, solange OIDC eingerichtet ist — ohne Provider
+        gäbe es niemanden, der bestätigen könnte, und jeder Key stünde nach der Frist still.
+
+        * **Nein des Providers** (`idp_bestaetigt_at = 0`, gesetzt von der Nachprüfung 4a): Die
+          Sitzung endete dort schon; ohne diese Prüfung lief ein Automaten-Key weiter, bis zu
+          `apikey_default_days` lang — derselbe Fehler, den PocketID bis 2.5.0 selbst hatte
+          (CVE-2026-43983: gesperrtes Konto behält den Zugriff über ein altes Token).
+        * **Keine Bestätigung binnen `oidc_apikey_confirm_days`**: Wer nur noch per Skript
+          arbeitet, hat keine Sitzung, die 4a nachprüft. So fällt ein beim Provider gesperrtes
+          Konto spätestens nach der Frist auf.
+
+        Gelöscht wird nichts: `invalid_grant` unterscheidet nicht zwischen „gesperrt" und „nur
+        abgelaufen" (RFC 6749 5.2) — die nächste Anmeldung über den Provider weckt die Keys."""
+        if self.oidc is None:
+            return None
+        try:
+            stand = u["idp_bestaetigt_at"]
+        except (IndexError, KeyError):
+            return None                       # Zeile ohne die Spalte: nur vor `_migrate`
+        if not self.store.ist_oidc_konto(u["id"]):
+            return None
+        if stand == 0:
+            return "idp_nein"
+        frist = int(self.cfg.oidc_apikey_confirm_days or 0) * 86400
+        if frist and (stand is None or _jetzt() - int(stand) > frist):
+            return "idp_unbestaetigt"
+        return None
+
+    def _idp_nein(self, user_id, name, ip, client, grund) -> None:
+        """Der Provider hat Nein gesagt (4a): Sitzung ist schon beendet — jetzt ruhen auch die
+        Keys (Fund 8). Eine Zeile im Audit-Log nennt, wie viele es betrifft."""
+        self.store.idp_verweigert(user_id)
+        aktiv = [k for k in self.store.list_api_keys(user_id) if not k["revoked"]]
+        if aktiv:
+            self.store.audit_log("api_keys_ruhen", name, ip,
+                                 f"client={client} grund={grund} anzahl={len(aktiv)}")
 
     #: Wie lange dieselbe Key-Nutzung (Key, IP, Ausgang) nicht erneut ins Audit-Log geht (B5-05).
     #: Ein Key ist für Automatiken da, die ihn im Sekundentakt vorlegen; eine Zeile je Anfrage
@@ -1543,8 +1588,12 @@ class TinySesam:
                 # die Vorgabe `True`, wäre der Riegel oben nur für DIESEN Login zu — der
                 # nächste Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey),
                 # reist ohne Beleg an, liest den Vermerk und befördert doch (B-umgehung-1 aus T-13).
+                # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er dem Verzeichnis
+                # traut (`ldap_email_trusted`, Vorgabe ja): dann mit Beleg, sonst gar nicht (H-3).
+                vertraut = bool(self.cfg.ldap_email_trusted)
                 return self.create_user(username, display_name=info.get("name") or username,
-                                        email=info.get("email"), email_verified=False)
+                                        email=info.get("email") if vertraut else None,
+                                        email_verified=vertraut and bool(info.get("email")))
             except ConfigError:
                 # Name oder Adresse gehören lokal schon jemandem (Fund R4-12). Fail-closed:
                 # lieber keine Anmeldung als ein Konto, das eine fremde Kennung besetzt.
@@ -1556,6 +1605,7 @@ class TinySesam:
         u = self._fremde_identitaet_aufloesen("ldap", info.get("id") or "", username, _anlegen)
         if not u or u["disabled"]:
             return None
+        self._adresse_aus_quelle_belegen(u, info.get("email"), self.cfg.ldap_email_trusted)
         # memberOf liefert ganze DNs → Vergleich nach Bestandteilen (F-19). Bis 0.20.0 stand
         # hier `substring=True` fest verdrahtet, und `group_match` war für LDAP wirkungslos.
         self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
@@ -1581,6 +1631,19 @@ class TinySesam:
         if not username:
             self.audit("saml_denied", None, ip, "grund=kein_name")
             return None
+        vertraut = bool(cfg.saml_email_trusted)
+        mail = first(attrs, cfg.saml_attr_email)
+        # Die stabile Kennung ist die `NameID` — oder ein Attribut, wenn der IdP transiente
+        # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
+        kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
+        # Ohne Vertrauen in die Adressen dieses IdP (Vorgabe) wie H-3 bei OIDC: Ein Name mit `@`
+        # (NameID im Format emailAddress, ein UPN) ist dieselbe unbelegte Adresse unter anderem
+        # Namen — als Kontoname und `Remote-User` besetzte er die Kennung der echten Inhaberin.
+        # Gilt nur für NEUE Konten; ein gebundenes behält seinen Namen. Geprüft wird gefaltet
+        # (`＠` U+FF20 wird zu `@`, R2-1).
+        neu_name = username
+        if not vertraut and "@" in norm_kennung(username):
+            neu_name = "saml-" + hashlib.sha256((kennung or username).encode()).hexdigest()[:8]
         if cfg.saml_allowed_groups:
             groups = as_list(attrs, cfg.saml_attr_groups)
             if not (set(cfg.saml_allowed_groups) & set(str(g) for g in groups)):
@@ -1596,24 +1659,39 @@ class TinySesam:
                 # Beleg, also wird sie auch ohne Beleg abgelegt. Sonst trüge der Vermerk am
                 # Konto einen Freifahrtschein für jeden späteren Anmeldeweg, der selbst
                 # nichts belegt.
-                return self.create_user(username, display_name=first(attrs, cfg.saml_attr_name) or username,
-                                        email=first(attrs, cfg.saml_attr_email), email_verified=False)
+                name = neu_name
+                i = 1
+                while name != username and self.kennung_vergeben(name):
+                    i += 1
+                    name = f"{neu_name}{i}"
+                anzeige = first(attrs, cfg.saml_attr_name) or name
+                return self.create_user(name, display_name=anzeige,
+                                        email=mail if vertraut else None,
+                                        email_verified=vertraut and bool(mail))
             except ConfigError:
                 # Wie bei LDAP (Fund R4-12): eine schon vergebene Kennung legt kein Konto an.
                 self.audit("saml_ident_taken", username)
                 return None
 
-        # Die stabile Kennung ist die `NameID` — oder ein Attribut, wenn der IdP transiente
-        # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
-        kennung = (first(attrs, cfg.saml_attr_id) if cfg.saml_attr_id else nameid) or ""
         u = self._fremde_identitaet_aufloesen("saml", kennung, username, _anlegen)
         if u and u["disabled"]:
             self.audit("saml_denied", str(u["username"]), ip, "grund=konto_gesperrt")
             return None
         if not u:
             return None     # Grund steht schon im Audit-Log (Anlegen/Kennung)
+        self._adresse_aus_quelle_belegen(u, mail, vertraut)
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
+
+    def _adresse_aus_quelle_belegen(self, u, mail, vertraut) -> None:
+        """Vertraut der Betreiber den Adressen einer Quelle (LDAP/SAML), belegt ein Login deren
+        Adresse am Konto — aber nur DIESELBE Adresse (über eine andere sagt die Quelle nichts;
+        dieselbe Regel wie beim OIDC-Claim) und nur nach oben: Ohne Vertrauen ist die Quelle
+        stumm, und Schweigen nimmt keinem Konto den Beleg, den der Betreiber selbst gesetzt hat."""
+        if not vertraut or not mail or not u:
+            return
+        if str(u["email"] or "").strip().lower() == str(mail).strip().lower() and not u["email_verified"]:
+            self.store.set_email_verified(u["id"], True)
 
     # ---------- Passkeys verwalten ----------
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
@@ -2194,15 +2272,40 @@ class TinySesam:
         """Erfüllt die Faktorliste die AKTIVE globale Policy (Kette oder klassisch)?"""
         req, strict = self._global_chain()
         if req is not None:
-            return self._chain_satisfied(req, strict, done)
-        return self._default_satisfied(user_id, done)
+            ok = self._chain_satisfied(req, strict, done)
+        else:
+            ok = self._default_satisfied(user_id, done)
+        return ok and self._link_braucht(user_id, done) is None
 
     def next_login_step(self, user_id, done):
         """Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig."""
         req, strict = self._global_chain()
         if req is not None:
-            return None if self._chain_satisfied(req, strict, done) else self._next_factor(req, strict, done)
-        return None if self._default_satisfied(user_id, done) else "totp"
+            if not self._chain_satisfied(req, strict, done):
+                return self._next_factor(req, strict, done)
+        elif not self._default_satisfied(user_id, done):
+            return "totp"
+        return self._link_braucht(user_id, done)
+
+    def _link_braucht(self, user_id, done) -> Optional[str]:
+        """Welcher zweite Faktor fehlt noch, weil die Anmeldung über den Anmelde-Link lief?
+        None, wenn keiner (ASVS 6.3.6, PO-Entscheid 2026-09-24, `magiclink_require_second_factor`).
+
+        Der Link beweist nur das Postfach. Hat das Konto einen zweiten Faktor, verlangt ihn die
+        Anmeldung — sonst wäre das Postfach allein der Schlüssel zu einem Konto, das sich mit
+        einem Authenticator geschützt hat. Die klassische Policy verlangte ein eingerichtetes TOTP
+        schon immer; offen waren Konten nur mit Passkey und Ketten, in denen der Link allein
+        genügt (`["magic"]`). Konten ohne zweiten Faktor meldet der Link weiter allein an (der
+        Preis von C gegenüber D, bewusst so entschieden)."""
+        if not self.cfg.magiclink_require_second_factor or "magic" not in done:
+            return None
+        if "totp" in done or "passkey" in done:
+            return None
+        if self.store.has_confirmed_totp(user_id):
+            return "totp"
+        if self.store.list_webauthn(user_id):
+            return "passkey"
+        return None
 
     def factor_entry(self, step, nxt="/") -> str:
         """Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran."""
@@ -3045,8 +3148,9 @@ class TinySesam:
             return
         if status == "abgelehnt":
             self.store.delete_session_by_handle(handle)
-            self.store.audit_log("oidc_widerruf", name, s["ip"],
-                                 f"client={client} grund={security.fuer_log(str(tok.get('error', '?')))}")
+            fehler = security.fuer_log(str(tok.get('error', '?')))
+            self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund={fehler}")
+            self._idp_nein(s["user_id"], name, s["ip"], client, fehler)
             return
         self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"))
         eintrag = self.oidc_clients.eintrag(client)
@@ -3057,8 +3161,10 @@ class TinySesam:
             if erlaubte and not (set(erlaubte) & set(map(str, gruppen))):
                 self.store.delete_session_by_handle(handle)
                 self.store.audit_log("oidc_widerruf", name, s["ip"], f"client={client} grund=gruppe")
+                self._idp_nein(s["user_id"], name, s["ip"], client, "gruppe")
                 return
             self.apply_idp_groups(s["user_id"], gruppen, eintrag["group_role_map"])
+        self.store.idp_bestaetigen(s["user_id"])
 
     def current_user(self, request) -> Optional[dict]:
         """Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.

@@ -606,6 +606,8 @@ ZAHLENGRENZEN = {
     # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
     "oidc_revalidate_minutes": (0, 30 * 24 * 60),
     "oidc_session_refresh_minutes": (0, 24 * 60),
+    # 0 = keine Frist. Zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
     "session_idle_minutes_remember": (0, 365 * 24 * 60),
 }

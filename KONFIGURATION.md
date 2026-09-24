@@ -108,6 +108,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `magiclink_enabled` | `bool` | `False` | Anmeldung per Einmal-Link — braucht einen Mailer |
 | `magiclink_ttl_min` | `int` | `15` | Gültigkeit eines Einmal-Links |
+| `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
 
 ## E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar)
 
@@ -204,6 +205,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `ldap_user_filter` | `str` | `"(uid={username})"` | Suchfilter für das Konto; `{username}` wird eingesetzt |
 | `ldap_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung des Verzeichniseintrags (F-11). Leer = der Reihe nach `entryUUID` (OpenLDAP, lldap) und `objectGUID` (Active Directory) versuchen. Daran hängt die Zuordnung zum lokalen Konto — ein Benutzername taugt dafür nicht: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben Namen neu anlegt, bekäme sonst dasselbe lokale Konto mitsamt seinen Rollen. |
 | `ldap_attr_email` | `str` | `"mail"` | LDAP-Attribut mit der E-Mail-Adresse |
+| `ldap_email_trusted` | `bool` | `True` | Adressen aus dem Verzeichnis vertrauen (PO-Entscheid 2026-09-24)? LDAP liefert keinen Beleg wie OIDC `email_verified`. `True` (Vorgabe, das Verzeichnis ist meist das eigene): Die Adresse gilt als belegt — sie geht ins Konto, als `Remote-Email` an die App und trägt Rechte (Erst-Admin über `admin_identifiers`). `False`: Sie wird nicht verwendet (wie H-3 bei OIDC). Auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen. |
 | `ldap_attr_name` | `str` | `"cn"` | LDAP-Attribut mit dem Anzeigenamen |
 | `ldap_group_attr` | `str` | `"memberOf"` | Attribut mit Gruppen-Zugehörigkeit |
 | `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring) |
@@ -231,6 +233,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `oidc_clients` | `dict` | `dict` | Geschützter Host → eigener OIDC-Client beim selben Provider. Leer = eine Anwendung, der Einzel-Client oben gilt für alles (Verhalten bis 0.18.0, unverändert). Warum überhaupt: Wer in welche Anwendung darf, entscheidet der **Provider** — bei PocketID über die Gruppenfreigabe je OIDC-Client. Diese Freigabe hängt am Client, nicht am Benutzer. Mit einem einzigen Client gibt es deshalb nur eine Antwort für alle Anwendungen: Wer bei irgendeiner drin ist, ist bei allen drin. Die bisherige Abhilfe war eine eigene TinySesam-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs für dieselben Menschen. Aufbau je Eintrag: ``{"app.example.com": {"client_id": "...", "client_secret": "...", "scopes": "openid profile email", "allowed_groups": [...], "group_role_map": {...}}}``. Fehlt ein optionaler Schlüssel, gilt der Wert des Einzel-Clients. Der **Issuer ist für alle Clients derselbe** — mehrere Provider in einer Instanz sind nicht vorgesehen, und die Konfigurationsprüfung sagt das auch. |
 | `oidc_revalidate_minutes` | `int` | `0` | Nach wie vielen Minuten eine erteilte Freigabe beim Provider nachgeprüft wird. 0 = nie (Verhalten bis 0.18.0). Der Provider entscheidet über die Freigabe, also muss ein Entzug dort auch ankommen: Ohne Nachprüfung gilt sie bis zum Ablauf der Sitzung — in der Vorgabe sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab, ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt. ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen. |
 | `oidc_session_refresh_minutes` | `int` | `15` | Widerruf folgt dem Provider (4a): Alle so viele Minuten tauscht TinySesam bei der nächsten Anfrage das Refresh-Token der OIDC-Sitzung. Verweigert der Provider (gesperrt, gelöscht, der Anwendung entzogen), endet die Sitzung; Gruppen und das vom Provider vergebene Admin-Flag werden dabei neu bewertet. Ein nicht erreichbarer Provider meldet niemanden ab. Braucht einen Provider, der Refresh-Tokens ausgibt (ggf. Scope `offline_access`). 0 = aus. |
+| `oidc_apikey_confirm_days` | `int` | `30` | API-Keys eines OIDC-Kontos folgen dem Provider (Fund 8). Sagt er bei der Nachprüfung (4a) Nein, ruhen die Keys des Kontos sofort — fest, nicht abschaltbar. Zusätzlich gelten sie nur, solange der Provider das Konto in den letzten so vielen Tagen bestätigt hat (Login über ihn oder ein Refresh-Tausch mit Ja): Wer nur noch per Skript arbeitet, hat keine Sitzung, die 4a nachprüfen könnte. Gelöscht wird nichts — die nächste Anmeldung über den Provider weckt die Keys wieder. Konten ohne OIDC-Bindung (auch Service-Konten) betrifft das nicht. 0 = keine Frist (nur das Nein zählt). |
 
 ## SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …)
 
@@ -245,6 +248,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `saml_idp_x509cert` | `str` | `""` | IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END) |
 | `saml_attr_username` | `str` | `""` | Attribut mit dem Benutzernamen; leer = NameID |
 | `saml_attr_email` | `str` | `"email"` | SAML-Attribut mit der E-Mail-Adresse |
+| `saml_email_trusted` | `bool` | `False` | Adressen aus der Assertion vertrauen (PO-Entscheid 2026-09-24)? SAML kennt keinen Beleg. `False` (Vorgabe): Die Adresse wird nicht verwendet — kein Konto-Attribut, kein `Remote-Email`, und ein Kontoname mit `@` (NameID im Format emailAddress) wird durch einen Ersatznamen ersetzt, wie H-3 bei OIDC. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne Selbstregistrierung) — sie gilt als belegt und trägt Rechte. |
 | `saml_attr_name` | `str` | `"displayName"` | SAML-Attribut mit dem Anzeigenamen |
 | `saml_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion. Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt. |
 | `saml_attr_groups` | `str` | `"groups"` | SAML-Attribut mit den Gruppen (für saml_group_role_map) |
@@ -281,4 +285,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-146 Felder, erzeugt aus `tinysesam/config.py`.
+150 Felder, erzeugt aus `tinysesam/config.py`.

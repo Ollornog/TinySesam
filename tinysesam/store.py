@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
     -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
     topf_name     TEXT,
-    topf_mail     TEXT
+    topf_mail     TEXT,
+    idp_bestaetigt_at INTEGER  -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -627,7 +628,8 @@ class Store:
     #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
     #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
     #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
-    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a)
+    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
+    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -667,7 +669,9 @@ class Store:
                       # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
                       ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
                       # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
-                      ("is_owner", "INTEGER NOT NULL DEFAULT 0")],
+                      ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
+                      # Bestand: unten für OIDC-Konten auf „jetzt" gesetzt (Fund 8).
+                      ("idp_bestaetigt_at", "INTEGER")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -683,11 +687,13 @@ class Store:
                     raise RuntimeError("SCHEMA enthält keine Tabelle fehlserie")
                 self.db.execute("DROP TABLE fehlserie")
                 self.db.execute(ddl.group(0))
+            neu_angelegt = set()
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in cols:
                     if name not in have:
                         self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                        neu_angelegt.add((table, name))
 
             # Sitzungs-Tokens lagen bis 0.18.0 im Klartext in der Datei. Der Hash lässt sich aus
             # dem Klartext ausrechnen — bestehende Anmeldungen überleben die Umstellung also, die
@@ -758,6 +764,15 @@ class Store:
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            if ("users", "idp_bestaetigt_at") in neu_angelegt:
+                # Die Frist für die API-Keys eines OIDC-Kontos (Fund 8) beginnt für den Bestand
+                # mit dem Update — sonst ruhten nach dem Update sofort alle Keys, bis jeder sich
+                # einmal über den Provider angemeldet hat. Genau einmal, beim Anlegen der Spalte:
+                # Liefe es bei jedem Start, schenkte jeder Neustart einem Konto ohne Bestätigung
+                # eine neue Frist. Hier und nicht direkt nach dem ALTER: Ein UPDATE öffnet in
+                # Pythons sqlite3 eine Transaktion, und das `BEGIN IMMEDIATE` oben schlüge fehl.
+                self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
+                                "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -1613,6 +1628,19 @@ class Store:
     def set_mfa_enroll_until(self, user_id: int, bis: Optional[int]) -> None:
         """Das Einrichtungsfenster öffnen (Zeitstempel) oder schliessen (None)."""
         self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (bis, user_id))
+
+    def ist_oidc_konto(self, user_id) -> bool:
+        """Ist dieses Konto an eine OIDC-Identität gebunden (Fund 8)?"""
+        return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? LIMIT 1", (user_id,)))
+
+    def idp_bestaetigen(self, user_id) -> None:
+        """Der Provider hat das Konto eben bestätigt (Login über ihn, Refresh-Tausch mit Ja)."""
+        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (_now(), user_id))
+
+    def idp_verweigert(self, user_id) -> None:
+        """Der Provider hat Nein gesagt: Die API-Keys des Kontos ruhen bis zur nächsten
+        Bestätigung (Fund 8). 0 statt NULL — NULL heisst „nie bestätigt", 0 heisst „verweigert"."""
+        self._exec("UPDATE users SET idp_bestaetigt_at=0 WHERE id=?", (user_id,))
 
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))

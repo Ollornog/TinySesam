@@ -81,8 +81,10 @@ r = c.post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/geheim"}
 assert r.status_code == 303 and r.headers["location"] == "/geheim", r.headers.get("location")
 assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
-assert u["email"] == "alice@corp" and u["display_name"] == "Alice"
-ok("ACS: gültige Assertion → lokaler User (Auto-Create, Attribute) + eingeloggt")
+# `saml_email_trusted` ist per Vorgabe aus (PO-Entscheid 2026-09-24): Die Adresse aus der
+# Assertion wird nicht verwendet, wie H-3 bei OIDC. Der Anzeigename kommt weiter.
+assert not u["email"] and u["display_name"] == "Alice", dict(u)
+ok("ACS: gültige Assertion → lokaler User (Auto-Create, Anzeigename, KEINE unbelegte Adresse) + eingeloggt")
 
 # ---------- ACS: ungültige Assertion → 400 ----------
 c2 = TestClient(app)
@@ -256,11 +258,13 @@ os.remove(db)
 
 # ---------- R4-12: eine SAML-Identität besetzt keine lokale Kennung ----------
 # Benutzername und E-Mail sind EIN Kennungs-Raum. Die Kreuzprüfung in `create_user` trifft
-# auch das Auto-Anlegen aus SAML — und muss als saubere 403 ankommen, nicht als 500.
+# auch das Auto-Anlegen aus SAML — und muss als saubere 403 ankommen, nicht als 500. Gemessen mit
+# `saml_email_trusted=True`: Nur dann kommen Adresse und Adress-Name überhaupt ins Konto (die
+# Vorgabe verwendet sie nicht, s. unten).
 for was, nameid, attrs in (
         ("deren Adresse lokal schon Kennung ist", "eve", {"email": ["chef@example.com"]}),
         ("deren Name lokal schon Adresse ist", "chef@example.com", {"email": ["eve@example.com"]})):
-    db, auth, app = build()
+    db, auth, app = build(saml_email_trusted=True)
     lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
     auth.saml = FakeSAML(nameid=nameid, attrs=attrs)
     r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
@@ -279,6 +283,29 @@ auth.saml = FakeSAML(nameid="neu", attrs={"email": ["neu@example.com"]})
 r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
 assert r.status_code == 303 and auth.store.get_user_by_name("neu") is not None, r.status_code
 ok("... mit freien Kennungen legt SAML weiterhin an")
+os.remove(db)
+
+# ---------- saml_email_trusted=False (Vorgabe, PO-Entscheid 2026-09-24): wie H-3 bei OIDC ----------
+# Die unbelegte Adresse einer Assertion wird nicht verwendet: kein Konto-Attribut, und ein
+# Kontoname mit `@` (NameID emailAddress) weicht einem Ersatznamen — sonst besetzte er als
+# `Remote-User` die Kennung der echten Inhaberin.
+db, auth, app = build(admin_identifiers=["chef@example.com"])
+lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
+auth.saml = FakeSAML(nameid="chef＠example.com", attrs={"email": ["chef@example.com"]})   # Vollbreite
+r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False)
+neu = [u for u in auth.store.list_users() if u["id"] != lokal]
+assert r.status_code == 303 and len(neu) == 1, (r.status_code, [dict(u) for u in neu])
+assert neu[0]["username"].startswith("saml-") and not neu[0]["email"], dict(neu[0])
+assert (auth.find_user("chef@example.com") or {})["id"] == lokal and not neu[0]["is_admin"]
+ok("saml_email_trusted=False: Adresse nicht verwendet, `@`-Name (auch `＠`) → Ersatzname, kein Erst-Admin")
+os.remove(db)
+db, auth, app = build(saml_email_trusted=True)
+auth.saml = FakeSAML(nameid="bea@corp.example", attrs={"email": ["bea@corp.example"]})
+assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
+                            follow_redirects=False).status_code == 303
+bea = auth.store.get_user_by_name("bea@corp.example")
+assert bea is not None and bea["email"] == "bea@corp.example" and bea["email_verified"], bea
+ok("saml_email_trusted=True: Name und Adresse aus der Assertion, die Adresse gilt als belegt")
 os.remove(db)
 
 # ---------- F-16: die SP-Identität kommt aus base_url, nicht aus dem Host-Header ----------

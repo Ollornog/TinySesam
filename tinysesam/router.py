@@ -167,7 +167,8 @@ def build_router(auth) -> APIRouter:
         # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
-                                              email_bestaetigt=False if aus_verzeichnis else None)
+                                              email_bestaetigt=(None if cfg.ldap_email_trusted else False)
+                                              if aus_verzeichnis else None)
         if cfg.remember_me_enabled and remember_me:
             auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
         resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
@@ -1384,7 +1385,9 @@ def build_router(auth) -> APIRouter:
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
-                                                  email_bestaetigt=False)
+                                                  email_bestaetigt=bool(
+                                                      cfg.saml_email_trusted and u.get("email")
+                                                      and u.get("email_verified")))
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)

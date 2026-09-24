@@ -830,10 +830,11 @@ import threading as _th  # noqa: E402
 import time as _zeit  # noqa: E402
 
 
-def _oidc_mit_refresh(sub, **cfg):
-    a, app = _oidc({"sub": sub, "preferred_username": sub}, **cfg)
+def _oidc_mit_refresh(sub, claims=None, **cfg):
+    extra = dict(claims or {})
+    a, app = _oidc({"sub": sub, "preferred_username": sub, **extra}, **cfg)
     a.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
-        _Claims({"sub": sub, "preferred_username": sub, "nonce": nonce}),
+        _Claims({"sub": sub, "preferred_username": sub, **extra, "nonce": nonce}),
         {"access_token": "at", "refresh_token": "rt-" + sub})
     c = TestClient(app, raise_server_exceptions=False)
     st = parse_qs(urlparse(c.get("/auth/oidc/start", follow_redirects=False).headers["location"]).query)["state"][0]
@@ -934,6 +935,156 @@ r.check("Fund 11: auch ohne Speicher-Drossel höchstens ein Hinweis je Sperrfens
 # (Mutationsproben: den Anspruch in `_oidc_nachpruefen` streichen → Fund 5 rot; den Tausch
 #  synchron statt über `_oidc_ausgang` → Fund 6 rot; die Audit-Drossel in `_senden` streichen →
 #  Fund 11 rot; `bleiben_gewaehlt` in `get_session` streichen → Fund 9 rot.)
+
+# ── Fund 8: API-Keys folgen dem Identity Provider (PO-Entscheid 2026-09-24) ────────────────
+# Sagt der Provider Nein (4a), ruhen die Keys des OIDC-Kontos; ohne Bestätigung binnen
+# `oidc_apikey_confirm_days` ebenso. Gelöscht wird nichts — die nächste Anmeldung weckt sie.
+def _erneut_ueber_idp(c):
+    st = parse_qs(urlparse(c.get("/auth/oidc/start", follow_redirects=False).headers["location"]).query)["state"][0]
+    return c.get(f"/auth/oidc/callback?code=x&state={st}", follow_redirects=False)
+
+
+a8, app8, c8 = _oidc_mit_refresh("keyhalter")
+uid8 = a8.store.get_user_by_name("keyhalter")["id"]
+key8 = a8.create_api_key(uid8, name="backup")["key"]
+r.check("Fund 8: der Key eines frisch über den Provider angemeldeten Kontos gilt",
+        a8.verify_api_key(key8)[0] is not None)
+a8.oidc.refresh = lambda rt, sub: ("abgelehnt", {}, {"error": "invalid_grant"})
+a8.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8._oidc_nachpruefen(a8.store._one("SELECT * FROM session"))
+a8._oidc_ausgang.abwarten()
+r.check("Fund 8: nach dem Nein des Providers ruht der Key (Sitzung weg, Key abgewiesen)",
+        a8.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0 and a8.verify_api_key(key8)[0] is None)
+_zeile8 = a8.store._one("SELECT detail FROM audit WHERE event='api_keys_ruhen'")
+r.check("… mit Zeile im Audit-Log (wie viele Keys es betrifft)",
+        _zeile8 is not None and "anzahl=1" in _zeile8["detail"], str(_zeile8 and dict(_zeile8)))
+r.check("… gelöscht oder widerrufen ist nichts",
+        not a8.store._one("SELECT revoked FROM api_key")["revoked"])
+r.check("… und die nächste Anmeldung über den Provider weckt ihn wieder",
+        _erneut_ueber_idp(c8).status_code == 303 and a8.verify_api_key(key8)[0] is not None)
+
+# Frist ohne Sitzung (Skript-only): 30 Tage Vorgabe.
+a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (int(_zeit.time()) - 29 * 86400, uid8))
+_innen8 = a8.verify_api_key(key8)[0] is not None
+a8.store._exec("UPDATE users SET idp_bestaetigt_at = ? WHERE id=?", (int(_zeit.time()) - 31 * 86400, uid8))
+r.check("Fund 8: ohne Bestätigung binnen 30 Tagen ruht der Key (29 Tage: gilt, 31: ruht)",
+        _innen8 and a8.verify_api_key(key8)[0] is None)
+a8.cfg.oidc_apikey_confirm_days = 0
+_ohne_frist8 = a8.verify_api_key(key8)[0] is not None
+a8.store.idp_verweigert(uid8)
+r.check("… `oidc_apikey_confirm_days=0` schaltet nur die Frist ab — das Nein zählt weiter",
+        _ohne_frist8 and a8.verify_api_key(key8)[0] is None)
+a8.cfg.oidc_apikey_confirm_days = 30
+
+# Ein Ja beim Tausch bestätigt; ein Gruppen-Entzug ist ein Nein.
+a8b, app8b, c8b = _oidc_mit_refresh("gruppe8", claims={"groups": ["team"]}, oidc_allowed_groups=["team"])
+uid8b = a8b.store.get_user_by_name("gruppe8")["id"]
+key8b = a8b.create_api_key(uid8b, name="ci")["key"]
+a8b.store._exec("UPDATE users SET idp_bestaetigt_at = 1000 WHERE id=?", (uid8b,))
+a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["team"]}, {})
+a8b.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8b._oidc_nachpruefen(a8b.store._one("SELECT * FROM session"))
+a8b._oidc_ausgang.abwarten()
+r.check("Fund 8: ein Ja beim Refresh-Tausch bestätigt das Konto (der alte Stand wird frisch)",
+        a8b.store.get_user(uid8b)["idp_bestaetigt_at"] > 1000 and a8b.verify_api_key(key8b)[0] is not None)
+a8b.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub, "groups": ["andere"]}, {})
+a8b.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60")
+a8b._oidc_nachpruefen(a8b.store._one("SELECT * FROM session"))
+a8b._oidc_ausgang.abwarten()
+r.check("… ein Entzug der erlaubten Gruppe ist ein Nein: der Key ruht",
+        a8b.verify_api_key(key8b)[0] is None and a8b.store.get_user(uid8b)["idp_bestaetigt_at"] == 0)
+
+# Konten ohne OIDC-Bindung betrifft das nicht — auch nicht mit einem Stand, der „Nein" hiesse.
+lokal8 = a8.create_user("lokal8", password=PW)
+key8l = a8.create_api_key(lokal8, name="lokal")["key"]
+a8.store._exec("UPDATE users SET idp_bestaetigt_at = 0 WHERE id=?", (lokal8,))
+r.check("Fund 8: ein Konto ohne OIDC-Bindung behält seinen Key (auch mit idp_bestaetigt_at=0)",
+        a8.verify_api_key(key8l)[0] is not None)
+
+# Bestand: Die Frist beginnt mit dem Update, genau einmal.
+_pfad8 = str(Path(tempfile.mkdtemp()) / "bestand8.db")
+_alt8 = Store(_pfad8)
+_alt8.create_user("bestand-oidc", None, None, False, [], False)
+_alt8.link_oidc("https://idp.example", "sub-b", 1)
+_alt8.db.execute("ALTER TABLE users DROP COLUMN idp_bestaetigt_at")
+_alt8.db.commit()
+_alt8.db.close()
+_neu8 = Store(_pfad8)
+_stand8 = _neu8.get_user(1)["idp_bestaetigt_at"]
+# Danach ohne Stand (ein Konto, das auf einem Weg ohne Bestätigung gebunden wurde): Ein Neustart
+# darf ihm KEINE frische Frist schenken.
+_neu8.db.execute("UPDATE users SET idp_bestaetigt_at = NULL WHERE id=1")
+_neu8.db.commit()
+_neu8.db.close()
+r.check("Fund 8, Bestand: Die Frist eines OIDC-Kontos beginnt mit dem Update — und nur einmal",
+        _stand8 is not None and abs(_stand8 - int(_zeit.time())) < 60
+        and Store(_pfad8).get_user(1)["idp_bestaetigt_at"] is None, f"{_stand8}")
+# (Mutationsproben: `_key_ruht` in `verify_api_key` streichen → „ruht" rot; `idp_bestaetigen` im
+#  Callback streichen → „weckt ihn wieder" rot; die Frist-Prüfung streichen → „31: ruht" rot;
+#  `_idp_nein` im Gruppen-Zweig streichen → Gruppen-Entzug rot; die Bindungs-Prüfung streichen →
+#  „ohne OIDC-Bindung" rot; die Bestands-Zeile bei jedem Start → „nur einmal" rot.)
+
+
+# ── 3c · ASVS 6.3.6: der Anmelde-Link braucht den zweiten Faktor, wenn es einen gibt ─────────
+def _link_app(**cfg):
+    a, ap = _app(magiclink_enabled=True, **cfg)
+    a.set_mailer(lambda *x, **k: True)
+
+    @ap.get("/drin")
+    def _drin(user=Depends(a.require())):
+        return {"u": user["username"]}
+    return a, ap
+
+
+def _link_login(a, ap, name):
+    c = TestClient(ap)
+    uid = a.store.get_user_by_name(name)["id"]
+    tok = a.create_magic_token("login", user_id=uid, payload={"next": "/drin"})
+    return c, c.post(f"/auth/magic/{tok}", follow_redirects=False)
+
+
+# Klassisch (keine Kette), Konto nur mit Passkey: bis hierhin meldete der Link allein voll an.
+a3c, ap3c = _link_app()
+u3c = a3c.create_user("passkey-konto", password=PW, email="pk@example.com")
+a3c.store.add_webauthn(u3c, b"cred-3c", b"pub", 0, "[]", "Laptop")
+c3c, antw3c = _link_login(a3c, ap3c, "passkey-konto")
+r.check("3c: Konto mit Passkey — der Link allein meldet nicht voll an (weiter zum Passkey)",
+        antw3c.status_code == 303 and antw3c.headers["location"].startswith(a3c.cfg.login_path)
+        and c3c.get("/drin", follow_redirects=False).status_code != 200,
+        f"{antw3c.status_code} {antw3c.headers.get('location')}")
+# Kette ["magic"] mit TOTP: der Link genügte der Kette, der Authenticator zählte nicht.
+a3k, ap3k = _link_app(login_chain=["magic"])
+u3k = a3k.create_user("totp-konto", password=PW, email="tk@example.com")
+_g3k = a3k.totp_begin(u3k)["secret"]
+a3k.totp_confirm(u3k, pyotp.TOTP(_g3k).at(_zeit.time() - 30))
+c3k, antw3k = _link_login(a3k, ap3k, "totp-konto")
+r.check("3c: Kette [\"magic\"], Konto mit TOTP — nach dem Link folgt der TOTP-Schritt",
+        antw3k.status_code == 303 and antw3k.headers["location"].startswith("/auth/totp")
+        and c3k.get("/drin", follow_redirects=False).status_code != 200,
+        f"{antw3k.status_code} {antw3k.headers.get('location')}")
+_fertig3k = c3k.post("/auth/totp", data={"code": pyotp.TOTP(_g3k).now(), "next": "/drin"},
+                     follow_redirects=False)
+r.check("… mit dem Code ist die Anmeldung vollständig",
+        _fertig3k.status_code == 303 and c3k.get("/drin").json() == {"u": "totp-konto"})
+a3o, ap3o = _link_app(login_chain=["magic"])
+a3o.create_user("ohne-faktor", password=PW, email="of@example.com")
+c3o, _ = _link_login(a3o, ap3o, "ohne-faktor")
+r.check("3c: ein Konto ohne zweiten Faktor meldet der Link weiter allein an (C, nicht D)",
+        c3o.get("/drin").json() == {"u": "ohne-faktor"})
+a3a, ap3a = _link_app(login_chain=["magic"], magiclink_require_second_factor=False)
+u3a = a3a.create_user("totp-a", password=PW, email="ta@example.com")
+_g3a = a3a.totp_begin(u3a)["secret"]
+a3a.totp_confirm(u3a, pyotp.TOTP(_g3a).at(_zeit.time() - 30))
+c3a, _ = _link_login(a3a, ap3a, "totp-a")
+r.check("3c einstellbar: magiclink_require_second_factor=False — der Link genügt wieder (A)",
+        c3a.get("/drin").json() == {"u": "totp-a"})
+_pw3, _pw3r = TestClient(ap3k), None
+_pw3r = _pw3.post("/auth/login", data={"username": "totp-konto", "password": PW, "next": "/drin"},
+                  follow_redirects=False)
+r.check("… andere Wege bleiben, wie sie waren (Passwort in der Kette [\"magic\"] allein: kein Login)",
+        _pw3.get("/drin", follow_redirects=False).status_code != 200)
+# (Mutationsproben: `_link_braucht` in `_session_ok` streichen → die ersten zwei rot; die
+#  Passkey-Zeile streichen → Passkey-Konto rot; den Schalter nicht lesen → „einstellbar" rot.)
 
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")

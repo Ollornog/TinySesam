@@ -756,6 +756,10 @@ def register_oidc_routes(router, auth):
                                     security.fuer_log(str(_konto["username"])),
                                     security.fuer_log(auth.client_ip(request)))
             raise HTTPException(403, auth.t("api.oidc_disabled"))
+        # Der Provider hat das Konto eben bestätigt — das weckt ruhende API-Keys (Fund 8). Erst
+        # hier, nach allen Abweisungen (Gruppen-Gate, Kennung vergeben, gesperrt): Ein Login, der
+        # scheitert, bestätigt nichts.
+        auth.store.idp_bestaetigen(uid)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt). Die Zuordnung darf je Anwendung eine
         # andere sein: Dieselbe Verzeichnisgruppe kann in App A „Redakteur" heissen und in App B
