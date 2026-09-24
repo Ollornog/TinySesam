@@ -2793,27 +2793,38 @@ r.check("…und ein Text statt einer Zahl ist ein Befund, kein Absturz der Prüf
 # Dieselbe Klasse an den übrigen Kombinationsprüfungen, die ein ZAHLENGRENZEN-Feld lesen (zweite
 # Angriffsrunde, konfig): `int()` auf `admin_claim_ttl_min` und `mfa_enrollment_grace_days` stürzte
 # ab, bevor `_zahlengrenzen` den Typ melden konnte — `TinySesam(cfg)` warf ValueError bzw.
-# OverflowError statt eines gesammelten ConfigError.
-for _feld, _wert, _dazu in (
-        ("oidc_revalidate_minutes", "sechzig", {}),
-        ("admin_claim_ttl_min", "eine Stunde", {"admin_claim_token_file": "/run/x/admin.token"}),
-        ("mfa_enrollment_grace_days", "sieben", {"mfa_enrollment": "grace"}),
-        ("mfa_enrollment_grace_days", float("inf"), {"mfa_enrollment": "grace"}),
-        ("admin_claim_ttl_min", float("nan"), {"admin_claim_token_file": "/run/x/admin.token"})):
-    try:
-        _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "keine ganze Zahl")
-    except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
-        _kf = f"{type(e).__name__}: {e}"
-    try:
-        TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "k.db"),
-                                  **{_feld: _wert}, **_dazu))
-        _kb = "baut"
-    except ConfigError:
-        _kb = True
-    except Exception as e:   # noqa: BLE001
-        _kb = f"{type(e).__name__}: {e}"
-    r.check(f"{_feld}={_wert!r}: gesammelter ConfigError statt Absturz der Prüfung",
-            _kf is True and _kb is True, f"pruefe: {_kf!r} · Aufbau: {_kb!r}")
+# OverflowError statt eines gesammelten ConfigError. Bis zur Schlussrunde deckte diese Probe nur
+# die drei damals bekannten Felder; eine neue Kombination mit `int()` über eine Zwischenvariable
+# (`w = getattr(config, "magiclink_ttl_min", 15); int(w)`) liess pruefe() wieder abstürzen, und
+# die Suite blieb grün (Schlussfund konfig-3). Jetzt über JEDES Feld aus ZAHLENGRENZEN, je mit
+# Text, inf und nan, einmal mit Vorgaben und einmal hinter den Schaltern, hinter denen heutige
+# Kombinationsprüfungen liegen (`_TORE`). Grenze: Eine neue Kombination hinter einem Schalter,
+# der nicht in `_TORE` steht, erreicht nur der Syntaxbaum-Wächter weiter unten.
+_TORE = {"admin_claim_token_file": "/run/x/admin.token", "mfa_enrollment": "grace"}
+for _feld in _kp2.ZAHLENGRENZEN:
+    _abstuerze = []
+    for _wert in ("sieben", float("inf"), float("nan")):
+        for _dazu in ({}, _TORE):
+            try:
+                _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "keine ganze Zahl")
+            except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
+                _kf = f"{type(e).__name__}: {e}"
+            try:
+                TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "k.db"),
+                                          **{_feld: _wert}, **_dazu))
+                _kb = "baut"
+            except ConfigError as e:
+                _kb = _feld in str(e) or "ConfigError ohne das Feld"
+            except Exception as e:   # noqa: BLE001
+                _kb = f"{type(e).__name__}: {e}"
+            if _kf is not True or _kb is not True:
+                _abstuerze.append(f"{_wert!r}{' mit Schaltern' if _dazu else ''}: pruefe {_kf!r} · Aufbau {_kb!r}")
+    r.check(f"{_feld}=Text/inf/nan: gesammelter ConfigError statt Absturz der Prüfung",
+            not _abstuerze, "; ".join(_abstuerze[:3]))
+r.check("…die Probe läuft über die Felder aus ZAHLENGRENZEN (nicht über eine leere Liste)", len(_kp2.ZAHLENGRENZEN) >= 10,
+        f"{len(_kp2.ZAHLENGRENZEN)} Felder")
+# (Mutationsprobe: die Fund-Mutation `_mt = getattr(config, "magiclink_ttl_min", 15)` +
+# `if int(_mt) > 600:` in pruefe → rot, `magiclink_ttl_min … ValueError`.)
 # Die Kombinationsprüfungen selbst gelten weiter:
 r.check("…mfa_enrollment='grace' mit 0 Tagen bleibt ein Fehler",
         _nennt(_befund(mfa_enrollment="grace", mfa_enrollment_grace_days=0)[0], "mfa_enrollment='grace'"))
@@ -2821,22 +2832,130 @@ r.check("…admin_claim_token_file mit admin_claim_ttl_min=0 bleibt eine Warnung
         _nennt(_befund(admin_claim_token_file="/run/x/admin.token", admin_claim_ttl_min=0)[1],
                "admin_claim_token_file"))
 # (Mutationsprobe: `_ganzzahl` durch `int(getattr(config, feld, 0) or 0)` ersetzen → rot.)
-# Die Klasse: Keine Prüfung in konfigpruefung.py wandelt einen Config-Wert selbst mit int()/float()
-# um — das tut allein `_zahlengrenzen` (als Typprüfung), die Kombinationen lesen über `_ganzzahl`.
+# Die Klasse im Code: Ein Feld aus ZAHLENGRENZEN liest die Prüfung nur über `_ganzzahl` (eine
+# ganze Zahl oder None) oder in `_zahlengrenzen` selbst. Was eine Kombination danach tut (int(),
+# Vergleich, Rechnung), geschieht dann mit einer ganzen Zahl. Bis zur Schlussrunde meldete der
+# Wächter ein int() nur, wenn getattr(config, …) direkt darin stand — die Zwischenvariable kam
+# durch (Schlussfund konfig-3). Jetzt am Syntaxbaum nach Klassen, nicht nach Schreibweise:
+# 1. Ein String, der genau ein ZAHLENGRENZEN-Feld nennt, steht als Schlüssel in ZAHLENGRENZEN oder
+#    als Feldname in `_ganzzahl(config, "<feld>")` — sonst liest ihn etwas anderes (`getattr`,
+#    `_an`, `vars(config)[…]`, `attrgetter`, ein Tupel, über das eine Schleife läuft).
+# 2. Kein Attribut `.<feld>`, gleich unter welchem Namen die Config steht.
+# 3. Ein `getattr` mit Feldnamen zur Laufzeit nutzt den Wert nur als Wahrheitswert oder Text
+#    (direkt in `bool()`/`str()` oder in einer Bedingung, auch über `and`/`or`) — das stürzt bei
+#    keinem Wert ab. `vars`, `__dict__`, `asdict`, `attrgetter`, `__getattribute__` sind verboten.
+# 4. Kein `int()`/`float()`, gleich worauf.
+# `_ganzzahl` und `_zahlengrenzen` sind davon ausgenommen: Sie SIND der Leseweg.
+# Grenze: Ein Feldname, der erst zur Laufzeit entsteht und durch einen Wahrheitswert-Helfer geht
+# (`_an(config, name)`), stürzt nicht ab, wird aber falsch bewertet; ein Helfer ausserhalb von
+# konfigpruefung.py, dem die Prüfung `config` übergibt, liegt ausserhalb dieses Baums. Beides sieht
+# nur die Funktionsprobe oben — und die nur ohne Schalter bzw. mit `_TORE`.
 import ast as _ast_k  # noqa: E402
+
+_KP_LESEWEG = {"_ganzzahl", "_zahlengrenzen"}
+_KP_VERBOTEN = {"vars", "__dict__", "asdict", "attrgetter", "__getattribute__"}
+
+
+def _kp_rohe_zahlen(baum):
+    """Stellen in konfigpruefung.py, die ein Zahlenfeld am Leseweg vorbei lesen oder umwandeln."""
+    felder = set(_kp2.ZAHLENGRENZEN)
+    eltern = {c: k for k in _ast_k.walk(baum) for c in _ast_k.iter_child_nodes(k)}
+
+    def funktion(k):
+        while k in eltern:
+            k = eltern[k]
+            if isinstance(k, (_ast_k.FunctionDef, _ast_k.AsyncFunctionDef)):
+                return k.name
+        return "<modul>"
+
+    def nur_wahrheit_oder_text(k):
+        while isinstance(eltern.get(k), _ast_k.BoolOp):
+            k = eltern[k]
+        p = eltern.get(k)
+        if isinstance(p, _ast_k.Call) and isinstance(p.func, _ast_k.Name) and p.func.id in ("str", "bool"):
+            return k in p.args
+        if isinstance(p, (_ast_k.If, _ast_k.While, _ast_k.IfExp, _ast_k.Assert)):
+            return p.test is k
+        return isinstance(p, _ast_k.UnaryOp) and isinstance(p.op, _ast_k.Not)
+
+    def ist_grenzen_schluessel(k):
+        d = eltern.get(k)
+        z = eltern.get(d)
+        return (isinstance(d, _ast_k.Dict) and k in d.keys and isinstance(z, _ast_k.Assign)
+                and any(getattr(t, "id", "") == "ZAHLENGRENZEN" for t in z.targets))
+
+    befunde = []
+    for k in _ast_k.walk(baum):
+        wo = funktion(k)
+        if wo in _KP_LESEWEG:
+            continue
+        p = eltern.get(k)
+        if isinstance(k, _ast_k.Constant) and isinstance(k.value, str) and k.value in felder:
+            ueber_ganzzahl = (isinstance(p, _ast_k.Call) and isinstance(p.func, _ast_k.Name)
+                              and p.func.id == "_ganzzahl" and len(p.args) >= 2 and p.args[1] is k)
+            if not (ueber_ganzzahl or ist_grenzen_schluessel(k)):
+                befunde.append(f"{k.lineno}: {k.value!r} in {wo} nicht über _ganzzahl gelesen")
+        elif isinstance(k, _ast_k.Attribute) and (k.attr in felder or k.attr in _KP_VERBOTEN):
+            befunde.append(f"{k.lineno}: .{k.attr} in {wo}")
+        elif isinstance(k, _ast_k.Name) and k.id in _KP_VERBOTEN:
+            befunde.append(f"{k.lineno}: {k.id} in {wo}")
+        elif isinstance(k, _ast_k.Call) and isinstance(k.func, _ast_k.Name):
+            if k.func.id in ("int", "float"):
+                befunde.append(f"{k.lineno}: {k.func.id}() in {wo}")
+            elif (k.func.id == "getattr" and not (len(k.args) > 1 and isinstance(k.args[1], _ast_k.Constant))
+                  and not nur_wahrheit_oder_text(k)):
+                befunde.append(f"{k.lineno}: getattr mit Laufzeit-Namen in {wo}, Wert nicht nur als Wahrheitswert/Text")
+    return befunde
+
 
 _kp_baum = _ast_k.parse((ROOT / "tinysesam" / "konfigpruefung.py").read_text(encoding="utf-8"))
 _kp_getattr = [k for k in _ast_k.walk(_kp_baum) if isinstance(k, _ast_k.Call)
-               and isinstance(k.func, _ast_k.Name) and k.func.id == "getattr"
-               and k.args and isinstance(k.args[0], _ast_k.Name) and k.args[0].id == "config"]
-_kp_roh = [k.lineno for k in _ast_k.walk(_kp_baum)
-           if isinstance(k, _ast_k.Call) and isinstance(k.func, _ast_k.Name) and k.func.id in ("int", "float")
-           and any(g in _kp_getattr for g in _ast_k.walk(k))]
-r.check("Wächter: er findet getattr(config, …) in der Prüfung überhaupt", len(_kp_getattr) >= 20,
-        f"{len(_kp_getattr)} Fundstellen")
-r.check("keine Kombinationsprüfung wandelt einen Config-Wert selbst mit int()/float() um",
-        not _kp_roh, f"Zeilen {_kp_roh}")
-# (Mutationsprobe: in `pruefe` wieder `int(getattr(config, "admin_claim_ttl_min", 0) or 0)` → rot.)
+               and isinstance(k.func, _ast_k.Name) and k.func.id == "getattr"]
+_kp_ganzzahl = [k for k in _ast_k.walk(_kp_baum) if isinstance(k, _ast_k.Call)
+                and isinstance(k.func, _ast_k.Name) and k.func.id == "_ganzzahl"]
+r.check("Wächter: er findet die Lesezugriffe der Prüfung überhaupt",
+        len(_kp_getattr) >= 20 and len(_kp_ganzzahl) >= 3, f"getattr {len(_kp_getattr)}, _ganzzahl {len(_kp_ganzzahl)}")
+_kp_roh = _kp_rohe_zahlen(_kp_baum)
+r.check("keine Kombinationsprüfung liest ein Zahlenfeld am Leseweg _ganzzahl vorbei oder wandelt selbst um",
+        not _kp_roh, f"{_kp_roh}")
+
+
+# Selbstprobe am Syntaxbaum (ohne Textanker): Jede Schreibweise wird vorn in pruefe() eingesetzt;
+# gezählt werden nur die Befunde, die sie NEU bringt (ein Befund im Bestand trüge sonst die Probe).
+def _kp_mit(schnipsel):
+    baum = _ast_k.parse((ROOT / "tinysesam" / "konfigpruefung.py").read_text(encoding="utf-8"))
+    fn = next(k for k in baum.body if isinstance(k, _ast_k.FunctionDef) and k.name == "pruefe")
+    fn.body[0:0] = _ast_k.parse(schnipsel).body
+    return set(_kp_rohe_zahlen(baum)) - set(_kp_roh)
+
+
+_kp_uebersehen = [x for x in (
+    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif int(_mt) > 600:\n    pass',   # der Fund
+    '_mt = getattr(config, "magiclink_ttl_min", 15)\nif _mt > 600:\n    pass',        # ohne int()
+    'if config.magiclink_ttl_min > 600:\n    pass',
+    '_f = "smtp_port"\nif getattr(config, _f) > 1:\n    pass',
+    'for _f in ("smtp_port",):\n    if getattr(config, _f) > 1:\n        pass',
+    'for _f in felder_von_woanders():\n    if getattr(config, _f) > 1:\n        pass',
+    'if vars(config)["pin_min_length"] > 4:\n    pass',
+    'if config.__dict__.get(name, 0) > 4:\n    pass',
+    'for _k, _v in vars(config).items():\n    if _v > 4:\n        pass',
+    'if asdict(config).get(name, 0) > 4:\n    pass',
+    'if operator.attrgetter("pin_min_length")(config) > 4:\n    pass',
+    'if _an(config, "smtp_timeout"):\n    pass',
+    'if float(str(getattr(config, "admin_path", ""))) > 1:\n    pass',
+    'n = getattr(config, name, 0) or 0\nif n > 5:\n    pass') if not _kp_mit(x)]
+r.check("Wächter-Selbstprobe: jede Schreibweise eines rohen Zahlen-Lesewegs fällt auf",
+        not _kp_uebersehen, f"übersehen: {_kp_uebersehen}")
+_kp_fehlalarm = [x for x in (
+    '_x = _ganzzahl(config, "magiclink_ttl_min")\nif _x is not None and _x > 600:\n    pass',
+    'if str(getattr(config, name, "") or "").strip():\n    pass',
+    'if not getattr(config, name, None) or _an(config, "demo_mode"):\n    pass') if _kp_mit(x)]
+r.check("…und der Leseweg selbst bleibt ohne Befund", not _kp_fehlalarm, f"Fehlalarm: {_kp_fehlalarm}")
+# (Mutationsproben, je einzeln → rot: Regel 1 streichen; Regel 2 streichen; Regel 3 streichen;
+# die verbotenen Namen (`vars`, `asdict`) übergehen; `int`/`float` aus Regel 4 nehmen;
+# `nur_wahrheit_oder_text` immer wahr; den Abzug des Bestands in `_kp_mit` streichen; in
+# `_kombinationen` wieder `getattr(config, "session_ttl_hours", 0)` → der Wächter nennt die Zeile;
+# in pruefe `if (getattr(config, "smtp_timeout", 0) or 0) > 200:` (Vergleich ohne int()) → rot.)
 
 # H-11 / B3-9: deny-by-default am Forward-Auth-Tor.
 _gw = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",
@@ -2862,6 +2981,14 @@ r.check("...admin_path ohne führenden Schrägstrich ist ein Fehler",
         _nennt(_befund(admin_path="admin")[0], "admin_path"))
 r.check("...kürzere Sitzung ohne „Angemeldet bleiben“ als mit wird gemeldet",
         _nennt(_befund(session_ttl_hours=2, session_ttl_transient_hours=12)[1], "session_ttl_transient_hours"))
+# `True` ist keine Stundenzahl: Den Typfehler meldet `_zahlengrenzen`, eine Kombinationswarnung
+# „länger als session_ttl_hours=True“ kam bis zur Schlussrunde trotzdem dazu (die Kombination las
+# am Leseweg `_ganzzahl` vorbei). (Mutationsprobe: in `_kombinationen` wieder
+# `getattr(config, "session_ttl_hours", 0)` mit `isinstance(…, int)` → rot.)
+_tt_f, _tt_w = _befund(session_ttl_hours=True, session_ttl_transient_hours=12)
+r.check("...session_ttl_hours=True: nur der Typfehler, keine Kombinationswarnung daneben",
+        _nennt(_tt_f, "session_ttl_hours=True", "keine ganze Zahl") and not _nennt(_tt_w, "länger als"),
+        f"Fehler {_tt_f} · Warnungen {_tt_w}")
 
 # B3-8: Demo-Modus hat technische Schranken.
 r.check("B3-8: demo_mode neben einem echten Anmeldeweg ist ein Fehler",

@@ -286,7 +286,8 @@ print("  ✓ Fund 8: Rollen ohne Text → 400 vor jedem Schreiben; Altbestand wi
 # (Mutationsproben: in `savesec` wieder `await p(…);alert(L.saved)` → rot; in `p` den Blick auf
 #  `r.ok` entfernen → rot — mit node in der Laufzeitprobe, ohne node in der Strukturprüfung von
 #  `p()` darunter. Vorher entfiel die Laufzeitprobe ohne node still, und das Image von ci-local
-#  hat kein node: Dort blieb genau diese Mutation grün.)
+#  hat kein node: Dort blieb genau diese Mutation grün. Schlussrunde: in `p` wieder
+#  `return {detail:L["err.generic"]}` → rot, mit und ohne node; ebenso `(j&&j.detail)||…`.)
 import os as _os  # noqa: E402
 import re as _re  # noqa: E402
 import shutil as _shutil  # noqa: E402
@@ -310,12 +311,247 @@ assert len(_schreibend) >= 10 and _act <= set(_stuecke), (_schreibend, _act - se
 # Und `p()` selbst: Ohne den Blick auf `r.ok` gibt sie bei 400/500 den Körper zurück, und
 # `abgewiesen()` sieht bei einem 500 ohne JSON-Körper nichts. Die Laufzeitprobe unten braucht
 # node; diese Prüfung läuft immer.
+#
+# Bis zur Schlussrunde verlangte sie nur `if(r.ok)return`, `return {detail:` und irgendwo den Text
+# L["err.generic"]. `return {detail:L["err.generic"]}` bestand das: Das Panel zeigte statt „Das ist
+# der letzte aktive Admin“ nur noch „Fehler“, und ohne node (ci-local) blieb es grün (Schlussfund
+# audit-3). Jetzt wird der Ausdruck hinter `detail:` gelesen, nicht nach Zeichen gesucht: Ein
+# kleiner Parser für den Teil von JavaScript, der dort vorkommt (`&&`, `||`, `?:`, `typeof`,
+# Vergleiche, `.`/`?.`/`[…]`), bestimmt, welche Werte als `detail` herauskommen KÖNNEN, und unter
+# welchen Bedingungen. Verlangt: Ein möglicher Wert ist der Grund des Servers (`<Körper>.detail`),
+# und zwar nur, wenn er ein Text ist (`typeof … === "string"`; FastAPI schickt bei 422 eine Liste)
+# und der Körper nicht null ist (davor geprüft oder `?.`) — und ein anderer ist der Rückfalltext.
+# Gleich wie geschrieben: `a&&b||c`, `c?a:b`, `j?.detail`, `j["detail"]`, `"string"===typeof …`.
+# Grenze: Das bleibt Struktur, keine Ausführung. Was ausserhalb des Teils liegt (eine Funktion,
+# ein Template-String), wird abgewiesen statt geraten (fail-closed); Anweisungen ZWISCHEN dem
+# Lesen des Körpers und der Rückgabe (`j.detail = …`) sieht der Parser nicht, ebenso wenig einen
+# falschen Text-Schlüssel. Das deckt nur die node-Laufzeitprobe darunter.
+_JS_TOKEN = _re.compile(r"""\s*(?:(?P<str>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(?P<op>===|!==|==|!=|&&|\|\||\?\.|[()\[\].?:!])"""
+                        r"""|(?P<name>[A-Za-z_$][\w$]*)|(?P<num>\d+(?:\.\d+)?))""")
+
+
+def _js_ausdruck(text):
+    """Einen JS-Ausdruck aus dem kleinen Teil oben lesen — als verschachtelte Tupel."""
+    toks, i = [], 0
+    while i < len(text):
+        if text[i:].strip() == "":
+            break
+        m = _JS_TOKEN.match(text, i)
+        if not m or m.end() == i:
+            raise ValueError(f"nicht auswertbar ab {text[i:i + 20]!r}")
+        art = m.lastgroup
+        toks.append((art, m.group(art)))
+        i = m.end()
+    pos = [0]
+
+    def nimm(wert=None):
+        if pos[0] < len(toks) and (wert is None or toks[pos[0]][1] == wert):
+            pos[0] += 1
+            return toks[pos[0] - 1]
+        return None
+
+    def muss(wert):
+        if not nimm(wert):
+            raise ValueError(f"erwartet {wert!r} bei Stück {pos[0]}")
+
+    def bedingt():
+        a = oder()
+        if nimm("?"):
+            x = bedingt()
+            muss(":")
+            return ("cond", a, x, bedingt())
+        return a
+
+    def kette(art, op, weiter):
+        teile = [weiter()]
+        while nimm(op):
+            teile.append(weiter())
+        return teile[0] if len(teile) == 1 else (art, teile)
+
+    def oder():
+        return kette("or", "||", und)
+
+    def und():
+        return kette("and", "&&", gleich)
+
+    def gleich():
+        a = einstellig()
+        while pos[0] < len(toks) and toks[pos[0]][1] in ("===", "!==", "==", "!="):
+            op = nimm()[1]
+            a = ("eq", op, a, einstellig())
+        return a
+
+    def einstellig():
+        if nimm("!"):
+            return ("not", einstellig())
+        if nimm("typeof"):
+            return ("typeof", einstellig())
+        return glied()
+
+    def glied():
+        t = nimm()
+        if t is None:
+            raise ValueError("Ausdruck endet zu früh")
+        if t[1] == "(":
+            a = bedingt()
+            muss(")")
+        elif t[0] in ("name", "num"):
+            a = (t[0], t[1])
+        elif t[0] == "str":
+            a = ("str", t[1][1:-1])
+        else:
+            raise ValueError(f"unerwartet {t[1]!r}")
+        while True:
+            if nimm(".") or nimm("?."):
+                optional = toks[pos[0] - 1][1] == "?."
+                n = nimm()
+                if not n or n[0] != "name":
+                    raise ValueError("nach . fehlt ein Name")
+                a = ("mem", a, n[1], optional)
+            elif nimm("["):
+                k = bedingt()
+                muss("]")
+                if k[0] != "str":
+                    raise ValueError("Index ist kein fester Text")
+                a = ("mem", a, k[1], False)
+            else:
+                return a
+
+    baum = bedingt()
+    if pos[0] != len(toks):
+        raise ValueError(f"Rest nach dem Ausdruck: {toks[pos[0]:][:3]}")
+    return baum
+
+
+def _js_ergebnisse(a, bedingungen=()):
+    """Jeder Wert, den der Ausdruck als Ergebnis liefern kann (ausser den kurzgeschlossenen
+    falschen), mit den Bedingungen, die dann in dieser Reihenfolge wahr waren."""
+    if a[0] == "or":
+        return [e for t in a[1] for e in _js_ergebnisse(t, bedingungen)]
+    if a[0] == "and":
+        return _js_ergebnisse(a[1][-1], bedingungen + tuple(a[1][:-1]))
+    if a[0] == "cond":
+        wahr = tuple(a[1][1]) if a[1][0] == "and" else (a[1],)   # `x&&y?…` heisst: x, dann y
+        return _js_ergebnisse(a[2], bedingungen + wahr) + _js_ergebnisse(a[3], bedingungen)
+    return [(a, bedingungen)]
+
+
+def _p_detail_stelle(code):
+    """(Anfang, Ende) des Ausdrucks hinter `return {detail:` — oder None."""
+    m = _re.search(r"return\s*\{\s*detail\s*:", code)
+    if not m:
+        return None
+    tiefe, i, zeichen = 0, m.end(), None
+    while i < len(code):
+        c = code[i]
+        if zeichen:
+            if c == "\\":
+                i += 1
+            elif c == zeichen:
+                zeichen = None
+        elif c in "\"'`":
+            zeichen = c
+        elif c in "([{":
+            tiefe += 1
+        elif c in ")]}":
+            if tiefe == 0:
+                return m.end(), i
+            tiefe -= 1
+        elif c == "," and tiefe == 0:
+            return m.end(), i
+        i += 1
+    return None
+
+
+def _p_pruefen(code):
+    """Was p() fehlt, um eine Abweisung samt Grund weiterzugeben — leer, wenn nichts."""
+    probleme = []
+    rm = _re.search(r"\.then\(\s*(?:async\s*)?\(?\s*(\w+)\s*\)?\s*=>", code)
+    r_ = rm.group(1) if rm else "r"
+    if not _re.search(rf"if\s*\(\s*{r_}\.ok\s*\)\s*\{{?\s*return", code):
+        probleme.append("p() liest r.ok nicht")
+    jm = _re.search(rf"(\w+)\s*=\s*await\s+{r_}\.json\(\)", code)
+    if not jm:
+        probleme.append("p() liest den Körper der Antwort nicht")
+    stelle = _p_detail_stelle(code)
+    if stelle is None:
+        return probleme + ["p() gibt eine Abweisung nicht als {detail: …} zurück"]
+    try:
+        ergebnisse = _js_ergebnisse(_js_ausdruck(code[stelle[0]:stelle[1]]))
+    except ValueError as e:
+        return probleme + [f"detail-Ausdruck nicht auswertbar ({e}): {code[stelle[0]:stelle[1]]}"]
+    j = jm.group(1) if jm else "j"
+
+    def ist_grund(a):
+        return a[0] == "mem" and a[1] == ("name", j) and a[2] == "detail"
+
+    def ist_textpruefung(b):
+        if b[0] != "eq" or b[1] not in ("===", "=="):
+            return None
+        for x, y in ((b[2], b[3]), (b[3], b[2])):
+            if x[0] == "typeof" and ist_grund(x[1]) and y == ("str", "string"):
+                return x[1]
+        return None
+
+    def ist_nicht_null(b):
+        return b == ("name", j) or (b[0] == "eq" and b[1] in ("!==", "!=") and ("name", j) in (b[2], b[3])
+                                    and ({("name", "null"), ("name", "undefined")} & {b[2], b[3]}))
+
+    def geschuetzt(bedingungen):
+        for n, b in enumerate(bedingungen):
+            gelesen = ist_textpruefung(b)
+            if gelesen and (gelesen[3] or any(ist_nicht_null(v) for v in bedingungen[:n])):
+                return True
+        return False
+
+    if not any(ist_grund(w) and geschuetzt(bed) for w, bed in ergebnisse):
+        probleme.append(f"p() reicht den Grund des Servers ({j}.detail, nur als Text, null-sicher) nicht durch")
+    if not any(w == ("mem", ("name", "L"), "err.generic", False) for w, _ in ergebnisse):
+        probleme.append('p() hat keinen Rückfalltext L["err.generic"]')
+    return probleme
+
+
 _p_def = _re.search(r"^const p=\(u,b\)=>(.*?)^(?:const|function|async function) ", _js, _re.S | _re.M)
 assert _p_def, "p() nicht gefunden"
 _p_code = "\n".join(z for z in _p_def.group(1).splitlines() if not z.lstrip().startswith("//"))
-assert _re.search(r"if\s*\(\s*r\.ok\s*\)\s*return", _p_code), f"p() liest r.ok nicht: {_p_code}"
-assert _re.search(r"return\s*\{\s*detail\s*:", _p_code) and 'L["err.generic"]' in _p_code, \
-    f"p() gibt eine Abweisung nicht als {{detail}} mit Rückfalltext zurück: {_p_code}"
+assert not _p_pruefen(_p_code), f"{_p_pruefen(_p_code)}: {_p_code}"
+# Selbstprobe: jede kaputte Fassung von p() fällt auf, jede gleichwertige Schreibweise nicht.
+# Die Fassungen tauschen nur den Ausdruck hinter `detail:` (die Prüfung findet ihn selbst) oder
+# ersetzen p() ganz — kein Textanker in admin.py.
+_p_stelle = _p_detail_stelle(_p_code)
+assert _p_stelle, _p_code
+
+
+def _p_mit(detail):
+    return _p_code[:_p_stelle[0]] + detail + _p_code[_p_stelle[1]:]
+
+
+_p_kaputt = {
+    "Schlussfund audit-3": _p_mit('L["err.generic"]'),
+    "fester Text statt Grund": _p_mit('(j&&typeof j.detail==="string"&&"Fehler")||L["err.generic"]'),
+    "Grund ohne Text- und null-Prüfung": _p_mit('j.detail||L["err.generic"]'),
+    "Grund ohne Textprüfung": _p_mit('(j&&j.detail)||L["err.generic"]'),
+    "typeof vor der null-Prüfung": _p_mit('(typeof j.detail==="string"&&j&&j.detail)||L["err.generic"]'),
+    "Textprüfung verneint": _p_mit('(j&&typeof j.detail!=="string"&&j.detail)||L["err.generic"]'),
+    "Textprüfung an einem anderen Feld": _p_mit('(j&&typeof j.fehler==="string"&&j.detail)||L["err.generic"]'),
+    "null-Prüfung verneint": _p_mit('(!j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]'),
+    "Grund aus einer anderen Variable": _p_mit('(j&&typeof j.detail==="string"&&k.detail)||L["err.generic"]'),
+    "Zweige vertauscht": _p_mit('j&&typeof j.detail==="string"?L["err.generic"]:j.detail'),
+    "ohne Rückfalltext": _p_mit('(j&&typeof j.detail==="string"&&j.detail)'),
+    "Funktionsaufruf (ausserhalb des Teils)": _p_mit('grund(j)||L["err.generic"]'),
+    "ohne Blick auf r.ok": _re.sub(r"if\s*\(\s*r\.ok\s*\)\s*return[^;]*;", "", _p_code),
+    "Fund 4": '.then(r=>r.json());\n',
+    "Fund 7 (Körper immer)": '.then(async r=>{let j=null;try{j=await r.json()}catch(e){} return j});\n',
+}
+_p_durch = [n for n, c in _p_kaputt.items() if not _p_pruefen(c)]
+assert not _p_durch and _p_kaputt["ohne Blick auf r.ok"] != _p_code, f"Strukturprüfung übersieht: {_p_durch}"
+_p_gleichwertig = [
+    'j&&typeof j.detail==="string"?j.detail:L["err.generic"]',
+    '(typeof j?.detail==="string"&&j.detail)||L["err.generic"]',
+    '(j!==null&&"string"===typeof j["detail"]&&j["detail"])||L[\'err.generic\']',
+]
+_p_fehlalarm = [d for d in _p_gleichwertig if _p_pruefen(_p_mit(d))]
+assert not _p_fehlalarm, f"Strukturprüfung lehnt Gleichwertiges ab: {_p_fehlalarm}"
 
 _node = _shutil.which("node")
 if _node:
@@ -358,7 +594,7 @@ else:
     print("  ⚠ Fund 10 (node): Laufzeitprobe NICHT gelaufen — node fehlt; geprüft sind nur die "
           "Struktur der Aktionen und p()")
 print("  ✓ Fund 10 (Struktur): jede Panel-Aktion, die schreibt, führt das Ergebnis über abgewiesen(),"
-      " und p() liest r.ok")
+      " und p() liest r.ok und reicht den Grund des Servers durch")
 
 os.remove(db)
 print("\nADMIN-PANEL OK ✅")
