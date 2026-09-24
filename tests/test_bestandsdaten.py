@@ -169,7 +169,9 @@ _s10_alt.store.db.close()
 # DROP COLUMN`: SQLite sucht beim Entfernen der letzten Spalte das Komma davor rückwärts im Text
 # und findet eines im Kommentar darüber („incomplete input“).
 from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
-_s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT\n", "\n", _S10_SCHEMA, flags=re.S)
+# Mitgeschnitten wird `idp_bestaetigt_at` (Schema 11, Fund 8), die seitdem hinter `topf_mail` steht.
+_s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER[^\n]*\n",
+                               "\n", _S10_SCHEMA, flags=re.S)
 # Schema 11 (B2-6) kam danach: Eine Datei im Stand von 9 hat die Tabelle `fehlserie` noch nicht.
 _s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);\n", "", _s10_schema9,
                                  flags=re.S)
