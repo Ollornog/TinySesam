@@ -158,6 +158,11 @@ class TinySesamConfig:
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
     totp_enabled: bool = True             # User dürfen TOTP einrichten
+    #: Schlüsseldatei für die Verschlüsselung der TOTP-Geheimnisse (H-14/H-15; 32 Byte, Base64).
+    #: Vorrang hat die Umgebungsvariable TINYSESAM_SECRETS_KEY; ohne beides legt TinySesam
+    #: `<db_path>.key` an (0600). Ohne Schlüssel sind alle TOTP-Einrichtungen verloren — getrennt
+    #: von der Datenbank sichern (docs/BETRIEB.md).
+    secrets_key_file: str = ""
     # ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie
     # gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette:
     #   login_chain=['password', 'totp']  (+ login_chain_strict=True)

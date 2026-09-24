@@ -245,6 +245,13 @@ class TinySesam:
         self.store = Store(config.db_path)
         self.store.leerlauf_sek = (max(0, int(config.session_idle_minutes or 0)) * 60,
                                    max(0, int(config.session_idle_minutes_remember or 0)) * 60)
+        # TOTP-Geheimnisse nur verschlüsselt (H-14/H-15, Pflicht). Schlüssel aus der Umgebung, der
+        # Konfiguration oder neben der Datenbank; ein falscher bricht den Start ab.
+        from . import geheimnis as _geheimnis
+        _schluessel, self._schluessel_herkunft = _geheimnis.schluessel_laden(
+            config.db_path, config.secrets_key_file)
+        self.store.tresor = _geheimnis.Tresor(_schluessel)
+        self.store.geheimnisse_heben()
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
         # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
         # Beim Start zählen und sagen, wie viele es trifft; der Start selbst bleibt möglich

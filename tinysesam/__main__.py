@@ -153,6 +153,14 @@ def _backup(argv) -> int:
                 os.remove(a.ziel + rest)      # keine halbe Datei zurücklassen
         return 1
     print(f"Sicherung geschrieben: {a.ziel} ({os.path.getsize(a.ziel)} Bytes, Rechte 0600).")
+    # Die Sicherung enthält die TOTP-Geheimnisse nur verschlüsselt (H-14/H-15). Ohne den Schlüssel
+    # ist sie für TOTP wertlos — er gehört getrennt mitgesichert, nicht in dieselbe Ablage.
+    if os.path.exists(a.db + ".key"):
+        print(f"Hinweis: Der Schlüssel der TOTP-Geheimnisse liegt in {a.db}.key und ist NICHT in der "
+              "Sicherung. Getrennt sichern — ohne ihn müssen alle Konten TOTP neu einrichten.")
+    else:
+        print("Hinweis: Den Schlüssel der TOTP-Geheimnisse (TINYSESAM_SECRETS_KEY bzw. "
+              "secrets_key_file) getrennt sichern — ohne ihn ist TOTP aus dieser Sicherung verloren.")
     return 0
 
 

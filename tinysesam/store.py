@@ -1429,20 +1429,61 @@ class Store:
         return self.get_pin_hash(user_id) is not None
 
     # ---------- TOTP ----------
+    #: Ver-/Entschlüsselung der TOTP-Geheimnisse (H-14/H-15, `geheimnis.Tresor`). Setzt der Manager;
+    #: ein Store ohne Tresor (CLI-Werkzeuge) fasst die Geheimnisse nicht an.
+    tresor = None
+
     def set_totp(self, user_id, secret, confirmed=False):
         # `last_step` gehört zum Geheimnis: Ein neues beginnt ohne verbrauchten Schritt. Sonst
         # sperrte der Bestätigungscode eines verworfenen Versuchs den ersten Code des neuen,
         # wenn beide in dasselbe 30-Sekunden-Fenster fallen.
+        if self.tresor is None:
+            raise RuntimeError("TOTP-Geheimnisse werden nur verschlüsselt abgelegt — der Store hat "
+                               "keinen Schlüssel (geheimnis.Tresor).")
         self._exec("INSERT INTO totp_cred(user_id, secret, confirmed, created_at) VALUES (?,?,?,?) "
                    "ON CONFLICT(user_id) DO UPDATE SET secret=excluded.secret, "
                    "confirmed=excluded.confirmed, last_step=NULL",
-                   (user_id, secret, 1 if confirmed else 0, _now()))
+                   (user_id, self.tresor.verschluesseln(secret), 1 if confirmed else 0, _now()))
 
     def confirm_totp(self, user_id):
         self._exec("UPDATE totp_cred SET confirmed=1 WHERE user_id=?", (user_id,))
 
-    def get_totp(self, user_id) -> Optional[sqlite3.Row]:
-        return self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
+    def get_totp(self, user_id) -> Optional[dict]:
+        """Die TOTP-Zeile eines Kontos, das Geheimnis entschlüsselt (`secret`)."""
+        zeile = self._one("SELECT * FROM totp_cred WHERE user_id=?", (user_id,))
+        if zeile is None:
+            return None
+        d = dict(zeile)
+        if self.tresor is not None:
+            d["secret"] = self.tresor.entschluesseln(d["secret"])
+        return d
+
+    def geheimnisse_heben(self) -> int:
+        """Klartext-Geheimnisse aus der Zeit vor der Verschlüsselung verschlüsseln (stilles Heben)
+        — und vorher prüfen, dass der Schlüssel zu den schon verschlüsselten passt. Passt er nicht,
+        `ConfigError`: Ein Start mit falschem Schlüssel liesse sonst jede TOTP-Anmeldung still
+        scheitern. Gibt zurück, wie viele gehoben wurden."""
+        from .errors import ConfigError
+        if self.tresor is None:
+            return 0
+        probe = self._one("SELECT secret FROM totp_cred WHERE secret LIKE 'v1:%' LIMIT 1")
+        if probe is not None:
+            try:
+                self.tresor.entschluesseln(probe["secret"])
+            except Exception:
+                raise ConfigError(
+                    "Der Schlüssel passt nicht zu den gespeicherten TOTP-Geheimnissen (falsche "
+                    "TINYSESAM_SECRETS_KEY/secrets_key_file, oder die Schlüsseldatei neben der "
+                    "Datenbank fehlt bzw. ist eine andere). Den richtigen Schlüssel einsetzen — ohne ihn "
+                    "müssen alle Konten TOTP neu einrichten.") from None
+        klar = self._all("SELECT user_id, secret FROM totp_cred WHERE secret NOT LIKE 'v1:%'")
+        for z in klar:
+            self._exec("UPDATE totp_cred SET secret=? WHERE user_id=? AND secret=?",
+                       (self.tresor.verschluesseln(z["secret"]), z["user_id"], z["secret"]))
+        if klar:
+            logging.getLogger("tinysesam").info(
+                "%d TOTP-Geheimnis(se) verschlüsselt (bisher Klartext in der Datenbank).", len(klar))
+        return len(klar)
 
     def delete_totp(self, user_id):
         self._exec("DELETE FROM totp_cred WHERE user_id=?", (user_id,))

@@ -646,6 +646,63 @@ r.check("… opt-out: notify_login_failures=False schickt nichts", post635o == [
 # (Mutationsproben: `_sperrhinweis` in `_abgewiesen` nicht rufen → erste Prüfung rot; die Drossel
 #  streichen → „genau einen" rot; `_beleg_am_konto` streichen → „UNBELEGTE" rot.)
 
+# ── H-14/H-15: TOTP-Geheimnisse ruhend verschlüsselt (Pflicht) ───────────────────────────
+import base64 as _b64  # noqa: E402
+import os as _os  # noqa: E402
+import stat as _stat  # noqa: E402
+
+a14, app14 = _app()
+u14 = a14.create_user("totpnutzer", password=PW)
+geheim14 = a14.totp_begin(u14)["secret"]
+roh14 = a14.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
+r.check("H-14/15: in der Datenbank steht das TOTP-Geheimnis verschlüsselt, nicht im Klartext",
+        roh14.startswith("v1:") and geheim14 not in roh14, roh14[:20])
+r.check("… und die Anmeldung damit funktioniert (Einrichtung mit echtem Code)",
+        a14.totp_confirm(u14, pyotp.TOTP(geheim14).now()))
+_keydatei = a14.cfg.db_path + ".key"
+r.check("… ohne Angabe liegt der Schlüssel neben der Datenbank, nur für den Besitzer lesbar (0600)",
+        _os.path.isfile(_keydatei) and _stat.S_IMODE(_os.stat(_keydatei).st_mode) == 0o600)
+
+# Bestand: ein Klartext-Geheimnis wird beim Start verschlüsselt (stilles Heben).
+_pfad14 = a14.cfg.db_path
+a14.store._exec("UPDATE totp_cred SET secret=? WHERE user_id=?", (geheim14, u14))   # wie vor 0.21
+a14.store.db.close()
+a14b, _ = _app(db_path=_pfad14)
+roh14b = a14b.store._one("SELECT secret FROM totp_cred WHERE user_id=?", (u14,))["secret"]
+r.check("H-14/15: ein Klartext-Geheimnis aus der Zeit davor wird beim Start verschlüsselt",
+        roh14b.startswith("v1:") and a14b.store.get_totp(u14)["secret"] == geheim14)
+a14b.store.db.close()
+
+# Falscher Schlüssel → der Start bricht ab, statt still jede TOTP-Anmeldung scheitern zu lassen.
+_os.environ["TINYSESAM_SECRETS_KEY"] = _b64.b64encode(_os.urandom(32)).decode()
+try:
+    _app(db_path=_pfad14)
+    _falsch = False
+except ConfigError:
+    _falsch = True
+finally:
+    del _os.environ["TINYSESAM_SECRETS_KEY"]
+r.check("H-14/15: ein Schlüssel, der nicht passt, bricht den Start ab (ConfigError)", _falsch)
+
+# Vorrang: Umgebung vor Datei vor „neben der Datenbank"; eine kaputte Angabe ist ein Fehler.
+_datei14 = str(Path(tempfile.mkdtemp()) / "schluessel")
+with open(_datei14, "w") as _f:
+    _f.write(_b64.b64encode(_os.urandom(32)).decode())
+a14c, _ = _app(secrets_key_file=_datei14)
+r.check("… secrets_key_file wird genommen, dann entsteht keine Datei neben der Datenbank",
+        a14c._schluessel_herkunft == "datei" and not _os.path.exists(a14c.cfg.db_path + ".key"))
+with open(_datei14, "w") as _f:
+    _f.write("zu-kurz")
+try:
+    _app(secrets_key_file=_datei14)
+    _kaputt = False
+except ConfigError:
+    _kaputt = True
+r.check("… ein kaputter Schlüssel (kein Base64 von 32 Byte) ist ein Fehler, kein stiller Ersatz", _kaputt)
+# (Mutationsproben: in `set_totp` unverschlüsselt speichern → erste Prüfung rot; die Schlüsselprobe
+#  in `geheimnisse_heben` streichen → „bricht den Start ab" rot; das Heben streichen → „Klartext …
+#  wird beim Start verschlüsselt" rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()
