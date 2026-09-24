@@ -386,9 +386,14 @@ assert not fremd, "Ressourcen von Dritten im Markup:\n  " + "\n  ".join(fremd)
 testdateien = hygiene.pruefe_testdateien_gerufen(ROOT)
 assert not testdateien, "Testdatei ohne Läufer:\n  " + "\n  ".join(testdateien)
 
+# Kit 0.21.8: In einem tag-getriggerten Workflow mit Knopf veröffentlicht nichts ohne Tag — die
+# allgemeine Fassung des release.yml-Wächters weiter unten (der prüft zusätzlich den Trockenlauf).
+am_tag = hygiene.pruefe_veroeffentlichen_am_tag(ROOT)
+assert not am_tag, "veröffentlicht ohne Tag:\n  " + "\n  ".join(am_tag)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
-print("  Kit 0.21.1: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer")
+print("  Kit 0.21.8: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer; nichts veröffentlicht ohne Tag")
 
 rel = read(".github", "workflows", "release.yml")
 assert "tags:" in rel and "sha256sum" in rel, "Release baut keine Prüfsummen"
