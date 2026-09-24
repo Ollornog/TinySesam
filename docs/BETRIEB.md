@@ -145,12 +145,24 @@ Seite gehört und sich nicht ändert:
   alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
   Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt
   ab der Anfrage danach), und von vielen parallelen Anfragen tauscht genau eine. Gesperrte Konten
-  fragt niemand nach. Verweigert der Provider, endet die Sitzung (`oidc_widerruf`) — ihre API-Keys
-  nicht; frische Gruppen werden neu bewertet (ein Gruppen-
+  fragt niemand nach. Verweigert der Provider, endet die Sitzung (`oidc_widerruf`), und die
+  API-Keys des Kontos **ruhen** (unten); frische Gruppen werden neu bewertet (ein Gruppen-
   Claim, der ganz fehlt, ändert nichts). Nicht erreichbar → Sitzung bleibt, neuer Versuch nach einer
   Minute. **Voraussetzung:** Der Provider gibt Refresh-Tokens aus (bei manchen nur mit Scope
   `offline_access`, dann `oidc_scopes` ergänzen). Gibt er keine, bleibt es beim Stand davor: Die
   Sitzung läuft bis `session_ttl_hours`.
+- **API-Keys folgen dem Provider (Fund 8).** Für Konten mit OIDC-Bindung gilt ein Key nur, solange
+  der Provider das Konto trägt: Sagt er bei 4a Nein (auch: aus der erlaubten Gruppe genommen),
+  ruhen die Keys sofort (`api_keys_ruhen` im Audit-Log, Abweisung `idp_nein`). Und ohne Bestätigung
+  binnen `oidc_apikey_confirm_days` (Vorgabe 30; Login über den Provider oder Refresh-Tausch mit
+  Ja) ruhen sie ebenfalls (`idp_unbestaetigt`) — so fällt auch jemand auf, der nur noch per Skript
+  arbeitet und keine Sitzung hat, die 4a nachprüfen könnte. **Gelöscht wird nichts**: Ein
+  `invalid_grant` unterscheidet nicht zwischen „gesperrt" und „abgelaufen" (RFC 6749 5.2) — die
+  nächste Anmeldung über den Provider weckt die Keys. Reine Automatik gehört auf ein Service-Konto
+  (keine OIDC-Bindung, nicht betroffen). Bestand: Die Frist beginnt mit dem Update. `0` schaltet nur
+  die Frist ab, das Nein zählt weiter. Mit Keycloak beachten: Läuft dort die SSO-Sitzung per
+  Leerlauf ab, antwortet der Refresh ebenfalls `invalid_grant` — dann endet auch die
+  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login.
 - **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
   Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
   räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
@@ -163,8 +175,21 @@ Seite gehört und sich nicht ändert:
   keine Adresse im Konto, kein `Remote-Email` (H-3). Liefert der Provider den Beleg später, wird sie
   nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
   prüft: `oidc_email_verified_default=True`.
+- **SAML und LDAP liefern keinen Beleg** — der Betreiber sagt je Quelle, ob er ihren Adressen traut
+  (PO-Entscheid 2026-09-24):
+
+  | Schalter | Vorgabe | vertraut | nicht vertraut |
+  |---|---|---|---|
+  | `ldap_email_trusted` | **an** (das Verzeichnis ist meist das eigene) | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse wird nicht verwendet (wie H-3) |
+  | `saml_email_trusted` | **aus** | wie oben | Adresse nicht verwendet; ein Kontoname mit `@` (NameID emailAddress, UPN) weicht einem Ersatznamen `saml-<hash>` |
+
+  **LDAP auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen** — sonst trägt
+  sich jemand die Adresse aus `admin_identifiers` ein und ist beim ersten Login Erst-Admin (das war
+  F-14; die Vorgabe „vertraut" nimmt diesen Schutz bewusst zurück). Vertraut belegt ein Login nur
+  dieselbe Adresse, die schon am Konto steht, und nur nach oben; ein neuer Wert im Verzeichnis
+  ändert die Adresse eines bestehenden Kontos nicht. Bestehende Konten behalten, was sie haben.
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
-  SAML und LDAP liefern keinen). Der sichere Weg ist `/auth/claim-admin` (F-14).
+  bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
 ## Anmeldewege und ihre Stärke
 
@@ -180,27 +205,28 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
 | PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
-| Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet | ohne TOTP ist das Postfach der einzige Faktor (ASVS 6.3.6) |
+| Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
 | Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
 | Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
 | API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) |
 
-**Die Stärke eines Kontos ist die seines schwächsten eingeschalteten Wegs.** Ein Konto mit TOTP ist
-über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne TOTP ist der Anmelde-Link
-so stark wie das Postfach. Wer das angleichen will, erzwingt eine Kette oder schaltet schwache
+**Die Stärke eines Kontos ist die seines schwächsten eingeschalteten Wegs.** Ein Konto mit TOTP oder
+Passkey ist über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne zweiten Faktor
+ist der Anmelde-Link so stark wie das Postfach. Eine Route-Kette `require(factors=["magic"])` prüft
+nur ihre eigene Liste; sie verlangt den zweiten Faktor nicht. Wer das angleichen will, erzwingt eine Kette oder schaltet schwache
 Wege ab. ASVS 6.3.4 („alle Wege gleich stark") erfüllt die Vorgabe damit **nicht**; eine Kette
 tut es.
 
 ## Was für ASVS Level 3 fehlt
 
 TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Seit
-2026-09-24 sind drei davon erfüllt (6.3.5, 6.3.7, 6.3.8 mit Bestätigung), 6.3.6 bleibt eine
-Entscheidung des Betreibers:
+2026-09-24 sind drei davon erfüllt (6.3.5, 6.3.7, 6.3.8 mit Bestätigung), 6.3.6 für Konten mit
+zweitem Faktor:
 
 | ASVS | Anforderung | Stand |
 |---|---|---|
 | 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | erfüllt, sobald Versand konfiguriert ist: Greift eine Konto-Sperre (Fenster oder Serie), geht ein Hinweis an die belegte Adresse — höchstens einer je Sperrfenster, ohne Link (`notify_login_failures`, Vorgabe an). Nachgeschlagen und verschickt im Hintergrund, die Antwort verrät weder Existenz noch Laufzeit |
-| 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | nicht erfüllt, sobald `magiclink_enabled` ohne erzwungene Kette läuft (s. Tabelle oben); abschaltbar |
+| 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | teilweise (PO-Entscheid 2026-09-24, Option C): Hat ein Konto TOTP oder Passkey, verlangt die Anmeldung über den Anmelde-Link ihn zusätzlich (`magiclink_require_second_factor`, Vorgabe an; `False` = der Link genügt). Konten ohne zweiten Faktor meldet der Link weiter allein an — dort ist das Postfach der einzige Faktor. Streng erfüllt nur ohne `magiclink_enabled` |
 | 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift, und seit 2026-09-24 auch beim Widerruf von API-Keys (`api_key_revoked`, gesammelt `api_keys_revoked`). Die Mail verschickt der Hook (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
 | 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | erfüllt mit `signup_verify_email=True`: gleiche Antwort und Rechenzeit am Login (`dummy_verify`) und an der Registrierung (dieselbe Arbeit in beiden Zweigen, 2026-09-24). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig (sofortige Anmeldung vs. 409) — die Konfigurationsprüfung warnt |
