@@ -2,7 +2,27 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.20.0] — 2026-09-24
+
+**Sicherheits-Release, mit Brüchen — jede Installation sollte es einspielen, aber nicht blind.**
+Es schliesst die übrigen drei 1.0-Blocker des dritten Audits (F-11 stabile Kennung für LDAP und
+SAML, F-12 LDAP-Transport, F-16 SP-Identität) und die übrigen Befunde aus T-13; danach wurde
+die Zusammenführung selbst angegriffen und gehärtet.
+
+**Vor dem Update:**
+
+1. **Sicherung ziehen** (`tinysesam backup`). Die Datenbank wandert von Schema 8 auf **10**; ein
+   Rückschritt auf 0.19.x braucht die Sicherung.
+2. **Jeder ist nach dem Update einmal abgemeldet** (`__Host-`-Cookies).
+3. **Eigenes JS und eigene Routen prüfen:** den CSRF-Cookie-Namen aus `auth.csrf_cookie_name`
+   lesen (nicht aus `cfg.csrf_cookie`, nicht fest `tinysesam_csrf`); das Rückgabe-Token von
+   `complete_totp()` ins Cookie setzen; Abmelden per `POST /auth/logout`.
+4. **Konfiguration prüfen:** `ldap://` ohne StartTLS ist ein Aufbaufehler, ebenso Text statt Zahl
+   in Zahlenfeldern (`smtp_port="587"`). `base_url` setzen, wenn Mails oder SSO im Spiel sind.
+5. **Wer die nginx-Vorlage übernommen hat**, zieht die `map`-Zeilen nach.
+
+Die Einzelheiten folgen — erst die Punkte aus den Blockern, dann „T-13: die übrigen Befunde" und
+„T-13: Angriff auf die Integration".
 
 **Verhaltensänderung.** `ldap://` ohne StartTLS ist jetzt ein **Aufbaufehler**. Wer ein
 Verzeichnis im Klartext anspricht, muss das mit `ldap_allow_plaintext=True` ausdrücklich sagen.
@@ -11,6 +31,9 @@ setzen (nur sinnvoll, wenn der Verkehr die Maschine nie verlässt).
 
 ### Geändert
 
+- **Das Release-Skript ersetzt nur noch Pins** (`scripts/_release.py`): Bisher schrieb es jede
+  Fundstelle der alten Version um, auch erzählenden Text wie „0.19.0 hob auf Schema 8". Es
+  erkennt jetzt auch den deutschen Abschnitt `[Unveröffentlicht]`.
 - **Testbasis auf Kit 0.21.5** (von 0.18.0). Neu verdrahtet: `pruefe_testdateien_gerufen` fragt
   von aussen, ob jede Testdatei einen Läufer hat — ein nicht verkabelter Test besteht seine eigene
   Aufruf-Prüfung dadurch, dass er schweigt. Der Geheimnis-Zaun kennt `pat`-Zuweisungen und das

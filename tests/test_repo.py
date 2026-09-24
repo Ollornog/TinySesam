@@ -862,9 +862,22 @@ _verloren = sorted(k for k, v in _scorecard.items() if not v)
 assert not _verloren, f"Scorecard-Kriterien verloren: {_verloren} (Binärdateien: {_bin[:3]})"
 print(f"  Scorecard: {len(_scorecard)} erreichte Kriterien bewacht ({', '.join(sorted(_scorecard))})")
 
+# ---------- Das Release-Skript ersetzt nur Pins, keine Geschichte ----------
+# Bis 0.20.0 ersetzte `scripts/_release.py` jede Fundstelle der alten Version — und schrieb damit
+# „0.19.0 hob auf Schema 8" und „bis 0.19.0 landete man im selben Konto" auf die neue Fassung um.
+# (Mutationsprobe: in `ersetze_pins` wieder `text.replace(alt, neu)` → rot.)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import _release  # noqa: E402
+_probe = ("x@v0.19.0\ntinysesam:v0.19.0\n/v0.19.0/tinysesam-0.19.0-py3\n==0.19.0\n"
+          'version = "0.19.0"\n__version__ = "0.19.0"\nBis 0.19.0 galt\n0.19.0 took it\nv0.19.01')
+_neu, _n = _release.ersetze_pins(_probe, "0.19.0", "0.20.0")
+assert _n == 7 and "Bis 0.19.0 galt" in _neu and "0.19.0 took it" in _neu and "v0.19.01" in _neu, (_n, _neu)
+print("  Release-Skript ersetzt nur Pins (7 Formen), erzählender Text bleibt")
+
 # ---------- Doku wandert mit: der Changelog kennt den aktuellen Stand ----------
 changelog = read("CHANGELOG.md")
-assert "## [Unreleased]" in changelog or f"## [{pv}]" in changelog
+assert any(k in changelog for k in ("## [Unveröffentlicht]", "## [Unreleased]", f"## [{pv}]")), \
+    "CHANGELOG hat weder einen offenen Abschnitt noch einen für die Paketversion"
 for readme in ("README.md", "i18n/README.de.md"):
     body = read(readme)
     assert "tests/test_browser.py" in body, f"{readme} erklärt den Browser-Test nicht"
