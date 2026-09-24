@@ -416,6 +416,62 @@ r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
 #  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
 #  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
 
+# ── F-05: Inaktivitäts-Timeout ────────────────────────────────────────────────────────────
+auth_i, app_i = _app()
+
+
+@app_i.get("/drin")
+def _drin(user=Depends(auth_i.require())):
+    return {"ok": True}
+
+
+r.check("F-05: Vorgabe 8 h Inaktivität ohne „Angemeldet bleiben“, mit: aus",
+        auth_i.store.leerlauf_sek == (8 * 3600, 0), str(auth_i.store.leerlauf_sek))
+auth_i.create_user("ruhig", password=PW)
+ci = TestClient(app_i)
+ci.post("/auth/login", data={"username": "ruhig", "password": PW}, follow_redirects=False)   # ohne remember
+r.check("… frisch angemeldet kommt man hinein", ci.get("/drin", follow_redirects=False).status_code == 200)
+auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 8 * 3600 - 5")
+r.check("… nach 8 h ohne Anfrage ist die Sitzung weg (nicht nur abgewiesen, gelöscht)",
+        ci.get("/drin", follow_redirects=False).status_code != 200
+        and auth_i.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0)
+ci2 = TestClient(app_i)
+ci2.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
+auth_i.store._exec("UPDATE session SET zuletzt = zuletzt - 30 * 86400")
+r.check("… mit „Angemeldet bleiben“ zählt nur die absolute Laufzeit (Vorgabe)",
+        ci2.get("/drin", follow_redirects=False).status_code == 200)
+auth_j, app_j = _app(session_idle_minutes_remember=60)
+
+
+@app_j.get("/drin")
+def _drin_j(user=Depends(auth_j.require())):
+    return {"ok": True}
+
+
+auth_j.create_user("ruhig", password=PW)
+cj = TestClient(app_j)
+cj.post("/auth/login", data={"username": "ruhig", "password": PW, "remember": "1"}, follow_redirects=False)
+cj.get("/drin")
+_vorher = auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"]
+cj.get("/drin")
+r.check("F-05: eine zweite Anfrage in derselben Minute schreibt nicht (keine Sperre je Abruf)",
+        auth_j.store._one("SELECT zuletzt FROM session")["zuletzt"] == _vorher)
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 61 * 60")
+r.check("F-05 einstellbar: auch für „Angemeldet bleiben“ (hier 60 min)",
+        cj.get("/drin", follow_redirects=False).status_code != 200)
+auth_j.create_user("aktiv", password=PW)
+ck = TestClient(app_j)
+ck.post("/auth/login", data={"username": "aktiv", "password": PW, "remember": "1"}, follow_redirects=False)
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60, created_at = created_at - 50 * 60 "
+                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
+ck.get("/drin")                                              # Aktivität setzt die Uhr neu
+auth_j.store._exec("UPDATE session SET zuletzt = zuletzt - 50 * 60 "
+                   "WHERE user_id = (SELECT id FROM users WHERE username='aktiv')")
+r.check("F-05: wer aktiv ist, bleibt drin (50 + 50 min, aber nie 60 am Stück)",
+        ck.get("/drin", follow_redirects=False).status_code == 200)
+# (Mutationsproben: die Leerlauf-Prüfung in `get_session` streichen → „nach 8 h … weg" rot; das
+#  Nachschreiben von `zuletzt` streichen → „wer aktiv ist, bleibt drin" rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

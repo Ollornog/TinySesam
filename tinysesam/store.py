@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
     -- behält sein Verhalten (das ALTER TABLE füllt jede vorhandene Zeile damit).
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_admin      INTEGER NOT NULL DEFAULT 0,
+    -- Owner (Entscheid 2026-09-24): immer Admin (von Hand, 1), nicht löschbar, nicht sperrbar, nicht
+    -- entmachtbar; die Rolle lässt sich weitergeben, es gibt mindestens einen. Nur Owner vergeben sie.
+    is_owner      INTEGER NOT NULL DEFAULT 0,
     roles         TEXT NOT NULL DEFAULT '[]',   -- JSON-Liste feingranularer Rollen (optional)
     is_service    INTEGER NOT NULL DEFAULT 0,   -- Service-/Daemon-Account: kein interaktiver Login, nur API-Key
     -- 0 = aktiv. 1 = gesperrt, weil die Bestätigung der Adresse aussteht (Registrierung, oder
@@ -144,7 +147,8 @@ CREATE TABLE IF NOT EXISTS session (
     factors_done TEXT NOT NULL DEFAULT '[]',  -- JSON-Liste erfüllter Faktoren (Ketten-Engine)
     remember   INTEGER NOT NULL DEFAULT 1,   -- „Angemeldet bleiben" (persistentes Cookie)
     ip         TEXT,
-    user_agent TEXT
+    user_agent TEXT,
+    zuletzt    INTEGER                        -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
 );
 -- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
 -- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
@@ -603,7 +607,8 @@ class Store:
     #:      und Adresse (NOCASE); Bestand: Sperren aus dem Panel auf den Betreiber-Vermerk
     #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
     #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
-    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist
+    #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
+    #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -622,7 +627,9 @@ class Store:
         Ansage statt eines rätselhaften Verhaltens."""
         adds = {
             "session": [("mfa_at", "INTEGER"), ("remember", "INTEGER NOT NULL DEFAULT 1"),
-                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'")],
+                        ("factors_done", "TEXT NOT NULL DEFAULT '[]'"),
+                        # NULL für Bestandssitzungen: gilt als `created_at` (F-05).
+                        ("zuletzt", "INTEGER")],
             "totp_cred": [("last_step", "INTEGER")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
@@ -637,7 +644,9 @@ class Store:
                       ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
                       # NULL = noch nicht gerechnet; weiter unten für den Bestand nachgetragen.
                       # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
-                      ("topf_name", "TEXT"), ("topf_mail", "TEXT")],
+                      ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
+                      # 0 für den Bestand; wer Owner wird, entscheidet `TinySesam._owner_sicherstellen`.
+                      ("is_owner", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -1361,6 +1370,21 @@ class Store:
     def set_admin(self, user_id, is_admin: bool):
         self._exec("UPDATE users SET is_admin=? WHERE id=?", (1 if is_admin else 0, user_id))
 
+    def set_owner(self, user_id, owner: bool):
+        """Owner-Kennzeichen setzen. Ein Owner ist immer Admin — und zwar von Hand (1): Kein Identity
+        Provider nimmt einem Owner das Admin-Recht (H-5 entzieht nur die 2). Die Regeln (mindestens
+        einer, nur Owner vergeben) prüft der Manager."""
+        if owner:
+            self._exec("UPDATE users SET is_owner=1, is_admin=1 WHERE id=?", (user_id,))
+        else:
+            self._exec("UPDATE users SET is_owner=0 WHERE id=?", (user_id,))
+
+    def owner_count(self, ohne=None) -> int:
+        """Wie viele Owner gibt es (ohne das Konto `ohne`)?"""
+        zeile = self._one("SELECT COUNT(*) AS n FROM users WHERE is_owner=1 AND id <> ?",
+                          (int(ohne) if ohne is not None else -1,))
+        return int(zeile["n"])
+
     def set_admin_vom_idp(self, user_id):
         """Admin-Flag mit dem Vermerk „vom Identity Provider vergeben" (`is_admin=2`, H-5).
 
@@ -1578,11 +1602,18 @@ class Store:
         token = secrets.token_urlsafe(32)
         now = _now()
         self._exec("INSERT INTO session(token_hash, user_id, created_at, expires_at, mfa_ok, mfa_at, "
-                   "method, factors_done, remember, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   "method, factors_done, remember, ip, user_agent, zuletzt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                    (self.session_hash(token), user_id, now, now + ttl_seconds, 1 if mfa_ok else 0,
                     (now if mfa_ok else None), method, json.dumps(list(factors or [])),
-                    1 if remember else 0, ip, ua))
+                    1 if remember else 0, ip, ua, now))
         return token
+
+    #: Inaktivitäts-Grenzen in Sekunden (ohne / mit „Angemeldet bleiben"), 0 = aus. Setzt der
+    #: Manager aus der Konfiguration (F-05); der Store allein kennt keine.
+    leerlauf_sek = (0, 0)
+    #: Wie oft `zuletzt` höchstens geschrieben wird: Jede Anfrage schreiben hiesse, dass jeder
+    #: Forward-Auth-Abruf die Datei sperrt. Eine Minute Unschärfe ist für Stunden-Grenzen nichts.
+    LEERLAUF_SCHRITT_SEK = 60
 
     @staticmethod
     def _handle(wert) -> str:
@@ -1609,9 +1640,21 @@ class Store:
         if not token:
             return None
         r = self._one("SELECT * FROM session WHERE token_hash=?", (self.session_hash(token),))
-        if r and r["expires_at"] < _now():
+        if not r:
+            return None
+        jetzt = _now()
+        if r["expires_at"] < jetzt:
             self.delete_session(token)
             return None
+        # Inaktivität (F-05): zusätzlich zur absoluten Laufzeit. Eine abgelaufene Sitzung wird
+        # gelöscht, nicht nur abgewiesen — sonst lebte sie mit dem nächsten Zugriff wieder auf.
+        grenze = self.leerlauf_sek[1 if r["remember"] else 0]
+        zuletzt = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
+        if grenze and jetzt - int(zuletzt) > grenze:
+            self.delete_session(token)
+            return None
+        if jetzt - int(zuletzt) >= self.LEERLAUF_SCHRITT_SEK:
+            self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (jetzt, r["token_hash"]))
         return r
 
     def set_session_mfa(self, handle, ok=True):
@@ -1638,7 +1681,7 @@ class Store:
         token = secrets.token_urlsafe(32)
         neu = self.session_hash(token)
         spalten = ("user_id, created_at, expires_at, mfa_ok, mfa_at, method, factors_done, "
-                   "remember, ip, user_agent")
+                   "remember, ip, user_agent, zuletzt")
         with self._lock:
             try:
                 cur = self.db.execute(

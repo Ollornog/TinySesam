@@ -207,6 +207,12 @@ class TinySesamConfig:
     session_ttl_hours: int = 24 * 7       # TTL bei „Angemeldet bleiben" (persistentes Cookie)
     session_ttl_transient_hours: int = 12 # TTL ohne „Angemeldet bleiben" (Session-Cookie, endet beim Browser-Schließen)
     remember_me_enabled: bool = True      # „Angemeldet bleiben"-Checkbox anbieten (aus → immer persistent)
+    #: Inaktivitäts-Timeout in Minuten (F-05, ASVS 7.3.1): Wer so lange keine Anfrage mit dieser
+    #: Sitzung gestellt hat, ist abgemeldet — zusätzlich zur absoluten Laufzeit oben. 0 = aus.
+    #: Vorgabe 8 h für Sitzungen OHNE „Angemeldet bleiben"; mit gilt die zweite Zahl (Vorgabe aus:
+    #: wer „Angemeldet bleiben" wählt, hat die lange Sitzung ausdrücklich gewollt).
+    session_idle_minutes: int = 8 * 60
+    session_idle_minutes_remember: int = 0
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten

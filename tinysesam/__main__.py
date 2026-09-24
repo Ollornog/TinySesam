@@ -326,6 +326,33 @@ def _unlock(argv) -> int:
     return 0
 
 
+def _owner(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam owner",
+        description="Ein Konto zum Owner machen — der Notweg, wenn kein Owner mehr herankommt.",
+        epilog="Im Panel vergibt nur ein Owner die Rolle. Ist der einzige Owner ausgesperrt (Passkey "
+               "verloren, Person weg), bleibt der Weg über die Datenbank: wer sie in der Hand hat, "
+               "betreibt die Instanz ohnehin.")
+    ap.add_argument("username", help="Benutzername des Kontos")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    konto = store.get_user_by_name(a.username)
+    if not konto:
+        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        return 1
+    if konto["is_service"] or konto["disabled"]:
+        print(f"'{a.username}' ist gesperrt oder ein Service-Konto — Owner muss sich anmelden können.",
+              file=sys.stderr)
+        return 1
+    store.set_owner(konto["id"], True)
+    store.audit_log("owner_grant", a.username, None, "quelle=cli")
+    print(f"'{a.username}' ist Owner (und Admin).")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
@@ -343,6 +370,8 @@ def main(argv=None):
         sys.exit(_audit(argv[1:]))
     elif cmd == "unlock":
         sys.exit(_unlock(argv[1:]))
+    elif cmd == "owner":
+        sys.exit(_owner(argv[1:]))
     else:
         # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
         # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
@@ -353,7 +382,8 @@ def main(argv=None):
               "       python -m tinysesam restore --db <datei> <sicherung>\n"
               "       python -m tinysesam gc     --db <datei>\n"
               "       python -m tinysesam audit  --db <datei> [--user X]\n"
-              "       python -m tinysesam unlock --db <datei> <benutzer>",
+              "       python -m tinysesam unlock --db <datei> <benutzer>\n"
+              "       python -m tinysesam owner  --db <datei> <benutzer>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
 

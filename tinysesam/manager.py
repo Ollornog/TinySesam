@@ -242,6 +242,8 @@ class TinySesam:
         self._riegel(config, beim_aufbau=True)
         self.cfg = config
         self.store = Store(config.db_path)
+        self.store.leerlauf_sek = (max(0, int(config.session_idle_minutes or 0)) * 60,
+                                   max(0, int(config.session_idle_minutes_remember or 0)) * 60)
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
         # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
         # Beim Start zählen und sagen, wie viele es trifft; der Start selbst bleibt möglich
@@ -410,9 +412,60 @@ class TinySesam:
                 "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
                 len(kollisionen), beispiele,
                 " (weitere folgen)" if len(kollisionen) > 3 else "")
+        self._owner_sicherstellen()
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
+
+    # ---------- Owner ----------
+    def _owner_sicherstellen(self) -> None:
+        """Gibt es Admins, aber keinen Owner (Bestand vor dem Owner-Modell), wird der älteste
+        Admin Owner — bevorzugt einer, den jemand von Hand gesetzt hat (`is_admin=1`), aktiv und
+        kein Service-Konto. Einmal, laut, mit Zeile im Audit-Log. Ohne Admin bleibt es beim
+        Erst-Admin-Weg, der den ersten Owner mit vergibt (`_erster_owner`)."""
+        if self.store.owner_count() > 0:
+            return
+        kandidaten = sorted((u for u in self.store.list_users() if u["is_admin"] and not u["is_service"]),
+                            key=lambda u: (u["is_admin"] != 1, bool(u["disabled"]), int(u["id"])))
+        if not kandidaten:
+            return
+        u = kandidaten[0]
+        self.store.set_owner(u["id"], True)
+        self.store.audit_log("owner_grant", u["username"], None, "quelle=bestand aeltester_admin")
+        security.seclog.warning("Owner-Modell: %s ist jetzt Owner (ältester Admin). Weitere Owner "
+                                "vergibt ein Owner im Admin-Panel.", security.fuer_log(u["username"]))
+
+    def _erster_owner(self, user_id) -> None:
+        """Der erste Admin einer Instanz wird auch ihr erster Owner (Bootstrap-Wege)."""
+        if self.store.owner_count() == 0:
+            self.store.set_owner(user_id, True)
+            u = self.store.get_user(user_id)
+            self.store.audit_log("owner_grant", u["username"] if u else None, None, "quelle=erst_admin")
+
+    def set_owner(self, user_id: int, owner: bool) -> bool:
+        """Die Owner-Rolle vergeben (`owner=True`) oder abgeben (`False`). False = kein solches Konto.
+
+        Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; es gibt immer
+        mindestens einen, und nur Owner vergeben die Rolle (das prüft die aufrufende Route). Die
+        Rolle abgeben geht nur, wenn ein ANDERER Owner bleibt (`StateError`). Service-Konten und
+        gesperrte Konten werden nicht Owner (`ConfigError`) — ein Owner muss sich anmelden können."""
+        u = self.store.get_user(user_id)
+        if not u:
+            return False
+        if owner:
+            if u["is_service"] or u["disabled"]:
+                raise ConfigError("Owner kann nur ein aktives, interaktives Konto werden.")
+            if not u["is_owner"]:
+                self.store.set_owner(user_id, True)
+                self.audit("owner_grant", u["username"])
+            return True
+        if u["is_owner"]:
+            if self.store.owner_count(ohne=user_id) == 0:
+                raise StateError(f"Konto {user_id} ist der letzte Owner. Erst einen anderen Owner "
+                                 "bestimmen, dann die Rolle abgeben.")
+            self.store.set_owner(user_id, False)
+            self.audit("owner_revoke", u["username"])
+        return True
 
     # ---------- User-Verwaltung ----------
     def kennung_vergeben(self, kennung, exclude_id=None) -> Optional[dict]:
@@ -922,7 +975,8 @@ class TinySesam:
     def ensure_admin(self, username, password) -> bool:
         """Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage."""
         if self.store.user_count() == 0:
-            self.create_user(username, password, is_admin=True)
+            uid = self.create_user(username, password, is_admin=True)
+            self._erster_owner(uid)
             return True
         return False
 
@@ -958,6 +1012,9 @@ class TinySesam:
         u = self.store.get_user(user_id)
         if not u:
             return False
+        if u["is_owner"]:
+            raise StateError(f"Konto {user_id} ist Owner und kann nicht gelöscht werden — erst die "
+                             "Owner-Rolle abgeben (dazu muss ein anderer Owner bestehen).")
         if u["is_admin"] and sum(1 for x in self.store.list_users() if x["is_admin"]) <= 1:
             raise StateError(f"Konto {user_id} ist der letzte Admin und kann nicht gelöscht werden.")
         # Der eine Löschweg (`Store.konto_entfernen`) — derselbe, über den `gc()`, `tinysesam gc`
@@ -1087,6 +1144,7 @@ class TinySesam:
         if not (trifft_adresse or trifft_name):
             return False
         self.store.set_admin(user["id"], True)
+        self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
         security.seclog.warning("Erst-Admin per admin_identifiers vergeben: %s",
                                 security.fuer_log(user["username"]))
@@ -1172,6 +1230,7 @@ class TinySesam:
             return False
         self.store.set_setting("admin_claim", "")     # einmalig
         self.store.set_admin(user["id"], True)
+        self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="claim_token")
         security.seclog.warning("Erst-Admin per Einmal-Token vergeben: %s",
                                 security.fuer_log(user["username"]))
