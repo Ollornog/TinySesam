@@ -182,7 +182,12 @@ auth_w, app_w, mails_w = _aufbau("")
 _rundgang("Wurzel", TestClient(app_w), auth_w, mails_w, "", "")
 
 # ── Ein root_path in unerwarteter Form wird nicht in Seiten getragen ──────────────────────
-auth_x, app_x, _ = _aufbau("/sso")
+# Ohne base_url (nur Passwort) zählt der root_path der Anfrage — hier mit Markup darin.
+cfg_x = TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False,
+                        csrf_enabled=False, passkey_enabled=False, lang="de")
+auth_x = TinySesam(cfg_x)
+app_x = FastAPI()
+app_x.include_router(auth_x.router())
 boese = TestClient(_wie_uvicorn(app_x, "/sso'><script>x</script>"))
 seite_x = boese.get("/auth/login", headers=HTML)
 r.check("ein root_path mit Markup landet nicht in der Seite (Form geprüft, dann leer)",
@@ -190,7 +195,81 @@ r.check("ein root_path mit Markup landet nicht in der Seite (Form geprüft, dann
         and "x</script>" not in seite_x.text and "sso'>" not in seite_x.text
         and PRAEFIX_PLATZHALTER not in seite_x.text,
         f"HTTP {seite_x.status_code} {seite_x.text[:200]}")
+ok_x = TestClient(_wie_uvicorn(app_x, "/sso")).get("/auth/login", headers=HTML).text
+r.check("… ein gültiger root_path ohne base_url trägt die Seite", "action='/sso/auth/login'" in ok_x)
+
+# ── Gegenprüfung T-15 ────────────────────────────────────────────────────────────────────
+# G1: Forward-Auth — die Login-URL im Header trägt den Präfix (mit base_url, auch für einen
+#     mitvertrauten Ziel-Host, der die Login-Seite an sich zieht).
+cfg_f = TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False,
+                        csrf_enabled=False, passkey_enabled=False, forward_auth_enabled=True,
+                        base_url="https://example.com/sso", trusted_redirect_hosts=["app.example.com"])
+auth_f = TinySesam(cfg_f)
+app_f = FastAPI()
+app_f.include_router(auth_f.router())
+c_f = TestClient(Starlette(routes=[Mount("/sso", app=app_f)]))
+loc_f = c_f.get("/sso/auth/forward", headers={"x-forwarded-host": "example.com", "x-forwarded-proto": "https",
+                                              "x-forwarded-uri": "/wiki/seite"}).headers.get("x-tinysesam-location", "")
+loc_f2 = c_f.get("/sso/auth/forward", headers={"x-forwarded-host": "app.example.com", "x-forwarded-proto": "https",
+                                               "x-forwarded-uri": "/wiki"}).headers.get("x-tinysesam-location", "")
+r.check("G1: Forward-Auth — Login-URL im Präfix, auch auf dem mitvertrauten Ziel-Host",
+        loc_f.startswith("https://example.com/sso/auth/login?next=")
+        and loc_f2.startswith("https://app.example.com/sso/auth/login?next="), f"{loc_f} | {loc_f2}")
+
+# G2: Guard einer Host-App AUSSERHALB der TinySesam-Montage (Host an der Wurzel, TinySesam unter /sso).
+auth_g, app_g, _ = _aufbau("/sso")
+host = FastAPI()
+host.mount("/sso", app_g)
+
+
+@host.get("/dashboard")
+def _dash(user=Depends(auth_g.require_user)):
+    return {"u": user["username"]}
+
+
+c_g = TestClient(host)
+loc_g = c_g.get("/dashboard", headers=HTML, follow_redirects=False).headers.get("location", "")
+form_g = VERWEIS.findall(c_g.get("/sso/auth/login", headers=HTML).text)
+nach_g = c_g.post("/sso/auth/login", data={"username": "chefin", "password": PW, "next": "/dashboard"},
+                  follow_redirects=False).headers.get("location", "")
+r.check("G2: Guard der Host-App → Login im Präfix, next = Pfad der Host-App, zurück dorthin",
+        loc_g == "/sso/auth/login?next=/dashboard" and ("/sso/auth/login", "") in form_g
+        and nach_g == "/dashboard" and c_g.get("/dashboard").json() == {"u": "chefin"},
+        f"{loc_g} | {nach_g}")
+
+# G3: Ein Platzhalter in Daten wird nicht zum Ziel; eigene Templates bleiben byte-gleich.
+auth_p, app_p, _ = _aufbau("")
+c_p = TestClient(app_p)
+r.check("G3: safe_next weist ein Ziel mit dem Platzhalter ab",
+        auth_p.safe_next(f"/{PRAEFIX_PLATZHALTER}/evil.example/x") == "/")
+auth_p.set_template("login", lambda a, ctx: f"<a href='{ctx.get('next', '')}'>zurück</a> {PRAEFIX_PLATZHALTER}")
+eigen = c_p.get(f"/auth/login?next=/{PRAEFIX_PLATZHALTER}/evil.example/x", headers=HTML).text
+r.check("… und die Ausgabe eines eigenen Templates bleibt byte-gleich (Platzhalter nicht ersetzt)",
+        eigen == f"<a href='/'>zurück</a> {PRAEFIX_PLATZHALTER}", eigen)
+
+# G4: Fehlerseite und Abmelde-Rückfrage bleiben im Präfix; render_panel ist vollständig.
+auth_e, app_e, _ = _aufbau("/sso")
+auth_e.install_error_pages(app_e)
+c_e = TestClient(Starlette(routes=[Mount("/sso", app=app_e)]))
+fehler_e: list = []
+_pruefe_seite("404", c_e.get("/sso/gibt-es-nicht", headers=HTML), "/sso", fehler_e)
+_pruefe_seite("logout-rückfrage", c_e.get("/sso/auth/logout", headers={**HTML, "sec-fetch-site": "cross-site"}),
+              "/sso", fehler_e)
+from tinysesam.admin import render_panel  # noqa: E402
+r.check("G4: Fehlerseite und Abmelde-Rückfrage im Präfix; render_panel ohne Platzhalter",
+        not fehler_e and PRAEFIX_PLATZHALTER not in render_panel(auth_e, "/auth/admin")
+        and 'href="/sso/auth/logout"' in render_panel(auth_e, "/sso/auth/admin", praefix="/sso"),
+        "; ".join(fehler_e))
+
+# G5: Wer den Präfix noch von Hand in login_path trägt, bekommt eine Warnung (sonst /sso/sso/…).
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+_warn = " ".join(_kp.pruefe(TinySesamConfig(db_path=":memory:", base_url="https://example.com/sso",
+                                           login_path="/sso/auth/login"))[1])
+r.check("G5: login_path mit dem Präfix der base_url → Warnung", "login_path='/sso/auth/login'" in _warn, _warn[:200])
+
 # (Mutationsproben: `render_page` ersetzt den Platzhalter nicht → „kein Platzhalter" rot;
+#  `_praefix` ohne base_url-Pfad → G2 rot; forward_login_url wieder mit base+login_path → G1 rot;
+#  Ersatz auch bei eigenen Templates → G3 rot; safe_next ohne Platzhalter-Prüfung → G3 rot;
 #  `pfad` gibt den Pfad unverändert zurück → Umleitungen rot; `_praefix` ohne Formprüfung →
 #  letzte Prüfung rot; `safe_next` ohne request → „ohne next" rot.)
 

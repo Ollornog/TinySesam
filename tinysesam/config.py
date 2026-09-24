@@ -446,9 +446,9 @@ class TinySesamConfig:
     # ein Host, wählt der Anfragende per Host-Header aus.
     # Mit Unterpfad montiert (root_path) gehört das Präfix HIER hinein:
     # "https://example.com/sso" — es gilt für die VERSCHICKTEN LINKS, die es genau einmal tragen.
-    # Die eingebauten Seiten und ihre Umleitungen nehmen es seit T-15 aus dem `root_path` der
-    # Anfrage (uvicorn --root-path hinter einem Proxy, der /sso abschneidet, oder eine
-    # Starlette-Montage) — dafür ist hier nichts einzustellen.
+    # Die eingebauten Seiten und ihre Umleitungen nehmen seit T-15 denselben Präfix aus dem Pfad
+    # dieser base_url (ohne base_url aus dem root_path der Anfrage). login_path, login_redirect,
+    # logout_redirect und admin_path sind deshalb Pfade der App OHNE Präfix.
     # Wo base_url leer bleiben darf (nur Passwort/Passkey/PIN/LDAP,
     # höchstens forward_auth_enabled), wird eine abgeleitete Basis geprüft: nur ein Host aus
     # trusted_redirect_hosts oder Loopback zählt, und der root_path des Servers kommt mit.

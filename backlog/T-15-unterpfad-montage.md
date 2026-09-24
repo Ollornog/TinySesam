@@ -33,7 +33,9 @@ Einschränkung stehen.
 
 ## Erledigt 2026-09-25
 
-Eine Quelle: `TinySesam._praefix(request)` liest `scope["root_path"]` (Form geprüft: nur
+Eine Quelle: `TinySesam._praefix(request)` nimmt den Pfad der `base_url`, ohne sie `scope["root_path"]`
+(Gegenprüfung: nur so stimmen Guards einer Host-App ausserhalb der Montage und ein Proxy, der ohne
+`--root-path` abschneidet). Form geprüft: nur
 `/teil/teil` aus A–Z a–z 0–9 . _ ~ -, sonst leer und eine Warnung — der Wert landet unmaskiert
 in Attributen und Skripten). Die eingebauten Seiten schreiben `__TS_P__` vor jeden Pfad der App
 (Formulare, Links, fetch-Aufrufe), `render_page` setzt den Präfix ein; ein eigenes Template ohne
@@ -43,6 +45,10 @@ request)` gibt dem Rückfall `login_redirect` den Präfix; die Routen haben `nex
 als Vorgabe, damit ein fehlendes `next` wirklich auf `login_redirect` führt (so stand es schon in
 der Konfiguration). Gemessen in `tests/test_unterpfad.py` an einer Starlette-Montage, an einem
 Scope wie von `uvicorn --root-path` und an der Wurzel (unverändert), sechs Mutationen rot.
+
+**Gegenprüfung (ein Angreifer):** 3 mittel (Forward-Auth-URL ohne Präfix, Host-App-Guard,
+Platzhalter-Ersatz über Daten und eigene Templates → Open Redirect in eigenen Templates), 2
+niedrig, 3 info — alle behoben, 12 Mutationen rot.
 
 **Grenze:** `FastAPI(root_path=...)` an der App selbst lässt den Pfad der Anfrage ohne Präfix —
 Seiten und Umleitungen stimmen, aber `next=`-Ziele aus `request.url.path` zeigen aus der Montage

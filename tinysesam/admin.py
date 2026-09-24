@@ -481,8 +481,8 @@ def build_admin_router(auth) -> APIRouter:
             nonce = secrets.token_urlsafe(16)
             # `__TS_P__` im Kopf (App, Logout) wird der Montage-Präfix (T-15); die API-Basis `B`
             # kommt aus dem Pfad der Anfrage und trägt ihn schon.
-            seite = render_panel(auth, request.url.path.rstrip("/"), warn=warn)
-            resp = HTMLResponse(_inject_nonce(seite.replace("__TS_P__", auth._praefix(request)), nonce))
+            seite = render_panel(auth, request.url.path.rstrip("/"), warn=warn, praefix=auth._praefix(request))
+            resp = HTMLResponse(_inject_nonce(seite, nonce))
             policy = auth._csp_header(nonce)
             if policy:
                 resp.headers.setdefault("Content-Security-Policy", policy)
@@ -526,7 +526,7 @@ def panel_texts(auth) -> dict:
     return texts
 
 
-def render_panel(auth, base: str, warn: str = "") -> str:
+def render_panel(auth, base: str, warn: str = "", praefix: str = "") -> str:
     """Panel-HTML für eine gegebene API-Basis. Einziger Ort, an dem `_PAGE` befüllt wird —
     damit z.B. eine Demo-/Vorschau-Einbindung dieselbe UI zeigt wie das echte Panel.
 
@@ -534,7 +534,8 @@ def render_panel(auth, base: str, warn: str = "") -> str:
     Anfrage umschaltet (`?lang=`), bekommt das Panel übersetzt mitgeliefert.
     """
     cfg = auth.cfg
-    return (_PAGE.replace("__TOKENS__", TOKENS)
+    # `__TS_P__` zuerst und nur im Gerüst — Marke, Warnung und Kopf/Fuss kommen danach (T-15).
+    return (_PAGE.replace("__TS_P__", praefix).replace("__TOKENS__", TOKENS)
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))

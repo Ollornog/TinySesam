@@ -809,9 +809,10 @@ All optional (on/off by config), usable individually and combined, front end rep
   with more than one host listed, the `Host` header would still pick which one ends up in the
   link. **Mounted under a sub-path** (`root_path`), the prefix belongs in `base_url`:
   `base_url="https://example.com/sso"` — and it applies to the **mailed links**, which carry it
-  exactly once. The built-in pages and their redirects take the prefix from the request's
-  `root_path` — `uvicorn --root-path /sso` behind a proxy that strips `/sso`, or a Starlette
-  `Mount("/sso", app)`; nothing to configure for them. (Not `FastAPI(root_path=...)` on the app
+  exactly once. The built-in pages and their redirects take the same prefix from the path of
+  `base_url` (without `base_url`: from the request's `root_path` — `uvicorn --root-path /sso` behind
+  a proxy that strips `/sso`, or a Starlette `Mount("/sso", app)`). `login_path`, `login_redirect`,
+  `logout_redirect` and `admin_path` are paths of the app *without* the prefix. (Not `FastAPI(root_path=...)` on the app
   itself: that setting leaves the request path without the prefix, and `next=` targets built from
   it would point outside the mount.) The same one rule holds for the methods
   themselves, not just for the built-in routes: `magic_url`, `send_password_reset`,

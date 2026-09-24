@@ -38,6 +38,10 @@ class Templates:
     def has(self, name: str) -> bool:
         return name in self._overrides or name in DEFAULTS
 
+    def ueberschrieben(self, name: str) -> bool:
+        """Hat die App diese Seite durch ein eigenes Template ersetzt?"""
+        return name in self._overrides
+
     def render(self, name: str, auth, ctx: dict):
         fn = self._overrides.get(name) or DEFAULTS.get(name)
         if fn is None:
@@ -590,7 +594,7 @@ def _error(auth, ctx) -> str:
     msg = ctx.get("message") or t("error.oops")
     body = (f"<h1 class=errcode>{_e(code)}</h1>"
             f"<div class='hint errhint'>{_e(msg)}</div>"
-            f"<a class=btn2 href='/'>{_e(t('error.home'))}</a>")
+            f"<a class=btn2 href='__TS_P__/'>{_e(t('error.home'))}</a>")
     return _page(auth, str(code), body)
 
 
@@ -654,7 +658,7 @@ def _logout(auth, ctx) -> str:
             f"<div class=hint>{_e(t('logout.confirm'))}</div>"
             f"<form method=post action='__TS_P__/auth/logout'>{_cf(ctx)}"
             f"<button type=submit>{_e(t('logout'))}</button></form>"
-            f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
+            f"<div class=hint><a href='__TS_P__/'>{_e(t('cancel'))}</a></div>")
     return _page(auth, t("logout"), body)
 
 

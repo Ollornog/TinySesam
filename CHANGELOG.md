@@ -170,9 +170,14 @@ auffällt:
 - **Die eingebauten Seiten tragen den Unterpfad (T-15).** Unter `uvicorn --root-path /sso` hinter
   einem Proxy, der `/sso` abschneidet, oder als `Mount("/sso", app)` zeigten Formulare, Links,
   fetch-Aufrufe und Umleitungen bis dahin aus der Montage heraus (`/auth/login` → 404), nur die
-  verschickten Links stimmten. Jetzt kommt der Präfix aus dem `root_path` der Anfrage — eine
-  Quelle für alle. Neu: `auth.pfad(request, pfad)` für eigene Umleitungen auf Seiten von
-  TinySesam; `safe_next(next, request)`. Eigene Templates bleiben unberührt.
+  verschickten Links stimmten. Jetzt kommt der Präfix aus **einer** Quelle: dem Pfad der
+  `base_url` (dort gehört er laut Doku ohnehin hin), ohne `base_url` aus dem `root_path` der
+  Anfrage. So stimmen auch Guards einer Host-App ausserhalb der TinySesam-Montage und die
+  Forward-Auth-Login-URL. Neu: `auth.pfad(request, pfad)` für eigene Umleitungen auf Seiten von
+  TinySesam, `safe_next(next, request)`, `ctx["praefix"]` für eigene Templates (deren Ausgabe
+  sonst unverändert bleibt). **Beim Update:** `login_path`, `login_redirect`, `logout_redirect`
+  und `admin_path` sind Pfade der App **ohne** Präfix — wer ihn bisher von Hand eingetragen hat
+  (`/sso/auth/login`), nimmt ihn heraus; die Konfigurationsprüfung warnt davor.
 - **Ohne `next` führt eine Anmeldung auf `login_redirect`.** Die Routen hatten `next="/"` als
   Vorgabe, `login_redirect` galt nur für ein ungültiges Ziel — anders, als die Konfiguration es
   beschreibt („Ziel nach erfolgreichem Login"). Mit der Vorgabe `"/"` ändert sich nichts.
