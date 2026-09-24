@@ -21,6 +21,18 @@ from __future__ import annotations
 
 import re
 
+
+# Stufe 3 (M-1): Fallzahl je Prüfung. Einzeln per Pfad geladen gibt es kein Paket und damit
+# keine Zählung — dann bleibt alles wie vorher.
+try:
+    from .hygiene import mit_fallzahl, zaehle_fall
+except ImportError:  # pragma: no cover — nur beim Laden ohne Paket
+    def mit_fallzahl(name, fn):
+        return fn
+
+    def zaehle_fall(n=1):
+        return None
+
 # Referrer-Werte, die keine vollständige URL an fremde Hosts geben.
 SICHERE_REFERRER = ("no-referrer", "same-origin", "strict-origin",
                     "strict-origin-when-cross-origin", "no-referrer-when-downgrade")
@@ -114,6 +126,7 @@ def pruefe_cookie_flags(gesetzt: dict, erwartung: dict) -> list[str]:
     sein muss, prüft der Aufrufer — das hängt an der Antwort, nicht an der Politik.
     """
     verstoesse: list[str] = []
+    zaehle_fall(len(gesetzt))
     for name, attrs in sorted(gesetzt.items()):
         if name not in erwartung:
             verstoesse.append(f"{name}: gesetzt, aber ohne Erwartung — Flags deklarieren")
@@ -141,6 +154,7 @@ def pruefe_security_header(headers, policy: dict | None = None) -> list[str]:
     regeln = STANDARD_POLICY if policy is None else policy
     h = _normalisiere(headers)
     verstoesse: list[str] = []
+    zaehle_fall(len(h))
     for name, soll in sorted(regeln.items()):
         ist = h.get(name.lower())
         if ist is None:
@@ -166,6 +180,7 @@ def pruefe_csp(csp: str) -> list[str]:
     verstoesse: list[str] = []
     if not csp or not csp.strip():
         return ["CSP: leer"]
+    zaehle_fall()
     text = csp.lower()
     direktiven = {}
     for teil in text.split(";"):
@@ -196,6 +211,7 @@ def pruefe_hsts(wert: str | None, min_alter: int = 15768000) -> list[str]:
     """
     if not wert:
         return ["HSTS: fehlt"]
+    zaehle_fall()
     m = re.search(r"max-age\s*=\s*(\d+)", str(wert).lower())
     if not m:
         return [f"HSTS: kein max-age in {wert!r}"]
@@ -213,8 +229,17 @@ def pruefe_kein_versions_leak(headers) -> list[str]:
     """
     h = _normalisiere(headers)
     verstoesse = []
+    zaehle_fall(len(h))
     for name in ("server", "x-powered-by", "x-aspnet-version"):
         wert = h.get(name)
         if wert and _VERSION.search(str(wert)):
             verstoesse.append(f"{name}: {wert!r} verrät eine Version")
     return verstoesse
+
+
+# Jede Prüfung dieses Moduls zählt ihre Fälle (M-1, Stufe 3) — Auswertung: hygiene.pruefe_etwas_gesehen.
+pruefe_cookie_flags = mit_fallzahl("headers.pruefe_cookie_flags", pruefe_cookie_flags)
+pruefe_security_header = mit_fallzahl("headers.pruefe_security_header", pruefe_security_header)
+pruefe_csp = mit_fallzahl("headers.pruefe_csp", pruefe_csp)
+pruefe_hsts = mit_fallzahl("headers.pruefe_hsts", pruefe_hsts)
+pruefe_kein_versions_leak = mit_fallzahl("headers.pruefe_kein_versions_leak", pruefe_kein_versions_leak)

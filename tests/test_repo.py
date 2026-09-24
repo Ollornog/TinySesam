@@ -1192,4 +1192,10 @@ else:
     assert _ausgefuehrt >= 2, f"nur {_ausgefuehrt} vollständige Beispiele — Muster anpassen"
 print(f"  READMEs: {_ausgefuehrt} vollständige Beispiele laufen im Wegwerf-Verzeichnis durch")
 
+# Kit 0.22.0 (M-1, Stufe 3): Hat jede Prüfung davor etwas GESEHEN? Eine Prüfung über eine
+# leere Menge ist immer grün. Muss als LETZTE laufen, sie wertet die Fallzahlen davor aus.
+ungesehen = hygiene.pruefe_etwas_gesehen()
+assert not ungesehen, "Kit-Prüfung ohne Fall:\n  " + "\n  ".join(ungesehen)
+print("  Kit 0.22.0: jede Prüfung hat etwas gesehen")
+
 print("OK test_repo")

@@ -23,6 +23,19 @@ from __future__ import annotations
 import hashlib
 import os
 
+# Stufe 3 (M-1): Fallzahl je Prüfung. Einzeln per Pfad geladen (so lädt `repokit` selbst
+# `manifest.py`) gibt es kein Paket und damit keine Zählung — dann bleibt alles wie vorher.
+try:
+    from .hygiene import LEER_IST_AUSSAGE, mit_fallzahl, zaehle_fall
+except ImportError:  # pragma: no cover — nur beim Laden ohne Paket
+    LEER_IST_AUSSAGE: set = set()
+
+    def mit_fallzahl(name, fn):
+        return fn
+
+    def zaehle_fall(n=1):
+        return None
+
 # Pfade relativ zur Repo-Wurzel — beide schreibt `repokit sync`.
 MANIFEST = "tests/_kit/MANIFEST.sha256"
 KIT_VERSION = "tests/_kit/KIT_VERSION"
@@ -60,6 +73,7 @@ def pruefe(root: str) -> list[str]:
                 abweichungen.append(f"MANIFEST.sha256 Zeile {nr}: unlesbar")
                 continue
             erwartet, rel = zeile.split("  ", 1)
+            zaehle_fall()
             voll = os.path.join(root, rel)
             if not os.path.exists(voll):
                 abweichungen.append(f"{rel}: fehlt")
@@ -75,3 +89,7 @@ def version(root: str) -> str | None:
         return None
     with open(pfad, encoding="utf-8") as fh:
         return fh.read().strip() or None
+
+
+# Jede Prüfung dieses Moduls zählt ihre Fälle (M-1, Stufe 3) — Auswertung: hygiene.pruefe_etwas_gesehen.
+pruefe = mit_fallzahl("manifest.pruefe", pruefe)
