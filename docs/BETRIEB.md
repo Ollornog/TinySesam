@@ -133,11 +133,11 @@ tut es.
 
 TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Drei
 davon sind offen oder nur teilweise erfüllt. 6.3.7 erfüllt der Hook `on_security_event`, sobald die
-App ihn setzt:
+App ihn setzt — mit einer benannten Lücke beim Widerruf von API-Keys:
 
 | ASVS | Anforderung | Stand |
 |---|---|---|
 | 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | fehlt — Fehlversuche stehen im Audit- und Sicherheits-Log, der Nutzer erfährt nichts. `on_security_event` meldet Faktorwechsel, keine Fehlversuche |
 | 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | nicht erfüllt, sobald `magiclink_enabled` ohne erzwungene Kette läuft (s. Tabelle oben); abschaltbar |
-| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey, API-Key), auch wenn ein Admin im Panel eingreift. Die Mail verschickt der Hook, TinySesam selbst verschickt nichts (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
+| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift. API-Keys meldet er nur bei der Anlage (`api_key_created`). **Offen:** Der Widerruf eines Keys löst kein Ereignis aus, weder durch den Inhaber noch durch einen Admin im Panel noch gesammelt beim Reset, bei der Sperre oder bei `POST /auth/sessions/revoke` mit `scope=all`. Er steht nur im Audit-Log (`apikey_revoke` bzw. `api_keys_revoked=` in der Zeile des Vorgangs). Nachrangig, weil ein Widerruf Zugang wegnimmt statt welchen zu schaffen. Die Mail verschickt der Hook, TinySesam selbst verschickt nichts (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
 | 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | teilweise — gleiche Antwort und Rechenzeit am Login (`dummy_verify`), Registrierung verrät Kennungen noch (R4-03) |

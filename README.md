@@ -231,12 +231,14 @@ user = auth.check_password(username, password)
 token, done = auth.start_session(user["id"], "password")   # tuple, not just a token
 auth.set_cookie(resp, token)
 if not done:                      # a second factor is still missing
-    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
 ```
 
 `start_session` returns `(token, session_ok)`. Unpack it — passing the tuple straight into
 `set_cookie` writes the string `"('abc…', True)"` into the cookie, and nothing raises: the sign-in
 is quietly broken. `session_ok=False` means the session exists but is not complete yet.
+The token returned by `complete_totp` replaces the old one, also on step-up — put it into the
+cookie. Ignore it, and the cookie holds a dead session: the user is signed out.
 
 ## Look & feel
 
