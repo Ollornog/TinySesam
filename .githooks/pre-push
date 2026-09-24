@@ -99,9 +99,27 @@ fi
 # Daraus lesen wir, ob main betroffen ist. Kein stdin (manueller Aufruf) => wie Feature-Branch,
 # also die strenge Regel. Fail-closed ist hier die richtige Richtung.
 pushes_main=0
-while read -r _local_ref _local_sha remote_ref _remote_sha; do
+refs_gesehen=0
+refs_geloescht=0
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    refs_gesehen=$((refs_gesehen + 1))
     [[ "$remote_ref" == "refs/heads/main" ]] && pushes_main=1
+    # Beim LOESCHEN eines Zweigs (`git push origin --delete <zweig>`) ist die lokale SHA
+    # vierzig Nullen. Git sagt es also deutlich — man muss nur hinsehen.
+    [[ "$local_sha" =~ ^0+$ ]] && refs_geloescht=$((refs_geloescht + 1))
 done || true
+
+# Ein reiner Loesch-Push schiebt KEINEN Inhalt. Die Suite wuerde den lokalen HEAD pruefen —
+# also etwas, das mit diesem Push nichts zu tun hat — und das kostet Minuten fuer einen Push
+# ohne Inhalt. Gemessen in zwei Repos beim Aufraeumen gemergter Zweige (2026-09-24).
+#
+# Bedingung mit Bedacht: NUR wenn stdin ueberhaupt Zeilen hatte UND jede davon eine Loeschung
+# war. Ohne stdin (manueller Aufruf) bleibt es bei der strengen Regel — fail-closed ist hier
+# die richtige Richtung, und ein gemischter Push (loeschen + schieben) traegt Inhalt.
+if [[ "$refs_gesehen" -gt 0 && "$refs_gesehen" -eq "$refs_geloescht" ]]; then
+    echo "pre-push: reiner Loesch-Push ($refs_geloescht Ref(s)) — kein Inhalt, keine Suite."
+    exit 0
+fi
 
 # Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo.
 # Ein interaktiver sudo-Prompt wäre hier falsch — der Hook darf nicht nach einem
