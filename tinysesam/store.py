@@ -702,12 +702,25 @@ class Store:
 
             # Schema 10. Die Schritte laufen in derselben Transaktion wie der Stempel unten: Bricht
             # der Start dazwischen ab, fehlt auch der Stempel, und der nächste Start fährt sie erneut
-            # (jeder Schritt ist wiederholbar).
-            if vorhanden_vorab < 10:
-                self._bestand_auf_10()
+            # (jeder Schritt ist wiederholbar). Die Bestandsschritte laufen bei JEDEM Start, nicht nur
+            # beim Sprung über den Stempel — für das, was ein älterer Schreiber seitdem hinterlassen
+            # haben kann (`_bestand_nachziehen`).
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            if vorhanden_vorab < 10:
+                self._bestand_nachziehen(True, ohne_topf)
+            else:
+                try:
+                    self._bestand_nachziehen(False, ohne_topf)
+                except sqlite3.OperationalError as e:
+                    # Wie beim Topf unten: Das darf einen Start nicht verhindern, der bisher ging.
+                    # In der Transaktion liegt bei diesem Stempel nur dieser Schritt.
+                    self.db.rollback()
+                    logging.getLogger("tinysesam").warning(
+                        "Bestandsschritte nicht nachgezogen (%s): Sperren aus dem Panel einer älteren "
+                        "Fassung tragen den Betreiber-Vermerk erst nach einem Start mit "
+                        "Schreibzugriff.", e)
             try:
                 self._toepfe_schreiben(ohne_topf)
             except sqlite3.OperationalError:
@@ -766,48 +779,133 @@ class Store:
                     f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
             self.db.commit()
 
-    def _bestand_auf_10(self) -> None:
+    #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
+    #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
+    #: einmal ganz — das ist nur langsamer, nicht falsch (jeder Schritt ist wiederholbar).
+    PANEL_WASSERLINIE = "panel_sperren_bis"
+
+    #: Wie viele Kennungen höchstens in einem `IN (…)` stehen (SQLite bis 3.32: 999 Parameter).
+    IN_STUECK = 500
+
+    @staticmethod
+    def _uid_aus_detail(detail) -> Optional[int]:
+        """Die Konto-ID aus dem Detail einer Panel-Zeile: `uid=<id>` oder `uid=<id> …`.
+
+        Dieselbe Form, die die SQL-Fassung verglich (`detail = 'uid=' || id` oder
+        `LIKE 'uid=' || id || ' %'`): nur ASCII-Ziffern ohne führende Null, danach Ende oder ein
+        Leerzeichen. Das Panel schreibt diese Form seit 0.3.0 unverändert."""
+        kopf = str(detail or "").split(" ", 1)[0]
+        if not kopf.startswith("uid="):
+            return None
+        zahl = kopf[4:]
+        if not (zahl.isascii() and zahl.isdigit()) or zahl != str(int(zahl)):
+            return None
+        return int(zahl)
+
+    def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
         """Bestandsdaten auf Schema 10 heben (ohne Commit, unter `_lock` — Teil von `_migrate`).
+
+        Beim Upgrade (`ab_anfang`) für den ganzen Bestand, danach bei **jedem** Start für das, was
+        ein älterer Schreiber seitdem hinterlassen haben kann. Eine ältere Fassung öffnet eine
+        Schema-10-Datei, warnt und schreibt weiter; den Stempel lässt sie auf 10 (Rückschritt ohne
+        Sicherung). Sperrt sie in diesem Fenster im Panel, steht wieder `disabled=1` mit offenem
+        Bestätigungslink da, und hinge der Schritt am Stempel, liefe er nie wieder: Der alte Link
+        höbe die Sperre auf und meldete an (H-18, gemessen mit 0.19.0). Die Spur des älteren
+        Schreibers ist je Schritt eine andere — Audit-Zeilen seit der Wasserlinie für die Sperren,
+        Zeilen ohne Topf (`topf_name`) für die Registrierungen.
 
         1. **Sperren aus dem Panel bekommen den Betreiber-Vermerk** (`disabled=2`). Bis zu dieser
            Fassung schrieb die Sperre im Panel `disabled=1` — denselben Wert wie eine ausstehende
            Bestätigung, und die hebt der Bestätigungslink auf. Bis 0.19.x verwarf die Sperre
-           dabei nicht einmal die offenen Token: Ein im Panel gesperrtes Konto mit ausstehender
-           Registrierung wurde nach dem Upgrade über den alten Link freigeschaltet und angemeldet.
-           Erkannt wird die Panel-Sperre am Audit-Log: Der jüngste Eintrag `user_disable`/
-           `user_enable` mit `uid=<id>` ist `user_disable` (das Detail hat diese Form seit jeher).
-           Solchen Konten werden zugleich die offenen Einmal-Token verworfen — wie bei einer
-           Sperre von heute. Eine Sperre, deren Zeile `audit_retention_days` schon gelöscht hat,
-           bleibt unerkannt; dafür sperrt `POST <admin_path>/api/users/{id}/disable` mit
-           `{"disabled": true}` erneut, ohne zu entsperren.
+           dabei nicht einmal die offenen Token. Erkannt wird die Panel-Sperre am Audit-Log: Der
+           jüngste Eintrag `user_disable`/`user_enable` mit `uid=<id>` ist `user_disable`, und das
+           Konto steht auf 1 (die heutige Sperre schreibt 2, eine 1 dahinter stammt also von einem
+           älteren Schreiber). Solchen Konten werden zugleich die offenen Einmal-Token verworfen —
+           wie bei einer Sperre von heute. Gelesen wird **einmal der Reihe nach**, nur die Zeilen
+           nach der Wasserlinie (`PANEL_WASSERLINIE`, beim Upgrade ab 0): Die erste Fassung suchte
+           je gesperrtem Konto im ganzen Audit-Log (gemessen 60 s bei 1 000 000 Zeilen × 1 000
+           Konten, unter der Schreibsperre — ein zweiter Worker scheiterte am `busy_timeout`).
+           Grenzen: Eine Sperre, deren Zeile `audit_retention_days` schon gelöscht hat, bleibt
+           unerkannt; dafür sperrt `POST <admin_path>/api/users/{id}/disable` mit
+           `{"disabled": true}` erneut, ohne zu entsperren. Und in die sichere Richtung: Hebt eine
+           App eine Sperre von heute ohne Audit-Zeile auf und sperrt dann selbst (1), bevor der
+           Dienst neu startet, gilt das beim nächsten Start als Sperre des Betreibers.
         2. **Adressen offener Registrierungen tragen keinen Beleg** (`email_verified=0`). Die
            Registrierung legte sie mit dem Vermerk 1 an, obwohl der Link noch ausstand; seit
            dieser Fassung setzt ihn erst der eingelöste Link. Offen heisst: gesperrt, nie
            angemeldet, ein unbenutzter `verify_email`-Token und kein eingelöster. Sonst nähme
            die Löschung durch einen Admin die fremd eingetippte Adresse auch aus älteren Zeilen
            (`konto_entfernen`) — auch dann noch, wenn eine Sperre im Panel die Token verworfen
-           hat, an denen das Konto sonst als offen zu erkennen ist. Schritt 2 läuft vor Schritt 1,
-           der genau diese Token verwirft."""
-        offen = self.db.execute(
-            "UPDATE users SET email_verified=0 WHERE email_verified <> 0 AND disabled <> 0 "
-            "  AND first_login_at IS NULL "
-            "  AND EXISTS (SELECT 1 FROM magic_token m WHERE m.user_id = users.id "
-            "      AND m.purpose = 'verify_email' AND m.used_at IS NULL) "
-            "  AND NOT EXISTS (SELECT 1 FROM magic_token m WHERE m.user_id = users.id "
-            "      AND m.purpose = 'verify_email' AND m.used_at IS NOT NULL)").rowcount
-        panel = [z["id"] for z in self.db.execute(
-            "SELECT u.id FROM users u WHERE u.disabled = ? AND ("
-            "  SELECT a.event FROM audit a WHERE a.event IN ('user_disable', 'user_enable') "
-            "    AND (a.detail = 'uid=' || u.id OR a.detail LIKE 'uid=' || u.id || ' %') "
-            "  ORDER BY a.id DESC LIMIT 1) = 'user_disable'", (self.GESPERRT_BESTAETIGUNG,))]
-        for uid in panel:
-            self.db.execute("UPDATE users SET disabled=? WHERE id=?", (self.GESPERRT_BETREIBER, uid))
-            self.db.execute("DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL", (uid,))
-        if offen or panel:
-            logging.getLogger("tinysesam").info(
-                "Schema 10: %d Sperre(n) aus dem Panel tragen jetzt den Betreiber-Vermerk (offene "
-                "Einmal-Token verworfen), %d Adresse(n) offener Registrierungen gelten bis zur "
-                "Bestätigung als unbelegt.", len(panel), offen)
+           hat, an denen das Konto sonst als offen zu erkennen ist. Nach dem Upgrade nur für
+           Zeilen ohne Topf (die legt nur ein fremder Schreiber an) und für die Konten aus
+           Schritt 1. Schritt 2 läuft vor Schritt 1, der genau diese Token verwirft."""
+        log = logging.getLogger("tinysesam")
+        # Lesen und Schreiben unter EINER Schreibsperre: Ein zweiter Worker, der gerade einen
+        # Bestätigungslink einlöst, sieht die Sperre davor oder danach, nicht dazwischen. Beim
+        # Upgrade hält `_migrate` die Transaktion schon (DELETE oben).
+        if not self.db.in_transaction:
+            self.db.execute("BEGIN IMMEDIATE")
+        zeile = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
+        bis = int(zeile[0]) if zeile and zeile[0] else 0
+        gespeichert = self.db.execute("SELECT value FROM setting WHERE key=?",
+                                      (self.PANEL_WASSERLINIE,)).fetchone()
+        gespeichert = gespeichert[0] if gespeichert else None
+        ab = 0
+        if not ab_anfang and gespeichert is not None and str(gespeichert).isdigit():
+            ab = int(gespeichert)
+        if ab > bis:
+            ab = 0          # Zähler kleiner als die Wasserlinie (Tabelle neu angelegt): alles lesen
+        juengstes = {}
+        for ereignis, detail in self.db.execute(
+                "SELECT event, detail FROM audit WHERE id > ? AND id <= ? "
+                "AND event IN ('user_disable', 'user_enable') ORDER BY id", (ab, bis)):
+            uid = self._uid_aus_detail(detail)
+            if uid is not None:
+                juengstes[uid] = ereignis
+        kandidaten = sorted(uid for uid, ereignis in juengstes.items() if ereignis == "user_disable")
+
+        def stuecke(ids):
+            ids = list(ids)
+            for i in range(0, len(ids), self.IN_STUECK):
+                teil = ids[i:i + self.IN_STUECK]
+                yield teil, ",".join("?" * len(teil))
+
+        adressen = 0
+        ziel = None if ab_anfang else {z["id"] for z in ohne_topf} | set(kandidaten)
+        if ziel is None or ziel:
+            offen = sorted(z[0] for z in self.db.execute(
+                "SELECT user_id FROM magic_token WHERE purpose = 'verify_email' AND user_id IS NOT NULL "
+                "GROUP BY user_id HAVING SUM(used_at IS NULL) > 0 AND SUM(used_at IS NOT NULL) = 0")
+                if ziel is None or z[0] in ziel)
+            for teil, ph in stuecke(offen):
+                adressen += self.db.execute(
+                    f"UPDATE users SET email_verified=0 WHERE id IN ({ph}) AND email_verified <> 0 "
+                    "AND disabled <> 0 AND first_login_at IS NULL", teil).rowcount
+        panel = []
+        for teil, ph in stuecke(kandidaten):
+            ids = [z[0] for z in self.db.execute(
+                f"SELECT id FROM users WHERE id IN ({ph}) AND disabled = ?",
+                (*teil, self.GESPERRT_BESTAETIGUNG))]
+            if not ids:
+                continue
+            ph = ",".join("?" * len(ids))
+            self.db.execute(f"UPDATE users SET disabled=? WHERE id IN ({ph}) AND disabled = ?",
+                            (self.GESPERRT_BETREIBER, *ids, self.GESPERRT_BESTAETIGUNG))
+            self.db.execute(f"DELETE FROM magic_token WHERE user_id IN ({ph}) AND used_at IS NULL", ids)
+            panel += ids
+        if gespeichert is None or str(gespeichert) != str(bis):
+            self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                            (self.PANEL_WASSERLINIE, str(bis)))
+        if ab_anfang and (adressen or panel):
+            log.info("Schema 10: %d Sperre(n) aus dem Panel tragen jetzt den Betreiber-Vermerk (offene "
+                     "Einmal-Token verworfen), %d Adresse(n) offener Registrierungen gelten bis zur "
+                     "Bestätigung als unbelegt.", len(panel), adressen)
+        elif adressen or panel:
+            log.warning("Eine ältere TinySesam-Fassung hat in diese Datenbank geschrieben (Rückschritt "
+                        "ohne Sicherung?): %d Sperre(n) aus ihrem Panel tragen jetzt den "
+                        "Betreiber-Vermerk (offene Einmal-Token verworfen), %d Adresse(n) ihrer "
+                        "offenen Registrierungen gelten bis zur Bestätigung als unbelegt.",
+                        len(panel), adressen)
 
     def _toepfe_schreiben(self, zeilen) -> None:
         """`topf_name`/`topf_mail` für diese Kontozeilen rechnen (ohne Commit, unter `_lock`).
@@ -1212,7 +1310,7 @@ class Store:
 
         Sperren aus Fassungen vor dieser Unterscheidung tragen 1 — und bis 0.19.x verwarf die
         Sperre im Panel die offenen Einmal-Token nicht, ein ausstehender Bestätigungslink hätte
-        sie nach dem Upgrade also aufgehoben. Die Migration auf Schema 10 (`_bestand_auf_10`)
+        sie nach dem Upgrade also aufgehoben. Die Migration auf Schema 10 (`_bestand_nachziehen`)
         hebt deshalb jede Sperre, die das Audit-Log als Panel-Sperre kennt, auf 2 und verwirft
         dabei die offenen Token. Eine Sperre, deren Zeile schon gelöscht ist
         (`audit_retention_days`), bleibt 1; `POST <admin_path>/api/users/{id}/disable` mit

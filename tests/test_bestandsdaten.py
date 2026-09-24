@@ -13,9 +13,11 @@ import base64
 import hashlib
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -250,6 +252,193 @@ r.check("… ein zweiter Start ändert nichts mehr (Stempel 10, keine weitere Sp
         and _s10_zweit.get_user(_s10_ids["wieder"])["disabled"] == 1
         and _s10_zweit.get_user(_s10_ids["wartend"])["email_verified"] == 1)
 _s10_zweit.db.close()
+
+# ---------------------------------------------------------------- Rückschritt-Fenster
+# Eine ältere Fassung öffnet eine Schema-10-Datei, warnt und schreibt weiter; den Stempel lässt sie
+# auf 10. Sperrt sie in diesem Fenster im Panel, steht wieder `disabled=1` mit offenem
+# Bestätigungslink da. Die Bestandsschritte, die das beim Upgrade beheben, hingen am Stempel und
+# liefen danach nie wieder: Der alte Link hob die Sperre auf und meldete an (Schlussrunde W1,
+# nachgestellt mit echtem 0.19.0). Hier schreibt die ältere Fassung mit rohem SQL genau das, was
+# 0.19.0 schreibt: Registrierung ohne Topf, mit Vermerk 1, gesperrt, Token offen; die Panel-Sperre
+# als `disabled=1` plus Audit-Zeile `user_disable uid=<id>`, die Token bleiben liegen.
+_rs_cfg = dict(db_path=os.path.join(tempfile.mkdtemp(), "rueckschritt.db"), allow_signup=True,
+               signup_require_email=True, signup_verify_email=True, csrf_enabled=False,
+               base_url="https://auth.example.com")
+_rs_heute, _ = frisch(**_rs_cfg)                              # die heutige Fassung legt die Datei an
+_rs_heute.create_user("chefin", password="Geheim12345!", is_admin=True)
+_rs_ids, _rs_links = {}, {}
+for _name in ("vorher", "hin"):                              # offene Registrierungen von heute
+    _uid = _rs_heute.store.create_user(_name, None, f"{_name}@example.org", email_verified=False)
+    _rs_heute.store.set_disabled(_uid, True)
+    _rs_ids[_name] = _uid
+    _rs_links[_name] = _rs_heute.create_magic_token("verify_email", user_id=_uid, email=f"{_name}@example.org")
+_rs_heute.store.db.close()
+
+_rs_roh = sqlite3.connect(_rs_cfg["db_path"])                # ab hier: die ältere Fassung
+_rs_jetzt = int(time.time())
+for _name in ("rueck", "offen_alt"):
+    _uid = _rs_roh.execute("INSERT INTO users(username, display_name, email, email_verified, disabled, "
+                           "created_at) VALUES (?,?,?,1,1,?)",
+                           (_name, _name, f"{_name}@example.org", _rs_jetzt)).lastrowid
+    _rs_ids[_name] = _uid
+    _rs_links[_name] = secrets.token_urlsafe(32)
+    _rs_roh.execute("INSERT INTO magic_token(token_hash, purpose, user_id, email, created_at, expires_at) "
+                    "VALUES (?,?,?,?,?,?)", (hashlib.sha256(_rs_links[_name].encode()).hexdigest(),
+                                             "verify_email", _uid, f"{_name}@example.org", _rs_jetzt,
+                                             _rs_jetzt + 3600))
+for _name, _ereignis in (("rueck", "user_disable"), ("vorher", "user_disable"),
+                         ("hin", "user_disable"), ("hin", "user_enable")):
+    _rs_roh.execute("UPDATE users SET disabled=1 WHERE id=?", (_rs_ids[_name],))
+    _rs_roh.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                    (_rs_jetzt, _ereignis, "chefin", "192.0.2.9", f"uid={_rs_ids[_name]}"))
+_rs_stempel = _rs_roh.execute("PRAGMA user_version").fetchone()[0]
+_rs_roh.commit()
+_rs_roh.close()
+
+_rs, _ = frisch(**_rs_cfg)                                     # wieder die heutige Fassung
+_rs_app = FastAPI()
+_rs_app.include_router(_rs.router())
+
+
+def _rs_offen(uid) -> int:
+    return _rs.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE user_id=? AND used_at IS NULL",
+                          (uid,))["n"]
+
+
+_rs_u = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
+_rs_tok = {n: _rs_offen(i) for n, i in _rs_ids.items()}
+_rs_bis = _rs.store.get_setting(getattr(Store, "PANEL_WASSERLINIE", "panel_sperren_bis"))
+_rs_max = _rs.store._one("SELECT MAX(id) AS m FROM audit")["m"]
+_rs_antwort = {n: TestClient(_rs_app, client=(f"192.0.2.{70 + k}", 1)).post(
+    f"/auth/verify/{_rs_links[n]}", follow_redirects=False).status_code
+    for k, n in enumerate(("rueck", "vorher", "hin", "offen_alt"))}
+_rs_danach = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
+# (Mutationsproben, ausgeführt: die Bestandsschritte wieder nur bei `vorhanden_vorab < 10` fahren
+#  → rot, der alte Link gibt 303 und meldet an; die Token nicht verwerfen → rot; im Panel-Schritt
+#  nur Konten ohne Topf nehmen → rot bei „vorher“; das erste statt des jüngsten Ereignisses je
+#  Konto nehmen → rot bei „hin“; die Wasserlinie ignorieren → hier grün, rot im Aufwands-Test unten.)
+r.check("Rückschritt: eine Panel-Sperre der älteren Fassung auf einer Schema-10-Datei trägt nach dem "
+        "nächsten Start den Betreiber-Vermerk, ihre Token sind verworfen — der alte Link schaltet nicht frei",
+        _rs_stempel == 10 and _rs_u["rueck"]["disabled"] == 2 and _rs_tok["rueck"] == 0
+        and _rs_u["vorher"]["disabled"] == 2 and _rs_tok["vorher"] == 0
+        and _rs_antwort["rueck"] != 303 and _rs_antwort["vorher"] != 303
+        and _rs_danach["rueck"]["disabled"] == 2 and _rs_danach["vorher"]["disabled"] == 2
+        and not _rs.store.list_sessions(_rs_ids["rueck"]) and not _rs.store.list_sessions(_rs_ids["vorher"]),
+        f"Stempel {_rs_stempel}, vorher {_rs_u}, Token {_rs_tok}, Links {_rs_antwort}")
+r.check("Rückschritt: … eine Sperre, die die ältere Fassung wieder aufgehoben hat, bleibt die der App "
+        "(1), ihr Link schaltet frei",
+        _rs_u["hin"]["disabled"] == 1 and _rs_tok["hin"] == 1 and _rs_antwort["hin"] == 303
+        and _rs_danach["hin"]["disabled"] == 0, f"hin {_rs_u['hin']}, Link {_rs_antwort['hin']}")
+# Schritt 2 im selben Fenster: Die ältere Fassung legt die Adresse einer offenen Registrierung mit
+# Vermerk 1 an. Die Spur dafür ist die Zeile ohne Topf, die nur ein fremder Schreiber hinterlässt.
+# (Mutationsproben, ausgeführt: den Adress-Schritt bei einem Stempel ab 10 streichen → rot; ihn nur
+#  für die Konten aus dem Panel-Schritt fahren, ohne die Topf-Spur → rot bei „offen_alt“; ihn NACH
+#  dem Panel-Schritt fahren, der die Token verwirft → rot bei „rueck“.)
+r.check("Rückschritt: … die Adresse einer offenen Registrierung der älteren Fassung trägt nach dem "
+        "Start keinen Beleg, bis der Link kommt — die Panel-Sperre verliert ihn vor dem Verwerfen der Token",
+        _rs_u["offen_alt"]["email_verified"] == 0 and _rs_u["offen_alt"]["disabled"] == 1
+        and _rs_antwort["offen_alt"] == 303 and _rs_danach["offen_alt"]["email_verified"] == 1
+        and _rs_u["rueck"]["email_verified"] == 0,
+        f"offen_alt vorher {_rs_u['offen_alt']}, nachher {_rs_danach['offen_alt']}, rueck {_rs_u['rueck']}")
+r.check("Rückschritt: … die Wasserlinie steht nach dem Start auf der jüngsten Audit-Zeile",
+        _rs_bis is not None and _rs_max is not None and int(_rs_bis) == int(_rs_max),
+        f"Wasserlinie {_rs_bis}, jüngste Zeile {_rs_max}")
+_rs.store.db.close()
+# Randfall: Die Wasserlinie steht über dem Zähler des Audit-Logs (Tabelle von Hand geleert und der
+# Zähler zurückgesetzt, Setting von Hand gesetzt). Dann liest der Start alles, statt jede neue Zeile
+# bis zur alten Höhe zu überspringen.
+# (Mutationsprobe, ausgeführt: die Rückstellung auf 0 streichen → rot.)
+_rs_roh = sqlite3.connect(_rs_cfg["db_path"])
+_rs_roh.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                (getattr(Store, "PANEL_WASSERLINIE", "panel_sperren_bis"), "1000000000"))
+_rs_roh.execute("INSERT INTO users(username, email, email_verified, disabled, created_at) "
+                "VALUES ('spaet', 'spaet@example.org', 1, 1, ?)", (_rs_jetzt,))
+_rs_spaet = _rs_roh.execute("SELECT id FROM users WHERE username='spaet'").fetchone()[0]
+_rs_roh.execute("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                (_rs_jetzt, "user_disable", "chefin", "192.0.2.9", f"uid={_rs_spaet}"))
+_rs_roh.commit()
+_rs_roh.close()
+_rs_hoch = Store(_rs_cfg["db_path"])
+r.check("Rückschritt: … eine Wasserlinie über dem Zähler des Audit-Logs überspringt keine Sperre",
+        _rs_hoch.get_user(_rs_spaet)["disabled"] == 2
+        and int(_rs_hoch.get_setting(getattr(Store, "PANEL_WASSERLINIE", "panel_sperren_bis"))) < 1000000000,
+        f"{dict(_rs_hoch.get_user(_rs_spaet))}")
+_rs_hoch.db.close()
+
+# ---------------------------------------------------------------- Aufwand der Bestandsschritte
+# Die erste Fassung suchte für JEDES Konto mit `disabled=1` im ganzen Audit-Log nach seiner
+# jüngsten Zeile (korrelierte Unterabfrage, kein Index auf `event`/`detail`): gesperrt × Audit.
+# Gemessen beim Angriff: 1 000 000 Zeilen × 1 000 gesperrte Konten 60 s, unter der Schreibsperre;
+# ein zweiter Worker scheiterte nach `BUSY_TIMEOUT_MS` mit „database is locked“. Ebenso der
+# Adress-Schritt: offene Registrierungen × Einmal-Token. Gemessen wird nicht die Wanduhr, sondern
+# die Arbeit der Datenbank (SQLite-Schritte, `set_progress_handler`), wie bei S-1 in
+# tests/test_audit_runde2.py — deterministisch, auch auf einem langsamen Runner.
+def _rs_bestand(n_audit: int, n_gesperrt: int) -> Store:
+    """Datei im Stand von Schema 9: `n_audit` Rauschzeilen im Audit-Log und ebenso viele
+    Anmelde-Links, `n_gesperrt` offene Registrierungen (gesperrt, Token offen) und `n_gesperrt`
+    Panel-Sperren von damals."""
+    st = Store(os.path.join(tempfile.mkdtemp(), "aufwand.db"))
+    jetzt = int(time.time())
+    with st._lock:
+        st.db.executemany("INSERT INTO users(username, email, created_at, disabled) VALUES (?,?,?,1)",
+                          [(f"k{i}", f"k{i}@example.com", jetzt) for i in range(2 * n_gesperrt)])
+        ids = [z[0] for z in st.db.execute("SELECT id FROM users ORDER BY id")]
+        st.db.executemany("INSERT INTO magic_token(token_hash, purpose, user_id, created_at, expires_at) "
+                          "VALUES (?,?,?,?,?)", [(f"h{u}", "verify_email", u, jetzt, jetzt + 3600)
+                                                 for u in ids[:n_gesperrt]])
+        st.db.executemany("INSERT INTO magic_token(token_hash, purpose, email, created_at, expires_at) "
+                          "VALUES (?,?,?,?,?)", ((f"l{i}", "login", f"x{i}@example.com", jetzt, jetzt + 3600)
+                                                 for i in range(n_audit)))
+        ereignisse = ("login_ok", "login_fail", "logout", "signup", "session_revoked")
+        st.db.executemany("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                          ((jetzt, ereignisse[i % 5], f"k{i % 50}", "192.0.2.1", None)
+                           for i in range(n_audit)))
+        st.db.executemany("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+                          [(jetzt, "user_disable", "chefin", None, f"uid={u}") for u in ids[n_gesperrt:]])
+        st.db.execute("PRAGMA user_version = 9")
+        st.db.commit()
+    return st
+
+
+def _rs_schritte(st: Store) -> int:
+    """SQLite-Schritte (je 100 VM-Befehle) eines Starts auf der offenen Datei (`_migrate`)."""
+    zaehler = [0]
+
+    def schritt():
+        zaehler[0] += 1
+        return 0
+    st.db.set_progress_handler(schritt, 100)
+    try:
+        st._migrate()
+    finally:
+        st.db.set_progress_handler(None, 100)
+    return zaehler[0]
+
+
+_rs_mess = {}
+for _a, _g in ((20000, 10), (20000, 200), (2000, 10)):
+    _st = _rs_bestand(_a, _g)
+    _rs_mess[(_a, _g, "Upgrade")] = _rs_schritte(_st)
+    _rs_mess[(_a, _g, "Panel")] = _st._one("SELECT COUNT(*) AS n FROM users WHERE disabled=2")["n"]
+    _rs_mess[(_a, _g, "Neustart")] = _rs_schritte(_st)
+    _st.db.close()
+# Je zusätzlichem gesperrten Konto (190 Panel-Sperren und 190 offene Registrierungen mehr) darf das
+# Upgrade höchstens einen kleinen, festen Betrag mehr kosten — nicht einen Lauf durchs Audit-Log
+# oder durch die Einmal-Token (je 20 000 Zeilen). Gemessen mit der Fassung davor: rund 1 500
+# Schritte je Konto, jetzt gut einer. Und ein Start nach dem Upgrade liest das Audit-Log nicht noch einmal: bei
+# 20 000 Zeilen nicht mehr als bei 2 000.
+# (Mutationsproben, ausgeführt: den Panel-Schritt wieder als korrelierte Unterabfrage je Konto → rot;
+#  den Adress-Schritt wieder als EXISTS je Konto → rot; die Wasserlinie nicht lesen, jeder Start ab
+#  0 → rot beim Neustart, 1 080 Schritte mehr.)
+_rs_je_konto = (_rs_mess[(20000, 200, "Upgrade")] - _rs_mess[(20000, 10, "Upgrade")]) / 380
+_rs_neustart = _rs_mess[(20000, 10, "Neustart")] - _rs_mess[(2000, 10, "Neustart")]
+r.check("Aufwand: das Upgrade wächst mit Audit-Log PLUS gesperrten Konten, nicht mit ihrem Produkt "
+        "(SQLite-Schritte je zusätzlichem gesperrten Konto bei 20 000 Audit-Zeilen)",
+        _rs_je_konto < 20 and _rs_mess[(20000, 200, "Panel")] == 200,
+        f"je Konto {_rs_je_konto:.1f} Schritte, Messung {_rs_mess}")
+r.check("Aufwand: … ein Start nach dem Upgrade liest nur die Audit-Zeilen seit dem letzten Start",
+        _rs_neustart < 20, f"Neustart bei 20 000 statt 2 000 Zeilen: {_rs_neustart} Schritte mehr, "
+        f"Messung {_rs_mess}")
 
 # ---------------------------------------------------------------- audit --user
 # Das Kommando siebte die jüngsten Zeilen nach, statt in SQL zu filtern: Wer im Anlassfall suchte

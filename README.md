@@ -387,7 +387,10 @@ systemctl start tinysesam
 > name/address lookups, and panel locks from earlier releases become operator locks). Older code then opens the
 > file without complaining, `/healthz` stays green and accounts are readable — but every session
 > operation raises. Take a backup *before* the update (`tinysesam backup` leaves the source
-> untouched) and restore that one.
+> untouched) and restore that one. If older code did run on the new file, the next start of the
+> new release catches up on two things: locks set in the older panel become operator locks
+> (recognised by their audit rows), and addresses of its pending sign-ups count as unverified until
+> confirmed; the log carries a warning. Nothing else is reconciled — the safe way back is the backup.
 
 ### Diagnosing "I can't get in"
 

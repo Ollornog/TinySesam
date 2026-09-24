@@ -390,6 +390,10 @@ systemctl start tinysesam
 > Index, Sperren aus dem Panel früherer Fassungen tragen danach den Betreiber-Vermerk). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
 > Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem Update
 > ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die zurückspielen.
+> Lief älterer Code doch auf der neuen Datei, holt der nächste Start der neuen Fassung zweierlei
+> nach: Sperren aus dem Panel der älteren tragen danach den Betreiber-Vermerk (erkannt an ihren
+> Audit-Zeilen), und Adressen ihrer offenen Registrierungen gelten bis zur Bestätigung als
+> unbelegt; im Log steht dann eine Warnung. Mehr gleicht er nicht ab — der sichere Rückweg ist die Sicherung.
 
 ### „Ich komme nicht rein" — nachsehen
 
