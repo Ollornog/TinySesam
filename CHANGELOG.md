@@ -70,6 +70,9 @@ Schema-Wechsel, keine neue Konfiguration.
 
 ### Geändert
 
+- **Testbasis auf Kit 0.21.6:** Die Hygiene-Prüfungen nennen Zeilennummern wie der Editor
+  (vorher verschob `splitlines()` sie hinter U+2028 und Verwandten).
+
 - **Ein CSRF-Cookie, das nicht wie ein Token aussieht, wird ersetzt** statt übernommen — in
   `render_page()`, `csrf_token()`, `ensure_csrf()` und im Admin-Panel gleich: nur `A–Z a–z 0–9 _ -`,
   32 bis 128 Zeichen. Vorher landete jeder Cookie-Wert unbesehen im Formularfeld. Der Vergleich
