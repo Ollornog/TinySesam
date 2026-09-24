@@ -271,6 +271,10 @@ class TinySesam:
         #: die App.
         self.on_security_event: Optional[Callable[[str, dict, dict], Any]] = None
         self._blockliste = self._blockliste_laden(config.password_blocklist_file)
+        # Versuchs-ID → (Kennung, Methode, Serienstand nach der Buchung) für die in
+        # `versuch_beginnen` vorgebuchte Serie (B2-6). Im Speicher genügt: Stirbt der Prozess
+        # dazwischen, bleibt die Vorbuchung als Fehlversuch stehen — im Zweifel strenger.
+        self._serie_vorbuchungen: dict = {}
         self.oidc = None
         self.webauthn = None
         self.ldap = None
@@ -529,9 +533,17 @@ class TinySesam:
 
     def apply_idp_groups(self, user_id, groups, mapping: dict, substring: Optional[bool] = None,
                          dn: bool = False):
-        """IdP-Gruppen → lokale Rollen (beim Login). Ziel '__admin__' setzt das Admin-Flag (nur grant,
-        nie automatisch entziehen). Gemappte Rollen werden synchronisiert (bei Wegfall der Gruppe
-        entfernt), manuell vergebene Rollen bleiben.
+        """IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisiert (bei
+        Wegfall der Gruppe entfernt), manuell vergebene Rollen bleiben. Ziel '__admin__' setzt das
+        Admin-Flag und nimmt es wieder, wenn es vom Provider stammt (H-5).
+
+        Ziel '__admin__' setzt das Admin-Flag — und nimmt es seit H-5 auch wieder, wenn der Provider
+        die Gruppe nicht mehr liefert, aber **nur ein Flag, das er selbst vergeben hat**
+        (`is_admin=2`, `Store.set_admin_vom_idp`). Bis dahin war es „nur grant": Wer beim Provider
+        aus der Admin-Gruppe flog, blieb hier Admin, bis jemand es im Panel bemerkte. Ein Admin aus
+        dem Panel, dem CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt unberührt — sonst
+        entzöge ein falsch konfigurierter Provider dem Betreiber seinen eigenen Zugang. Ein Flag
+        aus der Zeit vor H-5 trägt den Vermerk nicht und bleibt deshalb ebenfalls stehen.
 
         Verglichen wird standardmäßig **exakt** (`config.group_match`). Sonst würde `admin` auch
         auf `nicht-admin` passen: eine stille Rechteausweitung. `dn=True` (LDAP) vergleicht einen
@@ -552,10 +564,19 @@ class TinySesam:
         new_roles = (current - managed) | {r for r in matched if r != "__admin__"}
         if new_roles != current:
             self.store.set_roles(user_id, sorted(new_roles))
+        u = self.store.get_user(user_id)
         if "__admin__" in matched:
-            u = self.store.get_user(user_id)
             if u and not u["is_admin"]:
-                self.store.set_admin(user_id, True)
+                self.store.set_admin_vom_idp(user_id)
+                self.audit("idp_admin_grant", u["username"], detail="quelle=idp")
+        elif "__admin__" in mapping.values() and u and u["is_admin"] == 2:
+            # Das Mapping kennt eine Admin-Gruppe, der Provider liefert sie nicht mehr: Das Flag,
+            # das er vergeben hat, geht. Laut, weil es auch der letzte Admin sein kann — dann
+            # öffnet sich der belegte Erst-Admin-Weg (`/auth/claim-admin`, Token auf der Konsole).
+            self.store.set_admin(user_id, False)
+            self.audit("idp_admin_revoke", u["username"], detail="quelle=idp gruppe_entfallen=1")
+            security.seclog.warning("Admin-Flag entzogen: user=%s, der Identity Provider liefert die "
+                                    "Admin-Gruppe nicht mehr.", security.fuer_log(u["username"]))
 
     # ---------- API-Keys / Service-Accounts (maschineller Zugang, Daemons) ----------
     def create_service(self, username, roles=None, display_name=None) -> int:
@@ -814,7 +835,7 @@ class TinySesam:
         kontext = [self.cfg.rp_name, username or ""]
         if email:
             kontext.append(str(email).split("@", 1)[0])
-        befund = _pw.passwort_mangel(password or "", self.sec("password_min_length"),
+        befund = _pw.passwort_mangel(password or "", self._passwort_mindestlaenge(),
                                      kontext=kontext, blockliste=self._blockliste)
         if befund is None:
             return None
@@ -823,6 +844,43 @@ class TinySesam:
                       "long": ("api.password_long", "err.pw_long"),
                       "weak": ("api.password_weak", "err.pw_weak")}[grund]
         return self.t(schluessel[0] if api else schluessel[1], **werte)
+
+    def _passwort_allein_moeglich(self) -> bool:
+        """Kann das Passwort in dieser Konfiguration ALLEIN vollständig anmelden?
+
+        Ja im klassischen Modus (keine `login_chain`): Ein Konto ohne TOTP meldet sich mit dem
+        Passwort allein an — und ein TOTP lässt sich später wieder entfernen. Ja auch bei einer
+        Kette, die ausser dem Passwort nichts verlangt. Nein erst, wenn die globale Kette einen
+        weiteren Faktor erzwingt (`["password", "totp"]`, `["oidc", "password"]`).
+
+        Bewusst eine Aussage über die KONFIGURATION, nicht über das einzelne Konto: Wer heute
+        TOTP hat, kann es morgen entfernen, und das Passwort bliebe mit der kürzeren Länge allein
+        stehen.
+
+        Und nur mit `mfa_enrollment="strict"`: Bei `"first_login"` (Vorgabe) und `"grace"` richtet
+        ein Konto den verlangten zweiten Faktor beim ersten Mal selbst ein — wer nur das Passwort
+        kennt, bindet dann seinen eigenen Authenticator und ist drin. Genau die Erstpasswörter
+        (Panel, Einladung, Registrierung) melden in diesem Fenster also allein an (gemessen im
+        Angriff auf B2-4). Erst wenn der Betreiber die Einrichtung vergibt, ist das Passwort nie
+        allein. Grenze: ein vom Betreiber geöffnetes Fenster (`grant_mfa_enrollment`) — das ist
+        seine bewusste Entscheidung für genau ein Konto."""
+        kette = list(self.cfg.login_chain or ())
+        if not kette or not (set(kette) - {"password"}):
+            return True
+        return self.cfg.mfa_enrollment != "strict"
+
+    def _passwort_mindestlaenge(self) -> int:
+        """Die Mindestlänge für ein NEUES Passwort (B2-4, NIST SP 800-63B-4, 3.1.1.2).
+
+        Die Norm verlangt 15 Zeichen, wenn das Passwort allein anmelden kann, und 8, wenn es nur
+        Teil einer Anmeldung mit weiterem Faktor ist. Beide Werte sind im Panel einstellbar
+        (`password_min_length_single_factor`, `password_min_length`); wer die strengere Regel
+        nicht will, setzt die erste auf 8. Bestehende Passwörter bleiben gültig — die Regel gilt,
+        wo ein Passwort gesetzt wird."""
+        basis = self.sec("password_min_length")
+        if self._passwort_allein_moeglich():
+            return max(basis, self.sec("password_min_length_single_factor"))
+        return basis
 
     # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
     #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
@@ -1753,8 +1811,21 @@ class TinySesam:
             regeln += self._regeln_pin(username, ip, since)
         return regeln
 
+    def _serie_voll(self, username) -> bool:
+        """Hat diese Kennung `account_max_consecutive_failures` Fehlversuche IN FOLGE erreicht (B2-6)?
+
+        Anders als jede Fenster-Schwelle läuft diese Sperre nicht ab: Sie endet mit einer
+        vollständigen Anmeldung auf einem anderen Weg (Passkey, Magic-Link, OIDC), einem
+        Passwort-Reset oder durch den Betreiber (Panel-Reset, `tinysesam unlock`). Gezählt wird
+        je gefalteter Kennung, ob es das Konto gibt oder nicht — sonst verriete die Sperre, welche
+        Namen existieren."""
+        return self.store.fehlserie(norm_kennung(username)) >= self.sec("account_max_consecutive_failures")
+
     def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
         """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`)."""
+        if login and username and self._serie_voll(username):
+            self._abgewiesen(username, ip, "lockout_serie", login=True)
+            return True
         for grund, grenze, filt in _gueltige_regeln(regeln):
             if self.store.count_fails(**filt) >= grenze:
                 self._abgewiesen(username, ip, grund, login=login)
@@ -1775,12 +1846,37 @@ class TinySesam:
         regeln = self._regeln(username, ip, method)
         if auch_pin:
             regeln = regeln + self._regeln_pin(username, ip)
-        versuch, grund = self.store.reserve_attempt(self._topf(username, method), ip, method,
-                                                    _gueltige_regeln(regeln))
+        # Die Serie (B2-6) gehört in DIESELBE Transaktion wie der Versuch: geprüft und vorgebucht
+        # in `reserve_attempt`. Vorher davor gelesen und erst nach der Prüfung gezählt — eine
+        # parallele Salve an der Grenze durfte dann jeder Anfrage einen Versuch lang raten.
+        serie = None
+        if method not in security.NICHT_LOGIN_METHODEN:
+            serie = (norm_kennung(username), method, self.sec("account_max_consecutive_failures"))
+        versuch, antwort = self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                                      _gueltige_regeln(regeln), serie=serie)
         if versuch is None:
-            self._abgewiesen(username, ip, grund,
+            self._abgewiesen(username, ip, antwort,
                              login=method not in security.NICHT_LOGIN_METHODEN)
+        elif serie is not None:
+            self._serie_vorbuchungen[versuch] = (serie[0], method, antwort)
+            # Gedeckelt: Ein Versuch, den nie jemand abschliesst (Ausnahme mitten in der Route),
+            # bliebe sonst für immer liegen. Wer herausfällt, zählt als Fehlversuch — strenger,
+            # nie lockerer.
+            while len(self._serie_vorbuchungen) > self._SERIE_VORBUCHUNGEN_MAX:
+                self._serie_vorbuchungen.pop(next(iter(self._serie_vorbuchungen)), None)
         return versuch
+
+    _SERIE_VORBUCHUNGEN_MAX = 10000
+
+    def _versuch_zuruecknehmen(self, versuch) -> None:
+        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
+
+        Mitsamt seiner Vorbuchung in der Serie (B2-6): Ein Ausfall ist kein Fehlversuch, weder
+        im Fenster noch in Folge."""
+        self.store.cancel_attempt(versuch)
+        gebucht = self._serie_vorbuchungen.pop(versuch, None)
+        if gebucht:
+            self.store.fehlserie_senken(gebucht[0], gebucht[1])
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
@@ -3328,10 +3424,15 @@ class TinySesam:
         `login_lokal`), ein Fehlversuch hängt `quelle=…` an `login_fail` an (`lokal+ldap`: beide
         wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe."""
         topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
+        vorgebucht = self._serie_vorbuchungen.pop(versuch, None) if versuch is not None else None
         if versuch is None:
             self.store.record_attempt(topf, ip, success, method)
         else:
             self.store.finish_attempt(versuch, bool(success))
+        if success and vorgebucht:
+            # Richtig — die Vorbuchung in der Serie gilt nicht. Die Serie davor bleibt: Ein
+            # richtiger erster Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`).
+            self.store.fehlserie_senken(vorgebucht[0], vorgebucht[1])
         if success and quelle:
             self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:
@@ -3360,6 +3461,31 @@ class TinySesam:
             # `security.log_ereignis`).
             security.seclog.warning("%s user=%s ip=%s method=%s", security.log_ereignis(method),
                                     security.fuer_log(username), security.fuer_log(ip), method)
+            if method not in security.NICHT_LOGIN_METHODEN:
+                # Die Serie zählt je gefalteter Kennung, wie der Konto-Topf (`_topf`). Vorgebucht
+                # hat sie `versuch_beginnen`; nur ein Weg ohne Vorbuchung zählt hier. Genau beim
+                # Erreichen der Grenze eine Zeile: ab da ist die Anmeldung dauerhaft zu, und der
+                # Betreiber muss wissen, warum sich jemand nicht mehr anmelden kann. Nur EINE
+                # Buchung kann die Grenze erreichen — die Buchungen laufen nacheinander.
+                if vorgebucht:
+                    stand = vorgebucht[2]
+                else:
+                    stand = self.store.fehlserie_erhoehen(norm_kennung(username), method)
+                if stand == self.sec("account_max_consecutive_failures"):
+                    self.store.audit_log("lockout_serie", username, ip, f"fehlversuche_in_folge={stand}")
+                    security.seclog.warning(
+                        "Anmeldung für user=%s gesperrt: %d Fehlversuche in Folge. Aufheben: "
+                        "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`.",
+                        security.fuer_log(username), stand)
+
+    #: Welche Anteile der Serie (B2-6) ein Selbstbedienungs-Reset räumt: die der ERSTEN Faktoren.
+    #: Die kann jeder erzeugen, ohne ein Geheimnis zu kennen — ein Fremder sperrt mit falschen PINs
+    #: ein Konto, dessen Inhaberin nicht einmal eine PIN hat. Blieben sie stehen, hülfe der Reset
+    #: nicht mehr, zu dem die Meldung rät (Angriff auf die Fixes, R2-2). TOTP-Fehlgriffe dagegen
+    #: erzeugt nur, wer das Passwort schon hat; die räumt nur eine vollständige Anmeldung oder der
+    #: Betreiber (R4-13). Grenze: In einer Kette `password → pin` ist die PIN ein ZWEITER Faktor,
+    #: ihre Fehlgriffe räumt der Reset trotzdem mit — die Art kennt die Stellung nicht.
+    _SERIE_RESET_ARTEN = ("password", "pin")
 
     def sperre_aufheben(self, user_id, methoden=None) -> int:
         """Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
@@ -3386,6 +3512,15 @@ class TinySesam:
         weg = 0
         since = 0
         for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
+            # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
+            # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
+            # Grund wie unten (R4-13): Der Selbstbedienungs-Reset beweist das Postfach, nicht den
+            # zweiten Faktor. Räumte er die TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und
+            # Passwort je Reset eine frische Serie gegen TOTP (gemessen im Angriff auf B2-6). Der
+            # Betreiber räumt ganz (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
+            self.store.fehlserie_loeschen(
+                kennung, arten=None if methoden is None else
+                tuple(set(methoden) | (set(self._SERIE_RESET_ARTEN) if "password" in methoden else set())))
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
@@ -3395,6 +3530,16 @@ class TinySesam:
                     weg += self.store.count_fails(since, username=kennung, method=m)
                     self.store.clear_fails(username=kennung, method=m)
         return weg
+
+    def _serie_beenden(self, user_id) -> int:
+        """Die Serie eines Kontos ganz beenden (B2-6) — der Weg des Betreibers (Panel-Reset).
+
+        Unter Name UND Adresse: gezählt wird unter dem, was jemand eingetippt hat."""
+        u = self.store.get_user(user_id)
+        if not u:
+            return 0
+        return sum(self.store.fehlserie_loeschen(k)
+                   for k in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""})
 
     def _fehl_grund(self, username, method=None) -> str:
         """Warum ist die Anmeldung gescheitert — für das Protokoll, nicht für die Antwort."""
@@ -3467,6 +3612,9 @@ class TinySesam:
             "magic_tokens": self.store.gc_magic_tokens(),
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
+            # Nicht ausgelöste Serien nach 90 Tagen Ruhe; ausgelöste bleiben (B2-6).
+            "fehlserien": self.store.gc_fehlserien(
+                _jetzt() - 90 * 86400, self.sec("account_max_consecutive_failures")),
         }
         tage = int(self.cfg.audit_retention_days or 0)
         if tage > 0:

@@ -341,6 +341,22 @@ TinySesamConfig.local_accounts(          # username + password only, no email an
 - `Depends(auth.require(factors=["password", "pin"]))` → an ordered chain per route. Someone already
   signed in only gets the missing field, not the whole login page again.
 
+**A PIN as the way in is a deliberate option.** With `pin_enabled=True` the PIN is a first factor by
+default (`pin_login=True`) — handy for a general page, while a detail page asks for more:
+
+```python
+@app.get("/overview")                                   # the PIN is enough
+def overview(user=Depends(auth.require())): ...
+
+@app.get("/details")                                    # PIN, then the password
+def details(user=Depends(auth.require(factors=["pin", "password"]))): ...
+```
+
+A four-digit PIN has 10,000 values. What keeps guessing in check is its own counter
+(`pin_max_attempts` per account, the IP threshold at `ip_attempt_factor` times that) and the
+consecutive-failure lock (`account_max_consecutive_failures`, see *Hardening*) — both sit next to the
+login lockout in the admin panel. Don't want it? `pin_login=False`.
+
 ## Bootstrapping the first admin
 
 Open registration plus “the first account becomes admin” is a race: whoever finds the fresh instance
@@ -511,6 +527,19 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Brute-force throttling:** failed attempts per **user *and* IP** are counted; after `max_login_attempts`
   within the `lockout_window_sec` window the login is locked — this also blocks the *correct* password.
   Applies to password and TOTP login (IP threshold higher because of NAT: `ip_attempt_factor`).
+- **Consecutive failures, no window** (`account_max_consecutive_failures`, default 100): every
+  failed sign-in attempt under a name extends a series; at the limit sign-in is locked — and unlike
+  the window thresholds this lock does not expire. It ends with a successful full sign-in over
+  another path (passkey, sign-in link, OIDC), a password reset, a new password from the admin panel
+  or `tinysesam unlock`. Counted per name whether the account exists or not, so the lock reveals
+  nothing. NIST SP 800-63B caps consecutive failures at 100: slow guessing below every window
+  threshold no longer runs forever.
+- **Password length by factor situation:** a new password needs `password_min_length_single_factor`
+  (default 15, NIST SP 800-63B) when it can sign in on its own — no `login_chain`, one with
+  nothing but `password`, or a chain whose second factor accounts may enrol themselves
+  (`mfa_enrollment` `first_login`/`grace`) — and `password_min_length` (default 8) only when the
+  chain enforces a second factor that the operator hands out (`mfa_enrollment="strict"`). Existing passwords stay valid; the rule applies wherever one is set. The CLI
+  (`tinysesam passwd`) doesn't read the configuration and takes the stricter one.
 - **Method-scoped counters next to the login lockout:** the PIN (short keyspace,
   `pin_max_attempts`), the account page's current-password prompt
   (`password_change_max_attempts`), the step-up confirmation (`reauth_max_attempts`) and the
@@ -976,7 +1005,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**46 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**47 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -20,7 +20,7 @@ auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_n
                                  # Mail-Links brauchen seit R4-01 eine zugesagte Adresse.
                                  base_url="https://auth.example.com"))
 auth.set_mailer(lambda to, s, t, html=None: sent.append({"to": to, "text": t}))
-auth.ensure_admin("admin", "geheim123")
+auth.ensure_admin("admin", "geheim123-lang-genug")
 uid = auth.store.get_user_by_name("admin")["id"]
 auth.store._exec("UPDATE users SET email=? WHERE id=?", ("admin@example.com", uid))
 app = FastAPI()
@@ -43,7 +43,7 @@ assert len(codes) == 6 and auth.recovery_codes_remaining(uid) == 6
 ok("generate_recovery_codes → 6 Codes")
 
 # Login → TOTP-Schritt; statt TOTP einen Recovery-Code eingeben
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/geheim"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/geheim"}, follow_redirects=False)
 assert c.get("/geheim", headers=JSON).status_code == 401
 r = c.post("/auth/totp", data={"code": codes[0], "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and c.get("/geheim", headers=JSON).json() == {"u": "admin"}
@@ -52,7 +52,7 @@ ok("Recovery-Code statt TOTP → eingeloggt (verbraucht: 6→5)")
 
 # derselbe Code ein zweites Mal → ungültig
 c.get("/auth/logout")
-c.post("/auth/login", data={"username": "admin", "password": "geheim123", "next": "/"}, follow_redirects=False)
+c.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug", "next": "/"}, follow_redirects=False)
 assert c.post("/auth/totp", data={"code": codes[0], "next": "/"}).status_code == 401
 ok("verbrauchter Recovery-Code ist ungültig (one-shot)")
 
@@ -83,7 +83,7 @@ assert "Neues Passwort" in c.get(f"/auth/reset?token={token}").text
 # zu kurzes Passwort → 400
 assert c.post("/auth/reset", data={"token": token, "password": "x"}).status_code == 400
 # neues Passwort setzen → Redirect zum Login, Token verbraucht
-r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw"}, follow_redirects=False)
+r = c.post("/auth/reset", data={"token": token, "password": "ganzneuespw-lang-genug"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"]
 assert auth.peek_magic(token, purpose="reset_password") is None
 ok("Reset: neues Passwort gesetzt, Token verbraucht")
@@ -113,8 +113,8 @@ ok("Passwort-Reset funktioniert ohne Magic-Link (Kopplung gelöst)")
 
 # altes Passwort weg, neues geht
 c2 = TestClient(app)
-assert c2.post("/auth/login", data={"username": "admin", "password": "geheim123"}, follow_redirects=False).status_code == 401
-r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw", "next": "/"}, follow_redirects=False)
+assert c2.post("/auth/login", data={"username": "admin", "password": "geheim123-lang-genug"}, follow_redirects=False).status_code == 401
+r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw-lang-genug", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303
 ok("nach Reset: altes Passwort ungültig, neues gültig")
 
@@ -169,7 +169,7 @@ _a2 = TinySesam(TinySesamConfig(db_path=_db2, rp_name="T", passkey_enabled=False
                                 base_url="https://auth.example.com "))
 _post = []
 _a2.set_mailer(lambda to, subject, text, html=None: _post.append(text))
-_a2.create_user("lea", password="geheim12345", email="lea@example.com")
+_a2.create_user("lea", password="geheim12345-lang-genug", email="lea@example.com")
 _a2.send_password_reset("lea@example.com", _a2.cfg.base_url)
 assert _post and " " not in _post[0].split("https://auth.example.com", 1)[1].split()[0] \
     and "https://auth.example.com/auth/reset" in _post[0], _post
@@ -193,14 +193,14 @@ post_r = []
 auth_r.set_mailer(lambda to, s, t, html=None: post_r.append(t))
 ereig_r = []
 auth_r.on_security_event = lambda e, k, d: ereig_r.append((e, d))
-uid_r = auth_r.create_user("rita", "rita-geheim-1", email="rita@example.com")
+uid_r = auth_r.create_user("rita", "rita-geheim-1-lang", email="rita@example.com")
 geheim_r = auth_r.totp_begin(uid_r)["secret"]
 auth_r.totp_confirm(uid_r, pyotp.TOTP(geheim_r).at(time.time() - 30))
 codes_r = auth_r.generate_recovery_codes(uid_r)
 app_r = FastAPI()
 app_r.include_router(auth_r.router())
 cr = TestClient(app_r)
-cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1"}, follow_redirects=False)
+cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang"}, follow_redirects=False)
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
 zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
 assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
@@ -219,8 +219,9 @@ key_r = auth_r.create_api_key(uid_r, name="ci")["key"]
 assert auth_r.verify_api_key(key_r)[0] is not None
 auth_r.send_password_reset("rita@example.com", auth_r.cfg.base_url)
 tok_r = re.search(r"/auth/reset\?token=([\w\-]+)", post_r[-1]).group(1)
-# Erst die Regel: ein schwaches Passwort wird abgelehnt und lässt den Link gültig.
-r = cr.post("/auth/reset", data={"token": tok_r, "password": "Rita2024!"})
+# Erst die Regel: ein schwaches Passwort wird abgelehnt und lässt den Link gültig. Lang genug
+# für die Einfaktor-Länge (B2-4), aber nur der Kontoname zweimal — das Kontextwort greift.
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "Rita2024!Rita2024!"})
 assert r.status_code == 400 and "leicht zu erraten" in r.text
 assert auth_r.peek_magic(tok_r, purpose="reset_password"), "ein abgelehntes Passwort entwertet den Link"
 r = cr.post("/auth/reset", data={"token": tok_r, "password": "ein-frisches-passwort"}, follow_redirects=False)
@@ -289,7 +290,7 @@ _sso = auth.create_user("sso-nutzer", email="sso@example.com")
 auth.store.link_oidc("https://idp.example.com", "sub-sso", _sso)
 _ldap = auth.create_user("ldap-nutzer", email="ldap@example.com")
 auth.store.link_federated("ldap", "uuid-ldap", _ldap, 0)
-_gemischt = auth.create_user("gemischt", password="lokal-pw-123", email="gemischt@example.com")
+_gemischt = auth.create_user("gemischt", password="lokal-pw-123-ab", email="gemischt@example.com")
 auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _gemischt)
 for _adresse in ("sso@example.com", "ldap@example.com"):
     assert c.post("/auth/forgot", data={"email": _adresse}).status_code == 200

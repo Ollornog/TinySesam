@@ -148,13 +148,14 @@ r.check("wer eine UNBESTÄTIGTE IdP-Adresse mitbringt, wird nicht Erst-Admin",
         "er ist Admin — email_verified wird wieder ignoriert")
 r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exists(),
         "irgendein Weg hat doch befördert")
-# Die Adresse WIRD geführt — sie zu verwerfen war die erste Fassung des Fixes und kostete den
-# Kontonamen und `Remote-Email` (dieselbe Person landete in einem anderen Konto der geschützten
-# App). Getrennt gemerkt wird nur der Beleg; er ist es, der die Rechte trägt.
-r.check("die unbestätigte Adresse bleibt im Konto und geht als Remote-Email weiter",
-        konto is not None and konto["email"] == "chef@example.com"
-        and auth_f.forward_response_headers(konto)["Remote-Email"] == "chef@example.com",
-        f"gespeichert: {konto['email'] if konto else '—'} — ein Gateway verliert die Adresse")
+# Die Adresse wird NICHT verwendet (H-3, PO-Entscheid 2026-09-24). Bis dahin wurde sie geführt
+# und als `Remote-Email` weitergereicht, nur ohne Rechte in TinySesam — eine geschützte App, die
+# Nutzer über die Adresse zuordnet, sah den Vermerk aber nie. Für einen Provider, der den Claim
+# nie schickt, sagt der Betreiber es ausdrücklich (`oidc_email_verified_default=True`).
+r.check("die unbestätigte Adresse wird nicht übernommen und geht nicht als Remote-Email weiter",
+        konto is not None and not konto["email"]
+        and not auth_f.forward_response_headers(konto).get("Remote-Email"),
+        f"gespeichert: {konto['email'] if konto else '—'} — die fremde Adresse erreicht die App")
 r.check("… ist aber als unbestätigt vermerkt", konto is not None and not konto["email_verified"],
         "der Vermerk fehlt — dann trägt sie beim nächsten Login wieder Rechte")
 # Der Vermerk steht in der Datenbank, nicht im Anmeldeweg: Genau hier wäre der Schutz sonst
@@ -243,8 +244,10 @@ vorher = bool(nach["email_verified"])
 _claims_setzen(auth_s, {**NACH, "email_verified": True})
 _oidc_login(app_s)
 nachher = bool(auth_s.get_user(nach["id"])["email_verified"])
-r.check("liefert der Provider den Beleg nach, zieht der Vermerk am Konto nach",
-        not vorher and nachher, f"vorher={vorher} nachher={nachher}")
+# Seit H-3 legt der erste Login das Konto OHNE Adresse an; der nachgelieferte Beleg trägt sie ein.
+r.check("liefert der Provider den Beleg nach, kommt die Adresse belegt ins Konto",
+        not vorher and nachher and auth_s.get_user(nach["id"])["email"] == "nach@example.com",
+        f"vorher={vorher} nachher={nachher} adresse={auth_s.get_user(nach['id'])['email']}")
 _claims_setzen(auth_s, {**NACH, "email_verified": False})
 _oidc_login(app_s)
 r.check("und nimmt er ihn zurück, fällt der Vermerk wieder",
@@ -282,9 +285,8 @@ mischer = auth_m.store.get_user_by_name("mischer")
 r.check("ein Beleg aus dem userinfo-Dokument trägt nicht die Adresse aus dem ID-Token",
         mischer is not None and not mischer["is_admin"],
         "Admin — der fremde email_verified wurde auf die ungeprüfte Adresse gemünzt")
-r.check("… und sie steht im Konto als unbestätigt, nicht als belegt",
-        mischer is not None and mischer["email"] == "chef@example.com"
-        and not mischer["email_verified"],
+r.check("… und sie wird gar nicht übernommen (H-3)",
+        mischer is not None and not mischer["email"] and not mischer["email_verified"],
         f"Konto: {dict(mischer) if mischer else None}")
 
 # Gegenprobe: Liefert der IdP die Adresse NUR im userinfo-Dokument (verbreiteter Aufbau),
@@ -432,8 +434,14 @@ lokal9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example
 antw9 = _oidc_login(app_k9)
 r.check("ein OIDC-Name, der die E-Mail eines Kontos ist, weicht auf einen freien Namen aus",
         antw9.status_code == 303, f"HTTP {antw9.status_code} — der Nutzer kommt nicht mehr herein")
-r.check("...das neue Konto heisst anders", auth_k9.store.get_user_by_name("chef@example.com2") is not None,
-        "kein Ausweichname — dann wurde entweder abgewiesen oder eine Kennung besetzt")
+# Seit dem Angriff auf H-3 (2026-09-24) gilt ein `preferred_username` mit `@` nur, wenn er die
+# belegte Adresse ist — hier ist er eine FREMDE Adresse, das Konto heisst also nach der belegten
+# (`neu@example.com`), nicht mehr `chef@example.com2`. Die Zusage bleibt dieselbe: eine eigene,
+# freie Kennung, keine besetzte.
+_k9_uid = auth_k9.store.get_oidc_user(IDP, "k9")
+_k9_name = auth_k9.store.get_user(_k9_uid)["username"] if _k9_uid else None
+r.check("...das neue Konto heisst anders", _k9_name not in (None, "chef@example.com", "chef"),
+        f"Name {_k9_name!r} — dann wurde entweder abgewiesen oder eine Kennung besetzt")
 r.check("...und die Kennung zeigt weiter auf das lokale Konto",
         (auth_k9.find_user("chef@example.com") or {}).get("id") == lokal9,
         "die fremde Anmeldung hat die Kennung übernommen")
@@ -926,8 +934,8 @@ from tinysesam.__main__ import _audit as _cli_audit, _gc as _cli_gc  # noqa: E40
 auth_t, app_t = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                      forward_auth_enabled=True)
 auth_t.set_mailer(lambda *a, **k: None)
-_chef_t = auth_t.create_user("chef", password="Geheim12345!", is_admin=True)
-_anna_t = auth_t.create_user("anna", password="Geheim12345!", email="anna@example.com")
+_chef_t = auth_t.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_anna_t = auth_t.create_user("anna", password="Geheim12345!-lang", email="anna@example.com")
 
 
 def _sitzung_t(uid):
@@ -963,7 +971,7 @@ r.check("B5-02: `tinysesam audit --user anna` findet sie (Filter in SQL auf user
 r.check("B5-07: das Bestätigen der TOTP-Einrichtung hinterlässt `totp_enable`",
         len(_zeilen_t("totp_enable")) == 1)
 _login_rc = TestClient(app_t)
-_login_rc.post("/auth/login", data={"username": "anna", "password": "Geheim12345!"})
+_login_rc.post("/auth/login", data={"username": "anna", "password": "Geheim12345!-lang"})
 _rc_antwort = _login_rc.post("/auth/totp", data={"code": _rc.json()["codes"][0]},
                              follow_redirects=False)
 _rc_zeilen = _zeilen_t("recovery_used")
@@ -1181,10 +1189,10 @@ r.check("A-1: eine Zone mit Zeilenumbruch landet nicht in der ip-Spalte",
 
 # ── A-2 / A-3: Konto löschen trifft fremde Zeilen nicht, dafür die Anmeldeversuche per Mail ──
 auth_d, app_d2 = _app(csrf_enabled=False)
-auth_d.create_user("chef", password="Geheim12345!", is_admin=True)
-_adm = auth_d.create_user("admin", password="Geheim12345!", email="Anna.Admin@example.com",
+auth_d.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_adm = auth_d.create_user("admin", password="Geheim12345!-lang", email="Anna.Admin@example.com",
                           is_admin=True)
-_bob = auth_d.create_user("bob", password="Geheim12345!")
+_bob = auth_d.create_user("bob", password="Geheim12345!-lang")
 _kd = TestClient(app_d2)
 _kd.cookies.set(auth_d.cfg.session_cookie, auth_d.store.create_session(_adm, 3600, True, "password"))
 _kd.post(f"/auth/admin/api/users/{_bob}/roles", json={"roles": ["ops"], "is_admin": True})
@@ -1219,7 +1227,7 @@ r.check("A-2: dort, wo ein Name steht (akteur=, Kopf von user_create), wird er w
 
 # ── A-4: die CSRF-Ausnahme prüft den Key VOR current_user — die IP muss schon da sein ─────
 auth_k, app_k = _app()
-_kchef = auth_k.create_user("chef", password="Geheim12345!", is_admin=True)
+_kchef = auth_k.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _k_weg = auth_k.create_api_key(_kchef, name="alt")
 auth_k.revoke_api_key(_k_weg["id"])
 _k_ok = auth_k.create_api_key(_kchef, name="ok")
@@ -1237,8 +1245,8 @@ r.check("A-4: gültiger Key an einer POST-Route: EINE apikey_use-Zeile, mit IP",
 
 # ── A-5: die Kontoseite zeigt nicht die IP des Admins ─────────────────────────────────────
 auth_e, app_e = _app(csrf_enabled=False)
-_echef = auth_e.create_user("chef", password="Geheim12345!", is_admin=True)
-_eanna = auth_e.create_user("anna", password="Geheim12345!")
+_echef = auth_e.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_eanna = auth_e.create_user("anna", password="Geheim12345!-lang")
 _ec = TestClient(app_e, client=("198.51.100.50", 1))
 _ec.cookies.set(auth_e.cfg.session_cookie, auth_e.store.create_session(_echef, 3600, True, "password"))
 _ea = TestClient(app_e, client=("203.0.113.9", 1))
@@ -1381,8 +1389,8 @@ r.check("Wächter-Selbsttest: ein Aufruf ausserhalb der Erlaubnis wird gefunden"
 # (Mutationsproben: in `remove_passkey` den `sicherheitsereignis`-Aufruf streichen → rot; die
 #  Panel-Route wieder direkt `store.delete_webauthn` + `audit` rufen lassen → rot, Hook UND Wächter.)
 auth_f3, app_f3 = _app(csrf_enabled=False)
-_f3_chef = auth_f3.create_user("chef", password="Geheim12345!", is_admin=True)
-_f3_anna = auth_f3.create_user("anna", password="Geheim12345!")
+_f3_chef = auth_f3.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_f3_anna = auth_f3.create_user("anna", password="Geheim12345!-lang")
 _f3_ereig = []
 auth_f3.on_security_event = lambda e, k, d: _f3_ereig.append((e, k["username"], dict(d)))
 auth_f3.store.add_webauthn(_f3_anna, b"cred-f3-a", b"pk", 0, [], "Laptop")
@@ -1417,7 +1425,7 @@ if _ilu.find_spec("webauthn") is not None:
     # und ein fremder oder erfundener Passkey schrieb trotzdem Zeile UND Ereignis).
     auth_f3s, app_f3s = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                              origin="http://localhost")
-    _f3s_anna = auth_f3s.create_user("anna", password="Geheim12345!")
+    _f3s_anna = auth_f3s.create_user("anna", password="Geheim12345!-lang")
     _f3s_ereig = []
     auth_f3s.on_security_event = lambda e, k, d: _f3s_ereig.append((e, k["username"], dict(d)))
     auth_f3s.store.add_webauthn(_f3s_anna, b"cred-f3s", b"pk", 0, [], "Laptop")
@@ -1465,7 +1473,7 @@ def _f12_unbestaetigt():
     """Ein Konto, wie es die Registrierung mit Bestätigungspflicht hinterlässt, samt Spuren: die
     Registrierung des Fremden (mit seiner IP) und ein Fehlversuch des echten Adressinhabers."""
     a, app_ = _app(csrf_enabled=False)
-    uid = a.create_user(_F12_NAME, password="Geheim12345!", email=_F12_MAIL)
+    uid = a.create_user(_F12_NAME, password="Geheim12345!-lang", email=_F12_MAIL)
     a.store.set_disabled(uid, True)
     a.create_magic_token("verify_email", user_id=uid)
     # Die Spuren entstehen NACH der Sekunde der Anlage (das Konto ist eine Minute alt): Ein
@@ -1496,7 +1504,7 @@ for _f12_weg, _f12_lauf in (("gc()", lambda a: a.gc()["unverified_accounts"]),
 # Und die Kontoseite der echten Carol danach (Fund 12 im Wortlaut): nur ihre eigenen Zeilen.
 _f12_a, _f12_app, _ = _f12_unbestaetigt()
 _f12_a.gc()
-_f12_neu = _f12_a.create_user(_F12_NAME, password="Geheim12345!", email="echt@example.com")
+_f12_neu = _f12_a.create_user(_F12_NAME, password="Geheim12345!-lang", email="echt@example.com")
 _f12_a.audit("signup", _F12_NAME, "198.51.100.8")
 _f12_eigene = [(e["event"], e["ip"]) for e in _f12_a.own_events(_f12_neu)]
 r.check("Fund 12: ein späterer Namensvetter sieht die Registrierung des Fremden nicht",
@@ -1513,7 +1521,7 @@ def _f12_kaputt(*a, **k):
 
 _f12_b.set_mailer(_f12_kaputt)
 _f12_bc = TestClient(_f12_bapp, client=("203.0.113.66", 1), raise_server_exceptions=False)
-_f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password": "Geheim12345!",
+_f12_br = _f12_bc.post("/auth/register", data={"username": _F12_NAME, "password": "Geheim12345!-lang",
                                                 "email": _F12_MAIL, "next": "/"})
 _f12_brest = _f12_spuren(_f12_b)
 _f12_bzeile = [z["username"] for z in _f12_b.store.recent_audit(20) if z["event"] == "verify_send_error"]
@@ -1540,7 +1548,7 @@ r.check("Funde 12/18 (Wächter): ein Konto löscht nur Store.konto_entfernen —
 _f12_c, _ = _app()
 _f12_c.store.audit_log("login_fail", "berta", "203.0.113.66", "password")
 _f12_c.store._exec("UPDATE audit SET ts=ts-3600 WHERE username='berta'")
-_f12_berta = _f12_c.create_user("berta", password="Geheim12345!")
+_f12_berta = _f12_c.create_user("berta", password="Geheim12345!-lang")
 _f12_c.audit("signup", "berta", "198.51.100.10")
 _f12_bev = [(e["event"], e["ip"]) for e in _f12_c.own_events(_f12_berta)]
 r.check("Fund 12: die Kontoseite zeigt keine Zeilen von vor der Anlage des Kontos",
@@ -1603,7 +1611,7 @@ def _n1_lauf(mailer, gleiche_sekunde: bool):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    magiclink_enabled=True, csrf_enabled=False)
     a.set_mailer(lambda *x, **k: True)   # die Einladung geht hinaus; `mailer` gilt danach
-    chef = a.create_user("chef", password="Geheim12345!", is_admin=True)
+    chef = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
     vor_id = a.store._one("SELECT COALESCE(MAX(id), 0) AS m FROM audit")["m"]
@@ -1689,7 +1697,7 @@ def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
     a, app_ = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                    csrf_enabled=False)
     a.set_mailer(lambda *x, **k: True)
-    chef = a.create_user("chef", password="Geheim12345!", is_admin=True)
+    chef = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
     with _uhr_steht():                 # Anlage und `user_create` in einer Sekunde
@@ -1697,7 +1705,7 @@ def _n7_lauf(versatz: int, ereignis: str = "signup_taken"):
     konto = a.store.get_user_by_name("kasse@example.com")
     if ereignis == "signup_taken":
         antwort = TestClient(app_, client=("203.0.113.66", 1)).post(
-            "/auth/register", data={"username": "kasse@example.com", "password": "Anderes-77!",
+            "/auth/register", data={"username": "kasse@example.com", "password": "Anderes-77!-lang-genug",
                                     "email": "kasse@example.com", "next": "/"})
         status = antwort.status_code
     else:                              # eine einbettende App protokolliert ihre eigene Anmeldung
@@ -1725,7 +1733,7 @@ for _n7_ereignis, _n7_versatz in (("signup_taken", 0), ("signup_taken", 1), ("si
 _s3_a, _s3_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
 _s3_a.set_mailer(lambda *x, **k: True)
-_s3_a.create_user("inhaberin", password="Geheim12345!", email="belegt@example.com")
+_s3_a.create_user("inhaberin", password="Geheim12345!-lang", email="belegt@example.com")
 with _uhr_steht():
     TestClient(_s3_app, client=("203.0.113.9", 1)).post(          # Sprayer, Name noch frei
         "/auth/login", data={"username": "platz", "password": "Passwort1!"})
@@ -1750,13 +1758,13 @@ r.check("S-3: … die signup_taken-Zeile eines Platzhalters bleibt sein Anker �
 # älteren Zeilen (die Einladung, die zu dem Konto führte). Der NAME dagegen gehörte vor der
 # Anlage niemandem — der Fehlversuch darunter bleibt, wie er war.
 _n6_a, _ = _app(csrf_enabled=False)
-_n6_a.create_user("chef", password="Geheim12345!", is_admin=True)
+_n6_a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
 _n6_a.store.audit_log("invite_create", "chef", "198.51.100.1", "dora@example.com")
 _n6_a.store.audit_log("login_fail", "dora", "203.0.113.9", "password grund=kein_konto")
 _n6_a.store.record_attempt("dora", "203.0.113.9", False, "password")
 _n6_a.store._exec("UPDATE audit SET ts=ts-60")
 _n6_a.store._exec("UPDATE login_attempt SET ts=ts-60")
-_n6_dora = _n6_a.create_user("dora", password="Geheim12345!", email="dora@example.com")
+_n6_dora = _n6_a.create_user("dora", password="Geheim12345!-lang", email="dora@example.com")
 _n6_a.delete_user(_n6_dora)
 _n6_zeilen = {z["event"]: (z["username"], z["detail"]) for z in _n6_a.store._all(
     "SELECT * FROM audit WHERE event IN ('invite_create', 'login_fail')")}
@@ -1787,7 +1795,7 @@ def _s2_lauf(verify: bool):
                    magiclink_enabled=True, csrf_enabled=False)
     post = []
     a.set_mailer(lambda to, betreff, text, html=None: post.append((to, text)))
-    chef = a.create_user("chef", password="Geheim12345!", is_admin=True)
+    chef = a.create_user("chef", password="Geheim12345!-lang", is_admin=True)
     ca = TestClient(app_, client=("198.51.100.1", 1))
     ca.cookies.set(a.cfg.session_cookie, a.store.create_session(chef, 3600, True, "password"))
     assert ca.post("/auth/admin/api/invite", json={"email": _S2_MAIL}).status_code == 200
@@ -1859,7 +1867,7 @@ r.check("S-2 (nach dem Link): der eingelöste Link setzt den Beleg, und die Lös
 # Bestätigungslink ausstehend. Der Vermerk sagt „belegt“, der offene Token widerspricht.
 _s2_d, _, _, _ = _s2_lauf(True)
 _s2_dvorher = _s2_fremde(_s2_d)
-_s2_duid = _s2_d.create_user("fremder", password="Geheim12345!", email=_S2_MAIL)
+_s2_duid = _s2_d.create_user("fremder", password="Geheim12345!-lang", email=_S2_MAIL)
 _s2_d.store.set_disabled(_s2_duid, True)
 _s2_d.create_magic_token("verify_email", user_id=_s2_duid, email=_S2_MAIL)
 _s2_offen_belegt = _s2_d.store.adresse_belegt(_s2_d.store.get_user(_s2_duid))
@@ -2025,7 +2033,7 @@ r.check("S-1: … create_user und set_email schreiben den Topf gleich mit",
 _n5_a, _n5_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
                       csrf_enabled=False)
 _n5_a.set_mailer(_n1_kaputt)          # scheiterte die Registrierung doch, griffe B6-5 sofort
-_n5_a.create_user("Émile", password="Geheim12345!", email="emile@example.com")
+_n5_a.create_user("Émile", password="Geheim12345!-lang", email="emile@example.com")
 _n5_reg = TestClient(_n5_app, client=("203.0.113.99", 1), raise_server_exceptions=False).post(
     "/auth/register", data={"username": "émile", "password": "Irgendwas-Langes-77",
                             "email": "gibtsnicht@example.org", "next": "/"})
@@ -2033,7 +2041,7 @@ _n5_kein = None
 try:
     # Klein-é: SQLite-NOCASE sieht darin einen anderen Namen (anders als bei „ÉMILE“, das
     # schon an ASCII-Faltung scheitert) — der Weg, den die Registrierung oben nimmt.
-    _n5_a.create_user("émile", password="Anderes-77!")
+    _n5_a.create_user("émile", password="Anderes-77!-lang-genug")
 except ConfigError as _e:
     _n5_kein = getattr(_e, "feld", "?")
 r.check("N-5: „émile“ neben „Émile“ ist vergeben (derselbe Zähl-Topf) — 409, kein zweites Konto",
@@ -2041,7 +2049,7 @@ r.check("N-5: „émile“ neben „Émile“ ist vergeben (derselbe Zähl-Topf)
         and len(_n5_a.store._all("SELECT id FROM users")) == 1,
         f"HTTP {_n5_reg.status_code}, create_user: {_n5_kein}")
 r.check("N-5: … ein anderer Topf bleibt frei („Emile“ ohne Akzent)",
-        bool(_n5_a.create_user("Emile", password="Anderes-77!")))
+        bool(_n5_a.create_user("Emile", password="Anderes-77!-lang-genug")))
 
 
 def _n5_rate(a, app_, name):
@@ -2053,7 +2061,7 @@ def _n5_rate(a, app_, name):
 
 # Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.
 _n5_b, _n5_bapp = _app(csrf_enabled=False)
-_n5_b.create_user("Özlem", password="Geheim12345!", email="oezlem@example.com")
+_n5_b.create_user("Özlem", password="Geheim12345!-lang", email="oezlem@example.com")
 _n5_platz = _n5_b.store.create_user("özlem")
 # Eine Minute vor den Rateversuchen angelegt — sonst blieben sie schon als Versuche aus der
 # Anlage-Sekunde stehen, und die Probe mässe die Topf-Prüfung nicht.
@@ -2083,8 +2091,8 @@ r.check("N-5: gc() eines Namensvetters aus dem Bestand leert den Topf des verble
 # ist `Émile`. Eine Löschung durch den Admin liess die Versuchszeilen deshalb liegen — die
 # Zusage von H-13 („deren Versuchszeilen werden gelöscht") galt nur für ASCII-Namen.
 _n5_c, _n5_capp = _app(csrf_enabled=False)
-_n5_c.create_user("chef", password="Geheim12345!", is_admin=True)
-_n5_ae = _n5_c.create_user("Ärmel", password="Geheim12345!")
+_n5_c.create_user("chef", password="Geheim12345!-lang", is_admin=True)
+_n5_ae = _n5_c.create_user("Ärmel", password="Geheim12345!-lang")
 _n5_c.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_ae,))
 _n5_rate(_n5_c, _n5_capp, "Ärmel")
 _n5_cvor = _n5_topf(_n5_c, "ärmel")
@@ -2136,7 +2144,7 @@ r.check("N-2: … mit gültigem Token und ganz ohne Token dagegen keine Zeile",
 if _ilu.find_spec("webauthn") is not None:
     _n3_a, _n3_app = _app(csrf_enabled=False, passkey_enabled=True, rp_id="localhost",
                           origin="http://localhost")
-    _n3_anna = _n3_a.create_user("anna", password="Geheim12345!")
+    _n3_anna = _n3_a.create_user("anna", password="Geheim12345!-lang")
     _n3_ereig = []
     _n3_a.on_security_event = lambda e, k, d: _n3_ereig.append(e)
     _n3_a.store.add_webauthn(_n3_anna, b"cred-n3", b"pk", 0, [], "Laptop")

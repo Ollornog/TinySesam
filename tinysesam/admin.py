@@ -171,6 +171,11 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
+        # Neu gebunden: Passwort-Fehlversuche und die Serien-Sperre (B2-6) enden hier — die Serie
+        # GANZ, anders als beim Selbstbedienungs-Reset: Hier entscheidet der Betreiber, nicht wer
+        # das Postfach hat. Sonst stünde das Konto nach dem Reset weiter vor der Tür.
+        auth.sperre_aufheben(uid, methoden=("password",))
+        auth._serie_beenden(uid)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
@@ -206,7 +211,11 @@ def build_admin_router(auth) -> APIRouter:
         rollen_vorher = sorted(map(str, auth.user_roles(vorher))) if vorher else []
         admin_vorher = bool(vorher["is_admin"]) if vorher else False
         auth.set_roles(uid, rollen)
-        if "is_admin" in b:
+        # Nur bei einer ECHTEN Änderung schreiben (H-5): Das Panel schickt den Haken bei jedem
+        # Speichern der Rollen mit. `set_admin(True)` schrieb dann eine 1 über die 2 eines vom
+        # Identity Provider vergebenen Flags — aus dem entziehbaren wurde still ein dauerhaftes
+        # Admin-Recht, und der nächste Login ohne Admin-Gruppe nahm es nicht mehr (Angriff auf H-5).
+        if "is_admin" in b and bool(b["is_admin"]) != bool(ziel["is_admin"]):
             auth.store.set_admin(uid, bool(b["is_admin"]))
         nachher = auth.store.get_user(uid)
         rollen_nachher = sorted(map(str, auth.user_roles(nachher))) if nachher else []

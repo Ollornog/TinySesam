@@ -170,6 +170,9 @@ _s10_alt.store.db.close()
 # und findet eines im Kommentar darüber („incomplete input“).
 from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
 _s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT\n", "\n", _S10_SCHEMA, flags=re.S)
+# Schema 11 (B2-6) kam danach: Eine Datei im Stand von 9 hat die Tabelle `fehlserie` noch nicht.
+_s10_schema9, _s10_n11 = re.subn(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);\n", "", _s10_schema9,
+                                 flags=re.S)
 os.close(os.open(_s10_db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
 _s10_roh = sqlite3.connect(_s10_db)
 _s10_roh.executescript(_s10_schema9)
@@ -188,8 +191,8 @@ _s10_roh.commit()
 _s10_roh.close()
 _s10_cfg["db_path"] = _s10_db
 r.check("Vorbedingung: die Datei steht auf Schema 9, ohne Topf-Spalten, Indizes und Trigger, mit allen Konten",
-        _s10_n == 1 and not _s10_rest and _s10_zahl == 6 and Store.SCHEMA_VERSION == 10,
-        f"Schnitt {_s10_n}, Reste {_s10_rest}, Konten {_s10_zahl}, SCHEMA_VERSION={Store.SCHEMA_VERSION}")
+        _s10_n == 1 and _s10_n11 == 1 and not _s10_rest and _s10_zahl == 6 and Store.SCHEMA_VERSION >= 10,
+        f"Schnitt {_s10_n}/{_s10_n11}, Reste {_s10_rest}, Konten {_s10_zahl}, SCHEMA_VERSION={Store.SCHEMA_VERSION}")
 
 _s10, _ = frisch(**_s10_cfg)                                      # = Upgrade auf Schema 10
 _s10_app = FastAPI()
@@ -247,8 +250,8 @@ r.check("S-1 (b): … ein Stempel unter TOPF_SCHEMA rechnet auch vorhandene Töp
         f"{_s10_neu.get_user(_s10_emile)['topf_name']}")
 _s10_neu.db.close()
 _s10_zweit = Store(_s10_db)
-r.check("… ein zweiter Start ändert nichts mehr (Stempel 10, keine weitere Sperre, kein Vermerk)",
-        int(_s10_zweit.db.execute("PRAGMA user_version").fetchone()[0]) == 10
+r.check("… ein zweiter Start ändert nichts mehr (Stempel aktuell, keine weitere Sperre, kein Vermerk)",
+        int(_s10_zweit.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION
         and _s10_zweit.get_user(_s10_ids["wieder"])["disabled"] == 1
         and _s10_zweit.get_user(_s10_ids["wartend"])["email_verified"] == 1)
 _s10_zweit.db.close()
@@ -319,7 +322,7 @@ _rs_danach = {n: dict(_rs.store.get_user(i)) for n, i in _rs_ids.items()}
 #  Konto nehmen → rot bei „hin“; die Wasserlinie ignorieren → hier grün, rot im Aufwands-Test unten.)
 r.check("Rückschritt: eine Panel-Sperre der älteren Fassung auf einer Schema-10-Datei trägt nach dem "
         "nächsten Start den Betreiber-Vermerk, ihre Token sind verworfen — der alte Link schaltet nicht frei",
-        _rs_stempel == 10 and _rs_u["rueck"]["disabled"] == 2 and _rs_tok["rueck"] == 0
+        _rs_stempel == Store.SCHEMA_VERSION and _rs_u["rueck"]["disabled"] == 2 and _rs_tok["rueck"] == 0
         and _rs_u["vorher"]["disabled"] == 2 and _rs_tok["vorher"] == 0
         and _rs_antwort["rueck"] != 303 and _rs_antwort["vorher"] != 303
         and _rs_danach["rueck"]["disabled"] == 2 and _rs_danach["vorher"]["disabled"] == 2

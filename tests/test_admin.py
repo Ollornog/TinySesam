@@ -8,6 +8,10 @@ from tinysesam import TinySesam, TinySesamConfig
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, passkey_enabled=False, oidc_enabled=False, cookie_secure=False))
+# Diese Suite prüft Blockliste, Kontextwörter und Höchstlänge — nicht die Einfaktor-Länge (B2-4,
+# die prüft test_t13_entscheide.py). Mit 15 Zeichen Mindestlänge fiele jedes kurze schwache
+# Beispiel schon an der Länge durch, und die Regel dahinter bliebe ungeprüft.
+auth.set_security("password_min_length_single_factor", 8)
 auth.ensure_admin("admin", "pw12345")
 auth.create_user("bob", password="bobpw", is_admin=False)
 
@@ -165,6 +169,7 @@ for k, v in streng.items():
 auth.set_security("max_login_attempts", 1)                     # ein Versuch: hart, aber zulässig
 for k, v in security.SECURITY_DEFAULTS.items():
     auth.set_security(k, v)
+auth.set_security("password_min_length_single_factor", 8)      # wie oben: hier geht es um die Regel
 print("  ✓ A1: strengere Altwerte bleiben, Werte jenseits der Grenze landen an der Grenze")
 # (Mutationsprobe: in manager.sec() wieder `return security.SECURITY_DEFAULTS[key]` statt
 #  klemme_haertung → rot; SECURITY_GRENZEN max_login_attempts wieder (3, …) → rot.)

@@ -14,6 +14,10 @@ def ok(name):
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
                                  cookie_secure=False, pin_enabled=True))
+# Diese Suite prüft Blockliste, Kontextwörter und Höchstlänge — nicht die Einfaktor-Länge (B2-4,
+# die prüft test_t13_entscheide.py). Mit 15 Zeichen Mindestlänge fiele jedes kurze schwache
+# Beispiel schon an der Länge durch, und die Regel dahinter bliebe ungeprüft.
+auth.set_security("password_min_length_single_factor", 8)
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()
 app.include_router(auth.router())
@@ -76,6 +80,7 @@ with open(_liste, "w", encoding="utf-8") as _f:
     _f.write("# Kommentar\nFirmenname2026\n")
 _ab = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_liste))
+_ab.set_security("password_min_length_single_factor", 8)       # geprüft wird die Liste, nicht die Länge
 assert _ab.passwort_mangel("firmenname2026") and _ab.passwort_mangel("Firmenname!!")
 assert _ab.passwort_mangel("ein-ganz-eigenes-wort") is None
 # Gegenprobe gegen Übereifer: keine Zusammensetzungsregeln (NIST), eine Ziffernfolge ohne Muster

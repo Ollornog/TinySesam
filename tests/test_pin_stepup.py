@@ -15,7 +15,7 @@ from tinysesam import TinySesam, TinySesamConfig
 HTML = {"accept": "text/html"}
 
 
-def login(c, u="max", pw="geheim12345"):
+def login(c, u="max", pw="geheim12345-lang-genug"):
     return c.post("/auth/login", data={"username": u, "password": pw, "next": "/"}, follow_redirects=False)
 
 
@@ -33,7 +33,7 @@ c = TestClient(app, headers=HTML)
 
 page = c.get("/auth/register").text
 assert "name=username" in page and "name=email" not in page or "required" not in page
-r = c.post("/auth/register", data={"username": "max", "password": "geheim12345", "next": "/"},
+r = c.post("/auth/register", data={"username": "max", "password": "geheim12345-lang-genug", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303, r.text[:200]
 assert auth.store.get_user_by_name("max")["email"] is None
@@ -55,7 +55,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345")
+uid = auth.create_user("max", password="geheim12345-lang-genug")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())
@@ -88,7 +88,7 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], stepup_max_age_sec=1,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345")
+uid = auth.create_user("max", password="geheim12345-lang-genug")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())
@@ -118,7 +118,7 @@ assert "name=password" not in page, "stepup_methods=['pin'] → kein Passwortfel
 r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensibel"})
 assert r.status_code == 401
 # Passwort wird NICHT akzeptiert, wenn nur PIN erlaubt ist
-r = c.post("/auth/reauth", data={"password": "geheim12345", "next": "/sensibel"})
+r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensibel"})
 assert r.status_code == 401, "Passwort darf hier nicht durchgehen"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensibel"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sensibel"
@@ -132,7 +132,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], cookie_secure=False))
-uid = auth.create_user("ohnepin", password="geheim12345")   # keine PIN gesetzt
+uid = auth.create_user("ohnepin", password="geheim12345-lang-genug")   # keine PIN gesetzt
 u = auth.store.get_user(uid)
 assert auth.stepup_options(u) == ["password"], "ohne PIN → Passwort statt Sackgasse"
 os.unlink(db)
@@ -143,7 +143,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, pin_enabled=True,
                                                 pin_login=False, cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345")
+uid = auth.create_user("max", password="geheim12345-lang-genug")
 auth.set_pin(uid, "2468")
 app = FastAPI(); app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
@@ -187,13 +187,13 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, lang="de",
                                                 passkey_enabled=False, cookie_secure=False,
                                                 admin_identifiers=["chef"]))
-auth.create_user("fremder", password="geheim12345")
-auth.create_user("chef", password="geheim12345")
+auth.create_user("fremder", password="geheim12345-lang-genug")
+auth.create_user("chef", password="geheim12345-lang-genug")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
-c.post("/auth/login", data={"username": "fremder", "password": "geheim12345", "next": "/"})
+c.post("/auth/login", data={"username": "fremder", "password": "geheim12345-lang-genug", "next": "/"})
 assert not auth.store.get_user_by_name("fremder")["is_admin"], "Fremder darf kein Admin werden"
 c.cookies.clear()
-c.post("/auth/login", data={"username": "chef", "password": "geheim12345", "next": "/"})
+c.post("/auth/login", data={"username": "chef", "password": "geheim12345-lang-genug", "next": "/"})
 assert auth.store.get_user_by_name("chef")["is_admin"]
 os.unlink(db)
 
@@ -203,11 +203,11 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, cookie_secure=False))
 tok = auth.admin_claim_token()
 assert tok
-auth.create_user("erster", password="geheim12345")
+auth.create_user("erster", password="geheim12345-lang-genug")
 app = FastAPI(); app.include_router(auth.router()); c = TestClient(app, headers=HTML)
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
 assert r.status_code == 303 and "/auth/login" in r.headers["location"], "ohne Login erst anmelden"
-c.post("/auth/login", data={"username": "erster", "password": "geheim12345", "next": "/"})
+c.post("/auth/login", data={"username": "erster", "password": "geheim12345-lang-genug", "next": "/"})
 assert c.get("/auth/claim-admin?token=falsch").status_code == 403
 r = c.get(f"/auth/claim-admin?token={tok}", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/admin"
@@ -362,7 +362,7 @@ auth = TinySesam(TinySesamConfig.local_accounts(db_path=db, csrf_enabled=False, 
                                                 passkey_enabled=False, pin_enabled=True,
                                                 stepup_methods=["pin"], stepup_max_age_sec=1,
                                                 cookie_secure=False))
-uid = auth.create_user("max", password="geheim12345")
+uid = auth.create_user("max", password="geheim12345-lang-genug")
 auth.set_pin(uid, "2468")
 app = FastAPI()
 app.include_router(auth.router())

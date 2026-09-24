@@ -21,7 +21,6 @@ nicht dreimal starten.
 from __future__ import annotations
 
 import os
-import re
 
 from . import security
 

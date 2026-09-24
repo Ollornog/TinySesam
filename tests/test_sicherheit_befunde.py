@@ -46,7 +46,7 @@ def _app(**cfg):
 # {"roles": ["buchhaltung"]} auf und bekommt einen Key, der genau diese Rolle trägt.
 # Der Scope überschrieb die Kontorollen, statt sie zu schneiden.
 auth, app = _app()
-auth.create_user("mitarbeiter", password="Geheim12345!")
+auth.create_user("mitarbeiter", password="Geheim12345!abc")
 nutzer = auth.store.get_user_by_name("mitarbeiter")
 
 
@@ -169,13 +169,13 @@ r.check("SAML- und Passkey-Flow-Cookie tragen das Präfix ebenso",
 # `POST /auth/totp/disable` löschte damit TOTP UND alle Recovery-Codes — ohne Rückfrage,
 # ohne frische Faktor-Bestätigung und ohne Audit-Eintrag.
 auth_c, app_c = _app(pin_enabled=True)
-auth_c.create_user("opfer", password="Geheim12345!")
+auth_c.create_user("opfer", password="Geheim12345!abc")
 opfer = auth_c.store.get_user_by_name("opfer")
 auth_c.totp_enable(opfer["id"], auth_c.totp_new_secret()) if hasattr(auth_c, "totp_new_secret") else None
 
 OHNE_CSRF = ("/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/disable")
 with TestClient(app_c) as c:
-    c.post("/auth/login", data={"username": "opfer", "password": "Geheim12345!"},
+    c.post("/auth/login", data={"username": "opfer", "password": "Geheim12345!abc"},
            follow_redirects=False)
     for pfad in OHNE_CSRF:
         antwort = c.post(pfad)          # kein X-CSRF-Token, kein Body — wie ein fremdes Formular
@@ -197,7 +197,7 @@ r.check("das Abschalten der PIN ebenso",
 # TOTP-Rateversuch einmal korrekt an. Der Erfolg löschte ALLE Fehlversuche des Kontos — auch die
 # der TOTP-Versuche. Die Sperre griff für den zweiten Faktor damit nie.
 auth_b, _app_b = _app()
-auth_b.create_user("ziel", password="Geheim12345!")
+auth_b.create_user("ziel", password="Geheim12345!abc")
 
 # Fünf Fehlversuche beim zweiten Faktor …
 for _ in range(5):
@@ -543,7 +543,7 @@ ca = TestClient(app_a)
 ca.cookies.set(auth_a.cfg.session_cookie,
                auth_a.store.create_session(admin_a, 3600, True, "password"))
 
-antwort = ca.post(f"/auth/admin/api/users/{uid_a}/password", json={"password": "ganzneu12345"})
+antwort = ca.post(f"/auth/admin/api/users/{uid_a}/password", json={"password": "ganzneu12345abc"})
 r.check("der Admin-Reset läuft überhaupt durch", antwort.status_code == 200,
         f"HTTP {antwort.status_code}: {antwort.text[:120]}")
 r.check("der Admin-Reset entwertet die API-Keys des Kontos", not _key_gilt(auth_a, zweit),
@@ -584,7 +584,7 @@ r.check("und die IP, von der aus", bool(eintrag) and bool(eintrag["ip"]),
         f"ip={eintrag['ip'] if eintrag else None!r}")
 
 # Nicht nur diese eine Route: auch der Passwort-Reset.
-cp.post(f"/auth/admin/api/users/{opfer_p}/password", json={"password": "ganzneu12345"})
+cp.post(f"/auth/admin/api/users/{opfer_p}/password", json={"password": "ganzneu12345abc"})
 reset = next((z for z in auth_p.store.recent_audit(50) if z["event"] == "user_password_reset"), None)
 r.check("auch der Admin-Passwort-Reset nennt Akteur und IP",
         bool(reset) and reset["username"] == "chefin2" and bool(reset["ip"]),
@@ -1150,7 +1150,7 @@ def _mailapp(**cfg):
     grund.update(cfg)
     auth, app = _app(**grund)
     auth.set_mailer(lambda to, betreff, text, html=None: post.append(text))
-    auth.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+    auth.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
     return auth, TestClient(app), post
 
 
@@ -1170,7 +1170,7 @@ r.check("Vorbedingung: der Weg funktioniert überhaupt (Mail geht raus)",
 for pfad, daten, name in (
         ("/auth/forgot", {"email": "opfer@example.com"}, "Reset-Link"),
         ("/auth/magic/request", {"email": "opfer@example.com", "next": "/"}, "Magic-Link"),
-        ("/auth/register", {"username": "neu", "password": "Geheim12345!",
+        ("/auth/register", {"username": "neu", "password": "Geheim12345!abc",
                             "email": "neu@example.com"}, "Bestätigungslink")):
     auth_x, c_x, post_x = _mailapp()
     antwort_x = c_x.post(pfad, data=daten, headers={"host": BOESE})
@@ -1266,7 +1266,7 @@ auth_500, app_500 = _app(csrf_enabled=False, magiclink_enabled=True, password_re
                          passkey_enabled=False, base_url=ECHT)
 _post_500: list = []
 auth_500.set_mailer(lambda to, betreff, text, html=None: _post_500.append(text))
-auth_500.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+auth_500.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
 auth_500.cfg.base_url = ""              # die Lage, für die das zweite Schloss gebaut ist
 _c500 = TestClient(app_500, raise_server_exceptions=False)
 _antwort_500 = _c500.post("/auth/forgot", data={"email": "opfer@example.com"})
@@ -1282,9 +1282,9 @@ r.check("...sondern HTTP 503 aus der Route, kein ungefangener 500",
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=ECHT)
 auth_inv.set_mailer(lambda *a, **k: None)
-auth_inv.ensure_admin("chefin", "Geheim12345!")
+auth_inv.ensure_admin("chefin", "Geheim12345!abc")
 _ci = TestClient(app_inv, raise_server_exceptions=False)
-_ci.post("/auth/login", data={"username": "chefin", "password": "Geheim12345!"})
+_ci.post("/auth/login", data={"username": "chefin", "password": "Geheim12345!abc"})
 auth_inv.cfg.base_url = ""
 _inv = _ci.post("/auth/admin/api/invite", json={"email": "gast@example.com"})
 r.check("Admin-Einladung ohne Basis: 503, kein 500 und kein Link",
@@ -1318,7 +1318,7 @@ r.check("und der gefälschte Host taucht nirgends auf", BOESE not in "\n".join(p
 auth_inv, app_inv = _app(csrf_enabled=False, magiclink_enabled=True, passkey_enabled=False,
                          base_url=ECHT)
 auth_inv.set_mailer(lambda *a, **k: None)
-auth_inv.create_user("chef", password="Geheim12345!", is_admin=True)
+auth_inv.create_user("chef", password="Geheim12345!abc", is_admin=True)
 with TestClient(app_inv) as c_inv:
     c_inv.cookies.set(auth_inv.cfg.session_cookie,
                       auth_inv.store.create_session(auth_inv.store.get_user_by_name("chef")["id"],
@@ -1495,7 +1495,7 @@ r.check("...und mit base_url läuft der Flow weiter, auf der eigenen Adresse",
 # (2) OIDC-Post-Logout. Der `post_logout_redirect_uri` geht an den IdP; aus dem Host-Header
 # abgeleitet schickt der IdP das Opfer nach dem Abmelden auf den Server des Angreifers.
 def _abmelden(auth_x, app_x):
-    uid = auth_x.create_user("wer", password="Geheim12345!")
+    uid = auth_x.create_user("wer", password="Geheim12345!abc")
     tok = auth_x.store.create_session(uid, 3600, True, "oidc")
     with TestClient(app_x) as c:
         c.cookies.set(auth_x.cfg.session_cookie, tok)
@@ -1616,7 +1616,7 @@ _a_api, _app_api = _app(magiclink_enabled=True, password_reset_enabled=True, pas
                         trusted_redirect_hosts=["auth.example.com", "app-b.example.com"])
 _mails_api: list = []
 _a_api.set_mailer(lambda to, betreff, text, html=None: _mails_api.append(text))
-_a_api.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+_a_api.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
 # Diese Runde schickt ein Dutzend Mails an dieselbe Adresse; gemessen wird die Basis, nicht die
 # Drossel je Zieladresse (R4-04, eigener Test in test_magic.py) — die bekommt hier Luft.
 _a_api.set_security("mail_per_address_max", 100)
@@ -1670,7 +1670,7 @@ for _fremd, _was in (("https://" + BOESE, "einen fremden Host"),
 _a_ohne, _app_ohne = _app(passkey_enabled=False, trusted_redirect_hosts=["auth.example.com"])
 _mails_ohne: list = []
 _a_ohne.set_mailer(lambda to, betreff, text, html=None: _mails_ohne.append(text))
-_a_ohne.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+_a_ohne.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
 for _name, _ruf in _wege(_a_ohne, "https://" + BOESE):
     try:
         _abgewiesen, _wie = False, repr(_ruf())
@@ -1714,7 +1714,7 @@ _UNTER = "https://portal.example.com/portal"
 _a_pfad, _app_pfad = _app(passkey_enabled=False, trusted_redirect_hosts=["portal.example.com"])
 _mails_pfad: list = []
 _a_pfad.set_mailer(lambda to, betreff, text, html=None: _mails_pfad.append(text))
-_a_pfad.create_user("opfer", password="Geheim12345!", email="opfer@example.com")
+_a_pfad.create_user("opfer", password="Geheim12345!abc", email="opfer@example.com")
 _a_pfad.set_security("mail_per_address_max", 100)   # wie oben: gemessen wird der Pfad, nicht R4-04
 def _links(texte) -> list:
     """Alle Adressen auf dem Unterpfad-Host, die ein Aufruf nach aussen gegeben hat."""
@@ -1749,7 +1749,7 @@ _a_mnt = TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "t.db"
                                    base_url="https://example.com/sso"))
 _mails_mnt: list = []
 _a_mnt.set_mailer(lambda to, betreff, text, html=None: _mails_mnt.append(text))
-_a_mnt.create_user("anna", password="Geheim12345!", email="anna@example.com")
+_a_mnt.create_user("anna", password="Geheim12345!abc", email="anna@example.com")
 _app_mnt = FastAPI(root_path="/sso")
 _app_mnt.include_router(_a_mnt.router())
 _c_mnt = TestClient(_app_mnt, root_path="/sso", follow_redirects=False)
@@ -1788,7 +1788,7 @@ for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
 # besetzte ein Fremder die Kennung eines bestehenden Kontos — der Inhaber (auch ein Admin) bekam
 # 401 trotz richtigem Passwort, und /auth/password prüfte fortan ein fremdes Geheimnis.
 
-PW_INHABER, PW_EVE = "Geheim12345!", "Angreifer12345!"
+PW_INHABER, PW_EVE = "Geheim12345!abc", "Angreifer12345!"
 
 
 def _anmelden(client, kennung, passwort=PW_INHABER):
@@ -1834,7 +1834,7 @@ r.check("...und die E-Mail-Kennung zeigt weiter auf den Inhaber",
 
 # Der legitime Weg bleibt offen — sonst wäre der Wächter nur eine kaputte Registrierung.
 frisch = c_n2.post("/auth/register",
-                   data={"username": "neu", "password": "Neues12345!",
+                   data={"username": "neu", "password": "Neues12345!abcd",
                          "email": "neu@example.com", "next": "/"}, follow_redirects=False)
 r.check("eine Registrierung mit freien Kennungen geht weiterhin durch", frisch.status_code == 303,
         f"HTTP {frisch.status_code}: {frisch.text[:120]}")
@@ -1911,14 +1911,14 @@ r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf
 c_alt = TestClient(app_alt)
 c_alt.cookies.set(auth_alt.cfg.session_cookie,
                   auth_alt.store.create_session(eve_alt, 3600, True, "password"))
-fremd = c_alt.post("/auth/password", json={"current": PW_INHABER, "new": "Neues12345!"})
+fremd = c_alt.post("/auth/password", json={"current": PW_INHABER, "new": "Neues12345!abcd"})
 r.check("/auth/password nimmt das Passwort eines FREMDEN Kontos nicht an",
         fremd.status_code == 403,
         f"HTTP {fremd.status_code} — die Route ist ein Orakel für fremde Passwörter")
 r.check("...und das fremde Passwort gilt unverändert weiter",
         auth_alt.check_password("chef", PW_INHABER) is not None,
         "das Geheimnis des Opfers wurde überschrieben")
-eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!"})
+eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!abcd"})
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
 
@@ -2432,7 +2432,7 @@ auth_g, app_g = _app(csrf_enabled=False, pin_enabled=True, pin_login=True,
                      allow_signup=True, signup_require_email=True, signup_verify_email=True,
                      base_url=ECHT)
 auth_g.set_mailer(lambda to, betreff, text, html=None: None)
-uid_g = auth_g.create_user("gesperrt", password="Geheim12345!", email="gesperrt@example.com")
+uid_g = auth_g.create_user("gesperrt", password="Geheim12345!abc", email="gesperrt@example.com")
 auth_g.set_pin(uid_g, "471193")
 key_g = auth_g.create_api_key(uid_g, "bot")["key"]
 alt_g = auth_g.store.create_session(uid_g, 3600, True, "password")
@@ -2453,7 +2453,7 @@ def _sitzungen_g():
 
 vorher_g = _sitzungen_g()
 cg = TestClient(app_g)
-cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!", "next": "/"},
+cg.post("/auth/login", data={"username": "gesperrt", "password": "Geheim12345!abc", "next": "/"},
         follow_redirects=False)
 cg.post("/auth/pin", data={"username": "gesperrt", "pin": "471193", "next": "/"},
         follow_redirects=False)
@@ -2487,7 +2487,7 @@ r.check("ein API-Key des gesperrten Kontos öffnet nichts",
         cg.get("/geschuetzt", headers={"X-API-Key": key_g}).status_code == 401)
 
 # Die halbe Sitzung (erster Faktor erbracht, TOTP offen) wird nach einer Sperre nicht vollwertig.
-uid_h = auth_g.create_user("halb", password="Geheim12345!")
+uid_h = auth_g.create_user("halb", password="Geheim12345!abc")
 halb_tok = auth_g.store.create_session(uid_h, 3600, False, "password")
 auth_g.store.set_disabled(uid_h, True)
 r.check("eine halbe Sitzung wird nach der Sperre nicht über TOTP vollwertig",
@@ -2495,8 +2495,8 @@ r.check("eine halbe Sitzung wird nach der Sperre nicht über TOTP vollwertig",
         "complete_totp stellte einem gesperrten Konto eine volle Sitzung aus")
 
 # Die Sperre durch den Betreiber hält gegen einen offenen Bestätigungslink.
-admin_g = auth_g.create_user("chefin-g", password="Geheim12345!", is_admin=True)
-uid_v = auth_g.create_user("wartend", password="Geheim12345!", email="wartend@example.com")
+admin_g = auth_g.create_user("chefin-g", password="Geheim12345!abc", is_admin=True)
+uid_v = auth_g.create_user("wartend", password="Geheim12345!abc", email="wartend@example.com")
 auth_g.store.set_disabled(uid_v, True)                      # wie nach der Registrierung
 verify_g = auth_g.create_magic_token("verify_email", user_id=uid_v, email="wartend@example.com")
 ca_g = TestClient(app_g)
@@ -2995,7 +2995,7 @@ r.check("B3-8: demo_mode neben einem echten Anmeldeweg ist ein Fehler",
         _nennt(_befund(demo_mode=True, forward_auth_enabled=True)[0], "demo_mode"))
 _demo_db = str(Path(tempfile.mkdtemp()) / "t.db")
 _bestand = TinySesam(TinySesamConfig(db_path=_demo_db))
-_bestand.create_user("echt", password="Geheim12345!")
+_bestand.create_user("echt", password="Geheim12345!abc")
 try:
     TinySesam(TinySesamConfig(db_path=_demo_db, demo_mode=True))
     _b38 = False
@@ -3007,7 +3007,7 @@ r.check("...demo_mode auf einer Datenbank mit Bestandskonten scheitert beim Aufb
 # Gegenprobe: Eine echte Demo startet wieder, auch mit inzwischen registrierten Besuchern.
 _demo_db2 = str(Path(tempfile.mkdtemp()) / "t.db")
 _d1 = TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
-_d1.create_user("besucher", password="Geheim12345!")
+_d1.create_user("besucher", password="Geheim12345!abc")
 try:
     TinySesam(TinySesamConfig(db_path=_demo_db2, demo_mode=True))
     _b38b = True

@@ -23,7 +23,7 @@ def build(**over):
     return auth, TestClient(app), db
 
 
-def login(c, ident, pw="geheim12345"):
+def login(c, ident, pw="geheim12345-lang-genug"):
     return c.post("/auth/login", data={"username": ident, "password": pw, "next": "/"},
                   follow_redirects=False)
 
@@ -51,10 +51,10 @@ assert valid_email("山田たろう@example.jp") and valid_email("user@例え.�
 assert valid_email("ラーメン@example.jp") and valid_email("홍길동漢@example.kr"), "Kana-Langzeichen, Hangul+Hanja"
 assert not valid_email("山田a@example.jp") and not valid_email("たаро@example.jp"), "Latein/Kyrillisch mischt nicht mit"
 auth, c, db = build(login_identifier="email", allow_signup=True)
-auth.create_user("admin@example.com", password="geheim12345", email="admin@example.com")
-r = c.post("/auth/register", data={"password": "geheim12345", "email": "ａｄｍｉｎ@example.com", "next": "/"})
+auth.create_user("admin@example.com", password="geheim12345-lang-genug", email="admin@example.com")
+r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "ａｄｍｉｎ@example.com", "next": "/"})
 assert r.status_code == 409, "Vollbreiten-Doppelgänger ist dieselbe Kennung"
-r = c.post("/auth/register", data={"password": "geheim12345", "email": "аdmin@example.com", "next": "/"})
+r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "аdmin@example.com", "next": "/"})
 assert r.status_code == 400, "Verwechsler wird abgewiesen"
 assert auth.store._exec("SELECT COUNT(*) FROM users").fetchone()[0] == 1
 # Bestand von VOR R4-06: eine Umlaut-Domain in Unicode-Form wird weiter gefunden
@@ -65,7 +65,7 @@ print("  R4-06: NFKC, IDNA-A-Label, Verwechsler abgewiesen, Bestand weiter auffi
 
 # ---------- Modus "both": Login mit beidem ----------
 auth, c, db = build(login_identifier="both")
-auth.create_user("max", password="geheim12345", email="Max@Example.com")
+auth.create_user("max", password="geheim12345-lang-genug", email="Max@Example.com")
 assert login(c, "max").status_code == 303, "Username-Login"
 assert login(c, "max@example.com").status_code == 303, "E-Mail-Login"
 assert login(c, "MAX@EXAMPLE.COM").status_code == 303, "E-Mail case-insensitiv"
@@ -78,7 +78,7 @@ os.unlink(db)
 
 # ---------- Modus "username": E-Mail darf NICHT gehen ----------
 auth, c, db = build(login_identifier="username")
-auth.create_user("max", password="geheim12345", email="max@example.com")
+auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
 assert login(c, "max").status_code == 303
 assert login(c, "max@example.com").status_code != 303, "E-Mail darf im Username-Modus nicht greifen"
 c.cookies.clear()
@@ -88,7 +88,7 @@ os.unlink(db)
 
 # ---------- Modus "email": Username darf NICHT gehen ----------
 auth, c, db = build(login_identifier="email")
-auth.create_user("max", password="geheim12345", email="max@example.com")
+auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
 assert login(c, "max@example.com").status_code == 303
 assert login(c, "max").status_code != 303, "Username darf im E-Mail-Modus nicht greifen"
 c.cookies.clear()
@@ -98,7 +98,7 @@ print("  username-/email-only: jeweils nur die erlaubte Kennung ok")
 
 # ---------- PIN nutzt dieselbe Kennung ----------
 auth, c, db = build(login_identifier="both", pin_enabled=True)
-uid = auth.create_user("max", password="geheim12345", email="max@example.com")
+uid = auth.create_user("max", password="geheim12345-lang-genug", email="max@example.com")
 auth.set_pin(uid, "2468")
 r = c.post("/auth/pin", data={"username": "max@example.com", "pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, "PIN-Login per E-Mail"
@@ -107,9 +107,9 @@ print("  PIN akzeptiert dieselbe Kennung ok")
 
 # ---------- E-Mail eindeutig ----------
 auth, c, db = build()
-auth.create_user("a", password="geheim12345", email="dup@example.com")
+auth.create_user("a", password="geheim12345-lang-genug", email="dup@example.com")
 try:
-    auth.create_user("b", password="geheim12345", email="DUP@example.com")
+    auth.create_user("b", password="geheim12345-lang-genug", email="DUP@example.com")
     raise AssertionError("Dublette wurde angenommen")
 except ValueError:
     pass
@@ -121,15 +121,15 @@ print("  E-Mail-Eindeutigkeit (case-insensitiv) ok")
 # ---------- Registrierung: E-Mail Pflicht (Default) ----------
 auth, c, db = build(allow_signup=True)
 assert auth.cfg.signup_require_email is True, "Default = Pflicht"
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345", "next": "/"})
+r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug", "next": "/"})
 assert r.status_code == 400 and "E-Mail nötig" in r.text
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345", "email": "keine-mail", "next": "/"})
+r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug", "email": "keine-mail", "next": "/"})
 assert r.status_code == 400 and "gültige E-Mail" in r.text
-r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345",
+r = c.post("/auth/register", data={"username": "neu", "password": "geheim12345-lang-genug",
                                    "email": "Neu@Example.com", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.text[:300]
 assert auth.store.get_user_by_name("neu")["email"] == "neu@example.com", "kanonisch gespeichert"
-r = c.post("/auth/register", data={"username": "neu2", "password": "geheim12345",
+r = c.post("/auth/register", data={"username": "neu2", "password": "geheim12345-lang-genug",
                                    "email": "NEU@example.com", "next": "/"})
 assert r.status_code == 409 and "bereits registriert" in r.text
 c.cookies.clear()
@@ -144,7 +144,7 @@ auth, c, db = build(allow_signup=True, login_identifier="email")
 page = c.get("/auth/register").text
 assert "name=username" not in page, "im E-Mail-Modus kein Benutzernamen-Feld"
 assert "name=email" in page and "required" in page
-r = c.post("/auth/register", data={"password": "geheim12345", "email": "Solo@Example.com", "next": "/"},
+r = c.post("/auth/register", data={"password": "geheim12345-lang-genug", "email": "Solo@Example.com", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303, r.text[:300]
 u = auth.store.get_user_by_email("solo@example.com")
@@ -164,7 +164,7 @@ print("  Registrierung folgt login_identifier ok")
 
 # ---------- Registrierung: E-Mail optional abschaltbar ----------
 auth, c, db = build(allow_signup=True, signup_require_email=False)
-r = c.post("/auth/register", data={"username": "ohne", "password": "geheim12345", "next": "/"},
+r = c.post("/auth/register", data={"username": "ohne", "password": "geheim12345-lang-genug", "next": "/"},
            follow_redirects=False)
 assert r.status_code == 303
 assert auth.store.get_user_by_name("ohne")["email"] is None
@@ -176,7 +176,7 @@ sent = []
 auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                     base_url="http://testserver")
 auth.set_mailer(lambda to, subject, text, html=None: sent.append((to, text)))
-r = c.post("/auth/register", data={"username": "verify", "password": "geheim12345",
+r = c.post("/auth/register", data={"username": "verify", "password": "geheim12345-lang-genug",
                                    "email": "v@example.com", "next": "/"})
 assert r.status_code == 200 and "Fast fertig" in r.text, r.text[:200]
 u = auth.store.get_user_by_name("verify")
@@ -195,7 +195,7 @@ print("  signup_verify_email: gesperrt → Link → entsperrt → Login ok")
 # (sonst scheitert schon der Konstruktor). Geprüft wird die Lage danach: Basis ja, Mailer nein.
 auth, c, db = build(allow_signup=True, signup_verify_email=True, magiclink_enabled=True,
                     base_url="http://testserver")
-r = c.post("/auth/register", data={"username": "x", "password": "geheim12345",
+r = c.post("/auth/register", data={"username": "x", "password": "geheim12345-lang-genug",
                                    "email": "x@example.com", "next": "/"})
 assert r.status_code == 500 and "kein Mailer" in r.text
 assert auth.store.get_user_by_name("x") is None, "kein halbfertiges Konto angelegt"
@@ -229,7 +229,7 @@ print("  Config-Sanity ok")
 from tinysesam import ConfigError  # noqa: E402
 
 auth, c, db = build(login_identifier="both")
-opfer_id = auth.create_user("opfer", password="geheim12345", email="chef@example.com")
+opfer_id = auth.create_user("opfer", password="geheim12345-lang-genug", email="chef@example.com")
 for kennung, mail, feld in (("chef@example.com", None, "username"),   # Name == fremde E-Mail
                             ("neu", "chef@example.com", "email")):    # E-Mail == fremde E-Mail
     try:
