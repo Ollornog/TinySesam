@@ -1851,6 +1851,9 @@ _VEROEFFENTLICHT: list[tuple[str, str]] = [
     (r"twine\s+upload", "twine upload"),
     (r"docker/build-push-action", "build-push-action"),
 ]
+# Reiner Aufbau zaehlt nicht als "der Trockenlauf prueft etwas".
+_NUR_AUFBAU = re.compile(r"actions/(checkout|setup-|cache|download-artifact|upload-artifact)"
+                         r"|docker/setup-")
 _AM_TAG = re.compile(r"ref_type\s*==\s*'tag'|startsWith\(github\.ref,\s*'refs/tags")
 
 
@@ -1946,6 +1949,14 @@ def pruefe_veroeffentlichen_am_tag(root: str, dateien: list[str] | None = None) 
 
     Gedeckt ist eine Handlung, wenn der **Job** oder der **Schritt** ein `if` mit
     `github.ref_type == 'tag'` bzw. `startsWith(github.ref, 'refs/tags…')` traegt.
+
+    **Zweiter Teil (seit 0.21.9): der Trockenlauf muss auch etwas PRUEFEN.** Haengt der *ganze*
+    Job am Tag, ist der Knopf gruen und tut nichts — derselbe klemmende Notausgang in anderer
+    Gestalt. Gemeldet aus der TinySesam-Session, die das in ihrem eigenen Waechter abdeckte;
+    hier verallgemeinert. Gezaehlt werden Schritte, die im Trockenlauf LAUFEN und nicht bloss
+    Aufbau sind (`actions/checkout`, `setup-*`, `cache`, `*-artifact`, `docker/setup-*` zaehlen
+    nicht). Gemessen ueber die Flotte: 4-7 wirkende Schritte je Workflow, kein Repo war betroffen —
+    es ist also ein Rueckfall-Schutz.
     """
     treffer: list[str] = []
     verz = os.path.join(root, ".github", "workflows")
@@ -1988,6 +1999,21 @@ def pruefe_veroeffentlichen_am_tag(root: str, dateien: list[str] | None = None) 
                                    f"`{bezeichnung}` ohne Tag-Bedingung — ein Trockenlauf "
                                    f"wuerde damit VEROEFFENTLICHEN")
                     break
+        # Und die Gegenrichtung: laeuft im Trockenlauf ueberhaupt etwas Wirkendes?
+        wirkend = 0
+        for job in jobs:
+            if _AM_TAG.search(job.get("if", "")):
+                continue                     # ganzer Job nur beim Tag -> im Trockenlauf still
+            for s in job["steps"]:
+                if _AM_TAG.search(s.get("if", "")):
+                    continue
+                if _NUR_AUFBAU.search(s["text"]):
+                    continue
+                wirkend += 1
+        if jobs and wirkend == 0:
+            treffer.append(f".github/workflows/{name}: der Trockenlauf prueft NICHTS — jeder "
+                           "wirkende Schritt haengt am Tag. Der Knopf ist dann gruen und tut "
+                           "nichts (derselbe klemmende Notausgang in anderer Gestalt)")
     return treffer
 
 
