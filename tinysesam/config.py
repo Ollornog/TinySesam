@@ -336,7 +336,11 @@ class TinySesamConfig:
     #: sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in
     #: aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab,
     #: ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt.
-    #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst.
+    #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind
+    #: 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag
+    #: oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die
+    #: Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden
+    #: (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen.
     oidc_revalidate_minutes: int = 0
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
@@ -423,7 +427,9 @@ class TinySesamConfig:
     # Frist, das Log wächst wie bisher unbegrenzt. Im Audit-Log stehen Benutzernamen und IPs,
     # also personenbezogene Daten — eine Frist ist Sache des Betreibers (Zweck und Dauer gehören
     # in sein Verarbeitungsverzeichnis). Die Vorgabe löscht deshalb nichts von selbst. Das
-    # Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile.
+    # Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile. Erlaubt sind
+    # 0 bis 3660 (zehn Jahre) — ein Wert in Sekunden statt Tagen wird abgewiesen, nicht
+    # still angenommen.
     audit_retention_days: int = 0
     # IPs im Audit-Log auf ihr Netz kürzen (IPv4 /24, IPv6 /48). Gilt für neue Zeilen; Sperre,
     # Rate-Limit und security_log (fail2ban) sehen weiterhin die volle Adresse, sonst träfe eine

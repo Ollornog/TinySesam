@@ -104,6 +104,106 @@ assert code == 1 and "lässt sich nicht lesen" in aus, aus
 assert auth.check_password("admin", _von_der_liste)
 ok("passwd liest --blocklist-file (auch Latin-1-Zeilen) und --rp-name wie die Config")
 
+# Die Mindestlänge liest das CLI wie das Web (T-13-Angriff, faktoren × konfiguration): Ein
+# Altwert aus einer Fassung ohne Grenzen (`password_min_length` = 4 oder 0) gilt im Web als 8
+# (`sec()` zieht ihn an die Grenze), das CLI las ihn roh und setzte Passwörter, die jede
+# Web-Setzstelle ablehnt.
+from tinysesam import security as _security
+
+for _altwert in ("4", "0"):
+    auth.store.set_setting("password_min_length", _altwert)
+    code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 Zeichen
+    assert code == 1 and "zu kurz (min. 8)" in aus, (_altwert, code, aus)
+    assert auth.sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
+    assert auth.check_password("admin", _von_der_liste)
+auth.store.set_setting("password_min_length", "12")                 # gültiger Wert: gilt wie im Web
+code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 Zeichen
+assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
+auth.store._exec("DELETE FROM setting WHERE key='password_min_length'")   # zurück zur Vorgabe
+ok("passwd liest die Mindestlänge wie das Web (Altwert jenseits der Grenze gilt als Grenze)")
+# (Mutationsprobe: in `_passwd` wieder `int(store.get_setting("password_min_length") or …)` statt
+# `haertung_lesen` → rot.)
+
+# Die Klasse dahinter: Jede Härtungs-Schwelle wird über `security.haertung_lesen` gelesen — ein
+# zweiter, roher Leseweg entschiede sonst mit dem schwächeren Wert. Geprüft wird jeder Lesezugriff
+# auf die Settings-Tabelle im Paket, nicht nur die Schreibweise, die der erste Fund benutzte
+# (zweite Angriffsrunde, konfig: `get_setting(key="…")`, ein Schlüssel über eine Variable und
+# `all_settings()[…]` kamen durch, und ein falscher Pfad hätte null Dateien geprüft — grün).
+import ast as _ast
+import pathlib as _pl
+import re as _re
+
+#: Wo ein NICHT-literaler Schlüssel erlaubt ist (Datei, Funktion) — der gemeinsame Leseweg selbst.
+_SETTING_FREIER_SCHLUESSEL = {("security.py", "haertung_lesen")}
+#: Wo `all_settings()` gerufen werden darf. Heute nirgends; wer es braucht, trägt die Stelle
+#: hier ein und begründet, warum dort keine Härtungs-Schwelle roh gelesen wird.
+_SETTING_ALLE = set()
+
+
+def _setting_lesewege(quellen):
+    """(Verstöße, gesehene erlaubte Stellen) für [(Dateiname, Quelltext), …]."""
+    verstoesse, gesehen = [], set()
+    for name, text in quellen:
+        baum = _ast.parse(text)
+        eltern = {}
+        for knoten in _ast.walk(baum):
+            for kind in _ast.iter_child_nodes(knoten):
+                eltern[kind] = knoten
+
+        def funktion(k):
+            while k in eltern:
+                k = eltern[k]
+                if isinstance(k, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    return k.name
+            return "<modul>"
+        for k in _ast.walk(baum):
+            if isinstance(k, _ast.Constant) and isinstance(k.value, str) \
+                    and _re.search(r"\bFROM\s+setting\b", k.value) and name != "store.py":
+                verstoesse.append(f"{name}:{k.lineno} rohes SQL auf die Settings-Tabelle")
+            if not (isinstance(k, _ast.Call) and isinstance(k.func, _ast.Attribute)):
+                continue
+            stelle = (name, funktion(k))
+            if k.func.attr == "all_settings":
+                if stelle in _SETTING_ALLE:
+                    gesehen.add(stelle)
+                else:
+                    verstoesse.append(f"{name}:{k.lineno} all_settings() in {stelle[1]}")
+            if k.func.attr != "get_setting":
+                continue
+            schluessel = k.args[0] if k.args else next(
+                (w.value for w in k.keywords if w.arg == "key"), None)
+            if isinstance(schluessel, _ast.Constant) and isinstance(schluessel.value, str):
+                if schluessel.value in _security.SECURITY_DEFAULTS:
+                    verstoesse.append(f"{name}:{k.lineno} Härtungs-Schwelle {schluessel.value!r} roh gelesen")
+            elif stelle in _SETTING_FREIER_SCHLUESSEL:
+                gesehen.add(stelle)
+            else:
+                verstoesse.append(f"{name}:{k.lineno} get_setting ohne literalen Schlüssel in {stelle[1]}")
+    return verstoesse, gesehen
+
+
+# Selbsttest des Wächters: jede Schreibweise eines rohen Lesewegs fällt auf.
+for _schreibweise in ('n = int(store.get_setting("password_min_length") or 8)',
+                      'n = int(store.get_setting(key="password_min_length") or 8)',
+                      'k = "max_login_attempts"\nn = int(store.get_setting(k) or 5)',
+                      'n = int(store.all_settings().get("max_login_attempts", 5))',
+                      'n = db.execute("SELECT value FROM setting WHERE key=?", (k,))'):
+    assert _setting_lesewege([("fremd.py", _schreibweise)])[0], f"Wächter übersieht: {_schreibweise}"
+assert not _setting_lesewege([("fremd.py", 'x = store.get_setting("demo_users")')])[0]
+
+_paket = sorted((_pl.Path(__file__).resolve().parent.parent / "tinysesam").rglob("*.py"))
+assert len(_paket) >= 10 and any(d.name == "security.py" for d in _paket), \
+    f"Wächter findet das Paket nicht: {len(_paket)} Datei(en)"
+_verstoesse, _gesehen = _setting_lesewege([(d.name, d.read_text(encoding="utf-8")) for d in _paket])
+assert not _verstoesse, f"Settings am gemeinsamen Leseweg vorbei gelesen: {_verstoesse}"
+assert _gesehen == _SETTING_FREIER_SCHLUESSEL | _SETTING_ALLE, \
+    f"Ausnahmeliste veraltet oder Wächter blind: gesehen {_gesehen}"
+ok("jeder Lesezugriff auf die Settings läuft über literale Schlüssel oder security.haertung_lesen")
+# (Mutationsproben: im Wächter nur `k.args[0]` lesen, Schlüsselwörter übergehen → der Selbsttest
+# wird rot; den Zweig für nicht-literale Schlüssel streichen → rot; in `_passwd` wieder
+# `int(store.get_setting("password_min_length") or …)` → der Wächter nennt `__main__.py:<Zeile>`,
+# einzeln nachgeprüft, weil in der Suite das assert weiter oben zuerst anschlägt.)
+
 code, aus = cli("quatsch")
 assert code == 2 and "usage" in aus
 ok("unbekanntes Kommando → usage, Exit 2")
@@ -160,6 +260,62 @@ code, aus = cli("gc", "--db", db)
 assert code == 0 and "sessions=" in aus and "login_attempts=" in aus, (code, aus)
 assert "unverified_accounts=1" in aus and auth.store.get_user(_sq) is None, aus
 ok("gc räumt auf und nennt je Bereich die Zahl (für Cron/Timer), nie bestätigte Konten zuerst")
+
+# `--audit-days` ist das Gegenstück zu `audit_retention_days` und hält dieselbe Grenze
+# (T-13-Angriff, audit × konfiguration): 10**20 brach mit OverflowError ab, NACHDEM Sitzungen und
+# Tokens schon gelöscht waren; Sekunden statt Tagen (2592000) liessen die Frist still ins Leere laufen.
+auth.store.audit_log("bleibt", "x", None)
+for _tage in (str(10 ** 20), "2592000", "-1"):
+    try:
+        code, aus = cli("gc", "--db", db, "--audit-days", _tage)
+    except Exception as e:   # noqa: BLE001 — ein Traceback ist hier der Befund
+        code, aus = f"{type(e).__name__}", str(e)
+    assert code == 2 and "--audit-days" in aus, (_tage, code, aus[-200:])
+assert any(z["event"] == "bleibt" for z in auth.store.recent_audit(20))
+ok("gc --audit-days hält dieselbe Grenze wie audit_retention_days (kein Absturz, nichts gelöscht)")
+# (Mutationsprobe: die Bereichsprüfung in `_gc` auf `a.audit_days < 0` zurückstellen → rot.)
+
+# Dieselbe Klasse am Nachbarparameter (zweite Angriffsrunde, konfig): `--attempts-older-than` und
+# `TinySesam.gc(attempts_older_than_sec=)` hatten keine Grenze. ±10**20 brach mit OverflowError ab,
+# NACHDEM Sitzungen, Flows, Tokens und Unlocks schon gelöscht waren; ein negativer Wert räumte
+# jeden Fehlversuch weg — auch die im laufenden Sperrfenster — und hob damit jede Kontosperre auf.
+# 0 bleibt erlaubt: der dokumentierte Weg, alle Fehlversuche zu räumen (s. `unlock`).
+_gc_uid = auth.create_user("gc-probe", password="Gc-Probe#lang-12345")
+auth.store.create_session(_gc_uid, 3600, True, "password")
+auth.store._exec("UPDATE session SET expires_at=1 WHERE user_id=?", (_gc_uid,))   # abgelaufen
+
+
+def _abgelaufene_sitzungen():
+    return auth.store._one("SELECT COUNT(*) AS n FROM session WHERE user_id=?", (_gc_uid,))["n"]
+
+
+for _ in range(auth.sec("max_login_attempts") + 1):
+    auth.record_login("gc-probe", "198.51.100.7", False, "password")
+assert auth.is_locked("gc-probe", "198.51.100.7")
+for _sek in (str(10 ** 20), str(-10 ** 20), "-1"):
+    try:
+        code, aus = cli("gc", "--db", db, "--attempts-older-than", _sek)
+    except Exception as e:   # noqa: BLE001 — ein Traceback ist hier der Befund
+        code, aus = f"{type(e).__name__}", str(e)
+    assert code == 2 and "--attempts-older-than" in aus, (_sek, code, aus[-200:])
+assert _abgelaufene_sitzungen() == 1, "gc hat gelöscht, obwohl das Argument abgewiesen wurde"
+assert auth.is_locked("gc-probe", "198.51.100.7"), "ein abgewiesener gc-Lauf hat die Sperre aufgehoben"
+for _sek in (10 ** 20, -10 ** 20, -1, True, float("inf"), "viel"):
+    try:
+        auth.gc(attempts_older_than_sec=_sek)
+        _gc_fund = "angenommen"
+    except ValueError:
+        _gc_fund = None
+    except Exception as e:   # noqa: BLE001 — ein anderer Absturz ist hier der Befund
+        _gc_fund = f"{type(e).__name__}: {e}"
+    assert _gc_fund is None, (_sek, _gc_fund)
+assert _abgelaufene_sitzungen() == 1 and auth.is_locked("gc-probe", "198.51.100.7")
+assert auth.gc(attempts_older_than_sec=86400)["sessions"] >= 1 and _abgelaufene_sitzungen() == 0
+code, aus = cli("gc", "--db", db, "--attempts-older-than", "0")
+assert code == 0 and "login_attempts=" in aus, (code, aus)
+ok("gc --attempts-older-than und auth.gc() prüfen die Frist, bevor irgendetwas gelöscht wird")
+# (Mutationsprobe: `store.versuchsfrist(...)` in `_gc` durch den rohen Wert ersetzen → rot
+# (OverflowError bzw. Exit 0); dasselbe in `TinySesam.gc` → rot.)
 
 os.remove(nackt)
 os.remove(roh)

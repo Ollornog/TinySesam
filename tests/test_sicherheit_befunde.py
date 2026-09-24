@@ -1626,6 +1626,11 @@ def _tokenzeilen(auth_x) -> int:
     return auth_x.store._exec("SELECT COUNT(*) FROM magic_token").fetchone()[0]
 
 
+def _versende(senden):
+    """Den Versand ausführen, den `_verify_mail` zurückgibt (None: kein Mailer)."""
+    return senden() if senden else senden
+
+
 def _wege(auth_x, basis):
     """Die dokumentierten Wege, alle mit DERSELBEN übergebenen Basis."""
     return (
@@ -1633,6 +1638,9 @@ def _wege(auth_x, basis):
         ("send_password_reset", lambda: auth_x.send_password_reset("opfer@example.com", basis)),
         ("send_login_link", lambda: auth_x.send_login_link("opfer@example.com", basis)),
         ("send_verify_email", lambda: auth_x.send_verify_email(1, "opfer@example.com", basis)),
+        # Die Registrierung legt den Token in der Anfrage an und verschickt später (T-13-Angriff,
+        # mail × betrieb) — sie ruft `_verify_mail` direkt, also wird es auch direkt gemessen.
+        ("_verify_mail", lambda: _versende(auth_x._verify_mail(1, "opfer@example.com", basis))),
         ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
         # R4-03: der Hinweis an den Inhaber einer vergebenen Adresse trägt den Weg zur Anmeldung.
         ("send_signup_notice", lambda: auth_x.send_signup_notice("opfer@example.com", basis)),
@@ -2271,6 +2279,81 @@ finally:
 r.check("mock.patch('time.time') nach vorn lässt eine Sitzung ablaufen",
         not _gilt_p, "TinySesam sieht die gepatchte Zeit nicht (beim Import gebunden)")
 
+# freezegun ersetzt auch `time.monotonic` — durch die eingefrorene Zeit auf der EPOCH-Skala
+# (`calendar.timegm`, ≈1,8e9), nicht durch die Betriebszeit (T-13-Angriff, Hinweis zu B6-9). Die
+# Uhr schrieb diesen Schritt als vergangene Zeit fort und sprang um rund 57 Jahre nach vorn; beim
+# Verlassen von freeze_time fiel sie zurück, und `uhr_stand` hob jede spätere Öffnung der Datenbank
+# dauerhaft ins Jahr 2083. Nachgestellt mit gestellten Quellen, genau in freezegun-Werten.
+_T21, _BETRIEB = 1_790_000_000.0, 200_000.0     # Wanduhr / echte monotone Zeit (Betriebszeit)
+_w21, _m21 = [_T21], [_BETRIEB]
+_u21 = _store_mod._Uhr(wand=lambda: _w21[0], mono=lambda: _m21[0])
+_f21 = [_u21.jetzt()]
+_w21[0] = _m21[0] = _T21 + 3600                  # with freeze_time(+1 h): beide Quellen eingefroren
+_f21.append(_u21.jetzt())
+_w21[0] = _m21[0] = _T21 + 3660                  # freezer.tick(60)
+_f21.append(_u21.jetzt())
+_w21[0], _m21[0] = _T21 + 5, _BETRIEB + 5        # freeze_time verlassen: echte Quellen wieder da
+_f21.append(_u21.jetzt())
+r.check("freezegun (monotonic auf der Epoch-Skala) stellt die Uhr genau vor und nicht um Jahrzehnte",
+        _f21[1:3] == [int(_T21) + 3600, int(_T21) + 3660],
+        f"{[int(x - _T21) for x in _f21]} s ab Start — erwartet [0, 3600, 3660, …]")
+r.check("…und nach dem Verlassen läuft sie nicht rückwärts",
+        _f21[3] >= _f21[2], f"{[int(x - _T21) for x in _f21]} s ab Start")
+# (Mutationsprobe: die Plausibilitätsprüfung des Monotonie-Schritts in `_Uhr.jetzt` entfernen →
+# beide rot; nur die Obergrenze prüfen, einen negativen Schritt also fortschreiben → die zweite rot.)
+
+# Die Gegenprobe zur Plausibilitätsgrenze: Der Schutz aus B6-9 hält auch nach einer langen
+# Pause. Monate ohne Anfrage, und währenddessen springt die Wanduhr eine Stunde zurück — die
+# Uhr schreibt die echte vergangene Zeit fort, statt der zurückgesprungenen Wanduhr zu folgen.
+_w22, _m22 = [_T21], [_BETRIEB]
+_u22 = _store_mod._Uhr(wand=lambda: _w22[0], mono=lambda: _m22[0])
+_u22.jetzt()
+_pause = 200 * 86400
+_w22[0], _m22[0] = _T21 + _pause - 3600, _BETRIEB + _pause
+r.check("nach 200 Tagen Pause schützt die Uhr weiter vor einem Rückwärtssprung",
+        _u22.jetzt() == int(_T21) + _pause, f"{_u22.jetzt() - int(_T21) - _pause} s daneben")
+# (Mutationsprobe: die Grenze auf einen Tag setzen → rot.)
+
+# Dieselbe Klasse im Store (zweite Angriffsrunde, konfig): `_uhr_gesichert` und `_geschrieben`
+# führen eigene monotone Stempel. Nach einem Schreibzugriff unter freezegun standen sie auf der
+# Epoch-Skala (≈1,8e9); danach war der Abstand zur echten monotonen Zeit negativ und damit immer
+# „kürzer als die Frist“ — `uhr_stand` wurde im ganzen Prozess nicht mehr gesichert (rechnerisch
+# 57 Jahre lang), und die Schreibprobe von /healthz prüfte nur noch die Verbindung.
+_st23 = _store_mod.Store(str(Path(tempfile.mkdtemp()) / "uhr23.db"))
+_st23.set_setting("x", "0")
+
+
+def _unter_freezegun_schreiben():
+    # freezegun liefert `time.monotonic` auf der Epoch-Skala; nachgestellt ohne die Abhängigkeit.
+    with mock.patch("time.monotonic", lambda: _time.time()):
+        _st23.set_setting("x", "fg")
+
+
+def _uhr_stand_zurueck():
+    # So, als wäre `uhr_stand` vor zwei Minuten zuletzt gesichert worden (ohne `_exec`, damit
+    # die Stempel stehen bleiben, wie der Schreibzugriff unter freezegun sie hinterliess).
+    _st23.db.execute("UPDATE setting SET value=? WHERE key=?",
+                     (str(_store_mod.jetzt() - 120), _st23.UHR_STAND))
+    _st23.db.commit()
+    return _store_mod.jetzt() - 120
+
+
+_unter_freezegun_schreiben()
+_alt23 = _uhr_stand_zurueck()
+_st23.schreibprobe()
+r.check("nach einem Schreibzugriff unter freezegun schreibt die Schreibprobe von /healthz wieder",
+        int(_st23.get_setting(_st23.UHR_STAND)) > _alt23,
+        f"uhr_stand blieb {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s zurück — "
+        "nur die Verbindung geprüft")
+_unter_freezegun_schreiben()
+_alt23 = _uhr_stand_zurueck()
+_st23.set_setting("x", "1")
+r.check("…und ein gewöhnlicher Schreibzugriff sichert uhr_stand wieder mit",
+        int(_st23.get_setting(_st23.UHR_STAND)) > _alt23,
+        f"uhr_stand blieb {int(_st23.get_setting(_st23.UHR_STAND)) - _store_mod.jetzt()} s zurück")
+_st23.db.close()
+# (Mutationsprobe: in `Store._frisch` die Bedingung `0 <=` streichen → beide rot.)
+
 
 # ── pop_flow gab dieselbe Challenge zweimal heraus (R3-8) ────────────────────
 # Lesen und Löschen waren zwei Schritte. Zwei Callbacks mit demselben OIDC-`state` (zwei
@@ -2420,10 +2503,148 @@ ca_g = TestClient(app_g)
 ca_g.cookies.set(auth_g.cfg.session_cookie, auth_g.store.create_session(admin_g, 3600, True, "password"))
 ca_g.post(f"/auth/admin/api/users/{uid_v}/disable", json={"disabled": True})
 cv = TestClient(app_g)
-cv.get(f"/auth/verify/{verify_g}", follow_redirects=False)
+r.check("die Sperre durch den Betreiber verwirft den offenen Bestätigungslink",
+        auth_g.peek_magic(verify_g, purpose="verify_email") is None,
+        "der Bestätigungstoken ist nach der Sperre noch einlösbar")
+# (Mutationsprobe: `auth.store.revoke_user_magic_tokens(uid)` in admin.user_disable → `pass` → rot.
+# Die Prüfung darunter bleibt dabei grün: Seit der zweiten Angriffsrunde hält die Sperre auch ohne
+# den Widerruf, weil `/auth/verify` eine Sperre des Betreibers nicht mehr aufhebt — zwei Riegel.)
+# POST, nicht GET: Seit R4-02 zeigt GET nur die Bestätigungsseite und löst nichts ein.
+cv.post(f"/auth/verify/{verify_g}", follow_redirects=False)
 r.check("ein Bestätigungslink hebt eine Sperre des Betreibers nicht auf",
         bool(auth_g.store.get_user(uid_v)["disabled"]),
         "der Link aus der Registrierung hat das gesperrte Konto wieder freigeschaltet")
+
+# Dasselbe über die echte Registrierung, mit wartendem Postausgang (T-13-Angriff, mail × betrieb):
+# Der Bestätigungstoken entstand erst im Mail-Arbeiter. Sperrte der Admin das neue Konto, solange
+# der Auftrag wartete (belegte Arbeiter, langsamer Mailserver), fand die Sperre nichts zu
+# verwerfen — danach entstand der Token, die Mail ging hinaus, und der Link hob die Sperre auf.
+# Nachgestellt ohne Threads: Der Auftrag wird festgehalten statt gestartet und erst nach der
+# Sperre ausgeführt — genau die Reihenfolge, die ein Rückstau erzeugt.
+_auftraege_w: list = []
+
+
+async def _nichts_w():
+    return None
+
+
+def _festhalten_w(auftrag, bei_ueberlauf=None):
+    _auftraege_w.append(auftrag)
+    return _nichts_w
+
+
+_mails_w: list = []
+auth_g.set_mailer(lambda to, betreff, text, html=None: _mails_w.append((to, text)))
+auth_g._postausgang.nachher = _festhalten_w
+try:
+    TestClient(app_g).post("/auth/register", data={
+        "username": "wartet-noch", "password": "Neues-Passwort-lang-7", "email": "wartet@example.org"})
+    _neu_w = auth_g.store.get_user_by_name("wartet-noch")
+    _tok_w = auth_g.store._all("SELECT 1 FROM magic_token WHERE user_id=? AND purpose='verify_email' "
+                               "AND used_at IS NULL", (_neu_w["id"],)) if _neu_w else []
+    r.check("der Bestätigungstoken existiert, wenn die Antwort der Registrierung hinausgeht",
+            bool(_neu_w) and len(_auftraege_w) == 1 and bool(_tok_w),
+            f"Konto={bool(_neu_w)}, Aufträge={len(_auftraege_w)}, Token={len(_tok_w)} — "
+            "entsteht er erst im Postausgang, findet eine Sperre im Wartefenster nichts")
+    # (Mutationsprobe: den Token wieder in `_versand` anlegen — `auth.send_verify_email(...)` im
+    # Auftrag statt `_verify_mail` in der Anfrage → rot, hier und bei der Mail-Prüfung unten. Die
+    # Sperre selbst hält seit der zweiten Angriffsrunde auch dann: `/auth/verify` hebt eine Sperre
+    # des Betreibers nicht mehr auf — der zweite Riegel, geprüft über die öffentliche API unten.)
+    ca_g.post(f"/auth/admin/api/users/{_neu_w['id']}/disable", json={"disabled": True})
+    for _a in _auftraege_w:
+        _a()                                     # jetzt erst ist der Mail-Arbeiter an der Reihe
+    _link_w = [re.search(r"/auth/verify/([\w\-]+)", t) for to, t in _mails_w if to == "wartet@example.org"]
+    for _m in filter(None, _link_w):
+        cv.post(f"/auth/verify/{_m.group(1)}", follow_redirects=False)
+    r.check("eine Sperre im Wartefenster des Postausgangs hält gegen den Bestätigungslink",
+            bool(auth_g.store.get_user(_neu_w["id"])["disabled"])
+            and not auth_g.store.list_sessions(_neu_w["id"]),
+            "der verspätet angelegte Token hat die Sperre des Betreibers aufgehoben")
+    r.check("…und für den verworfenen Token geht keine Mail mit totem Link hinaus",
+            not _link_w, f"{len(_link_w)} Bestätigungsmail(s) nach der Sperre verschickt")
+    # (Mutationsprobe: die Prüfung auf einen offenen Token in `_token_mail` entfernen → rot.)
+finally:
+    del auth_g._postausgang.nachher              # zurück zur Klassenmethode
+
+# Dasselbe über die ÖFFENTLICHE API (zweite Angriffsrunde, konfig): Eine einbettende App mit
+# eigener Registrierung hat nur `create_user`, `store.set_disabled` und `nach_der_antwort(…
+# send_verify_email …)` — genau das Muster, das der Kern bis T-13 selbst benutzte. Der Token
+# entsteht dort weiterhin im Mail-Arbeiter, also NACH einer Sperre im Wartefenster, und die Sperre
+# findet nichts zu verwerfen. Die Ursache sass in `/auth/verify`: Es setzte `disabled`
+# bedingungslos auf 0, ob die Sperre vom Betreiber kam oder nur die Bestätigung ausstand.
+from fastapi.responses import PlainTextResponse as _TextAntwort  # noqa: E402
+
+_auftraege_p: list = []
+_mails_p: list = []
+
+
+def _festhalten_p(auftrag, bei_ueberlauf=None):
+    _auftraege_p.append(auftrag)
+    return _nichts_w
+
+
+@app_g.post("/app/signup")
+def _app_signup_p(name: str):
+    _uid = auth_g.create_user(name, password="Neues-Passwort#lang-7", email=f"{name}@example.org")
+    auth_g.store.set_disabled(_uid, True)                   # wartet auf die Bestätigung
+    return auth_g.nach_der_antwort(
+        _TextAntwort("Mail unterwegs"),
+        lambda: auth_g.send_verify_email(_uid, f"{name}@example.org", ECHT))
+
+
+def _app_link_p(name):
+    _t = [t for to, t in _mails_p if to == f"{name}@example.org"]
+    _m = re.search(r"/auth/verify/([\w\-]+)", _t[-1]) if _t else None
+    return _m.group(1) if _m else None
+
+
+auth_g.set_mailer(lambda to, betreff, text, html=None: _mails_p.append((to, text)))
+auth_g._postausgang.nachher = _festhalten_p
+try:
+    TestClient(app_g).post("/app/signup", params={"name": "app-gesperrt"})
+    _uid_p = auth_g.store.get_user_by_name("app-gesperrt")["id"]
+    ca_g.post(f"/auth/admin/api/users/{_uid_p}/disable", json={"disabled": True})
+    for _a in _auftraege_p:
+        _a()                                     # der Mail-Arbeiter legt den Token erst jetzt an
+    _auftraege_p.clear()
+    _link_p = _app_link_p("app-gesperrt")
+    r.check("Wächter: die App verschickt ihren Bestätigungslink erst nach der Sperre",
+            bool(_link_p), f"Mails: {len(_mails_p)}")
+    _antwort_p = cv.post(f"/auth/verify/{_link_p}", follow_redirects=False) if _link_p else None
+    r.check("ein NACH der Sperre angelegter Bestätigungslink hebt die Sperre des Betreibers nicht auf",
+            bool(auth_g.store.get_user(_uid_p)["disabled"]) and not auth_g.store.list_sessions(_uid_p),
+            f"HTTP {getattr(_antwort_p, 'status_code', None)}, disabled="
+            f"{auth_g.store.get_user(_uid_p)['disabled']}, Sitzungen={len(auth_g.store.list_sessions(_uid_p))}")
+    r.check("…der Versuch steht im Audit-Log (verify_blocked)",
+            any(z["event"] == "verify_blocked" and z["username"] == "app-gesperrt"
+                for z in auth_g.store.recent_audit(30)),
+            f"{[z['event'] for z in auth_g.store.recent_audit(8)]}")
+    # (Mutationsprobe: in `/auth/verify` wieder `auth.store.set_disabled(uid, False)` statt
+    # `bestaetigung_freischalten` → rot.)
+
+    # Gegenprobe: Ohne Sperre des Betreibers schaltet derselbe Weg das Konto frei — die
+    # öffentliche API behält ihre Zusage.
+    TestClient(app_g).post("/app/signup", params={"name": "app-frei"})
+    _uid_f = auth_g.store.get_user_by_name("app-frei")["id"]
+    for _a in _auftraege_p:
+        _a()
+    _link_f = _app_link_p("app-frei")
+    _antwort_f = TestClient(app_g).post(f"/auth/verify/{_link_f}", follow_redirects=False)
+    r.check("…ohne Sperre des Betreibers schaltet der Link das Konto der App frei und meldet an",
+            _antwort_f.status_code == 303 and not auth_g.store.get_user(_uid_f)["disabled"]
+            and bool(auth_g.store.list_sessions(_uid_f)),
+            f"HTTP {_antwort_f.status_code}, disabled={auth_g.store.get_user(_uid_f)['disabled']}")
+    # Eine erneute Sperre ohne Betreiber-Vermerk (`set_disabled(uid, True)`) stuft eine Sperre des
+    # Betreibers nicht auf „wartet auf Bestätigung“ herab.
+    auth_g.store.set_disabled(_uid_p, True)
+    auth_g.send_verify_email(_uid_p, "app-gesperrt@example.org", ECHT)
+    cv.post(f"/auth/verify/{_app_link_p('app-gesperrt')}", follow_redirects=False)
+    r.check("…und ein späteres set_disabled(uid, True) macht aus der Betreiber-Sperre keine aufhebbare",
+            bool(auth_g.store.get_user(_uid_p)["disabled"]),
+            f"disabled={auth_g.store.get_user(_uid_p)['disabled']}")
+    # (Mutationsprobe: `set_disabled` setzt ohne `durch_betreiber` wieder blind 1 → rot.)
+finally:
+    del auth_g._postausgang.nachher
 
 
 # ── H-18 (c): jeder Mail-Link entsteht aus `base_url` — auch künftige ─────────────
@@ -2446,7 +2667,7 @@ for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
                     and _k.func.attr in ("send_mail", "magic_url")):
                 _absender.add(_fn.name)
 r.check("Wächter: er findet die bekannten Absender überhaupt",
-        {"send_password_reset", "send_login_link", "send_verify_email", "create_invite"} <= _absender,
+        {"send_password_reset", "send_login_link", "_verify_mail", "create_invite"} <= _absender,
         f"gefunden: {sorted(_absender)} — ohne Treffer prüft die Zeile darunter nichts")
 r.check("jeder Absender von Mail-Links steht in der gemessenen Liste",
         _absender <= _GEMESSEN, f"ungemessen: {sorted(_absender - _GEMESSEN)} — in `_wege` aufnehmen")
@@ -2511,6 +2732,111 @@ for _feld, _wert in (("session_ttl_hours", 0), ("magiclink_ttl_min", 0), ("recov
 r.check("...die Vorgaben selbst liegen alle in ihren Grenzen",
         not any(f in x for x in _befund()[0] for f in _kp2.ZAHLENGRENZEN))
 # (Mutationsprobe: `_zahlengrenzen(config, fehler)` in pruefe() auskommentieren → rot.)
+
+# T-13-Angriff (audit × konfiguration): `audit_retention_days` kam nach ZAHLENGRENZEN dazu und
+# stand nicht darin — seine eigene Prüfung wies nur `< 0` ab. `True` galt als ein Tag (gc()
+# löschte das Audit-Log bis auf den letzten Tag), Sekunden statt Tagen hebelten die Frist aus,
+# 10**20 liess gc() mit OverflowError abbrechen. `oidc_revalidate_minutes` fehlte ebenso. Deshalb
+# jetzt die Klasse: Jedes Zahlenfeld der Config hat eine Grenze oder steht, begründet, hier.
+import dataclasses as _dc  # noqa: E402
+import typing as _typing  # noqa: E402
+
+_OHNE_ZAHLENGRENZE: dict = {}      # Feld → Begründung. Leer: Jedes Zahlenfeld hat eine Grenze.
+_typen_cfg = _typing.get_type_hints(TinySesamConfig)
+_zahlfelder = {f.name for f in _dc.fields(TinySesamConfig) if _typen_cfg[f.name] in (int, float)}
+r.check("Wächter: er findet Zahlenfelder der Config überhaupt",
+        {"session_ttl_hours", "smtp_port"} <= _zahlfelder, f"{sorted(_zahlfelder)}")
+r.check("jedes Zahlenfeld der Config hat eine Grenze in ZAHLENGRENZEN (oder eine begründete Ausnahme)",
+        not (_zahlfelder - set(_kp2.ZAHLENGRENZEN) - set(_OHNE_ZAHLENGRENZE)),
+        f"ohne Grenze: {sorted(_zahlfelder - set(_kp2.ZAHLENGRENZEN) - set(_OHNE_ZAHLENGRENZE))}")
+r.check("…und die Ausnahmeliste nennt nur Zahlenfelder ohne Grenze, jedes mit Begründung",
+        all(f in _zahlfelder and f not in _kp2.ZAHLENGRENZEN and str(g).strip()
+            for f, g in _OHNE_ZAHLENGRENZE.items()), f"{_OHNE_ZAHLENGRENZE!r}")
+# (Mutationsprobe: `audit_retention_days` aus ZAHLENGRENZEN streichen → rot.)
+for _feld, _wert in (("audit_retention_days", True), ("audit_retention_days", 30 * 86400),
+                     ("audit_retention_days", 10 ** 20), ("audit_retention_days", -1),
+                     ("oidc_revalidate_minutes", True), ("oidc_revalidate_minutes", 86400),
+                     ("oidc_revalidate_minutes", -1)):
+    r.check(f"{_feld}={_wert!r} ist ein Fehler", _nennt(_befund(**{_feld: _wert})[0], _feld))
+for _feld, _wert in (("audit_retention_days", 3650), ("oidc_revalidate_minutes", 60)):
+    r.check(f"…{_feld}={_wert} bleibt ohne Fehler", not _nennt(_befund(**{_feld: _wert})[0], _feld))
+
+# Die Obergrenze (43200) fängt eine Frist in Sekunden erst ab einem Tag (86400) — die Vorgabe des
+# Presets, eine Stunde, in Sekunden geschrieben (3600) ging still durch: Nachprüfung alle 60
+# Stunden statt jede Stunde, ein Entzug beim Provider kam 60-mal später an (zweite Angriffsrunde,
+# konfig). Eine Frist über einem Tag bekommt deshalb eine Warnung, die nach der Einheit fragt.
+# 300 oder 900 (fünf oder 15 Minuten in Sekunden) fängt keine Grenze — das sagt die Doku jetzt auch.
+def _rv_befund(minuten):
+    return _kp2.pruefe(TinySesamConfig.oidc_gateway(
+        issuer="https://id.example.com", client_id="g", client_secret="s", base_url=ECHT,
+        db_path=":memory:", clients={"app.example.com": {"client_id": "a", "client_secret": "b"}},
+        revalidate_minutes=minuten))
+
+
+for _min in (3600, 7200, 43200):
+    _f, _w = _rv_befund(_min)
+    r.check(f"oidc_revalidate_minutes={_min} (über einem Tag) warnt vor Sekunden statt Minuten",
+            _nennt(_w, "oidc_revalidate_minutes", "Sekunden") and not _nennt(_f, "oidc_revalidate_minutes"),
+            f"Warnungen: {[x[:80] for x in _w]}")
+for _min in (60, 1440):
+    r.check(f"…{_min} Minuten bleiben ohne Warnung",
+            not _nennt(_rv_befund(_min)[1], "oidc_revalidate_minutes"))
+# (Mutationsprobe: die Warnung in `pruefe` streichen → rot; die Schwelle auf 43200 setzen → rot.)
+_rv_kaputt = "keine Zahl"
+try:
+    _rv_fund = _nennt(_befund(oidc_revalidate_minutes=_rv_kaputt)[0], "oidc_revalidate_minutes")
+except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
+    _rv_fund = f"{type(e).__name__}: {e}"
+r.check("…und ein Text statt einer Zahl ist ein Befund, kein Absturz der Prüfung",
+        _rv_fund is True, f"{_rv_fund!r}")
+
+# Dieselbe Klasse an den übrigen Kombinationsprüfungen, die ein ZAHLENGRENZEN-Feld lesen (zweite
+# Angriffsrunde, konfig): `int()` auf `admin_claim_ttl_min` und `mfa_enrollment_grace_days` stürzte
+# ab, bevor `_zahlengrenzen` den Typ melden konnte — `TinySesam(cfg)` warf ValueError bzw.
+# OverflowError statt eines gesammelten ConfigError.
+for _feld, _wert, _dazu in (
+        ("oidc_revalidate_minutes", "sechzig", {}),
+        ("admin_claim_ttl_min", "eine Stunde", {"admin_claim_token_file": "/run/x/admin.token"}),
+        ("mfa_enrollment_grace_days", "sieben", {"mfa_enrollment": "grace"}),
+        ("mfa_enrollment_grace_days", float("inf"), {"mfa_enrollment": "grace"}),
+        ("admin_claim_ttl_min", float("nan"), {"admin_claim_token_file": "/run/x/admin.token"})):
+    try:
+        _kf = _nennt(_befund(**{_feld: _wert}, **_dazu)[0], _feld, "keine ganze Zahl")
+    except Exception as e:   # noqa: BLE001 — ein Absturz der Prüfung ist hier der Befund
+        _kf = f"{type(e).__name__}: {e}"
+    try:
+        TinySesam(TinySesamConfig(db_path=str(Path(tempfile.mkdtemp()) / "k.db"),
+                                  **{_feld: _wert}, **_dazu))
+        _kb = "baut"
+    except ConfigError:
+        _kb = True
+    except Exception as e:   # noqa: BLE001
+        _kb = f"{type(e).__name__}: {e}"
+    r.check(f"{_feld}={_wert!r}: gesammelter ConfigError statt Absturz der Prüfung",
+            _kf is True and _kb is True, f"pruefe: {_kf!r} · Aufbau: {_kb!r}")
+# Die Kombinationsprüfungen selbst gelten weiter:
+r.check("…mfa_enrollment='grace' mit 0 Tagen bleibt ein Fehler",
+        _nennt(_befund(mfa_enrollment="grace", mfa_enrollment_grace_days=0)[0], "mfa_enrollment='grace'"))
+r.check("…admin_claim_token_file mit admin_claim_ttl_min=0 bleibt eine Warnung",
+        _nennt(_befund(admin_claim_token_file="/run/x/admin.token", admin_claim_ttl_min=0)[1],
+               "admin_claim_token_file"))
+# (Mutationsprobe: `_ganzzahl` durch `int(getattr(config, feld, 0) or 0)` ersetzen → rot.)
+# Die Klasse: Keine Prüfung in konfigpruefung.py wandelt einen Config-Wert selbst mit int()/float()
+# um — das tut allein `_zahlengrenzen` (als Typprüfung), die Kombinationen lesen über `_ganzzahl`.
+import ast as _ast_k  # noqa: E402
+
+_kp_baum = _ast_k.parse((ROOT / "tinysesam" / "konfigpruefung.py").read_text(encoding="utf-8"))
+_kp_getattr = [k for k in _ast_k.walk(_kp_baum) if isinstance(k, _ast_k.Call)
+               and isinstance(k.func, _ast_k.Name) and k.func.id == "getattr"
+               and k.args and isinstance(k.args[0], _ast_k.Name) and k.args[0].id == "config"]
+_kp_roh = [k.lineno for k in _ast_k.walk(_kp_baum)
+           if isinstance(k, _ast_k.Call) and isinstance(k.func, _ast_k.Name) and k.func.id in ("int", "float")
+           and any(g in _kp_getattr for g in _ast_k.walk(k))]
+r.check("Wächter: er findet getattr(config, …) in der Prüfung überhaupt", len(_kp_getattr) >= 20,
+        f"{len(_kp_getattr)} Fundstellen")
+r.check("keine Kombinationsprüfung wandelt einen Config-Wert selbst mit int()/float() um",
+        not _kp_roh, f"Zeilen {_kp_roh}")
+# (Mutationsprobe: in `pruefe` wieder `int(getattr(config, "admin_claim_ttl_min", 0) or 0)` → rot.)
 
 # H-11 / B3-9: deny-by-default am Forward-Auth-Tor.
 _gw = TinySesamConfig.oidc_gateway(issuer="https://id.example.com", client_id="g", client_secret="s",

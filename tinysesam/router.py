@@ -575,7 +575,19 @@ def build_router(auth) -> APIRouter:
                 auth.token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
-            auth.store.set_disabled(uid, False)          # Konto aktivieren
+            # Nur die Sperre der AUSSTEHENDEN Bestätigung aufheben, nie die des Betreibers (H-18,
+            # zweite Angriffsrunde). Bis dahin setzte diese Route `disabled` bedingungslos auf 0:
+            # Entstand der Token erst nach einer Sperre im Panel — eine App schiebt
+            # `send_verify_email` in den Postausgang —, fand die Sperre nichts zu verwerfen, und
+            # der Link schaltete das Konto wieder frei und meldete an.
+            if not auth.store.bestaetigung_freischalten(uid):
+                konto = auth._kontoname(uid)
+                if konto is None:                        # Konto inzwischen gelöscht
+                    auth.token_abgewiesen("verify_email", request)
+                    return auth.render_page("magic_invalid", request=request, status=400)
+                auth.audit("verify_blocked", konto, auth.client_ip(request),
+                           "Konto vom Betreiber gesperrt")
+                return auth.render_page("magic_invalid", request=request, status=403)
             # Konto und IP gehören in die Zeile (B5-02): Hier wird ein Konto freigeschaltet, und
             # ohne Namen fand `tinysesam audit --user X` den Vorgang nicht.
             auth.audit("email_verified", auth._kontoname(uid), auth.client_ip(request),
@@ -898,16 +910,30 @@ def build_router(auth) -> APIRouter:
                     auth.audit("verify_send_error", ersatzname(uid), ip,
                                detail=f"{grund}, Konto entfernt")
 
+                seite = auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
+                # Der Token entsteht HIER, in der Anfrage; nur der Versand wartet auf den
+                # Postausgang. Eine Sperre durch den Betreiber verwirft offene Token (H-18) —
+                # entstand er erst im Mail-Arbeiter, fand eine Sperre im Wartefenster nichts, und
+                # der verspätete Link hob sie danach auf. Zeitlich neutral nur gegenüber dem
+                # Platzhalter-Zweig einer vergebenen Adresse (R4-03, Name ≠ Adresse), der seinen
+                # Token ebenfalls in der Anfrage anlegt. Ist der Name die Adresse (immer bei
+                # login_identifier='email'), schreibt der Vergeben-Zweig nur die Audit-Zeile —
+                # dieses Zeitorakel bestand schon vorher und steht im Backlog (T-13).
+                try:
+                    senden = auth._verify_mail(uid, email_final, verify_base)
+                except Exception:
+                    senden = None
+                if senden is None:
+                    _zuruecknehmen("versand")
+                    return seite
+
                 def _versand():
                     try:
-                        gesendet = auth.send_verify_email(uid, email_final, verify_base)
+                        senden()
                     except Exception:
-                        gesendet = False
-                    if not gesendet:
                         _zuruecknehmen("versand")
                 return auth.nach_der_antwort(
-                    auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
-                    _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
+                    seite, _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)

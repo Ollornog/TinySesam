@@ -47,7 +47,7 @@ def _passwd(argv) -> int:
     import os
     from .store import Store
     from .passwords import hash_password, passwort_mangel, blockliste_lesen
-    from .security import SECURITY_DEFAULTS
+    from .security import haertung_lesen
 
     # Ohne diese Prüfung legt sqlite3 die Datei stillschweigend an und der Tippfehler im Pfad
     # käme als „Kein Konto 'admin'" zurück — die ratloseste aller Fehlermeldungen.
@@ -67,10 +67,9 @@ def _passwd(argv) -> int:
         if pw != getpass.getpass("Wiederholen:    "):
             print("Die beiden Eingaben sind verschieden.", file=sys.stderr)
             return 1
-    try:
-        minlen = int(store.get_setting("password_min_length") or SECURITY_DEFAULTS["password_min_length"])
-    except (TypeError, ValueError):
-        minlen = SECURITY_DEFAULTS["password_min_length"]
+    # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam.sec()`: Roh gelesen galt ein
+    # Altwert ohne Grenzen (4, 0) hier weiter, während das Web ihn auf 8 zog.
+    minlen = haertung_lesen(store, "password_min_length")
     # Dieselbe Regel wie im Web (Länge, Höchstlänge, eingebaute Blockliste, Benutzername,
     # E-Mail-Name) — das CLI ist ein Setzweg wie die anderen. Blockliste und Dienstname des
     # Betreibers kommen über `--blocklist-file` und `--rp-name`, weil das CLI keine Config liest.
@@ -221,8 +220,20 @@ def _gc(argv) -> int:
                     help="Audit-Einträge älter als N Tage löschen (Vorgabe: 0 = keine; "
                          "Gegenstück zu config.audit_retention_days)")
     a = ap.parse_args(argv)
-    if a.audit_days < 0:
-        ap.error("--audit-days muss ≥ 0 sein")
+    # Dieselbe Grenze wie `audit_retention_days` — geprüft, bevor irgendetwas gelöscht wird.
+    # 10**20 brach sonst mit OverflowError ab, als Sitzungen und Tokens schon weg waren.
+    from .konfigpruefung import ZAHLENGRENZEN
+    unten, oben = ZAHLENGRENZEN["audit_retention_days"]
+    if not unten <= a.audit_days <= oben:
+        ap.error(f"--audit-days muss zwischen {unten} und {oben} liegen (Tage, nicht Sekunden)")
+    # Dasselbe für die Login-Versuche (zweite Angriffsrunde): ±10**20 brach nach den ersten
+    # Löschschritten ab, ein negativer Wert räumte auch das laufende Sperrfenster weg.
+    from .store import versuchsfrist, VERSUCHSFRIST_MAX_SEK
+    try:
+        versuchsfrist(a.attempts_older_than)
+    except ValueError:
+        ap.error(f"--attempts-older-than muss zwischen 0 und {VERSUCHSFRIST_MAX_SEK} liegen "
+                 "(Sekunden; 0 räumt alle Fehlversuche)")
     store = _oeffne(a.db)
     if store is None:
         return 1
