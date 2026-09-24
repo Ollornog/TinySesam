@@ -379,31 +379,49 @@ def pruefe(config) -> tuple[list[str], list[str]]:
 
     # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
     # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine
-    # Adresse bleibt erlaubt — aber sie trägt die Entscheidung nur mit Beleg, und einen Beleg
-    # gibt es allein bei OIDC (`email_verified`). SAML und LDAP kennen keinen: Kein
-    # Standardattribut sagt, dass die Adresse geprüft wurde, und ein `mail`-Attribut pflegt
-    # der Nutzer in vielen Verzeichnissen selbst. Die Laufzeit befördert dort deshalb nie
-    # (fail-closed, F-14) — wer den ersten Admin über diesen Weg erwartet, wartet umsonst.
-    # Warnung, nicht Fehler: Derselbe Aufbau ist mit einem lokalen Passwort-Login (bestätigte
-    # Adresse) völlig tragfähig, und der Betreiber soll nur wissen, welcher Weg zählt.
+    # Adresse bleibt erlaubt — sie trägt die Entscheidung aber nur mit Beleg. SAML und LDAP
+    # liefern keinen; seit dem PO-Entscheid 2026-09-24 sagt der Betreiber je Quelle, ob er ihren
+    # Adressen traut (`ldap_email_trusted`, Vorgabe ja; `saml_email_trusted`, Vorgabe nein).
+    # Nicht vertraut: Die Laufzeit befördert nie (fail-closed, F-14). Vertraut: Die Adresse
+    # befördert — richtig nur, wenn niemand sie selbst eintragen kann.
     allowlist_adressen = sorted({str(i).strip() for i in
                                  (getattr(config, "admin_identifiers", None) or [])
                                  if "@" in str(i)})
-    ohne_beleg = [name for an, anlegen, name in (("saml_enabled", "saml_auto_create", "SAML"),
-                                                 ("ldap_enabled", "ldap_auto_create", "LDAP"))
-                  if _an(config, an) and _an(config, anlegen)]
+    quellen = [(name, _an(config, vertrauen)) for an, anlegen, vertrauen, name in (
+        ("saml_enabled", "saml_auto_create", "saml_email_trusted", "SAML"),
+        ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "LDAP"))
+        if _an(config, an) and _an(config, anlegen)]
+    ohne_beleg = [name for name, vertraut in quellen if not vertraut]
+    mit_beleg = [name for name, vertraut in quellen if vertraut]
     if allowlist_adressen and ohne_beleg:
         warnungen.append(
             f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
             + " und ".join(ohne_beleg) +
-            " legt Konten beim ersten Login selbst an. Über diese Wege wird die Adresse NIE "
-            "zum Erst-Admin: Weder SAML noch LDAP liefern einen Bestätigungsbeleg für eine "
-            "Adresse (bei OIDC ist es der Claim email_verified), und ohne Beleg befördert "
-            "TinySesam nicht — sonst genügte ein IdP mit Selbstregistrierung oder ein "
-            "Verzeichnis, in dem der Nutzer sein mail-Attribut selbst pflegt. Der belegte "
-            "Weg ist das Einmal-Token: anmelden, dann /auth/claim-admin (s. "
-            "admin_claim_ttl_min); danach vergibt der Erst-Admin die Rechte selbst. Ein "
-            "lokaler Passwort-Login mit bestätigter Adresse befördert weiterhin.")
+            " legt Konten beim ersten Login selbst an, ohne dass der Betreiber den Adressen "
+            "dieser Quelle traut (*_email_trusted=False). Über diese Wege wird die Adresse NIE "
+            "zum Erst-Admin — die Adresse wird dort gar nicht verwendet. Der belegte Weg ist das "
+            "Einmal-Token: anmelden, dann /auth/claim-admin (s. admin_claim_ttl_min); danach "
+            "vergibt der Erst-Admin die Rechte selbst.")
+    if allowlist_adressen and mit_beleg:
+        warnungen.append(
+            f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
+            + " und ".join(mit_beleg) +
+            " gilt als vertraute Quelle (*_email_trusted=True): Wer dort eine dieser Adressen "
+            "trägt, wird beim ersten Login Erst-Admin. Das ist nur richtig, wenn niemand seine "
+            "Adresse in dieser Quelle selbst ändern kann (kein Self-Service für das mail-Attribut, "
+            "kein IdP mit Selbstregistrierung) — sonst *_email_trusted=False und /auth/claim-admin.")
+    # LDAP nicht vertraut, aber der Suchfilter findet Konten über die Adresse: Dann ist die
+    # Eingabe beim Login eine Adresse, die niemand belegt. TinySesam nimmt sie nicht als
+    # Kontonamen (Ersatzname `ldap-…`), braucht dafür aber eine stabile Kennung.
+    _filter = str(getattr(config, "ldap_user_filter", "") or "")
+    _mail_attr = str(getattr(config, "ldap_attr_email", "") or "mail")
+    if _an(config, "ldap_enabled") and not _an(config, "ldap_email_trusted") \
+            and f"({_mail_attr.lower()}=" in _filter.lower():
+        warnungen.append(
+            f"ldap_user_filter sucht über {_mail_attr}, aber ldap_email_trusted=False: Wer sich mit "
+            f"seinem {_mail_attr}-Wert anmeldet, bekommt einen Ersatznamen (ldap-…) statt dieses "
+            "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
+            "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
 
     # --- Mehrere Anwendungen hinter einer Installation (T-14) ---
     _clients = getattr(config, "oidc_clients", None) or {}
@@ -606,6 +624,8 @@ ZAHLENGRENZEN = {
     # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
     "oidc_revalidate_minutes": (0, 30 * 24 * 60),
     "oidc_session_refresh_minutes": (0, 24 * 60),
+    # 0 = keine Frist. Zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
     "session_idle_minutes_remember": (0, 365 * 24 * 60),
 }

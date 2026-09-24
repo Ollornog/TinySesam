@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
     -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
     topf_name     TEXT,
-    topf_mail     TEXT
+    topf_mail     TEXT,
+    idp_bestaetigt_at INTEGER  -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,6 +171,7 @@ CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung
     sub         TEXT NOT NULL,                -- Subjekt beim Provider; ein anderes beendet die Sitzung
     refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
     geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
+    client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
     PRIMARY KEY (token_hash, client)
 );
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
@@ -311,6 +313,17 @@ def _eine_schrift(teil: str) -> bool:
     """Stammen die Buchstaben aus einer Schrift — oder aus einer Gruppe, die zusammengehört?"""
     s = _schriften(teil)
     return len(s) <= 1 or any(s <= gruppe for gruppe in _SCHRIFT_GRUPPEN)
+
+
+def name_ungueltig(name) -> bool:
+    """Enthält ein Benutzername Steuer-, Format- oder Trennzeichen (Cc/Cf/Zl/Zp)?
+
+    Solche Zeichen trennen zwei Kennungen, die für einen Menschen und für einen HTTP-Header gleich
+    aussehen: `chefin\\x01` ist für `kennung_vergeben` ein anderer Name als `chefin`, aber die
+    Header-Säuberung der Forward-Auth nimmt das Steuerzeichen heraus — die geschützte App bekam
+    `Remote-User: chefin` von einem fremden Konto (Angriff auf die dritte Runde). Dieselbe Regel
+    wie für Adressen (`valid_email`)."""
+    return any(unicodedata.category(z) in ("Cc", "Cf", "Zl", "Zp") for z in str(name or ""))
 
 
 def norm_kennung(kennung) -> str:
@@ -627,7 +640,8 @@ class Store:
     #: 11 — `fehlserie`: Fehlversuche in Folge je Kennung (B2-6); `users.is_admin=2` heisst
     #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
     #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
-    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a)
+    #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
+    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -652,6 +666,9 @@ class Store:
                         ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
                         ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
             "totp_cred": [("last_step", "INTEGER")],
+            # Die client_id, an die ein Refresh-Token ging: Legt der Betreiber den Client beim
+            # Provider neu an, lehnt der jedes alte Token ab — das ist kein Nein zum Konto.
+            "oidc_sitzung": [("client_id", "TEXT")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
             # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
@@ -667,7 +684,9 @@ class Store:
                       # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
                       ("topf_name", "TEXT"), ("topf_mail", "TEXT"),
                       # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
-                      ("is_owner", "INTEGER NOT NULL DEFAULT 0")],
+                      ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
+                      # Bestand: unten für OIDC-Konten auf „jetzt" gesetzt (Fund 8).
+                      ("idp_bestaetigt_at", "INTEGER")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -758,6 +777,22 @@ class Store:
             ohne_topf = self.db.execute(
                 "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
                                          " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            if self.db.execute("SELECT 1 FROM setting WHERE key='idp_bestand_gesetzt'").fetchone() is None:
+                # Die Frist für die API-Keys eines OIDC-Kontos (Fund 8) beginnt für den Bestand
+                # mit dem Update — sonst ruhten nach dem Update sofort alle Keys, bis jeder sich
+                # einmal über den Provider angemeldet hat. Genau einmal: Liefe es bei jedem Start,
+                # schenkte jeder Neustart einem Konto ohne Bestätigung eine neue Frist.
+                #
+                # Am Merker, nicht an „Spalte in diesem Lauf angelegt": Das ALTER ist sofort
+                # dauerhaft, dieses UPDATE erst mit dem Schluss-Commit. Ein Abbruch dazwischen
+                # (OOM, Neustart mitten im Update) hinterliess die Spalte ohne Stand, und kein
+                # Start holte ihn nach (Angriff auf die dritte Runde). Merker und Stand gehen im
+                # selben Commit. Hier und nicht direkt nach dem ALTER: Ein UPDATE öffnet in
+                # Pythons sqlite3 eine Transaktion, und das `BEGIN IMMEDIATE` oben schlüge fehl.
+                self.db.execute("UPDATE users SET idp_bestaetigt_at=? WHERE idp_bestaetigt_at IS NULL "
+                                "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
+                self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
+                                (str(_now()),))
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -1614,6 +1649,41 @@ class Store:
         """Das Einrichtungsfenster öffnen (Zeitstempel) oder schliessen (None)."""
         self._exec("UPDATE users SET mfa_enroll_until=? WHERE id=?", (bis, user_id))
 
+    def ist_oidc_konto(self, user_id) -> bool:
+        """Ist dieses Konto an eine OIDC-Identität gebunden (Fund 8)?"""
+        return bool(self._one("SELECT 1 FROM oidc_identity WHERE user_id=? LIMIT 1", (user_id,)))
+
+    def idp_bestaetigen(self, user_id, gefragt_at: Optional[int] = None) -> bool:
+        """Der Provider hat das Konto bestätigt (Login über ihn, Refresh-Tausch mit Ja).
+
+        `gefragt_at` ist der Zeitpunkt, zu dem die Frage an den Provider ABGING. Ein Nein, das
+        danach eingetragen wurde, bleibt stehen: Zwei Tausche laufen parallel (zwei Sitzungen,
+        zwei Clients), und ein Ja, das vor der Sperre beantwortet, aber nach dem Nein angewandt
+        wird, weckte sonst die Keys eines gesperrten Kontos (Angriff auf die dritte Runde).
+        Rückgabe: ob geschrieben wurde."""
+        jetzt = _now()
+        gefragt = int(gefragt_at if gefragt_at is not None else jetzt)
+        return self._exec(
+            "UPDATE users SET idp_bestaetigt_at=? WHERE id=? AND (idp_bestaetigt_at IS NULL "
+            "OR idp_bestaetigt_at > 0 OR -idp_bestaetigt_at < ?)", (jetzt, user_id, gefragt)).rowcount > 0
+
+    def idp_verweigert(self, user_id) -> None:
+        """Der Provider hat Nein gesagt: Die API-Keys des Kontos ruhen bis zur nächsten
+        Bestätigung (Fund 8). Gespeichert als NEGATIVER Zeitpunkt des Neins — NULL heisst „nie
+        bestätigt", ≤ 0 „verweigert", und der Zeitpunkt entscheidet, ob ein später angewandtes Ja
+        jünger ist (`idp_bestaetigen`)."""
+        self._exec("UPDATE users SET idp_bestaetigt_at=? WHERE id=?", (-max(_now(), 1), user_id))
+
+    def oidc_sitzung_handle(self, client, alt_verschluesselt) -> Optional[str]:
+        """Das HEUTIGE Handle der Sitzung, deren Zeile dieses (verschlüsselte) Token trägt."""
+        r = self._one("SELECT token_hash FROM oidc_sitzung WHERE client=? AND refresh=?",
+                      (client, alt_verschluesselt))
+        return r["token_hash"] if r else None
+
+    def oidc_sitzung_verwerfen(self, handle, client) -> None:
+        """Eine OIDC-Zeile ohne eingerichteten Client verwerfen — die Sitzung selbst bleibt."""
+        self._exec("DELETE FROM oidc_sitzung WHERE token_hash=? AND client=?", (self._handle(handle), client))
+
     def get_oidc_user(self, issuer, subject) -> Optional[int]:
         r = self._one("SELECT user_id FROM oidc_identity WHERE issuer=? AND subject=?", (issuer, subject))
         return r["user_id"] if r else None
@@ -1653,7 +1723,7 @@ class Store:
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
     # `session`: Wer die Datei liest, bekommt damit keine übernehmbare Sitzung.
-    def set_oidc_sitzung(self, handle, client, sub, refresh) -> None:
+    def set_oidc_sitzung(self, handle, client, sub, refresh, client_id: Optional[str] = None) -> None:
         """Das Refresh-Token einer OIDC-Sitzung für DIESEN Client ablegen — verschlüsselt (4a).
 
         Je Client eine Zeile: Mit mehreren Anwendungen darf ein späterer Login über einen anderen
@@ -1661,10 +1731,10 @@ class Store:
         welcher Provider-Eintrag noch nachgeprüft wird (Angriff auf die zweite Runde, Fund 7)."""
         if self.tresor is None:
             raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
-        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at) VALUES (?,?,?,?,?) "
-                   "ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
-                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at",
-                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now()))
+        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id) "
+                   "VALUES (?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
+                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id",
+                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id))
 
     def get_oidc_sitzungen(self, handle) -> list:
         """Die OIDC-Zeilen einer Sitzung — das Refresh-Token VERSCHLÜSSELT (entschlüsselt wird
@@ -1690,14 +1760,23 @@ class Store:
         return self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=? "
                           "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
 
-    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None) -> None:
-        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation)."""
+    def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None,
+                              alt_verschluesselt: Optional[str] = None) -> bool:
+        """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation).
+        Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein).
+
+        Mit `alt_verschluesselt` (dem gespeicherten, verschlüsselten Token, mit dem getauscht
+        wurde) wird die Zeile darüber gefunden statt über das Handle: Bekommt die Sitzung während
+        des Tauschs ein neues Token (Step-up, Abschluss eines Faktors), hängt die Zeile am neuen
+        Handle — das alte träfe nichts, und das vom Provider rotierte Refresh-Token ginge
+        verloren; der nächste Tausch mit dem alten wäre bei PocketID ein Nein. Der Chiffretext ist
+        durch seine Nonce eindeutig."""
+        wo, wert = ("refresh=?", alt_verschluesselt) if alt_verschluesselt else ("token_hash=?", self._handle(handle))
         if neuer_refresh and self.tresor is not None:
-            self._exec("UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE token_hash=? AND client=?",
-                       (int(zeit), self.tresor.verschluesseln(neuer_refresh), self._handle(handle), client))
-        else:
-            self._exec("UPDATE oidc_sitzung SET geprueft_at=? WHERE token_hash=? AND client=?",
-                       (int(zeit), self._handle(handle), client))
+            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE {wo} AND client=?",
+                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), wert, client)).rowcount > 0
+        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=? WHERE {wo} AND client=?",
+                          (int(zeit), wert, client)).rowcount > 0
 
     def oidc_sitzung_umhaengen(self, alt, neu) -> None:
         """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —

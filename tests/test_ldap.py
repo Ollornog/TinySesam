@@ -112,14 +112,28 @@ def baue_ohne_admin(**cfgkw):
     return db, auth, TestClient(app)
 
 
-db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"])
+# Seit dem PO-Entscheid 2026-09-24 hängt der Riegel an `ldap_email_trusted=False` — der Betreiber
+# sagt damit, dass Nutzer ihr `mail`-Attribut selbst pflegen. Die Vorgabe (vertraut) steht unten.
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=False)
 auth.ldap = FakeLDAP({"angreifer": {"password": "x", "email": "boss@example.com", "groups": []}})
 r = c.post("/auth/login", data={"username": "angreifer", "password": "x"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code          # die Anmeldung selbst bleibt erlaubt
 u = auth.store.get_user_by_name("angreifer")
 assert u is not None and not u["is_admin"], dict(u) if u else None
 assert not auth.admin_exists(), "die Instanz hat jetzt einen Admin — über ein mail-Attribut"
-ok("F-14: eine Allowlist-ADRESSE aus dem Verzeichnis befördert nicht (LDAP kennt keinen Beleg)")
+ok("F-14: eine Allowlist-ADRESSE aus einem nicht vertrauten Verzeichnis befördert nicht")
+os.remove(db)
+
+# Die Vorgabe `ldap_email_trusted=True` (PO-Entscheid B): Das Verzeichnis gilt als gepflegt, seine
+# Adresse als belegt — und trägt damit Rechte, bis zum Erst-Admin. Das ist die bewusste Umkehr
+# von F-14 in der Vorgabe; wer Nutzern das `mail`-Attribut überlässt, stellt auf False.
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"])
+auth.ldap = FakeLDAP({"boss": {"password": "x", "email": "boss@example.com", "groups": []}})
+assert c.post("/auth/login", data={"username": "boss", "password": "x"},
+              follow_redirects=False).status_code == 303
+u = auth.store.get_user_by_name("boss")
+assert u["email"] == "boss@example.com" and u["email_verified"] and u["is_admin"], dict(u)
+ok("ldap_email_trusted (Vorgabe): die Verzeichnis-Adresse gilt als belegt und trägt Rechte")
 os.remove(db)
 
 # Gegenprobe, sonst wäre die Prüfung oben auch grün, wenn der Bootstrap komplett kaputt wäre:
@@ -140,7 +154,7 @@ os.remove(db)
 # Faktor, den sich der Angreifer in seiner frisch angemeldeten Sitzung selbst einrichtet (PIN,
 # Passkey: Selbstbedienung), reist ohne Beleg an, liest den Vermerk und befördert doch. Der
 # Bootstrap-Angriff war damit unverändert möglich, nur mit einem Klick mehr.
-db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"],
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=False,
                               pin_enabled=True, pin_login=True)
 auth.ldap = FakeLDAP({"mallory": {"password": "x", "email": "boss@example.com", "groups": []}})
 assert c.post("/auth/login", data={"username": "mallory", "password": "x"},
@@ -175,7 +189,8 @@ os.remove(db)
 # fällt das Entfernen von (1) nirgends auf — wer den Durchreicher später umbaut, verliert ihn
 # unbemerkt. Deshalb hier ein Konto, das einen ECHTEN Beleg trägt (der Betreiber hat es
 # angelegt) und dessen Namen das Verzeichnis kennt: Jetzt hängt alles an (1).
-db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False)
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_auto_create=False,
+                              ldap_email_trusted=False)
 uid = auth.create_user("chefin", email="boss@example.com")       # Beleg am Konto: ja
 assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
 auth.ldap = FakeLDAP({"chefin": {"password": "x", "email": "boss@example.com", "groups": []}})

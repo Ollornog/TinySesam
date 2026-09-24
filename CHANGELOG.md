@@ -16,6 +16,12 @@ auffällt:
 - **Sitzungen ohne ausdrücklich gewähltes „Angemeldet bleiben" enden nach 8 Stunden Inaktivität**
   (`session_idle_minutes`) — auch OIDC- und Link-Sitzungen.
 - **Es gibt Owner**: Der älteste aktive, von Hand gesetzte Admin wird beim ersten Start Owner.
+- **SAML-Adressen werden per Vorgabe nicht mehr verwendet** (`saml_email_trusted=False`), neue
+  SAML-Konten mit `@` im Namen bekommen einen Ersatznamen. LDAP-Adressen gelten dagegen per Vorgabe
+  als belegt (`ldap_email_trusted=True`) — **auf `False` stellen, wenn Nutzer ihr `mail`-Attribut
+  selbst pflegen.**
+- **API-Keys von OIDC-Konten ruhen**, wenn der Provider Nein sagt oder das Konto 30 Tage lang nicht
+  bestätigt hat — eine Anmeldung über den Provider weckt sie.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -51,6 +57,52 @@ auffällt:
   einen eigenen Postausgang — die Antwort verrät weder Existenz noch Laufzeit.
 - **Sicherheitsereignisse für den Widerruf von API-Keys**: `api_key_revoked`, `api_keys_revoked`
   (Grenze e).
+- **API-Keys folgen dem Identity Provider (Fund 8).** Bisher beendete ein Nein des Providers (4a) nur
+  die Sitzung; die Automaten-Keys des Kontos liefen bis zu `apikey_default_days` weiter — dieselbe
+  Fehlerklasse wie PocketID CVE-2026-43983. Jetzt ruhen sie sofort (`api_keys_ruhen` im Audit-Log),
+  und ohne Bestätigung durch den Provider binnen `oidc_apikey_confirm_days` (Vorgabe 30, 0 = keine
+  Frist) ebenso — das trifft auch jemanden, der nur noch per Skript arbeitet. Gelöscht wird nichts,
+  weil `invalid_grant` „gesperrt" und „abgelaufen" nicht unterscheidet: Die nächste Anmeldung über
+  den Provider weckt die Keys. Nur Konten mit OIDC-Bindung; Spalte `users.idp_bestaetigt_at`, für
+  den Bestand beginnt die Frist mit dem Update.
+- **Der Anmelde-Link verlangt den zweiten Faktor, wenn es einen gibt (ASVS 6.3.6, Option C).** Hat
+  ein Konto TOTP oder einen Passkey, meldet der Link allein nicht mehr voll an — auch nicht in einer
+  Kette wie `["magic"]` und nicht bei einem Konto nur mit Passkey (die klassische Policy verlangte
+  ein eingerichtetes TOTP schon immer). Konten ohne zweiten Faktor meldet der Link weiter allein an.
+  Einstellbar: `magiclink_require_second_factor` (Vorgabe an). Ein Konto mit Passkey richtet sich
+  einen weiteren Faktor (TOTP-Selbsteinrichtung in einer Kette) nur ein, wenn der Passkey in
+  derselben Sitzung vorgelegt wurde oder der Betreiber ein Fenster geöffnet hat — sonst ginge es
+  über den Anmelde-Link oder „Passwort vergessen" am Passkey vorbei.
+- **SAML- und LDAP-Adressen: der Betreiber sagt je Quelle, ob er ihnen traut** (Punkt 5, Option B).
+  `ldap_email_trusted` (Vorgabe an) und `saml_email_trusted` (Vorgabe aus). Vertraut: Die Adresse
+  gilt als belegt, geht als `Remote-Email` weiter und trägt Rechte (Erst-Admin). Nicht vertraut:
+  wie H-3 bei OIDC — keine Adresse im Konto, kein `Remote-Email`, und bei SAML weicht ein
+  Kontoname mit `@` (auch `＠`) einem Ersatznamen. **Die LDAP-Vorgabe nimmt den Schutz aus F-14
+  bewusst zurück**: Wo Nutzer ihr `mail`-Attribut selbst ändern dürfen, gehört sie auf `False`.
+  Bei nicht vertrauter Quelle wird ein unbelegter Name nie über den Namen einem vorhandenen Konto
+  zugeordnet (sonst übernähme `bob@example.com` aus einem IdP mit Selbstregistrierung das lokale
+  Konto `bob@example.com`); ohne stabile Kennung wird er abgewiesen. Unbelegt heisst: bei SAML ein
+  Name mit `@` oder einer aus dem Adress-Attribut selbst, bei LDAP eine Eingabe, die dem
+  `mail`-Wert des Eintrags gleicht (auch `chefin` ohne `@`; ein UPN als Bind-Kennung bleibt).
+  Ersatznamen `saml-…`/`ldap-…`. Eine Kennung mit Rand-Leerraum oder Steuerzeichen wird
+  abgewiesen statt getrimmt.
+- **Kontonamen mit Steuer- oder Formatzeichen gibt es nicht mehr** (vorbestehend, Angriff auf die
+  dritte Runde). `chefin\x01` war für TinySesam ein anderer Name als `chefin`, die Header-Säuberung
+  der Forward-Auth machte daraus aber `Remote-User: chefin` — die geschützte App sah ein fremdes
+  Konto. `create_user` weist solche Namen ab (Registrierung und Panel mit 400), föderierte Wege
+  weichen auf einen Ersatznamen aus. Ein Bestand mit C0-Steuerzeichen im Namen bekommt von
+  `/auth/forward` keine Freigabe mehr (403); Namen mit anderen Formatzeichen (etwa ZWNJ) kollidieren
+  nicht und gehen weiter durch. Der Start nennt solche Bestandskonten.
+- **4a: Ein Fehler des Clients ist kein Nein zum Konto.** `invalid_client` (z. B. nach einer
+  Secret-Rotation), `unauthorized_client`, `unsupported_grant_type` und jede 401 beendeten bisher
+  Sitzungen — und hätten seit Fund 8 die Keys aller Betroffenen stillgelegt. Sie zählen jetzt wie
+  ein nicht erreichbarer Provider (ebenso 5xx). Jede andere 4xx bleibt ein Nein — auch Dex'
+  `invalid_request` für ein widerrufenes Token. Eine Zeile eines Clients, der aus `oidc_clients`
+  genommen oder beim Provider neu angelegt wurde (andere `client_id`, jetzt an der Zeile), wird
+  verworfen statt getauscht. Ein Ja, dessen Frage vor einem Nein abging, überschreibt das Nein
+  nicht (Wettlauf zweier Tausche). Bekommt die Sitzung während des Tauschs ein neues Token, landet
+  das rotierte Refresh-Token trotzdem an ihrer Zeile (vorher ging es verloren, und der nächste
+  Tausch war bei PocketID ein Nein).
 
 ### Sicherheit
 

@@ -7,6 +7,7 @@ Beide Libs sind optional-Extra `[oidc]`.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 import secrets
 from urllib.parse import urlencode
@@ -19,7 +20,7 @@ from .messages import translate
 
 
 from . import errors
-from .store import norm_email, norm_kennung
+from .store import jetzt, name_ungueltig, norm_email, norm_kennung
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -314,11 +315,22 @@ class OIDCClient:
             return "fehler", {}, {"error": type(e).__name__}
         if not isinstance(tok, dict):
             return "fehler", {}, {"error": "antwort"}
-        if antwort.status_code in (400, 401) or tok.get("error") in (
-                "invalid_grant", "unauthorized_client", "invalid_client", "access_denied"):
-            return "abgelehnt", {}, tok
+        # Ein Fehler des CLIENTS sagt nichts über die Person: `invalid_client` nach einer
+        # Secret-Rotation (RFC 6749 5.2: dafür steht auch die 401), `unauthorized_client`, ein
+        # abgeschalteter Grant. Er zählt wie ein nicht erreichbarer Provider — sonst beendete
+        # eine Fehlkonfiguration alle Sitzungen und legte seit Fund 8 die API-Keys aller
+        # Betroffenen still (Angriff auf die dritte Runde). Jede andere 4xx ist ein Nein: Die
+        # Anfrage ist wohlgeformt, also meint der Provider das Token — Dex meldet ein widerrufenes
+        # oder abgelaufenes als `400 invalid_request` (Gegenprüfung der Fixes), andere schicken
+        # gar keinen Code. Eine Liste der Nein-Codes liesse jeden solchen Provider durch.
+        fehler_code = str(tok.get("error") or "")
+        if antwort.status_code >= 500 or antwort.status_code == 401 or fehler_code in (
+                "invalid_client", "unauthorized_client", "unsupported_grant_type"):
+            return "fehler", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
+        if 400 <= antwort.status_code < 500:
+            return "abgelehnt", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
         if antwort.status_code >= 300 or "error" in tok:
-            return "fehler", {}, tok
+            return "fehler", {}, {**tok, "error": fehler_code or f"http_{antwort.status_code}"}
         claims: dict = {}
         if tok.get("id_token"):
             optionen = {"iss": {"essential": True, "value": self.meta()["issuer"]},
@@ -512,6 +524,12 @@ class OIDCClients:
     def fuer_host(self, host: str) -> OIDCClient:
         return self[self.schluessel_fuer_host(host)]
 
+    def bekannt(self, schluessel: str) -> bool:
+        """Ist dieser Client (noch) eingerichtet? `__getitem__` fällt sonst auf den Vorgabe-Client
+        zurück — für eine Zeile aus `oidc_sitzung` hiesse das, ein fremdes Refresh-Token mit
+        falschen Zugangsdaten zu tauschen."""
+        return schluessel in self._clients
+
     def eintrag(self, schluessel: str) -> dict:
         """Die Zusatzangaben eines Clients (`allowed_groups`, `group_role_map`) — mit den
         Werten des Einzel-Clients als Rückfall. So gilt eine global gesetzte Gruppenregel auch
@@ -609,6 +627,7 @@ def register_oidc_routes(router, auth):
         # ein anderes Geheimnis — der Tausch scheitert dann beim Provider, und zwar zu Recht.
         ziel = str(flow.get("app") or VORGABE_CLIENT)
         client = clients[ziel]
+        _gefragt = jetzt()          # Fund 8: ein Nein, das danach kommt, bleibt stehen
         claims, tok = client.exchange(code, _redirect_uri(request), flow["nonce"], t=auth.t,
                                       code_verifier=str(flow.get("pkce") or ""))
         # Das `sub` aus dem **signierten** Token ist der Massstab für die UserInfo-Antwort, die
@@ -685,10 +704,14 @@ def register_oidc_routes(router, auth):
             # `﹫` (U+FE6B) werden in `norm_kennung` zu `@` — wörtlich geprüft rutschten sie durch
             # und besetzten die Adresse doch (Angriff auf die Fixes, R2-1).
             wunsch = str(info.get("preferred_username") or "").strip()
+            if name_ungueltig(wunsch):
+                wunsch = ""          # Steuerzeichen: in `Remote-User` ein anderer Name
             if "@" in norm_kennung(wunsch) and not (
                     belegte_mail and norm_email(wunsch) == norm_email(belegte_mail)):
                 wunsch = ""
             username = wunsch or belegte_mail or ("oidc-" + sub[:8])
+            if name_ungueltig(username):
+                username = "oidc-" + hashlib.sha256(sub.encode()).hexdigest()[:8]
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
             # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
@@ -756,6 +779,10 @@ def register_oidc_routes(router, auth):
                                     security.fuer_log(str(_konto["username"])),
                                     security.fuer_log(auth.client_ip(request)))
             raise HTTPException(403, auth.t("api.oidc_disabled"))
+        # Der Provider hat das Konto eben bestätigt — das weckt ruhende API-Keys (Fund 8). Erst
+        # hier, nach allen Abweisungen (Gruppen-Gate, Kennung vergeben, gesperrt): Ein Login, der
+        # scheitert, bestätigt nichts.
+        auth.store.idp_bestaetigen(uid, _gefragt)
 
         # OIDC-Gruppen → lokale Rollen (falls gemappt). Die Zuordnung darf je Anwendung eine
         # andere sein: Dieselbe Verzeichnisgruppe kann in App A „Redakteur" heissen und in App B

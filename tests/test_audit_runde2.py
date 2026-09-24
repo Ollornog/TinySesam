@@ -352,12 +352,15 @@ class _FakeLDAP:
 for weg, anlegen in (
         ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a.check_ldap("mallory", "x"))[1]),
         ("SAML", lambda a: a.check_saml("mallory", {"email": ["chef@example.com"]}))):
+    # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er einer Quelle traut
+    # (`ldap_email_trusted`, Vorgabe ja; `saml_email_trusted`, Vorgabe nein). Der F-14-Fall ist
+    # die Quelle, der er NICHT traut — dann wird die Adresse gar nicht verwendet (wie H-3).
     a_v, _ = _app(admin_identifiers=["chef@example.com"], ldap_enabled=True,
-                  ldap_url="ldaps://dir.example.invalid")
+                  ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
     konto = anlegen(a_v)
-    r.check(f"ein über {weg} angelegtes Konto trägt die Adresse OHNE Beleg",
-            konto is not None and not konto["email_verified"],
-            f"Konto: {konto} — der Vermerk behauptet, was {weg} nie belegt")
+    r.check(f"ein über {weg} angelegtes Konto (Quelle nicht vertraut) trägt die Adresse nicht",
+            konto is not None and not konto["email"] and not konto["email_verified"],
+            f"Konto: {konto} — die Adresse einer nicht vertrauten Quelle landet am Konto")
     # Der zweite Sprung: ein Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey).
     # Er ist nicht föderiert und reicht keinen Beleg — es entscheidet allein der Vermerk.
     r.check(f"… und ein zweiter, selbst eingerichteter Faktor befördert sie nach dem {weg}-Login nicht",
@@ -366,7 +369,7 @@ for weg, anlegen in (
     # Gegenprobe auf derselben Instanz: Trägt die Adresse einen Beleg (Bestätigungsmail,
     # Betreiber), befördert genau derselbe Aufruf. Ohne sie wäre oben auch eine kaputte
     # Beförderung grün.
-    a_v.store.set_email_verified(konto["id"], True)
+    a_v.store.set_email(konto["id"], "chef@example.com", verified=True)
     r.check(f"… Gegenprobe: mit Beleg am Konto befördert derselbe Aufruf ({weg})",
             a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
             "der Bootstrap-Weg ist ganz zu — dann misst die Prüfung darüber nichts")
