@@ -66,9 +66,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam installs from its **git tag** — it is not on PyPI yet (see below):
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -577,7 +577,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1
 ```
 
 The same line installs the same code tomorrow, and updating means: bump the line, reinstall,
@@ -591,7 +591,7 @@ Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To 
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tinysesam-0.20.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.1/tinysesam-0.20.1-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -599,7 +599,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.20.0
+ghcr.io/ollornog/tinysesam:v0.20.1
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -610,9 +610,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog
-gh attestation verify tinysesam-0.20.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog
+gh attestation verify tinysesam-0.20.1-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 

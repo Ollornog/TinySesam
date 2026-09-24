@@ -2,7 +2,11 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.20.1] — 2026-09-24
+
+**Sicherheits-Nachschlag — zügig einspielen, wer einen zweiten Faktor oder API-Keys nutzt.** Über
+`/auth/reauth` ersetzten API-Key und Passwort den zweiten Faktor, über `/auth/pin` wurde aus
+Automaten-Key und PIN eine volle Admin-Sitzung (beide vorbestehend, siehe „Sicherheit").
 
 Nachschlag zu 0.20.0. Zwei Abnehmer haben beim Heben Befunde **in** TinySesam gemeldet: Beide
 mussten für das CSRF-Cookie ihrer eigenen Seiten TinySesam nachbauen, und die Zusage „frisches

@@ -62,9 +62,9 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 TinySesam wird über seinen **Git-Tag** installiert — auf PyPI liegt es noch nicht (siehe unten):
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 # gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -585,7 +585,7 @@ so einen Knopf nicht, und seit `v0.12.0` hat TinySesam ihn auch nicht mehr.
 Schreibe eine **feste Version** in die Abhängigkeiten deiner App — nie einen Branch:
 
 ```
-tinysesam[oidc]==0.20.0
+tinysesam[oidc]==0.20.1
 ```
 
 Eine veröffentlichte Version auf PyPI ändert sich nicht mehr: Dieselbe Zeile installiert morgen
@@ -596,14 +596,14 @@ Derselbe Pin über Git, wenn du so installierst — beachte, dass sich ein **Tag
 für echte Unveränderlichkeit pinne den Commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1
 ```
 
 Jedes Release hängt zusätzlich ein **Wheel** und ein **sdist** an, mit `SHA256SUMS`. Wer ohne Git
 und ohne Paketindex installieren will, nimmt die Datei direkt:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tinysesam-0.20.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.1/tinysesam-0.20.1-py3-none-any.whl
 ```
 
 ### Als Gateway (eigener Container)
@@ -611,7 +611,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.20.0/tiny
 Jedes Release baut ein Abbild für `linux/amd64` und `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.20.0
+ghcr.io/ollornog/tinysesam:v0.20.1
 ```
 
 **Prüfen, woher es kommt.** Ein Digest belegt, dass sich ein Artefakt seit dem Bau nicht verändert
@@ -619,9 +619,9 @@ hat — nicht, wer es gebaut hat. Jedes Release trägt deshalb eine über Sigsto
 Herkunfts-Attestation und eine SBOM; beide liegen auch neben dem Abbild in der Registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog
-gh attestation verify tinysesam-0.20.0-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog
+gh attestation verify tinysesam-0.20.1-py3-none-any.whl --owner Ollornog   # auch Wheel und sdist
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.20.1 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # die SBOM
 ```
 
