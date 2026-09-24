@@ -62,6 +62,19 @@ def pruefen() -> int:
     return len(fehler)
 
 
+def ersetze_pins(text: str, alt: str, neu: str) -> tuple[str, int]:
+    """Die Version nur dort ersetzen, wo sie ein **Pin** ist — nicht in erzählendem Text.
+
+    Bis 0.20.0 ersetzte das Skript jede Zeichenkette `alt` in den READMEs. Damit wurde aus
+    „0.19.0 hob die Datenbank auf Schema 8“ ein falsches „0.20.0 hob …“ und aus „bis 0.19.0
+    landete man im selben Konto“ eine Aussage über die neue Fassung. Ein Pin erkennt man an dem,
+    was davor steht: `@v`, `:v`, `/v` (Git-Ref, Abbild-Tag, Release-Pfad), `tinysesam-` (Wheel),
+    `==` (PyPI), und in `pyproject.toml`/`__init__.py` an der Zuweisung."""
+    muster = re.compile(r'(?:(?<=@v)|(?<=:v)|(?<=/v)|(?<=tinysesam-)|(?<===)|(?<=version = ")'
+                        r'|(?<=__version__ = "))' + re.escape(alt) + r"(?![\d.])")
+    return muster.subn(neu, text)
+
+
 def setzen(neu: str) -> int:
     alt = aktuelle_version()
     if alt == neu:
@@ -71,20 +84,22 @@ def setzen(neu: str) -> int:
 
     for name in DATEIEN:
         p = WURZEL / name
-        text = p.read_text(encoding="utf-8")
-        anzahl = text.count(alt)
+        text, anzahl = ersetze_pins(p.read_text(encoding="utf-8"), alt, neu)
         if anzahl:
-            p.write_text(text.replace(alt, neu), encoding="utf-8")
+            p.write_text(text, encoding="utf-8")
             print(f"    {name}: {anzahl} Stelle(n)")
 
     text = CHANGELOG.read_text(encoding="utf-8")
     heute = dt.date.today().isoformat()
-    if "## [Unreleased]" in text:
-        CHANGELOG.write_text(text.replace("## [Unreleased]", f"## [{neu}] — {heute}", 1),
-                             encoding="utf-8")
-        print(f"    CHANGELOG: [Unreleased] → [{neu}] — {heute}")
+    # Der CHANGELOG ist deutsch und nennt den Abschnitt „[Unveröffentlicht]“; bis 0.20.0 suchte
+    # das Skript nur die englische Form und bat bei jedem Release um Handarbeit.
+    for offen in ("## [Unveröffentlicht]", "## [Unreleased]"):
+        if offen in text:
+            CHANGELOG.write_text(text.replace(offen, f"## [{neu}] — {heute}", 1), encoding="utf-8")
+            print(f"    CHANGELOG: {offen[3:]} → [{neu}] — {heute}")
+            break
     else:
-        print("    CHANGELOG: kein [Unreleased]-Abschnitt gefunden — bitte von Hand nachsehen")
+        print("    CHANGELOG: kein [Unveröffentlicht]-Abschnitt gefunden — bitte von Hand nachsehen")
 
     print("\n  Was noch fehlt (und ein Mensch entscheiden soll):")
     print("    1. Im CHANGELOG-Abschnitt oben zusammenfassen, WER dieses Release braucht.")
