@@ -801,11 +801,13 @@ class TinySesam:
 
     # ---------- Benachrichtigung bei Sicherheitsereignissen (Opt-in) ----------
     #: Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmelde-
-    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. NIST SP 800-63B verlangt,
-    #: den Inhaber über solche Änderungen zu benachrichtigen; bis T-13 erfuhr er von keiner
-    #: (Fund B2-2): Ein Angreifer mit einer Sitzung konnte TOTP abschalten, einen Passkey
-    #: hinzufügen oder das Passwort ändern, und der Inhaber sah es erst beim nächsten Login —
-    #: wenn überhaupt.
+    #: faktor des Kontos anlegt, ändert, entfernt oder verbraucht. Ausnahme: API-Keys nur bei der
+    #: Anlage; ihren Widerruf (einzeln, im Panel, gesammelt bei Reset, Sperre und
+    #: `sessions/revoke`) meldet kein Ereignis, er steht nur im Audit-Log (offen, docs/BETRIEB.md
+    #: zu ASVS 6.3.7). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
+    #: benachrichtigen; bis T-13 erfuhr er von keiner (Fund B2-2): Ein Angreifer mit einer
+    #: Sitzung konnte TOTP abschalten, einen Passkey hinzufügen oder das Passwort ändern, und der
+    #: Inhaber sah es erst beim nächsten Login — wenn überhaupt.
     SICHERHEITSEREIGNISSE = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -2125,7 +2127,9 @@ class TinySesam:
         Nachbar-Subdomain ein Cookie setzen kann (cookie tossing), setzt das passende Paar gleich
         mit und schickt das Opfer per Formular in SEIN Konto (Login-CSRF). Der Browser verrät
         aber, woher der Request kommt: `Origin` bei jedem POST, `Sec-Fetch-Site` bei jedem
-        Request. Die kann eine fremde Seite nicht fälschen.
+        Request an eine sichere Adresse (HTTPS oder `localhost`; über HTTP schickt kein Browser
+        `Sec-Fetch-*`, so will es die Fetch-Metadata-Spezifikation). Die kann eine fremde Seite
+        nicht fälschen.
 
         * `Sec-Fetch-Site: same-origin` → ja. Das sagt der Browser selbst, gemessen an der
           Adresse, die ER sieht — damit bleibt eine App hinter einem Proxy bedienbar, der den
@@ -2138,9 +2142,18 @@ class TinySesam:
           mit `Referrer-Policy: no-referrer` ausliefert; `same-site` sagt der Browser trotzdem.
           Bis zur Nacharbeit fiel hier nur `cross-site` heraus, und wo das CSRF-Cookie kein
           `__Host-` tragen kann, entschied für die Nachbar-Subdomain wieder allein das Token.
-        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` fehlt oder sagt `none` (vom
-          Nutzer selbst angestossen, keine Seite kann das auslösen) → das Token entscheidet
-          allein. Ebenso, wenn beides fehlt (alter Browser, Skript, TestClient).
+          Das schließt diese Regel nur über HTTPS (siehe den letzten Punkt).
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` sagt `none` (vom Nutzer selbst
+          angestoßen, keine Seite kann das auslösen) → das Token entscheidet allein.
+        * `Origin` fehlt oder ist `null`, und `Sec-Fetch-Site` fehlt → das Token entscheidet
+          ebenfalls allein. Das ist nicht nur der alte Browser, das Skript oder der TestClient,
+          sondern **jeder Browser über HTTP** (`cookie_secure=False`, außer `localhost`). Dort
+          kommt eine Nachbar-Subdomain mit `Origin: null` (Seite mit
+          `Referrer-Policy: no-referrer`) bis zum Token durch, und ohne `Secure` trägt das
+          CSRF-Cookie kein `__Host-`, lässt sich also unterschieben. Über HTTP schützt diese
+          Prüfung deshalb nicht vor Login-CSRF aus der Nachbarschaft. Abweisen brächte dort wenig:
+          In derselben Konfiguration lässt sich schon das Sitzungs-Cookie selbst unterschieben
+          (bekannte Grenze, SECURITY.md).
         """
         if not self.cfg.csrf_origin_check:
             return True
@@ -2894,6 +2907,11 @@ class TinySesam:
         Die Antwort jeder Faktor-Änderung trägt die Zahl als `other_sessions`: ASVS 5.0 7.4.3
         verlangt nach Anlage oder Entfernung eines Faktors das Angebot, die übrigen Sitzungen zu
         beenden. Die Kontoseite fragt dann nach; wer eine eigene Oberfläche baut, liest das Feld.
+
+        Bekannte Grenze: Die Pflicht-Einrichtung von TOTP mitten in einer Kette
+        (`password → totp → pin`) meldet 0, weil die Sitzung danach noch halb ist und eine halbe
+        Sitzung die übrigen nicht beenden darf. Der PIN-Schritt danach bietet auch nichts an; das
+        Angebot entfällt dort ganz, der Weg ist die Sitzungsliste auf der Kontoseite.
 
         `token`: das Klartext-Token der eigenen Sitzung, wenn es in DIESER Antwort gewechselt
         hat (die Pflicht-Einrichtung von TOTP schliesst die Anmeldung ab und dreht dabei das

@@ -56,27 +56,34 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   it with a key kept outside the database is planned (T-13, H-14/H-15). Until then, treat the
   database and its backups as a secret (mode `0600`, encrypted backups), and if you need the second
   factor to survive a database leak, use passkeys — only a public key is stored for them.
-- **Known limit — with `cookie_domain`, every host under that domain is trusted.** SSO across
-  subdomains needs a session cookie that is valid for the whole domain, and such a cookie cannot
-  carry the `__Host-` prefix. Any host under the domain — a protected app behind forward auth
-  included — can therefore set its own `tinysesam_session` for the whole domain (cookie tossing):
-  a signed-out visitor is then signed in as the account whose token the app holds, and a signed-in
-  one usually as well, because the newer cookie wins. No request to TinySesam is needed, so neither
-  the CSRF token nor the origin check can stop it; they only close the form route (login CSRF via
-  a POST to TinySesam). Set `cookie_domain` only when every host under it is yours and trusted as
-  much as TinySesam itself. Otherwise leave it empty: the session stays host-only with `__Host-`,
-  and no other host can set it. (Apps served from TinySesam's own host, as in the path-based
-  forward-auth setup, share its origin and are trusted either way.)
+- **Known limit — without the `__Host-` prefix on the session cookie, every host under the
+  parent domain is trusted.** The session cookie carries `__Host-` only with `cookie_secure=True`,
+  an empty `cookie_domain`, `cookie_path="/"` and `cookie_host_prefix=True` — the defaults. SSO
+  across subdomains needs `cookie_domain`, and a cookie valid for the whole domain cannot carry the
+  prefix; `cookie_host_prefix=False`, any other `cookie_path` and `cookie_secure=False` drop it as
+  well. Without it the cookie is plain `tinysesam_session`, and any host under the parent domain —
+  a protected app behind forward auth included — can set its own cookie of that name for the whole
+  domain (cookie tossing), with or without `cookie_domain`: a signed-out visitor is then signed in
+  as the account whose token that host holds, and a signed-in one usually as well, because the
+  newer cookie wins. No request to TinySesam is needed, so neither the CSRF token nor the origin
+  check can stop it; they only close the form route (login CSRF via a POST to TinySesam), and over
+  plain HTTP not even that, because browsers send no `Sec-Fetch-Site` there. Set `cookie_domain`
+  only when every host under it is yours and trusted as much as TinySesam itself. Otherwise leave
+  it empty and keep the other three at their defaults: the session then stays host-only with
+  `__Host-`, and no other host can set it. (Apps served from TinySesam's own host, as in the
+  path-based forward-auth setup, share its origin and are trusted either way.)
 - **Notify account holders about factor changes — `auth.on_security_event`.** Opt-in hook,
   called as `hook(event, account, details)` with `account = {id, username, email, display_name}`
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
   `api_key_created`. That includes changes an administrator makes to someone else's account in the
-  panel (password reset, API key, revoking a passkey) — write the mail so it does not assume the
-  holder did it. TinySesam sends nothing itself; send the mail from the hook (ideally via a
-  queue — it runs synchronously in the request). An exception in the hook never undoes the change,
-  but lands in the security log.
+  panel (password reset, issuing an API key, revoking a passkey) — write the mail so it does not
+  assume the holder did it. API keys are reported only when created: revoking one (by the holder,
+  by an administrator, or in bulk on a reset, a block or `sessions/revoke` with `scope=all`) raises
+  no event and shows up in the audit log only. TinySesam sends nothing itself; send the mail from
+  the hook (ideally via a queue — it runs synchronously in the request). An exception in the hook
+  never undoes the change, but lands in the security log.
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that

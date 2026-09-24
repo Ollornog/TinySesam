@@ -228,13 +228,15 @@ user = auth.check_password(username, password)
 token, fertig = auth.start_session(user["id"], "password")   # Tupel, nicht nur ein Token
 auth.set_cookie(resp, token)
 if not fertig:                    # es fehlt noch ein zweiter Faktor
-    ...                           # auth.verify_totp(user["id"], code) → auth.complete_totp(token)
+    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
 ```
 
 `start_session` gibt `(token, session_ok)` zurück. Auspacken — wer das Tupel direkt in
 `set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie, und es fliegt keine
 Ausnahme: Die Anmeldung ist still kaputt. `session_ok=False` heisst: Die Sitzung existiert, ist
 aber noch nicht vollständig.
+Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch beim Step-up — es gehört ins
+Cookie. Wer es ignoriert, hat eine tote Sitzung im Cookie, und der Nutzer ist abgemeldet.
 
 ## Look & Feel
 

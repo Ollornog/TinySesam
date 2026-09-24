@@ -213,12 +213,17 @@ class TinySesamConfig:
     #: Leer = Host-only. Für SSO über Subdomains z.B. ".example.com" — dann vertraut TinySesam
     #: jedem Host unter dieser Domain: Jeder kann ein Sitzungs-Cookie für die ganze Domain
     #: setzen und den Browser so in ein fremdes Konto schieben (bekannte Grenze, SECURITY.md).
+    #: Leer schützt davor nur, solange das Sitzungs-Cookie `__Host-` trägt (`cookie_host_prefix`).
     cookie_domain: str = ""
     #: `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der
     #: Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Das
     #: CSRF-Cookie ist immer host-only und trägt das Präfix auch bei gesetztem `cookie_domain`.
     #: Ein so benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie
-    #: tossing). Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die
+    #: tossing). Fehlt das Präfix am Sitzungs-Cookie (`cookie_domain` gesetzt, dieser Schalter
+    #: aus, `cookie_path` ≠ "/" oder `cookie_secure=False`), trägt es nur seinen blanken Namen
+    #: (`tinysesam_session`), und jeder Host unter der Domain kann eines unterschieben (bekannte
+    #: Grenze, SECURITY.md).
+    #: Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die
     #: Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder
     #: Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`.
     #: Eigenes JS liest den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`.
@@ -246,10 +251,17 @@ class TinySesamConfig:
     #: sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url —
     #: NICHT trusted_redirect_hosts: das sind Redirect-Ziele, im Forward-Auth-Aufbau die
     #: geschützten Apps); `Sec-Fetch-Site: same-site` oder `cross-site` ohne eigenen Origin
-    #: (auch `Origin: null`) wird abgewiesen. Fehlen beide Header (alter Browser, Skript),
-    #: entscheidet allein das Token.
+    #: (auch `Origin: null`) wird abgewiesen. Fehlt ein brauchbarer Origin und sagt
+    #: `Sec-Fetch-Site` `none` oder fehlt, entscheidet allein das Token. `Sec-Fetch-Site` fehlt
+    #: nicht nur bei alten Browsern und Skripten, sondern bei jedem Browser über HTTP (außer
+    #: localhost): Browser schicken `Sec-Fetch-*` nur an HTTPS. Mit `cookie_secure=False`
+    #: kommt deshalb auch `Origin: null` einer Nachbar-Subdomain bis zum Token durch, und das
+    #: CSRF-Cookie trägt dann kein `__Host-` — die Prüfung schützt über HTTP nicht vor
+    #: Login-CSRF aus der Nachbarschaft (dort lässt sich ohnehin das Sitzungs-Cookie
+    #: unterschieben, bekannte Grenze in SECURITY.md).
     #: Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern
-    #: nur Browser ohne `Sec-Fetch-Site` (Safari vor 16.4) — dafür base_url setzen.
+    #: Browser ohne `Sec-Fetch-Site` (Safari vor 16.4, jeder Browser über HTTP) — dafür
+    #: base_url setzen.
     csrf_origin_check: bool = True
 
     # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---

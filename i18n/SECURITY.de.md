@@ -58,19 +58,24 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
   (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
   Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
-- **Bekannte Grenze — mit `cookie_domain` gilt jeder Host unter dieser Domain als
-  vertrauenswürdig.** SSO über Subdomains braucht ein Sitzungs-Cookie, das für die ganze Domain
-  gilt, und ein solches Cookie kann kein `__Host-`-Präfix tragen. Jeder Host unter der Domain —
-  auch eine geschützte App hinter Forward-Auth — kann deshalb ein eigenes `tinysesam_session` für
-  die ganze Domain setzen (cookie tossing): Ein abgemeldeter Besucher ist danach als das Konto
-  angemeldet, dessen Token die App besitzt, ein angemeldeter meist ebenso, weil das jüngere Cookie
-  gewinnt. Dafür braucht es keinen Request an TinySesam, also halten weder CSRF-Token noch
-  Herkunftsprüfung das auf; sie schliessen nur den Weg über ein Formular (Login-CSRF per POST an
-  TinySesam). `cookie_domain` nur setzen, wenn jeder Host darunter einem selbst gehört und so
-  vertrauenswürdig ist wie TinySesam. Sonst leer lassen: Die Sitzung bleibt host-only mit
-  `__Host-`, und kein anderer Host kann sie setzen. (Apps auf dem Host von TinySesam selbst, wie
-  im pfadbasierten Forward-Auth-Aufbau, teilen seinen Origin und gelten ohnehin als
-  vertrauenswürdig.)
+- **Bekannte Grenze — ohne `__Host-`-Präfix am Sitzungs-Cookie gilt jeder Host unter der
+  übergeordneten Domain als vertrauenswürdig.** Das Sitzungs-Cookie trägt `__Host-` nur mit
+  `cookie_secure=True`, leerem `cookie_domain`, `cookie_path="/"` und `cookie_host_prefix=True` —
+  den Vorgaben. SSO über Subdomains braucht `cookie_domain`, und ein Cookie für die ganze Domain
+  kann das Präfix nicht tragen; `cookie_host_prefix=False`, ein anderer `cookie_path` und
+  `cookie_secure=False` nehmen es ebenfalls weg. Ohne Präfix heißt das Cookie schlicht
+  `tinysesam_session`, und jeder Host unter der übergeordneten Domain — auch eine geschützte App
+  hinter Forward-Auth — kann ein eigenes Cookie dieses Namens für die ganze Domain setzen (cookie
+  tossing), mit oder ohne `cookie_domain`: Ein abgemeldeter Besucher ist danach als das Konto
+  angemeldet, dessen Token dieser Host besitzt, ein angemeldeter meist ebenso, weil das jüngere
+  Cookie gewinnt. Dafür braucht es keinen Request an TinySesam, also halten weder CSRF-Token noch
+  Herkunftsprüfung das auf; sie schließen nur den Weg über ein Formular (Login-CSRF per POST an
+  TinySesam), und über reines HTTP nicht einmal den, weil Browser dort kein `Sec-Fetch-Site`
+  schicken. `cookie_domain` nur setzen, wenn jeder Host darunter einem selbst gehört und so
+  vertrauenswürdig ist wie TinySesam. Sonst leer lassen und die übrigen drei auf ihren Vorgaben
+  lassen: Dann bleibt die Sitzung host-only mit `__Host-`, und kein anderer Host kann sie setzen.
+  (Apps auf dem Host von TinySesam selbst, wie im pfadbasierten Forward-Auth-Aufbau, teilen seinen
+  Origin und gelten ohnehin als vertrauenswürdig.)
 - **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
   gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
@@ -78,9 +83,12 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
   `api_key_created`. Das gilt auch für Änderungen, die ein Admin im Panel an einem fremden Konto
   vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die Mail also so
-  schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. TinySesam verschickt selbst
-  nichts; die Mail geht aus dem Hook (am besten über eine Warteschlange — er läuft synchron im
-  Request). Ein Fehler im Hook macht die Änderung nie rückgängig, landet aber im Sicherheits-Log.
+  schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. API-Keys meldet der Hook nur
+  bei der Anlage: Der Widerruf eines Keys (durch den Inhaber, durch einen Admin oder gesammelt beim
+  Reset, bei der Sperre und bei `sessions/revoke` mit `scope=all`) löst kein Ereignis aus und steht
+  nur im Audit-Log. TinySesam verschickt selbst nichts; die Mail geht aus dem Hook (am besten
+  über eine Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
+  nie rückgängig, landet aber im Sicherheits-Log.
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
