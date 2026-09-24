@@ -19,7 +19,7 @@ from .messages import translate
 
 
 from . import errors
-from .store import norm_email
+from .store import norm_email, norm_kennung
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -632,8 +632,12 @@ def register_oidc_routes(router, auth):
             # Durchgelassen, wurde sie Kontoname und `Remote-User`, und die Kennung war für die
             # echte Inhaberin besetzt (Angriff auf H-3). Ein Name mit `@` gilt deshalb nur, wenn er
             # die belegte Adresse ist; sonst der Ersatzname.
+            # Geprüft wird die GEFALTETE Kennung: `victim＠example.com` (Vollbreite, U+FF20) oder
+            # `﹫` (U+FE6B) werden in `norm_kennung` zu `@` — wörtlich geprüft rutschten sie durch
+            # und besetzten die Adresse doch (Angriff auf die Fixes, R2-1).
             wunsch = str(info.get("preferred_username") or "").strip()
-            if "@" in wunsch and not (belegte_mail and norm_email(wunsch) == norm_email(belegte_mail)):
+            if "@" in norm_kennung(wunsch) and not (
+                    belegte_mail and norm_email(wunsch) == norm_email(belegte_mail)):
                 wunsch = ""
             username = wunsch or belegte_mail or ("oidc-" + sub[:8])
             base_un, i = username, 1

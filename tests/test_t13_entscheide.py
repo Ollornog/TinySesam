@@ -200,6 +200,16 @@ auth.sperre_aufheben(uid_t, methoden=("password",))            # Selbstbedienung
 r.check("B2-6 + R4-13: der Selbstbedienungs-Reset räumt TOTP-Fehlgriffe der Serie NICHT",
         auth.store.fehlserie("zweit") == 10 and auth.versuch_beginnen("zweit", "198.51.100.5", "password") is None,
         str(auth.store.fehlserie("zweit")))
+# Umgekehrt die ERSTEN Faktoren: Falsche PINs kann jeder schicken, auch ohne ein Geheimnis zu kennen.
+# Blieben sie nach dem Reset stehen, hülfe der Reset nicht mehr, zu dem die Meldung rät (R2-2).
+uid_pin = auth.create_user("pinopfer", password=PW)
+for _ in range(10):
+    auth.record_login("pinopfer", "198.51.100.8", False, "pin",
+                      versuch=auth.versuch_beginnen("pinopfer", "198.51.100.8", "pin"))
+auth.sperre_aufheben(uid_pin, methoden=("password",))          # Selbstbedienungs-Reset
+r.check("B2-6: eine Serie aus falschen PINs (Erstfaktor, von jedem erzeugbar) räumt der Reset",
+        auth.store.fehlserie("pinopfer") == 0, str(auth.store.fehlserie("pinopfer")))
+
 chefin_t = auth.create_user("chefin-t", password=PW, is_admin=True)
 cpt = TestClient(app)
 cpt.post("/auth/login", data={"username": "chefin-t", "password": PW}, follow_redirects=False)
@@ -346,6 +356,7 @@ r.check("… es sei denn, sie gehört inzwischen einem anderen Konto (dann bleib
         not a3f.store.get_user_by_name("spaet2")["email"]
         and any(z["event"] == "oidc_email_taken" for z in a3f.store.recent_audit(50)))
 for wunsch, belegt, erwartet in (("opfer@example.com", False, "oidc-"), ("opfer@example.com", True, "opfer@example.com"),
+                                 ("opfer\uff20example.com", False, "oidc-"), ("opfer\ufe6bexample.com", False, "oidc-"),
                                  ("anderer@example.com", True, "opfer@example.com"), ("klarname", False, "klarname")):
     a3g, app3g = _oidc({"sub": f"h3-pu-{wunsch}-{belegt}", "preferred_username": wunsch,
                         "email": "opfer@example.com", "email_verified": belegt})
@@ -404,6 +415,21 @@ r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
 # (Mutationsproben: den `elif`-Zweig in apply_idp_groups streichen → „ist das Flag weg" rot;
 #  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
 #  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
+
+# ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
+_pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
+Store(_pfad_z).db.close()
+_roh = sqlite3.connect(_pfad_z)
+_roh.execute("DROP TABLE fehlserie")
+_roh.execute("CREATE TABLE fehlserie (topf TEXT PRIMARY KEY, anzahl INTEGER NOT NULL, "
+             "seit INTEGER NOT NULL, zuletzt INTEGER NOT NULL)")
+_roh.commit()
+_roh.close()
+_z = Store(_pfad_z)
+_spalten = {z["name"] for z in _z._all("PRAGMA table_info(fehlserie)")}
+r.check("Zwischenstand: eine `fehlserie` ohne `art` wird neu angelegt, statt jede Anmeldung zu brechen",
+        "art" in _spalten and _z.fehlserie_erhoehen("x", "password") == 1, str(_spalten))
+_z.db.close()
 
 # ── Schema 11: eine Datei von 0.20.x bekommt die Tabelle beim Start ───────────────────────
 _pfad = str(Path(tempfile.mkdtemp()) / "alt.db")

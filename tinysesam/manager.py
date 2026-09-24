@@ -1859,7 +1859,14 @@ class TinySesam:
                              login=method not in security.NICHT_LOGIN_METHODEN)
         elif serie is not None:
             self._serie_vorbuchungen[versuch] = (serie[0], method, antwort)
+            # Gedeckelt: Ein Versuch, den nie jemand abschliesst (Ausnahme mitten in der Route),
+            # bliebe sonst für immer liegen. Wer herausfällt, zählt als Fehlversuch — strenger,
+            # nie lockerer.
+            while len(self._serie_vorbuchungen) > self._SERIE_VORBUCHUNGEN_MAX:
+                self._serie_vorbuchungen.pop(next(iter(self._serie_vorbuchungen)), None)
         return versuch
+
+    _SERIE_VORBUCHUNGEN_MAX = 10000
 
     def _versuch_zuruecknehmen(self, versuch) -> None:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
@@ -3471,6 +3478,15 @@ class TinySesam:
                         "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`.",
                         security.fuer_log(username), stand)
 
+    #: Welche Anteile der Serie (B2-6) ein Selbstbedienungs-Reset räumt: die der ERSTEN Faktoren.
+    #: Die kann jeder erzeugen, ohne ein Geheimnis zu kennen — ein Fremder sperrt mit falschen PINs
+    #: ein Konto, dessen Inhaberin nicht einmal eine PIN hat. Blieben sie stehen, hülfe der Reset
+    #: nicht mehr, zu dem die Meldung rät (Angriff auf die Fixes, R2-2). TOTP-Fehlgriffe dagegen
+    #: erzeugt nur, wer das Passwort schon hat; die räumt nur eine vollständige Anmeldung oder der
+    #: Betreiber (R4-13). Grenze: In einer Kette `password → pin` ist die PIN ein ZWEITER Faktor,
+    #: ihre Fehlgriffe räumt der Reset trotzdem mit — die Art kennt die Stellung nicht.
+    _SERIE_RESET_ARTEN = ("password", "pin")
+
     def sperre_aufheben(self, user_id, methoden=None) -> int:
         """Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
 
@@ -3496,13 +3512,15 @@ class TinySesam:
         weg = 0
         since = 0
         for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
-            # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Reset (`methoden`)
-            # nur den Anteil seiner Methoden — derselbe Grund wie unten (R4-13): Der
-            # Selbstbedienungs-Reset beweist das Postfach, nicht den zweiten Faktor. Räumte er die
-            # TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und Passwort je Reset eine frische
-            # Serie gegen TOTP (gemessen im Angriff auf B2-6). Der Betreiber räumt ganz
-            # (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
-            self.store.fehlserie_loeschen(kennung, arten=methoden)
+            # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
+            # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
+            # Grund wie unten (R4-13): Der Selbstbedienungs-Reset beweist das Postfach, nicht den
+            # zweiten Faktor. Räumte er die TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und
+            # Passwort je Reset eine frische Serie gegen TOTP (gemessen im Angriff auf B2-6). Der
+            # Betreiber räumt ganz (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
+            self.store.fehlserie_loeschen(
+                kennung, arten=None if methoden is None else
+                tuple(set(methoden) | (set(self._SERIE_RESET_ARTEN) if "password" in methoden else set())))
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
                 weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)

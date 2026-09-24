@@ -23,9 +23,11 @@ Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wan
   90 Tagen Ruhe, ausgelöste nie. Geprüft und vorgebucht wird die Serie **in derselben Transaktion**
   wie der Versuch (eine parallele Salve an der Grenze bekommt einen Versuch, nicht einen je Anfrage);
   ein richtiger erster Faktor nimmt nur seine eigene Vorbuchung zurück, ein Verzeichnis-Ausfall
-  zählt nicht. Der **Selbstbedienungs-Reset räumt nur den Passwort-Anteil** der Serie — TOTP- und
-  PIN-Fehlgriffe bleiben stehen (derselbe Grund wie R4-13: Das Postfach beweist den zweiten Faktor
-  nicht). Der Betreiber räumt ganz: Passwort-Reset im Panel, `tinysesam unlock`.
+  zählt nicht. Der **Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren** (Passwort, PIN —
+  die kann jeder erzeugen, auch ein Fremder ohne Geheimnis); **TOTP-Fehlgriffe bleiben stehen**
+  (derselbe Grund wie R4-13: Das Postfach beweist den zweiten Faktor nicht, und TOTP-Fehlgriffe
+  erzeugt nur, wer das Passwort schon hat). Der Betreiber räumt ganz: Passwort-Reset im Panel,
+  `tinysesam unlock`.
 - **Passwort-Mindestlänge 15, wenn das Passwort allein anmelden kann (B2-4, NIST SP 800-63B).** Neue
   Schwelle `password_min_length_single_factor` (Panel, Vorgabe 15). Sie gilt, solange die globale
   Kette keinen zweiten Faktor erzwingt — also in der Vorgabe — **und auch dann, wenn Konten den
@@ -44,8 +46,9 @@ Bestehende bleiben gültig. **Vor dem Update die Datenbank sichern** — sie wan
 - **Eine IdP-Adresse ohne Beleg wird nicht verwendet (H-3).** Bisher übernahm OIDC eine Adresse ohne
   `email_verified=true` ins Konto und reichte sie als `Remote-Email` weiter, nur ohne Rechte in
   TinySesam — eine geschützte App, die Nutzer über die Adresse zuordnet, sah den Vermerk nie. Jetzt:
-  kein Kontoname aus ihr (auch nicht über ein `preferred_username`, das diese Adresse ist — Keycloak
-  „Email as username", Entra-UPN), keine Adresse im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
+  kein Kontoname aus ihr (auch nicht über ein `preferred_username`, das eine Adresse ist — Keycloak
+  „Email as username", Entra-UPN —, geprüft nach der Unicode-Faltung, also auch `＠`), keine Adresse
+  im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
   später, wird sie nachgetragen, sofern sie frei ist. Ein Provider, der den Claim nie schickt (Entra
   ID), braucht `oidc_email_verified_default=True`. SAML und LDAP sind unverändert (sie liefern keinen
   Beleg; offen zur Entscheidung).

@@ -29,7 +29,10 @@ Sie bleibt **einstellbar**:
   `ip_attempt_factor`-fache. Er steht im Panel **direkt bei der Login-Sperre**, weil er dort
   zusammen mit ihr eingestellt wird.
 - `account_max_consecutive_failures` (Panel, Vorgabe 100, B2-6): PIN-Fehlgriffe zählen in die
-  Serie. Mehr als 99 Rateversuche am Stück bekommt niemand, auch verteilt nicht.
+  Serie. Mehr als 99 Rateversuche am Stück bekommt niemand, auch verteilt nicht. Ein
+  Passwort-Reset der Inhaberin beginnt eine neue Serie — sonst sperrte ein Fremder mit falschen
+  PINs das Konto über den Reset hinaus (R2-2). Wer das Raten ganz ausschliessen will, nimmt die PIN
+  von der Login-Seite (`pin_login=False`).
 
 ## Folgen
 

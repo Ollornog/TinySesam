@@ -434,8 +434,14 @@ lokal9 = auth_k9.create_user("chef", password="geheim12345", email="chef@example
 antw9 = _oidc_login(app_k9)
 r.check("ein OIDC-Name, der die E-Mail eines Kontos ist, weicht auf einen freien Namen aus",
         antw9.status_code == 303, f"HTTP {antw9.status_code} — der Nutzer kommt nicht mehr herein")
-r.check("...das neue Konto heisst anders", auth_k9.store.get_user_by_name("chef@example.com2") is not None,
-        "kein Ausweichname — dann wurde entweder abgewiesen oder eine Kennung besetzt")
+# Seit dem Angriff auf H-3 (2026-09-24) gilt ein `preferred_username` mit `@` nur, wenn er die
+# belegte Adresse ist — hier ist er eine FREMDE Adresse, das Konto heisst also nach der belegten
+# (`neu@example.com`), nicht mehr `chef@example.com2`. Die Zusage bleibt dieselbe: eine eigene,
+# freie Kennung, keine besetzte.
+_k9_uid = auth_k9.store.get_oidc_user(IDP, "k9")
+_k9_name = auth_k9.store.get_user(_k9_uid)["username"] if _k9_uid else None
+r.check("...das neue Konto heisst anders", _k9_name not in (None, "chef@example.com", "chef"),
+        f"Name {_k9_name!r} — dann wurde entweder abgewiesen oder eine Kennung besetzt")
 r.check("...und die Kennung zeigt weiter auf das lokale Konto",
         (auth_k9.find_user("chef@example.com") or {}).get("id") == lokal9,
         "die fremde Anmeldung hat die Kennung übernommen")

@@ -7,7 +7,7 @@ Was bei einer nur lesbaren, vollen oder gesperrten Datenbank und bei einem Sprun
 geschieht, steht für Betreiber in `docs/BETRIEB.md` (Ausfallverhalten).
 """
 from __future__ import annotations
-import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, stat, unicodedata
+import contextlib, sqlite3, threading, time, secrets, json, logging, hashlib, os, re, stat, unicodedata
 from typing import Optional
 
 SCHEMA = """
@@ -643,6 +643,14 @@ class Store:
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
         # offen (der AST-Wächter in tests/test_hardening2.py verlangt das für jeden Commit).
         with self._schreibend():
+            # `fehlserie` kam mit Schema 11 zunächst ohne Spalte `art` (nie veröffentlichter
+            # Zwischenstand). Eine solche Tabelle wird neu angelegt — sonst liefe jede Anmeldung auf
+            # einen 500. Die Serien darin gehen verloren; das ist der kleinere Schaden.
+            _fs = {r["name"] for r in self.db.execute("PRAGMA table_info(fehlserie)")}
+            if _fs and "art" not in _fs:
+                self.db.execute("DROP TABLE fehlserie")
+                self.db.execute(re.search(r"CREATE TABLE IF NOT EXISTS fehlserie \(.*?\n\);",
+                                          SCHEMA, re.S).group(0))
             for table, cols in adds.items():
                 have = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, decl in cols:
