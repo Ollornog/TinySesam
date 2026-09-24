@@ -26,10 +26,8 @@ import os
 # Stufe 3 (M-1): Fallzahl je Prüfung. Einzeln per Pfad geladen (so lädt `repokit` selbst
 # `manifest.py`) gibt es kein Paket und damit keine Zählung — dann bleibt alles wie vorher.
 try:
-    from .hygiene import LEER_IST_AUSSAGE, mit_fallzahl, zaehle_fall
+    from .hygiene import mit_fallzahl, zaehle_fall
 except ImportError:  # pragma: no cover — nur beim Laden ohne Paket
-    LEER_IST_AUSSAGE: set = set()
-
     def mit_fallzahl(name, fn):
         return fn
 
