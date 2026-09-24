@@ -385,10 +385,15 @@ systemctl start tinysesam
 > **Ein Rückschritt braucht eine Sicherung im alten Schema.** Jede Fassung, die Spalten
 > hinzufügt, migriert die Datenbank beim ersten Start — 0.18.0 tat es einmal (Schema 5), 0.19.0
 > hebt sie auf **Schema 8** (Freigaben je Anwendung, Key-Art, Erst-Login und
-> Einrichtungsfenster); die nächste Fassung fügt **Schema 9** hinzu (stabile
-> Verzeichnis-Kennungen für LDAP/SAML). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
+> Einrichtungsfenster); die nächste Fassung hebt sie auf **Schema 10** (9: stabile
+> Verzeichnis-Kennungen für LDAP/SAML; 10: Zähl-Töpfe und die Suche nach Name und Adresse mit
+> Index, Sperren aus dem Panel früherer Fassungen tragen danach den Betreiber-Vermerk). Älterer Code öffnet die Datei danach klaglos, `/healthz` bleibt grün und
 > Konten sind lesbar — aber jede Sitzungsoperation wirft. Die Sicherung also **vor** dem Update
 > ziehen (`tinysesam backup` lässt die Quelle unangetastet) und im Ernstfall die zurückspielen.
+> Lief älterer Code doch auf der neuen Datei, holt der nächste Start der neuen Fassung zweierlei
+> nach: Sperren aus dem Panel der älteren tragen danach den Betreiber-Vermerk (erkannt an ihren
+> Audit-Zeilen), und Adressen ihrer offenen Registrierungen gelten bis zur Bestätigung als
+> unbelegt; im Log steht dann eine Warnung. Mehr gleicht er nicht ab — der sichere Rückweg ist die Sicherung.
 
 ### „Ich komme nicht rein" — nachsehen
 

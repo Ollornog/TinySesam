@@ -444,7 +444,7 @@ Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wo
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18).
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
 
 ### `session_from_request(request)`
 

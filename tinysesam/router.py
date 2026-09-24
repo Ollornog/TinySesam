@@ -588,6 +588,13 @@ def build_router(auth) -> APIRouter:
                 auth.audit("verify_blocked", konto, auth.client_ip(request),
                            "Konto vom Betreiber gesperrt")
                 return auth.render_page("magic_invalid", request=request, status=403)
+            # Der eingelöste Link belegt die Adresse, an die er ging — solange sie noch die des
+            # Kontos ist (eine inzwischen geänderte Adresse hat er nicht belegt). Vor der Anmeldung
+            # unten: Dort entscheidet `maybe_promote_admin` über den Vermerk am Konto.
+            konto_zeile = auth.store.get_user(uid)
+            if (konto_zeile is not None and konto_zeile["email"] and data.get("email")
+                    and norm_email(data.get("email")) == konto_zeile["email"]):
+                auth.store.set_email_verified(uid, True)
             # Konto und IP gehören in die Zeile (B5-02): Hier wird ein Konto freigeschaltet, und
             # ohne Namen fand `tinysesam audit --user X` den Vorgang nicht.
             auth.audit("email_verified", auth._kontoname(uid), auth.client_ip(request),
@@ -889,8 +896,17 @@ def build_router(auth) -> APIRouter:
                         auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
                         _hinweis)
                 return err(auth.t("err.email_taken"), 409)
+            # Belegt ist die Adresse hier nur, wenn sie aus der Einladung stammt — die hat der
+            # Admin an genau dieses Postfach geschickt. Eingetippt ist sie eine Behauptung: Mit
+            # Bestätigungspflicht setzt den Beleg erst der eingelöste Link (`/auth/verify`), ohne
+            # sie nie. Bis Schema 10 stand hier die Vorgabe „belegt", und die Löschung durch
+            # einen Admin nahm die fremd eingetippte Adresse deshalb auch aus Zeilen von vor der
+            # Anlage — die Einladung des Admins, die Fehlversuche der echten Inhaberin
+            # (`Store.konto_entfernen`). Rechte hängen daran nicht: Eine Allowlist-Adresse
+            # verlangt bei offener Registrierung ohnehin die Bestätigung (Konstruktor-Wächter).
             uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
-                                   email=email_final or None)
+                                   email=email_final or None,
+                                   email_verified=bool(inv and norm_email(inv.get("email"))))
             if inv:
                 auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
             auth.audit("signup", username, ip)

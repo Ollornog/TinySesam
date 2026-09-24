@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT UNIQUE NOT NULL,
     display_name  TEXT,
     email         TEXT,
-    -- Trägt die Adresse einen Beleg? 1 = ja (lokale Registrierung mit Bestätigungsmail, vom
-    -- Admin/CLI gesetzt, aus einem Verzeichnis), 0 = nein. Nein heisst NICHT „ungültig": Die
+    -- Trägt die Adresse einen Beleg? 1 = ja (lokale Registrierung, sobald der Bestätigungslink
+    -- eingelöst ist, oder über eine Einladung an genau diese Adresse; vom Admin/CLI gesetzt; ein
+    -- IdP mit dem Claim), 0 = nein. Nein heisst NICHT „ungültig": Die
     -- Adresse wird ganz normal geführt und weitergereicht (`Remote-Email`), sie trägt nur keine
     -- Rechte — Erst-Admin/Allowlist verlangen den Beleg (`maybe_promote_admin`). Ein IdP, der
     -- `email_verified` nicht schickt (OIDC Core 5.1: optional; Entra ID), landet damit auf 0,
@@ -40,7 +41,16 @@ CREATE TABLE IF NOT EXISTS users (
     -- Ein vom Betreiber geöffnetes Zeitfenster für die Einrichtung (Admin-Panel, Einladung).
     -- NULL/abgelaufen = zu. Der Weg für jedes Konto, dem die Betriebsart es sonst verwehrt.
     mfa_enroll_until INTEGER,
-    created_at    INTEGER NOT NULL
+    created_at    INTEGER NOT NULL,
+    -- Der Zähl-Topf des Sperrzählers (`norm_kennung`) von Name und Adresse, als Spalten mit Index
+    -- (Schema 10). `konto_mit_topf` faltete vorher bei JEDEM Aufruf alle Konten in Python: Die
+    -- Registrierung mit einer freien Adresse lief dadurch messbar länger als mit einer vergebenen
+    -- (R4-03), und `gc()` wuchs mit offenen Konten × allen Konten. Gesetzt von `create_user` und
+    -- `set_email`. NULL heisst „noch nicht gerechnet" — eine Zeile eines anderen Schreibers
+    -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
+    -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
+    topf_name     TEXT,
+    topf_mail     TEXT
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -577,7 +587,20 @@ class Store:
     #: 3 — 0.18.0: `totp_cred.last_step` (ein TOTP-Code gilt genau einmal)
     #: 4 — 0.18.0: `resource_unlock.token` trägt den sha256 statt des Klartexts
     #: 5 — `users.email_verified`: der Beleg für die Adresse, getrennt von der Adresse selbst
-    SCHEMA_VERSION = 9
+    #: 6 — `oidc_grant`: Freigabe je Anwendung (T-14)
+    #: 7 — `api_key.kind`: Automaten- und Menschen-Keys (R6-5)
+    #: 8 — `users.first_login_at`, `users.mfa_enroll_until` (R3-1) — Stand von 0.19.0
+    #: 9 — `federated_identity`: stabile Verzeichnis-Kennungen für LDAP/SAML (F-11)
+    #: 10 — `users.topf_name`/`topf_mail` mit Index und Triggern, Indizes für die Suche nach Name
+    #:      und Adresse (NOCASE); Bestand: Sperren aus dem Panel auf den Betreiber-Vermerk
+    #:      (`disabled=2`), Adressen offener Registrierungen ohne Beleg (`_migrate`)
+    SCHEMA_VERSION = 10
+
+    #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
+    #: gerechnet. Wer die Faltung in `norm_kennung` ändert, hebt `SCHEMA_VERSION` und setzt diesen
+    #: Wert gleich — sonst stünden die Töpfe des Bestands in der alten Faltung im Index, und
+    #: `konto_mit_topf` fände Namensvetter nicht mehr.
+    TOPF_SCHEMA = 10
 
     def _migrate(self):
         """Additive Migrationen für bestehende DBs: fehlende Spalten nachrüsten (idempotent).
@@ -601,7 +624,10 @@ class Store:
             "users": [("email_verified", "INTEGER NOT NULL DEFAULT 1"),
                       # Beide NULL für Bestandskonten: Wer noch kein TOTP hat, soll es beim
                       # nächsten Login einrichten können — der Riegel greift ab da (R3-1).
-                      ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER")],
+                      ("first_login_at", "INTEGER"), ("mfa_enroll_until", "INTEGER"),
+                      # NULL = noch nicht gerechnet; weiter unten für den Bestand nachgetragen.
+                      # Ohne NOT NULL: Eine ältere Fassung (Rückschritt) legt Konten weiter an.
+                      ("topf_name", "TEXT"), ("topf_mail", "TEXT")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -674,6 +700,40 @@ class Store:
                     logging.getLogger("tinysesam").info(
                         "%d Ressourcen-Freigaben verworfen (Token werden jetzt gehasht abgelegt).", weg)
 
+            # Schema 10. Die Schritte laufen in derselben Transaktion wie der Stempel unten: Bricht
+            # der Start dazwischen ab, fehlt auch der Stempel, und der nächste Start fährt sie erneut
+            # (jeder Schritt ist wiederholbar). Die Bestandsschritte laufen bei JEDEM Start, nicht nur
+            # beim Sprung über den Stempel — für das, was ein älterer Schreiber seitdem hinterlassen
+            # haben kann (`_bestand_nachziehen`).
+            ohne_topf = self.db.execute(
+                "SELECT * FROM users" + ("" if vorhanden_vorab < self.TOPF_SCHEMA else
+                                         " WHERE topf_name IS NULL OR topf_mail IS NULL")).fetchall()
+            if vorhanden_vorab < 10:
+                self._bestand_nachziehen(True, ohne_topf)
+            else:
+                try:
+                    self._bestand_nachziehen(False, ohne_topf)
+                except sqlite3.OperationalError as e:
+                    # Wie beim Topf unten: Das darf einen Start nicht verhindern, der bisher ging.
+                    # In der Transaktion liegt bei diesem Stempel nur dieser Schritt.
+                    self.db.rollback()
+                    logging.getLogger("tinysesam").warning(
+                        "Bestandsschritte nicht nachgezogen (%s): Sperren aus dem Panel einer älteren "
+                        "Fassung tragen den Betreiber-Vermerk erst nach einem Start mit "
+                        "Schreibzugriff.", e)
+            try:
+                self._toepfe_schreiben(ohne_topf)
+            except sqlite3.OperationalError:
+                # Nur lesbar (Volume schreibgeschützt eingehängt) und Zeilen eines fremden
+                # Schreibers ohne Topf: Das darf den Start nicht verhindern, der bisher auch ging —
+                # `konto_mit_topf` prüft solche Zeilen dann selbst (`_toepfe_nachtragen`). Ein
+                # Upgrade dagegen braucht die Töpfe, wie jede andere Migration ihre Spalten.
+                if vorhanden_vorab < self.TOPF_SCHEMA:
+                    raise
+                logging.getLogger("tinysesam").warning(
+                    "Zähl-Töpfe von %d Konto(en) nicht nachgetragen: Die Datenbank ist nicht "
+                    "schreibbar. Die Topf-Prüfung sieht sie trotzdem, nur langsamer.", len(ohne_topf))
+
             # Eine Datei aus der Zukunft: Diese Fassung kennt ihre Tabellen nicht vollständig
             # und würde beim Schreiben Lücken hinterlassen. Das ist kein Grund abzustürzen —
             # aber ein sehr guter, es laut zu sagen.
@@ -695,7 +755,185 @@ class Store:
                 logging.getLogger("tinysesam").warning(
                     "users.email enthält Dubletten — Eindeutigkeits-Index nicht angelegt. "
                     "Doppelte Adressen bereinigen, sonst ist Login per E-Mail mehrdeutig.")
+            # Schema 10: Jede Suche nach einer Kennung läuft über einen Index, keine durch die ganze
+            # Tabelle. Mit einem Scan hing die Laufzeit einer Registrierung davon ab, ob (und wie
+            # früh) die Adresse gefunden wird — bei vielen Konten ein Orakel für vergebene Adressen
+            # (R4-03). `get_user_by_name`/`get_user_by_email` vergleichen mit NOCASE; der
+            # UNIQUE-Index auf `username` (BINARY) und `ux_users_email` (`lower(email)`) passen
+            # dazu nicht, SQLite las deshalb jede Zeile.
+            for sql in ("CREATE INDEX IF NOT EXISTS ix_users_topf_name ON users(topf_name)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_topf_mail ON users(topf_mail)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
+                self.db.execute(sql)
+            # Ein anderer Schreiber ändert Name oder Adresse, ohne den Topf mitzuführen (eine
+            # ältere Fassung nach einem Rückschritt, die Umbenennung von Hand, zu der der
+            # Kollisions-Wächter beim Start rät): Dann ist der Topf veraltet — und NULL heisst
+            # „nachrechnen". Nur eingebaute SQL-Funktionen: Auch das sqlite3-Werkzeug und ältere
+            # Fassungen müssen weiter schreiben können (eine Python-Funktion im Trigger oder im
+            # Index-Ausdruck bräche jeden Schreiber ohne sie mit „no such function").
+            for spalte, topf in (("username", "topf_name"), ("email", "topf_mail")):
+                self.db.execute(
+                    f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
+                    f"WHEN NEW.{topf} IS OLD.{topf} "
+                    f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
             self.db.commit()
+
+    #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
+    #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
+    #: einmal ganz — das ist nur langsamer, nicht falsch (jeder Schritt ist wiederholbar).
+    PANEL_WASSERLINIE = "panel_sperren_bis"
+
+    #: Wie viele Kennungen höchstens in einem `IN (…)` stehen (SQLite bis 3.32: 999 Parameter).
+    IN_STUECK = 500
+
+    @staticmethod
+    def _uid_aus_detail(detail) -> Optional[int]:
+        """Die Konto-ID aus dem Detail einer Panel-Zeile: `uid=<id>` oder `uid=<id> …`.
+
+        Dieselbe Form, die die SQL-Fassung verglich (`detail = 'uid=' || id` oder
+        `LIKE 'uid=' || id || ' %'`): nur ASCII-Ziffern ohne führende Null, danach Ende oder ein
+        Leerzeichen. Das Panel schreibt diese Form seit 0.3.0 unverändert."""
+        kopf = str(detail or "").split(" ", 1)[0]
+        if not kopf.startswith("uid="):
+            return None
+        zahl = kopf[4:]
+        if not (zahl.isascii() and zahl.isdigit()) or zahl != str(int(zahl)):
+            return None
+        return int(zahl)
+
+    def _bestand_nachziehen(self, ab_anfang: bool, ohne_topf) -> None:
+        """Bestandsdaten auf Schema 10 heben (ohne Commit, unter `_lock` — Teil von `_migrate`).
+
+        Beim Upgrade (`ab_anfang`) für den ganzen Bestand, danach bei **jedem** Start für das, was
+        ein älterer Schreiber seitdem hinterlassen haben kann. Eine ältere Fassung öffnet eine
+        Schema-10-Datei, warnt und schreibt weiter; den Stempel lässt sie auf 10 (Rückschritt ohne
+        Sicherung). Sperrt sie in diesem Fenster im Panel, steht wieder `disabled=1` mit offenem
+        Bestätigungslink da, und hinge der Schritt am Stempel, liefe er nie wieder: Der alte Link
+        höbe die Sperre auf und meldete an (H-18, gemessen mit 0.19.0). Die Spur des älteren
+        Schreibers ist je Schritt eine andere — Audit-Zeilen seit der Wasserlinie für die Sperren,
+        Zeilen ohne Topf (`topf_name`) für die Registrierungen.
+
+        1. **Sperren aus dem Panel bekommen den Betreiber-Vermerk** (`disabled=2`). Bis zu dieser
+           Fassung schrieb die Sperre im Panel `disabled=1` — denselben Wert wie eine ausstehende
+           Bestätigung, und die hebt der Bestätigungslink auf. Bis 0.19.x verwarf die Sperre
+           dabei nicht einmal die offenen Token. Erkannt wird die Panel-Sperre am Audit-Log: Der
+           jüngste Eintrag `user_disable`/`user_enable` mit `uid=<id>` ist `user_disable`, und das
+           Konto steht auf 1 (die heutige Sperre schreibt 2, eine 1 dahinter stammt also von einem
+           älteren Schreiber). Solchen Konten werden zugleich die offenen Einmal-Token verworfen —
+           wie bei einer Sperre von heute. Gelesen wird **einmal der Reihe nach**, nur die Zeilen
+           nach der Wasserlinie (`PANEL_WASSERLINIE`, beim Upgrade ab 0): Die erste Fassung suchte
+           je gesperrtem Konto im ganzen Audit-Log (gemessen 60 s bei 1 000 000 Zeilen × 1 000
+           Konten, unter der Schreibsperre — ein zweiter Worker scheiterte am `busy_timeout`).
+           Grenzen: Eine Sperre, deren Zeile `audit_retention_days` schon gelöscht hat, bleibt
+           unerkannt; dafür sperrt `POST <admin_path>/api/users/{id}/disable` mit
+           `{"disabled": true}` erneut, ohne zu entsperren. Und in die sichere Richtung: Hebt eine
+           App eine Sperre von heute ohne Audit-Zeile auf und sperrt dann selbst (1), bevor der
+           Dienst neu startet, gilt das beim nächsten Start als Sperre des Betreibers.
+        2. **Adressen offener Registrierungen tragen keinen Beleg** (`email_verified=0`). Die
+           Registrierung legte sie mit dem Vermerk 1 an, obwohl der Link noch ausstand; seit
+           dieser Fassung setzt ihn erst der eingelöste Link. Offen heisst: gesperrt, nie
+           angemeldet, ein unbenutzter `verify_email`-Token und kein eingelöster. Sonst nähme
+           die Löschung durch einen Admin die fremd eingetippte Adresse auch aus älteren Zeilen
+           (`konto_entfernen`) — auch dann noch, wenn eine Sperre im Panel die Token verworfen
+           hat, an denen das Konto sonst als offen zu erkennen ist. Nach dem Upgrade nur für
+           Zeilen ohne Topf (die legt nur ein fremder Schreiber an) und für die Konten aus
+           Schritt 1. Schritt 2 läuft vor Schritt 1, der genau diese Token verwirft."""
+        log = logging.getLogger("tinysesam")
+        # Lesen und Schreiben unter EINER Schreibsperre: Ein zweiter Worker, der gerade einen
+        # Bestätigungslink einlöst, sieht die Sperre davor oder danach, nicht dazwischen. Beim
+        # Upgrade hält `_migrate` die Transaktion schon (DELETE oben).
+        if not self.db.in_transaction:
+            self.db.execute("BEGIN IMMEDIATE")
+        zeile = self.db.execute("SELECT seq FROM sqlite_sequence WHERE name='audit'").fetchone()
+        bis = int(zeile[0]) if zeile and zeile[0] else 0
+        gespeichert = self.db.execute("SELECT value FROM setting WHERE key=?",
+                                      (self.PANEL_WASSERLINIE,)).fetchone()
+        gespeichert = gespeichert[0] if gespeichert else None
+        ab = 0
+        if not ab_anfang and gespeichert is not None and str(gespeichert).isdigit():
+            ab = int(gespeichert)
+        if ab > bis:
+            ab = 0          # Zähler kleiner als die Wasserlinie (Tabelle neu angelegt): alles lesen
+        juengstes = {}
+        for ereignis, detail in self.db.execute(
+                "SELECT event, detail FROM audit WHERE id > ? AND id <= ? "
+                "AND event IN ('user_disable', 'user_enable') ORDER BY id", (ab, bis)):
+            uid = self._uid_aus_detail(detail)
+            if uid is not None:
+                juengstes[uid] = ereignis
+        kandidaten = sorted(uid for uid, ereignis in juengstes.items() if ereignis == "user_disable")
+
+        def stuecke(ids):
+            ids = list(ids)
+            for i in range(0, len(ids), self.IN_STUECK):
+                teil = ids[i:i + self.IN_STUECK]
+                yield teil, ",".join("?" * len(teil))
+
+        adressen = 0
+        ziel = None if ab_anfang else {z["id"] for z in ohne_topf} | set(kandidaten)
+        if ziel is None or ziel:
+            offen = sorted(z[0] for z in self.db.execute(
+                "SELECT user_id FROM magic_token WHERE purpose = 'verify_email' AND user_id IS NOT NULL "
+                "GROUP BY user_id HAVING SUM(used_at IS NULL) > 0 AND SUM(used_at IS NOT NULL) = 0")
+                if ziel is None or z[0] in ziel)
+            for teil, ph in stuecke(offen):
+                adressen += self.db.execute(
+                    f"UPDATE users SET email_verified=0 WHERE id IN ({ph}) AND email_verified <> 0 "
+                    "AND disabled <> 0 AND first_login_at IS NULL", teil).rowcount
+        panel = []
+        for teil, ph in stuecke(kandidaten):
+            ids = [z[0] for z in self.db.execute(
+                f"SELECT id FROM users WHERE id IN ({ph}) AND disabled = ?",
+                (*teil, self.GESPERRT_BESTAETIGUNG))]
+            if not ids:
+                continue
+            ph = ",".join("?" * len(ids))
+            self.db.execute(f"UPDATE users SET disabled=? WHERE id IN ({ph}) AND disabled = ?",
+                            (self.GESPERRT_BETREIBER, *ids, self.GESPERRT_BESTAETIGUNG))
+            self.db.execute(f"DELETE FROM magic_token WHERE user_id IN ({ph}) AND used_at IS NULL", ids)
+            panel += ids
+        if gespeichert is None or str(gespeichert) != str(bis):
+            self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                            (self.PANEL_WASSERLINIE, str(bis)))
+        if ab_anfang and (adressen or panel):
+            log.info("Schema 10: %d Sperre(n) aus dem Panel tragen jetzt den Betreiber-Vermerk (offene "
+                     "Einmal-Token verworfen), %d Adresse(n) offener Registrierungen gelten bis zur "
+                     "Bestätigung als unbelegt.", len(panel), adressen)
+        elif adressen or panel:
+            log.warning("Eine ältere TinySesam-Fassung hat in diese Datenbank geschrieben (Rückschritt "
+                        "ohne Sicherung?): %d Sperre(n) aus ihrem Panel tragen jetzt den "
+                        "Betreiber-Vermerk (offene Einmal-Token verworfen), %d Adresse(n) ihrer "
+                        "offenen Registrierungen gelten bis zur Bestätigung als unbelegt.",
+                        len(panel), adressen)
+
+    def _toepfe_schreiben(self, zeilen) -> None:
+        """`topf_name`/`topf_mail` für diese Kontozeilen rechnen (ohne Commit, unter `_lock`).
+
+        Geschrieben wird nur, wenn Name und Adresse noch die gelesenen sind: Ändert ein anderer
+        Schreiber sie dazwischen, setzt sein Trigger den Topf auf NULL, und der nächste Aufruf
+        rechnet neu — statt dass hier der Topf des alten Namens stehen bliebe."""
+        self.db.executemany(
+            "UPDATE users SET topf_name=?, topf_mail=? WHERE id=? AND username IS ? AND email IS ?",
+            [(norm_kennung(z["username"]), norm_kennung(z["email"]), z["id"], z["username"], z["email"])
+             for z in zeilen])
+
+    def _toepfe_nachtragen(self) -> list:
+        """Fehlende Zähl-Töpfe nachtragen — die Zeilen eines anderen Schreibers (s. `topf_name`).
+
+        Gibt die Zeilen zurück, die sich NICHT schreiben liessen (Datenbank nur lesbar, gesperrt);
+        die prüft der Aufrufer selbst. Im Normalfall ist das nichts, und es kostet eine Abfrage
+        über den Index — unabhängig davon, welche Kennung gerade gesucht wird."""
+        offen = self._all("SELECT * FROM users WHERE topf_name IS NULL OR topf_mail IS NULL")
+        if not offen:
+            return []
+        try:
+            with self._schreibend():
+                self._toepfe_schreiben(offen)
+                self.db.commit()
+        except sqlite3.Error:
+            return offen
+        return []
 
     def _one(self, sql, args=()):
         with self._lock:
@@ -799,12 +1037,14 @@ class Store:
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
                     is_service=False, email_verified=True) -> int:
+        mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
-            "is_service, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (username, display_name or username, norm_email(email), 1 if email_verified else 0,
+            "is_service, created_at, topf_name, topf_mail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
-             json.dumps(list(roles or [])), 1 if is_service else 0, _now()))
+             json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
+             norm_kennung(username), norm_kennung(mail)))
         return cur.lastrowid
 
     def set_email(self, user_id, email, verified: bool = False):
@@ -823,9 +1063,10 @@ class Store:
         ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
         `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
         damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
-        trägt."""
-        self._exec("UPDATE users SET email=?, email_verified=? WHERE id=?",
-                   (norm_email(email), 1 if verified else 0, user_id))
+        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Anweisung mit."""
+        mail = norm_email(email)
+        self._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=?",
+                   (mail, 1 if verified else 0, norm_kennung(mail), user_id))
 
     def set_email_verified(self, user_id, verified: bool):
         """Den Beleg für die Adresse vermerken (`users.email_verified`).
@@ -893,13 +1134,16 @@ class Store:
         stehen: Ob sie davor oder danach kamen, lässt sich nicht entscheiden, und Stehenlassen
         ist hier die sichere Richtung (sie verfallen mit dem Sperrfenster).
 
-        `adresse_unbefristet=True` nimmt eine **bestätigte** Adresse davon aus: Sie gehört
-        nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die Einladung, die zu
-        dem Konto führte). Das ist die bewusste Löschung durch einen Admin
+        `adresse_unbefristet=True` nimmt eine **belegte** Adresse davon aus (`adresse_belegt`):
+        Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
+        Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
         (`TinySesam.delete_user`, H-13) — kein Weg, den ein Anonymer auslöst. `gc()`, die
         Rücknahme und `purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
-        Grenze auch für die Adresse (die bei einer Registrierung ja als „bestätigt" angelegt
-        wird, bis der Link sie freischaltet).
+        Grenze auch für die Adresse. Und auch bei der Löschung durch einen Admin nur für eine
+        BELEGTE Adresse: Die eines offenen Kontos (Registrierung, Link nie eingelöst) oder
+        einer Registrierung ohne Bestätigungspflicht hat ein Fremder eingetippt — ohne diese
+        Unterscheidung schrieb das Aufräumen solcher Konten im Panel die Einladung des Admins
+        und die Fehlversuche der echten Inhaberin von VOR der Anlage auf `gelöscht#<id>` um.
 
         Die Anmeldeversuche eines Zähl-Topfs (`norm_kennung`), den ein VERBLEIBENDES Konto
         teilt, bleiben stehen (s. `delete_attempts_for`).
@@ -912,12 +1156,33 @@ class Store:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
         seit, seit_id = self.anlage_grenze(u)
-        unbefristet = (mail,) if (adresse_unbefristet and mail and u["email_verified"]) else ()
+        unbefristet = (mail,) if (adresse_unbefristet and self.adresse_belegt(u)) else ()
         self.delete_user(user_id)
         self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet)
         ersatz = ersatzname(user_id)
         return ersatz, self.audit_anonymisieren(name, ersatz, (mail,), seit=seit, seit_id=seit_id,
                                                 unbefristet=unbefristet)
+
+    def adresse_belegt(self, user) -> bool:
+        """Gehört die Adresse dieses Kontos nachweislich ihm? (`konto_entfernen`, H-13)
+
+        Der Vermerk `email_verified` UND keine ausstehende Bestätigung: Ein offenes Konto —
+        gesperrt, ein unbenutzter `verify_email`-Token und kein eingelöster — trägt eine Adresse,
+        die jemand eingetippt und nie bestätigt hat. Die Registrierung legt sie seit Schema 10
+        ohne Vermerk an (den setzt erst der eingelöste Link), und `_migrate` holt das für
+        offene Registrierungen aus dem Bestand nach. Die Token-Prüfung hier fängt zusätzlich
+        eine App, die `create_user` mit der Vorgabe `email_verified=True` ruft und danach selbst
+        einen Bestätigungslink verschickt."""
+        if not (user["email"] and user["email_verified"]):
+            return False
+        if not user["disabled"]:
+            return True
+        offen = self._one(
+            "SELECT 1 AS x FROM magic_token WHERE user_id=? AND purpose='verify_email' "
+            "  AND used_at IS NULL "
+            "  AND NOT EXISTS (SELECT 1 FROM magic_token WHERE user_id=? AND purpose='verify_email' "
+            "      AND used_at IS NOT NULL) LIMIT 1", (user["id"], user["id"]))
+        return offen is None
 
     def anlage_grenze(self, user) -> tuple[int, int]:
         """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)`.
@@ -932,32 +1197,54 @@ class Store:
         zählt die ganze Sekunde.
 
         Gesucht wird die Zeile nur in der Sekunde der Anlage und der nächsten (das Passwort wird
-        NACH dem Anlegen gehasht, die Zeile kann eine Sekunde später stehen). Eine spätere
-        `signup_taken`-Zeile unter demselben Namen — jemand registriert sich mit der Adresse
-        eines Kontos, dessen Benutzername sie ist — ist nicht die Anlage und verschiebt nichts.
+        NACH dem Anlegen gehasht, die Zeile kann eine Sekunde später stehen). Eine
+        `signup_taken`-Zeile zählt nur, wenn sie die Anlage eines **Platzhalters** war: Der
+        Platzhalter trägt keine Adresse, und seine Zeile nennt im Detail die Adresse, die nicht
+        sein Name ist. Die andere `signup_taken`-Zeile — jemand registriert sich mit einer
+        Adresse, die schon einem Konto als Benutzername gehört (Name = Adresse), und dabei
+        entsteht kein Konto — steht unter genau diesem Namen, auch in derselben oder der
+        nächsten Sekunde. Sie ist nicht die Anlage und verschiebt nichts; als Anker genommen,
+        fiele die `user_create`-Zeile des Admins aus der Anonymisierung.
 
         Filter für SQL: `ts > seit OR (ts = seit AND id >= seit_id)`."""
         seit = int(user["created_at"] or 0)
-        anker = self._one(
-            "SELECT MIN(id) AS a FROM audit WHERE event IN ('signup', 'signup_taken') "
-            "AND lower(username) = lower(?) AND ts BETWEEN ? AND ?",
-            (str(user["username"]), seit, seit + 1))
-        return seit, int((anker["a"] if anker else None) or 0)
+        platzhalter = not user["email"]
+        for z in self._all(
+                "SELECT id, event, username, detail FROM audit WHERE event IN ('signup', 'signup_taken') "
+                "AND lower(username) = lower(?) AND ts BETWEEN ? AND ? ORDER BY id",
+                (str(user["username"]), seit, seit + 1)):
+            if z["event"] == "signup" or (
+                    platzhalter and norm_email(z["username"]) != norm_email(z["detail"])):
+                return seit, int(z["id"])
+        return seit, 0
 
     def konto_mit_topf(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
         """Das erste Konto, dessen Name oder Adresse in denselben Zähl-Topf fällt wie `kennung`.
 
         Der Topf ist `norm_kennung` (Python-`lower()`), die Namensprüfung der Datenbank dagegen
         `COLLATE NOCASE` — und das faltet nur ASCII. `Émile` und `émile` sind für SQLite zwei
-        Namen, für den Sperrzähler einer. Die Abfrage läuft deshalb in Python, nicht in SQL.
+        Namen, für den Sperrzähler einer. Deshalb führt jedes Konto seinen Topf als Spalte
+        (`topf_name`/`topf_mail`, gerechnet in Python), und gesucht wird über deren Index.
+
+        Bis Schema 10 lief die Suche als Schleife über ALLE Konten in Python — bei jeder
+        Registrierung, und bei der mit einer freien Adresse zweimal öfter als bei der mit einer
+        vergebenen: Ab einigen tausend Konten verriet die Antwortzeit einer einzigen Anfrage,
+        ob eine Adresse ein Konto hat (R4-03), und `gc()` wuchs mit offenen × allen Konten.
+        Die Arbeit hier hängt jetzt weder von der Zahl der Konten ab noch davon, ob und wo die
+        Kennung gefunden wird (tests/test_audit_runde2.py zählt die SQLite-Schritte).
         `ausser` lässt ein Konto aus (die ID, um die es gerade geht)."""
         topf = norm_kennung(kennung)
         if not topf:
             return None
-        for z in self._all("SELECT * FROM users ORDER BY id"):
-            if z["id"] != ausser and topf in (norm_kennung(z["username"]), norm_kennung(z["email"])):
-                return z
-        return None
+        # Zeilen, deren Topf sich nicht nachtragen liess (Datenbank nur lesbar), prüft Python —
+        # im Normalfall keine.
+        treffer = [z for z in self._toepfe_nachtragen()
+                   if z["id"] != ausser and topf in (norm_kennung(z["username"]), norm_kennung(z["email"]))]
+        z = self._one("SELECT * FROM users WHERE (topf_name = ? OR topf_mail = ?) AND id IS NOT ? "
+                      "ORDER BY id LIMIT 1", (topf, topf, ausser))
+        if z is not None:
+            treffer.append(z)
+        return min(treffer, key=lambda t: t["id"]) if treffer else None
 
     def delete_user(self, user_id):
         """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
@@ -1021,10 +1308,13 @@ class Store:
         die Sperre einer ausstehenden Bestätigung, die `bestaetigung_freischalten` aufhebt — und
         die stuft eine schon bestehende Sperre des Betreibers nicht herab.
 
-        Sperren aus Fassungen vor dieser Unterscheidung tragen 1. Ihre offenen Einmal-Token hat
-        die Sperre damals schon verworfen (H-18); ein Link, der erst danach entsteht (die App ruft
-        `send_verify_email` für ein gesperrtes Konto), hebt sie noch auf — eine erneute Sperre im
-        Panel trägt den Vermerk."""
+        Sperren aus Fassungen vor dieser Unterscheidung tragen 1 — und bis 0.19.x verwarf die
+        Sperre im Panel die offenen Einmal-Token nicht, ein ausstehender Bestätigungslink hätte
+        sie nach dem Upgrade also aufgehoben. Die Migration auf Schema 10 (`_bestand_nachziehen`)
+        hebt deshalb jede Sperre, die das Audit-Log als Panel-Sperre kennt, auf 2 und verwirft
+        dabei die offenen Token. Eine Sperre, deren Zeile schon gelöscht ist
+        (`audit_retention_days`), bleibt 1; `POST <admin_path>/api/users/{id}/disable` mit
+        `{"disabled": true}` setzt den Vermerk, ohne dazwischen zu entsperren."""
         if not disabled:
             self._exec("UPDATE users SET disabled=0 WHERE id=?", (user_id,))
         elif durch_betreiber:
