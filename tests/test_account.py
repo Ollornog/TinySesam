@@ -258,10 +258,12 @@ ok("Konto-Seite: jedes API-Feld im Markup läuft durch esc0")
 # Mit node die echten Listen-Funktionen gegen präparierte Namen laufen lassen — die Wirkung,
 # nicht nur der Quelltext.
 import json as _json  # noqa: E402
-import shutil as _shutil  # noqa: E402
 import subprocess as _sp  # noqa: E402
+from voraussetzung import pflicht_werkzeug  # noqa: E402
 
-_node = _shutil.which("node")
+# Fehlt node, ist das rot, nicht still übersprungen (s. `pflicht_werkzeug`).
+# (Mutationsprobe: mit PATH ohne node laufen lassen → rot; mit TINYSESAM_OHNE_NODE=1 → ⚠-Zeile.)
+_node = pflicht_werkzeug("node", "Konto-Seite: Listen-Funktionen gegen präparierte Namen")
 if _node:
     _boese = '<img src=x onerror=alert(1)>"\'&'
     _daten = {"/auth/apikeys": [{"id": 7, "prefix": "ts_ab", "name": _boese, "revoked": 0}],
