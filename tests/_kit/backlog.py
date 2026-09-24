@@ -33,6 +33,20 @@ from __future__ import annotations
 import os
 import re
 
+
+# Stufe 3 (M-1): Fallzahl je Prüfung. Einzeln per Pfad geladen (so lädt `repokit` selbst
+# `manifest.py`) gibt es kein Paket und damit keine Zählung — dann bleibt alles wie vorher.
+try:
+    from .hygiene import LEER_IST_AUSSAGE, mit_fallzahl, zaehle_fall
+except ImportError:  # pragma: no cover — nur beim Laden ohne Paket
+    LEER_IST_AUSSAGE: set = set()
+
+    def mit_fallzahl(name, fn):
+        return fn
+
+    def zaehle_fall(n=1):
+        return None
+
 # `zeilen_wie_grep` statt `splitlines()` — U+2028 verschiebt sonst jede Zeilennummer
 # (Register 2026-09-23). Eine Quelle, nicht zwei Fassungen desselben Schnitts.
 from . import hygiene
@@ -99,6 +113,7 @@ def lade(root: str = ".") -> list[dict]:
 def pruefe_backlog(root: str = ".") -> list[str]:
     """Alle Strukturprüfungen. Leere Liste = sauber."""
     eintraege = lade(root)
+    zaehle_fall(len(eintraege))
     if not eintraege:
         return []
     fehler: list[str] = []
@@ -151,6 +166,7 @@ def pruefe_backlog(root: str = ".") -> list[str]:
 def pruefe_keine_zyklen(root: str = ".") -> list[str]:
     """`blocked_by` darf keinen Kreis bilden — sonst ist nichts mehr startbar."""
     eintraege = lade(root)
+    zaehle_fall(len(eintraege))
     kanten = {}
     for e in eintraege:
         b = e.get("blocked_by") or []
@@ -209,6 +225,7 @@ def pruefe_backlog_vorhanden(root: str = ".") -> list[str]:
     gesyncte Repo das Verzeichnis. Fehlt es, hat jemand es entfernt oder nie gesynct.
     """
     verz = os.path.join(root, BACKLOG_DIR)
+    zaehle_fall()
     if os.path.isdir(verz):
         return []
     return [f"{BACKLOG_DIR}/ fehlt — jede Backlog-Pruefung laeuft damit ueber eine leere "
@@ -226,3 +243,14 @@ def alle_pruefungen(root: str = ".") -> list[str]:
     return (pruefe_backlog(root)
             + pruefe_keine_zyklen(root)
             + offene_gegen_erledigten_milestone(root))
+
+
+# Ein LEERES backlog/ ist eine wahre Aussage („keine offenen Punkte"), kein Nichtsehen — die
+# Entscheidung aus T-1, belegt durch `test_leerer_backlog_ist_sauber`. Ein FEHLENDES meldet
+# `pruefe_backlog_vorhanden` selbst.
+LEER_IST_AUSSAGE.update({"backlog.pruefe_backlog", "backlog.pruefe_keine_zyklen"})
+
+# Jede Prüfung dieses Moduls zählt ihre Fälle (M-1, Stufe 3) — Auswertung: hygiene.pruefe_etwas_gesehen.
+pruefe_backlog = mit_fallzahl("backlog.pruefe_backlog", pruefe_backlog)
+pruefe_keine_zyklen = mit_fallzahl("backlog.pruefe_keine_zyklen", pruefe_keine_zyklen)
+pruefe_backlog_vorhanden = mit_fallzahl("backlog.pruefe_backlog_vorhanden", pruefe_backlog_vorhanden)

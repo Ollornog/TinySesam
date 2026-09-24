@@ -13,6 +13,7 @@ so passt derselbe Code in ein `assert not pruefe_...(...)` wie in ein sammelndes
 from __future__ import annotations
 
 import ast
+import functools
 import glob
 import hashlib
 import json
@@ -46,13 +47,62 @@ def getrackte_dateien(root: str) -> list[str]:
     return [n for n in out.stdout.decode("utf-8").split("\0") if n]
 
 
+# ---------------------------------------------------------------------------
+# Stufe 3 (M-1): Hat eine Prüfung überhaupt etwas GESEHEN?
+# ---------------------------------------------------------------------------
+# Eine Prüfung über eine leere Menge ist immer fehlerfrei. Ob „keine Befunde" heißt
+# „nichts da" oder „nichts angesehen", stand bis 0.22.0 in keiner Ausgabe. Jede Prüfung
+# zählt deshalb ihre FÄLLE mit: gelesene Dateien zählen von selbst (über `_lies`), alles
+# andere zählt die Prüfung ausdrücklich mit `zaehle_fall`. `pruefe_etwas_gesehen` wertet
+# das am Ende des Laufs aus.
+#
+# Gemessen, bevor es scharf wurde (2026-09-24, alle acht Repos): kein Repo hatte eine Prüfung,
+# die still null Fälle sah. Die Messung selbst lief aber einmal in genau diese Falle: Der
+# Prüfbaum war per `git archive` gebaut, das `export-ignore` respektiert. In einem Repo mit
+# `/.github export-ignore` fehlte dadurch `.github/`, und fünf Workflow-Prüfungen lasen NULL Dateien und waren grün. Dieselbe
+# Falle hatte `ci-local` am 2026-09-21 schon einmal, und es gibt sie überall, wo jemand eine
+# Dateiliste anders baut als gedacht.
+GESEHEN: dict[str, list[int]] = {}       # Prüfung → Fallzahl je Aufruf, in diesem Prozess
+LEER_IST_AUSSAGE: set[str] = set()       # Prüfungen, bei denen „null Fälle" eine WAHRE Aussage ist
+_LAUFEND: list[list] = []                # Stapel [Name, Zähler] der gerade laufenden Prüfungen
+
+
+def zaehle_fall(n: int = 1) -> None:
+    """Der laufenden Prüfung `n` angesehene Fälle gutschreiben (außerhalb einer Prüfung: nichts)."""
+    if _LAUFEND:
+        _LAUFEND[-1][1] += n
+
+
+def mit_fallzahl(name: str, fn):
+    """Hülle um eine Prüfung: legt je Aufruf die Fallzahl in `GESEHEN` ab.
+
+    Die Rückgabe bleibt unverändert, die Prüfung bleibt also in `assert not …` wie in
+    `r.check(…)` verwendbar. Verschachtelte Prüfungen zählen je für sich.
+    """
+    @functools.wraps(fn)
+    def huelle(*args, **kwargs):
+        _LAUFEND.append([name, 0])
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _, n = _LAUFEND.pop()
+            GESEHEN.setdefault(name, []).append(n)
+    huelle.__fallzahl__ = name
+    return huelle
+
+
 def _lies(root: str, rel: str) -> str | None:
-    """Textinhalt oder None, wenn die Datei binär/unlesbar ist."""
+    """Textinhalt oder None, wenn die Datei binär/unlesbar ist.
+
+    Jede gelesene Datei ist ein angesehener Fall der gerade laufenden Prüfung.
+    """
     try:
         with open(os.path.join(root, rel), encoding="utf-8") as fh:
-            return fh.read()
+            inhalt = fh.read()
     except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
         return None
+    zaehle_fall()
+    return inhalt
 
 
 def _texte(root: str, dateien: list[str], policy: dict, mit_selbst: bool = False):
@@ -83,6 +133,7 @@ def pruefe_artefakte(dateien: list[str], policy: dict) -> list[str]:
     verzeichnisse = set(policy["artefakt_verzeichnisse"])
     endungen = tuple(policy["artefakt_endungen"])
     treffer = []
+    zaehle_fall(len(dateien))
     for rel in dateien:
         segmente = rel.split("/")
         if (any(t in rel for t in teile)
@@ -137,7 +188,18 @@ def pruefe_private_infrastruktur(root: str, dateien: list[str], policy: dict,
     wort = re.compile(r"[a-z][a-z0-9-]{3,}")
 
     treffer = []
-    for rel, inhalt in _texte(root, dateien, policy):
+    # Der KIT-QUELLTEXT ist seit 0.22.0 von dieser Prüfung nie ausgenommen. Die Selbstausnahmen
+    # (Policy, Kit-Code, Hygiene-Test, Mutationsvorlagen) brauchen die Geheimnis- und
+    # Adressprüfungen, weil dort Beispielhosts und Muster im Klartext stehen MÜSSEN. Der Kit-Code
+    # braucht sie hier nicht: Die geschützten Namen stehen nur als Prüfsumme in der Policy. Er ist
+    # aber das, was `repokit sync` verteilt. Gefunden am eigenen Fehler: Ein Kundenname im
+    # KOMMENTAR von hygiene.py lief an jedem Zaun vorbei und wäre in sieben Repos gelandet, sechs
+    # davon öffentlich. Vorher gemessen über alle acht Repos: Mit dieser Änderung meldet die Prüfung
+    # dort nichts außer genau diesem Kommentar.
+    ohne_kit = dict(policy)
+    ohne_kit["selbst_ausnahmen"] = [a for a in policy["selbst_ausnahmen"]
+                                    if not re.search(r"(^|/)_kit/[^/]+\.py$", a)]
+    for rel, inhalt in _texte(root, dateien, ohne_kit):
         for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
             sauber = erlaubt.sub("", zeile)
             for pat in muster:
@@ -667,6 +729,7 @@ def pruefe_run_all_sammelt_automatisch(root: str) -> list[str]:
 
 def pruefe_ausfuehrbar(root: str, pfade: list[str]) -> list[str]:
     treffer = []
+    zaehle_fall(len(pfade))
     for rel in pfade:
         voll = os.path.join(root, rel)
         if not os.path.exists(voll):
@@ -677,6 +740,7 @@ def pruefe_ausfuehrbar(root: str, pfade: list[str]) -> list[str]:
 
 
 def pruefe_pflichtdateien(root: str, namen: list[str]) -> list[str]:
+    zaehle_fall(len(namen))
     return [n for n in namen if not os.path.exists(os.path.join(root, n))]
 
 
@@ -927,6 +991,9 @@ def pruefe_requires_python(root: str, quelle: dict | None = None,
     m = re.search(r"^requires-python\s*=\s*['\"]([^'\"]+)['\"]", inhalt, re.M)
     if not m:
         return []
+    # Erst eine gefundene Angabe ist ein Fall. Fehlt die Datei oder die Zeile, kehrt die
+    # Prüfung oben still zurück — mit null Fällen, und das sieht `pruefe_etwas_gesehen`.
+    zaehle_fall()
     ist = m.group(1).replace(" ", "")
     if ist != f">={soll}":
         return [f"{datei}: requires-python = \"{m.group(1)}\" — die Matrix beginnt bei "
@@ -970,6 +1037,7 @@ def pruefe_python_matrix_regel(quelle: dict | None = None,
     ober = q["obergrenze"]["version"]
 
     treffer = []
+    zaehle_fall(len(matrix))
     if ober not in rel:
         return [f"obergrenze {ober} steht in keiner Release-Zeile"]
 
@@ -1228,6 +1296,7 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
     muster = os.path.join(root, testverzeichnis, "test_*")
     dateien = sorted(d for d in _glob.glob(muster)
                      if os.path.isfile(d) and not d.endswith((".pyc", ".orig")))
+    zaehle_fall(len(dateien))
     if not dateien:
         # ⚠️ NICHT SCHWEIGEN. Gemeldet von derselben Kunden-Session, die den Anlass-Befund
         # lieferte — und sie hatte den Fehler am selben Abend im eigenen Werkzeug:
@@ -1349,6 +1418,7 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
                     continue
     text = "\n".join(quelle)
 
+    zaehle_fall(len(angeboten))
     for name in sorted(angeboten):
         if name in ausgenommen:
             continue
@@ -1386,6 +1456,7 @@ def pruefe_dateiliste_plausibel(dateien: list[str], mindestens: int = 5,
     `mindestens` bleibt als Notnagel für den Fall, dass kein git erreichbar ist.
     """
     treffer = []
+    zaehle_fall(len(dateien))
     if len(dateien) < mindestens:
         treffer.append(f"nur {len(dateien)} getrackte Datei(en) gefunden (erwartet: "
                        f"mindestens {mindestens}) — die Hygiene-Prüfungen hätten nichts "
@@ -1647,6 +1718,7 @@ def pruefe_belegstellen_eng(root: str, dateien: list[str],
     Beleg. Der Rest ist Sichtung durch einen Menschen, und die Liste gehoert entsprechend eng.
     """
     treffer = []
+    zaehle_fall(len(belegstellen or []))
     if not belegstellen:
         return treffer
     code = (".py", ".sh", ".yml", ".yaml", ".go", ".php", ".js", ".ts", ".toml",
@@ -1785,6 +1857,7 @@ def pruefe_policy_schluessel_gelesen(policy: dict,
                        "und waere aus dem falschen Grund gruen")
         return treffer
 
+    zaehle_fall(sum(1 for k in policy if not str(k).startswith("_")))
     for name in sorted(k for k in policy if not str(k).startswith("_")):
         muster = (rf'\[\s*["\']{re.escape(name)}["\']\s*\]'
                   rf'|\.get\(\s*["\']{re.escape(name)}["\']')
@@ -1830,6 +1903,7 @@ def pruefe_zeilennummern_wie_grep(kit_verzeichnis: str | None = None) -> list[st
         except (OSError, SyntaxError) as fehler:
             treffer.append(f"{name}: nicht lesbar ({fehler}) — nicht geprueft")
             continue
+        zaehle_fall()
         for knoten in _ast.walk(baum):
             if isinstance(knoten, _ast.Call) and isinstance(knoten.func, _ast.Attribute) \
                     and knoten.func.attr == "splitlines":
@@ -2044,6 +2118,7 @@ def pruefe_dateien_geschlossen(kit_verzeichnis: str | None = None) -> list[str]:
         except (OSError, SyntaxError) as fehler:
             treffer.append(f"{name}: nicht lesbar ({fehler}) — nicht geprueft")
             continue
+        zaehle_fall()
         im_with = set()
         for knoten in _ast.walk(baum):
             if isinstance(knoten, _ast.With):
@@ -2113,6 +2188,7 @@ def pruefe_tabelle_vollstaendig(kit_verzeichnis: str | None = None) -> list[str]
         except (OSError, SyntaxError) as fehler:
             treffer.append(f"Kit-Modul {modul} nicht lesbar: {fehler}")
             continue
+        zaehle_fall()
         for knoten in baum.body:
             if not isinstance(knoten, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -2175,6 +2251,7 @@ def pruefe_fixture_deckt_muster(policy: dict,
 
     muster = grep_muster(policy)
     ausnahmen = [re.compile(a) for a in grep_ausnahmen(policy)]
+    zaehle_fall(len(muster))
 
     def trifft(regex, zeilen: list[str]) -> list[str]:
         r = re.compile(regex)
@@ -2193,3 +2270,73 @@ def pruefe_fixture_deckt_muster(policy: dict,
                 f"{FIXTURE_SAUBER}: Fehlalarm auf einem Platzhalter ({z[:40]}…) — "
                 "ein Waechter, dem man nicht glaubt, wird abgeschaltet")
     return befunde
+
+
+# ---------------------------------------------------------------------------
+# Stufe 3 (M-1): die Auswertung — und die Hülle um jede Prüfung
+# ---------------------------------------------------------------------------
+# Leere Ausnahmeliste = keine zu weite Ausnahme. Das ist eine wahre Aussage, kein Nichtsehen.
+LEER_IST_AUSSAGE.add("pruefe_belegstellen_eng")
+
+
+def pruefe_etwas_gesehen(leer_erlaubt: dict[str, str] | None = None) -> list[str]:
+    """Hat jede Kit-Prüfung dieses Laufs mindestens einen Fall angesehen?
+
+    **Als LETZTE Prüfung rufen.** Sie wertet aus, was die Prüfungen davor in diesem Prozess
+    gezählt haben (`GESEHEN`).
+
+    WARUM (M-1, Stufe 3): *Eine Prüfung, die null Fälle gesehen hat, ist rot — nicht grün.*
+    Stufe 1 (`pruefe_kit_prueffunktionen_gerufen`) belegt, dass eine Prüfung gerufen wird,
+    Stufe 2 (`repokit gegenprobe`), dass sie anschlagen KANN. Keine von beiden sieht, ob sie
+    in diesem Lauf etwas VOR SICH hatte. Eine leere Dateiliste, ein falscher `root` oder ein
+    Prüfbaum ohne `.github/` (per `git archive` gebaut, `export-ignore`) lässt jede Prüfung
+    grün durchlaufen.
+
+    Zwei Fälle sind zu trennen, das war die Lehre aus T-1:
+
+    - **nicht anwendbar** (nichts da, worüber geurteilt werden könnte): das MELDET diese
+      Prüfung. Ist es gewollt, steht es mit Grund in `leer_erlaubt`:
+
+          leer_erlaubt={"pruefe_requires_python": "kein Python-Paket, nur Skripte"}
+
+    - **anwendbar, nichts gefunden** (z. B. ein leeres `backlog/`, eine leere Ausnahmeliste):
+      das ist eine wahre Aussage. Solche Prüfungen tragen sich selbst in `LEER_IST_AUSSAGE`
+      ein und werden hier nie gemeldet.
+
+    Grenze, ehrlich benannt: Gezählt wird, was eine Prüfung ANGESEHEN hat (gelesene Dateien,
+    beurteilte Einträge), nicht, ob darin ihr Gegenstand vorkam. Eine Workflow-Prüfung, die
+    drei Workflows liest, von denen keiner eine Matrix hat, hat drei Fälle gesehen.
+    """
+    leer_erlaubt = leer_erlaubt or {}
+    treffer = []
+    for name, grund in sorted(leer_erlaubt.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {name!r} ohne Begründung — ein Grund ist Pflicht")
+    if not GESEHEN:
+        return treffer + [
+            ("vor pruefe_etwas_gesehen lief in diesem Prozess KEINE Kit-Prüfung — sie muss als "
+             "letzte gerufen werden, sonst misst sie nichts und wäre aus dem falschen Grund grün")]
+    for name in sorted(GESEHEN):
+        zahlen = GESEHEN[name]
+        leer = sum(1 for z in zahlen if z == 0)
+        if not leer or name in LEER_IST_AUSSAGE or name in leer_erlaubt:
+            continue
+        wie = "hat" if len(zahlen) == 1 else f"hat in {leer} von {len(zahlen)} Aufrufen"
+        treffer.append(
+            f"{name} {wie} NULL Fälle gesehen und ist deshalb grün, ohne etwas geprüft zu haben. "
+            f"Entweder falsch verkabelt (leere Dateiliste, falscher root, Prüfbaum ohne "
+            f"`.github/` durch `export-ignore`) oder hier nicht anwendbar, dann mit Grund in "
+            f"`leer_erlaubt`")
+    for name in sorted(set(leer_erlaubt) - set(GESEHEN)):
+        treffer.append(f"Ausnahme {name!r} nennt keine Prüfung, die in diesem Lauf gelaufen ist "
+                       f"— Tippfehler, oder die Prüfung wird nicht mehr gerufen?")
+    return treffer
+
+
+# Jede Prüfung dieses Moduls bekommt die Hülle — per Schleife, nicht per Dekorator an jeder
+# Stelle, damit eine NEUE Prüfung sie nicht vergessen kann. Ausgenommen ist nur die Auswertung.
+for _name, _fn in list(globals().items()):
+    if _name.startswith("pruefe_") and _name != "pruefe_etwas_gesehen" and callable(_fn) \
+            and not hasattr(_fn, "__fallzahl__"):
+        globals()[_name] = mit_fallzahl(_name, _fn)
+del _name, _fn
