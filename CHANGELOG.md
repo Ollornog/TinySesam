@@ -2,6 +2,13 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+### Geändert
+
+- **Testbasis auf Kit 0.21.7:** Die Kit-Prüfung, die `splitlines()` sucht, schliesst ihre Dateien wieder
+  (CodeQL `file-not-closed`, in 0.20.1 als Kit-Fund abgewiesen und an der Quelle behoben).
+
 ## [0.20.1] — 2026-09-24
 
 **Sicherheits-Nachschlag — zügig einspielen, wer einen zweiten Faktor oder API-Keys nutzt.** Über
