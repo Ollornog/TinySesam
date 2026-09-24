@@ -54,7 +54,7 @@ assert c.get("/geheim").json()["u"] == "admin"
 ok("richtige PIN → eingeloggt (PIN ist vollwertiger Faktor)")
 
 # Self-Service: PIN ändern & entfernen
-assert c.post("/auth/pin/set", json={"pin": "13579"}).json() == {"ok": True}
+assert c.post("/auth/pin/set", json={"pin": "13579"}).json() == {"ok": True, "other_sessions": 0}
 assert c.post("/auth/pin/set", json={"pin": "1"}).status_code == 400   # zu kurz
 c.get("/auth/logout")
 r = c.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/"}, follow_redirects=False)
@@ -72,7 +72,7 @@ auth.store.clear_fails(username="admin")
 
 # PIN + TOTP kombiniert: PIN-Login führt in den TOTP-Schritt
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 c2 = TestClient(app)
 r = c2.post("/auth/pin", data={"username": "admin", "pin": "13579", "next": "/geheim"}, follow_redirects=False)
 assert r.status_code == 303 and "/auth/totp" in r.headers["location"]
@@ -88,7 +88,7 @@ c3.post("/auth/pin", data={"username": "admin", "pin": "13579"}, follow_redirect
 # hier also der nächste Zeitschritt (liegt im erlaubten Fenster).
 c3.post("/auth/totp", data={"code": pyotp.TOTP(secret).at(int(time.time()) + 30)},
         follow_redirects=False)
-assert c3.post("/auth/pin/disable").json() == {"ok": True}
+assert c3.post("/auth/pin/disable").json()["ok"] is True
 assert not auth.has_pin(uid)
 ok("PIN entfernen")
 

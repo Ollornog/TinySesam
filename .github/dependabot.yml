@@ -12,12 +12,17 @@ updates:
     schedule:
       interval: monthly
 
-  # Die Bibliotheks-Abhängigkeiten selbst. Bis 0.18.0 fehlten sie hier: Dependabot meldete
-  # zwar Sicherheitslücken (das tut es repo-weit), aber es gab keine regulären Versions-PRs
-  # für fastapi, authlib, python3-saml & Co. — ein Auth-Paket sollte nicht auf der Version von
-  # vorgestern sitzen bleiben, bis jemand eine Lücke findet.
+  # Gepinnte Python-Abhängigkeiten — dort, wo es Pins GIBT. Bis 0.19.0 stand hier ein Eintrag für
+  # `directory: /`, also für die `>=`-Grenzen in pyproject.toml. Der konnte nie etwas tun: Eine
+  # offene Untergrenze erlaubt jede neue Fassung schon, Dependabot sieht nichts zu heben (B4-3
+  # aus T-13). Die Frage, ob ein BODEN noch lückenfrei ist, beantwortet jetzt das Tor in
+  # .github/workflows/audit.yml (Auflösung `lowest-direct` gegen pip-audit) — rot statt PR.
+  #
+  # Was ausgeliefert oder zum Bauen benutzt wird, steht dagegen gepinnt samt Hashes, und dort
+  # hebt Dependabot die Zeilen: die Sperrliste des Gateway-Abbilds, die Bauwerkzeuge von Wheel
+  # und sdist, die Werkzeuge des Schwachstellen-Tors.
   - package-ecosystem: pip
-    directory: /
+    directories: ["/deploy/gateway", "/.github/bau", "/.github/audit"]
     schedule:
       interval: monthly
     groups:
@@ -30,6 +35,16 @@ updates:
       alle:
         patterns: ["*"]
         update-types: ["patch", "minor"]
+
+  # Der mitgelieferte Referenz-Stack (B4-12): Caddy ist der Netzrand, und sein Pin in
+  # deploy/forward-auth/docker-compose.yml alterte bis hierhin, ohne dass jemand es sah — der
+  # `docker`-Eintrag unten liest nur Dockerfiles, keine Compose-Dateien.
+  - package-ecosystem: docker-compose
+    directory: /deploy/forward-auth
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "deploy"
 
   # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
   - package-ecosystem: docker

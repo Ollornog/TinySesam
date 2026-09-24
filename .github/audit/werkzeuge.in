@@ -1,0 +1,7 @@
+# Die Werkzeuge des Schwachstellen-Tors (.github/workflows/audit.yml). Gepinnt samt Hashes
+# (requirements.txt daneben): Ein Prüfwerkzeug, das bei jedem Lauf in der gerade neuesten Fassung
+# aus dem Index kommt, ist selbst ein ungeprüfter Teil der Lieferkette.
+# Bewusst NICHT `requirements.in`: Zu diesem Namen hielte Dependabot requirements.txt für eine
+# pip-compile-Ausgabe und erzeugte sie mit pip-compile neu, statt die Zeilen samt Hashes zu heben.
+pip-audit
+uv

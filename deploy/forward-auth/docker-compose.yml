@@ -16,9 +16,26 @@
 # Rollback = alten Tag zurückschreiben. Wer es ernst meint, pinnt den Digest
 # (`ghcr.io/ollornog/tinysesam@sha256:…`) — ein Tag lässt sich umhängen, ein Digest nicht.
 # Der Digest steht im Log des release-Workflows. Es gibt bewusst kein `latest`.
+#
+# Caddy ist der Netzrand — der einzige Dienst, der aus dem Internet erreichbar ist. Bis 0.19.0
+# stand hier `caddy:2`: ein Tag, der mit jeder Caddy-Version wandert, sodass zwei `pull` desselben
+# Compose zwei verschiedene Proxys ergaben (B4-11 aus T-13). Jetzt Version UND Digest; Dependabot
+# hebt beides (Eintrag `docker-compose` in .github/dependabot.yml). Das eigene Abbild bleibt beim
+# Versions-Tag: Sein Digest entsteht erst im Release, also nach dem Commit, der ihn nennen müsste.
+#
+# Beide Dienste laufen gehärtet (`x-haertung` unten): Dateisystem nur lesbar, alle Capabilities
+# weg, kein Rechtegewinn über setuid. Geschrieben wird nur in die Volumes und in ein tmpfs.
+# `tests/test_repo.py` verlangt das für jeden Dienst dieser Datei.
+
+x-haertung: &haertung
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
 
 services:
   tinysesam:
+    <<: *haertung
     image: ghcr.io/ollornog/tinysesam:v0.19.0
     # Kein `command:` nötig — der Entrypoint startet das Gateway. Es läuft als Nicht-root
     # (uid 1000) und bringt einen HEALTHCHECK auf /healthz mit.
@@ -29,7 +46,11 @@ services:
       TINYSESAM_BASE_URL: "https://auth.example.com"
       TINYSESAM_COOKIE_DOMAIN: ".example.com"
       TINYSESAM_PROTECTED_HOSTS: "app.example.com,wiki.example.com"
-      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"       # optional: nur diese OIDC-Gruppen
+      # Wer durch das Tor darf, muss IRGENDWO begrenzt sein — sonst kommt jedes Konto beim
+      # Provider in jede Anwendung (deny-by-default, B3-9). Hier geschieht das über die
+      # Freigabe je Client beim Provider (TINYSESAM_OIDC_CLIENTS unten). Wer nur EINEN Client
+      # fährt, begrenzt mit Gruppen; ohne beides warnt TinySesam beim Start.
+      # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"
       #
       # Zwei Anwendungen, zwei Clients, EINE Installation (T-14). Wer in welche darf, steht
       # beim Provider — dort hängt die Freigabe am Client. Ohne eigene Clients gäbe es nur eine
@@ -69,7 +90,10 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2
+    <<: *haertung
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    # Die einzige Capability, die zurückkommt: Ports unter 1024 binden (80/443).
+    cap_add: [NET_BIND_SERVICE]
     ports:
       - "80:80"
       - "443:443"

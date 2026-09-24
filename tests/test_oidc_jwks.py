@@ -112,7 +112,7 @@ r.check("nach dem Mindestabstand ist sie wieder erlaubt", c2._jwks_auffrischbar(
 # `exchange()` holt ein Token, verifiziert es gegen das Set, und soll bei einem
 # Signaturfehler EINMAL neu holen und erneut versuchen.
 class FakeClaims(dict):
-    def validate(self):
+    def validate(self, *a, **k):
         pass
 
 
@@ -475,5 +475,130 @@ r.check("ohne erwartetes sub bekommt der Aufrufer nichts",
         _userinfo_mit({"sub": "u1", "groups": ["a"]}, "") == {})
 r.check("eine Antwort, die kein Objekt ist, wird verworfen",
         _userinfo_mit(["kein", "objekt"], "u1") == {})
+
+# ---------- 9) F-20/H-12: PKCE mit S256 ----------
+# Ohne PKCE war ein abgefangener Autorisierungs-Code (Referer, Proxy-Log, Browser-Verlauf)
+# einlösbar, solange der Angreifer auch das Client-Secret hat — oder in einen fremden Flow
+# injizierbar. Der Verifier bleibt im Flow-Satz; nur die Challenge reist durch den Browser.
+from urllib.parse import parse_qs as _pqs, urlparse as _up  # noqa: E402
+from tinysesam.oidc import pkce_paar  # noqa: E402
+
+_v, _ch = pkce_paar()
+_erwartet = base64.urlsafe_b64encode(hashlib.sha256(_v.encode()).digest()).rstrip(b"=").decode()
+r.check("pkce_paar: Challenge = BASE64URL(SHA256(Verifier)) ohne Auffüllung (RFC 7636 4.2)",
+        _ch == _erwartet and "=" not in _ch, f"{_ch} ≠ {_erwartet}")
+r.check("pkce_paar: Verifier 43–128 Zeichen aus dem erlaubten Alphabet",
+        43 <= len(_v) <= 128 and re.fullmatch(r"[A-Za-z0-9\-._~]+", _v) is not None, _v)
+r.check("pkce_paar: jeder Aufruf ein neues Paar", pkce_paar()[0] != _v)
+_q = _pqs(_up(frischer_client().auth_url("https://app.example.com/cb", "st", "no",
+                                         code_challenge=_ch)).query)
+r.check("auth_url trägt code_challenge und code_challenge_method=S256",
+        _q.get("code_challenge") == [_ch] and _q.get("code_challenge_method") == ["S256"], _q)
+
+_posts = []
+
+
+def _pkce_umgebung(id_token):
+    class A:
+        def __init__(self, n):
+            self._n = n
+
+        def json(self):
+            return self._n
+
+    def _post(url, **kw):
+        _posts.append(kw.get("data") or {})
+        return A({"id_token": id_token, "access_token": "at"})
+
+    sys.modules["httpx"] = types.SimpleNamespace(post=_post, get=lambda *a, **k: A(JWKS_RSA))
+
+
+echtes_httpx9 = sys.modules.get("httpx")
+try:
+    _tok9 = _vorgabe_dekoder.encode({"alg": "RS256", "kid": "k1"}, dict(NUTZLAST), privat).decode()
+    _pkce_umgebung(_tok9)
+    frischer_client().exchange("code", "https://app.example.com/cb", "n1", code_verifier=_v)
+    r.check("exchange schickt den code_verifier an den Token-Endpunkt",
+            _posts and _posts[-1].get("code_verifier") == _v, _posts)
+
+    # ---------- 10) F-25: ein ID-Token ohne `exp` gilt nicht für immer ----------
+    def _tausch(nutzlast):
+        tok = _vorgabe_dekoder.encode({"alg": "RS256", "kid": "k1"}, nutzlast, privat).decode()
+        _pkce_umgebung(tok)
+        try:
+            frischer_client().exchange("code", "https://app.example.com/cb", "n1")
+            return None
+        except Exception as e:           # noqa: BLE001 — jede Abweisung zählt hier als Nein
+            return type(e).__name__
+
+    _ohne_exp = {k: v for k, v in NUTZLAST.items() if k != "exp"}
+    r.check("F-25: ein ID-Token OHNE exp wird abgewiesen", _tausch(_ohne_exp) is not None,
+            "authlib prüft exp nur, wenn der Claim da ist — das Token gälte für immer")
+    r.check("F-25: Gegenprobe — mit exp geht dasselbe Token durch", _tausch(dict(NUTZLAST)) is None)
+
+    # ---------- 11) F-26: ein paar Sekunden Uhrvorlauf beim Provider blockieren keinen Login ----------
+    _t = int(time.time())
+    r.check("F-26: iat 30 s in der Zukunft (Provider-Uhr geht vor) wird angenommen",
+            _tausch({**NUTZLAST, "iat": _t + 30, "nbf": _t + 30}) is None,
+            "ohne leeway scheitert jeder Login, sobald die Uhr des IdP vorgeht")
+    r.check("F-26: …aber die Toleranz ist begrenzt: iat weit in der Zukunft bleibt abgewiesen",
+            _tausch({**NUTZLAST, "iat": _t + 3600, "nbf": _t + 3600}) is not None)
+    r.check("F-26: ein abgelaufenes Token (exp jenseits der Toleranz) bleibt abgewiesen",
+            _tausch({**NUTZLAST, "iat": _t - 600, "exp": _t - OIDCClient.UHR_TOLERANZ - 30}) is not None)
+finally:
+    if echtes_httpx9 is not None:
+        sys.modules["httpx"] = echtes_httpx9
+    else:
+        sys.modules.pop("httpx", None)
+
+# ---------- 12) F-24: eine Fehlerantwort des Providers wird nicht zwischengespeichert ----------
+# Discovery: seit F-13 (#55) wirft ein Nicht-200 bzw. ein fremder Issuer, BEVOR `_meta` gesetzt
+# wird. Gemessen wird hier, dass danach wirklich neu gefragt wird — sonst wäre ein Wartungsfenster
+# des Providers 24 Stunden lang ein Ausfall hier.
+echtes_httpx12 = sys.modules.get("httpx")
+try:
+    _folge = [(503, {"error": "wartung"}), (200, {"error": "server_error"}), (200, dict(META))]
+    _abrufe12 = []
+
+    def _get12(url, **kw):
+        status, dok = _folge[min(len(_abrufe12), len(_folge) - 1)]
+        _abrufe12.append(url)
+        return types.SimpleNamespace(status_code=status, json=lambda d=dok: d)
+
+    sys.modules["httpx"] = types.SimpleNamespace(get=_get12)
+    c12 = OIDCClient("https://id.example.com", "cid", "geheim", "openid")
+    _f1, _f2 = meta_fehler(c12), meta_fehler(c12)
+    r.check("F-24: 503 und eine 200 mit Fehlerdokument werden abgewiesen und NICHT gemerkt",
+            _f1 is not None and _f2 is not None and c12._meta is None and len(_abrufe12) == 2,
+            f"_meta={c12._meta!r}, Abrufe={len(_abrufe12)}")
+    r.check("F-24: der nächste Abruf nach Ende der Störung holt das echte Dokument",
+            meta_fehler(c12) is None and c12.meta()["issuer"] == META["issuer"] and len(_abrufe12) == 3)
+
+    # JWKS: eine Fehlerantwort (hier 500 mit leerem Satz) kommt nicht in den Cache.
+    _jwks_folge = [(500, {"keys": []}), (200, JWKS_RSA)]
+    _jwks_abrufe = []
+
+    def _get12b(url, **kw):
+        status, dok = _jwks_folge[min(len(_jwks_abrufe), 1)]
+        _jwks_abrufe.append(url)
+        return types.SimpleNamespace(status_code=status, json=lambda d=dok: d)
+
+    sys.modules["httpx"] = types.SimpleNamespace(get=_get12b)
+    c12b = frischer_client()
+    try:
+        c12b._jwkset()
+        _jwks_fehler = None
+    except _errors.ConfigError as e:
+        _jwks_fehler = str(e)
+    r.check("F-24: JWKS mit 500 wird abgewiesen und nicht gemerkt",
+            _jwks_fehler is not None and "500" in _jwks_fehler and c12b._jwks is None,
+            f"Fehler={_jwks_fehler!r}, Cache={c12b._jwks!r}")
+    r.check("F-24: …der nächste Abruf holt den echten Satz", c12b._jwkset() is not None
+            and len(_jwks_abrufe) == 2)
+finally:
+    if echtes_httpx12 is not None:
+        sys.modules["httpx"] = echtes_httpx12
+    else:
+        sys.modules.pop("httpx", None)
 
 sys.exit(r.done())

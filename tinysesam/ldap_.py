@@ -6,7 +6,9 @@ Zwei Modi:
 - **Search-then-Bind** (`ldap_bind_dn`/`ldap_bind_password` + `ldap_user_base`/`ldap_user_filter`):
   Service-Account sucht den User, dann Re-Bind mit dessen DN + Passwort.
 
-Gibt bei Erfolg {username, email, name, groups} zurück, sonst None. Fehler/Bind-Fehler → None.
+Gibt bei Erfolg {username, email, name, groups} zurück, bei falschem Passwort/unbekanntem Konto
+None. Ist das Verzeichnis nicht erreichbar oder nicht benutzbar (Netz, TLS, Dienstkonto), fliegt
+`VerzeichnisNichtErreichbar` — ein Ausfall ist kein Fehlversuch des Anmeldenden (F-23).
 Benutzernamen werden für Filter/DN escaped (LDAP-Injection-Schutz). **Verweisen (Referrals) folgt
 dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben Zugangsdaten
 (s. `_OHNE_REFERRALS`). Ein verworfener Verweis wird ins Sicherheits-Log geschrieben
@@ -15,6 +17,8 @@ dieses Modul nie** — sonst bindet ldap3 auf dem verwiesenen Host mit denselben
 """
 from __future__ import annotations
 
+import threading
+import time
 
 from . import errors
 from .security import fuer_log, seclog
@@ -81,6 +85,192 @@ def _verweis_melden(conn, was: str, username: str) -> None:
         ", ".join(fuer_log(v) for v in verweise[:3]) or "(Host nicht genannt)")
 
 
+class VerzeichnisNichtErreichbar(errors.TinySesamError, RuntimeError):
+    """Das Verzeichnis hat die Frage nicht beantwortet — Netz, TLS, Dienstkonto (F-23).
+
+    Bis 0.20.0 endete jeder Fehler in `authenticate()` als `None`, also als „Passwort falsch":
+    Der Login verbuchte einen Fehlversuch, fail2ban las `failed login`, und nach ein paar
+    Minuten Ausfall waren die Nutzer gesperrt, die nichts falsch gemacht hatten. Im Protokoll
+    war der Ausfall vom falschen Passwort nicht zu unterscheiden. Diese Ausnahme trennt die
+    beiden Fälle; die Login-Route antwortet dann 503 und verbucht nichts gegen das Konto."""
+
+
+class AnfrageAbgebrochen(VerzeichnisNichtErreichbar):
+    """Das Verzeichnis hat DIESE Anfrage abgebrochen — nicht bewiesen, dass es weg ist.
+
+    Geworfen, wenn ein Schritt, der Eingaben des Anmeldenden trug (Benutzersuche, Benutzer-Bind,
+    Attributsuche), schnell mit einem Kommunikationsfehler endet: Verbindung vom Server
+    beendet, Senden oder Empfangen gescheitert. Genau das löst ein Anmeldender mit dem Inhalt
+    seiner Anfrage selbst aus — OpenLDAP beendet die Sitzung, sobald eine PDU auf der noch
+    anonymen Sitzung grösser als `sockbuf_max_incoming` ist (Vorgabe 262143 Byte).
+
+    Für die Login-Route ist es dasselbe wie ein Ausfall (Unterklasse: 503, kein Fehlversuch).
+    `TinySesam.check_ldap` schaltet damit aber den `AusfallMerker` NICHT scharf: Bis zur
+    Nachbesserung der T-13-Integration tat es das, und EINE präparierte Anmeldung ohne Konto gab
+    jeder LDAP-Nutzerin 30 s lang 503 — alle paar Sekunden wiederholt dauerhaft, ohne dass den
+    Absender das einen Fehlversuch kostete. Der Merker ist für Fehlschläge da, die HÄNGEN (ohne
+    ihn schwebte jeder vorgebuchte Versuch bis zum Timeout); ein schneller Abbruch schwebt nicht.
+    """
+
+
+#: Wie lange ein Verbindungsaufbau und eine Antwort dauern dürfen. Ohne Grenze hing ein Login
+#: bei einem Verzeichnis, das Pakete verwirft statt abzulehnen, so lange wie der TCP-Timeout
+#: des Betriebssystems (Minuten) — mit einem Worker-Thread je wartendem Nutzer.
+VERBINDUNGS_TIMEOUT = 10
+
+#: Ab welcher Dauer ein gescheiterter Schritt, der Eingaben des Anmeldenden trug, als „das
+#: Verzeichnis hängt" gilt (Sekunden) — dann schaltet er den `AusfallMerker` scharf wie jeder
+#: Ausfall. Darunter ist es ein Abbruch DIESER Anfrage (`AnfrageAbgebrochen`). Die Grenze trennt
+#: die beiden Fälle, für die der Merker da ist bzw. nicht: Ein hängendes Verzeichnis antwortet
+#: erst nach `VERBINDUNGS_TIMEOUT`, ein Abbruch wegen des Inhalts kommt in Millisekunden.
+HAENGER_SEK = 1.0
+
+#: Obergrenzen für das, was eine Anmeldung ans Verzeichnis schicken darf (Zeichen). Länger ist
+#: keine Anmeldung: Benutzernamen, UPNs und Adressen bleiben weit unter 256 Zeichen, und
+#: `passwords.PASSWORT_MAX_LAENGE` erlaubt beim Setzen 256 — 1024 lassen Verzeichnissen mit
+#: eigener Passwortregel reichlich Luft. Selbst voll ausgenutzt (UTF-8, maskierte DN-Zeichen)
+#: bleibt eine Bind-PDU damit unter 16 KiB, weit unter slapds 256 KiB für anonyme Sitzungen.
+#: Was darüber liegt, fragt TinySesam gar nicht erst und behandelt es wie ein falsches Passwort.
+LDAP_NAME_MAX = 256
+LDAP_PASSWORT_MAX = 1024
+
+
+def eingabe_zu_lang(username, password) -> bool:
+    """Ist Benutzername oder Passwort länger als jede echte Anmeldung (`LDAP_NAME_MAX`,
+    `LDAP_PASSWORT_MAX`)? Dann nicht ans Verzeichnis damit — s. `AnfrageAbgebrochen`."""
+    return (len(str(username or "")) > LDAP_NAME_MAX
+            or len(str(password or "")) > LDAP_PASSWORT_MAX)
+
+#: Wie lange nach einem Ausfall das Verzeichnis gar nicht erst gefragt wird (Sekunden, s.
+#: `AusfallMerker`). So lange wie die Redis-Pause: Kürzer hiesse mehr hängende Proben, länger
+#: hiesse, dass ein zurückgekehrtes Verzeichnis spürbar später wieder angenommen wird.
+AUSFALL_PAUSE_SEK = 30
+
+
+class AusfallMerker:
+    """Merkt sich einen Verzeichnis-Ausfall, damit nicht jede Anmeldung bis zum Timeout hängt.
+
+    Vorbild ist die Redis-Pause (`security.RedisRateLimiter`). Hier ist sie mehr als Komfort: Die
+    Login-Route bucht jeden Versuch VORAB als Fehlversuch (`versuch_beginnen`, R7-2) und nimmt ihn
+    bei einem Ausfall erst zurück, wenn `VerzeichnisNichtErreichbar` kommt (F-23). Bei einem
+    Verzeichnis, das Pakete verwirft, ist das nach `VERBINDUNGS_TIMEOUT`. Bis dahin zählte jede
+    hängende Anmeldung für Konto, Paar und Adresse mit — und zwar während des GANZEN Ausfalls,
+    denn jeder neue Anlauf hing wieder zehn Sekunden: 15 Kollegen hinter einer NAT-Adresse, und
+    der lokale Notfall-Admin bekam mit richtigem Passwort 429; jede weitere Abweisung schrieb
+    `failed login … reason=lockout_ip`, und fail2ban bannte die Adresse. Genau das sollte F-23
+    verhindern.
+
+    Scharf schaltet ihn nur ein Fehlschlag, der das Verzeichnis als Ganzes betrifft —
+    Verbindungsaufbau, TLS, Dienstkonto, oder eine Frage, die bis zum Timeout HING. Bricht das
+    Verzeichnis dagegen nur eine einzelne Anfrage schnell ab (`AnfrageAbgebrochen`, etwa slapd bei
+    einer übergrossen PDU), trifft das nur diese: Sonst legte eine präparierte Anmeldung ohne
+    Konto die LDAP-Anmeldung aller 30 s lang still, beliebig oft wiederholt.
+
+    Ablauf: Nach einem Ausfall ruht das Verzeichnis `pause_sec` lang — jede Frage bekommt sofort
+    `VerzeichnisNichtErreichbar`, der vorgebuchte Versuch ist Millisekunden später zurückgenommen.
+    Danach fragt **genau eine** Anmeldung nach (Probe); alle anderen bekommen weiter sofort den
+    Ausfall, bis sie zurück ist. So schwebt auch beim Nachfragen höchstens ein Versuch. Antwortet
+    das Verzeichnis — auch mit „Passwort falsch" —, ist es wieder frei; sonst beginnt die nächste
+    Pause. Gemeldet wird der Wechsel (einmal beim Ausfall, einmal bei der Rückkehr), nicht jede
+    Anfrage.
+
+    **Was bleibt:** das erste Fenster. Bevor die erste Frage scheitert, weiss niemand, dass das
+    Verzeichnis weg ist; Anmeldungen, die in diesen höchstens `VERBINDUNGS_TIMEOUT` Sekunden
+    beginnen, schweben wie vorher. Das geschieht einmal je Ausfall und je Prozess (der Merker lebt
+    im Prozess, bei `--workers N` also N-mal, zeitgleich). Ganz schliessen liesse es sich nur mit
+    einem Schwebezustand der Vorbuchung in der Datenbank.
+
+    `uhr` ist austauschbar, damit ein Test die Pause ablaufen lassen kann, ohne zu warten.
+    """
+
+    def __init__(self, pause_sec: float = AUSFALL_PAUSE_SEK, uhr=None):
+        self.pause_sec = pause_sec
+        self._uhr = uhr or time.monotonic
+        self._lock = threading.Lock()
+        self._gestoert = False
+        self._pause_bis = 0.0
+        self._probe = False
+        self._grund = ""
+
+    def zugang(self) -> bool:
+        """Darf diese Anmeldung das Verzeichnis fragen? Wirft `VerzeichnisNichtErreichbar`, wenn nicht.
+
+        Rückgabe `True`: Diese Anmeldung ist die Probe nach einer Pause — sie MUSS mit
+        `ausgefallen()`, `erreicht()` oder `freigeben()` enden, sonst fragt niemand mehr nach."""
+        with self._lock:
+            if not self._gestoert:
+                return False
+            rest = self._pause_bis - self._uhr()
+            if rest > 0 or self._probe:
+                grund = self._grund
+                warum = (f"nächster Versuch in {rest:.0f} s" if rest > 0
+                         else "eine andere Anmeldung fragt gerade nach")
+            else:
+                self._probe = True
+                return True
+        raise VerzeichnisNichtErreichbar(
+            f"LDAP-Verzeichnis gilt nach einem Fehlschlag als nicht erreichbar ({warum}): {grund}")
+
+    def ausgefallen(self, fehler, war_probe: bool = False) -> None:
+        """Die Frage ist gescheitert: Pause (neu) beginnen, den Wechsel einmal melden.
+
+        Den Platz der Probe gibt nur die Probe selbst frei — ein Nachzügler aus dem ersten
+        Fenster, der erst jetzt in sein Timeout läuft, liesse sonst eine zweite Probe zu."""
+        with self._lock:
+            self._pause_bis = self._uhr() + self.pause_sec
+            if war_probe:
+                self._probe = False
+            self._grund = str(fehler)[:300]
+            neu = not self._gestoert
+            self._gestoert = True
+        if neu:
+            seclog.warning("LDAP-Verzeichnis nicht erreichbar (%s) — Anmeldungen über das "
+                           "Verzeichnis bekommen %d s lang sofort 503, danach fragt eine einzelne "
+                           "Anmeldung wieder nach.", fuer_log(str(fehler)), int(self.pause_sec))
+
+    def erreicht(self) -> None:
+        """Das Verzeichnis hat geantwortet (auch mit „Passwort falsch"): wieder frei."""
+        if not self._gestoert:
+            return
+        with self._lock:
+            war = self._gestoert
+            self._gestoert = False
+            self._probe = False
+        if war:
+            seclog.warning("LDAP-Verzeichnis wieder erreichbar — Anmeldungen fragen es wieder.")
+
+    def freigeben(self) -> None:
+        """Eine Probe endete ohne Antwort und ohne Ausfall (anderer Fehler): Platz freigeben."""
+        with self._lock:
+            self._probe = False
+
+
+def _ausfall_arten() -> tuple:
+    """Die ldap3-Fehler, die „Verzeichnis nicht erreichbar/benutzbar" heissen — nicht „falsches
+    Passwort". Ein falsches Benutzerpasswort wirft keinen davon: `bind()` gibt dann False zurück.
+    `LDAPBindError` kommt nur aus dem `auto_bind` des Dienstkontos — dessen Zugangsdaten sind
+    Betreiberkonfiguration, nicht der Fehler des Anmeldenden."""
+    try:
+        from ldap3.core import exceptions as lx
+    except ImportError:          # untergeschobenes ldap3 ohne Ausnahme-Modul (Testattrappe)
+        return ()
+    return (lx.LDAPCommunicationError, lx.LDAPStartTLSError, lx.LDAPBindError,
+            lx.LDAPMaximumRetriesError, lx.LDAPSSLConfigurationError)
+
+
+def _inhaltsfreie_arten() -> tuple:
+    """Die Ausfall-Arten, die der INHALT einer Anfrage nicht auslösen kann: Die Verbindung kam
+    nicht zustande (TCP, bei `ldaps://` auch der TLS-Handschlag), StartTLS scheiterte, die
+    TLS-Konfiguration taugt nicht, oder das Dienstkonto kam nicht hinein. Bis dahin ist nichts
+    vom Anmeldenden über die Leitung gegangen."""
+    try:
+        from ldap3.core import exceptions as lx
+    except ImportError:
+        return ()
+    return (lx.LDAPSocketOpenError, lx.LDAPStartTLSError, lx.LDAPBindError,
+            lx.LDAPSSLConfigurationError)
+
+
 class LDAPClient:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -95,7 +285,7 @@ class LDAPClient:
         # zwar mit Zugangsdaten". Selbst wenn irgendwann jemand eine Connection ohne
         # `auto_referrals=False` anlegt, findet ldap3 dann keinen erlaubten Verweis-Host mehr.
         return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[],
-                            tls=self._tls(ldap3))
+                            tls=self._tls(ldap3), connect_timeout=VERBINDUNGS_TIMEOUT)
 
     def _tls(self, ldap3):
         """Die TLS-Einstellungen für `ldaps://` und StartTLS (F-12).
@@ -119,6 +309,8 @@ class LDAPClient:
     def authenticate(self, username: str, password: str):
         if not username or not password:
             return None
+        if eingabe_zu_lang(username, password):
+            return None      # keine Anmeldung, sondern der Hebel aus `AnfrageAbgebrochen`
         try:
             import ldap3
             from ldap3.utils.conv import escape_filter_chars
@@ -133,6 +325,10 @@ class LDAPClient:
             return None
         cfg = self.cfg
         server = self._server()
+        # Welcher Schritt läuft, seit wann, und trägt er Eingaben des Anmeldenden? Daran hängt,
+        # ob ein Fehlschlag das Verzeichnis als Ganzes betrifft oder nur diese Anfrage (s.
+        # `AnfrageAbgebrochen`, `HAENGER_SEK`).
+        eingabe, seit = False, time.monotonic()
         try:
             if cfg.ldap_user_dn_template:
                 user_dn = cfg.ldap_user_dn_template.format(username=escape_rdn(username))
@@ -148,9 +344,10 @@ class LDAPClient:
                     password=cfg.ldap_bind_password or None,
                     auto_bind=(ldap3.AUTO_BIND_TLS_BEFORE_BIND if cfg.ldap_start_tls
                                else ldap3.AUTO_BIND_NO_TLS),
-                    **_OHNE_REFERRALS)
+                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
                 attrs = _attributliste(cfg)
+                eingabe, seit = True, time.monotonic()        # der Filter trägt den Benutzernamen
                 svc.search(cfg.ldap_user_base, flt, attributes=attrs)
                 if not svc.entries:
                     _verweis_melden(svc, "die Benutzersuche", username)
@@ -160,9 +357,14 @@ class LDAPClient:
                 svc.unbind()
             # Re-Bind mit dem User-DN + Passwort → prüft das Passwort
             conn = ldap3.Connection(server, user=user_dn, password=password,
-                                    **_OHNE_REFERRALS)
+                                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
+            # Verbindung und TLS ausdrücklich VOR dem Bind: Scheitern sie, ist vom Anmeldenden
+            # noch nichts gesendet — ein Ausfall des Verzeichnisses, gleich wie lange es dauerte.
+            eingabe, seit = False, time.monotonic()
+            conn.open()
             if cfg.ldap_start_tls:
                 conn.start_tls()
+            eingabe, seit = True, time.monotonic()            # Bind: Benutzer-DN und Passwort
             if not conn.bind():
                 return None
             attrs = _attributliste(cfg)
@@ -181,6 +383,24 @@ class LDAPClient:
                 info["id"] = _stabile_kennung(entry, cfg)
             conn.unbind()
             return info
+        except _ausfall_arten() as e:
+            # Kein `None`: Das hiesse „Passwort falsch" und kostete den Nutzer einen Fehlversuch
+            # für einen Ausfall, den er nicht verursacht hat (F-23).
+            #
+            # Nur diese Anfrage, wenn alles drei zutrifft: Der Schritt trug Eingaben des
+            # Anmeldenden, der Fehler gehört nicht zu denen, die vor dem Senden entstehen, und es
+            # ging SCHNELL. Ein Verzeichnis, das hängt, meldet sich erst nach dem Timeout — das ist
+            # ein Ausfall, auch wenn es erst beim Benutzer-Bind hängt (Backend blockiert).
+            dauer = time.monotonic() - seit
+            nur_diese = (eingabe and dauer < HAENGER_SEK
+                         and not isinstance(e, _inhaltsfreie_arten()))
+            # Die Kennzeichnung steht VORN: Route und Audit kürzen den Grund (`fuer_log`, 64 Zeichen).
+            if nur_diese:
+                raise AnfrageAbgebrochen(
+                    f"LDAP: nur diese Anfrage abgebrochen — {type(e).__name__}: {e} "
+                    f"({cfg.ldap_url})") from e
+            raise VerzeichnisNichtErreichbar(
+                f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
         except Exception:
             return None
 

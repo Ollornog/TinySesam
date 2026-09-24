@@ -235,4 +235,24 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "/auth/login" not in page, "die gebaute Seite verlinkt keine laufende App"
 print("  web.build schreibt Seiten, Demo-Panels, Attrappen-API + .nojekyll")
 
+# ---------- Showcase: der Benutzername ist Text (R8-2) ----------
+# T-12 escapte ihn auf /app und /sensibel; /demo („Angemeldet als …") blieb roh. Ein Konto namens
+# <img src=x onerror=…> lief damit bei jedem eigenen Besuch der Demo-Seite als Code.
+os.environ["TINYSESAM_SHOWCASE_DB"] = os.path.join(tempfile.mkdtemp(), "showcase.db")
+from fastapi.testclient import TestClient  # noqa: E402
+import examples.showcase as showcase  # noqa: E402
+
+_boese = "<img src=x onerror=alert(1)>"
+showcase.auth.create_user(_boese, password="geheim-passwort-1")
+_c = TestClient(showcase.app)
+_c.get("/auth/login")
+_r = _c.post("/auth/login", data={"username": _boese, "password": "geheim-passwort-1", "next": "/",
+                                  "_csrf": _c.cookies.get(showcase.auth.cfg.csrf_cookie)},
+             follow_redirects=False)
+assert _r.status_code == 303, _r.status_code
+for _weg in ("/demo", "/app"):
+    _t = _c.get(_weg).text
+    assert "<img src=x" not in _t and "&lt;img src=x onerror=alert(1)&gt;" in _t, _weg
+print("  Showcase: ein präparierter Benutzername bleibt auf /demo und /app Text")
+
 print("OK test_site")

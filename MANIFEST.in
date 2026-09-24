@@ -41,3 +41,18 @@ include i18n/SECURITY.de.md
 recursive-exclude * __pycache__
 recursive-exclude * *.py[cod]
 global-exclude .DS_Store
+
+# Was .gitignore ausschliesst, gehört auch nicht ins sdist. Die `graft`-Zeilen oben nehmen ALLES
+# unter tests/, examples/ und deploy/ mit, was auf der Platte liegt — nicht, was versioniert ist.
+# Ein `python -m build` aus einem benutzten Arbeitsbaum packte so eine `examples/app.db` samt
+# Konten und Sitzungen oder eine `deploy/forward-auth/.env` mit Geheimnissen ins Quellpaket
+# (B4-13 aus T-13). Der Release baut aus einem frischen Checkout und war nicht betroffen — wer
+# selbst paketiert, schon. `tests/test_packaging.py` legt für jedes Muster aus .gitignore eine
+# Attrappe in die gegrafteten Bäume und prüft, dass keine im sdist landet; ein neues Muster dort
+# ohne Zeile hier wird rot. `*.egg-info/` nur unter den gegrafteten Bäumen: setuptools legt sein
+# eigenes egg-info ins sdist, ein `global-exclude` schlösse es mit aus.
+global-exclude .venv/** venv/** __pycache__/** build/** dist/** _site/** .befunde-*/**
+global-exclude *.db *.db-wal *.db-shm .env
+recursive-exclude tests *.egg-info/**
+recursive-exclude examples *.egg-info/**
+recursive-exclude deploy *.egg-info/**

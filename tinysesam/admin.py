@@ -10,20 +10,24 @@ eingebettet werden kann. Die eingebaute UI ermittelt ihre Basis-URL selbst → l
 Mountpunkt. Nur Admins.
 """
 from __future__ import annotations
+import html
 import json
+import secrets
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
-from .router import _key_art
+from .errors import ConfigError, StateError
+from .router import _key_art, _mail_basis, gehaertete_route
+from . import security
 from .store import norm_email, valid_email
-from .templates import brand, favicon_link
+from .templates import brand, favicon_link, inject_nonce as _inject_nonce
 from .theme import TOKENS
 
 
 def build_admin_router(auth) -> APIRouter:
     cfg = auth.cfg
-    ar = APIRouter(tags=["admin"])
+    ar = APIRouter(tags=["admin"], route_class=gehaertete_route(auth))
 
     def guard(request: Request):
         # Admin + (optional) Step-up-MFA. Browser-Seitenaufruf → Redirect zu Login/Reauth;
@@ -47,6 +51,29 @@ def build_admin_router(auth) -> APIRouter:
         """
         wer = auth.current_user(request)
         auth.audit(ereignis, wer["username"] if wer else None, auth.client_ip(request), detail)
+
+    def andere_aktive_admins(uid: int) -> int:
+        """Wie viele aktive, interaktive Admins bleiben, wenn `uid` keiner mehr ist?
+
+        Gezählt wird, wer sich wirklich als Admin anmelden kann: nicht gesperrt, kein
+        Service-Konto (das hat keine Sitzung, und seine Keys tragen das Flag nie, R6-5)."""
+        return sum(1 for u in auth.store.list_users()
+                   if u["is_admin"] and not u["disabled"] and not u["is_service"]
+                   and int(u["id"]) != int(uid))
+
+    def rollen_aus(b: dict) -> list:
+        """`roles` aus dem Body: eine Liste aus Texten — sonst 400, und zwar VOR jedem Schreiben.
+
+        Die Datenbank nimmt jedes JSON; eine Rolle `1` oder `null` fiel erst beim Protokollieren
+        auf (`','.join`), NACHDEM Rollen und Admin-Flag geschrieben waren: HTTP 500 ohne
+        Audit-Zeile (Integrationsfund 8). Ein Text wie `"admin"` wurde von `list()` still in
+        Buchstaben zerlegt. Fehlt das Feld (oder ist es leer), heisst das „keine Rollen"."""
+        roh = b.get("roles")
+        if not roh:
+            return []
+        if not isinstance(roh, list) or not all(isinstance(x, str) for x in roh):
+            raise HTTPException(400, auth.t("api.invalid", grund="roles"))
+        return list(roh)
 
     def uview(u):
         return {"id": u["id"], "username": u["username"], "display_name": u["display_name"],
@@ -83,10 +110,24 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.username_req"))
         if auth.kennung_vergeben(username):
             raise HTTPException(409, auth.t("api.user_exists"))
-        roles = b.get("roles") or []
+        roles = rollen_aus(b)
+        # Service-Konto + Admin (R6-2): Früher fiel `is_admin` hier still weg, über die
+        # Rollen-Route liess sich das Flag danach aber doch setzen. Ein solches Konto kann sich
+        # nicht anmelden, seine Keys tragen das Flag nie (R6-5) — es zählt nur als „es gibt
+        # einen Admin" und schliesst damit den Erst-Admin-Weg, ohne dass jemand Admin ist.
+        # Laut abweisen statt still verwerfen: Wer beides ankreuzt, hat etwas anderes gemeint.
+        if b.get("is_service") and b.get("is_admin"):
+            raise HTTPException(400, auth.t("api.service_admin"))
         if b.get("is_service"):
             uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
         else:
+            # Dieselbe Passwortregel wie an jeder anderen Setzstelle (Fund B2-13): Bis T-13 nahm
+            # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
+            # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
+            if b.get("password"):
+                mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
+                if mangel:
+                    raise HTTPException(400, mangel)
             uid = auth.create_user(username, password=b.get("password") or None,
                                    is_admin=bool(b.get("is_admin")), roles=roles,
                                    display_name=b.get("display_name"), email=email)
@@ -100,7 +141,9 @@ def build_admin_router(auth) -> APIRouter:
         disabled = bool(b.get("disabled", True))
         if disabled and uid == me["id"]:
             raise HTTPException(400, auth.t("api.no_self_lock"))
-        auth.store.set_disabled(uid, disabled)
+        # Mit Betreiber-Vermerk: Kein Bestätigungslink hebt diese Sperre auf, auch einer nicht,
+        # der erst nach ihr entsteht (H-18, zweite Angriffsrunde) — s. `Store.set_disabled`.
+        auth.store.set_disabled(uid, disabled, durch_betreiber=True)
         keys = 0
         if disabled:
             auth.store.delete_user_sessions(uid)
@@ -108,6 +151,9 @@ def build_admin_router(auth) -> APIRouter:
             # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
             # niemand mehr weiss.
             keys = auth.store.revoke_user_api_keys(uid)
+            # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
+            # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
+            auth.store.revoke_user_magic_tokens(uid)
         protokoll(request, "user_disable" if disabled else "user_enable",
               f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return {"ok": True}
@@ -118,6 +164,11 @@ def build_admin_router(auth) -> APIRouter:
         b = await auth.json_body(request)
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
+        ziel = auth.store.get_user(uid)
+        mangel = auth.passwort_mangel(b["password"], username=ziel["username"] if ziel else None,
+                                      email=ziel["email"] if ziel else None, api=True)
+        if mangel:
+            raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
         auth.set_password(uid, b["password"])
         auth.store.delete_user_sessions(uid)   # Admin-Reset → alle Sitzungen beenden (Re-Login erzwingen)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
@@ -131,10 +182,73 @@ def build_admin_router(auth) -> APIRouter:
     async def user_roles(request: Request, uid: int):
         guard(request)
         b = await auth.json_body(request)
-        auth.set_roles(uid, b.get("roles") or [])
+        ziel = auth.store.get_user(uid)
+        if ziel is None:
+            raise HTTPException(404)
+        rollen = rollen_aus(b)          # geprüft VOR jedem Schreibzugriff, wie R6-1 darunter
+        if "is_admin" in b:
+            neu = bool(b["is_admin"])
+            if neu and ziel["is_service"]:
+                raise HTTPException(400, auth.t("api.service_admin"))      # R6-2, s. user_create
+            # Den letzten Admin nicht entmachten (R6-1). Ohne Admin öffnet sich der
+            # Erst-Admin-Weg wieder: Ein neues Einmal-Token entsteht, und wer es liest — im Log,
+            # in der Konsole — wird Admin. Das Panel ist danach für niemanden mehr erreichbar,
+            # der es zurückdrehen könnte. Geprüft VOR jedem Schreibzugriff, damit die Rollen
+            # nicht halb gesetzt stehen bleiben.
+            if not neu and ziel["is_admin"] and not andere_aktive_admins(uid):
+                raise HTTPException(400, auth.t("api.last_admin"))
+        # Vorher/Nachher ins Protokoll (R6-7): „uid=5" sagte, DASS sich Rechte änderten, nicht
+        # welche. Ob jemand Admin wurde, ist aber genau die Frage nach einem Vorfall.
+        # `str` je Rolle: Ein Altbestand aus der Zeit vor der Prüfung (oder aus eigenem Code) darf
+        # die Zeile nicht sprengen — sie entsteht NACH dem Schreiben, und ein Fehler hier hiess
+        # „geändert, aber nicht protokolliert" (Integrationsfund 8).
+        vorher = ziel
+        rollen_vorher = sorted(map(str, auth.user_roles(vorher))) if vorher else []
+        admin_vorher = bool(vorher["is_admin"]) if vorher else False
+        auth.set_roles(uid, rollen)
         if "is_admin" in b:
             auth.store.set_admin(uid, bool(b["is_admin"]))
-        protokoll(request, "user_roles", f"uid={uid}")
+        nachher = auth.store.get_user(uid)
+        rollen_nachher = sorted(map(str, auth.user_roles(nachher))) if nachher else []
+        admin_nachher = bool(nachher["is_admin"]) if nachher else False
+        detail = (f"uid={uid} rollen={','.join(rollen_vorher) or '-'}"
+                  f"->{','.join(rollen_nachher) or '-'}")
+        if admin_vorher != admin_nachher:
+            detail += f" admin={int(admin_vorher)}->{int(admin_nachher)}"
+        protokoll(request, "user_roles", detail)
+        return {"ok": True}
+
+    # ---------- Passkeys fremder Konten / Konto löschen (B5-08) ----------
+    # Bisher konnte nur der Inhaber einen Passkey entfernen. Ist das Gerät gestohlen und der
+    # Mensch ausgesperrt, blieb dem Betreiber nur die Datenbank. Dasselbe beim Löschen eines
+    # Kontos: Sperren ging, Löschen (etwa auf Verlangen nach Art. 17 DSGVO) nicht.
+    @ar.get("/api/users/{uid}/passkeys")
+    def user_passkeys(request: Request, uid: int):
+        guard(request)
+        return [{"id": c["id"], "name": c["name"], "created_at": c["created_at"],
+                 "last_used": c["last_used"]} for c in auth.store.list_webauthn(uid)]
+
+    @ar.post("/api/users/{uid}/passkeys/{cid}/delete")
+    def user_passkey_delete(request: Request, uid: int, cid: int):
+        guard(request)
+        # Über denselben Weg wie die Selbstbedienung (Integrationsfund 3): Löschen, Audit-Zeile
+        # unter dem Inhaber (der Admin als akteur=, so findet `tinysesam audit --user <inhaber>`
+        # den Widerruf) und `passkey_removed` an `on_security_event` — der Inhaber erfährt,
+        # dass ihm ein Faktor genommen wurde, auch wenn es ein anderer war.
+        if not auth.remove_passkey(uid, cid):
+            raise HTTPException(404, auth.t("api.not_found"))
+        return {"ok": True}
+
+    @ar.post("/api/users/{uid}/delete")
+    def user_delete(request: Request, uid: int):
+        me = guard(request)
+        if uid == me["id"]:
+            raise HTTPException(400, auth.t("api.no_self_delete"))
+        try:
+            if not auth.delete_user(uid):
+                raise HTTPException(404, auth.t("api.not_found"))
+        except StateError:
+            raise HTTPException(409, auth.t("api.last_admin_delete"))
         return {"ok": True}
 
     # ---------- API-Keys (je User) ----------
@@ -145,13 +259,29 @@ def build_admin_router(auth) -> APIRouter:
 
     @ar.post("/api/users/{uid}/keys")
     async def user_key_create(request: Request, uid: int):
-        guard(request)
+        wer = guard(request)
+        # Dieselbe Regel wie an der Selbstbedienungs-Route (`_nur_mit_sitzung`, R6-6):
+        # Schlüssel gibt ein Mensch aus, kein Schlüssel. Hier fehlte sie — der Panel-Pfad war
+        # der Umweg, auf dem ein Key einen neuen Key mintet, und zwar für ein BELIEBIGES Konto.
+        # Heute hält schon R6-5 (ein Automaten-Key trägt kein Admin-Flag, ein Menschen-Key
+        # gilt nur neben der Sitzung); diese Zeile hängt nicht davon ab, dass das so bleibt.
+        if wer.get("_via") != "session":
+            raise HTTPException(403, auth.t("api.key_needs_session"))
         b = await auth.json_body(request)
-        return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"), roles=b.get("roles"))
+        # Die Audit-Zeile schreibt `create_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
+        # `create_api_key` wirft `ConfigError` für einen Scope ohne gültige Rolle und für
+        # „unbefristet" ohne Erlaubnis; eine unbrauchbare Zahl ist ein `ValueError`. Ungefangen
+        # war das ein HTTP 500 (R6-8) — der Admin sah „internal server error" statt des Grundes.
+        try:
+            return auth.create_api_key(uid, name=b.get("name"), expires_days=b.get("expires_days"),
+                                       roles=b.get("roles"))
+        except (ConfigError, ValueError, TypeError) as e:
+            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
 
     @ar.post("/api/keys/{kid}/revoke")
     def key_revoke(request: Request, kid: int):
         guard(request)
+        # Die Audit-Zeile schreibt `revoke_api_key` — mit Besitzer, IP und akteur= (B5-04/R6-3).
         auth.revoke_api_key(kid)
         return {"ok": True}
 
@@ -159,6 +289,9 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/sessions")
     def sessions(request: Request):
         guard(request)
+        # Auch Lesen wird protokolliert (B5-12): Die Liste nennt IP und Anmeldeweg jedes
+        # Nutzers, und wer als Admin mitliest, soll dabei selbst eine Spur hinterlassen.
+        protokoll(request, "sessions_read")
         names = {u["id"]: u["username"] for u in auth.store.list_users()}
         # `full` ist das HANDLE (sha256 des Tokens), nicht das Token: Es benennt die Sitzung zum
         # Beenden und taugt nicht zum Anmelden. Vorher stand hier das echte Sitzungstoken jedes
@@ -187,8 +320,10 @@ def build_admin_router(auth) -> APIRouter:
             email = (b.get("email") or "").strip()
             # Der Einladungslink geht per Mail an einen Dritten und trägt ein gültiges
             # Token — er darf nie aus dem Host-Header gebaut werden (R4-01).
-            base = auth.require_public_base(request)
-            res = auth.create_invite(email or None, base, roles=b.get("roles") or [],
+            base = _mail_basis(auth, request)
+            # Dieselbe Prüfung wie beim Anlegen: Die Rollen landen erst beim Einlösen im Konto —
+            # eine kaputte Rolle fiele dann dem Eingeladenen vor die Füsse, nicht dem Admin.
+            res = auth.create_invite(email or None, base, roles=rollen_aus(b),
                                      is_admin=bool(b.get("is_admin")), ttl_min=b.get("ttl_min"))
             return {"url": res["url"], "emailed": bool(email and auth.mail_configured())}
 
@@ -230,10 +365,24 @@ def build_admin_router(auth) -> APIRouter:
     @ar.post("/api/security")
     async def security_set(request: Request):
         guard(request)
-        for k, v in (await auth.json_body(request)).items():
+        # Vorher/Nachher (R6-7): Wer `max_login_attempts` von 5 auf 5000 stellt, schaltet die
+        # Sperre faktisch ab — im Protokoll stand bisher nur, DASS etwas gespeichert wurde.
+        vorher = auth.all_security()
+        werte = await auth.json_body(request)
+        # Erst ALLE prüfen, dann schreiben: Ein ungültiger Wert in der Mitte liess sonst die
+        # Hälfte gespeichert zurück. Und ohne Grenzen legte ein Tippfehler die Instanz still
+        # (`rate_limit_max=0` sperrt jede Anmeldung, auch die zum Zurückdrehen — R6-4).
+        try:
+            geprueft = {k: security.pruefe_haertung(k, v) for k, v in werte.items()}
+        except ValueError as e:
+            raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
+        for k, v in geprueft.items():
             auth.set_security(k, v)
-        protokoll(request, "security_update")
-        return auth.all_security()
+        nachher = auth.all_security()
+        geaendert = [f"{k}={vorher[k]}->{nachher[k]}" for k in sorted(nachher)
+                     if vorher.get(k) != nachher[k]]
+        protokoll(request, "security_update", " ".join(geaendert) or "unverändert")
+        return nachher
 
     @ar.get("/api/version")
     def version_get(request: Request):
@@ -243,6 +392,7 @@ def build_admin_router(auth) -> APIRouter:
     @ar.get("/api/audit")
     def audit(request: Request, limit: int = 100):
         guard(request)
+        protokoll(request, "audit_read", f"limit={limit}")    # B5-12, s. sessions_read
         return [{"ts": a["ts"], "event": a["event"], "username": a["username"], "ip": a["ip"], "detail": a["detail"]}
                 for a in auth.store.recent_audit(limit)]
 
@@ -256,7 +406,15 @@ def build_admin_router(auth) -> APIRouter:
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis
-            resp = HTMLResponse(render_panel(auth, request.url.path.rstrip("/"), warn=warn))
+            # Dieselbe CSP wie jede andere eingebaute Seite (R8-1). Bis 0.19.0 kam ausgerechnet
+            # das Panel, das Konten anlegt und Rechte vergibt, ohne CSP und ohne Schutz gegen
+            # Einbetten. Möglich wurde es erst, als die Inline-Handler verschwanden (`data-on`).
+            nonce = secrets.token_urlsafe(16)
+            resp = HTMLResponse(_inject_nonce(
+                render_panel(auth, request.url.path.rstrip("/"), warn=warn), nonce))
+            policy = auth._csp_header(nonce)
+            if policy:
+                resp.headers.setdefault("Content-Security-Policy", policy)
             # Ein VORHANDENES Cookie übernehmen, nicht überschreiben — dieselbe Behandlung wie
             # in `render_page`. Diese Stelle war der dritte Setzer und der letzte, der bei jedem
             # Aufruf neu würfelte: Wer das Panel in einem zweiten Reiter öffnete, machte damit
@@ -264,8 +422,8 @@ def build_admin_router(auth) -> APIRouter:
             # Erklärung. Gegen einen Angreifer schützte das nie — getroffen wurde der eigene
             # Nutzer. (War als B-1 auf „nach 1.0" vertagt; durch die neuen CSRF-Prüfungen im
             # Panel trifft es inzwischen mehr Wege als bei der Meldung.)
-            if cfg.csrf_enabled and not request.cookies.get(cfg.csrf_cookie):
-                resp.set_cookie(cfg.csrf_cookie, auth.csrf_token(request), secure=cfg.cookie_secure,
+            if cfg.csrf_enabled and not request.cookies.get(auth.csrf_cookie_name):
+                resp.set_cookie(auth.csrf_cookie_name, auth.csrf_token(request), secure=cfg.cookie_secure,
                                 samesite=cfg.cookie_samesite, path=cfg.cookie_path)
             return resp
 
@@ -281,7 +439,8 @@ _KEYS = (
     "f.key_name f.key_expires "
     "th.user th.email th.type th.roles th.status th.actions th.method th.ip th.since th.mfa "
     "th.time th.event th.detail "
-    "active disabled revoked enable disable btn.pw btn.roles btn.keys "
+    "active disabled revoked enable disable btn.pw btn.roles btn.keys btn.passkeys btn.delete "
+    "passkeys no_passkeys confirm.delete confirm.pk_delete "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
     "prompt.pw pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening version installed update_note"
@@ -309,9 +468,13 @@ def render_panel(auth, base: str, warn: str = "") -> str:
             .replace("__BRANDHEAD__", getattr(cfg, "brand_head", "") or "")
             .replace("__HEADER__", brand(getattr(cfg, "brand_header", ""), auth))
             .replace("__FOOTER__", brand(getattr(cfg, "brand_footer", ""), auth))
-            .replace("__RP__", cfg.rp_name).replace("__BASE__", base)
+            # `rp_name` ist Text, kein Markup (R8-3) — die übrigen Seiten escapen ihn längst.
+            # `base` kommt aus dem Anfragepfad und landet in einem JS-String; json.dumps plus
+            # `<`-Maskierung hält ihn dort.
+            .replace("__RP__", html.escape(cfg.rp_name))
+            .replace('"__BASE__"', json.dumps(base).replace("<", "\\u003c"))
             .replace("__ICON__", favicon_link(getattr(cfg, "brand_icon", "")))
-            .replace("__WARN__", warn).replace("__CSRFCK__", cfg.csrf_cookie)
+            .replace("__WARN__", warn).replace("__CSRFCK__", auth.csrf_cookie_name)
             .replace("__ROLES__", json.dumps(list(cfg.available_roles)))
             .replace("__REQMAIL__", "true" if (cfg.signup_require_email or
                                               cfg.login_identifier == "email") else "false")
@@ -364,6 +527,9 @@ body{font-family:var(--ts-font);margin:0;background:var(--ts-bg);color:var(--ts-
   border-radius:calc(var(--ts-radius) - 2px);padding:14px;margin-bottom:14px}
 .tsadmin h2{font-size:13px;color:var(--ts-muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px}
 .tsadmin .muted{color:var(--ts-muted)}
+.tsadmin .w120{width:120px}.tsadmin .w150{width:150px}.tsadmin .w200{width:200px}
+.tsadmin .w230{width:230px}.tsadmin .w280{width:280px}.tsadmin .mr12{margin-right:12px}
+.tsadmin .small{font-size:12px}
 .tsadmin code{background:var(--ts-field-bg);border:1px solid var(--ts-field-line);border-radius:5px;
   padding:2px 6px;font-size:12px}
 __BRANDCSS__
@@ -385,18 +551,26 @@ const TABS=[["users",L["tab.users"]],["sessions",L["tab.sessions"]],["security",
 let cur="users";
 const g=(u)=>fetch(B+u).then(r=>r.json());
 function tsCsrf(){return (document.cookie.match(/(?:^|; )__CSRFCK__=([^;]+)/)||[])[1]||''}
-const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})}).then(r=>r.json());
+// Eine Abweisung (4xx/5xx) kommt IMMER als {detail:"<Text>"} zurück, auch ohne JSON-Körper. Vorher
+// sah p() nur den Körper: savesec meldete „gespeichert", obwohl der Server 400 sagte, pw „Passwort
+// gesetzt" trotz abgelehnter Regel, saveroles lud still neu (Integrationsfund 10).
+const p=(u,b)=>fetch(B+u,{method:"POST",headers:{"Content-Type":"application/json","X-CSRF-Token":tsCsrf()},body:JSON.stringify(b||{})})
+  .then(async r=>{let j=null;try{j=await r.json()}catch(e){}
+    if(r.ok)return j||{};
+    return {detail:(j&&typeof j.detail==="string"&&j.detail)||L["err.generic"]}});
+// Den Grund einer Abweisung zeigen — true, wenn es eine war. Jede Aktion, die p() ruft, geht hier
+// durch (ein Test hält das fest), damit die nächste neue Aktion nicht wieder still scheitert.
+const abgewiesen=r=>{if(r&&r.detail){alert(r.detail);return true}return false};
 const esc=s=>(s??"").toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-// Ein Wert, der als JS-ARGUMENT in ein onclick-Attribut geht. HTML-Escaping allein genuegt dort
-// NICHT: Der Browser dekodiert das Attribut zuerst und laesst den JS-Parser danach ueber das
-// Ergebnis laufen — aus &#39; wird wieder ein Apostroph, der den String schliesst. Ein Nutzer,
-// der sich als  bob');alert(document.cookie);//  registriert, fuehrte damit Code im Browser der
-// angemeldeten Administratorin aus, sobald sie das Panel oeffnet.
-// JSON.stringify baut ein gueltiges JS-Literal (samt Anfuehrungszeichen), esc() macht es
-// attribut-sicher. Deshalb stehen an den Aufrufstellen KEINE eigenen Anfuehrungszeichen mehr.
-const jsarg=v=>esc(JSON.stringify(v??""));
+// Ein Knopf bekommt seine Aktion als data-on (Name) und data-a (Argumente als JSON), nie als
+// onclick. Zwei Gruende: Die CSP des Panels erlaubt Skript nur per Nonce, ein Inline-Handler
+// liefe gar nicht (R8-1). Und Daten in einem onclick sind Code — der Browser dekodiert das
+// Attribut und laesst den JS-Parser darueber laufen; aus &#39; wurde wieder ein Apostroph, und
+// ein Benutzername wie  bob');alert(document.cookie);//  lief im Browser der Administratorin.
+// data-a dagegen wird nur mit JSON.parse gelesen: Was darin steht, bleibt ein Wert.
+const on=(f,...a)=>`data-on="${f}" data-a="${esc(JSON.stringify(a))}"`;
 const dt=t=>t?new Date(t*1000).toLocaleString(L.locale):"—";
-function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" onclick="go('${k}')">${esc(l)}</div>`).join("")}
+function tabs(){document.getElementById("tabs").innerHTML=TABS.map(([k,l])=>`<div class="tab ${k==cur?'on':''}" ${on("go",k)}>${esc(l)}</div>`).join("")}
 function go(k){cur=k;tabs();({users:users,sessions:sessions,security:security,audit:audit})[k]()}
 const V=h=>document.getElementById("view").innerHTML=h;
 
@@ -405,9 +579,9 @@ async function users(){
   V(`<div class=card><h2>${esc(L.new_user)}</h2><div class=row>
     <input id=nu placeholder="${esc(L["f.username"])}"><input id=ne type=email placeholder="${esc(REQMAIL?L["f.email"]:L["f.email_optional"])}">
     <input id=np type=password placeholder="${esc(L["f.password"])}">
-    <input id=nr placeholder="${esc(L["f.roles"])}" style=width:200px>
+    <input id=nr placeholder="${esc(L["f.roles"])}" class=w200>
     <label><input type=checkbox id=na> ${esc(L["f.admin"])}</label><label><input type=checkbox id=ns> ${esc(L["f.service"])}</label>
-    <button onclick=mkuser()>${esc(L.create)}</button></div></div>
+    <button ${on("mkuser")}>${esc(L.create)}</button></div></div>
     <table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.email"])}</th><th>${esc(L["th.type"])}</th><th>${esc(L["th.roles"])}</th><th>${esc(L["th.status"])}</th><th>${esc(L["th.actions"])}</th></tr>`+
     us.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td>${esc(u.email)||'<span class=muted>—</span>'}</td>
@@ -415,64 +589,78 @@ async function users(){
       <td>${esc((u.roles||[]).join(", "))||'—'}</td>
       <td>${u.disabled?`<span class="badge red">${esc(L.disabled)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>
-        <button class="${u.disabled?'ok':'warn'}" onclick="dis(${u.id},${!u.disabled})">${esc(u.disabled?L.enable:L.disable)}</button>
-        <button class=sec onclick="pw(${u.id})">${esc(L["btn.pw"])}</button>
-        <button class=sec onclick="roles(${u.id},${jsarg((u.roles||[]).join(','))},${u.is_admin?1:0})">${esc(L["btn.roles"])}</button>
-        <button class=sec onclick="keys(${u.id},${jsarg(u.username)})">${esc(L["btn.keys"])}</button>
+        <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
+        <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
+        <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
+        <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
+        <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
+        <button class=warn ${on("deluser",u.id)}>${esc(L["btn.delete"])}</button>
       </td></tr><tr id=r${u.id}></tr><tr id=k${u.id}></tr>`).join("")+`</table>`);
 }
 async function mkuser(){const b={username:nu.value,email:ne.value,password:np.value,roles:nr.value.split(",").map(s=>s.trim()).filter(Boolean),is_admin:na.checked,is_service:ns.checked};
   if(REQMAIL&&!ns.checked&&!ne.value.trim())return alert(L["err.email"]);
-  const r=await p("/api/users",b);if(r.id)users();else alert(r.detail||L["err.generic"])}
-async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;await p(`/api/users/${id}/disable`,{disabled:d});users()}
-async function pw(id){const v=prompt(L["prompt.pw"]);if(v)await p(`/api/users/${id}/password`,{password:v})&&alert(L.pw_set)}
+  const r=await p("/api/users",b);if(!abgewiesen(r))users()}
+async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;abgewiesen(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
+async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!abgewiesen(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
-    ? ROLES.map(r=>`<label style="margin-right:12px"><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
-    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" style=width:280px>`;
+    ? ROLES.map(r=>`<label class=mr12><input type=checkbox class="rc_${id}" value="${esc(r)}" ${have.has(r)?"checked":""}> ${esc(r)}</label>`).join("")
+    : `<input id="rf${id}" value="${esc(cur)}" placeholder="${esc(L["f.roles"])}" class=w280>`;
   document.getElementById("r"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.roles_groups)}</h2>
     <div class=row>${inner||`<span class=muted>${esc(L.no_roles)}</span>`}</div>
     <div class=row><label><input type=checkbox id="ra${id}" ${isadmin?"checked":""}> ${esc(L["f.admin"])}</label>
-      <button onclick="saveroles(${id})">${esc(L.save)}</button>
-      <button class=sec onclick="document.getElementById('r'+${id}).innerHTML=''">${esc(L.cancel)}</button></div></div></td>`;
+      <button ${on("saveroles",id)}>${esc(L.save)}</button>
+      <button class=sec ${on("clr",id)}>${esc(L.cancel)}</button></div></div></td>`;
 }
 async function saveroles(id){
   const roles = ROLES.length
     ? [...document.querySelectorAll(".rc_"+id+":checked")].map(c=>c.value)
     : (document.getElementById("rf"+id).value||"").split(",").map(s=>s.trim()).filter(Boolean);
-  await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked});users();
+  abgewiesen(await p(`/api/users/${id}/roles`,{roles,is_admin:document.getElementById("ra"+id).checked}));users();
 }
 async function keys(id,name){const ks=await g(`/api/users/${id}/keys`);
   document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.api_keys)} · ${esc(name)}</h2>
-    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" style=width:150px>
-    <button onclick="mkkey(${id})">${esc(L.create_key)}</button></div>
+    <div class=row><input id=kn placeholder="${esc(L["f.key_name"])}"><input id=ke type=number placeholder="${esc(L["f.key_expires"])}" class=w150>
+    <button ${on("mkkey",id)}>${esc(L.create_key)}</button></div>
     <table>`+ks.map(k=>`<tr><td><code>${esc(k.prefix)}</code> ${esc(k.name||'')}</td><td>${k.revoked?`<span class="badge red">${esc(L.revoked)}</span>`:`<span class="badge grn">${esc(L.active)}</span>`}</td>
       <td>${esc(L.last_used)} ${dt(k.last_used)}</td><td>${k.expires_at?esc(L.expires)+' '+dt(k.expires_at):esc(L.never_expires)}</td>
-      <td>${k.revoked?'':`<button class=warn onclick="revk(${k.id},${id},${jsarg(name)})">${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
+      <td>${k.revoked?'':`<button class=warn ${on("revk",k.id,id,name)}>${esc(L.revoke)}</button>`}</td></tr>`).join("")+`</table></div></td>`}
 async function mkkey(id){const r=await p(`/api/users/${id}/keys`,{name:kn.value,expires_days:ke.value?parseInt(ke.value):null});
-  if(r.key)prompt(L.key_once,r.key);keys(id,"")}
-async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){await p(`/api/keys/${kid}/revoke`);keys(uid,name)}}
+  if(!abgewiesen(r)&&r.key)prompt(L.key_once,r.key);keys(id,"")}
+async function pks(id,name){const ps=await g(`/api/users/${id}/passkeys`);
+  document.getElementById("k"+id).innerHTML=`<td colspan=5><div class=card><h2>${esc(L.passkeys)} · ${esc(name)}</h2>
+    <table>`+(ps.length?ps.map(c=>`<tr><td>${esc(c.name||'')}</td><td>${dt(c.created_at)}</td><td>${esc(L.last_used)} ${dt(c.last_used)}</td>
+      <td><button class=warn ${on("delpk",id,c.id,name)}>${esc(L.revoke)}</button></td></tr>`).join(""):`<tr><td class=muted>${esc(L.no_passkeys)}</td></tr>`)+`</table></div></td>`}
+async function delpk(uid,cid,name){if(confirm(L["confirm.pk_delete"])){abgewiesen(await p(`/api/users/${uid}/passkeys/${cid}/delete`));pks(uid,name)}}
+async function deluser(id){if(!confirm(L["confirm.delete"]))return;if(!abgewiesen(await p(`/api/users/${id}/delete`)))users()}
+async function revk(kid,uid,name){if(confirm(L["confirm.revoke"])){abgewiesen(await p(`/api/keys/${kid}/revoke`));keys(uid,name)}}
 
 async function sessions(){const ss=await g("/api/sessions");
   V(`<table><tr><th>${esc(L["th.user"])}</th><th>${esc(L["th.method"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.since"])}</th><th>${esc(L["th.mfa"])}</th><th></th></tr>`+
     ss.map(s=>`<tr><td><b>${esc(s.user)}</b></td><td>${esc(s.method)}</td><td>${esc(s.ip)}</td><td>${dt(s.created_at)}</td>
-      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn onclick="revs(${jsarg(s.full)})">${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
-async function revs(t){await p("/api/sessions/revoke",{token:t});sessions()}
+      <td>${s.mfa_ok?'✓':'—'}</td><td><button class=warn ${on("revs",s.full)}>${esc(L.end_session)}</button></td></tr>`).join("")+`</table>`)}
+async function revs(t){abgewiesen(await p("/api/sessions/revoke",{token:t}));sessions()}
+function clr(id){document.getElementById("r"+id).innerHTML=""}
 
 async function security(){const s=await g("/api/security");const v=await g("/api/version");
   V(`<div class=card><h2>${esc(L.hardening)}</h2>`+
-    Object.entries(s).map(([k,v])=>`<div class=row><label style=width:230px>${k}</label><input id=s_${k} value=${v} type=number style=width:120px></div>`).join("")+
-    `<div class=row><button onclick='savesec(${JSON.stringify(Object.keys(s))})'>${esc(L.save)}</button></div></div>`+
+    Object.entries(s).map(([k,v])=>`<div class=row><label class=w230>${esc(k)}</label><input id="s_${esc(k)}" value="${esc(v)}" type=number class=w120></div>`).join("")+
+    `<div class=row><button ${on("savesec",Object.keys(s))}>${esc(L.save)}</button></div></div>`+
     `<div class=card><h2>${esc(L.version)}</h2><div class=row>${esc(L.installed)} <code>${esc(v.version)}</code></div>
-     <div class=muted style=font-size:12px>${esc(L.update_note)}</div></div>`)}
-async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));await p("/api/security",b);alert(L.saved)}
+     <div class="muted small">${esc(L.update_note)}</div></div>`)}
+async function savesec(keys){const b={};keys.forEach(k=>b[k]=parseInt(document.getElementById("s_"+k).value));if(!abgewiesen(await p("/api/security",b)))alert(L.saved)}
 
 
 async function audit(){const a=await g("/api/audit?limit=120");
   V(`<table><tr><th>${esc(L["th.time"])}</th><th>${esc(L["th.event"])}</th><th>${esc(L["th.user"])}</th><th>${esc(L["th.ip"])}</th><th>${esc(L["th.detail"])}</th></tr>`+
     a.map(e=>`<tr><td>${dt(e.ts)}</td><td>${esc(e.event)}</td><td>${esc(e.username)||'—'}</td><td>${esc(e.ip)||'—'}</td><td>${esc(e.detail)||''}</td></tr>`).join("")+`</table>`)}
 
+// Ein delegierter Listener fuer alle Knoepfe, auch die per innerHTML nachgeladenen. Nur Namen
+// aus ACT sind aufrufbar — data-on waehlt eine Aktion aus, es nennt keinen beliebigen Code.
+const ACT={go,mkuser,dis,pw,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
+document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
+  if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();
 </script>
 </div>__FOOTER__</body></html>"""

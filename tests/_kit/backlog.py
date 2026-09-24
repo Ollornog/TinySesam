@@ -185,7 +185,7 @@ def offene_gegen_erledigten_milestone(root: str = ".") -> list[str]:
 def pruefe_backlog_vorhanden(root: str = ".") -> list[str]:
     """Gibt es das `backlog/`-Verzeichnis ueberhaupt?
 
-    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session, gemessen an drei Stellen):
+    WARUM (2026-09-23, gemeldet aus einem Kundenrepo, gemessen an drei Stellen):
     `lade()` gibt bei fehlendem Verzeichnis eine leere Liste zurueck, und alle Pruefungen
     darauf melden folgerichtig **nichts**. Der Aufrufer sieht einen gruenen Haken fuer eine
     Pruefung, die kein einziges Element angesehen hat.

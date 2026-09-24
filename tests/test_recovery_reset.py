@@ -4,6 +4,7 @@ import tempfile, os, re
 from fastapi import FastAPI, Depends
 from fastapi.testclient import TestClient
 import pyotp
+import time
 from tinysesam import TinySesam, TinySesamConfig
 
 
@@ -36,7 +37,7 @@ JSON = {"Accept": "application/json"}
 
 # ---------- Recovery-Codes: einlösbar im TOTP-Schritt, one-shot ----------
 secret = auth.totp_begin(uid)["secret"]
-auth.totp_confirm(uid, pyotp.TOTP(secret).now())
+auth.totp_confirm(uid, pyotp.TOTP(secret).at(time.time() - 30))
 codes = auth.generate_recovery_codes(uid)
 assert len(codes) == 6 and auth.recovery_codes_remaining(uid) == 6
 ok("generate_recovery_codes → 6 Codes")
@@ -117,6 +118,48 @@ r = c2.post("/auth/login", data={"username": "admin", "password": "ganzneuespw",
 assert r.status_code == 303
 ok("nach Reset: altes Passwort ungültig, neues gültig")
 
+# ---------- R4-13 / H-10: Der Reset ist der Weg aus der Sperre ----------
+# Bis T-13 setzte der Selbstbedienungs-Reset das Passwort und liess die Fehlversuche stehen:
+# Wer sich ausgesperrt hatte und den vorgesehenen Weg ging, stand mit dem NEUEN Passwort vor
+# derselben 429 — bis das Fenster ablief oder ein Admin `tinysesam unlock` fuhr. Der Reset
+# prüft die Sperre nicht (unabhängiger Weg, H-10) und hebt jetzt die Passwort-Sperre auf. Die
+# TOTP-Fehlversuche bleiben: Ein Postfach beweist den zweiten Faktor nicht.
+# (Mutationsprobe: `sperre_aufheben` in `reset_submit` streichen → 429 statt 303.)
+db_s = os.path.join(tempfile.mkdtemp(), "t.db")
+post_s = []
+a_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, cookie_secure=False,
+                                passkey_enabled=False, password_reset_enabled=True,
+                                base_url="https://auth.example.com"))
+a_s.set_mailer(lambda to, subject, text, html=None: post_s.append(text))
+a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
+app_s = FastAPI()
+app_s.include_router(a_s.router())
+c_s = TestClient(app_s, headers={"Accept": "text/html"})
+for _ in range(a_s.sec("max_login_attempts")):
+    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "vergessen"}).status_code == 401
+a_s.record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
+assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
+    "Vorbedingung: das Konto ist gesperrt"
+c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
+tok_s = re.search(r"/auth/reset\?token=([\w\-]+)", post_s[0]).group(1)
+assert c_s.post("/auth/reset", data={"token": tok_s, "password": "neues-geheimnis-2"},
+                follow_redirects=False).status_code == 303, "der Reset selbst hängt an der Sperre"
+r = c_s.post("/auth/login", data={"username": "gesperrt", "password": "neues-geheimnis-2"},
+             follow_redirects=False)
+assert r.status_code == 303, f"nach dem Reset weiter gesperrt: {r.status_code}"
+ok("R4-13/H-10: der Reset läuft an der Sperre vorbei und hebt sie auf")
+# Der Login oben war vollständig und hat damit ohnehin alles geräumt (R7-1); gemessen wird der
+# Reset deshalb am Zähler direkt, mit einem frischen Fehlgriff je Methode.
+a_s.record_login("gesperrt", "testclient", False, "password")
+a_s.record_login("gesperrt", "testclient", False, "totp")
+weg = a_s.sperre_aufheben(a_s.store.get_user_by_name("gesperrt")["id"], methoden=("password",))
+assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
+    "der Reset räumt auch Fehlversuche am zweiten Faktor"
+assert any("fehlversuche_verworfen=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
+           if z["event"] == "password_reset"), "das Audit-Log sagt nicht, was der Reset geräumt hat"
+ok("…nur die Passwort-Fehlversuche, nicht die des zweiten Faktors; das Audit-Log nennt die Zahl")
+os.remove(db_s)
+
 
 # ---------- base_url mit Leerraum (C-2): der Link bleibt sauber, eine unbrauchbare Basis fällt beim Aufbau ----------
 from tinysesam.errors import ConfigError as _CfgErr
@@ -138,6 +181,133 @@ except _CfgErr as e:
     assert "base_url" in str(e), e
 os.remove(_db2)
 print("  (C-2) base_url wird getrimmt, ohne Schema abgewiesen ok")
+
+# ---------- B2-7: ein verbrauchter Recovery-Code wird nachgehalten und gemeldet ----------
+# (Mutationsprobe: in `verify_recovery_code` direkt `return self.store.consume_recovery_code(…)`
+# wie vor T-13 → rot: keine Audit-Zeile, kein Ereignis.)
+db_r = os.path.join(tempfile.mkdtemp(), "r.db")
+auth_r = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_r, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False, recovery_code_count=4,
+                                   password_reset_enabled=True, base_url="https://auth.example.com"))
+post_r = []
+auth_r.set_mailer(lambda to, s, t, html=None: post_r.append(t))
+ereig_r = []
+auth_r.on_security_event = lambda e, k, d: ereig_r.append((e, d))
+uid_r = auth_r.create_user("rita", "rita-geheim-1", email="rita@example.com")
+geheim_r = auth_r.totp_begin(uid_r)["secret"]
+auth_r.totp_confirm(uid_r, pyotp.TOTP(geheim_r).at(time.time() - 30))
+codes_r = auth_r.generate_recovery_codes(uid_r)
+app_r = FastAPI()
+app_r.include_router(auth_r.router())
+cr = TestClient(app_r)
+cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1"}, follow_redirects=False)
+assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
+zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
+assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
+assert ("recovery_code_used", {"verbleibend": 3}) in ereig_r, ereig_r
+seite = cr.get("/auth/account").text
+assert "Nur noch 3 Recovery-Codes" in seite, "die Kontoseite nennt den knappen Rest nicht"
+auth_r.generate_recovery_codes(uid_r)
+assert "4 Recovery-Codes übrig" in cr.get("/auth/account").text
+assert [e for e, _ in ereig_r] == ["totp_enabled", "recovery_codes_generated", "recovery_code_used",
+                                   "recovery_codes_generated"], ereig_r
+ok("B2-7: Recovery-Verbrauch → Audit mit Rest, Ereignis, Anzeige auf der Kontoseite")
+
+# ---------- R4-14: der Selbstbedienungs-Reset widerruft die API-Keys ----------
+# (Mutationsprobe: `revoke_user_api_keys` in reset_submit streichen → rot.)
+key_r = auth_r.create_api_key(uid_r, name="ci")["key"]
+assert auth_r.verify_api_key(key_r)[0] is not None
+auth_r.send_password_reset("rita@example.com", auth_r.cfg.base_url)
+tok_r = re.search(r"/auth/reset\?token=([\w\-]+)", post_r[-1]).group(1)
+# Erst die Regel: ein schwaches Passwort wird abgelehnt und lässt den Link gültig.
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "Rita2024!"})
+assert r.status_code == 400 and "leicht zu erraten" in r.text
+assert auth_r.peek_magic(tok_r, purpose="reset_password"), "ein abgelehntes Passwort entwertet den Link"
+r = cr.post("/auth/reset", data={"token": tok_r, "password": "ein-frisches-passwort"}, follow_redirects=False)
+assert r.status_code == 303
+assert auth_r.verify_api_key(key_r)[0] is None, "der API-Key überlebt den Reset"
+assert auth_r.store.count_active_api_keys(uid_r) == 0
+assert any(z["event"] == "password_reset" and "api_keys_revoked=1" in (z["detail"] or "")
+           for z in auth_r.store.recent_audit(20))
+assert ereig_r[-1][0] == "password_changed"
+ok("R4-14: Passwort-Reset per Mail widerruft die API-Keys (und prüft die Passwortregel)")
+
+# A-8: Ein toter Link geht der Passwortregel vor — sonst hiess es „zu leicht", und erst der
+# zweite Versuch verriet, dass der Link nicht mehr gilt. (tok_r ist oben verbraucht.)
+for _tok in ("quatsch", tok_r):
+    r = cr.post("/auth/reset", data={"token": _tok, "password": "password"})
+    assert r.status_code == 400 and auth_r.t("magic.invalid") in r.text, r.text[:300]
+    assert "leicht zu erraten" not in r.text
+ok("A-8: ungültiger oder verbrauchter Link → „Link ungültig“ vor der Passwortregel")
+
+# Integrationsfund 4 (A-8 × B5-18): Der A-8-Vorabcheck kehrte früh zurück, OHNE
+# `token_abgewiesen` — der Aufruf aus B5-18 stand nur hinter `redeem_magic` und war für einen
+# toten Token unerreichbar. Wer Reset-Token per POST durchprobierte oder einen benutzten Link
+# wieder einspielte, erschien weder im Audit-Log noch in der fail2ban-Verify-Jail; der GET schon.
+# (Mutationsprobe: den `token_abgewiesen`-Aufruf im A-8-Zweig von `reset_submit` streichen → rot.)
+import io as _io  # noqa: E402
+import logging as _logging  # noqa: E402
+from tinysesam import security as _security  # noqa: E402
+
+
+def _token_spuren():
+    return len(auth_r.store._all("SELECT id FROM audit WHERE event='token_invalid' "
+                                 "AND detail LIKE 'zweck=reset_password%'"))
+
+
+_puffer_r = _io.StringIO()
+_haken_r = _logging.StreamHandler(_puffer_r)
+_security.seclog.addHandler(_haken_r)
+try:
+    _vorher_r = _token_spuren()
+    for _tok, _pw in (("erfunden-1", "ein-frisches-passwort"),   # geraten, Passwort taugt
+                      ("erfunden-2", "x"),                       # geraten, Passwort zu kurz
+                      (tok_r, "noch-ein-frisches-passwort")):     # schon eingelöst
+        r = cr.post("/auth/reset", data={"token": _tok, "password": _pw})
+        assert r.status_code == 400, (_tok, r.status_code)
+    _neu_r = _token_spuren() - _vorher_r
+    _log_r = [z for z in _puffer_r.getvalue().splitlines()
+              if z.startswith(_security.LOG_PRUEFUNG) and "token_reset_password" in z]
+    assert _neu_r == 3 and len(_log_r) == 3, (_neu_r, _puffer_r.getvalue())
+    # Ohne Token ist das kein vorgelegter Link (A3) — keine Zeile, wie beim GET.
+    assert cr.post("/auth/reset", data={"token": "", "password": "egal-was"}).status_code == 400
+    assert _token_spuren() - _vorher_r == 3 and len(
+        [z for z in _puffer_r.getvalue().splitlines() if "token_reset_password" in z]) == 3
+finally:
+    _security.seclog.removeHandler(_haken_r)
+ok("Fund 4: POST /auth/reset mit totem Token → token_invalid im Audit + „failed verification“ (wie der GET)")
+auth_r.totp_disable(uid_r)
+assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
+os.remove(db_r)
+
+# ---------- H-4: kein Reset-Link für ein reines SSO-Konto ----------
+# Ein Reset auf einem Konto, das nur über IdP/Verzeichnis angemeldet wird, setzte ein LOKALES
+# Passwort — ein zweiter Weg an Sperre, Gruppenentzug und MFA-Pflicht des Providers vorbei. Bei
+# LDAP gewinnt ein lokales Passwort sogar vor dem Verzeichnis.
+sent.clear()
+_sso = auth.create_user("sso-nutzer", email="sso@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-sso", _sso)
+_ldap = auth.create_user("ldap-nutzer", email="ldap@example.com")
+auth.store.link_federated("ldap", "uuid-ldap", _ldap, 0)
+_gemischt = auth.create_user("gemischt", password="lokal-pw-123", email="gemischt@example.com")
+auth.store.link_oidc("https://idp.example.com", "sub-gemischt", _gemischt)
+for _adresse in ("sso@example.com", "ldap@example.com"):
+    assert c.post("/auth/forgot", data={"email": _adresse}).status_code == 200
+assert sent == [], f"ein reines SSO-Konto bekam einen Reset-Link: {[m['to'] for m in sent]}"
+assert sum(1 for z in auth.store.recent_audit(30) if z["event"] == "reset_sso_only") == 2
+# Die Antwort nach aussen ist dieselbe wie für eine unbekannte Adresse — keine Konto-Erkundung.
+def _ohne_nonce(antwort):
+    return antwort.status_code, re.sub(r'nonce="[^"]*"', "", antwort.text)
+
+
+assert _ohne_nonce(c.post("/auth/forgot", data={"email": "sso@example.com"})) == \
+    _ohne_nonce(c.post("/auth/forgot", data={"email": "gibtsnicht@example.com"}))
+ok("H-4: reines SSO-Konto (OIDC oder LDAP gebunden, kein lokales Passwort) bekommt keinen Reset-Link")
+# Gegenprobe: gebunden UND mit lokalem Passwort — das lokale Passwort ist ein eigener Weg und
+# bleibt rücksetzbar.
+c.post("/auth/forgot", data={"email": "gemischt@example.com"})
+assert [m["to"] for m in sent] == ["gemischt@example.com"], sent
+ok("H-4: …ein föderiertes Konto MIT lokalem Passwort bleibt rücksetzbar")
 
 os.remove(db)
 print("\nRECOVERY + RESET OK ✅")

@@ -5,9 +5,25 @@
 
 ## Schwachstellen melden
 
-Bitte Sicherheitslücken **nicht** über öffentliche Issues melden, sondern privat über die
-**GitHub Security Advisories** dieses Repos (Reiter *Security* → *Report a vulnerability*).
-Ich bemühe mich um eine erste Rückmeldung innerhalb weniger Tage.
+Bitte Sicherheitslücken **nicht** über öffentliche Issues melden. Zwei vertrauliche Wege:
+
+1. **Private Schwachstellenmeldung auf GitHub** — Reiter *Security* → *Report a vulnerability*
+   (<https://github.com/Ollornog/TinySesam/security/advisories/new>). Bevorzugt: Meldung,
+   Rückfragen und das spätere Advisory bleiben an einer Stelle.
+2. **E-Mail** an <tinysesam-github@ollornog.de> mit dem Betreff `[security] TinySesam` — für alle
+   ohne GitHub-Konto, oder wenn das Formular nicht erreichbar ist.
+
+Worauf Verlass ist (Kalendertage, ab Eingang der Meldung):
+
+| Schritt | Frist |
+| --- | --- |
+| Eingangsbestätigung | **7 Tage** |
+| Erste Einschätzung (bestätigt / nicht nachstellbar / ausserhalb des Umfangs) | **14 Tage** |
+| Behobenes Release oder veröffentlichtes Advisory mit Umgehung | **90 Tage** |
+
+Koordinierte Offenlegung: Details bitte vertraulich halten, bis ein Fix veröffentlicht ist oder
+die 90 Tage vorbei sind — was zuerst eintritt. Reisst eine Frist, kommt eine Nachricht mit dem
+Grund; Schweigen ist keine Antwort. Nennung im Advisory und im CHANGELOG, wenn gewünscht.
 
 ## Status / Umfang
 
@@ -34,6 +50,51 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   eingesammelt wird `admin_claim_token_file` (Rechte `0600`) nehmen, sofort einlösen, und wo gar
   kein Token in einer URL stehen soll, den ersten Admin über `auth.ensure_admin(...)` oder
   `admin_identifiers` setzen.
+- **Bekannte Grenze — TOTP-Geheimnisse liegen unverschlüsselt in der Datenbank.** Passwörter,
+  PINs, Recovery-Codes und API-Keys stehen dort nur als Hash; das TOTP-Geheimnis kann das nicht,
+  denn der Server muss daraus jeden Code nachrechnen. Wer die SQLite-Datei (oder eine Sicherung
+  davon) lesen kann, erzeugt damit für jedes Konto gültige Codes — der zweite Faktor hängt dann
+  nur noch am Passwort. Eine Verschlüsselung mit einem Schlüssel ausserhalb der Datenbank ist
+  geplant (T-13, H-14/H-15). Bis dahin: Datenbank und Sicherungen wie ein Geheimnis behandeln
+  (Rechte `0600`, verschlüsselte Backups), und wer den zweiten Faktor auch gegen einen
+  Datenbankabfluss braucht, setzt auf Passkeys — dort liegt nur ein öffentlicher Schlüssel.
+- **Bekannte Grenze — ohne `__Host-`-Präfix am Sitzungs-Cookie gilt jeder Host unter der
+  übergeordneten Domain als vertrauenswürdig.** Das Sitzungs-Cookie trägt `__Host-` nur mit
+  `cookie_secure=True`, leerem `cookie_domain`, `cookie_path="/"` und `cookie_host_prefix=True` —
+  den Vorgaben. SSO über Subdomains braucht `cookie_domain`, und ein Cookie für die ganze Domain
+  kann das Präfix nicht tragen; `cookie_host_prefix=False`, ein anderer `cookie_path` und
+  `cookie_secure=False` nehmen es ebenfalls weg. Ohne Präfix heißt das Cookie schlicht
+  `tinysesam_session`, und jeder Host unter der übergeordneten Domain — auch eine geschützte App
+  hinter Forward-Auth — kann ein eigenes Cookie dieses Namens für die ganze Domain setzen (cookie
+  tossing), mit oder ohne `cookie_domain`: Ein abgemeldeter Besucher ist danach als das Konto
+  angemeldet, dessen Token dieser Host besitzt, ein angemeldeter meist ebenso, weil das jüngere
+  Cookie gewinnt. Dafür braucht es keinen Request an TinySesam, also halten weder CSRF-Token noch
+  Herkunftsprüfung das auf; sie schließen nur den Weg über ein Formular (Login-CSRF per POST an
+  TinySesam), und über reines HTTP nicht einmal den, weil Browser dort kein `Sec-Fetch-Site`
+  schicken. `cookie_domain` nur setzen, wenn jeder Host darunter einem selbst gehört und so
+  vertrauenswürdig ist wie TinySesam. Sonst leer lassen und die übrigen drei auf ihren Vorgaben
+  lassen: Dann bleibt die Sitzung host-only mit `__Host-`, und kein anderer Host kann sie setzen.
+  (Apps auf dem Host von TinySesam selbst, wie im pfadbasierten Forward-Auth-Aufbau, teilen seinen
+  Origin und gelten ohnehin als vertrauenswürdig.)
+- **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
+  gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
+  sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
+  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
+  `api_key_created`. Das gilt auch für Änderungen, die ein Admin im Panel an einem fremden Konto
+  vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die Mail also so
+  schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. API-Keys meldet der Hook nur
+  bei der Anlage: Der Widerruf eines Keys (durch den Inhaber, durch einen Admin oder gesammelt beim
+  Reset, bei der Sperre und bei `sessions/revoke` mit `scope=all`) löst kein Ereignis aus und steht
+  nur im Audit-Log. TinySesam verschickt selbst nichts; die Mail geht aus dem Hook (am besten
+  über eine Warteschlange — er läuft synchron im Request). Ein Fehler im Hook macht die Änderung
+  nie rückgängig, landet aber im Sicherheits-Log.
+- **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
+  bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
+  Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
+  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` und danach
+  `verify_totp(uid, now())` mit demselben Code rufen, werden seit T-13 rot — dort mit dem Code des
+  vorigen Zeitschritts bestätigen.
 
 ## Unterstützte Versionen
 

@@ -395,7 +395,7 @@ def _ist_belegstelle(rel: str, belegstellen: list[str] | None) -> bool:
 def _ist_eigene_identitaet(host: str, policy: dict) -> bool:
     r"""Die NACKTE eigene Domain (und ihr `www`) ist Identitaet, keine Karte.
 
-    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session): `eigene_domains_sha256_16` las bis
+    WARUM (2026-09-23, gemeldet aus einem Kundenrepo): `eigene_domains_sha256_16` las bis
     dahin nur `pruefe_private_infrastruktur`. Die Adresspruefungen kannten die Liste nicht und
     meldeten die eigene Produktdomain als fremden Host — 8 von 96 verbliebenen Treffern in einem
     Kundenrepo.
@@ -1104,7 +1104,7 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
                                ausgenommen: dict[str, str] | None = None) -> list[str]:
     """Wird jede `tests/test_*`-Datei von irgendetwas AUFGERUFEN?
 
-    WARUM (2026-09-23, gemeldet von der des Kundenrepos-Session an einem echten Repo): Dort wurde
+    WARUM (2026-09-23, gemeldet aus einem Kundenrepo an einem echten Repo): Dort wurde
     `tests/test_hygiene.py` von **nichts** gerufen — weder von `scripts/check.sh` noch von
     einem Workflow. Die 16 Kit-Pruefungen darin hatten am Vortag 1060 Treffer auf null
     gebracht und liefen seitdem in **keinem** Lauf mit.
@@ -1148,17 +1148,8 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
     # eine Messung VOR dem Scharfschalten aufgedeckt.
     #
     # Der Waechter bleibt trotzdem noetig: repokits `check.sh` zaehlt namentlich auf, und
-    # genau dort lagen zwei Testdateien im Baum, ohne je zu laufen. Und des Kundenrepos
-    # `test_hygiene.py` wird von gar nichts gerufen — weder namentlich noch per Sammler.
-    for _sammler in ("tests/run_all.py", "run_all.py", "scripts/run_all.py"):
-        _inhalt = _lies(root, _sammler)
-        if _inhalt and ("glob(" in _inhalt or "glob.glob" in _inhalt or "iterdir" in _inhalt
-                        or "discover" in _inhalt):
-            return treffer
-    _check = _lies(root, "scripts/check.sh") or ""
-    if re.search(r"pytest\s+(-[^\s]+\s+)*tests?\b|unittest\s+discover", _check):
-        return treffer
-
+    # genau dort lagen zwei Testdateien im Baum, ohne je zu laufen. Und in einem Kundenrepo
+    # wurde `test_hygiene.py` von gar nichts gerufen — weder namentlich noch per Sammler.
     if laeufer is None:
         # `tox.ini` und `pyproject.toml` dazu: gemeldet von einer Kunden-Session, die
         # beim Belegen ihres Befunds BEIDE Einstiegspunkte greppen musste (check.sh und
@@ -1183,6 +1174,39 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
         return treffer + [f"kein Laeufer gefunden (gesucht: {', '.join(laeufer[:3])}…) — "
                           f"diese Pruefung haette nichts gemessen und waere aus dem falschen "
                           f"Grund gruen"]
+
+    # AUTODISCOVERY — aber erst, nachdem die Laeufer gelesen sind.
+    #
+    # ⚠️ KORREKTUR 0.21.2 (gemeldet aus einer fremden Session, per Mutation belegt, Register
+    # `pipeline-fehler.md`): Bis 0.21.1 stand diese Abkuerzung VOR dem Laeuferblock und
+    # fragte nur, ob ein Sammler EXISTIERT. Wer alle Aufrufe von `tests/run_all.py` aus
+    # check.sh und den Workflows entfernte, bekam trotzdem `[]` zurueck:
+    #
+    #     Ein nicht verkabelter Sammler bestand die Pruefung dadurch, dass es ihn gibt.
+    #
+    # Das ist exakt der Fall, gegen den diese Pruefung gebaut ist — eine Ebene hoeher. Die
+    # Abkuerzung verlangt jetzt beides: der Sammler sammelt automatisch UND er wird selbst
+    # von einem Laeufer gerufen.
+    for _sammler in ("tests/run_all.py", "run_all.py", "scripts/run_all.py"):
+        _inhalt = _lies(root, _sammler)
+        if not _inhalt:
+            continue
+        if not ("glob(" in _inhalt or "glob.glob" in _inhalt or "iterdir" in _inhalt
+                or "discover" in _inhalt):
+            continue
+        _name = os.path.basename(_sammler)
+        if re.search(rf"(^|[\s\"'/]){re.escape(_name)}\b", text, re.M):
+            return treffer
+        treffer.append(
+            f"{_sammler} sammelt automatisch, wird aber selbst von keinem Laeufer "
+            f"gerufen — dann laeuft KEINE Testdatei, und diese Pruefung waere ohne "
+            f"diese Zeile gruen")
+        return treffer
+    # `pytest tests/` bzw. `unittest discover` in check.sh: check.sh IST ein Laeufer, hier
+    # stellt sich die Frage nach der Verkabelung nicht.
+    _check = _lies(root, "scripts/check.sh") or ""
+    if re.search(r"pytest\s+(-[^\s]+\s+)*tests?\b|unittest\s+discover", _check):
+        return treffer
 
     muster = os.path.join(root, testverzeichnis, "test_*")
     dateien = sorted(d for d in _glob.glob(muster)
@@ -1272,6 +1296,29 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
         if os.path.exists(os.path.join(root, testverzeichnis, "_kit", f"{modul}.py")):
             angeboten.add(f"{modul}.{funktion}")
 
+    # KIT_WERKZEUGE gilt HIER genauso wie in `pruefe_tabelle_vollstaendig`.
+    #
+    # ⚠️ GEFUNDEN BEIM ROLLOUT VON 0.21.2, und es ist ein Befund ueber die Pruefungen,
+    # nicht ueber die Repos: `pruefe_fixture_deckt_muster` stand in KIT_WERKZEUGE (mit
+    # Grund: sie prueft das KIT gegen seine eigene Fixture, nicht ein Repo) — und
+    # **sechs Repos wurden gleichzeitig rot**, weil DIESE Pruefung die Tabelle nicht
+    # las. Dieselbe Liste galt in zwei Pruefungen gegenlaeufig.
+    #
+    # Dass es die `headers`-Eintraege nicht traf, war Zufall: sie liegen in einem
+    # ANDEREN Modul, und die Introspektion oben sieht nur dieses hier.
+    #
+    # Warum repokits eigener Lauf es nicht fand: repokit RUFT die Funktion in seinem
+    # check.sh. Ein Dogfooding-Lauf kann eine Forderung nicht pruefen, die nur fremde
+    # Repos trifft — dafuer gibt es `repokit status`/den Rollout, und beim naechsten Mal
+    # frueher: vor dem Scharfschalten ueber ALLE Repos messen.
+    for _modul, _funktion, _grund in KIT_WERKZEUGE:
+        if not str(_grund).strip():
+            treffer.append(f"KIT_WERKZEUGE-Eintrag {_modul}.{_funktion} ohne Begruendung "
+                           "— ein Grund ist Pflicht, sonst ist die Liste ein Ablagefach")
+            continue
+        angeboten.discard(_funktion)
+        angeboten.discard(f"{_modul}.{_funktion}")
+
     quelle = []
     wurzel = os.path.join(root, testverzeichnis)
     for pfad, verzeichnisse, dateien in os.walk(wurzel):
@@ -1308,7 +1355,7 @@ def pruefe_dateiliste_plausibel(dateien: list[str], mindestens: int = 5,
                                 root: str | None = None) -> list[str]:
     """Ist die Dateiliste vollständig? — sonst prüft jede Prüfung danach zu wenig.
 
-    WARUM (2026-09-22, gemeldet von der des Kundenrepos-Session): `pruefe_geheimnisse([], …)`
+    WARUM (2026-09-22, gemeldet aus einem Kundenrepo): `pruefe_geheimnisse([], …)`
     und `pruefe_private_infrastruktur([], …)` geben beide **grün** zurück. Eine leere
     Liste ist damit von „alles sauber" nicht zu unterscheiden.
 
@@ -1669,6 +1716,9 @@ KIT_WERKZEUGE: list[tuple[str, str, str]] = [
      "gehoert auf die Proxy-/Deploy-Ebene, nicht in eine App-Suite (s. Docstring)"),
     ("headers", "pruefe_kein_versions_leak",
      "braucht die Antwort-Koepfe eines laufenden Dienstes"),
+    ("hygiene", "pruefe_fixture_deckt_muster",
+     ("prueft das KIT gegen seine eigene Fixture, nicht ein Repo — sie laeuft in "
+      "repokits check.sh; die Repos erben das Ergebnis ueber `repokit muster`")),
 ]
 
 
@@ -1795,3 +1845,62 @@ def pruefe_tabelle_vollstaendig(kit_verzeichnis: str | None = None) -> list[str]
         treffer.append(f"{m}.{f} steht in der Tabelle, existiert im Kit aber nicht "
                        f"(umbenannt oder entfernt?)")
     return treffer
+
+
+FIXTURE_SCHMUTZIG = "fixture_geheimnis_schmutzig.txt"
+FIXTURE_SAUBER = "fixture_geheimnis_sauber.txt"
+
+
+def _fixture_zeilen(kit_verzeichnis: str, name: str) -> list[str]:
+    pfad = os.path.join(kit_verzeichnis, name)
+    with open(pfad, encoding="utf-8") as fh:
+        return [z for z in fh.read().splitlines() if z and not z.startswith("#")]
+
+
+def pruefe_fixture_deckt_muster(policy: dict,
+                                kit_verzeichnis: str | None = None) -> list[str]:
+    """Jede Musterzeile braucht einen Fall in der Fixture — und die Fixture keinen Fehlalarm.
+
+    WARUM (2026-09-24): Die Fixture behauptete in ihrem eigenen Kopf „JEDE Zeile der
+    Musterliste hat hier einen Fall". Als die Liste um `nbp_` (NetBird-PAT) und `pat=`
+    wuchs, wuchs die Fixture NICHT mit — und der Selbsttest blieb gruen, weil er nur
+    gegen eine harte Zahl (13) prueft. Eine Zusage, die niemand nachmisst, ist keine
+    Zusage: das neue Muster war ab dem Tag seiner Aufnahme ungeprueft.
+
+    GRENZE, die diese Pruefung NICHT schliesst: sie deckt MUSTERZEILEN ab, nicht die
+    Alternativen INNERHALB einer Zeile. Das Zuweisungsmuster ist eine einzige Zeile mit
+    einem Dutzend Schluesselwoertern (`token`, `secret`, `pat`, …); faellt eines davon
+    weg, bleibt die Zeile getroffen und diese Pruefung schweigt. Wer ein Schluesselwort
+    ergaenzt, ergaenzt die Fixture von Hand — hier steht nur, dass es kein Muster OHNE
+    jeden Fall geben kann.
+    """
+    kit_verzeichnis = kit_verzeichnis or os.path.dirname(os.path.abspath(__file__))
+    befunde: list[str] = []
+    try:
+        schmutzig = _fixture_zeilen(kit_verzeichnis, FIXTURE_SCHMUTZIG)
+        sauber = _fixture_zeilen(kit_verzeichnis, FIXTURE_SAUBER)
+    except OSError as e:
+        return [f"Fixture nicht lesbar: {e} — der Selbsttest der Muster ist nicht messbar"]
+    if not schmutzig:
+        return [f"{FIXTURE_SCHMUTZIG} enthaelt keinen Fall — ein leerer Selbsttest ist gruen und wertlos"]
+
+    muster = grep_muster(policy)
+    ausnahmen = [re.compile(a) for a in grep_ausnahmen(policy)]
+
+    def trifft(regex, zeilen: list[str]) -> list[str]:
+        r = re.compile(regex)
+        return [z for z in zeilen
+                if r.search(z) and not any(a.search(z) for a in ausnahmen)]
+
+    for m in muster:
+        if not trifft(m, schmutzig):
+            befunde.append(
+                f"kein Fall in {FIXTURE_SCHMUTZIG} fuer das Muster {m[:48]}… — "
+                "es koennte geloescht werden, ohne dass der Selbsttest rot wird")
+
+    for m in muster:
+        for z in trifft(m, sauber):
+            befunde.append(
+                f"{FIXTURE_SAUBER}: Fehlalarm auf einem Platzhalter ({z[:40]}…) — "
+                "ein Waechter, dem man nicht glaubt, wird abgeschaltet")
+    return befunde

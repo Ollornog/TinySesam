@@ -10,6 +10,18 @@
 # Hinweis: Traefik folgt der 401 nicht automatisch. Damit Browser zum Login umgeleitet werden,
 # entweder im Client den Header X-TinySesam-Location auswerten oder einen 401-Errorpage-Router
 # ergänzen. Die Remote-*-Header werden via authResponseHeaders an die App durchgereicht.
+#
+# Cookies an die App (B-20) — hier bleibt eine Lücke, die nur der Betreiber schliessen kann:
+# Der Browser schickt das Sitzungs-Cookie `tinysesam_session` (und `tinysesam_runlock`) an jeden
+# Host unter cookie_domain, und Traefik reicht es an die App durch. Eine kompromittierte oder
+# geschwätzige App (Debug-Seite, Fehlerbericht, Log mit Anfrage-Headern) gibt damit eine Sitzung
+# heraus, die für ALLE Apps gilt. Caddy und nginx (Vorlagen daneben) nehmen die TinySesam-Cookies
+# gezielt heraus; Traefik kann das mit Bordmitteln nicht — die Headers-Middleware setzt oder
+# löscht nur den GANZEN Cookie-Header. Deshalb:
+#   * Braucht die App keine eigenen Cookies: Middleware `tinysesam-cookies-weg` (unten) NACH
+#     `tinysesam-auth` in die Kette. Die Reihenfolge zählt — davor sähe auch die Prüfung kein Cookie.
+#   * Braucht sie eigene Cookies: ein Plugin, das einzelne Cookies entfernt, oder Caddy/nginx
+#     vor die App. Ohne eins von beiden bleibt es bei der Lücke.
 
 http:
   middlewares:
@@ -37,11 +49,19 @@ http:
           - "Remote-Email"
           - "Remote-Name"
 
+    # Löscht den ganzen Cookie-Header auf dem Weg zur App (leerer Wert = entfernen). Nur für Apps
+    # ohne eigene Cookies — siehe B-20 oben.
+    tinysesam-cookies-weg:
+      headers:
+        customRequestHeaders:
+          Cookie: ""
+
   routers:
     app:
       rule: "Host(`app.example.com`)"
       middlewares:
         - tinysesam-auth
+        # - tinysesam-cookies-weg   # nur für Apps ohne eigene Cookies (B-20), immer NACH der Prüfung
       service: app-svc
 
     auth:

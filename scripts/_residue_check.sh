@@ -77,6 +77,32 @@ check() {
 
     if [[ ${#rueckstaende[@]} -gt 0 ]]; then
         if [[ -z "$vorher_datei" ]]; then
+            # In der CI IST es entscheidbar, auch ohne Snapshot: der Checkout ist frisch,
+            # also stammt jede veränderte Datei aus dem Lauf.
+            #
+            # ⚠️ KORREKTUR 2026-09-24 (gemeldet aus einer fremden Session, Register
+            # `pipeline-fehler.md`): Bis hierher behauptete die Meldung „In der CI tritt
+            # das nie auf" — und genau dort wurde sie gerufen: vier Repos rufen
+            # `_residue_check.sh check` OHNE `--seit` nach der Suite. Ein echter
+            # Rückstand kam dort als „nicht entscheidbar … kein Vorwurf" heraus. Der Job
+            # wurde weiter rot (Exit ≠ 0), das Gate hielt — aber die Aussage war falsch.
+            if [[ -n "${CI:-}${GITHUB_ACTIONS:-}" ]]; then
+                {
+                    echo
+                    echo "Rückstands-Check: ABGEBROCHEN — in diesem Lauf sind Rückstände"
+                    echo "entstanden (CI erkannt, Checkout frisch, also stammen sie aus dem Lauf)."
+                    echo "WELCHER Schritt sie hinterlassen hat, sagt dieser Aufruf NICHT: ohne"
+                    echo "Snapshot ist ein Vorbereitungsschritt (z.B. ein editable install, der"
+                    echo "egg-info erzeugt) von der Suite nicht zu unterscheiden."
+                    printf '  %s\n' "${rueckstaende[@]}"
+                    echo
+                    echo "Besser als diese Herleitung ist der Snapshot-Weg — VOR der Suite:"
+                    echo "    scripts/_residue_check.sh snapshot > \"\$RUNNER_TEMP/vorher.txt\""
+                    echo "und danach:"
+                    echo "    scripts/_residue_check.sh check --seit \"\$RUNNER_TEMP/vorher.txt\""
+                } >&2
+                return 1
+            fi
             # Ohne Vorher-Stand ist NICHT entscheidbar, ob das der Lauf war. Exit 2 statt 1:
             # es ist kein Freispruch, aber auch kein Vorwurf, den dieses Skript belegen kann.
             {
@@ -86,11 +112,11 @@ check() {
                 echo "kann dieses Skript nicht wissen:"
                 printf '  %s\n' "${rueckstaende[@]}"
                 echo
-                echo "In der CI und unter ci-local tritt das nie auf — dort ist der Baum vor"
-                echo "dem Lauf per Konstruktion sauber. Beim Lauf von Hand im Arbeitsbaum ist"
-                echo "es der Normalfall."
+                echo "Im Arbeitsbaum ist das der Normalfall. Unter ci-local und in der CI"
+                echo "wird stattdessen Exit 1 gemeldet — dort ist der Baum vor dem Lauf"
+                echo "per Konstruktion sauber."
                 echo
-                echo "Damit es entscheidbar wird, VOR der Suite einmal:"
+                echo "Damit es überall entscheidbar wird, VOR der Suite einmal:"
                 echo "    scripts/_residue_check.sh snapshot > \"\$TMPDIR/vorher.txt\""
                 echo "und danach:"
                 echo "    scripts/_residue_check.sh check --seit \"\$TMPDIR/vorher.txt\""

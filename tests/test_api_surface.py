@@ -88,9 +88,24 @@ def oberflaeche() -> dict:
             "TinySesamConfig.methoden": presets, "exporte": exporte}
 
 
+def _klammer_und_rest(sig: str) -> tuple:
+    """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Bis T-13 schnitt `teile()` einfach das
+    erste und letzte Zeichen ab — bei einer Signatur MIT Rückgabetyp landete der dann im
+    letzten Parameter, und ein harmlos angehängter Parameter galt als BRUCH."""
+    s, tiefe = sig.strip(), 0
+    for i, c in enumerate(s):
+        if c in "([{":
+            tiefe += 1
+        elif c in ")]}":
+            tiefe -= 1
+            if tiefe == 0:
+                return s[1:i], s[i + 1:].strip()
+    return s[1:-1], ""
+
+
 def teile(sig: str) -> list:
     """Signatur-String in Parameter zerlegen — nur auf Kommas ausserhalb von Klammern."""
-    inhalt = sig.strip()[1:-1]
+    inhalt = _klammer_und_rest(sig)[0]
     teile, tiefe, akt = [], 0, ""
     for c in inhalt:
         if c in "([{":
@@ -115,6 +130,8 @@ def nur_erweitert(alt: str, neu: str) -> bool:
     Ein Wächter, der bei Harmlosem schreit, wird weggeklickt, und dann übersieht man den echten.
     """
     a, n = teile(alt), teile(neu)
+    if _klammer_und_rest(alt)[1] != _klammer_und_rest(neu)[1]:
+        return False                                  # anderer Rückgabetyp
     if len(n) < len(a) or n[:len(a)] != a:
         return False
     return all("=" in p or p.startswith("*") for p in n[len(a):])

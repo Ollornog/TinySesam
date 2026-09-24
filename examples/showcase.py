@@ -272,7 +272,10 @@ _LIVE_OPEN = {"login": "/auth/login", "account": "/auth/account", "admin": "/aut
 def demo(request: Request):
     lang, user = lang_of(request), auth.current_user(request)
     t = PANEL_T[lang]
-    lead = t["demo_hello"].format(u=user["username"]) if user else t["demo_lead"]
+    # Escapen wie auf /app und /sensibel (R8-2): Der Fix aus T-12 traf zwei der drei Stellen,
+    # an denen der Benutzername in eine Demo-Seite geht. Wer sich als `<img src=x onerror=…>`
+    # registrierte, lief hier auf jedem Besuch von /demo mit.
+    lead = t["demo_hello"].format(u=html.escape(user["username"])) if user else t["demo_lead"]
     body = demo_body(lang, src=_LIVE_SRC, open_urls=_LIVE_OPEN, lead=lead)
     return page(t["demo_h1"], body, request)
 
@@ -333,7 +336,7 @@ def protected(request: Request, user=Depends(auth.require_user)):
 def sensitive(request: Request, user=Depends(auth.require(mfa=True))):
     lang = lang_of(request)
     t = TEXTS[lang]
-    method = ", ".join(auth.stepup_options(user)) or "—"
+    method = html.escape(", ".join(auth.stepup_options(user))) or "—"
     return page("/sensibel", f"<h1>{t['sens_h1']}</h1>"
                              f"<p class=lead>{t['sens_lead'].format(u=html.escape(user['username']))}</p>"
                              f"<p class=muted style='max-width:60ch'>{t['sens_hint'].format(m=method)}</p>"

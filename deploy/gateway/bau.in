@@ -1,0 +1,4 @@
+# Bau-Backend für `pip install --no-build-isolation .` im Abbild. Steht hier und nicht im
+# pyproject: Mit Bau-Isolierung holte pip sich setuptools ungeprüft in der jeweils neuesten
+# Fassung aus dem Netz — genau die Lücke, die requirements.txt schliessen soll.
+setuptools

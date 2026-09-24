@@ -7,8 +7,9 @@
 
   "obergrenze": {
     "version": "3.14",
-    "begruendung": "3.15 erscheint am 01.10.2026, kommt aber nicht automatisch ins Gate: cp315-Wheels fehlen noch bei PyYAML, aiohttp, PyArrow und PyMongo. Sie rueckt nach, wenn TinySesams nightly-Job zwei Naechte gruen ist.",
-    "naechste_pruefung": "2026-10-15"
+    "begruendung": "3.15 erscheint am 01.10.2026 und kommt nicht automatisch ins Gate: eine Version rueckt erst nach, wenn die Repos, die sie fahren muessen, auf ihr gruen sind (TinySesams nightly-Job laeuft auf 3.15-Prerelease und ist es seit dem 2026-09-19). KORREKTUR 2026-09-24: Bis hierher stand hier, cp315-Wheels fehlten bei PyYAML, aiohttp, PyArrow und PyMongo. Das war als Begruendung unbrauchbar, weil KEIN EINZIGES unserer Repos eines dieser vier Pakete deklariert (gemessen ueber alle pyproject.toml, requirements*.txt und setup.cfg in sieben Repos: null Treffer; endpoint-check und repokit haben gar keine Abhaengigkeiten, PyYAML liegt einmal als Altbestand in einem .venv). Damit konnte TinySesams nightly die Bedingung auch nicht belegen - es nutzt die vier Pakete selbst nicht, sein Gruen heisst 'TinySesam laeuft auf 3.15', nicht 'unsere Wheels sind da'. Die Sperre schuetzte vor einem Risiko, das wir messbar nicht haben, und ihr Beleg beantwortete eine andere Frage. PO-Entscheidung 2026-09-24: Begruendung jetzt korrigieren, ueber das Ausweiten der nightly-Laeufe auf die anderen Repos am 15.10. entscheiden.",
+    "naechste_pruefung": "2026-10-15",
+    "_am_pruefdatum_zu_entscheiden": "(1) Obergrenze auf 3.15 heben? (2) Brauchen die anderen sechs Repos einen eigenen nightly-Lauf auf der Prerelease, damit 'gruen' etwas ueber SIE aussagt - oder genuegt TinySesam, solange kein Repo fremde Wheels braucht? Frage (2) ist offen gestellt worden, nicht vergessen worden."
   },
 
   "_releases_quelle": "python.org/downloads (Release-Termine) + devguide.python.org/versions (EOL). 3.15 nach PEP 790; 3.16 ist der fortgeschriebene Jahresrhythmus und noch nicht durch ein PEP belegt.",

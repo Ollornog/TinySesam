@@ -9,10 +9,27 @@ import logging.handlers
 import ipaddress
 import re
 from urllib.parse import urlsplit
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 
 # fail2ban parst diesen Logger. Failed-Login-Zeilen enthalten "ip=<IP>" → Filter matcht darauf.
 seclog = logging.getLogger("tinysesam.security")
+
+#: Unicode-Formatzeichen, die die Leserichtung umdrehen (Bidi-Overrides/-Isolates). Sie brechen
+#: keine Zeile, lassen aber im Terminal eine andere stehen, als gespeichert ist (A-7).
+_BIDI = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+                  "\u2066\u2067\u2068\u2069")
+
+
+def _zeilenbrecher(z: str) -> bool:
+    """Ein Zeichen, das in einer Logzeile nichts zu suchen hat.
+
+    Nicht nur ASCII < 0x20 und DEL: Auch die C1-Steuerzeichen (U+0080–U+009F, darunter NEL als
+    Zeilenumbruch und CSI als Terminal-Befehl), der Zeilen- und Absatztrenner U+2028/U+2029 —
+    `str.splitlines()` und manche Anzeigen brechen daran — und die Bidi-Steuerzeichen.
+    """
+    o = ord(z)
+    return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
+
 
 def fuer_log(wert) -> str:
     """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
@@ -28,8 +45,112 @@ def fuer_log(wert) -> str:
     Steuerzeichen fliegen also raus, und die Länge wird gedeckelt (ein 4-kB-Benutzername ist
     keine Anmeldung, sondern ein Versuch, das Log zu fluten).
     """
-    text = "".join(z for z in str(wert if wert is not None else "") if z >= " " and z != "\x7f")
+    text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
     return (text[:64] + "…") if len(text) > 64 else text
+
+
+def zeilenfest(wert) -> str:
+    """Wie `fuer_log`, nur ohne Längendeckel — für Anzeigen, die den ganzen Wert brauchen.
+
+    Ein Umbruch wird sichtbar (`\\n`) statt still entfernt: In der forensischen Ansicht soll
+    auffallen, DASS jemand einen Zeilenumbruch in einen Benutzernamen geschrieben hat (B5-06).
+    """
+    text = str(wert if wert is not None else "")
+    return "".join(z if not _zeilenbrecher(z) else
+                   {"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(z, "?") for z in text)
+
+
+def url_fuer_log(url) -> str:
+    """Eine URL ohne Query und Fragment, zeilenfest und gedeckelt — für das Audit-Log.
+
+    Hinter dem `?` stehen bei geschützten Anwendungen oft Geheimnisse: Freigabe-Links
+    (`?token=…`), OAuth-Codes, signierte Download-Parameter. Im Audit-Log blieben sie dauerhaft
+    lesbar, auch im Panel. Für die Frage „wohin wollte die Anfrage" genügen Host und Pfad; dass
+    eine Query dabei war, zeigt ein `?…`.
+    """
+    text = str(url or "")
+    teile = urlsplit(text) if "://" in text else None
+    if teile is not None and teile.netloc:
+        rest = "?…" if (teile.query or teile.fragment) else ""
+        text = f"{teile.scheme}://{teile.netloc}{teile.path}{rest}"
+    else:
+        kopf, trenner, _ = text.partition("?")
+        kopf, trenner2, _ = kopf.partition("#")
+        text = kopf + ("?…" if (trenner or trenner2) else "")
+    return zeilenfest(text)[:200]
+
+
+class _ZeilenSchutz(logging.Filter):
+    """Neutralisiert Steuerzeichen in den ARGUMENTEN jeder `seclog`-Zeile (B5-14).
+
+    `fuer_log` an jeder Aufrufstelle ist eine Konvention — und zwei Stellen hatten sie nicht
+    (die `X-Forwarded-For`-Warnung und die OIDC-Adresse ohne Beleg). Die nächste neue Zeile
+    vergisst es wieder. Der Filter hängt am Logger selbst und greift deshalb für jede Zeile,
+    auch für künftige. Der Formatstring bleibt unberührt: Er ist Code, nicht Eingabe.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(self._sauber(a) for a in args)
+        elif isinstance(args, dict):
+            record.args = {k: self._sauber(v) for k, v in args.items()}
+        return True
+
+    @staticmethod
+    def _sauber(a):
+        if isinstance(a, (int, float)) or a is None:
+            return a            # %d/%.1f brauchen die Zahl, und eine Zahl bricht keine Zeile
+        return zeilenfest(a)
+
+
+seclog.addFilter(_ZeilenSchutz())
+
+
+def ip_normiert(wert) -> str | None:
+    """Die kanonische Schreibweise einer IP-Adresse, oder None, wenn es keine ist (B5-15).
+
+    Kanonisch heisst: `2001:DB8::1` und `2001:db8:0::1` sind dieselbe Adresse und landen als
+    eine im Protokoll, im Rate-Limit und in der Sperre — sonst zählte jede Schreibweise als
+    eigener Client. Eine Portangabe (`1.2.3.4:5678`, `[2001:db8::1]:443`), wie manche
+    Proxys sie in `X-Forwarded-For` schreiben, wird abgelöst.
+    """
+    roh = str(wert or "").strip()
+    if not roh:
+        return None
+    if roh.startswith("[") and "]" in roh:
+        roh = roh[1:roh.index("]")]
+    elif roh.count(":") == 1:
+        roh = roh.split(":", 1)[0]
+    try:
+        addr = ipaddress.ip_address(roh)
+    except ValueError:
+        return None
+    if getattr(addr, "scope_id", None) is not None:
+        # Die Zonenangabe (`fe80::1%eth0`) fällt weg. `ipaddress` nimmt hinter dem `%` jeden
+        # Text an — auch einen Zeilenumbruch —, und jede Zone wäre ein eigener Schlüssel: Über
+        # einen Proxy, der den Client-Header durchreicht, dreht ein Angreifer sie je Anfrage
+        # weiter und entgeht so Rate-Limit, IP-Sperre und Log-Drossel. Die Zone benennt nur die
+        # Schnittstelle des Absenders, nicht den Client.
+        addr = ipaddress.IPv6Address(addr.packed)
+    return str(addr)
+
+
+def ip_pseudonym(ip: str) -> str:
+    """Eine IP auf ihr Netz kürzen: IPv4 auf /24, IPv6 auf /48 (`audit_ip_pseudonymize`).
+
+    Das ist die Kürzung, die auch Webanalyse-Werkzeuge für „nicht mehr personenbeziehbar"
+    ansetzen. Für die Forensik bleibt das Netz — genug, um einen Provider oder eine Welle
+    zu erkennen, nicht genug, um einen Anschluss zu benennen. Keine IP → Wert unverändert.
+    """
+    norm = ip_normiert(ip)
+    if norm is None:
+        return ip
+    addr = ipaddress.ip_address(norm)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped             # ::ffff:1.2.3.4 ist eine IPv4-Adresse
+    netz = ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False)
+    return str(netz)
 
 
 #: Rechte, mit denen die Security-Logdatei angelegt wird — bei der ersten Zeile und nach jeder
@@ -116,9 +237,10 @@ def attach_security_log(path: str) -> bool:
 
 # Härtungs-Defaults — im Admin-Panel überschreibbar (store.setting). Nur diese Keys sind einstellbar.
 SECURITY_DEFAULTS = {
-    "max_login_attempts": 5,        # Fehlversuche pro User im Fenster → Lockout
+    "max_login_attempts": 5,        # Fehlversuche je Konto UND IP (Paar) im Fenster → Lockout
     "lockout_window_sec": 900,      # Beobachtungs-/Sperrfenster (15 min)
     "ip_attempt_factor": 3,         # IP-Lockout-Schwelle = max_login_attempts * Faktor (mehrere User hinter NAT)
+    "account_attempt_factor": 3,    # Konto-Schwelle über alle IPs = max_login_attempts * Faktor (verteiltes Raten)
     "rate_limit_max": 30,           # max Requests pro IP …
     "rate_limit_window_sec": 60,    # … je Fenster auf Auth-Endpoints
     "password_min_length": 8,
@@ -126,7 +248,109 @@ SECURITY_DEFAULTS = {
     "password_change_max_attempts": 5,  # eigener Zähler für die Alt-Passwort-Abfrage auf der Kontoseite
     "reauth_max_attempts": 5,       # eigener Zähler für die Step-up-Bestätigung (/auth/reauth)
     "resource_max_attempts": 5,     # eigener Zähler für die Bereichs-PIN (/auth/resource/…, ohne Konto)
+    "mail_per_address_max": 3,      # Mails je Zieladresse im Fenster (Anmelde-Link, Reset, Hinweis) — R4-04
+    "mail_per_address_window_sec": 900,  # … Fenster dazu; die IP-Drossel allein schützt kein fremdes Postfach
+    "totp_setup_max_attempts": 5,   # eigener Zähler für die Bestätigung der TOTP-Einrichtung
 }
+
+#: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
+#:
+#: Ohne Grenzen legte ein Tippfehler im Panel die Instanz still, und zwar dauerhaft: Mit
+#: `rate_limit_max=0` weist `rate_ok` jede Anmeldung ab — auch die der Administratorin, die den
+#: Wert zurückdrehen müsste. Der Wert steht in der Datenbank und überlebt jeden Neustart. Ebenso
+#: `max_login_attempts=0` (jedes Konto gilt sofort als gesperrt) oder ein `lockout_window_sec`
+#: von Jahren. Die Untergrenzen halten den Betrieb am Leben, die Obergrenzen den Schutz:
+#: `password_min_length` unter 8 ist kein Tuning, sondern das Abschalten der Passwortregel.
+#:
+#: Die Grenzen verbieten das Stilllegen, nicht das Verschärfen: Ein einziger Versuch
+#: (`count >= 1` sperrt nach dem ersten Fehler) oder eine Sperre von Wochen ist eine harte, aber
+#: legitime Wahl — erst `0` bzw. Jahre machen daraus einen Ausfall. `rate_limit_max` bleibt bei
+#: 3, weil eine Anmeldung mit zweitem Faktor mehrere Anfragen braucht; darunter kommt niemand
+#: mehr durch.
+SECURITY_GRENZEN = {
+    "max_login_attempts": (1, 1000),
+    "lockout_window_sec": (60, 30 * 86400),
+    "ip_attempt_factor": (1, 100),
+    "rate_limit_max": (3, 100000),
+    "rate_limit_window_sec": (1, 86400),
+    "password_min_length": (8, 128),
+    "pin_max_attempts": (1, 100),
+    "password_change_max_attempts": (1, 100),
+    "reauth_max_attempts": (1, 100),
+    "resource_max_attempts": (1, 100),
+    "account_attempt_factor": (1, 100),
+    "totp_setup_max_attempts": (1, 100),
+    "mail_per_address_max": (1, 1000),
+    "mail_per_address_window_sec": (60, 86400),
+}
+
+
+def pruefe_haertung(key: str, value) -> int:
+    """Einen Härtungs-Wert prüfen und als int zurückgeben — oder `ValueError` mit lesbarem Text.
+
+    Eine Stelle für Panel, `set_security()` und das Lesen aus der Datenbank: Zwei Fassungen der
+    Grenzen liefen sonst auseinander, und die schwächere entschiede."""
+    if key not in SECURITY_DEFAULTS:
+        raise ValueError(f"{key!r} ist keine Härtungs-Schwelle. Bekannt sind: "
+                         f"{', '.join(sorted(SECURITY_DEFAULTS))}")
+    # bool ist in Python ein int — `True` als „1 Versuch" wäre ein stiller Tippfehler.
+    if isinstance(value, bool):
+        raise ValueError(f"{key}: {value!r} ist keine Zahl")
+    try:
+        zahl = int(value)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: `int(float("inf"))` — Starlettes JSON nimmt das Literal `Infinity` an,
+        # und ohne diesen Fall wurde daraus ein 500 statt eines 400 (A4).
+        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl") from None
+    if isinstance(value, float) and value != zahl:
+        raise ValueError(f"{key}: {value!r} ist keine ganze Zahl")
+    unten, oben = SECURITY_GRENZEN[key]
+    if not unten <= zahl <= oben:
+        raise ValueError(f"{key}={zahl} liegt ausserhalb von {unten}…{oben}")
+    return zahl
+
+
+def klemme_haertung(key: str, value) -> int:
+    """Einen Altwert aus der Datenbank, den `pruefe_haertung` abweist, an die nächste Grenze ziehen.
+
+    Nicht auf die Vorgabe zurücksetzen: Ein Bestandswert jenseits der Grenze liegt fast immer auf
+    der STRENGEN Seite (2 Versuche, eine Woche Sperre), und die Vorgabe wäre dann die schwächere
+    Einstellung — ein Upgrade darf die Härtung nicht still lockern (A1). Die Grenze ist der
+    strengste Wert, der den Betrieb nicht stilllegt, und das Panel nimmt sie an. Nur was gar
+    keine Zahl ist, fällt auf die Vorgabe."""
+    try:
+        zahl = int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return SECURITY_DEFAULTS[key]
+    unten, oben = SECURITY_GRENZEN[key]
+    return min(max(zahl, unten), oben)
+
+
+def haertung_lesen(store, key: str) -> int:
+    """Eine Härtungs-Schwelle aus der Datenbank lesen, wie sie gilt: der Wert aus dem Panel oder
+    die Vorgabe, immer innerhalb von `SECURITY_GRENZEN`.
+
+    Der EINE Leseweg für `TinySesam.sec()` und das CLI (`tinysesam passwd`). Das CLI las
+    `password_min_length` bis T-13 roh: Ein Altwert aus einer Fassung ohne Grenzen (4, 0) galt im
+    Web als 8, offline weiter als 4 — und `passwd` setzte ein Passwort, das jede Web-Setzstelle
+    ablehnt. Zwei Lesewege laufen auseinander, und der schwächere entscheidet.
+
+    Ein Wert ausserhalb der Grenzen, der schon in der Datenbank steht (aus einer Fassung ohne
+    Grenzen, oder direkt geschrieben), wird an die nächste Grenze gezogen (`klemme_haertung`):
+    Ihn weiter anzuwenden hiesse, eine stillgelegte Instanz stillgelegt zu lassen (R6-4); ihn auf
+    die Vorgabe zu setzen, lockerte still jede strengere Bestandseinstellung (A1)."""
+    v = store.get_setting(key)
+    if v is None:
+        return SECURITY_DEFAULTS[key]
+    try:
+        return pruefe_haertung(key, v)
+    except ValueError as e:
+        wert = klemme_haertung(key, v)
+        if einmal_melden("sec:" + key):
+            seclog.warning(
+                "Härtungs-Wert in der Datenbank ungültig (%s) — es gilt %s. Der Wert lässt "
+                "sich im Admin-Panel bestätigen oder ändern.", e, wert)
+        return wert
 
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
 # Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
@@ -155,6 +379,7 @@ EIGENE_SPERRE = {
     "password_change": "is_password_change_locked",
     "reauth": "is_reauth_locked",
     "resource": "is_resource_locked",
+    "totp_setup": "is_totp_setup_locked",
 }
 
 NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
@@ -311,12 +536,35 @@ def sichere_basis(kandidat: str, allowed_hosts=None) -> str:
     return normalisiere_basis(roh)
 
 
+def ungueltige_netze(trusted_nets) -> list:
+    """Die Einträge einer `trusted_proxies`-Liste, die kein IP-Netz sind (B3-3)."""
+    schlecht = []
+    for n in trusted_nets or []:
+        try:
+            ipaddress.ip_network(str(n).strip(), strict=False)
+        except ValueError:
+            schlecht.append(n)
+    return schlecht
+
+
 def is_trusted(ip: str, trusted_nets) -> bool:
+    # Je Eintrag prüfen, nicht die ganze Liste in einem `try` (B3-3): Ein einziger ungültiger
+    # Eintrag (ein Hostname, ein Tippfehler) warf vorher mitten im `any()` und entwertete damit
+    # ALLE übrigen — der Proxy galt als fremd, jeder Nutzer erschien unter seiner IP. Die
+    # Warnung darauf riet dann, das Proxy-Netz einzutragen, das längst dastand.
+    # `konfigpruefung` weist so eine Liste beim Aufbau ab; hier ist der Boden für eine Liste,
+    # die danach geändert wurde.
     try:
         addr = ipaddress.ip_address(ip)
-        return any(addr in ipaddress.ip_network(n, strict=False) for n in trusted_nets)
-    except Exception:
+    except ValueError:
         return False
+    for n in trusted_nets or []:
+        try:
+            if addr in ipaddress.ip_network(str(n).strip(), strict=False):
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
 
 
 # Peers, über die schon geklagt wurde — eine Fehlkonfiguration meldet sich einmal, nicht pro
@@ -407,7 +655,20 @@ def client_ip(request, trusted_nets) -> str:
     if xff and is_trusted(peer, trusted_nets):
         for ip in reversed([p.strip() for p in xff.split(",") if p.strip()]):
             if not is_trusted(ip, trusted_nets):
-                return ip
+                # Nur eine ECHTE Adresse wird Client-IP (B5-15). Vorher ging der erste nicht
+                # vertrauenswürdige Eintrag ungeprüft durch — auch `evil`, ein Zeilenumbruch
+                # oder 4 kB Text, und das als Schlüssel für Rate-Limit, Sperre und Audit-Log.
+                # Ein Proxy, der den Client-Header nur durchreicht statt anzuhängen, macht genau
+                # diesen Eintrag client-steuerbar. Dann lieber die Peer-IP (kollektiv, aber echt).
+                norm = ip_normiert(ip)
+                if norm is not None:
+                    return norm
+                if einmal_melden("xff-ungueltig:" + peer):
+                    seclog.warning(
+                        "X-Forwarded-For von %s nennt keine gültige Adresse (%s) — es bleibt bei "
+                        "der Peer-IP. Reicht der Proxy den Header des Clients nur durch, statt "
+                        "anzuhängen?", peer, fuer_log(ip))
+                return peer
     if xff and peer not in _GEMELDETE_PEERS:
         _GEMELDETE_PEERS.add(peer)
         if not is_trusted(peer, trusted_nets):
@@ -425,38 +686,94 @@ def client_ip(request, trusted_nets) -> str:
                 "X-Forwarded-For (%s) enthält keine Adresse ausserhalb von trusted_proxies (%s) "
                 "— es bleibt bei der Peer-IP %s. Ein Eintrag wie 0.0.0.0/0 entwertet XFF, statt "
                 "ihm zu vertrauen: Nur das Netz des eigenen Proxys eintragen.",
-                xff, list(trusted_nets or []), peer)
+                fuer_log(xff), list(trusted_nets or []), peer)
     return peer
 
 
 class RateLimiter:
     """In-memory Token-Bucket pro Schlüssel (IP), pro Prozess. Für Single-Worker-Deployments;
     bei mehreren Workern greift zusätzlich die DB-basierte Regulation (Lockout). Für ein
-    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url)."""
-    def __init__(self):
-        self._hits = defaultdict(deque)
+    prozessübergreifendes Limit RedisRateLimiter nutzen (config.redis_url).
+
+    **Gedeckelt** (R7-5): Bis T-13 wuchs das Wörterbuch mit jeder neuen Adresse und schrumpfte
+    nie — ein leerer Eimer blieb als Schlüssel stehen. Wer die Quelladresse wechselt (IPv6
+    liefert davon ein /64 pro Anschluss), füllte so den Speicher des Prozesses. Jetzt gilt
+    `max_keys`, und darüber geht der am längsten ruhende Schlüssel zuerst — jede Anfrage, auch
+    eine abgewiesene, rückt ihren Schlüssel nach vorn. Wer gerade gebremst wird, fragt also
+    ständig und bleibt; verdrängt wird, wessen letzter Versuch am weitesten zurückliegt.
+    """
+    def __init__(self, max_keys: int = 100_000):
+        self._hits: OrderedDict = OrderedDict()
+        self.max_keys = max(1, int(max_keys))
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
         now = time.time()
-        dq = self._hits[key]
+        dq = self._hits.get(key)
+        if dq is None:
+            dq = self._hits[key] = deque()
+        self._hits.move_to_end(key)
         while dq and dq[0] < now - window_sec:
             dq.popleft()
         if len(dq) >= max_requests:
             return False
         dq.append(now)
+        while len(self._hits) > self.max_keys:
+            self._hits.popitem(last=False)
         return True
+
+    def __len__(self) -> int:
+        return len(self._hits)
 
 
 class RedisRateLimiter:
     """Prozessübergreifendes Rate-Limit über Redis (Fixed-Window-Counter) — für Multi-Worker/
-    Multi-Instanz. Gleiche allow()-Schnittstelle. Bei Redis-Fehler: fail-open (erlauben) + Log,
-    damit ein Redis-Ausfall keine Nutzer aussperrt (die DB-Lockout-Regulation greift weiter)."""
-    def __init__(self, url: str, prefix: str = "tsrl"):
+    Multi-Instanz. Gleiche allow()-Schnittstelle.
+
+    **Bei einem Redis-Ausfall wird nicht aufgemacht, sondern je Prozess weitergezählt** (B6-1).
+    Bis T-13 hiess es hier „fail-open (erlauben)" mit der Begründung, die DB-Sperre greife ja
+    weiter. Die gibt es aber nur an den Anmelde-Routen; Magic-Link-Anforderung, Passwort
+    vergessen, Registrierung und der Start der Föderation hängen allein an diesem Limit — ohne
+    Redis waren sie offen, und die ersten beiden verschicken Mails an beliebige Adressen. Jetzt
+    übernimmt ein eingebauter `RateLimiter`: pro Prozess statt über alle, also bis zu N-mal so
+    grosszügig — aber eine Grenze. Ausgesperrt wird durch den Ausfall niemand.
+
+    **Und er wird bemerkt** (B6-2): Der Konstruktor fragt Redis einmal (`ping`), statt den
+    Ausfall erst beim ersten Besucher zu entdecken. Gemeldet wird der **Wechsel** — einmal beim
+    Ausfall, einmal bei der Rückkehr —, nicht jede Anfrage: vorher schrieb jede Anfrage eine
+    Warnzeile in genau die Datei, die fail2ban liest. Nach einem Fehler ruht Redis
+    `pause_sec` lang, danach wird es wieder versucht; so hängt nicht jede Anfrage im Timeout
+    eines toten Servers. Dazu kurze Socket-Timeouts: Ein Redis, das nicht antwortet (statt
+    abzulehnen), hielt sonst jede Anfrage unbegrenzt fest.
+    """
+    def __init__(self, url: str, prefix: str = "tsrl", pause_sec: float = 30.0, timeout_sec: float = 1.0):
         import redis   # Extra [redis]
-        self.client = redis.from_url(url)
+        self.client = redis.from_url(url, socket_connect_timeout=timeout_sec, socket_timeout=timeout_sec)
         self.prefix = prefix
+        self._einrichten(pause_sec)
+        try:
+            self.client.ping()
+        except Exception as e:
+            self._ausgefallen(e)
+
+    def _einrichten(self, pause_sec: float = 30.0) -> None:
+        """Rückfall-Zustand anlegen (auch für Tests, die `__init__` umgehen)."""
+        self.ersatz = RateLimiter()
+        self.pause_sec = pause_sec
+        self._pause_bis = 0.0
+        self._gestoert = False
+
+    def _ausgefallen(self, fehler) -> None:
+        self._pause_bis = time.time() + self.pause_sec
+        if not self._gestoert:
+            self._gestoert = True
+            seclog.warning("Redis-Rate-Limit nicht erreichbar (%s) — es zählt jetzt jeder Prozess "
+                           "für sich weiter, bis Redis wieder antwortet.", fehler)
 
     def allow(self, key: str, max_requests: int, window_sec: int) -> bool:
+        if not hasattr(self, "ersatz"):
+            self._einrichten()
+        if self._gestoert and time.time() < self._pause_bis:
+            return self.ersatz.allow(key, max_requests, window_sec)
         try:
             bucket = int(time.time() // max(1, window_sec))
             rk = f"{self.prefix}:{key}:{window_sec}:{bucket}"
@@ -464,7 +781,10 @@ class RedisRateLimiter:
             pipe.incr(rk)
             pipe.expire(rk, window_sec)
             count = pipe.execute()[0]
-            return int(count) <= max_requests
         except Exception as e:
-            seclog.warning("redis rate-limit fail-open: %s", e)
-            return True
+            self._ausgefallen(e)
+            return self.ersatz.allow(key, max_requests, window_sec)
+        if self._gestoert:
+            self._gestoert = False
+            seclog.warning("Redis-Rate-Limit wieder erreichbar — es zählt wieder über alle Prozesse.")
+        return int(count) <= max_requests

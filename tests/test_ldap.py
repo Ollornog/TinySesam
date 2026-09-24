@@ -437,6 +437,9 @@ def stub_ldap3(mitschrift, leer=False, result=None):
             if result is not None:
                 self.result = result
 
+        def open(self):
+            pass     # `authenticate` öffnet die Benutzer-Verbindung ausdrücklich vor dem Bind
+
         def start_tls(self):
             pass
 
@@ -715,7 +718,763 @@ auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
 assert auth11c.check_ldap("ohne", "pw") is None
 ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab")
 
-for _d in (db11, db11b, db11c):
+# A-4 (Angriff auf H-4): Ohne stabile Kennung wurde nie gebunden — das LDAP-Konto galt als lokal
+# und bekam einen Reset-Link. Das neue lokale Passwort stach danach das Verzeichnis, auch wenn das
+# Konto dort gesperrt war. Hier über den ECHTEN Login-Weg, nicht über eine Bindung von Hand.
+db11d, auth11d, c11d = build(ldap_auto_create=True, password_reset_enabled=True,
+                             base_url="https://auth.example.com")
+_post11d = []
+auth11d.set_mailer(lambda to, s, t, html=None: _post11d.append(to))
+auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "email": "bob@example.com"}})   # kein "id"
+assert c11d.post("/auth/login", data={"username": "bob", "password": "ldappw"},
+                 follow_redirects=False).status_code == 303
+_uid_bob = auth11d.store.get_user_by_name("bob")["id"]
+assert auth11d.nur_foederiert(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
+c11d.get("/auth/logout")
+assert c11d.post("/auth/forgot", data={"email": "bob@example.com"}).status_code == 200
+assert _post11d == [], f"LDAP-Konto ohne Kennung bekam einen Reset-Link: {_post11d}"
+ok("A-4: ein LDAP-Konto ohne stabile Kennung bekommt über den echten Login-Weg keinen Reset-Link")
+# Kommt später eine echte Kennung, ersetzt sie den Platzhalter (Nachbindung, kein Kennungswechsel).
+auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "id": "uuid-bob"}})
+assert auth11d.check_ldap("bob", "ldappw") is not None, "der Platzhalter blockiert die echte Kennung"
+assert auth11d.store.get_federated_kennung("ldap", _uid_bob) == "uuid-bob"
+# Eine Kennung in Platzhalter-Form aus dem Verzeichnis wird abgewiesen — sie träfe sonst das
+# Konto, dessen ID sie nennt.
+_adm11d = auth11d.store.get_user_by_name("admin")["id"]
+auth11d.store.link_federated("ldap", f"{auth11d._OHNE_KENNUNG}{_adm11d}", _adm11d, 0)
+auth11d.ldap = FakeLDAP({"mallory": {"password": "m", "id": f"{auth11d._OHNE_KENNUNG}{_adm11d}"}})
+assert auth11d.check_ldap("mallory", "m") is None, "Platzhalter-Kennung übernahm ein fremdes Konto"
+ok("A-4: echte Kennung ersetzt den Platzhalter; Platzhalter-Form aus dem Verzeichnis abgewiesen")
+
+for _d in (db11, db11b, db11c, db11d):
     os.remove(_d)
+
+# ---------- F-19: Gruppen aus dem Verzeichnis werden nicht mehr als Teilstring verglichen ----------
+# Bis 0.20.0 verglich LDAP IMMER per Teilstring, `group_match` war wirkungslos: `admin` passte auf
+# `cn=nicht-admin,…`, `staff` auf `cn=staffextern,…`. Wer im Verzeichnis eine Gruppe benennen
+# darf (in vielen AD-Umgebungen jeder Abteilungsleiter), bekam damit Rolle und Admin-Flag.
+db19, auth19, c19 = build(ldap_allowed_groups=["staff"],
+                          ldap_group_role_map={"admin": "__admin__", "cn=redaktion": "redaktion"})
+auth19.ldap = FakeLDAP({
+    "eve": {"password": "x", "id": "e1",
+            "groups": ["cn=staffextern,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp"]},
+    "bob": {"password": "x", "id": "b1",
+            "groups": ["CN=Staff,OU=Groups,DC=corp", "cn=admin,ou=groups,dc=corp",
+                       "cn=redaktion,ou=groups,dc=corp"]},
+    "mia": {"password": "x", "id": "m1",
+            "groups": ["cn=staff,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp",
+                       "cn=redaktion-alt,ou=groups,dc=corp"]},
+})
+assert auth19.check_ldap("eve", "x") is None, "staff passt nicht auf cn=staffextern"
+assert any(z["event"] == "ldap_group_denied" and z["username"] == "eve"
+           for z in auth19.store.recent_audit(20)), "die Abweisung am Gruppen-Gate ist stumm"
+ok("F-19: ldap_allowed_groups=['staff'] lässt cn=staffextern nicht durch (und sagt es im Audit-Log)")
+_mia = auth19.check_ldap("mia", "x")
+assert _mia is not None and not _mia["is_admin"], "admin passt auf cn=nicht-admin"
+assert auth19.store.get_roles(_mia["id"]) == [], auth19.store.get_roles(_mia["id"])
+ok("F-19: 'admin' und 'cn=redaktion' treffen weder cn=nicht-admin noch cn=redaktion-alt")
+_bob = auth19.check_ldap("bob", "x")
+assert _bob is not None and _bob["is_admin"], "der exakte CN-Treffer muss weiter greifen"
+assert auth19.store.get_roles(_bob["id"]) == ["redaktion"], auth19.store.get_roles(_bob["id"])
+ok("F-19: der gewohnte Schlüssel ('staff', 'cn=redaktion') greift weiter — Gross/klein egal")
+os.remove(db19)
+
+# Die ausdrückliche Rückkehr zum alten Vergleich bleibt möglich — jetzt wirkt der Schalter.
+db19b, auth19b, _ = build(ldap_allowed_groups=["staff"], group_match="substring")
+auth19b.ldap = FakeLDAP({"eve": {"password": "x", "id": "e1",
+                                 "groups": ["cn=staffextern,ou=groups,dc=corp"]}})
+assert auth19b.check_ldap("eve", "x") is not None
+ok("F-19: group_match='substring' holt den Teilstring-Vergleich ausdrücklich zurück")
+os.remove(db19b)
+
+from tinysesam.manager import gruppe_passt  # noqa: E402
+assert gruppe_passt("cn=a\\,b", "cn=a\\,b,ou=g,dc=x", dn=True), "maskiertes Komma zerlegt den DN nicht"
+assert not gruppe_passt("a", "cn=a\\,b,ou=g,dc=x", dn=True)
+assert gruppe_passt("cn=staff,ou=groups,dc=corp", "CN=Staff, OU=Groups, DC=corp", dn=True)
+assert not gruppe_passt("staff", "cn=staff,ou=g", dn=False), "ohne dn=True bleibt es beim exakten Text"
+assert not gruppe_passt("", "cn=x", dn=True)
+ok("F-19: gruppe_passt zerlegt DNs an unmaskierten Kommas, vergleicht ganzen DN/ersten RDN/Wert")
+
+# A-3 (Angriff auf F-19): Das README-Beispiel `{"cn=admins,ou=g": "__admin__"}` ist ein Teil-DN.
+# Nach dem ersten Fix traf es `cn=admins,ou=g,dc=example,dc=com` nicht mehr — Admin-Mapping still
+# weg, als ldap_allowed_groups jeder Nutzer abgewiesen.
+assert gruppe_passt("cn=admins,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert gruppe_passt("CN=Admins, OU=G", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert not gruppe_passt("ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True), "nur von vorn"
+assert not gruppe_passt("cn=admin,ou=g", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+assert not gruppe_passt("cn=admins,ou=g,dc=example,dc=com,dc=x", "cn=admins,ou=g,dc=example,dc=com", dn=True)
+db19c, auth19c, _ = build(ldap_allowed_groups=["cn=admins,ou=g"],
+                          ldap_group_role_map={"cn=admins,ou=g": "__admin__", "ou=g": "alle"})
+auth19c.ldap = FakeLDAP({"ada": {"password": "x", "id": "a1",
+                                 "groups": ["cn=admins,ou=g,dc=example,dc=com"]}})
+from tinysesam import security as _sec19                    # noqa: E402
+_sec19.einmal_melden_zuruecksetzen()
+_puffer19 = __import__("io").StringIO()
+_haken19 = __import__("logging").StreamHandler(_puffer19)
+_sec19.seclog.addHandler(_haken19)
+try:
+    _ada = auth19c.check_ldap("ada", "x")
+finally:
+    _sec19.seclog.removeHandler(_haken19)
+assert _ada is not None, "README-Schlüssel als ldap_allowed_groups weist jeden ab"
+assert _ada["is_admin"], "README-Schlüssel als Admin-Mapping greift nicht"
+assert auth19c.store.get_roles(_ada["id"]) == [], "Teilstring 'ou=g' darf nicht treffen"
+# Der Schlüssel, der nur noch als Teilstring träfe, fällt nicht still weg: eine Zeile im Log.
+assert "'ou=g'" in _puffer19.getvalue() and "Teilstring" in _puffer19.getvalue(), _puffer19.getvalue()[:300]
+assert "cn=admins,ou=g'" not in _puffer19.getvalue(), "ein greifender Schlüssel darf nicht warnen"
+ok("A-3: Teil-DN von vorn (README-Beispiel) greift wieder; ein reiner Teilstring-Schlüssel meldet sich")
+os.remove(db19c)
+
+# ---------- F-23: ein Ausfall des Verzeichnisses ist kein Fehlversuch ----------
+# Bis 0.20.0 endete jeder Fehler in `authenticate()` als None, also als „Passwort falsch": ein
+# Fehlversuch gegen Konto und IP, `failed login` für fail2ban. Nach ein paar Minuten Ausfall
+# waren genau die Nutzer gesperrt, die nichts falsch gemacht hatten.
+from tinysesam.ldap_ import AUSFALL_PAUSE_SEK, AusfallMerker, VerzeichnisNichtErreichbar  # noqa: E402
+from tinysesam import ldap_ as _ldap_mod                    # noqa: E402
+
+
+class AusfallLDAP:
+    def authenticate(self, username, password):
+        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: Test")
+
+
+db23, auth23, c23 = build()
+auth23.ldap = AusfallLDAP()
+# Nach einem Ausfall fragt der Login das Verzeichnis eine Pause lang nicht (AusfallMerker, siehe
+# unten); die Uhr des Merkers ist hier gestellt, damit die Gegenprobe die Pause ablaufen lassen kann.
+_uhr23 = [1000.0]
+auth23._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr23[0])
+import io as _io23, logging as _log23                     # noqa: E402
+from tinysesam.security import seclog as _seclog23       # noqa: E402
+_puffer23 = _io23.StringIO()
+_haken23 = _log23.StreamHandler(_puffer23)
+_seclog23.addHandler(_haken23)
+try:
+    antworten23 = [c23.post("/auth/login", data={"username": "alice", "password": "egal"})
+                   for _ in range(auth23.sec("max_login_attempts") + 2)]
+finally:
+    _seclog23.removeHandler(_haken23)
+assert all(a.status_code == 503 for a in antworten23), [a.status_code for a in antworten23]
+assert "nicht erreichbar" in antworten23[0].text, antworten23[0].text[:300]
+assert auth23.store.count_fails(0, username="alice") == 0, "der Ausfall wurde als Fehlversuch verbucht"
+assert not auth23.is_locked("alice", "testclient"), "ein Ausfall sperrt das Konto"
+assert "failed login" not in _puffer23.getvalue(), "fail2ban bekäme einen Ausfall als Angriff"
+assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
+assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
+ok("F-23: Verzeichnis-Ausfall → 503, kein Fehlversuch, keine Sperre, kein 'failed login', eigene Audit-Zeile")
+# Gegenprobe: dieselbe Route mit einem erreichbaren Verzeichnis und falschem Passwort zählt —
+# sobald die Pause nach dem Ausfall abgelaufen ist und der Login wieder nachfragt.
+auth23.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+_uhr23[0] += AUSFALL_PAUSE_SEK + 1
+assert c23.post("/auth/login", data={"username": "alice", "password": "falsch"}).status_code == 401
+assert auth23.store.count_fails(0, username="alice") == 1
+ok("F-23: …ein echtes falsches Passwort bleibt ein Fehlversuch")
+os.remove(db23)
+
+# A-1 (Angriff auf F-23): Während des Ausfalls blieb auch das falsche LOKALE Passwort
+# unverbucht — gegen den lokalen Admin, das Notfallkonto, war beliebig oft zu raten (verteilt
+# über IPs griff nur das IP-Ratelimit), und das richtige Passwort kam danach trotz
+# max_login_attempts durch.
+db23a, auth23a, c23a = build()
+auth23a.ldap = AusfallLDAP()
+_max23a = auth23a.sec("max_login_attempts")
+_puffer23a = _io23.StringIO()
+_haken23a = _log23.StreamHandler(_puffer23a)
+_seclog23.addHandler(_haken23a)
+try:
+    _antw23a = [c23a.post("/auth/login", data={"username": "admin", "password": f"falsch{i}"}).status_code
+                for i in range(_max23a)]
+finally:
+    _seclog23.removeHandler(_haken23a)
+assert all(s == 503 for s in _antw23a), _antw23a
+assert auth23a.store.count_fails(0, username="admin") == _max23a, \
+    "falsches lokales Passwort während des Ausfalls wurde nicht verbucht"
+assert auth23a.is_locked("admin", "testclient"), "lokaler Admin während des Ausfalls unbegrenzt ratbar"
+assert "failed login" in _puffer23a.getvalue(), "fail2ban sieht das Raten am lokalen Konto nicht"
+_r23a = c23a.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
+assert _r23a.status_code == 429, f"richtiges Passwort kam nach {_max23a} Fehlversuchen durch: {_r23a.status_code}"
+# Der Verzeichnis-Anteil bleibt entschuldigt: das LDAP-Konto ohne lokales Passwort zählt nicht.
+c23a.post("/auth/login", data={"username": "alice", "password": "x"})
+assert auth23a.store.count_fails(0, username="alice") == 0
+ok("A-1: Ausfall entschuldigt nur das Verzeichnis — ein falsches LOKALES Passwort zählt und sperrt")
+os.remove(db23a)
+
+# ---------- T-13-Integration: vorgebuchte Versuche schweben nicht bis zum Timeout ----------
+# Der Login bucht jeden Versuch VORAB als Fehlversuch (R7-2) und nimmt ihn bei einem Ausfall
+# zurück (F-23) — aber erst, wenn `VerzeichnisNichtErreichbar` kommt. Ein Verzeichnis, das Pakete
+# verwirft, antwortet erst nach dem Timeout (10 s). Bis dahin zählte jede hängende Anmeldung für
+# Konto, Paar und Adresse: 15 Kollegen hinter einer NAT-Adresse, und der lokale Notfall-Admin
+# bekam mit RICHTIGEM Passwort 429; jede weitere Abweisung schrieb `failed login … reason=
+# lockout_ip`, und fail2ban bannte die Adresse. Und das nicht einmal, sondern bei jedem Anlauf
+# während des ganzen Ausfalls. Jetzt merkt sich der Login den Ausfall: Danach kommt sofort 503,
+# ohne das Verzeichnis erneut zu fragen. (Mutationsprobe: in `check_ldap` den Aufruf
+# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, der Admin bekommt 429 → rot.)
+from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
+
+HAENGT24 = 2.0
+
+
+class HaengendesLDAP:
+    """Ein Verzeichnis, das Pakete verwirft: jede Frage hängt bis zum Timeout, dann Ausfall."""
+
+    def __init__(self):
+        self.fragen = 0
+        self._zaehler = threading.Lock()
+
+    def authenticate(self, username, password):
+        with self._zaehler:
+            self.fragen += 1
+        time.sleep(HAENGT24)
+        raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+
+
+db24, auth24, c24 = build()
+auth24.set_security("rate_limit_max", 1000)          # eine 429 muss aus der Sperre kommen
+haengt24 = HaengendesLDAP()
+auth24.ldap = haengt24
+NAT24 = ("198.51.100.7", 40000)
+SCHWELLE24 = auth24.sec("max_login_attempts") * auth24.sec("ip_attempt_factor")
+
+
+def _anmelden24(name, pw="x"):
+    return TestClient(c24.app, client=NAT24).post(
+        "/auth/login", data={"username": name, "password": pw}, follow_redirects=False).status_code
+
+
+_puffer24 = _io23.StringIO()
+_haken24 = _log23.StreamHandler(_puffer24)
+_seclog23.addHandler(_haken24)
+try:
+    # (1) Der erste Anlauf entdeckt den Ausfall. Er hängt bis zum Timeout — dieses eine Fenster
+    # bleibt, denn vorher weiss niemand, dass das Verzeichnis weg ist.
+    _t0 = time.monotonic()
+    assert _anmelden24("kollege0") == 503
+    assert time.monotonic() - _t0 >= HAENGT24 * 0.9, "Vorbedingung: die erste Frage hing nicht"
+    # (2) Während des Ausfalls: das ganze Büro hinter der NAT-Adresse — so viele wie die
+    # IP-Schwelle, alle innerhalb von drei Fünfteln des Timeouts —, danach der lokale Notfall-Admin
+    # mit richtigem Passwort. Ohne Merker schwebten zu dem Zeitpunkt alle Anläufe noch und füllten
+    # die IP-Schwelle. Gestaffelt, nicht auf einen Schlag: Eine Vorbuchung lebt jetzt so lange wie
+    # die lokale Prüfung und ein paar Schreibzugriffe (unter Last einige hundert Millisekunden).
+    # Kommen mehr Anmeldungen als die IP-Schwelle GLEICHZEITIG, weist die Sperre einige ab — das
+    # ist R7-2 im Normalbetrieb genauso und hat mit dem Ausfall nichts zu tun.
+    _anzahl24 = SCHWELLE24
+    _abstand24 = HAENGT24 * 0.6 / _anzahl24
+    with _Pool24(max_workers=_anzahl24) as _pool24:
+        _laufend24 = []
+        for i in range(1, _anzahl24 + 1):
+            _laufend24.append(_pool24.submit(_anmelden24, f"kollege{i}"))
+            time.sleep(_abstand24)
+        _schwebend24 = auth24.store.count_fails(0, ip=NAT24[0])
+        _admin24 = _anmelden24("admin", "lokalpw")
+        _kollegen24 = [f.result(timeout=30) for f in _laufend24]
+    # (3) Der ungeduldige Nutzer, der auf der hängenden Seite siebenmal abschickt.
+    _klicks24 = [_anmelden24("alice") for _ in range(7)]
+finally:
+    _seclog23.removeHandler(_haken24)
+assert _admin24 == 303, (f"der Notfall-Admin kommt während des Ausfalls nicht hinein: {_admin24} "
+                         f"({_schwebend24} vorgebuchte Versuche der Adresse schwebten)")
+assert _kollegen24 == [503] * len(_kollegen24), f"Kollegen während des Ausfalls: {sorted(set(_kollegen24))}"
+assert _klicks24 == [503] * 7, f"ungeduldige Klicks: {_klicks24}"
+assert haengt24.fragen == 1, f"während der Pause wurde das Verzeichnis {haengt24.fragen - 1}-mal erneut gefragt"
+assert "failed login" not in _puffer24.getvalue(), \
+    "fail2ban bekäme den Ausfall als Angriff: " + next(
+        z for z in _puffer24.getvalue().splitlines() if "failed login" in z)
+assert auth24.store.count_fails(0, ip=NAT24[0]) == 0, "vom Ausfall blieben Fehlversuche stehen"
+ok(f"F-23 × R7-2: nach dem ersten Timeout sofort 503 — {len(_kollegen24)} Kollegen, 7 Klicks, "
+   "der lokale Admin kommt hinein, kein 'failed login'")
+
+# Nach der Pause fragt GENAU EINE Anmeldung nach (Probe); alle übrigen bekommen weiter sofort 503,
+# bis sie zurück ist — sonst schwebten nach jeder Pause wieder alle, die gerade anklopfen. Antwortet
+# das Verzeichnis wieder (auch mit „Passwort falsch"), ist es frei. Gemeldet wird der Wechsel, je
+# einmal, nicht jede Anfrage. (Mutationsprobe: in `AusfallMerker.zugang` die laufende Probe nicht
+# beachten (`if rest > 0:` statt `if rest > 0 or self._probe:`) → während der Probe fragen alle
+# das Verzeichnis → rot; in `check_ldap` `merker.erreicht()` streichen → das zurückgekehrte
+# Verzeichnis bleibt gesperrt → rot.)
+_uhr24 = [5000.0]
+auth24._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr24[0])
+haengt24.fragen = 0
+_puffer24b = _io23.StringIO()
+_haken24b = _log23.StreamHandler(_puffer24b)
+_seclog23.addHandler(_haken24b)
+try:
+    assert _anmelden24("kollege0") == 503 and haengt24.fragen == 1      # Ausfall entdeckt
+    assert _anmelden24("kollege1") == 503 and haengt24.fragen == 1      # Pause: nicht gefragt
+    _uhr24[0] += AUSFALL_PAUSE_SEK + 1                                  # Pause vorbei
+    with _Pool24(max_workers=2) as _pool24b:
+        _probe24 = _pool24b.submit(_anmelden24, "kollege2")             # die Probe hängt
+        time.sleep(HAENGT24 / 4)
+        _andere24 = [_anmelden24(f"kollege{i}") for i in range(3, 13)]
+        _admin24b = _anmelden24("admin", "lokalpw")
+        _probe_status24 = _probe24.result(timeout=30)
+    assert haengt24.fragen == 2, \
+        f"während der Probe fragten {haengt24.fragen - 2} weitere Anmeldungen das Verzeichnis"
+    assert _andere24 == [503] * 10 and _probe_status24 == 503, (_andere24, _probe_status24)
+    assert _admin24b == 303, f"der lokale Admin während der Probe: {_admin24b}"
+    # Das Verzeichnis ist zurück: Nach der nächsten Pause antwortet die Probe, danach läuft alles normal.
+    auth24.ldap = FakeLDAP({"alice": {"password": "richtig"}})
+    _uhr24[0] += AUSFALL_PAUSE_SEK + 1
+    assert _anmelden24("alice", "falsch") == 401, "die Probe mit falschem Passwort ist ein Fehlversuch"
+    assert _anmelden24("alice", "richtig") == 303, "nach der Rückkehr des Verzeichnisses bleibt es gesperrt"
+finally:
+    _seclog23.removeHandler(_haken24b)
+_text24 = _puffer24b.getvalue()
+assert _text24.count("LDAP-Verzeichnis nicht erreichbar (") == 1, _text24
+assert _text24.count("LDAP-Verzeichnis wieder erreichbar") == 1, _text24
+assert "failed login user=kollege" not in _text24, _text24
+assert auth24.store.count_fails(0, username="alice") == 0, "der volle Login räumt den Fehlversuch"
+ok("…nach der Pause fragt genau eine Anmeldung nach; Ausfall und Rückkehr stehen je einmal im Log")
+os.remove(db24)
+
+# Den Platz der Probe gibt nur die Probe selbst frei (`ausgefallen(war_probe=True)`). Ein
+# Nachzügler aus dem ersten Fenster, der erst während der Probe in sein Timeout läuft, meldet
+# `war_probe=False` — gäbe er den Platz frei, fragte gleich die nächste Anmeldung parallel zur
+# laufenden Probe nach, und nach jeder Pause schwebten wieder mehrere Versuche. (Mutationsprobe:
+# in `AusfallMerker.ausgefallen` den Platz immer freigeben (`self._probe = False` ohne
+# `if war_probe`) → rot.)
+_uhr_n = [100.0]
+_m_n = AusfallMerker(uhr=lambda: _uhr_n[0])
+_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: timed out"))
+_uhr_n[0] += AUSFALL_PAUSE_SEK + 1
+assert _m_n.zugang() is True, "Vorbedingung: nach der Pause ist die nächste Anmeldung die Probe"
+_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Nachzügler"), war_probe=False)   # Nachzügler
+_uhr_n[0] += AUSFALL_PAUSE_SEK + 1
+try:
+    _m_n.zugang()
+    _zweite_probe = True
+except VerzeichnisNichtErreichbar as _e_n:
+    _zweite_probe = False
+    assert "fragt gerade nach" in str(_e_n), str(_e_n)
+assert not _zweite_probe, "ein Nachzügler hat den Platz der laufenden Probe freigegeben — zwei Proben zugleich"
+_m_n.ausgefallen(VerzeichnisNichtErreichbar("Test: Probe gescheitert"), war_probe=True)
+_uhr_n[0] += AUSFALL_PAUSE_SEK + 1
+assert _m_n.zugang() is True, "nach dem Ende der Probe fragt die nächste nach"
+ok("Ausfall-Merker: ein Nachzügler gibt den Platz der laufenden Probe nicht frei")
+
+# Endet die Probe mit einer ANDEREN Ausnahme (Programmfehler im eigenen Client, fehlendes Extra),
+# muss `check_ldap` ihren Platz freigeben — sonst fragt niemand mehr nach, und die LDAP-Anmeldung
+# liefert bis zum Neustart 503, auch bei gesundem Verzeichnis. (Mutationsprobe: in `check_ldap`
+# den Zweig `except BaseException: if probe: merker.freigeben()` streichen → rot.)
+class _LaunischesLDAP:
+    modus = "weg"
+
+    def authenticate(self, username, password):
+        if self.modus == "weg":
+            raise VerzeichnisNichtErreichbar("LDAP-Verzeichnis ldap://dummy nicht benutzbar: timed out")
+        if self.modus == "kaputt":
+            raise RuntimeError("unerwarteter Fehler im Client")
+        if self.modus == "abgebrochen":
+            raise _ldap_mod.AnfrageAbgebrochen("Test: Verbindung nach dem Bind vom Server beendet")
+        return {"username": username, "email": None, "name": username, "groups": [], "id": "l-1"}
+
+
+_auth_p = TinySesam(TinySesamConfig(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://dummy",
+                                    ldap_allow_plaintext=True, passkey_enabled=False, oidc_enabled=False))
+_uhr_p = [100.0]
+_auth_p._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr_p[0])
+_auth_p.ldap = _launisch = _LaunischesLDAP()
+try:
+    _auth_p.check_ldap("alice", "pw")
+except VerzeichnisNichtErreichbar:
+    pass   # der Merker ist danach scharf — nur das zählt hier
+_uhr_p[0] += AUSFALL_PAUSE_SEK + 1
+_launisch.modus = "kaputt"
+try:
+    _auth_p.check_ldap("alice", "pw")
+    raise AssertionError("Vorbedingung: die Probe hätte mit RuntimeError enden müssen")
+except RuntimeError:
+    pass
+_launisch.modus = "gesund"
+try:
+    _info_p = _auth_p.check_ldap("alice", "pw")
+except VerzeichnisNichtErreichbar as _e_p:
+    raise AssertionError(f"nach einer Probe mit fremder Ausnahme fragt niemand mehr nach: {_e_p}")
+assert _info_p, _info_p
+# Dasselbe, wenn die Probe nur ihre eigene Anfrage verliert (`AnfrageAbgebrochen`, s. unten): kein
+# Beleg für einen Ausfall, aber auch keiner für die Rückkehr — die nächste Anmeldung fragt nach.
+# (Mutationsprobe: im Zweig `except AnfrageAbgebrochen` von `check_ldap` das `merker.freigeben()`
+# streichen → rot.)
+_launisch.modus = "weg"
+try:
+    _auth_p.check_ldap("alice", "pw")
+except VerzeichnisNichtErreichbar:
+    pass   # der Merker ist danach scharf — nur das zählt hier
+_uhr_p[0] += AUSFALL_PAUSE_SEK + 1
+_launisch.modus = "abgebrochen"
+try:
+    _auth_p.check_ldap("alice", "pw")
+    raise AssertionError("Vorbedingung: die Probe hätte abgebrochen werden müssen")
+except _ldap_mod.AnfrageAbgebrochen:
+    pass
+_launisch.modus = "gesund"
+try:
+    _info_p = _auth_p.check_ldap("alice", "pw")
+except VerzeichnisNichtErreichbar as _e_p:
+    raise AssertionError(f"nach einer abgebrochenen Probe fragt niemand mehr nach: {_e_p}")
+assert _info_p, _info_p
+ok("Ausfall-Merker: endet die Probe mit einer fremden Ausnahme oder einem Abbruch, fragt die nächste nach")
+
+# ---------- Nachbesserung T-13: eine übergrosse Anmeldung legt LDAP nicht still ----------
+# Der Merker schaltete bei JEDEM `VerzeichnisNichtErreichbar` scharf — auch wenn nur diese eine
+# Anfrage gescheitert war. OpenLDAP beendet mit seiner Vorgabe `sockbuf_max_incoming=262143` die
+# Verbindung, sobald eine Bind-PDU auf der (noch anonymen) Sitzung grösser ist; ldap3 meldet das
+# als Kommunikationsfehler. Ein Passwort mit 270 000 Zeichen, ohne Anmeldung abgeschickt, gab so
+# jeder LDAP-Nutzerin 30 s lang 503 — alle 2,5 s wiederholt dauerhaft, und den Angreifer kostete
+# es nichts (zurückgenommene Vorbuchung, kein `failed login`). Erstes Schloss: Was länger ist als
+# jede echte Anmeldung, geht gar nicht erst ans Verzeichnis und ist ein falsches Passwort.
+# (Mutationsprobe: in `check_ldap` die Prüfung `ldap_.eingabe_zu_lang` streichen → der Client
+# wird gefragt → rot.)
+class _MitschreibendesLDAP(FakeLDAP):
+    def __init__(self, users):
+        super().__init__(users)
+        self.gefragt = []
+
+    def authenticate(self, username, password):
+        self.gefragt.append((len(username), len(password)))
+        return super().authenticate(username, password)
+
+
+db_g, auth_g, c_g = build()
+auth_g.set_security("rate_limit_max", 1000)
+auth_g.ldap = _mitschrift_g = _MitschreibendesLDAP({"alice": {"password": "richtig"}})
+_puffer_g = _io23.StringIO()
+_haken_g = _log23.StreamHandler(_puffer_g)
+_seclog23.addHandler(_haken_g)
+try:
+    _gross = [TestClient(c_g.app, client=("203.0.113.66", 40000)).post(
+        "/auth/login", data=daten, follow_redirects=False).status_code
+        for daten in ({"username": "alice", "password": "x" * 270_000},
+                      {"username": "n" * 270_000, "password": "x"})]
+finally:
+    _seclog23.removeHandler(_haken_g)
+assert _mitschrift_g.gefragt == [], f"übergrosse Eingaben gingen ans Verzeichnis: {_mitschrift_g.gefragt}"
+assert _gross == [401, 401], f"übergrosse Eingaben: {_gross} (erwartet: wie ein falsches Passwort)"
+assert auth_g.store.count_fails(0, ip="203.0.113.66") == 2, "die übergrossen Versuche zählen nicht"
+assert _puffer_g.getvalue().count("failed login") == 2, "fail2ban sieht die übergrossen Versuche nicht"
+_r_g = TestClient(c_g.app, client=("192.0.2.10", 40000)).post(
+    "/auth/login", data={"username": "alice", "password": "richtig"}, follow_redirects=False)
+assert _r_g.status_code == 303, f"die richtige Anmeldung danach: {_r_g.status_code}"
+os.remove(db_g)
+ok("übergrosse Eingaben gehen nicht ans Verzeichnis: 401, Fehlversuch, 'failed login' — LDAP bleibt offen")
+
+if HAT_LDAP3:
+    # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der
+    # Bibliothek kommen, nicht aus unserer Attrappe — sonst wäre die Zuordnung der Fehlerarten
+    # (`_ausfall_arten`) ungemessen.
+    _s = socket.socket()
+    _s.bind(("127.0.0.1", 0))
+    _toter_port = _s.getsockname()[1]
+    _s.close()
+    for _cfg in (TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
+                                 ldap_url=f"ldap://127.0.0.1:{_toter_port}", ldap_allow_plaintext=True,
+                                 ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"),
+                 TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
+                                 ldap_url=f"ldap://127.0.0.1:{_toter_port}", ldap_allow_plaintext=True,
+                                 ldap_bind_dn=SVC_DN, ldap_bind_password=SVC_PW,
+                                 ldap_user_base="ou=people,dc=example,dc=com")):
+        try:
+            LDAPClient(_cfg).authenticate("alice", "egal")
+            _geworfen = False
+        except VerzeichnisNichtErreichbar as _e_tot:
+            _geworfen = True
+            # Ein toter Port betrifft das ganze Verzeichnis: Der Merker muss scharf schalten.
+            # (Mutationsprobe: in `authenticate` jeden Fehler als `AnfrageAbgebrochen` melden → rot.)
+            assert not isinstance(_e_tot, getattr(_ldap_mod, "AnfrageAbgebrochen", ())), \
+                f"ein toter Port gilt als Fehler nur dieser Anfrage: {_e_tot!r}"
+        assert _geworfen, "ein toter Port endet wieder als 'Passwort falsch'"
+    ok("F-23: echtes ldap3 gegen einen toten Port → VerzeichnisNichtErreichbar (Direkt- und Such-Bind)")
+    # Und ein abgewiesenes Passwort gegen einen ECHTEN Server bleibt None, nicht Ausfall.
+    _sa, _pa = lauscher()
+
+    def _lehnt_ab(sock):
+        try:
+            conn, _ = sock.accept()
+            conn.settimeout(5)
+            daten = conn.recv(8192)
+            mid, _op = zerlegen(daten)
+            # BindResponse resultCode 49 = invalidCredentials
+            conn.sendall(antwort(mid, 0x61, tlv(0x0A, b"\x31") + tlv(0x04, b"") + tlv(0x04, b"")))
+            conn.recv(8192)
+            conn.close()
+        except Exception:
+            pass   # der Client hat aufgelegt — für diesen Attrappen-Server kein Fehler
+
+    threading.Thread(target=_lehnt_ab, args=(_sa,), daemon=True).start()
+    assert LDAPClient(TinySesamConfig(
+        db_path=":memory:", password_enabled=True, ldap_enabled=True,
+        ldap_url=f"ldap://127.0.0.1:{_pa}", ldap_allow_plaintext=True,
+        ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")).authenticate(
+        "alice", "falsch") is None
+    _sa.close()
+    ok("F-23: invalidCredentials vom echten Server bleibt None (Fehlversuch), kein Ausfall")
+
+    # Zweites Schloss, gegen ECHTES ldap3 und ein Verzeichnis auf Loopback, das sich wie slapd
+    # verhält: Eine PDU über seiner Grenze beendet die Verbindung ohne Antwort. Die Grenze ist hier
+    # klein gestellt, damit eine Eingabe UNTER der Eingabegrenze sie reisst — so wie jeder
+    # künftige Weg, eine einzelne Anfrage abbrechen zu lassen. Bricht das Verzeichnis nur diese
+    # eine Anfrage ab (schnell, nachdem Eingaben des Anmeldenden gesendet waren), ist das kein
+    # Ausfall des Verzeichnisses: 503 für diese Anfrage, der Merker bleibt aus, die nächste
+    # Anmeldung fragt normal. (Mutationsprobe: in `check_ldap` `AnfrageAbgebrochen` wie jeden
+    # Ausfall behandeln (`merker.ausgefallen`) → alice bekommt 503 → rot; in `authenticate` die
+    # Unterscheidung streichen (immer `VerzeichnisNichtErreichbar`) → rot.)
+    def _tlv_lesen(d, i):
+        tag = d[i]
+        i += 1
+        if d[i] & 0x80:
+            k = d[i] & 0x7F
+            n = int.from_bytes(d[i + 1:i + 1 + k], "big")
+            i += 1 + k
+        else:
+            n = d[i]
+            i += 1
+        return tag, d[i:i + n], i + n
+
+    class _MiniVerzeichnis:
+        """LDAP-Verzeichnis auf Loopback mit echten PDUs. `grenze` wie slapds
+        `sockbuf_max_incoming` (eine grössere PDU beendet die Verbindung ohne Antwort);
+        `haengt=True`: nimmt Verbindungen an, liest mit, antwortet nie."""
+        NUTZER = {b"uid=alice,ou=people,dc=example,dc=com": b"richtig"}
+
+        def __init__(self, grenze=262143, haengt=False):
+            self.grenze, self.haengt = grenze, haengt
+            self.log, self.verbindungen = [], 0
+            self._sock = socket.socket()
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._sock.bind(("127.0.0.1", 0))
+            self._sock.listen(32)
+            self.port = self._sock.getsockname()[1]
+            threading.Thread(target=self._annehmen, daemon=True).start()
+
+        def _annehmen(self):
+            while True:
+                try:
+                    conn, _ = self._sock.accept()
+                except OSError:
+                    return
+                self.verbindungen += 1
+                threading.Thread(target=self._sitzung, args=(conn,), daemon=True).start()
+
+        def _mehr(self, conn, puffer):
+            d = conn.recv(65536)
+            if not d:
+                raise EOFError
+            return puffer + d
+
+        def _sitzung(self, conn):
+            puffer = b""
+            try:
+                while True:
+                    while len(puffer) < 2 or (puffer[1] & 0x80 and len(puffer) < 2 + (puffer[1] & 0x7F)):
+                        puffer = self._mehr(conn, puffer)
+                    if puffer[1] & 0x80:
+                        k = puffer[1] & 0x7F
+                        n, kopf = int.from_bytes(puffer[2:2 + k], "big"), 2 + k
+                    else:
+                        n, kopf = puffer[1], 2
+                    if kopf + n > self.grenze:
+                        self.log.append(f"zu gross {kopf + n}")
+                        return                      # Verbindung zu, keine Antwort — wie slapd
+                    while len(puffer) < kopf + n:
+                        puffer = self._mehr(conn, puffer)
+                    pdu, puffer = puffer[:kopf + n], puffer[kopf + n:]
+                    mid, op = zerlegen(pdu)
+                    if self.haengt:
+                        self.log.append(f"haengt {hex(op)}")
+                        continue
+                    if op == 0x60:
+                        _, inhalt, _ = _tlv_lesen(pdu, 0)
+                        _, _, j = _tlv_lesen(inhalt, 0)
+                        _, bind, _ = _tlv_lesen(inhalt, j)
+                        _, _, k = _tlv_lesen(bind, 0)
+                        _, name, k = _tlv_lesen(bind, k)
+                        _, pw, _ = _tlv_lesen(bind, k)
+                        gut = self.NUTZER.get(name) == pw
+                        self.log.append(f"bind {name.decode()} {'ok' if gut else 'falsch'}")
+                        conn.sendall(antwort(mid, 0x61, tlv(0x0A, b"\x00" if gut else b"\x31")
+                                             + tlv(0x04, b"") + tlv(0x04, b"")))
+                    elif op == 0x63:
+                        conn.sendall(suche_fertig(mid))
+                    else:
+                        return
+            except (OSError, EOFError):
+                pass   # Attrappen-Server: der Client hat aufgelegt
+            finally:
+                conn.close()
+
+        def schliessen(self):
+            self._sock.close()
+
+    def _echt_bauen(port):
+        db = os.path.join(tempfile.mkdtemp(), "t.db")
+        a = TinySesam(TinySesamConfig(
+            csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False,
+            oidc_enabled=False, cookie_secure=False, ldap_enabled=True,
+            ldap_url=f"ldap://127.0.0.1:{port}", ldap_allow_plaintext=True,
+            ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"))
+        a.set_security("rate_limit_max", 1000)
+        anw = FastAPI()
+        anw.include_router(a.router())
+        return a, anw, db
+
+    def _echt_anmelden(anw, name, pw, ip):
+        return TestClient(anw, client=(ip, 40000)).post(
+            "/auth/login", data={"username": name, "password": pw}, follow_redirects=False).status_code
+
+    _v = _MiniVerzeichnis(grenze=900)
+    _auth_v, _app_v, _db_v = _echt_bauen(_v.port)
+    try:
+        assert _echt_anmelden(_app_v, "alice", "richtig", "192.0.2.10") == 303, "Vorbedingung: alice kommt hinein"
+        _grenze_v = __import__("tinysesam.ldap_", fromlist=["x"])
+        _lang_v = "x" * 1000                  # unter der Eingabegrenze, über der PDU-Grenze des Verzeichnisses
+        assert len(_lang_v) <= getattr(_grenze_v, "LDAP_PASSWORT_MAX", 10 ** 9), "Vorbedingung: Eingabe unter der Grenze"
+        _t_v = time.monotonic()
+        _puffer_v = _io23.StringIO()
+        _haken_v = _log23.StreamHandler(_puffer_v)
+        _seclog23.addHandler(_haken_v)
+        try:
+            _abbruch_v = _echt_anmelden(_app_v, "bob", _lang_v, "203.0.113.66")
+        finally:
+            _seclog23.removeHandler(_haken_v)
+        # Im Sicherheits-Log unterscheidbar — auch nach dem Kürzen des Grundes auf 64 Zeichen.
+        assert "grund=LDAP: nur diese Anfrage abgebrochen" in _puffer_v.getvalue(), _puffer_v.getvalue()
+        assert "LDAP-Verzeichnis nicht erreichbar (" not in _puffer_v.getvalue(), "der Merker hat gemeldet"
+        assert any(z.startswith("zu gross") for z in _v.log), f"Vorbedingung: kein Abbruch im Verzeichnis: {_v.log}"
+        assert _abbruch_v == 503, f"die abgebrochene Anfrage selbst: {_abbruch_v}"
+        _vorher_v = len(_v.log)
+        _danach_v = [_echt_anmelden(_app_v, "alice", "richtig", f"192.0.2.{20 + i}") for i in range(3)]
+        assert _danach_v == [303] * 3, \
+            f"EINE abgebrochene Anfrage legt die LDAP-Anmeldung aller still: {_danach_v} ({_v.log[_vorher_v:]})"
+        assert _v.log[_vorher_v:].count("bind uid=alice,ou=people,dc=example,dc=com ok") == 3, _v.log[_vorher_v:]
+        assert time.monotonic() - _t_v < 5, "der Abbruch hat gehangen"
+    finally:
+        _v.schliessen()
+        os.remove(_db_v)
+    ok("eine einzelne Anfrage, die das Verzeichnis abbricht, schaltet den Merker nicht scharf")
+
+    # Die Eingabegrenze gilt auch, wenn jemand `LDAPClient` direkt benutzt: Das Verzeichnis sieht
+    # die übergrosse Eingabe gar nicht. (Mutationsprobe: in `LDAPClient.authenticate` die Prüfung
+    # `eingabe_zu_lang` streichen → das Verzeichnis wird gefragt → rot.)
+    _v2 = _MiniVerzeichnis()
+    try:
+        _cfg_v2 = TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
+                                  ldap_url=f"ldap://127.0.0.1:{_v2.port}", ldap_allow_plaintext=True,
+                                  ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")
+        assert LDAPClient(_cfg_v2).authenticate("alice", "richtig"), "Vorbedingung: der Server antwortet"
+        _vorher_v2 = _v2.verbindungen
+        assert LDAPClient(_cfg_v2).authenticate("alice", "x" * 270_000) is None
+        assert LDAPClient(_cfg_v2).authenticate("n" * 270_000, "richtig") is None
+        time.sleep(0.2)
+        assert _v2.verbindungen == _vorher_v2, f"übergrosse Eingaben erreichten das Verzeichnis: {_v2.log}"
+    finally:
+        _v2.schliessen()
+    ok("LDAPClient: übergrosse Eingaben erreichen das Verzeichnis nicht (None)")
+
+    # Die Unterscheidung hängt am SCHRITT, nicht bloss an der Fehlerart: Beendet das Verzeichnis
+    # die Verbindung schon bei StartTLS, meldet ldap3 dieselbe `LDAPSessionTerminatedByServerError`
+    # wie beim abgebrochenen Bind — nur ist bis dahin nichts vom Anmeldenden gesendet. Das ist
+    # ein Ausfall des Verzeichnisses (etwa ein TLS-Vorbau ohne Backend), kein Abbruch dieser
+    # Anfrage. (Mutationsprobe: in `authenticate` Verbindung und StartTLS schon als
+    # Eingabe-Schritt führen (`eingabe, seit = True, …` vor `conn.open()`) → rot.)
+    _st, _pst = lauscher()
+
+    def _schliesst_bei_starttls(sock):
+        try:
+            conn, _ = sock.accept()
+            conn.settimeout(5)
+            conn.recv(8192)                        # ExtendedRequest StartTLS — und zu
+            conn.close()
+        except OSError:
+            pass   # Attrappen-Server: der Client hat aufgelegt
+
+    threading.Thread(target=_schliesst_bei_starttls, args=(_st,), daemon=True).start()
+    try:
+        LDAPClient(TinySesamConfig(
+            db_path=":memory:", password_enabled=True, ldap_enabled=True,
+            ldap_url=f"ldap://127.0.0.1:{_pst}", ldap_start_tls=True, ldap_tls_verify=False,
+            ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")).authenticate("alice", "pw")
+        _e_st = None
+    except VerzeichnisNichtErreichbar as _e:
+        _e_st = _e
+    finally:
+        _st.close()
+    assert _e_st is not None, "Vorbedingung: der Abbruch bei StartTLS wurde nicht gemeldet"
+    assert not isinstance(_e_st, _ldap_mod.AnfrageAbgebrochen), \
+        f"ein Abbruch bei StartTLS (vor jeder Eingabe) gilt als Fehler nur dieser Anfrage: {_e_st!r}"
+    ok("Abbruch schon bei StartTLS: Ausfall des Verzeichnisses, nicht bloss dieser Anfrage")
+
+    # Gegenprobe: Ein Verzeichnis, das annimmt und nie antwortet (Prozess hängt, Backend
+    # blockiert), bleibt ein Ausfall des GANZEN Verzeichnisses — auch wenn es erst nach dem
+    # Senden des Benutzer-Binds hängt. Sonst hinge jeder Anlauf wieder bis zum Timeout (F-23 ×
+    # R7-2). Die Uhren sind klein gestellt, damit der Test nicht zehn Sekunden wartet.
+    # (Mutationsprobe: in `authenticate` die Dauer nicht beachten — jeden Fehler nach gesendeter
+    # Eingabe als `AnfrageAbgebrochen` melden → die zweite Anmeldung fragt wieder → rot.)
+    _ldap_mod_h = __import__("tinysesam.ldap_", fromlist=["x"])
+    _alt_h = {n: getattr(_ldap_mod_h, n) for n in ("VERBINDUNGS_TIMEOUT", "HAENGER_SEK") if hasattr(_ldap_mod_h, n)}
+    _ldap_mod_h.VERBINDUNGS_TIMEOUT, _ldap_mod_h.HAENGER_SEK = 1, 0.3
+    _h = _MiniVerzeichnis(haengt=True)
+    _auth_h, _app_h, _db_h = _echt_bauen(_h.port)
+    try:
+        _t_h = time.monotonic()
+        assert _echt_anmelden(_app_h, "alice", "richtig", "192.0.2.10") == 503
+        assert time.monotonic() - _t_h >= 0.9, "Vorbedingung: die erste Frage hing nicht bis zum Timeout"
+        assert any(z.startswith("haengt 0x60") for z in _h.log), f"Vorbedingung: der Bind kam an: {_h.log}"
+        _n_h = _h.verbindungen
+        _t_h = time.monotonic()
+        assert _echt_anmelden(_app_h, "alice", "richtig", "192.0.2.11") == 503
+        assert _h.verbindungen == _n_h, "nach einem Hänger beim Benutzer-Bind wurde das Verzeichnis gleich wieder gefragt"
+        assert time.monotonic() - _t_h < 0.9, "die zweite Anmeldung hing wieder"
+    finally:
+        for _n, _w in _alt_h.items():
+            setattr(_ldap_mod_h, _n, _w)
+        if "HAENGER_SEK" not in _alt_h:
+            delattr(_ldap_mod_h, "HAENGER_SEK")
+        _h.schliessen()
+        os.remove(_db_h)
+    ok("ein Verzeichnis, das beim Benutzer-Bind hängt, schaltet den Merker weiter scharf")
+
+# ---------- F-29: LDAP- und lokale Anmeldung sind im Audit-Log unterscheidbar ----------
+db29, auth29, c29 = build()
+auth29.ldap = FakeLDAP({"ldapnutzer": {"password": "lp", "id": "l1"}})
+c29.post("/auth/login", data={"username": "ldapnutzer", "password": "lp"}, follow_redirects=False)
+c29.get("/auth/logout")
+c29.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
+c29.get("/auth/logout")
+c29.post("/auth/login", data={"username": "niemand", "password": "x"})
+_zeilen29 = auth29.store.recent_audit(50)
+_ereignisse = {(z["event"], z["username"]) for z in _zeilen29}
+assert ("login_ldap", "ldapnutzer") in _ereignisse, _ereignisse
+assert ("login_lokal", "admin") in _ereignisse, _ereignisse
+assert ("login_ldap", "admin") not in _ereignisse and ("login_lokal", "ldapnutzer") not in _ereignisse
+_fail29 = [z for z in _zeilen29 if z["event"] == "login_fail" and z["username"] == "niemand"]
+assert _fail29 and "quelle=lokal+ldap" in (_fail29[0]["detail"] or ""), _fail29
+ok("F-29: login_ldap / login_lokal getrennt, ein Fehlversuch nennt quelle=lokal+ldap")
+os.remove(db29)
+# Ohne LDAP bleibt das Audit-Log wie bisher — keine neue Zeile für jeden lokalen Login.
+db29b = os.path.join(tempfile.mkdtemp(), "t.db")
+auth29b = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db29b, rp_name="Test",
+                                    passkey_enabled=False, cookie_secure=False))
+auth29b.ensure_admin("admin", "lokalpw")
+_app29b = FastAPI()
+_app29b.include_router(auth29b.router())
+TestClient(_app29b).post("/auth/login", data={"username": "admin", "password": "lokalpw"},
+                         follow_redirects=False)
+assert not any(z["event"].startswith("login_l") for z in auth29b.store.recent_audit(20))
+ok("F-29: ohne ldap_enabled keine Zusatzzeile")
+os.remove(db29b)
+
+# ---------- F-30: die Konfigurationsprüfung nennt keine Abhilfe, die sie selbst ablehnt ----------
+from tinysesam import konfigpruefung as _kp  # noqa: E402
+_f30, _w30 = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=False,
+                                        passkey_enabled=False, ldap_enabled=True,
+                                        ldap_url="ldaps://ldap.example.com"))
+_meldung30 = next(f for f in _f30 if "Keine einzige Anmelde-Methode" in f)
+assert "ldap_enabled=True," not in _meldung30.split("LDAP allein")[0], _meldung30
+assert "password_enabled=True" in _meldung30.split("LDAP allein")[1], _meldung30
+assert any("ldap_enabled=True, aber password_enabled=False" in w for w in _w30), _w30
+# Gegenprobe: die genannte Abhilfe wird tatsächlich angenommen.
+_f30b, _w30b = _kp.pruefe(TinySesamConfig(db_path=":memory:", password_enabled=True,
+                                          passkey_enabled=False, ldap_enabled=True,
+                                          ldap_url="ldaps://ldap.example.com"))
+assert not any("Keine einzige" in f for f in _f30b) and not any("password_enabled=False" in w for w in _w30b)
+ok("F-30: 'keine Methode' nennt ldap_enabled nicht mehr als Abhilfe; LDAP ohne Passwortfeld warnt")
 
 print("\nLDAP-BACKEND OK ✅")

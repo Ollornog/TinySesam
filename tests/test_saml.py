@@ -380,4 +380,126 @@ ok("F-11: saml_attr_id bindet das Attribut — eine transiente NameID wechselt b
 for _d in (db11, db11b):
     os.remove(_d)
 
+# ---------- F-22: die ACS ist ratenbegrenzt, und jede Abweisung steht im Audit-Log ----------
+# Bis 0.20.0 war die ACS die einzige Anmelderoute ohne Drossel — und die teuerste: Jeder POST geht
+# durch die XML-Signaturprüfung. Fachliche Abweisungen (Gruppe, kein Konto, gesperrt) endeten
+# stumm in einer 403; „ich komme nicht rein" war serverseitig nicht zu beantworten.
+db22, auth22, app22 = build(saml_allowed_groups=["staff"])
+auth22.set_security("rate_limit_max", 3)
+c22 = TestClient(app22)
+auth22.saml = FakeSAML(nameid="eve", attrs={"groups": ["extern"]})
+_antw22 = [c22.post("/auth/saml/acs", data={"SAMLResponse": "x"}, follow_redirects=False).status_code
+           for _ in range(5)]
+assert _antw22[:3] == [403, 403, 403] and _antw22[3:] == [429, 429], _antw22
+ok("F-22: die ACS ist ratenbegrenzt (nach rate_limit_max → 429, vor der Signaturprüfung)")
+_z22 = auth22.store.recent_audit(50)
+assert any(z["event"] == "saml_denied" and z["username"] == "eve" and "grund=gruppe" in (z["detail"] or "")
+           and z["ip"] for z in _z22), [dict(z) for z in _z22][:5]
+ok("F-22: Gruppen-Abweisung → Audit-Zeile saml_denied mit Grund und IP")
+os.remove(db22)
+
+db22b, auth22b, app22b = build(saml_auto_create=False)
+auth22b.saml = FakeSAML(nameid="unbekannt", attrs={})
+assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
+                               follow_redirects=False).status_code == 403
+assert any(z["event"] == "saml_denied" and "grund=kein_konto" in (z["detail"] or "")
+           for z in auth22b.store.recent_audit(20))
+_uid22 = auth22b.create_user("gesperrt")
+auth22b.store._exec("UPDATE users SET disabled=1 WHERE id=?", (_uid22,))
+auth22b.saml = FakeSAML(nameid="gesperrt", attrs={})
+assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"},
+                               follow_redirects=False).status_code == 403
+assert any(z["event"] == "saml_denied" and z["username"] == "gesperrt"
+           and "grund=konto_gesperrt" in (z["detail"] or "") for z in auth22b.store.recent_audit(20))
+auth22b.saml = FakeSAML(valid=False)
+assert TestClient(app22b).post("/auth/saml/acs", data={"SAMLResponse": "x"}).status_code == 400
+assert any(z["event"] == "saml_invalid" for z in auth22b.store.recent_audit(20))
+ok("F-22: kein Konto, gesperrtes Konto und abgelehnte Assertion hinterlassen je eine Audit-Zeile")
+os.remove(db22b)
+
+# ---------- F-21: SHA-1 in Signatur oder Digest wird abgewiesen ----------
+# Gemessen gegen ECHTES python3-saml mit einer echt signierten Assertion: Nur so ist belegt, dass
+# der Schalter in den Settings auch dort ankommt, wo die Signatur geprüft wird.
+from onelogin.saml2.settings import OneLogin_Saml2_Settings  # noqa: E402
+from tinysesam.saml_ import SAMLClient, request_kontext       # noqa: E402
+
+_cfg21 = TinySesamConfig(db_path=":memory:", saml_enabled=True, passkey_enabled=False,
+                         saml_idp_sso_url="https://idp.example.com/sso",
+                         saml_idp_x509cert=DUMMY_CERT, base_url="https://app.example.com")
+_st21 = OneLogin_Saml2_Settings(SAMLClient(_cfg21).settings("https://app.example.com"),
+                                sp_validation_only=True)
+assert _st21.get_security_data().get("rejectDeprecatedAlgorithm") is True, _st21.get_security_data()
+ok("F-21: rejectDeprecatedAlgorithm ist in den wirksamen python3-saml-Settings gesetzt")
+
+import importlib.util as _ilu21  # noqa: E402
+if _ilu21.find_spec("cryptography") and _ilu21.find_spec("lxml"):
+    import base64 as _b64
+    import datetime as _dt
+    from cryptography import x509 as _x509
+    from cryptography.x509.oid import NameOID as _NameOID
+    from cryptography.hazmat.primitives import hashes as _hashes, serialization as _ser
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+    from lxml import etree as _etree
+    from onelogin.saml2.utils import OneLogin_Saml2_Utils as _Utils
+    from onelogin.saml2.constants import OneLogin_Saml2_Constants as _K
+
+    _schluessel = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    _jetzt = _dt.datetime.now(_dt.timezone.utc)
+    _name = _x509.Name([_x509.NameAttribute(_NameOID.COMMON_NAME, "idp.example.com")])
+    _zert = (_x509.CertificateBuilder().subject_name(_name).issuer_name(_name)
+             .public_key(_schluessel.public_key()).serial_number(1)
+             .not_valid_before(_jetzt - _dt.timedelta(days=1))
+             .not_valid_after(_jetzt + _dt.timedelta(days=30)).sign(_schluessel, _hashes.SHA256()))
+    _key_pem = _schluessel.private_bytes(_ser.Encoding.PEM, _ser.PrivateFormat.PKCS8,
+                                         _ser.NoEncryption()).decode()
+    _zert_pem = _zert.public_bytes(_ser.Encoding.PEM).decode()
+    _BASIS, _IDP = "https://app.example.com", "https://idp.example.com/sso"
+    _ACS, _SP = _BASIS + "/auth/saml/acs", _BASIS + "/auth/saml/metadata"
+
+    def _signierte_antwort(sig, dig, rid="_req-21"):
+        vor = (_jetzt - _dt.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        nach = (_jetzt + _dt.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        xml = (
+            '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" '
+            'xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_r21" Version="2.0" '
+            f'IssueInstant="{vor}" Destination="{_ACS}" InResponseTo="{rid}">'
+            f'<saml:Issuer>{_IDP}</saml:Issuer><samlp:Status><samlp:StatusCode '
+            'Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>'
+            f'<saml:Assertion ID="_a21" Version="2.0" IssueInstant="{vor}"><saml:Issuer>{_IDP}</saml:Issuer>'
+            '<saml:Subject><saml:NameID>alice</saml:NameID><saml:SubjectConfirmation '
+            'Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml:SubjectConfirmationData '
+            f'NotOnOrAfter="{nach}" Recipient="{_ACS}" InResponseTo="{rid}"/></saml:SubjectConfirmation>'
+            f'</saml:Subject><saml:Conditions NotBefore="{vor}" NotOnOrAfter="{nach}">'
+            f'<saml:AudienceRestriction><saml:Audience>{_SP}</saml:Audience></saml:AudienceRestriction>'
+            f'</saml:Conditions><saml:AuthnStatement AuthnInstant="{vor}" SessionIndex="_s21">'
+            '<saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:'
+            'Password</saml:AuthnContextClassRef></saml:AuthnContext></saml:AuthnStatement>'
+            '<saml:AttributeStatement><saml:Attribute Name="email"><saml:AttributeValue>'
+            'alice@example.com</saml:AttributeValue></saml:Attribute></saml:AttributeStatement>'
+            '</saml:Assertion></samlp:Response>')
+        dok = _etree.fromstring(xml.encode())
+        behauptung = dok.find("{urn:oasis:names:tc:SAML:2.0:assertion}Assertion")
+        dok.replace(behauptung, _etree.fromstring(_Utils.add_sign(
+            _etree.tostring(behauptung), _key_pem, _zert_pem, sign_algorithm=sig, digest_algorithm=dig)))
+        return _b64.b64encode(_etree.tostring(dok)).decode()
+
+    _echt21 = SAMLClient(TinySesamConfig(
+        db_path=":memory:", saml_enabled=True, passkey_enabled=False, saml_idp_sso_url=_IDP,
+        saml_idp_x509cert="".join(_zert_pem.strip().splitlines()[1:-1]), base_url=_BASIS))
+
+    def _pruefe21(sig, dig):
+        req = request_kontext(_BASIS, "/auth/saml/acs", form={"SAMLResponse": _signierte_antwort(sig, dig)})
+        return _echt21.process(req, _BASIS, request_id="_req-21")
+
+    _gut21 = _pruefe21(_K.RSA_SHA256, _K.SHA256)
+    assert _gut21 and _gut21["nameid"] == "alice", \
+        f"Vorbedingung: eine SHA-256-signierte Assertion muss durchgehen, sonst misst der Rest nichts: {_gut21}"
+    assert _pruefe21(_K.RSA_SHA1, _K.SHA1) is None, "rsa-sha1 + sha1 wurde angenommen"
+    assert _pruefe21(_K.RSA_SHA1, _K.SHA256) is None, "rsa-sha1 als Signaturverfahren wurde angenommen"
+    assert _pruefe21(_K.RSA_SHA256, _K.SHA1) is None, "sha1 als Digest wurde angenommen"
+    ok("F-21: echt signierte Assertion — SHA-256 geht durch, SHA-1 in Signatur ODER Digest nicht")
+else:                                                    # pragma: no cover
+    print("  – F-21 gegen eine echt signierte Assertion nicht gefahren (cryptography/lxml fehlen); "
+          "gemessen ist oben nur der Settings-Schalter")
+
 print("\nSAML OK ✅")

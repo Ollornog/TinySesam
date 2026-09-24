@@ -27,19 +27,25 @@ class TinySesamConfig:
     # Rechteausweitung — dann False setzen oder je Guard `require_role(..., admin_implies=False)`.
     admin_implies_roles: bool = True
     # Wie werden IdP-Gruppen mit den Schlüsseln von *_group_role_map verglichen?
-    # "exact" (Default, sicher) oder "substring" (nötig für LDAP-memberOf-DNs).
-    # LDAP nutzt automatisch substring, weil dort ganze DNs ankommen.
+    # "exact" (Default, sicher) oder "substring" (alter Teilstring-Vergleich, nur auf Wunsch).
+    # LDAP vergleicht bei "exact" einen memberOf-DN nach Bestandteilen: ganzer DN, "cn=staff" oder "staff".
     group_match: str = "exact"
     # Bekannte Rollen/Gruppen: das Admin-Panel bietet sie als Checkboxen an (leer = Freitext-Fallback).
     available_roles: list[str] = field(default_factory=list)
     # IdP-Gruppe → lokale Rolle (beim OIDC/SAML/LDAP-Login gesetzt). Ziel "__admin__" = Admin-Flag (nur grant).
-    # Match ist Teilstring (deckt auch LDAP-memberOf-DNs ab). Managed Rollen werden je Login synchronisiert.
+    # Vergleich nach `group_match` (Vorgabe exakt). Managed Rollen werden je Login synchronisiert.
     oidc_group_role_map: dict = field(default_factory=dict)
     saml_group_role_map: dict = field(default_factory=dict) # SAML-Gruppe → lokale Rolle, z.B. `{"staff": "redaktion"}`
     ldap_group_role_map: dict = field(default_factory=dict) # LDAP-Gruppe (DN oder Name) → lokale Rolle
 
     # --- Aktive Login-Methoden (alle parallel möglich) ---
     password_enabled: bool = True     # Passwort-Login überhaupt anbieten (aus = nur SSO/Passkey/PIN)
+    # Eigene Blockliste für neue Passwörter: Pfad zu einer Textdatei, ein Passwort je Zeile
+    # (UTF-8, Zeilen in anderer Kodierung gelten als Latin-1; `#` am Zeilenanfang = Kommentar).
+    # Ergänzt die kleine eingebaute Liste — wer die gängigen Leak-Listen (z.B. die 100 000
+    # häufigsten) abgleichen will, legt sie hier ab. Offline: TinySesam fragt keinen fremden
+    # Dienst. Leer = nur die eingebaute Liste. `tinysesam passwd` liest sie mit `--blocklist-file`.
+    password_blocklist_file: str = ""
     # Vorgabe AUS, weil `webauthn` nicht im Kern steckt, sondern im Extra [passkey].
     # Stand bis 2026-09-21 auf True — damit stuerzte `pip install tinysesam` mit
     # Vorgabe-Konfiguration beim Bau des Routers ab (ModuleNotFoundError: webauthn).
@@ -143,6 +149,7 @@ class TinySesamConfig:
     smtp_starttls: bool = True            # 587 = STARTTLS; für 465 smtp_ssl=True setzen
     smtp_ssl: bool = False            # SMTPS ab Verbindungsaufbau (Port 465) statt STARTTLS
     smtp_timeout: int = 15            # Sekunden, bis ein hängender Mailserver aufgibt
+    smtp_ca_file: str = ""            # eigene CA (PEM) für das Relay; leer = System-CAs. Geprüft wird immer
     mail_subject_prefix: str = ""         # optionaler Betreff-Präfix, z.B. "[MeineApp] "
 
     # --- TOTP (2FA on-top zu Passwort/OIDC; Passkeys sind schon phishing-resistent) ---
@@ -203,21 +210,59 @@ class TinySesamConfig:
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten
-    cookie_domain: str = ""               # leer = Host-only; für SSO über Subdomains z.B. ".example.com"
+    #: Leer = Host-only. Für SSO über Subdomains z.B. ".example.com" — dann vertraut TinySesam
+    #: jedem Host unter dieser Domain: Jeder kann ein Sitzungs-Cookie für die ganze Domain
+    #: setzen und den Browser so in ein fremdes Konto schieben (bekannte Grenze, SECURITY.md).
+    #: Leer schützt davor nur, solange das Sitzungs-Cookie `__Host-` trägt (`cookie_host_prefix`).
+    cookie_domain: str = ""
+    #: `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der
+    #: Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Das
+    #: CSRF-Cookie ist immer host-only und trägt das Präfix auch bei gesetztem `cookie_domain`.
+    #: Ein so benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie
+    #: tossing). Fehlt das Präfix am Sitzungs-Cookie (`cookie_domain` gesetzt, dieser Schalter
+    #: aus, `cookie_path` ≠ "/" oder `cookie_secure=False`), trägt es nur seinen blanken Namen
+    #: (`tinysesam_session`), und jeder Host unter der Domain kann eines unterschieben (bekannte
+    #: Grenze, SECURITY.md).
+    #: Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die
+    #: Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder
+    #: Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`.
+    #: Eigenes JS liest den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`.
+    cookie_host_prefix: bool = True
 
     # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---
     # Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=);
     # pro Antwort wird ein Nonce erzeugt und in jedes <script>/<style> injiziert.
     #   "strict" (Default) → default-src 'self'; script-src/style-src nur per Nonce
     #   "off"              → kein CSP-Header (z.B. wenn ein Proxy/eine App die CSP zentral setzt)
-    #   eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt
-    # Gilt NUR für die von TinySesam gerenderten String-Seiten, nicht für eigene
-    # Response-Overrides (die setzen ihre CSP selbst).
+    #   eigener String     → 1:1 als Header; ein enthaltenes {nonce} wird ersetzt. Ohne eine
+    #                        einzige bekannte Direktive ('Strict', 'stirct') bricht der Aufbau
+    #                        ab, statt die CSP still abzuschalten; eine unbekannte neben
+    #                        bekannten ('scirpt-src', 'require-sri-for') gibt eine Warnung
+    # Gilt für die von TinySesam gerenderten Seiten und das Admin-Panel, nicht für eigene
+    # Response-Overrides (die setzen ihre CSP selbst). Bei 'strict' kommt X-Frame-Options:
+    # SAMEORIGIN dazu; nosniff, Referrer-Policy, no-store und Vary: Cookie tragen alle
+    # TinySesam-Antworten unabhängig von diesem Schalter.
     csp: str = "strict"
 
     # --- CSRF (Double-Submit-Cookie; zusätzlich zu SameSite=Lax) ---
     csrf_enabled: bool = True             # State-ändernde POSTs verlangen Token (Formular _csrf / Header X-CSRF-Token)
     csrf_cookie: str = "tinysesam_csrf" # Name des CSRF-Cookies
+    #: Vor dem Token-Vergleich die Herkunft prüfen (H-2): `Sec-Fetch-Site: same-origin` genügt,
+    #: sonst muss `Origin` ein eigener Host sein (Host-Header, X-Forwarded-Host, base_url —
+    #: NICHT trusted_redirect_hosts: das sind Redirect-Ziele, im Forward-Auth-Aufbau die
+    #: geschützten Apps); `Sec-Fetch-Site: same-site` oder `cross-site` ohne eigenen Origin
+    #: (auch `Origin: null`) wird abgewiesen. Fehlt ein brauchbarer Origin und sagt
+    #: `Sec-Fetch-Site` `none` oder fehlt, entscheidet allein das Token. `Sec-Fetch-Site` fehlt
+    #: nicht nur bei alten Browsern und Skripten, sondern bei jedem Browser über HTTP (außer
+    #: localhost): Browser schicken `Sec-Fetch-*` nur an HTTPS. Mit `cookie_secure=False`
+    #: kommt deshalb auch `Origin: null` einer Nachbar-Subdomain bis zum Token durch, und das
+    #: CSRF-Cookie trägt dann kein `__Host-` — die Prüfung schützt über HTTP nicht vor
+    #: Login-CSRF aus der Nachbarschaft (dort lässt sich ohnehin das Sitzungs-Cookie
+    #: unterschieben, bekannte Grenze in SECURITY.md).
+    #: Hinter einem Proxy, der den Host umschreibt, ohne X-Forwarded-Host zu setzen, scheitern
+    #: Browser ohne `Sec-Fetch-Site` (Safari vor 16.4, jeder Browser über HTTP) — dafür
+    #: base_url setzen.
+    csrf_origin_check: bool = True
 
     # --- LDAP / lldap (Passwort gegen Verzeichnis-Bind; zählt als Faktor 'password') ---
     #: Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**:
@@ -257,7 +302,7 @@ class TinySesamConfig:
     ldap_attr_email: str = "mail"     # LDAP-Attribut mit der E-Mail-Adresse
     ldap_attr_name: str = "cn"        # LDAP-Attribut mit dem Anzeigenamen
     ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
-    ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (Teilstring-Match)
+    ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring)
     ldap_auto_create: bool = True         # unbekannten LDAP-User lokal anlegen (ohne lokales Passwort)
 
     # --- OIDC ---
@@ -303,7 +348,11 @@ class TinySesamConfig:
     #: sieben Tage. Die Nachprüfung ist ein Sprung über den Provider; dessen Sitzung besteht in
     #: aller Regel weiter, der Mensch sieht also nur eine kurze Umleitung. Lehnt der Provider ab,
     #: ist die Freigabe **für diese eine Anwendung** weg, die Sitzung für die anderen bleibt.
-    #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst.
+    #: ``oidc_gateway()`` setzt 60; wer es von Hand aufbaut, entscheidet selbst. Erlaubt sind
+    #: 0 bis 43200 (30 Tage) — darüber ist es keine Nachprüfung mehr. Eine Frist von einem Tag
+    #: oder mehr in Sekunden geschrieben ist damit ein Fehler; über einem Tag (1440) warnt die
+    #: Prüfung und fragt nach der Einheit (3600 für eine Stunde). Kürzere Fristen in Sekunden
+    #: (300 statt 5) fallen nicht auf — die Einheit steht im Feldnamen.
     oidc_revalidate_minutes: int = 0
 
     # --- SAML 2.0 (SP-Login gegen einen IdP: ADFS, Keycloak, Okta, Entra …) ---
@@ -334,7 +383,7 @@ class TinySesamConfig:
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
-    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers
+    origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste
 
     # --- App-Integration ---
     # Öffentliche Base-URL — die eine Adresse, unter der die App von außen erreichbar ist.
@@ -386,6 +435,18 @@ class TinySesamConfig:
     # Rotation wieder mit der Gruppe des TinySesam-Prozesses, und der Versand verliert den
     # Lesezugriff — nicht beim Update, sondern erst bei der Rotation.
     security_log: str = ""
+    # Aufbewahrung des Audit-Logs in Tagen: `auth.gc()` löscht ältere Zeilen (B5-11). 0 = keine
+    # Frist, das Log wächst wie bisher unbegrenzt. Im Audit-Log stehen Benutzernamen und IPs,
+    # also personenbezogene Daten — eine Frist ist Sache des Betreibers (Zweck und Dauer gehören
+    # in sein Verarbeitungsverzeichnis). Die Vorgabe löscht deshalb nichts von selbst. Das
+    # Kommando `tinysesam gc --audit-days N` tut dasselbe von der Kommandozeile. Erlaubt sind
+    # 0 bis 3660 (zehn Jahre) — ein Wert in Sekunden statt Tagen wird abgewiesen, nicht
+    # still angenommen.
+    audit_retention_days: int = 0
+    # IPs im Audit-Log auf ihr Netz kürzen (IPv4 /24, IPv6 /48). Gilt für neue Zeilen; Sperre,
+    # Rate-Limit und security_log (fail2ban) sehen weiterhin die volle Adresse, sonst träfe eine
+    # Sperre das ganze Netz.
+    audit_ip_pseudonymize: bool = False
     # Feineinstellung (Versuche/Sperrzeit/Rate-Limit) liegt im Store und ist im Admin-Panel änderbar
     # (Defaults: tinysesam.security.SECURITY_DEFAULTS).
 
@@ -498,6 +559,13 @@ class TinySesamConfig:
         (leer = in Ordnung). Ein Einfrieren der Dataclass wäre die härtere Lösung — sie würde
         aber auch das Erlaubte verbieten.
         """
+        fehler, warnungen = self._befunde()
+        return fehler + warnungen
+
+    def _befunde(self) -> tuple[list[str], list[str]]:
+        """(Fehler, Warnungen) getrennt — `pruefen()` gibt beides in einer Liste zurück, und aus
+        der liess sich nicht mehr lesen, was den Aufbau hätte scheitern lassen. `TinySesam.router()`
+        braucht genau diese Unterscheidung (B3-14)."""
         from .konfigpruefung import pruefe
         fehler, warnungen = pruefe(self)
         if self.cookie_samesite not in ("lax", "strict", "none"):
@@ -510,7 +578,10 @@ class TinySesamConfig:
             fehler.append(f"https_mode={self.https_mode!r} — erlaubt sind 'off', 'warn', 'force'")
         if not isinstance(self.csp, str):
             fehler.append(f"csp muss ein String sein, ist {type(self.csp).__name__}")
-        return fehler + warnungen
+        if not self.cookie_secure and self.https_mode == "force":
+            fehler.append("https_mode='force' mit cookie_secure=False — das Sitzungs-Cookie ginge "
+                          "ohne Secure-Flag hinaus")
+        return fehler, warnungen
 
     def enabled_methods(self) -> list[str]:
         """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier
