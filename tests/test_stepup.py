@@ -22,7 +22,10 @@ def ok(name):
 
 db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, rp_name="Test", passkey_enabled=False, oidc_enabled=False,
-                                 cookie_secure=False, stepup_max_age_sec=900))
+                                 cookie_secure=False, stepup_max_age_sec=900,
+                                 # F-06 selbst (altes Token sofort tot) — die Gnadenfrist (A-6)
+                                 # hat unten eigene Prüfungen.
+                                 session_rotation_grace_sec=0))
 auth.ensure_admin("admin", "geheim123")
 app = FastAPI()
 app.include_router(auth.router())
@@ -114,7 +117,8 @@ ok("F-06: erneuter Faktor auf vollwertiger Sitzung → Token rotiert, Sitzungsza
 # (Mutationsprobe: in complete_totp den Zweig `ok and war_ok` → rotate_session streichen → rot.)
 db_t = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_t = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_t, passkey_enabled=False,
-                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
+                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900,
+                                   session_rotation_grace_sec=0))
 uid_t = auth_t.create_user("eva", password="Eva-Geheim-2026")
 assert auth_t.totp_confirm(uid_t, pyotp.TOTP(auth_t.totp_begin(uid_t)["secret"]).now())
 codes_t = auth_t.generate_recovery_codes(uid_t)   # zwei Codes ohne Warten auf das nächste TOTP-Fenster
@@ -192,7 +196,8 @@ os.remove(db_t)
 # (Mutationsprobe: in router.totp_submit das `if not s["mfa_ok"]` vor csrf_rotieren streichen → rot.)
 db_x = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_x = TinySesam(TinySesamConfig(lang="de", db_path=db_x, passkey_enabled=False, oidc_enabled=False,
-                                   cookie_secure=False, stepup_max_age_sec=900))
+                                   cookie_secure=False, stepup_max_age_sec=900,
+                                   session_rotation_grace_sec=0))
 uid_x = auth_x.create_user("eva", password="Eva-Geheim-2026")
 assert auth_x.totp_confirm(uid_x, pyotp.TOTP(auth_x.totp_begin(uid_x)["secret"]).now())
 codes_x = auth_x.generate_recovery_codes(uid_x)
@@ -937,6 +942,59 @@ _erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm",
 assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
 ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
    f"({len(_PROBEN)} Selbstproben)")
+
+# ---------- A-6: Gnadenfrist des alten Tokens nach dem Step-up (PO-Entscheid 2026-09-25) ----------
+# Eine Anfrage, die im Moment des Step-ups schon unterwegs war (zweiter Tab), trägt noch das alte
+# Token. Es gilt `session_rotation_grace_sec` (Vorgabe 10) weiter — aber OHNE Step-up-Frische, und
+# es endet mit der neuen Sitzung.
+db_g = os.path.join(tempfile.mkdtemp(), "g.db")
+auth_g = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_g, passkey_enabled=False,
+                                   oidc_enabled=False, cookie_secure=False, stepup_max_age_sec=900))
+assert auth_g.cfg.session_rotation_grace_sec == 10, "Vorgabe der Gnadenfrist ist 10 Sekunden"
+uid_g = auth_g.create_user("gina", password="Gin-Geheim-2026")
+app_g = FastAPI()
+app_g.include_router(auth_g.router())
+
+
+@app_g.get("/normal")
+def normal_g(u=Depends(auth_g.require_user)):
+    return {"u": u["username"]}
+
+
+@app_g.get("/sudo")
+def sudo_g(u=Depends(auth_g.require(mfa=True))):
+    return {"u": u["username"]}
+
+
+cg = TestClient(app_g)
+cg.post("/auth/login", data={"username": "gina", "password": "Gin-Geheim-2026"}, follow_redirects=False)
+alt_g = cg.cookies.get("tinysesam_session")
+auth_g.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
+cg.post("/auth/reauth", data={"password": "Gin-Geheim-2026", "next": "/sudo"}, follow_redirects=False)
+neu_g = cg.cookies.get("tinysesam_session")
+assert neu_g and neu_g != alt_g and cg.get("/sudo", headers=JSON).status_code == 200
+zweiter_tab = TestClient(app_g)
+zweiter_tab.cookies.set("tinysesam_session", alt_g)
+assert zweiter_tab.get("/normal", headers=JSON).status_code == 200, "die Anfrage im zweiten Tab scheitert"
+assert zweiter_tab.get("/sudo", headers=JSON).status_code != 200, "das alte Token hat frische Sudo-Rechte"
+assert len(auth_g.store.list_sessions(uid_g)) == 1, "das abgelöste Token zählt als eigene Sitzung"
+ok("A-6: altes Token gilt kurz weiter (normale Route), ohne Step-up-Frische, keine zweite Sitzung")
+auth_g.store._exec("UPDATE session SET expires_at=? WHERE token_hash=?",
+                   (int(time.time()) - 1, auth_g.store.session_hash(alt_g)))
+assert zweiter_tab.get("/normal", headers=JSON).status_code == 401, "nach der Frist trägt es nicht mehr"
+ok("A-6: nach Ablauf der Frist ist das alte Token tot")
+# Abmelden der neuen Sitzung nimmt das abgelöste Token mit.
+cg.post("/auth/login", data={"username": "gina", "password": "Gin-Geheim-2026"}, follow_redirects=False)
+alt2 = cg.cookies.get("tinysesam_session")
+auth_g.store._exec("UPDATE session SET mfa_at=?", (int(time.time()) - 100000,))
+cg.post("/auth/reauth", data={"password": "Gin-Geheim-2026", "next": "/"}, follow_redirects=False)
+auth_g.store.delete_session_by_handle(auth_g.store.session_hash(cg.cookies.get("tinysesam_session")))
+assert auth_g.store.get_session(alt2) is None, "das abgelöste Token überlebt das Abmelden"
+ok("A-6: Abmelden/Widerruf der neuen Sitzung beendet auch das abgelöste Token")
+os.remove(db_g)
+# (Mutationsproben: `gnade_sek` ignoriert → erste Prüfung rot; `mfa_at=NULL` weggelassen → Sudo
+#  rot; der Filter in `list_sessions` weg → Sitzungszahl rot; `OR nachfolger=?` beim Löschen weg →
+#  Abmelden rot.)
 
 os.remove(db)
 os.remove(db2)

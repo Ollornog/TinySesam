@@ -1377,6 +1377,35 @@ r.check("Gegenprüfung R3/I5: Rotation während des Tauschs — das neue Refresh
 #  weg → I2 rot; „nicht magic" statt „passkey" → I3 rot; Fenster-Prüfung weg → I4 rot;
 #  alt_verschluesselt weg → I5 rot.)
 
+# ── Obergrenze ohne erfolgreiche Nachprüfung (PO-Entscheid 2026-09-25: 25 Stunden) ──────────
+a_ob, _, c_ob = _oidc_mit_refresh("ob-konto")
+_uid_ob = a_ob.store.get_user_by_name("ob-konto")["id"]
+r.check("Obergrenze: Vorgabe 25 Stunden, Stand der Zeile beim Login gesetzt",
+        a_ob.cfg.oidc_session_max_unverified_hours == 25
+        and a_ob.store._one("SELECT erfolg_at FROM oidc_sitzung")["erfolg_at"] is not None)
+a_ob.oidc.refresh = lambda rt, sub: ("ok", {"sub": sub}, {})
+_vor_ob = int(_zeit.time()) - 2 * 3600
+a_ob.store._exec("UPDATE oidc_sitzung SET geprueft_at = geprueft_at - 16 * 60, erfolg_at = ?", (_vor_ob,))
+c_ob.get("/auth/me")
+a_ob._oidc_ausgang.abwarten()
+r.check("… ein Ja beim Tausch setzt den Stand neu",
+        (a_ob.store._one("SELECT erfolg_at FROM oidc_sitzung")["erfolg_at"] or 0) > _vor_ob)
+a_ob.oidc.refresh = lambda rt, sub: ("fehler", {}, {"error": "invalid_client"})
+a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_zeit.time()) - 24 * 3600,))
+r.check("… 24 Stunden ohne Ja: die Sitzung bleibt", c_ob.get("/auth/me").status_code == 200)
+a_ob.store._exec("UPDATE oidc_sitzung SET erfolg_at = ?", (int(_zeit.time()) - 26 * 3600,))
+_antw_ob = c_ob.get("/auth/me").status_code
+r.check("… 26 Stunden ohne Ja: die Sitzung endet, mit Audit-Zeile — und das ist KEIN Nein für die Keys",
+        _antw_ob == 401 and a_ob.store._one("SELECT COUNT(*) AS n FROM session")["n"] == 0
+        and a_ob.store._one("SELECT 1 FROM audit WHERE event='oidc_unbestaetigt'") is not None
+        and (a_ob.store.get_user(_uid_ob)["idp_bestaetigt_at"] or 0) > 0, f"HTTP {_antw_ob}")
+a_ob0, _, c_ob0 = _oidc_mit_refresh("ob-aus", oidc_session_max_unverified_hours=0)
+a_ob0.store._exec("UPDATE oidc_sitzung SET erfolg_at = 1000")
+r.check("… oidc_session_max_unverified_hours=0 schaltet die Grenze ab", c_ob0.get("/auth/me").status_code == 200)
+# (Mutationsproben: die Prüfung in `_oidc_nachpruefen` streichen → „26 Stunden" rot; `erfolg=True`
+#  beim Tausch weg → „ein Ja setzt den Stand neu" rot; `_idp_nein` statt nur Löschen → Keys-Prüfung
+#  rot.)
+
 # ── Schema 11, Zwischenstand: `fehlserie` ohne Spalte `art` wird neu angelegt (R2-3) ─────────
 _pfad_z = str(Path(tempfile.mkdtemp()) / "zwischen.db")
 Store(_pfad_z).db.close()

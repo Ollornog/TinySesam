@@ -3054,7 +3054,7 @@ class TinySesam:
                 # Die Sitzung war schon vollwertig, der Faktor frischt sie nur auf — das ist ein
                 # Step-up (mfa_at ist eben neu gesetzt worden). Auch der bekommt ein neues Token
                 # (F-06, ASVS 5.0 7.2.4); Laufzeit und Anmeldezeitpunkt bleiben dabei.
-                gedreht = self.store.rotate_session(s["token_hash"])
+                gedreht = self.store.rotate_session(s["token_hash"], self._gnade())
                 if gedreht:
                     return gedreht, ok, True
             # Zurück geht das Klartext-Token aus dem Cookie — der Aufrufer baut daraus
@@ -3152,7 +3152,7 @@ class TinySesam:
             # gesetzt — das ist ein Step-up, und der dreht das Token wie `/auth/reauth` und
             # `apply_factor` (F-06, ASVS 5.0 7.2.4). Vorher blieb es: Ein mitgelesenes Cookie
             # bekam so frische Sudo-Rechte. Laufzeit und Anmeldezeitpunkt bleiben.
-            return self.store.rotate_session(s["token_hash"])
+            return self.store.rotate_session(s["token_hash"], self._gnade())
         return None
 
     def complete_mfa(self, token):
@@ -3179,6 +3179,10 @@ class TinySesam:
         self.store.set_oidc_sitzung(self.store.session_hash(token), client, sub, refresh_token,
                                     client_id=self.oidc_clients[client].client_id)
 
+    def _gnade(self) -> int:
+        """Gnadenfrist des alten Tokens nach dem Drehen, in Sekunden (A-6)."""
+        return max(0, int(self.cfg.session_rotation_grace_sec or 0))
+
     def _oidc_nachpruefen(self, s) -> bool:
         """Folgt die Sitzung dem Provider noch? False = die Sitzung ist beendet (4a).
 
@@ -3198,7 +3202,27 @@ class TinySesam:
         if not konto or konto["disabled"]:
             return True
         jetzt = _jetzt()
+        grenze = int(self.cfg.oidc_session_max_unverified_hours or 0) * 3600
         for z in zeilen:
+            try:
+                erfolg = z["erfolg_at"]
+            except (IndexError, KeyError):
+                erfolg = None
+            # Seit wann hat der Provider nicht mehr Ja gesagt? Ohne Stand (Zeile aus der Zeit vor
+            # der Spalte) zählt der letzte Tausch.
+            seit = int(erfolg if erfolg is not None else z["geprueft_at"])
+            if grenze and jetzt - seit > grenze:
+                # Obergrenze ohne erfolgreiche Nachprüfung: Die Sitzung endet. Das ist KEIN Nein
+                # des Providers — die API-Keys ruhen dadurch nicht (Fund 8 bleibt am echten Nein).
+                self.store.delete_session_by_handle(s["token_hash"])
+                konto_name = konto["username"] if konto else None
+                self.store.audit_log("oidc_unbestaetigt", konto_name, s["ip"],
+                                     f"client={z['client']} stunden={grenze // 3600}")
+                security.seclog.warning(
+                    "OIDC-Nachprüfung seit über %d Stunden ohne Ergebnis — Sitzung beendet. Prüfen: "
+                    "Client-Secret/Client beim Provider, Erreichbarkeit. user=%s",
+                    grenze // 3600, security.fuer_log(konto_name))
+                return False
             if jetzt - int(z["geprueft_at"]) < frist:
                 continue
             if not self.store.oidc_sitzung_beanspruchen(s["token_hash"], z["client"], z["geprueft_at"], jetzt):
@@ -3263,7 +3287,7 @@ class TinySesam:
             self._idp_nein(s["user_id"], name, s["ip"], client, fehler)
             return
         lebt = self.store.oidc_sitzung_geprueft(handle, client, jetzt, tok.get("refresh_token"),
-                                                alt_verschluesselt=z["refresh"])
+                                                alt_verschluesselt=z["refresh"], erfolg=True)
         eintrag = self.oidc_clients.eintrag(client)
         if self.cfg.oidc_group_claim in info:
             roh = info.get(self.cfg.oidc_group_claim) or []
@@ -3637,7 +3661,7 @@ class TinySesam:
         s = self.session_from_request(request)
         if not s:
             return None
-        neu = self.store.rotate_session(s["token_hash"])
+        neu = self.store.rotate_session(s["token_hash"], self._gnade())
         if neu:
             self.set_cookie(response, neu, remember=bool(s["remember"]))
             self._altnamen_loeschen(request, response)

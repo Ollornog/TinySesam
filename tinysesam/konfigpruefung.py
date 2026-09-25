@@ -642,6 +642,10 @@ ZAHLENGRENZEN = {
     # Kürzere Fristen in Sekunden (3600 für eine Stunde) nicht — dafür warnt `pruefe` über 1440.
     "oidc_revalidate_minutes": (0, 30 * 24 * 60),
     "oidc_session_refresh_minutes": (0, 24 * 60),
+    # Ein Jahr ist das Äusserste, was noch eine Grenze ist; 0 = aus.
+    "oidc_session_max_unverified_hours": (0, 365 * 24),
+    # Länger als eine Minute ist keine Gnadenfrist mehr, sondern ein zweites Token.
+    "session_rotation_grace_sec": (0, 60),
     # 0 = keine Frist. Zehn Jahre sind das Äusserste, was noch eine Frist ist.
     "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
