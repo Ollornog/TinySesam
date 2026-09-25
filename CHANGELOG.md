@@ -26,6 +26,19 @@ auffällt:
 
 ### Hinzugefügt
 
+- **Benutzername und E-Mail-Adresse selbst ändern (PO-Entscheid 2026-09-25).** Auf der Konto-Seite,
+  mit frischem Step-up. Die Adresse gilt erst nach dem Klick auf den Link an die neue (mit Beleg),
+  die alte bekommt einen Hinweis, offene Links an sie verfallen; eine vergebene Adresse bekommt
+  keinen Link bei gleicher Antwort. Der Name folgt denselben Regeln wie beim Anlegen, dazu: kein
+  fremder Adress-Name, kein Name aus `admin_identifiers`; im Mail-Modus folgt er der Adresse.
+  Schalter `self_service_email_change`, `self_service_username_change` (beide an),
+  `email_change_ttl_min`. API: `change_username`, `request_email_change`, `confirm_email_change`;
+  Ereignisse `username_changed`, `email_changed`.
+- **`Remote-Id` in der Forward-Auth-Vorgabe** — die Konto-ID, stabil über Umbenennung und
+  Mailwechsel. **Beim Update:** Den Header im Proxy mitsetzen (die Beispiele unter
+  `deploy/forward-auth/` tun es) — ein Proxy, der ihn nicht selbst setzt, reicht einen vom
+  Browser mitgeschickten durch.
+
 - **Gnadenfrist nach dem Step-up (A-6).** Ein Step-up gibt der Sitzung ein neues Token (F-06); eine
   Anfrage aus einem zweiten Tab, die in dem Moment unterwegs war, scheiterte damit einmal. Das alte
   Token gilt jetzt `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter — ohne Step-up-Frische,

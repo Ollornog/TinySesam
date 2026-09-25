@@ -84,6 +84,21 @@ Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 - **Step-up** ist eine Frist an der Sitzung (`stepup_max_age_sec`, Vorgabe 15 min), keine eigene
   Sitzung: Sie verfällt, die Sitzung bleibt.
 
+## Benutzername und Adresse ändern (Selbstbedienung)
+
+Seit 2026-09-25 ändert jeder beides selbst auf der Konto-Seite, mit frischem Step-up. Alles, was am
+Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML —, hängt an der
+**Konto-ID** und bleibt. Nach aussen ändert sich `Remote-User` bzw. `Remote-Email`; stabil ist
+**`Remote-Id`** — eine App ordnet Nutzer darüber zu.
+
+| | Regel |
+|---|---|
+| Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Schalter `self_service_username_change` |
+| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Beim Klick wird noch einmal geprüft (409, wenn inzwischen vergeben). Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+
+Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
+`username_changed`, `email_change_requested`, `email_change_taken`, `email_changed`.
+
 ## Owner
 
 Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens

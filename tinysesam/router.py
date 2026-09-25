@@ -1169,7 +1169,75 @@ def build_router(auth) -> APIRouter:
                                     recovery_warn=auth.RECOVERY_WARNSCHWELLE,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
-                                    events=auth.own_events(u["id"]))
+                                    events=auth.own_events(u["id"]),
+                                    username_change=(cfg.self_service_username_change
+                                                     and cfg.login_identifier != "email"),
+                                    email_change=(cfg.self_service_email_change and auth.mail_configured()))
+
+    # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------
+    def _frisch_fuer_kennung(request: Request) -> dict:
+        """Wer seine Kennung ändert, bestätigt vorher frisch — wie beim Einrichten eines Faktors:
+        Mit einem gestohlenen Sitzungscookie liesse sich sonst der Name oder die Adresse umbiegen,
+        und der Reset-Link ginge danach an den Dieb. Ein Konto ohne jeden Faktor (rein föderiert)
+        hängt am Alter der Anmeldung. Kein API-Key (`require_session`)."""
+        u = auth.require_session(request)
+        if auth.stepup_options(u):
+            return auth.require_mfa(request)
+        if not auth.login_fresh(request, u):
+            raise HTTPException(403, auth.t("api.stepup_relogin"))
+        return u
+
+    if cfg.self_service_username_change:
+        @r.post("/auth/account/username")
+        async def own_username(request: Request):
+            b = await auth.json_body(request)
+            u = _frisch_fuer_kennung(request)
+            if not auth.rate_ok(auth.client_ip(request), login=False):
+                raise HTTPException(429, auth.t("api.too_many"))
+            try:
+                neu = auth.change_username(u["id"], b.get("username"), auth.client_ip(request))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return {"ok": True, "username": neu}
+
+    if cfg.self_service_email_change:
+        @r.post("/auth/account/email")
+        async def own_email(request: Request):
+            b = await auth.json_body(request)
+            u = _frisch_fuer_kennung(request)
+            if not auth.rate_ok(auth.client_ip(request), login=False):
+                raise HTTPException(429, auth.t("api.too_many"))
+            try:
+                senden = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            except ConfigError:
+                raise HTTPException(400, auth.t("api.no_mail"))
+            # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
+            # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
+            antwort = JSONResponse({"ok": True, "sent": True})
+            return auth.nach_der_antwort(antwort, senden) if senden else antwort
+
+        @r.get("/auth/email/{token}", response_class=HTMLResponse)
+        def email_confirm_page(request: Request, token: str):
+            """Bestätigungsseite statt Einlösen per GET — Link-Scanner lösen nichts ein (R4-02)."""
+            if not auth.peek_magic(token, purpose="email_change"):
+                auth.token_abgewiesen("email_change", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("magic_confirm", request=request, zweck="email_change",
+                                    action=auth.pfad(request, f"/auth/email/{_q(token)}"))
+
+        @r.post("/auth/email/{token}")
+        def email_confirm(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
+            ergebnis = auth.confirm_email_change(token, auth.client_ip(request))
+            if ergebnis is None:
+                auth.token_abgewiesen("email_change", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            if ergebnis == "vergeben":
+                return auth.render_page("magic_invalid", request=request, status=409)
+            ziel = auth.pfad(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
+            return RedirectResponse(ziel, 303)
 
     # ---------- Eigene Sitzungen verwalten ----------
     @r.get("/auth/sessions")

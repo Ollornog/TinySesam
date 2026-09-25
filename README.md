@@ -836,7 +836,9 @@ All optional (on/off by config), usable individually and combined, front end rep
   stays binary, exactly as before. Several specifications are AND-ed, so a client that adds one itself can
   only tighten the check, never loosen it.
   **Which headers go out** is `forward_headers` — default `Remote-User/-Name/-Email/-Groups` (the
-  Authelia set). Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
+  Authelia set) plus `Remote-Id`, the account ID: users can change their username and email
+  themselves, so an app should key users by `Remote-Id`. Your proxy must set every one of these
+  headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
   header and nothing else (Grafana style), a list sends the same value under several names. The mapping
   is the complete list, so leaving `email` out is how you stop handing the address to the app. Rename
   something? Pull the new name through in your proxy config too.
@@ -1015,7 +1017,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**49 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**50 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

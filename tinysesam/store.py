@@ -1176,6 +1176,12 @@ class Store:
              norm_kennung(username), norm_kennung(mail)))
         return cur.lastrowid
 
+    def set_username(self, user_id, username) -> None:
+        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Anweisung.
+        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben."""
+        name = str(username or "").strip()
+        self._exec("UPDATE users SET username=?, topf_name=? WHERE id=?", (name, norm_kennung(name), user_id))
+
     def set_email(self, user_id, email, verified: bool = False):
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
 

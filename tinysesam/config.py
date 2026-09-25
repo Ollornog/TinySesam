@@ -99,8 +99,11 @@ class TinySesamConfig:
     account_enabled: bool = True          # eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar)
     forward_auth_enabled: bool = False    # /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik)
     # Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz
-    # Remote-User/-Name/-Email/-Groups. Sonst **Feld → Headername** (oder Liste von Namen); was hier
-    # nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups.
+    # Remote-User/-Name/-Email/-Groups und Remote-Id (die Konto-ID — stabil über Umbenennung und
+    # Mailwechsel, seit 2026-09-25). Sonst **Feld → Headername** (oder Liste von Namen); was hier
+    # nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups · id.
+    # Der Proxy muss JEDEN gesetzten Header selbst setzen (überschreiben) — sonst reicht er einen
+    # vom Browser mitgeschickten gleichnamigen durch (deploy/forward-auth/*).
     #   {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts
     #   {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"}
     # Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders).
@@ -145,6 +148,17 @@ class TinySesamConfig:
     #: Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an.
     #: `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`).
     magiclink_require_second_factor: bool = True
+
+    # --- Selbstbedienung: Adresse und Benutzername (PO-Entscheid 2026-09-25) ---
+    #: Jeder ändert seine E-Mail-Adresse selbst (Konto-Seite, frischer Step-up). Die neue gilt erst
+    #: nach dem Klick auf den Bestätigungslink an sie; die alte bekommt einen Hinweis. Braucht einen
+    #: Mailer — ohne ihn gibt es den Weg nicht.
+    self_service_email_change: bool = True
+    #: Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus
+    #: `login_identifier="email"`, dort folgt der Name der Adresse. Apps hinter Forward-Auth sehen
+    #: danach einen anderen `Remote-User`; stabil ist `Remote-Id` (die Konto-ID).
+    self_service_username_change: bool = True
+    email_change_ttl_min: int = 60        # Gültigkeit des Bestätigungslinks für eine neue Adresse
 
     # --- E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar) ---
     smtp_host: str = ""                   # leer + kein set_mailer → Versand deaktiviert

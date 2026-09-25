@@ -81,7 +81,8 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`) und `api_keys_revoked`
+  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` und
+  `username_changed` (`details={"alt": …, "neu": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
   (`details={"anzahl": n, "grund": …}` — gesammelt beim Reset, bei der Sperre, beim Admin-Passwort
   und bei `sessions/revoke` mit `scope=all`). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die

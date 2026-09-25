@@ -61,6 +61,7 @@ app.example.com {
 				request_header Remote-Groups {rp.header.Remote-Groups}
 				request_header Remote-Email {rp.header.Remote-Email}
 				request_header Remote-Name {rp.header.Remote-Name}
+				request_header Remote-Id {rp.header.Remote-Id}
 			}
 			# nicht eingeloggt → Redirect zur Login-URL aus dem Header
 			#

@@ -646,6 +646,8 @@ ZAHLENGRENZEN = {
     "oidc_session_max_unverified_hours": (0, 365 * 24),
     # Länger als eine Minute ist keine Gnadenfrist mehr, sondern ein zweites Token.
     "session_rotation_grace_sec": (0, 60),
+    # Ein Bestätigungslink ist ein Schlüssel zum Konto — länger als eine Woche ist keine Frist mehr.
+    "email_change_ttl_min": (5, 7 * 24 * 60),
     # 0 = keine Frist. Zehn Jahre sind das Äusserste, was noch eine Frist ist.
     "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),

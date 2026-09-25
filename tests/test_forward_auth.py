@@ -159,8 +159,12 @@ ok("die Liste ist vollständig, nicht ergänzend — Weglassen gibt die E-Mail n
 
 # Ohne das Feld bleibt es beim bisherigen Satz
 vorgabe = auth.forward_response_headers(auth.store.get_user_by_name("admin"))
-assert sorted(vorgabe) == ["Remote-Email", "Remote-Groups", "Remote-Name", "Remote-User"]
-ok("Vorgabe unverändert (keine stille Änderung für Bestandsnutzer)")
+# Seit 2026-09-25 gehört `Remote-Id` (die Konto-ID) dazu — nicht still: CHANGELOG und die
+# Proxy-Beispiele unter deploy/ nennen ihn, und die Beispiele setzen ihn selbst (sonst reichte der
+# Proxy einen vom Browser gefälschten durch).
+assert sorted(vorgabe) == ["Remote-Email", "Remote-Groups", "Remote-Id", "Remote-Name", "Remote-User"]
+assert vorgabe["Remote-Id"] == str(auth.store.get_user_by_name("admin")["id"])
+ok("Vorgabe: Remote-User/-Name/-Email/-Groups und Remote-Id (die Konto-ID)")
 
 # Ein Tippfehler im Feldnamen liesse den Header still weg — deshalb Abbruch beim Start.
 # Ein Header-Name mit Zeilenumbruch wäre Header-Injection.

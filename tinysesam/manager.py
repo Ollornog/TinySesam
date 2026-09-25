@@ -1024,6 +1024,7 @@ class TinySesam:
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
         "api_key_created", "api_key_revoked", "api_keys_revoked",
+        "email_changed", "username_changed",
     )
 
     def sicherheitsereignis(self, ereignis: str, user_id, **details) -> None:
@@ -2777,6 +2778,7 @@ class TinySesam:
         "verify_email": "/auth/verify/{t}",
         "invite": "/auth/invite/{t}",
         "reset_password": "/auth/reset?token={t}",
+        "email_change": "/auth/email/{t}",
     }
 
     def magic_url(self, raw, base_url, purpose="login") -> str:
@@ -2873,6 +2875,128 @@ class TinySesam:
                              f"Bitte bestätige deine E-Mail-Adresse:\n\n{url}\n",
                              html=f'<p>Bitte bestätige deine E-Mail-Adresse:</p><p><a href="{url}">Bestätigen</a></p>')
         return senden
+
+    # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------
+    #: Länger ist kein Name mehr, sondern eine Nutzlast (Header, Logzeilen, Panel).
+    NAME_MAX = 150
+
+    def change_username(self, user_id, neu, ip: Optional[str] = None) -> str:
+        """Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem
+        Grund, wenn er nicht geht.
+
+        Alles, was am Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an LDAP/SAML/OIDC —
+        hängt an der ID, nicht am Namen, und bleibt. Nach aussen ändert sich `Remote-User`; stabil
+        ist `Remote-Id`. Dieselben Regeln wie beim Anlegen (frei in BEIDEN Namensräumen, keine
+        Steuerzeichen) und drei eigene:
+
+        * **Kein Name mit `@`**, ausser der eigenen belegten Adresse: Sonst besetzte jemand die
+          Adresse einer Person, die es hier noch nicht gibt, und die bekäme bei der Registrierung
+          „vergeben" (dieselbe Regel wie die Registrierung mit Bestätigung, Angriff A1).
+        * **Kein Name aus `admin_identifiers`**: Wer sich so nennt, würde beim nächsten Login
+          Erst-Admin. Die Antwort ist dieselbe wie bei „vergeben" — die Allowlist bleibt verborgen.
+        * **Nicht im Modus `login_identifier="email"`**: Dort ist der Name die Adresse und folgt ihr."""
+        konto = self.store.get_user(user_id)
+        if not konto:
+            raise ValueError(self.t("api.not_found"))
+        if self.cfg.login_identifier == "email":
+            raise ValueError(self.t("api.username_follows_email"))
+        name = str(neu or "").strip()
+        if not name:
+            raise ValueError(self.t("err.username_required"))
+        if len(name) > self.NAME_MAX or name_ungueltig(name):
+            raise ValueError(self.t("err.username_invalid"))
+        eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
+        if "@" in norm_kennung(name) and norm_email(name) != eigene:
+            raise ValueError(self.t("api.username_is_address"))
+        if name == konto["username"]:
+            return name
+        erlaubt = {norm_kennung(i) for i in (self.cfg.admin_identifiers or []) if str(i).strip()}
+        if self.kennung_vergeben(name, exclude_id=user_id) or norm_kennung(name) in erlaubt:
+            raise ValueError(self.t("api.user_exists"))
+        alt = konto["username"]
+        self.store.set_username(user_id, name)
+        self.audit("username_changed", name, ip, f"alt={alt}")
+        self.sicherheitsereignis("username_changed", user_id, alt=alt, neu=name)
+        return name
+
+    def request_email_change(self, user_id, neu, base_url):
+        """Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die
+        Versandfunktion zurück (für `nach_der_antwort`) oder None, wenn nichts zu senden ist.
+        `ValueError` bei einer ungültigen Adresse oder ohne Mailer.
+
+        Die Antwort an den Anfragenden ist in jedem Fall dieselbe: Ist die Adresse schon Kennung
+        eines anderen Kontos, geht kein Link hinaus, und das steht nur im Audit-Log — sonst wäre
+        die Konto-Seite ein Orakel für vergebene Adressen. Gültig ist die neue Adresse erst mit dem
+        Klick (`confirm_email_change`), vorher ändert sich nichts."""
+        from .store import valid_email
+        konto = self.store.get_user(user_id)
+        if not konto:
+            raise ValueError(self.t("api.not_found"))
+        if not valid_email(neu or ""):
+            raise ValueError(self.t("api.email_invalid"))
+        if not self.mail_configured():
+            raise ValueError(self.t("api.no_mail"))
+        base_url = self._gepruefte_basis(base_url)
+        mail = norm_email(neu)
+        if mail == norm_email(konto["email"] or "") and konto["email_verified"]:
+            return None
+        if self.kennung_vergeben(mail, exclude_id=user_id):
+            self.audit("email_change_taken", konto["username"], detail=f"neu={mail}")
+            return None
+        if not self._mail_ziel_ok(mail, "email_change"):
+            return None
+        raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
+                                      ttl_min=int(self.cfg.email_change_ttl_min),
+                                      payload={"alt": konto["email"] or ""})
+        url = self.magic_url(raw, base_url, "email_change")
+        self.audit("email_change_requested", konto["username"], detail=f"neu={mail}")
+
+        def senden():
+            self._token_mail(raw, mail, "Neue E-Mail-Adresse bestätigen",
+                             f"Bitte bestätige, dass dies deine neue E-Mail-Adresse ist:\n\n{url}\n\n"
+                             "Warst du das nicht, ignoriere diese E-Mail — es ändert sich nichts.",
+                             html=f'<p>Bitte bestätige, dass dies deine neue E-Mail-Adresse ist:</p>'
+                                  f'<p><a href="{url}">Adresse bestätigen</a></p>'
+                                  f'<p>Warst du das nicht, ignoriere diese E-Mail — es ändert sich nichts.</p>')
+        return senden
+
+    def confirm_email_change(self, raw, ip: Optional[str] = None) -> Optional[str]:
+        """Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines
+        anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
+
+        Danach ist die neue Adresse die des Kontos, **mit Beleg** (der Klick hat das Postfach
+        bewiesen). Im Modus `login_identifier="email"` zieht der Benutzername mit, wenn er die
+        alte Adresse war. Offene Links an die alte Adresse (Reset, Anmelde-Link) gelten nicht
+        mehr — sie gehörten einem Postfach, das nicht mehr zum Konto gehört. Die alte Adresse
+        bekommt einen Hinweis (ASVS 6.3.7)."""
+        data = self.redeem_magic(raw, purpose="email_change")
+        if not data or not data.get("user_id"):
+            return None
+        uid = data["user_id"]
+        konto = self.store.get_user(uid)
+        if not konto or konto["disabled"]:
+            return None
+        mail = norm_email(data.get("email") or "")
+        if not mail:
+            return None
+        if self.kennung_vergeben(mail, exclude_id=uid):
+            self.audit("email_change_taken", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
+            return "vergeben"
+        alt = konto["email"] or ""
+        self.store.set_email(uid, mail, verified=True)
+        if self.cfg.login_identifier == "email" and alt and norm_email(konto["username"]) == norm_email(alt):
+            self.store.set_username(uid, mail)
+        self.store.revoke_user_magic_tokens(uid)
+        name = self._kontoname(uid)
+        self.audit("email_changed", name, ip, f"alt={alt} neu={mail}")
+        self.sicherheitsereignis("email_changed", uid, alt=alt, neu=mail)
+        if alt and self.mail_configured():
+            def hinweis():
+                self.send_mail(alt, "Deine E-Mail-Adresse wurde geändert",
+                               f"Die E-Mail-Adresse deines Kontos ist jetzt {mail}.\n\n"
+                               "Warst du das nicht, melde dich sofort beim Betreiber — und ändere dein Passwort.")
+            self._hinweis_ausgang.einreihen(hinweis)
+        return "ok"
 
     def send_signup_notice(self, email, base_url) -> bool:
         """Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
@@ -4124,8 +4248,11 @@ class TinySesam:
 
     # ---------- Forward-Auth (Reverse-Proxy) ----------
     #: Vorgabe: der Satz, den Authelia/Traefik-Aufbauten erwarten.
+    #: `Remote-Id` ist die Konto-ID — der einzige Wert, der eine Umbenennung und einen Mailwechsel
+    #: übersteht (PO-Entscheid 2026-09-25: „alles an die ID hängen"). Eine App, die Nutzer darüber
+    #: zuordnet, verwechselt nach einer Änderung niemanden.
     FORWARD_HEADERS_DEFAULT = {"user": "Remote-User", "name": "Remote-Name",
-                               "email": "Remote-Email", "groups": "Remote-Groups"}
+                               "email": "Remote-Email", "groups": "Remote-Groups", "id": "Remote-Id"}
 
     def forward_response_headers(self, user) -> dict:
         """Die Header, die der Proxy bei einer erfolgreichen Prüfung an die App weiterreicht.
@@ -4145,6 +4272,7 @@ class TinySesam:
                                     user["id"])
             raise HTTPException(403, self.t("api.name_invalid"))
         werte = {
+            "id": str(user["id"]),
             "user": str(user["username"] or ""),
             "name": str(user["display_name"] or user["username"] or ""),
             "email": str(user["email"] or ""),

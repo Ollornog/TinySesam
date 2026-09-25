@@ -77,7 +77,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
   `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
   `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`) and `api_keys_revoked`
+  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` and
+  `username_changed` (`details={"alt": …, "neu": …}` — self-service, 2026-09-25) and `api_keys_revoked`
   (`details={"anzahl": n, "grund": …}` — in bulk on a reset, a block, an admin password reset or
   `sessions/revoke` with `scope=all`). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
