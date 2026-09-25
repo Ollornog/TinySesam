@@ -151,7 +151,8 @@ CREATE TABLE IF NOT EXISTS session (
     user_agent TEXT,
     zuletzt    INTEGER,                       -- letzte Anfrage mit dieser Sitzung (Inaktivitäts-Timeout, F-05)
     andere_beenden INTEGER NOT NULL DEFAULT 0, -- halbe Sitzung: bei Abschluss der Kette die übrigen beenden (Grenze d)
-    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0 -- „Angemeldet bleiben" AUSDRÜCKLICH gewählt (F-05: dann gilt die zweite Leerlauf-Grenze)
+    bleiben_gewaehlt INTEGER NOT NULL DEFAULT 0, -- „Angemeldet bleiben" AUSDRÜCKLICH gewählt (F-05: dann gilt die zweite Leerlauf-Grenze)
+    nachfolger TEXT                           -- abgelöst durch diese Sitzung (Gnadenfrist nach dem Drehen, A-6); NULL = aktuell
 );
 -- Welche Anwendung hat der Provider dieser Sitzung freigegeben? (T-14)
 -- Eine Zeile je Sitzung UND Anwendung: Wer sich für app-a anmeldet, bekommt damit keinen
@@ -172,6 +173,7 @@ CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung
     refresh     TEXT NOT NULL,                -- verschlüsselt (geheimnis.Tresor), nie im Klartext
     geprueft_at INTEGER NOT NULL,             -- letzter Tausch (oder: beansprucht, s. Store)
     client_id   TEXT,                         -- an welche client_id das Token ging (NULL: vor dieser Spalte)
+    erfolg_at   INTEGER,                      -- letzte ERFOLGREICHE Nachprüfung (Obergrenze ohne Nachprüfung); NULL: vor dieser Spalte
     PRIMARY KEY (token_hash, client)
 );
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
@@ -664,11 +666,14 @@ class Store:
                         # NULL für Bestandssitzungen: gilt als `created_at` (F-05).
                         ("zuletzt", "INTEGER"),
                         ("andere_beenden", "INTEGER NOT NULL DEFAULT 0"),
-                        ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
+                        ("bleiben_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                        # NULL = die aktuelle Sitzung; gesetzt nur für ein abgelöstes Token in der
+                        # Gnadenfrist nach dem Drehen (A-6).
+                        ("nachfolger", "TEXT")],
             "totp_cred": [("last_step", "INTEGER")],
             # Die client_id, an die ein Refresh-Token ging: Legt der Betreiber den Client beim
             # Provider neu an, lehnt der jedes alte Token ab — das ist kein Nein zum Konto.
-            "oidc_sitzung": [("client_id", "TEXT")],
+            "oidc_sitzung": [("client_id", "TEXT"), ("erfolg_at", "INTEGER")],
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
             # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
@@ -1731,10 +1736,12 @@ class Store:
         welcher Provider-Eintrag noch nachgeprüft wird (Angriff auf die zweite Runde, Fund 7)."""
         if self.tresor is None:
             raise RuntimeError("Refresh-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
-        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id) "
-                   "VALUES (?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
-                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id",
-                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id))
+        self._exec("INSERT INTO oidc_sitzung(token_hash, client, sub, refresh, geprueft_at, client_id, erfolg_at) "
+                   "VALUES (?,?,?,?,?,?,?) ON CONFLICT(token_hash, client) DO UPDATE SET sub=excluded.sub, "
+                   "refresh=excluded.refresh, geprueft_at=excluded.geprueft_at, client_id=excluded.client_id, "
+                   "erfolg_at=excluded.erfolg_at",
+                   (self._handle(handle), client, sub, self.tresor.verschluesseln(refresh), _now(), client_id,
+                    _now()))
 
     def get_oidc_sitzungen(self, handle) -> list:
         """Die OIDC-Zeilen einer Sitzung — das Refresh-Token VERSCHLÜSSELT (entschlüsselt wird
@@ -1761,7 +1768,7 @@ class Store:
                           "AND geprueft_at=?", (int(jetzt), self._handle(handle), client, int(alt))).rowcount == 1
 
     def oidc_sitzung_geprueft(self, handle, client, zeit: int, neuer_refresh=None,
-                              alt_verschluesselt: Optional[str] = None) -> bool:
+                              alt_verschluesselt: Optional[str] = None, erfolg: bool = False) -> bool:
         """Den Tausch vermerken; ein neu ausgegebenes Refresh-Token ersetzt das alte (Rotation).
         Rückgabe: ob die Zeile noch da war (die Sitzung kann inzwischen beendet sein).
 
@@ -1772,11 +1779,16 @@ class Store:
         verloren; der nächste Tausch mit dem alten wäre bei PocketID ein Nein. Der Chiffretext ist
         durch seine Nonce eindeutig."""
         wo, wert = ("refresh=?", alt_verschluesselt) if alt_verschluesselt else ("token_hash=?", self._handle(handle))
+        # `erfolg`: der Provider hat eben Ja gesagt — Stand für die Obergrenze ohne Nachprüfung.
+        # `geprueft_at` allein taugt dafür nicht: Nach einem „fehler" steht es auf „in einer Minute".
+        extra = ", erfolg_at=?" if erfolg else ""
+        erfolg_wert = (int(zeit),) if erfolg else ()
         if neuer_refresh and self.tresor is not None:
-            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=? WHERE {wo} AND client=?",
-                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), wert, client)).rowcount > 0
-        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=? WHERE {wo} AND client=?",
-                          (int(zeit), wert, client)).rowcount > 0
+            return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?, refresh=?{extra} WHERE {wo} AND client=?",
+                              (int(zeit), self.tresor.verschluesseln(neuer_refresh), *erfolg_wert, wert,
+                               client)).rowcount > 0
+        return self._exec(f"UPDATE oidc_sitzung SET geprueft_at=?{extra} WHERE {wo} AND client=?",
+                          (int(zeit), *erfolg_wert, wert, client)).rowcount > 0
 
     def oidc_sitzung_umhaengen(self, alt, neu) -> None:
         """Die OIDC-Zeilen an eine neue Sitzung hängen (neues Token beim Abschluss der Kette) —
@@ -1917,16 +1929,25 @@ class Store:
 
     def delete_session_by_handle(self, handle):
         """Handle aus einer Sitzungs-Zeile — für Admin-Panel und „andere Sitzungen beenden"."""
-        self._exec("DELETE FROM session WHERE token_hash=?", (self._handle(handle),))
+        h = self._handle(handle)
+        # Ein abgelöstes Token in der Gnadenfrist (A-6) gehört zu dieser Sitzung und geht mit.
+        self._exec("DELETE FROM session WHERE token_hash=? OR nachfolger=?", (h, h))
 
-    def rotate_session(self, handle) -> Optional[str]:
+    def rotate_session(self, handle, gnade_sek: int = 0) -> Optional[str]:
         """Der Sitzung ein neues Token geben, ohne sonst etwas an ihr zu ändern (F-06).
 
         Laufzeit, Faktoren und `created_at` bleiben — ein Step-up soll das Token erneuern, nicht
         die absolute Lebensdauer verlängern. Die OIDC-Freigaben hängen per Fremdschlüssel am
         Handle und ziehen mit um; darum neue Zeile, Freigaben umhängen, alte Zeile löschen, alles
         in einer Transaktion. Gibt das neue Klartext-Token zurück, oder None, wenn es die
-        Sitzung nicht (mehr) gibt."""
+        Sitzung nicht (mehr) gibt.
+
+        `gnade_sek` (A-6, PO-Entscheid 2026-09-25): Das alte Token gilt danach noch so viele
+        Sekunden — eine Anfrage, die im Moment des Step-ups schon unterwegs war (zweiter Tab,
+        Hintergrund-Laden), scheitert sonst einmal. Es gilt dann OHNE Step-up-Frische (`mfa_at`
+        leer): Wer das alte Token mitgelesen hat, bekommt keine frisch bestätigten Rechte, nur
+        die Frist. Es verweist auf seinen Nachfolger und endet mit ihm (`delete_session_by_handle`).
+        Ein schon abgelöstes Token wird nicht noch einmal gedreht."""
         alt = self._handle(handle)
         token = secrets.token_urlsafe(32)
         neu = self.session_hash(token)
@@ -1936,13 +1957,20 @@ class Store:
             try:
                 cur = self.db.execute(
                     f"INSERT INTO session(token_hash, {spalten}) SELECT ?, {spalten} FROM session "
-                    "WHERE token_hash=?", (neu, alt))
+                    "WHERE token_hash=? AND nachfolger IS NULL", (neu, alt))
                 if cur.rowcount != 1:
                     self.db.rollback()
                     return None
                 self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
-                self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
+                if gnade_sek > 0:
+                    self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
+                                    "nachfolger=? WHERE token_hash=?", (_now() + int(gnade_sek), neu, alt))
+                    # Ein früherer Vorgänger, der auf das alte Token zeigt, zeigt jetzt auf das neue —
+                    # sonst überlebte er ein Abmelden der neuen Sitzung.
+                    self.db.execute("UPDATE session SET nachfolger=? WHERE nachfolger=?", (neu, alt))
+                else:
+                    self.db.execute("DELETE FROM session WHERE token_hash=?", (alt,))
                 self.db.commit()
             except Exception:
                 self.db.rollback()
@@ -2047,9 +2075,11 @@ class Store:
         return self._exec("DELETE FROM flow WHERE expires_at < ?", (_now(),)).rowcount
 
     def list_sessions(self, user_id=None):
+        # Abgelöste Tokens in der Gnadenfrist (A-6) sind keine eigene Sitzung.
         if user_id is not None:
-            return self._all("SELECT * FROM session WHERE user_id=? ORDER BY created_at DESC", (user_id,))
-        return self._all("SELECT * FROM session ORDER BY created_at DESC")
+            return self._all("SELECT * FROM session WHERE user_id=? AND nachfolger IS NULL "
+                             "ORDER BY created_at DESC", (user_id,))
+        return self._all("SELECT * FROM session WHERE nachfolger IS NULL ORDER BY created_at DESC")
 
     # ---------- Flow-State (OIDC / WebAuthn, kurzlebig, one-shot) ----------
     def put_flow(self, key, data: dict, ttl=600):

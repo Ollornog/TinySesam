@@ -228,6 +228,11 @@ class TinySesamConfig:
     #: wer „Angemeldet bleiben" wählt, hat die lange Sitzung ausdrücklich gewollt).
     session_idle_minutes: int = 8 * 60        # Inaktivität ohne „Angemeldet bleiben" (Minuten, 0 = aus)
     session_idle_minutes_remember: int = 0    # Inaktivität MIT „Angemeldet bleiben" (Minuten, 0 = aus)
+    #: Gnadenfrist nach dem Drehen des Tokens (A-6, PO-Entscheid 2026-09-25): Ein Step-up gibt der
+    #: Sitzung ein neues Token (F-06). Eine Anfrage, die in dem Moment schon unterwegs war (zweiter
+    #: Tab, Hintergrund-Laden), trägt noch das alte und scheiterte einmal. So viele Sekunden gilt
+    #: das alte Token weiter — ohne Step-up-Frische, und es endet mit der neuen Sitzung. 0 = aus.
+    session_rotation_grace_sec: int = 10
     cookie_secure: bool = True            # nur über HTTPS senden
     cookie_samesite: str = "lax"          # lax|strict|none
     cookie_path: str = "/"            # Pfad, für den die Cookies gelten
@@ -389,6 +394,13 @@ class TinySesamConfig:
     #: werden dabei neu bewertet. Ein nicht erreichbarer Provider meldet niemanden ab. Braucht einen
     #: Provider, der Refresh-Tokens ausgibt (ggf. Scope `offline_access`). 0 = aus.
     oidc_session_refresh_minutes: int = 15
+    #: Obergrenze ohne erfolgreiche Nachprüfung (PO-Entscheid 2026-09-25): Scheitert 4a dauerhaft
+    #: an einem Fehler des Clients (Secret beim Provider erneuert, Client gelöscht) oder am Provider
+    #: selbst, prüft niemand mehr nach — wer in der Zeit beim Provider gesperrt wird, bliebe bis zum
+    #: Ablauf der Sitzung angemeldet. Nach so vielen Stunden ohne ein Ja endet die Sitzung; die
+    #: nächste Anmeldung zeigt dann, ob der Weg zum Provider wieder trägt. Preis: Ist der Provider
+    #: länger weg, sind danach alle OIDC-Sitzungen abgemeldet. 0 = keine Grenze.
+    oidc_session_max_unverified_hours: int = 25
     #: API-Keys eines OIDC-Kontos folgen dem Provider (Fund 8). Sagt er bei der Nachprüfung (4a)
     #: Nein, ruhen die Keys des Kontos sofort — fest, nicht abschaltbar. Zusätzlich gelten sie nur,
     #: solange der Provider das Konto in den letzten so vielen Tagen bestätigt hat (Login über ihn

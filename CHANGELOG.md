@@ -26,6 +26,15 @@ auffällt:
 
 ### Hinzugefügt
 
+- **Gnadenfrist nach dem Step-up (A-6).** Ein Step-up gibt der Sitzung ein neues Token (F-06); eine
+  Anfrage aus einem zweiten Tab, die in dem Moment unterwegs war, scheiterte damit einmal. Das alte
+  Token gilt jetzt `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter — ohne Step-up-Frische,
+  nicht als eigene Sitzung, und es endet mit der neuen. `0` = das alte Verhalten.
+- **Obergrenze ohne erfolgreiche Nachprüfung (4a).** Scheitert die Nachprüfung beim Provider
+  dauerhaft an einem Fehler des Clients oder am Provider selbst, endet eine OIDC-Sitzung nach
+  `oidc_session_max_unverified_hours` (Vorgabe 25) Stunden ohne Ja (`oidc_unbestaetigt`). Kein
+  Nein des Providers — die API-Keys ruhen dadurch nicht. `0` = keine Grenze.
+
 - **Owner.** Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen; die Rolle
   lässt sich weitergeben, mehrere können Owner sein, es gibt immer mindestens einen. Nur ein Owner
   vergibt sie — und nur ein Owner ändert ein Owner-Konto (Passwort, Keys, Passkeys, Sitzungen,

@@ -66,6 +66,11 @@ anderen Sitzungen), ein Passwort-Reset per Link (alle), ein Admin-Reset des Pass
 des Kontos. Eine Sitzung, deren Konto gesperrt ist, öffnet nichts mehr, auch wenn sie noch nicht
 abgelaufen ist — und kein Anmeldeweg legt einem gesperrten Konto eine neue an (H-18).
 
+Ein **Step-up** (Reauth, erneuter Faktor) gibt der Sitzung ein neues Token (F-06). Das alte gilt
+noch `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter, damit eine Anfrage aus einem zweiten
+Tab, die in dem Moment schon unterwegs war, nicht scheitert (A-6) — ohne Step-up-Frische (keine
+Sudo-Route), nicht als eigene Sitzung in der Liste, und es endet mit der neuen. `0` = sofort tot.
+
 Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 
 - **Mit „Angemeldet bleiben" kein Inaktivitäts-Timeout** (Vorgabe von
@@ -150,7 +155,11 @@ Seite gehört und sich nicht ändert:
   Claim, der ganz fehlt, ändert nichts). Nicht erreichbar → Sitzung bleibt, neuer Versuch nach einer
   Minute. **Voraussetzung:** Der Provider gibt Refresh-Tokens aus (bei manchen nur mit Scope
   `offline_access`, dann `oidc_scopes` ergänzen). Gibt er keine, bleibt es beim Stand davor: Die
-  Sitzung läuft bis `session_ttl_hours`.
+  Sitzung läuft bis `session_ttl_hours`. **Obergrenze ohne Ja:** Hat der Provider eine Sitzung
+  `oidc_session_max_unverified_hours` lang (Vorgabe 25) nicht bestätigt — dauerhafter Fehler des
+  Clients, Provider weg —, endet sie (`oidc_unbestaetigt` im Audit-Log). Das ist kein Nein des
+  Providers: Die API-Keys ruhen dadurch nicht. Preis: Ist der Provider länger als die Grenze weg,
+  sind danach alle OIDC-Sitzungen abgemeldet. `0` = keine Grenze.
 - **API-Keys folgen dem Provider (Fund 8).** Für Konten mit OIDC-Bindung gilt ein Key nur, solange
   der Provider das Konto trägt: Sagt er bei 4a Nein (auch: aus der erlaubten Gruppe genommen),
   ruhen die Keys sofort (`api_keys_ruhen` im Audit-Log, Abweisung `idp_nein`). Und ohne Bestätigung
