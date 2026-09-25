@@ -108,8 +108,14 @@ a = c.post("/auth/account/email", json={"email": "Carla.Neu@Example.com"})
 auth._hinweis_ausgang.abwarten()
 r.check("Adresswechsel beantragt → Link an die NEUE Adresse, das Konto ändert sich noch nicht",
         a.status_code == 200 and a.json() == {"ok": True, "sent": True}
-        and [m[0] for m in mails] == ["carla.neu@example.com"]
+        and [m[0] for m in mails if "/auth/email/" in m[2]] == ["carla.neu@example.com"]
         and auth.get_user(uid)["email"] == "carla@example.com", f"{a.text} {mails}")
+r.check("… die Mail nennt das Konto, für das bestätigt wird",
+        any(m[0] == "carla.neu@example.com" and "„carla“" in m[2] for m in mails), str(mails))
+_antrag = [m for m in mails if m[0] == "carla@example.com"]
+r.check("… schon der Antrag geht als Hinweis an die bisherige belegte Adresse — ohne Link",
+        len(_antrag) == 1 and "carla.neu@example.com" in _antrag[0][2] and "://" not in _antrag[0][2],
+        str(mails))
 link = re.search(r"http://testserver(/auth/email/[^\s]+)", mails[0][2]).group(1) if mails else ""
 seite = c.get(link, headers=HTML)
 r.check("… der Link zeigt eine Bestätigungsseite (GET löst nichts ein)",
@@ -160,12 +166,82 @@ r.check("… wird die Adresse bis zum Klick vergeben: 409, nichts geändert",
 _altern(auth)
 r.check("ohne frischen Step-up → 403", c.post("/auth/account/email", json={"email": "x@example.com"}).status_code == 403)
 
+# ── Ein offener Wechsel überlebt keine Abwehr (Angriffsrunde, Fund 1) ─────────────────────
+# Ein Eindringling mit frischer Sitzung beantragt den Wechsel auf SEINE Adresse; der Link liegt in
+# seinem Postfach. Der Inhaber setzt das Passwort zurück, ändert es oder beendet Sitzungen — der
+# Link muss damit fallen, sonst klickt der Eindringling danach, und der nächste Reset geht an ihn.
+def _abwehr_aufbau():
+    a, ap, post, _ = _aufbau()
+    a.create_user("chefin", password=PW, email="chefin@example.com")
+    a.store.set_admin(a.store.get_user_by_name("chefin")["id"], True)
+    u = a.create_user("opfer", password=PW, email="opfer@example.com")
+    return a, ap, post, u
+
+
+def _eindringling_beantragt(a, ap, post):
+    post.clear()
+    _login(ap, "opfer").post("/auth/account/email", json={"email": "dieb@example.org"})
+    a._hinweis_ausgang.abwarten()
+    return re.search(r"http://testserver(/auth/email/[^\s]+)",
+                     next(m[2] for m in post if m[0] == "dieb@example.org")).group(1)
+
+
+def _reset(a, ap, u):
+    roh = a.create_magic_token("reset_password", user_id=u, email="opfer@example.com")
+    TestClient(ap).post("/auth/reset", data={"token": roh, "password": "Ganz-Neues-Pw15"})
+
+
+def _pw_wechsel(a, ap, u):
+    _login(ap, "opfer").post("/auth/password", json={"current": PW, "new": "Ganz-Neues-Pw15"})
+
+
+def _alle_beenden(a, ap, u):
+    _login(ap, "opfer").post("/auth/sessions/revoke", json={"scope": "all"})
+
+
+def _andere_beenden(a, ap, u):
+    _login(ap, "opfer").post("/auth/sessions/revoke", json={"scope": "others"})
+
+
+def _admin_reset(a, ap, u):
+    _login(ap, "chefin").post(f"/auth/admin/api/users/{u}/password", json={"password": "Admin-Setzt-Pw15"})
+
+
+for titel, abwehr in (("Passwort-Reset", _reset), ("Passwortwechsel auf der Konto-Seite", _pw_wechsel),
+                      ("alle Sitzungen beenden", _alle_beenden), ("andere Sitzungen beenden", _andere_beenden),
+                      ("Passwort-Reset durch den Admin", _admin_reset)):
+    a_, ap_, post_, u_ = _abwehr_aufbau()
+    link_ = _eindringling_beantragt(a_, ap_, post_)
+    abwehr(a_, ap_, u_)
+    spaeter = TestClient(ap_).post(link_, follow_redirects=False)
+    r.check(f"{titel}: der offene Wechsel-Link des Eindringlings gilt danach nicht mehr",
+            spaeter.status_code == 400 and a_.get_user(u_)["email"] == "opfer@example.com",
+            f"{spaeter.status_code} {a_.get_user(u_)['email']}")
+
+# Streuen: Ein Konto schickt Wechsel-Mails nicht an beliebig viele fremde Adressen (Fund 3).
+a_s, ap_s, post_s, _ = _aufbau()
+a_s.create_user("streuer", password=PW, email="streuer@example.com")
+c_s = _login(ap_s, "streuer")
+for i in range(12):
+    c_s.post("/auth/account/email", json={"email": f"ziel{i}@example.org"})
+a_s._hinweis_ausgang.abwarten()
+_ziele = {m[0] for m in post_s if "/auth/email/" in m[2]}
+r.check("ein Konto erreicht mit Wechsel-Links höchstens so viele Adressen wie das Kontingent erlaubt",
+        0 < len(_ziele) <= int(a_s.sec("mail_per_address_max"))
+        and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change konto=%'")
+        is not None, f"{len(_ziele)} Adressen")
+
+# Gefaltet geprüft (Fund 3 LDAP/SAML-Runde): `＠` (U+FF20) ergäbe gefaltet zwei `@`.
+r.check("eine Adresse, die erst gefaltet ungültig ist → 400",
+        _login(ap_s, "streuer").post("/auth/account/email",
+                                     json={"email": "x\uff20evil.example@example.com"}).status_code == 400)
+
 # Mail-Modus: der Benutzername zieht mit.
 auth_e, app_e, mails_e, _ = _aufbau(login_identifier="email", signup_require_email=True)
 uid_e = auth_e.create_user("emil@example.com", password=PW, email="emil@example.com")
 ce = _login(app_e, "emil@example.com")
 ce.post("/auth/account/email", json={"email": "emil.neu@example.com"})
-link_e = re.search(r"http://testserver(/auth/email/[^\s]+)", mails_e[-1][2]).group(1)
+link_e = re.search(r"http://testserver(/auth/email/[^\s]+)", next(m[2] for m in mails_e if "/auth/email/" in m[2])).group(1)
 TestClient(app_e).post(link_e)
 r.check("Mail-Modus: nach der Bestätigung ist der Benutzername die neue Adresse",
         auth_e.get_user(uid_e)["username"] == "emil.neu@example.com")

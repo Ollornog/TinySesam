@@ -91,17 +91,24 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 **Konto-ID** und bleibt. Nach aussen ändert sich `Remote-User` bzw. `Remote-Email`; stabil ist
 **`Remote-Id`** — eine App ordnet Nutzer darüber zu.
 
+> **Namen werden wieder frei.** Wird ein Konto gelöscht oder umbenannt, kann ein anderes Konto den
+> Namen (oder die Adresse) übernehmen und trägt ihn dann als `Remote-User` in jede App. Eine App,
+> die Rechte am Namen festmacht („alice darf Projekt X"), gibt sie damit dem Nachfolger. Rechte
+> immer an `Remote-Id` binden.
+
 | | Regel |
 |---|---|
 | Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Schalter `self_service_username_change` |
-| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
 `username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
 (Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
 LDAP/SAML). Die Links
 eines Wechsels haben ein eigenes Kontingent je Zieladresse (Topf `wechsel`) — Anträge Fremder auf
-eine Adresse verbrauchen nicht das des Anmelde-Links. Derselbe Weg bestätigt Adressen aus LDAP und
+eine Adresse verbrauchen nicht das des Anmelde-Links — und eines je Konto
+(`mail_per_address_max` im Fenster `mail_per_address_window_sec`, Audit `mail_ratelimit`), damit
+ein Konto keine Mails an beliebig viele fremde Adressen streut. Derselbe Weg bestätigt Adressen aus LDAP und
 SAML (Tabelle unter „Föderierte Identitäten verwalten").
 
 ## Owner
@@ -228,7 +235,10 @@ Seite gehört und sich nicht ändert:
   2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
      `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
      Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,
-     wenn Nutzer das Attribut nicht selbst setzen können.
+     wenn Nutzer das Attribut nicht selbst setzen können. Es belegt die **Adresse, nicht den
+     Namen**: Bei SAML bleibt ein Kontoname mit `@` (NameID emailAddress) nur, wenn er genau die
+     belegte Adresse ist — sonst Ersatzname `saml-…` und keine Zuordnung über den Namen, wie bei
+     OIDC mit `email_verified`.
   3. **Pauschaler Schalter** für gepflegte Quellen: `ldap_email_trusted=True` für ein Verzeichnis,
      in dem niemand sein `mail`-Attribut selbst ändert; `saml_email_trusted=True` für einen
      Firmen-IdP ohne Selbstregistrierung. Wer ihn setzt, wo Nutzer ihre Adresse selbst pflegen,

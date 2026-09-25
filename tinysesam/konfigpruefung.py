@@ -389,10 +389,10 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     allowlist_adressen = sorted({str(i).strip() for i in
                                  (getattr(config, "admin_identifiers", None) or [])
                                  if "@" in str(i)})
-    quellen = [(name, _an(config, vertrauen) or bool(str(getattr(config, beleg, "") or "").strip()))
-               for an, anlegen, vertrauen, beleg, name in (
-        ("saml_enabled", "saml_auto_create", "saml_email_trusted", "saml_attr_email_verified", "SAML"),
-        ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "ldap_attr_email_verified", "LDAP"))
+    quellen = [(name, _an(config, vertrauen) or bool(security.beleg_attribut(config, quelle)))
+               for an, anlegen, vertrauen, quelle, name in (
+        ("saml_enabled", "saml_auto_create", "saml_email_trusted", "saml", "SAML"),
+        ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "ldap", "LDAP"))
         if _an(config, an) and _an(config, anlegen)]
     ohne_beleg = [name for name, vertraut in quellen if not vertraut]
     mit_beleg = [name for name, vertraut in quellen if vertraut]

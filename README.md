@@ -842,7 +842,9 @@ All optional (on/off by config), usable individually and combined, front end rep
   only tighten the check, never loosen it.
   **Which headers go out** is `forward_headers` — default `Remote-User/-Name/-Email/-Groups` (the
   Authelia set) plus `Remote-Id`, the account ID: users can change their username and email
-  themselves, so an app should key users by `Remote-Id`. Your proxy must set every one of these
+  themselves, so an app should key users by `Remote-Id`. **Never tie rights to `Remote-User` or
+  `Remote-Email`:** a name or address that becomes free (account deleted or renamed) can be taken by
+  another account, which then carries it into the app. Your proxy must set every one of these
   headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
   header and nothing else (Grafana style), a list sends the same value under several names. The mapping
   is the complete list, so leaving `email` out is how you stop handing the address to the app. Rename

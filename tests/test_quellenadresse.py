@@ -207,6 +207,36 @@ a8._hinweis_ausgang.abwarten()
 r.check("SAML, Beleg-Attribut „false“: Link statt Adresse",
         not a8.get_user(u8b["id"])["email"] and [m[0] for m in p8] == ["nils@example.com"], str(p8))
 
+# SAML, Beleg-Attribut und Name (Angriffsrunde, Fund 1): Das Attribut belegt die ADRESSE, nicht
+# den Namen. Ein IdP mit Selbstregistrierung lässt den Nutzer die NameID wählen — `bob@example.com`
+# als Name, die eigene Adresse bestätigt. Ohne diese Regel band Lage 4 das lokale Konto
+# `bob@example.com` über den Namen: Übernahme, auch eines Admins.
+a10, _, _ = _aufbau(saml_attr_email_verified="email_verified")
+opfer10 = a10.create_user("bob@example.com", password="Opfer-Passwort1", email="bob@example.com")
+a10.store.set_admin(opfer10, True)
+u10 = a10.check_saml("bob@example.com", {"email": ["angreifer@evil.example"], "email_verified": ["true"]})
+r.check("SAML, Beleg-Attribut: ein @-Name, der NICHT die belegte Adresse ist, trifft kein lokales Konto",
+        u10 is None or (u10["id"] != opfer10 and u10["username"].startswith("saml-") and not u10["is_admin"]),
+        str(u10))
+u10b = a10.check_saml("mia@example.com", {"email": ["mia@example.com"], "email_verified": ["true"]})
+r.check("… ist er genau die belegte Adresse, bleibt er Kontoname (wie OIDC mit email_verified)",
+        u10b is not None and u10b["username"] == "mia@example.com", str(u10b))
+a10c, _, _ = _aufbau(saml_attr_email_verified="email_verified", saml_attr_username="email")
+a10c.create_user("chefin", password="Opfer-Passwort1")
+u10c = a10c.check_saml("id-1", {"email": ["chefin"], "email_verified": ["true"]})
+r.check("… und ein Name aus dem Adress-Attribut, der keine Adresse ist, bleibt unbelegt",
+        u10c is None or u10c["username"] != "chefin", str(u10c))
+
+# Beleg-Attribut aus Leerraum (Fund 2): Prüfung und Laufzeit lesen dieselbe, getrimmte Angabe.
+a11, app11, _ = _aufbau(admin_identifiers=["boss@example.com"], ldap_attr_email_verified=" ")
+k11 = a11.create_user("bossin", email="boss@example.com")
+a11.store.set_email_verified(k11, True)
+a11.ldap = Verzeichnis({"bossin": {"pw": "pw", "email": "boss@example.com"}})
+TestClient(app11).post("/auth/login", data={"username": "bossin", "password": "pw"}, follow_redirects=False)
+_w11 = " ".join(_kp.pruefe(a11.cfg)[1])
+r.check("Beleg-Attribut \" \": die Prüfung sagt „NIE“, und die Laufzeit befördert auch nicht",
+        "NIE" in _w11 and not a11.get_user(k11)["is_admin"], f"is_admin={a11.get_user(k11)['is_admin']}")
+
 # ── Kontingent: Wechselanträge auf eine Adresse sperren deren späteren Inhaber nicht aus ─────
 # Eine vergebene Adresse erreicht die Drossel gar nicht (kein Link, nur Audit). Offen ist die noch
 # FREIE: Ein Fremder beantragt den Wechsel darauf, bis ihr Kontingent aufgebraucht ist; registriert

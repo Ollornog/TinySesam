@@ -142,6 +142,21 @@ auffällt:
 
 ### Sicherheit
 
+- **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
+  Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
+  Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene
+  Adresswechsel. Vorher überlebte ein Adresswechsel, den ein Eindringling aus seiner Sitzung
+  beantragt hatte, die Abwehr — ein Klick auf seinen Link danach, und der nächste Reset ging an ihn.
+  Schon der Antrag geht jetzt als Hinweis an die bisherige belegte Adresse, und die Mail nennt das
+  Konto, für das bestätigt wird.
+- **SAML-Beleg-Attribut belegt die Adresse, nicht den Namen** (Fund 1 der LDAP/SAML-Runde): Ein
+  Kontoname mit `@` bleibt nur, wenn er genau die belegte Adresse ist. Sonst hätte ein IdP mit
+  Selbstregistrierung (NameID `bob@example.com`, eigene Adresse bestätigt) das lokale Konto
+  `bob@example.com` über den Namen übernommen.
+- **Adresswechsel: je Konto gedrosselt, gefaltet geprüft.** Ein Konto streut keine Wechsel-Mails an
+  beliebig viele fremde Adressen mehr (Kontingent wie je Zieladresse); die Adresse wird erst
+  gefaltet, dann geprüft (`x＠…@example.com` ergab sonst eine Adresse mit zwei `@`). Ein
+  Beleg-Attribut aus Leerraum gilt überall als nicht gesetzt (vorher: Prüfung „nie", Laufzeit „ja").
 - **Wechselanträge haben ein eigenes Mail-Kontingent** (Topf `wechsel`, wie der
   Registrierungs-Hinweis nach Angriff A2): Den Wechsel auf eine noch freie Adresse beantragt jeder
   mit einem Konto. Im gemeinsamen Topf von Anmelde-Link und Reset hätte er das Kontingent

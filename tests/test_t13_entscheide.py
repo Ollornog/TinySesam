@@ -1303,6 +1303,11 @@ finally:
     _log3.getLogger("tinysesam.security").removeHandler(_h_v3)
 r.check("… und der Start nennt Bestandsnamen mit Steuer-/Formatzeichen",
         any("Kontoname(n) mit Steuer- oder Formatzeichen" in m and str(_c0) in m for m in _fang_v3))
+# Der genannte Weg (seit der Selbstbedienung) wirkt: umbenannt, danach Remote-User wieder da.
+_neu_v3 = a_v3.change_username(_c0, "chefin-neu")
+r.check("… und der Weg, den er nennt (auth.change_username), räumt den Namen auf",
+        any("auth.change_username" in m for m in _fang_v3) and _neu_v3 == "chefin-neu"
+        and a_v3.forward_response_headers(a_v3.get_user(_c0))["Remote-User"] == "chefin-neu")
 
 # V4: SAML-Kennung mit Rand-Steuerzeichen trifft keine fremde Bindung.
 a_v4, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",

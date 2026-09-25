@@ -2673,12 +2673,18 @@ class Store:
                               "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
                               (user_id, purpose, email, _now())))
 
-    def revoke_user_magic_tokens(self, user_id) -> int:
-        """Alle noch offenen Einmal-Token eines Kontos verwerfen (Sperre durch den Betreiber).
+    def revoke_user_magic_tokens(self, user_id, purposes=None) -> int:
+        """Noch offene Einmal-Token eines Kontos verwerfen — alle, oder nur die genannten Zwecke.
 
-        Ein vor der Sperre verschickter Bestätigungslink schaltete das Konto sonst wieder frei
-        (`/auth/verify/…` hebt `disabled` auf — für die Registrierung ist das richtig, für eine
-        Sperre durch den Betreiber nicht), ein Anmelde-Link hätte eine Sitzung angelegt."""
+        Sperre durch den Betreiber: Ein vor der Sperre verschickter Bestätigungslink schaltete
+        das Konto sonst wieder frei (`/auth/verify/…` hebt `disabled` auf — für die Registrierung
+        ist das richtig, für eine Sperre durch den Betreiber nicht), ein Anmelde-Link hätte eine
+        Sitzung angelegt. Reset, Passwortwechsel, „Sitzungen beenden": Ein offener Adresswechsel
+        aus einer übernommenen Sitzung überlebte sonst die Abwehr (Angriffsrunde, Fund 1)."""
+        if purposes:
+            ph = ",".join("?" * len(purposes))
+            return self._exec(f"DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL "
+                              f"AND purpose IN ({ph})", (user_id, *purposes)).rowcount
         return self._exec("DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL",
                           (user_id,)).rowcount
 

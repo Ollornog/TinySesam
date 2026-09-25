@@ -2672,7 +2672,7 @@ _GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url
 _GEMESSEN |= {"_sperrhinweis", "_senden"}
 # Ebenso der Hinweis an die ALTE Adresse nach einem Wechsel (`confirm_email_change` mit dem inneren
 # `hinweis`, ASVS 6.3.7) — ohne Link; das prüft tests/test_selbstbedienung.py (kein „://").
-_GEMESSEN |= {"confirm_email_change", "hinweis"}
+_GEMESSEN |= {"confirm_email_change", "hinweis", "_wechsel_antrag_hinweis"}
 _absender = set()
 for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
     _baum = _ast.parse(_datei.read_text(encoding="utf-8"))

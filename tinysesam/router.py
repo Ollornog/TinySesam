@@ -170,7 +170,7 @@ def build_router(auth) -> APIRouter:
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
                                               email_bestaetigt=(None if (cfg.ldap_email_trusted
-                                                                         or cfg.ldap_attr_email_verified)
+                                                                         or security.beleg_attribut(cfg, "ldap"))
                                                                 else False)
                                               if aus_verzeichnis else None)
         if cfg.remember_me_enabled and remember_me:
@@ -818,9 +818,14 @@ def build_router(auth) -> APIRouter:
             # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
             # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
             keys = auth._keys_widerrufen(uid, "passwort_reset")
+            # Und alle offenen Links (Angriffsrunde Selbstbedienung, Fund 1): Ein Adresswechsel,
+            # den ein Eindringling aus seiner Sitzung beantragt hat, überlebte sonst den Reset —
+            # der Link liegt in SEINEM Postfach, ein Klick danach, und der nächste Reset ginge an ihn.
+            links = auth.store.revoke_user_magic_tokens(uid)
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
                        f"uid={uid} fehlversuche_verworfen={weg}"
-                       + (f" api_keys_revoked={keys}" if keys else ""))
+                       + (f" api_keys_revoked={keys}" if keys else "")
+                       + (f" links_revoked={links}" if links else ""))
             return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/'))}", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -1151,6 +1156,9 @@ def build_router(auth) -> APIRouter:
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
         auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
+        # Ein offener Adresswechsel stammt womöglich aus einer der eben beendeten Sitzungen — er
+        # fällt mit ihnen (Fund 1). Andere Links (Anmelde-Link, Reset) gehen an die eigene Adresse.
+        auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
         # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
         # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
@@ -1293,9 +1301,12 @@ def build_router(auth) -> APIRouter:
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
             keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
+            auth.store.revoke_user_magic_tokens(u["id"])      # Panik-Taste: auch offene Links (Fund 1)
         else:
             cur = auth.session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
+            # Ein offener Adresswechsel kann aus einer der beendeten Sitzungen stammen (Fund 1).
+            auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
                    scope + (f" api_keys_revoked={keys_widerrufen}" if keys_widerrufen else ""))
         return {"ok": True, "api_keys_revoked": keys_widerrufen,
@@ -1462,7 +1473,7 @@ def build_router(auth) -> APIRouter:
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
                                                   email_bestaetigt=bool(
-                                                      (cfg.saml_email_trusted or cfg.saml_attr_email_verified)
+                                                      (cfg.saml_email_trusted or security.beleg_attribut(cfg, "saml"))
                                                       and u.get("email")
                                                       and u.get("email_verified")))
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)

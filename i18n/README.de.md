@@ -868,7 +868,9 @@ Alles optional (per Config an/aus), einzeln und kombiniert nutzbar, Frontend üb
   anhängt, kann die Prüfung nur verschärfen, nie aufweichen.
   **Welche Header hinausgehen**, steuert `forward_headers` — Vorgabe `Remote-User/-Name/-Email/-Groups`
   (der Authelia-Satz) und `Remote-Id`, die Konto-ID: Nutzer ändern Benutzername und Adresse selbst,
-  eine App ordnet deshalb über `Remote-Id` zu. Der Proxy muss jeden dieser Header selbst setzen (die
+  eine App ordnet deshalb über `Remote-Id` zu. **Rechte nie an `Remote-User` oder `Remote-Email`
+  binden:** Ein Name oder eine Adresse, die frei wird (Konto gelöscht oder umbenannt), kann ein
+  anderes Konto übernehmen und trägt sie dann in die App. Der Proxy muss jeden dieser Header selbst setzen (die
   Beispiele unter `deploy/forward-auth/` tun das), sonst reicht er einen gefälschten durch. Eine Zuordnung benennt sie um oder lässt sie weg: `{"user": "X-WEBAUTH-USER"}`
   verschickt genau diesen einen Header (Grafana-Stil), eine Liste denselben Wert unter mehreren Namen.
   Die Zuordnung ist die **vollständige** Liste — `email` wegzulassen ist der Weg, der App die Adresse
