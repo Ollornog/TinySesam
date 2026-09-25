@@ -1176,6 +1176,12 @@ class Store:
              norm_kennung(username), norm_kennung(mail)))
         return cur.lastrowid
 
+    def set_username(self, user_id, username) -> None:
+        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Anweisung.
+        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben."""
+        name = str(username or "").strip()
+        self._exec("UPDATE users SET username=?, topf_name=? WHERE id=?", (name, norm_kennung(name), user_id))
+
     def set_email(self, user_id, email, verified: bool = False):
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
 
@@ -2660,12 +2666,25 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
-    def revoke_user_magic_tokens(self, user_id) -> int:
-        """Alle noch offenen Einmal-Token eines Kontos verwerfen (Sperre durch den Betreiber).
+    def offener_token(self, user_id, purpose, email) -> bool:
+        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an
+        diese Adresse? Damit nicht jede Anmeldung einen neuen Bestätigungslink verschickt."""
+        return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? AND email=? "
+                              "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
+                              (user_id, purpose, email, _now())))
 
-        Ein vor der Sperre verschickter Bestätigungslink schaltete das Konto sonst wieder frei
-        (`/auth/verify/…` hebt `disabled` auf — für die Registrierung ist das richtig, für eine
-        Sperre durch den Betreiber nicht), ein Anmelde-Link hätte eine Sitzung angelegt."""
+    def revoke_user_magic_tokens(self, user_id, purposes=None) -> int:
+        """Noch offene Einmal-Token eines Kontos verwerfen — alle, oder nur die genannten Zwecke.
+
+        Sperre durch den Betreiber: Ein vor der Sperre verschickter Bestätigungslink schaltete
+        das Konto sonst wieder frei (`/auth/verify/…` hebt `disabled` auf — für die Registrierung
+        ist das richtig, für eine Sperre durch den Betreiber nicht), ein Anmelde-Link hätte eine
+        Sitzung angelegt. Reset, Passwortwechsel, „Sitzungen beenden": Ein offener Adresswechsel
+        aus einer übernommenen Sitzung überlebte sonst die Abwehr (Angriffsrunde, Fund 1)."""
+        if purposes:
+            ph = ",".join("?" * len(purposes))
+            return self._exec(f"DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL "
+                              f"AND purpose IN ({ph})", (user_id, *purposes)).rowcount
         return self._exec("DELETE FROM magic_token WHERE user_id=? AND used_at IS NULL",
                           (user_id,)).rowcount
 

@@ -31,6 +31,15 @@ def _zeilenbrecher(z: str) -> bool:
     return o < 0x20 or 0x7f <= o <= 0x9f or o in (0x2028, 0x2029) or z in _BIDI
 
 
+def beleg_attribut(cfg, quelle: str) -> str:
+    """Das Beleg-Attribut einer Quelle (`ldap`/`saml`), getrimmt — `""` heisst: keins.
+
+    Die EINE Lesestelle für Laufzeit, Router und Konfigurationsprüfung: Liest die Prüfung
+    getrimmt und die Laufzeit roh, sagt `" "` dort „nie Erst-Admin" und hier „es gibt einen Beleg"
+    (Angriffsrunde Selbstbedienung, Fund 2)."""
+    return str(getattr(cfg, f"{quelle}_attr_email_verified", "") or "").strip()
+
+
 def fuer_log(wert) -> str:
     """Einen fremden Wert so herrichten, dass er eine Logzeile nicht sprengen kann.
 

@@ -1644,6 +1644,10 @@ def _wege(auth_x, basis):
         ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
         # R4-03: der Hinweis an den Inhaber einer vergebenen Adresse trägt den Weg zur Anmeldung.
         ("send_signup_notice", lambda: auth_x.send_signup_notice("opfer@example.com", basis)),
+        # Selbstbedienung (2026-09-25): der Link an die NEUE Adresse; auch der Bestätigungsweg für
+        # Adressen aus LDAP/SAML läuft hier durch (`_adresse_aus_quelle_belegen`).
+        ("request_email_change", lambda: _versende(auth_x.request_email_change(
+            auth_x.store.get_user_by_name("opfer")["id"], "opfer-neu@example.com", basis))),
     )
 
 
@@ -1956,19 +1960,24 @@ r.check("...und nennt beide beteiligten Konten",
 # Rollen, Passwort und Keys, aber keine Route zum Umbenennen; das CLI legt überhaupt keine Konten
 # an. Der Betreiber, dem der Start gerade eine Kollision gemeldet hat, lief damit gegen zwei
 # Türen, die es nicht gibt. Gemessen wird deshalb nicht der Wortlaut, sondern dass die genannten
-# Wege existieren — und dass für den Benutzernamen wirklich nur die Datenbank bleibt.
-r.check("...und nennt Wege, die es wirklich gibt (store.set_email, sonst die Datenbank)",
+# Wege existieren. Seit der Selbstbedienung (2026-09-25) gibt es `change_username` — die Meldung
+# nennt sie statt des `UPDATE users` von Hand, und der Weg löst die Kollision wirklich (unten).
+r.check("...und nennt Wege, die es wirklich gibt (change_username, store.set_email)",
         "store.set_email" in _text_k and hasattr(auth_alt.store, "set_email")
-        and "UPDATE users" in _text_k,
+        and "auth.change_username" in _text_k and hasattr(auth_alt, "change_username"),
         f"{_text_k[:320]!r}")
-r.check("...und keine Methode macht das UPDATE überflüssig",
-        not any(hasattr(_o, _n) for _o in (auth_alt, auth_alt.store)
-                for _n in ("set_username", "rename_user", "change_identifier")),
-        "es gibt jetzt eine Umbenennungs-Methode — dann gehört sie in die Meldung statt des UPDATE")
+r.check("...und schickt niemanden mehr ins UPDATE von Hand",
+        "UPDATE users" not in _text_k, f"{_text_k[:320]!r}")
 r.check("...und verspricht dafür weder Admin-Panel noch CLI",
         "Kennungen ändern (Admin-Panel oder CLI)" not in _text_k
         and "weder im Admin-Panel noch im CLI" in _text_k,
         f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
+# Der genannte Weg wirkt: Umbenennen löst die Kollision auf, der Start schweigt danach.
+auth_alt.change_username(eve_alt, "eve-umbenannt")
+r.check("...und auth.change_username löst die Kollision tatsächlich auf",
+        not auth_alt.store.kennungs_kollisionen()
+        and "Kennungs-Kollision" not in _start_log(auth_alt.cfg.db_path),
+        f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]}")
 
 # Integration der Runde: Die Meldung nennt `store.set_email(...)` — und genau diese Methode nimmt
 # seit B-umgehung-8 den Bestätigungs-Vermerk MIT (Vorgabe: unbestätigt). Wer der Meldung folgt, um
@@ -2661,6 +2670,9 @@ _GEMESSEN = {name for name, _ in _wege(_a_api, ECHT)} | {"send_mail", "magic_url
 # Der Sperr-Hinweis (ASVS 6.3.5, `_sperrhinweis` mit dem inneren `_senden`) trägt KEINEN Link — es
 # gibt keine Basis zu messen. Dass das so bleibt, prüft tests/test_t13_entscheide.py (kein „://").
 _GEMESSEN |= {"_sperrhinweis", "_senden"}
+# Ebenso der Hinweis an die ALTE Adresse nach einem Wechsel (`confirm_email_change` mit dem inneren
+# `hinweis`, ASVS 6.3.7) — ohne Link; das prüft tests/test_selbstbedienung.py (kein „://").
+_GEMESSEN |= {"confirm_email_change", "hinweis", "_wechsel_antrag_hinweis"}
 _absender = set()
 for _datei in sorted((ROOT / "tinysesam").glob("*.py")):
     _baum = _ast.parse(_datei.read_text(encoding="utf-8"))

@@ -84,6 +84,33 @@ Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 - **Step-up** ist eine Frist an der Sitzung (`stepup_max_age_sec`, Vorgabe 15 min), keine eigene
   Sitzung: Sie verfällt, die Sitzung bleibt.
 
+## Benutzername und Adresse ändern (Selbstbedienung)
+
+Seit 2026-09-25 ändert jeder beides selbst auf der Konto-Seite, mit frischem Step-up. Alles, was am
+Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML —, hängt an der
+**Konto-ID** und bleibt. Nach aussen ändert sich `Remote-User` bzw. `Remote-Email`; stabil ist
+**`Remote-Id`** — eine App ordnet Nutzer darüber zu.
+
+> **Namen werden wieder frei.** Wird ein Konto gelöscht oder umbenannt, kann ein anderes Konto den
+> Namen (oder die Adresse) übernehmen und trägt ihn dann als `Remote-User` in jede App. Eine App,
+> die Rechte am Namen festmacht („alice darf Projekt X"), gibt sie damit dem Nachfolger. Rechte
+> immer an `Remote-Id` binden.
+
+| | Regel |
+|---|---|
+| Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Schalter `self_service_username_change` |
+| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+
+Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
+`username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
+(Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
+LDAP/SAML). Die Links
+eines Wechsels haben ein eigenes Kontingent je Zieladresse (Topf `wechsel`) — Anträge Fremder auf
+eine Adresse verbrauchen nicht das des Anmelde-Links — und eines je Konto
+(`mail_per_address_max` im Fenster `mail_per_address_window_sec`, Audit `mail_ratelimit`), damit
+ein Konto keine Mails an beliebig viele fremde Adressen streut. Derselbe Weg bestätigt Adressen aus LDAP und
+SAML (Tabelle unter „Föderierte Identitäten verwalten").
+
 ## Owner
 
 Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens
@@ -190,18 +217,37 @@ Seite gehört und sich nicht ändert:
   nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
   prüft: `oidc_email_verified_default=True`.
 - **SAML und LDAP liefern keinen Beleg** — der Betreiber sagt je Quelle, ob er ihren Adressen traut
-  (PO-Entscheid 2026-09-24):
+  (PO-Entscheide 2026-09-24 und 2026-09-25):
 
   | Schalter | Vorgabe | vertraut | nicht vertraut |
   |---|---|---|---|
-  | `ldap_email_trusted` | **an** (das Verzeichnis ist meist das eigene) | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse wird nicht verwendet (wie H-3) |
-  | `saml_email_trusted` | **aus** | wie oben | Adresse nicht verwendet; ein Kontoname mit `@` (NameID emailAddress, UPN) weicht einem Ersatznamen `saml-<hash>` |
+  | `ldap_email_trusted` | **aus** | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse nicht direkt verwendet (wie H-3); Bestätigung per Link (unten) |
+  | `saml_email_trusted` | **aus** | wie oben | wie oben; dazu weicht ein Kontoname mit `@` (NameID emailAddress, UPN) einem Ersatznamen `saml-<hash>` |
 
-  **LDAP auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen** — sonst trägt
-  sich jemand die Adresse aus `admin_identifiers` ein und ist beim ersten Login Erst-Admin (das war
-  F-14; die Vorgabe „vertraut" nimmt diesen Schutz bewusst zurück). Vertraut belegt ein Login nur
-  dieselbe Adresse, die schon am Konto steht, und nur nach oben; ein neuer Wert im Verzeichnis
-  ändert die Adresse eines bestehenden Kontos nicht. Bestehende Konten behalten, was sie haben.
+  Drei Wege zum Vertrauen, vom schwächsten zum stärksten Anspruch an die Quelle:
+
+  1. **Bestätigung per Link — der Normalweg**, sobald Mail eingerichtet ist
+     (`federation_email_confirm`, Vorgabe an; braucht Mailer und `base_url`). Nach der Anmeldung
+     geht ein Link an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos,
+     mit Beleg. Derselbe Weg wie beim Adresswechsel der Selbstbedienung. Nur für Konten ohne
+     belegte Adresse, höchstens einer je Konto und Tag, keiner, solange einer offen ist. Gehört die
+     Adresse schon einem anderen Konto, geht kein Link hinaus (Audit `email_change_taken`).
+  2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
+     `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
+     Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,
+     wenn Nutzer das Attribut nicht selbst setzen können. Es belegt die **Adresse, nicht den
+     Namen**: Bei SAML bleibt ein Kontoname mit `@` (NameID emailAddress) nur, wenn er genau die
+     belegte Adresse ist — sonst Ersatzname `saml-…` und keine Zuordnung über den Namen, wie bei
+     OIDC mit `email_verified`.
+  3. **Pauschaler Schalter** für gepflegte Quellen: `ldap_email_trusted=True` für ein Verzeichnis,
+     in dem niemand sein `mail`-Attribut selbst ändert; `saml_email_trusted=True` für einen
+     Firmen-IdP ohne Selbstregistrierung. Wer ihn setzt, wo Nutzer ihre Adresse selbst pflegen,
+     öffnet F-14 wieder: Jemand trägt sich die Adresse aus `admin_identifiers` ein und ist beim
+     ersten Login Erst-Admin.
+
+  Vertraut belegt ein Login dieselbe Adresse, die schon am Konto steht, nur nach oben; ein Konto
+  ohne Adresse bekommt sie, wenn sie frei ist. Ein neuer Wert in der Quelle ändert die Adresse
+  eines bestehenden Kontos nicht — das tut der Inhaber selbst über die Konto-Seite.
   Bei nicht vertrauter Quelle wird ein unbelegter Name **nie über den Namen** einem vorhandenen
   Konto zugeordnet — nur über die stabile Kennung, sonst abgewiesen. Unbelegt: bei SAML ein Name
   mit `@` (NameID emailAddress) oder einer aus dem Adress-Attribut selbst (`saml_attr_username` =

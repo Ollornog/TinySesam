@@ -16,15 +16,41 @@ auffällt:
 - **Sitzungen ohne ausdrücklich gewähltes „Angemeldet bleiben" enden nach 8 Stunden Inaktivität**
   (`session_idle_minutes`) — auch OIDC- und Link-Sitzungen.
 - **Es gibt Owner**: Der älteste aktive, von Hand gesetzte Admin wird beim ersten Start Owner.
-- **SAML-Adressen werden per Vorgabe nicht mehr verwendet** (`saml_email_trusted=False`), neue
-  SAML-Konten mit `@` im Namen bekommen einen Ersatznamen. LDAP-Adressen gelten dagegen per Vorgabe
-  als belegt (`ldap_email_trusted=True`) — **auf `False` stellen, wenn Nutzer ihr `mail`-Attribut
-  selbst pflegen.**
+- **Adressen aus SAML und LDAP kommen nicht mehr direkt ins Konto** (`saml_email_trusted`,
+  `ldap_email_trusted`, beide Vorgabe aus): Ist Mail eingerichtet, bestätigt der Inhaber sie per
+  Link; neue SAML-Konten mit `@` im Namen bekommen einen Ersatznamen. **Wer sein Verzeichnis pflegt
+  (niemand ändert sein `mail`-Attribut selbst), stellt `ldap_email_trusted=True`** — sonst bekommen
+  LDAP-Nutzer beim nächsten Login einen Bestätigungslink.
 - **API-Keys von OIDC-Konten ruhen**, wenn der Provider Nein sagt oder das Konto 30 Tage lang nicht
   bestätigt hat — eine Anmeldung über den Provider weckt sie.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
+
+- **Benutzername und E-Mail-Adresse selbst ändern (PO-Entscheid 2026-09-25).** Auf der Konto-Seite,
+  mit frischem Step-up. Die Adresse gilt erst nach dem Klick auf den Link an die neue (mit Beleg),
+  die alte bekommt einen Hinweis, offene Links an sie verfallen; eine vergebene Adresse bekommt
+  keinen Link bei gleicher Antwort, ebenso eine Adresse aus `admin_identifiers` (sonst trüge ein
+  fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre
+  auf einer Instanz ohne Admin Erst-Admin). Der Name folgt denselben Regeln wie beim Anlegen, dazu: kein
+  fremder Adress-Name, kein Name aus `admin_identifiers`; im Mail-Modus folgt er der Adresse.
+  Schalter `self_service_email_change`, `self_service_username_change` (beide an),
+  `email_change_ttl_min`. API: `change_username`, `request_email_change`, `confirm_email_change`;
+  Ereignisse `username_changed`, `email_changed`.
+- **Adressen aus SAML und LDAP per Link bestätigen (PO-Entscheid 2026-09-25).** Traut der
+  Betreiber der Quelle nicht, geht nach der Anmeldung ein Bestätigungslink an die Adresse aus der
+  Quelle — derselbe Weg wie beim Adresswechsel der Selbstbedienung; erst der Klick macht sie zur
+  Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens einer je Konto und
+  Tag, keiner, solange einer offen ist; eine vergebene Adresse bekommt keinen. Schalter
+  `federation_email_confirm` (Vorgabe an; braucht Mailer und `base_url`). Dazu je Quelle ein
+  optionales Beleg-Attribut für IdPs, die das führen: `ldap_attr_email_verified`,
+  `saml_attr_email_verified` — ein wahrer Wert (`true`, `1`, `yes`) belegt die Adresse dieses
+  Logins und trägt wie der Schalter auch den Erst-Admin über eine Allowlist-Adresse (die
+  Konfigurationsprüfung sagt das beim Aufbau).
+- **`Remote-Id` in der Forward-Auth-Vorgabe** — die Konto-ID, stabil über Umbenennung und
+  Mailwechsel. **Beim Update:** Den Header im Proxy mitsetzen (die Beispiele unter
+  `deploy/forward-auth/` tun es) — ein Proxy, der ihn nicht selbst setzt, reicht einen vom
+  Browser mitgeschickten durch.
 
 - **Gnadenfrist nach dem Step-up (A-6).** Ein Step-up gibt der Sitzung ein neues Token (F-06); eine
   Anfrage aus einem zweiten Tab, die in dem Moment unterwegs war, scheiterte damit einmal. Das alte
@@ -82,12 +108,13 @@ auffällt:
   einen weiteren Faktor (TOTP-Selbsteinrichtung in einer Kette) nur ein, wenn der Passkey in
   derselben Sitzung vorgelegt wurde oder der Betreiber ein Fenster geöffnet hat — sonst ginge es
   über den Anmelde-Link oder „Passwort vergessen" am Passkey vorbei.
-- **SAML- und LDAP-Adressen: der Betreiber sagt je Quelle, ob er ihnen traut** (Punkt 5, Option B).
-  `ldap_email_trusted` (Vorgabe an) und `saml_email_trusted` (Vorgabe aus). Vertraut: Die Adresse
-  gilt als belegt, geht als `Remote-Email` weiter und trägt Rechte (Erst-Admin). Nicht vertraut:
-  wie H-3 bei OIDC — keine Adresse im Konto, kein `Remote-Email`, und bei SAML weicht ein
-  Kontoname mit `@` (auch `＠`) einem Ersatznamen. **Die LDAP-Vorgabe nimmt den Schutz aus F-14
-  bewusst zurück**: Wo Nutzer ihr `mail`-Attribut selbst ändern dürfen, gehört sie auf `False`.
+- **SAML- und LDAP-Adressen: der Betreiber sagt je Quelle, ob er ihnen traut** (Punkt 5, Option B;
+  Vorgaben nach PO-Entscheid 2026-09-25). `ldap_email_trusted` und `saml_email_trusted`, beide
+  Vorgabe aus. Vertraut: Die Adresse gilt als belegt, geht als `Remote-Email` weiter und trägt
+  Rechte (Erst-Admin). Nicht vertraut: wie H-3 bei OIDC — keine Adresse im Konto, kein
+  `Remote-Email`, und bei SAML weicht ein Kontoname mit `@` (auch `＠`) einem Ersatznamen; der
+  Normalweg ist dann der Bestätigungslink (unten). Der Schutz aus F-14 gilt damit auch für LDAP
+  wieder per Vorgabe.
   Bei nicht vertrauter Quelle wird ein unbelegter Name nie über den Namen einem vorhandenen Konto
   zugeordnet (sonst übernähme `bob@example.com` aus einem IdP mit Selbstregistrierung das lokale
   Konto `bob@example.com`); ohne stabile Kennung wird er abgewiesen. Unbelegt heisst: bei SAML ein
@@ -115,6 +142,25 @@ auffällt:
 
 ### Sicherheit
 
+- **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
+  Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
+  Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene
+  Adresswechsel. Vorher überlebte ein Adresswechsel, den ein Eindringling aus seiner Sitzung
+  beantragt hatte, die Abwehr — ein Klick auf seinen Link danach, und der nächste Reset ging an ihn.
+  Schon der Antrag geht jetzt als Hinweis an die bisherige belegte Adresse, und die Mail nennt das
+  Konto, für das bestätigt wird.
+- **SAML-Beleg-Attribut belegt die Adresse, nicht den Namen** (Fund 1 der LDAP/SAML-Runde): Ein
+  Kontoname mit `@` bleibt nur, wenn er genau die belegte Adresse ist. Sonst hätte ein IdP mit
+  Selbstregistrierung (NameID `bob@example.com`, eigene Adresse bestätigt) das lokale Konto
+  `bob@example.com` über den Namen übernommen.
+- **Adresswechsel: je Konto gedrosselt, gefaltet geprüft.** Ein Konto streut keine Wechsel-Mails an
+  beliebig viele fremde Adressen mehr (Kontingent wie je Zieladresse); die Adresse wird erst
+  gefaltet, dann geprüft (`x＠…@example.com` ergab sonst eine Adresse mit zwei `@`). Ein
+  Beleg-Attribut aus Leerraum gilt überall als nicht gesetzt (vorher: Prüfung „nie", Laufzeit „ja").
+- **Wechselanträge haben ein eigenes Mail-Kontingent** (Topf `wechsel`, wie der
+  Registrierungs-Hinweis nach Angriff A2): Den Wechsel auf eine noch freie Adresse beantragt jeder
+  mit einem Konto. Im gemeinsamen Topf von Anmelde-Link und Reset hätte er das Kontingent
+  verbraucht, mit dem sich der spätere Inhaber jener Adresse einen Anmelde-Link schickt.
 - **TOTP-Geheimnisse ruhend verschlüsselt, Pflicht (H-14/H-15).** AES-256-GCM (`cryptography`); der
   Schlüssel kommt aus `TINYSESAM_SECRETS_KEY`, `secrets_key_file` oder `<db>.key` (0600, neben der
   Datenbank — dann laut gewarnt). Bestand wird beim Start verschlüsselt; ein Schlüssel, der nicht

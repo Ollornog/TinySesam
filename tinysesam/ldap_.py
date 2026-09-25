@@ -21,7 +21,7 @@ import threading
 import time
 
 from . import errors
-from .security import fuer_log, seclog
+from .security import beleg_attribut, fuer_log, seclog
 
 
 def _fehlt_extra(e: ModuleNotFoundError) -> "errors.MissingExtra":
@@ -381,6 +381,8 @@ class LDAPClient:
                 info["name"] = _first(entry, cfg.ldap_attr_name) or username
                 info["groups"] = _list(entry, cfg.ldap_group_attr)
                 info["id"] = _stabile_kennung(entry, cfg)
+                if beleg_attribut(cfg, "ldap"):
+                    info["email_verified"] = _first(entry, beleg_attribut(cfg, "ldap"))
             conn.unbind()
             return info
         except _ausfall_arten() as e:
@@ -419,6 +421,8 @@ def _attributliste(cfg) -> list:
     Server sie auch nicht: Die Bindung wäre dann still ohne Kennung, also wieder über den Namen.
     """
     namen = [cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr]
+    if beleg_attribut(cfg, "ldap"):
+        namen.append(beleg_attribut(cfg, "ldap"))
     namen += [cfg.ldap_attr_id] if cfg.ldap_attr_id else list(STABILE_KENNUNG_ATTRIBUTE)
     gesehen, raus = set(), []
     for a in namen:

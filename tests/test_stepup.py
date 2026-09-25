@@ -555,10 +555,14 @@ ANMELDEFLUSS = {"/auth/login", "/auth/totp", "/auth/pin", "/auth/magic/request",
                 "/auth/logout",   # Abmelden (F-07) beendet nur die eigene Sitzung, verwaltet nichts
                 # Grenze d: nur für eine HALBE Anmeldung, vermerkt nur — beendet wird erst, wenn der
                 # letzte Faktor bestätigt ist; eine volle Sitzung nimmt /auth/sessions/revoke.
-                "/auth/sessions/revoke-after-login"}
+                "/auth/sessions/revoke-after-login",
+                # Der Link an die neue Adresse IST die Bestätigung (Besitz des Postfachs), wie
+                # /auth/reset — beantragt wurde der Wechsel mit Step-up (/auth/account/email).
+                "/auth/email/{token}"}
 #: Verlangen frische Bestätigung (require_mfa): abgelaufene Sitzung → 403 + X-TinySesam-Reauth.
 STEPUP = {"/auth/totp/disable", "/auth/totp/recovery", "/auth/pin/set", "/auth/pin/disable",
-          "/auth/passkey/delete", "/auth/sessions/revoke"}   # sessions/revoke: F-09
+          "/auth/passkey/delete", "/auth/sessions/revoke",   # sessions/revoke: F-09
+          "/auth/account/username", "/auth/account/email"}   # Selbstbedienung (2026-09-25)
 #: Das alte Passwort ist die Bestätigung (gedrosselt, gesperrt, protokolliert — R4-10).
 PASSWORT = {"/auth/password"}
 #: Einrichtung eines Faktors: nur mit interaktiver Sitzung, nie mit API-Key (R3-1/R3-3).
@@ -596,7 +600,9 @@ def _abgestanden_client():
 _nutzlast = {"/auth/pin/set": {"json": {"pin": "999999"}}, "/auth/totp/setup": {"data": {"code": "000000"}},
              "/auth/password": {"json": {"current": "falsch-falsch", "new": "Neu1234567890!"}},
              "/auth/sessions/revoke": {"json": {"scope": "others"}},
-             "/auth/apikeys": {"json": {"name": "neu"}}}
+             "/auth/apikeys": {"json": {"name": "neu"}},
+             "/auth/account/username": {"json": {"username": "anders"}},
+             "/auth/account/email": {"json": {"email": "anders@example.com"}}}
 for pfad in sorted(STEPUP & _post6):
     r = _abgestanden_client().post(pfad, headers=JSON, **_nutzlast.get(pfad, {}))
     assert r.status_code == 403 and r.headers.get("X-TinySesam-Reauth"), \

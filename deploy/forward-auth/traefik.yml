@@ -34,6 +34,7 @@ http:
           - "Remote-Groups"
           - "Remote-Email"
           - "Remote-Name"
+          - "Remote-Id"
 
     # Dieselbe Prüfung, aber mit Rollenzwang: eine zweite Middleware, die den Query-Parameter
     # mitbringt (eine der genannten Rollen genügt). TinySesam antwortet 403 statt 200, wenn
@@ -48,6 +49,7 @@ http:
           - "Remote-Groups"
           - "Remote-Email"
           - "Remote-Name"
+          - "Remote-Id"
 
     # Löscht den ganzen Cookie-Header auf dem Weg zur App (leerer Wert = entfernen). Nur für Apps
     # ohne eigene Cookies — siehe B-20 oben.

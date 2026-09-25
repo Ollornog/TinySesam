@@ -62,6 +62,10 @@ IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisier
 
 Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
 
+### `change_username(user_id, neu, ip: 'Optional[str]' = None) -> 'str'`
+
+Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
+
 ### `check_ldap(username, password) -> 'Optional[dict]'`
 
 Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben. Zählt wie ein Passwort-Login (Faktor 'password').
@@ -93,6 +97,10 @@ Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegeben
 ### `complete_totp(token) -> 'Optional[str]'`
 
 Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
+
+### `confirm_email_change(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'`
+
+Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
 
 ### `consume_admin_claim(token, user) -> 'bool'`
 
@@ -365,6 +373,10 @@ Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperre
 ### `render_page(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'`
 
 `request` mitgeben, wo es eins gibt: dann bleibt ein bereits gesetztes CSRF-Token gültig. Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene Formulare ungültig (klassische „Formular abgelaufen"-Falle).
+
+### `request_email_change(user_id, neu, base_url)`
+
+Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) oder None, wenn nichts zu senden ist. `ValueError` bei einer ungültigen Adresse oder ohne Mailer.
 
 ### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
 
@@ -658,4 +670,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-143 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+146 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

@@ -309,6 +309,21 @@ def _account(auth, ctx) -> str:
     name = _e(u["display_name"] or u["username"])
     sections = []
 
+    # Benutzername und Adresse selbst ändern (PO-Entscheid 2026-09-25) — frischer Step-up; die
+    # Adresse gilt erst nach dem Bestätigungslink an sie.
+    if ctx.get("username_change"):
+        sections.append(
+            f"<div class=sec><h2>{_e(t('acc.username'))}</h2>"
+            f"<input id=un_new autocomplete=username value='{_e(u['username'])}'>"
+            f"<button data-act=setname>{_e(t('acc.username_change'))}</button><span id=un_msg class=msg></span></div>")
+    if ctx.get("email_change"):
+        aktuell = u.get("email") or ""
+        sections.append(
+            f"<div class=sec><h2>{_e(t('acc.email'))}</h2>"
+            + (f"<div class=msg>{_e(aktuell)}</div>" if aktuell else "")
+            + f"<input id=mail_new type=email autocomplete=email placeholder='{_e(t('acc.email_new'))}'>"
+            f"<button data-act=setmail>{_e(t('acc.email_change'))}</button><span id=mail_msg class=msg></span></div>")
+
     # Passwort ändern
     if "password" in methods:
         sections.append(
@@ -434,6 +449,10 @@ async function J(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Typ
   if(r.status===403&&re){location.href=re+'?next='+encodeURIComponent(location.pathname);return r}
   return r}
 const say=(id,t,good)=>{const e=document.getElementById(id);if(e){e.textContent=t;e.className='msg '+(good?'good':'bad')}};
+async function setname(){const r=await J('__TS_P__/auth/account/username',{username:un_new.value});
+  const j=await r.json().catch(()=>({}));say('un_msg',r.ok?'✓':(j.detail||'Fehler'),r.ok)}
+async function setmail(){const r=await J('__TS_P__/auth/account/email',{email:mail_new.value});
+  const j=await r.json().catch(()=>({}));say('mail_msg',r.ok?'✓ '+(document.documentElement.lang==='de'?'Link verschickt — bitte in der neuen Adresse bestätigen':'Link sent — please confirm it in the new mailbox'):(j.detail||'Fehler'),r.ok);if(r.ok)mail_new.value=''}
 async function changepw(){const r=await J('__TS_P__/auth/password',{current:pw_cur.value,new:pw_new.value});
   say('pw_msg',r.ok?'✓ geändert':(await r.json()).detail||'Fehler',r.ok);if(r.ok){pw_cur.value='';pw_new.value=''}}
 async function setpin(){const r=await J('__TS_P__/auth/pin/set',{pin:pin_new.value});await offer(r);
@@ -604,7 +623,8 @@ def _magic_confirm(auth, ctx) -> str:
     Der Link aus der Mail löst nicht mehr per GET ein — Mail-Scanner rufen jeden Link auf und
     hätten ihn sonst verbraucht. Erst dieser POST (mit CSRF-Token) tut es."""
     t = auth.t
-    knopf = t("magic.confirm_verify") if ctx.get("zweck") == "verify_email" else t("magic.confirm_login")
+    knopf = {"verify_email": t("magic.confirm_verify"),
+             "email_change": t("magic.confirm_email_change")}.get(ctx.get("zweck"), t("magic.confirm_login"))
     body = (f"<h1>{_e(t('magic.confirm_title'))}</h1>"
             f"<div class=hint>{_e(t('magic.confirm_hint'))}</div>"
             f"<form method=post action='{_e(ctx.get('action', ''))}'>{_cf(ctx)}"

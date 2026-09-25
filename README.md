@@ -399,11 +399,16 @@ addresses yourself, set `oidc_email_verified_default=True`. A claim that explici
 stays a no either way.
 
 **SAML and LDAP have no such proof**: no standard attribute states that the address was verified,
-and in many directories the `mail` entry is maintained by the user themselves. Over those two
-paths an allowlist address therefore **never** becomes the first admin — not even for an existing
-account that already carries it. The configuration check says so at construction time, and the
-refused attempt is logged to the security log and the audit trail
-(`admin_bootstrap_denied`). There the path with proof is the **one-time token**; to keep driving
+and in many directories the `mail` entry is maintained by the user themselves. By default an
+allowlist address over those two paths therefore **never** becomes the first admin — not even for
+an existing account that already carries it. The configuration check says so at construction
+time, and the refused attempt is logged to the security log and the audit trail
+(`admin_bootstrap_denied`). With a mailer, the owner confirms such an address by link after
+sign-in (`federation_email_confirm`) — an allowlist address never gets that link. Only where you
+vouch for the source does the address count as proven, like `email_verified=true` with OIDC:
+`ldap_email_trusted`/`saml_email_trusted` for a maintained directory or a company IdP without
+self-registration, or a proof attribute (`ldap_attr_email_verified`/`saml_attr_email_verified`)
+for an IdP that carries one. Otherwise the path with proof is the **one-time token**; to keep driving
 rights from the IdP afterwards, use `saml_group_role_map`/`ldap_group_role_map` (target
 `__admin__`) — that is the operator's decision in the configuration, not an attribute inside a
 sign-in.
@@ -836,7 +841,11 @@ All optional (on/off by config), usable individually and combined, front end rep
   stays binary, exactly as before. Several specifications are AND-ed, so a client that adds one itself can
   only tighten the check, never loosen it.
   **Which headers go out** is `forward_headers` — default `Remote-User/-Name/-Email/-Groups` (the
-  Authelia set). Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
+  Authelia set) plus `Remote-Id`, the account ID: users can change their username and email
+  themselves, so an app should key users by `Remote-Id`. **Never tie rights to `Remote-User` or
+  `Remote-Email`:** a name or address that becomes free (account deleted or renamed) can be taken by
+  another account, which then carries it into the app. Your proxy must set every one of these
+  headers itself (the examples in `deploy/forward-auth/` do), or it passes a forged one through. Give it a mapping to rename or drop them: `{"user": "X-WEBAUTH-USER"}` sends that one
   header and nothing else (Grafana style), a list sends the same value under several names. The mapping
   is the complete list, so leaving `email` out is how you stop handing the address to the app. Rename
   something? Pull the new name through in your proxy config too.
@@ -1015,7 +1024,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**49 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**51 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

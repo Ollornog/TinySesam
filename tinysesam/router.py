@@ -162,13 +162,16 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
         # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
-        # Betreiber dem Verzeichnis (`ldap_email_trusted`, Vorgabe), entscheidet der Beleg am
-        # Konto (None); sonst reist hier ausdrücklich „kein Beleg" mit: Eine
+        # Betreiber dem Verzeichnis (`ldap_email_trusted`) oder nennt er ein Beleg-Attribut
+        # (`ldap_attr_email_verified`), entscheidet der Beleg am Konto (None) — den setzt
+        # `check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein Beleg" mit: Eine
         # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
         # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
-                                              email_bestaetigt=(None if cfg.ldap_email_trusted else False)
+                                              email_bestaetigt=(None if (cfg.ldap_email_trusted
+                                                                         or security.beleg_attribut(cfg, "ldap"))
+                                                                else False)
                                               if aus_verzeichnis else None)
         if cfg.remember_me_enabled and remember_me:
             auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
@@ -815,9 +818,14 @@ def build_router(auth) -> APIRouter:
             # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
             # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
             keys = auth._keys_widerrufen(uid, "passwort_reset")
+            # Und alle offenen Links (Angriffsrunde Selbstbedienung, Fund 1): Ein Adresswechsel,
+            # den ein Eindringling aus seiner Sitzung beantragt hat, überlebte sonst den Reset —
+            # der Link liegt in SEINEM Postfach, ein Klick danach, und der nächste Reset ginge an ihn.
+            links = auth.store.revoke_user_magic_tokens(uid)
             auth.audit("password_reset", auth._kontoname(uid), auth.client_ip(request),
                        f"uid={uid} fehlversuche_verworfen={weg}"
-                       + (f" api_keys_revoked={keys}" if keys else ""))
+                       + (f" api_keys_revoked={keys}" if keys else "")
+                       + (f" links_revoked={links}" if links else ""))
             return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/'))}", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
@@ -1148,6 +1156,9 @@ def build_router(auth) -> APIRouter:
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
         s = auth.session_from_request(request)
         auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
+        # Ein offener Adresswechsel stammt womöglich aus einer der eben beendeten Sitzungen — er
+        # fällt mit ihnen (Fund 1). Andere Links (Anmelde-Link, Reset) gehen an die eigene Adresse.
+        auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
         # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
         # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
@@ -1169,7 +1180,77 @@ def build_router(auth) -> APIRouter:
                                     recovery_warn=auth.RECOVERY_WARNSCHWELLE,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
-                                    events=auth.own_events(u["id"]))
+                                    events=auth.own_events(u["id"]),
+                                    username_change=(cfg.self_service_username_change
+                                                     and cfg.login_identifier != "email"),
+                                    email_change=(cfg.self_service_email_change and auth.mail_configured()))
+
+    # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------
+    def _frisch_fuer_kennung(request: Request) -> dict:
+        """Wer seine Kennung ändert, bestätigt vorher frisch — wie beim Einrichten eines Faktors:
+        Mit einem gestohlenen Sitzungscookie liesse sich sonst der Name oder die Adresse umbiegen,
+        und der Reset-Link ginge danach an den Dieb. Ein Konto ohne jeden Faktor (rein föderiert)
+        hängt am Alter der Anmeldung. Kein API-Key (`require_session`)."""
+        u = auth.require_session(request)
+        if auth.stepup_options(u):
+            return auth.require_mfa(request)
+        if not auth.login_fresh(request, u):
+            raise HTTPException(403, auth.t("api.stepup_relogin"))
+        return u
+
+    if cfg.self_service_username_change:
+        @r.post("/auth/account/username")
+        async def own_username(request: Request):
+            b = await auth.json_body(request)
+            u = _frisch_fuer_kennung(request)
+            if not auth.rate_ok(auth.client_ip(request), login=False):
+                raise HTTPException(429, auth.t("api.too_many"))
+            try:
+                neu = auth.change_username(u["id"], b.get("username"), auth.client_ip(request))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return {"ok": True, "username": neu}
+
+    if cfg.self_service_email_change:
+        @r.post("/auth/account/email")
+        async def own_email(request: Request):
+            b = await auth.json_body(request)
+            u = _frisch_fuer_kennung(request)
+            if not auth.rate_ok(auth.client_ip(request), login=False):
+                raise HTTPException(429, auth.t("api.too_many"))
+            try:
+                senden = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
+            except ConfigError:
+                # Zuerst: `ConfigError` IST ein `ValueError` (CodeQL py/unreachable-except). In
+                # umgekehrter Reihenfolge ging die Meldung zur Basis-Adresse als Antworttext hinaus.
+                raise HTTPException(400, auth.t("api.no_mail"))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
+            # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
+            antwort = JSONResponse({"ok": True, "sent": True})
+            return auth.nach_der_antwort(antwort, senden) if senden else antwort
+
+        @r.get("/auth/email/{token}", response_class=HTMLResponse)
+        def email_confirm_page(request: Request, token: str):
+            """Bestätigungsseite statt Einlösen per GET — Link-Scanner lösen nichts ein (R4-02)."""
+            if not auth.peek_magic(token, purpose="email_change"):
+                auth.token_abgewiesen("email_change", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            return auth.render_page("magic_confirm", request=request, zweck="email_change",
+                                    action=auth.pfad(request, f"/auth/email/{_q(token)}"))
+
+        @r.post("/auth/email/{token}")
+        def email_confirm(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
+            auth.require_csrf(request, csrf_tok)
+            ergebnis = auth.confirm_email_change(token, auth.client_ip(request))
+            if ergebnis is None:
+                auth.token_abgewiesen("email_change", request)
+                return auth.render_page("magic_invalid", request=request, status=400)
+            if ergebnis == "vergeben":
+                return auth.render_page("magic_invalid", request=request, status=409)
+            ziel = auth.pfad(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
+            return RedirectResponse(ziel, 303)
 
     # ---------- Eigene Sitzungen verwalten ----------
     @r.get("/auth/sessions")
@@ -1222,9 +1303,12 @@ def build_router(auth) -> APIRouter:
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
             keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
+            auth.store.revoke_user_magic_tokens(u["id"])      # Panik-Taste: auch offene Links (Fund 1)
         else:
             cur = auth.session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
+            # Ein offener Adresswechsel kann aus einer der beendeten Sitzungen stammen (Fund 1).
+            auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
         auth.audit("sessions_revoke", u["username"], auth.client_ip(request),
                    scope + (f" api_keys_revoked={keys_widerrufen}" if keys_widerrufen else ""))
         return {"ok": True, "api_keys_revoked": keys_widerrufen,
@@ -1382,15 +1466,17 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
             # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
-            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) reist hier deshalb „kein
-            # Beleg" mit — eine Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit
-            # dem Schalter zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
+            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) und ohne Beleg-Attribut
+            # (`saml_attr_email_verified`) reist hier deshalb „kein Beleg" mit — eine
+            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit einem von beiden
+            # zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
             # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
                                                   email_bestaetigt=bool(
-                                                      cfg.saml_email_trusted and u.get("email")
+                                                      (cfg.saml_email_trusted or security.beleg_attribut(cfg, "saml"))
+                                                      and u.get("email")
                                                       and u.get("email_verified")))
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:

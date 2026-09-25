@@ -201,6 +201,8 @@ def build_admin_router(auth) -> APIRouter:
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
         keys = auth._keys_widerrufen(uid, "admin_passwort")
+        # Und offene Links — ein Adresswechsel aus der übernommenen Sitzung fällt mit (Fund 1).
+        auth.store.revoke_user_magic_tokens(uid)
         protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
         return {"ok": True, "api_keys_revoked": keys}
 

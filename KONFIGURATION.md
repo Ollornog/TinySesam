@@ -69,7 +69,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `admin_ui_enabled` | `bool` | `True` | eingebaute HTML-UI; False = nur JSON-API (fürs Einbetten in ein eigenes Panel) |
 | `account_enabled` | `bool` | `True` | eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar) |
 | `forward_auth_enabled` | `bool` | `False` | /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik) |
-| `forward_headers` | `dict` | `dict` | Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups. Sonst **Feld → Headername** (oder Liste von Namen); was hier nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups. {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"} Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders). |
+| `forward_headers` | `dict` | `dict` | Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups und Remote-Id (die Konto-ID — stabil über Umbenennung und Mailwechsel, seit 2026-09-25). Sonst **Feld → Headername** (oder Liste von Namen); was hier nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups · id. Der Proxy muss JEDEN gesetzten Header selbst setzen (überschreiben) — sonst reicht er einen vom Browser mitgeschickten gleichnamigen durch (deploy/forward-auth/*). {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"} Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders). |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) |
 | `login_identifier` | `str` | `"both"` | Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
 
@@ -109,6 +109,14 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `magiclink_enabled` | `bool` | `False` | Anmeldung per Einmal-Link — braucht einen Mailer |
 | `magiclink_ttl_min` | `int` | `15` | Gültigkeit eines Einmal-Links |
 | `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
+
+## Selbstbedienung: Adresse und Benutzername (PO-Entscheid 2026-09-25)
+
+| Feld | Typ | Vorgabe | Bedeutung |
+|---|---|---|---|
+| `self_service_email_change` | `bool` | `True` | Jeder ändert seine E-Mail-Adresse selbst (Konto-Seite, frischer Step-up). Die neue gilt erst nach dem Klick auf den Bestätigungslink an sie; die alte bekommt einen Hinweis. Braucht einen Mailer — ohne ihn gibt es den Weg nicht. |
+| `self_service_username_change` | `bool` | `True` | Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus `login_identifier="email"`, dort folgt der Name der Adresse. Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id` (die Konto-ID). |
+| `email_change_ttl_min` | `int` | `60` | Gültigkeit des Bestätigungslinks für eine neue Adresse |
 
 ## E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar)
 
@@ -206,7 +214,8 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `ldap_user_filter` | `str` | `"(uid={username})"` | Suchfilter für das Konto; `{username}` wird eingesetzt |
 | `ldap_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung des Verzeichniseintrags (F-11). Leer = der Reihe nach `entryUUID` (OpenLDAP, lldap) und `objectGUID` (Active Directory) versuchen. Daran hängt die Zuordnung zum lokalen Konto — ein Benutzername taugt dafür nicht: Wer im Verzeichnis umbenennt oder ein gelöschtes Konto unter demselben Namen neu anlegt, bekäme sonst dasselbe lokale Konto mitsamt seinen Rollen. |
 | `ldap_attr_email` | `str` | `"mail"` | LDAP-Attribut mit der E-Mail-Adresse |
-| `ldap_email_trusted` | `bool` | `True` | Adressen aus dem Verzeichnis vertrauen (PO-Entscheid 2026-09-24)? LDAP liefert keinen Beleg wie OIDC `email_verified`. `True` (Vorgabe, das Verzeichnis ist meist das eigene): Die Adresse gilt als belegt — sie geht ins Konto, als `Remote-Email` an die App und trägt Rechte (Erst-Admin über `admin_identifiers`). `False`: Sie wird nicht verwendet (wie H-3 bei OIDC). Auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen. |
+| `ldap_email_trusted` | `bool` | `False` | Adressen aus dem Verzeichnis pauschal vertrauen? LDAP liefert keinen Beleg wie OIDC `email_verified`. `False` (Vorgabe seit PO-Entscheid 2026-09-25): Die Adresse wird nicht direkt verwendet — mit `federation_email_confirm` bestätigt der Inhaber sie per Link, oder `ldap_attr_email_verified` nennt einen Beleg. `True`: Das Verzeichnis ist gepflegt, niemand ändert sein `mail`-Attribut selbst — die Adresse gilt als belegt und trägt Rechte (Erst-Admin über `admin_identifiers`). |
+| `ldap_attr_email_verified` | `str` | `""` | LDAP-Attribut, dessen wahrer Wert ("TRUE", "1", "yes") die Adresse DIESES Eintrags belegt — für Verzeichnisse, die das führen. Leer = keins. |
 | `ldap_attr_name` | `str` | `"cn"` | LDAP-Attribut mit dem Anzeigenamen |
 | `ldap_group_attr` | `str` | `"memberOf"` | Attribut mit Gruppen-Zugehörigkeit |
 | `ldap_allowed_groups` | `list[str]` | `list` | leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring) |
@@ -250,7 +259,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `saml_idp_x509cert` | `str` | `""` | IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END) |
 | `saml_attr_username` | `str` | `""` | Attribut mit dem Benutzernamen; leer = NameID |
 | `saml_attr_email` | `str` | `"email"` | SAML-Attribut mit der E-Mail-Adresse |
-| `saml_email_trusted` | `bool` | `False` | Adressen aus der Assertion vertrauen (PO-Entscheid 2026-09-24)? SAML kennt keinen Beleg. `False` (Vorgabe): Die Adresse wird nicht verwendet — kein Konto-Attribut, kein `Remote-Email`, und ein Kontoname mit `@` (NameID im Format emailAddress) wird durch einen Ersatznamen ersetzt, wie H-3 bei OIDC. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne Selbstregistrierung) — sie gilt als belegt und trägt Rechte. |
+| `saml_email_trusted` | `bool` | `False` | Adressen aus der Assertion pauschal vertrauen? SAML kennt keinen Beleg. `False` (Vorgabe): Die Adresse wird nicht direkt verwendet — kein Konto-Attribut, kein `Remote-Email`, ein Kontoname mit `@` weicht einem Ersatznamen (wie H-3 bei OIDC); mit `federation_email_confirm` bestätigt der Inhaber sie per Link, oder `saml_attr_email_verified` nennt einen Beleg. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne Selbstregistrierung). |
+| `saml_attr_email_verified` | `str` | `""` | Attribut der Assertion, dessen wahrer Wert die Adresse belegt (z. B. ein Keycloak-Mapper für `emailVerified`). Leer = keins. |
+| `federation_email_confirm` | `bool` | `True` | Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid 2026-09-25): Nach der Anmeldung geht einmal ein Bestätigungslink an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`. |
 | `saml_attr_name` | `str` | `"displayName"` | SAML-Attribut mit dem Anzeigenamen |
 | `saml_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion. Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt. |
 | `saml_attr_groups` | `str` | `"groups"` | SAML-Attribut mit den Gruppen (für saml_group_role_map) |
@@ -287,4 +298,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-152 Felder, erzeugt aus `tinysesam/config.py`.
+158 Felder, erzeugt aus `tinysesam/config.py`.
