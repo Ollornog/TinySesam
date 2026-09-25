@@ -2666,6 +2666,13 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
+    def offener_token(self, user_id, purpose, email) -> bool:
+        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an
+        diese Adresse? Damit nicht jede Anmeldung einen neuen Bestätigungslink verschickt."""
+        return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? AND email=? "
+                              "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
+                              (user_id, purpose, email, _now())))
+
     def revoke_user_magic_tokens(self, user_id) -> int:
         """Alle noch offenen Einmal-Token eines Kontos verwerfen (Sperre durch den Betreiber).
 

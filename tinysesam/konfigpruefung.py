@@ -380,16 +380,19 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     # Erst-Admin per Allowlist-ADRESSE, während SAML oder LDAP Konten selbst anlegt: Der
     # Konstruktor verbietet an dieser Stelle Allowlist-*Namen* (die bestätigt niemand). Eine
     # Adresse bleibt erlaubt — sie trägt die Entscheidung aber nur mit Beleg. SAML und LDAP
-    # liefern keinen; seit dem PO-Entscheid 2026-09-24 sagt der Betreiber je Quelle, ob er ihren
-    # Adressen traut (`ldap_email_trusted`, Vorgabe ja; `saml_email_trusted`, Vorgabe nein).
-    # Nicht vertraut: Die Laufzeit befördert nie (fail-closed, F-14). Vertraut: Die Adresse
-    # befördert — richtig nur, wenn niemand sie selbst eintragen kann.
+    # liefern keinen; seit den PO-Entscheiden 2026-09-24/25 sagt der Betreiber je Quelle, ob er
+    # ihren Adressen traut (`*_email_trusted`, Vorgabe nein) oder welches Attribut sie belegt
+    # (`*_attr_email_verified`). Nicht vertraut: Die Laufzeit befördert nie (fail-closed, F-14) —
+    # und der Bestätigungslink geht an keine Allowlist-Adresse. Vertraut oder per Attribut
+    # belegbar: Die Adresse befördert — richtig nur, wenn niemand sie oder das Attribut selbst
+    # eintragen kann.
     allowlist_adressen = sorted({str(i).strip() for i in
                                  (getattr(config, "admin_identifiers", None) or [])
                                  if "@" in str(i)})
-    quellen = [(name, _an(config, vertrauen)) for an, anlegen, vertrauen, name in (
-        ("saml_enabled", "saml_auto_create", "saml_email_trusted", "SAML"),
-        ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "LDAP"))
+    quellen = [(name, _an(config, vertrauen) or bool(str(getattr(config, beleg, "") or "").strip()))
+               for an, anlegen, vertrauen, beleg, name in (
+        ("saml_enabled", "saml_auto_create", "saml_email_trusted", "saml_attr_email_verified", "SAML"),
+        ("ldap_enabled", "ldap_auto_create", "ldap_email_trusted", "ldap_attr_email_verified", "LDAP"))
         if _an(config, an) and _an(config, anlegen)]
     ohne_beleg = [name for name, vertraut in quellen if not vertraut]
     mit_beleg = [name for name, vertraut in quellen if vertraut]
@@ -398,7 +401,8 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
             + " und ".join(ohne_beleg) +
             " legt Konten beim ersten Login selbst an, ohne dass der Betreiber den Adressen "
-            "dieser Quelle traut (*_email_trusted=False). Über diese Wege wird die Adresse NIE "
+            "dieser Quelle traut (*_email_trusted=False, kein *_attr_email_verified). Über diese "
+            "Wege wird die Adresse NIE "
             "zum Erst-Admin — die Adresse wird dort gar nicht verwendet. Der belegte Weg ist das "
             "Einmal-Token: anmelden, dann /auth/claim-admin (s. admin_claim_ttl_min); danach "
             "vergibt der Erst-Admin die Rechte selbst.")
@@ -406,10 +410,11 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         warnungen.append(
             f"admin_identifiers nennt die Adresse(n) {allowlist_adressen}, und "
             + " und ".join(mit_beleg) +
-            " gilt als vertraute Quelle (*_email_trusted=True): Wer dort eine dieser Adressen "
-            "trägt, wird beim ersten Login Erst-Admin. Das ist nur richtig, wenn niemand seine "
-            "Adresse in dieser Quelle selbst ändern kann (kein Self-Service für das mail-Attribut, "
-            "kein IdP mit Selbstregistrierung) — sonst *_email_trusted=False und /auth/claim-admin.")
+            " gilt als vertraute Quelle (*_email_trusted=True oder ein Beleg-Attribut "
+            "*_attr_email_verified): Wer dort eine dieser Adressen belegt trägt, wird beim ersten "
+            "Login Erst-Admin. Das ist nur richtig, wenn niemand seine Adresse (bzw. das "
+            "Beleg-Attribut) in dieser Quelle selbst ändern kann (kein Self-Service für das "
+            "mail-Attribut, kein IdP mit Selbstregistrierung) — sonst beides aus und /auth/claim-admin.")
     # LDAP nicht vertraut, aber der Suchfilter findet Konten über die Adresse: Dann ist die
     # Eingabe beim Login eine Adresse, die niemand belegt. TinySesam nimmt sie nicht als
     # Kontonamen (Ersatzname `ldap-…`), braucht dafür aber eine stabile Kennung.

@@ -94,10 +94,15 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 | | Regel |
 |---|---|
 | Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Schalter `self_service_username_change` |
-| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Beim Klick wird noch einmal geprüft (409, wenn inzwischen vergeben). Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
-`username_changed`, `email_change_requested`, `email_change_taken`, `email_changed`.
+`username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
+(Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
+LDAP/SAML). Die Links
+eines Wechsels haben ein eigenes Kontingent je Zieladresse (Topf `wechsel`) — Anträge Fremder auf
+eine Adresse verbrauchen nicht das des Anmelde-Links. Derselbe Weg bestätigt Adressen aus LDAP und
+SAML (Tabelle unter „Föderierte Identitäten verwalten").
 
 ## Owner
 
@@ -205,18 +210,34 @@ Seite gehört und sich nicht ändert:
   nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
   prüft: `oidc_email_verified_default=True`.
 - **SAML und LDAP liefern keinen Beleg** — der Betreiber sagt je Quelle, ob er ihren Adressen traut
-  (PO-Entscheid 2026-09-24):
+  (PO-Entscheide 2026-09-24 und 2026-09-25):
 
   | Schalter | Vorgabe | vertraut | nicht vertraut |
   |---|---|---|---|
-  | `ldap_email_trusted` | **an** (das Verzeichnis ist meist das eigene) | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse wird nicht verwendet (wie H-3) |
-  | `saml_email_trusted` | **aus** | wie oben | Adresse nicht verwendet; ein Kontoname mit `@` (NameID emailAddress, UPN) weicht einem Ersatznamen `saml-<hash>` |
+  | `ldap_email_trusted` | **aus** | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse nicht direkt verwendet (wie H-3); Bestätigung per Link (unten) |
+  | `saml_email_trusted` | **aus** | wie oben | wie oben; dazu weicht ein Kontoname mit `@` (NameID emailAddress, UPN) einem Ersatznamen `saml-<hash>` |
 
-  **LDAP auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen** — sonst trägt
-  sich jemand die Adresse aus `admin_identifiers` ein und ist beim ersten Login Erst-Admin (das war
-  F-14; die Vorgabe „vertraut" nimmt diesen Schutz bewusst zurück). Vertraut belegt ein Login nur
-  dieselbe Adresse, die schon am Konto steht, und nur nach oben; ein neuer Wert im Verzeichnis
-  ändert die Adresse eines bestehenden Kontos nicht. Bestehende Konten behalten, was sie haben.
+  Drei Wege zum Vertrauen, vom schwächsten zum stärksten Anspruch an die Quelle:
+
+  1. **Bestätigung per Link — der Normalweg**, sobald Mail eingerichtet ist
+     (`federation_email_confirm`, Vorgabe an; braucht Mailer und `base_url`). Nach der Anmeldung
+     geht ein Link an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos,
+     mit Beleg. Derselbe Weg wie beim Adresswechsel der Selbstbedienung. Nur für Konten ohne
+     belegte Adresse, höchstens einer je Konto und Tag, keiner, solange einer offen ist. Gehört die
+     Adresse schon einem anderen Konto, geht kein Link hinaus (Audit `email_change_taken`).
+  2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
+     `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
+     Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,
+     wenn Nutzer das Attribut nicht selbst setzen können.
+  3. **Pauschaler Schalter** für gepflegte Quellen: `ldap_email_trusted=True` für ein Verzeichnis,
+     in dem niemand sein `mail`-Attribut selbst ändert; `saml_email_trusted=True` für einen
+     Firmen-IdP ohne Selbstregistrierung. Wer ihn setzt, wo Nutzer ihre Adresse selbst pflegen,
+     öffnet F-14 wieder: Jemand trägt sich die Adresse aus `admin_identifiers` ein und ist beim
+     ersten Login Erst-Admin.
+
+  Vertraut belegt ein Login dieselbe Adresse, die schon am Konto steht, nur nach oben; ein Konto
+  ohne Adresse bekommt sie, wenn sie frei ist. Ein neuer Wert in der Quelle ändert die Adresse
+  eines bestehenden Kontos nicht — das tut der Inhaber selbst über die Konto-Seite.
   Bei nicht vertrauter Quelle wird ein unbelegter Name **nie über den Namen** einem vorhandenen
   Konto zugeordnet — nur über die stabile Kennung, sonst abgewiesen. Unbelegt: bei SAML ein Name
   mit `@` (NameID emailAddress) oder einer aus dem Adress-Attribut selbst (`saml_attr_username` =

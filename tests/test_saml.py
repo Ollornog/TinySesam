@@ -529,4 +529,18 @@ else:                                                    # pragma: no cover
     print("  – F-21 gegen eine echt signierte Assertion nicht gefahren (cryptography/lxml fehlen); "
           "gemessen ist oben nur der Settings-Schalter")
 
+# ---------- Beleg-Attribut (PO-Entscheid 2026-09-25): wirkt wie der Schalter, auch für den Erst-Admin ----------
+# Bis hierher reiste über die ACS nur mit `saml_email_trusted` ein Beleg mit. Mit dem Attribut
+# stand der Beleg dann zwar am Konto, die Anmeldung selbst beförderte aber nicht — erst die
+# nächste über einen lokalen Faktor. Konfig-Prüfung und Laufzeit sagten Verschiedenes.
+for wert, soll in (("true", True), ("false", False)):
+    db, auth, app = build(admin_identifiers=["boss@example.com"], saml_attr_email_verified="email_verified")
+    auth.saml = FakeSAML(nameid="bossin", attrs={"email": ["boss@example.com"], "email_verified": [wert]})
+    r = TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x", "RelayState": "/"},
+                             follow_redirects=False)
+    u = auth.store.get_user_by_name("bossin")
+    assert r.status_code == 303 and bool(u["is_admin"]) is soll, (wert, r.status_code, dict(u))
+    os.remove(db)
+ok("Beleg-Attribut „true“ befördert die Allowlist-Adresse wie der Schalter, „false“ nicht")
+
 print("\nSAML OK ✅")

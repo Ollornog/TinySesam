@@ -381,6 +381,8 @@ class LDAPClient:
                 info["name"] = _first(entry, cfg.ldap_attr_name) or username
                 info["groups"] = _list(entry, cfg.ldap_group_attr)
                 info["id"] = _stabile_kennung(entry, cfg)
+                if cfg.ldap_attr_email_verified:
+                    info["email_verified"] = _first(entry, cfg.ldap_attr_email_verified)
             conn.unbind()
             return info
         except _ausfall_arten() as e:
@@ -419,6 +421,8 @@ def _attributliste(cfg) -> list:
     Server sie auch nicht: Die Bindung wäre dann still ohne Kennung, also wieder über den Namen.
     """
     namen = [cfg.ldap_attr_email, cfg.ldap_attr_name, cfg.ldap_group_attr]
+    if cfg.ldap_attr_email_verified:
+        namen.append(cfg.ldap_attr_email_verified)
     namen += [cfg.ldap_attr_id] if cfg.ldap_attr_id else list(STABILE_KENNUNG_ATTRIBUTE)
     gesehen, raus = set(), []
     for a in namen:

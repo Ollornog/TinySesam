@@ -32,7 +32,7 @@ def _aufbau(**cfg):
     mails: list = []
     grund = dict(db_path=str(Path(tempfile.mkdtemp()) / "t.db"), cookie_secure=False, csrf_enabled=False,
                  passkey_enabled=False, base_url="http://testserver", lang="de",
-                 admin_identifiers=["chef-reserviert"], password_reset_enabled=True)
+                 admin_identifiers=["chef-reserviert", "Boss@Example.com"], password_reset_enabled=True)
     grund.update(cfg)
     auth = TinySesam(TinySesamConfig(**grund))
     auth.set_mailer(lambda to, betreff, text, html=None: mails.append((to, betreff, text)))
@@ -121,7 +121,8 @@ konto = auth.get_user(uid)
 r.check("… eingelöst: neue Adresse MIT Beleg, zurück zur Konto-Seite",
         fertig.status_code == 303 and fertig.headers["location"] == "/auth/account"
         and konto["email"] == "carla.neu@example.com" and konto["email_verified"], f"{fertig.status_code} {dict(konto)}")
-r.check("… die alte Adresse bekommt einen Hinweis", [m[0] for m in mails] == ["carla@example.com"], str(mails))
+r.check("… die alte Adresse bekommt einen Hinweis — ohne Link (nichts, dessen Basis zu prüfen wäre)",
+        [m[0] for m in mails] == ["carla@example.com"] and "://" not in mails[0][2], str(mails))
 r.check("… offene Links an die alte Adresse gelten nicht mehr",
         auth.peek_magic(reset_alt, purpose="reset_password") is None)
 r.check("… Sicherheitsereignis mit alt/neu",
@@ -135,6 +136,20 @@ r.check("eine vergebene Adresse: dieselbe Antwort, aber kein Link (kein Orakel),
         vergeben.status_code == 200 and vergeben.json() == {"ok": True, "sent": True} and not mails
         and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_taken'") is not None)
 r.check("ungültige Adresse → 400", c.post("/auth/account/email", json={"email": "kaputt"}).status_code == 400)
+# Allowlist-Adresse: Klickte ihr Inhaber den Link (auf einer Instanz ohne Admin), trüge das fremde
+# Konto die belegte Adresse und wäre beim nächsten Login Erst-Admin.
+mails.clear()
+reserviert = c.post("/auth/account/email", json={"email": "boss@EXAMPLE.com"})
+auth._hinweis_ausgang.abwarten()
+r.check("eine Adresse aus admin_identifiers: dieselbe Antwort, kein Link, Zeile im Audit-Log",
+        reserviert.status_code == 200 and reserviert.json() == {"ok": True, "sent": True} and not mails
+        and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_reserved'") is not None, str(mails))
+mails.clear()
+c.post("/auth/account/email", json={"email": "spaeter.boss@example.com"})
+link3 = re.search(r"http://testserver(/auth/email/[^\s]+)", mails[0][2]).group(1)
+auth.cfg.admin_identifiers.append("spaeter.boss@example.com")
+r.check("… kommt sie erst nach dem Antrag in die Liste: 409 beim Einlösen, nichts geändert",
+        TestClient(app).post(link3).status_code == 409 and auth.get_user(uid)["email"] == "carla.neu@example.com")
 # Kollision beim Bestätigen: Zwischen Antrag und Klick belegt ein anderes Konto die Adresse.
 mails.clear()
 c.post("/auth/account/email", json={"email": "frei@example.com"})

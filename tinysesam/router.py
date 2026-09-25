@@ -162,13 +162,16 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
         # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
-        # Betreiber dem Verzeichnis (`ldap_email_trusted`, Vorgabe), entscheidet der Beleg am
-        # Konto (None); sonst reist hier ausdrücklich „kein Beleg" mit: Eine
+        # Betreiber dem Verzeichnis (`ldap_email_trusted`) oder nennt er ein Beleg-Attribut
+        # (`ldap_attr_email_verified`), entscheidet der Beleg am Konto (None) — den setzt
+        # `check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein Beleg" mit: Eine
         # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
         # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
                                               request.headers.get("user-agent"), remember_me,
-                                              email_bestaetigt=(None if cfg.ldap_email_trusted else False)
+                                              email_bestaetigt=(None if (cfg.ldap_email_trusted
+                                                                         or cfg.ldap_attr_email_verified)
+                                                                else False)
                                               if aus_verzeichnis else None)
         if cfg.remember_me_enabled and remember_me:
             auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
@@ -1450,15 +1453,17 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
             # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
-            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) reist hier deshalb „kein
-            # Beleg" mit — eine Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit
-            # dem Schalter zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
+            # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) und ohne Beleg-Attribut
+            # (`saml_attr_email_verified`) reist hier deshalb „kein Beleg" mit — eine
+            # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit einem von beiden
+            # zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
             # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
                                                   email_bestaetigt=bool(
-                                                      cfg.saml_email_trusted and u.get("email")
+                                                      (cfg.saml_email_trusted or cfg.saml_attr_email_verified)
+                                                      and u.get("email")
                                                       and u.get("email_verified")))
             resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:

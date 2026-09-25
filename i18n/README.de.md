@@ -403,10 +403,16 @@ der ausdrücklich `false` sagt, bleibt in beiden Fällen ein Nein.
 
 **SAML und LDAP kennen keinen solchen Beleg**: Kein Standardattribut sagt, dass die Adresse
 geprüft wurde, und ein `mail`-Eintrag im Verzeichnis pflegt vielerorts der Nutzer selbst. Über
-diese beiden Wege wird eine Allowlist-Adresse deshalb **nie** zum Erst-Admin — auch nicht bei
-einem Bestandskonto, das sie schon führt. Die Konfigurationsprüfung sagt das beim Aufbau, und der
-abgewehrte Versuch steht im Sicherheits-Log und im Audit (`admin_bootstrap_denied`). Der belegte
-Weg ist dort der **Einmal-Token**; wer Rechte fortlaufend aus dem IdP steuern will, nimmt danach
+diese beiden Wege wird eine Allowlist-Adresse deshalb per Vorgabe **nie** zum Erst-Admin — auch
+nicht bei einem Bestandskonto, das sie schon führt. Die Konfigurationsprüfung sagt das beim Aufbau,
+und der abgewehrte Versuch steht im Sicherheits-Log und im Audit (`admin_bootstrap_denied`). Mit
+Mailer bestätigt der Inhaber eine solche Adresse nach der Anmeldung per Link
+(`federation_email_confirm`) — eine Allowlist-Adresse bekommt diesen Link nie. Als belegt gilt die
+Adresse nur, wo der Betreiber für die Quelle einsteht, wie `email_verified=true` bei OIDC:
+`ldap_email_trusted`/`saml_email_trusted` für ein gepflegtes Verzeichnis oder einen Firmen-IdP
+ohne Selbstregistrierung, oder ein Beleg-Attribut (`ldap_attr_email_verified`/
+`saml_attr_email_verified`) für einen IdP, der eines führt. Sonst ist der belegte Weg der
+**Einmal-Token**; wer Rechte fortlaufend aus dem IdP steuern will, nimmt danach
 `saml_group_role_map`/`ldap_group_role_map` (Ziel `__admin__`) — das entscheidet der Betreiber in
 der Konfiguration, nicht ein Attribut in der Anmeldung.
 
@@ -1045,7 +1051,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**50 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**51 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

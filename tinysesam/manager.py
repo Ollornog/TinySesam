@@ -205,6 +205,14 @@ def _samesite(wert: str) -> Literal["lax", "strict", "none"]:
     return cast(Literal["lax", "strict", "none"], wert)
 
 
+def _beleg_wahr(wert) -> bool:
+    """Sagt ein Attribut aus LDAP/SAML „diese Adresse ist geprüft"? Nur ausdrücklich wahre Werte
+    zählen (True, "true", "1", "yes", "ja"); alles andere — auch ein fehlendes Attribut — nicht."""
+    if isinstance(wert, bool):
+        return wert
+    return str(wert or "").strip().lower() in ("true", "1", "yes", "ja")
+
+
 def _beleg_am_konto(user) -> bool:
     """Der Vermerk `users.email_verified` einer Kontozeile.
 
@@ -419,10 +427,12 @@ class TinySesam:
                 "aber nur je Spalte. Die Anmeldung mit dieser Kennung ist mehrdeutig, der "
                 "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Zu ändern ist "
                 "eine der beiden Kennungen — dafür gibt es weder im Admin-Panel noch im CLI "
-                "einen Weg: die E-Mail über store.set_email(user_id, adresse) aus dem "
-                "(die neue Adresse muss in BEIDEN Spalten frei sein — set_email prüft das nicht) "
-                "einbettenden Dienst, den Benutzernamen nur direkt in der Datenbank "
-                "(UPDATE users SET username=… WHERE id=…). Achtung bei der E-Mail: "
+                "einen Weg, wohl aber: der Inhaber selbst auf der Konto-Seite (Selbstbedienung); "
+                "aus dem einbettenden Dienst den Benutzernamen über "
+                "auth.change_username(user_id, neu) (prüft beide Namensräume; im Modus "
+                "login_identifier='email' folgt der Name der Adresse), die E-Mail über "
+                "store.set_email(user_id, adresse) (die neue Adresse muss in BEIDEN Spalten "
+                "frei sein — set_email prüft das nicht). Achtung bei der E-Mail: "
                 "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
                 "(users.email_verified=0) — der Beleg der alten Adresse gilt nicht für eine "
                 "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
@@ -1561,9 +1571,11 @@ class TinySesam:
         Zählt wie ein Passwort-Login (Faktor 'password').
 
         Die übernommene Adresse (`info["email"]`) ist ein Verzeichnisattribut ohne Beleg — in
-        vielen Verzeichnissen pflegt sie der Nutzer selbst. Seit dem PO-Entscheid 2026-09-24 sagt
-        der Betreiber, ob er ihr traut (`ldap_email_trusted`, Vorgabe ja): Dann gilt sie als
-        belegt und trägt Rechte. Traut er ihr nicht, wird sie nicht verwendet, und eine
+        vielen Verzeichnissen pflegt sie der Nutzer selbst. Der Betreiber sagt, ob er ihr traut
+        (`ldap_email_trusted`, seit dem PO-Entscheid 2026-09-25 Vorgabe nein; oder für diesen
+        Eintrag per `ldap_attr_email_verified`): Dann gilt sie als belegt und trägt Rechte. Traut
+        er ihr nicht, wird sie nicht direkt verwendet (Bestätigungslink, s.
+        `_adresse_aus_quelle_belegen`), und eine
         eingetippte Adresse wird nicht Kontoname (Ersatzname `ldap-…`, keine Zuordnung über den
         Namen). Für diesen Fall — und das war bis dahin die Regel — galt und gilt, **zwei**
         Folgen, beide nötig:
@@ -1636,13 +1648,16 @@ class TinySesam:
         # übernähme er deren Konto (Angriff auf die dritte Runde). Wie bei SAML: Ersatzname,
         # keine Zuordnung über den Namen.
         kennung_ldap = info.get("id") or ""
+        # Vertraut: pauschal (`ldap_email_trusted`) oder für DIESEN Eintrag belegt (Attribut).
+        quelle_vertraut = bool(self.cfg.ldap_email_trusted) or (
+            bool(self.cfg.ldap_attr_email_verified) and _beleg_wahr(info.get("email_verified")))
         ldap_name = username
         name_zuordnen = True
         # Maßgeblich ist, ob die Eingabe der unbelegte Wert IST — nicht, ob sie wie eine Adresse
         # aussieht: `mail` ist ein freies Attribut (RFC 4524), ein Angreifer setzt es auch auf
         # `chefin` (Gegenprüfung); ein UPN mit `@` dagegen ist die Bind-Kennung und belegt.
         mail_wert = norm_kennung(info.get("email") or "")
-        if name_ungueltig(username) or (not self.cfg.ldap_email_trusted and mail_wert
+        if name_ungueltig(username) or (not quelle_vertraut and mail_wert
                                         and norm_kennung(username) == mail_wert):
             ldap_name = "ldap-" + hashlib.sha256((kennung_ldap or username).encode()).hexdigest()[:8]
             name_zuordnen = False
@@ -1656,9 +1671,9 @@ class TinySesam:
                 # die Vorgabe `True`, wäre der Riegel oben nur für DIESEN Login zu — der
                 # nächste Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey),
                 # reist ohne Beleg an, liest den Vermerk und befördert doch (B-umgehung-1 aus T-13).
-                # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er dem Verzeichnis
-                # traut (`ldap_email_trusted`, Vorgabe ja): dann mit Beleg, sonst gar nicht (H-3).
-                vertraut = bool(self.cfg.ldap_email_trusted)
+                # Der Betreiber sagt, ob er dem Verzeichnis traut (`ldap_email_trusted`, Vorgabe
+                # nein, oder das Beleg-Attribut): dann mit Beleg, sonst gar nicht (H-3).
+                vertraut = quelle_vertraut
                 name = ldap_name
                 i = 1
                 while name != username and self.kennung_vergeben(name):
@@ -1679,7 +1694,7 @@ class TinySesam:
                                               name_zuordnen=name_zuordnen)
         if not u or u["disabled"]:
             return None
-        self._adresse_aus_quelle_belegen(u, info.get("email"), self.cfg.ldap_email_trusted)
+        self._adresse_aus_quelle_belegen(u, info.get("email"), quelle_vertraut, "ldap")
         # memberOf liefert ganze DNs → Vergleich nach Bestandteilen (F-19). Bis 0.20.0 stand
         # hier `substring=True` fest verdrahtet, und `group_match` war für LDAP wirkungslos.
         self.apply_idp_groups(u["id"], info.get("groups"), self.cfg.ldap_group_role_map, dn=True)
@@ -1710,7 +1725,8 @@ class TinySesam:
         if not username:
             self.audit("saml_denied", None, ip, "grund=kein_name")
             return None
-        vertraut = bool(cfg.saml_email_trusted)
+        vertraut = bool(cfg.saml_email_trusted) or (
+            bool(cfg.saml_attr_email_verified) and _beleg_wahr(first(attrs, cfg.saml_attr_email_verified)))
         mail = first(attrs, cfg.saml_attr_email)
         # Die stabile Kennung ist die `NameID` — oder ein Attribut, wenn der IdP transiente
         # NameIDs schickt (`saml_attr_id`). Der Name ist nur noch der Rückfall (F-11).
@@ -1767,19 +1783,50 @@ class TinySesam:
             return None
         if not u:
             return None     # Grund steht schon im Audit-Log (Anlegen/Kennung)
-        self._adresse_aus_quelle_belegen(u, mail, vertraut)
+        self._adresse_aus_quelle_belegen(u, mail, vertraut, "saml")
         self.apply_idp_groups(u["id"], as_list(attrs, cfg.saml_attr_groups), cfg.saml_group_role_map)
         return self._als_dict(self.store.get_user(u["id"]))   # frisch (gemappte Rollen)
 
-    def _adresse_aus_quelle_belegen(self, u, mail, vertraut) -> None:
-        """Vertraut der Betreiber den Adressen einer Quelle (LDAP/SAML), belegt ein Login deren
-        Adresse am Konto — aber nur DIESELBE Adresse (über eine andere sagt die Quelle nichts;
-        dieselbe Regel wie beim OIDC-Claim) und nur nach oben: Ohne Vertrauen ist die Quelle
-        stumm, und Schweigen nimmt keinem Konto den Beleg, den der Betreiber selbst gesetzt hat."""
-        if not vertraut or not mail or not u:
+    def _adresse_aus_quelle_belegen(self, u, mail, vertraut, quelle: str = "") -> None:
+        """Die Adresse aus einer Quelle (LDAP/SAML) an das Konto bringen.
+
+        * **Vertraut** (Schalter oder Beleg-Attribut dieses Logins): belegt DIESELBE Adresse am
+          Konto (über eine andere sagt die Quelle nichts; dieselbe Regel wie beim OIDC-Claim),
+          nur nach oben; ein Konto ohne Adresse bekommt sie, wenn sie frei ist (wie H-3 bei OIDC).
+        * **Nicht vertraut** (PO-Entscheid 2026-09-25): Mit `federation_email_confirm`, Mailer und
+          `base_url` geht einmal ein Bestätigungslink an die Adresse — derselbe Weg wie der
+          Mailwechsel der Selbstbedienung (`request_email_change`). Erst der Klick macht sie zur
+          Adresse des Kontos. Nur für Konten OHNE belegte Adresse, höchstens einmal am Tag.
+        Schweigen nimmt keinem Konto den Beleg, den der Betreiber selbst gesetzt hat."""
+        if not mail or not u:
             return
-        if str(u["email"] or "").strip().lower() == str(mail).strip().lower() and not u["email_verified"]:
-            self.store.set_email_verified(u["id"], True)
+        adresse = norm_email(mail)
+        konto_mail = norm_email(u["email"] or "")
+        if vertraut:
+            if konto_mail == adresse and not u["email_verified"]:
+                self.store.set_email_verified(u["id"], True)
+            elif not konto_mail and not self.kennung_vergeben(adresse, exclude_id=u["id"]):
+                self.store.set_email(u["id"], adresse, verified=True)
+            return
+        # Ein Konto mit belegter Adresse behält sie — auch eine andere als die der Quelle: Die hat
+        # der Inhaber selbst bestätigt (Selbstbedienung), und ein Link bei jeder Anmeldung, der sie
+        # ersetzen will, wäre Belästigung. Wechseln kann er selbst über die Konto-Seite.
+        if u["email_verified"]:
+            return
+        if not (self.cfg.federation_email_confirm and self.cfg.base_url and self.mail_configured()):
+            return
+        # Höchstens ein Link je Konto und Tag, und keiner, solange einer offen ist.
+        if self.store.offener_token(u["id"], "email_change", adresse):
+            return
+        if not self.rl.allow(f"quellmail:{u['id']}", 1, 86400):
+            return
+        try:
+            senden = self.request_email_change(u["id"], adresse, self.cfg.base_url)
+        except (ValueError, ConfigError):
+            return
+        if senden is not None:
+            self.audit("federation_email_confirm", u["username"], detail=f"quelle={quelle} an={adresse}")
+            self._hinweis_ausgang.einreihen(senden)
 
     # ---------- Passkeys verwalten ----------
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
@@ -2943,7 +2990,17 @@ class TinySesam:
         if self.kennung_vergeben(mail, exclude_id=user_id):
             self.audit("email_change_taken", konto["username"], detail=f"neu={mail}")
             return None
-        if not self._mail_ziel_ok(mail, "email_change"):
+        # Eine Adresse aus `admin_identifiers` bekommt keinen Wechsel-Link (wie der Name): Auf einer
+        # Instanz ohne Admin klickte der Inhaber „bestätige deine neue Adresse" leicht für seine
+        # eigene Einrichtung — und das FREMDE Konto trüge danach die belegte Allowlist-Adresse und
+        # wäre bei der nächsten Anmeldung Erst-Admin. Dieselbe Antwort wie „vergeben".
+        if self._allowlist_adresse(mail):
+            self.audit("email_change_reserved", konto["username"], detail=f"neu={mail}")
+            return None
+        # Eigener Topf (wie der Registrierungs-Hinweis, Angriff A2): Den Wechsel auf eine FREMDE
+        # Adresse beantragt jeder mit einem Konto — im Topf `mail` verbrauchte er das Kontingent,
+        # mit dem sich der Inhaber jener Adresse selbst einen Anmelde-Link schickt.
+        if not self._mail_ziel_ok(mail, "email_change", topf="wechsel"):
             return None
         raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
                                       ttl_min=int(self.cfg.email_change_ttl_min),
@@ -2959,6 +3016,11 @@ class TinySesam:
                                   f'<p><a href="{url}">Adresse bestätigen</a></p>'
                                   f'<p>Warst du das nicht, ignoriere diese E-Mail — es ändert sich nichts.</p>')
         return senden
+
+    def _allowlist_adresse(self, mail) -> bool:
+        """Steht diese Adresse in `admin_identifiers`?"""
+        return norm_email(mail or "") in {norm_email(i) for i in (self.cfg.admin_identifiers or [])
+                                          if "@" in str(i)}
 
     def confirm_email_change(self, raw, ip: Optional[str] = None) -> Optional[str]:
         """Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines
@@ -2981,6 +3043,9 @@ class TinySesam:
             return None
         if self.kennung_vergeben(mail, exclude_id=uid):
             self.audit("email_change_taken", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
+            return "vergeben"
+        if self._allowlist_adresse(mail):     # erst nach dem Antrag in die Liste gekommen
+            self.audit("email_change_reserved", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
             return "vergeben"
         alt = konto["email"] or ""
         self.store.set_email(uid, mail, verified=True)

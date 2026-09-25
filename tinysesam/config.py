@@ -342,12 +342,16 @@ class TinySesamConfig:
     #: sonst dasselbe lokale Konto mitsamt seinen Rollen.
     ldap_attr_id: str = ""
     ldap_attr_email: str = "mail"     # LDAP-Attribut mit der E-Mail-Adresse
-    #: Adressen aus dem Verzeichnis vertrauen (PO-Entscheid 2026-09-24)? LDAP liefert keinen Beleg
-    #: wie OIDC `email_verified`. `True` (Vorgabe, das Verzeichnis ist meist das eigene): Die
-    #: Adresse gilt als belegt — sie geht ins Konto, als `Remote-Email` an die App und trägt Rechte
-    #: (Erst-Admin über `admin_identifiers`). `False`: Sie wird nicht verwendet (wie H-3 bei OIDC).
-    #: Auf `False` stellen, wenn Nutzer ihr `mail`-Attribut selbst ändern dürfen.
-    ldap_email_trusted: bool = True
+    #: Adressen aus dem Verzeichnis pauschal vertrauen? LDAP liefert keinen Beleg wie OIDC
+    #: `email_verified`. `False` (Vorgabe seit PO-Entscheid 2026-09-25): Die Adresse wird nicht
+    #: direkt verwendet — mit `federation_email_confirm` bestätigt der Inhaber sie per Link, oder
+    #: `ldap_attr_email_verified` nennt einen Beleg. `True`: Das Verzeichnis ist gepflegt, niemand
+    #: ändert sein `mail`-Attribut selbst — die Adresse gilt als belegt und trägt Rechte (Erst-Admin
+    #: über `admin_identifiers`).
+    ldap_email_trusted: bool = False
+    #: LDAP-Attribut, dessen wahrer Wert ("TRUE", "1", "yes") die Adresse DIESES Eintrags belegt —
+    #: für Verzeichnisse, die das führen. Leer = keins.
+    ldap_attr_email_verified: str = ""
     ldap_attr_name: str = "cn"        # LDAP-Attribut mit dem Anzeigenamen
     ldap_group_attr: str = "memberOf"     # Attribut mit Gruppen-Zugehörigkeit
     ldap_allowed_groups: list[str] = field(default_factory=list)  # leer = alle; sonst Gate (DN, "cn=x" oder "x" — kein Teilstring)
@@ -439,12 +443,19 @@ class TinySesamConfig:
     saml_idp_x509cert: str = ""           # IdP-Signaturzertifikat (PEM-Body, ohne BEGIN/END)
     saml_attr_username: str = ""          # Attribut mit dem Benutzernamen; leer = NameID
     saml_attr_email: str = "email"    # SAML-Attribut mit der E-Mail-Adresse
-    #: Adressen aus der Assertion vertrauen (PO-Entscheid 2026-09-24)? SAML kennt keinen Beleg.
-    #: `False` (Vorgabe): Die Adresse wird nicht verwendet — kein Konto-Attribut, kein
-    #: `Remote-Email`, und ein Kontoname mit `@` (NameID im Format emailAddress) wird durch einen
-    #: Ersatznamen ersetzt, wie H-3 bei OIDC. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne
-    #: Selbstregistrierung) — sie gilt als belegt und trägt Rechte.
+    #: Adressen aus der Assertion pauschal vertrauen? SAML kennt keinen Beleg. `False` (Vorgabe):
+    #: Die Adresse wird nicht direkt verwendet — kein Konto-Attribut, kein `Remote-Email`, ein
+    #: Kontoname mit `@` weicht einem Ersatznamen (wie H-3 bei OIDC); mit
+    #: `federation_email_confirm` bestätigt der Inhaber sie per Link, oder `saml_attr_email_verified`
+    #: nennt einen Beleg. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne Selbstregistrierung).
     saml_email_trusted: bool = False
+    #: Attribut der Assertion, dessen wahrer Wert die Adresse belegt (z. B. ein Keycloak-Mapper für
+    #: `emailVerified`). Leer = keins.
+    saml_attr_email_verified: str = ""
+    #: Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid
+    #: 2026-09-25): Nach der Anmeldung geht einmal ein Bestätigungslink an die Adresse aus der Quelle;
+    #: erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`.
+    federation_email_confirm: bool = True
     saml_attr_name: str = "displayName" # SAML-Attribut mit dem Anzeigenamen
     #: Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion.
     #: Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus

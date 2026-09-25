@@ -54,8 +54,10 @@ r = c.post("/auth/login", data={"username": "alice", "password": "ldappw", "next
 assert r.status_code == 303, r.status_code
 assert c.get("/geheim", headers=JSON).json() == {"u": "alice"}
 u = auth.store.get_user_by_name("alice")
-assert u and u["email"] == "alice@corp" and u["display_name"] == "Alice"
-ok("LDAP-Login legt lokalen User automatisch an (E-Mail/Name übernommen)")
+# Seit dem PO-Entscheid 2026-09-25 ist LDAP per Vorgabe NICHT vertraut: Die Adresse kommt erst
+# nach einer Bestätigung ins Konto (federation_email_confirm, hier ohne Mailer/base_url gar nicht).
+assert u and not u["email"] and u["display_name"] == "Alice", dict(u)
+ok("LDAP-Login legt lokalen User automatisch an (Name übernommen, unbestätigte Adresse nicht)")
 
 # falsches LDAP-Passwort → 401
 c.get("/auth/logout")
@@ -125,15 +127,15 @@ ok("F-14: eine Allowlist-ADRESSE aus einem nicht vertrauten Verzeichnis beförde
 os.remove(db)
 
 # Die Vorgabe `ldap_email_trusted=True` (PO-Entscheid B): Das Verzeichnis gilt als gepflegt, seine
-# Adresse als belegt — und trägt damit Rechte, bis zum Erst-Admin. Das ist die bewusste Umkehr
-# von F-14 in der Vorgabe; wer Nutzern das `mail`-Attribut überlässt, stellt auf False.
-db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"])
+# Adresse als belegt — und trägt damit Rechte, bis zum Erst-Admin. Seit 2026-09-25 ist das NICHT
+# mehr die Vorgabe (F-14 gilt wieder); der Betreiber sagt es ausdrücklich für ein gepflegtes Verzeichnis.
+db, auth, c = baue_ohne_admin(admin_identifiers=["boss@example.com"], ldap_email_trusted=True)
 auth.ldap = FakeLDAP({"boss": {"password": "x", "email": "boss@example.com", "groups": []}})
 assert c.post("/auth/login", data={"username": "boss", "password": "x"},
               follow_redirects=False).status_code == 303
 u = auth.store.get_user_by_name("boss")
 assert u["email"] == "boss@example.com" and u["email_verified"] and u["is_admin"], dict(u)
-ok("ldap_email_trusted (Vorgabe): die Verzeichnis-Adresse gilt als belegt und trägt Rechte")
+ok("ldap_email_trusted=True: die Verzeichnis-Adresse gilt als belegt und trägt Rechte")
 os.remove(db)
 
 # Gegenprobe, sonst wäre die Prüfung oben auch grün, wenn der Bootstrap komplett kaputt wäre:
@@ -213,7 +215,9 @@ os.remove(db)
 for was, verzeichnis, kennung in (
         ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve"),
         ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com")):
-    db, auth, c = baue_ohne_admin()
+    # Mit vertrauter Quelle: Nur dann kommt die Adresse überhaupt ins Konto (Vorgabe seit 2026-09-25:
+    # nicht vertraut — dann besetzt sie ohnehin nichts).
+    db, auth, c = baue_ohne_admin(ldap_email_trusted=True)
     lokal = auth.create_user("chef", password="lokal12345", email="chef@example.com")
     auth.ldap = FakeLDAP({kennung: dict(verzeichnis, groups=[])})
     r = c.post("/auth/login", data={"username": kennung, "password": "x"}, follow_redirects=False)
@@ -746,6 +750,9 @@ assert c11d.post("/auth/login", data={"username": "bob", "password": "ldappw"},
 _uid_bob = auth11d.store.get_user_by_name("bob")["id"]
 assert auth11d.nur_foederiert(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
 c11d.get("/auth/logout")
+# Die Anmeldung schickt (Adresse nicht vertraut) einen Bestätigungslink — gemessen wird hier nur der Reset.
+auth11d._hinweis_ausgang.abwarten()
+_post11d.clear()
 assert c11d.post("/auth/forgot", data={"email": "bob@example.com"}).status_code == 200
 assert _post11d == [], f"LDAP-Konto ohne Kennung bekam einen Reset-Link: {_post11d}"
 ok("A-4: ein LDAP-Konto ohne stabile Kennung bekommt über den echten Login-Weg keinen Reset-Link")

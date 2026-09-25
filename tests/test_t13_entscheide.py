@@ -1253,7 +1253,8 @@ r.check("… ein Konto ohne zweiten Faktor darf es weiter (der Preis von C)",
 
 # S5: Die Konfigurationsprüfung sagt, was die Laufzeit tut.
 _w_v = " ".join(_kp3.pruefe(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
-                                             ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True))[1])
+                                             ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
+                                             ldap_email_trusted=True))[1])
 _w_n = " ".join(_kp3.pruefe(TinySesamConfig(db_path=":memory:", admin_identifiers=["chef@example.com"],
                                              ldap_enabled=True, ldap_url="ldaps://d.example", ldap_auto_create=True,
                                              ldap_email_trusted=False))[1])
