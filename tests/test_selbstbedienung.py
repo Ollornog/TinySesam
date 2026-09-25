@@ -236,6 +236,16 @@ r.check("eine Adresse, die erst gefaltet ungültig ist → 400",
         _login(ap_s, "streuer").post("/auth/account/email",
                                      json={"email": "x\uff20evil.example@example.com"}).status_code == 400)
 
+# Ohne base_url und mit fremdem Host: die Antwort sagt „kein Mailversand", nicht die Interna der
+# Basis-Prüfung (CodeQL py/unreachable-except: `ConfigError` ist ein `ValueError`).
+a_b, ap_b, post_b, _ = _aufbau(base_url="", password_reset_enabled=False)
+a_b.create_user("ohnebasis", password=PW, email="ohnebasis@example.com")
+_ohne = _login(ap_b, "ohnebasis").post("/auth/account/email", json={"email": "neu@example.com"},
+                                       headers={"host": "evil.example"})
+r.check("ohne base_url, fremder Host: 400 mit der Meldung „kein Mailversand“, kein Link",
+        _ohne.status_code == 400 and _ohne.json().get("detail") == a_b.t("api.no_mail") and not post_b,
+        f"{_ohne.status_code} {_ohne.text[:160]}")
+
 # Mail-Modus: der Benutzername zieht mit.
 auth_e, app_e, mails_e, _ = _aufbau(login_identifier="email", signup_require_email=True)
 uid_e = auth_e.create_user("emil@example.com", password=PW, email="emil@example.com")

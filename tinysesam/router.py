@@ -1220,10 +1220,12 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(429, auth.t("api.too_many"))
             try:
                 senden = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
+            except ConfigError:
+                # Zuerst: `ConfigError` IST ein `ValueError` (CodeQL py/unreachable-except). In
+                # umgekehrter Reihenfolge ging die Meldung zur Basis-Adresse als Antworttext hinaus.
+                raise HTTPException(400, auth.t("api.no_mail"))
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            except ConfigError:
-                raise HTTPException(400, auth.t("api.no_mail"))
             # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
             # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
             antwort = JSONResponse({"ok": True, "sent": True})
