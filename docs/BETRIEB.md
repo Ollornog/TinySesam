@@ -118,12 +118,15 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 |---|---|
 | Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Ein selbst gewählter Name bindet nie über LDAP/SAML (G2-N, s. „Föderierte Identitäten"). Schalter `self_service_username_change` |
 | Benutzername, als Betreiber (G13) | Panel „Umbenennen" bzw. `POST <admin_path>/api/users/{id}/username` mit `{"username": …}` — dieselben Regeln (400 mit Grund), dazu der Owner-Schutz: ein Owner-Konto benennt nur ein Owner um. Unabhängig von `self_service_username_change`. Der Name gilt als vom Betreiber vergeben: Der Merker „selbst gewählt" (G2-N) fällt, die Audit-Zeile sagt `durch=betreiber akteur=<admin>`. Ohne laufenden Dienst: `tinysesam rename --db <datei> <name> <neuer-name>` (`#<id>` statt des Namens, etwa für einen Namen mit Steuerzeichen) — dieselben Grundregeln; einen Namen aus `admin_identifiers` und den Mail-Modus kennt das CLI nicht (es liest keine Konfiguration), und `on_security_event` feuert dort nicht. Audit `username_changed … quelle=cli` |
-| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link — sonst ist alles gleich (kein Orakel, G12b): dieselbe Antwort, derselbe Hinweis an die eigene Adresse, dasselbe Kontingent des Kontos, dieselbe Anzeige auf der Konto-Seite und dieselbe Arbeit der Datenbank (ein Wegwerf-Token, der schon bei seiner Anlage abgelaufen ist; `gc()` räumt ihn). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse — bei jedem Ziel, auch einem vergebenen. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
 `username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
 (Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
-LDAP/SAML). Die Links
+LDAP/SAML, erst nach dem Versand geschrieben, Detail `konto=<id> quelle=… an=…`). Die Konto-Seite
+zeigt einen Antrag immer als `email_change_requested` und `federation_email_confirm` gar nicht
+(G12b) — die echten Namen stehen nur im Audit-Log des Betreibers; eine Abweisung beim Bestätigen
+(`beim_bestaetigen=1`, 409) behält dort ihren Namen. Die Links
 eines Wechsels haben ein eigenes Kontingent je Zieladresse (Topf `wechsel`) — Anträge Fremder auf
 eine Adresse verbrauchen nicht das des Anmelde-Links — und eines je Konto
 (`mail_per_address_max` im Fenster `mail_per_address_window_sec`, Audit `mail_ratelimit`), damit
@@ -347,8 +350,12 @@ Seite gehört und sich nicht ändert:
      (`federation_email_confirm`, Vorgabe an; braucht Mailer und `base_url`). Nach der Anmeldung
      geht ein Link an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos,
      mit Beleg. Derselbe Weg wie beim Adresswechsel der Selbstbedienung. Nur für Konten ohne
-     belegte Adresse, höchstens einer je Konto und Tag, keiner, solange einer offen ist. Gehört die
-     Adresse schon einem anderen Konto, geht kein Link hinaus (Audit `email_change_taken`).
+     belegte Adresse, keiner, solange einer offen ist, und höchstens ein **zugestellter** Link je
+     Konto und Tag — über alle Worker, gezählt an der Audit-Zeile `federation_email_confirm`, die
+     erst nach dem Versand entsteht (G12a). Eine gedrosselte Adresse oder ein gescheiterter Versand
+     wird nach `mail_per_address_window_sec` erneut versucht. Gehört die Adresse schon einem
+     anderen Konto (oder steht sie in `admin_identifiers`), geht kein Link hinaus; die Audit-Zeile
+     `email_change_taken` bzw. `_reserved` kommt höchstens einmal am Tag je Prozess.
   2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
      `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
      Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,

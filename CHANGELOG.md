@@ -59,6 +59,19 @@ auffällt:
 - **Route-Ketten mit dem Anmelde-Link verlangen den zweiten Faktor** (G10): Hat ein Konto TOTP oder
   einen Passkey, lässt `require(factors=["magic"])` es nach dem Link erst mit diesem Faktor durch —
   wie die globale Policy (`magiclink_require_second_factor=False` schaltet beides ab).
+- **Adresswechsel auf eine vergebene Adresse sieht jetzt aus wie jeder andere** (G12b): Auch dann
+  geht der Hinweis an die bisherige belegte Adresse, und der Antrag verbraucht das Kontingent des
+  Kontos (`mail_per_address_max` je `mail_per_address_window_sec`). **`request_email_change()` gibt
+  dann trotzdem eine Versandfunktion zurück** — ob ein Link hinausging, sagt ihr Rückgabewert
+  (`senden() -> bool`). Eine App, die `request_email_change(…) is not None` als „Link verschickt"
+  las, liegt damit falsch. Die Konto-Seite zeigt `email_change_taken`/`_reserved` (auch ältere
+  Zeilen) als `email_change_requested` und `federation_email_confirm` gar nicht mehr; das Audit-Log
+  des Betreibers behält die echten Namen.
+- **Bestätigungslinks für Adressen aus LDAP/SAML zählen Versände** (G12a): höchstens ein
+  zugestellter je Konto und Tag, jetzt über alle Worker; eine gedrosselte Zieladresse oder ein
+  gescheiterter Versand wird nach `mail_per_address_window_sec` erneut versucht statt am nächsten
+  Tag. Die Audit-Zeile `federation_email_confirm` entsteht erst nach dem Versand, und ihr Detail
+  beginnt mit `konto=<id>` — wer das Log maschinell liest, passt den Leser an.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -94,8 +107,9 @@ auffällt:
 - **Adressen aus SAML und LDAP per Link bestätigen (PO-Entscheid 2026-09-25).** Traut der
   Betreiber der Quelle nicht, geht nach der Anmeldung ein Bestätigungslink an die Adresse aus der
   Quelle — derselbe Weg wie beim Adresswechsel der Selbstbedienung; erst der Klick macht sie zur
-  Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens einer je Konto und
-  Tag, keiner, solange einer offen ist; eine vergebene Adresse bekommt keinen. Schalter
+  Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens ein zugestellter je
+  Konto und Tag (über alle Worker, G12a), keiner, solange einer offen ist; eine vergebene Adresse
+  bekommt keinen. Schalter
   `federation_email_confirm` (Vorgabe an; braucht Mailer und `base_url`). Dazu je Quelle ein
   optionales Beleg-Attribut für IdPs, die das führen: `ldap_attr_email_verified`,
   `saml_attr_email_verified` — ein wahrer Wert (`true`, `1`, `yes`) belegt die Adresse dieses
@@ -261,6 +275,32 @@ auffällt:
   **Rückweg:** Die Trigger bleiben in der Datei und wirken unter 0.20.x weiter; entfernen mit
   `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;`
   (docs/BETRIEB.md, „Kennungsraum"). Test: `tests/test_kennungsraum.py`.
+- **Kein Orakel für vergebene Adressen beim Adresswechsel (G12b).** Die Antwort war wortgleich, aber
+  drei Kanäle verrieten, ob eine Adresse schon Kennung eines anderen Kontos ist (gemessen): Der
+  Hinweis an die eigene, belegte Adresse kam nur bei einer freien; der Antrag auf eine vergebene
+  kehrte vor der Drossel je Konto zurück — nach drei Proben auf vergebene Adressen ging der Link an
+  eine eigene Kontrolladresse noch hinaus, nach drei auf freie nicht mehr; und die Konto-Seite
+  nannte `email_change_taken` bzw. `_reserved`. Dazu die Laufzeit: vergeben eine geschriebene
+  Zeile und 417 SQLite-Schritte, frei zwei und 450, dazu der Versand nach der Antwort (Median in
+  einem Prozess 2,3 gegen 3,9 ms). Jetzt ein Zweig für jedes Ziel: erst die Drosseln, dann in jedem
+  Fall ein Token (bei „vergeben"/„reserviert" ein Wegwerf-Token, schon bei seiner Anlage
+  abgelaufen, nach dem Muster von R4-03) und eine Audit-Zeile, dann immer ein Sender, der den
+  Hinweis an die eigene Adresse schickt. Die Konto-Seite bildet die Ereignisnamen ab
+  (`own_events`); eine Abweisung beim Bestätigen (409) behält ihren Namen. Gleich sind damit
+  Antwort, Mails an den Antragsteller, Kontingent, Anzeige und die Folge der SQL-Anweisungen.
+  **Verbleibend:** kein Index-Treffer gegen einen Nicht-Treffer (Mikrosekunden), und die Drossel je
+  Ziel (`wechsel:<adresse>`) verrät weiter, ob eine Adresse in den letzten 15 Minuten drei
+  Wechselanträge bekam — unabhängig davon, ob sie vergeben ist. Test:
+  `tests/test_selbstbedienung.py` (G12b), `tests/test_quellenadresse.py` (Kontoseite LDAP).
+- **Bestätigungslinks aus LDAP/SAML: Versände zählen, Versuche dämpfen (G12a).** Das Tageskontingent
+  (`quellmail:<id>`, im Speicher je Prozess) wurde vor dem Versuch verbraucht: Eine gedrosselte
+  Zieladresse oder ein gescheiterter Versand kostete den Link für einen ganzen Tag, und zwei Worker
+  auf einer Datenbank schickten zwei am selben Tag. Jetzt zählt die Datenbank den Versand — die
+  Zeile `federation_email_confirm … konto=<id>` entsteht im Postausgang und nur, wenn die Mail
+  hinausging (`Store.quellmail_seit`, über `idx_audit_ts`). Der Speicher dämpft nur noch: eine
+  vergebene oder reservierte Adresse einmal am Tag (ihre Audit-Zeile bleibt so selten wie
+  gewollt), alles Vorübergehende im Fenster der Mail-Drossel. `_token_mail` meldet dafür, ob die
+  Mail hinausging. Test: `tests/test_quellenadresse.py` (G12a).
 - **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
   Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
   Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene

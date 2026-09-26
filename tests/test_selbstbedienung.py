@@ -4,6 +4,8 @@ Jeder ändert beides selbst, mit frischem Step-up; die Adresse gilt erst nach de
 an die NEUE. Alles hängt an der Konto-ID — nach aussen trägt `Remote-Id` sie, stabil über jede
 Änderung. Gemessen wird die Wirkung über die Routen, dazu die Riegel: fremde oder Allowlist-Namen,
 Adressen als Namen, kein Orakel für vergebene Adressen, Kollision beim Bestätigen, alte Links.
+Seit G12b (2026-09-26) heisst „kein Orakel" mehr als dieselbe Antwort: derselbe Hinweis an die
+eigene Adresse, dasselbe Kontingent, dieselbe Kontoseite und dieselbe Arbeit der Datenbank.
 """
 from __future__ import annotations
 
@@ -135,21 +137,29 @@ r.check("… Sicherheitsereignis mit alt/neu",
         ("email_changed", {"alt": "carla@example.com", "neu": "carla.neu@example.com"}) in ev, str(ev))
 r.check("… derselbe Link ein zweites Mal: ungültig", TestClient(app).post(link).status_code == 400)
 
+# Vergeben/reserviert: kein Link — aber der Hinweis an die eigene Adresse wie bei jedem Antrag
+# (G12b; bis 2026-09-26 blieb er aus, und genau das verriet „vergeben").
+_HINWEIS = ("carla.neu@example.com", "Änderung deiner E-Mail-Adresse beantragt")
 mails.clear()
 vergeben = c.post("/auth/account/email", json={"email": "dora@example.com"})
 auth._hinweis_ausgang.abwarten()
-r.check("eine vergebene Adresse: dieselbe Antwort, aber kein Link (kein Orakel), Zeile im Audit-Log",
-        vergeben.status_code == 200 and vergeben.json() == {"ok": True, "sent": True} and not mails
-        and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_taken'") is not None)
+r.check("eine vergebene Adresse: dieselbe Antwort, kein Link, nur der Hinweis an die eigene, Zeile im Audit-Log",
+        vergeben.status_code == 200 and vergeben.json() == {"ok": True, "sent": True}
+        and [m[:2] for m in mails] == [_HINWEIS]
+        and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_taken'") is not None, str(mails))
 r.check("ungültige Adresse → 400", c.post("/auth/account/email", json={"email": "kaputt"}).status_code == 400)
 # Allowlist-Adresse: Klickte ihr Inhaber den Link (auf einer Instanz ohne Admin), trüge das fremde
 # Konto die belegte Adresse und wäre beim nächsten Login Erst-Admin.
 mails.clear()
 reserviert = c.post("/auth/account/email", json={"email": "boss@EXAMPLE.com"})
 auth._hinweis_ausgang.abwarten()
-r.check("eine Adresse aus admin_identifiers: dieselbe Antwort, kein Link, Zeile im Audit-Log",
-        reserviert.status_code == 200 and reserviert.json() == {"ok": True, "sent": True} and not mails
+r.check("eine Adresse aus admin_identifiers: dieselbe Antwort, kein Link, nur der Hinweis, Zeile im Audit-Log",
+        reserviert.status_code == 200 and reserviert.json() == {"ok": True, "sent": True}
+        and [m[:2] for m in mails] == [_HINWEIS]
         and auth.store._one("SELECT 1 FROM audit WHERE event='email_change_reserved'") is not None, str(mails))
+# Beide Anträge haben das Kontingent des Kontos verbraucht wie ein freier (G12b) — für die
+# folgenden Fälle ein frisches Fenster.
+auth.rl = type(auth.rl)()
 mails.clear()
 c.post("/auth/account/email", json={"email": "spaeter.boss@example.com"})
 link3 = re.search(r"http://testserver(/auth/email/[^\s]+)", mails[0][2]).group(1)
@@ -163,6 +173,11 @@ link2 = re.search(r"http://testserver(/auth/email/[^\s]+)", mails[0][2]).group(1
 auth.create_user("frieda", password=PW, email="frei@example.com")
 r.check("… wird die Adresse bis zum Klick vergeben: 409, nichts geändert",
         TestClient(app).post(link2).status_code == 409 and auth.get_user(uid)["email"] == "carla.neu@example.com")
+_carla = [e["event"] for e in auth.own_events(uid, limit=100)]
+r.check("Kontoseite: jeder Antrag heisst email_change_requested (5), nur die Abweisung BEIM Bestätigen "
+        "behält ihren Namen (die 409 hat sie ohnehin gesagt)",
+        _carla.count("email_change_requested") == 5 and _carla.count("email_change_taken") == 1
+        and _carla.count("email_change_reserved") == 1, str(_carla))
 _altern(auth)
 r.check("ohne frischen Step-up → 403", c.post("/auth/account/email", json={"email": "x@example.com"}).status_code == 403)
 
@@ -236,6 +251,136 @@ r.check("eine Adresse, die erst gefaltet ungültig ist → 400",
         _login(ap_s, "streuer").post("/auth/account/email",
                                      json={"email": "x\uff20evil.example@example.com"}).status_code == 400)
 
+# ── G12b: kein Orakel für vergebene Adressen ────────────────────────────────────────────────
+# Gemessen bis 2026-09-26, bei wortgleicher Antwort: der Hinweis an die eigene Adresse nur bei
+# einer freien, das Kontingent des Kontos nur von freien verbraucht, die Kontoseite nannte
+# `email_change_taken`, und die Datenbank tat bei einer vergebenen eine Zeile weniger. Je Ziel ein
+# frischer Aufbau — gleiche Ausgangslage, nur das Ziel unterscheidet sich.
+ZIELE = (("vergeben", "bert@example.com"), ("reserviert", "boss@example.com"), ("frei", "neu@example.com"))
+
+
+def _g12b_aufbau():
+    a, ap, post, _ = _aufbau()
+    konto = a.create_user("anna", password=PW, email="anna@example.com")
+    a.create_user("bert", password=PW, email="bert@example.com")
+    return a, ap, post, konto
+
+
+def _form(sql):
+    """Eine Anweisung ohne ihre Werte: Welche Tabelle, welche Spalten, welche Bedingung."""
+    return re.sub(r"\b\d+\b", "?", re.sub(r"'(?:[^']|'')*'", "?", sql)).strip()
+
+
+_g = {}
+for art, ziel in ZIELE:
+    a, ap, post, konto = _g12b_aufbau()
+    c_g = _login(ap, "anna")
+    post.clear()
+    antw = c_g.post("/auth/account/email", json={"email": ziel})
+    a._hinweis_ausgang.abwarten()
+    _g[art] = {"auth": a, "antwort": (antw.status_code, antw.text),
+               "eigene": [m[1] for m in post if m[0] == "anna@example.com"],
+               "ziel": [m[1] for m in post if m[0] == ziel],
+               "ereignisse": [e["event"] for e in a.own_events(konto, limit=50)],
+               "seite": re.findall(r"email_change_\w+|federation_email_confirm",
+                                   c_g.get("/auth/account", headers=HTML).text)}
+r.check("G12b: dieselbe Antwort für vergeben, reserviert und frei",
+        len({str(g["antwort"]) for g in _g.values()}) == 1, str({k: g["antwort"] for k, g in _g.items()}))
+r.check("G12b: an die eigene Adresse in allen drei Fällen genau ein Hinweis",
+        all(g["eigene"] == ["Änderung deiner E-Mail-Adresse beantragt"] for g in _g.values()),
+        str({k: g["eigene"] for k, g in _g.items()}))
+r.check("… an die vergebene und die reservierte nichts, an die freie der Link",
+        _g["vergeben"]["ziel"] == [] and _g["reserviert"]["ziel"] == []
+        and _g["frei"]["ziel"] == ["Neue E-Mail-Adresse bestätigen"], str({k: g["ziel"] for k, g in _g.items()}))
+r.check("G12b: Kontoseite (own_events) in allen drei Fällen gleich, der Antrag als email_change_requested",
+        _g["vergeben"]["ereignisse"] == _g["reserviert"]["ereignisse"] == _g["frei"]["ereignisse"]
+        and "email_change_requested" in _g["frei"]["ereignisse"], str({k: g["ereignisse"] for k, g in _g.items()}))
+r.check("… ebenso die gerenderte Konto-Seite",
+        all(g["seite"] == ["email_change_requested"] for g in _g.values()), str({k: g["seite"] for k, g in _g.items()}))
+r.check("… das Audit-Log des Betreibers behält die echten Namen",
+        _g["vergeben"]["auth"].store._one("SELECT 1 FROM audit WHERE event='email_change_taken'") is not None
+        and _g["reserviert"]["auth"].store._one("SELECT 1 FROM audit WHERE event='email_change_reserved'") is not None)
+
+# Kontingent: Drei Anträge auf eine vergebene Adresse verbrauchen es wie drei auf freie — danach
+# geht auch an eine eigene Kontrolladresse kein Link mehr. Vorher verriet genau das „vergeben".
+_kontrolle = {}
+for art, ziele in (("vergeben", ["bert@example.com"] * 3),
+                   ("frei", ["x1@example.com", "x2@example.com", "x3@example.com"])):
+    a, ap, post, _k = _g12b_aufbau()
+    c_k = _login(ap, "anna")
+    for z in ziele:
+        c_k.post("/auth/account/email", json={"email": z})
+    a._hinweis_ausgang.abwarten()
+    post.clear()
+    c_k.post("/auth/account/email", json={"email": "kontrolle@example.com"})
+    a._hinweis_ausgang.abwarten()
+    _kontrolle[art] = [m[0] for m in post if m[0] == "kontrolle@example.com"]
+r.check("G12b: nach 3× vergeben wie nach 3× frei kein Link an die Kontrolladresse",
+        _kontrolle == {"vergeben": [], "frei": []}, str(_kontrolle))
+
+# Arbeit der Datenbank, ohne Stoppuhr: dieselbe Folge von Anweisungen (ohne ihre Werte), dieselbe
+# Zahl geschriebener Zeilen — Token und Audit-Zeile in jedem Fall.
+_spur = {}
+for art, ziel in ZIELE:
+    a, _ap, post, konto = _g12b_aufbau()
+    befehle: list = []
+    a.store._uhr_gesichert = time.monotonic()      # den Uhrstand nicht mitten hinein sichern
+    vorher = a.store.db.total_changes
+    a.store.db.set_trace_callback(befehle.append)
+    try:
+        senden = a.request_email_change(konto, ziel, "http://testserver")
+    finally:
+        a.store.db.set_trace_callback(None)
+    geschrieben = a.store.db.total_changes - vorher
+    _spur[art] = {"folge": [_form(b) for b in befehle], "zeilen": geschrieben,
+                  "gesendet": senden() if senden else None, "auth": a, "konto": konto}
+r.check("G12b: dieselbe Folge von Anweisungen für vergeben, reserviert und frei",
+        _spur["vergeben"]["folge"] == _spur["reserviert"]["folge"] == _spur["frei"]["folge"]
+        and any(f.startswith("INSERT INTO magic_token") for f in _spur["frei"]["folge"]),
+        "\n".join(f"{k}: {v['folge']}" for k, v in _spur.items()))
+r.check("… dieselbe Zahl geschriebener Zeilen (Token + Audit = 2)",
+        [v["zeilen"] for v in _spur.values()] == [2, 2, 2], str([v["zeilen"] for v in _spur.values()]))
+r.check("… immer ein Sender; er sagt, ob ein Link hinausging (False, False, True)",
+        [v["gesendet"] for v in _spur.values()] == [False, False, True],
+        str([v["gesendet"] for v in _spur.values()]))
+
+# Scheitert der Versand des Links, kommt der Hinweis an die eigene Adresse trotzdem — sonst verriete
+# ein Mailserver, der die freie Adresse abweist, wieder den Unterschied. Der Fehler bleibt sichtbar.
+a_f, _ap_f, post_f, konto_f = _g12b_aufbau()
+
+
+def _link_kaputt(to, betreff, text, html=None):
+    if to == "neu@example.com":
+        raise OSError("Mailserver weist ab")
+    post_f.append((to, betreff))
+
+
+a_f.set_mailer(_link_kaputt)
+senden_f = a_f.request_email_change(konto_f, "neu@example.com", "http://testserver")
+try:
+    senden_f()
+    _geworfen = False
+except OSError:
+    _geworfen = True
+r.check("G12b: scheitert der Link, geht der Hinweis an die eigene Adresse trotzdem (der Fehler bleibt)",
+        _geworfen and post_f == [("anna@example.com", "Änderung deiner E-Mail-Adresse beantragt")],
+        f"{_geworfen} {post_f}")
+
+# Der Wegwerf-Token ist harmlos: von Anfang an abgelaufen, kein offener Link, `gc()` räumt ihn.
+_st = _spur["vergeben"]["auth"].store
+_jetzt_s = int(time.time())
+r.check("G12b: der Token zu „vergeben“ ist bei seiner Anlage schon abgelaufen, kein offener Link",
+        _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com'")["n"] == 1
+        and _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com' AND expires_at >= ?",
+                     (_jetzt_s,))["n"] == 0
+        and not _st.offener_token(_spur["vergeben"]["konto"], "email_change", "bert@example.com"))
+_spur["vergeben"]["auth"].gc()
+r.check("… und gc() räumt ihn weg",
+        _st._one("SELECT COUNT(*) AS n FROM magic_token WHERE email='bert@example.com'")["n"] == 0)
+_sf = _spur["frei"]["auth"].store
+r.check("… während der Link an die freie Adresse gilt",
+        _sf.offener_token(_spur["frei"]["konto"], "email_change", "neu@example.com"))
+
 # Ohne base_url und mit fremdem Host: die Antwort sagt „kein Mailversand", nicht die Interna der
 # Basis-Prüfung (CodeQL py/unreachable-except: `ConfigError` ist ein `ValueError`).
 a_b, ap_b, post_b, _ = _aufbau(base_url="", password_reset_enabled=False)
@@ -267,6 +412,9 @@ r.check("ohne Mailer: kein Adresswechsel",
 # (Mutationsproben: der Step-up in `_frisch_fuer_kennung` weg → „ohne frischen Step-up" rot; die
 #  Allowlist-Prüfung weg → Allowlist-Name rot; die @-Regel weg → „fremde Adresse" rot; der
 #  Kennungs-Abgleich beim Bestätigen weg → 409 rot; `revoke_user_magic_tokens` weg → „offene Links"
-#  rot; `verified=True` weg → „MIT Beleg" rot; `Remote-Id` weg → Remote-Id rot.)
+#  rot; `verified=True` weg → „MIT Beleg" rot; `Remote-Id` weg → Remote-Id rot.
+#  G12b: Hinweis nur ohne „nein" → Hinweis rot; Drossel des Kontos nur für freie →
+#  Kontingent rot; Abbildung in `own_events` weg → Kontoseite rot; Wegwerf-Token weg → Folge rot;
+#  Token mit echter Frist → „schon abgelaufen" rot.)
 
 sys.exit(r.done())

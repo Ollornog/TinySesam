@@ -1190,6 +1190,16 @@ class TinySesam:
         self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
         return True
 
+    #: Wie die Kontoseite ein Ereignis nennt, wenn es nicht sein eigener Name ist (G12b). Der
+    #: Antrag auf eine vergebene oder eine Allowlist-Adresse erscheint wie jeder Antrag — sonst
+    #: stünde auf der Kontoseite, was die Antwort verschweigt. `None` blendet aus:
+    #: `federation_email_confirm` entsteht nur, wenn der Link an eine FREIE Adresse hinausging, und
+    #: verriete dasselbe einem LDAP-Nutzer, der sein `mail`-Attribut selbst setzt. Das Audit-Log
+    #: des Betreibers behält die echten Namen.
+    _EIGENE_ANSICHT = {"email_change_taken": "email_change_requested",
+                       "email_change_reserved": "email_change_requested",
+                       "federation_email_confirm": None}
+
     def own_events(self, user_id: int, limit: int = 20) -> list:
         """Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
 
@@ -1210,6 +1220,12 @@ class TinySesam:
         Seit 2026-09-26 zählt nicht die Anlage, sondern der Beitritt des NAMENS (G2): Wer einen
         freigewordenen Namen übernimmt (Umbenennen), sah vorher die Anmeldung des Vorbesitzers
         samt dessen IP. Die Anlage bleibt der Rückfall für den Bestand ohne Wasserlinie.
+
+        Ebenfalls seit 2026-09-26 zeigt sie einen Adresswechsel-Antrag immer als
+        `email_change_requested`, ob die Adresse frei, vergeben oder reserviert war, und
+        `federation_email_confirm` gar nicht (`_EIGENE_ANSICHT`, G12b). Eine Abweisung BEIM
+        BESTÄTIGEN (`beim_bestaetigen=1`) behält ihren Namen: Die 409 hat sie dem Klickenden
+        ohnehin gesagt, und nur, wer den Link aus dem Postfach hat, kommt dorthin.
         """
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
@@ -1219,10 +1235,14 @@ class TinySesam:
         name = str(u["username"])
         audit_ab = self.store.kennung_grenzen(u).get(norm_kennung(name), (None, None))[1]
         seit, seit_id = self.store.anlage_grenze(u) if audit_ab is None else (None, 0)
-        for z in self.store.recent_audit(max(1, int(limit)), username=name,
-                                         seit=seit, seit_id=seit_id, ab_id=audit_ab):
+        ausblenden = tuple(e for e, ansicht in self._EIGENE_ANSICHT.items() if ansicht is None)
+        for z in self.store.recent_audit(max(1, int(limit)), username=name, seit=seit, seit_id=seit_id,
+                                         ab_id=audit_ab, ohne_events=ausblenden):
             fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
-            aus.append({"ts": z["ts"], "event": z["event"],
+            ereignis = z["event"]
+            if not re.search(r"(?:^|\s)beim_bestaetigen=1(?:\s|$)", z["detail"] or ""):
+                ereignis = self._EIGENE_ANSICHT.get(ereignis, ereignis)
+            aus.append({"ts": z["ts"], "event": ereignis,
                         "ip": None if fremd else z["ip"], "by_admin": fremd})
         return aus
 
@@ -2229,8 +2249,18 @@ class TinySesam:
         * **Nicht vertraut** (PO-Entscheid 2026-09-25): Mit `federation_email_confirm`, Mailer und
           `base_url` geht einmal ein Bestätigungslink an die Adresse — derselbe Weg wie der
           Mailwechsel der Selbstbedienung (`request_email_change`). Erst der Klick macht sie zur
-          Adresse des Kontos. Nur für Konten OHNE belegte Adresse, höchstens einmal am Tag.
-        Schweigen nimmt keinem Konto den Beleg, den der Betreiber selbst gesetzt hat."""
+          Adresse des Kontos. Nur für Konten OHNE belegte Adresse, höchstens ein ZUGESTELLTER
+          Link am Tag (G12a, s. unten).
+        Schweigen nimmt keinem Konto den Beleg, den der Betreiber selbst gesetzt hat.
+
+        Gezählt werden Versände, gedämpft Versuche (G12a, seit 2026-09-26). Bis dahin verbrauchte
+        schon der Versuch das Tageskontingent (je Prozess, im Speicher): Eine gedrosselte
+        Zieladresse oder ein gescheiterter Versand kostete den Link für einen ganzen Tag, und
+        mehrere Worker schickten je einen. Jetzt steht der Versand in der Datenbank
+        (`federation_email_confirm … konto=<id>`, erst nach dem Versand, `Store.quellmail_seit`).
+        Der Speicher dämpft nur die Versuche: Eine vergebene oder reservierte Adresse bekommt nie
+        einen Link, ihr Versuch (mit Audit-Zeile) kommt höchstens einmal am Tag; alles andere —
+        eine Drossel, ein Mailserver-Fehler — darf nach `mail_per_address_window_sec` wieder."""
         if not mail or not u:
             return
         adresse = norm_email(mail)
@@ -2254,18 +2284,34 @@ class TinySesam:
             return
         if not (self.cfg.federation_email_confirm and self.cfg.base_url and self.mail_configured()):
             return
-        # Höchstens ein Link je Konto und Tag, und keiner, solange einer offen ist.
+        # Keiner, solange einer offen ist, und höchstens ein zugestellter je Konto und Tag.
         if self.store.offener_token(u["id"], "email_change", adresse):
             return
-        if not self.rl.allow(f"quellmail:{u['id']}", 1, 86400):
+        if self.store.quellmail_seit(u["id"], _jetzt() - 86400):
+            return
+        # Versuche dämpfen, je Prozess (G12a): Was sich nicht von selbst erledigt (vergeben,
+        # reserviert), einmal am Tag — sonst schriebe jede Anmeldung eine Audit-Zeile. Was
+        # vorübergeht (Drossel, Mailserver), nach dem Fenster der Mail-Drossel wieder.
+        dauerhaft = bool(self.kennung_vergeben(adresse, exclude_id=u["id"])) or self._allowlist_adresse(adresse)
+        fenster = 86400 if dauerhaft else int(self.sec("mail_per_address_window_sec"))
+        if not self.rl.allow(f"quellmail:{u['id']}:{'d' if dauerhaft else 'v'}", 1, fenster):
             return
         try:
             senden = self.request_email_change(u["id"], adresse, self.cfg.base_url)
         except (ValueError, ConfigError):
             return
-        if senden is not None:
-            self.audit("federation_email_confirm", u["username"], detail=f"quelle={quelle} an={adresse}")
-            self._hinweis_ausgang.einreihen(senden)
+        if senden is None:
+            return
+        uid, name = u["id"], u["username"]
+        # Die Zeile im Kontext der Anfrage schreiben (IP wie bisher), aber erst im Postausgang
+        # und nur, wenn der Link wirklich hinausging — sie ist das Tageskontingent.
+        anfrage = contextvars.copy_context()
+
+        def _versand():
+            if senden():
+                anfrage.run(self.audit, "federation_email_confirm", name,
+                            detail=f"konto={uid} quelle={quelle} an={adresse}")
+        self._hinweis_ausgang.einreihen(_versand)
 
     # ---------- Passkeys verwalten ----------
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
@@ -3286,7 +3332,7 @@ class TinySesam:
     def _token_hash(raw) -> str:
         return hashlib.sha256(str(raw).encode()).hexdigest()
 
-    def _token_mail(self, raw, to, subject, text, html=None):
+    def _token_mail(self, raw, to, subject, text, html=None) -> bool:
         """Eine Mail mit Einmal-Token verschicken. Scheitert der Versand, ist der Token sofort
         verbraucht (B6-12): Sonst lag ein gültiger, nie zugestellter Link bis zum Ablauf in der
         Datenbank — ein Beweisstück ohne Empfänger, und bei einem Relay, das die Mail doch noch
@@ -3294,15 +3340,19 @@ class TinySesam:
 
         Ist der Token vor dem Versand schon verworfen oder eingelöst, geht keine Mail hinaus:
         Liegt zwischen Anlage und Versand der Postausgang, kann der Betreiber das Konto in der
-        Zwischenzeit gesperrt haben (H-18) — die Mail trüge dann nur noch einen toten Link."""
+        Zwischenzeit gesperrt haben (H-18) — die Mail trüge dann nur noch einen toten Link.
+
+        True, wenn die Mail hinausging; False, wenn der Token schon weg war (G12a zählt nur
+        zugestellte Links); ein Fehler des Versands kommt als Ausnahme."""
         zeile = self.store.get_magic_token(self._token_hash(raw))
         if not zeile or zeile["used_at"]:
-            return
+            return False
         try:
             self.send_mail(to, subject, text, html)
         except Exception:
             self.store.expire_magic_token(self._token_hash(raw))
             raise
+        return True
 
     def nach_der_antwort(self, resp, auftrag, bei_ueberlauf=None):
         """`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter
@@ -3515,13 +3565,28 @@ class TinySesam:
 
     def request_email_change(self, user_id, neu, base_url):
         """Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die
-        Versandfunktion zurück (für `nach_der_antwort`) oder None, wenn nichts zu senden ist.
-        `ValueError` bei einer ungültigen Adresse oder ohne Mailer.
+        Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben
+        oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur
+        bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer
+        ungültigen Adresse oder ohne Mailer.
 
         Die Antwort an den Anfragenden ist in jedem Fall dieselbe: Ist die Adresse schon Kennung
-        eines anderen Kontos, geht kein Link hinaus, und das steht nur im Audit-Log — sonst wäre
-        die Konto-Seite ein Orakel für vergebene Adressen. Gültig ist die neue Adresse erst mit dem
-        Klick (`confirm_email_change`), vorher ändert sich nichts."""
+        eines anderen Kontos (oder steht sie in `admin_identifiers`), geht kein Link hinaus, und
+        das steht nur im Audit-Log — sonst wäre die Konto-Seite ein Orakel für vergebene
+        Adressen. Gültig ist die neue Adresse erst mit dem Klick (`confirm_email_change`), vorher
+        ändert sich nichts.
+
+        **Ein Zweig für jedes Ziel** (G12b, seit 2026-09-26). Bis dahin kehrte der Antrag auf
+        eine vergebene Adresse früh zurück, und das war an drei Stellen zu sehen, obwohl die
+        Antwort gleich lautete: Der Hinweis an die eigene Adresse kam nur bei einer freien, der
+        Antrag verbrauchte das Kontingent des Kontos nur bei einer freien, und die Konto-Seite
+        nannte `email_change_taken`. Dazu die Laufzeit: eine Zeile weniger in der Datenbank und
+        kein Versand nach der Antwort. Jetzt: erst die Drosseln (für jedes Ziel), dann in jedem
+        Fall ein Token und eine Audit-Zeile — bei „nein" ein Wegwerf-Token, von Anfang an
+        abgelaufen (niemand kennt den Klartext, `offener_token` und das Einlösen sehen ihn nicht,
+        `gc()` räumt ihn; das Muster von R4-03 bei der Registrierung) —, dann immer ein Sender,
+        der den Hinweis an die eigene Adresse in jedem Fall schickt. Die Konto-Seite zeigt jeden
+        Antrag als `email_change_requested` (`own_events`)."""
         konto = self.store.get_user(user_id)
         if not konto:
             raise ValueError(self.t("api.not_found"))
@@ -3536,20 +3601,13 @@ class TinySesam:
         base_url = self._gepruefte_basis(base_url)
         if mail == norm_email(konto["email"] or "") and konto["email_verified"]:
             return None
-        if self.kennung_vergeben(mail, exclude_id=user_id):
-            self.audit("email_change_taken", konto["username"], detail=f"neu={mail}")
-            return None
-        # Eine Adresse aus `admin_identifiers` bekommt keinen Wechsel-Link (wie der Name): Auf einer
-        # Instanz ohne Admin klickte der Inhaber „bestätige deine neue Adresse" leicht für seine
-        # eigene Einrichtung — und das FREMDE Konto trüge danach die belegte Allowlist-Adresse und
-        # wäre bei der nächsten Anmeldung Erst-Admin. Dieselbe Antwort wie „vergeben".
-        if self._allowlist_adresse(mail):
-            self.audit("email_change_reserved", konto["username"], detail=f"neu={mail}")
-            return None
         # Je KONTO gedrosselt (Angriffsrunde, Fund 3 der Selbstbedienung): Der Topf je Zieladresse
         # schützt ein Postfach, nicht vor dem Streuen — ein Konto schickte sonst Mails an beliebig
         # viele fremde Adressen, bis nur noch die IP-Drossel bremst (Ruf der Absenderdomain, und
         # jede Mail ist ein Vorwand zum Klicken). Dasselbe Kontingent wie je Zieladresse.
+        # VOR der Frage „vergeben?" (G12b): Sonst probte ein Konto vergebene Adressen ohne
+        # Kontingent, und nach drei Proben verriet der Link an die eigene Kontrolladresse, ob sie
+        # vergeben waren.
         if not self.rl.allow(f"wechsel-konto:{user_id}", self.sec("mail_per_address_max"),
                              self.sec("mail_per_address_window_sec")):
             self.audit("mail_ratelimit", konto["username"], detail=f"email_change konto={user_id}")
@@ -3559,11 +3617,19 @@ class TinySesam:
         # mit dem sich der Inhaber jener Adresse selbst einen Anmelde-Link schickt.
         if not self._mail_ziel_ok(mail, "email_change", topf="wechsel"):
             return None
+        # Eine Adresse aus `admin_identifiers` bekommt keinen Wechsel-Link (wie der Name): Auf einer
+        # Instanz ohne Admin klickte der Inhaber „bestätige deine neue Adresse" leicht für seine
+        # eigene Einrichtung — und das FREMDE Konto trüge danach die belegte Allowlist-Adresse und
+        # wäre bei der nächsten Anmeldung Erst-Admin. Dieselbe Antwort wie „vergeben".
+        nein = ("email_change_taken" if self.kennung_vergeben(mail, exclude_id=user_id)
+                else "email_change_reserved" if self._allowlist_adresse(mail) else None)
+        # Dieselbe Arbeit der Datenbank in beiden Fällen (G12b): bei „nein" ein Token, der schon
+        # abgelaufen ist, wenn er entsteht.
         raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
-                                      ttl_min=int(self.cfg.email_change_ttl_min),
+                                      ttl_min=(-1 if nein else int(self.cfg.email_change_ttl_min)),
                                       payload={"alt": konto["email"] or ""})
         url = self.magic_url(raw, base_url, "email_change")
-        self.audit("email_change_requested", konto["username"], detail=f"neu={mail}")
+        self.audit(nein or "email_change_requested", konto["username"], detail=f"neu={mail}")
         # Die Mail nennt das Konto: Wer eine Adresse bestätigt, soll sehen, für WELCHES — sonst
         # bestätigt ein gutgläubiger Klick die eigene Adresse für ein fremdes Konto (Verdacht aus
         # der Angriffsrunde; betrifft vor allem den Weg über LDAP/SAML, wo der Antrag nicht vom
@@ -3571,19 +3637,25 @@ class TinySesam:
         name = str(konto["username"])
         alt = norm_email(konto["email"] or "") if konto["email_verified"] else None
 
-        def senden():
-            self._token_mail(raw, mail, "Neue E-Mail-Adresse bestätigen",
-                             f"Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos „{name}“ "
-                             f"werden soll:\n\n{url}\n\n"
-                             "Ist das nicht dein Konto oder warst du das nicht, ignoriere diese E-Mail — "
-                             "es ändert sich nichts.",
-                             html=f'<p>Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos '
-                                  f'„{_html.escape(name)}“ werden soll:</p>'
-                                  f'<p><a href="{url}">Adresse bestätigen</a></p>'
-                                  f'<p>Ist das nicht dein Konto oder warst du das nicht, ignoriere diese '
-                                  f'E-Mail — es ändert sich nichts.</p>')
-            if alt and alt != mail:
-                self._wechsel_antrag_hinweis(alt, name, mail)
+        def senden() -> bool:
+            try:
+                return (not nein) and self._token_mail(
+                    raw, mail, "Neue E-Mail-Adresse bestätigen",
+                    f"Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos „{name}“ "
+                    f"werden soll:\n\n{url}\n\n"
+                    "Ist das nicht dein Konto oder warst du das nicht, ignoriere diese E-Mail — "
+                    "es ändert sich nichts.",
+                    html=f'<p>Bitte bestätige, dass dies die E-Mail-Adresse deines Kontos '
+                         f'„{_html.escape(name)}“ werden soll:</p>'
+                         f'<p><a href="{url}">Adresse bestätigen</a></p>'
+                         f'<p>Ist das nicht dein Konto oder warst du das nicht, ignoriere diese '
+                         f'E-Mail — es ändert sich nichts.</p>')
+            finally:
+                # In JEDEM Fall (G12b) — auch wenn kein Link hinausging, und auch wenn der Versand
+                # des Links scheiterte: Der Text („gilt erst, wenn der Link geklickt ist") stimmt
+                # immer, und sein Ausbleiben verriete „vergeben".
+                if alt and alt != mail:
+                    self._wechsel_antrag_hinweis(alt, name, mail)
         return senden
 
     def _wechsel_antrag_hinweis(self, alt, name, neu) -> None:

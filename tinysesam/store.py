@@ -3257,7 +3257,7 @@ class Store:
     _ANONYM_BLOCK = 5000
 
     def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
-                     seit_id: int = 0, ab_id: int | None = None):
+                     seit_id: int = 0, ab_id: int | None = None, ohne_events=()):
         """Die jüngsten Audit-Einträge, neueste zuerst.
 
         `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
@@ -3266,10 +3266,15 @@ class Store:
         Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
         filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL; aus der Sekunde `seit`
         selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`). `ab_id`: nur Zeilen mit einer
-        grösseren Id — die Wasserlinie einer Kennung (`kennung_grenzen`, G2).
+        grösseren Id — die Wasserlinie einer Kennung (`kennung_grenzen`, G2). `ohne_events`
+        lässt diese Ereignisse aus, ebenfalls in SQL: Eine Anzeige, die Zeilen erst danach
+        verwirft, zeigte weniger als `limit` — und die Lücke verriete, dass dort eine lag (G12b).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
+        if ohne_events:
+            bedingungen.append(f"event NOT IN ({','.join('?' * len(ohne_events))})")
+            werte.extend(ohne_events)
         if username:
             bedingungen.append("lower(username)=lower(?)")
             werte.append(username)
@@ -3299,6 +3304,15 @@ class Store:
 
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
+
+    def quellmail_seit(self, user_id, seit) -> bool:
+        """Ging seit `seit` (Unix-Sekunden) ein Bestätigungslink für eine Adresse aus LDAP/SAML an
+        dieses Konto hinaus (G12a)? Gezählt wird die Audit-Zeile `federation_email_confirm`, die
+        erst NACH dem erfolgreichen Versand entsteht, mit `konto=<id>` vorn im Detail — über
+        `idx_audit_ts`, in der Datenbank und damit über alle Worker und jeden Neustart hinweg.
+        Die Id statt des Namens: Ein Umbenennen setzt das Tageskontingent nicht zurück."""
+        return bool(self._one("SELECT 1 FROM audit WHERE ts >= ? AND event = 'federation_email_confirm' "
+                              "AND detail LIKE ? LIMIT 1", (int(seit), f"konto={int(user_id)} %")))
 
     def offener_token(self, user_id, purpose, email) -> bool:
         """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an
