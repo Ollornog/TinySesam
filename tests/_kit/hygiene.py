@@ -1586,6 +1586,21 @@ def _ist_code_kette(text: str, treffer) -> bool:
     # `log.info(` ist ein Aufruf, kein Host — auch ganz klein geschrieben.
     if rest.startswith("("):
         return True
+    # Ein längerer PUNKT-NAME geht weiter (seit 0.22.2): `route('neu.org.update')` liefert den
+    # Kandidaten `neu.org`, weil der reguläre Ausdruck vor `.update` aufhört. Ein Hostname endet
+    # auf seiner TLD, er wird nicht mit einem Namensglied fortgesetzt. Die Grenze liegt bei drei
+    # Zeichen: `kunde.co.uk` (Fortsetzung `.uk`) bleibt ein Host und damit rot.
+    if re.match(r"\.[A-Za-z_][\w-]{2,}", rest):
+        return True
+    # Laravel/Blade (seit 0.22.2): View-, Routen-, Config- und Übersetzungs-Schlüssel sind
+    # Punkt-Namen, keine Adressen (`@extends('layouts.app')`, `View::composer('layouts.app', …)`).
+    # Gemessen an einem Laravel-Repo: 12 der Kandidaten außerhalb der Recherche-Dossiers waren
+    # genau das.
+    davor_zeile = text[max(0, treffer.start() - 60):treffer.start()].rsplit("\n", 1)[-1]
+    if re.search(r"(?:\b(?:view|route|config|trans|trans_choice|__|asset|mix|vite)"
+                 r"|@(?:extends|include\w*|component|each|livewire|section|yield)"
+                 r"|\b[A-Z]\w*::\w+|->(?:name|prefix|view))\(\s*['\"]$", davor_zeile):
+        return True
     return bool(re.match(r"\.[A-Za-z_]\w*\s*[(=]", rest))
 
 
