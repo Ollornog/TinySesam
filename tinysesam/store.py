@@ -55,7 +55,18 @@ CREATE TABLE IF NOT EXISTS users (
     -- Über die Töpfe erzwingt die Datenbank auch den gemeinsamen Kennungsraum (`_trigger_sql`).
     topf_name     TEXT,
     topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER  -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
+    idp_bestaetigt_at INTEGER, -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
+    -- Ab wann gehört die Kennung diesem Konto? (Grenze a, G2) Die höchste `login_attempt.id`
+    -- bzw. `audit.id` in dem Moment, in dem Name oder Adresse in ihren Zähl-Topf kamen — bei der
+    -- Anlage, beim Umbenennen, beim Adresswechsel und beim Nachtrag einer Adresse. Was darunter
+    -- liegt, galt niemandem oder jemand anderem. Eine Id statt einer Zeit: exakt auch innerhalb
+    -- einer Sekunde, und unabhängig von der Uhr. NULL = Bestand von vor dieser Spalte, dann gilt
+    -- die Anlage als Grenze (`created_at`, `anlage_grenze`). Gesetzt von `create_user` und
+    -- `_kennung_setzen`, bei einem fremden Schreiber vom Nachrechnen-Trigger (`_trigger_sql`).
+    name_versuch_ab INTEGER,
+    mail_versuch_ab INTEGER,
+    name_audit_ab   INTEGER,
+    mail_audit_ab   INTEGER
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,6 +144,11 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     kennung     TEXT NOT NULL,              -- die stabile Kennung aus dem Verzeichnis
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     gebunden_at INTEGER NOT NULL,           -- wann die Bindung entstand (auch: nachgebunden)
+    -- Der Name, unter dem sich das Konto zuletzt über diese Quelle angemeldet hat, im Zähl-Topf
+    -- (`norm_kennung`) — nur wenn er weder Name noch Adresse des Kontos ist (G5). Nach einer
+    -- Umbenennung im Verzeichnis tippt die Person den NEUEN Namen, und unter ihm zählt die Serie
+    -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
+    name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
 );
 CREATE TABLE IF NOT EXISTS session (
@@ -646,7 +662,11 @@ class Store:
     #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
     #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8); Trigger
     #:      `trg_users_kennung_insert`/`_update`: Name und Adresse sind EIN Kennungsraum, von der
-    #:      Datenbank erzwungen (G12c; angelegt bei jedem Start, nicht am Stempel)
+    #:      Datenbank erzwungen (G12c; angelegt bei jedem Start, nicht am Stempel);
+    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
+    #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
+    #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
+    #:      (G5). Schema 11 ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -694,7 +714,14 @@ class Store:
                       # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
                       # Bestand: unten für OIDC-Konten auf „jetzt" gesetzt (Fund 8).
-                      ("idp_bestaetigt_at", "INTEGER")],
+                      ("idp_bestaetigt_at", "INTEGER"),
+                      # NULL für den Bestand: Grenze ist dann die Anlage, wie bis 2026-09-26 (G2).
+                      # Nicht „jetzt" nachtragen — die Kontoseite zeigte sonst nichts mehr von vor
+                      # dem Update, und eigene Fehlversuche blieben bis zum Fensterende stehen.
+                      ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
+                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER")],
+            # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
+            "federated_identity": [("name_topf", "TEXT")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -877,6 +904,12 @@ class Store:
     #: Zähl-Topf eines ANDEREN Kontos. Aufrufer erkennen den Fall an `IntegrityError`, nicht am Text.
     KENNUNG_VERGEBEN = "tinysesam: kennung vergeben"
 
+    #: Die Wasserlinien einer Kennung (G2) als SQL-Ausdruck: die höchste Id, die es JETZT gibt.
+    #: Alles, was danach entsteht, hat eine grössere (`AUTOINCREMENT` vergibt keine Id zweimal).
+    #: Nur eingebaute Funktionen — derselbe Grund wie bei den Triggern.
+    WL_VERSUCH = "(SELECT COALESCE(MAX(id), 0) FROM login_attempt)"
+    WL_AUDIT = "(SELECT COALESCE(MAX(id), 0) FROM audit)"
+
     @classmethod
     def _trigger_sql(cls) -> list:
         """Die Trigger auf `users` als `(name, CREATE-Anweisung)`. Nur eingebaute SQL-Funktionen:
@@ -890,6 +923,11 @@ class Store:
         veraltet — und NULL heisst „nachrechnen". Nur wenn sich der Wert WIRKLICH ändert: Wer
         dieselbe Adresse erneut setzt, behält seinen Topf (bis 2026-09-26 stand er danach bis zum
         nächsten Nachtrag auf NULL, und die Kennungs-Trigger sahen das Konto so lange nicht).
+        Derselbe Trigger hebt die Wasserlinien der Kennung (`name_versuch_ab` … , G2) auf den
+        aktuellen Stand: Ein fremder Schreiber hat eine neue Kennung vergeben, und was vorher unter
+        ihr stand, gehörte nicht diesem Konto. Das ist die strengere Richtung — auch bei einer
+        Umbenennung, die nur die Schreibweise ändert. Die eigenen Schreiber lösen ihn nie aus
+        (`_kennung_setzen`); sonst verschöbe schon `B1` → `b1` die Grenze.
 
         **Kennungsraum** (`trg_users_kennung_insert`/`_update`, G12c): Benutzername und Adresse
         sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
@@ -922,8 +960,9 @@ class Store:
         sql = [(f"trg_users_{topf}",
                 f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
                 f"WHEN NEW.{topf} IS OLD.{topf} AND NEW.{spalte} IS NOT OLD.{spalte} "
-                f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
-               for spalte, topf in (("username", "topf_name"), ("email", "topf_mail"))]
+                f"BEGIN UPDATE users SET {topf} = NULL, {art}_versuch_ab = {cls.WL_VERSUCH}, "
+                f"{art}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+               for spalte, topf, art in (("username", "topf_name", "name"), ("email", "topf_mail", "mail"))]
         sql.append(("trg_users_kennung_insert",
                     "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_insert BEFORE INSERT ON users "
                     f"WHEN {neu('topf_name', 'NULL', False)} OR {neu('topf_mail', 'NULL', False)} "
@@ -1253,11 +1292,16 @@ class Store:
         Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
         ist — auch als Namensvetter im Zähl-Topf (`Alice`/`alice`, s. `_trigger_sql`). Bis
         2026-09-26 ging das hier durch, sofern nicht genau derselbe Name oder dieselbe Adresse
-        schon stand."""
+        schon stand.
+
+        Name und Adresse gehören dem Konto ab dieser Anweisung: Die Wasserlinien (G2) entstehen im
+        selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
-            "is_service, created_at, topf_name, topf_mail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
+            f"name_audit_ab, mail_audit_ab) VALUES (?,?,?,?,?,?,?,?,?,?,{self.WL_VERSUCH},"
+            f"{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT})",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
@@ -1268,18 +1312,32 @@ class Store:
         """Die Anweisungen, die Name (`spalte="username"`) oder Adresse (`"email"`, mit `beleg`)
         samt Zähl-Topf ersetzen — für `_umschreiben`.
 
-        Zwei Anweisungen: Fällt der neue Wert in denselben Topf wie der alte (`B1` → `b1`,
-        `u@bücher.example` → `u@xn--bcher-kva.example`), setzt der Nachrechnen-Trigger den Topf auf
-        NULL — er kann den eigenen Schreiber nicht von einem fremden unterscheiden. Bis zum
-        nächsten Nachtrag sähen die Kennungs-Trigger das Konto dann nicht. Die zweite setzt ihn in
-        derselben Transaktion zurück; sie ändert nur den Topf und löst keinen Trigger aus."""
-        topf_spalte = "topf_name" if spalte == "username" else "topf_mail"
+        Kommt die Kennung damit in einen ANDEREN Topf, gehört sie dem Konto erst ab jetzt: Die
+        Wasserlinien (`name_versuch_ab`/`name_audit_ab` bzw. `mail_…`, G2) gehen in derselben
+        Anweisung auf den aktuellen Stand. Bleibt der Topf (`B1` → `b1`, `u@bücher.example` →
+        `u@xn--bcher-kva.example`), bleiben sie stehen — es ist dieselbe Kennung. SQLite rechnet
+        jeden Ausdruck in SET mit der ALTEN Zeile; der Vergleich sieht also den bisherigen Topf.
+
+        Zwei Anweisungen, weil der Nachrechnen-Trigger (`_trigger_sql`) einen eigenen Schreiber
+        nicht von einem fremden unterscheiden kann: Er feuert, wenn sich der Wert ändert, der Topf
+        aber nicht — und hebt dann die Wasserlinien. Deshalb setzt die erste Anweisung einen
+        gleichbleibenden Topf selbst auf NULL (der Trigger sieht einen geänderten Topf und bleibt
+        still; die Kennungs-Trigger prüfen nichts — es kommt ja keine Kennung hinzu), und die
+        zweite setzt ihn in derselben Transaktion zurück. Sie ändert nur den Topf und löst keinen
+        Trigger aus. Bis 2026-09-26 setzte der Trigger den Topf auf NULL und die zweite Anweisung
+        ihn zurück; mit den Wasserlinien hätte das schon `B1` → `b1` die Grenze verschoben."""
+        topf_spalte, art = ("topf_name", "name") if spalte == "username" else ("topf_mail", "mail")
+        gleich = f"CASE WHEN {topf_spalte} IS ? THEN"
+        setzen = (f"{topf_spalte} = {gleich} NULL ELSE ? END, "
+                  f"{art}_versuch_ab = {gleich} {art}_versuch_ab ELSE {self.WL_VERSUCH} END, "
+                  f"{art}_audit_ab = {gleich} {art}_audit_ab ELSE {self.WL_AUDIT} END")
         erste: tuple
         if beleg is None:
-            erste = (f"UPDATE users SET {spalte}=?, {topf_spalte}=? WHERE id=?", (wert, topf, user_id))
+            erste = (f"UPDATE users SET {spalte}=?, {setzen} WHERE id=?",
+                     (wert, topf, topf, topf, topf, user_id))
         else:
-            erste = (f"UPDATE users SET {spalte}=?, email_verified=?, {topf_spalte}=? WHERE id=?",
-                     (wert, 1 if beleg else 0, topf, user_id))
+            erste = (f"UPDATE users SET {spalte}=?, email_verified=?, {setzen} WHERE id=?",
+                     (wert, 1 if beleg else 0, topf, topf, topf, topf, user_id))
         return [erste, (f"UPDATE users SET {topf_spalte}=? WHERE id=?", (topf, user_id))]
 
     def _umschreiben(self, schritte) -> None:
@@ -1406,6 +1464,11 @@ class Store:
         stehen: Ob sie davor oder danach kamen, lässt sich nicht entscheiden, und Stehenlassen
         ist hier die sichere Richtung (sie verfallen mit dem Sperrfenster).
 
+        Seit 2026-09-26 genauer (G2): nicht ab der Anlage, sondern ab dem **Beitritt jeder
+        Kennung** (`kennung_grenzen`) — ein Konto bekommt Namen und Adresse auch später
+        (Umbenennen, Adresswechsel). Auf die Zeile genau, auch in der Sekunde des Beitritts. Die
+        Anlage bleibt der Rückfall für den Bestand ohne Wasserlinie.
+
         `adresse_unbefristet=True` nimmt eine **belegte** Adresse davon aus (`adresse_belegt`):
         Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
         Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
@@ -1428,12 +1491,17 @@ class Store:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
         seit, seit_id = self.anlage_grenze(u)
+        # Genauer als die Anlage: ab wann jede Kennung dem Konto gehörte (G2). Vor dem Löschen
+        # gelesen — danach gibt es die Zeile nicht mehr.
+        grenzen = self.kennung_grenzen(u)
         unbefristet = (mail,) if (adresse_unbefristet and self.adresse_belegt(u)) else ()
         self.delete_user(user_id)
-        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet)
+        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet,
+                                 ab_ids={t: g[0] for t, g in grenzen.items()})
         ersatz = ersatzname(user_id)
         return ersatz, self.audit_anonymisieren(name, ersatz, (mail,), seit=seit, seit_id=seit_id,
-                                                unbefristet=unbefristet)
+                                                unbefristet=unbefristet,
+                                                ab_ids={t: g[1] for t, g in grenzen.items()})
 
     def adresse_belegt(self, user) -> bool:
         """Gehört die Adresse dieses Kontos nachweislich ihm? (`konto_entfernen`, H-13)
@@ -1457,7 +1525,12 @@ class Store:
         return offen is None
 
     def anlage_grenze(self, user) -> tuple[int, int]:
-        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)`.
+        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)` — der Rückfall.
+
+        Seit 2026-09-26 gilt zuerst die Wasserlinie der Kennung (`kennung_grenzen`, G2): Ein
+        Konto, das einen freigewordenen Namen übernimmt, sah hier sonst die Anmeldungen des
+        Vorbesitzers samt dessen IP. Diese Grenze trägt nur noch den Bestand, dessen Konten die
+        Wasserlinie nicht haben.
 
         `seit` ist `created_at` (Unix-Sekunden). Aus der Sekunde der Anlage selbst zählen nur
         Zeilen ab `seit_id`: der Registrierungszeile des Kontos (`signup`, beim Platzhalter
@@ -1517,6 +1590,112 @@ class Store:
         if z is not None:
             treffer.append(z)
         return min(treffer, key=lambda t: t["id"]) if treffer else None
+
+    def topf_eines_anderen(self, kennung, user_id) -> bool:
+        """Ist diese Kennung (im Zähl-Topf) Name oder Adresse eines ANDEREN Kontos als `user_id`?
+
+        Der Wächter vor jedem Räumen unter einer Kennung, die das Konto nicht selbst als Name oder
+        Adresse führt (G5, G5-N1): unter dem Namen aus dem Verzeichnis (`zaehl_kennungen`) und
+        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam.record_login`). Ein
+        Verzeichnisfilter über `mail` löst `chefin@example.com` zu einem Dritten auf, dessen
+        `mail`-Attribut so lautet; ohne diesen Wächter räumte jede Anmeldung des Dritten die
+        Zähler der lokalen Inhaberin dieser Adresse — unbegrenztes Raten gegen ihr Konto.
+        Geprüft wird beim Räumen, nicht beim Schreiben: Eine Kennung kann den Besitzer wechseln."""
+        return self.konto_mit_topf(kennung, ausser=user_id) is not None
+
+    @staticmethod
+    def _feld(zeile, name):
+        """Eine Spalte der Kontozeile — None, wenn es sie (noch) nicht gibt (Attrappe, altes Dict)."""
+        try:
+            return zeile[name]
+        except (IndexError, KeyError):
+            return None
+
+    def kennung_grenzen(self, user) -> dict:
+        """Ab wo gehört eine Zeile unter Name oder Adresse diesem Konto? (Grenze a, G2)
+
+        `{topf: (versuch_ab, audit_ab)}` für Name und Adresse im Zähl-Topf: Zeilen in
+        `login_attempt` bzw. `audit` mit einer GRÖSSEREN Id gehören dem Konto, die übrigen galten
+        niemandem oder jemand anderem. `None` heisst Bestand (die Spalten kamen erst mit diesem
+        Stand) — dann gilt wie bis 2026-09-26 die Anlage (`created_at`, `anlage_grenze`).
+
+        Bis dahin war die Anlage die Grenze für JEDE Kennung. Ein Konto bekommt eine Kennung aber
+        auch später: beim Umbenennen, beim Adresswechsel, beim Nachtrag einer Adresse aus OIDC.
+        Die Fehlversuche, die ein Fremder vorher unter dem damals freien Namen gemacht hatte,
+        räumte dann die erste volle Anmeldung weg — auch aus der Drosselung seiner IP —, und die
+        Kontoseite zeigte die Anmeldung des Vorbesitzers samt dessen IP.
+
+        Name und Adresse im selben Topf (E-Mail-Modus): die frühere der beiden Wasserlinien —
+        die Kennung gehört dem Konto, seit sie über einen der beiden Wege hinzukam. Ist eine
+        davon NULL, gilt der Rückfall."""
+        aus: dict = {}
+        for spalte, art in (("username", "name"), ("email", "mail")):
+            topf = norm_kennung(self._feld(user, spalte))
+            if not topf:
+                continue
+            werte = tuple(None if w is None else int(w)
+                          for w in (self._feld(user, f"{art}_versuch_ab"), self._feld(user, f"{art}_audit_ab")))
+            if topf in aus:
+                werte = tuple(None if a is None or b is None else min(a, b) for a, b in zip(aus[topf], werte))
+            aus[topf] = werte
+        return aus
+
+    def zaehl_kennungen(self, user_id) -> set:
+        """Alle Kennungen (im Zähl-Topf), unter denen die Serie (B2-6) dieses Kontos stehen kann.
+
+        Name und Adresse — und der Name, unter dem sich das Konto über eine Verzeichnisquelle
+        anmeldet (`federated_identity.name_topf`, G5), sofern er nicht Name oder Adresse eines
+        ANDEREN Kontos ist (`topf_eines_anderen`). Die Serie zählt unter der EINGETIPPTEN Kennung;
+        nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`) räumte bis
+        2026-09-26 kein Rückweg die Serie unter `alice.neu` — eigene Tippfehler summierten sich
+        über die Jahre, und ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus.
+
+        Der eine Leser für jeden Rückweg: `sperre_aufheben`, `_serie_beenden` (Panel-Reset),
+        `tinysesam passwd` und `tinysesam unlock`."""
+        u = self.get_user(user_id)
+        if u is None:
+            return set()
+        kennungen = {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}
+        for z in self._all("SELECT DISTINCT name_topf FROM federated_identity WHERE user_id=? "
+                           "AND name_topf IS NOT NULL AND name_topf <> ''", (user_id,)):
+            topf = norm_kennung(z["name_topf"])
+            if topf and topf not in kennungen and not self.topf_eines_anderen(topf, user_id):
+                kennungen.add(topf)
+        return kennungen
+
+    def bindung_name_setzen(self, quelle: str, user_id, name) -> bool:
+        """Den Namen, unter dem sich das Konto gerade über `quelle` angemeldet hat, an seiner
+        Bindung vermerken (`federated_identity.name_topf`, G5). Gibt zurück, ob geschrieben wurde.
+
+        Gefaltet (`norm_kennung`) und nur, wenn er weder Name noch Adresse des Kontos ist — die
+        kennen die Rückwege ohnehin; dann steht NULL. Nur der jüngste Name: Nach zwei
+        Umbenennungen im Verzeichnis zählt unter dem ältesten niemand mehr, der sich so anmeldet.
+        Geschrieben wird nur bei einer Änderung, also höchstens ein UPDATE je Anmeldung und im
+        Normalfall keins. Ob der Name einem ANDEREN Konto gehört, prüft jeder Leser
+        (`zaehl_kennungen`), nicht dieser Schreiber."""
+        u = self.get_user(user_id)
+        if u is None:
+            return False
+        topf = norm_kennung(name)
+        wert = None if not topf or topf in {norm_kennung(u["username"]), norm_kennung(u["email"])} else topf
+        if self._one("SELECT 1 AS x FROM federated_identity WHERE quelle=? AND user_id=? AND name_topf IS NOT ?",
+                     (quelle, user_id, wert)) is None:
+            return False
+        self._exec("UPDATE federated_identity SET name_topf=? WHERE quelle=? AND user_id=?",
+                   (wert, quelle, user_id))
+        return True
+
+    def konto_mit_bindungsname(self, kennung) -> Optional[sqlite3.Row]:
+        """Das Konto, das sich zuletzt unter dieser Kennung über eine Verzeichnisquelle angemeldet
+        hat (`federated_identity.name_topf`, G5) — für `tinysesam unlock <Name wie eingetippt>`.
+        None, wenn keins oder wenn die Kennung Name oder Adresse eines Kontos ist (dann ist DAS
+        Konto gemeint, `konto_mit_topf`). Mehrere Treffer: das zuletzt gebundene."""
+        topf = norm_kennung(kennung)
+        if not topf or self.konto_mit_topf(topf) is not None:
+            return None
+        z = self._one("SELECT user_id FROM federated_identity WHERE name_topf=? "
+                      "ORDER BY gebunden_at DESC, user_id DESC LIMIT 1", (topf,))
+        return self.get_user(z["user_id"]) if z else None
 
     def delete_user(self, user_id):
         """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
@@ -2329,10 +2508,14 @@ class Store:
                    (_now(), username, ip, 1 if success else 0, method))
 
     @staticmethod
-    def _fails_abfrage(since, username=None, ip=None, method=None, exclude_methods=None):
-        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer."""
+    def _fails_abfrage(since, username=None, ip=None, method=None, exclude_methods=None, ab_id=None):
+        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer.
+        `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2)."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
+        if ab_id is not None:
+            q += " AND id>?"
+            args.append(int(ab_id))
         if username:
             q += " AND username=? COLLATE NOCASE"
             args.append(username)
@@ -2348,7 +2531,8 @@ class Store:
             args.extend(exclude_methods)
         return q, args
 
-    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
+    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
+                    ab_id=None) -> int:
         """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
 
         `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
@@ -2358,7 +2542,7 @@ class Store:
         """
         if not username and not ip:
             return 0
-        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods)
+        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id)
         return self._one(q, args)["c"]
 
     def reserve_attempt(self, username, ip, method, regeln, serie=None) -> tuple:
@@ -2430,7 +2614,8 @@ class Store:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
         self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
 
-    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None):
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None,
+                    ab_id=None):
         """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 
         `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
@@ -2441,6 +2626,10 @@ class Store:
 
         `exclude_methods` räumt alles ausser den genannten — der Weg nach einer VOLLSTÄNDIGEN
         Anmeldung, die die eigenen Töpfe (Kontoseite, Step-up, Bereich) nicht betrifft.
+
+        `ab_id` räumt nur Zeilen ab der Wasserlinie der Kennung (`kennung_grenzen`, G2): was
+        erst entstand, als die Kennung dem Konto schon gehörte. `seit` ist der Rückfall für den
+        Bestand ohne Wasserlinie (Unix-Sekunden, die Anlage des Kontos, einschliesslich).
         """
         wo: str = ""
         args_m: tuple = ()
@@ -2454,6 +2643,10 @@ class Store:
             # Konto galt — nicht die Fehlversuche unter seinem Namen oder seiner Adresse von vor
             # seiner Anlage (die galten niemandem oder jemand anderem).
             wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
+        if ab_id is not None:
+            # Genauer als `seit` (G2): ab dem Beitritt der Kennung, nicht ab der Anlage — und auf
+            # die Zeile genau, auch in der Sekunde des Beitritts.
+            wo, args_m = wo + " AND id > ?", args_m + (int(ab_id),)
         if username:
             self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
                        (username,) + args_m)
@@ -2682,7 +2875,7 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=()) -> int:
+    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=(), ab_ids=None) -> int:
         """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
 
         `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
@@ -2700,6 +2893,10 @@ class Store:
           machte. Die Sekunde selbst bleibt: Ob ein Versuch darin vor oder nach der Anlage kam,
           ist nicht zu entscheiden, und ein stehengebliebener Versuch verfällt mit dem
           Sperrfenster. Kennungen in `unbefristet` gelten ohne diese Grenze.
+          Genauer ist `ab_ids` (`{topf: versuch_ab}` aus `kennung_grenzen`, G2): nur Versuche mit
+          einer grösseren Id als die Wasserlinie der Kennung — ab ihrem BEITRITT (Umbenennen,
+          Adresswechsel), nicht ab der Anlage, und auf die Zeile genau. Wo eine Kennung keine hat
+          (Bestand), gilt `nach`.
         - Führt ein VERBLEIBENDES Konto denselben Topf (ein Namensvetter wie `ｃｌａｒａ`/`clara`
           oder `Émile`/`émile` aus einem Bestand, `konto_mit_topf`), bleibt der Topf unberührt.
           Sonst leerte das Entfernen eines Kontos, das ein Anonymer anlegen und per `gc()`
@@ -2709,9 +2906,15 @@ class Store:
             topf = norm_kennung(wert)
             if not topf or self.konto_mit_topf(topf) is not None:
                 continue
-            ab = -1 if (nach is None or wert in unbefristet) else int(nach)
+            wasserlinie = (ab_ids or {}).get(topf)
+            if wert in unbefristet:
+                grenze, ab = "ts > ?", -1
+            elif wasserlinie is not None:
+                grenze, ab = "id > ?", int(wasserlinie)
+            else:
+                grenze, ab = "ts > ?", (-1 if nach is None else int(nach))
             roh = str(wert)
-            n += self._exec("DELETE FROM login_attempt WHERE ts > ? "
+            n += self._exec(f"DELETE FROM login_attempt WHERE {grenze} "
                             "AND (username = ? OR lower(username) = lower(?) "
                             "OR lower(username) = lower(?))",
                             (ab, topf, roh, roh.strip())).rowcount
@@ -2722,7 +2925,7 @@ class Store:
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
     def audit_anonymisieren(self, username, ersatz, weitere=(), seit=None, seit_id=0,
-                            unbefristet=()) -> int:
+                            unbefristet=(), ab_ids=None) -> int:
         """Ein Konto aus dem Audit-Log herausnehmen, ohne die Zeilen zu löschen (H-13).
 
         Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
@@ -2739,7 +2942,10 @@ class Store:
         `seit`/`seit_id` beschränken das auf Zeilen ab der Anlage des Kontos (`anlage_grenze`,
         `konto_entfernen`): Was davor unter dem Namen oder mit der Adresse geschrieben wurde,
         gehörte nicht diesem Konto. Kennungen in `unbefristet` gelten ohne die Grenze. Ohne
-        `seit` gilt jede Zeile.
+        `seit` gilt jede Zeile. Genauer ist `ab_ids` (`{topf: audit_ab}` aus `kennung_grenzen`,
+        G2): ab dem Beitritt der Kennung statt ab der Anlage — sonst wurde beim Löschen eines
+        Kontos, das einen freigewordenen Namen übernommen hatte, auch die Zeile des Vorbesitzers
+        umgeschrieben. Wo eine Kennung keine hat (Bestand), gilt `seit`.
         """
         if not username:
             return 0
@@ -2748,10 +2954,15 @@ class Store:
         ohne_frist = {str(w) for w in unbefristet if w}
 
         def ab(wert) -> tuple:
-            if seit is None or wert in ohne_frist:
-                return (-1, -1, 0)
-            return (int(seit), int(seit), int(seit_id or 0))
-        grenze = "(ts > ? OR (ts = ? AND id >= ?))"
+            if wert in ohne_frist:
+                return (-1, -1, 0, -1)
+            wasserlinie = (ab_ids or {}).get(norm_kennung(wert))
+            if wasserlinie is not None:
+                return (-1, -1, 0, int(wasserlinie))
+            if seit is None:
+                return (-1, -1, 0, -1)
+            return (int(seit), int(seit), int(seit_id or 0), -1)
+        grenze = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ?)"
         with self._schreibend():
             n = 0
             for wert in kennungen:
@@ -2784,7 +2995,7 @@ class Store:
         return n
 
     def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
-                     seit_id: int = 0):
+                     seit_id: int = 0, ab_id: int | None = None):
         """Die jüngsten Audit-Einträge, neueste zuerst.
 
         `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
@@ -2792,7 +3003,8 @@ class Store:
         und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
         Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
         filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL; aus der Sekunde `seit`
-        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`).
+        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`). `ab_id`: nur Zeilen mit einer
+        grösseren Id — die Wasserlinie einer Kennung (`kennung_grenzen`, G2).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
@@ -2802,6 +3014,9 @@ class Store:
         if seit:
             bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
             werte.extend((int(seit), int(seit), int(seit_id or 0)))
+        if ab_id is not None:
+            bedingungen.append("id > ?")
+            werte.append(int(ab_id))
         wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
         return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
 

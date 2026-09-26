@@ -28,6 +28,10 @@ auffällt:
   schon Kennung eines anderen Kontos ist — **auch bei Namensvettern wie `Alice`/`alice`**. Wer den
   Store direkt aufruft, fängt das. Die Startmeldung nennt jetzt jede Kollision im Bestand, nicht nur
   „Name = fremde Adresse".
+- **`tinysesam unlock` nimmt die Kennung wie eingetippt** — Name, Adresse oder den Namen im
+  Verzeichnis — und räumt die Zähler unter ihr auch ohne Konto; Rückgabe 1 nur noch, wenn dort nichts
+  stand (G5). Fehlversuche, die vor einem Umbenennen oder Adresswechsel unter der neuen Kennung
+  gezählt wurden, räumt die nächste Anmeldung nicht mehr weg; sie verfallen mit dem Sperrfenster (G2).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -201,8 +205,35 @@ auffällt:
   messbar an der Antwortzeit. Jetzt dieselbe Arbeit (Platzhalter mit Zufallsnamen, von `gc()`
   geräumt). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig; die
   Konfigurationsprüfung warnt davor.
-- **Eine vollständige Anmeldung räumt nur Fehlversuche ab der Kontoanlage** (Grenze a) — nicht die,
-  die vorher unter demselben Namen oder derselben Adresse gezählt wurden.
+- **Eine Kennung gehört dem Konto erst ab ihrem Beitritt** (Grenze a, vollständig mit G2). Eine
+  Anmeldung räumt nur Fehlversuche, die ab dann unter Name oder Adresse gezählt wurden — nicht die, die
+  ein Fremder vorher unter der damals freien Kennung gemacht hatte (sie zählen in der Drosselung seiner
+  IP). Bis 2026-09-26 war die Grenze die Anlage des Kontos: Nach einem Umbenennen, einem Adresswechsel
+  oder dem Nachtrag einer Adresse aus OIDC räumte die erste Anmeldung auch die fremden Versuche weg,
+  die Konto-Seite zeigte die Anmeldung des Vorbesitzers samt IP, und das Löschen schrieb dessen
+  Audit-Zeilen um. Das gilt jetzt für die volle Anmeldung, den Erfolg des ersten Faktors
+  (`record_login`), die Konto-Seite und das Löschen. Die Grenze ist eine Id-Wasserlinie je Kennung
+  (`users.name_versuch_ab`, `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab`, gesetzt im selben
+  UPDATE wie die Kennung): exakt auch in der Sekunde der Anlage, unabhängig von der Uhr; nur die
+  Schreibweise zu ändern (`B1` → `b1`) verschiebt sie nicht. Ein rohes UPDATE von Name oder Adresse
+  hebt sie (Nachrechnen-Trigger, die strengere Richtung). Bestand: NULL, dann wie bisher die Anlage.
+  Die Serie (B2-6) endet weiter mit der ersten vollen Anmeldung ganz — sie hat keine IP und schützt
+  nur den, dem die Kennung jetzt gehört. Schema bleibt 11 (additiv). Test:
+  `tests/test_kennung_beitritt.py`.
+- **LDAP: die Serie unter dem Namen im Verzeichnis (G5).** Nach einer Umbenennung im Verzeichnis
+  (lokal `alice`, über die stabile Kennung gebunden, dort `alice.neu`) zählt die Serie (B2-6) unter
+  `alice.neu`, geräumt wurde aber nur unter `alice` und der Adresse: Eigene Tippfehler summierten sich
+  über die Jahre, ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus, und der
+  dokumentierte Ausweg `tinysesam unlock alice.neu` brach mit „Kein Konto" ab. Jetzt vermerkt jede
+  erfolgreiche Anmeldung den Verzeichnisnamen an der Bindung (`federated_identity.name_topf`), und
+  volle Anmeldung, Panel-Reset, `tinysesam passwd` und `unlock` räumen ihn mit
+  (`store.zaehl_kennungen`) — nicht, wenn er lokal einem anderen Konto gehört. `unlock` nimmt die
+  Kennung wie eingetippt und räumt auch ohne Konto (Bestand, in dem der Name noch nicht vermerkt ist).
+- **LDAP: eine Verzeichnis-Anmeldung räumt keine fremden Zähler mehr (G5-N1).** Ein Filter über
+  `mail` löst die Adresse eines lokalen Kontos auch zu einem Dritten auf, dessen `mail`-Attribut so
+  lautet. Jede Anmeldung des Dritten setzte das Kontofenster der Inhaberin zurück — verteiltes Raten
+  ohne Grenze ausser Serie und IP-Limit. `record_login` hat dafür `konto=` (angehängt, Vorgabe
+  `None`); die mitgelieferte Login-Route reicht es bei einer Verzeichnis-Anmeldung durch.
 
 - **Anmeldung gesperrt nach 100 Fehlversuchen in Folge (B2-6).** Die bisherigen Schwellen zählen nur
   im Fenster (`lockout_window_sec`) — wer langsamer rät als die Schwelle, riet beliebig lange. Jetzt

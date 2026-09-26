@@ -1165,14 +1165,21 @@ class TinySesam:
         dessen Zeilen ein älterer Stand nicht anonymisiert hat (Integrationsfund 12), oder
         niemandem — dann steht dort der Fehlversuch eines Fremden unter dem damals freien Namen,
         samt seiner IP.
+
+        Seit 2026-09-26 zählt nicht die Anlage, sondern der Beitritt des NAMENS (G2): Wer einen
+        freigewordenen Namen übernimmt (Umbenennen), sah vorher die Anmeldung des Vorbesitzers
+        samt dessen IP. Die Anlage bleibt der Rückfall für den Bestand ohne Wasserlinie.
         """
         u = self.store.get_user(user_id) if user_id is not None else None
         if not u:
             return []
         aus = []
-        seit, seit_id = self.store.anlage_grenze(u)   # dieselbe Grenze wie `konto_entfernen`
-        for z in self.store.recent_audit(max(1, int(limit)), username=str(u["username"]),
-                                         seit=seit, seit_id=seit_id):
+        # Dieselbe Grenze wie `konto_entfernen`: die Wasserlinie des Namens, sonst die Anlage.
+        name = str(u["username"])
+        audit_ab = self.store.kennung_grenzen(u).get(norm_kennung(name), (None, None))[1]
+        seit, seit_id = self.store.anlage_grenze(u) if audit_ab is None else (None, 0)
+        for z in self.store.recent_audit(max(1, int(limit)), username=name,
+                                         seit=seit, seit_id=seit_id, ab_id=audit_ab):
             fremd = bool(re.search(r"(?:^|\s)akteur=", z["detail"] or ""))
             aus.append({"ts": z["ts"], "event": z["event"],
                         "ip": None if fremd else z["ip"], "by_admin": fremd})
@@ -1728,6 +1735,13 @@ class TinySesam:
                                               name_zuordnen=name_zuordnen)
         if not u or u["disabled"]:
             return None
+        # Den eingetippten Namen an der Bindung vermerken, wenn er weder Name noch Adresse des
+        # Kontos ist (G5): Nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`)
+        # zählt die Serie (B2-6) unter `alice.neu`, und ohne den Vermerk räumte sie kein Rückweg —
+        # weder die volle Anmeldung noch der Panel-Reset noch `tinysesam unlock`. Wem er sonst
+        # noch gehört, prüft der Leser (`Store.zaehl_kennungen`), nicht dieser Schreiber.
+        if not name_ungueltig(username):
+            self.store.bindung_name_setzen("ldap", u["id"], username)
         self._adresse_aus_quelle_belegen(u, info.get("email"), quelle_vertraut, "ldap")
         # memberOf liefert ganze DNs → Vergleich nach Bestandteilen (F-19). Bis 0.20.0 stand
         # hier `substring=True` fest verdrahtet, und `group_match` war für LDAP wirkungslos.
@@ -4187,7 +4201,7 @@ class TinySesam:
         return self._sperre_pruefen(self._regeln(username, ip, "password"), username, ip, login=True)
 
     def record_login(self, username, ip, success, method, versuch: Optional[int] = None,
-                     quelle: str = ""):
+                     quelle: str = "", konto: Optional[int] = None):
         """Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
         `versuch` ist die ID aus `versuch_beginnen()`: Dann steht der Versuch schon als
@@ -4199,7 +4213,20 @@ class TinySesam:
         beide Wege gleich behandeln —, im Protokoll muss der Betreiber sie aber trennen können.
         Ein Erfolg mit `quelle` schreibt eine eigene Zeile `login_<quelle>` (`login_ldap`,
         `login_lokal`), ein Fehlversuch hängt `quelle=…` an `login_fail` an (`lokal+ldap`: beide
-        wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe."""
+        wurden gefragt, beide lehnten ab). Leer = wie bisher, keine Zusatzangabe.
+
+        `konto` ist die ID des Kontos, zu dem die Kennung aufgelöst wurde, wenn das nicht über
+        Name oder Adresse geschah — bei einer Verzeichnis-Anmeldung (G5-N1). Dann räumt ein Erfolg
+        die Fehlversuche unter der eingetippten Kennung nur, wenn sie keinem ANDEREN Konto gehört:
+        Ein Verzeichnisfilter über `mail` löst `chefin@example.com` auch zu einem Dritten auf,
+        dessen `mail`-Attribut so lautet — und jede seiner Anmeldungen setzte bis 2026-09-26 das
+        Kontofenster der lokalen Inhaberin zurück (verteiltes Raten ohne Grenze ausser Serie und
+        IP-Limit).
+
+        Ist die Kennung Name oder Adresse eines lokalen Kontos, wird ab ihrem Beitritt zu diesem
+        Konto geräumt (Grenze a, G2): Fehlversuche, die ein Fremder vor dem Umbenennen oder
+        Adresswechsel unter der damals freien Kennung gemacht hat, bleiben stehen — sie zählen in
+        der Drosselung SEINER IP. Einzelheiten in `_raeumgrenze`."""
         topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
         vorgebucht = self._serie_vorbuchungen.pop(versuch, None) if versuch is not None else None
         if versuch is None:
@@ -4217,7 +4244,9 @@ class TinySesam:
             # ob jemand gerade TOTP-Codes durchprobiert. Vorher raeumte er sie mit weg und machte
             # den zweiten Faktor ratbar. Alles übrige räumt erst die VOLLSTÄNDIGE Anmeldung
             # (`sperre_aufheben`).
-            self.store.clear_fails(username=topf, method=method)   # 'login'-Audit erst beim vollen Abschluss
+            grenze = self._raeumgrenze(topf, method, konto)
+            if grenze is not None:     # 'login'-Audit erst beim vollen Abschluss
+                self.store.clear_fails(username=topf, method=method, **grenze)
         else:
             # Der GRUND gehört ins serverseitige Protokoll. Die HTTP-Antwort bleibt bewusst
             # gleich (keine Konto-Erkundung) — im Audit-Log liest aber nur der Betreiber mit,
@@ -4255,6 +4284,30 @@ class TinySesam:
                         "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`.",
                         security.fuer_log(username), stand)
 
+    def _raeumgrenze(self, topf, method, konto: Optional[int] = None) -> Optional[dict]:
+        """Ab wo räumt ein Erfolg die Fehlversuche unter `topf`? Schlüsselwörter für
+        `Store.clear_fails` — oder None: gar nicht (`record_login`).
+
+        * `konto` gegeben (Verzeichnis-Anmeldung): Gehört die Kennung einem ANDEREN Konto → None
+          (G5-N1, `Store.topf_eines_anderen`). Sonst ohne Grenze, wie bis dahin: Die Kennung
+          gehört dem Eintrag im Verzeichnis, nicht erst ab der lokalen Anlage — die entsteht oft
+          erst mit genau dieser Anmeldung, und die Tippfehler davor galten derselben Person.
+        * Die Kennung ist Name oder Adresse eines lokalen Kontos → ab ihrer Wasserlinie (`ab_id`,
+          G2), im Bestand ohne Wasserlinie ab der Anlage (`seit`).
+        * Sonst (ein Bereich `res:<name>`, keine Kennung eines Kontos) → ohne Grenze, wie bis
+          dahin: Es gibt kein Konto, dem die Kennung erst ab einem Zeitpunkt gehört."""
+        if method == "resource" or not topf:
+            return {}
+        if konto is not None:
+            return None if self.store.topf_eines_anderen(topf, konto) else {}
+        u = self.store.konto_mit_topf(topf)
+        if u is None:
+            return {}
+        grenze = self.store.kennung_grenzen(u).get(topf)
+        if grenze is None:
+            return {}
+        return {"ab_id": grenze[0]} if grenze[0] is not None else {"seit": int(u["created_at"] or 0)}
+
     #: Welche Anteile der Serie (B2-6) ein Selbstbedienungs-Reset räumt: die der ERSTEN Faktoren.
     #: Die kann jeder erzeugen, ohne ein Geheimnis zu kennen — ein Fremder sperrt mit falschen PINs
     #: ein Konto, dessen Inhaberin nicht einmal eine PIN hat. Blieben sie stehen, hülfe der Reset
@@ -4280,46 +4333,58 @@ class TinySesam:
         nichts. Räumte er auch deren Fehlversuche, bekäme jeder mit Zugriff aufs Postfach bei
         jedem Reset frische Rateversuche gegen den zweiten Faktor.
 
-        Gezählt wurde unter der Kennung, die jemand eingetippt hat — Benutzername ODER E-Mail.
-        Geräumt wird deshalb unter beiden.
+        Gezählt wurde unter der Kennung, die jemand eingetippt hat — Benutzername ODER E-Mail,
+        bei einer Verzeichnis-Anmeldung auch der Name dort (G5). Geräumt wird deshalb unter allen
+        (`Store.zaehl_kennungen`).
         """
         u = self.store.get_user(user_id)
         if not u:
             return 0
         weg = 0
-        # Ab der Anlage des Kontos (Grenze a aus dem Integrationsangriff): Sonst räumte die erste
-        # vollständige Anmeldung eines frisch registrierten Kontos auch die Fehlversuche, die vor
-        # seiner Anlage unter derselben Adresse oder demselben Namen gezählt wurden.
+        # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
+        # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
+        # Grund wie unten (R4-13): Der Selbstbedienungs-Reset beweist das Postfach, nicht den
+        # zweiten Faktor. Räumte er die TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und
+        # Passwort je Reset eine frische Serie gegen TOTP (gemessen im Angriff auf B2-6). Der
+        # Betreiber räumt ganz (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
+        #
+        # Die Serie wird bewusst OHNE Grenze a geräumt, auch wenn sie vor dem Beitritt der
+        # Kennung begann (G2, Option A): Sie hat keine IP und schützt nur den, dem die Kennung
+        # JETZT gehört — vor dem Beitritt schützte sie kein Konto, Räumen nimmt also niemandem
+        # Schutz und wäscht keine Drosselung einer IP. Eine Grenze in der Zeit ginge auch gar
+        # nicht: Die Serie kennt keine Einzelzeiten, und eine vor dem Beitritt begonnene Serie
+        # könnte der neue Inhaber sonst mit keiner Anmeldung mehr beenden (Dauersperre).
+        arten = None if methoden is None else tuple(
+            set(methoden) | (set(self._SERIE_RESET_ARTEN) if "password" in methoden else set()))
+        for kennung in self.store.zaehl_kennungen(user_id):
+            self.store.fehlserie_loeschen(kennung, arten=arten)
+        # Das Fenster ab dem Beitritt der Kennung (Grenze a, G2): Sonst räumte die erste
+        # vollständige Anmeldung auch die Fehlversuche, die ein Fremder VOR der Anlage, dem
+        # Umbenennen oder dem Adresswechsel unter derselben Kennung gemacht hatte — auch aus der
+        # Drosselung seiner IP. Bis 2026-09-26 war die Grenze die Anlage des Kontos für jede
+        # Kennung; sie ist jetzt nur noch der Rückfall für den Bestand ohne Wasserlinie.
+        # Der Verzeichnisname (G5) hat keine Wasserlinie: Sein Fenster räumt die Anmeldung selbst
+        # (`record_login`), hier nur die Serie.
         since = int(u["created_at"] or 0)
-        for kennung in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}:
-            # Die Serie (B2-6): Eine vollständige Anmeldung beendet sie ganz. Ein Passwort-Reset
-            # die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht den zweiten — derselbe
-            # Grund wie unten (R4-13): Der Selbstbedienungs-Reset beweist das Postfach, nicht den
-            # zweiten Faktor. Räumte er die TOTP-Fehlgriffe mit, bekäme jeder mit Postfach und
-            # Passwort je Reset eine frische Serie gegen TOTP (gemessen im Angriff auf B2-6). Der
-            # Betreiber räumt ganz (`_serie_beenden`, Panel-Reset, `tinysesam unlock`).
-            self.store.fehlserie_loeschen(
-                kennung, arten=None if methoden is None else
-                tuple(set(methoden) | (set(self._SERIE_RESET_ARTEN) if "password" in methoden else set())))
+        for kennung, (ab_id, _) in self.store.kennung_grenzen(u).items():
+            grenze = {"seit": since} if ab_id is None else {"ab_id": ab_id}
+            ab = since if ab_id is None else 0
             if methoden is None:
                 ohne = security.NICHT_LOGIN_METHODEN
-                weg += self.store.count_fails(since, username=kennung, exclude_methods=ohne)
-                self.store.clear_fails(username=kennung, exclude_methods=ohne, seit=since)
+                weg += self.store.count_fails(ab, username=kennung, exclude_methods=ohne, ab_id=ab_id)
+                self.store.clear_fails(username=kennung, exclude_methods=ohne, **grenze)
             else:
                 for m in methoden:
-                    weg += self.store.count_fails(since, username=kennung, method=m)
-                    self.store.clear_fails(username=kennung, method=m, seit=since)
+                    weg += self.store.count_fails(ab, username=kennung, method=m, ab_id=ab_id)
+                    self.store.clear_fails(username=kennung, method=m, **grenze)
         return weg
 
     def _serie_beenden(self, user_id) -> int:
         """Die Serie eines Kontos ganz beenden (B2-6) — der Weg des Betreibers (Panel-Reset).
 
-        Unter Name UND Adresse: gezählt wird unter dem, was jemand eingetippt hat."""
-        u = self.store.get_user(user_id)
-        if not u:
-            return 0
-        return sum(self.store.fehlserie_loeschen(k)
-                   for k in {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""})
+        Unter Name, Adresse und dem Namen im Verzeichnis (G5, `Store.zaehl_kennungen`): gezählt
+        wird unter dem, was jemand eingetippt hat."""
+        return sum(self.store.fehlserie_loeschen(k) for k in self.store.zaehl_kennungen(user_id))
 
     def _fehl_grund(self, username, method=None) -> str:
         """Warum ist die Anmeldung gescheitert — für das Protokoll, nicht für die Antwort."""

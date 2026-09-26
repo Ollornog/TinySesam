@@ -97,9 +97,9 @@ def _passwd(argv) -> int:
         return 1
 
     store.set_password_hash(user["id"], hash_password(pw))
-    # Neu gebunden: Eine Serien-Sperre (B2-6) endet hier wie bei jedem anderen Reset.
-    from .store import norm_kennung
-    for kennung in {norm_kennung(a.username), norm_kennung(user["email"] or "")} - {""}:
+    # Neu gebunden: Eine Serien-Sperre (B2-6) endet hier wie bei jedem anderen Reset — unter
+    # Name, Adresse und dem Namen im Verzeichnis (G5, `Store.zaehl_kennungen`).
+    for kennung in store.zaehl_kennungen(user["id"]):
         store.fehlserie_loeschen(kennung)
     note = ""
     if not a.keep_sessions:
@@ -310,26 +310,43 @@ def _unlock(argv) -> int:
         epilog="Bisher gab es dafür keinen Weg: `clear_fails` lief nur intern nach einer "
                "erfolgreichen Anmeldung — und genau die ist ja gesperrt. Übrig blieb `gc "
                "--attempts-older-than 0`, das die Fehlversuche ALLER Konten wegräumt.")
-    ap.add_argument("username", help="Benutzername des Kontos")
+    ap.add_argument("username", help="die Kennung, wie sie eingetippt wird: Benutzername, Adresse "
+                                     "oder der Name im Verzeichnis (LDAP)")
     ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
     a = ap.parse_args(argv)
     store = _oeffne(a.db)
     if store is None:
         return 1
-    if not store.get_user_by_name(a.username):
-        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
-        return 1
     # Gezählt wird unter der gefalteten Kennung (`norm_kennung`), also auch so räumen.
     from .store import norm_kennung
     topf = norm_kennung(a.username)
+    # Das Konto zur Kennung: über den Namen, über Name oder Adresse im Zähl-Topf, oder über den
+    # Namen, unter dem es sich zuletzt im Verzeichnis angemeldet hat (G5). Bis 2026-09-26 nur
+    # über den Namen — nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`)
+    # brach `unlock alice.neu` mit „Kein Konto" ab, obwohl genau unter diesem Namen gezählt wurde.
+    konto = (store.get_user_by_name(a.username) or store.konto_mit_topf(topf)
+             or store.konto_mit_bindungsname(topf))
     offen = store.count_fails(0, username=topf)
     store.clear_fails(username=topf)
-    # Auch die Serien-Sperre (B2-6), unter Name UND Adresse — gezählt wird unter dem, was
-    # jemand eingetippt hat.
-    konto = store.get_user_by_name(a.username)
+    # Auch die Serien-Sperre (B2-6), unter allen Kennungen des Kontos — gezählt wird unter dem,
+    # was jemand eingetippt hat — und immer unter der eingetippten selbst.
     serie = sum(store.fehlserie_loeschen(k) for k in
-                {topf, norm_kennung(konto["email"] if konto else "")} - {""})
-    store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen} in_folge={serie}")
+                ({topf} | (store.zaehl_kennungen(konto["id"]) if konto else set())) - {""})
+    if konto is None:
+        # Kein Konto — gezählt wird aber auch für Kennungen ohne Konto (B2-6 verrät nicht, ob es
+        # eins gibt), und ein Bestand kennt den Namen im Verzeichnis noch nicht (er entsteht erst
+        # mit der nächsten erfolgreichen Anmeldung). Was unter der Kennung stand, ist geräumt.
+        if not (offen or serie):
+            print(f"Kein Konto '{a.username}' in {a.db}, und unter dieser Kennung steht keine Sperre.",
+                  file=sys.stderr)
+            return 1
+        store.audit_log("unlock_cli", a.username, None, f"fehlversuche={offen} in_folge={serie} ohne_konto=1")
+        print(f"Kein Konto '{a.username}' — die Sperre unter dieser Kennung ist trotzdem aufgehoben "
+              f"({offen} Fehlversuche, {serie} in Folge verworfen).")
+        return 0
+    store.audit_log("unlock_cli", str(konto["username"]), None,
+                    f"fehlversuche={offen} in_folge={serie}"
+                    + (f" kennung={a.username}" if norm_kennung(konto["username"]) != topf else ""))
     print(f"Sperre für '{a.username}' aufgehoben ({offen} Fehlversuche verworfen).")
     return 0
 

@@ -155,9 +155,12 @@ def build_router(auth) -> APIRouter:
         # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
         # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
         # Verzeichnis gefragt worden war und abgelehnt hatte.
+        # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
+        # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
         auth.record_login(username, ip, bool(u), "password", versuch=versuch,
                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
-                                  else "lokal" if u else "lokal+ldap"))
+                                  else "lokal" if u else "lokal+ldap"),
+                          konto=u["id"] if aus_verzeichnis and u else None)
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen

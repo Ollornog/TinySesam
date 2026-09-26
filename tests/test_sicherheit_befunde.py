@@ -1950,6 +1950,11 @@ def _start_log(db_pfad):
     return puffer.getvalue()
 
 
+# Die Zeile des fremden Schreibers wieder ohne Topf, wie direkt nach dem rohen INSERT: Seitdem hat
+# ihn ein anderer Weg nachgetragen (seit G2 räumt jede erfolgreiche Anmeldung ab der Wasserlinie des
+# Kontos und sucht es dafür über `konto_mit_topf`). Ohne das misst die Probe nicht mehr, ob
+# `kennungs_kollisionen` selbst nachträgt.
+auth_alt.store._exec("UPDATE users SET topf_name = NULL, topf_mail = NULL WHERE id = ?", (eve_alt,))
 r.check("Vorbedingung: die Kreuz-Kollision steht wirklich in der Datenbank",
         len(auth_alt.store.kennungs_kollisionen()) == 1,
         f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — dann misst der Test nichts")

@@ -350,7 +350,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '')`
+### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 

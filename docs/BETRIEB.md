@@ -95,6 +95,16 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 > Namen (oder die Adresse) übernehmen und trägt ihn dann als `Remote-User` in jede App. Eine App,
 > die Rechte am Namen festmacht („alice darf Projekt X"), gibt sie damit dem Nachfolger. Rechte
 > immer an `Remote-Id` binden.
+>
+> In TinySesam selbst beginnt eine Kennung für das Konto mit ihrem **Beitritt** — Anlage,
+> Umbenennen, Adresswechsel, Nachtrag einer Adresse (G2, seit 2026-09-26; bis dahin mit der Anlage
+> des Kontos). Was vorher unter ihr stand, gehört nicht dazu: Fehlversuche eines Fremden unter dem
+> damals freien Namen räumt die Anmeldung des neuen Inhabers nicht weg (sie zählen weiter in der
+> Drosselung der IP, von der sie kamen), die Konto-Seite zeigt keine Anmeldung des Vorbesitzers, und
+> das Löschen schreibt dessen Audit-Zeilen nicht um. Die Serie der Fehlversuche in Folge (B2-6)
+> endet dagegen mit der ersten vollen Anmeldung ganz: Sie hat keine IP und schützt nur den, dem die
+> Kennung jetzt gehört. Konten aus der Zeit davor haben keine solche Grenze gespeichert — für sie
+> gilt weiter die Anlage.
 
 | | Regel |
 |---|---|
@@ -136,7 +146,9 @@ Kennung gehört zwei Konten.
   danach selbst nach.
 - **Grenzen:** Eine Zeile eines fremden Schreibers (ältere Fassung nach einem Rückschritt,
   sqlite3-Werkzeug) trägt keinen Topf und zählt für die Trigger erst, wenn TinySesam ihn
-  nachgetragen hat — beim Start und vor jeder Anlage. Ein rohes UPDATE, das in eine Kollision hinein
+  nachgetragen hat — beim Start und vor jeder Anlage. Ändert ein fremder Schreiber Name oder
+  Adresse, gilt die Kennung als eben erst beigetreten (Trigger `trg_users_topf_name`/`_mail`):
+  strenger, nie lockerer. Ein rohes UPDATE, das in eine Kollision hinein
   umbenennt, wird nicht verhindert, nur beim nächsten Start gemeldet. Lassen sich die Trigger nicht
   anlegen (Datei nur lesbar), startet TinySesam trotzdem und sagt es im Log.
 - **Rückweg auf 0.20.x:** Die Trigger bleiben in der Datei und wirken dort weiter (0.20.x schreibt
@@ -240,8 +252,15 @@ Seite gehört und sich nicht ändert:
   Zeilen — die Sitzungen laufen dann bis zu ihrem Ablauf, ohne Nachprüfung.
 - **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
   Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
-  räumen die Rückwege nur den lokalen Namen und die Adresse — eine Serie unter dem neuen
-  Verzeichnisnamen hebt `tinysesam unlock <name wie eingetippt>` auf (die Logzeile nennt ihn).
+  vermerkt jede erfolgreiche Anmeldung den Verzeichnisnamen an der Bindung
+  (`federated_identity.name_topf`, nur den jüngsten), und alle Rückwege räumen ihn mit: die volle
+  Anmeldung, der Passwort-Reset im Panel, `tinysesam passwd` und `tinysesam unlock` (G5, seit
+  2026-09-26; bis dahin räumten sie nur den lokalen Namen und die Adresse, und
+  `unlock <verzeichnisname>` brach mit „Kein Konto" ab). `tinysesam unlock` nimmt die Kennung wie
+  eingetippt — Name, Adresse oder Verzeichnisname. Findet es kein Konto (Bestand: der Name ist noch
+  nicht vermerkt, und die Anmeldung, die ihn vermerken würde, ist gesperrt), räumt es trotzdem die
+  Zähler unter dieser Kennung und sagt das; Rückgabe 1 nur, wenn dort nichts stand. Gehört der
+  Verzeichnisname lokal einem ANDEREN Konto (als Name oder Adresse), bleibt dessen Serie stehen.
 - **`admin_identifiers` nach einem IdP-Entzug (H-5):** Entzieht der Provider dem letzten Admin das
   Flag und steht dessen belegte Adresse in `admin_identifiers`, befördert der Erst-Admin-Weg ihn im
   selben Login wieder — dann mit dem Vermerk „von Hand" (1). Das ist die Allowlist, wie der Betreiber
@@ -287,7 +306,10 @@ Seite gehört und sich nicht ändert:
   mit `@` (NameID emailAddress) oder einer aus dem Adress-Attribut selbst (`saml_attr_username` =
   `saml_attr_email`); bei LDAP eine Eingabe, die dem `mail`-Wert des gefundenen Eintrags gleicht
   (ein Filter wie `(|(uid={username})(mail={username}))`, auch mit `mail=chefin` ohne `@`). Ein UPN
-  als Bind-Kennung bleibt Kontoname. Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese
+  als Bind-Kennung bleibt Kontoname. Trifft ein solcher Filter die Kennung eines ANDEREN lokalen
+  Kontos, räumt die Anmeldung des Verzeichnis-Eintrags dessen Fehlversuche nicht (Fenster und
+  Serie; G5-N1, seit 2026-09-26 — vorher setzte jede Anmeldung des Dritten das Kontofenster der
+  lokalen Inhaberin zurück). Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese
   Namen nicht will und dem IdP traut, setzt den Schalter. Eine Kennung mit Rand-Leerraum oder
   Steuerzeichen weist TinySesam ab, statt sie zu trimmen (sie fiele sonst auf eine fremde Bindung).
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;

@@ -222,6 +222,143 @@ auth.record_login("zweit", "198.51.100.6", False, "password_change", versuch=v_p
 r.check("B2-6: ein Fehlgriff am Passwortwechsel (über versuch_beginnen) bucht keine Serie",
         auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
 
+# ── B2-6 × Verzeichnis: die Serie unter dem Namen im Verzeichnis (G5, G5-N1) ────────────────────
+# Die Serie zählt unter der EINGETIPPTEN Kennung. Nach einer Umbenennung im Verzeichnis (lokal
+# `alice`, über entryUUID gebunden, dort `alice.neu`) tippt die Person `alice.neu`. Bis 2026-09-26
+# räumte kein Rückweg die Serie darunter: Eigene Tippfehler summierten sich über die Jahre, ein
+# Fremder sperrte sie mit genug Fehlversuchen dauerhaft aus, und `tinysesam unlock alice.neu` brach
+# mit „Kein Konto" ab.
+class _Verzeichnis:
+    """Attrappe des LDAP-Clients nach dem Bind: der Eintrag zur eingetippten Kennung (bei einem
+    Filter über `uid` UND `mail` auch zur Adresse)."""
+
+    def __init__(self, eintraege):
+        self.eintraege = eintraege
+
+    def authenticate(self, username, password):
+        e = self.eintraege.get(username)
+        if not e or e["pw"] != password:
+            return None
+        return {"username": username, "email": e.get("email"), "name": username, "groups": [],
+                "id": e.get("id"), "email_verified": None}
+
+
+LPW = "Verzeichnis-Pw1"
+auth_v, app_v = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+                     ldap_auto_create=True, passkey_enabled=False)
+for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
+             ("account_max_consecutive_failures", 10)):
+    auth_v.set_security(k, v)
+auth_v.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
+_erst_v = _login(TestClient(app_v), "alice", LPW)
+uid_v = auth_v.store.get_user_by_name("alice")["id"]
+
+
+def _bindungsname(uid):
+    z = auth_v.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (uid,))
+    return z["name_topf"] if z else "(keine Bindung)"
+
+
+_erst_name = _bindungsname(uid_v)
+auth_v.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})     # im Verzeichnis umbenannt
+for _ in range(3):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_drei_v = auth_v.store.fehlserie("alice.neu")
+_voll_v = _login(TestClient(app_v), "alice.neu", LPW)
+# (Mutationsprobe: den Namen aus der Bindung in `Store.zaehl_kennungen` weglassen → 3 → rot.)
+r.check("G5: nach der Umbenennung im Verzeichnis beendet die volle Anmeldung die Serie unter dem "
+        "neuen Namen (und räumt sein Fenster)",
+        _erst_v.status_code == 303 and _drei_v == 3 and _voll_v.status_code == 303
+        and auth_v.store.fehlserie("alice.neu") == 0 and auth_v.store.count_fails(0, username="alice.neu") == 0,
+        f"HTTP {_erst_v.status_code}/{_voll_v.status_code}, Serie {_drei_v} → {auth_v.store.fehlserie('alice.neu')}")
+r.check("… dasselbe Konto; der Verzeichnisname steht an der Bindung — nur weil er nicht der eigene ist",
+        auth_v.store.get_user(uid_v)["username"] == "alice" and _erst_name is None
+        and _bindungsname(uid_v) == "alice.neu", f"{_erst_name!r} → {_bindungsname(uid_v)!r}")
+
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_gesperrt_v = _login(TestClient(app_v), "alice.neu", LPW)
+auth_v._serie_beenden(uid_v)
+# (Mutationsprobe: in `_serie_beenden` wieder nur Name und Adresse → rot.)
+r.check("G5: an der Grenze (429 auch mit dem richtigen Passwort) räumt der Betreiber-Weg "
+        "(`_serie_beenden`) die Serie unter dem Verzeichnisnamen",
+        _gesperrt_v.status_code == 429 and auth_v.store.fehlserie("alice.neu") == 0
+        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
+        f"HTTP {_gesperrt_v.status_code}, Serie {auth_v.store.fehlserie('alice.neu')}")
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+auth_v.create_user("chefin-v", password=PW, is_admin=True)
+_cv = TestClient(app_v)
+_login(_cv, "chefin-v", PW)
+_panel_v = _cv.post(f"/auth/admin/api/users/{uid_v}/password", json={"password": "Betreiber-Pw-15"})
+r.check("… ebenso der Passwort-Reset im Panel", _panel_v.status_code == 200
+        and auth_v.store.fehlserie("alice.neu") == 0, f"HTTP {_panel_v.status_code}, {auth_v.store.fehlserie('alice.neu')}")
+
+
+def _unlock(kennung):
+    aus, fehl, code = io.StringIO(), io.StringIO(), 0
+    with redirect_stdout(aus), redirect_stderr(fehl):
+        try:
+            _cli(["unlock", "--db", auth_v.cfg.db_path, kennung])
+        except SystemExit as e:
+            code = e.code or 0
+    return code, aus.getvalue() + fehl.getvalue()
+
+
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_login(TestClient(app_v), "alice", "falsch-falsch-1")          # der alte Name: im Verzeichnis weg
+_code_v, _text_v = _unlock("alice.neu")
+# (Mutationsprobe: `konto_mit_bindungsname` streichen → das Konto wird nicht gefunden, die Serie
+#  unter `alice` bleibt → rot.)
+r.check("G5: `tinysesam unlock alice.neu` — den Namen wie eingetippt — findet das Konto und beendet "
+        "seine Serie unter allen Kennungen",
+        _code_v == 0 and "Sperre für 'alice.neu' aufgehoben" in _text_v
+        and auth_v.store.fehlserie("alice.neu") == 0 and auth_v.store.fehlserie("alice") == 0,
+        f"exit {_code_v}, {_text_v!r}, Serie {auth_v.store.fehlserie('alice.neu')}/{auth_v.store.fehlserie('alice')}")
+# Bestand: Die Serie ist schon voll, der Verzeichnisname aber nie vermerkt (er entsteht erst mit der
+# nächsten ERFOLGREICHEN Anmeldung — und die ist gesperrt).
+auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_code_b, _text_b = _unlock("alice.neu")
+# (Mutationsprobe: den Abbruch „Kein Konto" vor dem Räumen zurückbauen → rot.)
+r.check("… auch im Bestand ohne Vermerk: kein Konto, aber die Zähler unter der Kennung sind geräumt (rc 0)",
+        _code_b == 0 and "Kein Konto" in _text_b and auth_v.store.fehlserie("alice.neu") == 0
+        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
+        f"exit {_code_b}, {_text_b!r}, Serie {auth_v.store.fehlserie('alice.neu')}")
+_code_n, _text_n = _unlock("gibt-es-nirgends")
+r.check("… eine Kennung ohne Konto und ohne Zähler bleibt ein Fehler (rc 1)",
+        _code_n == 1 and "Kein Konto" in _text_n, f"exit {_code_n}, {_text_n!r}")
+
+# Der Wächter: Ein Verzeichnisfilter über `mail` löst eine Kennung auch zu einem Dritten auf, dessen
+# `mail`-Attribut die Adresse eines LOKALEN Kontos ist (Vorgabe `ldap_email_trusted=False`). Ohne
+# Wächter räumte jede Anmeldung des Dritten die Zähler der Inhaberin — Fenster (G5-N1) und Serie
+# (G5): unbegrenztes Raten gegen ihr Konto.
+auth_v.create_user("chefin", password=PW, email="chefin@example.com")
+auth_v.ldap = _Verzeichnis({"chefin@example.com": {"pw": LPW, "id": "uuid-dritter", "email": "chefin@example.com"}})
+for _ in range(4):
+    _login(TestClient(app_v), "chefin@example.com", "falsch-falsch-1")
+_vorher_w = (auth_v.store.count_fails(0, username="chefin@example.com"), auth_v.store.fehlserie("chefin@example.com"))
+_dritter = _login(TestClient(app_v), "chefin@example.com", LPW)
+_uid_dritter = auth_v.store.get_federated_user("ldap", "uuid-dritter")
+# (Mutationsproben: den Wächter in `_raeumgrenze` streichen → Fenster 0 → rot; den Wächter in
+#  `Store.zaehl_kennungen` streichen → Serie 0 → rot.)
+r.check("G5-N1: die Anmeldung eines Verzeichnis-Dritten unter der Adresse eines lokalen Kontos lässt "
+        "dessen Fenster stehen",
+        _vorher_w == (4, 4) and _dritter.status_code == 303 and _uid_dritter not in (None, uid_v)
+        and auth_v.store.count_fails(0, username="chefin@example.com") == 4,
+        f"vorher {_vorher_w}, HTTP {_dritter.status_code}, {auth_v.store.count_fails(0, username='chefin@example.com')}")
+r.check("G5: … und ihre Serie (der Name an der Bindung des Dritten zählt nicht, er gehört ihr)",
+        auth_v.store.fehlserie("chefin@example.com") == 4
+        and "chefin@example.com" not in auth_v.store.zaehl_kennungen(_uid_dritter),
+        f"{auth_v.store.fehlserie('chefin@example.com')}, {auth_v.store.zaehl_kennungen(_uid_dritter)}")
+_inhaberin = _login(TestClient(app_v), "chefin@example.com", PW)
+r.check("… die Inhaberin selbst räumt beides mit ihrer Anmeldung (Gegenprobe)",
+        _inhaberin.status_code == 303 and auth_v.store.count_fails(0, username="chefin@example.com") == 0
+        and auth_v.store.fehlserie("chefin@example.com") == 0,
+        f"HTTP {_inhaberin.status_code}, {auth_v.store.count_fails(0, username='chefin@example.com')}")
+
 # ── B2-8: PIN als Erstfaktor — ausdrücklich erlaubt, mit eigener Grenze ─────────────────
 auth, app = _app(pin_enabled=True)
 
