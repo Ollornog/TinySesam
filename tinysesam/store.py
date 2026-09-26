@@ -231,7 +231,8 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
     username TEXT,
     ip       TEXT,
     success  INTEGER NOT NULL,
-    method   TEXT
+    method   TEXT,
+    offen    INTEGER NOT NULL DEFAULT 0      -- 1: vorgebucht, Ausgang noch offen (G9, `reserve_attempt`)
 );
 CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
     topf    TEXT NOT NULL,                   -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
@@ -666,7 +667,8 @@ class Store:
     #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
     #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
     #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
-    #:      (G5). Schema 11 ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
+    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Schema 11
+    #:      ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -722,6 +724,8 @@ class Store:
                       ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER")],
             # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
             "federated_identity": [("name_topf", "TEXT")],
+            # 0 für den Bestand: Jede vorhandene Zeile ist ein abgeschlossener Versuch (G9).
+            "login_attempt": [("offen", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -2507,12 +2511,23 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    @staticmethod
-    def _fails_abfrage(since, username=None, ip=None, method=None, exclude_methods=None, ab_id=None):
+    #: So lange gilt eine Vorbuchung mit offenem Ausgang (`reserve_attempt(schweben=True)`) als
+    #: schwebend, nicht als Fehlversuch (Sekunden, G9). Länger als jede Verzeichnis-Frage bis zu
+    #: ihrem Timeout (`ldap_.VERBINDUNGS_TIMEOUT`, Verbindungsaufbau und Bind je einmal) samt
+    #: Rechenzeit. Eine ältere offene Zeile hat niemand abgeschlossen — der Prozess ist gestorben
+    #: oder hängt; sie zählt dann als Fehlversuch, im Zweifel strenger.
+    VORBUCHUNG_SCHWEBE_SEK = 30
+
+    def _fails_abfrage(self, since, username=None, ip=None, method=None, exclude_methods=None,
+                       ab_id=None, nur_bestaetigt=False):
         """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer.
-        `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2)."""
+        `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2).
+        `nur_bestaetigt`: ohne die schwebenden Vorbuchungen (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
+        if nur_bestaetigt:
+            q += " AND (offen=0 OR ts<?)"
+            args.append(_now() - self.VORBUCHUNG_SCHWEBE_SEK)
         if ab_id is not None:
             q += " AND id>?"
             args.append(int(ab_id))
@@ -2532,20 +2547,24 @@ class Store:
         return q, args
 
     def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
-                    ab_id=None) -> int:
+                    ab_id=None, nur_bestaetigt=False) -> int:
         """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
 
         `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
         was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
         derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
         (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+
+        Vorgabe: Eine schwebende Vorbuchung (`reserve_attempt(schweben=True)`) zählt mit — sie
+        KANN ein Fehlversuch werden. `nur_bestaetigt=True` lässt sie weg (G9).
         """
         if not username and not ip:
             return 0
-        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id)
+        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id,
+                                      nur_bestaetigt)
         return self._one(q, args)["c"]
 
-    def reserve_attempt(self, username, ip, method, regeln, serie=None) -> tuple:
+    def reserve_attempt(self, username, ip, method, regeln, serie=None, schweben=False) -> tuple:
         """Sperren prüfen und den Versuch **in derselben Transaktion** vorab als Fehlversuch buchen.
 
         `regeln` ist eine Liste `(grund, grenze, filter)`; `filter` sind die Schlüsselwörter von
@@ -2566,6 +2585,18 @@ class Store:
         in DERSELBEN Transaktion. Die erste Fassung las die Serie davor und zählte sie erst nach
         der Prüfung: Eine parallele Salve an der Grenze las N-mal „noch nicht voll" und durfte
         N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung.
+
+        **Schwebend (G9).** `schweben=True` bucht den Versuch mit offenem Ausgang (`offen=1`): Er
+        kann ein Fehlversuch werden oder gar keiner (Verzeichnis-Ausfall, F-23 — zurückgenommen
+        erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach
+        dem Timeout). Greift eine Regel oder die Serie **nur** wegen solcher Zeilen, ist die
+        Antwort `(None, "schwebend")`: noch nicht entschieden, keine Sperre. Der Aufrufer fragt
+        nach einer kurzen Pause erneut (`versuch_beginnen`). Vorher war jede Abweisung in diesem
+        Fenster eine Sperre mit `failed login` für fail2ban und Sperrhinweis an den Inhaber — auch
+        wenn danach kein einziger Fehlversuch übrig blieb. Die Salve (R7-2) bleibt gebremst: Sie
+        wartet, bis die Vorbuchungen entschieden sind, und bekommt dann die echte Sperre. Greift
+        eine Regel auch mit den bestätigten Zeilen allein, gilt ihr Grund wie bisher; eine offene
+        Zeile, die älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch.
         """
         with self._lock:
             if self.db.in_transaction:
@@ -2581,21 +2612,32 @@ class Store:
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 stand = None
+                schwebend = False
                 topf_s, art_s, grenze_s = serie if serie is not None else (None, None, 0)
-                if topf_s:
-                    if self._serie_summe(topf_s) >= grenze_s:
+                if topf_s and self._serie_summe(topf_s) >= grenze_s:
+                    if self._serie_bestaetigt(topf_s) >= grenze_s:
                         self.db.execute("ROLLBACK")
                         return None, "lockout_serie"
+                    schwebend = True
                 for grund, grenze, filt in regeln:
                     if not filt.get("username") and not filt.get("ip"):
                         continue
                     q, args = self._fails_abfrage(**filt)
+                    if self.db.execute(q, args).fetchone()["c"] < grenze:
+                        continue
+                    # Die Regel greift — auch ohne die schwebenden Vorbuchungen? Dann ist es eine
+                    # Sperre. Sonst weiter: Eine spätere Regel kann bestätigt greifen und geht vor.
+                    q, args = self._fails_abfrage(**filt, nur_bestaetigt=True)
                     if self.db.execute(q, args).fetchone()["c"] >= grenze:
                         self.db.execute("ROLLBACK")
                         return None, grund
+                    schwebend = True
+                if schwebend:
+                    self.db.execute("ROLLBACK")
+                    return None, "schwebend"
                 cur = self.db.execute(
-                    "INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,0,?)",
-                    (_now(), username, ip, method))
+                    "INSERT INTO login_attempt(ts, username, ip, success, method, offen) VALUES (?,?,?,0,?,?)",
+                    (_now(), username, ip, method, 1 if schweben else 0))
                 if topf_s:
                     self._serie_plus(topf_s, art_s)
                     stand = self._serie_summe(topf_s)
@@ -2605,14 +2647,36 @@ class Store:
                 self.db.execute("ROLLBACK")
                 raise
 
-    def finish_attempt(self, attempt_id, success: bool):
-        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen (Fehlversuch bleibt stehen)."""
-        if success:
-            self._exec("UPDATE login_attempt SET success=1 WHERE id=?", (attempt_id,))
+    def finish_attempt(self, attempt_id, success: bool, serie=None):
+        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen: Erfolg oder Fehlversuch.
 
-    def cancel_attempt(self, attempt_id):
-        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
-        self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
+        Beides beendet den Schwebezustand (`offen=0`, G9): Ein Fehlversuch zählt ab hier auch für
+        `count_fails(nur_bestaetigt=True)` — bis dahin war der Abschluss eines Fehlversuchs ein
+        No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
+        Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
+        da, und wer gerade wartet (`versuch_beginnen`), läse die Serie um eins zu hoch — an der
+        Grenze eine Sperre mit Sperrhinweis für nichts."""
+        with self._schreibend():
+            self.db.execute("UPDATE login_attempt SET success=?, offen=0 WHERE id=?",
+                            (1 if success else 0, attempt_id))
+            if success and serie:
+                self._serie_minus(*serie)
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+
+    def cancel_attempt(self, attempt_id, serie=None):
+        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23).
+
+        `serie=(topf, art)` nimmt seine Vorbuchung in der Serie in derselben Transaktion zurück —
+        aus demselben Grund wie bei `finish_attempt` (G9)."""
+        with self._schreibend():
+            self.db.execute("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
+            if serie:
+                self._serie_minus(*serie)
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
 
     def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None,
                     ab_id=None):
@@ -2669,6 +2733,21 @@ class Store:
                                 (topf,)).fetchone()
         return int(zeile["n"])
 
+    def _serie_bestaetigt(self, topf) -> int:
+        """Die Serie ohne die schwebenden Vorbuchungen (G9) — unter `_lock`, ohne Commit.
+
+        Jede offene Zeile in `login_attempt` hat genau eine Buchung in der Serie unter demselben
+        Topf (`reserve_attempt(schweben=True)` bucht beide in einer Transaktion); eine Zeile, die
+        älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch und wird nicht abgezogen."""
+        offen = self.db.execute(
+            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
+            "AND ts>=?", (topf, _now() - self.VORBUCHUNG_SCHWEBE_SEK)).fetchone()
+        return max(0, self._serie_summe(topf) - int(offen["n"]))
+
+    def _serie_minus(self, topf, art):
+        self.db.execute("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
+                        (topf, art or ""))
+
     def _serie_plus(self, topf, art):
         jetzt = _now()
         self.db.execute("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
@@ -2681,6 +2760,14 @@ class Store:
             return 0
         with self._lock:
             return self._serie_summe(topf)
+
+    def fehlserie_bestaetigt(self, topf) -> int:
+        """Wie `fehlserie`, ohne die schwebenden Vorbuchungen (G9): die Fehlversuche in Folge, die
+        feststehen. An ihr hängt die Serien-Sperre; die Summe allein kann noch sinken."""
+        if not topf:
+            return 0
+        with self._lock:
+            return self._serie_bestaetigt(topf)
 
     def fehlserie_erhoehen(self, topf, art="password") -> int:
         """Einen Fehlversuch an die Serie hängen (Wege ohne Vorbuchung); gibt die neue Summe zurück."""

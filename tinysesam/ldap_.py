@@ -174,11 +174,15 @@ class AusfallMerker:
     Pause. Gemeldet wird der Wechsel (einmal beim Ausfall, einmal bei der Rückkehr), nicht jede
     Anfrage.
 
-    **Was bleibt:** das erste Fenster. Bevor die erste Frage scheitert, weiss niemand, dass das
+    **Das erste Fenster** (G9): Bevor die erste Frage scheitert, weiss niemand, dass das
     Verzeichnis weg ist; Anmeldungen, die in diesen höchstens `VERBINDUNGS_TIMEOUT` Sekunden
-    beginnen, schweben wie vorher. Das geschieht einmal je Ausfall und je Prozess (der Merker lebt
-    im Prozess, bei `--workers N` also N-mal, zeitgleich). Ganz schliessen liesse es sich nur mit
-    einem Schwebezustand der Vorbuchung in der Datenbank.
+    beginnen, hängen bis zum Timeout — einmal je Ausfall und je Prozess (der Merker lebt im
+    Prozess, bei `--workers N` also N-mal, zeitgleich). Ihre Vorbuchungen sperren aber niemanden
+    mehr: Die Login-Route bucht sie als schwebend (`Store.reserve_attempt(schweben=True)`), und
+    wer nur an ihnen scheitern würde, wartet, bis sie entschieden sind (`versuch_beginnen`) —
+    höchstens `VERBINDUNGS_TIMEOUT + 2` Sekunden, ohne `failed login` und ohne Sperrhinweis. Bis
+    2026-09-26 blieb dieses Fenster eine bekannte Lücke: 429 für Unbeteiligte, auch für den
+    Notfall-Admin, samt Bann durch fail2ban.
 
     `uhr` ist austauschbar, damit ein Test die Pause ablaufen lassen kann, ohne zu warten.
     """

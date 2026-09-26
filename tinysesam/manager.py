@@ -37,6 +37,7 @@ from . import passwords as _pw
 from .templates import PRAEFIX_PLATZHALTER as _PRAEFIX_PLATZHALTER, Templates, inject_nonce as _inject_nonce
 from . import totp as _totp
 from . import security
+from .ldap_ import VERBINDUNGS_TIMEOUT as _LDAP_TIMEOUT
 
 #: IP und angemeldetes Konto der Anfrage, die gerade bearbeitet wird (B5-02, B5-04).
 #:
@@ -303,6 +304,9 @@ class TinySesam:
         # `versuch_beginnen` vorgebuchte Serie (B2-6). Im Speicher genügt: Stirbt der Prozess
         # dazwischen, bleibt die Vorbuchung als Fehlversuch stehen — im Zweifel strenger.
         self._serie_vorbuchungen: dict = {}
+        # Warteplätze für Anmeldungen, die nur wegen schwebender Vorbuchungen nicht weiterkämen
+        # (G9, `versuch_beginnen`) — gedeckelt, damit Wartende nicht alle Worker-Threads belegen.
+        self._schwebe_plaetze = threading.BoundedSemaphore(self._SCHWEBE_WARTEPLAETZE)
         self.oidc = None
         self.webauthn = None
         self.ldap = None
@@ -2162,22 +2166,39 @@ class TinySesam:
         vollständigen Anmeldung auf einem anderen Weg (Passkey, Magic-Link, OIDC), einem
         Passwort-Reset oder durch den Betreiber (Panel-Reset, `tinysesam unlock`). Gezählt wird
         je gefalteter Kennung, ob es das Konto gibt oder nicht — sonst verriete die Sperre, welche
-        Namen existieren."""
-        return self.store.fehlserie(norm_kennung(username)) >= self.sec("account_max_consecutive_failures")
+        Namen existieren.
+
+        Nur was feststeht (`fehlserie_bestaetigt`, G9): Eine schwebende Vorbuchung kann noch
+        zurückgenommen werden — ein Aufschub zeigt deshalb nie den Text der Serien-Sperre."""
+        return (self.store.fehlserie_bestaetigt(norm_kennung(username))
+                >= self.sec("account_max_consecutive_failures"))
 
     def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
-        """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`)."""
-        if login and username and self._serie_voll(username):
-            self._abgewiesen(username, ip, "lockout_serie", login=True)
-            return True
+        """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`).
+
+        Greift eine Regel nur wegen schwebender Vorbuchungen (G9, `Store.reserve_attempt`), ist das
+        ein Aufschub, keine Sperre: `True` ohne `failed login` und ohne Sperrhinweis
+        (`_aufgeschoben`). Eine Regel, die auch bestätigt greift, geht vor."""
+        schwebend = False
+        if login and username:
+            if self._serie_voll(username):
+                self._abgewiesen(username, ip, "lockout_serie", login=True)
+                return True
+            schwebend = (self.store.fehlserie(norm_kennung(username))
+                         >= self.sec("account_max_consecutive_failures"))
         for grund, grenze, filt in _gueltige_regeln(regeln):
-            if self.store.count_fails(**filt) >= grenze:
+            if self.store.count_fails(**filt) < grenze:
+                continue
+            if self.store.count_fails(**filt, nur_bestaetigt=True) >= grenze:
                 self._abgewiesen(username, ip, grund, login=login)
                 return True
-        return False
+            schwebend = True
+        if schwebend:
+            self._aufgeschoben(username, ip, login=login)
+        return schwebend
 
     def versuch_beginnen(self, username, ip, method, auch_pin: bool = False,
-                         serie_art: Optional[str] = None) -> Optional[int]:
+                         serie_art: Optional[str] = None, schweben: bool = False) -> Optional[int]:
         """Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 
         Rückgabe: eine Versuchs-ID, die an `record_login(..., versuch=id)` zurückgeht, oder
@@ -2191,6 +2212,14 @@ class TinySesam:
         `serie_art` bucht den Versuch in der Serie (B2-6) unter einer anderen Art als der
         Methode — `SERIE_PIN_FOLGE` für eine PIN, die HINTER einem schon erbrachten Faktor steht
         (Kettenschritt, Route-Kette; G7). Fenster und Töpfe zählen weiter unter `method`.
+
+        `schweben=True` bucht den Versuch mit offenem Ausgang (G9, `Store.reserve_attempt`): für
+        eine Prüfung, die auch „gar kein Versuch" ergeben kann — die Login-Route mit LDAP, deren
+        Vorbuchung bei einem Ausfall zurückgenommen wird (F-23). Würde ein Versuch **nur** wegen
+        solcher offenen Vorbuchungen abgewiesen, wartet er, bis sie entschieden sind: höchstens
+        `_SCHWEBE_FRIST_SEK`, höchstens `_SCHWEBE_WARTEPLAETZE` Wartende je Prozess. Bleibt es
+        offen, ist die Antwort `None` wie bei einer Sperre — aber mit `deferred login` statt
+        `failed login` im Sicherheits-Log (fail2ban bannt nicht) und ohne Sperrhinweis.
         """
         regeln = self._regeln(username, ip, method)
         if auch_pin:
@@ -2201,11 +2230,20 @@ class TinySesam:
         serie = None
         if method not in security.NICHT_LOGIN_METHODEN:
             serie = (norm_kennung(username), serie_art or method, self.sec("account_max_consecutive_failures"))
-        versuch, antwort = self.store.reserve_attempt(self._topf(username, method), ip, method,
-                                                      _gueltige_regeln(regeln), serie=serie)
+
+        def buchen():
+            return self.store.reserve_attempt(self._topf(username, method), ip, method,
+                                              _gueltige_regeln(regeln), serie=serie, schweben=schweben)
+
+        versuch, antwort = buchen()
+        if versuch is None and antwort == "schwebend":
+            versuch, antwort = self._schwebe_abwarten(buchen)
         if versuch is None:
-            self._abgewiesen(username, ip, antwort,
-                             login=method not in security.NICHT_LOGIN_METHODEN)
+            login = method not in security.NICHT_LOGIN_METHODEN
+            if antwort == "schwebend":
+                self._aufgeschoben(username, ip, login=login)
+            else:
+                self._abgewiesen(username, ip, antwort, login=login)
         elif serie is not None:
             # Die Art, unter der gebucht WURDE (`serie[1]`), nicht die Methode: Sonst senkte ein
             # richtiger Folgeschritt die Art `pin` und liesse seine Vorbuchung unter `pin_folge`
@@ -2220,15 +2258,64 @@ class TinySesam:
 
     _SERIE_VORBUCHUNGEN_MAX = 10000
 
+    #: Schwebende Vorbuchungen (G9, `versuch_beginnen`): wie viele Anmeldungen je Prozess
+    #: gleichzeitig warten dürfen, wie lange höchstens (eine Verzeichnis-Frage bis zu ihrem Timeout
+    #: und etwas Luft) und in welchem Takt sie nachfragen. Jedes Nachfragen nimmt die Schreibsperre
+    #: (`BEGIN IMMEDIATE`) — bei voller Belegung höchstens rund 40 kurze Transaktionen je Sekunde.
+    _SCHWEBE_WARTEPLAETZE = 8
+    _SCHWEBE_FRIST_SEK = _LDAP_TIMEOUT + 2
+    _SCHWEBE_TAKT_SEK = 0.2
+
+    def _schwebe_abwarten(self, buchen) -> tuple:
+        """Warten, bis die schwebenden Vorbuchungen entschieden sind, dann erneut buchen (G9).
+
+        Rückgabe wie `Store.reserve_attempt`; `(None, "schwebend")`, wenn die Frist abläuft oder
+        kein Warteplatz frei ist. Ohne Deckel hielte eine Salve jeden Worker-Thread fest.
+
+        Das Warten blockiert den aufrufenden Thread — richtig für die synchronen Routen (sie laufen
+        im Threadpool). Die einzige asynchrone Route mit Vorbuchung (`password_change`) schwebt nie:
+        Ihr Topf zählt nur die eigene Methode, und die bucht nie offen."""
+        if not self._schwebe_plaetze.acquire(blocking=False):
+            return None, "schwebend"
+        try:
+            frist = time.monotonic() + self._SCHWEBE_FRIST_SEK
+            while time.monotonic() < frist:
+                time.sleep(self._SCHWEBE_TAKT_SEK)
+                versuch, antwort = buchen()
+                if versuch is not None or antwort != "schwebend":
+                    return versuch, antwort
+            return None, "schwebend"
+        finally:
+            self._schwebe_plaetze.release()
+
+    def _aufgeschoben(self, username, ip, login: bool = True) -> None:
+        """Eine Abweisung, die keine Sperre ist: nur schwebende Vorbuchungen im Weg (G9).
+
+        Eigenes Ereigniswort (`deferred login`/`deferred verification`) — die mitgelieferten
+        fail2ban-Filter treffen es nicht, und es geht kein Sperrhinweis hinaus: Womöglich steht
+        danach kein einziger Fehlversuch in der Tabelle. Protokolliert wird trotzdem, damit ein
+        Betreiber die 429 zuordnen kann."""
+        security.seclog.warning("deferred %s user=%s ip=%s reason=pending",
+                                "login" if login else "verification",
+                                security.fuer_log(username) or "-", security.fuer_log(ip))
+
     def _versuch_zuruecknehmen(self, versuch) -> None:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
 
-        Mitsamt seiner Vorbuchung in der Serie (B2-6): Ein Ausfall ist kein Fehlversuch, weder
-        im Fenster noch in Folge."""
-        self.store.cancel_attempt(versuch)
+        Mitsamt seiner Vorbuchung in der Serie (B2-6), in einer Transaktion (G9): Ein Ausfall ist
+        kein Fehlversuch, weder im Fenster noch in Folge."""
         gebucht = self._serie_vorbuchungen.pop(versuch, None)
-        if gebucht:
-            self.store.fehlserie_senken(gebucht[0], gebucht[1])
+        self.store.cancel_attempt(versuch, serie=gebucht[:2] if gebucht else None)
+
+    def _versuch_gescheitert(self, versuch) -> None:
+        """Einen vorgebuchten Versuch als Fehlversuch abschliessen, ohne `record_login` (G9).
+
+        Für eine Route, deren Prüfung mit einer unerwarteten Ausnahme endet: Der Versuch zählt
+        sofort — im Zweifel strenger, wie bei einem Prozess, der mittendrin stirbt —, statt
+        `Store.VORBUCHUNG_SCHWEBE_SEK` lang zu schweben und Anmeldungen derselben Adresse warten
+        zu lassen. Die Serie bleibt gebucht."""
+        self._serie_vorbuchungen.pop(versuch, None)
+        self.store.finish_attempt(versuch, False)
 
     # ---------- MFA (TOTP) ----------
     def mfa_pending(self, user_id) -> bool:
@@ -4241,11 +4328,11 @@ class TinySesam:
         if versuch is None:
             self.store.record_attempt(topf, ip, success, method)
         else:
-            self.store.finish_attempt(versuch, bool(success))
-        if success and vorgebucht:
-            # Richtig — die Vorbuchung in der Serie gilt nicht. Die Serie davor bleibt: Ein
-            # richtiger erster Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`).
-            self.store.fehlserie_senken(vorgebucht[0], vorgebucht[1])
+            # Bei einem Erfolg gilt die Vorbuchung in der Serie nicht — zurückgenommen in derselben
+            # Transaktion wie der Abschluss (G9). Die Serie davor bleibt: Ein richtiger erster
+            # Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`).
+            self.store.finish_attempt(versuch, bool(success),
+                                      serie=vorgebucht[:2] if success and vorgebucht else None)
         if success and quelle:
             self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:

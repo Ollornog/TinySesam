@@ -145,7 +145,7 @@
     "verify_user_pin": "(user_id, pin) -> 'bool'",
     "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
     "version": "() -> 'str'",
-    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None) -> 'Optional[int]'"
+    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'"
   },
   "TinySesam.eigenschaften": {
     "csrf_cookie_name": "() -> 'str'",

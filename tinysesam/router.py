@@ -108,49 +108,63 @@ def build_router(auth) -> APIRouter:
         # `record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
         # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
         # Fehlversuch in der Tabelle; `record_login(..., versuch=…)` macht ihn zum Erfolg.
-        versuch = auth.versuch_beginnen(username, ip, "password")
+        # Mit LDAP schwebt er, bis das Verzeichnis geantwortet hat (G9): Bei einem Ausfall wird er
+        # zurückgenommen (F-23), und bis dahin darf er niemanden sperren, sondern nur warten lassen.
+        versuch = auth.versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
         if versuch is None:
             # Eine Serien-Sperre (B2-6) läuft nicht ab — „vorübergehend" wäre gelogen, und der
             # Nutzer braucht den Weg hinaus. Die Meldung verrät nichts über die Existenz des
-            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht.
+            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht. Ein Aufschub (G9) bekommt
+            # dieselbe 429 wie eine Sperre — sonst verriete die Antwort, dass gerade jemand anderes
+            # unter dieser Kennung oder Adresse anmeldet.
             text = auth.t("err.locked_serie" if auth._serie_voll(username) else "err.locked")
             return auth.render_page("login", request=request, status=429, next=nxt, error=text)
-        u = auth.check_password(username, password)
-        aus_verzeichnis = False
-        if not u and cfg.ldap_enabled:
-            from .ldap_ import VerzeichnisNichtErreichbar
-            try:
-                u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
-            except VerzeichnisNichtErreichbar as e:
-                # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
-                # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
-                # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
-                # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
-                # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
-                auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
-                security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
-                                      security.fuer_log(username), security.fuer_log(ip),
-                                      security.fuer_log(str(e)))
-                # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
-                # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
-                # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
-                # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
-                # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
-                # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
-                # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
-                # Der Versuch steht seit `versuch_beginnen` schon als Fehlversuch in der Tabelle
-                # (R7-2) — ohne lokales Passwort wird er also zurückgenommen, nicht nur nicht
-                # zusätzlich verbucht. Bis dahin zählt er mit; damit das nicht bei jedem Anlauf
-                # bis zum Timeout dauert, fragt `check_ldap` nach einem Ausfall eine Pause lang
-                # gar nicht erst (`ldap_.AusfallMerker`) und wirft sofort.
-                lokal = auth.find_user(username)
-                if lokal and auth.store.get_password_hash(lokal["id"]):
-                    auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
-                else:
-                    auth._versuch_zuruecknehmen(versuch)
-                return auth.render_page("login", request=request, status=503, next=nxt,
-                                        error=auth.t("err.directory_down"))
-            aus_verzeichnis = u is not None
+        # Unerwartetes (Programmfehler im Client, Datenbank weg, eine HTTPException aus der
+        # Prüfung) macht den Versuch sofort zum Fehlversuch — im Zweifel strenger, wie bisher.
+        # Ohne das schwebte er `Store.VORBUCHUNG_SCHWEBE_SEK` lang und liesse Anmeldungen
+        # derselben Adresse warten (G9). Ab `record_login` ist er abgeschlossen.
+        try:
+            u = auth.check_password(username, password)
+            aus_verzeichnis = False
+            if not u and cfg.ldap_enabled:
+                from .ldap_ import VerzeichnisNichtErreichbar
+                try:
+                    u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+                except VerzeichnisNichtErreichbar as e:
+                    # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
+                    # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
+                    # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
+                    # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
+                    # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
+                    auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
+                    security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
+                                          security.fuer_log(username), security.fuer_log(ip),
+                                          security.fuer_log(str(e)))
+                    # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
+                    # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
+                    # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
+                    # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
+                    # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
+                    # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
+                    # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
+                    # Der Versuch steht seit `versuch_beginnen` schon in der Tabelle (R7-2), als
+                    # schwebende Vorbuchung (G9) — ohne lokales Passwort wird er also
+                    # zurückgenommen, nicht nur nicht zusätzlich verbucht. Bis dahin lässt er
+                    # Anmeldungen, die an ihm scheitern würden, warten, statt sie zu sperren; damit
+                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `check_ldap` nach
+                    # einem Ausfall eine Pause lang gar nicht erst (`ldap_.AusfallMerker`) und
+                    # wirft sofort.
+                    lokal = auth.find_user(username)
+                    if lokal and auth.store.get_password_hash(lokal["id"]):
+                        auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
+                    else:
+                        auth._versuch_zuruecknehmen(versuch)
+                    return auth.render_page("login", request=request, status=503, next=nxt,
+                                            error=auth.t("err.directory_down"))
+                aus_verzeichnis = u is not None
+        except BaseException:
+            auth._versuch_gescheitert(versuch)
+            raise
         # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
         # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
         # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das

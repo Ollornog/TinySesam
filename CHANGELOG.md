@@ -39,6 +39,10 @@ auffällt:
   „Passwort vergessen" nicht mehr auf (wie bei TOTP), der Betreiber schon (Panel-Reset, `tinysesam
   unlock`). Eine App, die unter so einer Kette eine Route-Kette mit der PIN zuerst für Gäste nutzt,
   verliert diesen Einstieg.
+- **LDAP: Anmeldungen warten kurz, statt gesperrt zu werden** (G9): Im ersten Fenster eines
+  Verzeichnis-Ausfalls kann eine Anmeldung bis zu 12 s dauern, statt sofort 429 zu bekommen. Neu im
+  Sicherheits-Log: `deferred login user=… ip=… reason=pending` — ein Aufschub, keine Sperre; die
+  mitgelieferten fail2ban-Filter treffen die Zeile bewusst nicht.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -265,6 +269,33 @@ auffällt:
   lautet. Jede Anmeldung des Dritten setzte das Kontofenster der Inhaberin zurück — verteiltes Raten
   ohne Grenze ausser Serie und IP-Limit. `record_login` hat dafür `konto=` (angehängt, Vorgabe
   `None`); die mitgelieferte Login-Route reicht es bei einer Verzeichnis-Anmeldung durch.
+- **LDAP: Das erste Fenster eines Ausfalls sperrt niemanden mehr (G9).** Die Login-Route bucht jeden
+  Versuch vorab als Fehlversuch (R7-2) und nimmt ihn bei einem Verzeichnis-Ausfall zurück (F-23) —
+  erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach dem
+  Timeout (10 s). Vor dem ersten Timeout weiss der Ausfall-Merker noch nichts: Wer in diesen Sekunden
+  anklopfte, sah die hängenden Vorbuchungen als Fehlversuche. Gemessen mit 15 hängenden Anmeldungen
+  hinter einer NAT-Adresse: Alice und der Notfall-Admin mit richtigem Passwort bekamen 429, das
+  Sicherheits-Log `failed login … reason=lockout_user|lockout_ip` (fail2ban bannte die Adresse), Alice
+  eine Mail „Gesperrte Anmeldung“ — danach stand kein einziger Fehlversuch in der Tabelle. Jetzt
+  schwebt die Vorbuchung einer LDAP-Anmeldung in der Datenbank (`login_attempt.offen`, Schema bleibt
+  11, additiv), bis das Verzeichnis geantwortet hat. Würde eine Anmeldung **nur** an schwebenden
+  Vorbuchungen scheitern, wartet sie, bis sie entschieden sind — höchstens 12 s
+  (`ldap_.VERBINDUNGS_TIMEOUT` + 2), höchstens 8 Wartende je Prozess —, und läuft dann normal weiter.
+  Wer keinen Warteplatz bekommt oder die Frist überschreitet, bekommt 429 wie bei einer Sperre (kein
+  neues Orakel), im Sicherheits-Log aber `deferred login user=… ip=… reason=pending`: keine Sperre,
+  kein Treffer für die fail2ban-Filter, kein Sperrhinweis, und nie der Text der Serien-Sperre. Eine
+  Regel, die auch mit den bestätigten Fehlversuchen allein greift, sperrt wie bisher — eine Salve
+  falscher Passwörter wartet mit und bekommt danach die echte Sperre (R7-2 bleibt). Eine offene
+  Vorbuchung, die nach 30 s niemand abgeschlossen hat (`Store.VORBUCHUNG_SCHWEBE_SEK`, Prozess
+  gestorben), zählt als Fehlversuch; eine unerwartete Ausnahme in der Prüfung macht den Versuch sofort
+  zu einem. Dazu: Abschluss bzw. Rücknahme eines Versuchs und seiner Vorbuchung in der Serie laufen
+  jetzt in einer Transaktion — getrennt las ein Wartender die Serie dazwischen um eins zu hoch. Neu:
+  `versuch_beginnen(…, schweben=)`, `store.count_fails(…, nur_bestaetigt=)`,
+  `store.reserve_attempt(…, schweben=)` (Antwort `(None, "schwebend")`), `store.finish_attempt(…,
+  serie=)`, `store.cancel_attempt(…, serie=)`, `store.fehlserie_bestaetigt()` — alles angehängt, mit
+  Vorgabe. `is_locked()` meldet einen Aufschub als `True` (mit `deferred login`, ohne Mail). Ohne LDAP
+  schwebt nichts, das Verhalten ist unverändert. **Rückweg:** Eine ältere Fassung kennt die Spalte
+  nicht und zählt offene Zeilen als Fehlversuche wie bisher. Test: `tests/test_vorbuchung_schwebe.py`.
 
 - **Anmeldung gesperrt nach 100 Fehlversuchen in Folge (B2-6).** Die bisherigen Schwellen zählen nur
   im Fenster (`lockout_window_sec`) — wer langsamer rät als die Schwelle, riet beliebig lange. Jetzt

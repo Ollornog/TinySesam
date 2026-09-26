@@ -598,7 +598,7 @@ Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
 
-### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None) -> 'Optional[int]'`
+### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'`
 
 Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 

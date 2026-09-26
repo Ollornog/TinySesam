@@ -930,7 +930,9 @@ os.remove(db23a)
 # lockout_ip`, und fail2ban bannte die Adresse. Und das nicht einmal, sondern bei jedem Anlauf
 # während des ganzen Ausfalls. Jetzt merkt sich der Login den Ausfall: Danach kommt sofort 503,
 # ohne das Verzeichnis erneut zu fragen. (Mutationsprobe: in `check_ldap` den Aufruf
-# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, der Admin bekommt 429 → rot.)
+# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, das Verzeichnis wird bei jedem Anlauf
+# erneut gefragt → rot. Bis G9 bekam dabei auch der Admin 429; seitdem wartet er, bis die
+# schwebenden Vorbuchungen entschieden sind — das misst tests/test_vorbuchung_schwebe.py.)
 from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
 
 HAENGT24 = 2.0
