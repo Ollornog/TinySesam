@@ -1438,6 +1438,23 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
     return treffer
 
 
+def _im_index_geloescht(root: str) -> set[str]:
+    """Pfade, die in HEAD stehen, im Index aber ausdruecklich entfernt sind. Leer im Zweifel."""
+    try:
+        idx = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                              "--git-path", "index"], capture_output=True, text=True, check=False)
+        if idx.returncode != 0 or not os.path.isfile(idx.stdout.strip()):
+            return set()
+        lauf = subprocess.run(["git", "-C", root, "-c", "core.quotePath=false", "diff",
+                               "--cached", "--no-renames", "--diff-filter=D", "--name-only",
+                               "-z", "HEAD"], capture_output=True, text=True, check=False)
+    except OSError:
+        return set()
+    if lauf.returncode != 0:
+        return set()
+    return {z for z in lauf.stdout.split("\0") if z.strip()}
+
+
 def pruefe_dateiliste_plausibel(dateien: list[str], mindestens: int = 5,
                                 root: str | None = None) -> list[str]:
     """Ist die Dateiliste vollständig? — sonst prüft jede Prüfung danach zu wenig.
@@ -1483,6 +1500,14 @@ def pruefe_dateiliste_plausibel(dateien: list[str], mindestens: int = 5,
         return treffer
 
     im_baum = {z for z in lauf.stdout.split("\0") if z.strip()}
+    # Im Index schon entfernte Pfade (`git rm`, alte Seite von `git mv`) sind kein Verlust:
+    # die Aufrufer-Liste kommt aus `git ls-files`, also aus dem INDEX, und dort gibt es sie
+    # nicht mehr. Ohne diesen Abzug meldete die Pruefung nach `git mv` vor dem Commit den
+    # alten Pfad als „fehlt" — rot, obwohl nichts fehlte; nach dem Commit gruen (gemessen
+    # 2026-09-27 in paperlaiss, zweimal). Abgezogen wird NUR, was der Index ausdruecklich als
+    # geloescht fuehrt, und nur, wenn es eine Indexdatei gibt: ohne sie haelt git den Index
+    # fuer leer und meldete JEDE Datei als geloescht — der Waechter waere still abgeschaltet.
+    im_baum -= _im_index_geloescht(root)
     fehlend = sorted(im_baum - set(dateien))
     if fehlend:
         treffer.append(f"{len(fehlend)} von {len(im_baum)} Dateien fehlen in der "
