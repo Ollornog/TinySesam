@@ -116,7 +116,10 @@ class TinySesamConfig:
     login_identifier: str = "both"
     # --- Erst-Admin (Bootstrap) — bewusst NICHT "der erste registrierte User wird Admin" ---
     admin_identifiers: list[str] = field(default_factory=list)  # Benutzername/E-Mail, die beim Login
-                                          # zum Admin befördert werden, SOLANGE es keinen Admin gibt.
+                                          # zum Admin befördert werden, SOLANGE es keinen Admin gibt —
+                                          # und nie mehr, nachdem der Identity Provider der Instanz
+                                          # ihren letzten Admin entzogen hat (G6; dann Einmal-Token
+                                          # oder `tinysesam owner`).
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
     # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
@@ -148,6 +151,7 @@ class TinySesamConfig:
     #: Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt.
     #: Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem
     #: Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an.
+    #: Gilt für die globale Kette und jede Route-Kette (`require(factors=["magic"])`, G10).
     #: `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`).
     magiclink_require_second_factor: bool = True
 

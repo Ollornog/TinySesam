@@ -52,10 +52,25 @@ auffällt:
   `federation_name_binding_days=-1` holt das alte Verhalten zurück. **Selbst registrierte oder
   selbst umbenannte Konten binden nie über den Namen** (G2-N); ein einzelnes Konto öffnet
   `auth.loese_fremde_bindung(quelle, user_id)`.
+- **Nimmt der Identity Provider dem letzten Admin das Recht, bleibt `admin_identifiers` zu** (G6):
+  Die Allowlist befördert danach niemanden mehr. Zurück ins Panel über das Einmal-Token, das
+  TinySesam in dem Moment auf die Konsole schreibt (bzw. in `admin_claim_token_file`), oder
+  `tinysesam owner`. **Mindestens einen Owner von Hand halten.**
+- **Route-Ketten mit dem Anmelde-Link verlangen den zweiten Faktor** (G10): Hat ein Konto TOTP oder
+  einen Passkey, lässt `require(factors=["magic"])` es nach dem Link erst mit diesem Faktor durch —
+  wie die globale Policy (`magiclink_require_second_factor=False` schaltet beides ab).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
 
+- **Konten umbenennen als Betreiber (G13).** Bis dahin ging das nur für den Inhaber selbst oder aus
+  dem einbettenden Dienst — auch eine Kennungs-Kollision, die der Start meldet, liess sich weder im
+  Panel noch im CLI auflösen. Jetzt: Panel „Umbenennen", `POST <admin_path>/api/users/{id}/username`
+  (dieselben Regeln wie die Selbstbedienung über `change_username`, dazu der Owner-Schutz; eine
+  Audit-Zeile `username_changed … durch=betreiber akteur=<admin>`) und `tinysesam rename --db <datei>
+  <name|#id> <neuer-name>` (Länge, Steuerzeichen, kreuzweise frei, kein fremder Adress-Name; weist die
+  Datenbank ab, eine klare Meldung; Audit `quelle=cli`). Beide benennen als Betreiber um: Der Merker
+  „selbst gewählt" (G2-N) fällt. Die Startmeldungen zu Kollisionen und Steuerzeichen nennen beide Wege.
 - **Bestandskonten an LDAP/SAML binden: `auth.foederation_nachbinden(quelle, *, zuordnung=None,
   ausfuehren=False)`** (G1). LDAP sucht je Konto ohne Kennung im Verzeichnis
   (`LDAPClient.eintrag_suchen`, Dienstkonto oder anonym, genau ein Treffer); SAML und einzelne
@@ -141,7 +156,8 @@ auffällt:
   den Bestand beginnt die Frist mit dem Update.
 - **Der Anmelde-Link verlangt den zweiten Faktor, wenn es einen gibt (ASVS 6.3.6, Option C).** Hat
   ein Konto TOTP oder einen Passkey, meldet der Link allein nicht mehr voll an — auch nicht in einer
-  Kette wie `["magic"]` und nicht bei einem Konto nur mit Passkey (die klassische Policy verlangte
+  Kette wie `["magic"]`, nicht in einer Route-Kette `require(factors=["magic"])` (G10) und nicht bei
+  einem Konto nur mit Passkey (die klassische Policy verlangte
   ein eingerichtetes TOTP schon immer). Konten ohne zweiten Faktor meldet der Link weiter allein an.
   Einstellbar: `magiclink_require_second_factor` (Vorgabe an). Ein Konto mit Passkey richtet sich
   einen weiteren Faktor (TOTP-Selbsteinrichtung in einer Kette) nur ein, wenn der Passkey in
@@ -181,6 +197,20 @@ auffällt:
 
 ### Sicherheit
 
+- **Nach einem Entzug durch den Identity Provider öffnet sich die Allowlist nicht wieder (G6).**
+  Gemessen: `admin_identifiers=[chef@…]` und eine Admin-Gruppe beim Provider; fällt die Gruppe weg,
+  nahm H-5 das Flag — und im selben Login beförderte `maybe_promote_admin` (über `apply_factor`, es
+  gab ja keinen Admin) die Person wieder: als Admin „von Hand" (1) UND Erst-Owner, ein Recht, das kein
+  Provider mehr entzieht und das sich weder löschen noch sperren lässt; ebenso jedes andere Konto aus
+  der Liste. Jetzt setzt der Entzug des letzten Admins den Merker `allowlist_nach_idp_entzug`
+  (Setting, kein Schema), danach verweigert die Allowlist (`admin_bootstrap_denied nach_idp_entzug`).
+  Das Einmal-Token für `/auth/claim-admin` geht sofort an den Betreiber (bis dahin nur beim Start),
+  `tinysesam owner` bleibt. Test: `tests/test_t13_entscheide.py`.
+- **Route-Ketten verlangen nach dem Anmelde-Link den zweiten Faktor (G10).** `_link_braucht` lief nur
+  für die globale Policy; `require(factors=["magic"])` liess ein Konto mit TOTP oder Passkey mit dem
+  Postfach allein durch (gemessen: globale Route 401, diese 200). Jetzt dieselbe Regel an beiden
+  Stellen; eine Kette, die `totp`/`passkey` selbst enthält, bekommt keinen Doppelschritt. Test:
+  `tests/test_t13_entscheide.py` (3c).
 - **Bindung über den Namen mit Frist (G1).** Ein Konto ohne Kennung aus LDAP/SAML (Bestand von vor
   F-11, Vorab-Anlage) band die nächste Anmeldung unter seinem Namen — ohne Grenze für Zeit oder
   Herkunft, auch den Ersatz eines Herkunfts-Platzhalters, und `federation_require_stable_id`
@@ -419,8 +449,17 @@ auffällt:
   Muster „allgemeine Seite mit PIN, Detailseite mit `require(factors=["pin", "password"])`".
 - Reihenfolge der Härtungswerte im Panel: was zusammen eingestellt wird, steht zusammen.
 - **Das Panel nennt den Grund einer Sperre** (Grenze b): „gesperrt (Bestätigung / App)" (hebt der
-  Bestätigungslink auf) statt nur „gesperrt" (Betreiber).
-- **Indizes auf dem Audit-Log** (Grenze c) für die Suche nach Name und Zeit.
+  Bestätigungslink auf) statt nur „gesperrt" (Betreiber). Der Text kam bis 2026-09-26 nicht im
+  Panel an (die Liste der Panel-Texte kannte ihn nicht, die Plakette blieb leer), ebenso die Texte der
+  Owner-Knöpfe — und „Zum Owner machen / Owner abgeben" war nie verdrahtet, der Klick tat nichts
+  (G3). Ein Test prüft jetzt jeden Text, den das Panel-Skript liest, und jede Aktion, die ein Knopf
+  nennt (`tests/test_admin_konto.py`); der Browser-Test klickt Owner-Knopf und „Umbenennen“.
+- **Indizes auf dem Audit-Log** (Grenze c) für die Suche nach Name und Zeit. Die Suche im Detailtext
+  beim Löschen eines Kontos grenzt kein Index ein (Teilstring) — sie bleibt ein Scan, lief aber in
+  EINER Schreibtransaktion: Bei einem grossen Log wartete jede Anmeldung und jeder andere Worker die
+  ganze Suche ab. Seit G4 liest sie blockweise nach `id` (5000 Zeilen) ohne Schreibsperre und schreibt
+  nur die Treffer in kurzen Transaktionen, die Zeile dort frisch gelesen (`tests/test_audit_runde2.py`,
+  120 000 Zeilen).
 - **Kette mit Pflicht-Einrichtung (password → totp → pin): das Angebot, die übrigen Sitzungen zu
   beenden, kommt wieder** (Grenze d, ASVS 7.4.3). Die Seite fragt nach der Einrichtung; eingelöst
   wird die Zustimmung, sobald der letzte Faktor bestätigt ist (`/auth/sessions/revoke-after-login`,

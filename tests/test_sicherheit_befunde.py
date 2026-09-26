@@ -1977,10 +1977,18 @@ r.check("...und nennt Wege, die es wirklich gibt (change_username, store.set_ema
         f"{_text_k[:320]!r}")
 r.check("...und schickt niemanden mehr ins UPDATE von Hand",
         "UPDATE users" not in _text_k, f"{_text_k[:320]!r}")
-r.check("...und verspricht dafür weder Admin-Panel noch CLI",
-        "Kennungen ändern (Admin-Panel oder CLI)" not in _text_k
-        and "weder im Admin-Panel noch im CLI" in _text_k,
-        f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
+# Seit G13 (2026-09-26) können Panel und CLI umbenennen — die Meldung nennt beide, und gemessen
+# wird wieder, dass es die genannten Wege gibt: die Route im Admin-Router und das Kommando im CLI.
+# Bis dahin hielt diese Prüfung das Gegenteil fest („weder im Admin-Panel noch im CLI"), weil es
+# damals stimmte.
+from tinysesam.admin import build_admin_router as _bar  # noqa: E402
+import tinysesam.__main__ as _cli_modul  # noqa: E402
+_routen_k = {getattr(_rt, "path", "") for _rt in _bar(auth_alt).routes}
+r.check("...und nennt Panel und CLI — beide Wege gibt es wirklich",
+        "/api/users/<id>/username" in _text_k and "/api/users/{uid}/username" in _routen_k
+        and "tinysesam rename" in _text_k and callable(getattr(_cli_modul, "_rename", None))
+        and "weder im Admin-Panel noch im CLI" not in _text_k,
+        f"{_text_k[:420]!r}, Routen: {sorted(p for p in _routen_k if 'username' in p)}")
 # Der genannte Weg wirkt: Umbenennen löst die Kollision auf, der Start schweigt danach.
 auth_alt.change_username(eve_alt, "eve-umbenannt")
 r.check("...und auth.change_username löst die Kollision tatsächlich auf",

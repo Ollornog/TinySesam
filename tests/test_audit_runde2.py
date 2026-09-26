@@ -2362,4 +2362,148 @@ _n8_funde = (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "kont
 r.check("N-8 (Wächter): Konten und Passkeys löschen nur die Bausteine — auch nicht per Alias oder SQL",
         not _n8_funde, f"{_n8_funde}")
 
+# ── G4: die Detailsuche beim Anonymisieren hält die Schreibsperre nicht über die ganze Suche ─────
+# Die Suche im Detailtext (`instr`) grenzt kein Index ein; bei einer unbefristeten Adresse (Löschen
+# durch einen Admin) liest sie das ganze Audit-Log. Bis 2026-09-26 tat sie das in EINER
+# Schreibtransaktion unter `_lock` — jede Anmeldung, jeder Audit-Eintrag und jeder andere Worker
+# wartete die ganze Suche ab. Gemessen wird nicht die Uhr, sondern der Ablauf: Ein Schloss, das bei
+# jeder Freigabe einen parallelen Schreiber vorlässt — über dieselbe Instanz (anderer Thread im
+# selben Worker) UND über eine zweite Verbindung ohne Wartezeit (anderer Worker, `timeout=0`; sie
+# scheitert sofort, solange eine Schreibtransaktion offen ist).
+auth_g4, _ = _app()
+st4 = auth_g4.store
+_G4_ZEILEN = 120_000
+st4.db.executemany(
+    "INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+    [(1_700_000_000 + i // 10, "apikey_create" if i % 997 == 0 else "login_fail", f"fremd{i % 50}", None,
+      "key=1 akteur=g4opfer" if i % 997 == 0 else
+      "neu=g4opfer@example.com" if i % 1499 == 0 else "password grund=falsch")
+     for i in range(_G4_ZEILEN)])
+st4.db.commit()
+_g4_erste = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 akteur=g4opfer'")["m"]
+_g4_treffer = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+
+
+class _G4Schloss:
+    """`Store._lock` mit Haken: Nach jeder Freigabe schreibt ein paralleler Schreiber."""
+
+    def __init__(self, echt):
+        self.echt, self.freigaben, self.haken, self._im_haken = echt, 0, None, False
+
+    def __enter__(self):
+        self.echt.acquire()
+        return self
+
+    def __exit__(self, *a):
+        self.echt.release()
+        self.freigaben += 1
+        if self.haken and not self._im_haken:
+            self._im_haken = True
+            try:
+                self.haken()
+            finally:
+                self._im_haken = False
+
+
+_g4_fremd = sqlite3.connect(auth_g4.cfg.db_path, timeout=0, isolation_level=None)
+_g4_mess = {"intern": 0, "zweite_verbindung": 0, "gesperrt": 0, "block_gelesen": False, "nachgetragen": False,
+            "block_sql": ""}
+
+
+def _g4_parallel():
+    st4.audit_log("g4_parallel", "fremd", None, "intern")            # derselbe Worker, anderer Thread
+    _g4_mess["intern"] += 1
+    try:
+        _g4_fremd.execute("BEGIN IMMEDIATE")                          # anderer Worker, ohne zu warten
+        _g4_fremd.execute("INSERT INTO audit(ts, event, username, detail) VALUES (?,?,?,?)",
+                          (int(_t.time()), "g4_parallel", "fremd", "zweite_verbindung"))
+        _g4_fremd.execute("COMMIT")
+        _g4_mess["zweite_verbindung"] += 1
+    except sqlite3.OperationalError:
+        _g4_mess["gesperrt"] += 1
+    # Zwischen Lesen und Schreiben eines Blocks ändert ein anderer die erste Trefferzeile: Das
+    # Schreiben muss die frische Zeile nehmen, nicht den gelesenen Stand.
+    if _g4_mess["block_gelesen"] and not _g4_mess["nachgetragen"]:
+        _g4_fremd.execute("UPDATE audit SET detail = detail || ' nachtrag=1' WHERE id = ?", (_g4_erste,))
+        _g4_mess["nachgetragen"] = True
+
+
+
+
+def _g4_spur(sql):
+    if "instr(lower(detail)" in sql:        # ein Block der Detailsuche (Parameter eingesetzt)
+        _g4_mess["block_gelesen"] = True
+        _g4_mess["block_sql"] = _g4_mess["block_sql"] or sql
+
+
+st4.db.set_trace_callback(_g4_spur)
+_g4_schloss = _G4Schloss(st4._lock)
+st4._lock = _g4_schloss
+_g4_schloss.haken = _g4_parallel
+try:
+    st4.audit_anonymisieren("g4opfer", "gelöscht#77", ("g4opfer@example.com",),
+                            unbefristet=("g4opfer@example.com",))
+finally:
+    _g4_schloss.haken = None
+    st4._lock = _g4_schloss.echt
+    st4.db.set_trace_callback(None)
+    _g4_fremd.close()
+# Mindestens 20 Freigaben bei 120 000 Zeilen: höchstens 6000 Zeilen unter einer Sperre. Fest, nicht
+# aus `_ANONYM_BLOCK` gerechnet — sonst ginge die Grenze mit, wenn jemand den Block vergrössert.
+_g4_bloecke = 20
+r.check(f"G4: {_G4_ZEILEN} Zeilen — die Suche gibt die Schreibsperre zwischen den Blöcken frei, und "
+        "parallele Schreiber kommen durch (derselbe Worker und ein zweiter ohne Wartezeit)",
+        _g4_schloss.freigaben >= _g4_bloecke and _g4_mess["intern"] >= _g4_bloecke
+        and _g4_mess["zweite_verbindung"] >= _g4_bloecke and _g4_mess["gesperrt"] == 0,
+        f"{_g4_schloss.freigaben} Freigaben, {_g4_mess} bei {_g4_bloecke} Blöcken")
+_g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+_g4_ersetzt = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'gelöscht#77') > 0")["n"]
+r.check("… und ersetzt trotzdem jeden Treffer im Detailtext (Name als akteur=, Adresse überall)",
+        _g4_treffer > 150 and _g4_rest == 0 and _g4_ersetzt == _g4_treffer,
+        f"vorher {_g4_treffer}, übrig {_g4_rest}, ersetzt {_g4_ersetzt}")
+r.check("… und nimmt beim Schreiben die frische Zeile (ein Nachtrag dazwischen geht nicht verloren)",
+        _g4_mess["nachgetragen"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,))["detail"]
+        == "key=1 akteur=gelöscht#77 nachtrag=1",
+        str(dict(st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,)))))
+r.check("… die Zeilen der parallelen Schreiber bleiben, wie sie waren",
+        st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='fremd' "
+                 "AND detail IN ('intern', 'zweite_verbindung')")["n"]
+        == _g4_mess["intern"] + _g4_mess["zweite_verbindung"])
+# Und die Suche bleibt linear: Ein Block wird über den Primärschlüssel gelesen (der Plan der
+# Anweisung, wie sie lief), nicht über einen Index auf `ts` — sonst läse jeder Block alles ab `seit`.
+_g4_plan = [str(tuple(z)) for z in st4.db.execute("EXPLAIN QUERY PLAN " + _g4_mess["block_sql"]).fetchall()] \
+    if _g4_mess["block_sql"] else []
+r.check("G4: ein Block liest über den Primärschlüssel (id-Bereich), nicht über einen Index auf ts",
+        len(_g4_plan) == 1 and "INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in _g4_plan[0], str(_g4_plan))
+
+def _g4_schritte_beim_entfernen(name, bestand):
+    uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
+    if bestand:   # Konto aus der Zeit vor G2: keine Wasserlinie, es gilt die Anlage (`seit`)
+        st4._exec("UPDATE users SET name_audit_ab = NULL, name_versuch_ab = NULL WHERE id = ?", (uid,))
+    st4.audit_log("apikey_create", "chef", None, f"key=2 akteur={name}")
+    zaehler = [0]
+
+    def schritt():
+        zaehler[0] += 1
+        return 0
+    st4.db.set_progress_handler(schritt, 1000)
+    try:
+        st4.konto_entfernen(uid)
+    finally:
+        st4.db.set_progress_handler(None, 1000)
+    rest = st4._one("SELECT count(*) AS n FROM audit WHERE detail = ?", (f"key=2 akteur={name}",))["n"]
+    return zaehler[0], rest
+
+
+_g4_jung = {"Wasserlinie": _g4_schritte_beim_entfernen("g4jung", False),
+            "Bestand (seit)": _g4_schritte_beim_entfernen("g4bestand", True)}
+r.check("G4: ein junges Konto liest nicht das ganze Log — mit Wasserlinie und im Bestand ab `seit`",
+        all(n < 60 and rest == 0 for n, rest in _g4_jung.values()),
+        f"{_g4_jung} (× 1000 SQLite-Schritte, Zeilen übrig) bei {_G4_ZEILEN} Zeilen")
+# (Mutationsproben, einzeln gefahren: `_ANONYM_BLOCK` auf 10**9 → die erste Prüfung rot
+#  (eine Freigabe statt einer je Block); die Zeile beim Schreiben nicht frisch lesen, sondern den
+#  gelesenen Stand nehmen → „frische Zeile“ rot; `id + 0` → `id` (der Beginn ab `seit` läuft dann
+#  die Tabelle von vorn entlang) → „junges Konto“ rot; den Beginn ganz ignorieren → ebenso; den id-Bereich des Blocks am Primärschlüssel vorbei schreiben (`+id`) →
+#  „über den Primärschlüssel“ rot; die alte Fassung (eine Schreibtransaktion) → die ersten drei rot.)
+
 sys.exit(r.done())

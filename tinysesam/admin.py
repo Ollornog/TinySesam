@@ -295,6 +295,30 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.owner_inactive"))
         return {"ok": True}
 
+    @ar.post("/api/users/{uid}/username")
+    async def user_username(request: Request, uid: int):
+        """Ein fremdes Konto umbenennen (G13) — bis dahin gingen weder Panel noch CLI, und eine
+        Kennungs-Kollision im Bestand liess sich nur aus dem einbettenden Dienst auflösen.
+
+        Derselbe Weg wie die Selbstbedienung (`change_username`: frei in Namen UND Adressen, keine
+        Steuerzeichen, kein fremder Adress-Name, kein Allowlist-Name, nicht im Mail-Modus), aber
+        als Betreiber: Der Merker „selbst gewählt" (G2-N) fällt, die Audit-Zeile sagt
+        `durch=betreiber` und trägt den Admin als `akteur=` — `change_username` schreibt sie
+        selbst, eine zweite über `protokoll()` wäre doppelt. Ein Owner-Konto benennt nur ein
+        Owner um (wie Passwort, Keys, Passkeys)."""
+        owner_schutz(guard(request), uid)
+        b = await auth.json_body(request)
+        if auth.store.get_user(uid) is None:
+            raise HTTPException(404, auth.t("api.not_found"))
+        roh = b.get("username")
+        if not isinstance(roh, str):
+            raise HTTPException(400, auth.t("err.username_required"))
+        try:
+            neu = auth.change_username(uid, roh, auth.client_ip(request), durch_betreiber=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "username": neu}
+
     @ar.post("/api/users/{uid}/delete")
     def user_delete(request: Request, uid: int):
         me = guard(request)
@@ -517,10 +541,11 @@ _KEYS = (
     "f.key_name f.key_expires "
     "th.user th.email th.type th.roles th.status th.actions th.method th.ip th.since th.mfa "
     "th.time th.event th.detail "
-    "active disabled revoked enable disable btn.pw btn.roles btn.keys btn.passkeys btn.delete "
-    "passkeys no_passkeys confirm.delete confirm.pk_delete "
+    "active disabled disabled_confirmation revoked enable disable "
+    "btn.pw btn.rename btn.roles btn.keys btn.passkeys btn.delete btn.owner_on btn.owner_off "
+    "passkeys no_passkeys confirm.delete confirm.pk_delete confirm.owner_on confirm.owner_off "
     "err.email err.generic confirm.disable confirm.enable confirm.revoke "
-    "prompt.pw pw_set roles_groups no_roles api_keys create_key last_used expires "
+    "prompt.pw prompt.username pw_set roles_groups no_roles api_keys create_key last_used expires "
     "never_expires revoke key_once end_session hardening hardening_owner version installed update_note"
 ).split()
 
@@ -670,6 +695,7 @@ async function users(){
       <td>
         <button class="${u.disabled?'ok':'warn'}" ${on("dis",u.id,!u.disabled)}>${esc(u.disabled?L.enable:L.disable)}</button>
         <button class=sec ${on("pw",u.id)}>${esc(L["btn.pw"])}</button>
+        <button class=sec ${on("ren",u.id,u.username)}>${esc(L["btn.rename"])}</button>
         <button class=sec ${on("roles",u.id,(u.roles||[]).join(','),u.is_admin?1:0)}>${esc(L["btn.roles"])}</button>
         <button class=sec ${on("keys",u.id,u.username)}>${esc(L["btn.keys"])}</button>
         <button class=sec ${on("pks",u.id,u.username)}>${esc(L["btn.passkeys"])}</button>
@@ -683,6 +709,7 @@ async function mkuser(){const b={username:nu.value,email:ne.value,password:np.va
 async function own(id,o){if(!confirm(o?L["confirm.owner_on"]:L["confirm.owner_off"]))return;abgewiesen(await p(`/api/users/${id}/owner`,{owner:o}));users()}
 async function dis(id,d){if(!confirm(d?L["confirm.disable"]:L["confirm.enable"]))return;abgewiesen(await p(`/api/users/${id}/disable`,{disabled:d}));users()}
 async function pw(id){const v=prompt(L["prompt.pw"]);if(v&&!abgewiesen(await p(`/api/users/${id}/password`,{password:v})))alert(L.pw_set)}
+async function ren(id,alt){const v=prompt(L["prompt.username"],alt);if(v&&v!==alt&&!abgewiesen(await p(`/api/users/${id}/username`,{username:v})))users()}
 async function roles(id,cur,isadmin){
   const have=new Set((cur||"").split(",").map(s=>s.trim()).filter(Boolean));
   const inner = ROLES.length
@@ -740,7 +767,7 @@ async function audit(){const a=await g("/api/audit?limit=120");
 
 // Ein delegierter Listener fuer alle Knoepfe, auch die per innerHTML nachgeladenen. Nur Namen
 // aus ACT sind aufrufbar — data-on waehlt eine Aktion aus, es nennt keinen beliebigen Code.
-const ACT={go,mkuser,dis,pw,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
+const ACT={go,mkuser,own,dis,pw,ren,roles,saveroles,clr,keys,mkkey,revk,revs,savesec,pks,delpk,deluser};
 document.addEventListener("click",e=>{const el=e.target.closest("[data-on]");
   if(!el||!ACT[el.dataset.on])return;ACT[el.dataset.on](...JSON.parse(el.dataset.a||"[]"))});
 tabs();users();

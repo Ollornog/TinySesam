@@ -269,6 +269,8 @@ CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
 -- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
 -- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
+-- Nur Name und Zeit: Die Suche im DETAILTEXT (`audit_anonymisieren`) ist eine Teilstring-Suche,
+-- die kein Index eingrenzt — sie bleibt ein Scan, läuft seit G4 aber blockweise ohne Schreibsperre.
 CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
@@ -3161,6 +3163,19 @@ class Store:
         G2): ab dem Beitritt der Kennung statt ab der Anlage — sonst wurde beim Löschen eines
         Kontos, das einen freigewordenen Namen übernommen hatte, auch die Zeile des Vorbesitzers
         umgeschrieben. Wo eine Kennung keine hat (Bestand), gilt `seit`.
+
+        **Die Suche im Detailtext ist ein Scan** — eine Teilstring-Suche (`instr`), die kein
+        B-Tree-Index eingrenzt; `idx_audit_name_ts`/`idx_audit_ts` helfen nur der Spalte
+        `username` und dem Zeitraum ab `seit`. Bei einer unbefristeten Adresse (Löschen durch
+        einen Admin, `adresse_unbefristet`) liest sie das ganze Audit-Log, und das wächst ohne
+        `audit_retention_days` unbegrenzt. Bis 2026-09-26 lief dieser Scan in EINER
+        Schreibtransaktion, unter der Schreibsperre (`_lock`) und mit offener SQLite-Transaktion:
+        Jede Anmeldung, jeder Audit-Eintrag, jeder andere Worker wartete die ganze Suche ab (G4).
+        Jetzt liest sie blockweise nach `id` (`_ANONYM_BLOCK` Zeilen) OHNE Schreibtransaktion und
+        schreibt nur die Treffer, je Block in einer kurzen Transaktion — die Zeile dort frisch
+        gelesen und neu geprüft, damit nichts überschrieben wird, was sich seit dem Lesen geändert
+        hat. Durchsucht wird bis zur jüngsten Zeile beim Beginn der Suche; was danach kommt, schrieb
+        jemand nach dem Löschen.
         """
         if not username:
             return 0
@@ -3178,36 +3193,68 @@ class Store:
                 return (-1, -1, 0, -1)
             return (int(seit), int(seit), int(seit_id or 0), -1)
         grenze = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ?)"
+        # Die Spalte `username`: über `idx_audit_name_ts`, kurz — eine Transaktion.
         with self._schreibend():
             n = 0
             for wert in kennungen:
                 n += self.db.execute(
                     f"UPDATE audit SET username=? WHERE lower(username)=lower(?) AND {grenze}",
                     (ersatz, wert, *ab(wert))).rowcount
-            for wert in kennungen:
-                w = _re.escape(wert)
-                ende = r"(?![\w@.=-])"
-                if "@" in wert:
-                    muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
-                else:
-                    muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
-                zeilen = self.db.execute(
-                    "SELECT id, event, detail FROM audit "
-                    f"WHERE instr(lower(detail), lower(?)) > 0 AND {grenze}",
-                    (wert, *ab(wert))).fetchall()
-                for z in zeilen:
-                    alt = z["detail"] or ""
-                    if "@" in wert:
-                        neu = muster.sub(ersatz, alt)
-                    else:
-                        neu = muster.sub("akteur=" + ersatz, alt)
-                        if z["event"] == "user_create":   # Detail: „<name> service=…"
-                            neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1,
-                                          flags=_re.IGNORECASE)
-                    if neu != alt:
-                        self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu, z["id"]))
             self.db.commit()
+        oben = int(self._one("SELECT max(id) AS m FROM audit")["m"] or 0)
+        for wert in kennungen:
+            w = _re.escape(wert)
+            ende = r"(?![\w@.=-])"
+            if "@" in wert:
+                muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
+            else:
+                muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
+
+            def umschreiben(event, alt, wert=wert, w=w, muster=muster) -> str:
+                if "@" in wert:
+                    return muster.sub(ersatz, alt)
+                neu = muster.sub("akteur=" + ersatz, alt)
+                if event == "user_create":   # Detail: „<name> service=…"
+                    neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1, flags=_re.IGNORECASE)
+                return neu
+            grenzwerte = ab(wert)
+            # Wo die Suche beginnt: hinter der Wasserlinie, bzw. bei der ersten Zeile ab `seit`
+            # — davor erfüllt keine Zeile die Grenze. `id + 0`, damit SQLite das Minimum über
+            # `idx_audit_ts` sucht (nur die Zeilen ab `seit`) und nicht die Tabelle ab der ersten
+            # `id` entlangläuft, bis `ts` passt — das wäre für ein junges Konto das ganze Log.
+            unten = max(grenzwerte[3], 0)
+            if grenzwerte[0] >= 0:
+                erste = self._one("SELECT min(id + 0) AS m FROM audit WHERE ts >= ?",
+                                  (grenzwerte[0],))["m"]
+                unten = max(unten, int(erste) - 1 if erste is not None else oben)
+            while unten < oben:
+                bis = min(unten + self._ANONYM_BLOCK, oben)
+                # Der Block über den Primärschlüssel (`id > ? AND id <= ?`, so steht es im Plan) —
+                # nie über `idx_audit_ts`: Sonst läse jeder Block alle Zeilen ab `seit`, und die
+                # Suche würde quadratisch (tests/test_audit_runde2.py prüft den Plan).
+                kandidaten = {z["id"]: z for z in self._all(
+                    "SELECT id, event, detail FROM audit WHERE id > ? AND id <= ? "
+                    f"AND instr(lower(detail), lower(?)) > 0 AND {grenze}",
+                    (unten, bis, wert, *grenzwerte))
+                    if umschreiben(z["event"], z["detail"] or "") != (z["detail"] or "")}
+                if kandidaten:
+                    with self._schreibend():
+                        for zid in kandidaten:
+                            z = self.db.execute("SELECT event, detail FROM audit WHERE id=?",
+                                                (zid,)).fetchone()
+                            if z is None:
+                                continue          # inzwischen weggeräumt (`gc_audit`)
+                            alt = z["detail"] or ""
+                            neu = umschreiben(z["event"], alt)
+                            if neu != alt:
+                                self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu, zid))
+                        self.db.commit()
+                unten = bis
         return n
+
+    #: Wie viele Audit-Zeilen `audit_anonymisieren` je Block im Detailtext durchsucht, bevor es die
+    #: Schreibsperre für andere freigibt (G4).
+    _ANONYM_BLOCK = 5000
 
     def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
                      seit_id: int = 0, ab_id: int | None = None):

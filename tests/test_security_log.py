@@ -274,8 +274,12 @@ from tinysesam.__main__ import main as _cli_main  # noqa: E402
 
 _kommandos = set(re.findall(r'cmd == "([a-z]+)"', _inspect.getsource(_cli_main)))
 # `owner` (2026-09-24) legt kein Konto an und ändert keine Kennung — es setzt die Owner-Rolle eines
-# bestehenden Kontos (Notweg, wenn kein Owner mehr herankommt).
-assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner"}, \
+# bestehenden Kontos (Notweg, wenn kein Owner mehr herankommt). `rename` (G13, 2026-09-26) legt
+# ebenfalls kein Konto an, ändert aber eine Kennung — deshalb nennen die Startmeldungen zu
+# Kennungs-Kollisionen und Steuerzeichen es jetzt (tests/test_sicherheit_befunde.py prüft, dass es
+# den genannten Weg gibt); die Erst-Admin-Warnung hier bleibt, wie sie ist.
+assert _kommandos == {"version", "passwd", "backup", "restore", "gc", "audit", "unlock", "owner",
+                      "rename"}, \
     (f"CLI-Kommandos geändert: {sorted(_kommandos)} — kann eines davon jetzt Konten anlegen "
      "oder Kennungen ändern, gehören die Betreiber-Meldungen mitgeändert")
 ok("Erst-Admin-Warnung nennt ensure_admin statt des CLI (das keine Konten anlegt)")

@@ -553,6 +553,76 @@ r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
 #  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
 #  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
 
+# ── G6: nach dem Entzug des letzten Admins durch den IdP öffnet sich die Allowlist nicht wieder ──
+# Gemessen vor dem Fix: Die Allowlist-Person war nach dem Entzug im SELBEN Login wieder Admin — als
+# „von Hand" (1) und Erst-Owner, den kein Provider mehr entzieht (`maybe_promote_admin` über
+# `apply_factor`, weil es in dem Moment keinen Admin gab).
+_C6 = {"sub": "g6-1", "preferred_username": "chef6", "email": "chef6@example.com", "email_verified": True}
+_LISTE6 = ["chef6@example.com", "vize6@example.com"]
+a6, app6 = _oidc({**_C6, "groups": ["admins"]}, oidc_group_role_map=KARTE, admin_identifiers=_LISTE6)
+_oidc_login(app6)
+_chef6 = a6.store.get_user_by_name("chef6")
+r.check("G6: Admin-Gruppe beim IdP → Admin vom IdP (2), kein Owner", (_chef6["is_admin"], _chef6["is_owner"]) == (2, 0),
+        str(dict(_chef6)))
+_vize6 = a6.create_user("vize6", password=PW, email="vize6@example.com")
+_setze(a6, {**_C6, "groups": []})
+_err6 = io.StringIO()
+with redirect_stderr(_err6):
+    _oidc_login(app6)
+_chef6 = a6.store.get_user_by_name("chef6")
+_audit6 = [(z["event"], z["username"], z["detail"]) for z in a6.store.recent_audit(50)]
+r.check("G6: der IdP nimmt den letzten Admin — die Allowlist befördert im selben Login NICHT wieder",
+        (_chef6["is_admin"], _chef6["is_owner"]) == (0, 0), str(dict(_chef6)))
+r.check("… mit Zeile admin_bootstrap_denied nach_idp_entzug, ohne admin_bootstrap",
+        ("admin_bootstrap_denied", "chef6", "nach_idp_entzug") in _audit6
+        and not any(e == "admin_bootstrap" for e, _, _ in _audit6), str(_audit6[:6]))
+r.check("… und das Einmal-Token geht sofort an den Betreiber (nicht erst beim nächsten Start)",
+        "claim-admin?token=" in _err6.getvalue(), _err6.getvalue()[-200:])
+with redirect_stderr(io.StringIO()):
+    _oidc_login(app6)
+r.check("… auch der nächste Login befördert nicht", not a6.store.get_user_by_name("chef6")["is_admin"])
+with redirect_stderr(io.StringIO()):
+    _login(TestClient(app6), "vize6", PW)
+r.check("… und kein anderes Allowlist-Konto (der Merker gilt für die Instanz)",
+        (a6.store.get_user(_vize6)["is_admin"], a6.store.get_user(_vize6)["is_owner"]) == (0, 0)
+        and any(z["event"] == "admin_bootstrap_denied" and z["username"] == "vize6"
+                for z in a6.store.recent_audit(20)), str(dict(a6.store.get_user(_vize6))))
+_chef6 = a6.store.get_user_by_name("chef6")
+r.check("G6: der Notweg bleibt — das Einmal-Token macht zum Admin und Owner",
+        a6.consume_admin_claim(a6.admin_claim_token(), _chef6)
+        and (a6.store.get_user(_chef6["id"])["is_admin"], a6.store.get_user(_chef6["id"])["is_owner"]) == (1, 1))
+# Gegenproben: Der Merker entsteht nur, wenn wirklich kein Admin bleibt, und stört weder die
+# frische Instanz noch den Weg von der Demo in den Betrieb (dort löscht purge_demo den letzten Admin).
+a6h, app6h = _oidc({**_C6, "sub": "g6-h", "groups": ["admins"]}, oidc_group_role_map=KARTE,
+                   admin_identifiers=_LISTE6)
+_oidc_login(app6h)
+a6h.create_user("handchef6", password=PW, is_admin=True)
+_setze(a6h, {**_C6, "sub": "g6-h", "groups": []})
+_oidc_login(app6h)
+r.check("G6: entzieht der IdP einen Admin, während ein Admin von Hand bleibt, entsteht kein Merker",
+        not a6h.store.get_user_by_name("chef6")["is_admin"]
+        and a6h.store.get_setting("allowlist_nach_idp_entzug") is None)
+a6f, app6f = _app(admin_identifiers=_LISTE6)
+_f6 = a6f.create_user("vize6", password=PW, email="vize6@example.com")
+_login(TestClient(app6f), "vize6", PW)
+r.check("G6: frische Instanz — der erste Allowlist-Login wird Admin und Owner",
+        (a6f.store.get_user(_f6)["is_admin"], a6f.store.get_user(_f6)["is_owner"]) == (1, 1))
+_db6d = str(Path(tempfile.mkdtemp()) / "t.db")
+with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+    TinySesam(TinySesamConfig(db_path=_db6d, cookie_secure=False, demo_mode=True))
+    a6d, app6d = _app(db_path=_db6d, admin_identifiers=_LISTE6)
+_d6 = a6d.create_user("vize6", password=PW, email="vize6@example.com")
+_login(TestClient(app6d), "vize6", PW)
+r.check("G6: Demo → Betrieb (purge_demo löscht den Demo-Admin): die Allowlist greift",
+        a6d.store.get_user_by_name("demoadmin") is None
+        and (a6d.store.get_user(_d6)["is_admin"], a6d.store.get_user(_d6)["is_owner"]) == (1, 1),
+        str(dict(a6d.store.get_user(_d6))))
+# (Mutationsproben, einzeln gefahren: die Prüfung des Merkers in `maybe_promote_admin`
+#  abschalten → „befördert … NICHT wieder“, „nächste Login“, „kein anderes Allowlist-Konto“ rot;
+#  das Setzen im Entzugszweig streichen → dieselben rot; `if not self.admin_exists()` streichen →
+#  „kein Merker“ rot; den Merker je Konto statt je Instanz → „kein anderes Allowlist-Konto“ rot;
+#  die Token-Ausgabe streichen → „geht sofort an den Betreiber“ rot.)
+
 # ── F-05: Inaktivitäts-Timeout ────────────────────────────────────────────────────────────
 auth_i, app_i = _app()
 
@@ -1246,6 +1316,78 @@ r.check("… andere Wege bleiben, wie sie waren (Passwort in der Kette [\"magic\
         _pw3.get("/drin", follow_redirects=False).status_code != 200)
 # (Mutationsproben: `_link_braucht` in `_session_ok` streichen → die ersten zwei rot; die
 #  Passkey-Zeile streichen → Passkey-Konto rot; den Schalter nicht lesen → „einstellbar" rot.)
+
+# G10: dieselbe Regel in Route-Ketten. Bis 2026-09-26 prüfte `require(factors=["magic"])` nur die
+# eigene Liste — gemessen: Konto mit TOTP, nur Anmelde-Link, globale Route 401, diese Route 200.
+# Das Postfach allein öffnete sie, obwohl `magiclink_require_second_factor` an war.
+def _route_app(**cfg):
+    a, ap = _link_app(**cfg)
+
+    @ap.get("/r")
+    def _r(user=Depends(a.require(factors=["magic"]))):
+        return {"u": user["username"]}
+
+    @ap.get("/r2")
+    def _r2(user=Depends(a.require(factors=["magic", "totp"]))):
+        return {"u": user["username"]}
+    return a, ap
+
+
+def _route_link(a, ap, name):
+    c = TestClient(ap)
+    tok = a.create_magic_token("login", user_id=a.store.get_user_by_name(name)["id"], payload={"next": "/r"})
+    c.post(f"/auth/magic/{tok}", follow_redirects=False)
+    return c
+
+
+def _mit_totp(a, name):
+    uid = a.create_user(name, password=PW, email=f"{name}@example.com")
+    geheim = a.totp_begin(uid)["secret"]
+    a.totp_confirm(uid, pyotp.TOTP(geheim).at(_zeit.time() - 30))
+    return geheim
+
+
+_JSON, _HTML10 = {"accept": "application/json"}, {"accept": "text/html"}
+for _fall, _cfg in (("klassisch", {}), ("globale Kette [password, totp]", {"login_chain": ["password", "totp"]})):
+    a10, ap10 = _route_app(**_cfg)
+    _g10 = _mit_totp(a10, "rt-totp")
+    c10 = _route_link(a10, ap10, "rt-totp")
+    _j10 = c10.get("/r", headers=_JSON)
+    _h10 = c10.get("/r", headers=_HTML10, follow_redirects=False)
+    r.check(f"G10 ({_fall}): Route [\"magic\"], Konto mit TOTP — nach dem Link 401, Schritt totp",
+            _j10.status_code == 401 and _j10.headers.get("x-tinysesam-factor") == "totp",
+            f"HTTP {_j10.status_code} {_j10.headers.get('x-tinysesam-factor')}")
+    r.check(f"… im Browser die Umleitung zum TOTP-Schritt ({_fall})",
+            _h10.status_code == 307 and _h10.headers["location"].startswith("/auth/totp?next=/r"),
+            f"{_h10.status_code} {_h10.headers.get('location')}")
+    c10.post("/auth/totp", data={"code": pyotp.TOTP(_g10).now(), "next": "/r"}, follow_redirects=False)
+    r.check(f"… mit dem Code öffnet sich die Route ({_fall})", c10.get("/r", headers=_JSON).json() == {"u": "rt-totp"})
+a10p, ap10p = _route_app()
+_u10p = a10p.create_user("rt-passkey", password=PW, email="rtp@example.com")
+a10p.store.add_webauthn(_u10p, b"cred-g10", b"pub", 0, "[]", "Laptop")
+_j10p = _route_link(a10p, ap10p, "rt-passkey").get("/r", headers=_JSON)
+r.check("G10: Route [\"magic\"], Konto nur mit Passkey — 401, Schritt passkey",
+        _j10p.status_code == 401 and _j10p.headers.get("x-tinysesam-factor") == "passkey",
+        f"HTTP {_j10p.status_code} {_j10p.headers.get('x-tinysesam-factor')}")
+a10o, ap10o = _route_app()
+a10o.create_user("rt-ohne", password=PW, email="rto@example.com")
+r.check("G10: ohne zweiten Faktor öffnet der Link die Route weiter allein (C, nicht D)",
+        _route_link(a10o, ap10o, "rt-ohne").get("/r", headers=_JSON).json() == {"u": "rt-ohne"})
+a10a, ap10a = _route_app(magiclink_require_second_factor=False)
+_mit_totp(a10a, "rt-aus")
+r.check("G10: magiclink_require_second_factor=False gilt auch hier — der Link genügt der Route",
+        _route_link(a10a, ap10a, "rt-aus").get("/r", headers=_JSON).json() == {"u": "rt-aus"})
+a10k, ap10k = _route_app()
+_g10k = _mit_totp(a10k, "rt-kette")
+c10k = _route_link(a10k, ap10k, "rt-kette")
+_vor10k = c10k.get("/r2", headers=_JSON)
+c10k.post("/auth/totp", data={"code": pyotp.TOTP(_g10k).now(), "next": "/r2"}, follow_redirects=False)
+r.check("G10: Route [\"magic\", \"totp\"] — genau ein TOTP-Schritt, danach offen (kein Doppelschritt)",
+        _vor10k.status_code == 401 and _vor10k.headers.get("x-tinysesam-factor") == "totp"
+        and c10k.get("/r2", headers=_JSON).json() == {"u": "rt-kette"},
+        f"HTTP {_vor10k.status_code} {_vor10k.headers.get('x-tinysesam-factor')}")
+# (Mutationsprobe, gefahren: den Aufruf von `_link_braucht` in
+#  `_enforce_route_chain` abschalten → die TOTP-, Passkey- und Ketten-Fälle werden rot.)
 
 # ── Angriff auf die dritte Runde: Funde und ihre Riegel ────────────────────────────────────
 from fastapi import HTTPException as _HTTPEx  # noqa: E402

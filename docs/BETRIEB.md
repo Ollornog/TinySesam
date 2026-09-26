@@ -41,6 +41,14 @@ gewordene Datenbank meldet der Check deshalb spätestens nach 5 s.
 jemand `auth.gc()` bzw. `tinysesam gc` aufruft (regelmässig, z.B. per Timer). Gelesen werden sie
 nicht mehr — aber die Tabellen wachsen. Das Audit-Log räumt `gc` bewusst nicht ab (B5-11).
 
+**Löschen und das Audit-Log.** Ein gelöschtes Konto wird im Audit-Log zu `gelöscht#<id>` (H-13) —
+auch im Detailtext (`akteur=<name>`, die Adresse). Name und Zeit sucht ein Index; die Suche im
+Detailtext ist eine Teilstring-Suche, die kein Index eingrenzt, und liest bei einer bestätigten
+Adresse (Löschen im Panel) das ganze Log — dessen Grösse wächst ohne `audit_retention_days`
+(Vorgabe 0 = unbegrenzt). Seit 2026-09-26 läuft sie in Blöcken zu 5000 Zeilen ohne Schreibsperre
+dazwischen (G4): Anmeldungen und andere Worker warten nicht mehr die ganze Suche ab; das Löschen
+selbst dauert so lange, wie das Log gross ist.
+
 ## Sitzungen verwalten
 
 Eine Sitzung ist eine Zeile in `session`; im Cookie steht das Token, in der Datenbank nur dessen
@@ -109,6 +117,7 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 | | Regel |
 |---|---|
 | Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Ein selbst gewählter Name bindet nie über LDAP/SAML (G2-N, s. „Föderierte Identitäten"). Schalter `self_service_username_change` |
+| Benutzername, als Betreiber (G13) | Panel „Umbenennen" bzw. `POST <admin_path>/api/users/{id}/username` mit `{"username": …}` — dieselben Regeln (400 mit Grund), dazu der Owner-Schutz: ein Owner-Konto benennt nur ein Owner um. Unabhängig von `self_service_username_change`. Der Name gilt als vom Betreiber vergeben: Der Merker „selbst gewählt" (G2-N) fällt, die Audit-Zeile sagt `durch=betreiber akteur=<admin>`. Ohne laufenden Dienst: `tinysesam rename --db <datei> <name> <neuer-name>` (`#<id>` statt des Namens, etwa für einen Namen mit Steuerzeichen) — dieselben Grundregeln; einen Namen aus `admin_identifiers` und den Mail-Modus kennt das CLI nicht (es liest keine Konfiguration), und `on_security_event` feuert dort nicht. Audit `username_changed … quelle=cli` |
 | Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
@@ -139,8 +148,9 @@ Kennung gehört zwei Konten.
   fremden Schreibers) bleiben stehen — der Start scheitert nicht daran, und nichts wird automatisch
   umbenannt, denn welches Konto die Kennung behält, entscheidet der Betreiber. Verschlimmern lassen
   sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
-  (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: der Inhaber auf der
-  Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu,
+  (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: im Panel
+  („Umbenennen"), mit `tinysesam rename --db <datei> '#<user_id>' <neuer-name>` (G13), der Inhaber
+  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu,
   durch_betreiber=True)` oder
   `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
   Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
@@ -220,8 +230,9 @@ Seite gehört und sich nicht ändert:
   (auch mit Einladung) und Konten, die sich auf der Konto-Seite umbenannt haben
   (`users.name_selbst_gewaehlt`), bindet keine Anmeldung über LDAP/SAML — sonst benennt sich ein
   lokales Konto nach jemandem aus dem Verzeichnis und erbt bei dessen Anmeldung Kennung und
-  Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; wer aus dem einbettenden
-  Dienst umbenennt, übergibt `auth.change_username(uid, neu, durch_betreiber=True)`. Für den
+  Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; Panel und `tinysesam rename`
+  benennen als Betreiber um (der Merker fällt), wer aus dem einbettenden Dienst umbenennt, übergibt
+  `auth.change_username(uid, neu, durch_betreiber=True)`. Für den
   Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
   `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
   gelöscht hat, bleibt unerkannt.
@@ -264,7 +275,8 @@ Seite gehört und sich nicht ändert:
 - **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen und
   entzogen, wenn sie beim Provider wegfallen — gemappte Rollen seit jeher, seit H-5 auch das
   Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
-  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin.
+  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin. War es der letzte
+  Admin, bleibt die Allowlist danach zu (G6, unten).
 - **Widerruf folgt dem Provider (4a).** Eine OIDC-Sitzung trägt ihr Refresh-Token (verschlüsselt);
   alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
   Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt
@@ -307,10 +319,16 @@ Seite gehört und sich nicht ändert:
   nicht vermerkt, und die Anmeldung, die ihn vermerken würde, ist gesperrt), räumt es trotzdem die
   Zähler unter dieser Kennung und sagt das; Rückgabe 1 nur, wenn dort nichts stand. Gehört der
   Verzeichnisname lokal einem ANDEREN Konto (als Name oder Adresse), bleibt dessen Serie stehen.
-- **`admin_identifiers` nach einem IdP-Entzug (H-5):** Entzieht der Provider dem letzten Admin das
-  Flag und steht dessen belegte Adresse in `admin_identifiers`, befördert der Erst-Admin-Weg ihn im
-  selben Login wieder — dann mit dem Vermerk „von Hand" (1). Das ist die Allowlist, wie der Betreiber
-  sie eingetragen hat; wer den Entzug will, nimmt die Adresse aus der Liste.
+- **`admin_identifiers` nach einem IdP-Entzug (H-5, G6):** Entzieht der Provider der Instanz ihren
+  **letzten** Admin, befördert die Allowlist danach niemanden mehr — weder diese Person noch ein
+  anderes Konto aus der Liste (Setting `allowlist_nach_idp_entzug`, Audit `admin_bootstrap_denied
+  nach_idp_entzug`). Bis 2026-09-26 beförderte sie die Person im selben Login zurück, als Admin „von
+  Hand" und Erst-Owner — ein Recht, das kein Provider mehr entzieht und das sich weder löschen noch
+  sperren lässt. Zurück ins Panel führen die Notwege: das Einmal-Token, das TinySesam im Moment des
+  Entzugs ausgibt (stderr bzw. `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim
+  nächsten Start neu), und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
+  Admin-Gruppe versehentlich nicht mehr (Mapping, Scope), verlieren alle Admins vom Provider das Recht
+  auf einmal — **deshalb mindestens einen Owner von Hand halten.**
 - **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,
   keine Adresse im Konto, kein `Remote-Email` (H-3). Liefert der Provider den Beleg später, wird sie
   nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
@@ -375,7 +393,7 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
 | PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_als_erstfaktor()`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
-| Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
+| Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` und in Route-Ketten `require(factors=[…])` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
 | Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
 | Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
@@ -393,9 +411,12 @@ dort. Soll sie nur Folgefaktor sein: `pin_login=False`.
 
 **Die Stärke eines Kontos ist die seines schwächsten eingeschalteten Wegs.** Ein Konto mit TOTP oder
 Passkey ist über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne zweiten Faktor
-ist der Anmelde-Link so stark wie das Postfach. Eine Route-Kette `require(factors=["magic"])` prüft
-nur ihre eigene Liste; sie verlangt den zweiten Faktor nicht. Wer das angleichen will, erzwingt eine Kette oder schaltet schwache
-Wege ab. ASVS 6.3.4 („alle Wege gleich stark") erfüllt die Vorgabe damit **nicht**; eine Kette
+ist der Anmelde-Link so stark wie das Postfach. Das gilt auch in einer Route-Kette wie
+`require(factors=["magic"])`: Hat das Konto TOTP oder einen Passkey, verlangt sie ihn nach dem Link
+(G10, seit 2026-09-26; bis dahin öffnete das Postfach allein die Route). Eine Route-Kette ohne
+`magic` prüft dagegen nur ihre eigene Liste — sie überschreibt die globale Policy; `["password"]`
+lässt ein Konto mit TOTP mit dem Passwort allein hinein. Wer das angleichen will, erzwingt eine
+Kette oder schaltet schwache Wege ab. ASVS 6.3.4 („alle Wege gleich stark") erfüllt die Vorgabe damit **nicht**; eine Kette
 tut es.
 
 ## Was für ASVS Level 3 fehlt

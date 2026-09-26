@@ -372,7 +372,9 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
 
 - **Allowlist** — the named username or email is promoted on its next successful sign-in, whatever the
   method. An **address** only counts with proof that it belongs to whoever is signing in; SAML and
-  LDAP offer no such proof, so it never promotes there (see below). After that: never again.
+  LDAP offer no such proof, so it never promotes there (see below). After that: never again — and
+  not once an identity provider has taken the flag from the instance's last admin either; TinySesam
+  then prints the one-time token below right away (or use `tinysesam owner`).
 - **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
   (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
   admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
@@ -1038,7 +1040,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**56 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**57 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -435,12 +435,13 @@ class TinySesam:
                 "teilen sich die Sperrschwelle). Neue verhindert die Datenbank; diese stammen aus "
                 "der Zeit davor und bleiben, bis eine der Kennungen geändert ist. Die Anmeldung "
                 "mit dieser Kennung ist mehrdeutig, der rechtmäßige Inhaber kann ausgesperrt "
-                "sein. Betroffen: %s%s. Zu ändern ist eine der Kennungen — dafür gibt es weder im "
-                "Admin-Panel noch im CLI einen Weg, wohl aber: der Inhaber selbst auf der "
-                "Konto-Seite (Selbstbedienung); aus dem einbettenden Dienst den Benutzernamen über "
-                "auth.change_username(user_id, neu, durch_betreiber=True) (prüft beide "
-                "Namensräume; im Modus "
-                "login_identifier='email' folgt der Name der Adresse), die E-Mail über "
+                "sein. Betroffen: %s%s. Zu ändern ist eine der Kennungen. Den Benutzernamen: im "
+                "Admin-Panel („Umbenennen“, POST <admin_path>/api/users/<id>/username), mit "
+                "tinysesam rename --db <datei> '#<user_id>' <neuer-name>, der Inhaber selbst auf "
+                "der Konto-Seite oder aus dem einbettenden Dienst "
+                "auth.change_username(user_id, neu, durch_betreiber=True) — alle prüfen beide "
+                "Namensräume (im Modus login_identifier='email' folgt der Name der Adresse). Die "
+                "E-Mail aus dem einbettenden Dienst über "
                 "store.set_email(user_id, adresse) (wirft sqlite3.IntegrityError, wenn die neue "
                 "Adresse schon Kennung eines anderen Kontos ist). Achtung bei der E-Mail: "
                 "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
@@ -457,11 +458,11 @@ class TinySesam:
             security.seclog.warning(
                 "%d Kontoname(n) mit Steuer- oder Formatzeichen im Bestand (user_id %s). Neue legt "
                 "TinySesam so nicht mehr an; Namen mit C0-Steuerzeichen bekommen an der "
-                "Forward-Auth keine Freigabe (Remote-User wäre ein anderer Name). Umbenennen: der "
-                "Inhaber selbst auf der Konto-Seite oder aus dem einbettenden Dienst "
-                "auth.change_username(user_id, neu, durch_betreiber=True) — prüft, dass der neue "
-                "Name in Benutzernamen "
-                "UND Adressen frei ist.",
+                "Forward-Auth keine Freigabe (Remote-User wäre ein anderer Name). Umbenennen: im "
+                "Admin-Panel („Umbenennen“), mit tinysesam rename --db <datei> '#<user_id>' "
+                "<neuer-name>, der Inhaber selbst auf der Konto-Seite oder aus dem einbettenden "
+                "Dienst auth.change_username(user_id, neu, durch_betreiber=True) — alle prüfen, "
+                "dass der neue Name in Benutzernamen UND Adressen frei ist.",
                 len(auffaellig), ", ".join(str(z["id"]) for z in auffaellig[:10]))
         # Bindung über den Namen (G1): Die Frist beginnt je Quelle beim ersten Start, an dem sie
         # eingeschaltet ist — für den Bestand also mit dem Update —, und genau einmal (der Merker
@@ -554,8 +555,8 @@ class TinySesam:
         besetzt ein neues Konto die Login-Kennung eines bestehenden. Die Prüfung sitzt hier,
         damit sie für JEDEN Weg gilt: Selbst-Registrierung, Admin-API, Einladung, Erst-Admin
         (`ensure_admin`), Service-Konten (`create_service`) und die automatische Anlage aus
-        OIDC/LDAP/SAML. Das CLI ist bewusst nicht dabei: Es kann keine Konten anlegen
-        (`version`, `passwd`, `backup`, `restore`, `gc`, `audit`, `unlock`).
+        OIDC/LDAP/SAML. Das CLI ist bewusst nicht dabei: Es kann keine Konten anlegen; sein
+        `rename` (G13) lädt den Manager nicht und prüft dieselben drei Treffer selbst.
 
         `email_verified=False` legt die Adresse als **unbestätigt** ab: geführt und
         weitergereicht wie jede andere, aber ohne Tragkraft für Rechte (Erst-Admin/Allowlist,
@@ -679,6 +680,9 @@ class TinySesam:
         dem Panel, dem CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt unberührt — sonst
         entzöge ein falsch konfigurierter Provider dem Betreiber seinen eigenen Zugang. Ein Flag
         aus der Zeit vor H-5 trägt den Vermerk nicht und bleibt deshalb ebenfalls stehen.
+        Nimmt der Provider so den **letzten** Admin, befördert `admin_identifiers` danach
+        niemanden mehr (G6); das Einmal-Token für `/auth/claim-admin` geht sofort an den
+        Betreiber (stderr bzw. `admin_claim_token_file`).
 
         Verglichen wird standardmäßig **exakt** (`config.group_match`). Sonst würde `admin` auch
         auf `nicht-admin` passen: eine stille Rechteausweitung. `dn=True` (LDAP) vergleicht einen
@@ -706,12 +710,29 @@ class TinySesam:
                 self.audit("idp_admin_grant", u["username"], detail="quelle=idp")
         elif "__admin__" in mapping.values() and u and u["is_admin"] == 2:
             # Das Mapping kennt eine Admin-Gruppe, der Provider liefert sie nicht mehr: Das Flag,
-            # das er vergeben hat, geht. Laut, weil es auch der letzte Admin sein kann — dann
-            # öffnet sich der belegte Erst-Admin-Weg (`/auth/claim-admin`, Token auf der Konsole).
+            # das er vergeben hat, geht. Laut, weil es auch der letzte Admin sein kann.
             self.store.set_admin(user_id, False)
             self.audit("idp_admin_revoke", u["username"], detail="quelle=idp gruppe_entfallen=1")
             security.seclog.warning("Admin-Flag entzogen: user=%s, der Identity Provider liefert die "
                                     "Admin-Gruppe nicht mehr.", security.fuer_log(u["username"]))
+            if not self.admin_exists():
+                # War es der letzte Admin (G6), bleibt die Allowlist ab jetzt zu: Sonst beförderte
+                # `maybe_promote_admin` im selben Login — über `apply_factor` — die Person wieder,
+                # als Admin „von Hand" (1) und Erst-Owner, den kein Provider mehr entzieht und
+                # niemand löschen oder sperren kann. Und nicht nur sie: jedes Konto mit einem
+                # Allowlist-Eintrag. Offen bleibt nur der belegte Weg des Betreibers — das
+                # Einmal-Token, jetzt sofort ausgegeben (bis dahin nur beim Start), und das CLI.
+                # Der Merker gilt für die Instanz und wird nie zurückgesetzt; er wirkt ohnehin nur,
+                # solange es keinen Admin gibt. Parallele Entzüge setzen ihn idempotent.
+                self.store.set_setting("allowlist_nach_idp_entzug", str(_jetzt()))
+                security.seclog.warning(
+                    "Kein Admin mehr: Der Identity Provider hat der Instanz ihren letzten Admin "
+                    "entzogen. admin_identifiers befördert danach niemanden mehr. Notweg: "
+                    "tinysesam owner --db <datei> <benutzer> oder /auth/claim-admin mit dem "
+                    "Einmal-Token (Konsole bzw. admin_claim_token_file).")
+                tok = self.admin_claim_token()
+                if tok:
+                    self._admin_claim_bekanntgeben(tok)
 
     # ---------- API-Keys / Service-Accounts (maschineller Zugang, Daemons) ----------
     def create_service(self, username, roles=None, display_name=None) -> int:
@@ -1123,7 +1144,8 @@ class TinySesam:
     # ---------- Erst-Admin (Bootstrap) ----------
     # Bewusst NICHT "der erste registrierte User wird Admin": bei offener Registrierung gewinnt,
     # wer als Erstes da ist — auch ein Fremder, der die frische Instanz findet. Stattdessen zwei
-    # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt.
+    # explizite Wege, beide nur wirksam, SOLANGE es keinen Admin gibt — die Allowlist zudem nie
+    # mehr, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6).
     def delete_user(self, user_id: int) -> bool:
         """Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log nehmen (H-13).
 
@@ -1221,7 +1243,8 @@ class TinySesam:
                             faktor: Optional[str] = None) -> bool:
         """Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über
         welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg,
-        dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
+        dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder —
+        auch nicht, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6).
 
         **Ein Eintrag mit `@` wird NUR gegen die E-Mail geprüft, einer ohne NUR gegen den
         Benutzernamen.** Vorher galt „Name ODER E-Mail" für jeden Eintrag, und das machte den
@@ -1258,6 +1281,13 @@ class TinySesam:
 
         Der Benutzername bleibt davon unberührt — für ihn ist der Konstruktor-Wächter zuständig,
         der Allowlist-Namen verbietet, sobald Konten von selbst entstehen.
+
+        **Nach einem Entzug durch den Identity Provider nie wieder** (G6): Hat der Provider der
+        Instanz ihren letzten Admin genommen (`apply_idp_groups`, H-5), befördert die Allowlist
+        niemanden mehr — sonst machte sie die Person im selben Login wieder zum Admin „von Hand"
+        und Erst-Owner, den kein Provider mehr entzieht (Audit `admin_bootstrap_denied
+        nach_idp_entzug`). Zurück ins Panel führen dann das Einmal-Token (`/auth/claim-admin`,
+        sofort ausgegeben) und `tinysesam owner`.
         """
         ids = {str(i).strip().lower() for i in self.cfg.admin_identifiers if str(i).strip()}
         if not ids or not user or user["is_admin"] or self.admin_exists():
@@ -1266,6 +1296,18 @@ class TinySesam:
         namen = ids - adressen
         trifft_adresse = str(user["email"] or "").lower() in adressen
         trifft_name = str(user["username"] or "").lower() in namen
+        if not (trifft_adresse or trifft_name):
+            return False
+        if self.store.get_setting("allowlist_nach_idp_entzug"):
+            # G6: Der Identity Provider hat der Instanz ihren letzten Admin entzogen
+            # (`apply_idp_groups`) — die Allowlist öffnet sich danach nicht wieder, für niemanden.
+            security.seclog.warning(
+                "Erst-Admin NICHT vergeben: %s steht in admin_identifiers, aber der Identity "
+                "Provider hat der Instanz ihren letzten Admin entzogen — die Allowlist öffnet sich "
+                "danach nicht wieder. Notweg: tinysesam owner --db <datei> <benutzer> oder "
+                "/auth/claim-admin.", security.fuer_log(user["username"]))
+            self.audit("admin_bootstrap_denied", user["username"], detail="nach_idp_entzug")
+            return False
         if trifft_adresse and not trifft_name:
             # Zwei Stufen, beide fail-closed: Ein ausdrücklicher Beleg des Anmeldewegs gewinnt.
             # Schweigt der Weg (`None`), verweigert ein föderierter Faktor grundsätzlich — auch
@@ -1288,8 +1330,6 @@ class TinySesam:
                     faktor or "?")
                 self.audit("admin_bootstrap_denied", user["username"], detail=grund)
                 return False
-        if not (trifft_adresse or trifft_name):
-            return False
         self.store.set_admin(user["id"], True)
         self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="admin_identifiers")
@@ -2921,7 +2961,8 @@ class TinySesam:
         einem Authenticator geschützt hat. Die klassische Policy verlangte ein eingerichtetes TOTP
         schon immer; offen waren Konten nur mit Passkey und Ketten, in denen der Link allein
         genügt (`["magic"]`). Konten ohne zweiten Faktor meldet der Link weiter allein an (der
-        Preis von C gegenüber D, bewusst so entschieden)."""
+        Preis von C gegenüber D, bewusst so entschieden). Gilt für die globale Policy und für jede
+        Route-Kette (`require(factors=[…])`, G10)."""
         if not self.cfg.magiclink_require_second_factor or "magic" not in done:
             return None
         if "totp" in done or "passkey" in done:
@@ -5850,6 +5891,13 @@ class TinySesam:
             self._redirect_factor(request, factors[0] if factors else "password")
         if not self._chain_satisfied(factors, strict, done):
             self._redirect_factor(request, self._next_factor(factors, strict, done))
+        # Dieselbe Regel wie für die globale Policy (G10): Lief die Anmeldung über den Link und hat
+        # das Konto einen zweiten Faktor, verlangt auch eine Route-Kette wie `["magic"]` ihn — sonst
+        # öffnete das Postfach allein die Route eines Kontos, das sich mit TOTP/Passkey geschützt
+        # hat. Enthält die Kette selbst `totp`/`passkey`, ist er schon erbracht (kein Doppelschritt).
+        fehlt = self._link_braucht(usr["id"], done)
+        if fehlt is not None:
+            self._redirect_factor(request, fehlt)
         d = dict(usr)
         d["_via"] = "session"
         return d
@@ -5943,7 +5991,9 @@ class TinySesam:
         `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
         `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt).
         factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale),
-        strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`."""
+        strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`.
+        Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt
+        auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy)."""
         def dep(request: Request) -> dict:
             return self._enforce(request, mfa=mfa, admin=admin, role=role, factors=factors,
                                  strict=strict, admin_implies=admin_implies)

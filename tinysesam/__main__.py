@@ -8,6 +8,8 @@
     gc --db auth.db                  Abgelaufenes wegräumen (für Cron/Timer)
     audit --db auth.db [--user X]    ins Protokoll sehen (auch wenn niemand hereinkommt)
     unlock --db auth.db <benutzer>   eine Brute-Force-Sperre aufheben
+    owner --db auth.db <benutzer>    ein Konto zum Owner machen (Notweg)
+    rename --db auth.db <alt> <neu>  ein Konto umbenennen (Kennungs-Kollision auflösen)
 
 Bewusst mager. TinySesam installiert sich nicht selbst — ein Auth-Modul, das zur Laufzeit
 Code nachlädt, ist eine Hintertür mit Bedienungsanleitung. Aktualisiert wird von außen:
@@ -378,6 +380,79 @@ def _owner(argv) -> int:
     return 0
 
 
+#: Höchstlänge eines Benutzernamens — dieselbe wie `TinySesam.NAME_MAX` (das CLI importiert den
+#: Manager nicht, er zieht FastAPI nach; tests/test_admin_konto.py hält beide gleich).
+_NAME_MAX = 150
+
+
+def _rename(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam rename",
+        description="Ein Konto umbenennen — als Betreiber, ohne laufenden Dienst.",
+        epilog="Der Weg für eine Kennungs-Kollision im Bestand, die der Start meldet (G13). Dieselben "
+               "Grundregeln wie im Panel: frei in Benutzernamen UND Adressen (auch als Namensvetter "
+               "wie Alice/alice), keine Steuerzeichen, höchstens 150 Zeichen, ein Name mit @ nur als "
+               "die eigene bestätigte Adresse. Die Konfiguration kennt das CLI nicht: Einen Namen aus "
+               "admin_identifiers prüft es nicht, und im Modus login_identifier='email' folgt der "
+               "Name der Adresse — dort nicht umbenennen. Sitzungen, Keys, Faktoren und Bindungen "
+               "hängen an der Konto-ID und bleiben; nach aussen ändert sich Remote-User.")
+    ap.add_argument("username", help="heutiger Benutzername des Kontos, oder #<id> (die user_id "
+                                     "aus der Startmeldung — für einen Namen, der sich nicht "
+                                     "eintippen lässt)")
+    ap.add_argument("neuer_name", help="der neue Benutzername")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank")
+    a = ap.parse_args(argv)
+    store = _oeffne(a.db)
+    if store is None:
+        return 1
+    import sqlite3
+    from .store import name_ungueltig, norm_email, norm_kennung
+    konto = store.get_user_by_name(a.username)
+    if konto is None and a.username[:1] == "#" and a.username[1:].isascii() and a.username[1:].isdigit():
+        # Über die ID: Ein Name mit Steuerzeichen (Bestand) lässt sich nicht eintippen, und bei
+        # einer Kollision nennt die Startmeldung die Konten ohnehin über ihre user_id.
+        konto = store.get_user(int(a.username[1:]))
+    if not konto:
+        print(f"Kein Konto '{a.username}' in {a.db}.", file=sys.stderr)
+        return 1
+    neu = a.neuer_name.strip()
+    if not neu or len(neu) > _NAME_MAX or name_ungueltig(neu):
+        print("Ungültiger Benutzername (leer, länger als 150 Zeichen oder mit Steuerzeichen).",
+              file=sys.stderr)
+        return 1
+    eigene = norm_email(konto["email"]) if konto["email"] and konto["email_verified"] else None
+    if "@" in norm_kennung(neu) and norm_email(neu) != eigene:
+        # Wie `change_username`: Ein Name, der eine fremde Adresse ist, besetzte das Postfach
+        # einer Person, die es hier noch nicht gibt.
+        print(f"'{neu}' ist eine Adresse — als Name nur die eigene bestätigte Adresse des Kontos.",
+              file=sys.stderr)
+        return 1
+    alt = str(konto["username"])
+    if neu == alt:
+        print(f"'{alt}' heisst schon so — nichts geändert.")
+        return 0
+    # Kreuzweise, wie `TinySesam.kennung_vergeben`: Name, Adresse und Zähl-Topf.
+    for treffer in (store.get_user_by_name(neu), store.get_user_by_email(neu),
+                    store.konto_mit_topf(neu, ausser=konto["id"])):
+        if treffer is not None and treffer["id"] != konto["id"]:
+            print(f"'{neu}' ist schon vergeben (Konto {treffer['id']}, als Name oder Adresse).",
+                  file=sys.stderr)
+            return 1
+    try:
+        # Als Betreiber: Der Merker „selbst gewählt" (G2-N) fällt — der Name steht für den
+        # Betreiber, und die Anmeldung über LDAP/SAML darf das Konto wieder über ihn binden.
+        store.set_username(konto["id"], neu, selbst_gewaehlt=False)
+    except sqlite3.IntegrityError:
+        # Wettlauf mit dem laufenden Dienst: dazwischen vergeben — die Datenbank entscheidet (G12c).
+        print(f"'{neu}' ist schon vergeben — die Datenbank hat das Umbenennen abgewiesen, nichts "
+              "geändert.", file=sys.stderr)
+        return 1
+    store.audit_log("username_changed", neu, None, f"alt={alt} durch=betreiber quelle=cli")
+    print(f"'{alt}' heisst jetzt '{neu}'. Apps sehen den neuen Namen als Remote-User; die Konto-ID "
+          "(Remote-Id) bleibt.")
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
@@ -397,6 +472,8 @@ def main(argv=None):
         sys.exit(_unlock(argv[1:]))
     elif cmd == "owner":
         sys.exit(_owner(argv[1:]))
+    elif cmd == "rename":
+        sys.exit(_rename(argv[1:]))
     else:
         # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
         # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
@@ -408,7 +485,8 @@ def main(argv=None):
               "       python -m tinysesam gc     --db <datei>\n"
               "       python -m tinysesam audit  --db <datei> [--user X]\n"
               "       python -m tinysesam unlock --db <datei> <benutzer>\n"
-              "       python -m tinysesam owner  --db <datei> <benutzer>",
+              "       python -m tinysesam owner  --db <datei> <benutzer>\n"
+              "       python -m tinysesam rename --db <datei> <benutzer> <neuer-name>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
 

@@ -77,7 +77,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt. Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
+| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt — und nie mehr, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6; dann Einmal-Token oder `tinysesam owner`). Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
 | `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
 
@@ -108,7 +108,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `magiclink_enabled` | `bool` | `False` | Anmeldung per Einmal-Link — braucht einen Mailer |
 | `magiclink_ttl_min` | `int` | `15` | Gültigkeit eines Einmal-Links |
-| `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
+| `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. Gilt für die globale Kette und jede Route-Kette (`require(factors=["magic"])`, G10). `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
 
 ## Selbstbedienung: Adresse und Benutzername (PO-Entscheid 2026-09-25)
 

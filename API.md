@@ -296,7 +296,7 @@ Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
 ### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder — auch nicht, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6).
 
 ### `mfa_pending(user_id) -> 'bool'`
 
@@ -384,7 +384,7 @@ Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gib
 
 ### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
 
-Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale), strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`.
+Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale), strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`. Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy).
 
 ### `require_admin(request: 'Request') -> 'dict'`
 

@@ -374,7 +374,8 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 - **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
   befördert, egal über welche Methode. Eine **Adresse** zählt dabei nur mit einem Beleg, dass sie
   dem Anmeldenden gehört; über SAML und LDAP gibt es keinen, dort befördert sie nie (s. unten).
-  Danach nie wieder.
+  Danach nie wieder — auch nicht, nachdem ein Identity Provider dem letzten Admin der Instanz das
+  Recht entzogen hat; TinySesam gibt dann sofort das Einmal-Token unten aus (oder `tinysesam owner`).
 - **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
   **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
   Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
@@ -1065,7 +1066,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**56 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**57 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
