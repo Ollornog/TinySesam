@@ -1066,21 +1066,22 @@ for _datei, _text in _readmes.items():
         f"{_datei} nennt Python {sorted(set(_gefunden))}, die CI fährt {_spanne}")
 print(f"  READMEs: Python-Spanne stimmt ({_spanne})")
 
-# ---------- Kein `pip install tinysesam` vor der Veröffentlichung ----------
-# Beide READMEs führten mit `pip install tinysesam` — der Name ist auf PyPI nicht registriert, der
-# Befehl endet mit „No matching distribution found". Die erste Zeile, die jemand ausprobiert, darf
-# nicht die erste sein, die fehlschlägt. Veröffentlicht wird laut ADR-6 mit 1.0; bis dahin gilt
-# ausschliesslich der gepinnte Git-Tag, und dieser Wächter fällt mit dem Sprung auf 1.0 von selbst weg.
+# ---------- Die Installation führt mit dem gepinnten PyPI-Weg ----------
+# Bis 2026-09-27 verbot dieser Wächter jede PyPI-Zeile („erst ab 1.0") — da lag TinySesam seit
+# 0.19.0 längst dort: Nach ADR-6 geht jeder Tag per Trusted Publishing nach PyPI. Der Wächter hielt
+# damit die falsche Aussage fest, und beide READMEs schickten jeden auf den Umweg über Git. Jetzt:
+# Beide führen mit `pip install "tinysesam==<Version>"` (die Version setzt scripts/_release.py mit),
+# keine Zeile installiert ungepinnt, und kein Satz behauptet, das Paket fehle auf PyPI.
 from tinysesam import __version__ as _ver  # noqa: E402
-if int(_ver.split(".")[0]) < 1:
-    for _datei, _text in _readmes.items():
-        _pypi = [z.strip() for z in _text.splitlines()
-                 if _re.match(r'^\s*pip install ["\']?tinysesam[\[\]a-z,]*["\']?\s*(#.*)?$', z)
-                 or _re.match(r'^\s*pip install ["\']?tinysesam[\[\]a-z,]*==', z)]
-        assert not _pypi, (
-            f"{_datei} zeigt eine PyPI-Installation, TinySesam ist dort aber nicht (bis 1.0):\n  "
-            + "\n  ".join(_pypi))
-    print("  READMEs installieren über den Git-Tag (PyPI erst ab 1.0)")
+for _datei, _text in _readmes.items():
+    assert f'pip install "tinysesam=={_ver}"' in _text, (
+        f'{_datei} zeigt die gepinnte PyPI-Installation nicht (pip install "tinysesam=={_ver}")')
+    _ungepinnt = [z.strip() for z in _text.splitlines()
+                  if _re.match(r'^\s*pip install ["\']?tinysesam[\[\]a-z,]*["\']?\s*(#.*)?$', z)]
+    assert not _ungepinnt, f"{_datei} installiert ungepinnt:\n  " + "\n  ".join(_ungepinnt)
+    _falsch = _re.search(r"not on PyPI|nicht auf PyPI|noch nicht auf PyPI", _text, _re.I)
+    assert not _falsch, f"{_datei} behauptet, TinySesam fehle auf PyPI: {_falsch.group(0)!r}"
+print("  READMEs installieren gepinnt von PyPI (seit 0.19.0)")
 
 # ---------- Die Code-Beispiele der READMEs müssen bauen ----------
 # Der allererste Block, den ein neuer Nutzer kopiert, schaltete `oidc_enabled=True` und setzte

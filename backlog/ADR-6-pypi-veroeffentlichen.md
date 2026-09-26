@@ -59,7 +59,9 @@ wiederholt.
 
 ## Konsequenzen
 
-- Installation ab 1.0: `pip install tinysesam` bzw. `pip install "tinysesam[all]==1.0.0"`.
+- Installation: `pip install "tinysesam[all]==X.Y.Z"`. Geplant war „ab 1.0"; tatsächlich geht
+  jeder Tag nach PyPI — seit **0.19.0** (2026-09-22). Die READMEs sagten bis 2026-09-27 noch
+  „nicht auf PyPI", und ein Wächter in `tests/test_repo.py` hielt das fest; beides ist korrigiert.
 - Der Sperrriegel `Private :: Do Not Upload` fällt aus `pyproject.toml`; `tests/test_packaging.py`
   achtet darauf, dass er nicht zurückkommt — und dass Wheel und sdist vollständig sind. Ein Wheel,
   dem eine Datei fehlt, installiert sauber und fällt erst beim Nutzer auf.

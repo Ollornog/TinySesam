@@ -222,6 +222,11 @@ auffällt:
 
 ### Geändert
 
+- **Die Installationsanleitung führt mit PyPI.** TinySesam liegt dort seit 0.19.0 (jeder Tag geht
+  per Trusted Publishing nach PyPI, ADR-6), beide READMEs sagten aber noch „nicht auf PyPI" und
+  schickten jeden über Git. Jetzt `pip install "tinysesam==X.Y.Z"`, der Git-Tag als Alternative; der
+  Wächter in `tests/test_repo.py`, der die falsche Aussage festhielt, prüft jetzt das Gegenteil.
+
 - **Die eingebauten Seiten tragen den Unterpfad (T-15).** Unter `uvicorn --root-path /sso` hinter
   einem Proxy, der `/sso` abschneidet, oder als `Mount("/sso", app)` zeigten Formulare, Links,
   fetch-Aufrufe und Umleitungen bis dahin aus der Montage heraus (`/auth/login` → 404), nur die

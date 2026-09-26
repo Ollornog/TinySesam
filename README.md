@@ -63,23 +63,25 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 
 ## Installation
 
-TinySesam installs from its **git tag** — it is not on PyPI yet (see below):
+TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
+pip install "tinysesam==0.20.1"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
+pip install "tinysesam[all]==0.20.1"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
+```
+
+Every release goes to PyPI from its git tag, via trusted publishing (no token), and each file
+carries a PEP 740 attestation of the commit it was built from. The same version also installs
+straight from the tag:
+
+```bash
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 ```
 
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
 default branch, so it belongs in an experiment, not in a deployment.
-
-> **Not on PyPI yet.** `pip install tinysesam` does **not** work: the name is not registered there.
-> The packaging is ready (metadata, trusted publishing, a packaging test) and publishing happens
-> with **1.0** — until then the pinned git tag above is the way. This page said otherwise until
-> 2026-09-21, which made the very first command anyone tried fail with
-> `No matching distribution found for tinysesam`.
 
 ## Quickstart
 
@@ -619,15 +621,18 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1
+tinysesam[oidc]==0.20.1
 ```
 
-The same line installs the same code tomorrow, and updating means: bump the line, reinstall,
-restart the service. Python does not reload code at runtime.
+A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
+means: bump the line, reinstall, restart the service. Python does not reload code at runtime.
 
-Note that a **tag can be moved**. For real immutability pin the commit instead (`@a1b2c3d…`) —
-that one cannot be rewritten. Once TinySesam is on PyPI (with 1.0), `tinysesam[oidc]==1.0.0`
-becomes the shorter way to the same guarantee: a released version there never changes at all.
+The same pin via git, if you install that way — note that a **tag can be moved**; for real
+immutability pin the commit (`@a1b2c3d…`):
+
+```
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1
+```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:

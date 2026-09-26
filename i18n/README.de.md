@@ -59,23 +59,25 @@ und das komplette **Frontend austauschbar** (`auth.set_template(...)`).
 
 ## Installation
 
-TinySesam wird über seinen **Git-Tag** installiert — auf PyPI liegt es noch nicht (siehe unten):
+TinySesam liegt auf **PyPI** (seit 0.19.0). Pinne die Version:
 
 ```bash
-pip install "tinysesam @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
+pip install "tinysesam==0.20.1"
 # Kern: Passwort + TOTP. Alles: [all] — + argon2, QR, OIDC, Passkey
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
+pip install "tinysesam[all]==0.20.1"
 # gezielt: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
+```
+
+Jedes Release geht aus seinem Git-Tag nach PyPI, per Trusted Publishing (ohne Token), und jede
+Datei trägt eine PEP-740-Beglaubigung des Commits, aus dem sie gebaut ist. Dieselbe Fassung
+installiert sich auch direkt vom Tag:
+
+```bash
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.20.1"
 ```
 
 Ohne `@v…` kommt statt einer freigegebenen Fassung der bewegliche Hauptzweig — das gehört in ein
 Experiment, nicht in einen Betrieb.
-
-> **Noch nicht auf PyPI.** `pip install tinysesam` funktioniert **nicht**: Der Name ist dort nicht
-> registriert. Das Packaging steht (Metadaten, Trusted Publishing, ein Packaging-Test);
-> veröffentlicht wird mit **1.0**, bis dahin gilt der gepinnte Git-Tag oben. Bis 2026-09-21 stand
-> hier das Gegenteil — der allererste Befehl, den jemand ausprobierte, endete mit
-> `No matching distribution found for tinysesam`.
 
 ## Quickstart
 

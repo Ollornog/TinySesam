@@ -1,6 +1,6 @@
 """Das Paket, wie es beim Nutzer ankommt — nicht die Absicht im `pyproject.toml`.
 
-Seit 1.0 ist PyPI der Installationsweg ([ADR-6](../backlog/ADR-6-pypi-veroeffentlichen.md)).
+Seit 0.19.0 ist PyPI der Installationsweg ([ADR-6](../backlog/ADR-6-pypi-veroeffentlichen.md)).
 Damit zählt nicht mehr, was im Repo liegt, sondern was im Wheel und im sdist landet — und die
 beiden werden aus verschiedenen Regeln gebaut. Ein Wheel, dem eine Datei fehlt, installiert
 sauber und stürzt erst beim Nutzer ab; eine Version, die auf PyPI steht, lässt sich nicht
