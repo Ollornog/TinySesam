@@ -62,7 +62,7 @@ IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisier
 
 Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
 
-### `change_username(user_id, neu, ip: 'Optional[str]' = None) -> 'str'`
+### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
 
 Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
 
@@ -122,7 +122,7 @@ Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
@@ -169,6 +169,10 @@ Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 ### `flow_cookie_name(basis: 'str') -> 'str'`
 
 Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
+### `foederation_nachbinden(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
+
+Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
 
 ### `forward_login_url(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'`
 
@@ -268,7 +272,7 @@ Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
 ### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
 
-Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg).
+Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
 
 ### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
@@ -674,4 +678,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-146 Methoden, 3 Eigenschaften, 7 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+147 Methoden, 3 Eigenschaften, 7 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

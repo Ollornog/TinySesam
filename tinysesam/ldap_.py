@@ -378,15 +378,7 @@ class LDAPClient:
                 # Auch hier: Ein Verweis auf der Attribut-Suche lässt E-Mail, Name und Gruppen
                 # fehlen — mit ldap_allowed_groups ist das eine Abweisung ohne erkennbaren Grund.
                 _verweis_melden(conn, "die Attribut-Suche", username)
-            info: dict = {"username": username, "email": None, "name": username, "groups": [],
-                          "id": None}
-            if entry is not None:
-                info["email"] = _first(entry, cfg.ldap_attr_email)
-                info["name"] = _first(entry, cfg.ldap_attr_name) or username
-                info["groups"] = _list(entry, cfg.ldap_group_attr)
-                info["id"] = _stabile_kennung(entry, cfg)
-                if beleg_attribut(cfg, "ldap"):
-                    info["email_verified"] = _first(entry, beleg_attribut(cfg, "ldap"))
+            info = _info_aus_eintrag(entry, username, cfg)
             conn.unbind()
             return info
         except _ausfall_arten() as e:
@@ -409,6 +401,90 @@ class LDAPClient:
                 f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
         except Exception:
             return None
+
+
+    def eintrag_suchen(self, username: str) -> list:
+        """Den Verzeichniseintrag zu einem Benutzernamen suchen — ohne dessen Passwort (G1).
+
+        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`): Ein Konto aus der Zeit vor
+        den Kennungen bindet sich sonst erst bei der nächsten Anmeldung — ein ruhendes nie. Gesucht
+        wird wie bei der Anmeldung, nur ohne Benutzer-Bind:
+
+        * **Search-then-Bind** (`ldap_user_base` + `ldap_user_filter`): derselbe Filter, mit dem
+          Dienstkonto (`ldap_bind_dn`) oder anonym.
+        * **Direkt-Bind** (`ldap_user_dn_template`): eine BASE-Suche auf den gebauten DN, mit dem
+          Dienstkonto, falls gesetzt, sonst anonym — das Verzeichnis muss das Lesen erlauben.
+
+        Rückgabe: je Treffer ein Eintrag in derselben Form wie `authenticate` (`id`, `email`,
+        `name`, `groups`), höchstens zwei. **Der Aufrufer verlangt genau einen** —
+        `authenticate` nimmt dagegen still den ersten, was für eine Anmeldung mit Passwort genügt
+        (das Passwort entscheidet), für eine Bindung ohne Passwort aber nicht. Leer: kein Eintrag,
+        oder das Verzeichnis antwortete mit einem Verweis (steht im Log).
+
+        Ein Ausfall — Netz, TLS, ein abgewiesenes Dienstkonto, eine abgewiesene Suche (etwa
+        fehlende Leserechte) — wirft `VerzeichnisNichtErreichbar`. Das ist kein „nicht im
+        Verzeichnis": Die Bestandsbindung bricht dann ab, statt ein falsches Bild zu liefern."""
+        if not username or len(str(username)) > LDAP_NAME_MAX:
+            return []
+        try:
+            import ldap3
+            from ldap3.core import exceptions as lx
+            from ldap3.utils.conv import escape_filter_chars
+            from ldap3.utils.dn import escape_rdn
+        except ModuleNotFoundError as e:
+            raise _fehlt_extra(e) from e
+        cfg = self.cfg
+        server = self._server()
+        try:
+            conn = ldap3.Connection(server, user=cfg.ldap_bind_dn or None,
+                                    password=cfg.ldap_bind_password or None,
+                                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
+            # TLS VOR dem Bind — wie beim Dienstkonto der Anmeldung (F-12).
+            conn.open()
+            if cfg.ldap_start_tls:
+                conn.start_tls()
+            if not conn.bind():
+                raise VerzeichnisNichtErreichbar(
+                    f"LDAP {cfg.ldap_url}: Dienstkonto bzw. anonyme Suche abgewiesen "
+                    f"({(conn.result or {}).get('description') or '?'})")
+            attrs = _attributliste(cfg)
+            if cfg.ldap_user_dn_template:
+                dn = cfg.ldap_user_dn_template.format(username=escape_rdn(username))
+                conn.search(dn, "(objectClass=*)", search_scope=ldap3.BASE, attributes=attrs)
+            else:
+                flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
+                conn.search(cfg.ldap_user_base, flt, attributes=attrs, size_limit=2)
+            code = (conn.result or {}).get("result")
+            eintraege = list(conn.entries)[:2]
+            if not eintraege and code == 10:
+                _verweis_melden(conn, "die Bestandssuche", username)
+            elif code not in (0, 4, 32):
+                # 0 Treffer oder Ende, 4 mehr als zwei Treffer (size_limit), 32 kein solcher DN.
+                raise VerzeichnisNichtErreichbar(
+                    f"LDAP {cfg.ldap_url}: Suche abgewiesen "
+                    f"({(conn.result or {}).get('description') or code})")
+            conn.unbind()
+            return [_info_aus_eintrag(e, username, cfg) for e in eintraege]
+        except VerzeichnisNichtErreichbar:
+            raise
+        except (lx.LDAPException, OSError) as e:
+            raise VerzeichnisNichtErreichbar(
+                f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
+
+
+def _info_aus_eintrag(entry, username: str, cfg) -> dict:
+    """Aus einem Verzeichniseintrag das, was `authenticate` und `eintrag_suchen` zurückgeben.
+    `entry=None` (die Attribut-Suche kam leer zurück): nur der Name, keine Kennung."""
+    info: dict = {"username": username, "email": None, "name": username, "groups": [],
+                  "id": None}
+    if entry is not None:
+        info["email"] = _first(entry, cfg.ldap_attr_email)
+        info["name"] = _first(entry, cfg.ldap_attr_name) or username
+        info["groups"] = _list(entry, cfg.ldap_group_attr)
+        info["id"] = _stabile_kennung(entry, cfg)
+        if beleg_attribut(cfg, "ldap"):
+            info["email_verified"] = _first(entry, beleg_attribut(cfg, "ldap"))
+    return info
 
 
 #: Attribute, in denen Verzeichnisse ihre stabile Kennung führen — in dieser Reihenfolge
@@ -440,17 +516,39 @@ def _stabile_kennung(entry, cfg):
     """Die stabile Kennung aus dem Eintrag — als Text, damit sie in die Datenbank passt.
 
     `objectGUID` kommt bei Active Directory als Bytes; roh abgelegt wäre sie je nach ldap3-Fassung
-    einmal so und einmal anders zu lesen. Deshalb hier eine feste Darstellung.
+    einmal so und einmal anders zu lesen. Deshalb hier eine feste Darstellung: Hex der ROHEN Bytes.
+
+    Nicht aus `value` allein: Ohne Schema (`get_info=NONE`) dekodiert ldap3 jeden Wert, der
+    zufällig gültiges UTF-8 ist, zu Text — bei einer GUID aus Bytes unter 0x80 etwa ein `str` mit
+    Steuerzeichen. Den wies die Formprüfung der Anmeldung als manipuliert ab (die Person kam über
+    LDAP nie mehr hinein), ein druckbarer landete als Text statt als Hex (gefunden mit ldap3
+    MOCK_SYNC, G1). `objectGUID` wird deshalb immer roh gelesen, ein anderes Attribut
+    (`ldap_attr_id`), wenn sein Text Steuerzeichen trägt — eine Kennung in Textform hat nie welche.
     """
     kandidaten = [cfg.ldap_attr_id] if cfg.ldap_attr_id else list(STABILE_KENNUNG_ATTRIBUTE)
     for attr in kandidaten:
         wert = _first(entry, attr)
         if wert in (None, ""):
             continue
+        if isinstance(wert, str) and (attr.lower() == "objectguid" or _hat_steuerzeichen(wert)):
+            wert = _roh(entry, attr) or wert
         if isinstance(wert, (bytes, bytearray)):
             return wert.hex()
         return str(wert)
     return None
+
+
+def _hat_steuerzeichen(text: str) -> bool:
+    return any(ord(z) < 0x20 or 0x7F <= ord(z) <= 0x9F for z in text)
+
+
+def _roh(entry, attr):
+    """Der erste Wert eines Attributs als die Bytes, die das Verzeichnis geschickt hat — oder None."""
+    try:
+        roh = entry[attr].raw_values if attr in entry else None
+    except Exception:
+        return None
+    return roh[0] if roh and isinstance(roh[0], (bytes, bytearray)) else None
 
 
 def _first(entry, attr):

@@ -441,6 +441,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             f"seinem {_mail_attr}-Wert anmeldet, bekommt einen Ersatznamen (ldap-…) statt dieses "
             "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
             "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
+    # G1: Unbegrenzt über den Namen binden ist der Stand bis 0.20.x — und genau die Lücke, die die
+    # Frist schliesst. Erlaubt (Rückweg), aber nicht still.
+    _foederiert = [name for an, name in (("ldap_enabled", "LDAP"), ("saml_enabled", "SAML"))
+                   if _an(config, an)]
+    _tage = _ganzzahl(config, "federation_name_binding_days", 30)
+    if _foederiert and _tage is not None and _tage < 0:
+        warnungen.append(
+            f"federation_name_binding_days={_tage}: {' und '.join(_foederiert)} binden ein "
+            "ungebundenes Konto unbegrenzt über seinen Namen. Ein ruhendes Konto (jemand ist "
+            "ausgeschieden) fällt dann an die nächste Person, die im Verzeichnis denselben Namen "
+            "bekommt — samt Rollen und Admin-Recht. Besser: den Bestand einmal binden "
+            "(auth.foederation_nachbinden(quelle), erst als Trockenlauf) und die Vorgabe (30) lassen.")
 
     # Pfade der App tragen seit T-15 keinen Montage-Präfix mehr — TinySesam setzt ihn aus dem Pfad
     # der base_url davor. Wer ihn für die alte Fassung von Hand eingetragen hat (`/sso/auth/login`),
@@ -671,6 +683,9 @@ ZAHLENGRENZEN = {
     "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
     "session_idle_minutes_remember": (0, 365 * 24 * 60),
+    # -1 = unbegrenzt (Verhalten bis 0.20.x), 0 = nur ausdrücklich. Darunter ist kein Wert gemeint;
+    # zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    "federation_name_binding_days": (-1, 3660),
 }
 
 

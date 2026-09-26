@@ -43,10 +43,29 @@ auffällt:
   Verzeichnis-Ausfalls kann eine Anmeldung bis zu 12 s dauern, statt sofort 429 zu bekommen. Neu im
   Sicherheits-Log: `deferred login user=… ip=… reason=pending` — ein Aufschub, keine Sperre; die
   mitgelieferten fail2ban-Filter treffen die Zeile bewusst nicht.
+- **LDAP/SAML binden ein ungebundenes Konto nur noch 30 Tage lang über den Namen** (G1): gezählt je
+  Quelle ab dem ersten Start nach dem Update bzw. ab der Anlage des Kontos
+  (`federation_name_binding_days`). Danach weist die Anmeldung ab (`<quelle>_namensbindung_zu`,
+  die Logzeile nennt Kennung und Abhilfe). **Den Bestand einmal binden:**
+  `auth.foederation_nachbinden("ldap")` als Trockenlauf lesen, dann mit `ausfuehren=True`; SAML mit
+  `zuordnung={name: nameid}`. Die Startmeldung nennt je Quelle, wie viele Konten es betrifft.
+  `federation_name_binding_days=-1` holt das alte Verhalten zurück. **Selbst registrierte oder
+  selbst umbenannte Konten binden nie über den Namen** (G2-N); ein einzelnes Konto öffnet
+  `auth.loese_fremde_bindung(quelle, user_id)`.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
 
+- **Bestandskonten an LDAP/SAML binden: `auth.foederation_nachbinden(quelle, *, zuordnung=None,
+  ausfuehren=False)`** (G1). LDAP sucht je Konto ohne Kennung im Verzeichnis
+  (`LDAPClient.eintrag_suchen`, Dienstkonto oder anonym, genau ein Treffer); SAML und einzelne
+  Konten nehmen `zuordnung={name: kennung}`. Vorgabe Trockenlauf; der Bericht nennt je Konto
+  `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen` (mit
+  Grund, `TinySesam.NACHBINDUNG_GRUENDE`) und `lokal` (Konten mit lokalem Passwort, nur berichtet),
+  mit Anzeigename und Adresse hier und im Verzeichnis nebeneinander. Dazu
+  `federation_name_binding_days`, `create_user(…, name_selbst_gewaehlt=False)` für eigene
+  Registrierungen und `change_username(…, durch_betreiber=False)` für das Umbenennen durch den
+  Betreiber (G2-N).
 - **Benutzername und E-Mail-Adresse selbst ändern (PO-Entscheid 2026-09-25).** Auf der Konto-Seite,
   mit frischem Step-up. Die Adresse gilt erst nach dem Klick auf den Link an die neue (mit Beleg),
   die alte bekommt einen Hinweis, offene Links an sie verfallen; eine vergebene Adresse bekommt
@@ -162,6 +181,33 @@ auffällt:
 
 ### Sicherheit
 
+- **Bindung über den Namen mit Frist (G1).** Ein Konto ohne Kennung aus LDAP/SAML (Bestand von vor
+  F-11, Vorab-Anlage) band die nächste Anmeldung unter seinem Namen — ohne Grenze für Zeit oder
+  Herkunft, auch den Ersatz eines Herkunfts-Platzhalters, und `federation_require_stable_id`
+  änderte daran nichts. Gemessen: ein ruhendes Konto `jsmith` mit Admin-Recht, zwei Jahre alt; ein
+  neuer Verzeichniseintrag `jsmith` mit fremder Kennung übernahm es samt Admin. Jetzt nur noch
+  `federation_name_binding_days` (Vorgabe 30, `0` = nur ausdrücklich, `-1` = unbegrenzt, darunter
+  ein Aufbaufehler) ab dem Merker der Quelle (`foederation_seit:<quelle>`, einmal gesetzt beim
+  ersten Start mit eingeschalteter Quelle) bzw. der Anlage des Kontos; danach Abweisung wie Lage 3.
+  Dasselbe gilt ohne stabile Kennung für die erste Zuordnung eines vorhandenen Kontos.
+  `loese_fremde_bindung` öffnet die Bindung für ein Konto (Tabelle `namensbindung`), die neue
+  `foederation_nachbinden` bindet den Bestand ausdrücklich — mit demselben Entscheid wie die
+  Anmeldung (`_nachbindung_grund`). Test: `tests/test_foederation_bestand.py`.
+- **Ein selbst gewählter Name bindet nicht über LDAP/SAML (G2-N).** Ein lokales Konto `eve` benannte
+  sich auf der Konto-Seite in `chefin` um, einen Namen, den es nur im Verzeichnis gab; die
+  Anmeldung der echten chefin band deren Kennung an eves Konto, die Rolle aus
+  `ldap_group_role_map` kam dazu — und eve meldete sich weiter mit ihrem Passwort an (vorbestehend
+  auch über `allow_signup`). Jetzt trägt ein Konto aus der Registrierung (auch mit Einladung) oder
+  aus dem Umbenennen der Selbstbedienung den Merker `users.name_selbst_gewaehlt` und wird nie über
+  den Namen gebunden (Audit `<quelle>_namensbindung_zu grund=name_selbst_gewaehlt`); ein vom
+  Betreiber angelegtes oder mit `durch_betreiber=True` umbenanntes nicht. Der Bestand bekommt den
+  Merker beim ersten Start einmal aus dem Audit-Log (`signup`/`username_changed` unter dem heutigen
+  Namen ab der Anlage).
+- **`objectGUID` aus den rohen Bytes** (Nebenbefund zu G1): Ohne Schema dekodiert ldap3 einen Wert,
+  der zufällig gültiges UTF-8 ist, zu Text — eine GUID aus Bytes unter 0x80 kam als Text mit
+  Steuerzeichen an, die Formprüfung wies sie als manipuliert ab, und die Person kam über LDAP nie
+  mehr hinein. `objectGUID` wird jetzt immer roh gelesen und als Hex abgelegt, ein anderes
+  `ldap_attr_id` dann, wenn sein Text Steuerzeichen trägt.
 - **Kennungsraum in der Datenbank erzwungen (G12c).** Benutzername und Adresse sind ein Raum
   (`find_user` sucht in beiden, der Sperrzähler faltet `Alice`/`alice`, `Émile`/`émile`, Vollbreite
   und Unicode-/A-Label-Domain zusammen), die Datenbank kannte aber nur `UNIQUE(username)` (BINARY)

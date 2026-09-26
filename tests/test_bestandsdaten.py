@@ -170,10 +170,12 @@ _s10_alt.store.db.close()
 # und findet eines im Kommentar darüber („incomplete input“).
 from tinysesam.store import SCHEMA as _S10_SCHEMA  # noqa: E402
 # Mitgeschnitten werden `idp_bestaetigt_at` (Schema 11, Fund 8) und die Wasserlinien der Kennungen
-# (Schema 11, G2), die seitdem hinter `topf_mail` stehen — und `federated_identity.name_topf`
-# (Schema 11, G5), dessen Name und Kommentar sonst die Probe „keine Reste mit topf" träfen.
+# (Schema 11, G2), die seitdem hinter `topf_mail` stehen, samt `name_selbst_gewaehlt` dahinter
+# (Schema 11, G2-N) — und `federated_identity.name_topf` (Schema 11, G5), dessen Name und Kommentar
+# sonst die Probe „keine Reste mit topf" träfen.
 _s10_schema9, _s10_n = re.subn(r",\n\s*-- Der Zähl-Topf.*?topf_mail\s+TEXT,\n\s*idp_bestaetigt_at INTEGER.*?"
-                               r"mail_audit_ab\s+INTEGER\n", "\n", _S10_SCHEMA, flags=re.S)
+                               r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
+                               "\n", _S10_SCHEMA, flags=re.S)
 _s10_schema9, _s10_nfi = re.subn(r"\n\s*-- Der Name, unter dem sich das Konto zuletzt.*?name_topf\s+TEXT,", "",
                                  _s10_schema9, flags=re.S)
 # Schema 11 (B2-6) kam danach: Eine Datei im Stand von 9 hat die Tabelle `fehlserie` noch nicht.

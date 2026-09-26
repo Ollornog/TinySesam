@@ -108,7 +108,7 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 
 | | Regel |
 |---|---|
-| Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Schalter `self_service_username_change` |
+| Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Ein selbst gewählter Name bindet nie über LDAP/SAML (G2-N, s. „Föderierte Identitäten"). Schalter `self_service_username_change` |
 | Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link, die Antwort ist dieselbe (kein Orakel). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
@@ -140,7 +140,8 @@ Kennung gehört zwei Konten.
   umbenannt, denn welches Konto die Kennung behält, entscheidet der Betreiber. Verschlimmern lassen
   sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
   (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: der Inhaber auf der
-  Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu)` oder
+  Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu,
+  durch_betreiber=True)` oder
   `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
   Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
   danach selbst nach.
@@ -204,14 +205,59 @@ Seite gehört und sich nicht ändert:
 | SAML | `NameID` | `federated_identity` (`quelle="saml"`) |
 
 - **Erste Anmeldung**: Gibt es noch keine Bindung, wird das Konto über den Namen gesucht bzw. mit
-  `*_auto_create` angelegt und dann gebunden. Bestandskonten aus der Zeit vor den Bindungen binden
-  sich beim nächsten Login selbst nach (F-11).
+  `*_auto_create` angelegt und dann gebunden. Ein vorhandenes, noch ungebundenes Konto bindet die
+  Anmeldung über seinen **Namen** nur noch in einer Frist (G1, seit 2026-09-26):
+  `federation_name_binding_days` (Vorgabe 30) Tage ab dem ersten Start mit eingeschalteter Quelle —
+  für den Bestand also ab dem Update — bzw. ab der Anlage des Kontos, was später ist (eine
+  Vorab-Anlage im Panel hat ihre eigene Frist). Danach wird abgewiesen: Ein ruhendes Konto
+  (jemand ist ausgeschieden) fiele sonst samt Rollen und Admin-Recht an die nächste Person, die im
+  Verzeichnis denselben Namen bekommt. Die Abweisung schreibt `<quelle>_namensbindung_zu` ins
+  Audit-Log und eine Zeile ins Sicherheits-Log mit Kennung und Abhilfe. `0` = nur ausdrücklich,
+  `-1` = unbegrenzt wie bis 0.20.x (die Konfigurationsprüfung warnt). Dasselbe gilt für den Ersatz
+  eines Herkunfts-Platzhalters und — bei einer Quelle ohne stabile Kennung — für die erste
+  Zuordnung eines vorhandenen Kontos.
+- **Ein selbst gewählter Name bindet nie über den Namen** (G2-N): Konten aus der Registrierung
+  (auch mit Einladung) und Konten, die sich auf der Konto-Seite umbenannt haben
+  (`users.name_selbst_gewaehlt`), bindet keine Anmeldung über LDAP/SAML — sonst benennt sich ein
+  lokales Konto nach jemandem aus dem Verzeichnis und erbt bei dessen Anmeldung Kennung und
+  Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; wer aus dem einbettenden
+  Dienst umbenennt, übergibt `auth.change_username(uid, neu, durch_betreiber=True)`. Für den
+  Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
+  `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
+  gelöscht hat, bleibt unerkannt.
+- **Bestandskonten binden** (F-11, G1): ohne auf die Anmeldung zu warten — ruhende Konten melden
+  sich nie an. Die Startmeldung nennt, solange die Frist läuft, je Quelle die Zahl der Konten ohne
+  Kennung. Einmal nach dem Update, aus dem einbettenden Dienst:
+
+  ```python
+  bericht = auth.foederation_nachbinden("ldap")          # Trockenlauf: schreibt nichts
+  for teil in ("gebunden", "konflikt", "mehrdeutig", "nicht_im_verzeichnis", "ohne_kennung",
+               "abgewiesen", "lokal"):
+      print(teil, [(e["username"], e.get("lokal"), e.get("verzeichnis")) for e in bericht[teil]])
+  auth.foederation_nachbinden("ldap", ausfuehren=True)  # erst nach dem Lesen
+  ```
+
+  LDAP sucht je Konto ohne Kennung im Verzeichnis (Dienstkonto oder anonym; bei
+  `ldap_user_dn_template` eine BASE-Suche auf den DN — das Verzeichnis muss das Lesen erlauben) und
+  verlangt genau einen Eintrag; ein Ausfall bricht vor dem ersten Schreiben ab. SAML hat keinen
+  Suchweg: `zuordnung={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
+  für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`lokal`), selbst
+  gewählte Namen abgewiesen. **Vor `ausfuehren` den Bericht lesen:** War ein Name schon vor dem Lauf
+  wiederverwendet, bindet auch dieser Weg die falsche Person; `lokal` und `verzeichnis` stehen
+  deshalb nebeneinander. Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
+  detail=migration`), der Lauf als Summenzeile im Sicherheits-Log. Ein CLI-Befehl fehlt bewusst:
+  LDAP und SAML laufen nur eingebettet.
 - **Ein Konto trägt je Quelle genau eine Kennung.** Taucht im Verzeichnis unter demselben Namen eine
   neue Kennung auf (Konto gelöscht und neu angelegt), wird das lokale Konto **nicht** übernommen.
-- **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot): `auth.loese_fremde_bindung(quelle,
-  user_id)` löst die Bindung für LDAP/SAML; die nächste Anmeldung bindet neu. Der Vorgang steht im
-  Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort ist die
-  Kennung `sub` des Providers per Definition stabil.
+- **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot) und **ausdrücklich öffnen** (Frist
+  verpasst, selbst gewählter Name, Vorab-Anlage mit `0`): `auth.loese_fremde_bindung(quelle,
+  user_id)` löst die Bindung für LDAP/SAML und öffnet die Bindung über den Namen für die nächste
+  Anmeldung — `max(federation_name_binding_days, 1)` Tage lang oder bis sie steht. Der Vorgang
+  steht im Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort
+  ist die Kennung `sub` des Providers per Definition stabil.
+- **`ldap_attr_id` später einschalten** (Quelle lief bisher ohne Kennung): Die Konten tragen dann nur
+  den Herkunfts-Platzhalter und binden sich über den Namen nur in der Frist — nach ihr zuerst
+  `foederation_nachbinden("ldap")` fahren.
 - **Freigaben je Anwendung** (mehrere OIDC-Clients): `auth.store.drop_oidc_grants_for_user(user_id,
   client=None)` entzieht sie sofort, ohne die Sitzung zu beenden — der Weg, wenn der Provider
   jemanden von einer Anwendung ausgeschlossen hat.

@@ -901,9 +901,15 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > 0.19.0 you'd land in the same local account with its roles. LDAP now binds `entryUUID` /
 > `objectGUID` (`ldap_attr_id`), SAML the `NameID` (`saml_attr_id` for IdPs that issue transient
 > ones). An account already bound to a *different* key is never taken over — that case is
-> refused and audited. Accounts from before this version bind themselves on their next sign-in,
-> once, also audited. If the directory supplies no stable key, the name still decides and a log
-> line says so; `federation_require_stable_id=True` turns that into a refusal.
+> refused and audited. Accounts from before this version bind themselves by name on their next
+> sign-in, once, also audited — but only within `federation_name_binding_days` (default 30) of the
+> first start with the source enabled or of the account's creation; after that a dormant account
+> would fall to the next person who gets the same name in the directory. Bind the rest explicitly:
+> `auth.foederation_nachbinden("ldap")` (dry run by default, `ausfuehren=True` writes; SAML takes
+> `zuordnung={name: nameid}`), or open a single account with `auth.loese_fremde_bindung(source,
+> user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name. If the
+> directory supplies no stable key, the name still decides and a log line says so;
+> `federation_require_stable_id=True` turns that into a refusal.
 
 > **Referrals are never followed** — and that is visible in the log. ldap3 follows a
 > `SearchResultDone resultCode=10` on its own and binds on the host named by the *answer*, with the
@@ -1032,7 +1038,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**55 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**56 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

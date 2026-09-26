@@ -201,6 +201,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `federation_require_stable_id` | `bool` | `False` | Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**: Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann. |
+| `federation_name_binding_days` | `int` | `30` | Wie lange darf eine Anmeldung über LDAP/SAML ein noch ungebundenes Konto über seinen **Namen** binden (Tage)? Gezählt je Quelle ab dem ersten Start mit eingeschalteter Quelle (für den Bestand: ab dem Update) bzw. ab der Anlage des Kontos, was später ist. Danach bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber bindet dann ausdrücklich: `auth.foederation_nachbinden(quelle)` (Bestand, Trockenlauf als Vorgabe) oder `auth.loese_fremde_bindung(quelle, user_id)` (öffnet die Bindung für dieses Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt). |
 | `ldap_enabled` | `bool` | `False` | Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap] |
 | `ldap_url` | `str` | `""` | ldap://host:389 oder ldaps://host:636 |
 | `ldap_start_tls` | `bool` | `False` | Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL |
@@ -298,4 +299,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-158 Felder, erzeugt aus `tinysesam/config.py`.
+159 Felder, erzeugt aus `tinysesam/config.py`.

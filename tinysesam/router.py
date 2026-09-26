@@ -978,7 +978,7 @@ def build_router(auth) -> APIRouter:
                     try:
                         platzhalter = auth.create_user(
                             f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
-                            password=password, roles=[])
+                            password=password, roles=[], name_selbst_gewaehlt=True)
                     except ConfigError:
                         # Wettlauf: Der Name ist seit der Prüfung oben vergeben (G12c) — dieselbe
                         # Antwort, die die Prüfung jetzt gäbe.
@@ -1006,9 +1006,13 @@ def build_router(auth) -> APIRouter:
             # (`Store.konto_entfernen`). Rechte hängen daran nicht: Eine Allowlist-Adresse
             # verlangt bei offener Registrierung ohnehin die Bestätigung (Konstruktor-Wächter).
             try:
+                # Den Namen hat die Person selbst eingetippt, auch mit Einladung: Er sagt nichts
+                # darüber, wer im Verzeichnis so heisst — LDAP/SAML binden dieses Konto nie über
+                # ihn (G2-N).
                 uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                        email=email_final or None,
-                                       email_verified=bool(inv and norm_email(inv.get("email"))))
+                                       email_verified=bool(inv and norm_email(inv.get("email"))),
+                                       name_selbst_gewaehlt=True)
             except ConfigError as e:
                 # Wettlauf (G12c): Zwischen den Prüfungen oben und dem Anlegen hat eine
                 # gleichzeitige Anfrage die Kennung belegt, und die Datenbank weist ab. Dieselben

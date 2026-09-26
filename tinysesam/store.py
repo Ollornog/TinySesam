@@ -66,7 +66,12 @@ CREATE TABLE IF NOT EXISTS users (
     name_versuch_ab INTEGER,
     mail_versuch_ab INTEGER,
     name_audit_ab   INTEGER,
-    mail_audit_ab   INTEGER
+    mail_audit_ab   INTEGER,
+    -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
+    -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
+    -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
+    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle.
+    name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +155,16 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
     name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
+);
+-- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
+-- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
+-- und auch mit selbst gewähltem Namen. Geschrieben von `loese_fremde_bindung`, gelöscht, sobald
+-- die Bindung steht. Ohne Zeile entscheidet die Frist.
+CREATE TABLE IF NOT EXISTS namensbindung (
+    quelle  TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bis     INTEGER NOT NULL,
+    PRIMARY KEY (quelle, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
@@ -259,6 +274,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
+-- G1: „Welche Konten tragen für diese Quelle noch keine Kennung?" (Startmeldung, Bestandsbindung)
+-- fragt je Konto nach seiner Zeile; ohne Index läse das je Konto alle Bindungen der Quelle.
+CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
 """
 
 
@@ -721,7 +739,10 @@ class Store:
                       # Nicht „jetzt" nachtragen — die Kontoseite zeigte sonst nichts mehr von vor
                       # dem Update, und eigene Fehlversuche blieben bis zum Fensterende stehen.
                       ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
-                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER")],
+                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
+                      # 0 für den Bestand; wer sich registriert oder selbst umbenannt hat, trägt
+                      # es unten einmal nach (`NAME_SELBST_NACHGETRAGEN`, G2-N).
+                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
             # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
             "federated_identity": [("name_topf", "TEXT")],
             # 0 für den Bestand: Jede vorhandene Zeile ist ein abgeschlossener Versuch (G9).
@@ -832,6 +853,9 @@ class Store:
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
                 self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
                                 (str(_now()),))
+            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
+                               (self.NAME_SELBST_NACHGETRAGEN,)).fetchone() is None:
+                self._name_selbst_nachtragen()
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -994,6 +1018,36 @@ class Store:
             if steht is not None:
                 self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
             self.db.execute(sql)
+
+    #: Setting-Schlüssel: Ist `users.name_selbst_gewaehlt` für den Bestand nachgetragen (G2-N)?
+    NAME_SELBST_NACHGETRAGEN = "name_selbst_nachgetragen"
+
+    def _name_selbst_nachtragen(self) -> None:
+        """`users.name_selbst_gewaehlt` für den Bestand einmal aus dem Audit-Log nachtragen (G2-N;
+        ohne Commit, unter `_lock`, Teil von `_migrate`).
+
+        Die Spalte kam nach 0.20.1; bis dahin hielt nichts fest, woher ein Name stammt. Das
+        Audit-Log weiss es für die beiden Wege, die zählen: `signup` (Registrierung, auch mit
+        Einladung) und `username_changed` (Umbenennen) stehen unter dem Namen, den das Konto danach
+        trug. Gezählt wird nur eine Zeile unter dem HEUTIGEN Namen und ab der Anlage des Kontos —
+        eine ältere gehörte einem anderen Konto mit diesem Namen. Die Suche läuft über
+        `idx_audit_name_ts` (Name, Zeit), nicht durch das ganze Log.
+
+        Grenzen, bewusst in die sichere Richtung: Ein vom Betreiber umbenanntes Konto trug bis
+        dahin dieselbe Zeile (`username_changed`) und bekommt den Merker auch — das Konto bindet
+        dann nicht mehr über den Namen, der Betreiber öffnet es mit `loese_fremde_bindung`. Was die
+        Aufbewahrung (`audit_retention_days`) schon gelöscht hat, wird nicht erkannt; 0.20.1 kannte
+        das Umbenennen nicht, dort bleibt nur die Registrierung.
+
+        Genau einmal, am Merker `NAME_SELBST_NACHGETRAGEN` im selben Commit: Liefe es bei jedem
+        Start, machte die Zeile eines späteren Umbenennens durch den Betreiber das Konto wieder zu
+        einem selbst benannten."""
+        self.db.execute(
+            "UPDATE users SET name_selbst_gewaehlt = 1 WHERE name_selbst_gewaehlt = 0 AND is_service = 0 "
+            "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
+            "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
+        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                        (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
 
     #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
     #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
@@ -1290,7 +1344,7 @@ class Store:
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
-                    is_service=False, email_verified=True) -> int:
+                    is_service=False, email_verified=True, name_selbst_gewaehlt=False) -> int:
         """Ein Konto anlegen (Rohbaustein; die Prüfungen macht `TinySesam.create_user`).
 
         Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
@@ -1299,17 +1353,19 @@ class Store:
         schon stand.
 
         Name und Adresse gehören dem Konto ab dieser Anweisung: Die Wasserlinien (G2) entstehen im
-        selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt."""
+        selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt. Ebenso der
+        Merker `name_selbst_gewaehlt` (G2-N) — zwischen Anlage und Merker liegt keine Anmeldung, die
+        das Konto über den Namen binden könnte."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
             "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
-            f"name_audit_ab, mail_audit_ab) VALUES (?,?,?,?,?,?,?,?,?,?,{self.WL_VERSUCH},"
-            f"{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT})",
+            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            f"{self.WL_VERSUCH},{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT},?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
-             norm_kennung(username), norm_kennung(mail)))
+             norm_kennung(username), norm_kennung(mail), 1 if name_selbst_gewaehlt else 0))
         return cur.lastrowid
 
     def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
@@ -1355,13 +1411,20 @@ class Store:
             self._geschrieben = time.monotonic()
             self._uhr_mitschreiben()
 
-    def set_username(self, user_id, username) -> None:
+    def set_username(self, user_id, username, selbst_gewaehlt: Optional[bool] = None) -> None:
         """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Transaktion.
         Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben. Ist der Name
         schon Kennung eines anderen Kontos (Name, Adresse oder Namensvetter im Topf), weist die
-        Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert."""
+        Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert.
+
+        `selbst_gewaehlt` setzt den Merker `users.name_selbst_gewaehlt` (G2-N) in derselben
+        Transaktion; `None` lässt ihn, wie er ist."""
         name = str(username or "").strip()
-        self._umschreiben(self._kennung_setzen(user_id, "username", name, norm_kennung(name)))
+        schritte = self._kennung_setzen(user_id, "username", name, norm_kennung(name))
+        if selbst_gewaehlt is not None:
+            schritte.append(("UPDATE users SET name_selbst_gewaehlt=? WHERE id=?",
+                             (1 if selbst_gewaehlt else 0, user_id)))
+        self._umschreiben(schritte)
 
     def set_email(self, user_id, email, verified: bool = False):
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
@@ -1709,8 +1772,8 @@ class Store:
         dass es keinen weiteren Aufrufer gibt."""
         with self._schreibend():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
-                          "webauthn_cred", "oidc_identity", "federated_identity", "session",
-                          "magic_token"):
+                          "webauthn_cred", "oidc_identity", "federated_identity", "namensbindung",
+                          "session", "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
             self.db.commit()
@@ -2070,6 +2133,71 @@ class Store:
         """Die Bindung eines Kontos für eine Quelle lösen (Betreiber-Weg nach einem Umzug)."""
         return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
                           (quelle, user_id)).rowcount
+
+    #: Präfix der Herkunfts-Platzhalter in `federated_identity.kennung` (s. `TinySesam._OHNE_KENNUNG`).
+    OHNE_KENNUNG = "~ohne-kennung:"
+
+    def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
+        """Ein Konto an eine Kennung binden, die noch niemandem gehört — oder nichts tun (G1).
+
+        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`), die zwischen Prüfung und
+        Schreiben durch ein ganzes Verzeichnis läuft. `link_federated` ersetzt eine Zeile mit
+        derselben Kennung (`INSERT OR REPLACE`) — hier nähme das einem Konto, das sich inzwischen
+        angemeldet hat, seine Bindung weg. Deshalb in EINER Transaktion: Gehört die Kennung schon
+        einem Konto oder trägt dieses Konto schon eine echte Kennung, bleibt alles, wie es ist
+        (`False`). Sonst weicht ein Herkunfts-Platzhalter, die Bindung entsteht, und eine offene
+        Namensbindung (`namensbindung`) ist erledigt."""
+        with self._schreibend():
+            besetzt = self.db.execute(
+                "SELECT 1 FROM federated_identity WHERE quelle=? AND (kennung=? OR "
+                "(user_id=? AND substr(kennung, 1, ?) <> ?)) LIMIT 1",
+                (quelle, kennung, user_id, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG)).fetchone()
+            if besetzt is not None:
+                return False
+            self.db.execute("DELETE FROM federated_identity WHERE quelle=? AND user_id=?", (quelle, user_id))
+            self.db.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) "
+                            "VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
+            self.db.execute("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+        return True
+
+    def ohne_bindung(self, quelle: str) -> list:
+        """Die Konten ohne echte Kennung für diese Quelle — keine Zeile oder nur der
+        Herkunfts-Platzhalter —, ohne Service-Konten (G1). Mit `hat_passwort` (lokales Passwort)."""
+        return self._all(
+            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS hat_passwort "
+            "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
+            "WHERE f.quelle = ? AND f.user_id = u.id AND substr(f.kennung, 1, ?) <> ?) ORDER BY u.id",
+            (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
+
+    def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
+        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `loese_fremde_bindung`)."""
+        self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
+                   (quelle, user_id, int(bis)))
+
+    def namensbindung_offen(self, quelle: str, user_id: int, jetzt: int) -> bool:
+        """Hat der Betreiber die Bindung über den Namen für dieses Konto geöffnet (und läuft sie noch)?"""
+        return self._one("SELECT 1 AS x FROM namensbindung WHERE quelle=? AND user_id=? AND bis > ?",
+                         (quelle, user_id, int(jetzt))) is not None
+
+    def namensbindung_schliessen(self, quelle: str, user_id: int) -> None:
+        """Die geöffnete Bindung über den Namen ist erledigt (die Bindung steht)."""
+        self._exec("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+
+    def foederation_seit(self, quelle: str, jetzt: int) -> int:
+        """Der Merker einer föderierten Quelle (`foederation_seit:<quelle>`): ab wann die Frist für
+        die Bindung über den Namen läuft (G1). Beim ersten Aufruf auf `jetzt` gesetzt, danach nie
+        wieder — ein Merker, der bei jedem Start neu gesetzt würde, schenkte jedem Neustart eine
+        neue Frist. `INSERT OR IGNORE`: Starten mehrere Worker gleichzeitig, gewinnt der erste, und
+        alle lesen danach denselben Wert."""
+        schluessel = f"foederation_seit:{quelle}"
+        z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+        if z is None:
+            self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES (?,?)", (schluessel, str(int(jetzt))))
+            z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+        return int(z["value"])
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in

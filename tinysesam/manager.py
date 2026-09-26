@@ -438,7 +438,8 @@ class TinySesam:
                 "sein. Betroffen: %s%s. Zu ändern ist eine der Kennungen — dafür gibt es weder im "
                 "Admin-Panel noch im CLI einen Weg, wohl aber: der Inhaber selbst auf der "
                 "Konto-Seite (Selbstbedienung); aus dem einbettenden Dienst den Benutzernamen über "
-                "auth.change_username(user_id, neu) (prüft beide Namensräume; im Modus "
+                "auth.change_username(user_id, neu, durch_betreiber=True) (prüft beide "
+                "Namensräume; im Modus "
                 "login_identifier='email' folgt der Name der Adresse), die E-Mail über "
                 "store.set_email(user_id, adresse) (wirft sqlite3.IntegrityError, wenn die neue "
                 "Adresse schon Kennung eines anderen Kontos ist). Achtung bei der E-Mail: "
@@ -458,9 +459,17 @@ class TinySesam:
                 "TinySesam so nicht mehr an; Namen mit C0-Steuerzeichen bekommen an der "
                 "Forward-Auth keine Freigabe (Remote-User wäre ein anderer Name). Umbenennen: der "
                 "Inhaber selbst auf der Konto-Seite oder aus dem einbettenden Dienst "
-                "auth.change_username(user_id, neu) — prüft, dass der neue Name in Benutzernamen "
+                "auth.change_username(user_id, neu, durch_betreiber=True) — prüft, dass der neue "
+                "Name in Benutzernamen "
                 "UND Adressen frei ist.",
                 len(auffaellig), ", ".join(str(z["id"]) for z in auffaellig[:10]))
+        # Bindung über den Namen (G1): Die Frist beginnt je Quelle beim ersten Start, an dem sie
+        # eingeschaltet ist — für den Bestand also mit dem Update —, und genau einmal (der Merker
+        # bleibt, s. `Store.foederation_seit`). Danach eine Zeile je Quelle, solange es noch Konten
+        # gibt, die sich über den Namen binden würden, und die Tür noch offen ist.
+        for _quelle, _an in (("ldap", config.ldap_enabled), ("saml", config.saml_enabled)):
+            if _an:
+                self._namensbindung_bestand_melden(_quelle, self._foederation_seit(_quelle))
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
@@ -535,7 +544,7 @@ class TinySesam:
 
     def create_user(self, username, password=None, is_admin=False, roles=None,
                     display_name=None, email=None, is_service=False,
-                    email_verified: bool = True) -> int:
+                    email_verified: bool = True, *, name_selbst_gewaehlt: bool = False) -> int:
         """Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein
         Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch
         beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der
@@ -572,7 +581,12 @@ class TinySesam:
         **Auch im Wettlauf** (seit 2026-09-26): Belegt eine gleichzeitige Anfrage die Kennung
         zwischen Prüfung und Anlage, weist die Datenbank das INSERT ab — und auch das kommt als
         derselbe `ConfigError`. `e.besitzer_id` kann dann `None` sein: wenn das andere Konto
-        schon wieder entfernt ist, bevor hier nachgesehen wird."""
+        schon wieder entfernt ist, bevor hier nachgesehen wird.
+
+        `name_selbst_gewaehlt=True`: Die Person hat den Namen selbst eingetippt (Registrierung,
+        auch mit Einladung). Eine Anmeldung über LDAP/SAML bindet dieses Konto dann nie über den
+        Namen (G2-N, `users.name_selbst_gewaehlt`). Die eingebaute Registrierung setzt es; wer eine
+        eigene baut, übergibt es ebenfalls. Vorgabe `False`: Den Namen vergibt der Betreiber."""
         username = (username or "").strip()
         email = norm_email(email)
         if name_ungueltig(username):
@@ -602,7 +616,8 @@ class TinySesam:
                 raise fehler
         try:
             uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
-                                         email_verified=email_verified)
+                                         email_verified=email_verified,
+                                         name_selbst_gewaehlt=name_selbst_gewaehlt)
         except sqlite3.IntegrityError as fehler_db:
             # Wettlauf (G12c): Zwischen der Prüfung oben und dem INSERT hat eine gleichzeitige
             # Anfrage die Kennung belegt, und die Datenbank weist ab (Kennungs-Trigger, UNIQUE auf
@@ -1478,8 +1493,9 @@ class TinySesam:
     #: Die Zeile in `federated_identity` sagt nur „dieses Konto stammt aus LDAP/SAML" — sonst
     #: zählte es für `nur_foederiert()` als lokal und bekäme einen Reset-Link, dessen Passwort
     #: danach vor dem Verzeichnis gewinnt. Je Konto eindeutig (Primärschlüssel quelle+kennung),
-    #: nie für eine Zuordnung gelesen, und eine echte Kennung ersetzt ihn beim nächsten Login.
-    _OHNE_KENNUNG = "~ohne-kennung:"
+    #: nie für eine Zuordnung gelesen, und eine echte Kennung ersetzt ihn beim nächsten Login —
+    #: durch dieselbe Tür wie Lage 4 (`_nachbindung_grund`).
+    _OHNE_KENNUNG = Store.OHNE_KENNUNG
 
     def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
                                      anlegen, name_zuordnen: bool = True) -> Optional[dict]:
@@ -1501,11 +1517,19 @@ class TinySesam:
            der Bestandsfall: Konten aus der Zeit vor F-11 haben keine Kennung, und irgendwann
            muss jedes von ihnen einmal daran kommen. Der PO hat diesen Weg für diese Runde
            ausdrücklich freigegeben; er verlässt sich noch einmal auf den Namen, aber nur ein
-           einziges Mal je Konto, und er hinterlässt eine Audit-Zeile.
+           einziges Mal je Konto, und er hinterlässt eine Audit-Zeile. Seit 2026-09-26 nur noch
+           durch eine Tür (`_nachbindung_grund`): nicht nach der Frist
+           (`federation_name_binding_days`, G1 — sonst fiele ein ruhendes Konto an die nächste
+           Person mit diesem Namen) und nie für einen selbst gewählten Namen
+           (`users.name_selbst_gewaehlt`, G2-N — sonst benennt sich ein lokales Konto nach
+           jemandem aus dem Verzeichnis und erbt dessen Gruppen), es sei denn, der Betreiber hat
+           die Bindung für dieses Konto geöffnet (`loese_fremde_bindung`). Sonst wird abgewiesen
+           wie in Lage 3. Dasselbe gilt für den Ersatz eines Herkunfts-Platzhalters.
 
         Ohne Kennung (das Verzeichnis liefert keine) bleibt es beim Namen — dem ungeschützten
         Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
-        daraus eine Abweisung.
+        daraus eine Abweisung. Die ERSTE Zuordnung eines vorhandenen Kontos geht dabei durch
+        dieselbe Tür wie Lage 4; ein Konto, das die Quelle schon kennt (Platzhalter), bleibt.
 
         `name_zuordnen=False`: Der Name ist keine Aussage über die Person — eine unbelegte
         Adresse aus einer Quelle, der der Betreiber nicht traut (`*_email_trusted=False`). Dann
@@ -1517,21 +1541,12 @@ class TinySesam:
         jetzt = _jetzt()
         roh = str(kennung or "")
         kennung = roh.strip()
-        if roh != kennung or name_ungueltig(roh):
-            # Eine Kennung mit Rand-Leerraum oder Steuerzeichen fiele nach dem Trimmen auf die
-            # Bindung eines ANDEREN Kontos (`chefin\u2028` → `chefin`, Gegenprüfung). Aus einem
-            # echten Verzeichnis kommt so etwas nicht — abweisen statt passend machen.
-            security.seclog.warning("%s: Kennung mit Rand- oder Steuerzeichen abgewiesen (user=%s)",
-                                    quelle, security.fuer_log(username))
-            self.audit(f"{quelle}_kennung_ungueltig", username, detail="Rand-/Steuerzeichen")
-            return None
-        if kennung.startswith(self._OHNE_KENNUNG):
-            # Eine Kennung in der Form des Platzhalters würde über `get_federated_user` genau
-            # das Konto treffen, dessen ID sie nennt. Aus einem echten Verzeichnis kommt so etwas
-            # nicht (UUID/GUID) — also ist es ein manipuliertes Attribut.
-            security.seclog.warning("%s: Kennung in Platzhalter-Form abgewiesen (user=%s)",
-                                    quelle, security.fuer_log(username))
-            self.audit(f"{quelle}_kennung_ungueltig", username, detail="Platzhalter-Form")
+        formfehler = self._kennung_formfehler(roh)
+        if formfehler:
+            security.seclog.warning("%s: Kennung %s abgewiesen (user=%s)", quelle,
+                                    "mit Rand- oder Steuerzeichen" if formfehler == "Rand-/Steuerzeichen"
+                                    else "in Platzhalter-Form", security.fuer_log(username))
+            self.audit(f"{quelle}_kennung_ungueltig", username, detail=formfehler)
             return None
         if not kennung and not name_zuordnen:
             security.seclog.warning(
@@ -1574,16 +1589,19 @@ class TinySesam:
             return self._als_dict(neu) if neu else None
 
         vorhandene = self.store.get_federated_kennung(quelle, u["id"])
+        # Nur der Herkunfts-Platzhalter, keine Kennung: wie ungebunden (Lage 4). Gelöst wird er
+        # erst, wenn die Tür offen ist — eine Abweisung lässt das Konto, wie es war.
+        platzhalter = bool(vorhandene) and str(vorhandene).startswith(self._OHNE_KENNUNG)
         if not kennung:
             if not vorhandene:
-                # Herkunft festhalten, auch ohne Kennung (A-4) — siehe _OHNE_KENNUNG.
+                # Erste Zuordnung eines vorhandenen Kontos, allein über den Namen: dieselbe Tür
+                # wie Lage 4 (G1, G2-N). Danach Herkunft festhalten (A-4) — siehe _OHNE_KENNUNG.
+                if not self._namensbindung_erlaubt(quelle, "", u, username):
+                    return None
                 self.store.link_federated(quelle, f"{self._OHNE_KENNUNG}{u['id']}", u["id"], jetzt)
+                self.store.namensbindung_schliessen(quelle, u["id"])
         else:
-            if vorhandene and vorhandene.startswith(self._OHNE_KENNUNG):
-                # Nur der Herkunfts-Platzhalter, keine Kennung: wie ungebunden (Lage 4).
-                self.store.unlink_federated(quelle, u["id"])
-                vorhandene = None
-            if vorhandene and vorhandene != kennung:
+            if vorhandene and not platzhalter and vorhandene != kennung:
                 # Lage 3: Das Konto gehört jemand anderem, auch wenn der Name derselbe ist.
                 security.seclog.warning(
                     "%s: Konto %s ist schon an eine andere Kennung gebunden — die Anmeldung mit "
@@ -1593,23 +1611,344 @@ class TinySesam:
                 self.audit(f"{quelle}_kennung_wechsel", str(u["username"]),
                            detail="abgewiesen: Konto traegt bereits eine andere Kennung")
                 return None
-            if not vorhandene:
-                # Lage 4: Nachbindung — ein einziges Mal je Konto, und sie steht im Protokoll.
+            if not vorhandene or platzhalter:
+                # Lage 4: Nachbindung — ein einziges Mal je Konto, nur durch die Tür, und sie
+                # steht im Protokoll.
+                if not self._namensbindung_erlaubt(quelle, kennung, u, username):
+                    return None
+                if platzhalter:
+                    self.store.unlink_federated(quelle, u["id"])
                 self.store.link_federated(quelle, kennung, u["id"], jetzt)
+                self.store.namensbindung_schliessen(quelle, u["id"])
                 self.audit(f"{quelle}_kennung_gebunden", str(u["username"]),
                            detail="nachgebunden beim Login")
         return self._als_dict(self.store.get_user(u["id"]))
 
+    @classmethod
+    def _kennung_formfehler(cls, roh) -> Optional[str]:
+        """Taugt dieser Wert als fremde Kennung? None = ja, sonst der Grund (Anmeldung und
+        Bestandsbindung prüfen mit DERSELBEN Funktion).
+
+        * Rand-Leerraum oder Steuerzeichen: Getrimmt fiele die Kennung auf die Bindung eines
+          ANDEREN Kontos (`chefin\u2028` → `chefin`, Gegenprüfung). Aus einem echten Verzeichnis
+          kommt so etwas nicht — abweisen statt passend machen.
+        * Die Form des Herkunfts-Platzhalters: Sie träfe über `get_federated_user` genau das
+          Konto, dessen ID sie nennt. Ein Verzeichnis liefert UUID/GUID — also ein manipuliertes
+          Attribut."""
+        roh = str(roh or "")
+        if roh != roh.strip() or name_ungueltig(roh):
+            return "Rand-/Steuerzeichen"
+        if roh.startswith(cls._OHNE_KENNUNG):
+            return "Platzhalter-Form"
+        return None
+
+    #: Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — für Log und Bericht.
+    NACHBINDUNG_GRUENDE = {
+        "adresse_als_name": "der Name sagt nichts über die Person (Steuerzeichen, oder der "
+                            "unbelegte mail-Wert einer Quelle, der nicht vertraut wird)",
+        "kennung_ungueltig": "die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)",
+        "konflikt": "die Kennung gehört schon einem anderen Konto",
+        "anders_gebunden": "das Konto trägt schon eine andere Kennung",
+        "name_selbst_gewaehlt": "der Name ist selbst gewählt (Registrierung oder Umbenennen) und "
+                                "sagt nichts darüber, wer im Verzeichnis so heisst",
+        "frist": "die Frist für die Bindung über den Namen ist abgelaufen "
+                 "(federation_name_binding_days)",
+    }
+
+    def _nachbindung_grund(self, quelle: str, kennung: str, konto, *, name_belegt: bool = True,
+                           frist: bool = True) -> Optional[str]:
+        """Darf das Konto `konto` über seinen Namen an die fremde Kennung `kennung` gebunden
+        werden? `None` = ja, sonst der Grund (Schlüssel aus `NACHBINDUNG_GRUENDE`).
+
+        EIN Entscheid für die Anmeldung (Lage 4, Ersatz eines Platzhalters, erste Zuordnung ohne
+        Kennung — `kennung=""`) und für die Bestandsbindung (`foederation_nachbinden`). Kopiert
+        drifteten die beiden auseinander, und der eine Weg bände, was der andere abweist (G1).
+
+        * `name_belegt=False`: Der Name ist der unbelegte `mail`-Wert einer Quelle, der nicht
+          vertraut wird (`_ldap_name_belegt`) — er sagt nichts über die Person.
+        * Kennung: Form (`_kennung_formfehler`), nicht schon an ein anderes Konto gebunden, das
+          Konto trägt nicht schon eine andere (Lage 3).
+        * **Selbst gewählter Name** (G2-N): Ein Konto, das sich selbst registriert oder umbenannt
+          hat (`users.name_selbst_gewaehlt`), wird nie über den Namen gebunden. Nachgestellt:
+          `eve` benennt sich in `chefin` um, einen Namen, den es nur im Verzeichnis gibt; die
+          echte chefin meldet sich über LDAP an, ihre Kennung landet an eves Konto, die Rolle aus
+          `ldap_group_role_map` auch — und eve meldet sich weiter mit ihrem Passwort an.
+        * **Frist** (`frist=True`, G1): `federation_name_binding_days` ab dem Merker der Quelle bzw.
+          der Anlage des Kontos, was später ist (`_namensfrist_offen`). Die Bestandsbindung prüft
+          sie nicht — sie IST der ausdrückliche Weg des Betreibers.
+
+        Die beiden letzten hebt eine vom Betreiber geöffnete Bindung auf (`loese_fremde_bindung`,
+        Tabelle `namensbindung`)."""
+        if not name_belegt or name_ungueltig(str(konto["username"] or "")):
+            return "adresse_als_name"
+        if kennung:
+            if self._kennung_formfehler(kennung):
+                return "kennung_ungueltig"
+            anderes = self.store.get_federated_user(quelle, kennung)
+            if anderes is not None and int(anderes) != int(konto["id"]):
+                return "konflikt"
+            vorhandene = self.store.get_federated_kennung(quelle, konto["id"])
+            if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG) and vorhandene != kennung:
+                return "anders_gebunden"
+        jetzt = _jetzt()
+        if self.store.namensbindung_offen(quelle, konto["id"], jetzt):
+            return None
+        try:
+            selbst = bool(konto["name_selbst_gewaehlt"])
+        except (IndexError, KeyError):
+            selbst = False       # Zeile ohne die Spalte (fremde Quelle): wie der Bestand
+        if selbst:
+            return "name_selbst_gewaehlt"
+        if frist and not self._namensfrist_offen(quelle, konto, jetzt):
+            return "frist"
+        return None
+
+    def _namensbindung_erlaubt(self, quelle: str, kennung: str, konto, username: str) -> bool:
+        """Die Tür für Lage 4 bei der Anmeldung: `_nachbindung_grund`, und eine Abweisung wie in
+        Lage 3 — Logzeile mit Kennung und Abhilfe, Audit `<quelle>_namensbindung_zu`."""
+        grund = self._nachbindung_grund(quelle, kennung, konto)
+        if grund is None:
+            return True
+        tage = int(self.cfg.federation_name_binding_days)
+        security.seclog.warning(
+            "%s: Konto %s (user_id=%s) wird nicht über den Namen an die Kennung %s gebunden — %s. "
+            "Die Anmeldung wird abgewiesen. Ist es dieselbe Person: "
+            "auth.loese_fremde_bindung('%s', %s) öffnet die Bindung für die nächste Anmeldung "
+            "(%d Tag(e)); den Bestand bindet auth.foederation_nachbinden('%s').",
+            quelle, security.fuer_log(username), konto["id"],
+            security.fuer_log(kennung) if kennung else "(keine)",
+            self.NACHBINDUNG_GRUENDE.get(grund, grund), quelle, konto["id"], max(tage, 1), quelle)
+        self.audit(f"{quelle}_namensbindung_zu", str(konto["username"]),
+                   detail=f"grund={grund} kennung={kennung or '-'}")
+        return False
+
+    def _foederation_seit(self, quelle: str) -> int:
+        """Ab wann gilt die Frist für die Bindung über den Namen (G1)? Der Merker der Quelle
+        (`Store.foederation_seit`), gesetzt beim ersten Start mit eingeschalteter Quelle — oder
+        hier, wenn sie ohne Schalter benutzt wird (ein selbst gesetzter Client). Genau einmal:
+        Ein Merker, der bei jedem Start neu gesetzt würde, schenkte jedem Neustart eine neue
+        Frist. Nur lesbar: dann ab jetzt."""
+        try:
+            return self.store.foederation_seit(quelle, _jetzt())
+        except (sqlite3.OperationalError, ValueError):
+            return _jetzt()
+
+    def _namensfrist_offen(self, quelle: str, konto, jetzt: int) -> bool:
+        """Bindet der Name dieses Konto noch (G1)? `federation_name_binding_days` Tage ab dem
+        Merker der Quelle oder der Anlage des Kontos, was später ist — eine Vorab-Anlage im Panel
+        hat damit ihre eigene Frist. `-1` = immer, `0` = nie."""
+        tage = int(self.cfg.federation_name_binding_days)
+        if tage < 0:
+            return True
+        ab = max(int(konto["created_at"] or 0), self._foederation_seit(quelle))
+        return jetzt < ab + tage * 86400
+
+    def _namensbindung_bestand_melden(self, quelle: str, seit: int) -> None:
+        """Startmeldung (G1): Wie viele Konten tragen für diese Quelle noch keine Kennung, und bis
+        wann bindet sie der Name? Nur solange die Tür für den Bestand offen ist — danach meldet
+        sich jede Abweisung selbst, und ein lokaler Admin stünde sonst für immer im Log."""
+        tage = int(self.cfg.federation_name_binding_days)
+        if tage <= 0:
+            return            # 0: nur ausdrücklich; -1: warnt die Konfigurationsprüfung
+        bis = seit + tage * 86400
+        if _jetzt() >= bis:
+            return
+        try:
+            konten = self.store.ohne_bindung(quelle)
+        except sqlite3.OperationalError:
+            return
+        if not konten:
+            return
+        ohne_pw = sum(1 for k in konten if not k["hat_passwort"])
+        weg = (f"auth.foederation_nachbinden('{quelle}')" if quelle == "ldap"
+               else f"auth.foederation_nachbinden('{quelle}', zuordnung={{name: kennung}})")
+        security.seclog.warning(
+            "%s: %d Konto(en) ohne Bindung an eine Kennung der Quelle (davon %d ohne lokales "
+            "Passwort). Bis %s (federation_name_binding_days=%d) bindet die nächste Anmeldung "
+            "sie über den Namen, danach nicht mehr — ein ruhendes Konto fiele sonst an die nächste "
+            "Person mit demselben Namen. Jetzt binden: %s (Trockenlauf), dann mit ausfuehren=True.",
+            quelle.upper(), len(konten), ohne_pw,
+            time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(bis)), tage, weg)
+
     def loese_fremde_bindung(self, quelle: str, user_id: int) -> int:
-        """Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg).
+        """Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die
+        Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten
+        Bindungen zurück (0: das Konto war nicht gebunden).
 
         Gebraucht, wenn im Verzeichnis wirklich umgezogen wurde — dann ist die alte Kennung tot
         und das Konto soll die neue bekommen. Dass das ein bewusster Schritt ist und kein
-        Nebeneffekt einer Anmeldung, ist der Punkt."""
+        Nebeneffekt einer Anmeldung, ist der Punkt.
+
+        Seit 2026-09-26 (G1, G2-N) öffnet der Aufruf zugleich die Tür für Lage 4: Die nächste
+        Anmeldung über diese Quelle bindet das Konto über seinen Namen, auch nach der Frist
+        (`federation_name_binding_days`) und auch mit selbst gewähltem Namen — für
+        `max(federation_name_binding_days, 1)` Tage oder bis die Bindung steht. Auf einem
+        ungebundenen Konto heisst der Aufruf also „für die nächste Anmeldung öffnen" (Vorab-Anlage,
+        Rückkehrer, ein Konto, das die Frist verpasst hat). Die Abweisung im Log nennt den Aufruf."""
         weg = self.store.unlink_federated(quelle, user_id)
         u = self.store.get_user(user_id)
-        self.audit(f"{quelle}_kennung_geloest", str(u["username"]) if u else None)
+        bis = None
+        if u is not None:
+            bis = _jetzt() + max(int(self.cfg.federation_name_binding_days), 1) * 86400
+            self.store.namensbindung_oeffnen(quelle, user_id, bis)
+        self.audit(f"{quelle}_kennung_geloest", str(u["username"]) if u else None,
+                   detail=f"namensbindung_offen_bis={bis}" if bis else None)
         return weg
+
+    def foederation_nachbinden(self, quelle: str, *, zuordnung: Optional[dict] = None,
+                               ausfuehren: bool = False) -> dict:
+        """Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
+
+        Konten aus der Zeit vor den Kennungen (F-11) binden sich bei der nächsten Anmeldung über
+        ihren Namen — aber nur innerhalb der Frist (`federation_name_binding_days`). Ein ruhendes
+        Konto meldet sich nie an; genau das fiele sonst an die nächste Person mit dem Namen. Diese
+        Methode bindet den Bestand ausdrücklich. **Vorgabe ist ein Trockenlauf**: Erst mit
+        `ausfuehren=True` wird geschrieben.
+
+        * **LDAP ohne `zuordnung`**: je Konto ohne Kennung eine Suche im Verzeichnis
+          (`LDAPClient.eintrag_suchen`, Dienstkonto oder anonym, ohne Passwort des Nutzers). Es
+          muss genau EIN Eintrag sein. Ein Ausfall (`VerzeichnisNichtErreichbar`) bricht ab —
+          vor dem ersten Schreiben: Gesucht wird erst alles, dann gebunden.
+        * **`zuordnung={Kontoname: Kennung}`** — für SAML (es gibt keinen Suchweg ohne Anmeldung;
+          die NameIDs etwa aus einem Export des IdP) oder für einzelne LDAP-Konten. Läuft ohne
+          Verzeichnis.
+
+        Entschieden wird je Konto mit demselben Helfer wie bei der Anmeldung
+        (`_nachbindung_grund`, ohne die Frist). Konten mit lokalem Passwort werden nur berichtet
+        (`lokal`): Ihr Name kann einem anderen Menschen gehören als der Eintrag im Verzeichnis —
+        der Betreiber öffnet sie einzeln mit `loese_fremde_bindung`.
+
+        Rückgabe (Listen von Einträgen mit `user_id`, `username`, `lokal` = Anzeigename/Adresse
+        hier, `verzeichnis` = dasselbe im Verzeichnis, `kennung`, bei Abweisungen `grund`):
+
+        * `gebunden` — gebunden (im Trockenlauf: würde gebunden). **Vor `ausfuehren` lesen**:
+          War ein Name schon vor dem Lauf wiederverwendet, bindet auch diese Methode die falsche
+          Person — `lokal` und `verzeichnis` nebeneinander zeigen es.
+        * `konflikt` — die Kennung gehört schon einem anderen Konto (`gebunden_an`), oder zwei
+          Konten nennen dieselbe
+        * `mehrdeutig` — mehr als ein Eintrag im Verzeichnis
+        * `nicht_im_verzeichnis`, `ohne_kennung` — kein Eintrag bzw. einer ohne stabile Kennung
+          (`ldap_attr_id`)
+        * `abgewiesen` — mit `grund`: einer aus `NACHBINDUNG_GRUENDE` oder `kein_konto`,
+          `dienstkonto`, `gesperrt`, `schon_gebunden`
+        * `lokal` — Konto mit lokalem Passwort, nur berichtet
+
+        Dazu `quelle` und `ausgefuehrt`. Jede Bindung schreibt `<quelle>_kennung_gebunden` mit
+        `detail=migration`, der Lauf eine Summenzeile ins Sicherheits-Log. Einen CLI-Befehl gibt
+        es nicht: LDAP und SAML laufen nur eingebettet, und das CLI kennt die Konfiguration nicht."""
+        if quelle not in self.FOEDERIERTE_QUELLEN:
+            raise ValueError(f"quelle muss eine von {self.FOEDERIERTE_QUELLEN} sein, nicht {quelle!r}")
+        suchen = None
+        if zuordnung is None:
+            if quelle != "ldap":
+                raise ValueError(
+                    "SAML kennt keinen Suchweg ohne Anmeldung — die Kennungen kommen als "
+                    "zuordnung={Kontoname: NameID} (etwa aus einem Export des IdP).")
+            if not self.ldap:
+                raise ConfigError("LDAP ist nicht eingerichtet (ldap_enabled, ldap_url) — oder "
+                                  "zuordnung={Kontoname: Kennung} übergeben.")
+            suchen = getattr(self.ldap, "eintrag_suchen", None)
+            if not callable(suchen):
+                raise ConfigError("Der gesetzte LDAP-Client kann nicht suchen (eintrag_suchen) — "
+                                  "zuordnung={Kontoname: Kennung} übergeben.")
+        bericht: dict = {"quelle": quelle, "ausgefuehrt": bool(ausfuehren), "gebunden": [],
+                         "konflikt": [], "mehrdeutig": [], "nicht_im_verzeichnis": [],
+                         "ohne_kennung": [], "abgewiesen": [], "lokal": []}
+        # Konto → Kennung aus der Zuordnung (None: im Verzeichnis suchen).
+        paare: list[tuple[Any, Optional[str]]] = []
+        if zuordnung is None:
+            paare = [(k, None) for k in self.store.ohne_bindung(quelle)]
+        else:
+            for name, wert in zuordnung.items():
+                k = self.store.get_user_by_name(str(name or "").strip())
+                if k is None:
+                    bericht["abgewiesen"].append({"user_id": None, "username": str(name),
+                                                  "grund": "kein_konto"})
+                else:
+                    paare.append((k, str(wert or "")))
+        plan = []
+        for konto, vorgabe in paare:
+            e: dict = {"user_id": int(konto["id"]), "username": konto["username"],
+                       "lokal": {"name": konto["display_name"], "email": konto["email"]}}
+            if konto["is_service"] or konto["disabled"]:
+                bericht["abgewiesen"].append(dict(e, grund="dienstkonto" if konto["is_service"] else "gesperrt"))
+                continue
+            vorhandene = self.store.get_federated_kennung(quelle, konto["id"])
+            if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG):
+                bericht["abgewiesen"].append(dict(e, kennung=vorhandene, grund=(
+                    "schon_gebunden" if vorgabe is None or vorhandene == vorgabe else "anders_gebunden")))
+                continue
+            name_belegt = True
+            kennung = vorgabe or ""
+            if suchen is not None:
+                treffer = suchen(konto["username"])     # VerzeichnisNichtErreichbar bricht ab
+                if not treffer:
+                    bericht["nicht_im_verzeichnis"].append(e)
+                    continue
+                if len(treffer) > 1:
+                    bericht["mehrdeutig"].append(dict(e, treffer=len(treffer)))
+                    continue
+                info = treffer[0]
+                e["verzeichnis"] = {"name": info.get("name"), "email": info.get("email")}
+                kennung = str(info.get("id") or "")
+                name_belegt = self._ldap_name_belegt(konto["username"], info)
+            if not kennung:
+                # Keine Kennung, auch eine leere in der Zuordnung: Gebunden würde über den Namen.
+                bericht["ohne_kennung"].append(e)
+                continue
+            e["kennung"] = kennung
+            grund = self._nachbindung_grund(quelle, kennung, konto, name_belegt=name_belegt,
+                                            frist=False)
+            if grund == "konflikt":
+                bericht["konflikt"].append(dict(e, gebunden_an=self.store.get_federated_user(quelle, kennung)))
+            elif grund:
+                bericht["abgewiesen"].append(dict(e, grund=grund))
+            elif self.store.get_password_hash(konto["id"]):
+                bericht["lokal"].append(e)
+            else:
+                plan.append(e)
+        # Zwei Konten, eine Kennung (Zuordnung mit Dublette): keines.
+        from collections import Counter
+        doppelt = {k for k, n in Counter(e["kennung"] for e in plan).items() if n > 1}
+        bericht["konflikt"] += [e for e in plan if e["kennung"] in doppelt]
+        plan = [e for e in plan if e["kennung"] not in doppelt]
+        if not ausfuehren:
+            bericht["gebunden"] = plan
+            return bericht
+        for e in plan:
+            # Atomar gegen eine Anmeldung, die seit der Prüfung gebunden hat (`Store.nachbinden`).
+            if self.store.nachbinden(quelle, e["kennung"], e["user_id"], _jetzt()):
+                self.audit(f"{quelle}_kennung_gebunden", str(e["username"]), detail="migration")
+                bericht["gebunden"].append(e)
+            else:
+                bericht["konflikt"].append(dict(e, gebunden_an=self.store.get_federated_user(quelle, e["kennung"])))
+        security.seclog.warning(
+            "foederation_nachbinden(%s): %d gebunden, %d Konflikt, %d mehrdeutig, %d nicht im "
+            "Verzeichnis, %d ohne Kennung, %d abgewiesen, %d mit lokalem Passwort (nur berichtet).",
+            quelle, len(bericht["gebunden"]), len(bericht["konflikt"]), len(bericht["mehrdeutig"]),
+            len(bericht["nicht_im_verzeichnis"]), len(bericht["ohne_kennung"]),
+            len(bericht["abgewiesen"]), len(bericht["lokal"]))
+        return bericht
+
+    def _ldap_vertraut(self, info) -> bool:
+        """Traut der Betreiber der Adresse dieses Eintrags? Pauschal (`ldap_email_trusted`) oder
+        für DIESEN Eintrag belegt (Beleg-Attribut `ldap_attr_email_verified`)."""
+        return bool(self.cfg.ldap_email_trusted) or (
+            bool(security.beleg_attribut(self.cfg, "ldap")) and _beleg_wahr(info.get("email_verified")))
+
+    def _ldap_name_belegt(self, username, info) -> bool:
+        """Sagt der Name etwas über die Person im Verzeichnis? Nein bei Steuerzeichen — und wenn er
+        der unbelegte `mail`-Wert des Eintrags IST (Quelle nicht vertraut). Anmeldung und
+        Bestandsbindung fragen hier; nur dann darf über den Namen einem Konto zugeordnet werden.
+
+        Maßgeblich ist, ob die Eingabe der unbelegte Wert IST — nicht, ob sie wie eine Adresse
+        aussieht: `mail` ist ein freies Attribut (RFC 4524), ein Angreifer setzt es auch auf
+        `chefin` (Gegenprüfung); ein UPN mit `@` dagegen ist die Bind-Kennung und belegt."""
+        if name_ungueltig(username):
+            return False
+        mail_wert = norm_kennung(info.get("email") or "")
+        return not (not self._ldap_vertraut(info) and mail_wert
+                    and norm_kennung(username) == mail_wert)
 
     def check_ldap(self, username, password) -> Optional[dict]:
         """Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben.
@@ -1693,17 +2032,10 @@ class TinySesam:
         # übernähme er deren Konto (Angriff auf die dritte Runde). Wie bei SAML: Ersatzname,
         # keine Zuordnung über den Namen.
         kennung_ldap = info.get("id") or ""
-        # Vertraut: pauschal (`ldap_email_trusted`) oder für DIESEN Eintrag belegt (Attribut).
-        quelle_vertraut = bool(self.cfg.ldap_email_trusted) or (
-            bool(security.beleg_attribut(self.cfg, "ldap")) and _beleg_wahr(info.get("email_verified")))
+        quelle_vertraut = self._ldap_vertraut(info)
         ldap_name = username
         name_zuordnen = True
-        # Maßgeblich ist, ob die Eingabe der unbelegte Wert IST — nicht, ob sie wie eine Adresse
-        # aussieht: `mail` ist ein freies Attribut (RFC 4524), ein Angreifer setzt es auch auf
-        # `chefin` (Gegenprüfung); ein UPN mit `@` dagegen ist die Bind-Kennung und belegt.
-        mail_wert = norm_kennung(info.get("email") or "")
-        if name_ungueltig(username) or (not quelle_vertraut and mail_wert
-                                        and norm_kennung(username) == mail_wert):
+        if not self._ldap_name_belegt(username, info):
             ldap_name = "ldap-" + hashlib.sha256((kennung_ldap or username).encode()).hexdigest()[:8]
             name_zuordnen = False
 
@@ -3085,9 +3417,18 @@ class TinySesam:
     #: Länger ist kein Name mehr, sondern eine Nutzlast (Header, Logzeilen, Panel).
     NAME_MAX = 150
 
-    def change_username(self, user_id, neu, ip: Optional[str] = None) -> str:
+    def change_username(self, user_id, neu, ip: Optional[str] = None, *,
+                        durch_betreiber: bool = False) -> str:
         """Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem
         Grund, wenn er nicht geht.
+
+        **Ein selbst gewählter Name bindet nicht über LDAP/SAML** (G2-N): Das Konto trägt danach
+        `users.name_selbst_gewaehlt`, und eine Anmeldung über eine föderierte Quelle bindet es nie
+        über den Namen — sonst benennt sich ein lokales Konto nach jemandem aus dem Verzeichnis
+        und erbt bei dessen nächster Anmeldung Kennung und Gruppen. Wer als **Betreiber**
+        umbenennt (aus dem einbettenden Dienst, etwa um eine Kollision aufzulösen), übergibt
+        `durch_betreiber=True`: Dann steht der Name für den Betreiber, der Merker fällt, und die
+        Audit-Zeile sagt `durch=betreiber`.
 
         Alles, was am Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an LDAP/SAML/OIDC —
         hängt an der ID, nicht am Namen, und bleibt. Nach aussen ändert sich `Remote-User`; stabil
@@ -3120,11 +3461,14 @@ class TinySesam:
             raise ValueError(self.t("api.user_exists"))
         alt = konto["username"]
         try:
-            self.store.set_username(user_id, name)
+            # Merker und Name in einer Transaktion (G2-N) — dazwischen könnte eine Anmeldung über
+            # LDAP/SAML das Konto sonst noch über den neuen Namen binden.
+            self.store.set_username(user_id, name, selbst_gewaehlt=not durch_betreiber)
         except sqlite3.IntegrityError:
             # Wettlauf: zwischen Prüfung und Schreiben vergeben — die Datenbank entscheidet.
             raise ValueError(self.t("api.user_exists")) from None
-        self.audit("username_changed", name, ip, f"alt={alt}")
+        self.audit("username_changed", name, ip,
+                   f"alt={alt} durch=betreiber" if durch_betreiber else f"alt={alt}")
         self.sicherheitsereignis("username_changed", user_id, alt=alt, neu=name)
         return name
 

@@ -925,8 +925,15 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > jetzt `entryUUID`/`objectGUID` (`ldap_attr_id`), SAML die `NameID` (`saml_attr_id` für IdPs mit
 > transienten NameIDs). Ein Konto, das schon an eine **andere** Kennung gebunden ist, wird nie
 > übernommen — dieser Fall wird abgewiesen und protokolliert. Konten von vor dieser Fassung
-> binden sich beim nächsten Login selbst nach, einmal, ebenfalls protokolliert. Liefert das
-> Verzeichnis keine Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
+> binden sich beim nächsten Login über den Namen selbst nach, einmal, ebenfalls protokolliert —
+> aber nur in `federation_name_binding_days` (Vorgabe 30) Tagen ab dem ersten Start mit
+> eingeschalteter Quelle bzw. ab der Anlage des Kontos; danach fiele ein ruhendes Konto an die
+> nächste Person, die im Verzeichnis denselben Namen bekommt. Den Rest bindet man ausdrücklich:
+> `auth.foederation_nachbinden("ldap")` (Vorgabe Trockenlauf, `ausfuehren=True` schreibt; SAML
+> mit `zuordnung={name: nameid}`), oder man öffnet ein einzelnes Konto mit
+> `auth.loese_fremde_bindung(quelle, user_id)`. Ein selbst gewählter Name (Registrierung,
+> Umbenennen in der Selbstbedienung) bindet nie über den Namen. Liefert das Verzeichnis keine
+> Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
 > `federation_require_stable_id=True` macht daraus eine Abweisung.
 
 > **Verweisen (Referrals) folgt TinySesam nie** — und das steht jetzt im Log. ldap3 verfolgt einen
@@ -1058,7 +1065,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**55 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**56 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

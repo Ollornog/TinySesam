@@ -203,12 +203,14 @@ r.check("… und sein Löschen schreibt die Zeilen des Vorbesitzers nicht um",
         str([dict(z) for z in a.store._all("SELECT event, username, ip FROM audit")]))
 
 # ── h: Bestand ohne Wasserlinie ──────────────────────────────────────────────────────────────────
-# Eine Datei von vor dieser Spalte (Schema 11 ohne sie): Die Spalten kommen dazu und bleiben NULL,
+# Eine Datei von vor dieser Spalte (Schema 11 ohne sie; mitgeschnitten wird die spätere
+# `name_selbst_gewaehlt`, G2-N, die dahinter steht): Die Spalten kommen dazu und bleiben NULL,
 # die Grenze ist dann wie bisher die Anlage. (Mutationsproben: der Rückfall in `sperre_aufheben`
 # räumt ab Id 0 statt ab der Anlage → rot; ebenso in `_raeumgrenze` → rot.)
 _bestand = str(Path(tempfile.mkdtemp()) / "t.db")
 _alt_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- Ab wann gehört die Kennung.*?"
-                                r"mail_audit_ab\s+INTEGER\n", r"\1  \2\n", SCHEMA, flags=re.S)
+                                r"mail_audit_ab\s+INTEGER,\n.*?name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0\n",
+                                r"\1  \2\n", SCHEMA, flags=re.S)
 _alt_schema, _n_fi = re.subn(r"\n\s*-- Der Name, unter dem sich das Konto zuletzt.*?name_topf\s+TEXT,", "",
                              _alt_schema, flags=re.S)
 os.close(os.open(_bestand, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
