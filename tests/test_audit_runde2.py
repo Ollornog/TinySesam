@@ -2075,7 +2075,10 @@ def _n5_rate(a, app_, name):
 # Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.
 _n5_b, _n5_bapp = _app(csrf_enabled=False)
 _n5_b.create_user("Özlem", password="Geheim12345!-lang", email="oezlem@example.com")
-_n5_platz = _n5_b.store.create_user("özlem")
+# Rohes INSERT ohne Topf (fremder Schreiber): Seit G12c weist `store.create_user` den
+# Namensvetter selbst ab.
+_n5_platz = _n5_b.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                              ("özlem", "özlem", _store_mod.jetzt())).lastrowid
 # Eine Minute vor den Rateversuchen angelegt — sonst blieben sie schon als Versuche aus der
 # Anlage-Sekunde stehen, und die Probe mässe die Topf-Prüfung nicht.
 _n5_b.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_platz,))

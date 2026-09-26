@@ -938,9 +938,14 @@ def build_router(auth) -> APIRouter:
                     # Sperre und Token: messbar an der Antwortzeit, ein Orakel „Adresse vergeben?"
                     # (T-13, B1-12 / ASVS 6.3.8). Jetzt dieselbe Arbeit in beiden Zweigen; `gc()`
                     # räumt den Platzhalter mit dem Ablauf seines Tokens (R4-09).
-                    platzhalter = auth.create_user(
-                        f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
-                        password=password, roles=[])
+                    try:
+                        platzhalter = auth.create_user(
+                            f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
+                            password=password, roles=[])
+                    except ConfigError:
+                        # Wettlauf: Der Name ist seit der Prüfung oben vergeben (G12c) — dieselbe
+                        # Antwort, die die Prüfung jetzt gäbe.
+                        return err(auth.t("err.username_taken"), 409)
                     auth.store.set_disabled(platzhalter, True)
                     auth.create_magic_token("verify_email", user_id=platzhalter)
                     adresse = email_final
@@ -963,9 +968,22 @@ def build_router(auth) -> APIRouter:
             # Anlage — die Einladung des Admins, die Fehlversuche der echten Inhaberin
             # (`Store.konto_entfernen`). Rechte hängen daran nicht: Eine Allowlist-Adresse
             # verlangt bei offener Registrierung ohnehin die Bestätigung (Konstruktor-Wächter).
-            uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
-                                   email=email_final or None,
-                                   email_verified=bool(inv and norm_email(inv.get("email"))))
+            try:
+                uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
+                                       email=email_final or None,
+                                       email_verified=bool(inv and norm_email(inv.get("email"))))
+            except ConfigError as e:
+                # Wettlauf (G12c): Zwischen den Prüfungen oben und dem Anlegen hat eine
+                # gleichzeitige Anfrage die Kennung belegt, und die Datenbank weist ab. Dieselben
+                # Antworten wie oben — bis dahin eine 500. Ein vergebener Name bleibt sichtbar; eine
+                # vergebene Adresse mit Bestätigungspflicht bekommt die neutrale Seite (R4-03), ohne
+                # sie 409.
+                if getattr(e, "feld", None) == "username" and not name_ist_adresse:
+                    return err(auth.t("err.username_taken"), 409)
+                if verify:
+                    auth.audit("signup_taken", username, ip, detail=f"{email_final} wettlauf=1")
+                    return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
+                return err(auth.t("err.email_taken"), 409)
             if inv:
                 auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
             auth.audit("signup", username, ip)

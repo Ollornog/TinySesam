@@ -1909,7 +1909,11 @@ r.check("create_service nimmt eine vergebene Kennung nicht an", not _dienst_ents
 # /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
 auth_alt, app_alt = _app(csrf_enabled=False)
 opfer_alt = auth_alt.create_user("chef", password=PW_INHABER, email="chef@example.com")
-eve_alt = auth_alt.store.create_user("chef@example.com")      # am Wächter vorbei = Altbestand
+# Am Wächter vorbei = Altbestand: ein rohes INSERT ohne Topf (seit G12c weist auch der Store
+# selbst die Kollision ab — der Weg eines fremden Schreibers bleibt).
+from tinysesam.store import jetzt as _jetzt  # noqa: E402
+eve_alt = auth_alt.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                               ("chef@example.com", "chef@example.com", _jetzt())).lastrowid
 auth_alt.set_password(eve_alt, PW_EVE)
 r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf",
         (auth_alt.find_user("chef@example.com") or {}).get("id") == opfer_alt,
@@ -1928,10 +1932,10 @@ eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
 
-# Und der Bestand selbst? Die Datenbank kann diese Kollision nicht verhindern: `UNIQUE(username)`
-# und `ux_users_email` gelten je SPALTE, es gibt keinen Index über beide Namensräume — und
-# `create_user` prüft und INSERTet nicht atomar. Der Wächter kann hier also nur MELDEN, und genau
-# das muss er beim Start tun: Ohne Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
+# Und der Bestand selbst? Neue Kollisionen verhindert seit G12c die Datenbank (Trigger über die
+# Zähl-Töpfe, tests/test_kennungsraum.py); eine, die schon drinsteht (hier: rohes INSERT eines
+# fremden Schreibers), kann der Wächter nur MELDEN, und genau das muss er beim Start tun: Ohne
+# Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
 
 
 def _start_log(db_pfad):

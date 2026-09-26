@@ -136,19 +136,25 @@ def build_admin_router(auth) -> APIRouter:
         # Laut abweisen statt still verwerfen: Wer beides ankreuzt, hat etwas anderes gemeint.
         if b.get("is_service") and b.get("is_admin"):
             raise HTTPException(400, auth.t("api.service_admin"))
-        if b.get("is_service"):
-            uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
-        else:
-            # Dieselbe Passwortregel wie an jeder anderen Setzstelle (Fund B2-13): Bis T-13 nahm
-            # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
-            # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
-            if b.get("password"):
-                mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
-                if mangel:
-                    raise HTTPException(400, mangel)
-            uid = auth.create_user(username, password=b.get("password") or None,
-                                   is_admin=bool(b.get("is_admin")), roles=roles,
-                                   display_name=b.get("display_name"), email=email)
+        # Dieselbe Passwortregel wie an jeder anderen Setzstelle (Fund B2-13): Bis T-13 nahm
+        # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
+        # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
+        if not b.get("is_service") and b.get("password"):
+            mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
+            if mangel:
+                raise HTTPException(400, mangel)
+        try:
+            if b.get("is_service"):
+                uid = auth.create_service(username, roles=roles, display_name=b.get("display_name"))
+            else:
+                uid = auth.create_user(username, password=b.get("password") or None,
+                                       is_admin=bool(b.get("is_admin")), roles=roles,
+                                       display_name=b.get("display_name"), email=email)
+        except ConfigError as e:
+            # Wettlauf (G12c): zwischen den Prüfungen oben und dem Anlegen vergeben — dieselbe
+            # Antwort wie dort, statt einer 500.
+            raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "feld", None) == "email"
+                                            else "api.user_exists"))
         protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
 

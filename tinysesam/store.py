@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- `set_email`. NULL heisst „noch nicht gerechnet" — eine Zeile eines anderen Schreibers
     -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
     -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
+    -- Über die Töpfe erzwingt die Datenbank auch den gemeinsamen Kennungsraum (`_trigger_sql`).
     topf_name     TEXT,
     topf_mail     TEXT,
     idp_bestaetigt_at INTEGER  -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
@@ -643,7 +644,9 @@ class Store:
     #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
     #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
     #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
-    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8)
+    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8); Trigger
+    #:      `trg_users_kennung_insert`/`_update`: Name und Adresse sind EIN Kennungsraum, von der
+    #:      Datenbank erzwungen (G12c; angelegt bei jedem Start, nicht am Stempel)
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -857,18 +860,97 @@ class Store:
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
                         "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
                 self.db.execute(sql)
-            # Ein anderer Schreiber ändert Name oder Adresse, ohne den Topf mitzuführen (eine
-            # ältere Fassung nach einem Rückschritt, die Umbenennung von Hand, zu der der
-            # Kollisions-Wächter beim Start rät): Dann ist der Topf veraltet — und NULL heisst
-            # „nachrechnen". Nur eingebaute SQL-Funktionen: Auch das sqlite3-Werkzeug und ältere
-            # Fassungen müssen weiter schreiben können (eine Python-Funktion im Trigger oder im
-            # Index-Ausdruck bräche jeden Schreiber ohne sie mit „no such function").
-            for spalte, topf in (("username", "topf_name"), ("email", "topf_mail")):
-                self.db.execute(
-                    f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
-                    f"WHEN NEW.{topf} IS OLD.{topf} "
-                    f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
+            # Die Trigger über die Töpfe (Nachrechnen und Kennungsraum, s. `_trigger_sql`). Eine
+            # Datei, auf der sie sich nicht anlegen lassen (nur lesbar), darf den Start nicht
+            # verhindern: Dort entsteht ohnehin kein neues Konto, und die Vorprüfung
+            # (`kennung_vergeben`) bleibt. Gesagt wird es trotzdem.
+            try:
+                self._trigger_setzen()
+            except sqlite3.OperationalError as e:
+                logging.getLogger("tinysesam").warning(
+                    "Trigger über Benutzername und Adresse nicht angelegt (%s): Die Datenbank "
+                    "erzwingt den gemeinsamen Kennungsraum erst nach einem Start mit "
+                    "Schreibzugriff.", e)
             self.db.commit()
+
+    #: Meldung der Kennungs-Trigger (`sqlite3.IntegrityError`): Name oder Adresse fällt in den
+    #: Zähl-Topf eines ANDEREN Kontos. Aufrufer erkennen den Fall an `IntegrityError`, nicht am Text.
+    KENNUNG_VERGEBEN = "tinysesam: kennung vergeben"
+
+    @classmethod
+    def _trigger_sql(cls) -> list:
+        """Die Trigger auf `users` als `(name, CREATE-Anweisung)`. Nur eingebaute SQL-Funktionen:
+        Auch das sqlite3-Werkzeug und ältere Fassungen müssen weiter schreiben können (eine
+        Python-Funktion im Trigger oder im Index-Ausdruck bräche jeden Schreiber ohne sie mit
+        „no such function").
+
+        **Nachrechnen** (`trg_users_topf_name`/`_mail`, Schema 10): Ein anderer Schreiber ändert
+        Name oder Adresse, ohne den Topf mitzuführen (eine ältere Fassung nach einem Rückschritt,
+        die Umbenennung von Hand, zu der der Kollisions-Wächter beim Start rät): Dann ist der Topf
+        veraltet — und NULL heisst „nachrechnen". Nur wenn sich der Wert WIRKLICH ändert: Wer
+        dieselbe Adresse erneut setzt, behält seinen Topf (bis 2026-09-26 stand er danach bis zum
+        nächsten Nachtrag auf NULL, und die Kennungs-Trigger sahen das Konto so lange nicht).
+
+        **Kennungsraum** (`trg_users_kennung_insert`/`_update`, G12c): Benutzername und Adresse
+        sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
+        (`Alice`/`alice`, `Émile`/`émile`, Vollbreite, Unicode- und A-Label-Domain). Die Datenbank
+        kannte bis dahin nur `UNIQUE(username)` (BINARY) und `ux_users_email` — Prüfung
+        (`kennung_vergeben`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
+        derselben Kennung (eine als Name, eine als Adresse) kamen beide durch. Jetzt weist die
+        Datenbank einen NEU vergebenen Topf ab, der schon Name oder Adresse eines anderen Kontos
+        ist — in derselben Anweisung wie das Schreiben, unter dem einen Schreiber von SQLite.
+        Warum jedes Teil:
+
+        * `UPDATE OF username, email`, nicht `OF topf_*`: Der Nachtrag (`_toepfe_schreiben`)
+          setzt nur Töpfe und prüft deshalb nicht. Ein Bestand mit Kollision bricht den Start nicht.
+        * `NEW IS NOT OLD`: Geprüft wird nur ein neu vergebener Topf. Das erneute Setzen der
+          eigenen Adresse und ein rohes UPDATE (Topf bleibt stehen, der Trigger oben setzt ihn
+          danach auf NULL) gehen durch — eine Kollision im Bestand wird gemeldet, nicht verhindert.
+        * `id IS NOT NEW.id` (nur beim UPDATE): Dieselbe Zeile darf Name = Adresse tragen
+          (E-Mail-Modus). Beim INSERT steht die Zeile noch nicht in der Tabelle.
+        * Zeilen ohne Topf (NULL: ein fremder Schreiber, noch nicht nachgetragen) zählen erst ab
+          dem Nachtrag — den `kennung_vergeben` vor jeder Anlage anstösst.
+
+        Die Suche läuft über `ix_users_topf_name`/`ix_users_topf_mail`, kein Scan: Die Arbeit
+        hängt nicht von der Zahl der Konten ab (Schrittzählung in tests/test_kennungsraum.py und
+        tests/test_audit_runde2.py)."""
+        def neu(spalte, alt, id_aus):
+            andere = "id IS NOT NEW.id AND " if id_aus else ""
+            return (f"(NEW.{spalte} IS NOT {alt} AND NEW.{spalte} <> '' AND EXISTS (SELECT 1 FROM users "
+                    f"WHERE {andere}(topf_name = NEW.{spalte} OR topf_mail = NEW.{spalte})))")
+        abweisen = f"BEGIN SELECT RAISE(ABORT, '{cls.KENNUNG_VERGEBEN}'); END"
+        sql = [(f"trg_users_{topf}",
+                f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
+                f"WHEN NEW.{topf} IS OLD.{topf} AND NEW.{spalte} IS NOT OLD.{spalte} "
+                f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
+               for spalte, topf in (("username", "topf_name"), ("email", "topf_mail"))]
+        sql.append(("trg_users_kennung_insert",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_insert BEFORE INSERT ON users "
+                    f"WHEN {neu('topf_name', 'NULL', False)} OR {neu('topf_mail', 'NULL', False)} "
+                    + abweisen))
+        sql.append(("trg_users_kennung_update",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_update BEFORE UPDATE OF username, email "
+                    f"ON users WHEN {neu('topf_name', 'OLD.topf_name', True)} "
+                    f"OR {neu('topf_mail', 'OLD.topf_mail', True)} " + abweisen))
+        return sql
+
+    def _trigger_setzen(self) -> None:
+        """Die Trigger aus `_trigger_sql` anlegen — oder ersetzen, wenn eine ältere Fassung sie
+        anders angelegt hat (ohne Commit, unter `_lock`, Teil von `_migrate`).
+
+        `CREATE TRIGGER IF NOT EXISTS` allein liesse einen Trigger aus Schema 10 für immer so
+        stehen, wie er damals war. Verglichen wird mit dem Text in `sqlite_master` (SQLite legt ihn
+        ohne `IF NOT EXISTS` ab; Leerraum zählt nicht). Stimmt er, wird nichts geschrieben — auch
+        nicht auf einer nur lesbaren Datei."""
+        for name, sql in self._trigger_sql():
+            soll = " ".join(sql.replace(" IF NOT EXISTS", "", 1).split())
+            steht = self.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                                    (name,)).fetchone()
+            if steht is not None and " ".join(str(steht[0] or "").split()) == soll:
+                continue
+            if steht is not None:
+                self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
+            self.db.execute(sql)
 
     #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
     #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
@@ -1166,6 +1248,12 @@ class Store:
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
                     is_service=False, email_verified=True) -> int:
+        """Ein Konto anlegen (Rohbaustein; die Prüfungen macht `TinySesam.create_user`).
+
+        Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
+        ist — auch als Namensvetter im Zähl-Topf (`Alice`/`alice`, s. `_trigger_sql`). Bis
+        2026-09-26 ging das hier durch, sofern nicht genau derselbe Name oder dieselbe Adresse
+        schon stand."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
@@ -1176,11 +1264,42 @@ class Store:
              norm_kennung(username), norm_kennung(mail)))
         return cur.lastrowid
 
+    def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
+        """Die Anweisungen, die Name (`spalte="username"`) oder Adresse (`"email"`, mit `beleg`)
+        samt Zähl-Topf ersetzen — für `_umschreiben`.
+
+        Zwei Anweisungen: Fällt der neue Wert in denselben Topf wie der alte (`B1` → `b1`,
+        `u@bücher.example` → `u@xn--bcher-kva.example`), setzt der Nachrechnen-Trigger den Topf auf
+        NULL — er kann den eigenen Schreiber nicht von einem fremden unterscheiden. Bis zum
+        nächsten Nachtrag sähen die Kennungs-Trigger das Konto dann nicht. Die zweite setzt ihn in
+        derselben Transaktion zurück; sie ändert nur den Topf und löst keinen Trigger aus."""
+        topf_spalte = "topf_name" if spalte == "username" else "topf_mail"
+        erste: tuple
+        if beleg is None:
+            erste = (f"UPDATE users SET {spalte}=?, {topf_spalte}=? WHERE id=?", (wert, topf, user_id))
+        else:
+            erste = (f"UPDATE users SET {spalte}=?, email_verified=?, {topf_spalte}=? WHERE id=?",
+                     (wert, 1 if beleg else 0, topf, user_id))
+        return [erste, (f"UPDATE users SET {topf_spalte}=? WHERE id=?", (topf, user_id))]
+
+    def _umschreiben(self, schritte) -> None:
+        """Mehrere Anweisungen in EINER Transaktion, ein Commit (wie `_exec`, nur für eine Liste).
+        Scheitert eine — auch an einem Kennungs-Trigger (`IntegrityError`) —, rollt `_schreibend`
+        alle zurück."""
+        with self._schreibend():
+            for sql, args in schritte:
+                self.db.execute(sql, args)
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+
     def set_username(self, user_id, username) -> None:
-        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Anweisung.
-        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben."""
+        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Transaktion.
+        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben. Ist der Name
+        schon Kennung eines anderen Kontos (Name, Adresse oder Namensvetter im Topf), weist die
+        Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert."""
         name = str(username or "").strip()
-        self._exec("UPDATE users SET username=?, topf_name=? WHERE id=?", (name, norm_kennung(name), user_id))
+        self._umschreiben(self._kennung_setzen(user_id, "username", name, norm_kennung(name)))
 
     def set_email(self, user_id, email, verified: bool = False):
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
@@ -1198,10 +1317,28 @@ class Store:
         ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
         `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
         damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
-        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Anweisung mit."""
+        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Transaktion mit.
+
+        Ist die Adresse schon Kennung eines anderen Kontos (Adresse, Name oder Namensvetter im
+        Topf), weist die Datenbank sie ab: `sqlite3.IntegrityError`, nichts geändert. Bis
+        2026-09-26 prüfte hier nichts ausser `ux_users_email` (Adresse gegen Adresse)."""
         mail = norm_email(email)
-        self._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=?",
-                   (mail, 1 if verified else 0, norm_kennung(mail), user_id))
+        self._umschreiben(self._kennung_setzen(user_id, "email", mail, norm_kennung(mail), bool(verified)))
+
+    def adresse_wechseln(self, user_id, email, name_folgt: bool = False) -> None:
+        """Die bestätigte neue Adresse eintragen (mit Beleg) und, wenn `name_folgt`, den Namen
+        auf dieselbe Adresse setzen (E-Mail-Modus) — in EINER Transaktion.
+
+        Getrennt geschrieben (`set_email`, dann `set_username`) konnte das zweite scheitern,
+        nachdem das erste schon stand: Adresse neu, Name noch die alte Adresse — und die alte
+        Adresse blieb als Name des Kontos besetzt. Scheitert hier eine Anweisung (die neue
+        Kennung ist inzwischen vergeben: `sqlite3.IntegrityError`), bleibt beides beim Alten."""
+        mail = norm_email(email)
+        topf = norm_kennung(mail)
+        schritte = self._kennung_setzen(user_id, "email", mail, topf, True)
+        if name_folgt:
+            schritte += self._kennung_setzen(user_id, "username", mail, topf)
+        self._umschreiben(schritte)
 
     def set_email_verified(self, user_id, verified: bool):
         """Den Beleg für die Adresse vermerken (`users.email_verified`).
@@ -1402,26 +1539,46 @@ class Store:
     def kennungs_kollisionen(self, limit: int = 50) -> list:
         """Konten, deren **Benutzername** die **E-Mail** eines ANDEREN Kontos ist (Fund R4-12).
 
-        Warum das eine eigene Abfrage braucht: Die Tabelle kennt `UNIQUE(username)` und den
-        Index `ux_users_email` auf `lower(email)` — aber **keinen Constraint über beide
-        Spalten**. Eindeutig ist also jeder Namensraum für sich, während `find_user` im
-        Vorgabe-Modus `both` in beiden sucht. `Manager.create_user` prüft kreuzweise, doch
-        Prüfung und INSERT sind nicht atomar (zwei gleichzeitige Registrierungen derselben
-        Kennung — eine als Name, eine als Adresse — kommen beide durch), und in einer Datenbank
-        von VOR dem Fix steht die Kollision längst. Diese Abfrage ist deshalb der Wächter, den
-        die Datenbank nicht stellen kann: Sie nennt, was da ist, statt es zu verhindern.
+        Nur die Kreuz-Richtung; alle Kollisionen im Kennungsraum (auch Name gegen Name, Adresse
+        gegen Adresse) nennt `topf_kollisionen`. Neue verhindert seit 2026-09-26 die Datenbank
+        (`_trigger_sql`); was hier steht, stammt aus dem Bestand (eine ältere Fassung, ein rohes
+        UPDATE, eine Zeile eines fremden Schreibers nach dem Nachtrag ihres Topfs).
 
-        Verglichen wird `COLLATE NOCASE`, also genauso wie `get_user_by_name`/`get_user_by_email`
-        suchen — eine Kollision, die die Anmeldung findet, muss auch hier auffallen.
+        Verglichen wird über den Zähl-Topf (`norm_kennung`). Der faltet gröber als NOCASE, mit dem
+        `get_user_by_name`/`get_user_by_email` suchen — jede Kollision, die die Anmeldung findet,
+        fällt also auch hier auf. Bis 2026-09-26 stand hier NOCASE; `Ärmel`/`ärmel` oder eine
+        Unicode- gegen die A-Label-Domain derselben Adresse fehlten. Eine Zeile ohne Topf (Datei
+        nur lesbar, Nachtrag nicht möglich) zählt nicht mit.
         Zeilen: `(name_id, kennung, mail_id, adresse)`. Ein Konto, das dieselbe Zeichenfolge in
         BEIDEN eigenen Spalten trägt, ist keine Kollision (E-Mail-Modus, vorgesehener Weg).
         """
+        self._toepfe_nachtragen()     # Zeilen eines fremden Schreibers zählen mit
         return self._all(
             "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
             "FROM users n JOIN users e ON e.id <> n.id "
-            "  AND e.email IS NOT NULL AND e.email <> '' "
-            "  AND e.email = n.username COLLATE NOCASE "
+            "  AND e.topf_mail <> '' AND e.topf_mail = n.topf_name "
             "ORDER BY n.id LIMIT ?", (int(limit),))
+
+    def topf_kollisionen(self, limit: int = 50) -> list:
+        """Alle Kennungen, die mehr als einem Konto gehören — als `[{"kennung", "ids"}, …]`.
+
+        Gezählt wird im Zähl-Topf (`norm_kennung`) über Namen UND Adressen: `Alice`/`alice`,
+        Name = fremde Adresse, zwei Schreibweisen derselben Adresse (`u@bücher.example` und
+        `u@xn--bcher-kva.example`). Ein Konto, dessen Name seine eigene Adresse ist, zählt einmal
+        (das `UNION` fasst die Zeile zusammen). Neue Kollisionen verhindert die Datenbank
+        (`_trigger_sql`); diese Abfrage nennt die aus dem Bestand — für die Startmeldung, die
+        vorher nur die Kreuz-Richtung sah (`kennungs_kollisionen`). `ids` aufsteigend, die
+        Kennungen nach dem ältesten beteiligten Konto. Zeilen eines fremden Schreibers bekommen
+        vorher ihren Topf (`_toepfe_nachtragen`); lässt der sich nicht schreiben (Datei nur
+        lesbar), zählen sie nicht mit."""
+        self._toepfe_nachtragen()
+        zeilen = self._all(
+            "SELECT topf, group_concat(id) AS ids FROM ("
+            "  SELECT id, topf_name AS topf FROM users WHERE topf_name <> ''"
+            "  UNION SELECT id, topf_mail FROM users WHERE topf_mail <> '') "
+            "GROUP BY topf HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
+        return [{"kennung": z["topf"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
+                for z in zeilen]
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")

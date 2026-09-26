@@ -8,6 +8,7 @@ Beide Libs sind optional-Extra `[oidc]`.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 import secrets
 from urllib.parse import urlencode
@@ -752,9 +753,15 @@ def register_oidc_routes(router, auth):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                "nachgetragen=0")
                 else:
-                    auth.store.set_email(uid, mail, verified=True)
-                    auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
-                               "beleg=1")
+                    try:
+                        auth.store.set_email(uid, mail, verified=True)
+                        auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
+                                   "beleg=1")
+                    except sqlite3.IntegrityError:
+                        # Wettlauf (G12c): zwischen Prüfung und Schreiben vergeben — die Datenbank
+                        # entscheidet, das Konto bleibt ohne Adresse wie oben.
+                        auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
+                                   "nachgetragen=0 wettlauf=1")
             elif konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)

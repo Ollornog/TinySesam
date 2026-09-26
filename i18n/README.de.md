@@ -123,7 +123,8 @@ TinySesamConfig(login_identifier="email")     # nur E-Mail
 
 Die Beschriftung des Feldes zieht automatisch nach, Passwort- **und** PIN-Login halten sich daran.
 Weil die E-Mail eine Login-Kennung ist, wird sie kanonisch gespeichert (getrimmt, klein) und ist
-**eindeutig** (partieller UNIQUE-Index; Konten ohne Adresse bleiben erlaubt). Bei der Registrierung
+**eindeutig** — über Benutzernamen *und* Adressen (eine Kennung gehört nie zwei Konten, auch nicht als
+`Alice`/`alice`), von der Datenbank erzwungen; Konten ohne Adresse bleiben erlaubt. Bei der Registrierung
 ist sie standardmäßig Pflicht — `signup_require_email=False` schaltet das ab. Im Modus `"email"`
 fällt das Benutzernamen-Feld ganz weg: die Adresse *ist* die Kennung. `signup_verify_email=True`
 aktiviert das Konto erst nach Klick auf den Bestätigungslink; das braucht einen Mailer (`set_mailer`
@@ -1055,7 +1056,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**51 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**52 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

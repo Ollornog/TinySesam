@@ -23,6 +23,11 @@ auffällt:
   LDAP-Nutzer beim nächsten Login einen Bestätigungslink.
 - **API-Keys von OIDC-Konten ruhen**, wenn der Provider Nein sagt oder das Konto 30 Tage lang nicht
   bestätigt hat — eine Anmeldung über den Provider weckt sie.
+- **Die Datenbank erzwingt den gemeinsamen Kennungsraum** (G12c): `store.create_user`,
+  `store.set_username` und `store.set_email` werfen `sqlite3.IntegrityError`, wenn Name oder Adresse
+  schon Kennung eines anderen Kontos ist — **auch bei Namensvettern wie `Alice`/`alice`**. Wer den
+  Store direkt aufruft, fängt das. Die Startmeldung nennt jetzt jede Kollision im Bestand, nicht nur
+  „Name = fremde Adresse".
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -142,6 +147,29 @@ auffällt:
 
 ### Sicherheit
 
+- **Kennungsraum in der Datenbank erzwungen (G12c).** Benutzername und Adresse sind ein Raum
+  (`find_user` sucht in beiden, der Sperrzähler faltet `Alice`/`alice`, `Émile`/`émile`, Vollbreite
+  und Unicode-/A-Label-Domain zusammen), die Datenbank kannte aber nur `UNIQUE(username)` (BINARY)
+  und den Index auf die Adresse. Geprüft wurde vor dem Schreiben (`kennung_vergeben`), getrennt davon
+  geschrieben: Zwei gleichzeitige Anfragen derselben Kennung — eine als Name, eine als Adresse, auch
+  ein Adresswechsel gegen eine Registrierung — kamen beide durch, oder eine endete mit einer 500.
+  Jetzt weisen zwei Trigger über die Zähl-Töpfe (`trg_users_kennung_insert`/`_update`, nur
+  eingebaute SQL-Funktionen, über die vorhandenen Indizes) jede neu vergebene Kennung ab, die schon
+  einem anderen Konto gehört — in derselben Anweisung wie das Schreiben. Der Verlierer eines
+  Wettlaufs bekommt dieselbe Antwort wie bei einer vergebenen Kennung: `ConfigError` aus
+  `create_user` (`e.besitzer_id` kann dann `None` sein), 409 bzw. die neutrale Seite bei der
+  Registrierung, 409 in der Admin-API und beim Bestätigen eines Adresswechsels (Audit
+  `email_change_taken … wettlauf=1`), 400 beim Umbenennen; eine Adresse aus OIDC/LDAP/SAML wird
+  nicht nachgetragen (Audit `<quelle>_email_taken … wettlauf=1`). Der Adresswechsel im Mail-Modus
+  schreibt Adresse und Namen in einer Transaktion (`store.adresse_wechseln`). Bestehende
+  Kollisionen bleiben stehen und lassen sich auflösen; neu: `store.topf_kollisionen()`, und
+  `kennungs_kollisionen()` vergleicht über den Zähl-Topf statt NOCASE. Wer dieselbe Adresse erneut
+  setzt, behält seinen Zähl-Topf (vorher stand er bis zum nächsten Nachtrag auf NULL).
+  ⚠️ **Für direkte Store-Aufrufer:** `store.create_user`/`set_username`/`set_email` werfen
+  `sqlite3.IntegrityError` („tinysesam: kennung vergeben") statt eine Kollision anzulegen.
+  **Rückweg:** Die Trigger bleiben in der Datei und wirken unter 0.20.x weiter; entfernen mit
+  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;`
+  (docs/BETRIEB.md, „Kennungsraum"). Test: `tests/test_kennungsraum.py`.
 - **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
   Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
   Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene

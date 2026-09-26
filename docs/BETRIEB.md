@@ -111,6 +111,40 @@ eine Adresse verbrauchen nicht das des Anmelde-Links — und eines je Konto
 ein Konto keine Mails an beliebig viele fremde Adressen streut. Derselbe Weg bestätigt Adressen aus LDAP und
 SAML (Tabelle unter „Föderierte Identitäten verwalten").
 
+## Kennungsraum: Name und Adresse gehören zusammen
+
+`find_user` sucht eine Kennung in Benutzernamen UND Adressen, und der Sperrzähler faltet gröber als
+die Datenbank (NFKC, klein, IDNA: `Alice`/`alice`, `Émile`/`émile`, `ｂｏｂ`/`bob`,
+`u@bücher.example`/`u@xn--bcher-kva.example`). Beide Spalten sind deshalb **ein** Raum: Keine
+Kennung gehört zwei Konten.
+
+- **Seit 2026-09-26 erzwingt das die Datenbank** (Trigger `trg_users_kennung_insert` und
+  `trg_users_kennung_update` über die Zähl-Töpfe `topf_name`/`topf_mail`). Vorher prüfte nur
+  TinySesam vor dem Schreiben; zwei gleichzeitige Anfragen derselben Kennung (zwei Worker, eine als
+  Name, eine als Adresse) kamen beide durch oder endeten mit einer 500. Jetzt bekommt der Verlierer
+  dieselbe Antwort wie bei einer vergebenen Kennung — 409, bei der Registrierung mit Bestätigung die
+  neutrale Seite. Wer den Store direkt aufruft (`store.create_user`, `set_username`, `set_email`),
+  bekommt `sqlite3.IntegrityError` („tinysesam: kennung vergeben").
+- **Kollisionen im Bestand** (aus einer älteren Fassung, einem rohen UPDATE, einer Zeile eines
+  fremden Schreibers) bleiben stehen — der Start scheitert nicht daran, und nichts wird automatisch
+  umbenannt, denn welches Konto die Kennung behält, entscheidet der Betreiber. Verschlimmern lassen
+  sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
+  (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: der Inhaber auf der
+  Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu)` oder
+  `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
+  Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
+  danach selbst nach.
+- **Grenzen:** Eine Zeile eines fremden Schreibers (ältere Fassung nach einem Rückschritt,
+  sqlite3-Werkzeug) trägt keinen Topf und zählt für die Trigger erst, wenn TinySesam ihn
+  nachgetragen hat — beim Start und vor jeder Anlage. Ein rohes UPDATE, das in eine Kollision hinein
+  umbenennt, wird nicht verhindert, nur beim nächsten Start gemeldet. Lassen sich die Trigger nicht
+  anlegen (Datei nur lesbar), startet TinySesam trotzdem und sagt es im Log.
+- **Rückweg auf 0.20.x:** Die Trigger bleiben in der Datei und wirken dort weiter (0.20.x schreibt
+  die Töpfe mit; nur eingebaute SQL-Funktionen, also kein „no such function"). Im Wettlauf antwortet
+  0.20.x dann mit 500 statt mit einer Kollision. Entfernen bei gestoppter Instanz:
+  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — eine neuere
+  Fassung legt sie beim nächsten Start wieder an.
+
 ## Owner
 
 Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens

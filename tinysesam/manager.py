@@ -17,6 +17,7 @@ import json
 import hashlib
 import html as _html
 import secrets
+import sqlite3
 import time
 import contextvars
 from typing import Any, Callable, Literal, NoReturn, Optional, cast
@@ -410,35 +411,38 @@ class TinySesam:
                     "wird dort gebaut). Für gemeinsames SSO über Subdomains cookie_domain setzen, "
                     "z.B. '.%s'.", own or "?", ", ".join(fremd),
                     ".".join(own.split(".")[-2:]) if own.count(".") >= 1 else "example.com")
-        # Kreuz-Kollisionen im Bestand: Seit R4-12 prüft `create_user` kreuzweise, aber die
-        # Datenbank hat keinen UNIQUE-Index über BEIDE Namensräume — eine Kollision aus einer
-        # älteren Fassung (oder aus zwei gleichzeitigen Registrierungen, denn Prüfung und INSERT
-        # sind nicht atomar) steht weiter drin und wird von nichts gemeldet. Sie ist nicht
-        # harmlos: `find_user` löst die Kennung dann mehrdeutig auf, und der rechtmäßige Inhaber
-        # kann ausgesperrt sein. Bereinigt wird von Hand (welches Konto den Namen behält, kann
-        # keine Bibliothek entscheiden) — gesagt wird es beim Start.
-        kollisionen = self.store.kennungs_kollisionen()
+        # Kollisionen im Kennungsraum aus dem Bestand: Neue verhindert seit 2026-09-26 die
+        # Datenbank (Trigger über die Zähl-Töpfe, `Store._trigger_sql`), aber eine aus einer
+        # älteren Fassung, aus einem rohen UPDATE oder aus einer Zeile eines fremden Schreibers
+        # steht weiter drin. Sie ist nicht harmlos: `find_user` löst die Kennung dann mehrdeutig
+        # auf, der rechtmäßige Inhaber kann ausgesperrt sein, und zwei Konten teilen sich die
+        # Sperrschwelle. Bereinigt wird von Hand (welches Konto den Namen behält, kann keine
+        # Bibliothek entscheiden) — gesagt wird es beim Start, und zwar vollständig: Bis dahin sah
+        # die Meldung nur „Name = fremde Adresse" per NOCASE, nicht `Alice`/`alice` oder zwei
+        # Schreibweisen derselben Adresse (`topf_kollisionen`).
+        kollisionen = self.store.topf_kollisionen()
         if kollisionen:
             beispiele = "; ".join(
-                f"user_id={z['name_id']} heisst '{security.fuer_log(z['kennung'])}' und ist "
-                f"zugleich E-Mail von user_id={z['mail_id']}" for z in kollisionen[:3])
+                f"Kennung '{security.fuer_log(z['kennung'])}': "
+                + ", ".join(f"user_id={i}" for i in z["ids"]) for z in kollisionen[:5])
             security.seclog.warning(
                 "%d Kennungs-Kollision(en) im Bestand: Benutzername und E-Mail sind EIN "
-                "Kennungs-Raum (find_user sucht in beiden Spalten), die Datenbank erzwingt das "
-                "aber nur je Spalte. Die Anmeldung mit dieser Kennung ist mehrdeutig, der "
-                "rechtmäßige Inhaber kann ausgesperrt sein. Betroffen: %s%s. Zu ändern ist "
-                "eine der beiden Kennungen — dafür gibt es weder im Admin-Panel noch im CLI "
-                "einen Weg, wohl aber: der Inhaber selbst auf der Konto-Seite (Selbstbedienung); "
-                "aus dem einbettenden Dienst den Benutzernamen über "
+                "Kennungs-Raum (find_user sucht in beiden Spalten, Namensvetter wie Alice/alice "
+                "teilen sich die Sperrschwelle). Neue verhindert die Datenbank; diese stammen aus "
+                "der Zeit davor und bleiben, bis eine der Kennungen geändert ist. Die Anmeldung "
+                "mit dieser Kennung ist mehrdeutig, der rechtmäßige Inhaber kann ausgesperrt "
+                "sein. Betroffen: %s%s. Zu ändern ist eine der Kennungen — dafür gibt es weder im "
+                "Admin-Panel noch im CLI einen Weg, wohl aber: der Inhaber selbst auf der "
+                "Konto-Seite (Selbstbedienung); aus dem einbettenden Dienst den Benutzernamen über "
                 "auth.change_username(user_id, neu) (prüft beide Namensräume; im Modus "
                 "login_identifier='email' folgt der Name der Adresse), die E-Mail über "
-                "store.set_email(user_id, adresse) (die neue Adresse muss in BEIDEN Spalten "
-                "frei sein — set_email prüft das nicht). Achtung bei der E-Mail: "
+                "store.set_email(user_id, adresse) (wirft sqlite3.IntegrityError, wenn die neue "
+                "Adresse schon Kennung eines anderen Kontos ist). Achtung bei der E-Mail: "
                 "store.set_email() legt die neue Adresse vorgabegemäss als UNBESTÄTIGT ab "
                 "(users.email_verified=0) — der Beleg der alten Adresse gilt nicht für eine "
                 "andere. Wer einen Beleg für die neue hat, übergibt verified=True.",
                 len(kollisionen), beispiele,
-                " (weitere folgen)" if len(kollisionen) > 3 else "")
+                " (weitere folgen)" if len(kollisionen) > 5 else "")
         # Kontonamen mit Steuer-/Formatzeichen (seit 2026-09-24 nicht mehr anlegbar) im Bestand:
         # Die Forward-Auth weist die ab, deren Zeichen die Header-Säuberung entfernen würde (sonst
         # wäre `Remote-User` ein fremder Name). Gesagt wird es beim Start, nicht erst je Anfrage.
@@ -510,6 +514,11 @@ class TinySesam:
         solche Konten teilten sich die Konto-Schwelle gegen verteiltes Raten — und wurde das eine
         entfernt (auch anonym auslösbar: Registrierung, die `gc()` abräumt), gingen die
         Fehlversuche des anderen mit. Ein solcher Namensvetter gilt deshalb als vergeben.
+
+        **Eine Vorprüfung, die Datenbank entscheidet** (seit 2026-09-26): Zwischen dieser
+        Antwort und dem Schreiben kann eine gleichzeitige Anfrage die Kennung belegen. Das
+        Schreiben weist sie dann ab (Trigger über die Zähl-Töpfe, `Store._trigger_sql`), und die
+        Aufrufer machen daraus dieselbe Antwort wie hier („vergeben").
         """
         kennung = (kennung or "").strip()
         if not kennung:
@@ -554,7 +563,12 @@ class TinySesam:
         ⚠️ **Geändert gegenüber 0.18.x:** Nur die doppelte *E-Mail* warf dort schon
         `ConfigError`. Ein doppelter *Benutzername* lief bis in die Datenbank und kam als
         `sqlite3.IntegrityError` zurück; er wird jetzt vorher abgefangen und wirft denselben
-        `ConfigError`. Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr."""
+        `ConfigError`. Wer auf `IntegrityError` fängt, fängt diesen Fall nicht mehr.
+
+        **Auch im Wettlauf** (seit 2026-09-26): Belegt eine gleichzeitige Anfrage die Kennung
+        zwischen Prüfung und Anlage, weist die Datenbank das INSERT ab — und auch das kommt als
+        derselbe `ConfigError`. `e.besitzer_id` kann dann `None` sein: wenn das andere Konto
+        schon wieder entfernt ist, bevor hier nachgesehen wird."""
         username = (username or "").strip()
         email = norm_email(email)
         if name_ungueltig(username):
@@ -582,8 +596,26 @@ class TinySesam:
                 fehler.feld = schluessel
                 fehler.besitzer_id = int(besitzer["id"])
                 raise fehler
-        uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
-                                     email_verified=email_verified)
+        try:
+            uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
+                                         email_verified=email_verified)
+        except sqlite3.IntegrityError as fehler_db:
+            # Wettlauf (G12c): Zwischen der Prüfung oben und dem INSERT hat eine gleichzeitige
+            # Anfrage die Kennung belegt, und die Datenbank weist ab (Kennungs-Trigger, UNIQUE auf
+            # Name oder Adresse). Jeder IntegrityError dieses INSERT heisst „vergeben". Welche
+            # Kennung, sagt eine zweite Prüfung — ist das andere Konto schon wieder weg, bleibt es
+            # beim Benutzernamen ohne Besitzer.
+            treffer = [(feld, schluessel, self.kennung_vergeben(kennung) if kennung else None)
+                       for feld, schluessel, kennung in (("Benutzername", "username", username),
+                                                         ("E-Mail-Adresse", "email", email))]
+            feld, schluessel, besitzer = next((t for t in treffer if t[2]), treffer[0])
+            security.seclog.warning(
+                "Konto nicht angelegt (Wettlauf): %s wurde zwischen Prüfung und Anlage "
+                "Login-Kennung von user_id=%s", feld, besitzer["id"] if besitzer else "?")
+            fehler = ConfigError(f"{feld} ist bereits vergeben")
+            fehler.feld = schluessel
+            fehler.besitzer_id = int(besitzer["id"]) if besitzer else None
+            raise fehler from fehler_db
         if password:
             self.store.set_password_hash(uid, hash_password(password))
         return uid
@@ -1817,7 +1849,13 @@ class TinySesam:
             if konto_mail == adresse and not u["email_verified"]:
                 self.store.set_email_verified(u["id"], True)
             elif not konto_mail and not self.kennung_vergeben(adresse, exclude_id=u["id"]):
-                self.store.set_email(u["id"], adresse, verified=True)
+                try:
+                    self.store.set_email(u["id"], adresse, verified=True)
+                except sqlite3.IntegrityError:
+                    # Wettlauf: inzwischen Kennung eines anderen Kontos — das Konto bleibt ohne
+                    # Adresse, wie bei der Vorprüfung (fail-closed).
+                    self.audit(f"{quelle or 'quelle'}_email_taken", str(u["username"]), None,
+                               "nachgetragen=0 wettlauf=1")
             return
         # Ein Konto mit belegter Adresse behält sie — auch eine andere als die der Quelle: Die hat
         # der Inhaber selbst bestätigt (Selbstbedienung), und ein Link bei jeder Anmeldung, der sie
@@ -2972,7 +3010,11 @@ class TinySesam:
         if self.kennung_vergeben(name, exclude_id=user_id) or norm_kennung(name) in erlaubt:
             raise ValueError(self.t("api.user_exists"))
         alt = konto["username"]
-        self.store.set_username(user_id, name)
+        try:
+            self.store.set_username(user_id, name)
+        except sqlite3.IntegrityError:
+            # Wettlauf: zwischen Prüfung und Schreiben vergeben — die Datenbank entscheidet.
+            raise ValueError(self.t("api.user_exists")) from None
         self.audit("username_changed", name, ip, f"alt={alt}")
         self.sicherheitsereignis("username_changed", user_id, alt=alt, neu=name)
         return name
@@ -3093,9 +3135,18 @@ class TinySesam:
             self.audit("email_change_reserved", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
             return "vergeben"
         alt = konto["email"] or ""
-        self.store.set_email(uid, mail, verified=True)
-        if self.cfg.login_identifier == "email" and alt and norm_email(konto["username"]) == norm_email(alt):
-            self.store.set_username(uid, mail)
+        # Adresse und (im E-Mail-Modus) der Name in EINER Transaktion: Getrennt geschrieben
+        # stand nach einem Fehlschlag des zweiten die neue Adresse neben dem alten Namen.
+        name_folgt = (self.cfg.login_identifier == "email" and bool(alt)
+                      and norm_email(konto["username"]) == norm_email(alt))
+        try:
+            self.store.adresse_wechseln(uid, mail, name_folgt=name_folgt)
+        except sqlite3.IntegrityError:
+            # Wettlauf (G12c): Die Adresse ist zwischen Prüfung und Schreiben Kennung eines
+            # anderen Kontos geworden. Dieselbe Antwort wie oben; nichts ist geändert.
+            self.audit("email_change_taken", konto["username"], ip,
+                       f"neu={mail} beim_bestaetigen=1 wettlauf=1")
+            return "vergeben"
         self.store.revoke_user_magic_tokens(uid)
         name = self._kontoname(uid)
         self.audit("email_changed", name, ip, f"alt={alt} neu={mail}")
