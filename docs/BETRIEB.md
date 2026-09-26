@@ -327,13 +327,23 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Weg (Faktor) | Was er belegt | TOTP danach (ohne Kette) | Anmerkung |
 |---|---|---|---|
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
-| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`) |
+| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_als_erstfaktor()`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
 | Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
 | Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
 | Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
 | API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) |
+
+**Die PIN als Folgefaktor** (G7, seit 2026-09-26): Nach dem ersten Faktor einer Kette fragt
+`/auth/pin` nur die PIN des Kontos der halben Sitzung, ohne Namensfeld — auch mit `pin_login=False`
+(vorher eine Sackgasse); ebenso mit voller Sitzung in einer Route-Kette. Fehlgriffe dort zählen in der
+Serie als `pin_folge`: Ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP — sie erzeugt nur, wer
+den ersten Faktor hat), die volle Anmeldung, der Passwort-Reset im Panel und `tinysesam unlock`
+schon. Fehlgriffe einer PIN als Erstfaktor (ohne Sitzung) räumt der Reset weiter (R2-2). In einer
+**nicht** strikten Kette bleibt die PIN mit `pin_login=True` zugleich Erstfaktor, auch wenn sie hinten
+steht — ohne Passwort ratbar, und der Reset räumt diese Fehlversuche; die Konfigurationsprüfung warnt
+dort. Soll sie nur Folgefaktor sein: `pin_login=False`.
 
 **Die Stärke eines Kontos ist die seines schwächsten eingeschalteten Wegs.** Ein Konto mit TOTP oder
 Passkey ist über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne zweiten Faktor

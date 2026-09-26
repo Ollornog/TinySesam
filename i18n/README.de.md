@@ -344,8 +344,9 @@ TinySesamConfig.local_accounts(          # nur Benutzername + Passwort, nirgends
   eingeloggt ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite.
 
 **Die PIN als Weg hinein ist eine bewusste Option.** Mit `pin_enabled=True` ist die PIN in der Vorgabe
-ein Erstfaktor (`pin_login=True`) — praktisch für eine allgemeine Seite, während eine Detailseite mehr
-verlangt:
+ein Erstfaktor (`pin_login=True`) — ausser eine strikte `login_chain` verlangt sie hinter einem anderen
+Faktor, dann ist sie immer nur der nächste Schritt. Praktisch für eine allgemeine Seite, während eine
+Detailseite mehr verlangt:
 
 ```python
 @app.get("/uebersicht")                                 # die PIN genügt
@@ -555,8 +556,9 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Fehlversuche in Folge, ohne Fenster** (`account_max_consecutive_failures`, Vorgabe 100): Jeder
   gescheiterte Anmeldeversuch unter einem Namen verlängert eine Serie; an der Grenze ist die Anmeldung
   gesperrt — und anders als bei den Fenster-Schwellen läuft diese Sperre nicht ab. Sie endet mit einer
-  vollständigen Anmeldung über einen anderen Weg (Passkey, Anmelde-Link, OIDC), einem Passwort-Reset,
-  einem neuen Passwort aus dem Admin-Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das
+  vollständigen Anmeldung über einen anderen Weg (Passkey, Anmelde-Link, OIDC), einem Passwort-Reset
+  (nur der Anteil der Erstfaktoren — TOTP-Fehlgriffe und die einer PIN hinter einem anderen Faktor
+  bleiben), einem neuen Passwort aus dem Admin-Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das
   Konto gibt oder nicht — die Sperre verrät also nichts. NIST SP 800-63B begrenzt Fehlversuche in
   Folge auf 100: Langsames Raten unter jeder Fenster-Schwelle läuft nicht mehr ewig.
 - **Passwortlänge nach Faktor-Lage:** Ein neues Passwort braucht `password_min_length_single_factor`
@@ -1056,7 +1058,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**53 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**54 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

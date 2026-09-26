@@ -371,13 +371,16 @@ def build_router(auth) -> APIRouter:
     if cfg.pin_enabled:
         @r.get("/auth/pin", response_class=HTMLResponse)
         def pin_page(request: Request, next: str = "", error: str = ""):
-            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) ohne Benutzerfeld;
-            für Gäste als eigenständige Seite — die Login-Seite bietet die PIN ohnehin an."""
+            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) und im Kettenschritt
+            nach dem ersten Faktor ohne Benutzerfeld; für Gäste als eigenständige Seite — die
+            Login-Seite bietet die PIN ohnehin an."""
             nxt = auth.safe_next(next, request)
-            u = auth.session_user(request)    # wie beim Absenden: ein API-Key ist ein Gast
+            # Wie beim Absenden: ein API-Key ist ein Gast. Die halbe Sitzung (erster Faktor ja,
+            # Kette offen) liest `pending_user` — wie `/auth/totp` (G7, N1).
+            u = auth.session_user(request) or auth.pending_user(request)
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
-            if not cfg.pin_login:
+            if not cfg.pin_als_erstfaktor():
                 # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
                 return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(nxt)}", 303)
             return auth.render_page("pin", request=request, next=nxt, error=error)
@@ -395,32 +398,49 @@ def build_router(auth) -> APIRouter:
             # `pin_login=False` unten griff nicht, geprüft wurde die PIN des Key-Kontos, und
             # `apply_factor` legte mangels Sitzung eine neue, volle an: Automaten-Key + PIN
             # ergaben eine interaktive Sitzung samt Admin-Flag, das der Key allein nie trägt.
-            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_login`.
+            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_als_erstfaktor()`.
             me = auth.session_user(request)
-            page = "pin" if me else "login"
+            # Der Kettenschritt: erster Faktor erbracht, die Sitzung hängt noch (`pending_user`,
+            # wie `/auth/totp`). Bis 2026-09-26 lief er über den Gästeweg — mit `pin_login=False`
+            # war eine Kette `password → pin` darum eine Sackgasse (404), und seine Fehlgriffe
+            # buchten wie die eines Erstfaktors, die ein Selbstbedienungs-Reset räumt (G7).
+            # Nennt das Formular ein ANDERES Konto, bleibt es ein Identitätswechsel über den
+            # Gästeweg; eigene PIN-Seiten, die den Namen mitschicken, bleiben im Kettenschritt.
+            halb = None if me else auth.pending_user(request)
+            if halb and username:
+                gemeint = auth.find_user(username)
+                if not gemeint or gemeint["id"] != halb["id"]:
+                    halb = None
+            folge = me or halb      # die PIN steht HINTER einem schon erbrachten Faktor
+            page = "pin" if folge else "login"
 
             def fail(msg, status):
                 ctx = {"next": nxt, "error": msg}
-                if me:
-                    ctx["username"] = me["username"]
+                if folge:
+                    ctx["username"] = folge["username"]
                 return auth.render_page(page, status=status, request=request, **ctx)
 
-            if not me and not cfg.pin_login:
-                raise HTTPException(404)          # PIN ist kein Erstfaktor
-            if not pin or (not me and not username):
+            if not folge and not cfg.pin_als_erstfaktor():
+                # PIN ist kein Erstfaktor — abgeschaltet oder, in einer strikten Kette hinter
+                # einem anderen Faktor, nie mehr erfüllbar (G7: sonst ein Orakel ohne Passwort).
+                raise HTTPException(404)
+            if not pin or (not folge and not username):
                 return fail(auth.t("err.required"), 400)
             if not auth.rate_ok(ip):
                 return fail(auth.t("err.rate"), 429)
-            ident = me["username"] if me else username
+            ident = folge["username"] if folge else username
             if not ident:
                 return fail(auth.t("err.credentials"), 401)
             # Login- und PIN-Topf in einem atomaren Schritt (R3-7): Eine vierstellige PIN
-            # ist das dankbarste Ziel einer parallelen Salve.
-            versuch = auth.versuch_beginnen(ident, ip, "pin")
+            # ist das dankbarste Ziel einer parallelen Salve. Hinter einem erbrachten Faktor
+            # bucht die Serie unter eigener Art: Diese Fehlgriffe erzeugt nur, wer den ersten
+            # Faktor hat, und ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP, G7).
+            versuch = auth.versuch_beginnen(ident, ip, "pin",
+                                            serie_art=auth.SERIE_PIN_FOLGE if folge else None)
             if versuch is None:
                 return fail(auth.t("err.locked_serie" if auth._serie_voll(ident) else "err.locked"), 429)
-            if me:
-                u = auth.get_user(me["id"]) if auth.verify_user_pin(me["id"], pin) else None
+            if folge:
+                u = auth.get_user(folge["id"]) if auth.verify_user_pin(folge["id"], pin) else None
             else:
                 u = auth.check_pin(ident, pin)
             auth.record_login(ident, ip, bool(u), "pin", versuch=versuch)
@@ -1195,7 +1215,13 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/auth/account'))}", 303)
-            return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
+            # Die Konto-Seite fragt, welche Faktoren ein Konto pflegt, nicht, womit die Login-Seite
+            # beginnt: Eine PIN, die eine strikte Kette nur als Folgefaktor zulässt (G7), braucht
+            # ihre Sektion trotzdem, ebenso eine, die die Kette verlangt (mit `pin_login=False`).
+            methoden = cfg.enabled_methods()
+            if cfg.pin_enabled and (cfg.pin_login or "pin" in (cfg.login_chain or [])) and "pin" not in methoden:
+                methoden.append("pin")
+            return auth.render_page("account", request=request, user=u, methods=methoden,
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
                                     recovery_warn=auth.RECOVERY_WARNSCHWELLE,

@@ -68,7 +68,9 @@ class TinySesamConfig:
     pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
     pin_login: bool = True                # PIN als Erstfaktor auf der Login-Seite anbieten.
                                           # False = PIN existiert, dient aber NUR als Zusatzfaktor
-                                          # (Route-Kette) bzw. Step-up für sensible Bereiche.
+                                          # (Kettenschritt, Route-Kette) bzw. Step-up für sensible
+                                          # Bereiche. Verlangt eine strikte login_chain die PIN
+                                          # hinter einem anderen Faktor, ist sie dort nie Erstfaktor.
     pin_min_length: int = 4               # Mindestlänge beim Setzen einer PIN
     # Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat
     # (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche.
@@ -670,12 +672,13 @@ class TinySesamConfig:
         return fehler, warnungen
 
     def enabled_methods(self) -> list[str]:
-        """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier
-        bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar."""
+        """Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann
+        (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up
+        nutzbar."""
         m = []
         if self.password_enabled:
             m.append("password")
-        if self.pin_enabled and self.pin_login:
+        if self.pin_als_erstfaktor():
             m.append("pin")
         if self.passkey_enabled:
             m.append("passkey")
@@ -686,3 +689,22 @@ class TinySesamConfig:
         if self.magiclink_enabled:
             m.append("magic")
         return m
+
+    def pin_als_erstfaktor(self) -> bool:
+        """Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne
+        Sitzung?
+
+        Ja mit `pin_enabled` und `pin_login` — ausser eine strikte `login_chain` verlangt die PIN
+        hinter einem anderen Faktor (G7). Dort erfüllt eine zuerst eingegebene PIN die Kette nie
+        mehr, die Reihenfolge stimmt danach nicht (`_chain_satisfied`). Der Gästeweg nützte also
+        nur Ratenden: Er antwortete ohne das Passwort auf eine falsche PIN mit 401, auf die richtige
+        mit 303. Und über ihn wich jemand mit Postfach und Passwort auf die Art der Serie aus, die
+        ein Selbstbedienungs-Reset räumt. Der PIN-Schritt NACH dem ersten Faktor (halbe Sitzung)
+        hängt an keinem dieser Schalter.
+
+        In einer NICHT strikten Kette bleibt die PIN mit `pin_login` Erstfaktor, auch wenn sie
+        hinten steht — dazu warnt die Konfigurationsprüfung."""
+        if not (self.pin_enabled and self.pin_login):
+            return False
+        kette = list(self.login_chain or [])
+        return not (self.login_chain_strict and "pin" in kette and kette[0] != "pin")

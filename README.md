@@ -345,7 +345,8 @@ TinySesamConfig.local_accounts(          # username + password only, no email an
   signed in only gets the missing field, not the whole login page again.
 
 **A PIN as the way in is a deliberate option.** With `pin_enabled=True` the PIN is a first factor by
-default (`pin_login=True`) — handy for a general page, while a detail page asks for more:
+default (`pin_login=True`) — unless a strict `login_chain` asks for it after another factor, where it
+only ever is the next step. Handy for a general page, while a detail page asks for more:
 
 ```python
 @app.get("/overview")                                   # the PIN is enough
@@ -546,7 +547,8 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Consecutive failures, no window** (`account_max_consecutive_failures`, default 100): every
   failed sign-in attempt under a name extends a series; at the limit sign-in is locked — and unlike
   the window thresholds this lock does not expire. It ends with a successful full sign-in over
-  another path (passkey, sign-in link, OIDC), a password reset, a new password from the admin panel
+  another path (passkey, sign-in link, OIDC), a password reset (only the first-factor share — failed
+  TOTP codes and a PIN entered after another factor stay), a new password from the admin panel
   or `tinysesam unlock`. Counted per name whether the account exists or not, so the lock reveals
   nothing. NIST SP 800-63B caps consecutive failures at 100: slow guessing below every window
   threshold no longer runs forever.
@@ -1030,7 +1032,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**53 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**54 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

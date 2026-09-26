@@ -821,13 +821,19 @@ r = c8d.post("/auth/login", data={"username": "opfer", "password": "Geheim-Opfer
              follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"].startswith("/auth/totp"), r.headers.get("location")
 _halb8 = c8d.cookies.get("tinysesam_session")
+# Seit G7 (2026-09-26) ist eine halbe Sitzung im Cookie kein Gast mehr: `/auth/pin` ist dann ihr
+# Kettenschritt und prüft die PIN IHRES Kontos (`pending_user`, wie `/auth/totp`). Die Key-PIN des
+# Chefs ist für „opfer" falsch → 401 statt 404; worum es hier geht, bleibt: Der Key zählt nicht,
+# Cookie und Sitzung bleiben, wie sie waren, und niemand bekommt eine neue.
 r = c8d.post("/auth/pin", data={"pin": "4711", "next": "/", "_csrf": c8d.cookies.get("tinysesam_csrf")},
              headers=KEY8, follow_redirects=False)
-assert r.status_code == 404, (r.status_code, r.text[:120])
+assert r.status_code == 401, (r.status_code, r.text[:120])
 assert c8d.cookies.get("tinysesam_session") == _halb8, "das Cookie der halben Sitzung wurde ersetzt"
 _s8 = auth8.store.get_session(_halb8)
 assert _s8 and _s8["user_id"] == uid8_opfer and not _s8["mfa_ok"], "die halbe Sitzung hat sich verändert"
-ok("0.20.1: halbe fremde Sitzung + Key + PIN → 404, Cookie und Sitzung unverändert")
+assert not any(z["user_id"] == uid8 for z in auth8.store.list_sessions()), "das Key-Konto hat eine Sitzung"
+ok("0.20.1: halbe fremde Sitzung + Key + PIN → Kettenschritt der halben Sitzung (401), Cookie und "
+   "Sitzung unverändert, keine für das Key-Konto")
 
 # (e) Der legitime Weg bleibt: volle Sitzung, PIN als Zusatzfaktor bei pin_login=False.
 c8e = TestClient(app8)

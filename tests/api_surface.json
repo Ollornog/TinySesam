@@ -145,7 +145,7 @@
     "verify_user_pin": "(user_id, pin) -> 'bool'",
     "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
     "version": "() -> 'str'",
-    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'"
+    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None) -> 'Optional[int]'"
   },
   "TinySesam.eigenschaften": {
     "csrf_cookie_name": "() -> 'str'",
@@ -164,6 +164,7 @@
     "RECOVERY_BYTES": "7",
     "RECOVERY_WARNSCHWELLE": "3",
     "SEITEN": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')",
+    "SERIE_PIN_FOLGE": "'pin_folge'",
     "SICHERHEITSEREIGNISSE": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')",
     "TOKEN_PATHS": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
   },
@@ -333,6 +334,7 @@
     "entra_id": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
     "local_accounts": "(**overrides)",
     "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
+    "pin_als_erstfaktor": "() -> 'bool'",
     "pruefen": "() -> 'list[str]'"
   },
   "exporte": [

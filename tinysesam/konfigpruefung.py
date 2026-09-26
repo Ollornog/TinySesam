@@ -271,6 +271,20 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             " — die Kette ist unerfüllbar, niemand kommt über diesen Schritt hinaus.")
     if "totp" in kette and not _an(config, "totp_enabled"):
         fehler.append("login_chain verlangt 'totp', aber totp_enabled=False — unerfüllbar.")
+    # Eine PIN hinter einem anderen Faktor ist in einer NICHT strikten Kette mit `pin_login`
+    # zugleich Erstfaktor (`pin_als_erstfaktor`): Wer mit ihr beginnt, erfüllt die Kette danach
+    # mit dem Passwort. Dann rät jeder die PIN ohne das Passwort, und ein Selbstbedienungs-Reset
+    # räumt diese Fehlgriffe aus der Serie (R2-2) — die Konfiguration sagt „Folgefaktor", das
+    # Verhalten „Erstfaktor" (G7). In einer strikten Kette schliesst TinySesam den Gästeweg selbst.
+    if ("pin" in kette and kette[0] != "pin" and _an(config, "pin_enabled")
+            and _an(config, "pin_login") and not getattr(config, "login_chain_strict", True)):
+        warnungen.append(
+            f"login_chain={kette} mit login_chain_strict=False nennt 'pin' hinter einem anderen "
+            "Faktor, und pin_login=True bietet die PIN zugleich als Erstfaktor an: Wer mit ihr "
+            "beginnt, rät sie ohne das Passwort, und ein Selbstbedienungs-Reset räumt diese "
+            "Fehlversuche aus der Serie (account_max_consecutive_failures). Soll die PIN nur "
+            "Folgefaktor sein: pin_login=False — der PIN-Schritt nach dem ersten Faktor bleibt "
+            "erreichbar.")
 
     # Hier stand kurzzeitig „resource_locks_enabled braucht pin_enabled". Das war falsch und
     # eine eigene Suite hat es sofort widerlegt: Eine gesperrte Ressource wird mit ihrem EIGENEN

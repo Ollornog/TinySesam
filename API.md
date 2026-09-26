@@ -598,7 +598,7 @@ Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
 
-### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'`
+### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None) -> 'Optional[int]'`
 
 Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 
@@ -626,7 +626,7 @@ Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bi
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
-Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
+Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
 
 ### `TinySesamConfig.entra_id(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
 
@@ -639,6 +639,10 @@ Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
 ### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
 
 Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
+
+### `TinySesamConfig.pin_als_erstfaktor() -> 'bool'`
+
+Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne Sitzung?
 
 ### `TinySesamConfig.pruefen() -> 'list[str]'`
 
@@ -670,4 +674,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-146 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+146 Methoden, 3 Eigenschaften, 7 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.

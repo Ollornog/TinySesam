@@ -32,6 +32,13 @@ auffällt:
   Verzeichnis — und räumt die Zähler unter ihr auch ohne Konto; Rückgabe 1 nur noch, wenn dort nichts
   stand (G5). Fehlversuche, die vor einem Umbenennen oder Adresswechsel unter der neuen Kennung
   gezählt wurden, räumt die nächste Anmeldung nicht mehr weg; sie verfallen mit dem Sperrfenster (G2).
+- **PIN hinter einem anderen Faktor** (G7): Verlangt eine strikte `login_chain` die PIN hinter einem
+  anderen Faktor (`["password", "pin"]`), zeigt die Login-Seite kein PIN-Feld mehr, und `/auth/pin`
+  antwortet ohne Sitzung 404 — der Weg führte nie zur vollen Sitzung. **`pin_login=False` mit so einer
+  Kette funktioniert jetzt** (vorher Sackgasse). Fehlgriffe im PIN-Schritt nach dem ersten Faktor hebt
+  „Passwort vergessen" nicht mehr auf (wie bei TOTP), der Betreiber schon (Panel-Reset, `tinysesam
+  unlock`). Eine App, die unter so einer Kette eine Route-Kette mit der PIN zuerst für Gäste nutzt,
+  verliert diesen Einstieg.
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -229,6 +236,30 @@ auffällt:
   volle Anmeldung, Panel-Reset, `tinysesam passwd` und `unlock` räumen ihn mit
   (`store.zaehl_kennungen`) — nicht, wenn er lokal einem anderen Konto gehört. `unlock` nimmt die
   Kennung wie eingetippt und räumt auch ohne Konto (Bestand, in dem der Name noch nicht vermerkt ist).
+- **Die PIN hinter einem anderen Faktor ist ein Folgefaktor (G7).** Die Serie (B2-6) zählt je Art,
+  und ein Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren (R2-2). Die Art war die
+  Methode — sie kannte die Stellung nicht: In einer Kette `password → pin` buchten die Fehlgriffe des
+  PIN-Schritts wie die eines Erstfaktors, und wer Postfach und Passwort hatte, bekam je Reset eine
+  frische Serie gegen die PIN. Jetzt entscheidet der Weg: Eine PIN hinter einem schon erbrachten
+  Faktor — halbe Sitzung im Kettenschritt, volle in einer Route-Kette — bucht unter `pin_folge` und
+  bleibt nach dem Reset stehen wie TOTP; eine PIN als Erstfaktor (ohne Sitzung) bucht weiter unter
+  `pin`, die räumt der Reset. Die volle Anmeldung, der Panel-Reset und `tinysesam unlock` räumen
+  beide. Fenster und PIN-Topf zählen unverändert als `pin`. Dazu zwei Befunde am selben Weg:
+  **N1** — mit `pin_login=False` war eine Kette `password → pin` eine Sackgasse: Der PIN-Schritt lief
+  über den Gästeweg, und der antwortete 404. Jetzt erkennt `/auth/pin` die halbe Sitzung wie
+  `/auth/totp` und fragt nur die PIN (ohne Namensfeld); `pin_login` gilt nur für den Gästeweg.
+  **N2** — in einer strikten Kette `password → pin` antwortete der Gästeweg ohne Passwort auf eine
+  falsche PIN mit 401, auf die richtige mit 303: ein Orakel, und eine zuerst eingegebene PIN erfüllt
+  die strikte Kette ohnehin nie. Die PIN ist dort kein Erstfaktor mehr
+  (`TinySesamConfig.pin_als_erstfaktor()`, gelesen von Login-Seite und `/auth/pin`). In einer NICHT
+  strikten Kette bleibt sie es; die Konfigurationsprüfung warnt dann und rät zu `pin_login=False`.
+  Nennt das Formular im Kettenschritt ein anderes Konto, bleibt es ein Identitätswechsel über den
+  Gästeweg (bei geschlossenem: 404). Die Konto-Seite zeigt ihre PIN-Sektion weiter, wo die Login-Seite
+  die PIN nicht mehr anbietet, und auch mit `pin_login=False`, wenn die Kette eine PIN verlangt. Neu
+  für eigene PIN-Seiten: `versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`. Der Sperrhinweis per
+  Mail nennt bei der Serie auch den Betreiber als Weg hinaus. **Rückweg:** Eine ältere Fassung zählt
+  `pin_folge` mit und räumt es nur mit einer vollen Anmeldung oder durch den Betreiber — strenger.
+  Test: `tests/test_pin_folge.py`.
 - **LDAP: eine Verzeichnis-Anmeldung räumt keine fremden Zähler mehr (G5-N1).** Ein Filter über
   `mail` löst die Adresse eines lokalen Kontos auch zu einem Dritten auf, dessen `mail`-Attribut so
   lautet. Jede Anmeldung des Dritten setzte das Kontofenster der Inhaberin zurück — verteiltes Raten
@@ -247,11 +278,11 @@ auffällt:
   90 Tagen Ruhe, ausgelöste nie. Geprüft und vorgebucht wird die Serie **in derselben Transaktion**
   wie der Versuch (eine parallele Salve an der Grenze bekommt einen Versuch, nicht einen je Anfrage);
   ein richtiger erster Faktor nimmt nur seine eigene Vorbuchung zurück, ein Verzeichnis-Ausfall
-  zählt nicht. Der **Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren** (Passwort, PIN —
-  die kann jeder erzeugen, auch ein Fremder ohne Geheimnis); **TOTP-Fehlgriffe bleiben stehen**
-  (derselbe Grund wie R4-13: Das Postfach beweist den zweiten Faktor nicht, und TOTP-Fehlgriffe
-  erzeugt nur, wer das Passwort schon hat). Der Betreiber räumt ganz: Passwort-Reset im Panel,
-  `tinysesam unlock`.
+  zählt nicht. Der **Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren** (Passwort, PIN
+  als Erstfaktor — die kann jeder erzeugen, auch ein Fremder ohne Geheimnis); **TOTP-Fehlgriffe
+  bleiben stehen**, ebenso die einer PIN hinter einem schon erbrachten Faktor (G7) — derselbe Grund
+  wie R4-13: Das Postfach beweist den zweiten Faktor nicht, und diese Fehlgriffe erzeugt nur, wer den
+  ersten schon hat. Der Betreiber räumt ganz: Passwort-Reset im Panel, `tinysesam unlock`.
 - **Passwort-Mindestlänge 15, wenn das Passwort allein anmelden kann (B2-4, NIST SP 800-63B).** Neue
   Schwelle `password_min_length_single_factor` (Panel, Vorgabe 15). Sie gilt, solange die globale
   Kette keinen zweiten Faktor erzwingt — also in der Vorgabe — **und auch dann, wenn Konten den

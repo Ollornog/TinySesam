@@ -2176,7 +2176,8 @@ class TinySesam:
                 return True
         return False
 
-    def versuch_beginnen(self, username, ip, method, auch_pin: bool = False) -> Optional[int]:
+    def versuch_beginnen(self, username, ip, method, auch_pin: bool = False,
+                         serie_art: Optional[str] = None) -> Optional[int]:
         """Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 
         Rückgabe: eine Versuchs-ID, die an `record_login(..., versuch=id)` zurückgeht, oder
@@ -2186,6 +2187,10 @@ class TinySesam:
 
         `auch_pin=True` hängt den PIN-Topf mit an — für die Step-up-Seite, auf der eine PIN
         bestätigt, deren Versuche aber im Topf `reauth` landen.
+
+        `serie_art` bucht den Versuch in der Serie (B2-6) unter einer anderen Art als der
+        Methode — `SERIE_PIN_FOLGE` für eine PIN, die HINTER einem schon erbrachten Faktor steht
+        (Kettenschritt, Route-Kette; G7). Fenster und Töpfe zählen weiter unter `method`.
         """
         regeln = self._regeln(username, ip, method)
         if auch_pin:
@@ -2195,14 +2200,17 @@ class TinySesam:
         # parallele Salve an der Grenze durfte dann jeder Anfrage einen Versuch lang raten.
         serie = None
         if method not in security.NICHT_LOGIN_METHODEN:
-            serie = (norm_kennung(username), method, self.sec("account_max_consecutive_failures"))
+            serie = (norm_kennung(username), serie_art or method, self.sec("account_max_consecutive_failures"))
         versuch, antwort = self.store.reserve_attempt(self._topf(username, method), ip, method,
                                                       _gueltige_regeln(regeln), serie=serie)
         if versuch is None:
             self._abgewiesen(username, ip, antwort,
                              login=method not in security.NICHT_LOGIN_METHODEN)
         elif serie is not None:
-            self._serie_vorbuchungen[versuch] = (serie[0], method, antwort)
+            # Die Art, unter der gebucht WURDE (`serie[1]`), nicht die Methode: Sonst senkte ein
+            # richtiger Folgeschritt die Art `pin` und liesse seine Vorbuchung unter `pin_folge`
+            # stehen (G7).
+            self._serie_vorbuchungen[versuch] = (serie[0], serie[1], antwort)
             # Gedeckelt: Ein Versuch, den nie jemand abschliesst (Ausnahme mitten in der Route),
             # bliebe sonst für immer liegen. Wer herausfällt, zählt als Fehlversuch — strenger,
             # nie lockerer.
@@ -4163,7 +4171,8 @@ class TinySesam:
             betreff = "Gesperrte Anmeldung bei deinem Konto"
             text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
                     f"die Anmeldung ist deshalb vorübergehend gesperrt"
-                    + (" — bis du dein Passwort zurücksetzt" if grund == "lockout_serie" else "")
+                    + (" — bis du dein Passwort zurücksetzt oder der Betreiber sie freigibt"
+                       if grund == "lockout_serie" else "")
                     + f".\n\nZeitpunkt: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(zeit))}\n"
                     f"Adresse der Versuche: {security.fuer_log(ip) or 'unbekannt'}\n\n"
                     "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.")
@@ -4313,9 +4322,14 @@ class TinySesam:
     #: ein Konto, dessen Inhaberin nicht einmal eine PIN hat. Blieben sie stehen, hülfe der Reset
     #: nicht mehr, zu dem die Meldung rät (Angriff auf die Fixes, R2-2). TOTP-Fehlgriffe dagegen
     #: erzeugt nur, wer das Passwort schon hat; die räumt nur eine vollständige Anmeldung oder der
-    #: Betreiber (R4-13). Grenze: In einer Kette `password → pin` ist die PIN ein ZWEITER Faktor,
-    #: ihre Fehlgriffe räumt der Reset trotzdem mit — die Art kennt die Stellung nicht.
+    #: Betreiber (R4-13). Ebenso eine PIN HINTER einem schon erbrachten Faktor (Kettenschritt der
+    #: halben Sitzung, Route-Kette der vollen): Sie bucht unter `SERIE_PIN_FOLGE` und bleibt stehen
+    #: wie TOTP (G7). Bis 2026-09-26 kannte die Art die Stellung nicht — in einer Kette
+    #: `password → pin` räumte der Reset die Fehlgriffe des zweiten Faktors mit.
     _SERIE_RESET_ARTEN = ("password", "pin")
+    #: Die Art der Serie für eine PIN hinter einem schon erbrachten Faktor (G7). `login_attempt`
+    #: und der PIN-Topf zählen sie weiter als `pin`; nur der Selbstbedienungs-Reset unterscheidet.
+    SERIE_PIN_FOLGE = "pin_folge"
 
     def sperre_aufheben(self, user_id, methoden=None) -> int:
         """Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
