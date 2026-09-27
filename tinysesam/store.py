@@ -67,10 +67,19 @@ CREATE TABLE IF NOT EXISTS users (
     mail_versuch_ab INTEGER,
     name_audit_ab   INTEGER,
     mail_audit_ab   INTEGER,
+    -- Aus welcher föderierten Quelle stammt der Name ('oidc', 'saml', 'ldap')? Gesetzt, wenn die
+    -- Quelle das Konto anlegt; NULL = vom Betreiber vergeben, selbst gewählt oder Bestand von vor
+    -- dieser Spalte. Ein Name aus einer Quelle sagt nichts darüber, wer in einer ANDEREN so heisst:
+    -- `preferred_username` oder `uid` wählt man bei einem IdP mit Selbstregistrierung selbst. Eine
+    -- Anmeldung über eine andere Quelle bindet dieses Konto deshalb nie über den Namen
+    -- (`_nachbindung_grund`, Angriffsrunde 2026-09-26); dieselbe Quelle darf ihren Platzhalter
+    -- weiter durch die echte Kennung ersetzen. Ein Umbenennen setzt sie zurück.
+    name_quelle     TEXT,
     -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
     -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
     -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
-    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle.
+    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle
+    -- (dann sagt `name_quelle`, aus welcher).
     name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
@@ -744,7 +753,10 @@ class Store:
                       ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
                       # 0 für den Bestand; wer sich registriert oder selbst umbenannt hat, trägt
                       # es unten einmal nach (`NAME_SELBST_NACHGETRAGEN`, G2-N).
-                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0")],
+                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                      # NULL für den Bestand; wo die Herkunft belegt ist, unten einmal nachgetragen
+                      # (`NAME_QUELLE_NACHGETRAGEN`, Angriffsrunde 2026-09-26).
+                      ("name_quelle", "TEXT")],
             # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
             "federated_identity": [("name_topf", "TEXT")],
             # 0 für den Bestand: Jede vorhandene Zeile ist ein abgeschlossener Versuch (G9).
@@ -858,6 +870,9 @@ class Store:
             if self.db.execute("SELECT 1 FROM setting WHERE key=?",
                                (self.NAME_SELBST_NACHGETRAGEN,)).fetchone() is None:
                 self._name_selbst_nachtragen()
+            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
+                               (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
+                self._name_quelle_nachtragen()
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -1050,6 +1065,47 @@ class Store:
             "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                         (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
+
+    #: Setting-Schlüssel: Ist `users.name_quelle` für den Bestand nachgetragen (Angriffsrunde 2026-09-26)?
+    NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
+
+    #: Wie weit Anlage und Bindung einer Quelle auseinanderliegen dürfen, damit die Bindung als „die
+    #: Quelle hat das Konto angelegt" gilt (`_name_quelle_nachtragen`). Beim Anlegen stehen beide in
+    #: derselben Anmeldung, ohne Verzeichnisaufruf dazwischen — Sekundenbruchteile.
+    ANLAGE_TOLERANZ_SEC = 2
+
+    def _name_quelle_nachtragen(self) -> None:
+        """`users.name_quelle` für den Bestand einmal nachtragen, wo die Herkunft belegt ist (ohne
+        Commit, unter `_lock`, Teil von `_migrate`).
+
+        * **OIDC:** Jede Zeile in `oidc_identity` hat seit v0.1 der Callback beim ANLEGEN des Kontos
+          geschrieben — er verknüpft nie ein vorhandenes. Das Konto trägt also den Namen des Providers.
+        * **LDAP/SAML:** Eine Bindung (auch der Platzhalter), die mit der Anlage des Kontos entstand
+          (`gebunden_at` höchstens `ANLAGE_TOLERANZ_SEC` vor oder nach `created_at`). Eine spätere
+          Nachbindung zählt nicht — dann gab es das Konto schon, und sein Name kam von woanders.
+
+        Ausgenommen: Service-Konten und selbst gewählte Namen (der Merker oben trägt sie schon).
+        Konten von vor den Kennungen (F-11, bis 0.19) haben keine Bindung aus der Anlage und bleiben
+        NULL — für sie bleibt die Frist (`federation_name_binding_days`). Grenze in die sichere
+        Richtung: Legt der Betreiber ein Konto an und bindet es binnen zwei Sekunden, gilt es als von
+        der Quelle angelegt; eine andere Quelle bindet es dann nur, wenn er sie öffnet
+        (`loese_fremde_bindung`).
+
+        Genau einmal, am Merker `NAME_QUELLE_NACHGETRAGEN` im selben Commit: Liefe es bei jedem Start,
+        bekäme ein vom Betreiber umbenanntes Konto seine Quelle zurück."""
+        self.db.execute(
+            "UPDATE users SET name_quelle = 'oidc' WHERE name_quelle IS NULL AND is_service = 0 "
+            "AND name_selbst_gewaehlt = 0 AND id IN (SELECT user_id FROM oidc_identity)")
+        aus_anlage = ("FROM federated_identity f WHERE f.user_id = users.id "
+                      "AND abs(f.gebunden_at - users.created_at) <= ?")
+        self.db.execute(
+            f"UPDATE users SET name_quelle = (SELECT f.quelle {aus_anlage} "
+            "ORDER BY f.gebunden_at, f.quelle LIMIT 1) "
+            "WHERE name_quelle IS NULL AND is_service = 0 AND name_selbst_gewaehlt = 0 "
+            f"AND EXISTS (SELECT 1 {aus_anlage})",
+            (self.ANLAGE_TOLERANZ_SEC, self.ANLAGE_TOLERANZ_SEC))
+        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                        (self.NAME_QUELLE_NACHGETRAGEN, str(_now())))
 
     #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
     #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
@@ -1346,7 +1402,8 @@ class Store:
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
-                    is_service=False, email_verified=True, name_selbst_gewaehlt=False) -> int:
+                    is_service=False, email_verified=True, name_selbst_gewaehlt=False,
+                    name_quelle=None) -> int:
         """Ein Konto anlegen (Rohbaustein; die Prüfungen macht `TinySesam.create_user`).
 
         Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
@@ -1356,18 +1413,19 @@ class Store:
 
         Name und Adresse gehören dem Konto ab dieser Anweisung: Die Wasserlinien (G2) entstehen im
         selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt. Ebenso der
-        Merker `name_selbst_gewaehlt` (G2-N) — zwischen Anlage und Merker liegt keine Anmeldung, die
-        das Konto über den Namen binden könnte."""
+        Merker `name_selbst_gewaehlt` (G2-N) und die Herkunft des Namens (`name_quelle`) — zwischen
+        Anlage und Merker liegt keine Anmeldung, die das Konto über den Namen binden könnte."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
             "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
-            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt) VALUES (?,?,?,?,?,?,?,?,?,?,"
-            f"{self.WL_VERSUCH},{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT},?)",
+            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt, name_quelle) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            f"{self.WL_VERSUCH},{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
-             norm_kennung(username), norm_kennung(mail), 1 if name_selbst_gewaehlt else 0))
+             norm_kennung(username), norm_kennung(mail), 1 if name_selbst_gewaehlt else 0,
+             name_quelle or None))
         return cur.lastrowid
 
     def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
@@ -1420,11 +1478,13 @@ class Store:
         Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert.
 
         `selbst_gewaehlt` setzt den Merker `users.name_selbst_gewaehlt` (G2-N) in derselben
-        Transaktion; `None` lässt ihn, wie er ist."""
+        Transaktion und löscht die Herkunft `users.name_quelle`: Der neue Name stammt von der Person
+        oder vom Betreiber, nicht mehr aus der Quelle, die das Konto angelegt hat. `None` lässt
+        beide, wie sie sind."""
         name = str(username or "").strip()
         schritte = self._kennung_setzen(user_id, "username", name, norm_kennung(name))
         if selbst_gewaehlt is not None:
-            schritte.append(("UPDATE users SET name_selbst_gewaehlt=? WHERE id=?",
+            schritte.append(("UPDATE users SET name_selbst_gewaehlt=?, name_quelle=NULL WHERE id=?",
                              (1 if selbst_gewaehlt else 0, user_id)))
         self._umschreiben(schritte)
 
@@ -3305,14 +3365,22 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
+    #: Was einen Bestätigungsantrag aus LDAP/SAML für den Tag erledigt (`quellmail_seit`): der
+    #: zugestellte Link und die Abweisung einer vergebenen oder reservierten Adresse.
+    QUELLMAIL_ERLEDIGT = ("federation_email_confirm", "email_change_taken", "email_change_reserved")
+
     def quellmail_seit(self, user_id, seit) -> bool:
-        """Ging seit `seit` (Unix-Sekunden) ein Bestätigungslink für eine Adresse aus LDAP/SAML an
-        dieses Konto hinaus (G12a)? Gezählt wird die Audit-Zeile `federation_email_confirm`, die
-        erst NACH dem erfolgreichen Versand entsteht, mit `konto=<id>` vorn im Detail — über
+        """Ist seit `seit` (Unix-Sekunden) ein Bestätigungsantrag für eine Adresse aus LDAP/SAML an
+        diesem Konto erledigt? Zugestellt (G12a: die Zeile `federation_email_confirm`, die erst NACH
+        dem erfolgreichen Versand entsteht) oder abgewiesen, weil die Adresse vergeben oder
+        reserviert ist (`email_change_taken`/`_reserved` aus diesem Weg, Angriffsrunde 2026-09-26 —
+        sonst schrieb jeder Worker seine eigene Zeile, und die Kontoseite zählte mit). Erkannt am
+        Detail, das mit `konto=<id> ` beginnt; die Selbstbedienung schreibt es nicht. Über
         `idx_audit_ts`, in der Datenbank und damit über alle Worker und jeden Neustart hinweg.
         Die Id statt des Namens: Ein Umbenennen setzt das Tageskontingent nicht zurück."""
-        return bool(self._one("SELECT 1 FROM audit WHERE ts >= ? AND event = 'federation_email_confirm' "
-                              "AND detail LIKE ? LIMIT 1", (int(seit), f"konto={int(user_id)} %")))
+        return bool(self._one(
+            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
+            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"konto={int(user_id)} %")))
 
     def offener_token(self, user_id, purpose, email) -> bool:
         """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an

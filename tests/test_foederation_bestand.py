@@ -4,7 +4,8 @@ Konten aus der Zeit vor den Kennungen (F-11) binden sich bei der nächsten Anmel
 über ihren Namen (Lage 4). Bis 2026-09-26 ohne jede Grenze: Ein ruhendes Konto — jemand ist
 ausgeschieden — fiel samt Admin-Recht an die nächste Person, die im Verzeichnis denselben Namen
 bekommt (G1). Und ein lokales Konto, das sich selbst nach jemandem aus dem Verzeichnis benannte,
-bekam bei dessen Anmeldung Kennung und Gruppen (G2-N).
+bekam bei dessen Anmeldung Kennung und Gruppen (G2-N). Die Angriffsrunde 2026-09-26 fand dasselbe
+über einen Namen, den OIDC oder SAML beim Anlegen mitbrachte (a1-01, `users.name_quelle`).
 
 Gemessen wird die Wirkung: wer nach einer Anmeldung in welchem Konto landet, welche Bindung steht,
 welche Rolle das Konto trägt, was im Audit- und Sicherheits-Log steht — dazu die Bestandsbindung
@@ -21,6 +22,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -33,6 +35,7 @@ from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import konfigpruefung as _kp  # noqa: E402
 from tinysesam.errors import ConfigError  # noqa: E402
 from tinysesam.ldap_ import LDAPClient, VerzeichnisNichtErreichbar  # noqa: E402
+from tinysesam.oidc import OIDCClient  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
 from tinysesam.store import SCHEMA, Store, jetzt  # noqa: E402
 from _kit.report import Report  # noqa: E402
@@ -324,6 +327,134 @@ c2.post("/auth/login", data={"username": "konrad", "password": PW}, follow_redir
 antwort = c2.post("/auth/account/username", json={"username": "karla"})
 r.check("Umbenennen über die Konto-Seite (/auth/account/username): Merker 1",
         antwort.status_code == 200 and _flag(reg, ks) == 1, f"HTTP {antwort.status_code} {antwort.text[:120]}")
+
+# ══ Angriffsrunde 2026-09-26: ein Name aus einer ANDEREN Quelle bindet nie ══════════════════════
+# Befund a1-01: G2-N markierte nur Registrierung und Umbenennen. Ein Konto, das OIDC oder SAML
+# anlegt, trägt aber auch einen Namen, den die Person selbst gewählt haben kann — `preferred_username`
+# bzw. `uid` bei einem IdP mit Selbstregistrierung. Wer dort `chefin` wählte, bekam bei der ersten
+# LDAP-Anmeldung der echten chefin deren Kennung und Rollen ins eigene Konto und meldete sich
+# weiter über OIDC an. Die Anlage merkt sich jetzt die Quelle (`users.name_quelle`).
+IDP = "https://idp.example.com"
+
+
+class _Claims(dict):
+    def validate(self, *a, **k):
+        pass
+
+
+def _mit_oidc(**cfg):
+    auth = _ldap(base_url="http://testserver", oidc_enabled=True, oidc_issuer=IDP,
+                 oidc_client_id="probe", oidc_client_secret="geheim", **cfg)
+    app = FastAPI()
+    app.include_router(auth.router())
+    auth.oidc._meta = {"issuer": IDP, "authorization_endpoint": IDP + "/authorize",
+                       "token_endpoint": IDP + "/token", "userinfo_endpoint": IDP + "/userinfo",
+                       "jwks_uri": IDP + "/jwks"}
+    auth.oidc.userinfo = lambda at, erwartetes_sub="": OIDCClient.userinfo_pruefen({}, erwartetes_sub)
+    return auth, app
+
+
+def _oidc_anmelden(auth, app, claims):
+    """Über den echten Callback; gibt HTTP-Status und `/auth/me` zurück."""
+    auth.oidc.exchange = lambda code, redirect_uri, nonce, t=None, **_: (
+        _Claims({**claims, "nonce": nonce}), {"access_token": "at"})
+    cl = TestClient(app, raise_server_exceptions=False)
+    start = cl.get("/auth/oidc/start", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    antwort = cl.get(f"/auth/oidc/callback?code=x&state={state}", follow_redirects=False)
+    me = cl.get("/auth/me")
+    return antwort.status_code, (me.json() if me.status_code == 200 else None)
+
+
+def _quelle(auth, uid):
+    return auth.store._one("SELECT name_quelle AS q FROM users WHERE id=?", (uid,))["q"]
+
+
+# (a) OIDC legt `chefin` an, danach meldet sich die echte chefin über LDAP an (PoC a1-01, Variante A).
+qa, qapp = _mit_oidc()
+st, me = _oidc_anmelden(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
+oc = qa.store.get_user_by_name("chefin")
+r.check("OIDC legt `chefin` an (preferred_username): Herkunft oidc, kein Merker „selbst gewählt“",
+        st == 303 and oc is not None and _quelle(qa, oc["id"]) == "oidc" and _flag(qa, oc["id"]) == 0,
+        f"HTTP {st} {dict(oc) if oc else None}")
+with Mitschnitt() as log:
+    u = _anmelden(qa, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
+zu = _audit(qa, "ldap_namensbindung_zu")
+r.check("PoC a1-01 (OIDC): die echte chefin landet NICHT im OIDC-Konto — keine Kennung, keine Rolle",
+        u is None and qa.store.get_federated_kennung("ldap", oc["id"]) is None
+        and qa.user_roles(qa.store.get_user(oc["id"])) == [], str(u))
+r.check("… Abweisung wie Lage 3: Audit mit Grund name_aus_quelle, Logzeile mit dem Weg",
+        [z["detail"] for z in zu] == ["grund=name_aus_quelle kennung=uuid-chefin"]
+        and any("uuid-chefin" in z and f"loese_fremde_bindung('ldap', {oc['id']})" in z
+                for z in log.zeilen("anderen Quelle")), str(zu))
+st, me = _oidc_anmelden(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
+r.check("… und über OIDC kommt der Angreifer weiter nur in sein eigenes Konto, ohne Rolle",
+        st == 303 and me is not None and me["id"] == oc["id"] and me["roles"] == [], str(me))
+
+# Die Bestandsbindung fragt denselben Entscheid.
+st, _ = _oidc_anmelden(qa, qapp, {"sub": "olli-sub", "preferred_username": "olli"})
+bb = qa.foederation_nachbinden("ldap", zuordnung={"olli": "uuid-olli"})
+r.check("foederation_nachbinden: ein OIDC-Konto wird nicht über den Namen gebunden (name_aus_quelle)",
+        [(e["username"], e["grund"]) for e in bb["abgewiesen"]] == [("olli", "name_aus_quelle")]
+        and bb["gebunden"] == [], str(bb))
+
+# Der Betreiber entscheidet ausdrücklich: Dann bindet es.
+qa.loese_fremde_bindung("ldap", oc["id"])
+u = _anmelden(qa, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
+r.check("loese_fremde_bindung öffnet auch für einen Namen aus einer anderen Quelle",
+        u is not None and u["id"] == oc["id"] and qa.store.get_federated_kennung("ldap", oc["id"]) == "uuid-chefin")
+
+# Umbenennen: Der neue Name stammt nicht mehr aus der Quelle.
+st, _ = _oidc_anmelden(qa, qapp, {"sub": "otto-sub", "preferred_username": "otto"})
+ot = qa.store.get_user_by_name("otto")["id"]
+qa.change_username(ot, "ottilie", durch_betreiber=True)
+u = _anmelden(qa, "ottilie", {"id": "uuid-ottilie"})
+r.check("Vom Betreiber umbenannt: Herkunft gelöscht, der Name steht für den Betreiber und bindet",
+        _quelle(qa, ot) is None and _flag(qa, ot) == 0 and u is not None and u["id"] == ot)
+st, _ = _oidc_anmelden(qa, qapp, {"sub": "uwe-sub", "preferred_username": "uwe"})
+uw = qa.store.get_user_by_name("uwe")["id"]
+qa.change_username(uw, "ulla")
+r.check("Selbst umbenannt: Herkunft gelöscht, Merker „selbst gewählt“ gesetzt",
+        _quelle(qa, uw) is None and _flag(qa, uw) == 1)
+
+# (b) SAML legt `chefin` an; die echte chefin aus dem Verzeichnis ist Admin (PoC a1-01, Variante B).
+_ldap_dazu = dict(ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com", ldap_allow_plaintext=True,
+                  ldap_auto_create=True)
+qs = _saml(ldap_group_role_map={"cn=admins": "__admin__"}, **_ldap_dazu)
+qs.create_user("owner", password=PW, is_admin=True)
+sa = qs.check_saml("nid-angreifer", {"uid": ["chefin"]})
+u = _anmelden(qs, "chefin", {"id": "uuid-chefin", "groups": ["cn=admins"]}, pw="ldap-pw")
+sa2 = qs.check_saml("nid-angreifer", {"uid": ["chefin"]})
+r.check("PoC a1-01 (SAML): Herkunft saml; die Verzeichnis-Admin landet nicht im SAML-Konto, "
+        "und der Angreifer ist danach kein Admin",
+        _quelle(qs, sa["id"]) == "saml" and u is None and sa2 is not None and sa2["id"] == sa["id"]
+        and not sa2["is_admin"] and qs.store.get_federated_kennung("ldap", sa["id"]) is None,
+        f"{u} {sa2 and sa2['is_admin']}")
+
+# (c) Gegenrichtung: LDAP hat `chefin` angelegt, ein SAML-Selbstregistrant wählt `uid=chefin`.
+# Ohne den Riegel war das keine Rechteausweitung, sondern die Übernahme des Kontos selbst.
+gr = _saml(**_ldap_dazu)
+echt = _anmelden(gr, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
+ang = gr.check_saml("nid-angreifer", {"uid": ["chefin"]})
+r.check("Gegenrichtung: ein SAML-Name bindet das von LDAP angelegte Konto nicht (keine Übernahme)",
+        echt is not None and _quelle(gr, echt["id"]) == "ldap" and ang is None
+        and gr.store.get_federated_kennung("saml", echt["id"]) is None, str(ang))
+
+# (d) Dieselbe Quelle ist ausgenommen: LDAP ohne Kennung legt an (Platzhalter), später liefert das
+# Verzeichnis eine — die ersetzt den Platzhalter. Genau das bräche ein Merker „selbst gewählt“ für
+# jede föderierte Anlage (die im Befund empfohlene Form): Der Weg, den die Startmeldung empfiehlt
+# (`ldap_attr_id` setzen), endete dann in einer Abweisung.
+ps = _saml(**_ldap_dazu)
+pit = _anmelden(ps, "pit", {})
+r.check("LDAP ohne Kennung legt an: Herkunft ldap, Platzhalter",
+        pit is not None and _quelle(ps, pit["id"]) == "ldap"
+        and ps.store.get_federated_kennung("ldap", pit["id"]) == f"{Store.OHNE_KENNUNG}{pit['id']}")
+r.check("… eine andere Quelle (SAML) bindet es nicht über den Namen",
+        ps.check_saml("nid-fremd", {"uid": ["pit"]}) is None)
+u = _anmelden(ps, "pit", {"id": "uuid-pit"})
+r.check("… dieselbe Quelle ersetzt ihren Platzhalter durch die echte Kennung",
+        u is not None and u["id"] == pit["id"] and ps.store.get_federated_kennung("ldap", pit["id"]) == "uuid-pit",
+        str(ps.store.get_federated_kennung("ldap", pit["id"])))
 
 # ══ Der gemeinsame Entscheid: Name = unbelegter mail-Wert ══════════════════════════════════════
 # Anmeldung und Bestandsbindung fragen denselben Helfer (`_ldap_name_belegt`) — die Bestandsbindung
@@ -628,6 +759,55 @@ nochmal.loese_fremde_bindung("ldap", lo)
 nochmal.delete_user(lo)
 r.check("Konto gelöscht: seine geöffnete Namensbindung geht mit",
         nochmal.store._one("SELECT COUNT(*) AS n FROM namensbindung")["n"] == 0)
+
+# ══ Bestand: Herkunft des Namens nachgetragen (Angriffsrunde 2026-09-26) ═══════════════════════
+# Eine Datei aus dem Stand davor: Stempel 11, `name_selbst_gewaehlt` schon nachgetragen, aber ohne
+# `users.name_quelle`. Nachgetragen wird nur, wo die Herkunft belegt ist: OIDC (der Callback legt
+# jedes verknüpfte Konto selbst an) und eine LDAP/SAML-Bindung aus derselben Sekunde wie die Anlage.
+_alt_q, _nq = re.subn(r"\n\s*-- Aus welcher föderierten Quelle stammt der Name.*?name_quelle\s+TEXT,", "",
+                      SCHEMA, flags=re.S)
+pfad = _db()
+os.close(os.open(pfad, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+roh = sqlite3.connect(pfad)
+roh.executescript(_alt_q)
+t0 = jetzt() - 20 * TAG
+_bq = {}
+for name, selbst, dienst in (("oi", 0, 0), ("ld", 0, 0), ("ph", 0, 0), ("nb", 0, 0), ("op", 0, 0),
+                             ("ren", 1, 0), ("svc", 0, 1)):
+    _bq[name] = roh.execute("INSERT INTO users(username, created_at, name_selbst_gewaehlt, is_service) "
+                            "VALUES (?,?,?,?)", (name, t0, selbst, dienst)).lastrowid
+for name in ("oi", "ren", "svc"):
+    roh.execute("INSERT INTO oidc_identity(issuer, subject, user_id) VALUES (?,?,?)",
+                (IDP, f"sub-{name}", _bq[name]))
+for quelle, kennung, name, versatz in (("ldap", "u-ld", "ld", 0),
+                                       ("saml", f"{Store.OHNE_KENNUNG}{_bq['ph']}", "ph", 1),
+                                       ("ldap", "u-nb", "nb", 5 * TAG)):
+    roh.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) VALUES (?,?,?,?)",
+                (quelle, kennung, _bq[name], t0 + versatz))
+roh.execute("INSERT INTO setting(key, value) VALUES (?, ?)", (Store.NAME_SELBST_NACHGETRAGEN, str(t0)))
+roh.execute("PRAGMA user_version = 11")
+roh.commit()
+_sp_q = {z[1] for z in roh.execute("PRAGMA table_info(users)")}
+roh.close()
+r.check("Vorbedingung: Datei auf Stempel 11 mit `name_selbst_gewaehlt`, ohne `users.name_quelle`",
+        _nq == 1 and "name_quelle" not in _sp_q and "name_selbst_gewaehlt" in _sp_q, str(_nq))
+bq = _ldap(pfad)
+_hq = {z["username"]: z["name_quelle"] for z in bq.store._all("SELECT username, name_quelle FROM users")}
+r.check("Nachtrag: OIDC-Konto → oidc, Bindung aus der Anlage → deren Quelle (auch der Platzhalter); "
+        "eine spätere Nachbindung, das Betreiber-Konto, ein selbst gewählter Name und ein Dienstkonto nicht",
+        _hq == {"oi": "oidc", "ld": "ldap", "ph": "saml", "nb": None, "op": None, "ren": None, "svc": None},
+        str(_hq))
+u = _anmelden(bq, "oi", {"id": "u-oi"})
+r.check("… das nachgetragene OIDC-Konto bindet über LDAP nicht über den Namen",
+        u is None and bq.store.get_federated_kennung("ldap", _bq["oi"]) is None)
+u = _anmelden(bq, "nb", {"id": "u-nb"})
+r.check("… ein gebundenes Konto meldet sich weiter an (Lage 1)", u is not None and u["id"] == _bq["nb"])
+bq.store._exec("UPDATE users SET name_quelle = NULL WHERE username = 'ld'")
+bq.store.db.close()
+bq2 = _ldap(pfad)
+r.check("Zweiter Start: der Nachtrag läuft nicht noch einmal (Merker gesetzt)",
+        bq2.store._one("SELECT name_quelle AS q FROM users WHERE username='ld'")["q"] is None
+        and bq2.store.get_setting(Store.NAME_QUELLE_NACHGETRAGEN) is not None)
 
 # ══ Konfigurationsprüfung ═════════════════════════════════════════════════════════════════════
 _, warn = _kp.pruefe(TinySesamConfig(db_path=":memory:", ldap_enabled=True, ldap_url="ldaps://v.example.com",

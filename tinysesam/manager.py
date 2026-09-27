@@ -587,7 +587,22 @@ class TinySesam:
         `name_selbst_gewaehlt=True`: Die Person hat den Namen selbst eingetippt (Registrierung,
         auch mit Einladung). Eine Anmeldung über LDAP/SAML bindet dieses Konto dann nie über den
         Namen (G2-N, `users.name_selbst_gewaehlt`). Die eingebaute Registrierung setzt es; wer eine
-        eigene baut, übergibt es ebenfalls. Vorgabe `False`: Den Namen vergibt der Betreiber."""
+        eigene baut, übergibt es ebenfalls. Vorgabe `False`: Den Namen vergibt der Betreiber. Wer
+        Konten aus einer EIGENEN fremden Quelle anlegt (ein weiterer Identity Provider), übergibt es
+        auch: Dort gewählte Namen sagen nichts darüber, wer im Verzeichnis so heisst."""
+        return self._konto_anlegen(username, password, is_admin, roles, display_name, email,
+                                   is_service, email_verified, name_selbst_gewaehlt=name_selbst_gewaehlt)
+
+    def _konto_anlegen(self, username, password=None, is_admin=False, roles=None, display_name=None,
+                       email=None, is_service=False, email_verified: bool = True, *,
+                       name_selbst_gewaehlt: bool = False, name_quelle: Optional[str] = None) -> int:
+        """`create_user` samt Herkunft des Namens (`users.name_quelle`, Angriffsrunde 2026-09-26):
+        die Anlage aus OIDC, SAML und LDAP. Ein Name, den eine Quelle mitbringt, bindet das Konto
+        nie über den Namen an eine ANDERE (`_nachbindung_grund`) — `preferred_username`, NameID und
+        `uid` wählt man bei einem IdP mit Selbstregistrierung selbst. Nachgestellt: `chefin` meldet
+        sich über OIDC an, die echte chefin danach über LDAP, und das OIDC-Konto trug danach ihre
+        Kennung und ihre Rollen. Dieselbe Quelle darf ihren Platzhalter weiter durch die echte
+        Kennung ersetzen. Nicht öffentlich: Wer selbst anlegt, nimmt `name_selbst_gewaehlt=True`."""
         username = (username or "").strip()
         email = norm_email(email)
         if name_ungueltig(username):
@@ -618,7 +633,8 @@ class TinySesam:
         try:
             uid = self.store.create_user(username, display_name, email, is_admin, roles, is_service,
                                          email_verified=email_verified,
-                                         name_selbst_gewaehlt=name_selbst_gewaehlt)
+                                         name_selbst_gewaehlt=name_selbst_gewaehlt,
+                                         name_quelle=name_quelle)
         except sqlite3.IntegrityError as fehler_db:
             # Wettlauf (G12c): Zwischen der Prüfung oben und dem INSERT hat eine gleichzeitige
             # Anfrage die Kennung belegt, und die Datenbank weist ab (Kennungs-Trigger, UNIQUE auf
@@ -1582,9 +1598,11 @@ class TinySesam:
            (`federation_name_binding_days`, G1 — sonst fiele ein ruhendes Konto an die nächste
            Person mit diesem Namen) und nie für einen selbst gewählten Namen
            (`users.name_selbst_gewaehlt`, G2-N — sonst benennt sich ein lokales Konto nach
-           jemandem aus dem Verzeichnis und erbt dessen Gruppen), es sei denn, der Betreiber hat
-           die Bindung für dieses Konto geöffnet (`loese_fremde_bindung`). Sonst wird abgewiesen
-           wie in Lage 3. Dasselbe gilt für den Ersatz eines Herkunfts-Platzhalters.
+           jemandem aus dem Verzeichnis und erbt dessen Gruppen) und nie für einen Namen, den eine
+           andere Quelle beim Anlegen mitgebracht hat (`users.name_quelle`, Angriffsrunde
+           2026-09-26 — derselbe Angriff über `preferred_username` oder SAML), es sei denn, der
+           Betreiber hat die Bindung für dieses Konto geöffnet (`loese_fremde_bindung`). Sonst
+           wird abgewiesen wie in Lage 3. Dasselbe gilt für den Ersatz eines Herkunfts-Platzhalters.
 
         Ohne Kennung (das Verzeichnis liefert keine) bleibt es beim Namen — dem ungeschützten
         Zustand. Das sagt eine Zeile je Quelle, und `federation_require_stable_id=True` macht
@@ -1711,6 +1729,8 @@ class TinySesam:
         "anders_gebunden": "das Konto trägt schon eine andere Kennung",
         "name_selbst_gewaehlt": "der Name ist selbst gewählt (Registrierung oder Umbenennen) und "
                                 "sagt nichts darüber, wer im Verzeichnis so heisst",
+        "name_aus_quelle": "der Name stammt aus einer anderen Quelle, die das Konto angelegt hat "
+                           "(OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst",
         "frist": "die Frist für die Bindung über den Namen ist abgelaufen "
                  "(federation_name_binding_days)",
     }
@@ -1733,11 +1753,17 @@ class TinySesam:
           `eve` benennt sich in `chefin` um, einen Namen, den es nur im Verzeichnis gibt; die
           echte chefin meldet sich über LDAP an, ihre Kennung landet an eves Konto, die Rolle aus
           `ldap_group_role_map` auch — und eve meldet sich weiter mit ihrem Passwort an.
+        * **Name aus einer anderen Quelle** (`users.name_quelle`, Angriffsrunde 2026-09-26): Ein
+          Konto, das OIDC, SAML oder LDAP angelegt hat, trägt den Namen, den die Person DORT hat —
+          bei einem IdP mit Selbstregistrierung ein selbst gewählter. Nachgestellt: `chefin` über
+          OIDC, danach die echte chefin über LDAP; ihre Kennung und ihre Rollen landeten im
+          OIDC-Konto, und der Angreifer meldete sich weiter über OIDC an. Dieselbe Quelle ist
+          ausgenommen: Sie ersetzt ihren eigenen Platzhalter durch die echte Kennung.
         * **Frist** (`frist=True`, G1): `federation_name_binding_days` ab dem Merker der Quelle bzw.
           der Anlage des Kontos, was später ist (`_namensfrist_offen`). Die Bestandsbindung prüft
           sie nicht — sie IST der ausdrückliche Weg des Betreibers.
 
-        Die beiden letzten hebt eine vom Betreiber geöffnete Bindung auf (`loese_fremde_bindung`,
+        Die drei letzten hebt eine vom Betreiber geöffnete Bindung auf (`loese_fremde_bindung`,
         Tabelle `namensbindung`)."""
         if not name_belegt or name_ungueltig(str(konto["username"] or "")):
             return "adresse_als_name"
@@ -1759,6 +1785,12 @@ class TinySesam:
             selbst = False       # Zeile ohne die Spalte (fremde Quelle): wie der Bestand
         if selbst:
             return "name_selbst_gewaehlt"
+        try:
+            herkunft = str(konto["name_quelle"] or "")
+        except (IndexError, KeyError):
+            herkunft = ""        # Zeile ohne die Spalte (fremde Quelle): wie der Bestand
+        if herkunft and herkunft != quelle:
+            return "name_aus_quelle"
         if frist and not self._namensfrist_offen(quelle, konto, jetzt):
             return "frist"
         return None
@@ -1841,7 +1873,8 @@ class TinySesam:
 
         Seit 2026-09-26 (G1, G2-N) öffnet der Aufruf zugleich die Tür für Lage 4: Die nächste
         Anmeldung über diese Quelle bindet das Konto über seinen Namen, auch nach der Frist
-        (`federation_name_binding_days`) und auch mit selbst gewähltem Namen — für
+        (`federation_name_binding_days`), auch mit selbst gewähltem Namen und auch mit einem Namen
+        aus einer anderen Quelle (`users.name_quelle`) — für
         `max(federation_name_binding_days, 1)` Tage oder bis die Bindung steht. Auf einem
         ungebundenen Konto heisst der Aufruf also „für die nächste Anmeldung öffnen" (Vorab-Anlage,
         Rückkehrer, ein Konto, das die Frist verpasst hat). Die Abweisung im Log nennt den Aufruf."""
@@ -2116,9 +2149,10 @@ class TinySesam:
                 while name != username and self.kennung_vergeben(name):
                     i += 1
                     name = f"{ldap_name}{i}"
-                return self.create_user(name, display_name=info.get("name") or name,
-                                        email=info.get("email") if vertraut else None,
-                                        email_verified=vertraut and bool(info.get("email")))
+                return self._konto_anlegen(name, display_name=info.get("name") or name,
+                                           email=info.get("email") if vertraut else None,
+                                           email_verified=vertraut and bool(info.get("email")),
+                                           name_quelle="ldap")
             except ConfigError:
                 # Name oder Adresse gehören lokal schon jemandem (Fund R4-12). Fail-closed:
                 # lieber keine Anmeldung als ein Konto, das eine fremde Kennung besetzt.
@@ -2221,9 +2255,10 @@ class TinySesam:
                     i += 1
                     name = f"{neu_name}{i}"
                 anzeige = first(attrs, cfg.saml_attr_name) or name
-                return self.create_user(name, display_name=anzeige,
-                                        email=mail if vertraut else None,
-                                        email_verified=vertraut and bool(mail))
+                return self._konto_anlegen(name, display_name=anzeige,
+                                           email=mail if vertraut else None,
+                                           email_verified=vertraut and bool(mail),
+                                           name_quelle="saml")
             except ConfigError:
                 # Wie bei LDAP (Fund R4-12): eine schon vergebene Kennung legt kein Konto an.
                 self.audit("saml_ident_taken", username)
@@ -2258,9 +2293,13 @@ class TinySesam:
         Zieladresse oder ein gescheiterter Versand kostete den Link für einen ganzen Tag, und
         mehrere Worker schickten je einen. Jetzt steht der Versand in der Datenbank
         (`federation_email_confirm … konto=<id>`, erst nach dem Versand, `Store.quellmail_seit`).
-        Der Speicher dämpft nur die Versuche: Eine vergebene oder reservierte Adresse bekommt nie
-        einen Link, ihr Versuch (mit Audit-Zeile) kommt höchstens einmal am Tag; alles andere —
-        eine Drossel, ein Mailserver-Fehler — darf nach `mail_per_address_window_sec` wieder."""
+        Eine vergebene oder reservierte Adresse bekommt nie einen Link; ihr Versuch (mit
+        Audit-Zeile `konto=<id> …`) zählt ebenfalls in der Datenbank, höchstens einer am Tag. Bis
+        zur Angriffsrunde 2026-09-26 dämpfte ihn nur der Speicher — je Worker und bis zum Neustart:
+        Eine freie Adresse hinterliess auf der Kontoseite genau einen Antrag, eine vergebene mit
+        jedem weiteren Worker einen mehr, und ein LDAP-Nutzer, der sein `mail` selbst pflegt, las
+        daran ab, ob eine fremde Adresse ein Konto hat. Der Speicher dämpft nur noch das, was
+        vorübergeht — eine Drossel, ein Mailserver-Fehler: nach `mail_per_address_window_sec` wieder."""
         if not mail or not u:
             return
         adresse = norm_email(mail)
@@ -2284,20 +2323,25 @@ class TinySesam:
             return
         if not (self.cfg.federation_email_confirm and self.cfg.base_url and self.mail_configured()):
             return
-        # Keiner, solange einer offen ist, und höchstens ein zugestellter je Konto und Tag.
+        # Keiner, solange einer offen ist, und höchstens ein erledigter Antrag je Konto und Tag —
+        # zugestellt oder abgewiesen (vergeben, reserviert), gezählt in der Datenbank, über alle
+        # Worker. Sonst schriebe jede Anmeldung eine Audit-Zeile, und ihre Zahl auf der Kontoseite
+        # verriete, ob die Adresse vergeben ist (Angriffsrunde 2026-09-26). Lebt ein Link länger
+        # als einen Tag (`email_change_ttl_min`), so lange: Ein zugestellter hält den nächsten
+        # Versuch ohnehin bis zu seinem Ablauf auf (`offener_token`), eine Abweisung muss es genauso
+        # — und auch dann, wenn der Inhaber seinen offenen Link verwirft (Passwortwechsel).
+        frist = max(86400, int(self.cfg.email_change_ttl_min) * 60)
         if self.store.offener_token(u["id"], "email_change", adresse):
             return
-        if self.store.quellmail_seit(u["id"], _jetzt() - 86400):
+        if self.store.quellmail_seit(u["id"], _jetzt() - frist):
             return
-        # Versuche dämpfen, je Prozess (G12a): Was sich nicht von selbst erledigt (vergeben,
-        # reserviert), einmal am Tag — sonst schriebe jede Anmeldung eine Audit-Zeile. Was
-        # vorübergeht (Drossel, Mailserver), nach dem Fenster der Mail-Drossel wieder.
-        dauerhaft = bool(self.kennung_vergeben(adresse, exclude_id=u["id"])) or self._allowlist_adresse(adresse)
-        fenster = 86400 if dauerhaft else int(self.sec("mail_per_address_window_sec"))
-        if not self.rl.allow(f"quellmail:{u['id']}:{'d' if dauerhaft else 'v'}", 1, fenster):
+        # Was vorübergeht (Drossel, Mailserver), dämpft der Speicher je Prozess (G12a): nach dem
+        # Fenster der Mail-Drossel wieder. Für jedes Ziel gleich — gefragt wird „vergeben?" erst in
+        # `_wechsel_beantragen`, mit derselben Arbeit für beide Antworten (G12b).
+        if not self.rl.allow(f"quellmail:{u['id']}", 1, int(self.sec("mail_per_address_window_sec"))):
             return
         try:
-            senden = self.request_email_change(u["id"], adresse, self.cfg.base_url)
+            senden = self._wechsel_beantragen(u["id"], adresse, self.cfg.base_url, quelle=quelle or "quelle")
         except (ValueError, ConfigError):
             return
         if senden is None:
@@ -3587,6 +3631,13 @@ class TinySesam:
         `gc()` räumt ihn; das Muster von R4-03 bei der Registrierung) —, dann immer ein Sender,
         der den Hinweis an die eigene Adresse in jedem Fall schickt. Die Konto-Seite zeigt jeden
         Antrag als `email_change_requested` (`own_events`)."""
+        return self._wechsel_beantragen(user_id, neu, base_url)
+
+    def _wechsel_beantragen(self, user_id, neu, base_url, quelle: str = ""):
+        """`request_email_change`, mit der Quelle für den Weg über LDAP/SAML
+        (`_adresse_aus_quelle_belegen`). Mit `quelle` beginnt das Detail der Audit-Zeile mit
+        `konto=<id> quelle=<quelle>` — für jedes Ergebnis gleich, frei wie vergeben. Daran zählt die
+        Datenbank auch die Abweisungen (`Store.quellmail_seit`, Angriffsrunde 2026-09-26)."""
         konto = self.store.get_user(user_id)
         if not konto:
             raise ValueError(self.t("api.not_found"))
@@ -3629,7 +3680,8 @@ class TinySesam:
                                       ttl_min=(-1 if nein else int(self.cfg.email_change_ttl_min)),
                                       payload={"alt": konto["email"] or ""})
         url = self.magic_url(raw, base_url, "email_change")
-        self.audit(nein or "email_change_requested", konto["username"], detail=f"neu={mail}")
+        herkunft = f"konto={int(user_id)} quelle={quelle} " if quelle else ""
+        self.audit(nein or "email_change_requested", konto["username"], detail=f"{herkunft}neu={mail}")
         # Die Mail nennt das Konto: Wer eine Adresse bestätigt, soll sehen, für WELCHES — sonst
         # bestätigt ein gutgläubiger Klick die eigene Adresse für ein fremdes Konto (Verdacht aus
         # der Angriffsrunde; betrifft vor allem den Weg über LDAP/SAML, wo der Antrag nicht vom

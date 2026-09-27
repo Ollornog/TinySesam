@@ -909,7 +909,9 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > would fall to the next person who gets the same name in the directory. Bind the rest explicitly:
 > `auth.foederation_nachbinden("ldap")` (dry run by default, `ausfuehren=True` writes; SAML takes
 > `zuordnung={name: nameid}`), or open a single account with `auth.loese_fremde_bindung(source,
-> user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name. If the
+> user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name, and neither
+> does a name another source brought along when it created the account (an account created via
+> OIDC never binds to LDAP or SAML by name — the name may have been self-chosen at the IdP). If the
 > directory supplies no stable key, the name still decides and a log line says so;
 > `federation_require_stable_id=True` turns that into a refusal.
 

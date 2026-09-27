@@ -471,10 +471,11 @@ class TinySesamConfig:
     saml_attr_email_verified: str = ""
     #: Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid
     #: 2026-09-25): Nach der Anmeldung geht ein Bestätigungslink an die Adresse aus der Quelle —
-    #: höchstens ein zugestellter je Konto und Tag (über alle Worker), keiner, solange einer offen
-    #: ist; eine Drossel oder ein gescheiterter Versand wird nach `mail_per_address_window_sec`
-    #: erneut versucht. Erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer
-    #: und `base_url`.
+    #: höchstens ein zugestellter je Konto und Tag (über alle Worker; lebt ein Link länger,
+    #: `email_change_ttl_min`, so lange), keiner, solange einer offen ist; eine Drossel oder ein
+    #: gescheiterter Versand wird nach `mail_per_address_window_sec` erneut versucht. Eine vergebene
+    #: oder reservierte Adresse bekommt keinen, ihre Abweisung zählt wie ein Versand. Erst der Klick
+    #: macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`.
     federation_email_confirm: bool = True
     saml_attr_name: str = "displayName" # SAML-Attribut mit dem Anzeigenamen
     #: Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion.

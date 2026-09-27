@@ -1648,6 +1648,11 @@ def _wege(auth_x, basis):
         # Adressen aus LDAP/SAML läuft hier durch (`_adresse_aus_quelle_belegen`).
         ("request_email_change", lambda: _versende(auth_x.request_email_change(
             auth_x.store.get_user_by_name("opfer")["id"], "opfer-neu@example.com", basis))),
+        # …und seit der Angriffsrunde 2026-09-26 über die Hülle mit der Quelle, die
+        # `_adresse_aus_quelle_belegen` ruft (Detail `konto=<id> quelle=…`). Derselbe Link.
+        ("_wechsel_beantragen", lambda: _versende(auth_x._wechsel_beantragen(
+            auth_x.store.get_user_by_name("opfer")["id"], "opfer-quelle@example.com", basis,
+            quelle="ldap"))),
     )
 
 

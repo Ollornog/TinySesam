@@ -933,7 +933,9 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > `auth.foederation_nachbinden("ldap")` (Vorgabe Trockenlauf, `ausfuehren=True` schreibt; SAML
 > mit `zuordnung={name: nameid}`), oder man öffnet ein einzelnes Konto mit
 > `auth.loese_fremde_bindung(quelle, user_id)`. Ein selbst gewählter Name (Registrierung,
-> Umbenennen in der Selbstbedienung) bindet nie über den Namen. Liefert das Verzeichnis keine
+> Umbenennen in der Selbstbedienung) bindet nie über den Namen, ebenso wenig ein Name, den eine
+> andere Quelle beim Anlegen mitgebracht hat (ein über OIDC angelegtes Konto bindet sich nie über
+> den Namen an LDAP oder SAML — beim IdP kann der Name selbst gewählt sein). Liefert das Verzeichnis keine
 > Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
 > `federation_require_stable_id=True` macht daraus eine Abweisung.
 

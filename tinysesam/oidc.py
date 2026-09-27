@@ -723,8 +723,11 @@ def register_oidc_routes(router, auth):
                 # Adresse UND Beleg gehen zusammen ins Konto (F-14): Der Vermerk entscheidet
                 # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
                 # Konto sich das nächste Mal anmeldet.
-                uid = auth.create_user(username, display_name=info.get("name") or username,
-                                       email=belegte_mail, email_verified=bool(belegte_mail))
+                # Der Name kommt vom Provider (`name_quelle`): Eine Anmeldung über LDAP/SAML bindet
+                # dieses Konto nie über ihn (Angriffsrunde 2026-09-26, `_konto_anlegen`).
+                uid = auth._konto_anlegen(username, display_name=info.get("name") or username,
+                                          email=belegte_mail, email_verified=bool(belegte_mail),
+                                          name_quelle="oidc")
             except errors.ConfigError:
                 # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
                 # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.

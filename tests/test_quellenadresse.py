@@ -358,6 +358,72 @@ r.check("G12b: Kontoseite eines LDAP-Kontos gleich für freie und vergebene Adre
         and not {None, "federation_email_confirm", "email_change_taken"} & set(_ansicht["frei"] + _ansicht["vergeben"]),
         str(_ansicht))
 
+# ── Angriffsrunde 2026-09-26 (a1-02): kein Orakel über mehrere Worker ─────────────────────────
+# G12a zählte den zugestellten Link in der Datenbank, die Abweisung einer vergebenen Adresse aber
+# nur im Speicher — je Worker und bis zum Neustart. Ein LDAP-Nutzer setzt sein `mail` auf eine
+# fremde Adresse und meldet sich über wechselnde Worker an: Bei einer freien stand auf seiner
+# Kontoseite genau ein Antrag, bei einer vergebenen mit jedem weiteren Worker einer mehr
+# (gemessen: [1, 1, 1, 1, 1] gegen [1, 2, 2, 2, 3]). Jetzt zählt auch die Abweisung in der Datenbank.
+def _altern_alles(auth, sek):
+    """Wie `_vergehen`, dazu die Links: Auch ihre Gültigkeit läuft mit der Zeit ab."""
+    _vergehen(auth, sek)
+    auth.store._exec("UPDATE magic_token SET expires_at = expires_at - ?", (int(sek),))
+
+
+def _worker_lauf(vergeben, **cfg):
+    db = str(Path(tempfile.mkdtemp()) / "t.db")
+    w1, _, p1 = _aufbau(db_path=db, **cfg)
+    w2, _, p2 = _aufbau(db_path=db, **cfg)
+    if vergeben:
+        w1.create_user("opfer", email="ziel@example.com")
+    zahl = []
+
+    def _sicht(w):
+        u = _anmelden(w, "mallory", {"email": "ziel@example.com", "id": "uuid-mallory"})
+        zahl.append([e["event"] for e in w.own_events(u["id"], limit=50)].count("email_change_requested"))
+    for w in (w1, w2, w1, w2):
+        _sicht(w)
+    w3, _, p3 = _aufbau(db_path=db, **cfg)          # ein Neustart: frischer Speicher, dieselbe Datei
+    _sicht(w3)
+    zeilen = w3.store._one("SELECT COUNT(*) AS n FROM audit WHERE event IN "
+                           "('email_change_requested', 'email_change_taken')")["n"]
+    return {"sicht": zahl, "zeilen": zeilen, "post": [m[0] for m in p1 + p2 + p3], "w": w3, "sichtbar": _sicht}
+
+
+_frei, _verg = _worker_lauf(False), _worker_lauf(True)
+_res = _worker_lauf(False, admin_identifiers=["ziel@example.com"])     # reserviert (Allowlist)
+r.check("a1-02: Kontoseite nach vier Anmeldungen über zwei Worker und einem Neustart gleich, "
+        "ob die Adresse frei, vergeben oder reserviert ist (je genau ein Antrag)",
+        _frei["sicht"] == _verg["sicht"] == _res["sicht"] == [1, 1, 1, 1, 1],
+        f"frei {_frei['sicht']} vergeben {_verg['sicht']} reserviert {_res['sicht']}")
+r.check("… im Audit-Log des Betreibers je eine Zeile, der Link nur an die freie Adresse",
+        _frei["zeilen"] == _verg["zeilen"] == 1 and _frei["post"] == ["ziel@example.com"]
+        and _verg["post"] == _res["post"] == []
+        and _res["w"].store._one("SELECT COUNT(*) AS n FROM audit WHERE event='email_change_reserved'")["n"] == 1,
+        f"{_frei['zeilen']}/{_verg['zeilen']} {_frei['post']} {_verg['post']} {_res['post']}")
+r.check("… die Zeile trägt `konto=<id> quelle=ldap` vorn, für jedes Ergebnis gleich gebaut",
+        all(re.fullmatch(r"konto=\d+ quelle=ldap neu=ziel@example\.com", z["detail"] or "")
+            for lauf in (_frei, _verg, _res) for z in lauf["w"].store._all(
+                "SELECT detail FROM audit WHERE event LIKE 'email_change_%'")))
+for lauf in (_frei, _verg):
+    _altern_alles(lauf["w"], 86401)
+    lauf["sichtbar"](lauf["w"])
+r.check("… am nächsten Tag für beide genau ein weiterer Antrag",
+        _frei["sicht"][-1] == _verg["sicht"][-1] == 2, f"{_frei['sicht']} {_verg['sicht']}")
+
+# Lebt der Link länger als einen Tag, hält die Abweisung genauso lange auf wie ein offener Link.
+_frei7, _verg7 = _worker_lauf(False, email_change_ttl_min=3 * 24 * 60), _worker_lauf(True, email_change_ttl_min=3 * 24 * 60)
+for lauf in (_frei7, _verg7):
+    _altern_alles(lauf["w"], 86401)
+    lauf["sichtbar"](lauf["w"])
+r.check("… mit email_change_ttl_min = 3 Tage: auch am nächsten Tag für beide kein weiterer Antrag",
+        _frei7["sicht"] == _verg7["sicht"] == [1, 1, 1, 1, 1, 1], f"{_frei7['sicht']} {_verg7['sicht']}")
+for lauf in (_frei7, _verg7):
+    _altern_alles(lauf["w"], 2 * 86400)
+    lauf["sichtbar"](lauf["w"])
+r.check("… nach Ablauf des Links für beide genau ein weiterer",
+        _frei7["sicht"][-1] == _verg7["sicht"][-1] == 2, f"{_frei7['sicht']} {_verg7['sicht']}")
+
 # ── Kontingent: Wechselanträge auf eine Adresse sperren deren späteren Inhaber nicht aus ─────
 # Jeder Antrag erreicht die Drossel, auch der auf eine vergebene Adresse (G12b). Heikel ist die
 # noch FREIE: Ein Fremder beantragt den Wechsel darauf, bis ihr Kontingent aufgebraucht ist;
@@ -378,7 +444,8 @@ r.check("Wechselanträge anderer auf die Adresse verbrauchen nicht das Kontingen
 #  weg → „belegte eigene Adresse“ rot; `federation_email_confirm` nicht beachtet → rot; der Topf
 #  `wechsel` zurück auf `mail` → Kontingent rot; Vorgabe `ldap_email_trusted=True` → Vorgabe rot.
 #  G12a: Kontingent wieder vor dem Versuch für einen Tag → (a)/(b) rot; Audit-Zeile
-#  vor dem Versand → (b) rot; Prüfung in der Datenbank weg → (c) und „derselbe Tag" rot; Dämpfung
-#  für „vergeben" nur im Mail-Fenster → (d) rot; Kontingent nicht je Konto → „anderes Konto" rot.)
+#  vor dem Versand → (b) rot; Prüfung in der Datenbank weg → (c) und „derselbe Tag" rot; Kontingent
+#  nicht je Konto → „anderes Konto" rot. a1-02: Abweisung nicht in der Datenbank gezählt → (d) und
+#  „Kontoseite gleich" rot; `konto=` nicht im Detail → ebenso; Frist nur ein Tag → „3 Tage" rot.)
 
 sys.exit(r.done())

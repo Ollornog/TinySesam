@@ -123,7 +123,8 @@ Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML 
 Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
 `username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
 (Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
-LDAP/SAML, erst nach dem Versand geschrieben, Detail `konto=<id> quelle=… an=…`). Die Konto-Seite
+LDAP/SAML, erst nach dem Versand geschrieben, Detail `konto=<id> quelle=… an=…`); die Zeilen
+`email_change_*` aus diesem Weg beginnen mit `konto=<id> quelle=…`. Die Konto-Seite
 zeigt einen Antrag immer als `email_change_requested` und `federation_email_confirm` gar nicht
 (G12b) — die echten Namen stehen nur im Audit-Log des Betreibers; eine Abweisung beim Bestätigen
 (`beim_bestaetigen=1`, 409) behält dort ihren Namen. Die Links
@@ -239,6 +240,20 @@ Seite gehört und sich nicht ändert:
   Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
   `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
   gelöscht hat, bleibt unerkannt.
+- **Ein Name aus einer anderen Quelle bindet ebenfalls nie** (Angriffsrunde 2026-09-26): Ein Konto,
+  das OIDC, SAML oder LDAP angelegt hat, trägt den Namen, den die Person dort hat — bei einem IdP
+  mit Selbstregistrierung einen selbst gewählten (`preferred_username`, NameID, `uid`). Die Anlage
+  merkt sich die Quelle (`users.name_quelle`), und eine andere Quelle bindet das Konto nie über den
+  Namen (`grund=name_aus_quelle`); sonst wählt jemand beim IdP `chefin` und bekommt bei der
+  LDAP-Anmeldung der echten chefin deren Kennung und Gruppen. Dieselbe Quelle ersetzt ihren
+  Platzhalter weiter (`ldap_attr_id` später einschalten, s. unten). Umbenennen setzt die Herkunft
+  zurück. Bestand: Der erste Start trägt sie einmal nach, wo sie belegt ist — OIDC-Konten (der
+  Callback legt jedes verknüpfte Konto selbst an) und Bindungen aus der Sekunde der Anlage; Konten
+  von vor den Kennungen (bis 0.19) bleiben ohne und hängen an der Frist. **Mehrere Quellen aus
+  demselben Verzeichnis** (Keycloak vor LDAP, dazu der direkte LDAP-Login): Die zweite Quelle bindet
+  ein Konto der ersten nicht über den Namen; einzelne Konten öffnet
+  `auth.loese_fremde_bindung(quelle, user_id)`. Wer eigene Konten aus einem weiteren Identity
+  Provider anlegt, übergibt `create_user(…, name_selbst_gewaehlt=True)`.
 - **Bestandskonten binden** (F-11, G1): ohne auf die Anmeldung zu warten — ruhende Konten melden
   sich nie an. Die Startmeldung nennt, solange die Frist läuft, je Quelle die Zahl der Konten ohne
   Kennung. Einmal nach dem Update, aus dem einbettenden Dienst:
@@ -256,7 +271,7 @@ Seite gehört und sich nicht ändert:
   verlangt genau einen Eintrag; ein Ausfall bricht vor dem ersten Schreiben ab. SAML hat keinen
   Suchweg: `zuordnung={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
   für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`lokal`), selbst
-  gewählte Namen abgewiesen. **Vor `ausfuehren` den Bericht lesen:** War ein Name schon vor dem Lauf
+  gewählte Namen und Namen aus einer anderen Quelle abgewiesen. **Vor `ausfuehren` den Bericht lesen:** War ein Name schon vor dem Lauf
   wiederverwendet, bindet auch dieser Weg die falsche Person; `lokal` und `verzeichnis` stehen
   deshalb nebeneinander. Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
   detail=migration`), der Lauf als Summenzeile im Sicherheits-Log. Ein CLI-Befehl fehlt bewusst:
@@ -264,7 +279,7 @@ Seite gehört und sich nicht ändert:
 - **Ein Konto trägt je Quelle genau eine Kennung.** Taucht im Verzeichnis unter demselben Namen eine
   neue Kennung auf (Konto gelöscht und neu angelegt), wird das lokale Konto **nicht** übernommen.
 - **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot) und **ausdrücklich öffnen** (Frist
-  verpasst, selbst gewählter Name, Vorab-Anlage mit `0`): `auth.loese_fremde_bindung(quelle,
+  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.loese_fremde_bindung(quelle,
   user_id)` löst die Bindung für LDAP/SAML und öffnet die Bindung über den Namen für die nächste
   Anmeldung — `max(federation_name_binding_days, 1)` Tage lang oder bis sie steht. Der Vorgang
   steht im Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort
@@ -351,11 +366,15 @@ Seite gehört und sich nicht ändert:
      geht ein Link an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos,
      mit Beleg. Derselbe Weg wie beim Adresswechsel der Selbstbedienung. Nur für Konten ohne
      belegte Adresse, keiner, solange einer offen ist, und höchstens ein **zugestellter** Link je
-     Konto und Tag — über alle Worker, gezählt an der Audit-Zeile `federation_email_confirm`, die
-     erst nach dem Versand entsteht (G12a). Eine gedrosselte Adresse oder ein gescheiterter Versand
-     wird nach `mail_per_address_window_sec` erneut versucht. Gehört die Adresse schon einem
-     anderen Konto (oder steht sie in `admin_identifiers`), geht kein Link hinaus; die Audit-Zeile
-     `email_change_taken` bzw. `_reserved` kommt höchstens einmal am Tag je Prozess.
+     Konto und Tag (lebt ein Link länger, `email_change_ttl_min`, so lange) — über alle Worker,
+     gezählt an der Audit-Zeile `federation_email_confirm`, die erst nach dem Versand entsteht
+     (G12a). Eine gedrosselte Adresse oder ein gescheiterter Versand wird nach
+     `mail_per_address_window_sec` erneut versucht. Gehört die Adresse schon einem anderen Konto
+     (oder steht sie in `admin_identifiers`), geht kein Link hinaus; die Abweisung
+     (`email_change_taken` bzw. `_reserved`, Detail `konto=<id> quelle=…`) zählt wie ein Versand,
+     ebenfalls über alle Worker — sonst verriete ihre Zahl auf der Konto-Seite, ob eine fremde
+     Adresse vergeben ist (Angriffsrunde 2026-09-26). Bleibt: Scheitert der Versand an eine freie
+     Adresse, versucht es die nächste Anmeldung nach dem Fenster erneut.
   2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
      `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
      Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,
@@ -436,5 +455,5 @@ zweitem Faktor:
 |---|---|---|
 | 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | erfüllt, sobald Versand konfiguriert ist: Greift eine Konto-Sperre (Fenster oder Serie), geht ein Hinweis an die belegte Adresse — höchstens einer je Sperrfenster, ohne Link (`notify_login_failures`, Vorgabe an). Nachgeschlagen und verschickt im Hintergrund, die Antwort verrät weder Existenz noch Laufzeit |
 | 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | teilweise (PO-Entscheid 2026-09-24, Option C): Hat ein Konto TOTP oder Passkey, verlangt die Anmeldung über den Anmelde-Link ihn zusätzlich (`magiclink_require_second_factor`, Vorgabe an; `False` = der Link genügt). Konten ohne zweiten Faktor meldet der Link weiter allein an — dort ist das Postfach der einzige Faktor. Streng erfüllt nur ohne `magiclink_enabled` |
-| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift, und seit 2026-09-24 auch beim Widerruf von API-Keys (`api_key_revoked`, gesammelt `api_keys_revoked`). Die Mail verschickt der Hook (s. SECURITY.md). Ohne Hook wird nur protokolliert. Adresse oder Benutzername ändern lässt TinySesam niemanden über eine Oberfläche; `store.set_email` ist ein Werkzeug für den Betreiber und löst den Hook nicht aus |
+| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift, und seit 2026-09-24 auch beim Widerruf von API-Keys (`api_key_revoked`, gesammelt `api_keys_revoked`). Die Mail verschickt der Hook (s. SECURITY.md). Ohne Hook wird nur protokolliert. Umbenennen (Konto-Seite seit 2026-09-25, Panel seit 2026-09-26) meldet `username_changed`, der bestätigte Adresswechsel der Konto-Seite `email_changed` (die alte Adresse bekommt ohnehin einen Hinweis); `tinysesam rename` und `store.set_email` direkt sind Werkzeuge für den Betreiber und lösen den Hook nicht aus |
 | 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | erfüllt mit `signup_verify_email=True`: gleiche Antwort und Rechenzeit am Login (`dummy_verify`) und an der Registrierung (dieselbe Arbeit in beiden Zweigen, 2026-09-24). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig (sofortige Anmeldung vs. 409) — die Konfigurationsprüfung warnt |

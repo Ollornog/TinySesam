@@ -26,8 +26,9 @@ auffällt:
 - **Die Datenbank erzwingt den gemeinsamen Kennungsraum** (G12c): `store.create_user`,
   `store.set_username` und `store.set_email` werfen `sqlite3.IntegrityError`, wenn Name oder Adresse
   schon Kennung eines anderen Kontos ist — **auch bei Namensvettern wie `Alice`/`alice`**. Wer den
-  Store direkt aufruft, fängt das. Die Startmeldung nennt jetzt jede Kollision im Bestand, nicht nur
-  „Name = fremde Adresse".
+  Store direkt aufruft, fängt das. `auth.create_user` wirft im Wettlauf denselben `ConfigError` wie
+  bei einer vergebenen Kennung; `e.besitzer_id` kann dann `None` sein. Die Startmeldung nennt jetzt
+  jede Kollision im Bestand, nicht nur „Name = fremde Adresse".
 - **`tinysesam unlock` nimmt die Kennung wie eingetippt** — Name, Adresse oder den Namen im
   Verzeichnis — und räumt die Zähler unter ihr auch ohne Konto; Rückgabe 1 nur noch, wenn dort nichts
   stand (G5). Fehlversuche, die vor einem Umbenennen oder Adresswechsel unter der neuen Kennung
@@ -50,7 +51,11 @@ auffällt:
   `auth.foederation_nachbinden("ldap")` als Trockenlauf lesen, dann mit `ausfuehren=True`; SAML mit
   `zuordnung={name: nameid}`. Die Startmeldung nennt je Quelle, wie viele Konten es betrifft.
   `federation_name_binding_days=-1` holt das alte Verhalten zurück. **Selbst registrierte oder
-  selbst umbenannte Konten binden nie über den Namen** (G2-N); ein einzelnes Konto öffnet
+  selbst umbenannte Konten binden nie über den Namen** (G2-N), **ebenso Konten, die eine andere
+  Quelle angelegt hat** (Angriffsrunde 2026-09-26): Ein über OIDC angelegtes Konto bindet sich nicht
+  über den Namen an LDAP oder SAML, ein über LDAP angelegtes nicht an SAML und umgekehrt — auch im
+  Bestand, soweit die Herkunft belegt ist. Wer mehrere Quellen aus demselben Verzeichnis betreibt,
+  merkt das an `<quelle>_namensbindung_zu grund=name_aus_quelle`; ein einzelnes Konto öffnet
   `auth.loese_fremde_bindung(quelle, user_id)`.
 - **Nimmt der Identity Provider dem letzten Admin das Recht, bleibt `admin_identifiers` zu** (G6):
   Die Allowlist befördert danach niemanden mehr. Zurück ins Panel über das Einmal-Token, das
@@ -68,10 +73,15 @@ auffällt:
   Zeilen) als `email_change_requested` und `federation_email_confirm` gar nicht mehr; das Audit-Log
   des Betreibers behält die echten Namen.
 - **Bestätigungslinks für Adressen aus LDAP/SAML zählen Versände** (G12a): höchstens ein
-  zugestellter je Konto und Tag, jetzt über alle Worker; eine gedrosselte Zieladresse oder ein
-  gescheiterter Versand wird nach `mail_per_address_window_sec` erneut versucht statt am nächsten
-  Tag. Die Audit-Zeile `federation_email_confirm` entsteht erst nach dem Versand, und ihr Detail
-  beginnt mit `konto=<id>` — wer das Log maschinell liest, passt den Leser an.
+  zugestellter je Konto und Tag (lebt ein Link länger, `email_change_ttl_min`, so lange), jetzt
+  über alle Worker; eine gedrosselte Zieladresse oder ein gescheiterter Versand wird nach
+  `mail_per_address_window_sec` erneut versucht statt am nächsten Tag. Die Abweisung einer
+  vergebenen oder reservierten Adresse zählt genauso. Die Audit-Zeile `federation_email_confirm`
+  entsteht erst nach dem Versand; ihr Detail beginnt mit `konto=<id>`, das der Zeilen
+  `email_change_requested`/`_taken`/`_reserved` aus diesem Weg mit `konto=<id> quelle=<quelle>` —
+  wer das Log maschinell liest, passt den Leser an.
+- **Neue CLI-Befehle:** `tinysesam rename --db <datei> <name|#id> <neu>` (Umbenennen als Betreiber,
+  G13) und `tinysesam owner --db <datei> <name>` (Notweg zum Owner).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
@@ -92,8 +102,8 @@ auffällt:
   Grund, `TinySesam.NACHBINDUNG_GRUENDE`) und `lokal` (Konten mit lokalem Passwort, nur berichtet),
   mit Anzeigename und Adresse hier und im Verzeichnis nebeneinander. Dazu
   `federation_name_binding_days`, `create_user(…, name_selbst_gewaehlt=False)` für eigene
-  Registrierungen und `change_username(…, durch_betreiber=False)` für das Umbenennen durch den
-  Betreiber (G2-N).
+  Registrierungen und für Konten aus einem eigenen Identity Provider, und
+  `change_username(…, durch_betreiber=False)` für das Umbenennen durch den Betreiber (G2-N).
 - **Benutzername und E-Mail-Adresse selbst ändern (PO-Entscheid 2026-09-25).** Auf der Konto-Seite,
   mit frischem Step-up. Die Adresse gilt erst nach dem Klick auf den Link an die neue (mit Beleg),
   die alte bekommt einen Hinweis, offene Links an sie verfallen; eine vergebene Adresse bekommt
@@ -109,7 +119,7 @@ auffällt:
   Quelle — derselbe Weg wie beim Adresswechsel der Selbstbedienung; erst der Klick macht sie zur
   Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens ein zugestellter je
   Konto und Tag (über alle Worker, G12a), keiner, solange einer offen ist; eine vergebene Adresse
-  bekommt keinen. Schalter
+  bekommt keinen, und ihre Abweisung zählt wie ein Versand. Schalter
   `federation_email_confirm` (Vorgabe an; braucht Mailer und `base_url`). Dazu je Quelle ein
   optionales Beleg-Attribut für IdPs, die das führen: `ldap_attr_email_verified`,
   `saml_attr_email_verified` — ein wahrer Wert (`true`, `1`, `yes`) belegt die Adresse dieses
@@ -247,6 +257,21 @@ auffällt:
   Betreiber angelegtes oder mit `durch_betreiber=True` umbenanntes nicht. Der Bestand bekommt den
   Merker beim ersten Start einmal aus dem Audit-Log (`signup`/`username_changed` unter dem heutigen
   Namen ab der Anlage).
+- **Ein Name aus einer anderen Quelle bindet ebenfalls nicht (Angriffsrunde 2026-09-26).** G2-N
+  kannte nur Registrierung und Umbenennen. Ein Konto, das OIDC, SAML oder LDAP anlegt, trägt aber
+  den Namen, den die Person DORT hat — bei einem IdP mit Selbstregistrierung einen selbst gewählten
+  (`preferred_username`, NameID, `uid`). Gemessen: `chefin` über OIDC, danach die echte chefin über
+  LDAP — ihre Kennung und die Rolle aus `ldap_group_role_map` landeten im OIDC-Konto, und der
+  Angreifer meldete sich weiter über OIDC an; über SAML ebenso, mit `__admin__` bis zum Admin-Flag.
+  Umgekehrt übernahm ein SAML-Selbstregistrant mit `uid=chefin` das von LDAP angelegte Konto selbst.
+  Jetzt merkt sich die Anlage die Quelle (`users.name_quelle`), und eine ANDERE Quelle bindet das
+  Konto nie über den Namen (`grund=name_aus_quelle`); dieselbe Quelle ersetzt ihren Platzhalter
+  weiter durch die echte Kennung. Ein Merker „selbst gewählt" für jede föderierte Anlage (die im
+  Befund empfohlene Form) hätte genau das gebrochen: Nach `ldap_attr_id` wäre jedes LDAP-Konto ohne
+  Kennung abgewiesen worden. Umbenennen setzt die Herkunft zurück. Der Bestand bekommt sie beim
+  ersten Start einmal, wo sie belegt ist: OIDC (der Callback legt jedes verknüpfte Konto selbst an)
+  und eine LDAP/SAML-Bindung aus der Sekunde der Anlage; Konten von vor den Kennungen (bis 0.19)
+  bleiben ohne und hängen an der Frist. Test: `tests/test_foederation_bestand.py`.
 - **`objectGUID` aus den rohen Bytes** (Nebenbefund zu G1): Ohne Schema dekodiert ldap3 einen Wert,
   der zufällig gültiges UTF-8 ist, zu Text — eine GUID aus Bytes unter 0x80 kam als Text mit
   Steuerzeichen an, die Formprüfung wies sie als manipuliert ab, und die Person kam über LDAP nie
@@ -297,10 +322,17 @@ auffällt:
   Zieladresse oder ein gescheiterter Versand kostete den Link für einen ganzen Tag, und zwei Worker
   auf einer Datenbank schickten zwei am selben Tag. Jetzt zählt die Datenbank den Versand — die
   Zeile `federation_email_confirm … konto=<id>` entsteht im Postausgang und nur, wenn die Mail
-  hinausging (`Store.quellmail_seit`, über `idx_audit_ts`). Der Speicher dämpft nur noch: eine
-  vergebene oder reservierte Adresse einmal am Tag (ihre Audit-Zeile bleibt so selten wie
-  gewollt), alles Vorübergehende im Fenster der Mail-Drossel. `_token_mail` meldet dafür, ob die
-  Mail hinausging. Test: `tests/test_quellenadresse.py` (G12a).
+  hinausging (`Store.quellmail_seit`, über `idx_audit_ts`) —, und ebenso die Abweisung einer
+  vergebenen oder reservierten Adresse (ihre Zeile `email_change_taken`/`_reserved` beginnt auf
+  diesem Weg mit `konto=<id> quelle=<quelle>`): höchstens ein erledigter Antrag je Konto und Tag,
+  so lange, wie ein Link gilt, wenn das länger ist. Die Abweisung zuerst nur im Speicher zu dämpfen,
+  war ein Orakel (Angriffsrunde 2026-09-26): je Worker und bis zum Neustart eine weitere Zeile, die
+  Kontoseite eines LDAP-Nutzers, der sein `mail` selbst pflegt, zeigte bei einer freien Adresse
+  einen Antrag, bei einer vergebenen mit jedem Worker einen mehr. Der Speicher dämpft nur noch das
+  Vorübergehende im Fenster der Mail-Drossel. `_token_mail` meldet dafür, ob die Mail hinausging.
+  **Verbleibend:** Scheitert der Versand an eine freie Adresse, darf die nächste Anmeldung nach dem
+  Fenster erneut — eine vergebene hat keinen Versand, der scheitern könnte. Test:
+  `tests/test_quellenadresse.py` (G12a, a1-02).
 - **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
   Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
   Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene
@@ -452,8 +484,8 @@ auffällt:
   „Email as username", Entra-UPN —, geprüft nach der Unicode-Faltung, also auch `＠`), keine Adresse
   im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
   später, wird sie nachgetragen, sofern sie frei ist. Ein Provider, der den Claim nie schickt (Entra
-  ID), braucht `oidc_email_verified_default=True`. SAML und LDAP sind unverändert (sie liefern keinen
-  Beleg; offen zur Entscheidung).
+  ID), braucht `oidc_email_verified_default=True`. SAML und LDAP liefern keinen Beleg; für sie
+  entscheidet der Betreiber je Quelle („SAML- und LDAP-Adressen" unter Hinzugefügt).
 - **E-Mail-Kollision beim OIDC-Login (F-27)** war bereits abgefangen (409, `oidc_ident_taken`) und
   hat jetzt einen Test; eine unbelegte fremde Adresse kollidiert seit H-3 gar nicht mehr.
 
