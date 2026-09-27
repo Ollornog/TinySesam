@@ -47,7 +47,12 @@ Detailtext ist eine Teilstring-Suche, die kein Index eingrenzt, und liest bei ei
 Adresse (Löschen im Panel) das ganze Log — dessen Grösse wächst ohne `audit_retention_days`
 (Vorgabe 0 = unbegrenzt). Seit 2026-09-26 läuft sie in Blöcken zu 5000 Zeilen ohne Schreibsperre
 dazwischen (G4): Anmeldungen und andere Worker warten nicht mehr die ganze Suche ab; das Löschen
-selbst dauert so lange, wie das Log gross ist.
+selbst dauert so lange, wie das Log gross ist. Seit 2026-09-27 (Prüfrunde, F4) auch: jede
+Schreibweise, unter der jemand die Kennung eingetippt hat (`login_fail` schreibt die rohe Eingabe —
+verglichen im Zähl-Topf, nicht, wenn ein verbleibendes Konto ihn teilt), frühere Namen und Adressen
+des Kontos (aus seinen Zeilen `username_changed`/`email_changed`, je in der Zeit, in der es sie trug)
+und in seinen eigenen Zeilen die Werte von `alt=`, `neu=` und `an=`. Nicht erfasst: eine Adresse,
+die ohne `email_changed` kam und ging (Nachtrag aus OIDC/LDAP), und der Name im Verzeichnis.
 
 ## Sitzungen verwalten
 
@@ -337,6 +342,16 @@ Seite gehört und sich nicht ändert:
   nicht vermerkt, und die Anmeldung, die ihn vermerken würde, ist gesperrt), räumt es trotzdem die
   Zähler unter dieser Kennung und sagt das; Rückgabe 1 nur, wenn dort nichts stand. Gehört der
   Verzeichnisname lokal einem ANDEREN Konto (als Name oder Adresse), bleibt dessen Serie stehen.
+  Seit 2026-09-27 (Prüfrunde Sperren/Zähler): **Eine Kennung prüft nie die Geheimnisse zweier
+  Konten.** Gehört die eingetippte Kennung lokal einem Konto und führt der LDAP-Eintrag zu einem
+  anderen, weist die Anmeldung ab (Fehlversuch, `ldap_kennung_abgewiesen grund=kennung_zweier_konten
+  lokal=<id> verzeichnis=<id|neu>`); Abhilfe ist, das lokale Konto umzubenennen (Panel, `tinysesam
+  rename`) oder den Namen im Verzeichnis. Der Name an der Bindung eines Kontos ist für alle anderen
+  vergeben (Registrierung, Umbenennen, Admin-API, CLI, Datenbank), und wer ein LDAP-Konto umbenennt,
+  dessen Name der Verzeichnisname war, lässt ihn als Verzeichnisnamen stehen — der Panel-Reset
+  räumt die Serie darunter weiter. Den Namen trägt nur das Konto, das sich zuletzt so angemeldet
+  hat; tragen ihn zwei (Bestand), zählt er für keins, und `unlock` räumt unter ihm, ohne ein Konto zu
+  nennen.
 - **`admin_identifiers` nach einem IdP-Entzug (H-5, G6):** Entzieht der Provider der Instanz ihren
   **letzten** Admin, befördert die Allowlist danach niemanden mehr — weder diese Person noch ein
   anderes Konto aus der Liste (Setting `allowlist_nach_idp_entzug`, Audit `admin_bootstrap_denied
@@ -397,9 +412,10 @@ Seite gehört und sich nicht ändert:
   `saml_attr_email`); bei LDAP eine Eingabe, die dem `mail`-Wert des gefundenen Eintrags gleicht
   (ein Filter wie `(|(uid={username})(mail={username}))`, auch mit `mail=chefin` ohne `@`). Ein UPN
   als Bind-Kennung bleibt Kontoname. Trifft ein solcher Filter die Kennung eines ANDEREN lokalen
-  Kontos, räumt die Anmeldung des Verzeichnis-Eintrags dessen Fehlversuche nicht (Fenster und
-  Serie; G5-N1, seit 2026-09-26 — vorher setzte jede Anmeldung des Dritten das Kontofenster der
-  lokalen Inhaberin zurück). Neue Konten heissen dann `saml-…` bzw. `ldap-…`. Wer diese
+  Kontos, wird die Anmeldung des Verzeichnis-Eintrags abgewiesen (seit 2026-09-27,
+  `grund=kennung_zweier_konten`; von 2026-09-26 an räumte sie nur die Fehlversuche der Inhaberin
+  nicht, davor setzte jede Anmeldung des Dritten deren Kontofenster zurück). Neue Konten mit einem
+  unbelegten Namen heissen `saml-…` bzw. `ldap-…`. Wer diese
   Namen nicht will und dem IdP traut, setzt den Schalter. Eine Kennung mit Rand-Leerraum oder
   Steuerzeichen weist TinySesam ab, statt sie zu trimmen (sie fiele sonst auf eine fremde Bindung).
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
@@ -439,11 +455,14 @@ dort. Soll sie nur Folgefaktor sein: `pin_login=False`.
 Passkey ist über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne zweiten Faktor
 ist der Anmelde-Link so stark wie das Postfach. Das gilt auch in einer Route-Kette wie
 `require(factors=["magic"])`: Hat das Konto TOTP oder einen Passkey, verlangt sie ihn nach dem Link
-(G10, seit 2026-09-26; bis dahin öffnete das Postfach allein die Route). Eine Route-Kette ohne
-`magic` prüft dagegen nur ihre eigene Liste — sie überschreibt die globale Policy; `["password"]`
-lässt ein Konto mit TOTP mit dem Passwort allein hinein. Wer das angleichen will, erzwingt eine
-Kette oder schaltet schwache Wege ab. ASVS 6.3.4 („alle Wege gleich stark") erfüllt die Vorgabe damit **nicht**; eine Kette
-tut es.
+(G10, seit 2026-09-26; bis dahin öffnete das Postfach allein die Route). **Eine Route-Kette
+verschärft die globale Regel nur** (PO-Entscheid 2026-09-27, „Angleichen"): Schuldet die Sitzung der
+globalen Anmeldung noch einen Faktor — TOTP eines Kontos, das eines hat, oder den nächsten Schritt
+der `login_chain` —, geht sie zuerst dorthin, auch bei `require(factors=["password"])`; erst danach
+zählt die Liste der Route. Bis dahin überschrieb die Route-Kette die globale Policy, und
+`["password"]` liess ein Konto mit TOTP mit dem Passwort allein hinein. ASVS 6.3.4 („alle Wege
+gleich stark") erfüllt die Vorgabe trotzdem **nicht** — der Anmelde-Link ohne zweiten Faktor bleibt
+so stark wie das Postfach; eine Kette tut es.
 
 ## Was für ASVS Level 3 fehlt
 

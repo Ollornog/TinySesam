@@ -41,7 +41,8 @@ Hang one class in front of your app, done: login page, sessions and route guards
 
 **Combinable in order:**
 any **factor chains** (`login_chain=["oidc","password"]`),
-global or per route (`Depends(auth.require(factors=[...], strict=...))`).
+global or per route (`Depends(auth.require(factors=[...], strict=...))`) — a route chain only ever
+adds to the global rule.
 
 **Roles are optional:**
 most apps only need “logged in / not” (`require_user`).
@@ -342,7 +343,10 @@ TinySesamConfig.local_accounts(          # username + password only, no email an
   TOTP, PIN or password — restricted by `stepup_methods`, otherwise whatever the user has set up
   (`auth.stepup_options(user)`). Freshness expires after `stepup_max_age_sec`.
 - `Depends(auth.require(factors=["password", "pin"]))` → an ordered chain per route. Someone already
-  signed in only gets the missing field, not the whole login page again.
+  signed in only gets the missing field, not the whole login page again. A route chain tightens the
+  global rule and never undercuts it: a session that still owes the global sign-in a factor (TOTP of
+  an account that has one, the next step of `login_chain`) is sent there first — even with
+  `factors=["password"]`.
 
 **A PIN as the way in is a deliberate option.** With `pin_enabled=True` the PIN is a first factor by
 default (`pin_login=True`) — unless a strict `login_chain` asks for it after another factor, where it
@@ -808,7 +812,8 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
   → `/auth/reauth`). `admin_require_mfa=True` additionally protects the panel with a fresh confirmation.
 - **Factor chains (ordered):** `login_chain=["oidc","password"]` + `login_chain_strict`; per route
-  `require(factors=[...], strict=...)`. Factors: `password, pin, oidc, passkey, totp, magic`.
+  `require(factors=[...], strict=...)` on top of the global rule. Factors: `password, pin, oidc,
+  passkey, totp, magic`.
 - **PIN per user:** `pin_enabled` — user+PIN, its own strict lockout, combinable with TOTP.
 - **Shared resource secret:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
   kind="pin"|"password")`, guard `Depends(auth.require_resource(name))`, with no user account at all.

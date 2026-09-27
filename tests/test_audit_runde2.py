@@ -2506,4 +2506,107 @@ r.check("G4: ein junges Konto liest nicht das ganze Log — mit Wasserlinie und 
 #  die Tabelle von vorn entlang) → „junges Konto“ rot; den Beginn ganz ignorieren → ebenso; den id-Bereich des Blocks am Primärschlüssel vorbei schreiben (`+id`) →
 #  „über den Primärschlüssel“ rot; die alte Fassung (eine Schreibtransaktion) → die ersten drei rot.)
 
+
+# ── F4 (Prüfrunde Sperren/Zähler 2026-09-27): was die Löschzusage H-13 noch ausliess ───────────────
+# Schon auf main so: Nach dem Löschen standen eingetippte Schreibweisen (4a), frühere Namen und
+# Adressen (4b) und die Werte in den eigenen Zeilen (4c) weiter im Audit-Log.
+_F4_PW = "Loesch-Pw-15xy"
+
+
+def _f4_app():
+    a, ap = _app(csrf_enabled=False, passkey_enabled=False, lang="de")
+    a.set_security("rate_limit_max", 100000)
+    a.set_security("max_login_attempts", 1000)
+    post: list = []
+    a.set_mailer(lambda to, betreff, text, html=None: post.append((to, text)) or True)
+    a.create_user("root", password=_F4_PW, email="root@example.com", is_admin=True)
+    return a, ap, post
+
+
+def _f4_rest(a, *spuren):
+    """Alle Audit-Zeilen, in denen eine der Spuren (casefold) noch in Name oder Detail steht."""
+    aus = []
+    for z in a.store._all("SELECT id, event, username, detail FROM audit ORDER BY id"):
+        text = f"{z['username'] or ''} {z['detail'] or ''}".casefold()
+        if any(s.casefold() in text for s in spuren):
+            aus.append((z["event"], z["username"], z["detail"]))
+    return aus
+
+
+# 4a: `login_fail` schreibt die ROHE Eingabe; gezählt wird im Topf (strip, NFKC, lower).
+_f4a, _f4a_app, _ = _f4_app()
+_f4a_uid = _f4a.create_user("Émile", password=_F4_PW, email="emile@example.com")
+_f4a_c = TestClient(_f4a_app, client=("192.0.2.9", 4000))
+for _eingabe in ("Émile", "émile", "Émile ", " emile@example.com", "ＥＭＩＬＥ@example.com", "ÉMILE"):
+    _f4a_c.post("/auth/login", data={"username": _eingabe, "password": "falsch"}, follow_redirects=False)
+_f4a_vor = len(_f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ"))
+_f4a.delete_user(_f4a_uid)
+_f4a_rest = _f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ")
+# (Mutationsprobe: den Vergleich im Topf aus dem Blockscan nehmen (`auch_name` leer, `name_trifft`
+#  immer falsch) → vier Zeilen bleiben → rot.)
+r.check("F4a: jede eingetippte Schreibweise (Leerraum, Akzent-Grossbuchstabe, Vollbreite) ist nach dem "
+        "Löschen aus dem Audit-Log", _f4a_vor >= 6 and _f4a_rest == [], f"vorher {_f4a_vor}, übrig {_f4a_rest}")
+# Gegenprobe: Teilt ein VERBLEIBENDES Konto den Topf (Namensvetter aus dem Bestand, rohes INSERT),
+# bleibt eine gefaltete Schreibweise stehen — sie kann ihm gehören (wie bei `delete_attempts_for`).
+_f4n, _f4n_app, _ = _f4_app()
+_f4n.create_user("Karl", password=_F4_PW)
+_f4n_platz = _f4n.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                              ("karl", "karl", _store_mod.jetzt() - 60)).lastrowid
+TestClient(_f4n_app, client=("192.0.2.10", 1)).post("/auth/login", data={"username": " KARL ", "password": "x"})
+_f4n.delete_user(_f4n_platz)
+r.check("… ein Topf, den ein verbleibendes Konto teilt, wird nicht gefaltet verglichen (Gegenprobe)",
+        [z for z in _f4_rest(_f4n, " KARL ") if z[0] == "login_fail"] != [],
+        str(_f4_rest(_f4n, "karl")))
+
+# 4b: frühere Namen und Adressen desselben Kontos — umbenannt, Adresse gewechselt, dann gelöscht.
+_f4b, _f4b_app, _f4b_post = _f4_app()
+_f4b_uid = _f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
+_f4b_c = TestClient(_f4b_app, client=("192.0.2.11", 1))
+_f4b_c.post("/auth/login", data={"username": "bob", "password": _F4_PW}, follow_redirects=False)
+_f4b_c.post("/auth/login", data={"username": "bob.alt@example.com", "password": "falsch"}, follow_redirects=False)
+_f4b.change_username(_f4b_uid, "robert")
+_f4b.request_email_change(_f4b_uid, "robert@example.com", "http://testserver")()
+_f4b_link = [t for an, t in _f4b_post if an == "robert@example.com"]
+_f4b_raw = re.search(r"https?://\S+/([A-Za-z0-9_-]{20,})", _f4b_link[-1]).group(1) if _f4b_link else ""
+_f4b_ok = _f4b.confirm_email_change(_f4b_raw)
+# Danach übernimmt jemand den freien Namen und die freie Adresse — dessen Zeilen gehören nicht zum Konto.
+_f4b_grenze = _f4b.store._one("SELECT max(id) AS m FROM audit")["m"]
+_f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
+TestClient(_f4b_app, client=("192.0.2.12", 1)).post("/auth/login", data={"username": "bob", "password": _F4_PW},
+                                                     follow_redirects=False)
+_f4b.delete_user(_f4b_uid)
+_f4b_rest = [z for z in _f4b.store._all("SELECT id, event, username, ip, detail FROM audit WHERE id <= ?",
+                                        (_f4b_grenze,))
+             if z["username"] == "bob" or any(s in f"{z['username']} {z['detail']}".casefold()
+                                               for s in ("robert", "bob.alt@", "alt=bob"))]
+_f4b_spaeter = _f4b.store._all("SELECT event, ip FROM audit WHERE id > ? AND username = 'bob'", (_f4b_grenze,))
+# (Mutationsprobe: `_fruehere_kennungen` gibt [] zurück → die Anmeldung unter `bob` samt IP und der
+#  Fehlversuch unter der alten Adresse bleiben → rot.)
+r.check("F4b: frühere Namen und Adressen — umbenannt, Adresse gewechselt, gelöscht: keine Spur mehr",
+        _f4b_ok == "ok" and _f4b_rest == [], f"{_f4b_ok}, übrig {[dict(z) for z in _f4b_rest]}")
+r.check("… nur in ihrer Spanne: die Zeilen des späteren Trägers von Name und Adresse bleiben (Gegenprobe)",
+        any(z["event"] == "login" and z["ip"] == "192.0.2.12" for z in _f4b_spaeter),
+        str([dict(z) for z in _f4b_spaeter]))
+
+# 4c: die Werte in den eigenen Zeilen — ein nie eingelöster Adresswechsel (`neu=`), die Adresse aus
+# LDAP/SAML (`an=`, wie `_adresse_aus_quelle_belegen` sie schreibt), der alte Name (`alt=`).
+_f4c, _f4c_app, _ = _f4_app()
+_f4c_uid = _f4c.create_user("carla", password=_F4_PW, email="carla@example.com")
+_f4c.request_email_change(_f4c_uid, "carla.neu@example.com", "http://testserver")()
+_f4c.audit("federation_email_confirm", "carla", None, f"konto={_f4c_uid} quelle=ldap an=carla.ldap@example.com")
+_f4c.audit("username_changed", "carla", None, "alt=frueher-carla durch=betreiber akteur=root")
+_f4c.audit("email_change_requested", "root", None, "neu=root.neu@example.com")      # fremde Zeile
+_f4c.delete_user(_f4c_uid)
+_f4c_eigen = [z["detail"] for z in _f4c.store._all("SELECT detail FROM audit WHERE username=?",
+                                                    (f"gelöscht#{_f4c_uid}",))]
+# (Mutationsprobe: `_eigene_werte_ersetzen` abschalten → `neu=carla.neu@…`, `an=…`, `alt=…` bleiben → rot.)
+r.check("F4c: in den eigenen Zeilen sind `neu=`, `an=` und `alt=` ersetzt",
+        _f4_rest(_f4c, "carla") == [] and any("neu=gelöscht#" in d for d in _f4c_eigen)
+        and any("an=gelöscht#" in d for d in _f4c_eigen) and any("alt=gelöscht#" in d for d in _f4c_eigen),
+        f"{_f4_rest(_f4c, 'carla')} {_f4c_eigen}")
+r.check("… `akteur=` in den eigenen Zeilen und die Werte in fremden Zeilen bleiben (Gegenprobe)",
+        any("akteur=root" in d for d in _f4c_eigen)
+        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='neu=root.neu@example.com'")),
+        str(_f4c_eigen))
+
 sys.exit(r.done())

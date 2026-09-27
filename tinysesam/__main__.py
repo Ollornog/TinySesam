@@ -391,7 +391,7 @@ def _rename(argv) -> int:
         description="Ein Konto umbenennen — als Betreiber, ohne laufenden Dienst.",
         epilog="Der Weg für eine Kennungs-Kollision im Bestand, die der Start meldet (G13). Dieselben "
                "Grundregeln wie im Panel: frei in Benutzernamen UND Adressen (auch als Namensvetter "
-               "wie Alice/alice), keine Steuerzeichen, höchstens 150 Zeichen, ein Name mit @ nur als "
+               "wie Alice/alice) und nicht der Name eines anderen Kontos im Verzeichnis, keine Steuerzeichen, höchstens 150 Zeichen, ein Name mit @ nur als "
                "die eigene bestätigte Adresse. Die Konfiguration kennt das CLI nicht: Einen Namen aus "
                "admin_identifiers prüft es nicht, und im Modus login_identifier='email' folgt der "
                "Name der Adresse — dort nicht umbenennen. Sitzungen, Keys, Faktoren und Bindungen "
@@ -431,12 +431,14 @@ def _rename(argv) -> int:
     if neu == alt:
         print(f"'{alt}' heisst schon so — nichts geändert.")
         return 0
-    # Kreuzweise, wie `TinySesam.kennung_vergeben`: Name, Adresse und Zähl-Topf.
+    # Kreuzweise, wie `TinySesam.kennung_vergeben`: Name, Adresse, Zähl-Topf und der Name im
+    # Verzeichnis eines anderen Kontos (Prüfrunde 2026-09-27).
     for treffer in (store.get_user_by_name(neu), store.get_user_by_email(neu),
-                    store.konto_mit_topf(neu, ausser=konto["id"])):
+                    store.konto_mit_topf(neu, ausser=konto["id"]),
+                    store.konto_mit_verzeichnisname(neu, ausser=konto["id"])):
         if treffer is not None and treffer["id"] != konto["id"]:
-            print(f"'{neu}' ist schon vergeben (Konto {treffer['id']}, als Name oder Adresse).",
-                  file=sys.stderr)
+            print(f"'{neu}' ist schon vergeben (Konto {treffer['id']}, als Name, Adresse oder Name "
+                  "im Verzeichnis).", file=sys.stderr)
             return 1
     try:
         # Als Betreiber: Der Merker „selbst gewählt" (G2-N) fällt — der Name steht für den

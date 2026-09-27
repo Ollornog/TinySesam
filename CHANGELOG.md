@@ -80,6 +80,21 @@ auffällt:
   entsteht erst nach dem Versand; ihr Detail beginnt mit `konto=<id>`, das der Zeilen
   `email_change_requested`/`_taken`/`_reserved` aus diesem Weg mit `konto=<id> quelle=<quelle>` —
   wer das Log maschinell liest, passt den Leser an.
+- **Eine Kennung, ein Konto (Prüfrunde 2026-09-27):** Gehört die eingetippte Kennung lokal einem
+  Konto (Name oder Adresse), der LDAP-Eintrag dazu aber einem anderen — ein lokales Konto heisst wie
+  jemand im Verzeichnis, oder ein Filter über `mail` trifft die Adresse eines lokalen Kontos —,
+  **weist die Anmeldung über LDAP ab** (Fehlversuch, Audit `ldap_kennung_abgewiesen
+  grund=kennung_zweier_konten lokal=<id> verzeichnis=<id|neu>`, Logzeile mit Abhilfe: das lokale
+  Konto umbenennen). Bis dahin meldete sie den Verzeichnis-Eintrag an bzw. legte ein Konto `ldap-…`
+  an. **Der Name, unter dem sich ein anderes Konto über LDAP anmeldet, gilt als vergeben**
+  (Registrierung 409, Umbenennen abgewiesen, `store.create_user`/`set_username` werfen
+  `IntegrityError`), und ein umbenanntes LDAP-Konto behält seinen alten Namen als Verzeichnisnamen.
+- **Route-Ketten verschärfen die globale Regel nur** (PO-Entscheid 2026-09-27): `require(factors=[…])`
+  lässt eine Sitzung, der die globale Anmeldung noch einen Faktor schuldet (TOTP eines Kontos, das
+  eines hat; der nächste Schritt der `login_chain`), erst zu diesem Schritt — auch bei
+  `factors=["password"]`. Bis dahin überschrieb die Route-Kette die globale Regel; wer sie als
+  eigene, schwächere Anmeldung nutzte (Route `["password"]` ohne TOTP, Route `["magic"]` unter
+  `login_chain=["password", "totp"]`), bekommt jetzt den fehlenden Schritt.
 - **Neue CLI-Befehle:** `tinysesam rename --db <datei> <name|#id> <neu>` (Umbenennen als Betreiber,
   G13) und `tinysesam owner --db <datei> <name>` (Notweg zum Owner).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
@@ -417,6 +432,48 @@ auffällt:
   lautet. Jede Anmeldung des Dritten setzte das Kontofenster der Inhaberin zurück — verteiltes Raten
   ohne Grenze ausser Serie und IP-Limit. `record_login` hat dafür `konto=` (angehängt, Vorgabe
   `None`); die mitgelieferte Login-Route reicht es bei einer Verzeichnis-Anmeldung durch.
+- **Eine Kennung prüft nie die Geheimnisse zweier Konten (Prüfrunde 2026-09-27, p1-d).** G5-N1
+  schützte nur eine Richtung. Unter einer Kennung prüfte die Login-Route das lokale Passwort des
+  Kontos UND das LDAP-Passwort des Eintrags, der über die stabile Kennung an ein ANDERES Konto
+  gebunden sein kann. Hiess ein lokales Konto wie eine andere Person im Verzeichnis (nach einer
+  Umbenennung dort, im Panel, im CLI oder in der Selbstbedienung, per Registrierung) oder trug es
+  deren Verzeichnisadresse (Filter über `mail`, `ldap_email_trusted=False`), räumte jede seiner
+  Anmeldungen Fenster und Serie unter dieser Kennung. Gemessen mit allen Vorgaben: 120 Fehlversuche
+  gegen das LDAP-Passwort von einer IP, keine 429, danach öffnete das richtige Passwort die Sitzung
+  der Person. Jetzt weist `check_ldap` ab, wenn der Eintrag zu einem anderen Konto führt als
+  `find_user` — gebunden, über den Namen oder neu angelegt —, bevor irgendetwas geschrieben ist
+  (Konto, Bindung, Rollen, Adresse); die Route verbucht einen Fehlversuch. Und der Name an der
+  Bindung eines anderen Kontos (`federated_identity.name_topf`) ist vergeben: `kennung_vergeben`,
+  die Kennungs-Trigger der Datenbank (Index `ix_fed_name_topf`) und `tinysesam rename`. Test:
+  `tests/test_t13_entscheide.py`.
+- **Nach dem Umbenennen eines LDAP-Kontos bleibt sein alter Name der Name im Verzeichnis (p1-b).**
+  Hiess das Konto lokal wie im Verzeichnis, stand an der Bindung nichts; nach dem Umbenennen
+  räumten Panel-Reset und volle Anmeldung die Serie unter dem Verzeichnisnamen nicht mehr (429 bis
+  `tinysesam unlock`), und der Name war lokal frei. Jetzt vermerkt jedes Umbenennen den alten Namen
+  in derselben Transaktion (nur mit echter Kennung, nicht mit dem Herkunfts-Platzhalter).
+- **Ein veralteter Verzeichnisname räumt keine fremde Serie (p1-a).** Nach Umbenennen und
+  Wiedervergabe im Verzeichnis trugen zwei Konten denselben Namen; jede volle Anmeldung des
+  Vorbesitzers beendete die Serie, unter der gegen den neuen Inhaber geraten wurde, und `tinysesam
+  unlock` nannte das Konto mit der jüngeren Bindung. Jetzt löscht die Anmeldung unter dem Namen ihn
+  an fremden Bindungen, `zaehl_kennungen` prüft fremde Bindungen mit, und `unlock` nennt bei zwei
+  Trägern (Bestand) kein Konto.
+- **Ein Schreiber, der den Zähl-Topf mitführt, hebt die Wasserlinie (p1-c).** `store.set_email` aus
+  0.20.1 (nach einem Rückschritt) setzt Adresse und Topf in einer Anweisung — der Nachrechnen-Trigger
+  feuerte nicht, und die erste volle Anmeldung räumte die Fehlversuche des Fremden unter der neuen
+  Adresse. Neue Trigger `trg_users_wechsel_name`/`_mail`. Test: `tests/test_kennung_beitritt.py`.
+- **Route-Ketten unterschreiten die globale Regel nicht mehr (PO-Entscheid 2026-09-27, „Angleichen").**
+  `require(factors=["password"])` liess ein Konto mit TOTP mit dem Passwort allein auf die Route,
+  `["pin", "password"]` ebenso, und unter `login_chain=["password", "totp"]` genügte das Passwort.
+  Jetzt muss die Sitzung erst für die globale Regel voll sein (`mfa_ok`); eine halbe geht zu deren
+  fehlendem Schritt (`next_login_step`). Kein neuer Parameter. Test: `tests/test_t13_entscheide.py`.
+- **Die Löschzusage (H-13) deckt Schreibweisen, frühere Kennungen und die eigenen Werte (p2 F4,
+  schon auf main).** Nach dem Löschen blieben stehen: `login_fail`-Zeilen mit der ROHEN Eingabe
+  (`Émile `, ` emile@…`, Vollbreite), die Anmeldung unter dem früheren Namen samt IP, `alt=` in
+  `username_changed`/`email_changed` und `neu=`/`an=` eines nie eingelösten Adresswechsels bzw. aus
+  LDAP/SAML. Jetzt vergleicht der Blockscan die Spalte `username` im Zähl-Topf (nicht, wenn ein
+  verbleibendes Konto den Topf teilt), frühere Namen und Adressen kommen aus den eigenen
+  Wechselzeilen und gelten in ihrer Spanne, und in den eigenen Zeilen werden `alt=`, `neu=` und
+  `an=` ersetzt. Test: `tests/test_audit_runde2.py`.
 - **LDAP: Das erste Fenster eines Ausfalls sperrt niemanden mehr (G9).** Die Login-Route bucht jeden
   Versuch vorab als Fehlversuch (R7-2) und nimmt ihn bei einem Verzeichnis-Ausfall zurück (F-23) —
   erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach dem

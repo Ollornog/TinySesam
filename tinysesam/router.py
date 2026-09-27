@@ -171,6 +171,8 @@ def build_router(auth) -> APIRouter:
         # Verzeichnis gefragt worden war und abgelehnt hatte.
         # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
         # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
+        # Diesen Fall weist `check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
+        # Wächter in `_raeumgrenze` bleibt die zweite Sicherung.
         auth.record_login(username, ip, bool(u), "password", versuch=versuch,
                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
                                   else "lokal" if u else "lokal+ldap"),

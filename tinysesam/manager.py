@@ -529,6 +529,15 @@ class TinySesam:
         entfernt (auch anonym auslösbar: Registrierung, die `gc()` abräumt), gingen die
         Fehlversuche des anderen mit. Ein solcher Namensvetter gilt deshalb als vergeben.
 
+        **Und über den Namen im Verzeichnis** (`federated_identity.name_topf`, G5; Prüfrunde
+        2026-09-27): Unter einer Kennung prüft die Login-Route das lokale Passwort des Kontos UND
+        das LDAP-Passwort des Eintrags. Hiess ein lokales Konto so wie eine andere Person im
+        Verzeichnis (Selbstbedienung, Registrierung, Umbenennen im Panel), räumte jede seiner
+        Anmeldungen die Zähler, unter denen gegen deren LDAP-Passwort geraten wurde — die
+        Sperren wirkten nicht mehr. Ein Name, der an der Bindung eines ANDEREN Kontos steht, gilt
+        deshalb als vergeben (die Kennung, die nach dem Umbenennen im Verzeichnis dort steht, und
+        der alte Name eines umbenannten LDAP-Kontos, s. `Store._verzeichnisname_merken`).
+
         **Eine Vorprüfung, die Datenbank entscheidet** (seit 2026-09-26): Zwischen dieser
         Antwort und dem Schreiben kann eine gleichzeitige Anfrage die Kennung belegen. Das
         Schreiben weist sie dann ab (Trigger über die Zähl-Töpfe, `Store._trigger_sql`), und die
@@ -538,7 +547,8 @@ class TinySesam:
         if not kennung:
             return None
         for treffer in (self.store.get_user_by_name(kennung), self.store.get_user_by_email(kennung),
-                        self.store.konto_mit_topf(kennung, ausser=exclude_id)):
+                        self.store.konto_mit_topf(kennung, ausser=exclude_id),
+                        self.store.konto_mit_verzeichnisname(kennung, ausser=exclude_id)):
             if treffer is not None and treffer["id"] != exclude_id:
                 return self._als_dict(treffer)
         return None
@@ -1210,11 +1220,15 @@ class TinySesam:
     #: Antrag auf eine vergebene oder eine Allowlist-Adresse erscheint wie jeder Antrag — sonst
     #: stünde auf der Kontoseite, was die Antwort verschweigt. `None` blendet aus:
     #: `federation_email_confirm` entsteht nur, wenn der Link an eine FREIE Adresse hinausging, und
-    #: verriete dasselbe einem LDAP-Nutzer, der sein `mail`-Attribut selbst setzt. Das Audit-Log
-    #: des Betreibers behält die echten Namen.
+    #: verriete dasselbe einem LDAP-Nutzer, der sein `mail`-Attribut selbst setzt. Ebenso
+    #: `ldap_kennung_abgewiesen` (Prüfrunde 2026-09-27): Die Zeile steht unter der eingetippten
+    #: Kennung und entsteht nur, wenn das LDAP-Passwort des ANDEREN Eintrags stimmte — auf der
+    #: Kontoseite des lokalen Inhabers wäre sie genau das Orakel, das die Abweisung schliesst. Das
+    #: Audit-Log des Betreibers behält die echten Namen.
     _EIGENE_ANSICHT = {"email_change_taken": "email_change_requested",
                        "email_change_reserved": "email_change_requested",
-                       "federation_email_confirm": None}
+                       "federation_email_confirm": None,
+                       "ldap_kennung_abgewiesen": None}
 
     def own_events(self, user_id: int, limit: int = 20) -> list:
         """Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
@@ -1574,7 +1588,8 @@ class TinySesam:
     _OHNE_KENNUNG = Store.OHNE_KENNUNG
 
     def _fremde_identitaet_aufloesen(self, quelle: str, kennung: str, username: str,
-                                     anlegen, name_zuordnen: bool = True) -> Optional[dict]:
+                                     anlegen, name_zuordnen: bool = True,
+                                     nur_konto: Optional[int] = None) -> Optional[dict]:
         """Ein lokales Konto zu einer fremden Identität finden, binden oder anlegen (F-11).
 
         `kennung` ist die **stabile** Kennung aus dem Verzeichnis (objectGUID/entryUUID bei LDAP,
@@ -1615,6 +1630,11 @@ class TinySesam:
         beim IdP die Adresse eines lokalen Kontos als Namen einträgt, übernähme sonst genau
         dieses Konto (Angriff auf die dritte Runde). Ohne Kennung wird abgewiesen, mit Kennung
         gebunden oder neu angelegt — nie über den Namen.
+
+        `nur_konto`: Die Auflösung darf nur bei DIESEM Konto enden (`check_ldap`: das Konto, dessen
+        lokales Geheimnis unter derselben Kennung geprüft wird). Führt sie zu einem anderen — einer
+        Bindung, einem Namen, einer Anlage —, wird abgewiesen, bevor irgendetwas geschrieben ist
+        (`_kennung_zweier_konten`). None: keine Einschränkung.
         """
         jetzt = _jetzt()
         roh = str(kennung or "")
@@ -1654,10 +1674,16 @@ class TinySesam:
             gebunden_uid = self.store.get_federated_user(quelle, kennung)
 
         if gebunden_uid:
+            if nur_konto is not None and int(gebunden_uid) != int(nur_konto):
+                self._kennung_zweier_konten(quelle, username, nur_konto, gebunden_uid)
+                return None
             u = self.store.get_user(gebunden_uid)
             return self._als_dict(u) if u else None
 
         u = self.store.get_user_by_name(username) if name_zuordnen else None
+        if nur_konto is not None and (u is None or int(u["id"]) != int(nur_konto)):
+            self._kennung_zweier_konten(quelle, username, nur_konto, u["id"] if u else None)
+            return None
         if u is None:
             uid = anlegen()
             if uid is None:
@@ -1701,6 +1727,24 @@ class TinySesam:
                 self.audit(f"{quelle}_kennung_gebunden", str(u["username"]),
                            detail="nachgebunden beim Login")
         return self._als_dict(self.store.get_user(u["id"]))
+
+    def _kennung_zweier_konten(self, quelle: str, username: str, lokal_id, ziel_id) -> None:
+        """Die Anmeldung über `quelle` abweisen: Die eingetippte Kennung gehört lokal dem Konto
+        `lokal_id`, der Eintrag im Verzeichnis aber einem anderen (`ziel_id`, None = es würde neu
+        angelegt). Logzeile mit Abhilfe, Audit `<quelle>_kennung_abgewiesen grund=kennung_zweier_konten`.
+        Der Aufrufer gibt danach None zurück, die Route verbucht einen Fehlversuch (Prüfrunde
+        2026-09-27, p1-d)."""
+        security.seclog.warning(
+            "%s: Anmeldung unter %s abgewiesen — die Kennung ist Name oder Adresse von Konto %s, der "
+            "Eintrag im Verzeichnis gehört aber %s. Unter einer Kennung prüft TinySesam nie die "
+            "Geheimnisse zweier Personen: Die Anmeldung der einen räumte sonst die Sperrzähler, unter "
+            "denen gegen die andere geraten wird. Abhilfe: das lokale Konto umbenennen (Panel oder "
+            "`tinysesam rename`) oder den Namen im Verzeichnis ändern.",
+            quelle.upper(), security.fuer_log(username), lokal_id,
+            f"Konto {ziel_id}" if ziel_id is not None else "keinem Konto (es würde neu angelegt)")
+        self.audit(f"{quelle}_kennung_abgewiesen", username,
+                   detail=f"grund=kennung_zweier_konten lokal={lokal_id} "
+                          f"verzeichnis={ziel_id if ziel_id is not None else 'neu'}")
 
     @classmethod
     def _kennung_formfehler(cls, roh) -> Optional[str]:
@@ -2068,7 +2112,18 @@ class TinySesam:
         frisch angemeldeten Sitzung eine PIN oder einen Passkey ein, meldete sich damit erneut
         an — dieser Faktor reist ohne Beleg an —, und der Vermerk am Konto befördert ihn doch
         (B-umgehung-1 aus T-13). Sonst könnte eine Allowlist-Adresse über LDAP den Erst-Admin
-        bestimmen (F-14)."""
+        bestimmen (F-14).
+
+        **Eine Kennung, ein Konto** (Prüfrunde 2026-09-27, p1-d): Die Login-Route fragt LDAP erst,
+        nachdem das lokale Passwort des Kontos zur Kennung (`find_user`) nicht gepasst hat. Führt
+        der Eintrag im Verzeichnis zu einem ANDEREN Konto (gebunden, über den Namen oder neu
+        angelegt), wird abgewiesen, bevor etwas geschrieben ist (`_kennung_zweier_konten`) — die
+        Route verbucht einen Fehlversuch. Sonst prüfte eine Kennung die Geheimnisse zweier
+        Personen, und die Anmeldung der einen räumte die Zähler, unter denen gegen die andere
+        geraten wird (lokal `alice.neu` neben dem Verzeichnisnamen `alice.neu` einer anderen Person,
+        oder eine Registrierung mit der Verzeichnisadresse bei einem Filter über `mail`). Das trifft
+        auch die Anmeldung eines Verzeichnis-Dritten unter der Adresse eines lokalen Kontos (bis
+        dahin nur für die Zähler abgesichert, G5-N1)."""
         if not self.ldap:
             return None
         from .ldap_ import AnfrageAbgebrochen, VerzeichnisNichtErreichbar, eingabe_zu_lang
@@ -2145,6 +2200,11 @@ class TinySesam:
                 # nein, oder das Beleg-Attribut): dann mit Beleg, sonst gar nicht (H-3).
                 vertraut = quelle_vertraut
                 name = ldap_name
+                if name == username:
+                    # Das Verzeichnis hat eben diesen Eintrag unter dem Namen angemeldet; steht er
+                    # noch an der Bindung eines anderen Kontos, ist er dort veraltet (p1-a) — und
+                    # hielte die Anlage sonst als „vergeben" auf.
+                    self.store.verzeichnisname_freigeben(name)
                 i = 1
                 while name != username and self.kennung_vergeben(name):
                     i += 1
@@ -2160,9 +2220,12 @@ class TinySesam:
                 return None
 
         # Zugeordnet wird über die STABILE Kennung des Verzeichnisses, nicht über den Namen
-        # (F-11). Der Name bleibt der Rückfall für Konten, die noch keine Bindung haben.
+        # (F-11). Der Name bleibt der Rückfall für Konten, die noch keine Bindung haben. Gehört die
+        # Kennung lokal einem Konto, darf die Auflösung nur dort enden (p1-d, s. oben).
+        lokal = self.find_user(username)
         u = self._fremde_identitaet_aufloesen("ldap", kennung_ldap, username, _anlegen,
-                                              name_zuordnen=name_zuordnen)
+                                              name_zuordnen=name_zuordnen,
+                                              nur_konto=int(lokal["id"]) if lokal else None)
         if not u or u["disabled"]:
             return None
         # Den eingetippten Namen an der Bindung vermerken, wenn er weder Name noch Adresse des
@@ -6005,14 +6068,28 @@ class TinySesam:
         raise HTTPException(401, self.t("api.factor"), headers={"X-TinySesam-Factor": step})
 
     def _enforce_route_chain(self, request: Request, factors, strict) -> dict:
+        """Eine Route-Kette (`require(factors=[…])`) durchsetzen — **zusätzlich** zur globalen Regel.
+
+        Eine Route-Kette verschärft, sie unterschreitet nie (PO-Entscheid 2026-09-27, „Angleichen"):
+        Erst muss die Sitzung für die GLOBALE Regel voll sein (`mfa_ok`, wie bei `current_user`) —
+        eine halbe Sitzung geht zuerst zum fehlenden Schritt der globalen Anmeldung
+        (`next_login_step`). Bis dahin genügte die Liste der Route allein: `factors=["password"]`
+        öffnete die Route einer halben Sitzung, deren Konto noch TOTP schuldete, und
+        `["pin", "password"]` die eines Kontos mit TOTP, das nur PIN und Passwort erbracht hatte.
+        Danach die eigene Liste der Route (`_chain_satisfied`) und der zweite Faktor nach dem
+        Anmelde-Link (`_link_braucht`, G10). Ein API-Key erfüllt keine Route-Kette."""
         strict = self.cfg.login_chain_strict if strict is None else strict
         s = self.session_from_request(request)
         usr = self._als_dict(self.store.get_user(s["user_id"])) if s else None
         if usr and usr["disabled"]:
             usr = None
         done = json.loads(s["factors_done"] or "[]") if s else []
-        if usr is None:
+        if usr is None or s is None:
             self._redirect_factor(request, factors[0] if factors else "password")
+        if not s["mfa_ok"]:
+            # Die globale Anmeldung ist noch offen: erst deren nächster Schritt. `None` (nichts
+            # mehr offen, aber auch nicht voll — etwa ein inzwischen entfernter Faktor) → Login.
+            self._redirect_factor(request, self.next_login_step(usr["id"], done))
         if not self._chain_satisfied(factors, strict, done):
             self._redirect_factor(request, self._next_factor(factors, strict, done))
         # Dieselbe Regel wie für die globale Policy (G10): Lief die Anmeldung über den Link und hat
@@ -6114,10 +6191,14 @@ class TinySesam:
         """Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg:
         `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`.
         `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt).
-        factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale),
+        factors=[...] verlangt für diese Route zusätzlich eine bestimmte Faktor-Kette,
         strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`.
-        Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt
-        auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy)."""
+        Die Route-Kette verschärft die globale Regel, sie ersetzt sie nicht: Eine Sitzung, die für die
+        globale Anmeldung noch nicht voll ist (zweiter Faktor offen, Kette unvollständig), geht zuerst
+        zu deren fehlendem Schritt — auch bei `factors=["password"]` (seit 2026-09-27; bis dahin
+        überschrieb die Route-Kette die globale). Lief die Anmeldung über den Anmelde-Link und hat das
+        Konto TOTP oder einen Passkey, verlangt auch eine Route-Kette ihn
+        (`magiclink_require_second_factor`, wie in der globalen Policy)."""
         def dep(request: Request) -> dict:
             return self._enforce(request, mfa=mfa, admin=admin, role=role, factors=factors,
                                  strict=strict, admin_implies=admin_implies)

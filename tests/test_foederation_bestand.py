@@ -459,13 +459,17 @@ r.check("… dieselbe Quelle ersetzt ihren Platzhalter durch die echte Kennung",
 # ══ Der gemeinsame Entscheid: Name = unbelegter mail-Wert ══════════════════════════════════════
 # Anmeldung und Bestandsbindung fragen denselben Helfer (`_ldap_name_belegt`) — die Bestandsbindung
 # steht unten (gina); hier die Anmeldung: Ist der eingetippte Name der unbelegte `mail`-Wert des
-# Eintrags, wird das gleichnamige lokale Konto nicht zugeordnet.
+# Eintrags, wird das gleichnamige lokale Konto nicht zugeordnet. Bis 2026-09-27 legte die Anmeldung
+# dann ein Konto `ldap-…` an; seit der Prüfrunde (p1-d) weist sie ab — die Kennung `gerda` gehört
+# lokal einem Konto, und eine Kennung prüft nie die Geheimnisse zweier Konten.
 ge = _ldap()
 gl = ge.create_user("gerda")
+_n_ge = ge.store.user_count()
 u = _anmelden(ge, "gerda", {"id": "u-gerda", "email": "gerda"})
 r.check("Anmeldung: Name = unbelegter mail-Wert → kein Zugriff auf das gleichnamige lokale Konto",
-        u is not None and u["id"] != gl and ge.store.get_federated_kennung("ldap", gl) is None
-        and u["username"].startswith("ldap-"), str(u and u["username"]))
+        u is None and ge.store.get_federated_kennung("ldap", gl) is None
+        and ge.store.get_federated_user("ldap", "u-gerda") is None and ge.store.user_count() == _n_ge
+        and bool(_audit(ge, "ldap_kennung_abgewiesen")), str(u and u["username"]))
 
 # ══ Bestandsbindung: foederation_nachbinden ════════════════════════════════════════════════════
 m = _ldap()

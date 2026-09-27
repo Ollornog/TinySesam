@@ -13,6 +13,7 @@ b  Adresswechsel       g  Kontoseite und Audit nach Übernahme eines freien Name
 c  Sekunde der Anlage  h  Bestand ohne Wasserlinie: wie bisher (Anlage)
 d  eigene Fehlversuche i  fremder Schreiber (rohes SQL): Wasserlinie auf den aktuellen Stand
 e  nur Schreibweise    j  die Serie (B2-6) wird bewusst ganz geräumt
+                       i  auch einer, der den Topf selbst mitführt (0.20.1, Prüfrunde 2026-09-27)
 """
 from __future__ import annotations
 
@@ -264,6 +265,41 @@ anm = _login(app, "roh-neu")
 r.check("… und die Anmeldung unter dem neuen Namen lässt die Versuche von davor stehen",
         anm.status_code == 303 and a.store.count_fails(0, ip=SPRAYER) == 3,
         f"HTTP {anm.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
+
+# Ein fremder Schreiber, der den Topf SELBST mitführt — `store.set_email` aus 0.20.1 setzt Adresse und
+# `topf_mail` in EINER Anweisung (Prüfrunde 2026-09-27, p1-c). Der Nachrechnen-Trigger feuert dann
+# nicht (der Topf ändert sich ja), und bis dahin blieb die Wasserlinie auf dem Stand der ALTEN
+# Adresse: Die erste volle Anmeldung räumte die Fehlversuche des Fremden unter der neuen, auch aus
+# der Drosselung seiner IP. (Mutationsprobe: `trg_users_wechsel_mail` weglassen → rot.)
+from tinysesam.store import norm_email, norm_kennung  # noqa: E402
+
+a, app, _ = _app()
+uid = a.create_user("mia", password=PW, email="mia@example.com")
+a.store._exec("UPDATE users SET created_at = created_at - 7200")
+_fehlversuche(a, "neu@example.com", SPRAYER, 3, vorher=3600)
+_wl_c = _zeile(a, uid)["mail_versuch_ab"]
+_neu_c = norm_email("neu@example.com")
+a.store._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=?",
+              (_neu_c, 1, norm_kennung(_neu_c), uid))
+_rc = _zeile(a, uid)
+anm = _login(app, "neu@example.com")
+r.check("i: der Schreiber aus 0.20.1 (Adresse und Topf in einer Anweisung) hebt die Wasserlinie auch — "
+        "die Fehlversuche unter der neuen Adresse bleiben stehen",
+        _rc["mail_versuch_ab"] == a.store._one("SELECT MAX(id) AS m FROM login_attempt")["m"] > _wl_c
+        and _rc["topf_mail"] == "neu@example.com" and anm.status_code == 303
+        and a.store.count_fails(0, username="neu@example.com") == 3 and a.store.count_fails(0, ip=SPRAYER) == 3,
+        f"WL {_wl_c} → {_rc['mail_versuch_ab']}, HTTP {anm.status_code}, {a.store.count_fails(0, ip=SPRAYER)}")
+# Gegenproben: Der Nachtrag (nur der Topf, NULL → Topf) und die eigene Umschreibung `B1` → `b1` (derselbe
+# Topf) verschieben nichts.
+_vor_n = (_rc["name_versuch_ab"], _rc["mail_versuch_ab"])
+_fehlversuche(a, "anderswo", SPRAYER, 1)                 # sonst stünde der Höchststand schon dort
+a.store._exec("UPDATE users SET topf_name = NULL WHERE id = ?", (uid,))
+a.store._exec("UPDATE users SET topf_name = ? WHERE id = ?", ("mia", uid))
+a.store.set_username(uid, "MIA")
+_rn = _zeile(a, uid)
+r.check("… der Nachtrag eines Topfs und `mia` → `MIA` (derselbe Topf) lassen die Wasserlinien stehen",
+        (_rn["name_versuch_ab"], _rn["mail_versuch_ab"]) == _vor_n and _rn["topf_name"] == "mia",
+        f"{_vor_n} → {(_rn['name_versuch_ab'], _rn['mail_versuch_ab'])}")
 
 # ── j: die Serie (B2-6) ──────────────────────────────────────────────────────────────────────────
 # Bewusst OHNE Grenze a (Begründung in `sperre_aufheben`): Die Serie hat keine IP, und vor dem

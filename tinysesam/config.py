@@ -203,8 +203,9 @@ class TinySesamConfig:
     # --- Faktor-Ketten (geordnete Kombinationen) ---
     # Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B.
     # ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls
-    # eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)).
-    # Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User.
+    # eingerichtet). Pro Route verschärfbar: Depends(auth.require(factors=[...], strict=...)) —
+    # zusätzlich, nie statt dieser Kette (seit 2026-09-27). Faktornamen: password, pin, oidc, passkey,
+    # totp, magic. Der erste Faktor identifiziert den User.
     login_chain: list[str] = field(default_factory=list)
     #: Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1)
     #:
