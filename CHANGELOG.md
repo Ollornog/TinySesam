@@ -4,8 +4,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
-**Einstufung der öffentlichen API (Stufen A/B/C) — die internen Namen (Stufe C) warnen und fallen
-mit 1.0 weg.** Was beim Update auffällt:
+**Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
+(`anmelden_passwort`, `anmelden_pin`, `anmelden_totp`) für eigene Login-Seiten; die internen Namen
+(Stufe C) warnen und fallen mit 1.0 weg.** Was beim Update auffällt:
 
 - **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
   1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
@@ -24,8 +25,49 @@ mit 1.0 weg.** Was beim Update auffällt:
   seine Tests einmal mit `python -W error::DeprecationWarning` laufen**. Eine Unterklasse von
   `TinySesam`, die einen dieser Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`:
   Die eingebauten Routen rufen jetzt `_name`, die Überschreibung wirkt nicht mehr.
+- **Eigene Login-Seiten nehmen `anmelden_passwort`** (PO-Befund 2026-09-26). Wer dem Muster „Your
+  own login page“ der README bis 0.20.1 gefolgt ist (`check_password` + `start_session`), hat auf
+  seiner eigenen Route **keinen Schutz gegen Passwort-Raten** — keine Sperre, keinen Zähler, keine
+  Serie, keine Drossel, keine Zeile für fail2ban. Umstellen auf `auth.anmelden_passwort(request,
+  username, password, next=…, csrf=…)` (für den zweiten Schritt `anmelden_totp`, für die PIN
+  `anmelden_pin`): Es gibt eine `Anmeldung` zurück (`if not erg: …`, sonst
+  `erg.weiterleitung()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
+  Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
+  Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
 
 ### Hinzugefügt
+
+- **Sicherer Login-Baustein für eigene Seiten: `anmelden_passwort`, `anmelden_pin`,
+  `anmelden_totp`** (Stufe A, PO-Befund 2026-09-26). Jede Methode tut, was die eingebaute Route
+  tut — und die eingebaute Route ruft sie (eine Quelle, kein Drift): CSRF prüfen (`csrf=`, sonst
+  Header `X-CSRF-Token`; 403), Drossel je IP, den Versuch atomar vorbuchen (Fehlversuche je
+  Kennung, Adresse und Paar, Serie; bei der PIN Login- und PIN-Topf, hinter einem erbrachten
+  Faktor unter eigener Serien-Art), mit LDAP den Rückfall aufs Verzeichnis samt Schwebe und
+  Rücknahme bei einem Ausfall („eine Kennung, ein Konto“ inklusive), Audit- und Sicherheits-Log
+  (dieselben fail2ban-Zeilen), dann die Sitzung bzw. der nächste Faktor. `anmelden_totp` nimmt
+  TOTP- und Einmal-Codes, wie `POST /auth/totp`. Erwartbare Ausgänge sind Ergebnisse, keine
+  Ausnahmen; geworfen wird nur, was die Route auch wirft (403 bei CSRF, Unerwartetes).
+- **`tinysesam.Anmeldung`** (Export, Stufe A): das Ergebnis — `ok` (auch `bool(erg)`), `grund`
+  (`Anmeldung.GRUENDE`: `ok`, `leer`, `falsch`, `gesperrt`, `gesperrt_serie`, `ratelimit`,
+  `verzeichnis_weg`, `abgeschaltet`, `keine_sitzung`), `status` (der Status der eingebauten Seite),
+  `meldung` (übersetzt), `weiter` (geprüftes Ziel), `naechster` (offener Faktor), `fertig`, `user`
+  (nur bei Erfolg); `cookie_setzen(response)` und `weiterleitung()`. Eine eingefrorene Dataclass;
+  das Sitzungs-Token ist bewusst kein Feld (kein `repr`, kein `asdict`) — fail-closed: Ein
+  Misserfolg trägt keins, wer das Ergebnis ignoriert, meldet niemanden an. `gesperrt` umfasst den
+  Aufschub hinter einer schwebenden Verzeichnis-Anmeldung (G9), sonst verriete der Grund, dass
+  gerade jemand anderes unter der Kennung anmeldet. Der Wächter misst den Typ mit (Bereich
+  `Anmeldung` in `tests/api_surface.json`: Felder mit Typ und Vorgabe, Methoden, `GRUENDE`),
+  `API.md` beschreibt ihn in einem eigenen Abschnitt.
+- **Tests:** `tests/test_anmelden.py` — eine eigene Login-Seite über den Baustein sperrt nach N
+  Fehlversuchen (429 `gesperrt`), drosselt je IP (`ratelimit`) und sperrt die Serie
+  (`gesperrt_serie`); LDAP-Rückfall, Ausfall mit und ohne lokales Passwort, „eine Kennung, ein
+  Konto“; PIN im Gästeweg und im Kettenschritt, TOTP mit Einmal-Code und ohne Sitzung; CSRF,
+  fail-closed, der Ergebnistyp. Dieselbe Folge über die eingebaute Route und über eine eigene
+  ergibt dieselben Status, Audit-, Sicherheits-Log-, Versuchs- und Serienzeilen (Passwort, LDAP,
+  PIN, TOTP). Ein AST-Wächter hält fest, dass `login_submit`, `pin_submit` und `totp_submit` ihren
+  Baustein rufen und keinen inneren Prüfer selbst; das Beispiel der README läuft wörtlich und
+  muss sperren. Der Wächter in `tests/test_stepup.py` zählt `anmelden_*` zu den Stellen mit
+  Sitzungswirkung.
 
 - **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
   `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
@@ -35,8 +77,9 @@ mit 1.0 weg.** Was beim Update auffällt:
   übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
-  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 225, B 64, C 49
-  von 338 Namen (`SERIE_PIN_FOLGE`, nie veröffentlicht, heisst ohne Alias `_SERIE_PIN_FOLGE`).
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 240 (darunter
+  `anmelden_*` und die 11 Namen am Ergebnistyp `Anmeldung`), B 64, C 49 von 353 Namen
+  (`SERIE_PIN_FOLGE`, nie veröffentlicht, heisst ohne Alias `_SERIE_PIN_FOLGE`).
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
   `Veraltet("_name", "<Ersatz>")`: ein Nicht-Daten-Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
@@ -70,12 +113,26 @@ mit 1.0 weg.** Was beim Update auffällt:
   Prüfer `check_password`, `check_pin`, `check_ldap` und `check_saml` drosseln aber nicht selbst —
   Sperre, Fehlversuchszähler und Serien-Sperre setzen nur die eingebauten Routen. Wer dem Muster
   bis 0.20.1 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
-  README warnt jetzt davor und nennt den sicheren Weg für ein eigenes Aussehen
-  (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route); die Prüfer
-  stehen in Stufe C.
+  README zeigt jetzt zwei sichere Wege: für ein eigenes Aussehen allein die Seite ersetzen
+  (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route), für eine eigene
+  Route den Baustein `anmelden_passwort` (bzw. `anmelden_totp`, `anmelden_pin`), den die
+  eingebauten Routen selbst rufen; ihr Beispiel läuft im Test wörtlich und muss sperren. Die
+  Prüfer stehen in Stufe C, ihre Warnung nennt den Baustein. Ungedrosselt war auch `verify_totp`
+  aus demselben Beispiel — ein sechsstelliger Code; sein Ersatz ist `anmelden_totp`.
 
 ### Geändert
 
+- **`POST /auth/login`, `/auth/pin` und `/auth/totp` sind dünne Hüllen um `anmelden_*`.** Der
+  ganze Ablauf zog aus `router.py` in die Bausteine; die Routen rendern nur noch das Ergebnis.
+  Antworten, Texte, Audit- und Log-Zeilen bleiben gleich (gemessen gegen eine eigene Route über
+  denselben Baustein). Drei Kleinigkeiten ändern sich: Eine unerwartete Ausnahme in der PIN- oder
+  TOTP-Prüfung schliesst den vorgebuchten Versuch jetzt sofort als Fehlversuch ab (bisher nur beim
+  Passwort; vorher blieb seine Serien-Vorbuchung im Speicher liegen). `/auth/pin` antwortet 404,
+  wenn `pin_enabled` zur Laufzeit abgeschaltet wurde (die Route stand seit dem Start, bestätigte
+  auf einer vollen Sitzung aber weiter PINs). Und die Ersatztexte der C-Aliase (`check_password`,
+  `check_pin`, `check_ldap`, `verify_totp`, `verify_recovery_code`, `is_locked`, `is_pin_locked`,
+  `rate_ok`, `record_login`, `versuch_beginnen`, `login_redirect_after`) nennen jetzt den
+  Baustein statt der Route.
 - **`API.md` ist nach Stufe gegliedert** (A „öffentlich, stabil ab 1.0“, B „für
   Fortgeschrittene“, C als Tabelle „Veraltet — fällt mit 1.0 weg“ mit Ersatz statt Erklärung) und
   erklärt vorab, was jede Stufe zusagt. Neu
@@ -90,23 +147,25 @@ mit 1.0 weg.** Was beim Update auffällt:
   Implementierung `_name`; der alte Name reicht bis 1.0 unverändert weiter und löst beim Aufruf
   (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
   führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
-  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: die eingebauten Routen (`POST /auth/login`,
-    `/auth/pin`, `/auth/totp`, `/auth/reauth`, `/auth/resource/{name}`, `/auth/saml/acs`), eigenes
-    Aussehen per `set_template`:** `check_password` → `_check_password`, `check_pin` → `_check_pin`,
-    `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`, `check_resource` →
-    `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
+  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: `anmelden_passwort`, `anmelden_pin`,
+    `anmelden_totp` bzw. die eingebauten Routen (`/auth/reauth`, `/auth/resource/{name}`,
+    `/auth/saml/acs`), eigenes Aussehen per `set_template`:** `check_password` → `_check_password`,
+    `check_pin` → `_check_pin`, `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`,
+    `check_resource` → `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
     `_verify_recovery_code`, `verify_user_password` → `_verify_user_password`, `verify_user_pin` →
     `_verify_user_pin`.
-  - **Sperren und Buchhaltung — Ersatz: die eingebauten Routen, die atomar prüfen und buchen:**
-    `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`, `is_password_change_locked` →
-    `_is_password_change_locked`, `is_reauth_locked` → `_is_reauth_locked`, `is_resource_locked` →
-    `_is_resource_locked`, `is_totp_setup_locked` → `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`,
-    `record_login` → `_record_login`, `versuch_beginnen` → `_versuch_beginnen`.
+  - **Sperren und Buchhaltung — Ersatz: `anmelden_*` bzw. die eingebauten Routen, die atomar prüfen
+    und buchen:** `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`,
+    `is_password_change_locked` → `_is_password_change_locked`, `is_reauth_locked` →
+    `_is_reauth_locked`, `is_resource_locked` → `_is_resource_locked`, `is_totp_setup_locked` →
+    `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`, `record_login` → `_record_login`,
+    `versuch_beginnen` → `_versuch_beginnen`.
   - **Sitzung, Anmeldekette, CSRF:** `session_from_request` → `_session_from_request` (Ersatz
     `current_user`/`session_user`), `next_login_step` → `_next_login_step`, `factor_entry` →
-    `_factor_entry`, `login_redirect_after` → `_login_redirect_after`, `csrf_rotieren` →
-    `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`), `verify_csrf` → `_verify_csrf` (Ersatz
-    `require_csrf`), `unlock_resource` → `_unlock_resource`, `mfa_pending` → `_mfa_pending`.
+    `_factor_entry`, `login_redirect_after` → `_login_redirect_after` (Ersatz `weiter` am Ergebnis
+    von `anmelden_*`), `csrf_rotieren` → `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`),
+    `verify_csrf` → `_verify_csrf` (Ersatz `require_csrf`), `unlock_resource` → `_unlock_resource`,
+    `mfa_pending` → `_mfa_pending`.
   - **Erst-Admin, Demo, Protokoll:** `maybe_promote_admin` → `_maybe_promote_admin` (Ersatz
     `admin_identifiers`/`ensure_admin`), `consume_admin_claim` → `_consume_admin_claim`,
     `admin_claim_fehlgriff` → `_admin_claim_fehlgriff`, `seed_demo` → `_seed_demo` (Ersatz

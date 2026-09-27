@@ -1,4 +1,50 @@
 {
+  "Anmeldung": {
+    "GRUENDE": {
+      "sig": "('ok', 'leer', 'falsch', 'gesperrt', 'gesperrt_serie', 'ratelimit', 'verzeichnis_weg', 'abgeschaltet', 'keine_sitzung')",
+      "stufe": "A"
+    },
+    "cookie_setzen": {
+      "sig": "(response) -> 'None'",
+      "stufe": "A"
+    },
+    "fertig": {
+      "sig": "bool = False",
+      "stufe": "A"
+    },
+    "grund": {
+      "sig": "str = <pflicht>",
+      "stufe": "A"
+    },
+    "meldung": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "naechster": {
+      "sig": "Optional[str] = None",
+      "stufe": "A"
+    },
+    "ok": {
+      "sig": "bool = <pflicht>",
+      "stufe": "A"
+    },
+    "status": {
+      "sig": "int = <pflicht>",
+      "stufe": "A"
+    },
+    "user": {
+      "sig": "Optional[dict] = None",
+      "stufe": "A"
+    },
+    "weiter": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "weiterleitung": {
+      "sig": "()",
+      "stufe": "A"
+    }
+  },
   "TinySesam": {
     "add_messages": {
       "sig": "(lang, mapping: 'dict')",
@@ -30,6 +76,18 @@
     "andere_sitzungen": {
       "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
       "stufe": "B"
+    },
+    "anmelden_passwort": {
+      "sig": "(request: 'Request', username: 'str', password: 'str', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "stufe": "A"
+    },
+    "anmelden_pin": {
+      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "stufe": "A"
+    },
+    "anmelden_totp": {
+      "sig": "(request: 'Request', code: 'str', next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "stufe": "A"
     },
     "api_key_art": {
       "sig": "(key) -> 'str'",
@@ -1477,6 +1535,9 @@
     }
   },
   "exporte": {
+    "Anmeldung": {
+      "stufe": "A"
+    },
     "ConfigError": {
       "stufe": "A"
     },

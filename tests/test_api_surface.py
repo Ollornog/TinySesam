@@ -6,7 +6,8 @@ Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGEL
 
 Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
 Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
-die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte.
+die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.21.0 dazu der
+Ergebnistyp der Anmelde-Bausteine (`Anmeldung`: Felder, Methoden, Gründe).
 Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 
     python tests/test_api_surface.py --update      # Änderung übernehmen, danach committen
@@ -42,7 +43,7 @@ import warnings
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
-from tinysesam import TinySesam, TinySesamConfig
+from tinysesam import Anmeldung, TinySesam, TinySesamConfig
 from tinysesam._veraltet import BIS, Veraltet
 
 _paket = importlib.import_module("tinysesam")
@@ -68,7 +69,7 @@ C_SEIT = "0.21.0"
 #: `--update` übernommen, nicht neu gemessen. Die Exporte haben keinen Messwert — nur den Namen.
 MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
             "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
-            "TinySesamConfig.felder": "feld", "exporte": None}
+            "TinySesamConfig.felder": "feld", "exporte": None, "Anmeldung": "sig"}
 
 
 def ok(name):
@@ -150,7 +151,26 @@ def oberflaeche() -> dict:
     return {"TinySesam": manager, "TinySesam.konstanten": konstanten,
             "TinySesam.eigenschaften": eigenschaften,
             "TinySesamConfig.felder": felder,
-            "TinySesamConfig.methoden": presets, "exporte": exporte}
+            "TinySesamConfig.methoden": presets, "exporte": exporte,
+            "Anmeldung": anmeldung_oberflaeche()}
+
+
+def anmeldung_oberflaeche() -> dict:
+    """Der Ergebnistyp der Anmelde-Bausteine (0.21.0, Stufe A): Felder, Methoden, Gründe.
+
+    Die Exporte erfasst der Wächter nur beim Namen. Für `Anmeldung` genügt das nicht: Wer
+    `erg.naechster` liest oder auf `erg.grund == "gesperrt"` prüft, bricht an einem umbenannten
+    Feld oder einem gestrichenen Grund genauso wie an einer umbenannten Methode. Felder mit Typ
+    und Vorgabe (wie die Konfiguration), Methoden mit Signatur, `GRUENDE` mit dem Wert.
+    """
+    ergebnis = {}
+    for f in dataclasses.fields(Anmeldung):
+        vorgabe = "<pflicht>" if f.default is dataclasses.MISSING else repr(f.default)
+        ergebnis[f.name] = f"{f.type} = {vorgabe}"
+    ergebnis.update({name: signatur(fn) for name, fn in inspect.getmembers(Anmeldung, inspect.isfunction)
+                     if not name.startswith("_")})
+    ergebnis["GRUENDE"] = repr(Anmeldung.GRUENDE)
+    return ergebnis
 
 
 def messung(datei: dict) -> dict:

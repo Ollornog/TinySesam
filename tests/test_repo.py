@@ -1043,13 +1043,15 @@ print(f"  Konfigurations-Nachschlag: {_zahl} Felder, jedes erklärt, Abzug aktue
 # Zusage („diese Oberfläche bleibt stabil") ohne eine Stelle, an der steht, was sie enthält.
 _api = subprocess.run([sys.executable, "scripts/_api_doku.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
-assert _api.returncode == 0, "API.md ist veraltet — `python3 scripts/_api_doku.py` fahren"
+assert _api.returncode == 0, ("API.md ist veraltet oder der Generator weist etwas ab — "
+                              "`python3 scripts/_api_doku.py` fahren\n" + _api.stderr[-400:])
 _apidoc = _lies("API.md")
 # Methoden `### \`name(…)\``, Properties `### \`name\` — Property …` (seit 0.20.1 eingefroren),
 # seit 0.21.0 auch die Konstanten (`— Konstante`, Erklärung aus dem `#:`-Block darüber), die
 # Methoden von TinySesamConfig und die Funktions-Exporte: Mit der Einstufung stehen sie als
-# Zusage (A) oder Baustein (B) da — ohne Erklärung wären sie eine Zusage ins Blaue.
-_leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.)?[A-Za-z_][A-Za-z0-9_]*)"
+# Zusage (A) oder Baustein (B) da — ohne Erklärung wären sie eine Zusage ins Blaue. Ebenso die
+# Methoden und Konstanten des Ergebnistyps `Anmeldung` (0.21.0); seine Felder prüft der Generator.
+_leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|Anmeldung\.)?[A-Za-z_][A-Za-z0-9_]*)"
                     r"(?:\(|` — Property|` — Konstante).*\n\n—$", _apidoc, _re.M)
 assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommentar:\n  " +
                    "\n  ".join(_leer[:8]) +
@@ -1057,6 +1059,7 @@ assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommenta
 # Gegliedert nach Stufe (PO-Entscheid 2026-09-26): A und B mit Erklärung, C als Tabelle alter
 # Name → Ersatz (seit 0.21.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
 for _kopf in ("## A · Methoden von `TinySesam`", "## B · Methoden von `TinySesam`",
+              "## A · Ergebnis der Anmelde-Bausteine: `tinysesam.Anmeldung`",
               "## C · Veraltet — fällt mit 1.0 weg"):
     assert _kopf in _apidoc, f"API.md ohne Abschnitt {_kopf!r} — Gliederung nach Stufe fehlt"
 _c_zeilen = _re.findall(r"^\| `(\w+)` \| (?:Methode|Konstante) \| (.+) \|$", _apidoc, _re.M)

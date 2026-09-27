@@ -22,7 +22,7 @@ Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_ap
 
 Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
 
-**Stand:** A 225 · B 64 · C 49 Namen.
+**Stand:** A 240 · B 64 · C 49 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -33,6 +33,18 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 ### `admin_router()`
 
 Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
+
+### `anmelden_passwort(request: 'Request', username: 'str', password: 'str', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+
+Mit Kennung und Passwort anmelden — gedrosselt, gezählt und gesperrt wie `POST /auth/login`, die genau diese Methode ruft.
+
+### `anmelden_pin(request: 'Request', pin: 'str', username: 'str' = '', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+
+Mit der persönlichen PIN anmelden oder den PIN-Schritt erbringen — gedrosselt und gesperrt wie `POST /auth/pin`, die genau diese Methode ruft.
+
+### `anmelden_totp(request: 'Request', code: 'str', next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+
+Den TOTP-Schritt erbringen — mit einem TOTP-Code oder einem Einmal-Code, gedrosselt und gesperrt wie `POST /auth/totp`, die genau diese Methode ruft.
 
 ### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
 
@@ -305,6 +317,35 @@ Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
 ### `StateError` (erbt von `TinySesamError`, `RuntimeError`)
 
 Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+
+## A · Ergebnis der Anmelde-Bausteine: `tinysesam.Anmeldung`
+
+Was ein Anmeldeschritt ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text. Zurück von `anmelden_passwort`, `anmelden_pin`, `anmelden_totp`. Eine eingefrorene Dataclass; `bool(erg)` ist `erg.ok`. Das Sitzungs-Token ist bewusst kein Feld — `cookie_setzen()` und `weiterleitung()` setzen es.
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `ok` | `bool` | Hat der Schritt angemeldet? Genau dann, wenn `grund == "ok"`; `bool(erg)` ist derselbe Wert. |
+| `grund` | `str` | Warum (nicht): einer der Werte aus `GRUENDE`. Für Programme — der Text steht in `meldung`. |
+| `status` | `int` | Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 404, 429 oder 503. |
+| `meldung` | `str` | Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg. |
+| `weiter` | `str` | Das geprüfte Ziel (`safe_next`, mit Montage-Präfix): bei Erfolg der nächste Faktor-Schritt oder `next`, sonst `next` fürs Formular — bei `keine_sitzung` die Login-Seite. |
+| `naechster` | `Optional[str]` | Der offene Faktor nach diesem Schritt (etwa `"totp"`), für eine eigene Seite des nächsten Schritts. Bei einem Fehlschlag im Folgeschritt derselbe Faktor noch einmal, sonst None. |
+| `fertig` | `bool` | Ist die Sitzung vollständig angemeldet? Nur bei Erfolg und ohne offenen Faktor True. |
+| `user` | `Optional[dict]` | Das angemeldete Konto (wie `get_user`) — nur bei Erfolg, sonst None. |
+
+### `Anmeldung.GRUENDE` — Konstante
+
+Jeder Wert, den `grund` annehmen kann.
+
+Wert: `('ok', 'leer', 'falsch', 'gesperrt', 'gesperrt_serie', 'ratelimit', 'verzeichnis_weg', 'abgeschaltet', 'keine_sitzung')`
+
+### `Anmeldung.cookie_setzen(response) -> 'None'`
+
+Das Sitzungs-Cookie in `response` setzen, falls der Schritt ein neues Token ergeben hat.
+
+### `Anmeldung.weiterleitung()`
+
+Eine Umleitung (303) nach `weiter`, mit gesetztem Sitzungs-Cookie, falls es eines gibt.
 
 ## A · weitere Exporte von `tinysesam`
 
@@ -591,15 +632,15 @@ Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann sti
 
 Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung `_name`; der alte Name bleibt bis 1.0 als Alias, der **beim Aufruf** (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit `python -W error::DeprecationWarning` laufen.
 
-**Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.
+**Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere Baustein ist `anmelden_passwort`, `anmelden_pin`, `anmelden_totp` (Stufe A): dieselben Methoden, die die eingebauten Routen rufen.
 
 | Alter Name | Art | Ersatz |
 |---|---|---|
 | `admin_claim_fehlgriff` | Methode | Ohne Ersatz; die Route `/auth/claim-admin` protokolliert selbst |
 | `APIKEY_AUDIT_FENSTER` | Konstante | Ohne Ersatz, ein interner Wert |
-| `check_ldap` | Methode | `POST /auth/login` (drosselt, sperrt und fragt das Verzeichnis), eigenes Aussehen per `set_template("login", …)` |
-| `check_password` | Methode | `POST /auth/login` (drosselt und sperrt), eigenes Aussehen per `set_template("login", …)`; `check_password` selbst drosselt nicht |
-| `check_pin` | Methode | `POST /auth/pin` (drosselt und sperrt), eigenes Aussehen per `set_template("pin", …)`; `check_pin` selbst drosselt nicht |
+| `check_ldap` | Methode | `anmelden_passwort` (fragt das Verzeichnis als Rückfall, drosselt und sperrt wie `POST /auth/login`) |
+| `check_password` | Methode | `anmelden_passwort` (drosselt, zählt und sperrt wie `POST /auth/login`), für ein eigenes Aussehen allein `set_template("login", …)`; `check_password` selbst drosselt nicht |
+| `check_pin` | Methode | `anmelden_pin` (drosselt, zählt und sperrt wie `POST /auth/pin`), für ein eigenes Aussehen allein `set_template("pin", …)`; `check_pin` selbst drosselt nicht |
 | `check_resource` | Methode | `POST /auth/resource/{name}` (drosselt und sperrt) bzw. `require_resource` |
 | `check_saml` | Methode | `POST /auth/saml/acs`, das die Signatur der Assertion prüft; `check_saml` vertraut seinen Argumenten |
 | `complete_mfa` | Methode | `complete_totp` (gleiches Verhalten) |
@@ -612,22 +653,22 @@ Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung `_
 | `forward_response_headers` | Methode | Ohne Ersatz; welche Header `/auth/forward` setzt, steuert `forward_headers` |
 | `forwarded_url` | Methode | Ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst |
 | `IDENTIFYING` | Konstante | Ohne Ersatz; welche Faktoren identifizieren, steht in docs/BETRIEB.md |
-| `is_locked` | Methode | Die eingebauten Anmelderouten, die atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch |
+| `is_locked` | Methode | `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, die atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch |
 | `is_password_change_locked` | Methode | `POST /auth/password` (prüft und bucht atomar) |
-| `is_pin_locked` | Methode | `POST /auth/pin` (prüft und bucht atomar) |
+| `is_pin_locked` | Methode | `anmelden_pin` (prüft und bucht atomar wie `POST /auth/pin`) |
 | `is_reauth_locked` | Methode | `/auth/reauth` (prüft und bucht atomar; `require(mfa=True)` leitet dorthin) |
 | `is_resource_locked` | Methode | `POST /auth/resource/{name}` (prüft und bucht atomar) |
 | `is_secure` | Methode | Ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode` |
 | `is_totp_setup_locked` | Methode | `POST /auth/totp/setup` (prüft und bucht atomar) |
-| `login_redirect_after` | Methode | Ohne Ersatz; die eingebauten Anmelderouten leiten selbst zum nächsten Faktor bzw. zu `next` |
+| `login_redirect_after` | Methode | `weiter` bzw. `weiterleitung()` am Ergebnis von `anmelden_passwort`, `anmelden_pin` oder `anmelden_totp` (nächster Faktor oder `next`) |
 | `maybe_promote_admin` | Methode | `admin_identifiers` oder `ensure_admin`; direkt gerufen umgeht es den Adressbeleg |
 | `mfa_pending` | Methode | Ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe liefert `auth.store.has_confirmed_totp(user_id)` |
 | `next_login_step` | Methode | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
 | `oidc_anwendung` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
 | `oidc_freigabe_gueltig` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
 | `purge_demo` | Methode | `demo_mode=False` (räumt die Demo-Konten beim Start) |
-| `rate_ok` | Methode | Die eingebauten Anmelderouten (drosseln je IP) bzw. `set_rate_limiter` |
-| `record_login` | Methode | Die eingebauten Anmelderouten, die jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler |
+| `rate_ok` | Methode | `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp` (drosseln je IP), ein eigener Limiter per `set_rate_limiter` |
+| `record_login` | Methode | `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, die jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler |
 | `RECOVERY_BYTES` | Konstante | Ohne Ersatz, ein interner Wert |
 | `RECOVERY_WARNSCHWELLE` | Konstante | `recovery_codes_remaining` und eine eigene Schwelle |
 | `sec` | Methode | `all_security()` |
@@ -638,13 +679,13 @@ Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung `_
 | `token_abgewiesen` | Methode | Ohne Ersatz; die eingebauten Token-Routen protokollieren selbst |
 | `unlock_resource` | Methode | `POST /auth/resource/{name}` (prüft das Geheimnis vorher) |
 | `verify_csrf` | Methode | `require_csrf` |
-| `verify_recovery_code` | Methode | `POST /auth/totp` (nimmt auch Einmal-Codes, drosselt und sperrt); `verify_recovery_code` selbst drosselt nicht |
-| `verify_totp` | Methode | `POST /auth/totp` (drosselt und sperrt); `verify_totp` selbst drosselt nicht |
+| `verify_recovery_code` | Methode | `anmelden_totp` (nimmt auch Einmal-Codes, drosselt und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht |
+| `verify_totp` | Methode | `anmelden_totp` (drosselt und sperrt wie `POST /auth/totp`); `verify_totp` selbst drosselt nicht |
 | `verify_user_password` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin) bzw. `POST /auth/password`; ungedrosselt |
 | `verify_user_pin` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin); ungedrosselt |
 | `vermerke_oidc_freigabe` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
-| `versuch_beginnen` | Methode | Die eingebauten Anmelderouten, die jeden Versuch atomar vorbuchen |
+| `versuch_beginnen` | Methode | `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, die jeden Versuch atomar vorbuchen |
 
 ---
 
-147 Methoden, 3 Eigenschaften, 14 Konstanten, 7 Methoden von `TinySesamConfig`, 8 Exporte, davon 5 Fehlertypen — erzeugt aus den Docstrings und `tests/api_surface.json`.
+150 Methoden, 3 Eigenschaften, 14 Konstanten, 7 Methoden von `TinySesamConfig`, 9 Exporte, davon 5 Fehlertypen, 11 Namen an `Anmeldung` — erzeugt aus den Docstrings und `tests/api_surface.json`.

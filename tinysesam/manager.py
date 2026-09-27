@@ -40,6 +40,7 @@ from . import totp as _totp
 from . import security
 from .ldap_ import VERBINDUNGS_TIMEOUT as _LDAP_TIMEOUT
 from ._veraltet import Veraltet
+from .anmeldung import Anmeldung
 
 #: IP und angemeldetes Konto der Anfrage, die gerade bearbeitet wird (B5-02, B5-04).
 #:
@@ -4110,12 +4111,17 @@ class TinySesam:
 
     def _login_redirect_after(self, request, token, user_id, nxt):
         """Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors."""
+        return self._nach_dem_faktor(request, token, user_id, nxt)[0]
+
+    def _nach_dem_faktor(self, request, token, user_id, nxt) -> tuple:
+        """(weiter, naechster, fertig) nach einem erbrachten Faktor — die eine Quelle für die
+        Umleitung jedes Anmeldewegs und für `Anmeldung.weiter`/`naechster`/`fertig`."""
         s = self.store.get_session(token)
         done = json.loads(s["factors_done"] or "[]") if s else []
         if s and s["mfa_ok"]:
-            return nxt
+            return nxt, None, True
         step = self._next_login_step(user_id, done)
-        return self.pfad(request, self._factor_entry(step, nxt)) if step else nxt
+        return (self.pfad(request, self._factor_entry(step, nxt)) if step else nxt), step, False
 
     def complete_totp(self, token) -> Optional[str]:
         """Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein
@@ -4168,6 +4174,295 @@ class TinySesam:
             # bekam so frische Sudo-Rechte. Laufzeit und Anmeldezeitpunkt bleiben.
             return self.store.rotate_session(s["token_hash"], self._gnade())
         return None
+
+    # ---------- Anmelden für eigene Seiten (Stufe A, 0.21.0) ----------
+    # PO-Befund 2026-09-26: Die README zeigte `check_password` + `start_session` als Bausteine
+    # einer eigenen Login-Seite. Die inneren Prüfer drosseln nicht — Sperre, Zähler, Serie und
+    # die fail2ban-Zeilen standen nur in den Routen. Diese drei Methoden SIND jetzt die Routen:
+    # `POST /auth/login`, `/auth/pin` und `/auth/totp` rufen sie und rendern nur noch das
+    # Ergebnis. Eine Quelle, kein Drift — `tests/test_anmelden.py` hält per AST fest, dass keine
+    # der drei Routen einen inneren Prüfer selbst ruft, und prüft eigene Seiten gegen die
+    # eingebauten (dieselben Audit- und Log-Zeilen).
+
+    @staticmethod
+    def _csrf_mitgeschickt(request, csrf: Optional[str]) -> Optional[str]:
+        """Das mitgeschickte CSRF-Token: das Argument, sonst der Header `X-CSRF-Token`."""
+        return request.headers.get("x-csrf-token") if csrf is None else csrf
+
+    def _bleiben_gewaehlt(self, remember: Optional[bool]) -> bool:
+        """„Angemeldet bleiben“ gewählt? Ohne Haken im Formular (`remember_me_enabled=False`) gilt
+        jede Sitzung als bleibend, wie bisher; sonst nur ein ausdrückliches True (F-05)."""
+        return True if not self.cfg.remember_me_enabled else remember is True
+
+    def _anmeldung_nein(self, grund: str, status: int, text: str, weiter: str,
+                        naechster: Optional[str] = None) -> Anmeldung:
+        """Ein Misserfolg: keine Sitzung, kein Cookie — nur Grund, Status und Text."""
+        return Anmeldung(ok=False, grund=grund, status=status, meldung=self.t(text) if text else "",
+                         weiter=weiter, naechster=naechster)
+
+    def _anmeldung_gesperrt(self, kennung: str, weiter: str, naechster: Optional[str] = None,
+                            text: str = "err.locked", grund: str = "gesperrt") -> Anmeldung:
+        """Die Vorbuchung wurde abgewiesen. Eine Serien-Sperre (B2-6) läuft nicht ab —
+        „vorübergehend“ wäre gelogen, und der Nutzer braucht den Weg hinaus. Die Meldung verrät
+        nichts über die Existenz des Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht.
+        Ein Aufschub (G9) bekommt dieselbe 429 und denselben Grund wie eine Sperre — sonst
+        verriete die Antwort, dass gerade jemand anderes unter dieser Kennung oder Adresse anmeldet."""
+        if self._serie_voll(kennung):
+            return self._anmeldung_nein("gesperrt_serie", 429, "err.locked_serie", weiter, naechster)
+        return self._anmeldung_nein(grund, 429, text, weiter, naechster)
+
+    def _angemeldet(self, request, token, neu: bool, user_id: int, nxt: str) -> Anmeldung:
+        """Ein Erfolg: Ziel und offener Faktor aus derselben Quelle wie jede Umleitung."""
+        weiter, naechster, fertig = self._nach_dem_faktor(request, token, user_id, nxt)
+        return Anmeldung._mit_sitzung(self, token if neu else None, ok=True, grund="ok", status=303,
+                                      weiter=weiter, naechster=naechster, fertig=fertig,
+                                      user=self.get_user(user_id))
+
+    def anmelden_passwort(self, request: Request, username: str, password: str, *, next: str = "",
+                          remember: Optional[bool] = None, csrf: Optional[str] = None) -> Anmeldung:
+        """Mit Kennung und Passwort anmelden — gedrosselt, gezählt und gesperrt wie `POST /auth/login`, die genau diese Methode ruft.
+
+        Der Baustein für eine eigene Login-Route (SPA, JSON, andere Felder). Er prüft das
+        CSRF-Token (`csrf`, sonst Header `X-CSRF-Token`), drosselt je IP, bucht den Versuch atomar
+        vor (Fehlversuche je Kennung, IP und Paar, Serie), fragt mit `ldap_enabled` das
+        Verzeichnis als Rückfall (eine Kennung, ein Konto; ein Ausfall ist kein Fehlversuch),
+        schreibt Audit- und Sicherheits-Log (die Zeilen für fail2ban) und legt die Sitzung an —
+        oder hängt den Faktor an die laufende. Zurück kommt eine `Anmeldung`:
+
+            erg = auth.anmelden_passwort(request, username, password, next=next, csrf=csrf)
+            if not erg:
+                return mein_formular(fehler=erg.meldung, status=erg.status)
+            return erg.weiterleitung()     # zum offenen Faktor (erg.naechster) oder nach next
+
+        `remember=True` ist der angehakte Haken „Angemeldet bleiben“. Wirft nur, was die Route
+        auch wirft: `HTTPException(403)` bei falschem CSRF-Token (und aus `apply_factor` für ein
+        Konto, das eben gesperrt wurde) sowie Unerwartetes — der Versuch zählt dann als
+        Fehlversuch. Synchron: aus einer `def`-Route rufen (FastAPI nimmt dafür den Threadpool),
+        in einer `async def`-Route über `run_in_threadpool`."""
+        cfg = self.cfg
+        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        nxt = self.safe_next(next, request)
+        if not cfg.password_enabled:
+            return self._anmeldung_nein("abgeschaltet", 404, "api.password_off", nxt)
+        if not username or not password:
+            return self._anmeldung_nein("leer", 400, "err.required", nxt)
+        bleiben = self._bleiben_gewaehlt(remember)
+        ip = self.client_ip(request)
+        if not self._rate_ok(ip):
+            return self._anmeldung_nein("ratelimit", 429, "err.rate", nxt)
+        # Prüfen und Verbuchen in EINEM Schritt (R7-2): Mit `_is_locked()` vorab und
+        # `_record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
+        # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
+        # Fehlversuch in der Tabelle; `_record_login(..., versuch=…)` macht ihn zum Erfolg.
+        # Mit LDAP schwebt er, bis das Verzeichnis geantwortet hat (G9): Bei einem Ausfall wird er
+        # zurückgenommen (F-23), und bis dahin darf er niemanden sperren, sondern nur warten lassen.
+        versuch = self._versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
+        if versuch is None:
+            return self._anmeldung_gesperrt(username, nxt)
+        # Unerwartetes (Programmfehler im Client, Datenbank weg, eine HTTPException aus der
+        # Prüfung) macht den Versuch sofort zum Fehlversuch — im Zweifel strenger, wie bisher.
+        # Ohne das schwebte er `Store.VORBUCHUNG_SCHWEBE_SEK` lang und liesse Anmeldungen
+        # derselben Adresse warten (G9). Ab `_record_login` ist er abgeschlossen.
+        try:
+            u = self._check_password(username, password)
+            aus_verzeichnis = False
+            if not u and cfg.ldap_enabled:
+                from .ldap_ import VerzeichnisNichtErreichbar
+                try:
+                    u = self._check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+                except VerzeichnisNichtErreichbar as e:
+                    # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
+                    # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
+                    # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
+                    # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
+                    # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
+                    self.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
+                    security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
+                                          security.fuer_log(username), security.fuer_log(ip),
+                                          security.fuer_log(str(e)))
+                    # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
+                    # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
+                    # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
+                    # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
+                    # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
+                    # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
+                    # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
+                    # Der Versuch steht seit `_versuch_beginnen` schon in der Tabelle (R7-2), als
+                    # schwebende Vorbuchung (G9) — ohne lokales Passwort wird er also
+                    # zurückgenommen, nicht nur nicht zusätzlich verbucht. Bis dahin lässt er
+                    # Anmeldungen, die an ihm scheitern würden, warten, statt sie zu sperren; damit
+                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `_check_ldap` nach
+                    # einem Ausfall eine Pause lang gar nicht erst (`ldap_.AusfallMerker`) und
+                    # wirft sofort.
+                    lokal = self.find_user(username)
+                    if lokal and self.store.get_password_hash(lokal["id"]):
+                        self._record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
+                    else:
+                        self._versuch_zuruecknehmen(versuch)
+                    return self._anmeldung_nein("verzeichnis_weg", 503, "err.directory_down", nxt)
+                aus_verzeichnis = u is not None
+        except BaseException:
+            self._versuch_gescheitert(versuch)
+            raise
+        # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
+        # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
+        # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
+        # Verzeichnis gefragt worden war und abgelehnt hatte.
+        # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
+        # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
+        # Diesen Fall weist `_check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
+        # Wächter in `_raeumgrenze` bleibt die zweite Sicherung.
+        self._record_login(username, ip, bool(u), "password", versuch=versuch,
+                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
+                                   else "lokal" if u else "lokal+ldap"),
+                           konto=u["id"] if aus_verzeichnis and u else None)
+        if not u:
+            return self._anmeldung_nein("falsch", 401, "err.credentials", nxt)
+        # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
+        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
+        # Betreiber dem Verzeichnis (`ldap_email_trusted`) oder nennt er ein Beleg-Attribut
+        # (`ldap_attr_email_verified`), entscheidet der Beleg am Konto (None) — den setzt
+        # `_check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein
+        # Beleg" mit: Eine Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14).
+        # Am Faktornamen ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
+        token, _ok, neu = self.apply_factor(request, u["id"], "password", ip,
+                                            request.headers.get("user-agent"), bleiben,
+                                            email_bestaetigt=(None if (cfg.ldap_email_trusted
+                                                                       or security.beleg_attribut(cfg, "ldap"))
+                                                              else False)
+                                            if aus_verzeichnis else None)
+        if cfg.remember_me_enabled and bleiben:
+            self.store.set_session_bleiben(self.store.session_hash(token))     # F-05: ausdrücklich gewählt
+        return self._angemeldet(request, token, neu, u["id"], nxt)
+
+    def anmelden_pin(self, request: Request, pin: str, username: str = "", *, next: str = "",
+                     remember: Optional[bool] = None, csrf: Optional[str] = None) -> Anmeldung:
+        """Mit der persönlichen PIN anmelden oder den PIN-Schritt erbringen — gedrosselt und gesperrt wie `POST /auth/pin`, die genau diese Methode ruft.
+
+        Drei Lagen, wie die Route: auf einer vollen Sitzung (PIN als Faktor einer Route) und im
+        Kettenschritt nach dem ersten Faktor (`login_chain` mit `pin`) gilt die PIN dem Konto der
+        Sitzung, `username` bleibt leer — Fehlgriffe buchen dort unter einer eigenen Serien-Art,
+        die ein Selbstbedienungs-Reset nicht räumt (G7). Ohne Sitzung ist die PIN ein Erstfaktor
+        mit `username`, nur mit `pin_login` (`TinySesamConfig.pin_als_erstfaktor()`), sonst
+        `grund="abgeschaltet"` (404). Eine vierstellige PIN ist das dankbarste Ziel einer Salve:
+        Login- und PIN-Topf werden in einem Schritt vorgebucht (R3-7). Ergebnis, CSRF,
+        `remember` und Ausnahmen wie bei `anmelden_passwort`; `erg.naechster == "pin"` nach einem
+        Fehlschlag heisst: dieselbe PIN-Seite noch einmal, ohne Namensfeld."""
+        cfg = self.cfg
+        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        nxt = self.safe_next(next, request)
+        bleiben = self._bleiben_gewaehlt(remember)
+        ip = self.client_ip(request)
+        # Schon eingeloggt → die PIN gehört zur laufenden Sitzung, kein Benutzerfeld nötig.
+        # „Eingeloggt" heisst hier: eine volle SITZUNG (0.20.1, `session_user`). Mit
+        # `current_user()` galt eine reine API-Key-Anfrage als eingeloggt — der Riegel
+        # `pin_login=False` unten griff nicht, geprüft wurde die PIN des Key-Kontos, und
+        # `apply_factor` legte mangels Sitzung eine neue, volle an: Automaten-Key + PIN
+        # ergaben eine interaktive Sitzung samt Admin-Flag, das der Key allein nie trägt.
+        # Ein Key kommt hier nur als Gast an, und für den gilt `pin_als_erstfaktor()`.
+        me = self.session_user(request)
+        # Der Kettenschritt: erster Faktor erbracht, die Sitzung hängt noch (`pending_user`,
+        # wie `/auth/totp`). Bis 2026-09-26 lief er über den Gästeweg — mit `pin_login=False`
+        # war eine Kette `password → pin` darum eine Sackgasse (404), und seine Fehlgriffe
+        # buchten wie die eines Erstfaktors, die ein Selbstbedienungs-Reset räumt (G7).
+        # Nennt das Formular ein ANDERES Konto, bleibt es ein Identitätswechsel über den
+        # Gästeweg; eigene PIN-Seiten, die den Namen mitschicken, bleiben im Kettenschritt.
+        # Die halbe Sitzung zählt nur, wenn die PIN jetzt ihr Kettenschritt ist (p2 F1): Sonst
+        # prüfte sie PINs im klassischen Modus (Orakel mit nur dem Passwort) oder vor dem TOTP
+        # einer strikten Kette, deren Reihenfolge danach nie mehr erfüllbar war.
+        halb = None if me else self._pin_kettenschritt(request)
+        if halb and username:
+            gemeint = self.find_user(username)
+            if not gemeint or gemeint["id"] != halb["id"]:
+                halb = None
+        folge = me or halb      # die PIN steht HINTER einem schon erbrachten Faktor
+        offen = "pin" if folge else None
+        if not cfg.pin_enabled or (not folge and not cfg.pin_als_erstfaktor()):
+            # PIN ist kein Erstfaktor — abgeschaltet oder, in einer strikten Kette hinter
+            # einem anderen Faktor, nie mehr erfüllbar (G7: sonst ein Orakel ohne Passwort).
+            return self._anmeldung_nein("abgeschaltet", 404, "api.not_found", nxt)
+        if not pin or (not folge and not username):
+            return self._anmeldung_nein("leer", 400, "err.required", nxt, offen)
+        if not self._rate_ok(ip):
+            return self._anmeldung_nein("ratelimit", 429, "err.rate", nxt, offen)
+        ident = folge["username"] if folge else username
+        if not ident:
+            return self._anmeldung_nein("falsch", 401, "err.credentials", nxt, offen)
+        # Login- und PIN-Topf in einem atomaren Schritt (R3-7): Eine vierstellige PIN
+        # ist das dankbarste Ziel einer parallelen Salve. Hinter einem erbrachten Faktor
+        # bucht die Serie unter eigener Art: Diese Fehlgriffe erzeugt nur, wer den ersten
+        # Faktor hat, und ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP, G7).
+        versuch = self._versuch_beginnen(ident, ip, "pin",
+                                         serie_art=self._SERIE_PIN_FOLGE if folge else None)
+        if versuch is None:
+            return self._anmeldung_gesperrt(ident, nxt, offen)
+        try:
+            if folge:
+                u = self.get_user(folge["id"]) if self._verify_user_pin(folge["id"], pin) else None
+            else:
+                u = self._check_pin(ident, pin)
+        except BaseException:
+            self._versuch_gescheitert(versuch)       # Unerwartetes zählt sofort (wie beim Passwort)
+            raise
+        self._record_login(ident, ip, bool(u), "pin", versuch=versuch)
+        if not u:
+            return self._anmeldung_nein("falsch", 401, "err.credentials", nxt, offen)
+        token, _ok, neu = self.apply_factor(request, u["id"], "pin", ip,
+                                            request.headers.get("user-agent"), bleiben)
+        if cfg.remember_me_enabled and bleiben:
+            self.store.set_session_bleiben(self.store.session_hash(token))  # F-05: ausdrücklich gewählt
+        return self._angemeldet(request, token, neu, u["id"], nxt)
+
+    def anmelden_totp(self, request: Request, code: str, *, next: str = "",
+                      csrf: Optional[str] = None) -> Anmeldung:
+        """Den TOTP-Schritt erbringen — mit einem TOTP-Code oder einem Einmal-Code, gedrosselt und gesperrt wie `POST /auth/totp`, die genau diese Methode ruft.
+
+        Für die halbe Sitzung nach dem ersten Faktor (`erg.naechster == "totp"` einer
+        vorigen `Anmeldung`) und als Step-up einer vollen. Beides kommt aus dem Cookie
+        (`pending_user`/`session_user`, nie aus einem API-Key); ohne Sitzung ist das Ergebnis
+        `grund="keine_sitzung"` mit der Login-Seite als `weiter`. Wird die Sitzung dadurch voll
+        oder frisch bestätigt, bekommt sie ein neues Token — `weiterleitung()`/`cookie_setzen()`
+        setzen es; wer es ignoriert, hat eine tote Sitzung im Cookie. Ergebnis, CSRF und
+        Ausnahmen wie bei `anmelden_passwort`."""
+        cfg = self.cfg
+        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        nxt = self.safe_next(next, request)
+        s = self._session_from_request(request)
+        # Geprüft wird der Code des Kontos, dessen Sitzung danach weiterkommt — beide aus dem
+        # Cookie (0.20.1, `session_user`). `current_user()` fiel hier auf einen API-Key zurück,
+        # wenn das Konto der Sitzung gesperrt war; dann hätte der Code des Key-Kontos gezählt.
+        pu = self.pending_user(request) or self.session_user(request)
+        offen = "totp" if s and pu else None
+        if not code:
+            return self._anmeldung_nein("leer", 400, "err.required", nxt, offen)
+        if not s or not pu:
+            return self._anmeldung_nein("keine_sitzung", 401, "api.not_signed_in",
+                                        self.pfad(request, cfg.login_path))
+        ip = self.client_ip(request)
+        # Atomar wie am Login (R3-2): Die Prüfung liegt sonst zwischen Sperre und Zählung.
+        drossel_ok = self._rate_ok(ip)
+        versuch = self._versuch_beginnen(pu["username"], ip, "totp") if drossel_ok else None
+        if versuch is None:
+            return self._anmeldung_gesperrt(pu["username"], nxt, offen, text="err.retry",
+                                            grund="gesperrt" if drossel_ok else "ratelimit")
+        try:
+            # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
+            richtig = self._verify_totp(pu["id"], code) or self._verify_recovery_code(pu["id"], code)
+        except BaseException:
+            self._versuch_gescheitert(versuch)       # Unerwartetes zählt sofort (wie beim Passwort)
+            raise
+        if not richtig:
+            self._record_login(pu["username"], ip, False, "totp", versuch=versuch)
+            return self._anmeldung_nein("falsch", 401, "err.code", nxt, offen)
+        self._record_login(pu["username"], ip, True, "totp", versuch=versuch)
+        sitzungs_token = request.cookies.get(self.session_cookie_name)   # Klartext nur hier, im Cookie
+        # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
+        # Rechtewechsel. Ebenso beim Step-up auf einer schon vollen Sitzung (F-06). In beiden
+        # Fällen muss das Cookie mit; wird die Sitzung hier voll (Login), dreht `set_cookie`
+        # auch das CSRF-Token, beim Step-up nicht — es entwertete nur die Formulare der
+        # anderen offenen Reiter.
+        erneuert = self.complete_totp(sitzungs_token)
+        return self._angemeldet(request, erneuert or sitzungs_token, bool(erneuert), pu["id"], nxt)
 
     def _session_from_request(self, request):
         """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
@@ -6403,14 +6698,16 @@ class TinySesam:
     admin_claim_fehlgriff = Veraltet(
         "_admin_claim_fehlgriff", "ohne Ersatz; die Route `/auth/claim-admin` protokolliert selbst")
     check_ldap = Veraltet(
-        "_check_ldap", "stattdessen `POST /auth/login` (drosselt, sperrt und fragt das "
-        "Verzeichnis), eigenes Aussehen per `set_template(\"login\", …)`")
+        "_check_ldap", "stattdessen `anmelden_passwort` (fragt das Verzeichnis als Rückfall, "
+        "drosselt und sperrt wie `POST /auth/login`)")
     check_password = Veraltet(
-        "_check_password", "stattdessen `POST /auth/login` (drosselt und sperrt), eigenes "
-        "Aussehen per `set_template(\"login\", …)`; `check_password` selbst drosselt nicht")
+        "_check_password", "stattdessen `anmelden_passwort` (drosselt, zählt und sperrt wie "
+        "`POST /auth/login`), für ein eigenes Aussehen allein `set_template(\"login\", …)`; "
+        "`check_password` selbst drosselt nicht")
     check_pin = Veraltet(
-        "_check_pin", "stattdessen `POST /auth/pin` (drosselt und sperrt), eigenes Aussehen per "
-        "`set_template(\"pin\", …)`; `check_pin` selbst drosselt nicht")
+        "_check_pin", "stattdessen `anmelden_pin` (drosselt, zählt und sperrt wie `POST /auth/pin`), "
+        "für ein eigenes Aussehen allein `set_template(\"pin\", …)`; `check_pin` selbst drosselt "
+        "nicht")
     check_resource = Veraltet(
         "_check_resource", "stattdessen `POST /auth/resource/{name}` (drosselt und sperrt) bzw. "
         "`require_resource`")
@@ -6434,12 +6731,12 @@ class TinySesam:
     forwarded_url = Veraltet(
         "_forwarded_url", "ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst")
     is_locked = Veraltet(
-        "_is_locked", "stattdessen die eingebauten Anmelderouten, die atomar prüfen und buchen; "
-        "`is_locked` liest nur und lässt parallele Salven durch")
+        "_is_locked", "stattdessen `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, die "
+        "atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch")
     is_password_change_locked = Veraltet(
         "_is_password_change_locked", "stattdessen `POST /auth/password` (prüft und bucht atomar)")
     is_pin_locked = Veraltet(
-        "_is_pin_locked", "stattdessen `POST /auth/pin` (prüft und bucht atomar)")
+        "_is_pin_locked", "stattdessen `anmelden_pin` (prüft und bucht atomar wie `POST /auth/pin`)")
     is_reauth_locked = Veraltet(
         "_is_reauth_locked", "stattdessen `/auth/reauth` (prüft und bucht atomar; "
         "`require(mfa=True)` leitet dorthin)")
@@ -6450,8 +6747,8 @@ class TinySesam:
     is_totp_setup_locked = Veraltet(
         "_is_totp_setup_locked", "stattdessen `POST /auth/totp/setup` (prüft und bucht atomar)")
     login_redirect_after = Veraltet(
-        "_login_redirect_after", "ohne Ersatz; die eingebauten Anmelderouten leiten selbst zum "
-        "nächsten Faktor bzw. zu `next`")
+        "_login_redirect_after", "stattdessen `weiter` bzw. `weiterleitung()` am Ergebnis von "
+        "`anmelden_passwort`, `anmelden_pin` oder `anmelden_totp` (nächster Faktor oder `next`)")
     maybe_promote_admin = Veraltet(
         "_maybe_promote_admin", "stattdessen `admin_identifiers` oder `ensure_admin`; direkt "
         "gerufen umgeht es den Adressbeleg")
@@ -6468,11 +6765,11 @@ class TinySesam:
     purge_demo = Veraltet(
         "_purge_demo", "stattdessen `demo_mode=False` (räumt die Demo-Konten beim Start)")
     rate_ok = Veraltet(
-        "_rate_ok", "stattdessen die eingebauten Anmelderouten (drosseln je IP) bzw. "
-        "`set_rate_limiter`")
+        "_rate_ok", "stattdessen `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp` (drosseln "
+        "je IP), ein eigener Limiter per `set_rate_limiter`")
     record_login = Veraltet(
-        "_record_login", "stattdessen die eingebauten Anmelderouten, die jeden Versuch verbuchen; "
-        "falsch gerufen räumt es fremde Fehlversuchszähler")
+        "_record_login", "stattdessen `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, die "
+        "jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler")
     sec = Veraltet("_sec", "stattdessen `all_security()`")
     seed_demo = Veraltet(
         "_seed_demo", "stattdessen `demo_mode=True` (legt die Demo-Konten beim Start an)")
@@ -6488,11 +6785,11 @@ class TinySesam:
         "_unlock_resource", "stattdessen `POST /auth/resource/{name}` (prüft das Geheimnis vorher)")
     verify_csrf = Veraltet("_verify_csrf", "stattdessen `require_csrf`")
     verify_recovery_code = Veraltet(
-        "_verify_recovery_code", "stattdessen `POST /auth/totp` (nimmt auch Einmal-Codes, "
-        "drosselt und sperrt); `verify_recovery_code` selbst drosselt nicht")
+        "_verify_recovery_code", "stattdessen `anmelden_totp` (nimmt auch Einmal-Codes, drosselt "
+        "und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht")
     verify_totp = Veraltet(
-        "_verify_totp", "stattdessen `POST /auth/totp` (drosselt und sperrt); `verify_totp` "
-        "selbst drosselt nicht")
+        "_verify_totp", "stattdessen `anmelden_totp` (drosselt und sperrt wie `POST /auth/totp`); "
+        "`verify_totp` selbst drosselt nicht")
     verify_user_password = Veraltet(
         "_verify_user_password", "stattdessen `/auth/reauth` (`require(mfa=True)` leitet dorthin) "
         "bzw. `POST /auth/password`; ungedrosselt")
@@ -6502,8 +6799,8 @@ class TinySesam:
     vermerke_oidc_freigabe = Veraltet(
         "_vermerke_oidc_freigabe", "ohne Ersatz; die Zuordnung steht in `oidc_clients`")
     versuch_beginnen = Veraltet(
-        "_versuch_beginnen", "stattdessen die eingebauten Anmelderouten, die jeden Versuch "
-        "atomar vorbuchen")
+        "_versuch_beginnen", "stattdessen `anmelden_passwort`, `anmelden_pin` bzw. `anmelden_totp`, "
+        "die jeden Versuch atomar vorbuchen")
 
     APIKEY_AUDIT_FENSTER = Veraltet("_APIKEY_AUDIT_FENSTER", "ohne Ersatz, ein interner Wert")
     DEMO_USERS = Veraltet(

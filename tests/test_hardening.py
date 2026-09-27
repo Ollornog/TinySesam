@@ -286,7 +286,7 @@ os.remove(db3)
 # Zwischen `is_locked()` und `record_login()` lag die ganze Prüfung. Eine parallele Salve las
 # N-mal „noch nicht gesperrt" und durfte N-mal raten. Die Probe verlangsamt die Prüfung künstlich
 # (sonst gewinnt der Zufall) und schickt zwölf Anfragen gleichzeitig: Mehr als die Grenze darf
-# nicht bis zur Prüfung durchkommen. (Mutationsprobe: in `login_submit` wieder
+# nicht bis zur Prüfung durchkommen. (Mutationsprobe: in `anmelden_passwort` wieder
 # `is_locked()` + `record_login()` ohne `versuch` → alle zwölf kommen durch.)
 import threading                                                                # noqa: E402
 import time as _time                                                            # noqa: E402

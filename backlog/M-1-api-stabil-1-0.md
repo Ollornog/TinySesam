@@ -95,7 +95,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 |---|---|
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
 | C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (49 Aliase, Wächter, Warnfilter in `run_all.py`) |
-| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | offen — Schritt 3 |
+| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`anmelden_*`, `Anmeldung`, die Routen rufen ihn) |
 | zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.21.0 |
 
 **Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
@@ -105,8 +105,27 @@ Beispiele, Skripte und Tests rufen nur noch die neuen Namen. Der Wächter hält 
 gegeneinander, prüft Warnung, Ziel und Weiterreichen jedes Alias, verbietet alte Namen im eigenen
 Code (AST) und wird mit 1.0 rot, solange noch ein Alias steht; `tests/run_all.py` macht eine solche
 Warnung aus dem Paket selbst zum Fehler. `SERIE_PIN_FOLGE` war nie veröffentlicht und heisst ohne
-Alias `_SERIE_PIN_FOLGE` — Stand jetzt 338 Namen, C 49. Die Ersatztexte der ungedrosselten Prüfer
-nennen die eingebauten Routen; mit Schritt 3 kommt der Baustein dazu, auf den sie zeigen sollen.
+Alias `_SERIE_PIN_FOLGE` — Stand nach Schritt 2: 338 Namen, C 49.
+
+**Schritt 3 (2026-09-27): ein sicherer Login-Baustein für eigene Seiten.** Der PO-Befund: Die README
+schickte eigene Login-Seiten zu `check_password` + `start_session`, und die inneren Prüfer drosseln
+nicht. Jetzt gibt es `anmelden_passwort`, `anmelden_pin` und `anmelden_totp` (Stufe A) mit dem
+Ergebnistyp `tinysesam.Anmeldung` (Export, Stufe A): Sie drosseln, zählen und sperren wie die
+eingebauten Routen — weil `POST /auth/login`, `/auth/pin` und `/auth/totp` genau sie rufen und nur
+noch das Ergebnis rendern (eine Quelle; ein AST-Wächter in `tests/test_anmelden.py` verbietet den
+Routen jeden inneren Prüfer). Gemessen ist die Gleichheit Zeile für Zeile: dieselbe Folge über die
+eingebaute und über eine eigene Route ergibt dieselben Status, Audit-, Log- und Zählerzeilen. Die
+README zeigt beide Wege (nur Aussehen: `set_template`; eigene Route: `anmelden_passwort`), ihr
+Beispiel läuft im Test wörtlich und muss sperren. Die Ersatztexte der C-Aliase nennen den Baustein.
+Der Wächter misst den Ergebnistyp mit (Bereich `Anmeldung`: Felder, Methoden, `GRUENDE`) — Stand
+353 Namen: A 240, B 64, C 49.
+
+Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
+Stern der Nur-Schlüsselwort-Parameter fest (`signatur()` setzt die Parameter einzeln zusammen) —
+ein nachträglich eingefügtes `*` vor `next=` wäre ein Bruch, den er nicht meldet, obwohl sein
+Docstring das Gegenteil sagt. Betrifft jede Methode mit `*` (`anmelden_*`, `change_username`,
+`foederation_nachbinden`, `passwort_mangel` …). Die Korrektur ändert viele gemessene Signaturen und
+den Vergleich mit älteren Releases — eigener Schritt, PO-Entscheid.
 
 Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
 `on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in

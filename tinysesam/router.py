@@ -92,112 +92,19 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        auth.require_csrf(request, csrf_tok)
-        if not cfg.password_enabled:
-            raise HTTPException(404, auth.t("api.password_off"))
-        nxt = auth.safe_next(next, request)
-        if not username or not password:
+        # Eine Quelle (0.21.0): Der ganze Ablauf — CSRF, IP-Drossel, Vorbuchung, LDAP-Rückfall,
+        # Audit und Sicherheits-Log, Sitzung — steht in `anmelden_passwort`, dem öffentlichen
+        # Baustein für eigene Login-Seiten. Hier wird nur das Ergebnis zur Seite. Diese Route ruft
+        # keinen inneren Prüfer selbst (Wächter in `tests/test_anmelden.py`).
+        erg = auth.anmelden_passwort(request, username, password, next=next,
+                                     remember=_remember(cfg, remember), csrf=csrf_tok)
+        if erg.grund == "abgeschaltet":
+            raise HTTPException(404, erg.meldung)
+        if not erg:
             # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
-            return auth.render_page("login", status=400, request=request, next=nxt,
-                                    error=auth.t("err.required"))
-        remember_me = _remember(cfg, remember)
-        ip = auth.client_ip(request)
-        if not auth._rate_ok(ip):
-            return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.rate"))
-        # Prüfen und Verbuchen in EINEM Schritt (R7-2): Mit `_is_locked()` vorab und
-        # `_record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
-        # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
-        # Fehlversuch in der Tabelle; `_record_login(..., versuch=…)` macht ihn zum Erfolg.
-        # Mit LDAP schwebt er, bis das Verzeichnis geantwortet hat (G9): Bei einem Ausfall wird er
-        # zurückgenommen (F-23), und bis dahin darf er niemanden sperren, sondern nur warten lassen.
-        versuch = auth._versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
-        if versuch is None:
-            # Eine Serien-Sperre (B2-6) läuft nicht ab — „vorübergehend" wäre gelogen, und der
-            # Nutzer braucht den Weg hinaus. Die Meldung verrät nichts über die Existenz des
-            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht. Ein Aufschub (G9) bekommt
-            # dieselbe 429 wie eine Sperre — sonst verriete die Antwort, dass gerade jemand anderes
-            # unter dieser Kennung oder Adresse anmeldet.
-            text = auth.t("err.locked_serie" if auth._serie_voll(username) else "err.locked")
-            return auth.render_page("login", request=request, status=429, next=nxt, error=text)
-        # Unerwartetes (Programmfehler im Client, Datenbank weg, eine HTTPException aus der
-        # Prüfung) macht den Versuch sofort zum Fehlversuch — im Zweifel strenger, wie bisher.
-        # Ohne das schwebte er `Store.VORBUCHUNG_SCHWEBE_SEK` lang und liesse Anmeldungen
-        # derselben Adresse warten (G9). Ab `_record_login` ist er abgeschlossen.
-        try:
-            u = auth._check_password(username, password)
-            aus_verzeichnis = False
-            if not u and cfg.ldap_enabled:
-                from .ldap_ import VerzeichnisNichtErreichbar
-                try:
-                    u = auth._check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
-                except VerzeichnisNichtErreichbar as e:
-                    # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
-                    # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
-                    # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
-                    # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
-                    # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
-                    auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
-                    security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
-                                          security.fuer_log(username), security.fuer_log(ip),
-                                          security.fuer_log(str(e)))
-                    # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
-                    # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
-                    # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
-                    # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
-                    # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
-                    # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
-                    # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
-                    # Der Versuch steht seit `_versuch_beginnen` schon in der Tabelle (R7-2), als
-                    # schwebende Vorbuchung (G9) — ohne lokales Passwort wird er also
-                    # zurückgenommen, nicht nur nicht zusätzlich verbucht. Bis dahin lässt er
-                    # Anmeldungen, die an ihm scheitern würden, warten, statt sie zu sperren; damit
-                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `_check_ldap` nach
-                    # einem Ausfall eine Pause lang gar nicht erst (`ldap_.AusfallMerker`) und
-                    # wirft sofort.
-                    lokal = auth.find_user(username)
-                    if lokal and auth.store.get_password_hash(lokal["id"]):
-                        auth._record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
-                    else:
-                        auth._versuch_zuruecknehmen(versuch)
-                    return auth.render_page("login", request=request, status=503, next=nxt,
-                                            error=auth.t("err.directory_down"))
-                aus_verzeichnis = u is not None
-        except BaseException:
-            auth._versuch_gescheitert(versuch)
-            raise
-        # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
-        # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
-        # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
-        # Verzeichnis gefragt worden war und abgelehnt hatte.
-        # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
-        # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
-        # Diesen Fall weist `_check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
-        # Wächter in `_raeumgrenze` bleibt die zweite Sicherung.
-        auth._record_login(username, ip, bool(u), "password", versuch=versuch,
-                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
-                                   else "lokal" if u else "lokal+ldap"),
-                           konto=u["id"] if aus_verzeichnis and u else None)
-        if not u:
-            return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
-        # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
-        # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
-        # Betreiber dem Verzeichnis (`ldap_email_trusted`) oder nennt er ein Beleg-Attribut
-        # (`ldap_attr_email_verified`), entscheidet der Beleg am Konto (None) — den setzt
-        # `_check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein Beleg" mit: Eine
-        # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
-        # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
-        token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
-                                              request.headers.get("user-agent"), remember_me,
-                                              email_bestaetigt=(None if (cfg.ldap_email_trusted
-                                                                         or security.beleg_attribut(cfg, "ldap"))
-                                                                else False)
-                                              if aus_verzeichnis else None)
-        if cfg.remember_me_enabled and remember_me:
-            auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
-        resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
-        if is_new:
-            auth.set_cookie(resp, token)   # Art des Cookies folgt der Sitzung (A-2)
-        return resp
+            return auth.render_page("login", request=request, status=erg.status, next=erg.weiter,
+                                    error=erg.meldung)
+        return erg.weiterleitung()   # Art des Cookies folgt der Sitzung (A-2)
 
     # ---------- TOTP als Faktor (2. Schritt oder Ketten-/Route-Faktor) ----------
     @r.get("/auth/totp", response_class=HTMLResponse)
@@ -220,41 +127,15 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(""), next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        auth.require_csrf(request, csrf_tok)
-        nxt = auth.safe_next(next, request)
-        if not code:
-            return auth.render_page("totp", status=400, request=request, next=nxt,
-                                    error=auth.t("err.required"))
-        s = auth._session_from_request(request)
-        # Geprüft wird der Code des Kontos, dessen Sitzung danach weiterkommt — beide aus dem
-        # Cookie (0.20.1, `session_user`). `current_user()` fiel hier auf einen API-Key zurück,
-        # wenn das Konto der Sitzung gesperrt war; dann hätte der Code des Key-Kontos gezählt.
-        pu = auth.pending_user(request) or auth.session_user(request)
-        if not s or not pu:
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
-        ip = auth.client_ip(request)
-        # Atomar wie am Login (R3-2): Die Prüfung liegt sonst zwischen Sperre und Zählung.
-        versuch = auth._versuch_beginnen(pu["username"], ip, "totp") if auth._rate_ok(ip) else None
-        if versuch is None:
-            text = auth.t("err.locked_serie" if auth._serie_voll(pu["username"]) else "err.retry")
-            return auth.render_page("totp", request=request, status=429, next=nxt, error=text)
-        # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
-        if not auth._verify_totp(pu["id"], code) and not auth._verify_recovery_code(pu["id"], code):
-            auth._record_login(pu["username"], ip, False, "totp", versuch=versuch)
-            return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
-        auth._record_login(pu["username"], ip, True, "totp", versuch=versuch)
-        sitzungs_token = request.cookies.get(auth.session_cookie_name)   # Klartext nur hier, im Cookie
-        # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
-        # Rechtewechsel. Ebenso beim Step-up auf einer schon vollen Sitzung (F-06). In beiden
-        # Fällen muss das Cookie mit.
-        erneuert = auth.complete_totp(sitzungs_token)
-        weiter = erneuert or sitzungs_token
-        antwort = RedirectResponse(auth._login_redirect_after(request, weiter, pu["id"], nxt), 303)
-        if erneuert:
-            # Wird die Sitzung hier voll (Login), dreht `set_cookie` auch das CSRF-Token; beim
-            # Step-up nicht — es würde nur die Formulare der anderen offenen Reiter entwerten.
-            auth.set_cookie(antwort, erneuert)
-        return antwort
+        # Eine Quelle (0.21.0): `anmelden_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
+        # hängt den Faktor an; hier wird nur das Ergebnis zur Seite.
+        erg = auth.anmelden_totp(request, code, next=next, csrf=csrf_tok)
+        if erg.grund == "keine_sitzung":
+            return erg.weiterleitung()                  # zur Login-Seite, ohne Cookie
+        if not erg:
+            return auth.render_page("totp", request=request, status=erg.status, next=erg.weiter,
+                                    error=erg.meldung)
+        return erg.weiterleitung()
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -404,75 +285,24 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/pin")
         def pin_submit(request: Request, pin: str = Form(""), username: str = Form(""),
                        next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-            auth.require_csrf(request, csrf_tok)
-            nxt = auth.safe_next(next, request)
-            remember_me = _remember(cfg, remember)
-            ip = auth.client_ip(request)
-            # Schon eingeloggt → die PIN gehört zur laufenden Sitzung, kein Benutzerfeld nötig.
-            # „Eingeloggt" heisst hier: eine volle SITZUNG (0.20.1, `session_user`). Mit
-            # `current_user()` galt eine reine API-Key-Anfrage als eingeloggt — der Riegel
-            # `pin_login=False` unten griff nicht, geprüft wurde die PIN des Key-Kontos, und
-            # `apply_factor` legte mangels Sitzung eine neue, volle an: Automaten-Key + PIN
-            # ergaben eine interaktive Sitzung samt Admin-Flag, das der Key allein nie trägt.
-            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_als_erstfaktor()`.
-            me = auth.session_user(request)
-            # Der Kettenschritt: erster Faktor erbracht, die Sitzung hängt noch (`pending_user`,
-            # wie `/auth/totp`). Bis 2026-09-26 lief er über den Gästeweg — mit `pin_login=False`
-            # war eine Kette `password → pin` darum eine Sackgasse (404), und seine Fehlgriffe
-            # buchten wie die eines Erstfaktors, die ein Selbstbedienungs-Reset räumt (G7).
-            # Nennt das Formular ein ANDERES Konto, bleibt es ein Identitätswechsel über den
-            # Gästeweg; eigene PIN-Seiten, die den Namen mitschicken, bleiben im Kettenschritt.
-            # Die halbe Sitzung zählt nur, wenn die PIN jetzt ihr Kettenschritt ist (p2 F1): Sonst
-            # prüfte sie PINs im klassischen Modus (Orakel mit nur dem Passwort) oder vor dem TOTP
-            # einer strikten Kette, deren Reihenfolge danach nie mehr erfüllbar war.
-            halb = None if me else auth._pin_kettenschritt(request)
-            if halb and username:
-                gemeint = auth.find_user(username)
-                if not gemeint or gemeint["id"] != halb["id"]:
-                    halb = None
-            folge = me or halb      # die PIN steht HINTER einem schon erbrachten Faktor
-            page = "pin" if folge else "login"
-
-            def fail(msg, status):
-                ctx = {"next": nxt, "error": msg}
-                if folge:
-                    ctx["username"] = folge["username"]
-                return auth.render_page(page, status=status, request=request, **ctx)
-
-            if not folge and not cfg.pin_als_erstfaktor():
-                # PIN ist kein Erstfaktor — abgeschaltet oder, in einer strikten Kette hinter
-                # einem anderen Faktor, nie mehr erfüllbar (G7: sonst ein Orakel ohne Passwort).
+            # Eine Quelle (0.21.0): Welche Lage (volle Sitzung, Kettenschritt, Gästeweg), Drossel,
+            # Vorbuchung in Login- und PIN-Topf und Serie stehen in `anmelden_pin`.
+            erg = auth.anmelden_pin(request, pin, username, next=next,
+                                    remember=_remember(cfg, remember), csrf=csrf_tok)
+            if erg.grund == "abgeschaltet":
                 raise HTTPException(404)
-            if not pin or (not folge and not username):
-                return fail(auth.t("err.required"), 400)
-            if not auth._rate_ok(ip):
-                return fail(auth.t("err.rate"), 429)
-            ident = folge["username"] if folge else username
-            if not ident:
-                return fail(auth.t("err.credentials"), 401)
-            # Login- und PIN-Topf in einem atomaren Schritt (R3-7): Eine vierstellige PIN
-            # ist das dankbarste Ziel einer parallelen Salve. Hinter einem erbrachten Faktor
-            # bucht die Serie unter eigener Art: Diese Fehlgriffe erzeugt nur, wer den ersten
-            # Faktor hat, und ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP, G7).
-            versuch = auth._versuch_beginnen(ident, ip, "pin",
-                                             serie_art=auth._SERIE_PIN_FOLGE if folge else None)
-            if versuch is None:
-                return fail(auth.t("err.locked_serie" if auth._serie_voll(ident) else "err.locked"), 429)
-            if folge:
-                u = auth.get_user(folge["id"]) if auth._verify_user_pin(folge["id"], pin) else None
-            else:
-                u = auth._check_pin(ident, pin)
-            auth._record_login(ident, ip, bool(u), "pin", versuch=versuch)
-            if not u:
-                return fail(auth.t("err.credentials"), 401)
-            token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
-                                                  request.headers.get("user-agent"), remember_me)
-            if cfg.remember_me_enabled and remember_me:
-                auth.store.set_session_bleiben(auth.store.session_hash(token))  # F-05: ausdrücklich gewählt
-            resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
-            if is_new:
-                auth.set_cookie(resp, token)
-            return resp
+            if not erg:
+                ctx = {"next": erg.weiter, "error": erg.meldung}
+                seite = "login"
+                if erg.naechster == "pin":
+                    # Die PIN steht hinter einem erbrachten Faktor: dieselbe PIN-Seite, ohne
+                    # Namensfeld, mit dem Konto der Sitzung (volle oder halbe).
+                    seite = "pin"
+                    konto = auth.session_user(request) or auth.pending_user(request)
+                    if konto:
+                        ctx["username"] = konto["username"]
+                return auth.render_page(seite, status=erg.status, request=request, **ctx)
+            return erg.weiterleitung()
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):

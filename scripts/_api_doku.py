@@ -20,6 +20,7 @@ Abschnitt; rot macht ihn der Wächter, nicht diese Seite.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import json
 import re
@@ -33,7 +34,7 @@ ZIEL = ROOT / "API.md"
 ABLAGE = ROOT / "tests" / "api_surface.json"
 
 import tinysesam as paket  # noqa: E402
-from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import Anmeldung, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import errors as fehler_modul  # noqa: E402
 from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
 
@@ -61,6 +62,10 @@ STUFEN = {
 #: Die inneren Prüfer, vor denen der C-Abschnitt ausdrücklich warnt (PO-Befund 2026-09-26). Der
 #: Text nennt sie beim Namen — steht einer nicht mehr in C, stimmt der Text nicht mehr.
 UNGEDROSSELT = ("check_password", "check_pin", "check_ldap", "check_saml")
+
+#: Der sichere Weg für eigene Login-Seiten (0.21.0), auf den der Warnsatz zu C zeigt. Stehen sie
+#: nicht in A, stimmt der Satz nicht mehr.
+BAUSTEINE = ("anmelden_passwort", "anmelden_pin", "anmelden_totp")
 
 KOPF = """# API — die öffentliche Oberfläche von `TinySesam`
 
@@ -163,6 +168,33 @@ def wert(w) -> str:
     return f"Wert: `{kurz[:197]}…`"
 
 
+def anmeldung_abschnitt(stufe_von) -> str:
+    """Der Ergebnistyp der Anmelde-Bausteine: Felder als Tabelle (Erklärung aus dem `#:`-Block),
+    `GRUENDE` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine andere Stufe
+    gibt es hier nicht, der Wächter misst jeden Namen einzeln."""
+    notiz = kommentare(Anmeldung)
+    # `dataclasses.fields`, nicht `__dataclass_fields__`: Dort stünde `GRUENDE` (ClassVar) mit.
+    felder = [f for f in dataclasses.fields(Anmeldung) if stufe_von(f.name) == "A"]
+    methoden = [(n, f) for n, f in inspect.getmembers(Anmeldung, inspect.isfunction)
+                if not n.startswith("_") and stufe_von(n) == "A"]
+    for f in felder:
+        assert notiz.get(f.name), f"Anmeldung.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
+    teile = [f"## A · Ergebnis der Anmelde-Bausteine: `tinysesam.Anmeldung`\n\n{erster_satz(Anmeldung)} "
+             "Zurück von " + ", ".join(f"`{n}`" for n in BAUSTEINE) + ". Eine eingefrorene "
+             "Dataclass; `bool(erg)` ist `erg.ok`. Das Sitzungs-Token ist bewusst kein Feld — "
+             "`cookie_setzen()` und `weiterleitung()` setzen es.\n\n"
+             "| Feld | Typ | Bedeutung |\n|---|---|---|\n"]
+    for f in felder:
+        teile.append(f"| `{f.name}` | `{f.type}` | {notiz[f.name].replace('|', chr(92) + '|')} |\n")
+    teile.append("\n")
+    if stufe_von("GRUENDE") == "A":
+        teile.append(f"### `Anmeldung.GRUENDE` — Konstante\n\n{satz(notiz.get('GRUENDE', ''))}\n\n"
+                     f"{wert(Anmeldung.GRUENDE)}\n\n")
+    for n, fn in methoden:
+        teile.append(f"### `Anmeldung.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
+    return "".join(teile)
+
+
 def _abschnitt(titel: str, eintraege: list, vorspann: str = "") -> str:
     if not eintraege:
         return ""
@@ -202,16 +234,22 @@ def bauen() -> str:
     notiz = kommentare(TinySesam)
 
     # Wer ohne Stufe ist, steht am Ende sichtbar da — statt still in A zu landen.
+    anmeldung = ([f.name for f in dataclasses.fields(Anmeldung)] + ["GRUENDE"]
+                 + [n for n, _ in inspect.getmembers(Anmeldung, inspect.isfunction) if not n.startswith("_")])
     alle = ([("TinySesam", n) for n, _ in methoden] + [("TinySesam.eigenschaften", n) for n, _ in eigenschaften]
             + [("TinySesam.konstanten", n) for n in konstanten]
             + [("TinySesamConfig.methoden", n) for n, _ in presets]
-            + [("TinySesamConfig.felder", n) for n in felder] + [("exporte", n) for n in exporte])
+            + [("TinySesamConfig.felder", n) for n in felder] + [("exporte", n) for n in exporte]
+            + [("Anmeldung", n) for n in anmeldung])
     zahl = {s: sum(1 for b, n in alle if von(b, n) == s) for s in STUFEN}
     ohne = [(b, n) for b, n in alle if von(b, n) not in STUFEN]
 
     for name in UNGEDROSSELT:
         assert von("TinySesam", name) == "C", (
             f"{name} ist nicht mehr Stufe C — den Warnsatz in scripts/_api_doku.py anpassen")
+    for name in BAUSTEINE:
+        assert von("TinySesam", name) == "A", (
+            f"{name} ist nicht Stufe A — der Warnsatz zu C nennt ihn als sicheren Weg")
 
     teile = [KOPF]
     for s, (titel, was, zusage) in STUFEN.items():
@@ -270,7 +308,10 @@ def bauen() -> str:
             "weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er "
             "ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen "
             "sind die Zusage.\n\n"))
-        uebrige = [n for n in exporte if von("exporte", n) == s and n not in dict(typen)]
+        if s == "A" and von("exporte", "Anmeldung") == "A":
+            teile.append(anmeldung_abschnitt(lambda n: von("Anmeldung", n)))
+        uebrige = [n for n in exporte if von("exporte", n) == s and n not in dict(typen)
+                   and n != "Anmeldung"]
         klassen = [n for n in uebrige if not inspect.isfunction(getattr(paket, n))]
         teile.append(_abschnitt(
             f"{titel}weitere Exporte von `tinysesam`",
@@ -292,7 +333,9 @@ def bauen() -> str:
             "**Vorsicht bei den inneren Prüfern** "
             + ", ".join(f"`{n}`" for n in UNGEDROSSELT) + ": Sie drosseln nicht selbst — "
             "Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene "
-            "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.\n\n"
+            "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere "
+            "Baustein ist " + ", ".join(f"`{n}`" for n in BAUSTEINE) + " (Stufe A): dieselben "
+            "Methoden, die die eingebauten Routen rufen.\n\n"
             "| Alter Name | Art | Ersatz |\n|---|---|---|\n")
         for b, n in sorted(intern, key=lambda bn: bn[1].lower()):
             alias = aliase.get(n)
@@ -309,8 +352,8 @@ def bauen() -> str:
 
     teile.append(f"---\n\n{len(methoden)} Methoden, {len(eigenschaften)} Eigenschaften, "
                  f"{len(konstanten)} Konstanten, {len(presets)} Methoden von `TinySesamConfig`, "
-                 f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen — erzeugt aus den "
-                 "Docstrings und `tests/api_surface.json`.\n")
+                 f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen, {len(anmeldung)} Namen "
+                 "an `Anmeldung` — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
     return "".join(teile)
 
 
