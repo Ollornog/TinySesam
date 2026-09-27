@@ -101,12 +101,35 @@ fi
 pushes_main=0
 refs_gesehen=0
 refs_geloescht=0
+refs_tag_geprueft=0
+# Standardzweig der Gegenstelle (main, in älteren Repos master). Ohne Tracking-Ref
+# (Push an eine URL, nie gefetcht) bleibt es leer — dann gibt es keine Tag-Ausnahme.
+# Git übergibt den Namen der Gegenstelle als $1.
+standard_ref=""
+if [[ -n "${1:-}" ]]; then
+    standard_ref="$(git symbolic-ref -q "refs/remotes/$1/HEAD" 2>/dev/null || true)"
+    if [[ -z "$standard_ref" ]] && git rev-parse -q --verify "refs/remotes/$1/main" >/dev/null 2>&1; then
+        standard_ref="refs/remotes/$1/main"
+    fi
+fi
 while read -r _local_ref local_sha remote_ref _remote_sha; do
     refs_gesehen=$((refs_gesehen + 1))
     [[ "$remote_ref" == "refs/heads/main" ]] && pushes_main=1
     # Beim LOESCHEN eines Zweigs (`git push origin --delete <zweig>`) ist die lokale SHA
     # vierzig Nullen. Git sagt es also deutlich — man muss nur hinsehen.
-    [[ "$local_sha" =~ ^0+$ ]] && refs_geloescht=$((refs_geloescht + 1))
+    if [[ "$local_sha" =~ ^0+$ ]]; then
+        refs_geloescht=$((refs_geloescht + 1))
+        continue
+    fi
+    # Tag auf einen Commit, der schon auf dem Standardzweig der Gegenstelle liegt: Dort kam er
+    # nur über einen PR hin, und `pr-mergen` merged nur bei grüner CI am exakten Kopf. Die Suite
+    # prüfte hier denselben Inhalt ein zweites Mal (12 min je Release, TinySesam 2026-09-27).
+    # `merge-base` schält annotierte Tags selbst; zeigt ein Tag auf etwas anderes als einen
+    # Commit, scheitert es — dann wird geprüft.
+    if [[ "$remote_ref" == refs/tags/* && -n "$standard_ref" ]] \
+        && git merge-base --is-ancestor "$local_sha" "$standard_ref" 2>/dev/null; then
+        refs_tag_geprueft=$((refs_tag_geprueft + 1))
+    fi
 done || true
 
 # Ein reiner Loesch-Push schiebt KEINEN Inhalt. Die Suite wuerde den lokalen HEAD pruefen —
@@ -118,6 +141,15 @@ done || true
 # die richtige Richtung, und ein gemischter Push (loeschen + schieben) traegt Inhalt.
 if [[ "$refs_gesehen" -gt 0 && "$refs_gesehen" -eq "$refs_geloescht" ]]; then
     echo "pre-push: reiner Loesch-Push ($refs_geloescht Ref(s)) — kein Inhalt, keine Suite."
+    exit 0
+fi
+
+# Reiner Tag-Push auf bereits geprüfte Commits: dieselbe Strenge wie oben — NUR wenn stdin
+# Zeilen hatte und JEDE davon entweder eine Löschung oder ein solcher Tag war. Ein Tag auf
+# einen Commit abseits des Standardzweigs, ein veralteter Tracking-Ref oder ein gemischter
+# Push mit Zweig fahren die Suite wie bisher.
+if [[ "$refs_tag_geprueft" -gt 0 && "$refs_gesehen" -eq $((refs_tag_geprueft + refs_geloescht)) ]]; then
+    echo "pre-push: reiner Tag-Push ($refs_tag_geprueft Tag(s)) auf Commits aus ${standard_ref#refs/remotes/} — dort per CI geprüft, keine Suite."
     exit 0
 fi
 

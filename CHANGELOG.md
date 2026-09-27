@@ -2,6 +2,32 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+### Geändert — Testlauf (für Entwickler; am Paket ändert sich nichts)
+
+- **Die Suiten laufen parallel.** `tests/run_all.py` fährt sie gleichzeitig; wie viele,
+  legt `CI_TEST_JOBS` fest (Vorgabe: die Hälfte der Kerne, mindestens eine; ein anderer
+  Wert als eine ganze Zahl ≥ 1 bricht mit Exit 2 ab). Die erste Zeile nennt die Zahl
+  (`▸ Test-Jobs: N`), das Protokoll folgt weiter der Reihenfolge der Dateien, und
+  `CI_TEST_JOBS=1` ist der serielle Lauf von früher. Gemessen auf 12 Threads (6 Jobs, ohne
+  Browser-Test): voller Lauf 237 s → 40 s, schmaler Lauf (ohne Extras) 466 s → 42 s; seriell mit
+  den billigen Hashes 179 s bzw. 177 s.
+- **Billige Passwort-Hashes nur im Testlauf.** Der Sammellauf startet jede Suite über
+  `tests/_starter.py`, der scrypt und argon2 **im Testprozess** absenkt. Im schmalen Lauf gingen
+  vorher rund zwei Drittel der Suitenzeit in scrypt. Das Paket hat dafür **keinen** Schalter —
+  keine Umgebungsvariable, keine Einstellung; `tests/test_testlauf.py` hält das fest. Suiten, die
+  Hash-Parameter oder -Laufzeiten selbst prüfen, rechnen weiter mit den echten Werten, ebenso jede
+  direkt gestartete Suite.
+- **Keine Suite schreibt mehr in den Baum oder teilt sich etwas mit einer anderen:** mypy legt
+  seinen Cache in die Sandbox der Suite (vorher `.mypy_cache/` im Baum), `scripts/check.sh` baut
+  die Website in ein Wegwerf-Verzeichnis (vorher `_site/`, das danach gelöscht wurde — auch ein
+  eigenes), `tests/test_ratelimit.py` spricht kein echtes Redis auf `localhost:6379` mehr an, und
+  `tests/test_ldap.py` hält seinen „toten“ Port belegt, bis die Probe fertig ist.
+- **Eine Prüfung, die unter Last rot wurde:** `tests/test_werte_englisch.py` verglich die Reihenfolge
+  von `list_api_keys` (nach Sekunden sortiert) — entstanden die Keys in zwei verschiedenen Sekunden,
+  war sie rot, obwohl jede Art stimmte. Jetzt je Key über seinen Namen.
+
 ## [0.22.0] — 2026-09-27
 
 > **Bricht die Oberfläche — vor dem Update lesen.** Deutsche Namen, Parameter, Schlüssel und Werte

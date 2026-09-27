@@ -1189,10 +1189,13 @@ if HAT_LDAP3:
     # Gegen das ECHTE ldap3: ein Port, auf dem niemand lauscht. Die Ausnahme muss aus der
     # Bibliothek kommen, nicht aus unserer Attrappe — sonst wäre die Zuordnung der Fehlerarten
     # (`_ausfall_arten`) ungemessen.
+    # Der Port bleibt GEBUNDEN, nur ohne `listen()`: Verbindungen werden abgewiesen wie bei einem
+    # toten Port, aber kein anderer Prozess bekommt ihn in der Zwischenzeit. Vorher wurde er gleich
+    # wieder freigegeben — lief daneben eine andere Suite (der Sammellauf fährt sie parallel) und
+    # bekam dieselbe Nummer für ihren Attrappen-Server, sprach ldap3 mit DEM statt mit niemandem.
     _s = socket.socket()
     _s.bind(("127.0.0.1", 0))
     _toter_port = _s.getsockname()[1]
-    _s.close()
     for _cfg in (TinySesamConfig(db_path=":memory:", password_enabled=True, ldap_enabled=True,
                                  ldap_url=f"ldap://127.0.0.1:{_toter_port}", ldap_allow_plaintext=True,
                                  ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"),
@@ -1210,6 +1213,17 @@ if HAT_LDAP3:
             assert not isinstance(_e_tot, getattr(_ldap_mod, "AnfrageAbgebrochen", ())), \
                 f"ein toter Port gilt als Fehler nur dieser Anfrage: {_e_tot!r}"
         assert _geworfen, "ein toter Port endet wieder als 'Passwort falsch'"
+    _zweiter = socket.socket()
+    _zweiter.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        _zweiter.bind(("127.0.0.1", _toter_port))
+        _belegt = False
+    except OSError:
+        _belegt = True
+    finally:
+        _zweiter.close()
+    _s.close()
+    assert _belegt, "der tote Port war während der Probe frei — eine parallele Suite hätte ihn nehmen können"
     ok("F-23: echtes ldap3 gegen einen toten Port → VerzeichnisNichtErreichbar (Direkt- und Such-Bind)")
     # Und ein abgewiesenes Passwort gegen einen ECHTEN Server bleibt None, nicht Ausfall.
     _sa, _pa = lauscher()

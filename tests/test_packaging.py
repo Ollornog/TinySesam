@@ -304,8 +304,8 @@ try:
     # Quellpakets; die repo-gebundenen Suiten sagen dort von selbst ab (Exit 77).
     tests_drin = {f for f in sdist_dateien if f.startswith("tests/")}
     assert tests_drin, "das sdist enthält keine Testsuite — `graft tests` in MANIFEST.in prüfen"
-    for pflicht in ("tests/run_all.py", "tests/voraussetzung.py", "tests/api_surface.json",
-                    "tests/_kit/report.py", "tests/_kit/hygiene.py"):
+    for pflicht in ("tests/run_all.py", "tests/_starter.py", "tests/voraussetzung.py",
+                    "tests/api_surface.json", "tests/_kit/report.py", "tests/_kit/hygiene.py"):
         assert pflicht in tests_drin, (f"{pflicht} fehlt im sdist — ohne diese Datei startet die "
                                        "Suite dort nicht, und eine halbe Suite ist schlimmer als keine")
     # Jede Suite, die der Sammellauf im Repo kennt, muss auch im Quellpaket liegen.
