@@ -76,4 +76,30 @@ Sperren/Zähler) ist abgeschlossen: Jeder Punkt ist behoben mit Test, per Mutati
 der öffentlichen API in A/B/C** (PO-Entscheid 2026-09-26) — die inhaltliche Frage oben, welche der
 eingefrorenen Namen auf Dauer öffentlich sein sollen. Sie liegt beim PO.
 
+## Stand 2026-09-27: Einstufung gebaut, die Uhr für A startet mit 0.21.0
+
+Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebaut ist Schritt 1:
+
+- **Jeder der 339 öffentlichen Namen trägt eine Stufe** in `tests/api_surface.json` —
+  A 225 (davon 158 Konfigurationsfelder), B 64, C 50. `tests/test_api_surface.py` ist rot, wenn
+  einer keine oder eine unbekannte trägt; `--update` übernimmt Stufen, vergibt aber nie eine.
+  Damit ist die Frage oben („gemessen, nicht ausgewählt“) beantwortet: Ausgewählt ist, was A ist.
+- **Nur für A gilt die Bedingung „zwei Minor-Versionen ohne Bruch“**, gezählt ab 0.21.0 — dem
+  Release, das die Einstufung bringt. Ein Bruch an B (nur nach `DeprecationWarning` über zwei
+  Minor-Versionen) oder C (intern, fällt mit 1.0) setzt die Uhr nicht zurück; der Wächter meldet
+  ihn trotzdem, mit der Stufe davor.
+- `API.md` gliedert nach Stufe, die READMEs erklären die Stufen und führen die B-Bausteine im
+  Abschnitt für Fortgeschrittene.
+
+| Bedingung | Stand |
+|---|---|
+| Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
+| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | offen — Schritt 2 |
+| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | offen — Schritt 3 |
+| zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.21.0 |
+
+Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
+`on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in
+die Zusage gehören, liegt als offene Frage beim PO.
+
 <!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->

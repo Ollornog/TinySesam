@@ -3,28 +3,315 @@
 <!-- GENERIERT von scripts/_api_doku.py — nicht von Hand pflegen.
      Neu bauen: `python3 scripts/_api_doku.py` -->
 
-Diese Namen hält `tests/api_surface.json` fest: Was hier steht, ändert sich nicht ohne eine
-bewusste Entscheidung und einen Eintrag im CHANGELOG.
+Diese Namen hält `tests/api_surface.json` fest, jeden mit seiner **Stufe**: Was hier steht,
+ändert sich nicht ohne eine bewusste Entscheidung und einen Eintrag im CHANGELOG.
 
 Die READMEs zeigen die **Wege** (welche Methode wofür, wie man sie kombiniert). Hier steht, was
 es überhaupt gibt — die Frage „gibt es dafür schon etwas?" beantwortet diese Seite, nicht der
 Quelltext.
 
-> **Gemessen, nicht ausgewählt.** Erfasst ist alles ohne führenden Unterstrich. Welche dieser
-> Methoden auf Dauer öffentlich sein *sollen*, ist eine offene Entscheidung für 1.0
-> ([M-1](backlog/M-1-api-stabil-1-0.md)) — bis dahin gilt: eingefroren ist, was hier steht.
+## Drei Stufen — was zugesagt ist
 
-Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md).
+| Stufe | Was | Zusage |
+|---|---|---|
+| **A — öffentlich, stabil ab 1.0** | dokumentiert und/oder von Einbettenden genutzt | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 ([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.21.0, dem Release, das die Einstufung bringt. |
+| **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten, eigene Mail- und Token-Abläufe, Erweiterungspunkte | Bleibt. Entfernen oder umbauen erst, nachdem eine `DeprecationWarning` zwei Minor-Versionen lang darauf hingewiesen hat. Schwächer als A: Ein Umbau mit Vorlauf ist erlaubt. |
+| **C — intern** | Verdrahtung der eingebauten Routen | Keine. Bekommt einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. |
 
-## `TinySesam`
+Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — nichts wird aus Versehen zugesagt.
+
+Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
+
+**Stand:** A 225 · B 64 · C 50 Namen.
+
+## A · Methoden von `TinySesam`
 
 ### `add_messages(lang, mapping: 'dict')`
 
 Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebauten).
 
-### `admin_claim_fehlgriff(username, ip) -> 'None'`
+### `admin_router()`
 
-Einen gescheiterten Erst-Admin-Claim festhalten — Audit-Log und Sicherheits-Log (B5-16).
+Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
+
+### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
+
+Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
+
+### `complete_totp(token) -> 'Optional[str]'`
+
+Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
+
+### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'`
+
+Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
+
+### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
+
+Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+
+### `create_service(username, roles=None, display_name=None) -> 'int'`
+
+Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
+
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
+
+Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
+
+### `csrf_token(request: 'Optional[Request]' = None) -> 'str'`
+
+Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln.
+
+### `current_user(request) -> 'Optional[dict]'`
+
+Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
+
+### `ensure_admin(username, password) -> 'bool'`
+
+Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage.
+
+### `ensure_csrf(request: 'Request', response: 'Response') -> 'str'`
+
+Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
+
+### `foederation_nachbinden(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
+
+Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
+
+### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
+
+Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich. `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird.
+
+### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
+
+Ein Einrichtungsfenster öffnen und seinen Ablauf zurückgeben.
+
+### `has_role(user, role, admin_implies=None) -> 'bool'`
+
+Hat der User die Rolle? Ein Admin erfüllt standardmäßig JEDE Rolle (`config.admin_implies_roles`). Wer Rechte allein an IdP-Gruppen hängt, schaltet das ab — sonst ist jeder lokale Admin automatisch auch „editor", „viewer", … .
+
+### `install_error_pages(app)`
+
+Themed Fehlerseiten registrieren (opt-in). Browser bekommen die 'error'-Seite (im Branding), API-Clients JSON; Redirects (Login/Reauth/Faktor, via Location-Header) bleiben Redirects.
+
+### `install_https(app)`
+
+HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' → läuft auch OHNE Zertifikat (bei 'warn' Panel-Hinweis). Gibt den Modus zurück.
+
+### `is_admin(user) -> 'bool'`
+
+Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
+
+### `issue_csrf(response: 'Response') -> 'str'`
+
+Ein NEUES CSRF-Token würfeln und als Cookie setzen; Rückgabe ist das Token. Für eine Seite mit Formular ist `ensure_csrf()` der Weg — dieses hier entwertet die Formulare in allen anderen offenen Reitern.
+
+### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
+
+Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
+
+### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
+
+True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
+
+### `logout(request, response)`
+
+Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und die Cookies löschen — Sitzung, Freigabe und seit 0.20.1 auch das CSRF-Cookie, dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
+
+### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+
+Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
+
+### `render_page(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'`
+
+`request` mitgeben, wo es eins gibt: dann bleibt ein bereits gesetztes CSRF-Token gültig. Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene Formulare ungültig (klassische „Formular abgelaufen"-Falle).
+
+### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
+
+Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt für diese Route zusätzlich eine bestimmte Faktor-Kette, strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`. Die Route-Kette verschärft die globale Regel, sie ersetzt sie nicht: Eine Sitzung, die für die globale Anmeldung noch nicht voll ist (zweiter Faktor offen, Kette unvollständig), geht zuerst zu deren fehlendem Schritt — auch bei `factors=["password"]` (seit 2026-09-27; bis dahin überschrieb die Route-Kette die globale). Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy).
+
+### `require_admin(request: 'Request') -> 'dict'`
+
+FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa).
+
+### `require_csrf(request: 'Request', submitted)`
+
+Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
+
+### `require_mfa(request: 'Request') -> 'dict'`
+
+FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung.
+
+### `require_resource(name: 'str')`
+
+FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich. Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`.
+
+### `require_role(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)`
+
+FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
+
+### `require_session(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'`
+
+Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
+
+### `require_user(request: 'Request') -> 'dict'`
+
+FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User. Wer keine Rollen braucht: `Depends(auth.require_user)` genügt.
+
+### `revoke_api_key(key_id, user_id=None)`
+
+Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen.
+
+### `rotate_session(request, response) -> 'Optional[str]'`
+
+Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
+
+### `router()`
+
+Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
+
+### `safe_next(next_: 'str', request: 'Optional[Request]' = None) -> 'str'`
+
+?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
+
+### `send_login_link(email, base_url, next='/') -> 'bool'`
+
+Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+
+### `send_password_reset(email, base_url) -> 'bool'`
+
+Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
+
+### `send_verify_email(user_id, email, base_url) -> 'bool'`
+
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
+
+### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
+
+Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
+
+### `set_mailer(fn)`
+
+Eigenen Mail-Versand einhängen: fn(to, subject, text, html=None). Überschreibt SMTP.
+
+### `set_owner(user_id: 'int', owner: 'bool') -> 'bool'`
+
+Die Owner-Rolle vergeben (`owner=True`) oder abgeben (`False`). False = kein solches Konto.
+
+### `set_password(user_id, password)`
+
+Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
+
+### `set_pin(user_id, pin)`
+
+PIN setzen/ändern. Mindestlänge aus cfg.pin_min_length.
+
+### `set_resource_secret(name, secret, kind='pin', label=None)`
+
+Geheimnis für einen Bereich setzen/ändern. kind='pin' (numerisch) \| 'password' (Passphrase).
+
+### `set_security(key, value)`
+
+Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank.
+
+### `set_template(name, fn)`
+
+Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str \| Response.
+
+### `start_session(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'`
+
+Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig.
+
+### `stepup_options(user) -> 'list[str]'`
+
+Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschlag.
+
+### `totp_disable(user_id)`
+
+TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert).
+
+## A · Eigenschaften von `TinySesam`
+
+Ohne Klammern gelesen (`auth.csrf_cookie_name`). Zur Laufzeit berechnet: Sie folgen der Konfiguration, auch wenn `cfg` nach dem Aufbau geändert wird.
+
+### `csrf_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des CSRF-Cookies — eigenes JS bekommt ihn von der Seite.
+
+### `resource_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN.
+
+### `session_cookie_name` — Property `-> 'str'`
+
+Der tatsächliche Name des Sitzungs-Cookies (mit `__Host-`, wo möglich).
+
+## A · Konstanten von `TinySesam`
+
+Klassenattribute, gelesen als `TinySesam.NAME` oder `auth.NAME`. Der Wert gehört zur Zusage — der Wächter hält ihn fest.
+
+### `FORWARD_HEADERS_DEFAULT` — Konstante
+
+Vorgabe: der Satz, den Authelia/Traefik-Aufbauten erwarten.
+
+Wert: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}`
+
+### `SICHERHEITSEREIGNISSE` — Konstante
+
+Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmeldefaktor des Kontos anlegt, ändert, entfernt oder verbraucht.
+
+Werte: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`, `recovery_code_used`, `passkey_added`, `passkey_removed`, `api_key_created`, `api_key_revoked`, `api_keys_revoked`, `email_changed`, `username_changed`
+
+## A · `TinySesamConfig`
+
+`TinySesamConfig` ist eine Dataclass und bleibt eine: `dataclasses.fields(TinySesamConfig)` zählt jedes Feld auf. Presets setzen Bündel dieser Felder, einzelne lassen sich per `**overrides` überschreiben.
+
+### `TinySesamConfig.active_directory(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
+
+Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bind per UPN (`upn_suffix="corp.example.com"` → user@corp.example.com) ODER Search-then-Bind über sAMAccountName (`bind_dn`/`bind_password`/`base_dn`). Restliche Felder via **overrides (db_path …).
+
+### `TinySesamConfig.entra_id(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
+
+Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Tenant-)ID.
+
+### `TinySesamConfig.local_accounts(**overrides)`
+
+Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
+
+### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
+
+Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
+
+## A · Fehlertypen
+
+Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen sind die Zusage.
+
+### `TinySesamError` (erbt von `Exception`)
+
+Basis aller eigenen Fehler — `except TinySesamError` fängt alles von hier.
+
+### `ConfigError` (erbt von `TinySesamError`, `ValueError`)
+
+Die Konfiguration widerspricht sich oder verspricht etwas, das so nicht wirkt.
+
+### `MailNotConfigured` (erbt von `TinySesamError`, `RuntimeError`)
+
+Es sollte eine Mail raus, aber kein Mailer ist eingerichtet.
+
+### `MissingExtra` (erbt von `TinySesamError`, `RuntimeError`)
+
+Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
+
+### `StateError` (erbt von `TinySesamError`, `RuntimeError`)
+
+Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+
+## A · weitere Exporte von `tinysesam`
+
+- `TinySesam`
+- `TinySesamConfig`
+
+## B · Methoden von `TinySesam`
 
 ### `admin_claim_token() -> 'Optional[str]'`
 
@@ -33,10 +320,6 @@ Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau 
 ### `admin_exists() -> 'bool'`
 
 Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht.
-
-### `admin_router()`
-
-Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
 
 ### `all_security() -> 'dict'`
 
@@ -62,81 +345,17 @@ IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisier
 
 Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
 
-### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
-
-Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
-
-### `check_ldap(username, password) -> 'Optional[dict]'`
-
-Passwort gegen LDAP prüfen. Bei Erfolg lokalen User finden/anlegen und zurückgeben. Zählt wie ein Passwort-Login (Faktor 'password').
-
-### `check_password(username, password) -> 'Optional[dict]'`
-
-Benutzername/E-Mail + Passwort prüfen. Gibt das Konto zurück oder None — und braucht bei beiden Ausgängen gleich lange (keine Konto-Erkundung).
-
-### `check_pin(username, pin) -> 'Optional[dict]'`
-
-Wie `check_password`, nur mit der persönlichen PIN.
-
-### `check_resource(name, secret) -> 'bool'`
-
-Das Geheimnis einer gesperrten Ressource prüfen (ohne sie freizuschalten — das tut `unlock_resource`).
-
-### `check_saml(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'`
-
-Aus einer geprüften SAML-Assertion einen lokalen User finden/anlegen. Faktor 'saml'.
-
 ### `client_ip(request: 'Request') -> 'str'`
 
 Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der Peer in `trusted_proxies` steht — sonst wäre der Header fälschbar.
-
-### `complete_mfa(token)`
-
-Historischer Name für `complete_totp()`, gleiches Verhalten: Ein zurückgegebenes Token gehört ins Cookie, auch beim Step-up. Der Name bleibt, damit Aufrufe unter ihm nicht brechen.
-
-### `complete_totp(token) -> 'Optional[str]'`
-
-Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
 
 ### `confirm_email_change(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'`
 
 Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
 
-### `consume_admin_claim(token, user) -> 'bool'`
-
-Das Einmal-Token einlösen und dieses Konto zum Admin machen. Gilt genau einmal.
-
-### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'`
-
-Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
-
-### `create_invite(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'`
-
-Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die vorgesehenen Rollen/Adminrechte; eingelöst wird er erst bei der Registrierung. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
-
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
 Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
-
-### `create_service(username, roles=None, display_name=None) -> 'int'`
-
-Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
-
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
-
-Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
-
-### `csrf_rotieren(response) -> 'str'`
-
-Ein frisches CSRF-Token setzen — beim Login.
-
-### `csrf_token(request: 'Optional[Request]' = None) -> 'str'`
-
-Das CSRF-Token dieses Browsers — vorhandenes Cookie wiederverwenden, sonst neu würfeln.
-
-### `current_user(request) -> 'Optional[dict]'`
-
-Das angemeldete Konto zu diesem Request — aus der Sitzung ODER einem API-Key. None, wenn niemand angemeldet ist.
 
 ### `darf_mfa_einrichten(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'`
 
@@ -150,18 +369,6 @@ Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log 
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
 
-### `ensure_admin(username, password) -> 'bool'`
-
-Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage.
-
-### `ensure_csrf(request: 'Request', response: 'Response') -> 'str'`
-
-Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
-
-### `factor_entry(step, nxt='/') -> 'str'`
-
-Die Adresse der Eingabeseite für einen Faktor-Schritt, mit `next` daran.
-
 ### `find_user(identifier) -> 'Optional[dict]'`
 
 Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
@@ -169,26 +376,6 @@ Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 ### `flow_cookie_name(basis: 'str') -> 'str'`
 
 Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
-
-### `foederation_nachbinden(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
-
-Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
-
-### `forward_login_url(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'`
-
-Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>.
-
-### `forward_response_headers(user) -> 'dict'`
-
-Die Header, die der Proxy bei einer erfolgreichen Prüfung an die App weiterreicht.
-
-### `forwarded_url(request: 'Request') -> 'str'`
-
-Ursprüngliche vom Proxy angefragte URL rekonstruieren (Caddy/Traefik: X-Forwarded-*, nginx: X-Original-URL). Fallback: Referer bzw. '/'.
-
-### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
-
-Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich. `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird.
 
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
@@ -198,61 +385,9 @@ Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL.
 
 Ein Konto per ID lesen, oder None.
 
-### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
-
-Ein Einrichtungsfenster öffnen und seinen Ablauf zurückgeben.
-
 ### `has_pin(user_id) -> 'bool'`
 
 Hat dieses Konto eine PIN eingerichtet?
-
-### `has_role(user, role, admin_implies=None) -> 'bool'`
-
-Hat der User die Rolle? Ein Admin erfüllt standardmäßig JEDE Rolle (`config.admin_implies_roles`). Wer Rechte allein an IdP-Gruppen hängt, schaltet das ab — sonst ist jeder lokale Admin automatisch auch „editor", „viewer", … .
-
-### `install_error_pages(app)`
-
-Themed Fehlerseiten registrieren (opt-in). Browser bekommen die 'error'-Seite (im Branding), API-Clients JSON; Redirects (Login/Reauth/Faktor, via Location-Header) bleiben Redirects.
-
-### `install_https(app)`
-
-HTTPS gemäß config.https_mode: 'force' → HTTP→HTTPS-Redirect-Middleware; 'warn'/'off' → läuft auch OHNE Zertifikat (bei 'warn' Panel-Hinweis). Gibt den Modus zurück.
-
-### `is_admin(user) -> 'bool'`
-
-Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
-
-### `is_locked(username, ip) -> 'bool'`
-
-Zu viele Fehlversuche im Fenster — je Paar aus Konto und IP, je Konto, je IP.
-
-### `is_password_change_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Alt-Passwort-Abfrage der Kontoseite.
-
-### `is_pin_locked(username, ip, login: 'bool' = True) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für PIN (kurzer Keyspace). Zusätzlich zu is_locked().
-
-### `is_reauth_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Step-up-Bestätigung (`/auth/reauth`).
-
-### `is_resource_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Bereichs-PIN (`/auth/resource/…`).
-
-### `is_secure(request: 'Request') -> 'bool'`
-
-HTTPS aktiv? (direkt, via X-Forwarded-Proto hinter Proxy, oder localhost).
-
-### `is_totp_setup_locked(username, ip) -> 'bool'`
-
-Eigener, methoden-scoped Lockout für die Bestätigung der TOTP-Einrichtung.
-
-### `issue_csrf(response: 'Response') -> 'str'`
-
-Ein NEUES CSRF-Token würfeln und als Cookie setzen; Rückgabe ist das Token. Für eine Seite mit Formular ist `ensure_csrf()` der Weg — dieses hier entwertet die Formulare in allen anderen offenen Reitern.
 
 ### `json_body(request: 'Request') -> 'dict'`
 
@@ -270,22 +405,6 @@ Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal
 
 Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
-### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
-
-Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
-
-### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
-
-True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
-
-### `login_redirect_after(request, token, user_id, nxt)`
-
-Zielredirect nach einem Faktor: nxt wenn Sitzung komplett, sonst Eingabeseite des nächsten Faktors.
-
-### `logout(request, response)`
-
-Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und die Cookies löschen — Sitzung, Freigabe und seit 0.20.1 auch das CSRF-Cookie, dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
-
 ### `magic_url(raw, base_url, purpose='login') -> 'str'`
 
 Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `base_url` wird geprüft: ein fremder Host wirft `ConfigError` — in einer Route liefert `public_base(request)` die geprüfte Basis.
@@ -294,33 +413,13 @@ Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `b
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
-
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder — auch nicht, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6).
-
-### `mfa_pending(user_id) -> 'bool'`
-
-TOTP verlangt? Ja, wenn ein bestätigtes TOTP für dieses Konto existiert.
-
 ### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
 
 `auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
 
-### `next_login_step(user_id, done)`
-
-Nächster offener Faktor bis zur vollen (globalen) Anmeldung, oder None wenn fertig.
-
 ### `nur_foederiert(user_id) -> 'bool'`
 
 Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
-
-### `oidc_anwendung(url_oder_host: 'str') -> 'str'`
-
-Der Client-Schlüssel für diese Adresse — "" wenn diese Installation nur eine Anwendung schützt. Der leere Rückgabewert ist Absicht: Er hält jede Aufrufstelle wortgleich beim Verhalten von 0.18.0, solange `oidc_clients` leer ist.
-
-### `oidc_freigabe_gueltig(token_hash: 'str', client: 'str') -> 'tuple'`
-
-Darf diese Sitzung in diese Anwendung? Rückgabe `(ja, grund)`.
 
 ### `own_events(user_id: 'int', limit: 'int' = 20) -> 'list'`
 
@@ -342,22 +441,6 @@ User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0).
 
 Einen Pfad der App (`/auth/login`, `login_path`, `admin_path`, …) in den Pfad umrechnen, den der Browser braucht — mit dem Montage-Präfix davor (T-15).
 
-### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
-
-Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
-
-### `purge_demo() -> 'int'`
-
-Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine gleichnamigen.
-
-### `rate_ok(ip, login: 'bool' = True) -> 'bool'`
-
-Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
-
-### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)`
-
-Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
-
 ### `recovery_codes_remaining(user_id) -> 'int'`
 
 Wie viele Einmal-Codes dieses Konto noch hat.
@@ -374,177 +457,49 @@ Einen Passkey eines Kontos entfernen — Löschen, Audit-Zeile und `passkey_remo
 
 Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperren).
 
-### `render_page(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'`
-
-`request` mitgeben, wo es eins gibt: dann bleibt ein bereits gesetztes CSRF-Token gültig. Ohne `request` entsteht ein neues — das überschreibt das Cookie und macht *andere* offene Formulare ungültig (klassische „Formular abgelaufen"-Falle).
-
 ### `request_email_change(user_id, neu, base_url)`
 
 Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `bei_ueberlauf` für `nach_der_antwort` (seit 2026-09-27).
-
-### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
-
-Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt für diese Route zusätzlich eine bestimmte Faktor-Kette, strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`. Die Route-Kette verschärft die globale Regel, sie ersetzt sie nicht: Eine Sitzung, die für die globale Anmeldung noch nicht voll ist (zweiter Faktor offen, Kette unvollständig), geht zuerst zu deren fehlendem Schritt — auch bei `factors=["password"]` (seit 2026-09-27; bis dahin überschrieb die Route-Kette die globale). Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy).
-
-### `require_admin(request: 'Request') -> 'dict'`
-
-FastAPI-Dependency (direkt): eingeloggt + Admin (+ Step-up, wenn admin_require_mfa).
-
-### `require_csrf(request: 'Request', submitted)`
-
-Für Formular-POSTs: wirft 403, wenn der CSRF-Token fehlt/nicht passt.
-
-### `require_mfa(request: 'Request') -> 'dict'`
-
-FastAPI-Dependency (direkt): eingeloggt + frische Step-up-Bestätigung.
 
 ### `require_public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
 
 Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
 
-### `require_resource(name: 'str')`
-
-FastAPI-Dependency-Factory: Bereich erst nach Eingabe des Ressourcen-Geheimnisses zugänglich. Unabhängig vom Benutzer-Login. `Depends(auth.require_resource('fotos'))`.
-
-### `require_role(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)`
-
-FastAPI-Dependency-Factory: eingeloggt + Rolle. `Depends(auth.require_role('editor'))`.
-
-### `require_session(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'`
-
-Eingeloggt — und zwar **interaktiv**: eine Sitzung ja, ein API-Key nein (403).
-
-### `require_user(request: 'Request') -> 'dict'`
-
-FastAPI-Dependency (direkt): erzwingt eingeloggten (inkl. MFA) User. Wer keine Rollen braucht: `Depends(auth.require_user)` genügt.
-
 ### `resource_unlocked(request: 'Request', name) -> 'bool'`
 
 Ist diese Ressource für diesen Browser gerade freigeschaltet?
-
-### `revoke_api_key(key_id, user_id=None)`
-
-Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen.
 
 ### `revoke_mfa_enrollment(user_id: 'int') -> 'None'`
 
 Ein offenes Einrichtungsfenster sofort schliessen.
 
-### `rotate_session(request, response) -> 'Optional[str]'`
-
-Der laufenden Sitzung ein neues Token geben und das Cookie setzen (F-06).
-
-### `router()`
-
-Der FastAPI-Router mit allen aktivierten Routen. Einmal einbinden, fertig.
-
-### `safe_next(next_: 'str', request: 'Optional[Request]' = None) -> 'str'`
-
-?next=-Ziel gegen Open-Redirect absichern (nur relative Pfade bzw. trusted_redirect_hosts).
-
-### `sec(key) -> 'int'`
-
-Härtungs-Wert: Store-Setting (Panel) ODER Default, immer innerhalb von `security.SECURITY_GRENZEN`.
-
-### `seed_demo() -> 'None'`
-
-Beispielkonten anlegen (idempotent). Verlangt `demo_mode=True`.
-
-### `send_login_link(email, base_url, next='/') -> 'bool'`
-
-Login-Link an eine E-Mail schicken, WENN ein passender interaktiver User existiert. Rückgabe nur intern — nach außen immer dieselbe Meldung (keine User-Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
-
 ### `send_mail(to, subject, text, html=None)`
 
 Eine Mail versenden — über SMTP oder den per `set_mailer` gesetzten Weg.
-
-### `send_password_reset(email, base_url) -> 'bool'`
-
-Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach außen immer gleiche Meldung (keine Enumeration). `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
-
-### `send_signup_notice(email, base_url) -> 'bool'`
-
-Hinweis an den Inhaber einer Adresse, mit der sich jemand erneut registrieren wollte (R4-03).
-
-### `send_verify_email(user_id, email, base_url) -> 'bool'`
-
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
-
-### `session_from_request(request)`
-
-Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
 
 ### `session_user(request) -> 'Optional[dict]'`
 
 Das Konto der vollen Sitzung dieses Requests — wie `current_user()`, nur nie aus einem API-Key.
 
-### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
-
-Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
-
-### `set_mailer(fn)`
-
-Eigenen Mail-Versand einhängen: fn(to, subject, text, html=None). Überschreibt SMTP.
-
-### `set_owner(user_id: 'int', owner: 'bool') -> 'bool'`
-
-Die Owner-Rolle vergeben (`owner=True`) oder abgeben (`False`). False = kein solches Konto.
-
-### `set_password(user_id, password)`
-
-Das Passwort eines Kontos setzen (ohne das alte zu prüfen — das ist Sache des Aufrufers).
-
-### `set_pin(user_id, pin)`
-
-PIN setzen/ändern. Mindestlänge aus cfg.pin_min_length.
-
 ### `set_rate_limiter(limiter)`
 
 Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, window)->bool.
-
-### `set_resource_secret(name, secret, kind='pin', label=None)`
-
-Geheimnis für einen Bereich setzen/ändern. kind='pin' (numerisch) \| 'password' (Passphrase).
 
 ### `set_roles(user_id, roles)`
 
 Die Rollen eines Kontos ersetzen.
 
-### `set_security(key, value)`
-
-Eine Härtungs-Schwelle zur Laufzeit setzen; sie überlebt den Neustart in der Datenbank.
-
-### `set_template(name, fn)`
-
-Eine eingebaute Seite durch einen eigenen Renderer ersetzen: fn(auth, ctx) -> str \| Response.
-
-### `sicherheitsereignis(ereignis: 'str', user_id, **details) -> 'None'`
-
-`on_security_event` für ein Ereignis aus `SICHERHEITSEREIGNISSE` rufen, falls gesetzt.
-
 ### `sperre_aufheben(user_id, methoden=None) -> 'int'`
 
 Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
-
-### `start_session(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'`
-
-Neue Session mit dem ersten Faktor. Gibt (token, session_ok). session_ok=False → weitere Schritte nötig.
 
 ### `stepup_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
 True, wenn die aktuelle Sitzung frisch einen Faktor bestätigt hat (Sudo-Frische).
 
-### `stepup_options(user) -> 'list[str]'`
-
-Womit kann DIESER User eine Step-up-Bestätigung leisten? Reihenfolge = Vorschlag.
-
 ### `t(key, **fmt) -> 'str'`
 
 Übersetzten Text für key in config.lang (Fallback en → key). Platzhalter via {name}.
-
-### `token_abgewiesen(zweck, request: 'Optional[Request]' = None, grund='ungueltig')`
-
-Ein ungültiger/abgelaufener/verbrauchter Einmal-Token wurde vorgelegt (B5-18).
 
 ### `totp_begin(user_id)`
 
@@ -554,17 +509,9 @@ Die Einrichtung starten: liefert Geheimnis und `otpauth://`-Adresse für den Aut
 
 Die Einrichtung abschliessen — erst mit einem gültigen Code ist TOTP wirklich an.
 
-### `totp_disable(user_id)`
-
-TOTP entfernen, samt der Recovery-Codes (beides wird protokolliert).
-
 ### `totp_enrollment_user(request) -> 'Optional[dict]'`
 
 Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
-
-### `unlock_resource(request: 'Request', response, name)`
-
-Eine Ressource für diesen Browser freischalten und das Cookie setzen.
 
 ### `user_roles(user) -> 'list'`
 
@@ -574,75 +521,57 @@ Die Rollen eines Kontos als Liste.
 
 (user, key_roles\|None) bei gültigem Key, sonst (None, None).
 
-### `verify_csrf(request: 'Request', submitted) -> 'bool'`
-
-Passt das mitgeschickte CSRF-Token zum Cookie? Vergleich in konstanter Zeit.
-
-### `verify_recovery_code(user_id, code) -> 'bool'`
-
-Einen Einmal-Code prüfen und verbrauchen. Ein Code gilt genau einmal.
-
-### `verify_totp(user_id, code) -> 'bool'`
-
-Einen TOTP-Code prüfen — und ihn dabei verbrauchen.
-
-### `verify_user_password(user_id, password) -> 'bool'`
-
-Das Passwort eines BEKANNTEN Kontos prüfen (Step-up: die Identität steht schon fest).
-
-### `verify_user_pin(user_id, pin) -> 'bool'`
-
-Wie `verify_user_password`, nur mit der PIN.
-
-### `vermerke_oidc_freigabe(token: 'str', client: 'str', rollen=None) -> 'None'`
-
-Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
-
 ### `version() -> 'str'`
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
 
-### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'`
+## B · Konstanten von `TinySesam`
 
-Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
+Klassenattribute, gelesen als `TinySesam.NAME` oder `auth.NAME`. Der Wert gehört zur Zusage — der Wächter hält ihn fest.
 
-## `TinySesam` — Eigenschaften
+### `FOEDERIERTE_QUELLEN` — Konstante
 
-Ohne Klammern gelesen (`auth.csrf_cookie_name`). Zur Laufzeit berechnet: Sie folgen der Konfiguration, auch wenn `cfg` nach dem Aufbau geändert wird.
+Quellen, die eine fremde Identität über eine stabile Kennung binden (F-11).
 
-### `csrf_cookie_name` — Property `-> 'str'`
+Wert: `('ldap', 'saml')`
 
-Der tatsächliche Name des CSRF-Cookies — eigenes JS bekommt ihn von der Seite.
+### `MFA_ENROLLMENT_ARTEN` — Konstante
 
-### `resource_cookie_name` — Property `-> 'str'`
+Die erlaubten Werte von `cfg.mfa_enrollment` — als Liste, damit ein Tippfehler beim Aufbau auffällt und nicht erst dann, wenn jemand vor der Tür steht.
 
-Der tatsächliche Name des Freigabe-Cookies der Bereichs-PIN.
+Wert: `('first_login', 'grace', 'strict')`
 
-### `session_cookie_name` — Property `-> 'str'`
+### `NACHBINDUNG_GRUENDE` — Konstante
 
-Der tatsächliche Name des Sitzungs-Cookies (mit `__Host-`, wo möglich).
+Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — für Log und Bericht.
 
-## `TinySesamConfig` — Presets
+Schlüssel: `adresse_als_name`, `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `frist`
 
-### `TinySesamConfig.active_directory(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
+### `NAME_MAX` — Konstante
 
-Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bind per UPN (`upn_suffix="corp.example.com"` → user@corp.example.com) ODER Search-then-Bind über sAMAccountName (`bind_dn`/`bind_password`/`base_dn`). Restliche Felder via **overrides (db_path …).
+Länger ist kein Name mehr, sondern eine Nutzlast (Header, Logzeilen, Panel).
+
+Wert: `150`
+
+### `SEITEN` — Konstante
+
+Die Seiten, die sich ersetzen lassen — dieselbe Liste, die `render_page()` bedient.
+
+Wert: `('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')`
+
+### `TOKEN_PATHS` — Konstante
+
+Wo ein Token eingelöst wird — je Zweck ein eigener Endpunkt.
+
+Wert: `{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}`
+
+## B · `TinySesamConfig`
+
+Felder dieser Stufe (Bedeutung in [KONFIGURATION.md](KONFIGURATION.md)): `totp_required`.
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
 Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
-
-### `TinySesamConfig.entra_id(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
-
-Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Tenant-)ID.
-
-### `TinySesamConfig.local_accounts(**overrides)`
-
-Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
-
-### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
-
-Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
 
 ### `TinySesamConfig.pin_als_erstfaktor() -> 'bool'`
 
@@ -652,30 +581,21 @@ Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pi
 
 Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
 
-## Fehlertypen
+## B · weitere Exporte von `tinysesam`
 
-Exportiert aus `tinysesam`. Jeder erbt zusätzlich von dem eingebauten Typ, den er ersetzt — bestehendes `except ValueError` / `except RuntimeError` fängt weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen sind die Zusage.
+### `tinysesam.current_version() -> str`
 
-### `TinySesamError` (erbt von `Exception`)
+Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann stimmen, wenn TinySesam als Abhängigkeit in einer fremden App steckt.
 
-Basis aller eigenen Fehler — `except TinySesamError` fängt alles von hier.
+## C · Intern — nicht verwenden
 
-### `ConfigError` (erbt von `TinySesamError`, `ValueError`)
+Diese Namen tragen (noch) keinen Unterstrich, gehören aber nicht zur Zusage. Sie bekommen einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B.
 
-Die Konfiguration widerspricht sich oder verspricht etwas, das so nicht wirkt.
+**Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.
 
-### `MailNotConfigured` (erbt von `TinySesamError`, `RuntimeError`)
-
-Es sollte eine Mail raus, aber kein Mailer ist eingerichtet.
-
-### `MissingExtra` (erbt von `TinySesamError`, `RuntimeError`)
-
-Ein aktivierter Schalter braucht ein Extra, das nicht installiert ist.
-
-### `StateError` (erbt von `TinySesamError`, `RuntimeError`)
-
-Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
+- **TinySesam:** `admin_claim_fehlgriff`, `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`, `csrf_rotieren`, `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`, `is_password_change_locked`, `is_pin_locked`, `is_reauth_locked`, `is_resource_locked`, `is_secure`, `is_totp_setup_locked`, `login_redirect_after`, `maybe_promote_admin`, `mfa_pending`, `next_login_step`, `oidc_anwendung`, `oidc_freigabe_gueltig`, `purge_demo`, `rate_ok`, `record_login`, `sec`, `seed_demo`, `send_signup_notice`, `session_from_request`, `sicherheitsereignis`, `token_abgewiesen`, `unlock_resource`, `verify_csrf`, `verify_recovery_code`, `verify_totp`, `verify_user_password`, `verify_user_pin`, `vermerke_oidc_freigabe`, `versuch_beginnen`
+- **TinySesam.konstanten:** `APIKEY_AUDIT_FENSTER`, `DEMO_USERS`, `FOEDERIERTE_FAKTOREN`, `IDENTIFYING`, `RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE`
 
 ---
 
-147 Methoden, 3 Eigenschaften, 7 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+147 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 8 Exporte, davon 5 Fehlertypen — erzeugt aus den Docstrings und `tests/api_surface.json`.

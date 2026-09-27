@@ -14,6 +14,15 @@ Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 Was als Bruch gilt, steht unten in `beurteile()`: Entfernt oder umbenannt ist ein Bruch,
 eine geänderte Signatur meistens auch, etwas Neues ist eine Erweiterung. Die Unterscheidung
 steht im Bericht, damit man nicht jede Zeile selbst nachschlagen muss.
+
+**Seit 0.21.0 trägt jeder Name eine Stufe** (PO-Entscheid 2026-09-26, `STUFEN` unten): A ist
+dauerhaft öffentlich und die einzige Stufe mit der 1.0-Zusage, B ist für Fortgeschrittene mit
+schwächerer Zusage, C ist intern. Bis dahin war die Oberfläche *gemessen, nicht ausgewählt* —
+eingefroren war, was keinen Unterstrich trug. Die Stufe ist eine Entscheidung, keine Messung:
+Sie steht je Eintrag in `api_surface.json`, `--update` übernimmt sie, vergibt aber NIE selbst
+eine. Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis jemand sie einträgt
+— ein stilles „A" hätte jede Hilfsmethode, die zufällig ohne Unterstrich entsteht, für immer
+zugesagt.
 """
 import dataclasses
 import inspect
@@ -29,6 +38,23 @@ from tinysesam import TinySesam, TinySesamConfig
 _paket = importlib.import_module("tinysesam")
 
 ABLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.json")
+
+#: Die Stufen der öffentlichen Oberfläche (PO-Entscheid 2026-09-26). Nur für A gilt die Zusage
+#: aus M-1 („zwei Minor-Versionen ohne Bruch“); der Zähler startet mit 0.21.0.
+STUFEN = {
+    "A": "öffentlich, stabil ab 1.0 — ein Bruch setzt die 1.0-Uhr zurück (M-1)",
+    "B": "für Fortgeschrittene — entfernen oder umbauen erst nach einer DeprecationWarning "
+         "über zwei Minor-Versionen",
+    "C": "intern — bekommt einen führenden Unterstrich, der alte Name bleibt bis 1.0 als Alias "
+         "mit DeprecationWarning",
+}
+
+#: Unter welchem Schlüssel ein Eintrag in `api_surface.json` seinen GEMESSENEN Wert trägt.
+#: Alles andere am Eintrag (`stufe`, später Alias-Angaben) ist Entscheidung und wird von
+#: `--update` übernommen, nicht neu gemessen. Die Exporte haben keinen Messwert — nur den Namen.
+MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
+            "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
+            "TinySesamConfig.felder": "feld", "exporte": None}
 
 
 def ok(name):
@@ -98,6 +124,78 @@ def oberflaeche() -> dict:
             "TinySesamConfig.methoden": presets, "exporte": exporte}
 
 
+def messung(datei: dict) -> dict:
+    """Die Ablage auf die reine Messung zurückführen — die Form, die `oberflaeche()` liefert.
+
+    Verträgt auch die Ablage von vor 0.21.0 (Wert als Zeichenkette, Exporte als Liste): Ein
+    Vergleich mit einem älteren Release (`git show v0.20.1:tests/api_surface.json`) soll nicht an
+    der Form scheitern.
+    """
+    ergebnis = {}
+    for bereich, eintraege in datei.items():
+        if isinstance(eintraege, list):
+            ergebnis[bereich] = sorted(eintraege)
+            continue
+        schluessel = MESSWERT.get(bereich)
+        if schluessel is None:
+            ergebnis[bereich] = sorted(eintraege)
+            continue
+        ergebnis[bereich] = {name: (e[schluessel] if isinstance(e, dict) else e)
+                             for name, e in eintraege.items()}
+    return ergebnis
+
+
+def mit_stufen(jetzt: dict, frueher: dict) -> dict:
+    """Die neue Ablage: gemessene Werte von `jetzt`, jede Entscheidung aus `frueher`.
+
+    Übernommen wird alles am alten Eintrag ausser dem Messwert — die `stufe`, später auch
+    Alias-Angaben —, und zwar nur für denselben Namen im selben Bereich. Ein neuer Name bekommt
+    KEINE Stufe: Der Wächter meldet ihn dann, statt ihn still zuzusagen.
+    """
+    ablage = {}
+    for bereich, gemessen in jetzt.items():
+        alt = frueher.get(bereich, {})
+        if isinstance(alt, list):                     # Form vor 0.21.0: keine Entscheidungen
+            alt = {}
+        schluessel = MESSWERT[bereich]
+        neu = {}
+        for name in (gemessen if schluessel is None else sorted(gemessen)):
+            vorher = alt.get(name)
+            eintrag = ({k: v for k, v in vorher.items() if k != schluessel}
+                       if isinstance(vorher, dict) else {})
+            if schluessel is not None:
+                eintrag[schluessel] = gemessen[name]
+            neu[name] = eintrag
+        ablage[bereich] = neu
+    return ablage
+
+
+def stufen_aus(datei: dict) -> dict:
+    """{bereich: {name: stufe}} — nur Einträge, die eine tragen."""
+    return {bereich: {name: e["stufe"] for name, e in eintraege.items()
+                      if isinstance(e, dict) and "stufe" in e}
+            for bereich, eintraege in datei.items() if isinstance(eintraege, dict)}
+
+
+def ohne_stufe(datei: dict) -> list:
+    """Jeder Eintrag ohne gültige Stufe, als lesbare Zeile. Leer = alles eingestuft."""
+    fehlt = []
+    for bereich in sorted(datei):
+        eintraege = datei[bereich]
+        if not isinstance(eintraege, dict):
+            fehlt.append(f"{bereich}: ganze Liste ohne Stufen (Form vor 0.21.0)")
+            continue
+        for name in sorted(eintraege):
+            e = eintraege[name]
+            stufe = e.get("stufe") if isinstance(e, dict) else None
+            if stufe is None:
+                fehlt.append(f"{bereich}.{name}: keine Stufe")
+            elif stufe not in STUFEN:
+                fehlt.append(f"{bereich}.{name}: unbekannte Stufe {stufe!r} "
+                             f"(erlaubt: {', '.join(STUFEN)})")
+    return fehlt
+
+
 def _klammer_und_rest(sig: str) -> tuple:
     """`(a, b) -> 'bool'` → (`a, b`, ` -> 'bool'`). Bis T-13 schnitt `teile()` einfach das
     erste und letzte Zeichen ab — bei einer Signatur MIT Rückgabetyp landete der dann im
@@ -147,19 +245,30 @@ def nur_erweitert(alt: str, neu: str) -> bool:
     return all("=" in p or p.startswith("*") for p in n[len(a):])
 
 
-def beurteile(alt: dict, neu: dict):
-    """(brueche, erweiterungen) — beides mit lesbarer Beschreibung."""
+def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
+    """(brueche, erweiterungen) — beides mit lesbarer Beschreibung.
+
+    Mit `stufen` (aus `stufen_aus()` der alten Ablage) beginnt jeder Bruch mit der Stufe des
+    Namens, `[A] …`: Ob die 1.0-Uhr zurückspringt, hängt allein daran.
+    """
     brueche, erweiterungen = [], []
+
+    def marke(bereich, name):
+        if stufen is None:
+            return ""
+        return f"[{stufen.get(bereich, {}).get(name, '?')}] "
+
     for bereich in sorted(set(alt) | set(neu)):
         a, n = alt.get(bereich, {}), neu.get(bereich, {})
         if isinstance(a, list) or isinstance(n, list):
             fort = sorted(set(a) - set(n))
             dazu = sorted(set(n) - set(a))
-            brueche += [f"{bereich}: '{x}' ist fort" for x in fort]
+            brueche += [f"{marke(bereich, x)}{bereich}: '{x}' ist fort" for x in fort]
             erweiterungen += [f"{bereich}: '{x}' ist neu" for x in dazu]
             continue
         for name in sorted(set(a) - set(n)):
-            brueche.append(f"{bereich}.{name} ist fort (entfernt oder umbenannt)")
+            brueche.append(f"{marke(bereich, name)}{bereich}.{name} ist fort "
+                           "(entfernt oder umbenannt)")
         for name in sorted(set(n) - set(a)):
             erweiterungen.append(f"{bereich}.{name} ist neu")
         for name in sorted(set(a) & set(n)):
@@ -170,7 +279,7 @@ def beurteile(alt: dict, neu: dict):
                 erweiterungen.append(zeile + "\n        (nur angehängt, mit Vorgabewert — "
                                             "bestehende Aufrufe laufen weiter)")
             else:
-                brueche.append(zeile)
+                brueche.append(marke(bereich, name) + zeile)
     return brueche, erweiterungen
 
 
@@ -200,42 +309,148 @@ def selbstpruefung(jetzt: dict) -> None:
     ok(f"Properties eingefroren ({len(eig)}), ein Umbenennen gälte als Bruch")
 
 
+def selbstpruefung_stufen(jetzt: dict) -> None:
+    """Schlägt die Stufen-Pflicht an, und vergibt `--update` wirklich keine Stufe? (0.21.0)
+
+    An synthetischen Ablagen aus der echten Messung, damit die Prüfung nicht an der
+    eingecheckten Datei hängt, die gerade vollständig sein mag. Läuft auch vor `--update`.
+    """
+    assert set(MESSWERT) == set(jetzt), (
+        f"Bereiche ohne Messwert-Schlüssel: {sorted(set(jetzt) - set(MESSWERT))} — "
+        "MESSWERT ergänzen, sonst weiss die Ablage nicht, was gemessen und was entschieden ist")
+    gesamt = sum(len(v) for v in jetzt.values())
+    # 1. Frisch gemessen trägt KEIN Eintrag eine Stufe — jeder einzelne wird gemeldet.
+    roh = mit_stufen(jetzt, {})
+    assert len(ohne_stufe(roh)) == gesamt, (len(ohne_stufe(roh)), gesamt)
+    # 2. Alles eingestuft → nichts gemeldet; eine unbekannte Stufe (auch kleingeschrieben) → gemeldet.
+    voll = json.loads(json.dumps(roh))
+    for eintraege in voll.values():
+        for e in eintraege.values():
+            e["stufe"] = "A"
+    assert ohne_stufe(voll) == [], ohne_stufe(voll)
+    for bereich, falsch in (("TinySesam", "a"), ("exporte", "D")):
+        kaputt = json.loads(json.dumps(voll))
+        name = sorted(kaputt[bereich])[0]
+        kaputt[bereich][name]["stufe"] = falsch
+        assert any(f"{bereich}.{name}: unbekannte Stufe" in z for z in ohne_stufe(kaputt)), falsch
+        del kaputt[bereich][name]["stufe"]
+        assert f"{bereich}.{name}: keine Stufe" in ohne_stufe(kaputt), bereich
+    # 3. `--update` übernimmt Entscheidungen, misst neu, und ein neuer Name bleibt ohne Stufe.
+    frueher = json.loads(json.dumps(voll))
+    methode = sorted(frueher["TinySesam"])[0]
+    frueher["TinySesam"][methode].update(stufe="B", sig="(veraltet)", ersatz="neu_name")
+    del frueher["TinySesam"][sorted(frueher["TinySesam"])[1]]      # „neu" seit der alten Ablage
+    del frueher["exporte"][sorted(frueher["exporte"])[0]]
+    frueher["TinySesam"]["fort_seit_langem"] = {"sig": "()", "stufe": "A"}
+    neu = mit_stufen(jetzt, frueher)
+    assert neu["TinySesam"][methode] == {"sig": jetzt["TinySesam"][methode], "stufe": "B",
+                                         "ersatz": "neu_name"}, neu["TinySesam"][methode]
+    assert "fort_seit_langem" not in neu["TinySesam"]
+    assert ohne_stufe(neu) == [f"TinySesam.{sorted(jetzt['TinySesam'])[1]}: keine Stufe",
+                               f"exporte.{sorted(jetzt['exporte'])[0]}: keine Stufe"], ohne_stufe(neu)
+    # 4. Die Ablage führt verlustfrei auf die Messung zurück — sonst vergliche `beurteile` Äpfel.
+    assert messung(neu) == jetzt
+    # 5. Ein Bruch nennt die Stufe des Namens.
+    weg = json.loads(json.dumps(jetzt))
+    del weg["TinySesam"][methode]
+    brueche, _ = beurteile(jetzt, weg, stufen_aus(neu))
+    assert brueche and brueche[0].startswith(f"[B] TinySesam.{methode} ist fort"), brueche
+    # 6. Der normale Lauf — dieselbe Funktion, die `main()` ausführt — ist rot, sobald EIN Name
+    #    ohne Stufe ist, auch wenn sich an der Messung nichts geändert hat.
+    rot, fehlt, b, e = vergleiche(voll, jetzt)
+    assert (rot, fehlt, b, e) == (False, [], [], []), (rot, fehlt, b, e)
+    luecke = json.loads(json.dumps(voll))
+    del luecke["TinySesam.eigenschaften"]["csrf_cookie_name"]["stufe"]
+    rot, fehlt, b, e = vergleiche(luecke, jetzt)
+    assert rot and fehlt == ["TinySesam.eigenschaften.csrf_cookie_name: keine Stufe"] \
+        and not b and not e, (rot, fehlt, b, e)
+    ok(f"Stufen-Pflicht greift ({gesamt} Namen): fehlende und unbekannte Stufe gemeldet, "
+       "`--update` vergibt keine")
+
+
+def vergleiche(frueher_datei: dict, jetzt: dict) -> tuple:
+    """(rot, ohne_stufe, brueche, erweiterungen) — die ganze Entscheidung des normalen Laufs.
+
+    Eine eigene Funktion, damit die Selbstprüfung genau das prüft, was `main()` ausführt: Eine
+    Stufen-Prüfung, die nur in der Selbstprüfung stünde, liefe im echten Lauf ins Leere.
+    """
+    fehlt = ohne_stufe(frueher_datei)
+    brueche, erweiterungen = beurteile(messung(frueher_datei), jetzt, stufen_aus(frueher_datei))
+    return bool(fehlt or brueche or erweiterungen), fehlt, brueche, erweiterungen
+
+
+def _zaehle_stufen(datei: dict) -> str:
+    zahl = {s: 0 for s in STUFEN}
+    for je_name in stufen_aus(datei).values():
+        for stufe in je_name.values():
+            zahl[stufe] = zahl.get(stufe, 0) + 1
+    return ", ".join(f"{s} {n}" for s, n in zahl.items())
+
+
+def _melde_ohne_stufe(fehlt: list) -> None:
+    print(f"\n  {len(fehlt)} öffentliche Namen ohne gültige Stufe:\n")
+    for zeile in fehlt:
+        print(f"    OHNE STUFE   {zeile}")
+    print("\n  Jeder öffentliche Name braucht eine ausdrückliche Stufe — in tests/api_surface.json")
+    print('  am Eintrag `"stufe": "A"|"B"|"C"` setzen (Bedeutung: API.md, „Drei Stufen“):')
+    for stufe, text in STUFEN.items():
+        print(f"    {stufe}  {text}")
+    print("  Nichts Öffentliches soll aus Versehen entstehen: Ist der Name intern, bekommt er einen")
+    print("  führenden Unterstrich und verschwindet aus der Ablage.\n")
+
+
 def main(argv):
     jetzt = oberflaeche()
     selbstpruefung(jetzt)
+    selbstpruefung_stufen(jetzt)
+
+    frueher_datei = {}
+    if os.path.exists(ABLAGE):
+        with open(ABLAGE, encoding="utf-8") as fh:
+            frueher_datei = json.load(fh)
 
     if "--update" in argv:
+        ablage = mit_stufen(jetzt, frueher_datei)
         with open(ABLAGE, "w", encoding="utf-8") as fh:
-            json.dump(jetzt, fh, indent=2, ensure_ascii=False, sort_keys=True)
+            json.dump(ablage, fh, indent=2, ensure_ascii=False, sort_keys=True)
             fh.write("\n")
         print(f"  Oberfläche festgeschrieben: {ABLAGE}")
+        fehlt = ohne_stufe(ablage)
+        if fehlt:
+            _melde_ohne_stufe(fehlt)
+            return 1
         return 0
 
-    if not os.path.exists(ABLAGE):
+    if not frueher_datei:
         print(f"  {ABLAGE} fehlt — einmalig anlegen mit: python tests/test_api_surface.py --update")
         return 1
 
-    with open(ABLAGE, encoding="utf-8") as fh:
-        frueher = json.load(fh)
+    rot, fehlt, brueche, erweiterungen = vergleiche(frueher_datei, jetzt)
+    if fehlt:
+        _melde_ohne_stufe(fehlt)
+    else:
+        ok(f"jeder öffentliche Name hat eine Stufe ({_zaehle_stufen(frueher_datei)})")
 
-    brueche, erweiterungen = beurteile(frueher, jetzt)
     if not brueche and not erweiterungen:
         n = sum(len(v) for v in jetzt.values())
         ok(f"öffentliche API unverändert ({n} Namen)")
-        return 0
+        return 1 if rot else 0
 
     print("\n  Die öffentliche API hat sich geändert.\n")
     for b in brueche:
         print(f"    BRUCH        {b}")
     for e in erweiterungen:
         print(f"    Erweiterung  {e}")
-    print("\n  Ein Bruch kostet die Nutzer Arbeit und setzt die Uhr für 1.0 zurück (M-1).")
+    print("\n  Ein Bruch kostet die Nutzer Arbeit. Was er kostet, sagt die Stufe davor:")
+    for stufe, text in STUFEN.items():
+        print(f"    [{stufe}] {text}")
     print("  War die Änderung gewollt: `python tests/test_api_surface.py --update`, dann committen")
-    print("  — und im CHANGELOG darauf hinweisen, wenn ein BRUCH dabei ist.\n")
+    print("  — und im CHANGELOG darauf hinweisen, wenn ein BRUCH dabei ist. Ein neuer Name")
+    print("  braucht danach noch seine Stufe.\n")
     return 1
 
 
 if __name__ == "__main__":
     code = main(sys.argv[1:])
-    print("\nAPI-OBERFLÄCHE " + ("OK ✅" if code == 0 else "GEÄNDERT ❌"))
+    print("\nAPI-OBERFLÄCHE " + ("OK ✅" if code == 0 else "GEÄNDERT ODER OHNE STUFE ❌"))
     sys.exit(code)

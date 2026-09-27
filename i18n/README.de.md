@@ -139,6 +139,12 @@ Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit 
 Depends(auth.require_role("a", "b"))   # eine der beiden genügt
 ```
 
+Ohne Guard liefert `auth.current_user(request)` das angemeldete Konto — aus einer Sitzung
+**oder** einem API-Key — oder `None`, und leitet nie um: für eine Seite, die angemeldet nur
+anders aussieht. Eine Route, die *auf die Sitzung wirkt* (einen Faktor anwendet, sie auffrischt
+oder beendet), nimmt das Konto stattdessen aus `auth.session_user(request)`, das für einen Key
+nie antwortet ([Stufe B](#öffentliche-api-drei-stufen)).
+
 ## Rollen & Gruppen
 
 **Rollen sind die Gruppen** — pro User eine Liste (`roles`) + `is_admin`; Guard `require_role("…")`.
@@ -148,12 +154,40 @@ Mehrere nennen und **eine davon genügt** — `require_role("redaktion", "lektor
 Guards: `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 Ein Admin erfüllt dabei **jede** Rolle. Wer das nicht will (z.B. weil die Rechte an einer IdP-Gruppe
 hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_implies=False)` je Route.
+Innerhalb einer Route stellt `auth.has_role(user, "editor")` dieselbe Frage als `bool` — dieselbe
+Admin-Regel, derselbe Schalter `admin_implies=False`.
 - **Lokale User/Passwort:** Rollen im **Admin-Panel** je User zuweisen. `available_roles=[…]` definiert bekannte
   Rollen → das Panel zeigt sie als **Checkboxen** (leer = Freitext-Eingabe).
 - **IdP-User (OIDC/SAML/LDAP/AD):** externe Gruppen automatisch auf lokale Rollen mappen —
   `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, z.B.
   `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (Ziel `__admin__` = Admin-Flag). Beim Login gesetzt;
   gemappte Rollen werden synchronisiert, manuell vergebene bleiben. Überall dieselben `require_role(...)`-Guards.
+
+## Konten im Code
+
+`auth.create_user(…)` legt ein Konto an und gibt seine ID zurück. Es prüft dasselbe wie jeder
+andere Weg — die Kennung muss über Benutzernamen *und* Adressen hinweg frei sein, sonst
+`ConfigError` (`e.feld`, `e.besitzer_id` sagen, was kollidierte):
+
+```python
+uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # ohne Passwort: OIDC, Link, …
+auth.create_user("bob", password=os.environ["BOB_START"], display_name="Bob")
+```
+
+`ensure_admin(…)` ist für den ersten Admin, `create_service(…)` für Maschinenkonten
+([API-Keys](#api-keys--service-daemon-accounts)).
+
+**In den Tests deiner App** brauchst du einen angemeldeten Client ohne den Umweg über den Login.
+`start_session` legt eine Sitzung an, **ohne irgendetwas zu prüfen** — genau deshalb gehört es in
+Tests (oder hinter einen Faktor, den du selbst geprüft hast), nie in eine Login-Route:
+
+```python
+token, _ = auth.start_session(uid, "oidc")
+client.cookies.set(auth.session_cookie_name, token)
+```
+
+`session_cookie_name`, `csrf_cookie_name` und `resource_cookie_name` tragen das Präfix `__Host-`,
+wo der Browser es erlaubt — auslesen, nicht ausschreiben.
 
 ## Routen (vom Router bereitgestellt)
 
@@ -214,6 +248,10 @@ CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
 
+`TinySesamConfig` ist eine Dataclass, und das gehört zur Zusage: `dataclasses.fields(TinySesamConfig)`
+zählt jedes Feld auf — praktisch, um aus eigenen Einstellungen nur die bekannten Schlüssel
+weiterzureichen. Jedes Feld mit Bedeutung: [`KONFIGURATION.md`](../KONFIGURATION.md).
+
 ## Sprache (i18n)
 
 Die eingebauten Texte sind **standardmäßig Englisch** (`lang="en"`); mitgeliefert ist auch **Deutsch**:
@@ -226,7 +264,17 @@ Einzelne Texte oder ganze Seiten lassen sich zusätzlich per `auth.set_template(
 
 ## Eigene Login-Seite
 
-TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentlich:
+TinySesam als reines Backend nutzen (eigene UI).
+
+> **Vorsicht — die Route unten schützt nicht vor Passwort-Raten.** `check_password` und
+> `check_pin` (ebenso `check_ldap`) vergleichen nur: Sperre, Fehlversuchszähler und Serien-Sperre
+> sitzen in den eingebauten Routen (`POST /auth/login`, `/auth/pin`), nicht in diesen Prüfern.
+> Sie sind intern ([Stufe C](#öffentliche-api-drei-stufen)). Für ein eigenes Aussehen nur die
+> Seite ersetzen — `auth.set_template("login", …)` ([Look & Feel](#look--feel)) — und deren
+> Formular weiter an die eingebaute Route schicken lassen.
+
+Das Muster, das dieser Abschnitt bisher zeigte — stehen gelassen wegen der Einzelheiten zu
+`start_session`/`complete_totp`, nicht zum Abschreiben in eine Login-Route:
 
 ```python
 user = auth.check_password(username, password)
@@ -1026,6 +1074,53 @@ keine Ein-Routen-App.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
+## Öffentliche API: drei Stufen
+
+Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.21.0 hat jeder öffentliche Name
+eine **Stufe**, festgehalten in `tests/api_surface.json` und mit Signatur und Beschreibung
+aufgeführt in [`API.md`](../API.md):
+
+| Stufe | Was | Zusage |
+|---|---|---|
+| **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.21.0. |
+| **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. |
+| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Bekommt einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
+
+Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
+`tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
+sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso die Fehlertypen
+(`TinySesamError`, `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+### Für Fortgeschrittene (Stufe B)
+
+Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
+[`API.md`](../API.md), Abschnitte „B“.
+
+- **Eigene Konto-Seite:** `andere_sitzungen` (weitere Sitzungen beenden?), `own_events`,
+  `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `darf_mfa_einrichten`,
+  `nur_foederiert` (reines SSO-Konto: kein Passwort zu ändern), `passwort_mangel` (die Regel für
+  ein neues Passwort), `kennung_vergeben` und `NAME_MAX` (ist ein Name oder eine Adresse frei, wie
+  lang darf er sein), `request_email_change` (Ergebnis an `nach_der_antwort` geben) →
+  `confirm_email_change`, `stepup_fresh`, `pending_user`, `session_user`.
+- **Eigenes Admin-Panel oder Betreiber-Werkzeuge:** `get_user`, `find_user`, `user_roles`,
+  `set_roles`, `delete_user`, `sperre_aufheben` (wie `tinysesam unlock`), `list_api_keys`,
+  `api_key_art`, `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`,
+  `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
+  `admin_claim_token`, `audit`, `FOEDERIERTE_QUELLEN`, `NACHBINDUNG_GRUENDE`.
+- **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
+  → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
+  `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `pfad` (Links
+  auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
+  `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` und
+  `tinysesam.current_version()`, `SEITEN` (die Seitennamen, die `set_template` annimmt),
+  `MFA_ENROLLMENT_ARTEN`, `TinySesamConfig.pruefen()` (Nachprüfung nach Änderungen an `auth.cfg`
+  zur Laufzeit), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_als_erstfaktor()`.
+- **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
+  den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
+  hier; ein Fehler davor ist ein Weg hinein.
+
 ## Tests & CI
 
 ```bash
@@ -1083,8 +1178,9 @@ echten Provider auf einer Bühne geprüft (`tests/e2e_stage.py`); die mitgeliefe
 sie strukturell ab, weil sie nicht nach draussen telefonieren können.
 
 Zwei Sicherheitsaudits sind im September 2026 durch den Code gegangen (siehe `CHANGELOG`). Die
-Version ist bewusst noch **nicht** 1.0: Die API-Oberfläche muss dafür zwei Minor-Versionen
-stillhalten.
+Version ist bewusst noch **nicht** 1.0: Die Oberfläche der Stufe A
+([Öffentliche API](#öffentliche-api-drei-stufen)) muss dafür zwei Minor-Versionen stillhalten,
+gezählt ab 0.21.0.
 
 MIT-Lizenz.
 

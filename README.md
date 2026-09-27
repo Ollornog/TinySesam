@@ -144,6 +144,12 @@ Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has 
 Depends(auth.require_role("a", "b"))   # one of the two is enough
 ```
 
+Without a guard, `auth.current_user(request)` returns the signed-in account — from a session
+**or** an API key — or `None`, and never redirects: for a page that merely looks different when
+someone is signed in. A route that *acts on the session* (applies a factor, refreshes or ends it)
+takes the account from `auth.session_user(request)` instead, which never answers for a key
+([tier B](#public-api-three-tiers)).
+
 ## Roles & groups
 
 **Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
@@ -153,12 +159,40 @@ of your own (`require_role(*ROLES_ALLOWED)`). That is the same OR as `?roles=a,b
 `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 An admin satisfies **every** role. If you don't want that (e.g. because permissions come from an IdP
 group): `admin_implies_roles=False` globally, or `require_role("editor", admin_implies=False)` per route.
+Inside a route, `auth.has_role(user, "editor")` asks the same question as a `bool` — same admin
+rule, same `admin_implies=False` switch.
 - **Local user/password:** assign roles per user in the **admin panel**. `available_roles=[…]` defines known
   roles → the panel shows them as **checkboxes** (empty = free-text entry).
 - **IdP users (OIDC/SAML/LDAP/AD):** automatically map external groups onto local roles —
   `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, e.g.
   `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (target `__admin__` = admin flag). Set at login;
   mapped roles are synchronized, manually assigned ones stay. The same `require_role(...)` guards everywhere.
+
+## Accounts in code
+
+`auth.create_user(…)` creates an account and returns its ID. It runs the same checks as every
+other path — the identifier must be free across usernames *and* emails, otherwise `ConfigError`
+(`e.feld`, `e.besitzer_id` say what collided):
+
+```python
+uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # no password: OIDC, link, …
+auth.create_user("bob", password=os.environ["BOB_INITIAL"], display_name="Bob")
+```
+
+`ensure_admin(…)` is for the first admin, `create_service(…)` for machine accounts
+([API keys](#api-keys--servicedaemon-accounts)).
+
+**In your app's tests** you want a signed-in client without a login round-trip.
+`start_session` creates a session **without checking anything** — which is exactly why it
+belongs in tests (or behind a factor you verified yourself), never in a login route:
+
+```python
+token, _ = auth.start_session(uid, "oidc")
+client.cookies.set(auth.session_cookie_name, token)
+```
+
+`session_cookie_name`, `csrf_cookie_name` and `resource_cookie_name` carry the `__Host-` prefix
+wherever the browser allows it — read them, don't spell the names out.
 
 ## Routes (provided by the router)
 
@@ -218,6 +252,10 @@ is the same code path the routes use, minus the HTTP surface.
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
 
+`TinySesamConfig` is a dataclass, and that is part of the promise: `dataclasses.fields(TinySesamConfig)`
+lists every field — handy for passing on only the keys it knows from your own settings. Every
+field with its meaning: [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md) (German).
+
 ## Language (i18n)
 
 The built-in texts are **English by default** (`lang="en"`); **German** ships too:
@@ -230,7 +268,17 @@ Individual texts or whole pages can additionally be freely replaced via `auth.se
 
 ## Your own login page
 
-Use TinySesam as a pure backend (your own UI) — the building blocks are public:
+Use TinySesam as a pure backend (your own UI).
+
+> **Caution — the route below has no protection against password guessing.** `check_password`
+> and `check_pin` (likewise `check_ldap`) only compare: lockout, the attempt counter and the
+> series lock live in the built-in routes (`POST /auth/login`, `/auth/pin`), not in these
+> checks. They are internal ([tier C](#public-api-three-tiers)). For your own look, replace only
+> the page — `auth.set_template("login", …)` ([Look & feel](#look--feel)) — and let its form
+> keep posting to the built-in route.
+
+The pattern this section used to show — kept for the `start_session`/`complete_totp` details,
+not to copy into a login route:
 
 ```python
 user = auth.check_password(username, password)
@@ -1006,6 +1054,53 @@ single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
+## Public API: three tiers
+
+Not everything without a leading underscore is a promise. Since 0.21.0 every public name has a
+**tier**, recorded in `tests/api_surface.json` and listed with signature and description in
+[`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md):
+
+| Tier | What | Promise |
+|---|---|---|
+| **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.21.0. |
+| **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. |
+| **C — internal** | the wiring of the built-in routes | None. Gets a leading underscore; the old name stays as an alias that warns when called until 1.0, then goes. Don't start using them. |
+
+A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
+red until then, so nothing becomes a promise by accident. The config fields are tier A (except
+one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinySesamError`,
+`ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+### For advanced use (tier B)
+
+Building blocks for pages you build yourself — signatures and descriptions in
+[`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md), the “B” sections.
+
+- **Your own account page:** `andere_sitzungen` (other sessions to end?), `own_events`,
+  `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `darf_mfa_einrichten`,
+  `nur_foederiert` (SSO-only account: no password to change), `passwort_mangel` (the rule for a
+  new password), `kennung_vergeben` and `NAME_MAX` (is a name or address free, how long may it
+  be), `request_email_change` (hand its result to `nach_der_antwort`) → `confirm_email_change`,
+  `stepup_fresh`, `pending_user`, `session_user`.
+- **Your own admin panel or operator tools:** `get_user`, `find_user`, `user_roles`, `set_roles`,
+  `delete_user`, `sperre_aufheben` (like `tinysesam unlock`), `list_api_keys`, `api_key_art`,
+  `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
+  `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
+  `FOEDERIERTE_QUELLEN`, `NACHBINDUNG_GRUENDE`.
+- **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
+  `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Your own routes and extension points:** `client_ip` (the real client address behind
+  `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `pfad`
+  (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
+  `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` and
+  `tinysesam.current_version()`, `SEITEN` (the page names `set_template` accepts),
+  `MFA_ENROLLMENT_ARTEN`, `TinySesamConfig.pruefen()` (re-check after changing `auth.cfg` at
+  runtime), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_als_erstfaktor()`.
+- **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
+  you verified that factor yourself, with the account from `session_user()` — it is the most
+  powerful block here, and a mistake in front of it is a way in.
+
 ## Tests & CI
 
 ```bash
@@ -1061,7 +1156,8 @@ against a real provider on a staging host (`tests/e2e_stage.py`); the tests that
 package cover them structurally, because they cannot dial out.
 
 Two security audits went through the code in 2026-09 (see the `CHANGELOG`). The version is
-deliberately **not** 1.0 yet: the API surface has to hold still for two minor releases first.
+deliberately **not** 1.0 yet: the tier-A surface ([Public API](#public-api-three-tiers)) has to
+hold still for two minor releases first, counted from 0.21.0.
 
 MIT license.
 

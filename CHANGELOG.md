@@ -2,6 +2,65 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+**Einstufung der öffentlichen API (Stufen A/B/C).** Jeder öffentliche Name trägt jetzt eine Stufe,
+und der Wächter verlangt sie. Was beim Update auffällt:
+
+- **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
+  1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
+  Nur A trägt die Zusage aus M-1 — zwei Minor-Versionen ohne Bruch, gezählt ab diesem Release. B
+  bleibt, wird aber umgebaut oder entfernt, nachdem eine `DeprecationWarning` zwei
+  Minor-Versionen lang darauf hingewiesen hat. C gehört nicht zur Zusage und fällt mit 1.0 weg.
+  **Wer TinySesam einbettet, sieht in `API.md` nach, welche Stufe seine Aufrufe haben** — dort
+  steht jetzt jeder Name unter seiner Stufe, die C-Namen als Liste (darunter `check_password`,
+  `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs erklären die
+  Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
+
+### Hinzugefügt
+
+- **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
+  `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
+  Konstanten `wert`, bei Konfigurationsfeldern `feld`) plus `stufe` (`"A"`, `"B"` oder `"C"`);
+  die Exporte stehen als Objekt statt als Liste. `tests/test_api_surface.py` ist rot, sobald ein
+  öffentlicher Name keine oder eine unbekannte Stufe trägt, und nennt ihn. `--update` misst neu,
+  übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
+  aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
+  jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 225, B 64, C 50
+  von 339 Namen.
+- **README: die Stufen und ein Abschnitt für Fortgeschrittene** (EN/DE). Die B-Bausteine stehen
+  gruppiert nach Zweck — eigene Konto-Seite, eigenes Admin-Panel, Mail- und Token-Abläufe, eigene
+  Routen und Erweiterungspunkte —, `apply_factor` mit einer eigenen Warnung (hängt einen Faktor
+  ungeprüft an die Sitzung). `tests/test_repo.py` prüft, dass jeder B-Name aus der Ablage dort in
+  beiden Sprachen steht.
+- **Nachdokumentiert, was Abnehmer nutzen, aber keine README zeigte** (alle Stufe A):
+  `create_user` (Abschnitt „Accounts in code“ / „Konten im Code“), `has_role` (Rollen),
+  `current_user` samt Abgrenzung zu `session_user` (Guards), `session_cookie_name` mit
+  `start_session` für die Tests der eigenen App — ausdrücklich als Sitzung **ohne Prüfung**, nicht
+  als Login-Weg —, und dass `TinySesamConfig` eine Dataclass ist und bleibt
+  (`dataclasses.fields(TinySesamConfig)`).
+
+### Sicherheit
+
+- **Das Muster „Your own login page“ der README war gegen Passwort-Raten ungeschützt**
+  (PO-Befund 2026-09-26). Es zeigte `check_password` + `start_session` als Bausteine; die inneren
+  Prüfer `check_password`, `check_pin`, `check_ldap` und `check_saml` drosseln aber nicht selbst —
+  Sperre, Fehlversuchszähler und Serien-Sperre setzen nur die eingebauten Routen. Wer dem Muster
+  bis 0.20.1 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
+  README warnt jetzt davor und nennt den sicheren Weg für ein eigenes Aussehen
+  (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route); die Prüfer
+  stehen in Stufe C.
+
+### Geändert
+
+- **`API.md` ist nach Stufe gegliedert** (A „öffentlich, stabil ab 1.0“, B „für
+  Fortgeschrittene“, C als Liste ohne Erklärung) und erklärt vorab, was jede Stufe zusagt. Neu
+  darin: die Konstanten der Stufen A und B (Erklärung aus dem `#:`-Kommentar, dazu der Wert) und
+  `tinysesam.current_version()`; die Hygiene-Prüfung verlangt auch für sie eine Erklärung.
+  `KONFIGURATION.md` nennt die Stufe der Felder — alle A bis auf den Grabstein `totp_required` (B).
+  Bis hierher stand dort „gemessen, nicht ausgewählt“: eingefroren war, was keinen Unterstrich trug.
+
 ## [0.21.0] — 2026-09-27
 
 **Grosses Release — vor dem Update die Datenbank sichern und die Liste unten lesen.** Es schliesst

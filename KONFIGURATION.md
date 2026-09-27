@@ -12,6 +12,7 @@ Nachschlagewerk beantwortet die andere Frage: *„Es gibt da ein Feld — was tu
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) setzen Bündel dieser Felder;
 einzelne lassen sich per `**overrides` überschreiben.
 
+**Stufe:** Jedes Feld gehört zur Stufe A — öffentlich, stabil ab 1.0 (siehe [API.md](API.md), „Drei Stufen“), ausser `totp_required` (B).
 
 ## Store
 
@@ -140,7 +141,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `totp_enabled` | `bool` | `True` | User dürfen TOTP einrichten |
 | `secrets_key_file` | `str` | `""` | Schlüsseldatei für die Verschlüsselung der TOTP-Geheimnisse (H-14/H-15; 32 Byte, Base64). Vorrang hat die Umgebungsvariable TINYSESAM_SECRETS_KEY; ohne beides legt TinySesam `<db_path>.key` an (0600). Ohne Schlüssel sind alle TOTP-Einrichtungen verloren — getrennt von der Datenbank sichern (docs/BETRIEB.md). |
-| `totp_required` | `bool` | `False` | ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
+| `totp_required` | `bool` | `False` | **Stufe B.** ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
 | `recovery_code_count` | `int` | `10` | Anzahl Einmal-Recovery-Codes je Erzeugung (verlorener Authenticator) |
 
 ## Passwort-Reset (Forgot-Password per E-Mail; braucht magiclink_enabled + Mailer)
