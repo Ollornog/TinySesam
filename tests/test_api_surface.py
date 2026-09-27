@@ -30,12 +30,17 @@ heisst `_name`, der alte Name reicht bis 1.0 weiter und warnt. Der Wächter häl
 (`c_befunde()`): Jeder C-Eintrag ist in der Klasse ein `Veraltet` und umgekehrt, er zeigt auf die
 Unterstrich-Implementierung, sein Aufruf warnt genau einmal mit Ersatz und auf den Aufrufer, kein
 Code im Paket benutzt einen alten Namen, und ab 1.0 steht keiner mehr da.
+
+**Die Stufen A und B heissen englisch** (PO-Entscheid 2026-09-27, `pruefe_namen()`): Kein Name,
+Parameter, Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B trägt ein deutsches
+Wort — gemessen am lebenden Objekt, mit Mindestmenge und Selbstproben.
 """
 import ast
 import dataclasses
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import warnings
@@ -1004,6 +1009,212 @@ def selbstpruefung_c() -> None:
        "interner Aufruf, Frist 1.0, `seit` gegen das CHANGELOG")
 
 
+# ---------- Die Namen der Stufen A und B: englisch (0.22.0) ----------
+# PO-Entscheid 2026-09-27: Die öffentliche Oberfläche heisst englisch — vor 0.22.0 umbenannt,
+# **ohne Alias**, weil die Zusagen der Stufen erst mit diesem Release beginnen und kein Abnehmer
+# einen der deutschen Namen benutzte (CHANGELOG, „Was beim Update auffällt“). Damit kein deutsches
+# Wort zurückkommt, misst der Wächter die GANZE Oberfläche der Stufen A und B: jeden Namen der
+# Ablage, die Parameter jeder Methode und Funktion (am lebenden Objekt), die Konfigurationsfelder
+# und die öffentlichen Attribute und Konstruktor-Parameter der exportierten Fehlertypen
+# (`ConfigError.field`, `MissingExtra(message, extra)`). Stufe C bleibt aussen vor: Das sind die
+# alten Namen, die bis 1.0 als Alias weiterreichen. Nicht gemeint sind Werte — die Grund-Kürzel
+# in `NAME_BINDING_REFUSALS`, Audit- und Log-Zeilen (`login_fail … grund=`, fail2ban) und die
+# Schlüssel eines Berichts bleiben, wie sie sind.
+# Der Abschnitt (k) in `tests/test_anmelden.py` misst dazu die Oberfläche des Login-Bausteins samt
+# der Werte von `LoginResult.REASONS` — mit derselben Wortliste (`deutsch_in`).
+# (Mutationsproben: `by_operator` in `change_username` zurück auf `durch_betreiber` → rot;
+# `ConfigError.owner_id` zurück auf `besitzer_id` → rot; ein Konfigurationsfeld `sperre_minuten`
+# mit Stufe → rot; `STAMM` leeren → Selbstprobe rot; die Parameter nicht mehr messen → rot.)
+
+#: Deutsche Wörter, als GANZES Wort eines Namens (zerlegt an `_`, `.` und CamelCase). Mit Vorsicht
+#: gewählt: keines ist zugleich ein englisches Wort, das in einer API vorkommt — `die`, `alt`,
+#: `hat`, `was`, `man`, `also` fehlen darum, `serie` zählt nur ganz (sonst fiele `series` auf).
+DEUTSCH = frozenset("""
+    abgeschaltet abmelden alle als andere anderen anmelden anmeldung antwort anwendung anzahl art arten
+    aufheben auftrag ausfuehren basis bei benutzer besitzer bestaetigt betreiber bindung bis darf der
+    durch eigene einrichten ereignis ereignisse ergebnis erlaubt erstfaktor falsch fehler fehlgriff
+    feld felder fertig foederation foederiert foederierte freigabe frist fremde fuer gesperrt gewaehlt
+    gruende grund gruppe gruppen gueltig jetzt kandidat kein keine kennung kennungen konto konten
+    leer lesen liste loese loeschen mangel meldung methoden minuten mit nach nachbinden nachbindung
+    nachricht naechster neu nur oder ohne passwort pfad praefix pruefen pruefung quelle quellen rolle
+    rollen schluessel schreiben seit seite seiten sekunden selbst serie setzen sicherheit
+    sicherheitsereignisse sitzung sitzungen sperre sperren sprache stunden tage ueberlauf und
+    vergeben verzeichnis von weg weiter weiterleitung wert werte zahl zeit ziel zu zuordnung zurueck
+    zweck
+""".split())
+#: Deutsche Wortstämme, die auch INNERHALB eines Worts auffallen: Eine Konstante wie
+#: `SICHERHEITSEREIGNISSE` ist nach dem Zerlegen EIN Wort. Nur Stämme ab fünf Buchstaben, die in
+#: keinem englischen Wort stecken (`bindung` ≠ `binding`, `sitzung`, `kennung` …).
+STAMM = ("anmeld", "aufheb", "ausfuehr", "benutzer", "besitzer", "bestaetig", "betreiber",
+         "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "foederi",
+         "gesperrt", "gewaehlt", "gueltig", "kennung", "loesch", "nachricht", "passwort", "pruef",
+         "schluessel", "sicherheit", "sitzung", "ueberlauf", "verzeichnis", "zuordnung")
+
+
+def woerter(name: str) -> set:
+    """`LoginResult` → {login, result}, `SECURITY_EVENTS` → {security, events}."""
+    return {w for w in re.split(r"[_.]", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name)).lower())
+            if w}
+
+
+def deutsch_in(name: str) -> set:
+    """Was an `name` deutsch ist: ganze Wörter aus `DEUTSCH`, Stämme aus `STAMM` (auch mitten im
+    Wort) und Umlaute/ß — leer, wenn nichts. Eine Menge, damit der Befund sagt, WAS auffiel."""
+    ww = woerter(name)
+    funde = ww & DEUTSCH
+    funde |= {s for s in STAMM for w in ww if s in w}
+    funde |= {z for z in str(name) if not z.isascii()}
+    return funde
+
+
+def _parameter(fn) -> list:
+    """Die Parameternamen einer Methode oder Funktion, ohne `self`/`cls` — `[]`, wenn keine
+    Signatur zu haben ist (dann meldet `pruefe_namen` das über die Mindestmenge)."""
+    try:
+        return [p for p in inspect.signature(fn).parameters if p not in ("self", "cls")]
+    except (TypeError, ValueError):
+        return []
+
+
+def oberflaeche_namen(datei: dict, klasse=TinySesam, config=TinySesamConfig,
+                      paket=_paket) -> list:
+    """[(wo, name)] — jeder Name der Stufen A und B, dazu Parameter, Felder, Attribute.
+
+    Die Namen kommen aus der Ablage (der normale Lauf hält sie gleich mit der Messung), die
+    Parameter und Attribute vom lebenden Objekt — ein neuer Parameter braucht keinen neuen
+    Eintrag, um gesehen zu werden."""
+    namen = []
+    objekte = {"TinySesam": klasse, "TinySesamConfig.methoden": config, "LoginResult": LoginResult}
+    eigen = {klasse.__name__, config.__name__, LoginResult.__name__}   # haben eigene Bereiche
+    for bereich in sorted(datei):
+        eintraege = datei[bereich]
+        if not isinstance(eintraege, dict):
+            continue
+        for name in sorted(eintraege):
+            e = eintraege[name]
+            if not isinstance(e, dict) or e.get("stufe") not in ("A", "B"):
+                continue
+            namen.append((bereich, name))
+            if bereich in objekte:
+                ziel = inspect.getattr_static(objekte[bereich], name, None)
+                if isinstance(ziel, (staticmethod, classmethod)):
+                    ziel = ziel.__func__
+                if inspect.isfunction(ziel):
+                    namen += [(f"{bereich}.{name}()", p) for p in _parameter(ziel)]
+            elif bereich == "exporte":
+                obj = getattr(paket, name, None)
+                if inspect.isfunction(obj):
+                    namen += [(f"{name}()", p) for p in _parameter(obj)]
+                elif inspect.isclass(obj) and name not in eigen:
+                    attribute = {a for a in list(vars(obj)) + list(inspect.get_annotations(obj))
+                                 if not a.startswith("_")}
+                    namen += [(name, a) for a in sorted(attribute)]
+                    if "__init__" in vars(obj):
+                        namen += [(f"{name}()", p) for p in _parameter(vars(obj)["__init__"])]
+    return namen
+
+
+def namens_befunde(namen: list) -> list:
+    """Jeder Name mit einem deutschen Wort, als lesbare Zeile. Leer = alles englisch."""
+    return [f"{wo}: {name!r} ({', '.join(sorted(deutsch_in(name)))})"
+            for wo, name in namen if deutsch_in(name)]
+
+
+#: Was die Messung mindestens sehen muss — sonst misst sie still weniger, als sie verspricht
+#: (eine leere Schnittmenge sieht aus wie eine saubere Oberfläche).
+NAMEN_PFLICHT = (("TinySesam", "change_username"), ("TinySesam.change_username()", "by_operator"),
+                 ("TinySesam.konstanten", "SECURITY_EVENTS"),
+                 ("TinySesamConfig.felder", "federation_name_binding_days"),
+                 ("TinySesamConfig.methoden", "validate"), ("TinySesam.eigenschaften", "csrf_cookie_name"),
+                 ("ConfigError", "owner_id"), ("MissingExtra()", "message"),
+                 ("LoginResult", "next_factor"), ("exporte", "current_version"))
+
+
+def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLICHT,
+                 mindestens=(500, 200, 150)) -> tuple:
+    """(befunde, zahl) — die ganze Namensprüfung des normalen Laufs, mit Mindestmenge. Dieselbe
+    Funktion prüft die Selbstprobe; eine Prüfung, die nur dort stünde, liefe im Lauf ins Leere."""
+    namen = oberflaeche_namen(datei, klasse=klasse, paket=paket)
+    fehlt = [f"{wo}: {name!r} wird nicht gemessen — Messung kaputt?"
+             for wo, name in pflicht if (wo, name) not in namen]
+    parameter = sum(1 for wo, _ in namen if wo.endswith("()"))
+    felder = sum(1 for wo, _ in namen if wo == "TinySesamConfig.felder")
+    # Stand 0.22.0: 566 Einträge, davon 260 Parameter und 159 Felder — mit Luft nach unten.
+    if len(namen) < mindestens[0] or parameter < mindestens[1] or felder < mindestens[2]:
+        fehlt.append(f"zu wenig gemessen: {len(namen)} Namen, {parameter} Parameter, {felder} "
+                     f"Felder (erwartet mindestens {'/'.join(map(str, mindestens))})")
+    return fehlt + namens_befunde(namen), len(namen)
+
+
+def selbstpruefung_namen() -> None:
+    """Findet die Namensprüfung, was sie finden soll — und nur das? An einer Probe, nicht an der
+    echten Oberfläche: Die ist hoffentlich gerade sauber, und eine Liste, die nie etwas fand,
+    beweist nichts."""
+    for deutsch in ("foederation_nachbinden", "loese_fremde_bindung", "SICHERHEITSEREIGNISSE",
+                    "andere_sitzungen", "api_key_art", "kennung_vergeben", "nach_der_antwort",
+                    "nur_foederiert", "passwort_mangel", "pin_als_erstfaktor", "pruefen",
+                    "sperre_aufheben", "FOEDERIERTE_QUELLEN", "MFA_ENROLLMENT_ARTEN",
+                    "NACHBINDUNG_GRUENDE", "SEITEN", "durch_betreiber", "zuordnung", "ausfuehren",
+                    "quelle", "neu", "kandidat", "email_bestaetigt", "jetzt", "basis", "auftrag",
+                    "bei_ueberlauf", "methoden", "name_selbst_gewaehlt", "feld", "besitzer_id",
+                    "nachricht", "pfad", "darf_mfa_einrichten", "SperreMinuten", "größe",
+                    # nur über einen Stamm zu finden — zusammengesetzt, kein Wort der Liste:
+                    "KENNUNGSRAUM", "passwortregel", "sitzungsdauer", "Verzeichnisname"):
+        assert deutsch_in(deutsch), f"{deutsch!r} fällt der Namensprüfung nicht auf"
+    for englisch in ("federation_bind_existing", "federation_unbind", "SECURITY_EVENTS",
+                     "count_other_sessions", "locked_series", "series", "start", "partial",
+                     "binding", "TinySesam", "base", "base_url", "new_username", "mapping", "apply",
+                     "source", "now", "methods", "message", "owner_id", "field", "path",
+                     "browser_path", "after_response", "on_overflow", "artifact", "nachos",
+                     "prefix", "background", "validate", "PAGES"):
+        assert not deutsch_in(englisch), f"{englisch!r}: Fehlalarm ({deutsch_in(englisch)})"
+
+    class Probe:
+        GUT = 1
+        SICHERHEITSEREIGNISSE = ()
+
+        def gut(self, request, *, by_operator=False):             # noqa: ARG002
+            return None
+
+        def schlecht(self, request, *, durch_betreiber=False):     # noqa: ARG002
+            return None
+
+    class ProbeError(Exception):
+        field = ""
+        besitzer_id = None
+
+        def __init__(self, nachricht: str, extra: str = ""):
+            super().__init__(nachricht)
+
+    probe_paket = type(sys)("probe_paket")
+    probe_paket.ProbeError = ProbeError
+    ablage = {"TinySesam": {"gut": {"stufe": "A"}, "schlecht": {"stufe": "B"}},
+              "TinySesam.konstanten": {"GUT": {"stufe": "A"}, "SICHERHEITSEREIGNISSE": {"stufe": "C"}},
+              "TinySesamConfig.felder": {"sperre_minuten": {"stufe": "A"}, "ok_feld": {"stufe": "C"}},
+              "exporte": {"ProbeError": {"stufe": "A"}}}
+    namen = oberflaeche_namen(ablage, klasse=Probe, paket=probe_paket)
+    assert ("TinySesam.gut()", "by_operator") in namen and ("ProbeError", "field") in namen, namen
+    # Stufe C zählt nicht: Dort stehen die alten Namen als Alias bis 1.0.
+    assert not any(n in ("SICHERHEITSEREIGNISSE", "ok_feld") for _, n in namen), namen
+    # Durch dieselbe Funktion wie der normale Lauf: die vier deutschen Namen, sonst nichts.
+    befunde, zahl = pruefe_namen(ablage, klasse=Probe, paket=probe_paket, pflicht=(),
+                                 mindestens=(len(namen), 0, 0))
+    assert [b.split(": ")[1].split(" ")[0] for b in befunde] == [
+        "'durch_betreiber'", "'sperre_minuten'", "'besitzer_id'", "'nachricht'"], befunde
+    # … und die Mindestmenge schlägt an, wenn eine Art fehlt oder zu wenig gemessen wird.
+    befunde, _ = pruefe_namen(ablage, klasse=Probe, paket=probe_paket,
+                              pflicht=(("ProbeError()", "message"),), mindestens=(zahl + 1, 0, 0))
+    assert len(befunde) == 6 and "'message' wird nicht gemessen" in befunde[0] \
+        and "zu wenig gemessen" in befunde[1], befunde
+    # Verdrahtet: Der normale Lauf ruft genau diese Funktion — eine Prüfung, die nur hier
+    # stünde, bliebe im Lauf stumm.
+    gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
+               if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
+    assert "pruefe_namen" in gerufen, "main() ruft pruefe_namen nicht"
+    ok("Namensprüfung schlägt an: deutsche Namen, Parameter, Felder, Attribute, Konstruktor, "
+       f"Umlaut — {len(STAMM)} Stämme, {len(DEUTSCH)} Wörter, ohne Fehlalarm bei englischen")
+
+
 def _zaehle_stufen(datei: dict) -> str:
     zahl = {s: 0 for s in STUFEN}
     for je_name in stufen_aus(datei).values():
@@ -1030,6 +1241,7 @@ def main(argv):
     selbstpruefung_signatur(jetzt)
     selbstpruefung_stufen(jetzt)
     selbstpruefung_c()
+    selbstpruefung_namen()
 
     frueher_datei = {}
     if os.path.exists(ABLAGE):
@@ -1076,6 +1288,20 @@ def main(argv):
            "Dateien ohne alten Namen")
     pruefe_unterklasse()
     pruefe_warnfilter()
+
+    # Die Namen der Stufen A und B sind englisch (PO-Entscheid 2026-09-27).
+    n_fehler, n_zahl = pruefe_namen(frueher_datei)
+    if n_fehler:
+        rot = True
+        print(f"\n  {len(n_fehler)} Namen der Stufen A/B mit deutschem Wort (oder Messung zu klein):\n")
+        for zeile in n_fehler:
+            print(f"    DEUTSCH      {zeile}")
+        print("\n  Die öffentliche Oberfläche heisst englisch — Namen, Parameter, Konfigurationsfelder,")
+        print("  Attribute der Fehlertypen. Ist ein Treffer ein englisches Wort, gehört es aus")
+        print("  `DEUTSCH`/`STAMM` heraus (mit Gegenprobe in `selbstpruefung_namen`).\n")
+    else:
+        ok(f"Stufen A und B englisch: {n_zahl} Namen, Parameter, Felder und Attribute, kein "
+           "deutsches Wort")
 
     if not brueche and not erweiterungen:
         n = sum(len(v) for v in jetzt.values())

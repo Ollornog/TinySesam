@@ -1906,7 +1906,7 @@ def _s1_app(n: int):
         "VALUES (?,?,?,?,?,?,?)",
         [(f"konto{i}", None, f"konto{i}@example.com", 0, "[]", 0, 1) for i in range(n)])
     a.store.db.commit()
-    a.kennung_vergeben("aufwaermen")          # trägt die Töpfe der rohen Zeilen nach
+    a.identifier_taken("aufwaermen")          # trägt die Töpfe der rohen Zeilen nach
     return a, app_
 
 
@@ -1940,10 +1940,10 @@ def _s1_messen_bei(n: int) -> dict:
                              "OR topf_mail IS NULL")["n"]
     letzte, erste = f"konto{n - 1}@example.com", "konto0@example.com"
     m = {"ohne_topf": ohne_topf,
-         "frei": _s1_schritte(a, lambda: a.kennung_vergeben("niemand@example.org")),
-         "vergeben (erstes Konto)": _s1_schritte(a, lambda: a.kennung_vergeben(erste)),
-         "vergeben (letztes Konto)": _s1_schritte(a, lambda: a.kennung_vergeben(letzte)),
-         "Namensvetter": _s1_schritte(a, lambda: a.kennung_vergeben("KONTO7")),
+         "frei": _s1_schritte(a, lambda: a.identifier_taken("niemand@example.org")),
+         "vergeben (erstes Konto)": _s1_schritte(a, lambda: a.identifier_taken(erste)),
+         "vergeben (letztes Konto)": _s1_schritte(a, lambda: a.identifier_taken(letzte)),
+         "Namensvetter": _s1_schritte(a, lambda: a.identifier_taken("KONTO7")),
          "Registrierung frei": _s1_schritte(a, lambda: TestClient(app_, client=("192.0.2.31", 1)).post(
              "/auth/register", data={"username": "probefrei", "password": "Sehr-Langes-Passwort-77",
                                      "email": "neu@example.org", "next": "/"})),
@@ -1964,7 +1964,7 @@ _s1_klein, _s1_gross = _s1_messen(100), _s1_messen(3000)
 # Ein Scan über 2900 zusätzliche Konten liegt weit darüber.
 _s1_wachsen = {k: (_s1_klein[k], _s1_gross[k]) for k in _s1_klein
                if k != "ohne_topf" and abs(_s1_gross[k] - _s1_klein[k]) > 100}
-r.check("S-1: die Datenbankarbeit von kennung_vergeben, der Registrierung (frei und vergeben) und "
+r.check("S-1: die Datenbankarbeit von identifier_taken, der Registrierung (frei und vergeben) und "
         "gc() hängt nicht von der Zahl der Konten ab (100 vs. 3000, SQLite-Schritte)",
         not _s1_wachsen and _s1_gross["ohne_topf"] == 0,
         f"wächst: {_s1_wachsen}\n100: {_s1_klein}\n3000: {_s1_gross}")
@@ -2035,12 +2035,12 @@ r.check("S-1: … create_user und set_email schreiben den Topf gleich mit",
         f"nach Anlage {_s1_nach_anlage}, nach Adresswechsel {_s1_nach_wechsel}")
 
 # ── N-5: Nicht-ASCII-Namensvetter teilen einen Zähl-Topf ──────────────────────────────────────
-# Der Sperrzähler faltet mit Python-`lower()` (`norm_kennung`), `kennung_vergeben` und
+# Der Sperrzähler faltet mit Python-`lower()` (`norm_kennung`), `identifier_taken` und
 # `get_user_by_name` mit SQLite-NOCASE — das faltet nur ASCII. Neben `Émile` liess sich deshalb
 # `émile` anlegen, beide zählten im Topf `émile`. Über `konto_entfernen` (gc, B6-5 — anonym
 # auslösbar) löschte das Entfernen von `émile` die Fehlversuche von `Émile`: Die Konto-Schwelle
 # gegen verteiltes Raten (R7-6/H-8) liess sich für jedes Konto mit Ö/Ü/Ä/É … beliebig oft leeren.
-# (Mutationsproben: in `kennung_vergeben` die Topf-Prüfung streichen → rot bei der Registrierung;
+# (Mutationsproben: in `identifier_taken` die Topf-Prüfung streichen → rot bei der Registrierung;
 #  in `delete_attempts_for` die Prüfung auf ein verbleibendes Konto im Topf streichen → rot beim
 #  Bestand; `delete_attempts_for` wieder nur mit SQLite-`lower()` vergleichen → rot beim Admin.)
 _n5_a, _n5_app = _app(allow_signup=True, signup_verify_email=True, signup_require_email=True,
@@ -2056,7 +2056,7 @@ try:
     # schon an ASCII-Faltung scheitert) — der Weg, den die Registrierung oben nimmt.
     _n5_a.create_user("émile", password="Anderes-77!-lang-genug")
 except ConfigError as _e:
-    _n5_kein = getattr(_e, "feld", "?")
+    _n5_kein = getattr(_e, "field", "?")
 r.check("N-5: „émile“ neben „Émile“ ist vergeben (derselbe Zähl-Topf) — 409, kein zweites Konto",
         _n5_reg.status_code == 409 and _n5_kein == "username"
         and len(_n5_a.store._all("SELECT id FROM users")) == 1,

@@ -69,20 +69,20 @@
       "sig": "()",
       "stufe": "A"
     },
+    "after_response": {
+      "sig": "(resp, task, on_overflow=None)",
+      "stufe": "B"
+    },
     "all_security": {
       "sig": "() -> 'dict'",
       "stufe": "B"
     },
-    "andere_sitzungen": {
-      "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
-      "stufe": "B"
-    },
-    "api_key_art": {
+    "api_key_kind": {
       "sig": "(key) -> 'str'",
       "stufe": "B"
     },
     "apply_factor": {
-      "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
+      "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
       "stufe": "B"
     },
     "apply_idp_groups": {
@@ -93,8 +93,12 @@
       "sig": "(event, username=None, ip=None, detail=None)",
       "stufe": "B"
     },
+    "browser_path": {
+      "sig": "(request: 'Optional[Request]', path: 'str') -> 'str'",
+      "stufe": "B"
+    },
     "change_username": {
-      "sig": "(user_id, neu, ip: 'Optional[str]' = None, *, durch_betreiber: 'bool' = False) -> 'str'",
+      "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
       "stufe": "A"
     },
     "check_ldap": {
@@ -158,6 +162,10 @@
       "stufe": "C",
       "ziel": "_consume_admin_claim"
     },
+    "count_other_sessions": {
+      "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
+      "stufe": "B"
+    },
     "create_api_key": {
       "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'",
       "stufe": "A"
@@ -175,7 +183,7 @@
       "stufe": "A"
     },
     "create_user": {
-      "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, name_selbst_gewaehlt: 'bool' = False) -> 'int'",
+      "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
       "stufe": "A"
     },
     "csrf_rotieren": {
@@ -192,10 +200,6 @@
     "current_user": {
       "sig": "(request) -> 'Optional[dict]'",
       "stufe": "A"
-    },
-    "darf_mfa_einrichten": {
-      "sig": "(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'",
-      "stufe": "B"
     },
     "delete_user": {
       "sig": "(user_id: 'int') -> 'bool'",
@@ -220,17 +224,25 @@
       "stufe": "C",
       "ziel": "_factor_entry"
     },
+    "federated_only": {
+      "sig": "(user_id) -> 'bool'",
+      "stufe": "B"
+    },
+    "federation_bind_existing": {
+      "sig": "(source: 'str', *, mapping: 'Optional[dict]' = None, apply: 'bool' = False) -> 'dict'",
+      "stufe": "A"
+    },
+    "federation_unbind": {
+      "sig": "(source: 'str', user_id: 'int') -> 'int'",
+      "stufe": "A"
+    },
     "find_user": {
       "sig": "(identifier) -> 'Optional[dict]'",
       "stufe": "B"
     },
     "flow_cookie_name": {
-      "sig": "(basis: 'str') -> 'str'",
+      "sig": "(base: 'str') -> 'str'",
       "stufe": "B"
-    },
-    "foederation_nachbinden": {
-      "sig": "(quelle: 'str', *, zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'",
-      "stufe": "A"
     },
     "forward_login_url": {
       "bis": "1.0",
@@ -276,6 +288,10 @@
     "has_role": {
       "sig": "(user, role, admin_implies=None) -> 'bool'",
       "stufe": "A"
+    },
+    "identifier_taken": {
+      "sig": "(identifier, exclude_id=None) -> 'Optional[dict]'",
+      "stufe": "B"
     },
     "install_error_pages": {
       "sig": "(app)",
@@ -346,8 +362,8 @@
       "sig": "(request: 'Request') -> 'dict'",
       "stufe": "B"
     },
-    "kennung_vergeben": {
-      "sig": "(kennung, exclude_id=None) -> 'Optional[dict]'",
+    "lift_lockout": {
+      "sig": "(user_id, methods=None) -> 'int'",
       "stufe": "B"
     },
     "list_api_keys": {
@@ -357,10 +373,6 @@
     "list_resource_secrets": {
       "sig": "()",
       "stufe": "B"
-    },
-    "loese_fremde_bindung": {
-      "sig": "(quelle: 'str', user_id: 'int') -> 'int'",
-      "stufe": "A"
     },
     "login_fresh": {
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
@@ -404,6 +416,10 @@
       "stufe": "C",
       "ziel": "_maybe_promote_admin"
     },
+    "mfa_enrollment_allowed": {
+      "sig": "(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'",
+      "stufe": "B"
+    },
     "mfa_pending": {
       "bis": "1.0",
       "seit": "0.22.0",
@@ -411,20 +427,12 @@
       "stufe": "C",
       "ziel": "_mfa_pending"
     },
-    "nach_der_antwort": {
-      "sig": "(resp, auftrag, bei_ueberlauf=None)",
-      "stufe": "B"
-    },
     "next_login_step": {
       "bis": "1.0",
       "seit": "0.22.0",
       "sig": "(user_id, done)",
       "stufe": "C",
       "ziel": "_next_login_step"
-    },
-    "nur_foederiert": {
-      "sig": "(user_id) -> 'bool'",
-      "stufe": "B"
     },
     "oidc_anwendung": {
       "bis": "1.0",
@@ -444,7 +452,7 @@
       "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
       "stufe": "B"
     },
-    "passwort_mangel": {
+    "password_policy_error": {
       "sig": "(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
       "stufe": "B"
     },
@@ -456,12 +464,8 @@
       "sig": "(request) -> 'Optional[dict]'",
       "stufe": "B"
     },
-    "pfad": {
-      "sig": "(request: 'Optional[Request]', pfad: 'str') -> 'str'",
-      "stufe": "B"
-    },
     "public_base": {
-      "sig": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
+      "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
       "stufe": "A"
     },
     "purge_demo": {
@@ -506,7 +510,7 @@
       "stufe": "A"
     },
     "request_email_change": {
-      "sig": "(user_id, neu, base_url)",
+      "sig": "(user_id, new_email, base_url)",
       "stufe": "B"
     },
     "require": {
@@ -526,7 +530,7 @@
       "stufe": "A"
     },
     "require_public_base": {
-      "sig": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
+      "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
       "stufe": "B"
     },
     "require_resource": {
@@ -663,10 +667,6 @@
       "sig": "(ereignis: 'str', user_id, **details) -> 'None'",
       "stufe": "C",
       "ziel": "_sicherheitsereignis"
-    },
-    "sperre_aufheben": {
-      "sig": "(user_id, methoden=None) -> 'int'",
-      "stufe": "B"
     },
     "start_session": {
       "sig": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
@@ -805,16 +805,16 @@
       "wert": "('demo', 'demoadmin')",
       "ziel": "_DEMO_USERS"
     },
+    "FEDERATED_SOURCES": {
+      "stufe": "B",
+      "wert": "('ldap', 'saml')"
+    },
     "FOEDERIERTE_FAKTOREN": {
       "bis": "1.0",
       "seit": "0.22.0",
       "stufe": "C",
       "wert": "('oidc', 'saml')",
       "ziel": "_FOEDERIERTE_FAKTOREN"
-    },
-    "FOEDERIERTE_QUELLEN": {
-      "stufe": "B",
-      "wert": "('ldap', 'saml')"
     },
     "FORWARD_HEADERS_DEFAULT": {
       "stufe": "A",
@@ -827,17 +827,21 @@
       "wert": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
       "ziel": "_IDENTIFYING"
     },
-    "MFA_ENROLLMENT_ARTEN": {
+    "MFA_ENROLLMENT_MODES": {
       "stufe": "B",
       "wert": "('first_login', 'grace', 'strict')"
     },
-    "NACHBINDUNG_GRUENDE": {
+    "NAME_BINDING_REFUSALS": {
       "stufe": "B",
       "wert": "{'adresse_als_name': 'der Name sagt nichts über die Person (Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht vertraut wird)', 'kennung_ungueltig': 'die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)', 'konflikt': 'die Kennung gehört schon einem anderen Konto', 'anders_gebunden': 'das Konto trägt schon eine andere Kennung', 'name_selbst_gewaehlt': 'der Name ist selbst gewählt (Registrierung oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst', 'name_aus_quelle': 'der Name stammt aus einer anderen Quelle, die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst', 'frist': 'die Frist für die Bindung über den Namen ist abgelaufen (federation_name_binding_days)'}"
     },
     "NAME_MAX": {
       "stufe": "B",
       "wert": "150"
+    },
+    "PAGES": {
+      "stufe": "B",
+      "wert": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "RECOVERY_BYTES": {
       "bis": "1.0",
@@ -853,9 +857,9 @@
       "wert": "3",
       "ziel": "_RECOVERY_WARNSCHWELLE"
     },
-    "SEITEN": {
-      "stufe": "B",
-      "wert": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+    "SECURITY_EVENTS": {
+      "stufe": "A",
+      "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
     },
     "SERIE_PIN_FOLGE": {
       "bis": "1.0",
@@ -863,10 +867,6 @@
       "stufe": "C",
       "wert": "'pin_folge'",
       "ziel": "_SERIE_PIN_FOLGE"
-    },
-    "SICHERHEITSEREIGNISSE": {
-      "stufe": "A",
-      "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
     },
     "TOKEN_PATHS": {
       "stufe": "B",
@@ -1532,11 +1532,11 @@
       "sig": "(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
       "stufe": "A"
     },
-    "pin_als_erstfaktor": {
+    "pin_as_first_factor": {
       "sig": "() -> 'bool'",
       "stufe": "B"
     },
-    "pruefen": {
+    "validate": {
       "sig": "() -> 'list[str]'",
       "stufe": "B"
     }

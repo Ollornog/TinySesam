@@ -829,18 +829,16 @@ r.check("(j) derselbe Fake auf dem neuen Namen (`auth._check_password = fake`) w
 # Dazu trägt jeder dieser Namen in `tests/api_surface.json` Stufe A — ein Name, der still in B
 # rutscht, verlöre die 1.0-Zusage. Nicht gemeint: Audit- und Log-Zeilen (`login_fail … grund=`,
 # fail2ban) — die sind keine Namen des Bausteins und bleiben, wie sie sind.
+# Die Wortliste ist seit dem zweiten PO-Entscheid vom 2026-09-27 (die ganze Oberfläche der Stufen
+# A und B englisch, ohne Alias) die EINE aus `tests/test_api_surface.py` (`deutsch_in`: ganze
+# Wörter, Stämme auch mitten im Wort, Umlaute). Dort misst der Wächter die ganze Oberfläche —
+# Namen, Parameter, Konfigurationsfelder, Attribute der Fehlertypen; hier bleibt, was nur der
+# Baustein hat: jede Methode, die ein `LoginResult` liefert (auch eine noch ohne Stufe), und die
+# Werte von `REASONS`.
 # (Mutationsproben, je einzeln: in `LoginResult.REASONS` einen Grund "gesperrt" anhängen → rot;
 # in `api_surface.json` `LoginResult.done` auf Stufe "B" → rot; eine Methode
 # `anmelden_passkey(self, request) -> LoginResult` in `TinySesam` → rot.)
-DEUTSCH = {"anmelden", "anmeldung", "weiter", "weiterleitung", "naechster", "nächster", "fertig",
-           "grund", "gruende", "gründe", "meldung", "gesperrt", "serie", "falsch", "leer", "abgeschaltet",
-           "keine", "sitzung", "verzeichnis", "weg", "passwort", "kennung", "konto", "ergebnis",
-           "setzen", "ziel"}
-
-
-def _woerter(name: str) -> set:
-    """`LoginResult` → {login, result}, `tinysesam.login_result` → {tinysesam, login, result}."""
-    return {w for w in re.split(r"[_.]", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()) if w}
+from test_api_surface import deutsch_in  # noqa: E402
 
 
 def _baustein(klasse, typ) -> tuple:
@@ -860,8 +858,8 @@ def _baustein(klasse, typ) -> tuple:
 
 
 def _deutsch(namen) -> list:
-    return [f"{wo}: {name!r} ({', '.join(sorted(_woerter(name) & DEUTSCH))})"
-            for wo, name in namen if _woerter(name) & DEUTSCH]
+    return [f"{wo}: {name!r} ({', '.join(sorted(deutsch_in(name)))})"
+            for wo, name in namen if deutsch_in(name)]
 
 
 def _stufe_befunde(methoden, typ, ablage) -> list:
@@ -900,7 +898,7 @@ class ProbeKlasse:
 
 
 _p_methoden, _p_namen = _baustein(ProbeKlasse, ProbeErgebnis)
-_p_funde = {name for wo, name in _p_namen if _woerter(name) & DEUTSCH}
+_p_funde = {name for wo, name in _p_namen if deutsch_in(name)}
 assert _p_methoden == ["anmelden_passkey", "login_other"], _p_methoden
 assert _p_funde == {"anmelden_passkey", "kennung", "grund", "gesperrt", "ProbeErgebnis"}, _p_funde
 assert _stufe_befunde(["login_other"], ProbeErgebnis,

@@ -172,7 +172,7 @@ Admin-Regel, derselbe Schalter `admin_implies=False`.
 
 `auth.create_user(…)` legt ein Konto an und gibt seine ID zurück. Es prüft dasselbe wie jeder
 andere Weg — die Kennung muss über Benutzernamen *und* Adressen hinweg frei sein, sonst
-`ConfigError` (`e.feld`, `e.besitzer_id` sagen, was kollidierte):
+`ConfigError` (`e.field`, `e.owner_id` sagen, was kollidierte):
 
 ```python
 uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # ohne Passwort: OIDC, Link, …
@@ -1032,9 +1032,9 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > aber nur in `federation_name_binding_days` (Vorgabe 30) Tagen ab dem ersten Start mit
 > eingeschalteter Quelle bzw. ab der Anlage des Kontos; danach fiele ein ruhendes Konto an die
 > nächste Person, die im Verzeichnis denselben Namen bekommt. Den Rest bindet man ausdrücklich:
-> `auth.foederation_nachbinden("ldap")` (Vorgabe Trockenlauf, `ausfuehren=True` schreibt; SAML
-> mit `zuordnung={name: nameid}`), oder man öffnet ein einzelnes Konto mit
-> `auth.loese_fremde_bindung(quelle, user_id)`. Ein selbst gewählter Name (Registrierung,
+> `auth.federation_bind_existing("ldap")` (Vorgabe Trockenlauf, `apply=True` schreibt; SAML
+> mit `mapping={name: nameid}`), oder man öffnet ein einzelnes Konto mit
+> `auth.federation_unbind(source, user_id)`. Ein selbst gewählter Name (Registrierung,
 > Umbenennen in der Selbstbedienung) bindet nie über den Namen, ebenso wenig ein Name, den eine
 > andere Quelle beim Anlegen mitgebracht hat (ein über OIDC angelegtes Konto bindet sich nie über
 > den Namen an LDAP oder SAML — beim IdP kann der Name selbst gewählt sein). Liefert das Verzeichnis keine
@@ -1145,6 +1145,15 @@ Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange i
 sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso die Fehlertypen
 (`TinySesamError`, `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
 
+**Stufen A und B heissen englisch.** Bis 0.21.x waren einige dieser Namen deutsch
+(`foederation_nachbinden`, `kennung_vergeben`, `SICHERHEITSEREIGNISSE`, Parameter wie
+`durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 benennt sie **ohne Alias** um — die
+Zusagen der Stufen beginnen erst mit diesem Release; die ganze Liste alt → neu steht im
+[CHANGELOG](../CHANGELOG.md). Der Wächter wird rot, sobald ein Name, Parameter,
+Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B ein deutsches Wort trägt. Werte
+bleiben, wie sie sind: Audit- und Log-Zeilen (fail2ban), Grund-Kürzel und die Schlüssel eines
+Berichts.
+
 **Stufe C warnt.** Wer einen alten C-Namen aufruft (bei den Konstanten: liest), bekommt eine
 `DeprecationWarning` mit dem Ersatz; [`API.md`](../API.md) führt jeden auf. Python zeigt diese
 Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
@@ -1161,27 +1170,27 @@ Namen setzen (`auth._check_password = fake`). Ein Patch an der Klasse
 Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
 [`API.md`](../API.md), Abschnitte „B“.
 
-- **Eigene Konto-Seite:** `andere_sitzungen` (weitere Sitzungen beenden?), `own_events`,
+- **Eigene Konto-Seite:** `count_other_sessions` (weitere Sitzungen beenden?), `own_events`,
   `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
-  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `darf_mfa_einrichten`,
-  `nur_foederiert` (reines SSO-Konto: kein Passwort zu ändern), `passwort_mangel` (die Regel für
-  ein neues Passwort), `kennung_vergeben` und `NAME_MAX` (ist ein Name oder eine Adresse frei, wie
-  lang darf er sein), `request_email_change` (Ergebnis an `nach_der_antwort` geben) →
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `mfa_enrollment_allowed`,
+  `federated_only` (reines SSO-Konto: kein Passwort zu ändern), `password_policy_error` (die Regel für
+  ein neues Passwort), `identifier_taken` und `NAME_MAX` (ist ein Name oder eine Adresse frei, wie
+  lang darf er sein), `request_email_change` (Ergebnis an `after_response` geben) →
   `confirm_email_change`, `stepup_fresh`, `pending_user`, `session_user`.
 - **Eigenes Admin-Panel oder Betreiber-Werkzeuge:** `get_user`, `find_user`, `user_roles`,
-  `set_roles`, `delete_user`, `sperre_aufheben` (wie `tinysesam unlock`), `list_api_keys`,
-  `api_key_art`, `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`,
+  `set_roles`, `delete_user`, `lift_lockout` (wie `tinysesam unlock`), `list_api_keys`,
+  `api_key_kind`, `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`,
   `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
-  `admin_claim_token`, `audit`, `FOEDERIERTE_QUELLEN`, `NACHBINDUNG_GRUENDE`.
+  `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
   → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
 - **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
-  `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `pfad` (Links
+  `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `browser_path` (Links
   auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
   `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` und
-  `tinysesam.current_version()`, `SEITEN` (die Seitennamen, die `set_template` annimmt),
-  `MFA_ENROLLMENT_ARTEN`, `TinySesamConfig.pruefen()` (Nachprüfung nach Änderungen an `auth.cfg`
-  zur Laufzeit), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_als_erstfaktor()`.
+  `tinysesam.current_version()`, `PAGES` (die Seitennamen, die `set_template` annimmt),
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung nach Änderungen an `auth.cfg`
+  zur Laufzeit), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
   hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die

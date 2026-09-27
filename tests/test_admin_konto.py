@@ -77,7 +77,7 @@ auth, app = _app()
 chefin = auth.create_user("chefin", password=PW, is_admin=True)
 auth.set_owner(chefin, True)
 helfer = auth.create_user("helfer", password=PW, is_admin=True)
-anna = auth.create_user("anna", password=PW, email="anna@example.com", name_selbst_gewaehlt=True)
+anna = auth.create_user("anna", password=PW, email="anna@example.com", self_chosen_name=True)
 bert = auth.create_user("bert", password=PW, email="bert@example.com")
 ereignisse: list = []
 auth.on_security_event = lambda e, konto, d: ereignisse.append((e, d))

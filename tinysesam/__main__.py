@@ -431,7 +431,7 @@ def _rename(argv) -> int:
     if neu == alt:
         print(f"'{alt}' heisst schon so — nichts geändert.")
         return 0
-    # Kreuzweise, wie `TinySesam.kennung_vergeben`: Name, Adresse, Zähl-Topf und der Name im
+    # Kreuzweise, wie `TinySesam.identifier_taken`: Name, Adresse, Zähl-Topf und der Name im
     # Verzeichnis eines anderen Kontos (Prüfrunde 2026-09-27).
     for treffer in (store.get_user_by_name(neu), store.get_user_by_email(neu),
                     store.konto_mit_topf(neu, ausser=konto["id"]),

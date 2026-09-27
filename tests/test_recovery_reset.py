@@ -124,7 +124,7 @@ ok("nach Reset: altes Passwort ungültig, neues gültig")
 # derselben 429 — bis das Fenster ablief oder ein Admin `tinysesam unlock` fuhr. Der Reset
 # prüft die Sperre nicht (unabhängiger Weg, H-10) und hebt jetzt die Passwort-Sperre auf. Die
 # TOTP-Fehlversuche bleiben: Ein Postfach beweist den zweiten Faktor nicht.
-# (Mutationsprobe: `sperre_aufheben` in `reset_submit` streichen → 429 statt 303.)
+# (Mutationsprobe: `lift_lockout` in `reset_submit` streichen → 429 statt 303.)
 db_s = os.path.join(tempfile.mkdtemp(), "t.db")
 post_s = []
 a_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, cookie_secure=False,
@@ -154,7 +154,7 @@ ok("R4-13/H-10: der Reset läuft an der Sperre vorbei und hebt sie auf")
 # Reset deshalb am Zähler direkt, mit einem frischen Fehlgriff je Methode.
 a_s._record_login("gesperrt", "testclient", False, "password")
 a_s._record_login("gesperrt", "testclient", False, "totp")
-weg = a_s.sperre_aufheben(a_s.store.get_user_by_name("gesperrt")["id"], methoden=("password",))
+weg = a_s.lift_lockout(a_s.store.get_user_by_name("gesperrt")["id"], methods=("password",))
 assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
     "der Reset räumt auch Fehlversuche am zweiten Faktor"
 assert any("fehlversuche_verworfen=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)

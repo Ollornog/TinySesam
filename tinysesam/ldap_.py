@@ -459,7 +459,7 @@ class LDAPClient:
     def eintrag_suchen(self, username: str) -> list:
         """Den Verzeichniseintrag zu einem Benutzernamen suchen — ohne dessen Passwort (G1).
 
-        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`): Ein Konto aus der Zeit vor
+        Für die Bestandsbindung (`TinySesam.federation_bind_existing`): Ein Konto aus der Zeit vor
         den Kennungen bindet sich sonst erst bei der nächsten Anmeldung — ein ruhendes nie. Gesucht
         wird wie bei der Anmeldung, nur ohne Benutzer-Bind:
 

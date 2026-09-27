@@ -9,7 +9,7 @@ bekam bei dessen Anmeldung Kennung und Gruppen (G2-N). Die Angriffsrunde 2026-09
 
 Gemessen wird die Wirkung: wer nach einer Anmeldung in welchem Konto landet, welche Bindung steht,
 welche Rolle das Konto trägt, was im Audit- und Sicherheits-Log steht — dazu die Bestandsbindung
-(`foederation_nachbinden`) mit einer Attrappe und gegen ldap3 (MOCK_SYNC), die Startmeldung und
+(`federation_bind_existing`) mit einer Attrappe und gegen ldap3 (MOCK_SYNC), die Startmeldung und
 der Nachtrag für den Bestand.
 """
 from __future__ import annotations
@@ -154,14 +154,14 @@ r.check("… das Konto behält Admin-Recht und bekommt keine Rolle aus dem Verze
 r.check("… Audit `ldap_namensbindung_zu` mit Grund und Kennung",
         len(zu) == 1 and zu[0]["username"] == "jsmith" and zu[0]["detail"] == "grund=frist kennung=uuid-neu",
         str(zu))
-r.check("… die Logzeile nennt Kennung und Abhilfe (loese_fremde_bindung, foederation_nachbinden)",
-        any("uuid-neu" in z and f"loese_fremde_bindung('ldap', {js})" in z
-            and "foederation_nachbinden('ldap')" in z for z in log.zeilen("jsmith")), log.puffer.getvalue()[-600:])
+r.check("… die Logzeile nennt Kennung und Abhilfe (federation_unbind, federation_bind_existing)",
+        any("uuid-neu" in z and f"federation_unbind('ldap', {js})" in z
+            and "federation_bind_existing('ldap')" in z for z in log.zeilen("jsmith")), log.puffer.getvalue()[-600:])
 
 # (4) Der Betreiber öffnet die Bindung ausdrücklich — die nächste Anmeldung bindet.
-weg = a.loese_fremde_bindung("ldap", js)
+weg = a.federation_unbind("ldap", js)
 offen = a.store._one("SELECT bis FROM namensbindung WHERE quelle='ldap' AND user_id=?", (js,))
-r.check("loese_fremde_bindung auf ein ungebundenes Konto: 0 gelöst, Bindung über den Namen geöffnet",
+r.check("federation_unbind auf ein ungebundenes Konto: 0 gelöst, Bindung über den Namen geöffnet",
         weg == 0 and offen is not None and offen["bis"] > jetzt() + 29 * TAG, str(offen and dict(offen)))
 u = _anmelden(a, "jsmith", {"id": "uuid-neu"})
 r.check("… danach bindet die nächste Anmeldung über den Namen, auch nach der Frist",
@@ -208,9 +208,9 @@ y = c0.create_user("yara")
 u = _anmelden(c0, "yara", {"id": "uuid-y"})
 r.check("federation_name_binding_days=0: auch ein frisches Konto bindet sich nicht selbst",
         u is None and c0.store.get_federated_kennung("ldap", y) is None)
-c0.loese_fremde_bindung("ldap", y)
+c0.federation_unbind("ldap", y)
 u = _anmelden(c0, "yara", {"id": "uuid-y"})
-r.check("… nur ausdrücklich (loese_fremde_bindung öffnet für mindestens einen Tag)",
+r.check("… nur ausdrücklich (federation_unbind öffnet für mindestens einen Tag)",
         u is not None and u["id"] == y)
 try:
     _ldap(federation_name_binding_days=-2)
@@ -278,19 +278,19 @@ r.check("… eve hat danach keine Rolle `chef`, auch nicht über ihr lokales Pas
         and "chef" not in g.user_roles(g.store.get_user(eve)))
 r.check("… Abweisung wie Lage 3: Audit mit Grund und Kennung, Logzeile mit dem Weg",
         [z["detail"] for z in zu] == ["grund=name_selbst_gewaehlt kennung=uuid-chefin"]
-        and any("uuid-chefin" in z and f"loese_fremde_bindung('ldap', {eve})" in z
+        and any("uuid-chefin" in z and f"federation_unbind('ldap', {eve})" in z
                 for z in log.zeilen("selbst gewählt")), str(zu))
-g.loese_fremde_bindung("ldap", eve)
+g.federation_unbind("ldap", eve)
 u = _anmelden(g, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
-r.check("Der Betreiber entscheidet ausdrücklich (loese_fremde_bindung): dann bindet es",
+r.check("Der Betreiber entscheidet ausdrücklich (federation_unbind): dann bindet es",
         u is not None and u["id"] == eve)
 
 # Umbenennen durch den Betreiber: der Name steht für den Betreiber.
 op = g.create_user("olaf", password=PW)
 g.store.set_username(op, "olga", selbst_gewaehlt=True)
-g.change_username(op, "oskar", durch_betreiber=True)
+g.change_username(op, "oskar", by_operator=True)
 u = _anmelden(g, "oskar", {"id": "uuid-oskar"})
-r.check("Umbenannt durch den Betreiber (durch_betreiber=True): Merker 0, bindet",
+r.check("Umbenannt durch den Betreiber (by_operator=True): Merker 0, bindet",
         _flag(g, op) == 0 and u is not None and u["id"] == op)
 r.check("… die Audit-Zeile sagt durch=betreiber",
         _audit(g, "username_changed")[-1]["detail"] == "alt=olga durch=betreiber")
@@ -397,7 +397,7 @@ r.check("PoC a1-01 (OIDC): die echte chefin landet NICHT im OIDC-Konto — keine
         and qa.user_roles(qa.store.get_user(oc["id"])) == [], str(u))
 r.check("… Abweisung wie Lage 3: Audit mit Grund name_aus_quelle, Logzeile mit dem Weg",
         [z["detail"] for z in zu] == ["grund=name_aus_quelle kennung=uuid-chefin"]
-        and any("uuid-chefin" in z and f"loese_fremde_bindung('ldap', {oc['id']})" in z
+        and any("uuid-chefin" in z and f"federation_unbind('ldap', {oc['id']})" in z
                 for z in log.zeilen("anderen Quelle")), str(zu))
 st, me = _oidc_anmelden(qa, qapp, {"sub": "angreifer-sub", "preferred_username": "chefin"})
 r.check("… und über OIDC kommt der Angreifer weiter nur in sein eigenes Konto, ohne Rolle",
@@ -405,21 +405,21 @@ r.check("… und über OIDC kommt der Angreifer weiter nur in sein eigenes Konto
 
 # Die Bestandsbindung fragt denselben Entscheid.
 st, _ = _oidc_anmelden(qa, qapp, {"sub": "olli-sub", "preferred_username": "olli"})
-bb = qa.foederation_nachbinden("ldap", zuordnung={"olli": "uuid-olli"})
-r.check("foederation_nachbinden: ein OIDC-Konto wird nicht über den Namen gebunden (name_aus_quelle)",
+bb = qa.federation_bind_existing("ldap", mapping={"olli": "uuid-olli"})
+r.check("federation_bind_existing: ein OIDC-Konto wird nicht über den Namen gebunden (name_aus_quelle)",
         [(e["username"], e["grund"]) for e in bb["abgewiesen"]] == [("olli", "name_aus_quelle")]
         and bb["gebunden"] == [], str(bb))
 
 # Der Betreiber entscheidet ausdrücklich: Dann bindet es.
-qa.loese_fremde_bindung("ldap", oc["id"])
+qa.federation_unbind("ldap", oc["id"])
 u = _anmelden(qa, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
-r.check("loese_fremde_bindung öffnet auch für einen Namen aus einer anderen Quelle",
+r.check("federation_unbind öffnet auch für einen Namen aus einer anderen Quelle",
         u is not None and u["id"] == oc["id"] and qa.store.get_federated_kennung("ldap", oc["id"]) == "uuid-chefin")
 
 # Umbenennen: Der neue Name stammt nicht mehr aus der Quelle.
 st, _ = _oidc_anmelden(qa, qapp, {"sub": "otto-sub", "preferred_username": "otto"})
 ot = qa.store.get_user_by_name("otto")["id"]
-qa.change_username(ot, "ottilie", durch_betreiber=True)
+qa.change_username(ot, "ottilie", by_operator=True)
 u = _anmelden(qa, "ottilie", {"id": "uuid-ottilie"})
 r.check("Vom Betreiber umbenannt: Herkunft gelöscht, der Name steht für den Betreiber und bindet",
         _quelle(qa, ot) is None and _flag(qa, ot) == 0 and u is not None and u["id"] == ot)
@@ -483,12 +483,12 @@ r.check("Anmeldung: Name = unbelegter mail-Wert → kein Zugriff auf das gleichn
         and ge.store.get_federated_user("ldap", "u-gerda") is None and ge.store.user_count() == _n_ge
         and bool(_audit(ge, "ldap_kennung_abgewiesen")), str(u and u["username"]))
 
-# ══ Bestandsbindung: foederation_nachbinden ════════════════════════════════════════════════════
+# ══ Bestandsbindung: federation_bind_existing ════════════════════════════════════════════════════
 m = _ldap()
 ids = {n: m.create_user(n) for n in ("anna", "bert", "cara", "dora", "emil", "fritz", "gina", "ida",
                                       "jo", "kim", "lea")}
 ids["hans"] = m.create_user("hans", password=PW)
-ids["ina"] = m.create_user("ina", name_selbst_gewaehlt=True)
+ids["ina"] = m.create_user("ina", self_chosen_name=True)
 m.create_service("dienst")
 m.store.link_federated("ldap", "u-fritz", ids["fritz"], jetzt())
 m.store.link_federated("ldap", f"{Store.OHNE_KENNUNG}{ids['lea']}", ids["lea"], jetzt())
@@ -515,7 +515,7 @@ def _gebunden(auth):
 
 
 vorher = _gebunden(m)
-tr = m.foederation_nachbinden("ldap")
+tr = m.federation_bind_existing("ldap")
 r.check("Trockenlauf (Vorgabe): nichts geschrieben", _gebunden(m) == vorher and tr["ausgefuehrt"] is False
         and not _audit(m, "ldap_kennung_gebunden"))
 r.check("… meldet, was gebunden würde (auch nach der Frist und den Platzhalter)",
@@ -537,9 +537,9 @@ r.check("… Konto mit lokalem Passwort nur berichtet; Service-Konten und gebund
         _namen(tr, "lokal") == ["hans"] and "dienst" not in vz.gefragt and "fritz" not in vz.gefragt,
         str(vz.gefragt))
 with Mitschnitt() as log:
-    ab = m.foederation_nachbinden("ldap", ausfuehren=True)
+    ab = m.federation_bind_existing("ldap", apply=True)
 jetzt_gebunden = _gebunden(m)
-r.check("ausfuehren=True: gebunden wie angekündigt, der Platzhalter ist ersetzt",
+r.check("apply=True: gebunden wie angekündigt, der Platzhalter ist ersetzt",
         all(jetzt_gebunden.get(ids[n]) == f"u-{n}" for n in ("anna", "ida", "kim", "lea"))
         and _namen(ab, "gebunden") == ["anna", "ida", "kim", "lea"], str(jetzt_gebunden))
 r.check("… nichts sonst: keine Bindung für hans, ina, gina, emil, jo",
@@ -547,19 +547,19 @@ r.check("… nichts sonst: keine Bindung für hans, ina, gina, emil, jo",
         and jetzt_gebunden[ids["fritz"]] == "u-fritz")
 r.check("… je Bindung Audit `ldap_kennung_gebunden detail=migration`, eine Summenzeile im Log",
         sorted(z["username"] for z in _audit(m, "ldap_kennung_gebunden") if z["detail"] == "migration")
-        == ["anna", "ida", "kim", "lea"] and len(log.zeilen("foederation_nachbinden(ldap): 4 gebunden")) == 1,
+        == ["anna", "ida", "kim", "lea"] and len(log.zeilen("federation_bind_existing(ldap): 4 gebunden")) == 1,
         log.puffer.getvalue()[-400:])
 u = _anmelden(m, "kim", {"id": "u-kim"})
 r.check("… danach meldet sich das gebundene Konto an (Lage 1)", u is not None and u["id"] == ids["kim"])
 r.check("Zweiter Lauf: die Gebundenen sind keine Kandidaten mehr",
-        m.foederation_nachbinden("ldap")["gebunden"] == [])
+        m.federation_bind_existing("ldap")["gebunden"] == [])
 
 # Ein Ausfall mitten im Lauf: nichts geschrieben.
 w = _ldap()
 w.create_user("wim"), w.create_user("wolf")
 w.ldap = Verzeichnis({"wim": {"id": "u-wim"}, "wolf": {"id": "u-wolf"}}, ausfall_bei="wolf")
 try:
-    w.foederation_nachbinden("ldap", ausfuehren=True)
+    w.federation_bind_existing("ldap", apply=True)
     _abbruch = False
 except VerzeichnisNichtErreichbar:
     _abbruch = True
@@ -569,12 +569,12 @@ r.check("Verzeichnis-Ausfall: der Lauf bricht ab, bevor irgendetwas gebunden ist
 # Zuordnung (SAML aus einem Export des IdP).
 z = _saml()
 sara, tom, udo = z.create_user("sara"), z.create_user("tom"), z.create_user("udo")
-zb = z.create_user("zeno", name_selbst_gewaehlt=True)
+zb = z.create_user("zeno", self_chosen_name=True)
 z.store.link_federated("saml", "nid-udo", udo, jetzt())
 leer = z.create_user("leer")
-zr = z.foederation_nachbinden("saml", zuordnung={"sara": "nid-sara", "tom": "nid-udo", "niemand": "nid-x",
-                                                 "zeno": "nid-zeno", "leer": ""}, ausfuehren=True)
-r.check("SAML mit zuordnung: bindet, verweigert die Kennung eines anderen Kontos, meldet Unbekanntes",
+zr = z.federation_bind_existing("saml", mapping={"sara": "nid-sara", "tom": "nid-udo", "niemand": "nid-x",
+                                                 "zeno": "nid-zeno", "leer": ""}, apply=True)
+r.check("SAML mit mapping: bindet, verweigert die Kennung eines anderen Kontos, meldet Unbekanntes",
         _gebunden(z).get(sara) == "nid-sara" and tom not in _gebunden(z) and leer not in _gebunden(z)
         and [e["username"] for e in zr["konflikt"]] == ["tom"] and _namen(zr, "ohne_kennung") == ["leer"]
         and sorted((e["username"], e["grund"]) for e in zr["abgewiesen"])
@@ -583,22 +583,22 @@ u = z._check_saml("nid-sara", {"uid": ["sara"]})
 r.check("… danach meldet sich sara über die NameID an", u is not None and u["id"] == sara)
 zd = _saml()
 zd.create_user("doppel1"), zd.create_user("doppel2")
-zdr = zd.foederation_nachbinden("saml", zuordnung={"doppel1": "nid-d", "doppel2": "nid-d"}, ausfuehren=True)
+zdr = zd.federation_bind_existing("saml", mapping={"doppel1": "nid-d", "doppel2": "nid-d"}, apply=True)
 r.check("Zuordnung mit Dublette (zwei Konten, eine Kennung): keines gebunden",
         _gebunden(zd) == {} and sorted(e["username"] for e in zdr["konflikt"]) == ["doppel1", "doppel2"])
 try:
-    zd.foederation_nachbinden("saml")
+    zd.federation_bind_existing("saml")
     _saml_ohne = False
 except ValueError:
     _saml_ohne = True
 fremd = _ldap()
 fremd.ldap = type("NurAnmelden", (), {"authenticate": lambda self, u, p: None})()
 try:
-    fremd.foederation_nachbinden("ldap")
+    fremd.federation_bind_existing("ldap")
     _ohne_suche = False
 except ConfigError:
     _ohne_suche = True
-r.check("SAML ohne zuordnung → ValueError; ein Client ohne eintrag_suchen → ConfigError",
+r.check("SAML ohne mapping → ValueError; ein Client ohne eintrag_suchen → ConfigError",
         _saml_ohne and _ohne_suche)
 
 # Atomar gegen eine Anmeldung, die zwischen Prüfung und Schreiben gebunden hat.
@@ -679,7 +679,7 @@ if ldap3 is not None:
         e2e = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
                     ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
         ea, eb = e2e.create_user("alice"), e2e.create_user("bob")
-        eb_ber = e2e.foederation_nachbinden("ldap", ausfuehren=True)
+        eb_ber = e2e.federation_bind_existing("ldap", apply=True)
         r.check("ldap3 von Anfang bis Ende: alice an ihre GUID gebunden, bob mehrdeutig",
                 _gebunden(e2e) == {ea: GUID.hex()} and _namen(eb_ber, "mehrdeutig") == ["bob"], str(eb_ber))
         # Der Anmeldeweg liest die Kennung genauso (`authenticate` → `_stabile_kennung`): Eine GUID,
@@ -712,9 +712,9 @@ zeile = log.zeilen("ohne Bindung an eine Kennung")
 r.check("Startmeldung: 3 Konten ohne Kennung (Service-Konto und gebundenes zählen nicht, der "
         "Platzhalter schon), davon 2 ohne lokales Passwort, mit dem Weg",
         len(zeile) == 1 and "LDAP: 3 Konto(en)" in zeile[0] and "davon 2 ohne lokales Passwort" in zeile[0]
-        and "auth.foederation_nachbinden('ldap')" in zeile[0], str(zeile))
+        and "auth.federation_bind_existing('ldap')" in zeile[0], str(zeile))
 sm.ldap = Verzeichnis({"a1": {"id": "u-a1"}, "p1": {"id": "u-p1"}})
-sm.foederation_nachbinden("ldap", ausfuehren=True)
+sm.federation_bind_existing("ldap", apply=True)
 sm.store._exec("DELETE FROM users WHERE id=?", (a2,))
 sm.store.db.close()
 with Mitschnitt() as log:
@@ -734,8 +734,8 @@ ss.create_user("s1")
 ss.store.db.close()
 with Mitschnitt() as log:
     _saml(pfad)
-r.check("SAML-Startmeldung nennt die zuordnung",
-        any("SAML: 1 Konto(en)" in z and "zuordnung=" in z for z in log.zeilen("ohne Bindung")),
+r.check("SAML-Startmeldung nennt das mapping",
+        any("SAML: 1 Konto(en)" in z and "mapping=" in z for z in log.zeilen("ohne Bindung")),
         str(log.zeilen("ohne Bindung")))
 
 # ══ Bestand: Datei auf Schema 11 ohne Tabelle und Spalte, Merker aus dem Audit-Log ════════════
@@ -780,7 +780,7 @@ r.check("Zweiter Start: idempotent, der Nachtrag läuft nicht noch einmal",
         nochmal.store._one("SELECT name_selbst_gewaehlt AS f FROM users WHERE username='op'")["f"] == 0
         and nochmal.store.get_setting(Store.NAME_SELBST_NACHGETRAGEN) is not None)
 lo = nochmal.create_user("loesch")
-nochmal.loese_fremde_bindung("ldap", lo)
+nochmal.federation_unbind("ldap", lo)
 nochmal.delete_user(lo)
 r.check("Konto gelöscht: seine geöffnete Namensbindung geht mit",
         nochmal.store._one("SELECT COUNT(*) AS n FROM namensbindung")["n"] == 0)

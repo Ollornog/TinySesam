@@ -225,7 +225,7 @@ print("  ✓ R6-6: unbekannte Key-Art trägt kein Admin-Flag; Panel-Key nur aus 
 
 # ---------- B2-13: das Panel hält dieselbe Passwortregel ein ----------
 # Bis T-13 nahm der Admin-Weg jedes Passwort an — `1` für ein neues Konto, `password` beim
-# Zurücksetzen. (Mutationsprobe: die beiden `passwort_mangel`-Aufrufe in admin.py streichen → rot.)
+# Zurücksetzen. (Mutationsprobe: die beiden `password_policy_error`-Aufrufe in admin.py streichen → rot.)
 r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "1"})
 assert r.status_code == 400 and "zu kurz" in r.json()["detail"], r.text
 r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "password123"})

@@ -844,8 +844,8 @@ r.check("ein echter Seitenname geht weiterhin", echte_geht, "die Liste ist zu en
 quelle = "\n".join((wurzel / "tinysesam" / f).read_text(encoding="utf-8")
                     for f in ("router.py", "manager.py", "admin.py"))
 gerendert = set(re.findall(r'render_page\(\s*"([a-z_]+)"', quelle))
-fehlend = sorted(gerendert - set(auth_tpl.SEITEN))
-r.check("jede gerenderte Seite steht in TinySesam.SEITEN", not fehlend,
+fehlend = sorted(gerendert - set(auth_tpl.PAGES))
+r.check("jede gerenderte Seite steht in TinySesam.PAGES", not fehlend,
         f"nicht ersetzbar, obwohl es sie gibt: {fehlend}")
 
 
@@ -1355,9 +1355,9 @@ r.check("und die geprüfte Basis trägt keine Benutzerangabe weiter",
         == "https://a.example.com:8443")
 auth_pb, _app_pb = _app(passkey_enabled=False)
 r.check("public_base() liefert leer statt zu raten (fail closed)",
-        auth_pb.public_base(kandidat="https://" + BOESE) == "")
+        auth_pb.public_base(candidate="https://" + BOESE) == "")
 try:
-    auth_pb.require_public_base(kandidat="https://" + BOESE)
+    auth_pb.require_public_base(candidate="https://" + BOESE)
     _pb_hart = False
 except _CfgErr:
     _pb_hart = True
@@ -1792,7 +1792,7 @@ r.check("...und die eingebauten Seiten tragen es auch (T-15): Formular, Links, U
 for _lab, _auth_x in (("mit base_url", _a_api), ("ohne base_url", _a_pfad)):
     for _fall in (ECHT, "http://auth.example.com/", "https://app-b.example.com",
                   "https://" + BOESE, _UNTER, ""):
-        _pb = _auth_x.public_base(kandidat=_fall)
+        _pb = _auth_x.public_base(candidate=_fall)
         try:
             _gb, _warf = _auth_x._gepruefte_basis(_fall), False
         except ConfigError:
@@ -2609,7 +2609,7 @@ finally:
     del auth_g._postausgang.nachher              # zurück zur Klassenmethode
 
 # Dasselbe über die ÖFFENTLICHE API (zweite Angriffsrunde, konfig): Eine einbettende App mit
-# eigener Registrierung hat nur `create_user`, `store.set_disabled` und `nach_der_antwort(…
+# eigener Registrierung hat nur `create_user`, `store.set_disabled` und `after_response(…
 # send_verify_email …)` — genau das Muster, das der Kern bis T-13 selbst benutzte. Der Token
 # entsteht dort weiterhin im Mail-Arbeiter, also NACH einer Sperre im Wartefenster, und die Sperre
 # findet nichts zu verwerfen. Die Ursache sass in `/auth/verify`: Es setzte `disabled`
@@ -2629,7 +2629,7 @@ def _festhalten_p(auftrag, bei_ueberlauf=None):
 def _app_signup_p(name: str):
     _uid = auth_g.create_user(name, password="Neues-Passwort#lang-7", email=f"{name}@example.org")
     auth_g.store.set_disabled(_uid, True)                   # wartet auf die Bestätigung
-    return auth_g.nach_der_antwort(
+    return auth_g.after_response(
         _TextAntwort("Mail unterwegs"),
         lambda: auth_g.send_verify_email(_uid, f"{name}@example.org", ECHT))
 
@@ -3064,7 +3064,7 @@ except _CfgErr:
 r.check("...eine echte Demo startet trotzdem neu (auch mit Besuchern)", _b38b)
 # (Mutationsprobe: die Bestandsprüfung vor seed_demo im Konstruktor entfernen → rot.)
 
-# B3-14: pruefen() hat einen Aufrufer — router() prüft vor dem Bau erneut.
+# B3-14: validate() hat einen Aufrufer — router() prüft vor dem Bau erneut.
 _a314, _ = _app()
 _a314.cfg.cookie_samesite = "Strict"
 try:
@@ -3082,8 +3082,8 @@ try:
 except _CfgErr:
     _b314b = False
 r.check("...eine erlaubte Änderung (Sprache, Adresse) baut weiter", _b314b)
-r.check("...und pruefen() liefert weiter eine Liste (Fehler + Warnungen)",
-        isinstance(TinySesamConfig(db_path=":memory:").pruefen(), list))
+r.check("...und validate() liefert weiter eine Liste (Fehler + Warnungen)",
+        isinstance(TinySesamConfig(db_path=":memory:").validate(), list))
 # (Mutationsprobe: `self._nachpruefen()` in router() entfernen → rot.)
 
 # A2: Auch die Riegel des Konstruktors gelten vor router()/admin_router(), nicht nur konfigpruefung.

@@ -6,9 +6,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 **Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
 (`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten; die internen Namen
-(Stufe C) warnen und fallen mit 1.0 weg. Und zwei Funde aus dem Betrieb: das Erst-Admin-Token steht
-im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim
-Update auffällt:
+(Stufe C) warnen und fallen mit 1.0 weg, die deutschen Namen der Stufen A und B heissen englisch
+(ohne Alias). Und zwei Funde aus dem Betrieb: das Erst-Admin-Token steht im Container nicht mehr
+im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update auffällt:
 
 - **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
   1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
@@ -19,6 +19,54 @@ Update auffällt:
   steht jetzt jeder Name unter seiner Stufe, die C-Namen als Tabelle mit ihrem Ersatz (darunter
   `check_password`, `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs
   erklären die Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
+- **Deutsche Namen der Stufen A und B heissen englisch — ohne Alias** (PO-Entscheid 2026-09-27).
+  Methoden, Konstanten, Parameter und die Attribute von `ConfigError` sind umbenannt, wie der Rest
+  der Stufe-A-Oberfläche. **Einen Alias gibt es nicht:** Die Zusagen der Stufen beginnen erst mit
+  diesem Release, und keiner der Abnehmer, die wir kennen, benutzt einen der alten Namen. Wer einen
+  davon aufruft, bekommt einen `AttributeError` bzw. bei einem Schlüsselwort-Parameter einen
+  `TypeError` — **umstellen nach der Tabelle**; positionelle Aufrufe mit einem umbenannten Parameter
+  laufen weiter. Kein Konfigurationsfeld ist betroffen (die hiessen schon englisch), ebenso wenig
+  eine Datenbank-Spalte.
+
+  | bis 0.21.x | ab 0.22.0 | Stufe |
+  |---|---|---|
+  | `foederation_nachbinden(quelle, *, zuordnung=None, ausfuehren=False)` | `federation_bind_existing(source, *, mapping=None, apply=False)` | A |
+  | `loese_fremde_bindung(quelle, user_id)` | `federation_unbind(source, user_id)` | A |
+  | `SICHERHEITSEREIGNISSE` | `SECURITY_EVENTS` | A |
+  | `change_username(user_id, neu, ip=None, *, durch_betreiber=False)` | `change_username(user_id, new_username, ip=None, *, by_operator=False)` | A |
+  | `create_user(…, *, name_selbst_gewaehlt=False)` | `create_user(…, *, self_chosen_name=False)` | A |
+  | `public_base(request=None, kandidat="")` | `public_base(request=None, candidate="")` | A |
+  | `ConfigError.feld`, `ConfigError.besitzer_id` | `ConfigError.field`, `ConfigError.owner_id` | A |
+  | `MissingExtra(nachricht, extra="")` | `MissingExtra(message, extra="")` | A |
+  | `andere_sitzungen(request, user, token=None)` | `count_other_sessions(request, user, token=None)` | B |
+  | `api_key_art(key)` | `api_key_kind(key)` | B |
+  | `darf_mfa_einrichten(user_id, jetzt=None)` | `mfa_enrollment_allowed(user_id, now=None)` | B |
+  | `kennung_vergeben(kennung, exclude_id=None)` | `identifier_taken(identifier, exclude_id=None)` | B |
+  | `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)` | `after_response(resp, task, on_overflow=None)` | B |
+  | `nur_foederiert(user_id)` | `federated_only(user_id)` | B |
+  | `passwort_mangel(password, *, …)` | `password_policy_error(password, *, …)` | B |
+  | `pfad(request, pfad)` | `browser_path(request, path)` | B |
+  | `sperre_aufheben(user_id, methoden=None)` | `lift_lockout(user_id, methods=None)` | B |
+  | `apply_factor(…, email_bestaetigt=None)` | `apply_factor(…, email_verified=None)` | B |
+  | `flow_cookie_name(basis)` | `flow_cookie_name(base)` | B |
+  | `request_email_change(user_id, neu, base_url)` | `request_email_change(user_id, new_email, base_url)` | B |
+  | `require_public_base(request=None, kandidat="")` | `require_public_base(request=None, candidate="")` | B |
+  | `FOEDERIERTE_QUELLEN` | `FEDERATED_SOURCES` | B |
+  | `MFA_ENROLLMENT_ARTEN` | `MFA_ENROLLMENT_MODES` | B |
+  | `NACHBINDUNG_GRUENDE` | `NAME_BINDING_REFUSALS` | B |
+  | `SEITEN` | `PAGES` | B |
+  | `TinySesamConfig.pin_als_erstfaktor()` | `TinySesamConfig.pin_as_first_factor()` | B |
+  | `TinySesamConfig.pruefen()` | `TinySesamConfig.validate()` | B |
+
+  **Werte bleiben, wie sie sind** — nur Namen ändern sich: die Grund-Kürzel (`adresse_als_name`,
+  `name_selbst_gewaehlt`, `frist` …, die Schlüssel von `NAME_BINDING_REFUSALS`), Audit-Ereignisse
+  und ihre Details (`ldap_kennung_gebunden`, `durch=betreiber`), die Zeilen für fail2ban, die
+  Schlüssel des Berichts von `federation_bind_existing` (`quelle`, `ausgefuehrt`, `gebunden` …),
+  die Werte von `api_key_kind` (`automat`/`mensch`) und alle Spalten der Datenbank. Geändert haben
+  sich nur Log-Zeilen, die einen Aufruf nennen: die Hinweise auf `auth.federation_unbind(…)`,
+  `auth.federation_bind_existing(…, mapping=…)` und `auth.change_username(…, by_operator=True)`,
+  und die Summenzeile der Bestandsbindung im Sicherheits-Log beginnt mit
+  `federation_bind_existing(<quelle>)`.
 - **Die internen Namen (Stufe C) warnen.** 42 Methoden und 7 Konstanten heissen intern jetzt `_name`
   (`check_password` → `_check_password`, `record_login` → `_record_login` …, Liste unter
   „Veraltet“), `complete_mfa` ist ein Alias von `complete_totp`. Der alte Name tut bis 1.0 dasselbe
@@ -107,6 +155,15 @@ Update auffällt:
   (`auth._check_password`) wirkt. Ein Namens-Wächter misst die Oberfläche des Bausteins am Objekt
   (jede Methode, die ein `LoginResult` liefert, samt Parametern; Typ, Modul, Felder, Methoden,
   `REASONS`): kein deutsches Wort, jeder Name in Stufe A.
+- **Namens-Wächter über die ganze Oberfläche der Stufen A und B** (`tests/test_api_surface.py`,
+  `pruefe_namen`): jeder Name der Ablage in A oder B, die Parameter jeder Methode und Funktion am
+  lebenden Objekt, alle Konfigurationsfelder, die öffentlichen Attribute und Konstruktor-Parameter
+  der exportierten Fehlertypen — Stand 566 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
+  einer Liste, Wortstämme auch mitten im Wort (`SICHERHEITSEREIGNISSE` ist nach dem Zerlegen nur
+  eines) und Umlaute. Dazu eine Mindestmenge (je Art ein Pflicht-Eintrag, Zahl der Parameter und
+  Felder) gegen eine Messung, die still weniger sieht, und Selbstproben an einer Probeklasse: jeder
+  alte Name fällt auf, englische Doppelgänger (`series`, `start`, `binding`, `base`) nicht, Stufe C
+  bleibt aussen vor. Der Abschnitt (k) in `tests/test_anmelden.py` nimmt dieselbe Liste.
 
 - **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
   `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
@@ -179,6 +236,12 @@ Update auffällt:
 
 ### Geändert
 
+- **Die deutschen Namen der Stufen A und B heissen englisch, ohne Alias** (PO-Entscheid
+  2026-09-27): 11 Methoden, 5 Konstanten, 2 Methoden von `TinySesamConfig`, 18 Parameter in 14
+  Methoden, die Attribute `ConfigError.field`/`.owner_id` und der erste Parameter von
+  `MissingExtra` — die Tabelle steht oben unter „Was beim Update auffällt“. Paket, Routen,
+  Beispiele, Tests und Doku rufen nur noch die neuen Namen; `API.md` und `KONFIGURATION.md` sind neu
+  erzeugt.
 - **`POST /auth/login`, `/auth/pin` und `/auth/totp` sind dünne Hüllen um `login_*`.** Der
   ganze Ablauf zog aus `router.py` in die Bausteine; die Routen rendern nur noch das Ergebnis.
   Antworten, Texte, Audit- und Log-Zeilen bleiben gleich (gemessen gegen eine eigene Route über
@@ -252,8 +315,8 @@ Update auffällt:
   Nur-Schlüsselwort- (`*`) und Nur-Positions-Parameter (`/`) fielen dabei weg, obwohl der Docstring
   genau das zu messen versprach. Ein nachträglich eingefügtes `*` — jeder positionelle Aufruf
   bricht — sah aus wie keine Änderung. Jetzt stehen die Marken in der Ablage (10 Signaturen neu
-  gemessen: `login_*`, `change_username`, `create_user`, `foederation_nachbinden`,
-  `passwort_mangel` und die Presets `active_directory`, `entra_id`, `oidc_gateway` — keine davon
+  gemessen: `login_*`, `change_username`, `create_user`, `federation_bind_existing`,
+  `password_policy_error` und die Presets `active_directory`, `entra_id`, `oidc_gateway` — keine davon
   hat sich geändert), ein eingefügtes `*` oder `/` ist ein Bruch, ein hinten angehängter
   Nur-Schlüsselwort-Parameter mit Vorgabe bleibt eine Erweiterung. Eine Ablage von vor 0.22.0
   (`git show v0.21.0:tests/api_surface.json`) lässt sich weiter vergleichen: Ihre Signaturen

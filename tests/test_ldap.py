@@ -715,7 +715,7 @@ assert auth11._check_ldap("bestand", "pw") is None
 ok("F-11: …danach ist auch dieses Konto gegen den Namenswechsel geschützt")
 
 # Der Betreiber kann die Bindung lösen, wenn im Verzeichnis wirklich umgezogen wurde.
-assert auth11.loese_fremde_bindung("ldap", _uid_b) == 1
+assert auth11.federation_unbind("ldap", _uid_b) == 1
 assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-anders"
 ok("F-11: der Betreiber löst die Bindung — ein bewusster Schritt, kein Nebeneffekt")
@@ -753,7 +753,7 @@ auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "email": "bob@example.com
 assert c11d.post("/auth/login", data={"username": "bob", "password": "ldappw"},
                  follow_redirects=False).status_code == 303
 _uid_bob = auth11d.store.get_user_by_name("bob")["id"]
-assert auth11d.nur_foederiert(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
+assert auth11d.federated_only(_uid_bob), "LDAP-Konto ohne Kennung gilt als lokal"
 c11d.get("/auth/logout")
 # Die Anmeldung schickt (Adresse nicht vertraut) einen Bestätigungslink — gemessen wird hier nur der Reset.
 auth11d._hinweis_ausgang.abwarten()

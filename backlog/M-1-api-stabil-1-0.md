@@ -155,4 +155,30 @@ Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.stor
 `on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in
 die Zusage gehören, liegt als offene Frage beim PO.
 
+**Nachtrag 2026-09-27 (PO-Entscheid): Die ganze Oberfläche der Stufen A und B heisst englisch,
+ohne Alias.** Nach dem Login-Baustein jetzt der Rest: 11 Methoden, 5 Konstanten, 2 Methoden von
+`TinySesamConfig`, 18 Parameter in 14 Methoden, `ConfigError.feld`/`.besitzer_id` →
+`.field`/`.owner_id` und `MissingExtra(nachricht, …)` → `MissingExtra(message, …)` (Tabelle im
+CHANGELOG unter „Was beim Update auffällt“). Anders als beim Baustein standen diese Namen in
+0.21.0 — sie fallen trotzdem **ohne Alias**, weil die Zusagen der Stufen erst mit 0.22.0 beginnen
+und keiner der bekannten Abnehmer einen davon benutzt (geprüft: kein Aufruf, kein Parameter, kein
+Konfigurationsfeld). Die Stufen bleiben, wie sie waren. Kein Konfigurationsfeld war betroffen —
+sie hiessen schon englisch. Werte bleiben: Grund-Kürzel, Audit- und Log-Zeilen, die Schlüssel des
+Berichts von `federation_bind_existing`, Datenbank-Spalten.
+
+Der Namens-Wächter aus Abschnitt (k) ist dafür auf die ganze Oberfläche ausgedehnt
+(`tests/test_api_surface.py`, `pruefe_namen`): jeder Name in A oder B, jeder Parameter am lebenden
+Objekt, jedes Konfigurationsfeld, die Attribute und Konstruktor-Parameter der Fehlertypen — 566
+Einträge; Wörter, Stämme (auch mitten im Wort) und Umlaute; Mindestmenge und Selbstproben. Stand
+unverändert 354 Namen, A 240, B 64, C 50.
+
+Offen (nicht Teil dieses Entscheids, Rückfrage beim PO): Rückgabewerte und Daten tragen noch
+deutsche Schlüssel — der Bericht von `federation_bind_existing` (`quelle`, `ausgefuehrt`,
+`gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen`,
+`lokal`, je Eintrag `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer`), `gc()`
+(`fehlserien`), die Nutzlast von `on_security_event` (`alt`, `neu`), die Werte von `api_key_kind`
+(`automat`, `mensch`) und der Kontext für eigene Seiten (`ctx["praefix"]`, `ctx["zweck"]`). Der
+Wächter misst Namen, keine Werte; ob diese Schlüssel vor 1.0 englisch werden, ist eine eigene
+Entscheidung — jede Änderung dort bricht Code, der sie liest.
+
 <!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->

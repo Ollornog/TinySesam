@@ -111,8 +111,8 @@ r.check("(a) nach dem Passwort führt die Kette auf /auth/pin; fünf falsche PIN
         _nach_pw.headers.get("location", "").startswith("/auth/pin") and _arten(auth, "kette") == {FOLGE: 5},
         f"{_nach_pw.headers.get('location')}, {_arten(auth, 'kette')}")
 # (Mutationsprobe: `serie_art` in `login_pin` weglassen → {'pin': 5}, der Reset räumt → rot.)
-auth.sperre_aufheben(uid, methoden=("password",))                  # der Weg des Selbstbedienungs-Resets
-r.check("(a) der Selbstbedienungs-Reset (sperre_aufheben mit password) lässt sie stehen, wie TOTP",
+auth.lift_lockout(uid, methods=("password",))                  # der Weg des Selbstbedienungs-Resets
+r.check("(a) der Selbstbedienungs-Reset (lift_lockout mit password) lässt sie stehen, wie TOTP",
         auth.store.fehlserie("kette") == 5, str(_arten(auth, "kette")))
 _tok = auth.create_magic_token("reset_password", user_id=uid, email="kette@example.com")
 _reset = TestClient(app).post("/auth/reset", data={"token": _tok, "password": NEU}, follow_redirects=False)
@@ -134,7 +134,7 @@ uid_b = _konto(auth_b, "gast")
 for i in range(5):
     _pin(TestClient(app_b), f"000{i}", username="gast")
 _vorher_b = _arten(auth_b, "gast")
-auth_b.sperre_aufheben(uid_b, methoden=("password",))
+auth_b.lift_lockout(uid_b, methods=("password",))
 # (Mutationsprobe: 'pin' aus `_SERIE_RESET_ARTEN` → 5 bleiben → rot.)
 r.check("(b) R2-2: Fehlgriffe über den Gästeweg buchen unter pin, und der Reset räumt sie",
         _vorher_b == {"pin": 5} and auth_b.store.fehlserie("gast") == 0,
@@ -149,7 +149,7 @@ for i in range(4):
     _pin(cc, f"000{i}")
 _vorher_c = _arten(auth_c, "voll")
 _fertig = _pin(cc, PIN)
-# (Mutationsprobe: in `sperre_aufheben` ohne `methoden` nur `_SERIE_RESET_ARTEN` räumen → 4 → rot.)
+# (Mutationsprobe: in `lift_lockout` ohne `methoden` nur `_SERIE_RESET_ARTEN` räumen → 4 → rot.)
 r.check("(c) die volle Anmeldung (richtige PIN im Kettenschritt) beendet die Serie ganz",
         _vorher_c == {FOLGE: 4} and _fertig.headers.get("location") == "/drin"
         and cc.get("/drin").status_code == 200 and auth_c.store.fehlserie("voll") == 0,
@@ -223,7 +223,7 @@ _konto(auth_f, "orakel")
 _falsch_f = _pin(TestClient(app_f), "0000", username="orakel")
 _richtig_f = _pin(TestClient(app_f), PIN, username="orakel")
 _zeilen_f = auth_f.store._one("SELECT COUNT(*) AS n FROM login_attempt")["n"]
-# (Mutationsprobe: in `login_pin` wieder `cfg.pin_login` statt `pin_als_erstfaktor()` → 401/303 → rot.)
+# (Mutationsprobe: in `login_pin` wieder `cfg.pin_login` statt `pin_as_first_factor()` → 401/303 → rot.)
 r.check("(f) N2: Gast-PIN ohne Passwort → 404, ob falsch oder richtig, und keine Zeile in login_attempt",
         _falsch_f.status_code == 404 and _richtig_f.status_code == 404 and _zeilen_f == 0,
         f"falsch {_falsch_f.status_code}, richtig {_richtig_f.status_code}, Zeilen {_zeilen_f}")

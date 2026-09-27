@@ -117,7 +117,7 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.email_invalid"))
         # Kreuzweise prüfen (Fund R4-12): Benutzername und E-Mail sind EIN Kennungs-Raum —
         # eine Adresse, die schon Benutzername eines anderen Kontos ist, ist vergeben.
-        if email and auth.kennung_vergeben(email):
+        if email and auth.identifier_taken(email):
             raise HTTPException(409, auth.t("api.email_taken"))
         # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
         if not username and cfg.login_identifier == "email" and not b.get("is_service"):
@@ -126,7 +126,7 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.username_req"))
         if name_ungueltig(username):
             raise HTTPException(400, auth.t("err.username_invalid"))
-        if auth.kennung_vergeben(username):
+        if auth.identifier_taken(username):
             raise HTTPException(409, auth.t("api.user_exists"))
         roles = rollen_aus(b)
         # Service-Konto + Admin (R6-2): Früher fiel `is_admin` hier still weg, über die
@@ -140,7 +140,7 @@ def build_admin_router(auth) -> APIRouter:
         # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
         # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
         if not b.get("is_service") and b.get("password"):
-            mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
+            mangel = auth.password_policy_error(b["password"], username=username, email=email, api=True)
             if mangel:
                 raise HTTPException(400, mangel)
         try:
@@ -153,7 +153,7 @@ def build_admin_router(auth) -> APIRouter:
         except ConfigError as e:
             # Wettlauf (G12c): zwischen den Prüfungen oben und dem Anlegen vergeben — dieselbe
             # Antwort wie dort, statt einer 500.
-            raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "feld", None) == "email"
+            raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "field", None) == "email"
                                             else "api.user_exists"))
         protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
@@ -192,7 +192,7 @@ def build_admin_router(auth) -> APIRouter:
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
         ziel = auth.store.get_user(uid)
-        mangel = auth.passwort_mangel(b["password"], username=ziel["username"] if ziel else None,
+        mangel = auth.password_policy_error(b["password"], username=ziel["username"] if ziel else None,
                                       email=ziel["email"] if ziel else None, api=True)
         if mangel:
             raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
@@ -201,7 +201,7 @@ def build_admin_router(auth) -> APIRouter:
         # Neu gebunden: Passwort-Fehlversuche und die Serien-Sperre (B2-6) enden hier — die Serie
         # GANZ, anders als beim Selbstbedienungs-Reset: Hier entscheidet der Betreiber, nicht wer
         # das Postfach hat. Sonst stünde das Konto nach dem Reset weiter vor der Tür.
-        auth.sperre_aufheben(uid, methoden=("password",))
+        auth.lift_lockout(uid, methods=("password",))
         auth._serie_beenden(uid)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
@@ -314,7 +314,7 @@ def build_admin_router(auth) -> APIRouter:
         if not isinstance(roh, str):
             raise HTTPException(400, auth.t("err.username_required"))
         try:
-            neu = auth.change_username(uid, roh, auth.client_ip(request), durch_betreiber=True)
+            neu = auth.change_username(uid, roh, auth.client_ip(request), by_operator=True)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"ok": True, "username": neu}

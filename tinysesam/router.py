@@ -115,14 +115,14 @@ def build_router(auth) -> APIRouter:
         voll = auth.session_user(request)
         user = auth.pending_user(request) or voll
         if not user:
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
+            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         if not auth.store.has_confirmed_totp(user["id"]):
             # Faktor totp verlangt, aber nicht eingerichtet → zur Einrichtung. Erlaubt ist das
             # für voll Angemeldete und für den Ketten-Fall (siehe totp_enrollment_user) — sonst
             # wäre login_chain=["password","totp"] für jedes Konto ohne TOTP eine Sackgasse.
             if voll or auth.totp_enrollment_user(request):
-                return RedirectResponse(f"{auth.pfad(request, '/auth/totp/setup')}?next={_q(nxt)}", 303)
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
+                return RedirectResponse(f"{auth.browser_path(request, '/auth/totp/setup')}?next={_q(nxt)}", 303)
+            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         return auth.render_page("totp", request=request, next=nxt, error=error)
 
     @r.post("/auth/totp")
@@ -142,7 +142,7 @@ def build_router(auth) -> APIRouter:
     def totp_setup(request: Request, next: str = ""):
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
+            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         # Faktor-ANLAGE ist Selbstverwaltung — eine Sitzung, kein API-Key. Der Abbau war seit
         # R3-3 gesperrt, die Anlage nicht: Ein abgeflossener CI-Key richtete sich ein eigenes
         # TOTP ein und kam über den vollwertigen Login damit zurück an die Abbau-Routen.
@@ -169,7 +169,7 @@ def build_router(auth) -> APIRouter:
         auth.require_csrf(request, csrf_tok)
         u = auth.current_user(request) or auth.totp_enrollment_user(request)
         if not u:
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
+            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         # Dasselbe Schloss wie am GET, und hier das wichtigere: Diese Antwort trägt das
         # TOTP-Geheimnis im Klartext. Ein API-Key darf es nicht zu sehen bekommen — er käme
         # sonst über den selbst registrierten Faktor an eine frische Sitzung.
@@ -213,7 +213,7 @@ def build_router(auth) -> APIRouter:
         if not (ok and einschreibung):
             # B1-7: Nach einem neuen Faktor das Beenden der übrigen Sitzungen anbieten — die Zahl
             # sagt der Oberfläche, ob es etwas anzubieten gibt.
-            return JSONResponse({"ok": ok, "other_sessions": auth.andere_sitzungen(request, u) if ok else 0})
+            return JSONResponse({"ok": ok, "other_sessions": auth.count_other_sessions(request, u) if ok else 0})
         # Pflicht-Einrichtung unter der Kette (A-1): Der Bestätigungscode IST der TOTP-Schritt.
         # Er ist jetzt verbraucht; hätte der Nutzer ihn an /auth/totp noch einmal getippt, wäre
         # das ein Fehlversuch gewesen — fünfmal, und der Login-Lockout samt fail2ban-Zeilen
@@ -231,10 +231,10 @@ def build_router(auth) -> APIRouter:
         # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
         antwort = JSONResponse({"ok": True, "next": auth._login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next, request)),
-            "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0,
+            "other_sessions": auth.count_other_sessions(request, u, token=erneuert) if erneuert else 0,
             # Grenze d: Bleibt die Sitzung halb, fragt die Seite trotzdem — eingelöst wird beim
             # Abschluss der Kette (`/auth/sessions/revoke-after-login`).
-            "other_sessions_after": 0 if erneuert else auth.andere_sitzungen(request, u)})
+            "other_sessions_after": 0 if erneuert else auth.count_other_sessions(request, u)})
         if erneuert:
             auth.set_cookie(antwort, erneuert)   # dreht beim Login auch das CSRF-Token
         return antwort
@@ -253,7 +253,7 @@ def build_router(auth) -> APIRouter:
         # Step-up-Frische konstruktiv unerreichbar (403, `api.stepup_session`).
         u = auth.require_mfa(request)
         auth.totp_disable(u["id"])
-        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+        return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
 
     @r.post("/auth/totp/recovery")
     def totp_recovery(request: Request):
@@ -277,9 +277,9 @@ def build_router(auth) -> APIRouter:
             u = auth.session_user(request) or auth._pin_kettenschritt(request)
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
-            if not cfg.pin_als_erstfaktor():
+            if not cfg.pin_as_first_factor():
                 # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
-                return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(nxt)}", 303)
+                return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
             return auth.render_page("pin", request=request, next=nxt, error=error)
 
         @r.post("/auth/pin")
@@ -337,7 +337,7 @@ def build_router(auth) -> APIRouter:
             except ValueError as e:
                 raise HTTPException(400, str(e))
             auth.audit("pin_set", u["username"])
-            return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+            return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
 
         @r.post("/auth/pin/disable")
         def pin_off(request: Request):
@@ -346,7 +346,7 @@ def build_router(auth) -> APIRouter:
             # Die Zeile schreibt `disable_pin` selbst — mit Konto und IP (B5-02). Hier stand eine
             # zweite, die denselben Vorgang doppelt ins Log schrieb.
             auth.disable_pin(u["id"])
-            return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+            return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7
 
     # ---------- Geteiltes Ressourcen-Geheimnis (PIN/Passphrase ohne User-Konto) ----------
     if cfg.resource_locks_enabled:
@@ -429,7 +429,7 @@ def build_router(auth) -> APIRouter:
                     auth.audit("magic_send_error", detail=adresse)   # Fehler nicht nach außen leaken
             # immer dieselbe Antwort (keine User-Enumeration) — und zur selben Zeit: versandt
             # wird erst nach der Antwort (R4-05), im eigenen Mail-Arbeiter (B6-6).
-            return auth.nach_der_antwort(
+            return auth.after_response(
                 auth.render_page("magic_request", request=request, next=nxt, sent=True, error=""), _versand)
 
         # R4-02: Der Link aus der Mail führt auf eine Bestätigungsseite, erst deren POST löst ein.
@@ -445,7 +445,7 @@ def build_router(auth) -> APIRouter:
                 auth._token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="login",
-                                    action=auth.pfad(request, f"/auth/magic/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/magic/{_q(token)}"))
 
         @r.post("/auth/magic/{token}")
         def magic_redeem(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
@@ -466,7 +466,7 @@ def build_router(auth) -> APIRouter:
                 auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="verify_email",
-                                    action=auth.pfad(request, f"/auth/verify/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/verify/{_q(token)}"))
 
         @r.post("/auth/verify/{token}")
         def verify_email(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
@@ -509,14 +509,14 @@ def build_router(auth) -> APIRouter:
             if not auth.peek_magic(token, purpose="invite"):
                 auth._token_abgewiesen("invite", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return RedirectResponse(f"{auth.pfad(request, '/auth/register')}?invite={_q(token)}", 303)
+            return RedirectResponse(f"{auth.browser_path(request, '/auth/register')}?invite={_q(token)}", 303)
 
     # ---------- Erst-Admin per Einmal-Token (nur solange es keinen Admin gibt) ----------
     @r.get("/auth/claim-admin", response_class=HTMLResponse)
     def claim_admin(request: Request, token: str = ""):
         u = auth.current_user(request)
         if not u:
-            return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={auth.pfad(request, '/auth/claim-admin')}?token={_q(token)}", 303)
+            return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={auth.browser_path(request, '/auth/claim-admin')}?token={_q(token)}", 303)
         if auth.admin_exists():
             raise HTTPException(404)          # kein Hinweis darauf, dass es die Route mal gab
         # Gedrosselt und protokolliert (B5-16): Bis T-13 durfte ein angemeldetes Konto hier
@@ -529,7 +529,7 @@ def build_router(auth) -> APIRouter:
         if not auth._consume_admin_claim(token, u):
             auth._admin_claim_fehlgriff(u["username"], ip)
             raise HTTPException(403, auth.t("err.claim"))
-        return RedirectResponse(auth.pfad(request, cfg.admin_path), 303)
+        return RedirectResponse(auth.browser_path(request, cfg.admin_path), 303)
 
     # ---------- Step-up / Reauth (Sudo-Frische für mfa=True-Guards) ----------
     def _nur_sitzung(request: Request):
@@ -554,7 +554,7 @@ def build_router(auth) -> APIRouter:
     def reauth_page(request: Request, next: str = "", error: str = ""):
         u = _nur_sitzung(request)
         if not u:
-            return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.safe_next(next, request))}", 303)
+            return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.safe_next(next, request))}", 303)
         methods = auth.stepup_options(u)
         # Leere Liste heisst `stepup_strict=True` und nichts Passendes eingerichtet. Ohne eigene
         # Meldung stünde hier eine Seite ohne einziges Eingabefeld — der Nutzer sähe nicht, was
@@ -569,7 +569,7 @@ def build_router(auth) -> APIRouter:
         auth.require_csrf(request, csrf_tok)
         u = _nur_sitzung(request)
         if not u:
-            return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
+            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
         nxt = auth.safe_next(next, request)
         ip = auth.client_ip(request)
         methods = auth.stepup_options(u)
@@ -634,7 +634,7 @@ def build_router(auth) -> APIRouter:
                 except Exception:
                     auth.audit("reset_send_error", detail=adresse)
             # generisch (keine Enumeration), Versand nach der Antwort (R4-05/B6-6)
-            return auth.nach_der_antwort(auth.render_page("forgot", request=request, sent=True, error=""),
+            return auth.after_response(auth.render_page("forgot", request=request, sent=True, error=""),
                                          _versand)
 
         @r.get("/auth/reset", response_class=HTMLResponse)
@@ -667,7 +667,7 @@ def build_router(auth) -> APIRouter:
                     auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             konto = auth.store.get_user(vorab["user_id"])
-            mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
+            mangel = auth.password_policy_error(password, username=konto["username"] if konto else None,
                                           email=konto["email"] if konto else None)
             if mangel:
                 return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
@@ -682,7 +682,7 @@ def build_router(auth) -> APIRouter:
             # und liess die Fehlversuche stehen: Wer sich ausgesperrt hatte und den
             # vorgesehenen Weg ging, stand danach mit dem NEUEN Passwort vor derselben 429.
             # Damit ist der Reset der Weg aus der Sperre, der nicht an ihr hängt (H-10).
-            weg = auth.sperre_aufheben(uid, methoden=("password",))
+            weg = auth.lift_lockout(uid, methods=("password",))
             # Und die API-Keys (R4-14). Wer sein Passwort über „vergessen" zurücksetzt, hat sein
             # Konto verloren oder fürchtet, dass es übernommen ist — derselbe Fall wie der
             # Admin-Reset, der die Keys seit 0.18.0 widerruft. Ein Key ist eine zweite,
@@ -698,7 +698,7 @@ def build_router(auth) -> APIRouter:
                        f"uid={uid} fehlversuche_verworfen={weg}"
                        + (f" api_keys_revoked={keys}" if keys else "")
                        + (f" links_revoked={links}" if links else ""))
-            return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/'))}", 303)
+            return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/'))}", 303)
 
     # ---------- Registrierung (nur wenn allow_signup) ----------
     if cfg.allow_signup:
@@ -744,7 +744,7 @@ def build_router(auth) -> APIRouter:
                                         **_reg_ctx(nxt, invite=invite, email=email, error=msg))
             if not password:
                 return err(auth.t("err.required"))
-            mangel = auth.passwort_mangel(password, username=username, email=email)
+            mangel = auth.password_policy_error(password, username=username, email=email)
             if mangel:
                 return err(mangel)
             roles, is_admin = list(cfg.signup_default_roles), False
@@ -787,9 +787,9 @@ def build_router(auth) -> APIRouter:
             # vergebener Name (`admin`) plus Zieladresse ein Orakel — vergebene Adresse 200,
             # freie Adresse 409 username_taken. Ein vergebener Name ist ohnehin sichtbar (der
             # Nutzer muss einen anderen wählen); jetzt hängt die Antwort darauf nicht mehr an der Adresse.
-            if not name_ist_adresse and auth.kennung_vergeben(username):
+            if not name_ist_adresse and auth.identifier_taken(username):
                 return err(auth.t("err.username_taken"), 409)
-            if email_final and auth.kennung_vergeben(email_final):
+            if email_final and auth.identifier_taken(email_final):
                 if verify:
                     # R4-03: Mit Bestätigung antwortet eine vergebene Adresse wie eine freie —
                     # 409 und „E-Mail vergeben" verrieten jedem, welche Adressen ein Konto
@@ -813,7 +813,7 @@ def build_router(auth) -> APIRouter:
                     try:
                         platzhalter = auth.create_user(
                             f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
-                            password=password, roles=[], name_selbst_gewaehlt=True)
+                            password=password, roles=[], self_chosen_name=True)
                     except ConfigError:
                         # Wettlauf: Der Name ist seit der Prüfung oben vergeben (G12c) — dieselbe
                         # Antwort, die die Prüfung jetzt gäbe.
@@ -828,7 +828,7 @@ def build_router(auth) -> APIRouter:
                         except Exception:
                             auth.audit("signup_notice_error", detail=adresse)
                     auth.audit("signup_taken", username, ip, detail=adresse)
-                    return auth.nach_der_antwort(
+                    return auth.after_response(
                         auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True)),
                         _hinweis)
                 return err(auth.t("err.email_taken"), 409)
@@ -847,14 +847,14 @@ def build_router(auth) -> APIRouter:
                 uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
                                        email=email_final or None,
                                        email_verified=bool(inv and norm_email(inv.get("email"))),
-                                       name_selbst_gewaehlt=True)
+                                       self_chosen_name=True)
             except ConfigError as e:
                 # Wettlauf (G12c): Zwischen den Prüfungen oben und dem Anlegen hat eine
                 # gleichzeitige Anfrage die Kennung belegt, und die Datenbank weist ab. Dieselben
                 # Antworten wie oben — bis dahin eine 500. Ein vergebener Name bleibt sichtbar; eine
                 # vergebene Adresse mit Bestätigungspflicht bekommt die neutrale Seite (R4-03), ohne
                 # sie 409.
-                if getattr(e, "feld", None) == "username" and not name_ist_adresse:
+                if getattr(e, "field", None) == "username" and not name_ist_adresse:
                     return err(auth.t("err.username_taken"), 409)
                 if verify:
                     auth.audit("signup_taken", username, ip, detail=f"{email_final} wettlauf=1")
@@ -901,8 +901,8 @@ def build_router(auth) -> APIRouter:
                         senden()
                     except Exception:
                         _zuruecknehmen("versand")
-                return auth.nach_der_antwort(
-                    seite, _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
+                return auth.after_response(
+                    seite, _versand, on_overflow=lambda: _zuruecknehmen("warteschlange_voll"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
             resp = RedirectResponse(auth._login_redirect_after(request, token, uid, nxt), 303)
@@ -1043,7 +1043,7 @@ def build_router(auth) -> APIRouter:
         if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
-        mangel = auth.passwort_mangel(new, username=u["username"], email=u.get("email"), api=True)
+        mangel = auth.password_policy_error(new, username=u["username"], email=u.get("email"), api=True)
         if mangel:
             raise HTTPException(400, mangel)
         auth.set_password(u["id"], new)
@@ -1067,7 +1067,7 @@ def build_router(auth) -> APIRouter:
         def account_page(request: Request):
             u = auth.current_user(request)
             if not u:
-                return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/auth/account'))}", 303)
+                return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(auth.browser_path(request, '/auth/account'))}", 303)
             # Die Konto-Seite fragt, welche Faktoren ein Konto pflegt, nicht, womit die Login-Seite
             # beginnt: Eine PIN, die eine strikte Kette nur als Folgefaktor zulässt (G7), braucht
             # ihre Sektion trotzdem, ebenso eine, die die Kette verlangt (mit `pin_login=False`).
@@ -1132,7 +1132,7 @@ def build_router(auth) -> APIRouter:
             # Ist die Warteschlange voll, verfällt der Token (`senden.verwerfen`): Ein nie
             # zugestellter Link hielte sonst den Weg über LDAP/SAML bis zu seinem Ablauf auf.
             antwort = JSONResponse({"ok": True, "sent": True})
-            return auth.nach_der_antwort(antwort, senden, bei_ueberlauf=senden.verwerfen) \
+            return auth.after_response(antwort, senden, on_overflow=senden.verwerfen) \
                 if senden else antwort
 
         @r.get("/auth/email/{token}", response_class=HTMLResponse)
@@ -1142,7 +1142,7 @@ def build_router(auth) -> APIRouter:
                 auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="email_change",
-                                    action=auth.pfad(request, f"/auth/email/{_q(token)}"))
+                                    action=auth.browser_path(request, f"/auth/email/{_q(token)}"))
 
         @r.post("/auth/email/{token}")
         def email_confirm(request: Request, token: str, csrf_tok: str = Form("", alias="_csrf")):
@@ -1153,7 +1153,7 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("magic_invalid", request=request, status=400)
             if ergebnis == "vergeben":
                 return auth.render_page("magic_invalid", request=request, status=409)
-            ziel = auth.pfad(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
+            ziel = auth.browser_path(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
             return RedirectResponse(ziel, 303)
 
     # ---------- Eigene Sitzungen verwalten ----------
@@ -1241,7 +1241,7 @@ def build_router(auth) -> APIRouter:
                     oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
         if u:
             auth.audit("logout", u["username"], auth.client_ip(request))
-        resp = RedirectResponse(oidc_logout_url or auth.pfad(request, cfg.logout_redirect), 303)
+        resp = RedirectResponse(oidc_logout_url or auth.browser_path(request, cfg.logout_redirect), 303)
         auth.logout(request, resp)
         return resp
 
@@ -1378,7 +1378,7 @@ def build_router(auth) -> APIRouter:
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
-                                                  email_bestaetigt=bool(
+                                                  email_verified=bool(
                                                       (cfg.saml_email_trusted or security.beleg_attribut(cfg, "saml"))
                                                       and u.get("email")
                                                       and u.get("email_verified")))

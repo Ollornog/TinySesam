@@ -444,7 +444,7 @@ for _ in range(grenze_i - 1):
     auth_i3.store.fehlserie_erhoehen("bert")
 _vor_i3 = _serien_zeilen(auth_i3)
 _v = auth_i3._versuch_beginnen("bert", "192.0.2.60", "pin")
-auth_i3.sperre_aufheben(auth_i3.store.get_user_by_name("bert")["id"])
+auth_i3.lift_lockout(auth_i3.store.get_user_by_name("bert")["id"])
 auth_i3._record_login("bert", "192.0.2.60", False, "pin", versuch=_v)
 # (Mutationsprobe: in `record_login` `min(vorgebucht[2], nachher)` durch `vorgebucht[2]` ersetzen → rot.)
 r.check("p2 F3: Buchung über die Grenze, Serie vor dem Abschluss beendet → keine Zeile",

@@ -164,8 +164,8 @@ Kennung gehört zwei Konten.
   sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
   (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: im Panel
   („Umbenennen"), mit `tinysesam rename --db <datei> '#<user_id>' <neuer-name>` (G13), der Inhaber
-  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu,
-  durch_betreiber=True)` oder
+  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, new_username,
+  by_operator=True)` oder
   `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
   Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
   danach selbst nach.
@@ -269,7 +269,7 @@ Seite gehört und sich nicht ändert:
   lokales Konto nach jemandem aus dem Verzeichnis und erbt bei dessen Anmeldung Kennung und
   Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; Panel und `tinysesam rename`
   benennen als Betreiber um (der Merker fällt), wer aus dem einbettenden Dienst umbenennt, übergibt
-  `auth.change_username(uid, neu, durch_betreiber=True)`. Für den
+  `auth.change_username(uid, new_username, by_operator=True)`. Für den
   Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
   `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
   gelöscht hat, bleibt unerkannt.
@@ -285,26 +285,26 @@ Seite gehört und sich nicht ändert:
   von vor den Kennungen (bis 0.19) bleiben ohne und hängen an der Frist. **Mehrere Quellen aus
   demselben Verzeichnis** (Keycloak vor LDAP, dazu der direkte LDAP-Login): Die zweite Quelle bindet
   ein Konto der ersten nicht über den Namen; einzelne Konten öffnet
-  `auth.loese_fremde_bindung(quelle, user_id)`. Wer eigene Konten aus einem weiteren Identity
-  Provider anlegt, übergibt `create_user(…, name_selbst_gewaehlt=True)`.
+  `auth.federation_unbind(source, user_id)`. Wer eigene Konten aus einem weiteren Identity
+  Provider anlegt, übergibt `create_user(…, self_chosen_name=True)`.
 - **Bestandskonten binden** (F-11, G1): ohne auf die Anmeldung zu warten — ruhende Konten melden
   sich nie an. Die Startmeldung nennt, solange die Frist läuft, je Quelle die Zahl der Konten ohne
   Kennung. Einmal nach dem Update, aus dem einbettenden Dienst:
 
   ```python
-  bericht = auth.foederation_nachbinden("ldap")          # Trockenlauf: schreibt nichts
+  bericht = auth.federation_bind_existing("ldap")          # Trockenlauf: schreibt nichts
   for teil in ("gebunden", "konflikt", "mehrdeutig", "nicht_im_verzeichnis", "ohne_kennung",
                "abgewiesen", "lokal"):
       print(teil, [(e["username"], e.get("lokal"), e.get("verzeichnis")) for e in bericht[teil]])
-  auth.foederation_nachbinden("ldap", ausfuehren=True)  # erst nach dem Lesen
+  auth.federation_bind_existing("ldap", apply=True)       # erst nach dem Lesen
   ```
 
   LDAP sucht je Konto ohne Kennung im Verzeichnis (Dienstkonto oder anonym; bei
   `ldap_user_dn_template` eine BASE-Suche auf den DN — das Verzeichnis muss das Lesen erlauben) und
   verlangt genau einen Eintrag; ein Ausfall bricht vor dem ersten Schreiben ab. SAML hat keinen
-  Suchweg: `zuordnung={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
+  Suchweg: `mapping={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
   für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`lokal`), selbst
-  gewählte Namen und Namen aus einer anderen Quelle abgewiesen. **Vor `ausfuehren` den Bericht lesen:** War ein Name schon vor dem Lauf
+  gewählte Namen und Namen aus einer anderen Quelle abgewiesen. **Vor `apply=True` den Bericht lesen:** War ein Name schon vor dem Lauf
   wiederverwendet, bindet auch dieser Weg die falsche Person; `lokal` und `verzeichnis` stehen
   deshalb nebeneinander. Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
   detail=migration`), der Lauf als Summenzeile im Sicherheits-Log. Ein CLI-Befehl fehlt bewusst:
@@ -312,14 +312,14 @@ Seite gehört und sich nicht ändert:
 - **Ein Konto trägt je Quelle genau eine Kennung.** Taucht im Verzeichnis unter demselben Namen eine
   neue Kennung auf (Konto gelöscht und neu angelegt), wird das lokale Konto **nicht** übernommen.
 - **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot) und **ausdrücklich öffnen** (Frist
-  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.loese_fremde_bindung(quelle,
+  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.federation_unbind(source,
   user_id)` löst die Bindung für LDAP/SAML und öffnet die Bindung über den Namen für die nächste
   Anmeldung — `max(federation_name_binding_days, 1)` Tage lang oder bis sie steht. Der Vorgang
   steht im Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort
   ist die Kennung `sub` des Providers per Definition stabil.
 - **`ldap_attr_id` später einschalten** (Quelle lief bisher ohne Kennung): Die Konten tragen dann nur
   den Herkunfts-Platzhalter und binden sich über den Namen nur in der Frist — nach ihr zuerst
-  `foederation_nachbinden("ldap")` fahren.
+  `federation_bind_existing("ldap")` fahren.
 - **Freigaben je Anwendung** (mehrere OIDC-Clients): `auth.store.drop_oidc_grants_for_user(user_id,
   client=None)` entzieht sie sofort, ohne die Sitzung zu beenden — der Weg, wenn der Provider
   jemanden von einer Anwendung ausgeschlossen hat.
@@ -482,7 +482,7 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Weg (Faktor) | Was er belegt | TOTP danach (ohne Kette) | Anmerkung |
 |---|---|---|---|
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
-| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_als_erstfaktor()`) |
+| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_as_first_factor()`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
 | Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` und in Route-Ketten `require(factors=[…])` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |

@@ -177,7 +177,7 @@ rule, same `admin_implies=False` switch.
 
 `auth.create_user(…)` creates an account and returns its ID. It runs the same checks as every
 other path — the identifier must be free across usernames *and* emails, otherwise `ConfigError`
-(`e.feld`, `e.besitzer_id` say what collided):
+(`e.field`, `e.owner_id` say what collided):
 
 ```python
 uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # no password: OIDC, link, …
@@ -1012,8 +1012,8 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > sign-in, once, also audited — but only within `federation_name_binding_days` (default 30) of the
 > first start with the source enabled or of the account's creation; after that a dormant account
 > would fall to the next person who gets the same name in the directory. Bind the rest explicitly:
-> `auth.foederation_nachbinden("ldap")` (dry run by default, `ausfuehren=True` writes; SAML takes
-> `zuordnung={name: nameid}`), or open a single account with `auth.loese_fremde_bindung(source,
+> `auth.federation_bind_existing("ldap")` (dry run by default, `apply=True` writes; SAML takes
+> `mapping={name: nameid}`), or open a single account with `auth.federation_unbind(source,
 > user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name, and neither
 > does a name another source brought along when it created the account (an account created via
 > OIDC never binds to LDAP or SAML by name — the name may have been self-chosen at the IdP). If the
@@ -1123,6 +1123,14 @@ red until then, so nothing becomes a promise by accident. The config fields are 
 one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinySesamError`,
 `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
 
+**Tiers A and B are in English.** Up to 0.21.x some of these names were German
+(`foederation_nachbinden`, `kennung_vergeben`, `SICHERHEITSEREIGNISSE`, parameters such as
+`durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 renames them **without an alias** — the
+tier promises only start with this release; the full list old → new is in the
+[CHANGELOG](https://github.com/Ollornog/TinySesam/blob/main/CHANGELOG.md). The guard fails on a
+German word in any tier-A/B name, parameter, config field or error attribute. Values stay as they
+are: audit and log lines (fail2ban), reason codes and report keys.
+
 **Tier C warns.** Calling an old tier-C name (reading one, for the constants) raises a
 `DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
 lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
@@ -1139,27 +1147,27 @@ warn and doesn't work either.
 Building blocks for pages you build yourself — signatures and descriptions in
 [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md), the “B” sections.
 
-- **Your own account page:** `andere_sitzungen` (other sessions to end?), `own_events`,
+- **Your own account page:** `count_other_sessions` (other sessions to end?), `own_events`,
   `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
-  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `darf_mfa_einrichten`,
-  `nur_foederiert` (SSO-only account: no password to change), `passwort_mangel` (the rule for a
-  new password), `kennung_vergeben` and `NAME_MAX` (is a name or address free, how long may it
-  be), `request_email_change` (hand its result to `nach_der_antwort`) → `confirm_email_change`,
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `mfa_enrollment_allowed`,
+  `federated_only` (SSO-only account: no password to change), `password_policy_error` (the rule for a
+  new password), `identifier_taken` and `NAME_MAX` (is a name or address free, how long may it
+  be), `request_email_change` (hand its result to `after_response`) → `confirm_email_change`,
   `stepup_fresh`, `pending_user`, `session_user`.
 - **Your own admin panel or operator tools:** `get_user`, `find_user`, `user_roles`, `set_roles`,
-  `delete_user`, `sperre_aufheben` (like `tinysesam unlock`), `list_api_keys`, `api_key_art`,
+  `delete_user`, `lift_lockout` (like `tinysesam unlock`), `list_api_keys`, `api_key_kind`,
   `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
   `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
-  `FOEDERIERTE_QUELLEN`, `NACHBINDUNG_GRUENDE`.
+  `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
 - **Your own routes and extension points:** `client_ip` (the real client address behind
-  `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `pfad`
+  `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `browser_path`
   (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
   `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` and
-  `tinysesam.current_version()`, `SEITEN` (the page names `set_template` accepts),
-  `MFA_ENROLLMENT_ARTEN`, `TinySesamConfig.pruefen()` (re-check after changing `auth.cfg` at
-  runtime), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_als_erstfaktor()`.
+  `tinysesam.current_version()`, `PAGES` (the page names `set_template` accepts),
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (re-check after changing `auth.cfg` at
+  runtime), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
 - **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
   you verified that factor yourself, with the account from `session_user()` — it is the most
   powerful block here, and a mistake in front of it is a way in. Not needed for password, PIN and

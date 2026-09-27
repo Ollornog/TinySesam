@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
     -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
     -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
-    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle
+    -- Betreiber vergeben (Panel, API, Umbenennen mit `by_operator=True`) oder aus einer Quelle
     -- (dann sagt `name_quelle`, aus welcher).
     name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
@@ -164,13 +164,13 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
     -- Der Name gehört dem Konto, das sich zuletzt so angemeldet hat (`bindung_name_setzen` löscht
     -- ihn an fremden Bindungen), und kein anderes Konto kann ihn als Name oder Adresse annehmen
-    -- (Kennungs-Trigger, `TinySesam.kennung_vergeben`; Prüfrunde Sperren/Zähler 2026-09-27).
+    -- (Kennungs-Trigger, `TinySesam.identifier_taken`; Prüfrunde Sperren/Zähler 2026-09-27).
     name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
 );
 -- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
 -- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
--- und auch mit selbst gewähltem Namen. Geschrieben von `loese_fremde_bindung`, gelöscht, sobald
+-- und auch mit selbst gewähltem Namen. Geschrieben von `federation_unbind`, gelöscht, sobald
 -- die Bindung steht. Ohne Zeile entscheidet die Frist.
 CREATE TABLE IF NOT EXISTS namensbindung (
     quelle  TEXT NOT NULL,
@@ -371,7 +371,7 @@ def name_ungueltig(name) -> bool:
     """Enthält ein Benutzername Steuer-, Format- oder Trennzeichen (Cc/Cf/Zl/Zp)?
 
     Solche Zeichen trennen zwei Kennungen, die für einen Menschen und für einen HTTP-Header gleich
-    aussehen: `chefin\\x01` ist für `kennung_vergeben` ein anderer Name als `chefin`, aber die
+    aussehen: `chefin\\x01` ist für `identifier_taken` ein anderer Name als `chefin`, aber die
     Header-Säuberung der Forward-Auth nimmt das Steuerzeichen heraus — die geschützte App bekam
     `Remote-User: chefin` von einem fremden Konto (Angriff auf die dritte Runde). Dieselbe Regel
     wie für Adressen (`valid_email`)."""
@@ -396,9 +396,9 @@ def norm_kennung(kennung) -> str:
     wird erst durch die Faltung zu einem. Gezählt wird bewusst unter der gefalteten EINGABE,
     nicht unter dem Konto, das sie trifft: So verhält sich die Sperre für vorhandene und
     erfundene Kennungen gleich und verrät nicht, welche Adresse zu welchem Benutzernamen
-    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `sperre_aufheben`
+    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `lift_lockout`
     räumt beide). Namensvetter aus einem Bestand (`Émile`/`émile`) teilen einen Topf; neu
-    anlegen lässt sich keiner mehr (`TinySesam.kennung_vergeben` fragt
+    anlegen lässt sich keiner mehr (`TinySesam.identifier_taken` fragt
     `Store.konto_mit_topf`), und `delete_attempts_for` lässt einen geteilten Topf stehen."""
     k = unicodedata.normalize("NFKC", str(kennung or "")).strip().lower()
     if "@" in k:
@@ -955,7 +955,7 @@ class Store:
             # Die Trigger über die Töpfe (Nachrechnen und Kennungsraum, s. `_trigger_sql`). Eine
             # Datei, auf der sie sich nicht anlegen lassen (nur lesbar), darf den Start nicht
             # verhindern: Dort entsteht ohnehin kein neues Konto, und die Vorprüfung
-            # (`kennung_vergeben`) bleibt. Gesagt wird es trotzdem.
+            # (`identifier_taken`) bleibt. Gesagt wird es trotzdem.
             try:
                 self._trigger_setzen()
             except sqlite3.OperationalError as e:
@@ -1009,7 +1009,7 @@ class Store:
         sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
         (`Alice`/`alice`, `Émile`/`émile`, Vollbreite, Unicode- und A-Label-Domain). Die Datenbank
         kannte bis dahin nur `UNIQUE(username)` (BINARY) und `ux_users_email` — Prüfung
-        (`kennung_vergeben`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
+        (`identifier_taken`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
         derselben Kennung (eine als Name, eine als Adresse) kamen beide durch. Jetzt weist die
         Datenbank einen NEU vergebenen Topf ab, der schon Name oder Adresse eines anderen Kontos
         ist — in derselben Anweisung wie das Schreiben, unter dem einen Schreiber von SQLite.
@@ -1023,7 +1023,7 @@ class Store:
         * `id IS NOT NEW.id` (nur beim UPDATE): Dieselbe Zeile darf Name = Adresse tragen
           (E-Mail-Modus). Beim INSERT steht die Zeile noch nicht in der Tabelle.
         * Zeilen ohne Topf (NULL: ein fremder Schreiber, noch nicht nachgetragen) zählen erst ab
-          dem Nachtrag — den `kennung_vergeben` vor jeder Anlage anstösst.
+          dem Nachtrag — den `identifier_taken` vor jeder Anlage anstösst.
         * **Der Name im Verzeichnis eines ANDEREN Kontos** (`federated_identity.name_topf`, G5)
           zählt mit (Prüfrunde 2026-09-27). Unter einer Kennung prüft die Login-Route zwei
           Geheimnisse — das lokale Passwort des Kontos und das LDAP-Passwort des Eintrags. Nahm
@@ -1100,7 +1100,7 @@ class Store:
 
         Grenzen, bewusst in die sichere Richtung: Ein vom Betreiber umbenanntes Konto trug bis
         dahin dieselbe Zeile (`username_changed`) und bekommt den Merker auch — das Konto bindet
-        dann nicht mehr über den Namen, der Betreiber öffnet es mit `loese_fremde_bindung`. Was die
+        dann nicht mehr über den Namen, der Betreiber öffnet es mit `federation_unbind`. Was die
         Aufbewahrung (`audit_retention_days`) schon gelöscht hat, wird nicht erkannt; 0.20.1 kannte
         das Umbenennen nicht, dort bleibt nur die Registrierung.
 
@@ -1137,7 +1137,7 @@ class Store:
         NULL — für sie bleibt die Frist (`federation_name_binding_days`). Grenze in die sichere
         Richtung: Legt der Betreiber ein Konto an und bindet es binnen zwei Sekunden, gilt es als von
         der Quelle angelegt; eine andere Quelle bindet es dann nur, wenn er sie öffnet
-        (`loese_fremde_bindung`).
+        (`federation_unbind`).
 
         Genau einmal, am Merker `NAME_QUELLE_NACHGETRAGEN` im selben Commit: Liefe es bei jedem Start,
         bekäme ein vom Betreiber umbenanntes Konto seine Quelle zurück."""
@@ -1865,7 +1865,7 @@ class Store:
 
     def konto_mit_verzeichnisname(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
         """Das Konto (nicht `ausser`), an dessen Bindung diese Kennung als Name im Verzeichnis steht
-        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.kennung_vergeben` und
+        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.identifier_taken` und
         `tinysesam rename`; die Datenbank prüft dasselbe in den Kennungs-Triggern (`_trigger_sql`).
         Über `ix_fed_name_topf`, kein Scan."""
         topf = norm_kennung(kennung)
@@ -1890,7 +1890,7 @@ class Store:
         2026-09-26 kein Rückweg die Serie unter `alice.neu` — eigene Tippfehler summierten sich
         über die Jahre, und ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus.
 
-        Der eine Leser für jeden Rückweg: `sperre_aufheben`, `_serie_beenden` (Panel-Reset),
+        Der eine Leser für jeden Rückweg: `lift_lockout`, `_serie_beenden` (Panel-Reset),
         `tinysesam passwd` und `tinysesam unlock`."""
         u = self.get_user(user_id)
         if u is None:
@@ -2336,7 +2336,7 @@ class Store:
     def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
         """Ein Konto an eine Kennung binden, die noch niemandem gehört — oder nichts tun (G1).
 
-        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`), die zwischen Prüfung und
+        Für die Bestandsbindung (`TinySesam.federation_bind_existing`), die zwischen Prüfung und
         Schreiben durch ein ganzes Verzeichnis läuft. `link_federated` ersetzt eine Zeile mit
         derselben Kennung (`INSERT OR REPLACE`) — hier nähme das einem Konto, das sich inzwischen
         angemeldet hat, seine Bindung weg. Deshalb in EINER Transaktion: Gehört die Kennung schon
@@ -2369,7 +2369,7 @@ class Store:
             (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
 
     def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
-        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `loese_fremde_bindung`)."""
+        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `federation_unbind`)."""
         self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
                    (quelle, user_id, int(bis)))
 

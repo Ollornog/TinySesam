@@ -121,7 +121,7 @@ def register_passkey_routes(router, auth):
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
         auth._sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
-        resp = JSONResponse({"ok": True, "other_sessions": auth.andere_sitzungen(request, u)})  # B1-7
+        resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
         # Der Flow ist verbraucht (pop_flow) — das Cookie dazu bindet nichts mehr und ginge nur
         # noch an jede App mit (B-20). OIDC und SAML löschen ihres am Rückweg ebenso.
         auth._flow_cookie_loeschen(resp, _WAFLOW)
@@ -232,4 +232,4 @@ def register_passkey_routes(router, auth):
         # ist 404 und hinterlässt weder Zeile noch Ereignis.
         if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
             raise HTTPException(404, auth.t("api.not_found"))
-        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+        return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7

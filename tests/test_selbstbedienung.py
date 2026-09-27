@@ -388,7 +388,7 @@ a_v, ap_v, post_v, _ = _aufbau()
 uid_v = a_v.create_user("voll", password=PW, email="voll@example.com")
 a_v._postausgang.max_offen = 0
 _antw_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
-# (Mutationsprobe: `bei_ueberlauf=senden.verwerfen` in der Route weglassen → offener Token → rot.)
+# (Mutationsprobe: `on_overflow=senden.verwerfen` in der Route weglassen → offener Token → rot.)
 r.check("Postausgang voll: dieselbe Antwort, kein Link, und kein offener Token bleibt stehen",
         _antw_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
         and a_v.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE purpose='email_change'")["n"] == 1

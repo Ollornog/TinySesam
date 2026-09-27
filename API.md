@@ -34,7 +34,7 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 
 Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
 
-### `change_username(user_id, neu, ip: 'Optional[str]' = None, *, durch_betreiber: 'bool' = False) -> 'str'`
+### `change_username(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'`
 
 Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
 
@@ -54,9 +54,9 @@ Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token tr�
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'`
 
-Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
+Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.field`/`e.owner_id` sagen, was kollidierte).
 
 ### `csrf_token(request: 'Optional[Request]' = None) -> 'str'`
 
@@ -74,9 +74,13 @@ Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage.
 
 Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
 
-### `foederation_nachbinden(quelle: 'str', *, zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
+### `federation_bind_existing(source: 'str', *, mapping: 'Optional[dict]' = None, apply: 'bool' = False) -> 'dict'`
 
 Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
+
+### `federation_unbind(source: 'str', user_id: 'int') -> 'int'`
+
+Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
@@ -106,10 +110,6 @@ Ist dieses Konto Admin? Nimmt eine Kontozeile, kein Request.
 
 Ein NEUES CSRF-Token würfeln und als Cookie setzen; Rückgabe ist das Token. Für eine Seite mit Formular ist `ensure_csrf()` der Weg — dieses hier entwertet die Formulare in allen anderen offenen Reitern.
 
-### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
-
-Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
-
 ### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
 True, wenn die **Anmeldung** höchstens `stepup_max_age_sec` zurückliegt.
@@ -130,7 +130,7 @@ Den TOTP-Schritt erbringen — mit einem TOTP-Code oder einem Einmal-Code, gedro
 
 Die Sitzung dieses Requests beenden, die Bereichs-Freigaben dieses Browsers mit, und die Cookies löschen — Sitzung, Freigabe und seit 0.20.1 auch das CSRF-Cookie, dazu die Cookies unter den Namen von vor dem `__Host-`-Präfix.
 
-### `public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+### `public_base(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'`
 
 Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links, Redirect-URIs, SAML-Metadaten. Leer heißt: es gibt keine, der Aufrufer bricht ab.
 
@@ -196,7 +196,7 @@ Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach auß
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `nach_der_antwort` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `after_response` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
 
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
@@ -268,7 +268,7 @@ Vorgabe: der Satz, den Authelia/Traefik-Aufbauten erwarten.
 
 Wert: `{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}`
 
-### `SICHERHEITSEREIGNISSE` — Konstante
+### `SECURITY_EVENTS` — Konstante
 
 Die Ereignisse, zu denen `on_security_event` gerufen wird — alles, was einen Anmeldefaktor des Kontos anlegt, ändert, entfernt oder verbraucht.
 
@@ -362,19 +362,19 @@ Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau 
 
 Gibt es mindestens einen Admin? Die beiden Bootstrap-Wege greifen nur, solange nicht.
 
+### `after_response(resp, task, on_overflow=None)`
+
+`task()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
+
 ### `all_security() -> 'dict'`
 
 Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Panel steht).
 
-### `andere_sitzungen(request, user, token: 'Optional[str]' = None) -> 'int'`
-
-Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
-
-### `api_key_art(key) -> 'str'`
+### `api_key_kind(key) -> 'str'`
 
 Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
 
-### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
+### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
 Einen bestätigten Faktor anwenden: an die laufende Sitzung desselben Users anhängen (Ketten-Schritt) ODER eine neue Sitzung starten (Erstfaktor/Identitätswechsel). Gibt (token, session_ok, is_new). Bei is_new muss der Aufrufer set_cookie(resp, token) rufen.
 
@@ -386,6 +386,10 @@ IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisier
 
 Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
 
+### `browser_path(request: 'Optional[Request]', path: 'str') -> 'str'`
+
+Einen Pfad der App (`/auth/login`, `login_path`, `admin_path`, …) in den Pfad umrechnen, den der Browser braucht — mit dem Montage-Präfix davor (T-15).
+
 ### `client_ip(request: 'Request') -> 'str'`
 
 Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der Peer in `trusted_proxies` steht — sonst wäre der Header fälschbar.
@@ -394,13 +398,13 @@ Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der
 
 Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
 
+### `count_other_sessions(request, user, token: 'Optional[str]' = None) -> 'int'`
+
+Wie viele Sitzungen dieses Kontos laufen AUSSER der aktuellen? (B1-7)
+
 ### `create_magic_token(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'`
 
 Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
-
-### `darf_mfa_einrichten(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'`
-
-Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
 
 ### `delete_user(user_id: 'int') -> 'bool'`
 
@@ -410,11 +414,15 @@ Ein Konto samt aller Zugangsdaten löschen (B5-08) — und es aus dem Audit-Log 
 
 Die PIN eines Kontos entfernen (wird protokolliert — ein zweiter Faktor verschwindet nicht unbemerkt).
 
+### `federated_only(user_id) -> 'bool'`
+
+Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
+
 ### `find_user(identifier) -> 'Optional[dict]'`
 
 Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 
-### `flow_cookie_name(basis: 'str') -> 'str'`
+### `flow_cookie_name(base: 'str') -> 'str'`
 
 Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
 
@@ -430,13 +438,17 @@ Ein Konto per ID lesen, oder None.
 
 Hat dieses Konto eine PIN eingerichtet?
 
+### `identifier_taken(identifier, exclude_id=None) -> 'Optional[dict]'`
+
+Gehört diese Login-Kennung schon einem Konto — in IRGENDEINEM der beiden Namensräume?
+
 ### `json_body(request: 'Request') -> 'dict'`
 
 JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500. Erzwingt CSRF (Header X-CSRF-Token) für cookie-basierte Clients; API-Key-Requests sind ausgenommen.
 
-### `kennung_vergeben(kennung, exclude_id=None) -> 'Optional[dict]'`
+### `lift_lockout(user_id, methods=None) -> 'int'`
 
-Gehört diese Login-Kennung schon einem Konto — in IRGENDEINEM der beiden Namensräume?
+Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
 
 ### `list_api_keys(user_id)`
 
@@ -454,19 +466,15 @@ Der Link, den der Empfänger anklickt — Pfad je nach Zweck (`TOKEN_PATHS`). `b
 
 Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
-### `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)`
+### `mfa_enrollment_allowed(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'`
 
-`auftrag()` erst NACH dem Versand der Antwort ausführen, im eigenen Mail-Arbeiter (`mailer.Postausgang`, R4-05/B6-6). Gibt `resp` zurück.
-
-### `nur_foederiert(user_id) -> 'bool'`
-
-Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwort.
+Darf dieses Konto den von der Kette verlangten Faktor **selbst** einrichten? (R3-1)
 
 ### `own_events(user_id: 'int', limit: 'int' = 20) -> 'list'`
 
 Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
 
-### `passwort_mangel(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
+### `password_policy_error(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
 
 Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
 
@@ -477,10 +485,6 @@ Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrier
 ### `pending_user(request) -> 'Optional[dict]'`
 
 User einer Session, die noch im MFA-Schritt hängt (mfa_ok=0).
-
-### `pfad(request: 'Optional[Request]', pfad: 'str') -> 'str'`
-
-Einen Pfad der App (`/auth/login`, `login_path`, `admin_path`, …) in den Pfad umrechnen, den der Browser braucht — mit dem Montage-Präfix davor (T-15).
 
 ### `recovery_codes_remaining(user_id) -> 'int'`
 
@@ -498,11 +502,11 @@ Einen Passkey eines Kontos entfernen — Löschen, Audit-Zeile und `passkey_remo
 
 Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperren).
 
-### `request_email_change(user_id, neu, base_url)`
+### `request_email_change(user_id, new_email, base_url)`
 
-Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `bei_ueberlauf` für `nach_der_antwort` (seit 2026-09-27).
+Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `after_response`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `on_overflow` für `after_response` (seit 2026-09-27).
 
-### `require_public_base(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'`
+### `require_public_base(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'`
 
 Wie `public_base()`, nur ohne Rückweg: keine geprüfte Basis → `ConfigError`.
 
@@ -529,10 +533,6 @@ Eigenes Rate-Limit-Backend einhängen — beliebiges Objekt mit allow(key, max, 
 ### `set_roles(user_id, roles)`
 
 Die Rollen eines Kontos ersetzen.
-
-### `sperre_aufheben(user_id, methoden=None) -> 'int'`
-
-Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
 
 ### `stepup_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
@@ -570,19 +570,19 @@ Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; 
 
 Klassenattribute, gelesen als `TinySesam.NAME` oder `auth.NAME`. Der Wert gehört zur Zusage — der Wächter hält ihn fest.
 
-### `FOEDERIERTE_QUELLEN` — Konstante
+### `FEDERATED_SOURCES` — Konstante
 
 Quellen, die eine fremde Identität über eine stabile Kennung binden (F-11).
 
 Wert: `('ldap', 'saml')`
 
-### `MFA_ENROLLMENT_ARTEN` — Konstante
+### `MFA_ENROLLMENT_MODES` — Konstante
 
 Die erlaubten Werte von `cfg.mfa_enrollment` — als Liste, damit ein Tippfehler beim Aufbau auffällt und nicht erst dann, wenn jemand vor der Tür steht.
 
 Wert: `('first_login', 'grace', 'strict')`
 
-### `NACHBINDUNG_GRUENDE` — Konstante
+### `NAME_BINDING_REFUSALS` — Konstante
 
 Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — für Log und Bericht.
 
@@ -594,7 +594,7 @@ Länger ist kein Name mehr, sondern eine Nutzlast (Header, Logzeilen, Panel).
 
 Wert: `150`
 
-### `SEITEN` — Konstante
+### `PAGES` — Konstante
 
 Die Seiten, die sich ersetzen lassen — dieselbe Liste, die `render_page()` bedient.
 
@@ -612,13 +612,13 @@ Felder dieser Stufe (Bedeutung in [KONFIGURATION.md](KONFIGURATION.md)): `totp_r
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
-Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
+Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann (`pin_as_first_factor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
 
-### `TinySesamConfig.pin_als_erstfaktor() -> 'bool'`
+### `TinySesamConfig.pin_as_first_factor() -> 'bool'`
 
 Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne Sitzung?
 
-### `TinySesamConfig.pruefen() -> 'list[str]'`
+### `TinySesamConfig.validate() -> 'list[str]'`
 
 Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
 

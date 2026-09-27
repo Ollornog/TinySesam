@@ -716,7 +716,7 @@ def register_oidc_routes(router, auth):
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
             # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
-            while auth.kennung_vergeben(username):
+            while auth.identifier_taken(username):
                 i += 1
                 username = f"{base_un}{i}"
             try:
@@ -752,7 +752,7 @@ def register_oidc_routes(router, auth):
                 # Provider sie nicht belegte, bekommt sie, sobald er es tut — sofern sie frei ist.
                 # Gehört sie schon einem anderen Konto, bleibt es ohne (fail-closed, wie beim
                 # Anlegen); der Betreiber sieht die Zeile.
-                if auth.kennung_vergeben(mail, exclude_id=uid):
+                if auth.identifier_taken(mail, exclude_id=uid):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                "nachgetragen=0")
                 else:
@@ -804,7 +804,7 @@ def register_oidc_routes(router, auth):
         # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
-                                              email_bestaetigt=mail_bestaetigt)
+                                              email_verified=mail_bestaetigt)
         # 4a: Das Refresh-Token merken — mit ihm fragt TinySesam den Provider regelmässig, ob die
         # Person noch darf (`oidc_session_refresh_minutes`). Ohne Refresh-Token geht das nicht.
         if tok.get("refresh_token"):

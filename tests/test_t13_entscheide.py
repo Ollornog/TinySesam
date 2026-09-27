@@ -50,9 +50,9 @@ def _app(**cfg):
 VIERZEHN, FUENFZEHN, ELF = "Kiefer-Spur-47", "Kiefer-Spur-478", "Kiefer-Spur"
 auth, app = _app()
 r.check("B2-4: Vorgabe (keine Kette, das Passwort meldet allein an): 14 Zeichen zu kurz",
-        "min. 15" in (auth.passwort_mangel(VIERZEHN) or ""), str(auth.passwort_mangel(VIERZEHN)))
-r.check("… 15 Zeichen gehen durch", auth.passwort_mangel(FUENFZEHN) is None,
-        str(auth.passwort_mangel(FUENFZEHN)))
+        "min. 15" in (auth.password_policy_error(VIERZEHN) or ""), str(auth.password_policy_error(VIERZEHN)))
+r.check("… 15 Zeichen gehen durch", auth.password_policy_error(FUENFZEHN) is None,
+        str(auth.password_policy_error(FUENFZEHN)))
 with TestClient(_app(allow_signup=True)[1]) as c:
     antwort = c.post("/auth/register", data={"username": "neuling", "password": VIERZEHN})
 r.check("… und die Registrierung hält sich daran", antwort.status_code == 400 and "min. 15" in antwort.text,
@@ -66,13 +66,13 @@ for kette, einschreiben, erwartet in ((["password", "totp"], "first_login", "min
                                       (["pin", "password"], "strict", None),
                                       (["password"], "strict", "min. 15")):
     a_k, _ = _app(login_chain=kette, pin_enabled="pin" in kette, mfa_enrollment=einschreiben)
-    befund = a_k.passwort_mangel(ELF)
+    befund = a_k.password_policy_error(ELF)
     r.check(f"B2-4: Kette {kette}, Einrichtung {einschreiben}: 11 Zeichen "
             f"{'gehen durch' if erwartet is None else 'zu kurz'}",
             (befund is None) if erwartet is None else (erwartet in (befund or "")), str(befund))
 auth.set_security("password_min_length_single_factor", 8)
 r.check("B2-4 einstellbar: auf 8 gestellt, gilt wieder die Grundlänge",
-        auth.passwort_mangel(ELF) is None, str(auth.passwort_mangel(ELF)))
+        auth.password_policy_error(ELF) is None, str(auth.password_policy_error(ELF)))
 try:
     auth.set_security("password_min_length_single_factor", 7)
     _unter = False
@@ -120,7 +120,7 @@ auth.store._exec("UPDATE fehlserie SET zuletzt = zuletzt - 91 * 86400 WHERE topf
 auth.gc()
 r.check("… wohl aber eine nicht ausgelöste nach 90 Tagen Ruhe", auth.store.fehlserie("alt-und-halb") == 0)
 
-auth.sperre_aufheben(uid, methoden=("password",))           # der Weg des Selbstbedienungs-Resets
+auth.lift_lockout(uid, methods=("password",))           # der Weg des Selbstbedienungs-Resets
 r.check("B2-6: ein Reset beendet die Serie (neu binden)", _login(c, "serie", PW).status_code == 303,
         "nach dem Reset weiter gesperrt")
 
@@ -169,7 +169,7 @@ for wert, gilt in ((9, False), (10, True), (100000, True), (100001, False)):
         ok_ = False
     r.check(f"B2-6 einstellbar: {wert} {'erlaubt' if gilt else 'abgewiesen'}", ok_ is gilt)
 # (Mutationsproben: die Serien-Prüfung in `versuch_beginnen` streichen → erste Prüfung rot;
-#  `fehlserie_loeschen` in `sperre_aufheben` streichen → Reset/Panel rot; in `gc_fehlserien` die
+#  `fehlserie_loeschen` in `lift_lockout` streichen → Reset/Panel rot; in `gc_fehlserien` die
 #  Bedingung `anzahl < ?` streichen → „läuft nicht ab" rot.)
 
 # Befunde aus dem Angriff auf B2-6 — je einer ein eigener Test.
@@ -196,7 +196,7 @@ uid_t = auth.create_user("zweit", password=PW)
 for _ in range(10):
     auth._record_login("zweit", "198.51.100.4", False, "totp",
                        versuch=auth._versuch_beginnen("zweit", "198.51.100.4", "totp"))
-auth.sperre_aufheben(uid_t, methoden=("password",))            # Selbstbedienungs-Reset
+auth.lift_lockout(uid_t, methods=("password",))            # Selbstbedienungs-Reset
 r.check("B2-6 + R4-13: der Selbstbedienungs-Reset räumt TOTP-Fehlgriffe der Serie NICHT",
         auth.store.fehlserie("zweit") == 10 and auth._versuch_beginnen("zweit", "198.51.100.5", "password") is None,
         str(auth.store.fehlserie("zweit")))
@@ -206,7 +206,7 @@ uid_pin = auth.create_user("pinopfer", password=PW)
 for _ in range(10):
     auth._record_login("pinopfer", "198.51.100.8", False, "pin",
                        versuch=auth._versuch_beginnen("pinopfer", "198.51.100.8", "pin"))
-auth.sperre_aufheben(uid_pin, methoden=("password",))          # Selbstbedienungs-Reset
+auth.lift_lockout(uid_pin, methods=("password",))          # Selbstbedienungs-Reset
 r.check("B2-6: eine Serie aus falschen PINs (Erstfaktor, von jedem erzeugbar) räumt der Reset",
         auth.store.fehlserie("pinopfer") == 0, str(auth.store.fehlserie("pinopfer")))
 
@@ -432,7 +432,7 @@ r.check("… und Mallorys Kontoseite sieht einen Treffer wie einen Fehlgriff (ke
         f"{_ev_d0[:2]} {_ev_d1[:2]} {_ev_d2[:2]}")
 r.check("… Mallorys eigene Anmeldung geht weiter (Gegenprobe)",
         _login(TestClient(ap_d), "alice.neu", MPW).status_code == 303)
-a_d.change_username(_mallory_d, "mallory", durch_betreiber=True)
+a_d.change_username(_mallory_d, "mallory", by_operator=True)
 _danach_d = _login(TestClient(ap_d), "alice.neu", LPW)
 r.check("… nach dem Umbenennen durch den Betreiber (die Abhilfe aus der Logzeile) meldet sich Alice unter "
         "`alice.neu` an", _danach_d.status_code == 303 and _sitzung_von(a_d, _danach_d) == _alice_d,
@@ -447,9 +447,9 @@ _alice_a = a_a.store.get_user_by_name("alice")["id"]
 a_a.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
 _login(TestClient(ap_a), "alice.neu", LPW)
 _mallory_a = a_a.create_user("mallory", password=MPW)
-_vergeben_a = a_a.kennung_vergeben("ALICE.NEU")
+_vergeben_a = a_a.identifier_taken("ALICE.NEU")
 try:
-    a_a.change_username(_mallory_a, "alice.neu", durch_betreiber=True)    # auch der Betreiber nicht
+    a_a.change_username(_mallory_a, "alice.neu", by_operator=True)    # auch der Betreiber nicht
     _selbst_a = "umbenannt"
 except ValueError:
     _selbst_a = "abgewiesen"
@@ -477,7 +477,7 @@ with redirect_stdout(_cli_aus_a), redirect_stderr(_cli_aus_a):
         _cli_a = 0
     except SystemExit as e:
         _cli_a = e.code
-# (Mutationsproben: `konto_mit_verzeichnisname` aus `kennung_vergeben` nehmen → die Vorprüfung rot;
+# (Mutationsproben: `konto_mit_verzeichnisname` aus `identifier_taken` nehmen → die Vorprüfung rot;
 #  den federated-Teil aus den Kennungs-Triggern nehmen → „Datenbank" rot.)
 r.check("p1-d (A): der Verzeichnisname eines anderen Kontos gilt als vergeben (Vorprüfung, jede Schreibweise)",
         _vergeben_a is not None and _vergeben_a["id"] == _alice_a, str(_vergeben_a))
@@ -506,7 +506,7 @@ r.check("Neben LDAP: keine Selbst-Umbenennung (Methode, Route, Konto-Seite)",
         _ldap_selbst == a_a.t("api.username_from_directory") and _route_sb.status_code in (400, 403)
         and "data-act=setname" not in _seite_sb and a_a.store.get_user(_mallory_a)["username"] == "mallory",
         f"{_ldap_selbst!r} HTTP {_route_sb.status_code}")
-a_a.change_username(_alice_a, "alice.neu", durch_betreiber=True)
+a_a.change_username(_alice_a, "alice.neu", by_operator=True)
 r.check("… Alices Konto darf ihn annehmen (ihre eigene Bindung zählt nicht)",
         a_a.store.get_user(_alice_a)["username"] == "alice.neu")
 
@@ -520,7 +520,7 @@ a_b.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
 _login(TestClient(ap_b), "alice", LPW)
 _alice_b = a_b.store.get_user_by_name("alice")["id"]
 a_b.create_user("chefin-b", password=PW, is_admin=True)
-a_b.change_username(_alice_b, "alice.meier", durch_betreiber=True)
+a_b.change_username(_alice_b, "alice.meier", by_operator=True)
 _kennungen_b = a_b.store.zaehl_kennungen(_alice_b)
 for _i in range(10):
     _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", "falsch-falsch-1")
@@ -538,7 +538,7 @@ r.check("p1-b: nach dem Umbenennen durch den Betreiber zählt der alte Name als 
         and _nach_b.status_code == 303 and _sitzung_von(a_b, _nach_b) == _alice_b,
         f"{_kennungen_b}, {_vor_b}/{_panel_b}/{_nach_b.status_code}")
 r.check("… und kein anderes Konto kann sich so nennen",
-        a_b.kennung_vergeben("alice", exclude_id=_mallory_b) is not None)
+        a_b.identifier_taken("alice", exclude_id=_mallory_b) is not None)
 
 # p1-a: Nach Umbenennen und Wiedervergabe im Verzeichnis trug der Vorbesitzer den Namen weiter an
 # seiner Bindung. Jede volle Anmeldung des Vorbesitzers (und jeder Betreiber-Reset für ihn) beendete
@@ -551,7 +551,7 @@ _berta_x = a_x.store.get_user_by_name("berta")["id"]
 a_x.store._exec("UPDATE federated_identity SET gebunden_at = gebunden_at - 100 WHERE user_id=?", (_berta_x,))
 _login(TestClient(ap_x), "x", LPW)
 _anton_x = a_x.store.get_user_by_name("x")["id"]
-a_x.change_username(_anton_x, "anton", durch_betreiber=True)
+a_x.change_username(_anton_x, "anton", by_operator=True)
 a_x.set_password(_anton_x, PW)
 a_x.ldap = _Verzeichnis({"x.alt": {"pw": LPW, "id": "uuid-a"}, "x": {"pw": LPW, "id": "uuid-b"}})
 _login(TestClient(ap_x), "x", LPW)                  # Berta heisst jetzt `x` im Verzeichnis
@@ -613,7 +613,7 @@ a_y, ap_y = _ldap_app()
 a_y.ldap = _Verzeichnis({"y": {"pw": LPW, "id": "uuid-a"}})
 _login(TestClient(ap_y), "y", LPW)
 _alt_y = a_y.store.get_user_by_name("y")["id"]
-a_y.change_username(_alt_y, "yves", durch_betreiber=True)           # vermerkt `y` (p1-b)
+a_y.change_username(_alt_y, "yves", by_operator=True)           # vermerkt `y` (p1-b)
 _vermerk_y = a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alt_y,))["name_topf"]
 a_y.ldap = _Verzeichnis({"y.alt": {"pw": LPW, "id": "uuid-a"}, "y": {"pw": LPW, "id": "uuid-c"}})
 _neu_y = _login(TestClient(ap_y), "y", LPW)
@@ -1095,7 +1095,7 @@ _login(ce8, "chef-e8", PW)
 ce8.post(f"/auth/admin/api/users/{uid_e8}/disable", json={"disabled": True})
 r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"anzahl": 1, "grund": "sperre"}) in ereignisse,
         str(ereignisse[-2:]))
-# (Mutationsproben: `seit=since` in `sperre_aufheben` streichen → (a) rot; `disabled_by` fest auf
+# (Mutationsproben: `seit=since` in `lift_lockout` streichen → (a) rot; `disabled_by` fest auf
 #  None → (b) rot; Index streichen → (c) rot; `_andere_nach_abschluss` leer → (d) rot;
 #  `sicherheitsereignis` in `_keys_widerrufen` streichen → (e) rot.)
 

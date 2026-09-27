@@ -32,15 +32,15 @@ class ConfigError(TinySesamError, ValueError):
 
     Erbt von `ValueError`, weil die Wächter das bisher warfen.
 
-    Zwei Felder sind gesetzt, wo eine **Kennung** im Spiel ist (`create_user`): `feld` ist
-    `"username"` oder `"email"`, `besitzer_id` die ID des Kontos, dem die Kennung gehört.
+    Zwei Felder sind gesetzt, wo eine **Kennung** im Spiel ist (`create_user`): `field` ist
+    `"username"` oder `"email"`, `owner_id` die ID des Kontos, dem die Kennung gehört.
     Damit muss niemand den Meldungstext lesen, um die beiden Fälle zu trennen — der Text ist
     übersetzt und gehört dem Menschen, die Attribute dem Programm. Sonst leer bzw. `None`."""
 
     #: "username" | "email" | "" — betroffenes Feld, wo es eines gibt.
-    feld: str = ""
+    field: str = ""
     #: ID des Kontos, dem die Kennung schon gehört (sonst None).
-    besitzer_id: "Optional[int]" = None
+    owner_id: "Optional[int]" = None
 
 
 class MissingExtra(TinySesamError, RuntimeError):
@@ -49,8 +49,8 @@ class MissingExtra(TinySesamError, RuntimeError):
     Trägt den Namen des Extras, damit eine App die Installationszeile bauen kann, statt sie
     aus dem Meldungstext zu fischen."""
 
-    def __init__(self, nachricht: str, extra: str = ""):
-        super().__init__(nachricht)
+    def __init__(self, message: str, extra: str = ""):
+        super().__init__(message)
         self.extra = extra
 
 

@@ -272,7 +272,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     if "totp" in kette and not _an(config, "totp_enabled"):
         fehler.append("login_chain verlangt 'totp', aber totp_enabled=False — unerfüllbar.")
     # Eine PIN hinter einem anderen Faktor ist in einer NICHT strikten Kette mit `pin_login`
-    # zugleich Erstfaktor (`pin_als_erstfaktor`): Wer mit ihr beginnt, erfüllt die Kette danach
+    # zugleich Erstfaktor (`pin_as_first_factor`): Wer mit ihr beginnt, erfüllt die Kette danach
     # mit dem Passwort. Dann rät jeder die PIN ohne das Passwort, und ein Selbstbedienungs-Reset
     # räumt diese Fehlgriffe aus der Serie (R2-2) — die Konfiguration sagt „Folgefaktor", das
     # Verhalten „Erstfaktor" (G7). In einer strikten Kette schliesst TinySesam den Gästeweg selbst.
@@ -464,7 +464,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             "ungebundenes Konto unbegrenzt über seinen Namen. Ein ruhendes Konto (jemand ist "
             "ausgeschieden) fällt dann an die nächste Person, die im Verzeichnis denselben Namen "
             "bekommt — samt Rollen und Admin-Recht. Besser: den Bestand einmal binden "
-            "(auth.foederation_nachbinden(quelle), erst als Trockenlauf) und die Vorgabe (30) lassen.")
+            "(auth.federation_bind_existing(source), erst als Trockenlauf) und die Vorgabe (30) lassen.")
 
     # Pfade der App tragen seit T-15 keinen Montage-Präfix mehr — TinySesam setzt ihn aus dem Pfad
     # der base_url davor. Wer ihn für die alte Fassung von Hand eingetragen hat (`/sso/auth/login`),

@@ -473,7 +473,7 @@ r = TestClient(app_v, client=("203.0.113.22", 40000)).post(
 assert r.status_code == 429, f"die Konto-Schwelle hat bei {geprueft} Versuchen nicht gegriffen: {r.status_code}"
 print(f"  ✓ …auch über Leerzeichen und Schreibweisen der Kennung: {geprueft} geprüft, dann zu")
 # Aufheben muss denselben Topf treffen: Die Fehlversuche stehen unter 'opfer', nicht unter '  oPfEr  '.
-assert auth_v.sperre_aufheben(auth_v.find_user("opfer")["id"]) == geprueft
+assert auth_v.lift_lockout(auth_v.find_user("opfer")["id"]) == geprueft
 assert auth_v.store.count_fails(0, username="opfer") == 0
 os.remove(db_v)
 
@@ -481,7 +481,7 @@ os.remove(db_v)
 # Passwort, PIN und TOTP füllen denselben Topf; ein Erfolg räumte bis T-13 nur die eigene
 # Methode. Wer nach zwei vertippten Passwörtern per PIN VOLLSTÄNDIG hineinkam, trug die zwei
 # weiter mit sich. Ein Teil-Erfolg (Passwort vor einem TOTP-Schritt) räumt weiter NUR sich
-# selbst — sonst wäre der zweite Faktor wieder ratbar. (Mutationsprobe: `sperre_aufheben` in
+# selbst — sonst wäre der zweite Faktor wieder ratbar. (Mutationsprobe: `lift_lockout` in
 # `start_session` streichen → die erste Zusage fällt.)
 db_m = os.path.join(tempfile.mkdtemp(), "t.db")
 auth_m = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_m, cookie_secure=False,
