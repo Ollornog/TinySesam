@@ -25,6 +25,14 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   seine Tests einmal mit `python -W error::DeprecationWarning` laufen**. Eine Unterklasse von
   `TinySesam`, die einen dieser Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`:
   Die eingebauten Routen rufen jetzt `_name`, die Überschreibung wirkt nicht mehr.
+- **Test-Fakes auf einen alten Namen wirken nicht mehr.** `auth.check_password = fake` oder
+  `mock.patch.object(auth, "rate_ok", …)` ersetzten bis 0.21.x, was die eingebauten Routen riefen.
+  Seit diesem Release rufen sie die `_`-Namen (`_check_password`, `_rate_ok` …) — ein solcher Fake
+  wird nie gerufen, und der Test prüft still etwas anderes (gemessen: 0 Aufrufe, der Login gelingt
+  mit 303). **Fakes auf den neuen Namen setzen** (`auth._check_password = fake`). Die Zuweisung auf
+  einen alten Namen am Objekt löst jetzt eine `RuntimeWarning` aus (ohne Filter sichtbar), die das
+  Ziel nennt; ein Patch an der Klasse (`mock.patch.object(TinySesam, "check_password", …)`) ersetzt
+  den Alias selbst, bleibt unbemerkt und wirkt ebenso wenig.
 - **Eigene Login-Seiten nehmen `anmelden_passwort`** (PO-Befund 2026-09-26). Wer dem Muster „Your
   own login page“ der README bis 0.21.0 gefolgt ist (`check_password` + `start_session`), hat auf
   seiner eigenen Route **keinen Schutz gegen Passwort-Raten** — keine Sperre, keinen Zähler, keine
@@ -67,7 +75,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   PIN, TOTP). Ein AST-Wächter hält fest, dass `login_submit`, `pin_submit` und `totp_submit` ihren
   Baustein rufen und keinen inneren Prüfer selbst; das Beispiel der README läuft wörtlich und
   muss sperren. Der Wächter in `tests/test_stepup.py` zählt `anmelden_*` zu den Stellen mit
-  Sitzungswirkung.
+  Sitzungswirkung. Ein Fake auf dem alten Namen (`auth.check_password = fake`,
+  `mock.patch.object(auth, "rate_ok", …)`) wird nie gerufen und warnt, derselbe auf dem neuen
+  (`auth._check_password`) wirkt.
 
 - **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
   `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
@@ -80,14 +90,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 240 (darunter
   `anmelden_*` und die 11 Namen am Ergebnistyp `Anmeldung`), B 64, C 50 von 354 Namen.
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
-  `Veraltet("_name", "<Ersatz>")`: ein Nicht-Daten-Deskriptor, der unverändert an die Implementierung
+  `Veraltet("_name", "<Ersatz>")`: ein Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
   Nachschlagen (`hasattr`, `getmembers`), bei Konstanten beim Lesen; die Warnung zeigt auf den
-  Aufrufer und nennt den Ersatz. Signatur und Docstring kommen vom Ziel, eine Zuweisung am Objekt
-  (Test-Fake) überschreibt weiter. `tests/test_api_surface.py` hält fest: C-Eintrag in der Ablage
+  Aufrufer und nennt den Ersatz. Signatur und Docstring kommen vom Ziel. Eine Zuweisung am Objekt
+  (Test-Fake) wird wie bisher abgelegt und über den alten Namen gelesen, **wirkt aber nicht mehr** —
+  die Routen rufen `_name` —, deshalb löst sie eine `RuntimeWarning` mit dem Ziel aus (s. „Was beim
+  Update auffällt“); `del` stellt den Alias wieder her. `tests/test_api_surface.py` hält fest:
+  C-Eintrag in der Ablage
   (mit `ziel`, `seit`, `bis`) genau dann, wenn die Klasse einen Alias trägt; das Ziel heisst `_name`
   (einzige Ausnahme `complete_mfa` → `complete_totp`, Stufe A); jeder Alias warnt genau einmal, mit
-  Ersatz und „fällt mit 1.0 weg“, auf den Aufrufer, und reicht Argumente unverändert weiter; kein
+  Ersatz und „fällt mit 1.0 weg“, auf den Aufrufer, und reicht Argumente unverändert weiter; eine
+  Zuweisung am Objekt warnt genau einmal (RuntimeWarning, mit Ziel, auf die Zuweisung); kein
   Code in `tinysesam/`, `examples/`, `scripts/` und `web/` benutzt einen alten Namen (AST, im Paket
   auch als Zeichenkette für `getattr`); ab Version 1.0 ist jeder verbliebene Alias rot; `seit`
   passt zum CHANGELOG — steht der Alias unter „Veraltet“ erst in `[Unveröffentlicht]`, muss `seit`

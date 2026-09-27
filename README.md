@@ -1117,7 +1117,11 @@ one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinyS
 lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
 tests once with `python -W error::DeprecationWarning`. A subclass that overrides one of these names
 gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.22.0, so the
-override no longer takes effect.
+override no longer takes effect. The same goes for a **test fake** on an old name —
+`auth.check_password = fake` or `mock.patch.object(auth, "rate_ok", …)` is never called; the
+assignment raises a `RuntimeWarning` naming the target. Put the fake on the new name
+(`auth._check_password = fake`). Patching the class (`mock.patch.object(TinySesam, …)`) doesn't
+warn and doesn't work either.
 
 ### For advanced use (tier B)
 

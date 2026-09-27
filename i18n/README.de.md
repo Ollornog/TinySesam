@@ -1138,7 +1138,11 @@ sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso d
 Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
 einmal mit `python -W error::DeprecationWarning` laufen lassen. Eine Unterklasse, die einen dieser
 Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`: Die eingebauten Routen rufen seit
-0.22.0 `_name`, die Überschreibung wirkt nicht mehr.
+0.22.0 `_name`, die Überschreibung wirkt nicht mehr. Dasselbe gilt für einen **Test-Fake** auf einen
+alten Namen — `auth.check_password = fake` oder `mock.patch.object(auth, "rate_ok", …)` wird nie
+gerufen; die Zuweisung löst eine `RuntimeWarning` aus, die das Ziel nennt. Den Fake auf den neuen
+Namen setzen (`auth._check_password = fake`). Ein Patch an der Klasse
+(`mock.patch.object(TinySesam, …)`) warnt nicht und wirkt ebenso wenig.
 
 ### Für Fortgeschrittene (Stufe B)
 

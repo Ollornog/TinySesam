@@ -18,6 +18,8 @@ verhält wie die eingebaute Route.
   (f) CSRF, fail-closed, der Ergebnistyp
   (g) Unerwartetes in der Prüfung zählt sofort als Fehlversuch
   (h) eine Quelle: die drei Routen rufen den Baustein und keinen inneren Prüfer
+  (i) das Beispiel der README ist selbst geschützt
+  (j) Test-Fakes: auf dem alten Namen wirkungslos und laut, auf dem neuen wirksam
 """
 from __future__ import annotations
 
@@ -29,7 +31,9 @@ import re
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -755,5 +759,56 @@ for _datei, _kopf in (("README.md", "## Your own login page\n"), ("i18n/README.d
             and _gesperrt.status_code == 429 and _frei.status_code == 303
             and _frei.cookies.get(_auth.session_cookie_name) and _ohne_csrf.status_code == 403,
             f"{_folge} {_gesperrt.status_code} {_frei.status_code} {_ohne_csrf.status_code}")
+
+
+# ── (j) Test-Fakes: auf dem alten Namen wirkungslos, deshalb laut ─────────────────────────────────
+# Befund der Gegenprüfung 2026-09-27: `auth.check_password = fake` wurde 0-mal gerufen, der Login
+# ergab 303 — und niemand warnte. Die Routen rufen `_check_password` (über `anmelden_passwort`).
+# Seitdem warnt die Zuweisung (RuntimeWarning, `Veraltet.__set__`) und nennt das Ziel; ein Fake
+# auf dem neuen Namen wirkt wie vorher einer auf dem alten.
+# (Mutationsprobe: `__set__`/`__delete__` in `tinysesam/_veraltet.py` streichen → keine Warnung → rot.)
+auth, app = _app()
+auth.create_user("fritz", password=PW)
+_aufrufe = []
+
+
+def _fake(*a, **k):
+    _aufrufe.append(a)
+    return None
+
+
+with warnings.catch_warnings(record=True) as _w_alt:
+    warnings.simplefilter("always")
+    auth.check_password = _fake
+_s_alt = [_post(_client(app), pfad, username="fritz", password=PW).status_code
+          for pfad in ("/auth/login", "/eigen/login")]
+r.check("(j) Fake auf dem alten Namen (`auth.check_password = fake`): genau eine RuntimeWarning, "
+        "sie nennt `_check_password` und zeigt auf die Zuweisung; der Fake wird nie gerufen (303, 303)",
+        [w.category for w in _w_alt] == [RuntimeWarning] and "`_check_password`" in str(_w_alt[0].message)
+        and Path(_w_alt[0].filename).resolve() == Path(__file__).resolve()
+        and _s_alt == [303, 303] and not _aufrufe,
+        f"{[(w.category.__name__, str(w.message)[:80]) for w in _w_alt]} {_s_alt} {_aufrufe}")
+del auth.check_password
+
+with warnings.catch_warnings(record=True) as _w_mock:
+    warnings.simplefilter("always")
+    with mock.patch.object(auth, "rate_ok", return_value=False) as _m:
+        _s_mock = _post(_client(app, ("203.0.113.10", 1)), "/auth/login", username="fritz",
+                        password=PW).status_code
+_nachher = "rate_ok" in vars(auth)
+r.check("(j) `mock.patch.object(auth, \"rate_ok\", …)`: warnt (RuntimeWarning mit `_rate_ok`), "
+        "drosselt nicht (303, 0 Aufrufe) und räumt beim Verlassen auf",
+        [w.category for w in _w_mock] == [RuntimeWarning] and "`_rate_ok`" in str(_w_mock[0].message)
+        and _s_mock == 303 and _m.call_count == 0 and not _nachher,
+        f"{[w.category.__name__ for w in _w_mock]} {_s_mock} {_m.call_count} {_nachher}")
+
+with warnings.catch_warnings(record=True) as _w_neu:
+    warnings.simplefilter("always")
+    auth._check_password = _fake
+    _s_neu = _post(_client(app, ("203.0.113.11", 1)), "/auth/login", username="fritz",
+                   password=PW).status_code
+r.check("(j) derselbe Fake auf dem neuen Namen (`auth._check_password = fake`) wirkt: gerufen, 401, "
+        "keine Warnung",
+        _aufrufe and _s_neu == 401 and not _w_neu, f"{_aufrufe} {_s_neu} {[str(w.message) for w in _w_neu]}")
 
 sys.exit(r.done())

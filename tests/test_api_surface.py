@@ -487,6 +487,43 @@ def _warnt(klasse, name: str, alias: Veraltet) -> list:
     return [f"TinySesam{'' if alias.methode else '.konstanten'}.{name}: Alias {f}" for f in fehler]
 
 
+def _zuweisung(klasse, name: str, alias: Veraltet) -> list:
+    """Eine Zuweisung auf den alten Namen am Objekt (Test-Fake) wirkt nicht mehr — warnt sie?
+
+    Genau eine `RuntimeWarning` (sichtbar ohne Filter), die das Ziel nennt und auf die Zuweisung
+    zeigt; danach liest der alte Name den gesetzten Wert, und `del` stellt den Alias wieder her
+    (so räumt `mock.patch.object` auf). Befund der Gegenprüfung 2026-09-27: Ein Fake auf
+    `check_password` wurde 0-mal gerufen, der Login ergab 303, und niemand warnte."""
+    fehler = []
+    probe = klasse.__new__(klasse)
+    fake = object()
+    with warnings.catch_warnings(record=True) as gewarnt:
+        warnings.simplefilter("always")
+        try:
+            setattr(probe, name, fake)
+            gelesen = probe.__dict__.get(name, None) is fake and getattr(probe, name) is fake
+            delattr(probe, name)
+        except Exception as e:                     # noqa: BLE001 — jede Ausnahme ist ein Befund
+            return [f"TinySesam.{name}: Alias: Zuweisung am Objekt wirft {type(e).__name__}: {e}"]
+    if [w.category for w in gewarnt] != [RuntimeWarning]:
+        fehler.append(f"Zuweisung am Objekt löst {[w.category.__name__ for w in gewarnt]} aus "
+                      "statt genau einer RuntimeWarning")
+    else:
+        text = str(gewarnt[0].message)
+        if f"`{alias.ziel}`" not in text:
+            fehler.append(f"die Warnung bei einer Zuweisung nennt das Ziel `{alias.ziel}` nicht: "
+                          f"{text!r}")
+        if os.path.abspath(gewarnt[0].filename) != os.path.abspath(__file__):
+            fehler.append(f"die Warnung bei einer Zuweisung zeigt auf "
+                          f"{os.path.basename(gewarnt[0].filename)} statt auf die Zuweisung")
+    if not gelesen:
+        fehler.append("liefert nach einer Zuweisung am Objekt nicht den gesetzten Wert")
+    if name in probe.__dict__:
+        fehler.append("`del` lässt den am Objekt gesetzten Wert stehen")
+    art = "" if alias.methode else ".konstanten"
+    return [f"TinySesam{art}.{name}: Alias {f}" for f in fehler]
+
+
 def alias_befunde(datei: dict, klasse=TinySesam) -> list:
     """Stimmen Ablage und Klasse bei Stufe C überein, und tut jeder Alias, was er soll?"""
     befunde = []
@@ -519,7 +556,7 @@ def alias_befunde(datei: dict, klasse=TinySesam) -> list:
         if not e.get("seit") or e.get("bis") != alias.bis:
             befunde.append(f"{bereich}.{name}: `seit`/`bis` fehlen oder passen nicht zum Alias "
                            f"(Ablage {e.get('seit')!r}/{e.get('bis')!r}, Alias bis {alias.bis})")
-        befunde += _warnt(klasse, name, alias)
+        befunde += _warnt(klasse, name, alias) + _zuweisung(klasse, name, alias)
     for name, alias in sorted(vars(klasse).items()):
         if isinstance(alias, Veraltet):
             bereich = "TinySesam" if alias.methode else "TinySesam.konstanten"
@@ -792,6 +829,30 @@ def selbstpruefung_c() -> None:
             fn = super().__get__(obj, owner)
             return (lambda *a, **k: fn(*a)) if self.methode else fn
 
+    class StilleZuweisung(Veraltet):
+        __slots__ = ()
+
+        def __set__(self, obj, wert):
+            obj.__dict__[self.name] = wert
+
+    class Falsch(Veraltet):
+        __slots__ = ()
+
+        def __set__(self, obj, wert):
+            warnings.warn("veraltet", RuntimeWarning, stacklevel=2)
+            obj.__dict__[self.name] = wert
+
+    class Anderswo(Veraltet):
+        __slots__ = ()
+
+        def __set__(self, obj, wert):
+            warnings.warn_explicit(f"auf `{self.ziel}` setzen", RuntimeWarning, "anderswo.py", 1)
+            obj.__dict__[self.name] = wert
+
+    rot(alias_befunde(ablage(), klasse(StilleZuweisung)),
+        "TinySesam.f: Alias Zuweisung am Objekt löst [] aus")
+    rot(alias_befunde(ablage(), klasse(Falsch)), "nennt das Ziel `_f` nicht")
+    rot(alias_befunde(ablage(), klasse(Anderswo)), "zeigt auf anderswo.py statt auf die Zuweisung")
     rot(alias_befunde(ablage(), klasse(Stumm)), "löst 0 Warnungen aus")
     rot(alias_befunde(ablage(), klasse(Tief)), "statt auf den Aufrufer")
     rot(alias_befunde(ablage(), klasse(Verschluckt)), "reicht nicht unverändert")
@@ -848,8 +909,8 @@ def selbstpruefung_c() -> None:
     for art in ("löst 0 Warnungen", "tinysesam/m.py:1", "fallen müssen", "kannte ihn nicht"):
         rot(befunde, art)
     ok("Stufe-C-Regeln schlagen an: Alias stumm, falscher stacklevel, verschluckte Argumente, "
-       "eigene Implementierung, Ablage ≠ Klasse, falsches Ziel, interner Aufruf, Frist 1.0, "
-       "`seit` gegen das CHANGELOG")
+       "stille Zuweisung am Objekt, eigene Implementierung, Ablage ≠ Klasse, falsches Ziel, "
+       "interner Aufruf, Frist 1.0, `seit` gegen das CHANGELOG")
 
 
 def _zaehle_stufen(datei: dict) -> str:
@@ -919,7 +980,8 @@ def main(argv):
               "`bis`.\n")
     else:
         ok(f"Stufe C: {len(c_eintraege(frueher_datei))} Aliase warnen genau einmal und zeigen auf "
-           f"ihre Implementierung; {c_dateien} Dateien ohne alten Namen")
+           f"ihre Implementierung, eine Zuweisung am Objekt (Test-Fake) warnt; {c_dateien} "
+           "Dateien ohne alten Namen")
     pruefe_unterklasse()
     pruefe_warnfilter()
 
