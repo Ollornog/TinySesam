@@ -9,6 +9,9 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    cooldown:
+      default-days: 3
     schedule:
       interval: monthly
 
@@ -23,6 +26,9 @@ updates:
   # und sdist, die Werkzeuge des Schwachstellen-Tors.
   - package-ecosystem: pip
     directories: ["/deploy/gateway", "/.github/bau", "/.github/audit"]
+    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    cooldown:
+      default-days: 3
     schedule:
       interval: monthly
     groups:
@@ -41,6 +47,9 @@ updates:
   # `docker`-Eintrag unten liest nur Dockerfiles, keine Compose-Dateien.
   - package-ecosystem: docker-compose
     directory: /deploy/forward-auth
+    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    cooldown:
+      default-days: 3
     schedule:
       interval: monthly
     commit-message:
@@ -49,6 +58,9 @@ updates:
   # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
   - package-ecosystem: docker
     directory: /
+    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    cooldown:
+      default-days: 3
     schedule:
       interval: monthly
     commit-message:
