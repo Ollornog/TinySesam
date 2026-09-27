@@ -305,6 +305,20 @@ Seite gehört und sich nicht ändert:
   Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
   CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin. War es der letzte
   Admin, bleibt die Allowlist danach zu (G6, unten).
+- **Gruppen kommen nur, wenn der Provider sie schickt** ([T-16](../backlog/T-16-gruppen-scope-warnung.md)).
+  PocketID (auch Authentik, Keycloak ohne eigenen Mapper) schickt den Claim `groups` nur mit dem
+  Scope `groups`; die Vorgabe `oidc_scopes="openid profile email"` fordert ihn nicht an. Dann
+  weist `oidc_allowed_groups` jeden ab (Audit `oidc_group_denied`), und `oidc_group_role_map`
+  vergibt keine Rolle. Der Start warnt, sobald eine Gruppenregel über den Claim `groups` läuft und
+  der Scope fehlt — je Client, auch für `oidc_clients` mit eigenen `scopes`. Abhilfe:
+  `oidc_scopes="openid profile email groups"` (Gateway: `TINYSESAM_OIDC_SCOPES`). TinySesam
+  fordert nichts von selbst nach: Liefert ein Provider den Claim über einen Mapper ohne Scope, ist
+  die Warnung gegenstandslos, und Entra ID lehnt einen Scope `groups` sogar ab (AADSTS650053; dort
+  kommen Gruppen über „optional claims", die Prüfung schweigt für diesen Issuer). **SAML und LDAP**
+  haben kein Gegenstück in der Konfiguration: Ob der IdP das Attribut `saml_attr_groups` freigibt
+  bzw. das Verzeichnis `ldap_group_attr` (`memberOf`; bei OpenLDAP nur mit dem memberof-Overlay)
+  liefert, steht auf der anderen Seite. Das Symptom ist dasselbe — `saml_denied grund=gruppe`
+  bzw. `ldap_group_denied` im Audit-Log für jeden.
 - **Widerruf folgt dem Provider (4a).** Eine OIDC-Sitzung trägt ihr Refresh-Token (verschlüsselt);
   alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
   Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt

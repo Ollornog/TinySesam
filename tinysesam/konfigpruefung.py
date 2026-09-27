@@ -621,6 +621,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _proxies_und_passkey(config, fehler, warnungen)
     _stepup(config, fehler, warnungen)
     _offene_tore(config, warnungen)
+    _gruppen_scope(config, warnungen)
     _kombinationen(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
@@ -858,6 +859,69 @@ def _offene_tore(config, warnungen: list) -> None:
             "Forward-Auth mit offener Selbst-Registrierung: Jeder Besucher legt sich ein Konto an "
             "und kommt damit durch jede geschützte Anwendung, die am Proxy kein ?roles= verlangt. "
             "signup_invite_only=True, allow_signup=False oder Rollen am Proxy verlangen.")
+
+
+#: Provider, die den Gruppen-Claim ohne eigenen Scope liefern und einen unbekannten Scope
+#: ABLEHNEN: Entra ID nimmt `groups` als Berechtigung der Graph-API und bricht die Anmeldung ab
+#: (AADSTS650053 „scope 'groups' that doesn't exist"; die Gruppen kommen dort über „optional
+#: claims" der App-Registrierung). Der Rat „`groups` in
+#: oidc_scopes aufnehmen" wäre dort falsch, die Warnung ein Dauer-Fehlalarm fürs `entra_id`-Preset.
+_GRUPPEN_OHNE_SCOPE = ("login.microsoftonline.com",)
+
+
+def _gruppen_scope(config, warnungen: list) -> None:
+    """Gruppenregel über den Claim `groups`, aber der Scope `groups` wird nicht angefordert.
+
+    Fund aus dem Betrieb (2026-09-27): PocketID — und andere Provider, die Claims an Scopes
+    binden — schickt den Claim `groups` nur, wenn der Client den Scope `groups` verlangt. Ohne
+    ihn weist `oidc_allowed_groups` jeden ab („keine passende Gruppe", im Audit
+    `oidc_group_denied`), und `oidc_group_role_map` vergibt still keine Rolle. Die Vorgabe
+    `oidc_scopes="openid profile email"` fordert ihn nicht an.
+
+    Warnung, kein Fehler, und kein stilles Nachfordern: Andere Provider (Keycloak, Authentik)
+    liefern den Claim über einen Mapper ohne eigenen Scope, und manche lehnen einen Scope ab,
+    den sie nicht kennen — TinySesam kann das aus der Konfiguration nicht ablesen. Geprüft wird
+    je Client: der Einzel-Client mit `oidc_scopes`, jede Anwendung aus `oidc_clients` mit ihren
+    eigenen `scopes` (sonst `oidc_scopes`) und ihrer Gruppenregel (sonst der globalen), genau
+    wie `OIDCClients` sie zusammensetzt. SAML und LDAP haben kein Gegenstück: Dort gibt es keine
+    Scopes, ob der IdP das Gruppenattribut freigibt, steht in SEINER Konfiguration.
+    """
+    if not _an(config, "oidc_enabled"):
+        return
+    if str(getattr(config, "oidc_group_claim", "") or "").strip() != "groups":
+        return
+    from urllib.parse import urlsplit
+    try:
+        idp = (urlsplit(str(getattr(config, "oidc_issuer", "") or "").strip()).hostname or "").lower()
+    except ValueError:
+        idp = ""
+    if idp in _GRUPPEN_OHNE_SCOPE:
+        return
+    global_gruppen = list(getattr(config, "oidc_allowed_groups", None) or [])
+    global_map = dict(getattr(config, "oidc_group_role_map", None) or {})
+    global_scopes = str(getattr(config, "oidc_scopes", "") or "")
+
+    def ohne_scope(scopes) -> bool:
+        return "groups" not in str(scopes or "").split()
+
+    betroffen = []
+    if (global_gruppen or global_map) and ohne_scope(global_scopes):
+        betroffen.append(f"oidc_scopes={global_scopes!r}")
+    for host, eintrag in (getattr(config, "oidc_clients", None) or {}).items():
+        e = dict(eintrag or {})
+        regel = e.get("allowed_groups") or global_gruppen or e.get("group_role_map") or global_map
+        scopes = e.get("scopes") or global_scopes
+        if regel and ohne_scope(scopes):
+            betroffen.append(f"oidc_clients[{host!r}] (scopes={str(scopes)!r})")
+    if betroffen:
+        warnungen.append(
+            "Gruppenregel über den Claim 'groups' (oidc_allowed_groups bzw. oidc_group_role_map), "
+            "aber der Scope 'groups' wird nicht angefordert: " + "; ".join(betroffen) + ". "
+            "PocketID und andere Provider schicken den Claim nur mit diesem Scope — dann weist "
+            "oidc_allowed_groups JEDEN ab, und oidc_group_role_map vergibt keine Rolle. 'groups' "
+            "in oidc_scopes aufnehmen (Gateway: TINYSESAM_OIDC_SCOPES; je Anwendung `scopes` im "
+            "Eintrag von oidc_clients). Liefert der Provider den Claim ohne eigenen Scope (Mapper, "
+            "etwa bei Keycloak), ist diese Warnung gegenstandslos.")
 
 
 def _kombinationen(config, fehler: list, warnungen: list) -> None:

@@ -51,6 +51,9 @@ services:
       # Freigabe je Client beim Provider (TINYSESAM_OIDC_CLIENTS unten). Wer nur EINEN Client
       # fährt, begrenzt mit Gruppen; ohne beides warnt TinySesam beim Start.
       # TINYSESAM_ALLOWED_GROUPS: "mitarbeiter"
+      # Gruppen kommen bei PocketID (und anderen) nur mit dem Scope `groups` — ohne ihn weist
+      # das Tor jeden ab, der Start warnt dann:
+      # TINYSESAM_OIDC_SCOPES: "openid profile email groups"
       #
       # Zwei Anwendungen, zwei Clients, EINE Installation (T-14). Wer in welche darf, steht
       # beim Provider — dort hängt die Freigabe am Client. Ohne eigene Clients gäbe es nur eine

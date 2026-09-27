@@ -14,6 +14,10 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_ALLOWED_GROUPS                   Komma-Liste. Leer = JEDES Konto beim Provider kommt
                                                durch das Tor — ohne Freigabe je Client (unten)
                                                warnt der Start deshalb laut (B3-9)
+    TINYSESAM_OIDC_SCOPES                      Default "openid profile email". Mit Gruppen bei
+                                               PocketID u. a.: "openid profile email groups" —
+                                               ohne den Scope fehlt der Claim, und das Tor weist
+                                               jeden ab (der Start warnt)
     TINYSESAM_TRUSTED_PROXIES                  Komma-Liste; Default 127.0.0.1/32,::1/128
     TINYSESAM_OIDC_CLIENTS                     JSON: mehrere Anwendungen, je eine mit eigenem
                                                Client beim selben Provider (T-14). Beispiel:
@@ -137,6 +141,7 @@ def config_from_env() -> TinySesamConfig:
         cookie_domain=os.environ.get("TINYSESAM_COOKIE_DOMAIN", ""),
         trusted_redirect_hosts=_split("TINYSESAM_PROTECTED_HOSTS"),
         allowed_groups=_split("TINYSESAM_ALLOWED_GROUPS"),
+        oidc_scopes=os.environ.get("TINYSESAM_OIDC_SCOPES", "").strip() or "openid profile email",
         db_path=os.environ.get("TINYSESAM_DB", "tinysesam-gateway.db"),
         https_mode=os.environ.get("TINYSESAM_HTTPS_MODE", "warn"),
         security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),

@@ -167,6 +167,11 @@ rule, same `admin_implies=False` switch.
   `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, e.g.
   `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (target `__admin__` = admin flag). Set at login;
   mapped roles are synchronized, manually assigned ones stay. The same `require_role(...)` guards everywhere.
+  **PocketID** (and other providers that tie claims to scopes) only sends the `groups` claim when the
+  scope `groups` is requested — add it: `oidc_scopes="openid profile email groups"` (gateway:
+  `TINYSESAM_OIDC_SCOPES`). Without it `oidc_allowed_groups` turns everyone away and the role map
+  assigns nothing; the start warns. TinySesam doesn't add the scope itself (Entra ID, for one,
+  rejects it and sends groups as an optional claim).
 
 ## Accounts in code
 
@@ -1196,7 +1201,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**58 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**59 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

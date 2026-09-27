@@ -42,9 +42,26 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   `erg.weiterleitung()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
   Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
   Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
+- **Neue Startwarnung: Gruppenregel ohne Scope `groups`** (T-16). Wer `oidc_allowed_groups` oder
+  `oidc_group_role_map` über den Claim `groups` nutzt und den Scope `groups` nicht anfordert,
+  sieht beim Start eine Warnung. Bei PocketID (und anderen Providern, die Claims an Scopes binden)
+  heisst diese Lage: jeder wird abgewiesen bzw. bekommt keine Rolle. Abhilfe
+  `oidc_scopes="openid profile email groups"`, im Gateway die neue Variable
+  `TINYSESAM_OIDC_SCOPES`. TinySesam fordert den Scope nicht selbst an; liefert der Provider den
+  Claim ohne Scope (Mapper), ist die Warnung gegenstandslos.
 
 ### Hinzugefügt
 
+- **Warnung bei Gruppenregel ohne Scope `groups`** (T-16, Fund aus dem Betrieb 2026-09-27):
+  `konfigpruefung` prüft je Client — den Einzel-Client mit `oidc_scopes`, jede Anwendung aus
+  `oidc_clients` mit ihren `scopes` und ihrer Gruppenregel (sonst den globalen) —, ob eine
+  Gruppenregel über den Claim `groups` läuft, ohne dass der Scope `groups` angefordert wird. Eine
+  Warnung, kein Fehler, kein Nachfordern. Für Entra ID (`login.microsoftonline.com`) schweigt sie:
+  Dort ist `groups` kein Scope (AADSTS650053), Gruppen kommen als „optional claim“. SAML und LDAP
+  haben kein Gegenstück in der Konfiguration (keine Scopes; das Attribut gibt der IdP bzw. das
+  Verzeichnis frei oder nicht) — `docs/BETRIEB.md` nennt das Symptom. Gateway: neue Variable
+  `TINYSESAM_OIDC_SCOPES` (Vorgabe `openid profile email`), vorher liess sich der Scope dort gar
+  nicht setzen. Test: `tests/test_betriebsfunde.py` (a).
 - **Sicherer Login-Baustein für eigene Seiten: `anmelden_passwort`, `anmelden_pin`,
   `anmelden_totp`** (Stufe A, PO-Befund 2026-09-26). Jede Methode tut, was die eingebaute Route
   tut — und die eingebaute Route ruft sie (eine Quelle, kein Drift): CSRF prüfen (`csrf=`, sonst
