@@ -2,7 +2,14 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.22.0] — 2026-09-27
+
+> **Bricht die Oberfläche — vor dem Update lesen.** Deutsche Namen, Parameter, Schlüssel und Werte
+> der Stufen A und B heissen englisch, **ohne Alias**; interne Namen (Stufe C) warnen; `POST
+> /auth/password` nimmt keinen API-Key mehr. Schema 12 (gespeicherte Key-Arten englisch) — **vor dem
+> Update die Datenbank sichern**; der Rückschritt auf 0.21.x braucht das SQL aus `docs/BETRIEB.md`.
+> Wer TinySesam nur über die dokumentierten Stufe-A-Wege nutzt (Router, Guards, `create_user`,
+> Konfiguration), merkt davon nichts — gegengeprüft mit drei Abnehmern.
 
 **Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
 (`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten und dieselben Bausteine für
