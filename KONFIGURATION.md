@@ -88,7 +88,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `demo_mode` | `bool` | `False` | Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv |
 | `demo_password` | `str` | `"demo1234"` | Passwort der Demo-Konten (nur bei demo_mode) |
 | `demo_pin` | `str` | `"1234"` | PIN der Demo-Konten (nur bei demo_mode) |
-| `allow_signup` | `bool` | `False` | Selbst-Registrierung (lokaler User+Passwort) |
+| `allow_signup` | `bool` | `False` | Selbst-Registrierung (lokaler User+Passwort); nicht neben ldap_enabled |
 | `signup_require_email` | `bool` | `True` | E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier) |
 | `signup_verify_email` | `bool` | `False` | Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer |
 | `signup_invite_only` | `bool` | `False` | Registrierung nur mit gültigem Einladungs-Token |
@@ -115,7 +115,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `self_service_email_change` | `bool` | `True` | Jeder ändert seine E-Mail-Adresse selbst (Konto-Seite, frischer Step-up). Die neue gilt erst nach dem Klick auf den Bestätigungslink an sie; die alte bekommt einen Hinweis. Braucht einen Mailer — ohne ihn gibt es den Weg nicht. |
-| `self_service_username_change` | `bool` | `True` | Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus `login_identifier="email"`, dort folgt der Name der Adresse. Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id` (die Konto-ID). |
+| `self_service_username_change` | `bool` | `True` | Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus `login_identifier="email"`, dort folgt der Name der Adresse, und nicht neben LDAP (`ldap_enabled`), dort kommen die Namen aus dem Verzeichnis und nur der Betreiber benennt um. Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id`. |
 | `email_change_ttl_min` | `int` | `60` | Gültigkeit des Bestätigungslinks für eine neue Adresse |
 
 ## E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar)

@@ -89,6 +89,13 @@ auffällt:
   an. **Der Name, unter dem sich ein anderes Konto über LDAP anmeldet, gilt als vergeben**
   (Registrierung 409, Umbenennen abgewiesen, `store.create_user`/`set_username` werfen
   `IntegrityError`), und ein umbenanntes LDAP-Konto behält seinen alten Namen als Verzeichnisnamen.
+- **Neben LDAP keine offene Registrierung und keine Selbst-Umbenennung** (PO-Entscheid 2026-09-27):
+  `allow_signup=True` zusammen mit `ldap_enabled=True` ist ein Aufbaufehler, und
+  `change_username` weist neben LDAP jeden ab, der nicht Betreiber ist (die Konto-Seite bietet es
+  nicht an). Wer sich vorab mit dem Namen oder der Verzeichnisadresse einer Person registrierte
+  oder sich so umbenannte, die sich noch nie angemeldet hat, sperrte sie sonst unter dieser
+  Kennung aus (Folge von „eine Kennung, ein Konto"). Konten legt dort der Betreiber an (Panel,
+  `create_user`), umbenennen ebenso (Panel, `tinysesam rename`).
 - **Route-Ketten verschärfen die globale Regel nur** (PO-Entscheid 2026-09-27): `require(factors=[…])`
   lässt eine Sitzung, der die globale Anmeldung noch einen Faktor schuldet (TOTP eines Kontos, das
   eines hat; der nächste Schritt der `login_chain`), erst zu diesem Schritt — auch bei

@@ -99,7 +99,12 @@ Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 
 ## Benutzername und Adresse ändern (Selbstbedienung)
 
-Seit 2026-09-25 ändert jeder beides selbst auf der Konto-Seite, mit frischem Step-up. Alles, was am
+Seit 2026-09-25 ändert jeder beides selbst auf der Konto-Seite, mit frischem Step-up — den
+Benutzernamen nicht neben LDAP (`ldap_enabled`, seit 2026-09-27): Dort kommen die Namen aus dem
+Verzeichnis, und ein lokales Konto könnte den Namen einer Person annehmen, die sich noch nie
+angemeldet hat, und sie damit aussperren (eine Kennung gehört genau einem Konto). Umbenennen dort
+nur als Betreiber (Panel, `tinysesam rename`); aus demselben Grund ist `allow_signup` neben LDAP ein
+Aufbaufehler. Alles, was am
 Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML —, hängt an der
 **Konto-ID** und bleibt. Nach aussen ändert sich `Remote-User` bzw. `Remote-Email`; stabil ist
 **`Remote-Id`** — eine App ordnet Nutzer darüber zu.

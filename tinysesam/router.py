@@ -1252,7 +1252,8 @@ def build_router(auth) -> APIRouter:
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]),
                                     username_change=(cfg.self_service_username_change
-                                                     and cfg.login_identifier != "email"),
+                                                     and cfg.login_identifier != "email"
+                                                     and not cfg.ldap_enabled),
                                     email_change=(cfg.self_service_email_change and auth.mail_configured()))
 
     # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------

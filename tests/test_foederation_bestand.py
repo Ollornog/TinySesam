@@ -264,8 +264,10 @@ r.check("… ein Konto, das die Quelle schon kennt (Platzhalter), meldet sich na
 g = _ldap()
 eve = g.create_user("eve", password=PW)
 r.check("Vom Betreiber angelegtes Konto: Merker 0", _flag(g, eve) == 0)
-g.change_username(eve, "chefin")
-r.check("Selbst umbenannt (change_username): Merker 1", _flag(g, eve) == 1)
+# Neben LDAP benennt sich seit 2026-09-27 niemand mehr selbst um; der Merker bleibt die zweite
+# Sicherung für den Bestand und für Konten, die ein fremder Schreiber umbenannt hat.
+g.store.set_username(eve, "chefin", selbst_gewaehlt=True)
+r.check("Selbst umbenannt (Bestand): Merker 1", _flag(g, eve) == 1)
 with Mitschnitt() as log:
     u = _anmelden(g, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
 zu = _audit(g, "ldap_namensbindung_zu")
@@ -285,7 +287,7 @@ r.check("Der Betreiber entscheidet ausdrücklich (loese_fremde_bindung): dann bi
 
 # Umbenennen durch den Betreiber: der Name steht für den Betreiber.
 op = g.create_user("olaf", password=PW)
-g.change_username(op, "olga")
+g.store.set_username(op, "olga", selbst_gewaehlt=True)
 g.change_username(op, "oskar", durch_betreiber=True)
 u = _anmelden(g, "oskar", {"id": "uuid-oskar"})
 r.check("Umbenannt durch den Betreiber (durch_betreiber=True): Merker 0, bindet",
@@ -302,25 +304,35 @@ r.check("SAML: ein selbst umbenanntes Konto wird nicht über den Namen gebunden"
         u is None and s2.store.get_federated_kennung("saml", sv) is None)
 n2 = _ldap()
 nv = n2.create_user("nora", password=PW)
-n2.change_username(nv, "nele")
+n2.store.set_username(nv, "nele", selbst_gewaehlt=True)
 u = _anmelden(n2, "nele", {})
 r.check("LDAP ohne Kennung: ein selbst umbenanntes Konto wird nicht über den Namen zugeordnet",
         u is None and n2.store.get_federated_kennung("ldap", nv) is None)
 
-# Registrierung (allow_signup) und Umbenennen über die Konto-Seite.
-reg = _ldap(allow_signup=True, signup_verify_email=False, base_url="http://testserver")
+# Registrierung (allow_signup) und Umbenennen über die Konto-Seite. Neben LDAP gibt es die
+# Registrierung seit 2026-09-27 nicht mehr (Aufbaufehler); neben SAML schon — dort trägt das
+# registrierte Konto den Merker, und die SAML-Anmeldung derselben Kennung bindet es nicht.
+try:
+    _ldap(allow_signup=True, signup_verify_email=False, base_url="http://testserver")
+    _ldap_reg = "gebaut"
+except ConfigError as e:
+    _ldap_reg = str(e)
+r.check("allow_signup neben LDAP: Aufbaufehler (PO-Entscheid 2026-09-27)",
+        "allow_signup" in _ldap_reg and "ldap_enabled" in _ldap_reg, _ldap_reg[:160])
+reg = _saml(allow_signup=True, signup_verify_email=False, base_url="http://testserver")
 app = FastAPI()
 app.include_router(reg.router())
 c = TestClient(app)
 antwort = c.post("/auth/register", data={"username": "chefin", "password": PW,
                                          "email": "chefin.privat@example.com"}, follow_redirects=False)
 rid = reg.store.get_user_by_name("chefin")
-r.check("Registrierung: das Konto trägt den Merker",
+r.check("Registrierung (SAML-Instanz): das Konto trägt den Merker",
         antwort.status_code in (200, 303) and rid is not None and _flag(reg, rid["id"]) == 1,
         f"HTTP {antwort.status_code}")
-u = _anmelden(reg, "chefin", {"id": "uuid-chefin", "groups": ["cn=chefs"]}, pw="ldap-pw")
-r.check("… die Verzeichnis-chefin übernimmt das registrierte Konto nicht",
-        u is None and reg.store.get_federated_kennung("ldap", rid["id"]) is None)
+u = reg.check_saml("nid-chefin", {"uid": ["chefin"]})
+r.check("… die SAML-chefin übernimmt das registrierte Konto nicht",
+        (u is None or u["id"] != rid["id"]) and reg.store.get_federated_kennung("saml", rid["id"]) is None,
+        str(u))
 ks = reg.create_user("konrad", password=PW)
 c2 = TestClient(app)
 c2.post("/auth/login", data={"username": "konrad", "password": PW}, follow_redirects=False)
@@ -413,7 +425,7 @@ r.check("Vom Betreiber umbenannt: Herkunft gelöscht, der Name steht für den Be
         _quelle(qa, ot) is None and _flag(qa, ot) == 0 and u is not None and u["id"] == ot)
 st, _ = _oidc_anmelden(qa, qapp, {"sub": "uwe-sub", "preferred_username": "uwe"})
 uw = qa.store.get_user_by_name("uwe")["id"]
-qa.change_username(uw, "ulla")
+qa.store.set_username(uw, "ulla", selbst_gewaehlt=True)
 r.check("Selbst umbenannt: Herkunft gelöscht, Merker „selbst gewählt“ gesetzt",
         _quelle(qa, uw) is None and _flag(qa, uw) == 1)
 

@@ -3667,12 +3667,20 @@ class TinySesam:
           „vergeben" (dieselbe Regel wie die Registrierung mit Bestätigung, Angriff A1).
         * **Kein Name aus `admin_identifiers`**: Wer sich so nennt, würde beim nächsten Login
           Erst-Admin. Die Antwort ist dieselbe wie bei „vergeben" — die Allowlist bleibt verborgen.
-        * **Nicht im Modus `login_identifier="email"`**: Dort ist der Name die Adresse und folgt ihr."""
+        * **Nicht im Modus `login_identifier="email"`**: Dort ist der Name die Adresse und folgt ihr.
+        * **Neben LDAP nur als Betreiber** (`durch_betreiber=True`, seit 2026-09-27): Dort kommen die
+          Namen aus dem Verzeichnis; ein Konto, das sich selbst umbenennt, könnte den Namen einer
+          Person annehmen, die sich noch nie angemeldet hat, und sie aussperren."""
         konto = self.store.get_user(user_id)
         if not konto:
             raise ValueError(self.t("api.not_found"))
         if self.cfg.login_identifier == "email":
             raise ValueError(self.t("api.username_follows_email"))
+        # Neben LDAP benennt sich niemand selbst um (PO-Entscheid 2026-09-27): Ein lokales Konto
+        # könnte den Verzeichnisnamen einer Person annehmen, die sich noch nie angemeldet hat, und
+        # sie damit aussperren — dieselbe Lücke wie die offene Registrierung. Der Betreiber darf.
+        if self.cfg.ldap_enabled and not durch_betreiber:
+            raise ValueError(self.t("api.username_from_directory"))
         name = str(neu or "").strip()
         if not name:
             raise ValueError(self.t("err.username_required"))

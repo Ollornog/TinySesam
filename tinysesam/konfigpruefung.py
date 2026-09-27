@@ -301,6 +301,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         fehler.append(
             "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
             "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
+    # Offene Registrierung neben LDAP (PO-Entscheid 2026-09-27): Eine Kennung gehört genau einem
+    # Konto — liefert das Verzeichnis unter einer lokal vergebenen Kennung eine andere Person,
+    # weist TinySesam die Anmeldung ab (Prüfrunde p1-d). Wer sich vorab mit dem Namen oder der
+    # Verzeichnisadresse einer Person registriert, die sich noch nie angemeldet hat, sperrte sie
+    # damit aus. TinySesam kennt diese Namen nicht, bevor das Verzeichnis sie nennt — also gibt
+    # es die Kombination nicht. Konten legt dort der Betreiber an (Panel, `create_user`).
+    if _an(config, "allow_signup") and _an(config, "ldap_enabled"):
+        fehler.append(
+            "allow_signup=True neben ldap_enabled=True: Wer sich mit dem Namen oder der Adresse "
+            "einer Person aus dem Verzeichnis registriert, bevor sie sich angemeldet hat, sperrt sie "
+            "unter dieser Kennung aus (eine Kennung gehört genau einem Konto). Registrierung "
+            "ausschalten und Konten im Admin-Panel bzw. mit auth.create_user(...) anlegen.")
 
     # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
     # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem

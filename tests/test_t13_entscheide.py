@@ -384,7 +384,7 @@ r.check("… die Inhaberin räumt beides mit ihrer Anmeldung — unter ihrer Adr
 # ── Prüfrunde Sperren/Zähler (2026-09-27): eine Kennung, ein Konto ─────────────────────────────
 def _ldap_app():
     a, ap = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
-                 ldap_auto_create=True, passkey_enabled=False, allow_signup=True)
+                 ldap_auto_create=True, passkey_enabled=False)
     for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
                  ("account_max_consecutive_failures", 10)):
         a.set_security(k, v)
@@ -449,7 +449,7 @@ _login(TestClient(ap_a), "alice.neu", LPW)
 _mallory_a = a_a.create_user("mallory", password=MPW)
 _vergeben_a = a_a.kennung_vergeben("ALICE.NEU")
 try:
-    a_a.change_username(_mallory_a, "alice.neu")
+    a_a.change_username(_mallory_a, "alice.neu", durch_betreiber=True)    # auch der Betreiber nicht
     _selbst_a = "umbenannt"
 except ValueError:
     _selbst_a = "abgewiesen"
@@ -463,8 +463,13 @@ try:
     _anlage_a = "angelegt"
 except sqlite3.IntegrityError:
     _anlage_a = "IntegrityError"
-_reg_a = TestClient(ap_a).post("/auth/register", data={"username": "alice.neu", "email": "m@example.com",
-                                                      "password": MPW}, follow_redirects=False).status_code
+# Registrieren gibt es neben LDAP nicht mehr (PO-Entscheid 2026-09-27) — der Aufbau scheitert.
+try:
+    _ldap_mit_signup = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+                            passkey_enabled=False, allow_signup=True)
+    _reg_a = "gebaut"
+except ConfigError as _e_reg:
+    _reg_a = str(_e_reg)
 _cli_aus_a = io.StringIO()
 with redirect_stdout(_cli_aus_a), redirect_stderr(_cli_aus_a):
     try:
@@ -478,13 +483,31 @@ r.check("p1-d (A): der Verzeichnisname eines anderen Kontos gilt als vergeben (V
         _vergeben_a is not None and _vergeben_a["id"] == _alice_a, str(_vergeben_a))
 r.check("… und die Datenbank weist ihn ab — Umbenennen und Anlegen (Kennungs-Trigger)",
         _roh_a == "IntegrityError" and _anlage_a == "IntegrityError", f"{_roh_a} {_anlage_a}")
-r.check("… Selbstbedienung, Registrierung und `tinysesam rename` lehnen ab",
-        _selbst_a == "abgewiesen" and _reg_a == 409 and _cli_a == 1
+r.check("… Umbenennen (auch durch den Betreiber) und `tinysesam rename` lehnen ab, Registrieren gibt es "
+        "neben LDAP gar nicht",
+        _selbst_a == "abgewiesen" and "allow_signup" in _reg_a and "ldap_enabled" in _reg_a and _cli_a == 1
         and "Name im Verzeichnis" in _cli_aus_a.getvalue()
         and a_a.store.get_user(_mallory_a)["username"] == "mallory",
         f"{_selbst_a}, Registrierung HTTP {_reg_a}, CLI rc {_cli_a} {_cli_aus_a.getvalue()[:120]!r}")
-a_a.change_username(_alice_a, "alice.neu")
-r.check("… Alice selbst darf ihn annehmen (ihre eigene Bindung zählt nicht)",
+# Neben LDAP benennt sich niemand selbst um, auch nicht auf einen freien Namen (PO-Entscheid
+# 2026-09-27): Ein lokales Konto könnte sonst den Verzeichnisnamen einer Person annehmen, die sich
+# noch nie angemeldet hat, und sie aussperren. (Mutationsprobe: die Prüfung in `change_username`
+# abschalten → rot; das Flag der Konto-Seite → rot.)
+try:
+    a_a.change_username(_mallory_a, "mallory2")
+    _ldap_selbst = "umbenannt"
+except ValueError as _e_sb:
+    _ldap_selbst = str(_e_sb)
+_c_sb = TestClient(ap_a)
+_login(_c_sb, "mallory", MPW)
+_seite_sb = _c_sb.get("/auth/account", headers={"accept": "text/html"}).text
+_route_sb = _c_sb.post("/auth/account/username", json={"username": "mallory3"})
+r.check("Neben LDAP: keine Selbst-Umbenennung (Methode, Route, Konto-Seite)",
+        _ldap_selbst == a_a.t("api.username_from_directory") and _route_sb.status_code in (400, 403)
+        and "data-act=setname" not in _seite_sb and a_a.store.get_user(_mallory_a)["username"] == "mallory",
+        f"{_ldap_selbst!r} HTTP {_route_sb.status_code}")
+a_a.change_username(_alice_a, "alice.neu", durch_betreiber=True)
+r.check("… Alices Konto darf ihn annehmen (ihre eigene Bindung zählt nicht)",
         a_a.store.get_user(_alice_a)["username"] == "alice.neu")
 
 # p1-b: Der Betreiber benennt ein LDAP-Konto um, dessen Name der Verzeichnisname ist (G13). Bis dahin
@@ -603,25 +626,25 @@ r.check("p1-a: ein neuer Verzeichniseintrag unter einem vermerkten Namen legt se
         f"Vermerk {_vermerk_y!r}, HTTP {_neu_y.status_code}")
 
 # p1-d (C), Adresse: Filter über uid UND mail, `ldap_email_trusted=False` (Vorgabe) — LDAP-Konten
-# tragen lokal keine Adresse. Mallory registriert sich mit Alices Verzeichnisadresse; bis 2026-09-27
-# räumte seine eigene Anmeldung unter der Adresse die Zähler gegen Alices LDAP-Passwort, ohne jede
-# Umbenennung.
+# tragen lokal keine Adresse. Ein lokales Konto trägt Alices Verzeichnisadresse (im Befund per
+# Registrierung, die es neben LDAP seit 2026-09-27 nicht mehr gibt; hier vom Betreiber angelegt oder
+# aus dem Bestand); bis 2026-09-27 räumte seine eigene Anmeldung unter der Adresse die Zähler gegen
+# Alices LDAP-Passwort, ohne jede Umbenennung.
 a_m, ap_m = _ldap_app()
 _alice_eintrag = {"pw": LPW, "id": "uuid-alice", "email": "alice@corp.example"}
 a_m.ldap = _Verzeichnis({"alice": _alice_eintrag, "alice@corp.example": _alice_eintrag})
 _login(TestClient(ap_m), "alice", LPW)
 _alice_m = a_m.store.get_user_by_name("alice")["id"]
-_reg_m = TestClient(ap_m).post("/auth/register", data={"username": "mallory", "email": "alice@corp.example",
-                                                      "password": MPW}, follow_redirects=False).status_code
+_reg_m = a_m.create_user("mallory", password=MPW, email="alice@corp.example")
 for _runde in range(10):
     for _ in range(4):
         _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", "falsch-falsch-1")
     _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", MPW)
 _treffer_m = _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", LPW)
 # (Mutationsprobe: die Prüfung gegen `nur_konto` abschalten → 303, Sitzung von Alice → rot.)
-r.check("p1-d (C): eine Registrierung mit der Verzeichnisadresse einer anderen Person — deren LDAP-Passwort "
+r.check("p1-d (C): ein lokales Konto mit der Verzeichnisadresse einer anderen Person — deren LDAP-Passwort "
         "öffnet unter der Adresse keine Sitzung",
-        _reg_m == 303 and _treffer_m.status_code == 401 and _sitzung_von(a_m, _treffer_m) is None,
+        bool(_reg_m) and _treffer_m.status_code == 401 and _sitzung_von(a_m, _treffer_m) is None,
         f"Registrierung {_reg_m}, HTTP {_treffer_m.status_code}")
 r.check("… unter ihrem Namen meldet sich Alice weiter an (Gegenprobe)",
         _sitzung_von(a_m, _login(TestClient(ap_m), "alice", LPW)) == _alice_m)
