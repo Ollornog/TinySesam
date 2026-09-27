@@ -154,7 +154,81 @@
     "Slack-Token",
     "Proxmox-API-Token; ein Platzhalter dahinter ({TOKEN_ID}, ${VAR}) trifft bewusst nicht"
   ],
-  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:api[_-]?key|access[_-]?key|secret|token|passwd|password|passphrase|credential|pat|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
+  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:api[_-]?key|access[_-]?key|secret|token|tok|passwd|password|passphrase|credential|pat|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
+  "geheimnis_kontexte": [
+    {
+      "art": "JSON-Schluessel",
+      "muster": "^[ \\t{[]*(?:export[ \\t]+)?[\"'](?:[A-Za-z0-9_.-]*[0-9_.-])?(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:api[_-]?key|access[_-]?key|secret|token|tok|passwd|password|passphrase|credential|pat|key)s?[\"'][ \\t]*(?::|=>?)[ \\t]*[\"'](?P<wert>[A-Za-z0-9/+_.=~-]{16,})[\"']"
+    },
+    {
+      "art": "Passwort",
+      "muster": "^[ \\t{[]*(?:(?:export[ \\t]+)?[\"']?(?:[A-Za-z0-9_.-]*[0-9_.-])?(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:passwd|password|passwort|passphrase|pwd|secret|api[_-]?key)s?[\"']?[ \\t]*(?::|=>?)|-[ \\t]+[\"']?(?:[A-Za-z0-9_.-]*[0-9_.-])?(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:passwd|password|passwort|passphrase|pwd|secret|api[_-]?key)=)[ \\t]*[\"']?(?P<wert>[A-Za-z0-9/+_.=~!@#%^&*-]{8,})"
+    },
+    {
+      "art": "Vorgabewert",
+      "muster": "(?:getenv|environ\\.get|env)\\([ \\t]*[\"'][A-Za-z0-9_]*(?:token|key|secret|pass|pwd)[A-Za-z0-9_]*[\"'][ \\t]*,[ \\t]*[\"'](?P<wert>[A-Za-z0-9/+_.=~!@#%^&*-]{8,})[\"']"
+    },
+    {
+      "art": "Vorgabewert",
+      "muster": "(?:process\\.env\\.[A-Za-z0-9_]*(?:token|key|secret|pass|pwd)[A-Za-z0-9_]*[ \\t]*(?:[|][|]|[?][?])[ \\t]*[\"']|[$][{][A-Za-z0-9_]*(?:token|key|secret|pass|pwd)[A-Za-z0-9_]*:?-)(?P<wert>[A-Za-z0-9/+_.=~!@#%^&*-]{8,})"
+    },
+    {
+      "art": "Basic-Auth",
+      "muster": "authorization[\"']?[ \\t]*[:=,][ \\t]*[\"']?basic[ \\t]+(?P<wert>[A-Za-z0-9+/=]{12,})"
+    },
+    {
+      "art": "Basic-Auth",
+      "muster": "(?:buffer\\.from|btoa|b64encode|base64_encode|encodebytes)\\([ \\t]*b?[\"'][^\"' \\t:$%{]{1,64}:(?P<wert>[A-Za-z0-9/+_.=~!@#%^&*-]{6,})[\"']"
+    },
+    {
+      "art": "Basic-Auth",
+      "muster": "curl[ \\t].*(?:-u|--user)[ \\t]+[\"']?[^\"' \\t:$%{]{1,64}:(?P<wert>[A-Za-z0-9/+_.=~!@#%^&*-]{6,})"
+    },
+    {
+      "art": "Zugangsdaten in URL",
+      "muster": "[a-z][a-z0-9+.-]*://[^/ \\t:@'\"$%{]*:(?P<wert>[A-Za-z0-9._~!+=%-]{6,})@"
+    },
+    {
+      "art": "Mail-Relay",
+      "muster": "(?:^[ \\t]*|[ \\t]login[ \\t]+[^ \\t]+[ \\t]+)password[ \\t]+[\"']?(?P<wert>[^ \\t\"']{6,})[\"']?[ \\t]*$"
+    },
+    {
+      "art": "Mail-Relay",
+      "muster": "^[ \\t]*\\[[A-Za-z0-9-]+\\.[A-Za-z0-9.-]+\\](?::[0-9]+)?[ \\t]+[^ \\t:]+:(?P<wert>[^ \\t]{6,})[ \\t]*$"
+    },
+    {
+      "art": "Mail-Relay",
+      "muster": "static:[^ \\t:]+:(?P<wert>[^ \\t]{6,})"
+    }
+  ],
+  "_geheimnis_kontexte_bedeutung": [
+    "kit 0.23.0 (2026-09-27, Backlog T-8). Gemessen gegen die Sicherungskopien der 47 Fundstellen:",
+    "25 Dateien mit Geheimnis blieben unerkannt, weil vor dem Wert kein 'name=' steht oder der",
+    "Wert kuerzer als 16 Zeichen ist. Jedes Muster hat eine Gruppe 'wert'; fuer sie gelten",
+    "DIESELBEN Platzhalter- und Kontextregeln wie fuer die Zuweisung.",
+    "",
+    "  JSON-Schluessel   '\"clientSecret\": \"...\"' — Name UND Wert in Anfuehrungszeichen, am Zeilenanfang",
+    "  Passwort          eindeutiger Name, Wert ab 8 Zeichen (.env, YAML, JSON, Compose-Liste, PHP-Array)",
+    "  Vorgabewert       getenv(\"X_TOKEN\", \"<wert>\"), process.env.X_TOKEN || '<wert>', ${X_TOKEN:-<wert>}",
+    "  Basic-Auth        Authorization: Basic <b64>, Buffer.from/btoa/b64encode('user:pass'), curl -u",
+    "  Zugangsdaten      scheme://user:pass@host",
+    "  Mail-Relay        msmtp/netrc 'password <wert>', Postfix sasl_passwd '[host]:587 user:pass', 'static:'",
+    "",
+    "WARUM AM ZEILENANFANG (JSON-Schluessel, Passwort): Die erste Fassung traf ueberall und",
+    "erzeugte 208 Fehlalarme in acht Repos und der Doku — fast alle Testpasswoerter MITTEN in",
+    "einem Aufruf (client.post(..., data={\"password\": \"...\"})) und Go-Maps mit Variablen. Eine",
+    "Konfigurationszeile beginnt mit dem Namen; Code ruft ihn mitten in der Zeile auf. Nach der",
+    "Einschraenkung: 2 Fehlalarme, beide in einer Test-Fixture (gezielt im Repo ausgenommen).",
+    "BENANNTE GRENZE: ein Passwort-Literal mitten in einer Zeile (auch 'public const X_PASSWORD = ...')",
+    "trifft nur die Zuweisung ab 16 Zeichen.",
+    "",
+    "BEWUSST NICHT (2026-09-27): SQL-'COPY'-Bloecke und Datenbankdateien. Die Werte stehen dort",
+    "tabellarisch ohne Namen; jede Wert-Heuristik (Hex-Laenge, Base64) traefe Commit-SHAs,",
+    "Pruefsummen und UUIDs in gewoehnlichen Tabellen. Ohne Fehlalarme ginge es nur ueber",
+    "Tabellennamen (authtoken_token …) — und die zeigen eine leere Tabelle genauso an. Die",
+    "richtige Stelle dafuer ist der Rechtefund des Server-Scans (jedes *.sql mit 0644 ist ein",
+    "Befund), nicht ein Muster."
+  ],
   "geheimnis_platzhalter": [
     "^[A-Z][A-Z0-9_]*$",
     "^[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)+$",
@@ -163,7 +237,13 @@
     "^[A-Za-z]+(?:[-/]+[A-Za-z]+)+$",
     "^(?:changeme|change_me|example|beispiel|dummy|placeholder|redacted|geheim|your|dein)[a-z0-9_.-]*$",
     "^ssh-(?:ed25519|rsa|dss)",
-    "^[A-Z][A-Za-z0-9]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+    "^[A-Z][A-Za-z0-9]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+    "^[A-Za-z][a-z]{0,14}$",
+    "^\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?$",
+    "^<[^>]*>$",
+    "^\\*+$",
+    "^[A-Z]+(?:-[A-Z]+)+-[0-9]+$",
+    "^[a-z_][a-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$"
   ],
   "_geheimnis_platzhalter_bedeutung": [
     "NUR Grossbuchstaben/Ziffern/Unterstrich = Platzhaltername (REPLACE_ME_TOKEN)",
