@@ -139,6 +139,12 @@ Depends(auth.require_role("editor"))   # eingeloggt + Rolle (Admin hat implizit 
 Depends(auth.require_role("a", "b"))   # eine der beiden genügt
 ```
 
+Ohne Guard liefert `auth.current_user(request)` das angemeldete Konto — aus einer Sitzung
+**oder** einem API-Key — oder `None`, und leitet nie um: für eine Seite, die angemeldet nur
+anders aussieht. Eine Route, die *auf die Sitzung wirkt* (einen Faktor anwendet, sie auffrischt
+oder beendet), nimmt das Konto stattdessen aus `auth.session_user(request)`, das für einen Key
+nie antwortet ([Stufe B](#öffentliche-api-drei-stufen)).
+
 ## Rollen & Gruppen
 
 **Rollen sind die Gruppen** — pro User eine Liste (`roles`) + `is_admin`; Guard `require_role("…")`.
@@ -148,12 +154,58 @@ Mehrere nennen und **eine davon genügt** — `require_role("redaktion", "lektor
 Guards: `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 Ein Admin erfüllt dabei **jede** Rolle. Wer das nicht will (z.B. weil die Rechte an einer IdP-Gruppe
 hängen): `admin_implies_roles=False` global oder `require_role("editor", admin_implies=False)` je Route.
+Innerhalb einer Route stellt `auth.has_role(user, "editor")` dieselbe Frage als `bool` — dieselbe
+Admin-Regel, derselbe Schalter `admin_implies=False`.
 - **Lokale User/Passwort:** Rollen im **Admin-Panel** je User zuweisen. `available_roles=[…]` definiert bekannte
   Rollen → das Panel zeigt sie als **Checkboxen** (leer = Freitext-Eingabe).
 - **IdP-User (OIDC/SAML/LDAP/AD):** externe Gruppen automatisch auf lokale Rollen mappen —
   `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, z.B.
   `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (Ziel `__admin__` = Admin-Flag). Beim Login gesetzt;
   gemappte Rollen werden synchronisiert, manuell vergebene bleiben. Überall dieselben `require_role(...)`-Guards.
+  **PocketID** (und andere Provider, die Claims an Scopes binden) schickt den Claim `groups` nur,
+  wenn der Scope `groups` angefordert wird — also aufnehmen: `oidc_scopes="openid profile email groups"`
+  (Gateway: `TINYSESAM_OIDC_SCOPES`). Ohne ihn weist `oidc_allowed_groups` jeden ab, und das
+  Rollen-Mapping vergibt nichts; der Start warnt. TinySesam fordert den Scope nicht selbst an
+  (Entra ID etwa lehnt ihn ab und schickt Gruppen als „optional claim").
+
+## Konten im Code
+
+`auth.create_user(…)` legt ein Konto an und gibt seine ID zurück. Es prüft dasselbe wie jeder
+andere Weg — die Kennung muss über Benutzernamen *und* Adressen hinweg frei sein, sonst
+`ConfigError` (`e.field`, `e.owner_id` sagen, was kollidierte):
+
+```python
+uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # ohne Passwort: OIDC, Link, …
+auth.create_user("bob", password=os.environ["BOB_START"], display_name="Bob")
+```
+
+`ensure_admin(…)` ist für den ersten Admin, `create_service(…)` für Maschinenkonten
+([API-Keys](#api-keys--service-daemon-accounts)).
+
+**Ein Konto als Betreiber sperren** — dasselbe wie „Sperren“ im Panel, das diese Methode ruft:
+
+```python
+auth.set_disabled(uid, True)     # beendet die Sitzungen, widerruft die API-Keys, verwirft offene Links
+auth.set_disabled(uid, False)    # entsperrt; widerrufene Keys bleiben widerrufen
+```
+
+Die Sperre trägt den Betreiber-Vermerk: Kein Bestätigungslink hebt sie auf, auch keiner, der erst
+danach entsteht. Ein Owner lässt sich nicht sperren (`StateError`); eine unbekannte ID gibt `False`.
+Bis 0.21.x zeigte die Doku dafür `auth.store.set_disabled(uid, True, durch_betreiber=True)` — das
+setzte nur den Vermerk, Sitzungen, Keys und Links blieben gültig.
+
+**In den Tests deiner App** brauchst du einen angemeldeten Client ohne den Umweg über den Login.
+`start_session` legt eine Sitzung an, **ohne irgendetwas zu prüfen** — genau deshalb gehört es in
+Tests (oder hinter einen Faktor, den du selbst geprüft hast), nie in eine Login-Route (die nimmt
+[`login_password`](#eigene-login-seite)):
+
+```python
+token, _ = auth.start_session(uid, "oidc")
+client.cookies.set(auth.session_cookie_name, token)
+```
+
+`session_cookie_name`, `csrf_cookie_name` und `resource_cookie_name` tragen das Präfix `__Host-`,
+wo der Browser es erlaubt — auslesen, nicht ausschreiben.
 
 ## Routen (vom Router bereitgestellt)
 
@@ -214,6 +266,10 @@ CLI-Kommando: im eigenen Dienst über die Python-API tun (`auth.set_pin(uid, …
 | `security_log` | `""` | Datei für den fail2ban-Logger (leer = nur an den Logger) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | Forward-Auth-Endpunkt · welche Header er setzt (leer = `Remote-*`) |
 
+`TinySesamConfig` ist eine Dataclass, und das gehört zur Zusage: `dataclasses.fields(TinySesamConfig)`
+zählt jedes Feld auf — praktisch, um aus eigenen Einstellungen nur die bekannten Schlüssel
+weiterzureichen. Jedes Feld mit Bedeutung: [`KONFIGURATION.md`](../KONFIGURATION.md).
+
 ## Sprache (i18n)
 
 Die eingebauten Texte sind **standardmäßig Englisch** (`lang="en"`); mitgeliefert ist auch **Deutsch**:
@@ -226,22 +282,80 @@ Einzelne Texte oder ganze Seiten lassen sich zusätzlich per `auth.set_template(
 
 ## Eigene Login-Seite
 
-TinySesam als reines Backend nutzen (eigene UI) — die Bausteine sind öffentlich:
+Zwei Wege, je nachdem, was sich ändern soll:
+
+- **Nur das Aussehen** — die Seite ersetzen, die Route behalten: `auth.set_template("login", fn)`
+  ([Look & Feel](#look--feel)). Das Formular geht weiter an `POST /auth/login`, und jeder Schutz
+  bleibt, wo er ist. Das ist die erste Wahl.
+- **Eine eigene Route** (Single-Page-App, JSON, andere Felder) — den Baustein rufen, den die
+  eingebaute Route selbst ruft: `auth.login_password(…)`. Er drosselt, zählt und sperrt genau
+  wie `POST /auth/login`, denn diese Route ist nichts anderes als dieser Aufruf: CSRF-Prüfung,
+  Drossel je IP, der vorab gebuchte Versuch (Fehlversuche je Kennung, je Adresse und je Paar,
+  die Serien-Sperre), der LDAP-Rückfall („eine Kennung, ein Konto“; ein Ausfall ist kein
+  Fehlversuch), Audit- und Sicherheits-Log (die Zeilen, die fail2ban liest), dann die Sitzung.
 
 ```python
-user = auth.check_password(username, password)
-token, fertig = auth.start_session(user["id"], "password")   # Tupel, nicht nur ein Token
-auth.set_cookie(resp, token)
-if not fertig:                    # es fehlt noch ein zweiter Faktor
-    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
+from html import escape
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db", lang="de"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.post("/login")          # ein schlichtes `def`: FastAPI führt es im Threadpool aus
+def login(request: Request, username: str = Form(""), password: str = Form(""),
+          next: str = Form(""), csrf: str = Form("", alias="_csrf")):
+    result = auth.login_password(request, username, password, next=next, csrf=csrf)
+    if not result:           # falsch, gesperrt, gedrosselt, Verzeichnis weg …: keine Sitzung, kein Cookie
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    return result.redirect()     # zum offenen Faktor (result.next_factor) oder nach next, Cookie gesetzt
 ```
 
-`start_session` gibt `(token, session_ok)` zurück. Auspacken — wer das Tupel direkt in
-`set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie, und es fliegt keine
-Ausnahme: Die Anmeldung ist still kaputt. `session_ok=False` heisst: Die Sitzung existiert, ist
-aber noch nicht vollständig.
-Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch beim Step-up — es gehört ins
-Cookie. Wer es ignoriert, hat eine tote Sitzung im Cookie, und der Nutzer ist abgemeldet.
+Das Ergebnis, ein `tinysesam.LoginResult`, trägt `ok` (auch sein Wahrheitswert), `reason`
+(einer aus `LoginResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`,
+`ratelimit`, `directory_down`, `method_disabled`, `no_session`), `status` (was die eingebaute
+Seite antwortet: 303, 400, 401, 404, 429, 503), `message` (der übersetzte Text), `next_url` (das
+geprüfte Ziel), `next_factor` (der offene Faktor, etwa `"totp"`), `done` (Sitzung vollständig)
+und `user` (nur bei Erfolg). `reason` ist für Programme gedacht; mit dem Audit- und
+Sicherheits-Log hat es nichts zu tun, dessen Zeilen bleiben, wie sie sind. Ein Misserfolg hat
+keine Sitzung und setzt kein Cookie — wer das Ergebnis ignoriert, meldet niemanden an. Eine
+JSON-Route, die lieber wirft, schreibt `if not result: raise HTTPException(result.status,
+result.message)`, lässt `csrf` weg (dann zählt der Header `X-CSRF-Token`) und setzt das Cookie
+mit `result.set_cookie(response)` an ihrer eigenen Antwort.
+Das Sitzungs-Token ist bewusst kein Feld. Geworfen wird nur `HTTPException(403)` (CSRF, oder ein
+Konto, das eben gesperrt wurde), dazu Unerwartetes — der Versuch zählt dann als Fehlversuch.
+
+Die Schritte nach dem ersten Faktor gehen genauso: `auth.login_totp(request, code, next=…)`
+nimmt einen TOTP-Code oder einen Einmal-Code, wie `POST /auth/totp`, und
+`auth.login_pin(request, pin, username, next=…)` arbeitet wie `POST /auth/pin` (im
+Kettenschritt oder auf einer angemeldeten Sitzung ohne `username`). `result.next_factor` sagt
+deiner Seite, welcher Schritt als nächster kommt. Alle drei sind synchron (ein Passwort-Hash,
+vielleicht das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
+`run_in_threadpool`.
+
+> **Ohne diese Bausteine gibt es keinen Schutz gegen Raten.** Die inneren Prüfer
+> `check_password`, `check_pin`, `check_ldap`, `verify_totp` und `verify_recovery_code`
+> vergleichen nur: keine Sperre, kein Zähler, keine Serien-Sperre, keine Drossel, keine Zeile für
+> fail2ban. Bis 0.21.0 zeigte dieser Abschnitt `check_password` + `start_session` — eine Route
+> danach lässt jeden Passwörter (oder eine vierstellige PIN, oder einen sechsstelligen Code) so
+> schnell raten, wie der Server antwortet. Sie sind seit 0.22.0 [Stufe C](#öffentliche-api-drei-stufen),
+> warnen beim Aufruf und fallen mit 1.0 weg; ersetzen durch `login_password`, `login_pin` und
+> `login_totp`.
+
+`start_session` bleibt, für Tests und für einen Faktor, den du selbst geprüft hast — es prüft
+nichts ([Konten im Code](#konten-im-code)). Es gibt `(token, session_ok)` zurück: auspacken —
+wer das Tupel direkt in `set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie,
+und es fliegt keine Ausnahme. Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch
+beim Step-up — es gehört ins Cookie, sonst hält das Cookie eine tote Sitzung. Die Bausteine
+`login_*` erledigen beides.
+
+Dasselbe Muster gibt es für einen eigenen Step-up ([Eigene Step-up-Seite](#eigene-step-up-seite),
+`confirm_*`) und für den Passwortwechsel ([Eigene Passwortwechsel-Seite](#eigene-passwortwechsel-seite),
+`change_password`).
 
 ### CSRF auf eigenen Seiten
 
@@ -298,15 +412,15 @@ Zeichen, zu kurz, zu lang), wird ersetzt statt in ein Formular übernommen. `iss
 würfelt immer ein **neues** Token und entwertet damit die Formulare in allen anderen Reitern — es
 ist zum bewussten Erneuern da, nicht zum Rendern einer Seite.
 
-**Anmelden und Abmelden wechseln das Token.** Jede Anmeldung — jeder eingebaute Weg und eine
-eigene Route mit `start_session` + `set_cookie` — setzt in derselben Antwort ein frisches Token,
-`auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, geht nur mit dem
-Antwortparameter (erstes Beispiel): Es holt sein Token *nach* `set_cookie`/`logout` aus
+**Anmelden und Abmelden wechseln das Token.** Jede Anmeldung — jeder eingebaute Weg und eine eigene
+Route mit `login_*` (oder `start_session` + `set_cookie`) — setzt in derselben Antwort ein
+frisches Token, `auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, geht nur
+mit dem Antwortparameter (erstes Beispiel): Es holt sein Token *nach* `set_cookie`/`logout` aus
 `ensure_csrf(request, response)`. Eine fertige Antwort (zweites Beispiel) ist gerendert, bevor
 `set_cookie`/`logout` das Token wechselt — ihr Formular trägt das alte, jedes Absenden endet mit
-403. Eine Antwort, die an- oder abmeldet, rendert deshalb so kein Formular, sondern leitet um
-(303); die Folgeanfrage rendert mit dem neuen Cookie, wie bei den eingebauten Anmeldungen. Ein
-Step-up (`/auth/reauth`, `rotate_session`) behält das Token.
+403. Eine Antwort, die an- oder abmeldet, rendert deshalb so kein Formular, sondern leitet um (303);
+die Folgeanfrage rendert mit dem neuen Cookie, wie bei den eingebauten Anmeldungen. Ein Step-up
+(`/auth/reauth`, `rotate_session`) behält das Token.
 
 ## Look & Feel
 
@@ -361,6 +475,98 @@ Konto, die Adress-Schwelle beim `ip_attempt_factor`-fachen) und die Sperre nach 
 Folge (`account_max_consecutive_failures`, siehe *Härtung*) — beide stehen im Admin-Panel direkt bei
 der Login-Sperre. Nicht gewollt? `pin_login=False`.
 
+## Eigene Step-up-Seite
+
+`Depends(auth.require(mfa=True))` schickt Browser auf die eingebaute Seite `/auth/reauth` und
+antwortet anderen Clients mit 403 samt `X-TinySesam-Reauth` ([oben](#pin-und-step-up-für-sensible-routen)).
+Wer nur ihr Aussehen ändern will, ersetzt die Seite: `auth.set_template("reauth", fn)`. Eine eigene
+Seite — der Dialog einer Single-Page-App, ein Formular vor einem gefährlichen Knopf — ruft den
+Baustein, den die eingebaute Route selbst ruft: `auth.confirm_password(…)`, `auth.confirm_pin(…)`
+oder `auth.confirm_totp(…)`. Sie drosseln, zählen und sperren genau wie `POST /auth/reauth`, denn
+diese Route ist nichts anderes als dieser Aufruf: CSRF-Prüfung, eine volle Sitzung (ein API-Key
+zählt nicht), nur ein Verfahren, das `stepup_options()` diesem Konto anbietet (`stepup_methods`,
+`stepup_strict`), die Drossel je IP, der vorab gebuchte Versuch im eigenen Topf
+(`reauth_max_attempts` — Tippfehler hier sperren nicht die Anmeldung), Audit- und Sicherheits-Log,
+dann die frische Bestätigung mit neuem Sitzungs-Token.
+
+```python
+from html import escape
+
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db", lang="de"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.get("/gefaehrlich")         # eine sensible Route: nur mit frischer Bestätigung
+def gefaehrlich(user=Depends(auth.require(mfa=True))):
+    return {"user": user["username"]}
+
+
+@app.post("/bestaetigen")        # ein schlichtes `def`: FastAPI führt es im Threadpool aus
+def bestaetigen(request: Request, password: str = Form(""), next: str = Form(""),
+                csrf: str = Form("", alias="_csrf")):
+    result = auth.confirm_password(request, password, next=next, csrf=csrf)
+    if not result:               # falsch, gesperrt, keine Sitzung, nicht angeboten …: nichts ist frisch
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    return result.redirect()     # nach next, mit dem erneuerten Sitzungs-Cookie
+```
+
+Das Ergebnis ist dasselbe `tinysesam.LoginResult` wie beim Anmelden: Bei Erfolg ist `done` wahr, und
+`redirect()` bzw. `set_cookie(response)` legt das erneuerte Token ins Cookie — das alte gilt noch
+`session_rotation_grace_sec` lang weiter, ohne die Frische. Bei einem Misserfolg ist nichts frisch
+geworden, und `reason` sagt, warum: `missing` (leer, 400, zählt nicht), `invalid` (401), `locked`
+oder `ratelimit` (429), `method_disabled` (403: diesem Konto nicht angeboten; bei leerem
+`stepup_options()` hat es nichts, womit es bestätigen könnte), `no_session` (401 mit der Login-Seite
+als `next_url`; 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt). `confirm_totp` nimmt
+nur einen TOTP-Code, keinen Einmal-Code — wie die eingebaute Seite. Synchron, wie `login_*`.
+
+## Eigene Passwortwechsel-Seite
+
+Die eingebaute Route ist `POST /auth/password` (JSON mit `current` und `new`; die Konto-Seite
+benutzt sie). Eine eigene Seite ruft den Baustein, den diese Route ruft:
+`auth.change_password(request, current, new, csrf=…)`. Das alte Passwort ist ein Geheimnis wie am
+Login, also gilt derselbe Dreiklang: die Drossel je IP, der vorab gebuchte Versuch im eigenen Topf
+(`password_change_max_attempts`, je Konto — ein Tippfehler hier sperrt nicht die Anmeldung), Audit-
+und Sicherheits-Log. Geprüft wird gegen das Konto der Sitzung, nie gegen einen Namen, der auf jemand
+anderen auflösen könnte; danach das neue gegen die Passwortregel (`password_policy_error`). Bei
+Erfolg enden die anderen Sitzungen des Kontos (die eigene bleibt), offene Adresswechsel-Links fallen
+weg, und API-Keys bleiben mit Absicht gültig — `result.api_keys_active` sagt, wie viele, damit deine
+Seite es auch sagen kann.
+
+```python
+from html import escape
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db", lang="de"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.post("/passwort")           # ein schlichtes `def`: FastAPI führt es im Threadpool aus
+def passwort(request: Request, current: str = Form(""), new: str = Form(""),
+             csrf: str = Form("", alias="_csrf")):
+    result = auth.change_password(request, current, new, csrf=csrf)
+    if not result:               # falsch, gesperrt, zu schwach, keine Sitzung …: nichts geändert
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    keys = f" {result.api_keys_active} API-Key(s) gelten weiter." if result.api_keys_active else ""
+    return HTMLResponse(f"<p>Passwort geändert, deine anderen Sitzungen sind abgemeldet.{keys}</p>")
+```
+
+Das Ergebnis ist ein `tinysesam.PasswordChangeResult`: `ok` (auch sein Wahrheitswert), `reason`
+(einer aus `PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`,
+`policy`, `no_session`), `status` (was `POST /auth/password` antwortet: 200, 400, 401, 403, 429),
+`message` (der übersetzte Text; bei `policy` die verletzte Regel) und `api_keys_active`. Es braucht
+eine volle Sitzung — ein API-Key zählt nicht (`no_session`, 403): Ein Maschinen-Zugang ändert nicht
+das Passwort eines Menschen. Ein leeres altes Passwort ist `missing` (400) und zählt nicht als
+Fehlversuch. Synchron, wie `login_*`.
+
 ## Den ersten Admin bestimmen
 
 Offene Registrierung plus „der erste Account wird Admin" ist ein Wettlauf: wer die frische Instanz
@@ -377,11 +583,15 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
   Danach nie wieder — auch nicht, nachdem ein Identity Provider dem letzten Admin der Instanz das
   Recht entzogen hat; TinySesam gibt dann sofort das Einmal-Token unten aus (oder `tinysesam owner`).
 - **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
-  **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
-  Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
-  antwortet die Route mit 404. Der Wert bleibt bewusst aus dem Security-Log heraus — das liest
-  fail2ban, und logrotate hebt es auf. Wird stderr selbst eingesammelt (journal, Container-Logs),
-  nennt `admin_claim_token_file` eine eigene Datei; TinySesam legt sie mit `0600` an.
+  **stderr**, wenn stderr eine Konsole ist (das Terminal des Betreibers). Anmelden,
+  `/auth/claim-admin?token=…` öffnen, fertig. Das Token gilt einmal und läuft nach
+  `admin_claim_ttl_min` ab; sobald ein Admin existiert, antwortet die Route mit 404. Der Wert bleibt
+  bewusst aus dem Security-Log heraus — das liest fail2ban, und logrotate hebt es auf. **Ist stderr
+  keine Konsole** (Container, journal, Pipe — dort *ist* stderr das Log), schreibt TinySesam das
+  Token stattdessen nach `<db_path>.claim` mit `0600` und nennt im Log nur den Pfad
+  (`docker exec … cat /data/app.db.claim`); nach dem Einlösen verschwindet die Datei. Ohne
+  Datenbank-Datei (`:memory:`) bleibt nur stderr, und die Log-Zeile sagt das. Mit
+  `admin_claim_token_file` wählt man die Datei selbst (sie geht vor, auch an einer Konsole).
   **Bekannte Grenze:** Eingelöst wird der Token über eine URL (`?token=…`, bei nicht angemeldetem
   Aufruf zusätzlich im `Location` des Login-Redirects) — er läuft damit durch Proxy-Access-Logs,
   `Referer` und die Browser-History, bevor er verbraucht ist. Also `admin_claim_ttl_min` kurz
@@ -441,7 +651,7 @@ Dasselbe aus Python:
 
 ```python
 auth = TinySesam(TinySesamConfig(db_path="auth.db"))
-auth.set_password(auth.store.get_user_by_name("admin")["id"], "neues-passwort")
+auth.set_password(auth.find_user("admin")["id"], "neues-passwort")
 ```
 
 ## Sicherungen und Aufräumen
@@ -456,8 +666,9 @@ python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegr
 > allein liefert einen Torso — gemessen an einer frischen Instanz mit fünf Konten enthielt die
 > Kopie nicht einmal die Tabelle `users`, und das merkt man erst beim Zurückspielen. `backup`
 > nutzt SQLites Online-Backup: Es nimmt die nötigen Sperren, zieht das WAL mit und schreibt eine
-> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Aus Python:
-> `auth.store.backup(pfad)`.
+> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Der zugesagte
+> Weg ist dieses Kommando; `auth.store.backup(pfad)` tut aus Python dasselbe, aber `auth.store` ist
+> Innenleben (Stufe C, keine Zusage — s. [Öffentliche API](#öffentliche-api-drei-stufen)).
 
 `gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
 bleibt bewusst unangetastet. **Von selbst läuft das nicht** — fertige Unit-Dateien liegen in
@@ -755,14 +966,16 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
 - **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
-- **Zwei Arten Key, und keine davon ist eine Admin-API.** `kind="automat"` (Vorgabe) arbeitet
+- **Zwei Arten Key, und keine davon ist eine Admin-API.** `kind="automation"` (Vorgabe) arbeitet
   allein, trägt aber **nie das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin
-  verlangt — der Weg für Dienste, Skripte und CI. `kind="mensch"` gilt nur **zusammen mit einer
+  verlangt — der Weg für Dienste, Skripte und CI. `kind="human"` gilt nur **zusammen mit einer
   gültigen Sitzung desselben Kontos** und trägt dafür die vollen Rechte — der Weg für ein
   Werkzeug, das ein Mensch selbst bedient. Allein abgeflossen ist so einer wertlos. Bis 0.18.x
   gab es eine Art, und der Key eines Admins war eine vollständige Schreib-API: Nutzer anlegen,
   `is_admin` setzen, Passwörter zurücksetzen — ohne zweiten Faktor, ohne CSRF-Schicht. Ein
-  abgeflossener CI-Key war die Instanz.
+  abgeflossener CI-Key war die Instanz. (Bis 0.21.x hiessen die Arten `automat` und `mensch`; seit
+  0.22.0 sind diese Namen ein Eingabefehler, der den neuen nennt, und die Migration schreibt
+  gespeicherte Keys um — Rückschritt: `docs/BETRIEB.md`.)
 - **Ein Key läuft von selbst ab.** Ohne `expires_days` galt er bisher unbefristet, und das war
   der häufigste Fall. Jetzt greift `apikey_default_days` (90); `expires_days=0` heisst weiter
   „unbefristet", braucht aber `apikey_allow_unlimited=True` und steht dann im Audit-Eintrag.
@@ -777,7 +990,7 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 
 Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
 
-- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz), Passwort-Reset, Rollen/Admin setzen.
+- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
@@ -930,9 +1143,9 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > aber nur in `federation_name_binding_days` (Vorgabe 30) Tagen ab dem ersten Start mit
 > eingeschalteter Quelle bzw. ab der Anlage des Kontos; danach fiele ein ruhendes Konto an die
 > nächste Person, die im Verzeichnis denselben Namen bekommt. Den Rest bindet man ausdrücklich:
-> `auth.foederation_nachbinden("ldap")` (Vorgabe Trockenlauf, `ausfuehren=True` schreibt; SAML
-> mit `zuordnung={name: nameid}`), oder man öffnet ein einzelnes Konto mit
-> `auth.loese_fremde_bindung(quelle, user_id)`. Ein selbst gewählter Name (Registrierung,
+> `auth.federation_bind_existing("ldap")` (Vorgabe Trockenlauf, `apply=True` schreibt; SAML
+> mit `mapping={name: nameid}`), oder man öffnet ein einzelnes Konto mit
+> `auth.federation_unbind(source, user_id)`. Ein selbst gewählter Name (Registrierung,
 > Umbenennen in der Selbstbedienung) bindet nie über den Namen, ebenso wenig ein Name, den eine
 > andere Quelle beim Anlegen mitgebracht hat (ein über OIDC angelegtes Konto bindet sich nie über
 > den Namen an LDAP oder SAML — beim IdP kann der Name selbst gewählt sein). Liefert das Verzeichnis keine
@@ -1026,6 +1239,91 @@ keine Ein-Routen-App.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
+## Öffentliche API: drei Stufen
+
+Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
+eine **Stufe**, festgehalten in `tests/api_surface.json` und mit Signatur und Beschreibung
+aufgeführt in [`API.md`](../API.md):
+
+| Stufe | Was | Zusage |
+|---|---|---|
+| **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.22.0. |
+| **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. |
+| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.22.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
+
+Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
+`tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
+sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso die Fehlertypen
+(`TinySesamError`, `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+**Stufen A und B heissen englisch.** Bis 0.21.x waren einige dieser Namen deutsch
+(`foederation_nachbinden`, `kennung_vergeben`, `SICHERHEITSEREIGNISSE`, Parameter wie
+`durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 benennt sie **ohne Alias** um — die
+Zusagen der Stufen beginnen erst mit diesem Release; die ganze Liste alt → neu steht im
+[CHANGELOG](../CHANGELOG.md). Der Wächter wird rot, sobald ein Name, Parameter,
+Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B ein deutsches Wort trägt.
+
+**Ebenso die Schlüssel und Werte** (0.22.0, ebenfalls ohne Alias): was die Methoden der Stufen A/B
+zurückgeben oder annehmen (der Bericht von `federation_bind_existing`, `gc()`, `create_api_key`, die
+Grund-Kürzel), die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`,
+`ctx["purpose"]`), das JSON der Konto- und Admin-Routen und die Arten der API-Keys `automation`/
+`human`. Die zwei Werte, die in der Datenbank stehen (die Art eines Keys, die bisherige Adresse
+`old` in einem offenen Adresswechsel-Link), schreibt der Start um (Schema 12), gelesen werden sie
+auch in alter Form richtig; der Rückschritt auf 0.21.x braucht einen SQL-Block aus
+`docs/BETRIEB.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
+Log-Zeilen bleiben, wie sie sind** — fail2ban und eigene Filter hängen an ihnen
+(`apikey_create … art=automat` behält seinen Wortlaut).
+
+**`auth.store` ist Innenleben (Stufe C).** Das ist die Speicherschicht der eingebauten Routen; ihre
+Methoden haben keine Stufe, keine Zusage und keine Übergangsfrist und können sich mit jedem Release
+ändern. Was eine App braucht, hat eine öffentliche Methode (`set_disabled`, `find_user`,
+`list_api_keys`, `lift_lockout` …); wo die Doku doch einen Aufruf von `auth.store` nennt (eine
+Gesundheitsprobe, das Entziehen von OIDC-Freigaben), sagt sie es dazu.
+
+**Stufe C warnt.** Wer einen alten C-Namen aufruft (bei den Konstanten: liest), bekommt eine
+`DeprecationWarning` mit dem Ersatz; [`API.md`](../API.md) führt jeden auf. Python zeigt diese
+Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
+einmal mit `python -W error::DeprecationWarning` laufen lassen. Eine Unterklasse, die einen dieser
+Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`: Die eingebauten Routen rufen seit
+0.22.0 `_name`, die Überschreibung wirkt nicht mehr. Dasselbe gilt für einen **Test-Fake** auf einen
+alten Namen — `auth.check_password = fake` oder `mock.patch.object(auth, "rate_ok", …)` wird nie
+gerufen; die Zuweisung löst eine `RuntimeWarning` aus, die das Ziel nennt. Den Fake auf den neuen
+Namen setzen (`auth._check_password = fake`). Ein Patch an der Klasse
+(`mock.patch.object(TinySesam, …)`) warnt nicht und wirkt ebenso wenig.
+
+### Für Fortgeschrittene (Stufe B)
+
+Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
+[`API.md`](../API.md), Abschnitte „B“.
+
+- **Eigene Konto-Seite:** `count_other_sessions` (weitere Sitzungen beenden?), `own_events`,
+  `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `mfa_enrollment_allowed`,
+  `federated_only` (reines SSO-Konto: kein Passwort zu ändern), `password_policy_error` (die Regel für
+  ein neues Passwort; den Wechsel selbst macht `change_password`, Stufe A), `identifier_taken` und
+  `NAME_MAX` (ist ein Name oder eine Adresse frei, wie lang darf er sein), `request_email_change`
+  (Ergebnis an `after_response` geben) → `confirm_email_change`, `stepup_fresh` (den Step-up selbst
+  machen `confirm_*`, Stufe A), `pending_user`, `session_user`.
+- **Eigenes Admin-Panel oder Betreiber-Werkzeuge:** `get_user`, `find_user`, `user_roles`,
+  `set_roles`, `delete_user`, `lift_lockout` (wie `tinysesam unlock`), `list_api_keys`,
+  `api_key_kind`, `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`,
+  `remove_resource_secret`, `resource_unlocked`, `all_security`, `admin_exists`,
+  `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
+- **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
+  → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
+  `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `browser_path` (Links
+  auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
+  `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` und
+  `tinysesam.current_version()`, `PAGES` (die Seitennamen, die `set_template` annimmt),
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (Nachprüfung nach Änderungen an `auth.cfg`
+  zur Laufzeit), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+- **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
+  den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
+  hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die
+  Bausteine `login_*` ([Eigene Login-Seite](#eigene-login-seite), Stufe A) prüfen, drosseln
+  und rufen ihn dann selbst.
+
 ## Tests & CI
 
 ```bash
@@ -1068,7 +1366,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**57 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**61 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
@@ -1083,8 +1381,9 @@ echten Provider auf einer Bühne geprüft (`tests/e2e_stage.py`); die mitgeliefe
 sie strukturell ab, weil sie nicht nach draussen telefonieren können.
 
 Zwei Sicherheitsaudits sind im September 2026 durch den Code gegangen (siehe `CHANGELOG`). Die
-Version ist bewusst noch **nicht** 1.0: Die API-Oberfläche muss dafür zwei Minor-Versionen
-stillhalten.
+Version ist bewusst noch **nicht** 1.0: Die Oberfläche der Stufe A
+([Öffentliche API](#öffentliche-api-drei-stufen)) muss dafür zwei Minor-Versionen stillhalten,
+gezählt ab 0.22.0.
 
 MIT-Lizenz.
 

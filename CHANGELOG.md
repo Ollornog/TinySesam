@@ -2,6 +2,543 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+**Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
+(`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten und dieselben Bausteine für
+eigene Step-up- und Passwortwechsel-Seiten (`confirm_password`, `confirm_pin`, `confirm_totp`,
+`change_password`); die internen Namen (Stufe C) warnen und fallen mit 1.0 weg, die deutschen
+Namen der Stufen A und B heissen englisch (ohne Alias) — ebenso ihre Schlüssel und Werte, auch die
+gespeicherten (Schema 12); die Sperre durch den Betreiber hat eine öffentliche Methode
+(`auth.set_disabled`), `auth.store` ist Innenleben ohne Zusage. Und zwei Funde aus dem Betrieb: das
+Erst-Admin-Token steht im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird
+gemeldet.** Was beim Update auffällt:
+
+- **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
+  1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
+  Nur A trägt die Zusage aus M-1 — zwei Minor-Versionen ohne Bruch, gezählt ab diesem Release. B
+  bleibt, wird aber umgebaut oder entfernt, nachdem eine `DeprecationWarning` zwei
+  Minor-Versionen lang darauf hingewiesen hat. C gehört nicht zur Zusage und fällt mit 1.0 weg.
+  **Wer TinySesam einbettet, sieht in `API.md` nach, welche Stufe seine Aufrufe haben** — dort
+  steht jetzt jeder Name unter seiner Stufe, die C-Namen als Tabelle mit ihrem Ersatz (darunter
+  `check_password`, `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs
+  erklären die Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
+- **Deutsche Namen der Stufen A und B heissen englisch — ohne Alias** (PO-Entscheid 2026-09-27).
+  Methoden, Konstanten, Parameter und die Attribute von `ConfigError` sind umbenannt, wie der Rest
+  der Stufe-A-Oberfläche. **Einen Alias gibt es nicht:** Die Zusagen der Stufen beginnen erst mit
+  diesem Release, und keiner der Abnehmer, die wir kennen, benutzt einen der alten Namen. Wer einen
+  davon aufruft, bekommt einen `AttributeError` bzw. bei einem Schlüsselwort-Parameter einen
+  `TypeError` — **umstellen nach der Tabelle**; positionelle Aufrufe mit einem umbenannten Parameter
+  laufen weiter. Kein Konfigurationsfeld ist betroffen (die hiessen schon englisch), ebenso wenig
+  eine Datenbank-Spalte.
+
+  | bis 0.21.x | ab 0.22.0 | Stufe |
+  |---|---|---|
+  | `foederation_nachbinden(quelle, *, zuordnung=None, ausfuehren=False)` | `federation_bind_existing(source, *, mapping=None, apply=False)` | A |
+  | `loese_fremde_bindung(quelle, user_id)` | `federation_unbind(source, user_id)` | A |
+  | `SICHERHEITSEREIGNISSE` | `SECURITY_EVENTS` | A |
+  | `change_username(user_id, neu, ip=None, *, durch_betreiber=False)` | `change_username(user_id, new_username, ip=None, *, by_operator=False)` | A |
+  | `create_user(…, *, name_selbst_gewaehlt=False)` | `create_user(…, *, self_chosen_name=False)` | A |
+  | `public_base(request=None, kandidat="")` | `public_base(request=None, candidate="")` | A |
+  | `ConfigError.feld`, `ConfigError.besitzer_id` | `ConfigError.field`, `ConfigError.owner_id` | A |
+  | `MissingExtra(nachricht, extra="")` | `MissingExtra(message, extra="")` | A |
+  | `andere_sitzungen(request, user, token=None)` | `count_other_sessions(request, user, token=None)` | B |
+  | `api_key_art(key)` | `api_key_kind(key)` | B |
+  | `darf_mfa_einrichten(user_id, jetzt=None)` | `mfa_enrollment_allowed(user_id, now=None)` | B |
+  | `kennung_vergeben(kennung, exclude_id=None)` | `identifier_taken(identifier, exclude_id=None)` | B |
+  | `nach_der_antwort(resp, auftrag, bei_ueberlauf=None)` | `after_response(resp, task, on_overflow=None)` | B |
+  | `nur_foederiert(user_id)` | `federated_only(user_id)` | B |
+  | `passwort_mangel(password, *, …)` | `password_policy_error(password, *, …)` | B |
+  | `pfad(request, pfad)` | `browser_path(request, path)` | B |
+  | `sperre_aufheben(user_id, methoden=None)` | `lift_lockout(user_id, methods=None)` | B |
+  | `apply_factor(…, email_bestaetigt=None)` | `apply_factor(…, email_verified=None)` | B |
+  | `flow_cookie_name(basis)` | `flow_cookie_name(base)` | B |
+  | `request_email_change(user_id, neu, base_url)` | `request_email_change(user_id, new_email, base_url)` | B |
+  | `require_public_base(request=None, kandidat="")` | `require_public_base(request=None, candidate="")` | B |
+  | `FOEDERIERTE_QUELLEN` | `FEDERATED_SOURCES` | B |
+  | `MFA_ENROLLMENT_ARTEN` | `MFA_ENROLLMENT_MODES` | B |
+  | `NACHBINDUNG_GRUENDE` | `NAME_BINDING_REFUSALS` | B |
+  | `SEITEN` | `PAGES` | B |
+  | `TinySesamConfig.pin_als_erstfaktor()` | `TinySesamConfig.pin_as_first_factor()` | B |
+  | `TinySesamConfig.pruefen()` | `TinySesamConfig.validate()` | B |
+
+  Die Schlüssel und Werte, die diese Namen zurückgeben oder annehmen, heissen seit dem zweiten
+  PO-Entscheid desselben Tags ebenfalls englisch — nächster Punkt. Audit-Ereignisse und ihre Details
+  (`ldap_kennung_gebunden`, `durch=betreiber`), die Zeilen für fail2ban und alle Spalten der
+  Datenbank bleiben. Geändert haben sich nur Log-Zeilen, die einen Aufruf nennen: die Hinweise auf
+  `auth.federation_unbind(…)`, `auth.federation_bind_existing(…, mapping=…)` und
+  `auth.change_username(…, by_operator=True)`, und die Summenzeile der Bestandsbindung im
+  Sicherheits-Log beginnt mit `federation_bind_existing(<quelle>)`.
+- **Auch die Schlüssel und Werte heissen englisch — ohne Alias, und die Datenbank zieht mit**
+  (PO-Entscheid 2026-09-27, „Alles übersetzen, auch DB-Werte“): was die Stufen A und B
+  zurückgeben oder annehmen, was an `on_security_event` geht, der Kontext eigener Seiten und die
+  JSON-Antworten der Routen. **Wer einen dieser Schlüssel liest oder einen der Werte vergleicht,
+  stellt nach der Tabelle um** — ein alter Schlüssel ist ein `KeyError`, ein alter Wert vergleicht
+  still ungleich; `create_api_key(kind="automat"|"mensch")` und `POST /auth/apikeys` mit einem alten
+  `kind` sind ein Eingabefehler (`ConfigError` bzw. 400), dessen Text den neuen Namen nennt.
+
+  | Wo | bis 0.21.x | ab 0.22.0 |
+  |---|---|---|
+  | `federation_bind_existing()` — Bericht | `quelle`, `ausgefuehrt`, `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen`, `lokal` | `source`, `applied`, `bound`, `conflict`, `ambiguous`, `not_in_directory`, `no_identifier`, `refused`, `local_password` |
+  | … je Eintrag | `lokal`, `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer` | `local`, `directory`, `identifier`, `reason`, `bound_to`, `matches` |
+  | … Gründe (`reason`) ausserhalb von `NAME_BINDING_REFUSALS` | `kein_konto`, `dienstkonto`, `gesperrt`, `schon_gebunden` | `no_account`, `service_account`, `disabled`, `already_bound` |
+  | `NAME_BINDING_REFUSALS` — Schlüssel (die Erklärungen jetzt englisch) | `adresse_als_name`, `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `frist` | `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired` |
+  | `gc()` | `fehlserien` | `failure_series` |
+  | `create_api_key()`, `POST /auth/apikeys` | `verworfene_rollen` | `dropped_roles` |
+  | Art eines API-Keys: `create_api_key(kind=…)` (auch die Vorgabe), `api_key_kind()`, `list_api_keys()`, `GET /auth/apikeys`, `GET <admin_path>/api/users/{id}/keys` | `automat`, `mensch` | `automation`, `human` |
+  | `current_user()` über einen API-Key | `_key_art` | `_key_kind` |
+  | `confirm_email_change()` | `"vergeben"` | `"taken"` |
+  | `peek_magic()`/`redeem_magic()` eines Adresswechsel-Links — `payload` | `alt` | `old` |
+  | `on_security_event`: `username_changed`, `email_changed` | `alt`, `neu` | `old`, `new` |
+  | … `recovery_code_used` | `verbleibend` | `remaining` |
+  | … `recovery_codes_generated` | `anzahl` | `count` |
+  | … `totp_disabled` | `recovery_codes_geloescht` | `recovery_codes_deleted` |
+  | … `api_keys_revoked` | `anzahl`, `grund`: `sperre`, `admin_passwort`, `passwort_reset`, `sitzungen_beendet` | `count`, `reason`: `account_disabled`, `admin_password_reset`, `password_reset`, `sessions_revoked` |
+  | Kontext eigener Seiten (`set_template`) | `ctx["praefix"]`; `ctx["zweck"]` (Seite `magic_confirm`) | `ctx["prefix"]`; `ctx["purpose"]` |
+
+  Die Ereignisnamen (`SECURITY_EVENTS`), die übrigen Gründe (`LoginResult.REASONS` …), die
+  Seitennamen (`PAGES`) und die Schlüssel der übrigen JSON-Antworten waren schon englisch.
+  `own_events()` nennt weiter die Namen der Audit-Ereignisse (darunter deutsche wie
+  `ldap_kennung_gebunden`) — das sind Audit-Werte, und die bleiben.
+
+  **Gespeicherte Werte, Schema 12.** Zwei davon stehen in der Datenbank: die Art jedes API-Keys
+  (`api_key.kind`) und im offenen Adresswechsel-Link die bisherige Adresse (`magic_token.payload`).
+  Der erste Start von 0.22.0 schreibt sie um, hebt den Stempel auf 12 und sagt es im Log (`…
+  gespeicherte Werte auf die englischen Namen umgeschrieben`); keine Spalte ändert sich. Gelesen
+  wird ein alter Wert trotzdem richtig (ein `mensch`-Key gilt als `human`, also nur mit Sitzung),
+  und jeder Start zieht Keys nach, die eine ältere Fassung inzwischen ausgestellt hat.
+  **Rückschritt auf 0.21.x** (gemessen mit 0.21.0): Sie öffnet die Datei und warnt beim Start
+  („Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11 …“), hält einen
+  `human`-Key aber für einen Automaten-Key — **er wirkt dort ohne Sitzung**, mit den Rechten des
+  Kontos ohne Admin-Flag. Vor dem Start einer 0.21.x-Fassung deshalb das SQL aus `docs/BETRIEB.md`
+  („Rückschritt auf 0.21.x“) fahren: `UPDATE api_key SET kind='mensch' WHERE kind='human'` usw.,
+  danach der Stempel zurück auf 11.
+
+  **Audit- und Log-Zeilen bleiben, wie sie waren** — Filter der Betreiber hängen an ihnen. Darin
+  stehen weiter die alten Namen: `apikey_create`/`apikey_use` `art=automat|mensch`,
+  `<quelle>_namensbindung_zu grund=<Kürzel bis 0.21.x>` (etwa `grund=name_aus_quelle`),
+  `totp_disable … recovery_codes_geloescht=`, `recovery_used … verbleibend=`, die Zeilen im
+  Sicherheits-Log (`API-Key der Art 'mensch' ohne passende Sitzung …`, die Begründung einer nicht
+  gebundenen Namensbindung). Wer von einem Wert der Oberfläche auf eine Audit-Zeile schliesst, liest
+  dort also noch die alte Schreibweise.
+- **Konto-Dicts tragen nur noch die Felder des Kontos.** `get_user`, `find_user`,
+  `identifier_taken`, `current_user`, `session_user`, `pending_user`, `verify_api_key`,
+  `LoginResult.user` und die `require_*`-Wächter liefern `id`, `username`, `display_name`, `email`,
+  `email_verified`, `is_admin`, `is_owner`, `roles`, `is_service`, `disabled`, `first_login_at`,
+  `mfa_enroll_until`, `created_at` (dazu je nach Weg `_via`, `_key_kind`). Bis 0.21.x ging die ganze
+  Datenbankzeile hinaus, mit der Buchhaltung des Stores unter deutschen Spaltennamen (`topf_name`,
+  `topf_mail`, `name_quelle`, `name_selbst_gewaehlt`, `idp_bestaetigt_at`, `name_versuch_ab`,
+  `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab`) — Innenleben, das keine Zusage tragen soll.
+  `verify_api_key` gibt als Konto jetzt ein Dict statt einer `sqlite3.Row` zurück, `list_api_keys`
+  eine Liste von Dicts (Spalten von `api_key`, `kind` englisch).
+- **Ein Konto sperrt der Betreiber im Code mit `auth.set_disabled(user_id, True)`** (neu, Stufe A,
+  PO-Entscheid 2026-09-27) — dieselbe Wirkung wie „Sperren“ im Panel, das die Methode ruft:
+  Betreiber-Vermerk, Sitzungen beenden, API-Keys widerrufen, offene Einmal-Token verwerfen, Audit.
+  Bis 0.21.x zeigte `docs/BETRIEB.md` dafür `auth.store.set_disabled(uid, True,
+  durch_betreiber=True)` — **das setzte nur den Vermerk**; Sitzungen, Keys und Links blieben gültig.
+  Wer das so übernommen hat, stellt um. **`auth.store` ist Innenleben** (Stufe C): ohne Stufe,
+  ohne Zusage, ohne Übergangsfrist. Wo die Doku noch einen Aufruf nennt (die Schreibprobe für einen
+  eigenen Healthcheck, `drop_oidc_grants_for_user`, `backup` aus Python), steht das dabei. Das
+  Panel antwortet auf `POST <admin_path>/api/users/{id}/disable` für ein Konto, das es nicht gibt,
+  jetzt 404 statt 200 (bisher „ok“ samt Audit-Zeile, ohne dass etwas geschah).
+- **Die internen Namen (Stufe C) warnen.** 42 Methoden und 7 Konstanten heissen intern jetzt `_name`
+  (`check_password` → `_check_password`, `record_login` → `_record_login` …, Liste unter
+  „Veraltet“), `complete_mfa` ist ein Alias von `complete_totp`. Der alte Name tut bis 1.0 dasselbe
+  wie bisher, löst aber bei jedem Aufruf (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem
+  Ersatz aus. Python zeigt sie ausserhalb von `__main__` nicht an — **wer TinySesam einbettet, lässt
+  seine Tests einmal mit `python -W error::DeprecationWarning` laufen**. Eine Unterklasse von
+  `TinySesam`, die einen dieser Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`:
+  Die eingebauten Routen rufen jetzt `_name`, die Überschreibung wirkt nicht mehr.
+- **Test-Fakes auf einen alten Namen wirken nicht mehr.** `auth.check_password = fake` oder
+  `mock.patch.object(auth, "rate_ok", …)` ersetzten bis 0.21.x, was die eingebauten Routen riefen.
+  Seit diesem Release rufen sie die `_`-Namen (`_check_password`, `_rate_ok` …) — ein solcher Fake
+  wird nie gerufen, und der Test prüft still etwas anderes (gemessen: 0 Aufrufe, der Login gelingt
+  mit 303). **Fakes auf den neuen Namen setzen** (`auth._check_password = fake`). Die Zuweisung auf
+  einen alten Namen am Objekt löst jetzt eine `RuntimeWarning` aus (ohne Filter sichtbar), die das
+  Ziel nennt; ein Patch an der Klasse (`mock.patch.object(TinySesam, "check_password", …)`) ersetzt
+  den Alias selbst, bleibt unbemerkt und wirkt ebenso wenig.
+- **Eigene Login-Seiten nehmen `login_password`** (PO-Befund 2026-09-26). Wer dem Muster „Your
+  own login page“ der README bis 0.21.0 gefolgt ist (`check_password` + `start_session`), hat auf
+  seiner eigenen Route **keinen Schutz gegen Passwort-Raten** — keine Sperre, keinen Zähler, keine
+  Serie, keine Drossel, keine Zeile für fail2ban. Umstellen auf `auth.login_password(request,
+  username, password, next=…, csrf=…)` (für den zweiten Schritt `login_totp`, für die PIN
+  `login_pin`): Es gibt ein `LoginResult` zurück (`if not result: …`, sonst
+  `result.redirect()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
+  Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
+  Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
+- **Eigene Step-up- und Passwortwechsel-Seiten nehmen `confirm_*` bzw. `change_password`**
+  (PO-Entscheid 2026-09-27). Wer vor einer heiklen Aktion selbst nachfragt und dazu
+  `verify_user_password`, `verify_user_pin` oder `verify_totp` ruft, hat dort **keine Sperre,
+  keinen Zähler und keine Zeile im Sicherheits-Log** — dasselbe gilt für eine eigene Kontoseite, die
+  das alte Passwort so prüft und dann `set_password` ruft. Umstellen auf
+  `auth.confirm_password(request, password, next=…, csrf=…)` (bzw. `confirm_pin`,
+  `confirm_totp`; Ergebnis ein `LoginResult`, bei Erfolg `result.redirect()`) und
+  `auth.change_password(request, current, new, csrf=…)` (Ergebnis ein `PasswordChangeResult`).
+  Beide schützen genau wie `/auth/reauth` und `POST /auth/password`, weil diese Routen sie rufen.
+- **`POST /auth/password` nimmt keinen API-Key mehr** — 403 mit dem Text „Ein Passwort ändert ein
+  Mensch: angemeldete Sitzung nötig, ein API-Key genügt hier nicht“ (`api.password_needs_session`).
+  Bis 0.21.x änderte ein Key zusammen mit dem alten Passwort das Passwort des Kontos und beendete
+  dabei **alle** seine Sitzungen (eine eigene war ja nicht dabei). Wer ein Passwort maschinell
+  setzt, tut das als Betreiber (Panel, `set_password`). Ohne Sitzung steht in der 401 jetzt ein
+  Text („nicht eingeloggt“) statt bloss `Unauthorized`.
+- **Ein leeres Feld ist kein Fehlversuch mehr — und ein nicht angebotenes Verfahren auch nicht.**
+  `/auth/reauth` ohne ausgefülltes Feld antwortet 400 („Bitte alle Felder ausfüllen.“) statt 401,
+  `POST /auth/password` mit leerem `current` 400 statt 403; beide zählen nicht mehr in die Sperre
+  (wie am Login). Schickt ein Formular an `/auth/reauth` ein Verfahren, das dem Konto nicht
+  angeboten wird (`stepup_options()`; die eingebaute Seite zeigt nur die angebotenen — betroffen
+  sind eigene Vorlagen und gebaute Anfragen), ist das 403 ohne Fehlversuch statt 401 mit. Welches
+  Feld zählt, bestimmt wie bisher die Reihenfolge Code, PIN, Passwort; neu ist nur, dass ein
+  ausgefülltes, aber nicht angebotenes Feld nicht mehr still übergangen wird.
+- **Das Erst-Admin-Einmal-Token geht ohne Konsole in eine Datei** (T-17). Gibt es keinen Admin und
+  ist stderr kein Terminal (Container, journal, Pipe), steht das Token für `/auth/claim-admin` jetzt
+  in `<db_path>.claim` (Rechte 0600), und das Log nennt nur den Pfad — im Container also
+  `docker exec … cat /data/app.db.claim` statt `docker logs`. Nach dem Einlösen verschwindet die
+  Datei. An einer Konsole bleibt es bei stderr; `admin_claim_token_file` geht wie bisher vor. Wer
+  auf die Zeile mit `?token=` in den Logs gewartet hat (Skript, Anleitung), liest jetzt die Datei.
+- **Neue Startwarnung: Gruppenregel ohne Scope `groups`** (T-16). Wer `oidc_allowed_groups` oder
+  `oidc_group_role_map` über den Claim `groups` nutzt und den Scope `groups` nicht anfordert,
+  sieht beim Start eine Warnung. Bei PocketID (und anderen Providern, die Claims an Scopes binden)
+  heisst diese Lage: jeder wird abgewiesen bzw. bekommt keine Rolle. Abhilfe
+  `oidc_scopes="openid profile email groups"`, im Gateway die neue Variable
+  `TINYSESAM_OIDC_SCOPES`. TinySesam fordert den Scope nicht selbst an; liefert der Provider den
+  Claim ohne Scope (Mapper), ist die Warnung gegenstandslos.
+
+### Hinzugefügt
+
+- **`auth.set_disabled(user_id, disabled)`** (Stufe A, PO-Entscheid 2026-09-27): ein Konto als
+  Betreiber sperren oder entsperren, mit der Wirkung des Panels — Betreiber-Vermerk (kein
+  Bestätigungslink hebt die Sperre auf, auch keiner, der erst danach entsteht, H-18), alle
+  Sitzungen beenden, API-Keys widerrufen (Ereignis `api_keys_revoked` mit
+  `reason="account_disabled"`; beim Entsperren bleiben sie widerrufen), offene Einmal-Token
+  verwerfen, Audit `user_disable`/`user_enable` mit `uid=…` (und `api_keys_revoked=…`). In einer
+  Anfrage steht das angemeldete Konto in der Zeile — genau die Zeile, die das Panel bis 0.21.x
+  selbst schrieb —, ohne Anfrage das betroffene. Ein Owner lässt sich nicht sperren
+  (`StateError`, nichts geschieht), eine unbekannte ID gibt `False`. Was vom Aufrufer abhängt
+  (sich nicht selbst sperren, ein Owner-Konto ändert nur ein Owner), prüft weiter das Panel. Die
+  Route `POST <admin_path>/api/users/{id}/disable` ruft die Methode (eine Quelle).
+- **Wertprüfung im Namens-Wächter** (`tests/test_api_surface.py`, `pruefe_werte`): Neben den Namen
+  misst er jetzt die Schlüssel und Werte der Stufen A und B — an einer Probeinstanz (Ergebnis-Dicts
+  von `gc`, `create_api_key`, `list_api_keys`, `federation_bind_existing` mit allen Teilen und
+  Gründen, `peek_magic`, `confirm_email_change`, die Konto-Dicts, `ConfigError.field`; die
+  Nutzlast jedes Ereignisses an einem Hook; der Kontext eigener Seiten über aufzeichnende Vorlagen;
+  das JSON von `/auth/me`, `/auth/apikeys` und `<admin_path>/api/users` samt `disabled_by`; die
+  gespeicherten Werte in der Datei), an den Konstanten und Konfigurations-Vorgaben und im Quelltext
+  (jeder Aufruf von `_sicherheitsereignis` und `render_page`, jeder Schlüssel, den ein Renderer aus
+  `ctx` liest, jede JSON-Antwort der Routen-Module) — Stand 790 Einträge. Rot bei einem deutschen Wort (dieselbe
+  Liste, um die Wörter und Stämme der Werte ergänzt) und bei jedem Namen bis 0.21.x (`ALTE_WERTE`,
+  auch `alt`, das als englisches Wort nicht in der Liste steht); dazu eine Mindestmenge je Weg,
+  Selbstproben (ein alter Schlüssel in `gc()` einer Unterklasse, in einem Ereignis, im Kontext,
+  in einer JSON-Antwort) und die Verdrahtung.
+- **Tests:** `tests/test_werte_englisch.py` — eine Datei aus 0.21.x (alte Werte, Stempel 11)
+  migriert beim Start, die Keys wirken wie vorher (Menschen-Key nur mit Sitzung), ein zweiter
+  Start ändert nichts; gemischte Werte nach einem Rückschritt (Stempel 12, `mensch`/`automat` und
+  ein Link mit `alt`) wirken richtig, auch ohne Neustart; das SQL aus `docs/BETRIEB.md` stellt den
+  Stand von 0.21.x her und ein späterer Start migriert wieder; nur lesbar startet eine Datei mit
+  alten Werten (Stempel 12), ein Upgrade ohne Schreibrecht bricht ab; die alten Arten sind ein
+  Eingabefehler mit Hinweis; `set_disabled` mit jeder Wirkung, Owner-Schutz, unbekannter ID,
+  derselben Audit-Zeile über das Panel und ein AST-Wächter, dass die Panel-Route nur die Methode
+  ruft.
+
+- **Warnung bei Gruppenregel ohne Scope `groups`** (T-16, Fund aus dem Betrieb 2026-09-27):
+  `konfigpruefung` prüft je Client — den Einzel-Client mit `oidc_scopes`, jede Anwendung aus
+  `oidc_clients` mit ihren `scopes` und ihrer Gruppenregel (sonst den globalen) —, ob eine
+  Gruppenregel über den Claim `groups` läuft, ohne dass der Scope `groups` angefordert wird. Eine
+  Warnung, kein Fehler, kein Nachfordern. Für Entra ID (`login.microsoftonline.com`) schweigt sie:
+  Dort ist `groups` kein Scope (AADSTS650053), Gruppen kommen als „optional claim“. SAML und LDAP
+  haben kein Gegenstück in der Konfiguration (keine Scopes; das Attribut gibt der IdP bzw. das
+  Verzeichnis frei oder nicht) — `docs/BETRIEB.md` nennt das Symptom. Gateway: neue Variable
+  `TINYSESAM_OIDC_SCOPES` (Vorgabe `openid profile email`), vorher liess sich der Scope dort gar
+  nicht setzen. Test: `tests/test_betriebsfunde.py` (a).
+- **Sicherer Login-Baustein für eigene Seiten: `login_password`, `login_pin`,
+  `login_totp`** (Stufe A, PO-Befund 2026-09-26). Jede Methode tut, was die eingebaute Route
+  tut — und die eingebaute Route ruft sie (eine Quelle, kein Drift): CSRF prüfen (`csrf=`, sonst
+  Header `X-CSRF-Token`; 403), Drossel je IP, den Versuch atomar vorbuchen (Fehlversuche je
+  Kennung, Adresse und Paar, Serie; bei der PIN Login- und PIN-Topf, hinter einem erbrachten
+  Faktor unter eigener Serien-Art), mit LDAP den Rückfall aufs Verzeichnis samt Schwebe und
+  Rücknahme bei einem Ausfall („eine Kennung, ein Konto“ inklusive), Audit- und Sicherheits-Log
+  (dieselben fail2ban-Zeilen), dann die Sitzung bzw. der nächste Faktor. `login_totp` nimmt
+  TOTP- und Einmal-Codes, wie `POST /auth/totp`. Erwartbare Ausgänge sind Ergebnisse, keine
+  Ausnahmen; geworfen wird nur, was die Route auch wirft (403 bei CSRF, Unerwartetes).
+- **`tinysesam.LoginResult`** (Export, Stufe A): das Ergebnis — `ok` (auch `bool(result)`),
+  `reason` (`LoginResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`,
+  `ratelimit`, `directory_down`, `method_disabled`, `no_session`), `status` (der Status der
+  eingebauten Seite), `message` (übersetzt), `next_url` (geprüftes Ziel), `next_factor` (offener
+  Faktor), `done`, `user` (nur bei Erfolg); `set_cookie(response)` und `redirect()`. Eine
+  eingefrorene Dataclass; das Sitzungs-Token ist bewusst kein Feld (kein `repr`, kein `asdict`) —
+  fail-closed: Ein Misserfolg trägt keins, wer das Ergebnis ignoriert, meldet niemanden an.
+  `locked` umfasst den Aufschub hinter einer schwebenden Verzeichnis-Anmeldung (G9), sonst verriete
+  der Grund, dass gerade jemand anderes unter der Kennung anmeldet. Die Namen des Bausteins sind
+  englisch wie der Rest der Stufe A (PO-Entscheid 2026-09-27); `reason` ist ein Kürzel für
+  Programme — die Audit- und Log-Zeilen (auch die für fail2ban) bleiben, wie sie sind. Der Wächter
+  misst den Typ mit (Bereich `LoginResult` in `tests/api_surface.json`: Felder mit Typ und Vorgabe,
+  Methoden, `REASONS`), `API.md` beschreibt ihn in einem eigenen Abschnitt. Auch die
+  Step-up-Bausteine `confirm_*` liefern ihn (s. u.); dort heisst `method_disabled` 403 und
+  `no_session` 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt.
+- **Sichere Bausteine für eigene Step-up-Seiten: `confirm_password`, `confirm_pin`,
+  `confirm_totp`** (Stufe A, PO-Entscheid 2026-09-27). Dasselbe Muster wie `login_*`, für die
+  Bestätigung vor heiklen Aktionen: CSRF prüfen (`csrf=`, sonst Header `X-CSRF-Token`), eine volle
+  Sitzung verlangen (ein API-Key zählt nicht: `no_session`, 403 — auch nicht neben einer halben
+  Sitzung), nur ein Verfahren zulassen, das `stepup_options()` dem Konto anbietet (`stepup_methods`,
+  `stepup_strict`; sonst `method_disabled`, 403, ohne Fehlversuch), je IP drosseln, den Versuch
+  atomar im eigenen Topf vorbuchen (`reauth_max_attempts`; bietet die Seite die PIN an, gilt der
+  PIN-Topf mit, C-3), Audit- und Sicherheits-Log (`failed verification`, `stepup`), dann die
+  Frische (`mfa_at`) mit neuem Sitzungs-Token (F-06) — das alte gilt `session_rotation_grace_sec`
+  lang ohne Frische weiter (A-6). Ein leeres Feld ist `missing` (400) und zählt nicht.
+  `confirm_totp` nimmt keinen Einmal-Code, wie die eingebaute Seite. **Ergebnis ist `LoginResult`**
+  und kein eigener Typ: Eine Bestätigung ist eine erneute Anmeldung an der laufenden Sitzung, die
+  Felder passen ohne Rest (bei Erfolg `done=True`, `next_factor=None`), und `redirect()`/
+  `set_cookie()` setzen das erneuerte Token — ein eigener Typ hätte jedes Feld wiederholt. Drei
+  Namen statt einem `confirm(…, password=…, pin=…, code=…)`: wie `login_*` genau ein Geheimnis je
+  Aufruf, keine Reihenfolge, die still ein Feld übergeht. `POST /auth/reauth` ruft sie.
+- **Sicherer Baustein für eine eigene Passwortwechsel-Seite: `change_password`** (Stufe A):
+  dieselbe Logik wie `POST /auth/password`, die ihn ruft — CSRF, volle Sitzung (kein API-Key),
+  Drossel je IP, Vorbuchung im eigenen Topf (`password_change_max_attempts`, je Konto; ein
+  Tippfehler hier sperrt nicht die Anmeldung, R4-10), das alte Passwort gegen die ID der Sitzung
+  (R4-12), die Passwortregel, bei Erfolg die anderen Sitzungen beenden (die eigene bleibt), offene
+  Adresswechsel-Links verwerfen, Audit `password_change` samt `api_keys_active=n`. Ergebnis ist der
+  neue Export **`tinysesam.PasswordChangeResult`** (Stufe A): `ok` (auch `bool(result)`), `reason`
+  (`PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`, `policy`,
+  `no_session`), `status` (was die Route antwortet: 200, 400, 401, 403, 429), `message` (übersetzt;
+  bei `policy` die verletzte Regel), `api_keys_active` (so viele API-Keys überleben den Wechsel —
+  mit Absicht, verschwiegen wird es nicht). Ein eigener Typ, weil ein Passwortwechsel niemanden
+  anmeldet und kein Token dreht: `next_url`, `next_factor`, `done`, `redirect()` hätten keine
+  Bedeutung, `api_keys_active` hat nur er. Der Wächter misst ihn wie `LoginResult` (eigener
+  Bereich in `tests/api_surface.json`), `API.md` beschreibt ihn in einem eigenen Abschnitt.
+- **Tests:** `tests/test_bestaetigen.py` — eine eigene Step-up-Seite über `confirm_*` sperrt nach N
+  Fehlversuchen im Topf `reauth` (auch das richtige Passwort macht dann nichts frisch, die
+  Anmeldung bleibt offen), drosselt je IP und macht bei Erfolg frisch, mit neuem Token und
+  Gnadenfrist des alten; ohne Sitzung, mit halber Sitzung und mit API-Key (auch neben einer halben
+  Sitzung) keine Wirkung und kein Versuch; nur angebotene Verfahren, leer zählt nicht, PIN-Topf,
+  kein Einmal-Code. Eine eigene Passwortwechsel-Seite über `change_password` sperrt, prüft die
+  Regel, beendet die anderen Sitzungen, verwirft den offenen Adresswechsel und nennt die API-Keys;
+  CSRF über Feld und Header, der Ergebnistyp. Dieselbe Folge über `/auth/reauth` bzw.
+  `POST /auth/password` und über eine eigene Route ergibt dieselben Status, Texte, Audit-,
+  Sicherheits-Log- und Versuchszeilen. Ein AST-Wächter hält fest, dass beide Routen ihren Baustein
+  rufen und keinen inneren Prüfer selbst; die Beispiele der README laufen wörtlich und müssen
+  sperren; die Namen sind englisch und Stufe A. Der Wächter in `tests/test_stepup.py` sieht jetzt
+  auch eine Senke, die nur übergeben wird (`run_in_threadpool(auth.change_password, …)`), Helfer,
+  die als Methode gerufen werden (`self._nur_mit_sitzung`), und prüft den Rumpf einer Senke selbst.
+- **Tests:** `tests/test_anmelden.py` — eine eigene Login-Seite über den Baustein sperrt nach N
+  Fehlversuchen (429 `locked`), drosselt je IP (`ratelimit`) und sperrt die Serie
+  (`locked_series`); LDAP-Rückfall, Ausfall mit und ohne lokales Passwort, „eine Kennung, ein
+  Konto“; PIN im Gästeweg und im Kettenschritt, TOTP mit Einmal-Code und ohne Sitzung; CSRF,
+  fail-closed, der Ergebnistyp. Dieselbe Folge über die eingebaute Route und über eine eigene
+  ergibt dieselben Status, Audit-, Sicherheits-Log-, Versuchs- und Serienzeilen (Passwort, LDAP,
+  PIN, TOTP). Ein AST-Wächter hält fest, dass `login_submit`, `pin_submit` und `totp_submit` ihren
+  Baustein rufen und keinen inneren Prüfer selbst; das Beispiel der README läuft wörtlich und
+  muss sperren. Der Wächter in `tests/test_stepup.py` zählt `login_*` zu den Stellen mit
+  Sitzungswirkung. Ein Fake auf dem alten Namen (`auth.check_password = fake`,
+  `mock.patch.object(auth, "rate_ok", …)`) wird nie gerufen und warnt, derselbe auf dem neuen
+  (`auth._check_password`) wirkt. Ein Namens-Wächter misst die Oberfläche des Bausteins am Objekt
+  (jede Methode, die ein `LoginResult` liefert, samt Parametern; Typ, Modul, Felder, Methoden,
+  `REASONS`): kein deutsches Wort, jeder Name in Stufe A.
+- **Namens-Wächter über die ganze Oberfläche der Stufen A und B** (`tests/test_api_surface.py`,
+  `pruefe_namen`): jeder Name der Ablage in A oder B, die Parameter jeder Methode und Funktion am
+  lebenden Objekt, alle Konfigurationsfelder, die öffentlichen Attribute und Konstruktor-Parameter
+  der exportierten Fehlertypen — Stand 596 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
+  einer Liste, Wortstämme auch mitten im Wort (`SICHERHEITSEREIGNISSE` ist nach dem Zerlegen nur
+  eines) und Umlaute. Dazu eine Mindestmenge (je Art ein Pflicht-Eintrag, Zahl der Parameter und
+  Felder) gegen eine Messung, die still weniger sieht, und Selbstproben an einer Probeklasse: jeder
+  alte Name fällt auf, englische Doppelgänger (`series`, `start`, `binding`, `base`) nicht, Stufe C
+  bleibt aussen vor. Der Abschnitt (k) in `tests/test_anmelden.py` nimmt dieselbe Liste.
+
+- **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
+  `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
+  Konstanten `wert`, bei Konfigurationsfeldern `feld`) plus `stufe` (`"A"`, `"B"` oder `"C"`);
+  die Exporte stehen als Objekt statt als Liste. `tests/test_api_surface.py` ist rot, sobald ein
+  öffentlicher Name keine oder eine unbekannte Stufe trägt, und nennt ihn. `--update` misst neu,
+  übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
+  aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
+  jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 252 (darunter
+  `login_*`, `confirm_*`, `change_password`, `set_disabled`, die 11 Namen am Ergebnistyp
+  `LoginResult` und die 6 an `PasswordChangeResult`), B 64, C 50 von 366 Namen.
+- **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
+  `Veraltet("_name", "<Ersatz>")`: ein Deskriptor, der unverändert an die Implementierung
+  weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
+  Nachschlagen (`hasattr`, `getmembers`), bei Konstanten beim Lesen; die Warnung zeigt auf den
+  Aufrufer und nennt den Ersatz. Signatur und Docstring kommen vom Ziel. Eine Zuweisung am Objekt
+  (Test-Fake) wird wie bisher abgelegt und über den alten Namen gelesen, **wirkt aber nicht mehr** —
+  die Routen rufen `_name` —, deshalb löst sie eine `RuntimeWarning` mit dem Ziel aus (s. „Was beim
+  Update auffällt“); `del` stellt den Alias wieder her. `tests/test_api_surface.py` hält fest:
+  C-Eintrag in der Ablage
+  (mit `ziel`, `seit`, `bis`) genau dann, wenn die Klasse einen Alias trägt; das Ziel heisst `_name`
+  (einzige Ausnahme `complete_mfa` → `complete_totp`, Stufe A); jeder Alias warnt genau einmal, mit
+  Ersatz und „fällt mit 1.0 weg“, auf den Aufrufer, und reicht Argumente unverändert weiter; eine
+  Zuweisung am Objekt warnt genau einmal (RuntimeWarning, mit Ziel, auf die Zuweisung); kein
+  Code in `tinysesam/`, `examples/`, `scripts/` und `web/` benutzt einen alten Namen (AST, im Paket
+  auch als Zeichenkette für `getattr`); ab Version 1.0 ist jeder verbliebene Alias rot; `seit`
+  passt zum CHANGELOG — steht der Alias unter „Veraltet“ erst in `[Unveröffentlicht]`, muss `seit`
+  grösser sein als das jüngste Release, sonst genau das Release, das ihn einführt (die Einstufung
+  war mit `seit: 0.21.0` gebaut, dann ging 0.21.0 ohne sie hinaus, und nur das Feld wurde
+  geprüft, nicht sein Wert). Dazu setzt
+  `tests/run_all.py` für jede Suite einen Warnfilter, der eine solche Warnung aus einem Modul des
+  Pakets zum Fehler macht — so fällt auch ein dynamischer Zugriff auf, sobald eine Suite den Weg
+  durchläuft; der Wächter misst die Wirkung des Filters in einem eigenen Prozess.
+- **README: die Stufen und ein Abschnitt für Fortgeschrittene** (EN/DE). Die B-Bausteine stehen
+  gruppiert nach Zweck — eigene Konto-Seite, eigenes Admin-Panel, Mail- und Token-Abläufe, eigene
+  Routen und Erweiterungspunkte —, `apply_factor` mit einer eigenen Warnung (hängt einen Faktor
+  ungeprüft an die Sitzung). `tests/test_repo.py` prüft, dass jeder B-Name aus der Ablage dort in
+  beiden Sprachen steht.
+- **Nachdokumentiert, was Abnehmer nutzen, aber keine README zeigte** (alle Stufe A):
+  `create_user` (Abschnitt „Accounts in code“ / „Konten im Code“), `has_role` (Rollen),
+  `current_user` samt Abgrenzung zu `session_user` (Guards), `session_cookie_name` mit
+  `start_session` für die Tests der eigenen App — ausdrücklich als Sitzung **ohne Prüfung**, nicht
+  als Login-Weg —, und dass `TinySesamConfig` eine Dataclass ist und bleibt
+  (`dataclasses.fields(TinySesamConfig)`).
+
+### Sicherheit
+
+- **Das Erst-Admin-Einmal-Token stand im Container im Log** (T-17, Fund aus dem Betrieb
+  2026-09-27). Ohne `admin_claim_token_file` ging es auf stderr — und direkt danach die Zeile „Der
+  Wert steht bewusst NICHT im Log“. Im Container ist stderr das Log (`docker logs`, jeder
+  Log-Versand): Wer es lesen konnte und ein Konto auf der Instanz hatte, wurde mit dem Token Admin,
+  solange es noch keinen gab. Jetzt: Ist stderr keine Konsole (`sys.stderr.isatty()` falsch),
+  schreibt TinySesam das Token nach `<db_path>.claim` (0600) und nennt nur den Pfad; nach dem
+  Einlösen wird die Datei gelöscht, ein Start mit Admin räumt einen Rest weg, nach dem Verfall ist
+  ihr Inhalt ungültig. Ohne Datenbank-Datei (`:memory:`) oder wenn die Datei nicht entsteht, bleibt
+  nur stderr — und die Log-Zeile sagt dann, dass der Wert im Log des Dienstes steht, statt das
+  Gegenteil zu behaupten. Gilt auch für die Ausgabe im Moment eines IdP-Entzugs (G6). Test:
+  `tests/test_betriebsfunde.py` (b).
+- **Das Muster „Your own login page“ der README war gegen Passwort-Raten ungeschützt**
+  (PO-Befund 2026-09-26). Es zeigte `check_password` + `start_session` als Bausteine; die inneren
+  Prüfer `check_password`, `check_pin`, `check_ldap` und `check_saml` drosseln aber nicht selbst —
+  Sperre, Fehlversuchszähler und Serien-Sperre setzen nur die eingebauten Routen. Wer dem Muster
+  bis 0.21.0 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
+  README zeigt jetzt zwei sichere Wege: für ein eigenes Aussehen allein die Seite ersetzen
+  (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route), für eine eigene
+  Route den Baustein `login_password` (bzw. `login_totp`, `login_pin`), den die
+  eingebauten Routen selbst rufen; ihr Beispiel läuft im Test wörtlich und muss sperren. Die
+  Prüfer stehen in Stufe C, ihre Warnung nennt den Baustein. Ungedrosselt war auch `verify_totp`
+  aus demselben Beispiel — ein sechsstelliger Code; sein Ersatz ist `login_totp`.
+- **Eigene Step-up- und Passwortwechsel-Seiten hatten nur ungedrosselte Prüfer** (PO-Entscheid
+  2026-09-27). Für die Bestätigung vor heiklen Aktionen und den Passwortwechsel gab es nur die
+  eingebauten Routen; wer eine eigene Seite baute, blieb bei `verify_user_password`,
+  `verify_user_pin`, `verify_totp` und `set_password` — ohne Sperre, Zähler und Log-Zeile, ein
+  unbegrenztes Orakel für das Passwort (und die kurze PIN) eines Kontos, dessen Sitzung man
+  schon hat. Jetzt gibt es `confirm_*` und `change_password` (Stufe A), die eingebauten Routen
+  rufen sie; die Warnungen der alten Prüfer nennen sie.
+- **`POST /auth/password` nahm einen API-Key an.** Das Konto kam aus `current_user()`, und das
+  fällt ohne Sitzung auf den Key zurück: Ein Automaten-Key zusammen mit dem alten Passwort änderte
+  das Passwort eines Menschen und beendete dabei alle seine Sitzungen. `/auth/reauth` weist Keys
+  seit 0.20.1 ab; der Passwortwechsel jetzt auch (403, `api.password_needs_session`). Ein Key ist
+  eine Maschinen-Anmeldung, das alte Passwort zu kennen macht ihn nicht zum Menschen.
+
+### Geändert
+
+- **Schlüssel und Werte der Stufen A und B englisch, Schema 12** (PO-Entscheid 2026-09-27): die
+  Tabelle steht unter „Was beim Update auffällt“. `Store.SCHEMA_VERSION` ist 12 — eine
+  Datenmigration ohne neue Spalte, aber mit Werten, die 0.21.x anders liest (ein `human`-Key gälte
+  dort ohne Sitzung); der Stempel ist genau die Stelle, an der eine ältere Fassung davor warnt.
+  `api_key.kind` schreibt jeder Start um, den Payload eines Adresswechsel-Links nur der Sprung auf
+  12 — bei jedem Start ginge die Suche durch alle Einmal-Token (gemessen in
+  `tests/test_bestandsdaten.py`, „Aufwand“: 540 SQLite-Schritte mehr bei 20 000 Token); gelesen
+  werden alte Werte an beiden Stellen richtig. Nur lesbar startet eine Datei mit alten Werten bei
+  Stempel 12 weiter (Warnung im Log). Der Grund des gesammelten Key-Widerrufs kommt aus einer festen
+  Liste (`_KEYS_WIDERRUFEN_GRUENDE`); ein anderer Wert ist ein Programmierfehler (`ValueError`),
+  kein stilles neues Kürzel.
+- **Konto-Dicts nur mit den Feldern des Kontos** (`_KONTO_FELDER` — eine Liste der erlaubten Spalten
+  statt der verbotenen: Eine neue Spalte des Stores wird nicht still zur Zusage).
+- **Die Panel-Route „Sperren“ ruft `auth.set_disabled`**; die Schritte stehen nur noch dort.
+
+- **Die deutschen Namen der Stufen A und B heissen englisch, ohne Alias** (PO-Entscheid
+  2026-09-27): 11 Methoden, 5 Konstanten, 2 Methoden von `TinySesamConfig`, 18 Parameter in 14
+  Methoden, die Attribute `ConfigError.field`/`.owner_id` und der erste Parameter von
+  `MissingExtra` — die Tabelle steht oben unter „Was beim Update auffällt“. Paket, Routen,
+  Beispiele, Tests und Doku rufen nur noch die neuen Namen; `API.md` und `KONFIGURATION.md` sind neu
+  erzeugt.
+- **`POST /auth/login`, `/auth/pin` und `/auth/totp` sind dünne Hüllen um `login_*`.** Der
+  ganze Ablauf zog aus `router.py` in die Bausteine; die Routen rendern nur noch das Ergebnis.
+  Antworten, Texte, Audit- und Log-Zeilen bleiben gleich (gemessen gegen eine eigene Route über
+  denselben Baustein). Drei Kleinigkeiten ändern sich: Eine unerwartete Ausnahme in der PIN- oder
+  TOTP-Prüfung schliesst den vorgebuchten Versuch jetzt sofort als Fehlversuch ab (bisher nur beim
+  Passwort; vorher blieb seine Serien-Vorbuchung im Speicher liegen). `/auth/pin` antwortet 404,
+  wenn `pin_enabled` zur Laufzeit abgeschaltet wurde (die Route stand seit dem Start, bestätigte
+  auf einer vollen Sitzung aber weiter PINs). Und die Ersatztexte der C-Aliase (`check_password`,
+  `check_pin`, `check_ldap`, `verify_totp`, `verify_recovery_code`, `is_locked`, `is_pin_locked`,
+  `rate_ok`, `record_login`, `versuch_beginnen`, `login_redirect_after`) nennen jetzt den
+  Baustein statt der Route.
+- **`/auth/reauth` (Absenden) und `POST /auth/password` sind dünne Hüllen um `confirm_*` bzw.
+  `change_password`.** Der Ablauf zog aus `router.py` in die Bausteine; die Routen wählen nur noch
+  das ausgefüllte Feld bzw. lesen das JSON und geben das Ergebnis aus. Antworten, Texte, Audit- und
+  Log-Zeilen bleiben gleich (gemessen gegen eigene Routen über dieselben Bausteine) bis auf die
+  Punkte unter „Was beim Update auffällt“. `POST /auth/password` prüft das alte Passwort jetzt im
+  Threadpool — vorher lief argon2 in der Ereignisschleife und hielt für die Dauer der Prüfung jede
+  andere Anfrage des Workers an. Die Ersatztexte der C-Aliase `verify_user_password`,
+  `verify_user_pin`, `verify_totp`, `is_reauth_locked` und `is_password_change_locked` nennen die
+  neuen Bausteine.
+- **`API.md` ist nach Stufe gegliedert** (A „öffentlich, stabil ab 1.0“, B „für
+  Fortgeschrittene“, C als Tabelle „Veraltet — fällt mit 1.0 weg“ mit Ersatz statt Erklärung) und
+  erklärt vorab, was jede Stufe zusagt. Neu
+  darin: die Konstanten der Stufen A und B (Erklärung aus dem `#:`-Kommentar, dazu der Wert) und
+  `tinysesam.current_version()`; die Hygiene-Prüfung verlangt auch für sie eine Erklärung.
+  `KONFIGURATION.md` nennt die Stufe der Felder — alle A bis auf den Grabstein `totp_required` (B).
+  Bis hierher stand dort „gemessen, nicht ausgewählt“: eingefroren war, was keinen Unterstrich trug.
+
+### Veraltet
+
+- **50 interne Namen (Stufe C) — fallen mit 1.0 weg.** Seit diesem Release heisst die
+  Implementierung `_name`; der alte Name reicht bis 1.0 unverändert weiter und löst beim Aufruf
+  (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
+  führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
+  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: `login_password`, `login_pin`,
+    `login_totp`, für den Step-up `confirm_password`, `confirm_pin`, `confirm_totp`, für den
+    Passwortwechsel `change_password` bzw. die eingebauten Routen (`/auth/resource/{name}`,
+    `/auth/saml/acs`), eigenes Aussehen per `set_template`:** `check_password` → `_check_password`,
+    `check_pin` → `_check_pin`, `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`,
+    `check_resource` → `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
+    `_verify_recovery_code`, `verify_user_password` → `_verify_user_password`, `verify_user_pin` →
+    `_verify_user_pin`.
+  - **Sperren und Buchhaltung — Ersatz: `login_*`, `confirm_*`, `change_password` bzw. die
+    eingebauten Routen, die atomar prüfen und buchen:** `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`,
+    `is_password_change_locked` → `_is_password_change_locked`, `is_reauth_locked` →
+    `_is_reauth_locked`, `is_resource_locked` → `_is_resource_locked`, `is_totp_setup_locked` →
+    `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`, `record_login` → `_record_login`,
+    `versuch_beginnen` → `_versuch_beginnen`.
+  - **Sitzung, Anmeldekette, CSRF:** `session_from_request` → `_session_from_request` (Ersatz
+    `current_user`/`session_user`), `next_login_step` → `_next_login_step`, `factor_entry` →
+    `_factor_entry`, `login_redirect_after` → `_login_redirect_after` (Ersatz `next_url` am Ergebnis
+    von `login_*`), `csrf_rotieren` → `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`),
+    `verify_csrf` → `_verify_csrf` (Ersatz `require_csrf`), `unlock_resource` → `_unlock_resource`,
+    `mfa_pending` → `_mfa_pending`.
+  - **Erst-Admin, Demo, Protokoll:** `maybe_promote_admin` → `_maybe_promote_admin` (Ersatz
+    `admin_identifiers`/`ensure_admin`), `consume_admin_claim` → `_consume_admin_claim`,
+    `admin_claim_fehlgriff` → `_admin_claim_fehlgriff`, `seed_demo` → `_seed_demo` (Ersatz
+    `demo_mode=True`), `purge_demo` → `_purge_demo` (Ersatz `demo_mode=False`), `send_signup_notice`
+    → `_send_signup_notice`, `sicherheitsereignis` → `_sicherheitsereignis`, `token_abgewiesen` →
+    `_token_abgewiesen`.
+  - **Forward-Auth und mehrere OIDC-Anwendungen:** `forwarded_url` → `_forwarded_url`,
+    `forward_login_url` → `_forward_login_url`, `forward_response_headers` →
+    `_forward_response_headers`, `oidc_anwendung` → `_oidc_anwendung`, `oidc_freigabe_gueltig` →
+    `_oidc_freigabe_gueltig`, `vermerke_oidc_freigabe` → `_vermerke_oidc_freigabe`, `is_secure` →
+    `_is_secure`.
+  - **Härtungswerte:** `sec` → `_sec` (Ersatz `all_security()`).
+  - **Konstanten (warnen beim Lesen):** `APIKEY_AUDIT_FENSTER` → `_APIKEY_AUDIT_FENSTER`,
+    `DEMO_USERS` → `_DEMO_USERS`, `FOEDERIERTE_FAKTOREN` → `_FOEDERIERTE_FAKTOREN`, `IDENTIFYING` →
+    `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE` →
+    `_RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE` → `_SERIE_PIN_FOLGE` (Ersatz `login_pin`; kam mit
+    0.21.0, dessen CHANGELOG ihn für eigene PIN-Seiten nannte — deshalb ein Alias und nicht bloss
+    umbenannt).
+  - **`complete_mfa` → `complete_totp`** (gleiches Verhalten; kein Unterstrich-Name, der Alias zeigt
+    auf die öffentliche Methode). Im Wächter misst sich jetzt dessen Rückgabetyp mit
+    (`-> Optional[str]`), vorher stand dort keiner.
+
+### Behoben
+
+- **Der API-Wächter verlor `*` und `/` in Signaturen.** `signatur()` in
+  `tests/test_api_surface.py` setzte die Parameter einzeln zusammen; die Marken für
+  Nur-Schlüsselwort- (`*`) und Nur-Positions-Parameter (`/`) fielen dabei weg, obwohl der Docstring
+  genau das zu messen versprach. Ein nachträglich eingefügtes `*` — jeder positionelle Aufruf
+  bricht — sah aus wie keine Änderung. Jetzt stehen die Marken in der Ablage (10 Signaturen neu
+  gemessen: `login_*`, `change_username`, `create_user`, `federation_bind_existing`,
+  `password_policy_error` und die Presets `active_directory`, `entra_id`, `oidc_gateway` — keine davon
+  hat sich geändert), ein eingefügtes `*` oder `/` ist ein Bruch, ein hinten angehängter
+  Nur-Schlüsselwort-Parameter mit Vorgabe bleibt eine Erweiterung. Eine Ablage von vor 0.22.0
+  (`git show v0.21.0:tests/api_surface.json`) lässt sich weiter vergleichen: Ihre Signaturen
+  werden als „ohne Marken gemessen“ eingelesen und ohne Marken verglichen. Derselbe Fehler stand
+  in `scripts/_api_doku.py` — `API.md` zeigte etwa `login_password(…, password, next=…)`, als
+  ginge `next` auch positionell; der Wächter hält beide Fassungen gleich.
+
 ## [0.21.0] — 2026-09-27
 
 **Grosses Release — vor dem Update die Datenbank sichern und die Liste unten lesen.** Es schliesst

@@ -94,7 +94,7 @@ auth_b.on_security_event = lambda e, k, d: _ereig.append(e)
 geheim_b = auth_b.totp_begin(uid_b)["secret"]
 code_b = pyotp.TOTP(geheim_b).now()
 assert auth_b.totp_confirm(uid_b, code_b)
-assert not auth_b.verify_totp(uid_b, code_b), "der Einrichtungscode meldet danach noch an"
+assert not auth_b._verify_totp(uid_b, code_b), "der Einrichtungscode meldet danach noch an"
 assert not auth_b.totp_confirm(uid_b, code_b), "…und bestätigt ein zweites Mal"
 assert _ereig == ["totp_enabled"], _ereig
 assert any(z["event"] == "totp_enable" for z in auth_b.store.recent_audit(20))
@@ -109,7 +109,7 @@ cb = TestClient(app_b)
 assert cb.post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
                follow_redirects=False).status_code == 303
 geheim_b = auth_b.totp_begin(uid_b)["secret"]
-grenze = auth_b.sec("totp_setup_max_attempts")
+grenze = auth_b._sec("totp_setup_max_attempts")
 antworten = [cb.post("/auth/totp/setup", data={"code": "000000"}).json().get("ok") for _ in range(grenze)]
 assert antworten == [False] * grenze, antworten
 r = cb.post("/auth/totp/setup", data={"code": pyotp.TOTP(geheim_b).now()})
@@ -118,7 +118,7 @@ assert not auth_b.store.has_confirmed_totp(uid_b)
 fehl = [z for z in auth_b.store.recent_audit(50) if z["event"] == "login_fail" and "totp_setup" in (z["detail"] or "")]
 assert len(fehl) >= grenze, "jeder Fehlgriff steht im Audit-Log"
 # Eigener Topf: Die Anmeldung desselben Kontos bleibt offen.
-assert not auth_b.is_locked("berta", "testclient")
+assert not auth_b._is_locked("berta", "testclient")
 assert TestClient(app_b).post("/auth/login", data={"username": "berta", "password": "berta-geheim-1"},
                               follow_redirects=False).status_code == 303
 ok("B2-12/R3-6: Einrichtungsbestätigung gedrosselt, gesperrt, protokolliert — Login bleibt offen")

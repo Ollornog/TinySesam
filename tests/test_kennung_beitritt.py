@@ -63,8 +63,8 @@ def _fehlversuche(auth, kennung, ip, n, vorher=0):
     """`n` Fehlversuche unter `kennung` von `ip` — über den Weg der Routen (mit Vorbuchung der
     Serie) —, datiert `vorher` Sekunden zurück."""
     for _ in range(n):
-        v = auth.versuch_beginnen(kennung, ip, "password")
-        auth.record_login(kennung, ip, False, "password", versuch=v)
+        v = auth._versuch_beginnen(kennung, ip, "password")
+        auth._record_login(kennung, ip, False, "password", versuch=v)
     if vorher:
         auth.store._exec("UPDATE login_attempt SET ts = ts - ? WHERE ip = ?", (vorher, ip))
 
@@ -74,7 +74,7 @@ def _zeile(auth, uid):
 
 
 # ── a: Umbenennen ────────────────────────────────────────────────────────────────────────────────
-# (Mutationsproben: in `sperre_aufheben` nur `seit` statt `ab_id` → rot; in `_raeumgrenze` immer
+# (Mutationsproben: in `lift_lockout` nur `seit` statt `ab_id` → rot; in `_raeumgrenze` immer
 #  ohne Grenze (`{}`) → rot: die Anmeldung unter `frei` räumt dann schon beim ersten Faktor.)
 a, app, _ = _app()
 uid = a.create_user("alt", password=PW)
@@ -206,7 +206,7 @@ r.check("… und sein Löschen schreibt die Zeilen des Vorbesitzers nicht um",
 # ── h: Bestand ohne Wasserlinie ──────────────────────────────────────────────────────────────────
 # Eine Datei von vor dieser Spalte (Schema 11 ohne sie; mitgeschnitten wird die spätere
 # `name_selbst_gewaehlt`, G2-N, die dahinter steht): Die Spalten kommen dazu und bleiben NULL,
-# die Grenze ist dann wie bisher die Anlage. (Mutationsproben: der Rückfall in `sperre_aufheben`
+# die Grenze ist dann wie bisher die Anlage. (Mutationsproben: der Rückfall in `lift_lockout`
 # räumt ab Id 0 statt ab der Anlage → rot; ebenso in `_raeumgrenze` → rot.)
 _bestand = str(Path(tempfile.mkdtemp()) / "t.db")
 _alt_schema, _n_users = re.subn(r"(idp_bestaetigt_at INTEGER), (--[^\n]*)\n\s*-- Ab wann gehört die Kennung.*?"
@@ -302,7 +302,7 @@ r.check("… der Nachtrag eines Topfs und `mia` → `MIA` (derselbe Topf) lassen
         f"{_vor_n} → {(_rn['name_versuch_ab'], _rn['mail_versuch_ab'])}")
 
 # ── j: die Serie (B2-6) ──────────────────────────────────────────────────────────────────────────
-# Bewusst OHNE Grenze a (Begründung in `sperre_aufheben`): Die Serie hat keine IP, und vor dem
+# Bewusst OHNE Grenze a (Begründung in `lift_lockout`): Die Serie hat keine IP, und vor dem
 # Beitritt schützte sie kein Konto. Eine Grenze in der Zeit liesse eine vor dem Beitritt begonnene
 # Serie für den neuen Inhaber unbeendbar. (Mutationsprobe: `fehlserie_loeschen(…, arten=())` → rot.)
 a, app, _ = _app()

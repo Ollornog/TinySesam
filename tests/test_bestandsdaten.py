@@ -87,7 +87,7 @@ else:
 auth, db = frisch()
 uid = auth.create_user("bestand", password="geheim123")
 auth.store.set_password_hash(uid, bestand)
-r.check("Anmeldung mit 0.17.0-Hash gelingt", bool(auth.check_password("bestand", "geheim123")),
+r.check("Anmeldung mit 0.17.0-Hash gelingt", bool(auth._check_password("bestand", "geheim123")),
         "der Login-Pfad rechnet anders als verify_password")
 
 # ---------------------------------------------------------------- Migration einer Altdatei
@@ -473,7 +473,7 @@ r.check("ohne Filter kommen weiter die jüngsten Zeilen",
 # legte `demoadmin` mit bekanntem Passwort und is_admin=1 an — anmeldefähig, ohne Warnung im Log.
 auth3, _ = frisch()
 try:
-    auth3.seed_demo()
+    auth3._seed_demo()
     r.check("seed_demo() ohne demo_mode wird abgewiesen", False, "es lief durch")
 except ConfigError:
     r.check("seed_demo() ohne demo_mode wird abgewiesen", True)
@@ -609,11 +609,11 @@ try:
             f"{fang.zeilen} — alle Bestandskonten gesperrt, und niemand erfährt warum")
     fang.zeilen.clear()
     r.check("die Anmeldung scheitert weiter (ein argon2-Hash ist ohne argon2 nicht prüfbar)",
-            not auth_b.check_password("altkonto", "geheim123"))
+            not auth_b._check_password("altkonto", "geheim123"))
     r.check("…aber nicht mehr still: der Fehlschlag schreibt eine Zeile",
             any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
     fang.zeilen.clear()
-    auth_b.check_password("altkonto", "geheim123")
+    auth_b._check_password("altkonto", "geheim123")
     r.check("…und zwar einmal, nicht eine je Anmeldeversuch",
             not any("[argon2]" in z for z in fang.zeilen), f"{fang.zeilen}")
 finally:

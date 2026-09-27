@@ -1,7 +1,7 @@
 """Kennungsraum: Benutzername und Adresse sind EIN Raum — von der Datenbank erzwungen (G12c).
 
 `find_user` sucht in beiden Spalten, und der Zähl-Topf (`norm_kennung`) faltet gröber als NOCASE.
-Bis 2026-09-26 prüfte das nur `kennung_vergeben` VOR dem Schreiben; die Datenbank kannte
+Bis 2026-09-26 prüfte das nur `identifier_taken` VOR dem Schreiben; die Datenbank kannte
 `UNIQUE(username)` (BINARY) und `ux_users_email`. Zwei gleichzeitige Anfragen derselben Kennung —
 eine als Name, eine als Adresse — kamen beide durch, oder eine endete mit einer 500. Gemessen wird:
 
@@ -194,7 +194,7 @@ try:
     a.create_user("race@example.com", password=PW)
     b1 = None
 except ConfigError as fehler:
-    b1 = (fehler.feld, fehler.besitzer_id)
+    b1 = (fehler.field, fehler.owner_id)
 r.check("B1: Name gegen eine gleichzeitig angelegte Adresse → ConfigError, Feld und Besitzer stimmen",
         b1 == ("username", b.store.get_user_by_name("rb")["id"]), str(b1))
 _dazwischen(a, "create_user", lambda: b.create_user("race2@example.com", password=PW))
@@ -202,7 +202,7 @@ try:
     a.create_user("rc", password=PW, email="race2@example.com")
     b1b = None
 except ConfigError as fehler:
-    b1b = (fehler.feld, fehler.besitzer_id)
+    b1b = (fehler.field, fehler.owner_id)
 r.check("B1: … Adresse gegen einen gleichzeitig angelegten Namen → Feld „email“",
         b1b == ("email", b.store.get_user_by_name("race2@example.com")["id"]), str(b1b))
 _dazwischen(a, "create_user", lambda: b.create_user("weg", password=PW),
@@ -211,7 +211,7 @@ try:
     a.create_user("WEG", password=PW)
     b1c = None
 except ConfigError as fehler:
-    b1c = (fehler.feld, fehler.besitzer_id, str(fehler))
+    b1c = (fehler.field, fehler.owner_id, str(fehler))
 r.check("B1: … ist das andere Konto schon wieder weg: ConfigError ohne Besitzer, nicht IntegrityError",
         b1c == ("username", None, "Benutzername ist bereits vergeben"), str(b1c))
 r.check("B1: … keine Kollision in der Datenbank", a.store.topf_kollisionen() == [], str(a.store.topf_kollisionen()))

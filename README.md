@@ -144,6 +144,12 @@ Depends(auth.require_role("editor"))   # logged in + role (admin implicitly has 
 Depends(auth.require_role("a", "b"))   # one of the two is enough
 ```
 
+Without a guard, `auth.current_user(request)` returns the signed-in account — from a session
+**or** an API key — or `None`, and never redirects: for a page that merely looks different when
+someone is signed in. A route that *acts on the session* (applies a factor, refreshes or ends it)
+takes the account from `auth.session_user(request)` instead, which never answers for a key
+([tier B](#public-api-three-tiers)).
+
 ## Roles & groups
 
 **Roles are the groups** — a list per user (`roles`) + `is_admin`; guard `require_role("…")`.
@@ -153,12 +159,58 @@ of your own (`require_role(*ROLES_ALLOWED)`). That is the same OR as `?roles=a,b
 `@app.get(…, dependencies=[Depends(auth.require_role("a")), Depends(auth.require_role("b"))])`.
 An admin satisfies **every** role. If you don't want that (e.g. because permissions come from an IdP
 group): `admin_implies_roles=False` globally, or `require_role("editor", admin_implies=False)` per route.
+Inside a route, `auth.has_role(user, "editor")` asks the same question as a `bool` — same admin
+rule, same `admin_implies=False` switch.
 - **Local user/password:** assign roles per user in the **admin panel**. `available_roles=[…]` defines known
   roles → the panel shows them as **checkboxes** (empty = free-text entry).
 - **IdP users (OIDC/SAML/LDAP/AD):** automatically map external groups onto local roles —
   `oidc_group_role_map` / `saml_group_role_map` / `ldap_group_role_map`, e.g.
   `{"editors": "editor", "cn=admins,ou=g": "__admin__"}` (target `__admin__` = admin flag). Set at login;
   mapped roles are synchronized, manually assigned ones stay. The same `require_role(...)` guards everywhere.
+  **PocketID** (and other providers that tie claims to scopes) only sends the `groups` claim when the
+  scope `groups` is requested — add it: `oidc_scopes="openid profile email groups"` (gateway:
+  `TINYSESAM_OIDC_SCOPES`). Without it `oidc_allowed_groups` turns everyone away and the role map
+  assigns nothing; the start warns. TinySesam doesn't add the scope itself (Entra ID, for one,
+  rejects it and sends groups as an optional claim).
+
+## Accounts in code
+
+`auth.create_user(…)` creates an account and returns its ID. It runs the same checks as every
+other path — the identifier must be free across usernames *and* emails, otherwise `ConfigError`
+(`e.field`, `e.owner_id` say what collided):
+
+```python
+uid = auth.create_user("alice", email="alice@example.com", roles=["editor"])  # no password: OIDC, link, …
+auth.create_user("bob", password=os.environ["BOB_INITIAL"], display_name="Bob")
+```
+
+`ensure_admin(…)` is for the first admin, `create_service(…)` for machine accounts
+([API keys](#api-keys--servicedaemon-accounts)).
+
+**Locking an account as the operator** — the same as “disable” in the panel, which calls it:
+
+```python
+auth.set_disabled(uid, True)     # ends its sessions, revokes its API keys, drops open links
+auth.set_disabled(uid, False)    # unlocks; revoked keys stay revoked
+```
+
+The lock carries the operator mark: no confirmation link lifts it, not even one issued afterwards.
+An owner cannot be locked (`StateError`); an unknown ID returns `False`. Up to 0.21.x the docs
+showed `auth.store.set_disabled(uid, True, durch_betreiber=True)` for this — that only set the mark
+and left sessions, keys and links alive.
+
+**In your app's tests** you want a signed-in client without a login round-trip.
+`start_session` creates a session **without checking anything** — which is exactly why it
+belongs in tests (or behind a factor you verified yourself), never in a login route (that one
+takes [`login_password`](#your-own-login-page)):
+
+```python
+token, _ = auth.start_session(uid, "oidc")
+client.cookies.set(auth.session_cookie_name, token)
+```
+
+`session_cookie_name`, `csrf_cookie_name` and `resource_cookie_name` carry the `__Host-` prefix
+wherever the browser allows it — read them, don't spell the names out.
 
 ## Routes (provided by the router)
 
@@ -218,6 +270,10 @@ is the same code path the routes use, minus the HTTP surface.
 | `security_log` | `""` | file for the fail2ban logger (empty = logger only) |
 | `forward_auth_enabled` · `forward_headers` | `False` · `{}` | forward-auth endpoint · which headers it sets (empty = `Remote-*`) |
 
+`TinySesamConfig` is a dataclass, and that is part of the promise: `dataclasses.fields(TinySesamConfig)`
+lists every field — handy for passing on only the keys it knows from your own settings. Every
+field with its meaning: [`KONFIGURATION.md`](https://github.com/Ollornog/TinySesam/blob/main/KONFIGURATION.md) (German).
+
 ## Language (i18n)
 
 The built-in texts are **English by default** (`lang="en"`); **German** ships too:
@@ -230,21 +286,77 @@ Individual texts or whole pages can additionally be freely replaced via `auth.se
 
 ## Your own login page
 
-Use TinySesam as a pure backend (your own UI) — the building blocks are public:
+Two ways, depending on what you want to change:
+
+- **Only the look** — replace the page and keep the route: `auth.set_template("login", fn)`
+  ([Look & feel](#look--feel)). The form keeps posting to `POST /auth/login`, and every
+  protection stays where it is. This is the first choice.
+- **Your own route** (a single-page app, JSON, other fields) — call the building block the
+  built-in route itself calls: `auth.login_password(…)`. It throttles, counts and locks
+  exactly like `POST /auth/login`, because that route is nothing but this call: the CSRF check,
+  the per-IP rate limit, the attempt booked up front (failures per identifier, per address and
+  per pair, the series lock), the LDAP fallback ("one identifier, one account"; an outage is not
+  a failure), audit and security log (the lines fail2ban reads), then the session.
 
 ```python
-user = auth.check_password(username, password)
-token, done = auth.start_session(user["id"], "password")   # tuple, not just a token
-auth.set_cookie(resp, token)
-if not done:                      # a second factor is still missing
-    ...                           # auth.verify_totp(user["id"], code) → neu = auth.complete_totp(token); if neu: auth.set_cookie(resp, neu)
+from html import escape
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.post("/login")          # a plain `def`: FastAPI runs it in its thread pool
+def login(request: Request, username: str = Form(""), password: str = Form(""),
+          next: str = Form(""), csrf: str = Form("", alias="_csrf")):
+    result = auth.login_password(request, username, password, next=next, csrf=csrf)
+    if not result:           # wrong, locked, rate-limited, directory down …: no session, no cookie
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # your form
+    return result.redirect()     # to the open factor (result.next_factor) or to next, cookie set
 ```
 
-`start_session` returns `(token, session_ok)`. Unpack it — passing the tuple straight into
-`set_cookie` writes the string `"('abc…', True)"` into the cookie, and nothing raises: the sign-in
-is quietly broken. `session_ok=False` means the session exists but is not complete yet.
-The token returned by `complete_totp` replaces the old one, also on step-up — put it into the
-cookie. Ignore it, and the cookie holds a dead session: the user is signed out.
+The result, a `tinysesam.LoginResult`, carries `ok` (also its truth value), `reason` (one of
+`LoginResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`, `ratelimit`,
+`directory_down`, `method_disabled`, `no_session`), `status` (what the built-in page answers:
+303, 400, 401, 404, 429, 503), `message` (the translated text), `next_url` (the checked target),
+`next_factor` (the open factor, e.g. `"totp"`), `done` (session complete) and `user` (only on
+success). `reason` is meant for programs; it is not the audit or security log, whose lines stay
+as they are. A failure has no session and sets no cookie — ignoring the result signs no one in. A
+JSON route that prefers to raise writes `if not result: raise HTTPException(result.status,
+result.message)`, leaves `csrf` out (then the `X-CSRF-Token` header counts) and sets the cookie on
+its own response with `result.set_cookie(response)`. The session token is deliberately not a
+field. Only `HTTPException(403)` is raised (CSRF, or an account disabled in the meantime), plus
+anything unexpected — the attempt then counts as a failure.
+
+The steps after the first factor work the same way: `auth.login_totp(request, code, next=…)`
+takes a TOTP code or a one-time recovery code, like `POST /auth/totp`, and
+`auth.login_pin(request, pin, username, next=…)` works like `POST /auth/pin` (in a chain step
+or on a signed-in session without `username`). `result.next_factor` tells your page which step
+comes next. All three are synchronous (a password hash, maybe the directory): call them from a
+`def` route, or through `run_in_threadpool` in an `async def` one.
+
+> **Without these building blocks there is no protection against guessing.** The inner checks
+> `check_password`, `check_pin`, `check_ldap`, `verify_totp` and `verify_recovery_code` only
+> compare: no lockout, no counter, no series lock, no rate limit, no line for fail2ban. Until
+> 0.21.0 this section showed `check_password` + `start_session` — a route built from that lets
+> anyone guess passwords (or a four-digit PIN, or a six-digit code) as fast as the server
+> answers. They are [tier C](#public-api-three-tiers) since 0.22.0, warn when called and go with
+> 1.0; replace them with `login_password`, `login_pin` and `login_totp`.
+
+`start_session` stays, for tests and for a factor you verified yourself — it checks nothing
+([Accounts in code](#accounts-in-code)). It returns `(token, session_ok)`: unpack it — passing
+the tuple straight into `set_cookie` writes the string `"('abc…', True)"` into the cookie, and
+nothing raises. The token returned by `complete_totp` replaces the old one, also on step-up — put
+it into the cookie, or the cookie holds a dead session. The `login_*` building blocks do both
+for you.
+
+The same pattern exists for a step-up of your own ([Own step-up page](#own-step-up-page),
+`confirm_*`) and for changing the password ([Own password change page](#own-password-change-page),
+`change_password`).
 
 ### CSRF in your own pages
 
@@ -300,15 +412,15 @@ characters, too short, too long) is replaced rather than copied into a form.
 `issue_csrf(response)` always rolls a **new** token and invalidates the forms in every other
 tab; it is for deliberate renewal, not for rendering a page.
 
-**Signing in and out changes the token.** Every sign-in — each built-in path and your own route
-with `start_session` + `set_cookie` — sets a fresh token in the same response, and
+**Signing in and out changes the token.** Every sign-in — each built-in path and your own route with
+`login_*` (or `start_session` + `set_cookie`) — sets a fresh token in the same response, and
 `auth.logout()` deletes it. A form rendered in that same response works only with the response
 parameter (first example): it takes its token from `ensure_csrf(request, response)` *after*
-`set_cookie`/`logout`. A finished response (second example) is rendered before
-`set_cookie`/`logout` changes the token, so its form carries the old one and every submit gets a
-403. A response that signs in or out therefore renders no form that way — redirect (303) instead,
-and the next request renders with the new cookie, as the built-in sign-ins do. A step-up
-(`/auth/reauth`, `rotate_session`) keeps the token.
+`set_cookie`/`logout`. A finished response (second example) is rendered before `set_cookie`/`logout`
+changes the token, so its form carries the old one and every submit gets a 403. A response that
+signs in or out therefore renders no form that way — redirect (303) instead, and the next request
+renders with the new cookie, as the built-in sign-ins do. A step-up (`/auth/reauth`,
+`rotate_session`) keeps the token.
 
 ## Look & feel
 
@@ -365,6 +477,98 @@ A four-digit PIN has 10,000 values. What keeps guessing in check is its own coun
 consecutive-failure lock (`account_max_consecutive_failures`, see *Hardening*) — both sit next to the
 login lockout in the admin panel. Don't want it? `pin_login=False`.
 
+## Own step-up page
+
+`Depends(auth.require(mfa=True))` sends browsers to the built-in page `/auth/reauth` and answers
+other clients with a 403 plus `X-TinySesam-Reauth` ([above](#pin-and-step-up-for-sensitive-routes)).
+To change only its look, replace the page: `auth.set_template("reauth", fn)`. A page of your own —
+the dialog of a single-page app, a form in front of a dangerous button — calls the building block
+the built-in route itself calls: `auth.confirm_password(…)`, `auth.confirm_pin(…)` or
+`auth.confirm_totp(…)`. They throttle, count and lock exactly like `POST /auth/reauth`, because
+that route is nothing but this call: the CSRF check, a full session (an API key does not count),
+only a method `stepup_options()` offers this account (`stepup_methods`, `stepup_strict`), the
+per-IP rate limit, the attempt booked up front in its own pot (`reauth_max_attempts` — typos here
+do not lock the sign-in), audit and security log, then the fresh confirmation with a new session
+token.
+
+```python
+from html import escape
+
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.get("/danger")              # a sensitive route: only with a fresh confirmation
+def danger(user=Depends(auth.require(mfa=True))):
+    return {"user": user["username"]}
+
+
+@app.post("/confirm")            # a plain `def`: FastAPI runs it in its thread pool
+def confirm(request: Request, password: str = Form(""), next: str = Form(""),
+            csrf: str = Form("", alias="_csrf")):
+    result = auth.confirm_password(request, password, next=next, csrf=csrf)
+    if not result:               # wrong, locked, no session, not offered …: nothing became fresh
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # your form
+    return result.redirect()     # to next, with the renewed session cookie
+```
+
+The result is the same `tinysesam.LoginResult` as for signing in: on success `done` is true and
+`redirect()` or `set_cookie(response)` puts the renewed token into the cookie — the old one keeps
+working for `session_rotation_grace_sec`, without the freshness. On failure nothing became fresh,
+and `reason` says why: `missing` (empty, 400, not counted), `invalid` (401), `locked` or
+`ratelimit` (429), `method_disabled` (403: not offered to this account; with an empty
+`stepup_options()` it has nothing to confirm with), `no_session` (401 with the login page as
+`next_url`; 403 when the request shows an API key instead of a session). `confirm_totp` takes a
+TOTP code only, no one-time recovery code — like the built-in page. Synchronous, like `login_*`.
+
+## Own password change page
+
+The built-in route is `POST /auth/password` (JSON with `current` and `new`; the account page uses
+it). A page of your own calls the building block that route calls:
+`auth.change_password(request, current, new, csrf=…)`. The current password is a secret like at
+sign-in, so the same three apply: the per-IP rate limit, the attempt booked up front in its own pot
+(`password_change_max_attempts`, per account — a typo here does not lock the sign-in), audit and
+security log. It is checked against the account of the session, never against a name that might
+resolve to someone else; then the new one against the password rule (`password_policy_error`). On
+success the other sessions of the account end (yours stays), open address-change links are
+dropped, and API keys stay valid on purpose — `result.api_keys_active` says how many, so your page
+can say so too.
+
+```python
+from html import escape
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.post("/password")           # a plain `def`: FastAPI runs it in its thread pool
+def password(request: Request, current: str = Form(""), new: str = Form(""),
+             csrf: str = Form("", alias="_csrf")):
+    result = auth.change_password(request, current, new, csrf=csrf)
+    if not result:               # wrong, locked, too weak, no session …: nothing changed
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # your form
+    keys = f" {result.api_keys_active} API key(s) still work." if result.api_keys_active else ""
+    return HTMLResponse(f"<p>Password changed, your other sessions are signed out.{keys}</p>")
+```
+
+The result is a `tinysesam.PasswordChangeResult`: `ok` (also its truth value), `reason` (one of
+`PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`, `policy`,
+`no_session`), `status` (what `POST /auth/password` answers: 200, 400, 401, 403, 429), `message`
+(the translated text; for `policy` the rule that failed) and `api_keys_active`. It needs a full
+session — an API key does not count (`no_session`, 403): a machine credential does not change a
+person's password. An empty current password is `missing` (400) and does not count as a failure.
+Synchronous, like `login_*`.
+
 ## Bootstrapping the first admin
 
 Open registration plus “the first account becomes admin” is a race: whoever finds the fresh instance
@@ -380,11 +584,15 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
   not once an identity provider has taken the flag from the instance's last admin either; TinySesam
   then prints the one-time token below right away (or use `tinysesam owner`).
 - **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
-  (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
-  admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
-  route answers 404. The value is deliberately kept out of the security log — that file is what
-  fail2ban reads and logrotate keeps. Where stderr itself is collected (journal, container logs),
-  set `admin_claim_token_file` and TinySesam writes the token to that file with mode `0600`.
+  when stderr is a console (the operator's terminal). Sign in, open `/auth/claim-admin?token=…`,
+  and that account becomes admin. The token is single-use and expires after `admin_claim_ttl_min`;
+  once an admin exists the route answers 404. The value is deliberately kept out of the security
+  log — that file is what fail2ban reads and logrotate keeps. **Where stderr is not a console**
+  (container, journal, a pipe — stderr *is* the log there), TinySesam writes the token to
+  `<db_path>.claim` with mode `0600` instead and logs only that path (`docker exec … cat
+  /data/app.db.claim`); the file is removed once the token is redeemed. Without a database file
+  (`:memory:`) only stderr is left, and the log line says so. `admin_claim_token_file` picks the
+  file yourself (it takes precedence, also at a console).
   **Known limit:** the token is redeemed through a URL (`?token=…`, mirrored into the login
   redirect's `Location` when you are not signed in yet), so it passes through proxy access logs,
   `Referer` and the browser history before it is spent — keep `admin_claim_ttl_min` short and
@@ -442,7 +650,7 @@ It ends that account's open sessions (`--keep-sessions` keeps them) and writes a
 
 ```python
 auth = TinySesam(TinySesamConfig(db_path="auth.db"))
-auth.set_password(auth.store.get_user_by_name("admin")["id"], "new-password")
+auth.set_password(auth.find_user("admin")["id"], "new-password")
 ```
 
 ## Backups and housekeeping
@@ -457,7 +665,9 @@ python -m tinysesam gc     --db auth.db                      # expired sessions/
 > gives you a torso — measured on a fresh instance with five accounts, the copy did not even
 > contain the `users` table, and you only find out when you restore it. `backup` uses SQLite's
 > online backup: it takes the locks it needs, pulls the WAL in, and writes a file that stands on
-> its own, with the same tight permissions as the source. From Python: `auth.store.backup(path)`.
+> its own, with the same tight permissions as the source. The supported way is this command;
+> `auth.store.backup(path)` does the same from Python, but `auth.store` is internal (tier C, no
+> promise — see [Public API](#public-api-three-tiers)).
 
 `gc` deletes expired sessions, flows, one-time tokens and old login attempts; the audit log is
 left alone on purpose. **Nothing runs it for you** — ready-made unit files are in
@@ -744,13 +954,15 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 - **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
 - **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.
 - **Disable instead of delete:** `auth.revoke_api_key(id)` (key disabled, stays in the list). Self-service routes: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
-- **Two kinds of key, and neither one is an admin API.** `kind="automat"` (the default) works
+- **Two kinds of key, and neither one is an admin API.** `kind="automation"` (the default) works
   on its own but **never carries its owner's admin flag** and satisfies no route that requires
-  admin — the way for services, scripts and CI. `kind="mensch"` is only valid **together with a
+  admin — the way for services, scripts and CI. `kind="human"` is only valid **together with a
   live session of the same account**, and in return carries full rights — the way for a tool a
   human drives themselves. On its own, a leaked one is worthless. Until 0.18.x there was one kind,
   and an admin's key was a complete write API: create users, set `is_admin`, reset passwords — no
-  second factor, no CSRF layer. A leaked CI key was the instance.
+  second factor, no CSRF layer. A leaked CI key was the instance. (Up to 0.21.x the kinds were
+  called `automat` and `mensch`; since 0.22.0 those names are an input error that names the new
+  one, and the migration rewrites stored keys — rolling back: `docs/BETRIEB.md`.)
 - **Keys expire by themselves.** Without `expires_days` a key used to live forever, and that was
   the common case. `apikey_default_days` (90) now applies; `expires_days=0` still means
   "unlimited" but needs `apikey_allow_unlimited=True` and lands in the audit entry.
@@ -765,7 +977,7 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 
 Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
 
-- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection), password reset, set roles/admin.
+- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
 - **API keys** per user: generate (shown once) / revoke.
 - **Sessions:** view active ones + end them.
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
@@ -912,8 +1124,8 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > sign-in, once, also audited — but only within `federation_name_binding_days` (default 30) of the
 > first start with the source enabled or of the account's creation; after that a dormant account
 > would fall to the next person who gets the same name in the directory. Bind the rest explicitly:
-> `auth.foederation_nachbinden("ldap")` (dry run by default, `ausfuehren=True` writes; SAML takes
-> `zuordnung={name: nameid}`), or open a single account with `auth.loese_fremde_bindung(source,
+> `auth.federation_bind_existing("ldap")` (dry run by default, `apply=True` writes; SAML takes
+> `mapping={name: nameid}`), or open a single account with `auth.federation_unbind(source,
 > user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name, and neither
 > does a name another source brought along when it created the account (an account created via
 > OIDC never binds to LDAP or SAML by name — the name may have been self-chosen at the IdP). If the
@@ -1006,6 +1218,90 @@ single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
+## Public API: three tiers
+
+Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
+**tier**, recorded in `tests/api_surface.json` and listed with signature and description in
+[`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md):
+
+| Tier | What | Promise |
+|---|---|---|
+| **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.22.0. |
+| **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. |
+| **C — internal** | the wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
+
+A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
+red until then, so nothing becomes a promise by accident. The config fields are tier A (except
+one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinySesamError`,
+`ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+**Tiers A and B are in English.** Up to 0.21.x some of these names were German
+(`foederation_nachbinden`, `kennung_vergeben`, `SICHERHEITSEREIGNISSE`, parameters such as
+`durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 renames them **without an alias** — the
+tier promises only start with this release; the full list old → new is in the
+[CHANGELOG](https://github.com/Ollornog/TinySesam/blob/main/CHANGELOG.md). The guard fails on a
+German word in any tier-A/B name, parameter, config field or error attribute.
+
+**So are the keys and values** (0.22.0, also without an alias): what the tier-A/B methods return or
+accept (the report of `federation_bind_existing`, `gc()`, `create_api_key`, the reason codes), the
+`details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`,
+`ctx["purpose"]`), the JSON of the account and admin routes, and the API key kinds `automation`/
+`human`. The two values that live in the database (the key kind, the `old` address in a pending
+address-change link) are migrated on start (schema 12) and still read correctly in their old form;
+rolling back to 0.21.x takes one SQL block from `docs/BETRIEB.md`. The same guard measures them on a
+probe instance and in the source. **Audit and log lines stay as they are** — fail2ban filters and
+your own filters depend on them (`apikey_create … art=automat` keeps its wording).
+
+**`auth.store` is internal (tier C).** It is the storage layer the built-in routes use; its methods
+have no tier, no promise and no deprecation period, and they may change in any release. Everything
+an app needs has a public method (`set_disabled`, `find_user`, `list_api_keys`, `lift_lockout` …);
+where the docs still mention an `auth.store` call (a health probe, dropping OIDC grants), they say
+so.
+
+**Tier C warns.** Calling an old tier-C name (reading one, for the constants) raises a
+`DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
+lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
+tests once with `python -W error::DeprecationWarning`. A subclass that overrides one of these names
+gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.22.0, so the
+override no longer takes effect. The same goes for a **test fake** on an old name —
+`auth.check_password = fake` or `mock.patch.object(auth, "rate_ok", …)` is never called; the
+assignment raises a `RuntimeWarning` naming the target. Put the fake on the new name
+(`auth._check_password = fake`). Patching the class (`mock.patch.object(TinySesam, …)`) doesn't
+warn and doesn't work either.
+
+### For advanced use (tier B)
+
+Building blocks for pages you build yourself — signatures and descriptions in
+[`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md), the “B” sections.
+
+- **Your own account page:** `count_other_sessions` (other sessions to end?), `own_events`,
+  `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
+  `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `mfa_enrollment_allowed`,
+  `federated_only` (SSO-only account: no password to change), `password_policy_error` (the rule for a
+  new password; the change itself is `change_password`, tier A), `identifier_taken` and `NAME_MAX`
+  (is a name or address free, how long may it be), `request_email_change` (hand its result to
+  `after_response`) → `confirm_email_change`, `stepup_fresh` (the step-up itself: `confirm_*`,
+  tier A), `pending_user`, `session_user`.
+- **Your own admin panel or operator tools:** `get_user`, `find_user`, `user_roles`, `set_roles`,
+  `delete_user`, `lift_lockout` (like `tinysesam unlock`), `list_api_keys`, `api_key_kind`,
+  `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`, `remove_resource_secret`,
+  `resource_unlocked`, `all_security`, `admin_exists`, `admin_claim_token`, `audit`,
+  `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
+- **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
+  `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Your own routes and extension points:** `client_ip` (the real client address behind
+  `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `browser_path`
+  (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
+  `config.lang`), `set_rate_limiter`, `apply_idp_groups`, `version` and
+  `tinysesam.current_version()`, `PAGES` (the page names `set_template` accepts),
+  `MFA_ENROLLMENT_MODES`, `TinySesamConfig.validate()` (re-check after changing `auth.cfg` at
+  runtime), `TinySesamConfig.enabled_methods()`, `TinySesamConfig.pin_as_first_factor()`.
+- **`apply_factor`** attaches a factor to the session **without checking it**. Call it only after
+  you verified that factor yourself, with the account from `session_user()` — it is the most
+  powerful block here, and a mistake in front of it is a way in. Not needed for password, PIN and
+  TOTP: the building blocks `login_*` ([Your own login page](#your-own-login-page), tier A)
+  check, throttle and then call it themselves.
+
 ## Tests & CI
 
 ```bash
@@ -1047,7 +1343,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**57 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**61 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and
@@ -1061,7 +1357,8 @@ against a real provider on a staging host (`tests/e2e_stage.py`); the tests that
 package cover them structurally, because they cannot dial out.
 
 Two security audits went through the code in 2026-09 (see the `CHANGELOG`). The version is
-deliberately **not** 1.0 yet: the API surface has to hold still for two minor releases first.
+deliberately **not** 1.0 yet: the tier-A surface ([Public API](#public-api-three-tiers)) has to
+hold still for two minor releases first, counted from 0.22.0.
 
 MIT license.
 

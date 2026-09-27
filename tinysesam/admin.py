@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
-from .router import _key_art, _mail_basis, gehaertete_route
+from .router import _key_kind, _mail_basis, gehaertete_route
 from . import security
 from .store import name_ungueltig, norm_email, valid_email
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
@@ -99,7 +99,7 @@ def build_admin_router(auth) -> APIRouter:
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
                 "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
-                "kind": _key_art(k)}
+                "kind": _key_kind(k)}
 
     # ---------- Benutzer / Service-Accounts ----------
     @ar.get("/api/users")
@@ -117,7 +117,7 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.email_invalid"))
         # Kreuzweise prüfen (Fund R4-12): Benutzername und E-Mail sind EIN Kennungs-Raum —
         # eine Adresse, die schon Benutzername eines anderen Kontos ist, ist vergeben.
-        if email and auth.kennung_vergeben(email):
+        if email and auth.identifier_taken(email):
             raise HTTPException(409, auth.t("api.email_taken"))
         # Im E-Mail-Modus ist die Adresse die Kennung — Benutzername darf entfallen.
         if not username and cfg.login_identifier == "email" and not b.get("is_service"):
@@ -126,7 +126,7 @@ def build_admin_router(auth) -> APIRouter:
             raise HTTPException(400, auth.t("api.username_req"))
         if name_ungueltig(username):
             raise HTTPException(400, auth.t("err.username_invalid"))
-        if auth.kennung_vergeben(username):
+        if auth.identifier_taken(username):
             raise HTTPException(409, auth.t("api.user_exists"))
         roles = rollen_aus(b)
         # Service-Konto + Admin (R6-2): Früher fiel `is_admin` hier still weg, über die
@@ -140,7 +140,7 @@ def build_admin_router(auth) -> APIRouter:
         # das Panel jedes Passwort an, auch `1` — ausgerechnet der Weg, auf dem die
         # Erstpasswörter ganzer Teams entstehen. Ohne Passwort bleibt erlaubt (SSO/Passkey).
         if not b.get("is_service") and b.get("password"):
-            mangel = auth.passwort_mangel(b["password"], username=username, email=email, api=True)
+            mangel = auth.password_policy_error(b["password"], username=username, email=email, api=True)
             if mangel:
                 raise HTTPException(400, mangel)
         try:
@@ -153,7 +153,7 @@ def build_admin_router(auth) -> APIRouter:
         except ConfigError as e:
             # Wettlauf (G12c): zwischen den Prüfungen oben und dem Anlegen vergeben — dieselbe
             # Antwort wie dort, statt einer 500.
-            raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "feld", None) == "email"
+            raise HTTPException(409, auth.t("api.email_taken" if getattr(e, "field", None) == "email"
                                             else "api.user_exists"))
         protokoll(request, "user_create", f"{username} service={bool(b.get('is_service'))}")
         return {"id": uid}
@@ -168,21 +168,12 @@ def build_admin_router(auth) -> APIRouter:
         ziel = owner_schutz(me, uid)
         if disabled and ziel and ziel["is_owner"]:
             raise HTTPException(400, auth.t("api.owner_protected"))
-        # Mit Betreiber-Vermerk: Kein Bestätigungslink hebt diese Sperre auf, auch einer nicht,
-        # der erst nach ihr entsteht (H-18, zweite Angriffsrunde) — s. `Store.set_disabled`.
-        auth.store.set_disabled(uid, disabled, durch_betreiber=True)
-        keys = 0
-        if disabled:
-            auth.store.delete_user_sessions(uid)
-            # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
-            # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
-            # niemand mehr weiss.
-            keys = auth._keys_widerrufen(uid, "sperre")
-            # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
-            # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
-            auth.store.revoke_user_magic_tokens(uid)
-        protokoll(request, "user_disable" if disabled else "user_enable",
-              f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
+        # Die Wirkung steht an EINER Stelle, `auth.set_disabled` (PO-Entscheid 2026-09-27):
+        # Betreiber-Vermerk (kein Bestätigungslink hebt die Sperre auf, H-18), Sitzungen beenden,
+        # Keys widerrufen, offene Links verwerfen, Audit mit dem Admin als Akteur. Eine eigene
+        # Admin-Route der App ruft dieselbe Methode. Hier bleibt, was vom Aufrufer abhängt.
+        if not auth.set_disabled(uid, disabled):
+            raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/password")
@@ -192,7 +183,7 @@ def build_admin_router(auth) -> APIRouter:
         if not b.get("password"):
             raise HTTPException(400, auth.t("api.password_req"))
         ziel = auth.store.get_user(uid)
-        mangel = auth.passwort_mangel(b["password"], username=ziel["username"] if ziel else None,
+        mangel = auth.password_policy_error(b["password"], username=ziel["username"] if ziel else None,
                                       email=ziel["email"] if ziel else None, api=True)
         if mangel:
             raise HTTPException(400, mangel)   # B2-13: auch der Admin-Reset hält die Regel ein
@@ -201,12 +192,12 @@ def build_admin_router(auth) -> APIRouter:
         # Neu gebunden: Passwort-Fehlversuche und die Serien-Sperre (B2-6) enden hier — die Serie
         # GANZ, anders als beim Selbstbedienungs-Reset: Hier entscheidet der Betreiber, nicht wer
         # das Postfach hat. Sonst stünde das Konto nach dem Reset weiter vor der Tür.
-        auth.sperre_aufheben(uid, methoden=("password",))
+        auth.lift_lockout(uid, methods=("password",))
         auth._serie_beenden(uid)
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
-        keys = auth._keys_widerrufen(uid, "admin_passwort")
+        keys = auth._keys_widerrufen(uid, "admin_password_reset")
         # Und offene Links — ein Adresswechsel aus der übernommenen Sitzung fällt mit (Fund 1).
         auth.store.revoke_user_magic_tokens(uid)
         protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")
@@ -314,7 +305,7 @@ def build_admin_router(auth) -> APIRouter:
         if not isinstance(roh, str):
             raise HTTPException(400, auth.t("err.username_required"))
         try:
-            neu = auth.change_username(uid, roh, auth.client_ip(request), durch_betreiber=True)
+            neu = auth.change_username(uid, roh, auth.client_ip(request), by_operator=True)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return {"ok": True, "username": neu}
@@ -503,7 +494,7 @@ def build_admin_router(auth) -> APIRouter:
         def admin_page(request: Request):
             guard(request)
             warn = ""
-            if cfg.https_mode == "warn" and not auth.is_secure(request):
+            if cfg.https_mode == "warn" and not auth._is_secure(request):
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis

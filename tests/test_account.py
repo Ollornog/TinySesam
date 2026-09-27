@@ -81,12 +81,12 @@ with open(_liste, "w", encoding="utf-8") as _f:
 _ab = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_liste))
 _ab.set_security("password_min_length_single_factor", 8)       # geprüft wird die Liste, nicht die Länge
-assert _ab.passwort_mangel("firmenname2026") and _ab.passwort_mangel("Firmenname!!")
-assert _ab.passwort_mangel("ein-ganz-eigenes-wort") is None
+assert _ab.password_policy_error("firmenname2026") and _ab.password_policy_error("Firmenname!!")
+assert _ab.password_policy_error("ein-ganz-eigenes-wort") is None
 # Gegenprobe gegen Übereifer: keine Zusammensetzungsregeln (NIST), eine Ziffernfolge ohne Muster
 # und eine Passphrase gehen durch.
 for _gut in ("24681357", "correct horse battery", "9384756102"):
-    assert _ab.passwort_mangel(_gut) is None, _gut
+    assert _ab.password_policy_error(_gut) is None, _gut
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                               password_blocklist_file=_liste + ".fehlt"))
@@ -103,7 +103,7 @@ with open(_misch, "wb") as _f:
     _f.write(b"password\nsch\xf6n123\n" + "möhrenkuchen\n".encode("utf-8"))   # Latin-1, dann UTF-8
 _am = TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                                 password_blocklist_file=_misch))
-assert _am.passwort_mangel("Schön123!") and _am.passwort_mangel("Möhrenkuchen99")
+assert _am.password_policy_error("Schön123!") and _am.password_policy_error("Möhrenkuchen99")
 try:
     TinySesam(TinySesamConfig(db_path=os.path.join(tempfile.mkdtemp(), "b.db"), passkey_enabled=False,
                               password_blocklist_file=os.path.dirname(_misch)))
@@ -119,9 +119,9 @@ for _pw, _name, _mail in (("Mustermann1990!", "maxm", "max.mustermann@example.co
                           ("Schmidt1985!", "anna.schmidt", None),
                           ("Mueller2026!", "km", "k.mueller@example.com"),
                           ("Mustermann1990!", "MaxMustermann", None)):
-    assert _ab.passwort_mangel(_pw, username=_name, email=_mail), (_pw, _name, _mail)
+    assert _ab.password_policy_error(_pw, username=_name, email=_mail), (_pw, _name, _mail)
 # Gegenprobe: Teile unter vier Buchstaben (`max`, `k`) tragen nichts.
-assert _ab.passwort_mangel("Maximal-Ruhig-7", username="max.mustermann") is None
+assert _ab.password_policy_error("Maximal-Ruhig-7", username="max.mustermann") is None
 ok("A-5: Namensteile aus Benutzername und E-Mail (Trenner, Binnenmajuskel) sind Kontextwörter")
 
 # A-6: Die übrigen trivialen Muster aus den Leak-Listen — absteigend mit Umbruch, wiederholte
@@ -129,9 +129,9 @@ ok("A-5: Namensteile aus Benutzername und E-Mail (Trenner, Binnenmajuskel) sind 
 # (Mutationsprobe: in `passwords._trivial` alles nach der ±1-Prüfung durch `return False` ersetzen → rot.)
 for _muster in ("0987654321", "12341234", "asdfasdf", "abcabcabc", "12121212", "11112222",
                 "qwerasdf", "Asdf1234", "7890123456", "aabbccdd", "yxcvbnm123"):
-    assert _ab.passwort_mangel(_muster), _muster
+    assert _ab.password_policy_error(_muster), _muster
 for _gut in ("24681357", "correct horse battery", "9384756102", "Zauberwald-17", "Tischlampe42"):
-    assert _ab.passwort_mangel(_gut) is None, _gut
+    assert _ab.password_policy_error(_gut) is None, _gut
 ok("A-6: Wiederholungsblöcke, Tastatur- und Zählreihen gelten als trivial")
 
 # ---------- on_security_event (B2-2/H-6) ----------
@@ -148,7 +148,7 @@ auth.create_api_key(_uid, name="ci")
 _namen = [e for e, _, _ in _ereignisse]
 assert _namen == ["password_changed", "pin_set", "pin_disabled", "api_key_created"], _ereignisse
 assert all(n == "admin" for _, n, _ in _ereignisse)
-assert set(_namen) <= set(auth.SICHERHEITSEREIGNISSE)
+assert set(_namen) <= set(auth.SECURITY_EVENTS)
 ok("on_security_event: Passwort, PIN setzen/entfernen und neuer API-Key melden sich")
 
 # Jedes zugesagte Ereignis hat einen Aufrufer im Paket — auch die, die dieser Test nicht fährt
@@ -159,18 +159,18 @@ _gerufen = set()
 for _datei in (_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"):
     for _k in _ast.walk(_ast.parse(_datei.read_text(encoding="utf-8"))):
         if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
-                and _k.func.attr == "sicherheitsereignis" and _k.args
+                and _k.func.attr == "_sicherheitsereignis" and _k.args
                 and isinstance(_k.args[0], _ast.Constant)):
             _gerufen.add(_k.args[0].value)
-assert _gerufen == set(auth.SICHERHEITSEREIGNISSE), (sorted(_gerufen), auth.SICHERHEITSEREIGNISSE)
-ok("jedes Ereignis aus SICHERHEITSEREIGNISSE wird irgendwo ausgelöst (und kein anderes)")
+assert _gerufen == set(auth.SECURITY_EVENTS), (sorted(_gerufen), auth.SECURITY_EVENTS)
+ok("jedes Ereignis aus SECURITY_EVENTS wird irgendwo ausgelöst (und kein anderes)")
 
 # A-2: Der Hook stand nur im generierten API.md — ein Integrator erfuhr nirgends, welche
 # Ereignisse kommen. Die Betriebshinweise (beide Sprachen) nennen jetzt jedes einzelne.
 _wurzel = _pl.Path(__file__).resolve().parent.parent
 for _doku in ("SECURITY.md", "i18n/SECURITY.de.md"):
     _txt = (_wurzel / _doku).read_text(encoding="utf-8")
-    _fehlt = [e for e in auth.SICHERHEITSEREIGNISSE if f"`{e}`" not in _txt]
+    _fehlt = [e for e in auth.SECURITY_EVENTS if f"`{e}`" not in _txt]
     assert "on_security_event" in _txt and not _fehlt, (_doku, _fehlt)
 ok("A-2: SECURITY.md (en/de) beschreibt on_security_event mit allen Ereignissen")
 
@@ -193,7 +193,7 @@ _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
 assert _r.status_code == 200, "ein fehlschlagender Hook darf den Passwortwechsel nicht kippen"
 assert any("on_security_event fehlgeschlagen" in z and "password_changed" in z for z in _zeilen), _zeilen
-assert auth.check_password("admin", "neuespasswort")
+assert auth._check_password("admin", "neuespasswort")
 ok("on_security_event: Fehler im Hook → Vorgang gilt, Zeile im Sicherheits-Log")
 
 # ---------- Die Lösch-Knöpfe prüfen die Antwort, bevor sie Erfolg melden (R3-3) ----------

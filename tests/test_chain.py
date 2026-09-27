@@ -145,7 +145,7 @@ def _bis_zum_zweiten_faktor(app):
 # Vorgabe „first_login": ein frisches Konto darf sich einrichten — sonst wäre jedes neue Konto
 # eine Sackgasse und der Betreiber müsste an die Datenbank.
 db_a, auth_a, uid_a, app_a = _kette_ohne_totp()
-assert auth_a.darf_mfa_einrichten(uid_a) is True
+assert auth_a.mfa_enrollment_allowed(uid_a) is True
 c_a = _bis_zum_zweiten_faktor(app_a)
 assert c_a.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
                ).headers.get("location", "").startswith("/auth/totp/setup")
@@ -181,7 +181,7 @@ try:
     assert _s and _s["mfa_ok"], "nach der Pflicht-Einrichtung hängt die Sitzung noch im MFA-Schritt"
     # Der alte Weg — denselben Code an /auth/totp noch einmal — ist damit überflüssig: Die
     # Einrichtungsseite leitet mit `next` direkt zum Ziel weiter.
-    assert not auth_e.is_locked("neu", "testclient")
+    assert not auth_e._is_locked("neu", "testclient")
     assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "nicht voll angemeldet"
 finally:
     _sec_e.seclog.removeHandler(_haken_e)
@@ -199,7 +199,7 @@ assert _ant.status_code == 409, (_ant.status_code, _ant.text)
 assert not auth_e.totp_confirm(uid_e, _folge), "totp_confirm bestätigt ein aktives TOTP erneut"
 assert _ereig_e == ["totp_enabled"], _ereig_e
 assert sum(z["event"] == "totp_enable" for z in auth_e.store.recent_audit(50)) == 1
-assert auth_e.verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
+assert auth_e._verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
 ok("A-4: bestätigtes TOTP → 409 an /auth/totp/setup, kein zweites totp_enabled")
 
 # B1-7 auch in der Pflicht-Einrichtung: Die Bestätigung meldet `other_sessions`, und zwar gemessen
@@ -209,7 +209,7 @@ ok("A-4: bestätigtes TOTP → 409 an /auth/totp/setup, kein zweites totp_enable
 # anzubieten. Gezählt gegen das alte Cookie stünde hier 2: Dessen halbe Sitzung hat
 # `complete_totp` eben gelöscht, und die neue zählte als „andere" mit.
 # (Mutationsprobe: other_sessions im Einschreibungszweig streichen → rot; gegen das alte Cookie
-# zählen, also `andere_sitzungen(request, u)` ohne token → rot, schon oben bei A-1 mit 1 statt 0.)
+# zählen, also `count_other_sessions(request, u)` ohne token → rot, schon oben bei A-1 mit 1 statt 0.)
 auth_e.totp_disable(uid_e)
 auth_e.grant_mfa_enrollment(uid_e, minutes=30)
 c_b = _bis_zum_zweiten_faktor(app_e)
@@ -268,7 +268,7 @@ os.remove(db_k)
 # …aber nur bis zum ersten vollständigen Login. Danach ist der Weg zu — genau der Fall, in dem
 # jemand das Passwort eines BESTEHENDEN Kontos hat.
 auth_a.store.mark_first_login(uid_a, int(_zeit.time()))
-assert auth_a.darf_mfa_einrichten(uid_a) is False
+assert auth_a.mfa_enrollment_allowed(uid_a) is False
 c_a2 = _bis_zum_zweiten_faktor(app_a)
 _ziel = c_a2.get("/auth/totp", headers={"Accept": "text/html"}, follow_redirects=False
                  ).headers.get("location", "")
@@ -300,25 +300,25 @@ ok("R3-1: …die Meldung darüber trifft die fail2ban-Jail nicht (es ist kein Fe
 # Der Betreiber kann ein Fenster öffnen — der Weg für „Gerät verloren" und für strict.
 _bis = auth_a.grant_mfa_enrollment(uid_a, minutes=30)
 assert _bis > int(_zeit.time())
-assert auth_a.darf_mfa_einrichten(uid_a) is True
-assert auth_a.darf_mfa_einrichten(uid_a, jetzt=_bis + 1) is False
+assert auth_a.mfa_enrollment_allowed(uid_a) is True
+assert auth_a.mfa_enrollment_allowed(uid_a, now=_bis + 1) is False
 auth_a.revoke_mfa_enrollment(uid_a)
-assert auth_a.darf_mfa_einrichten(uid_a) is False
+assert auth_a.mfa_enrollment_allowed(uid_a) is False
 ok("R3-1: ein Einrichtungsfenster des Betreibers gewinnt — zeitlich begrenzt und rücknehmbar")
 
 # „strict": nie von selbst, auch nicht beim ersten Mal.
 db_s, auth_s, uid_s, app_s = _kette_ohne_totp(mfa_enrollment="strict")
-assert auth_s.darf_mfa_einrichten(uid_s) is False
+assert auth_s.mfa_enrollment_allowed(uid_s) is False
 _ziel_s = _bis_zum_zweiten_faktor(app_s).get("/auth/totp", headers={"Accept": "text/html"},
                                              follow_redirects=False).headers.get("location", "")
 assert not _ziel_s.startswith("/auth/totp/setup"), _ziel_s
-assert auth_s.grant_mfa_enrollment(uid_s, minutes=5) and auth_s.darf_mfa_einrichten(uid_s) is True
+assert auth_s.grant_mfa_enrollment(uid_s, minutes=5) and auth_s.mfa_enrollment_allowed(uid_s) is True
 ok("R3-1: mfa_enrollment='strict' verweigert auch dem frischen Konto — bis der Betreiber öffnet")
 
 # „grace": eine Frist ab Kontoanlage, danach zu.
 db_g, auth_g, uid_g, app_g = _kette_ohne_totp(mfa_enrollment="grace", mfa_enrollment_grace_days=7)
-assert auth_g.darf_mfa_einrichten(uid_g) is True
-assert auth_g.darf_mfa_einrichten(uid_g, jetzt=int(_zeit.time()) + 8 * 86400) is False
+assert auth_g.mfa_enrollment_allowed(uid_g) is True
+assert auth_g.mfa_enrollment_allowed(uid_g, now=int(_zeit.time()) + 8 * 86400) is False
 ok("R3-1: mfa_enrollment='grace' läuft nach der eingestellten Zahl Tage ab")
 
 # Ohne Zwang bleibt alles beim Alten: Verlangt die Kette keinen zweiten Faktor, richtet ihn

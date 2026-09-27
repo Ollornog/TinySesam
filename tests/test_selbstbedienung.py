@@ -62,16 +62,16 @@ auth.create_user("bert", password=PW, email="bert@example.com")
 c = _login(app, "anna")
 seite = c.get("/auth/account", headers=HTML).text
 r.check("Konto-Seite bietet Benutzername und Adresse an", "data-act=setname" in seite and "data-act=setmail" in seite)
-id_vorher = auth.forward_response_headers(auth.get_user(uid))["Remote-Id"]
+id_vorher = auth._forward_response_headers(auth.get_user(uid))["Remote-Id"]
 a = c.post("/auth/account/username", json={"username": "anna.neu"})
 r.check("Benutzername geändert (frisch angemeldet)", a.status_code == 200 and auth.get_user(uid)["username"] == "anna.neu",
         f"{a.status_code} {a.text[:120]}")
-kopf = auth.forward_response_headers(auth.get_user(uid))
+kopf = auth._forward_response_headers(auth.get_user(uid))
 r.check("… Remote-Id bleibt die Konto-ID, Remote-User folgt dem neuen Namen",
         kopf["Remote-Id"] == id_vorher == str(uid) and kopf["Remote-User"] == "anna.neu")
 r.check("… die Sitzung bleibt (sie hängt an der ID)", c.get("/auth/me").status_code == 200)
 r.check("… Sicherheitsereignis und Audit-Zeile",
-        ("username_changed", {"alt": "anna", "neu": "anna.neu"}) in ev
+        ("username_changed", {"old": "anna", "new": "anna.neu"}) in ev
         and auth.store._one("SELECT 1 FROM audit WHERE event='username_changed'") is not None, str(ev))
 r.check("… Anmelden mit dem neuen Namen geht, mit dem alten nicht",
         _login(app, "anna.neu").get("/auth/me").status_code == 200
@@ -87,7 +87,7 @@ _altern(auth)
 alt_ = c.post("/auth/account/username", json={"username": "anna3"})
 r.check("ohne frischen Step-up → 403 mit Reauth-Hinweis", alt_.status_code == 403
         and alt_.headers.get("x-tinysesam-reauth"), f"{alt_.status_code} {dict(alt_.headers)}")
-key = auth.create_api_key(uid, name="skript", kind="mensch")["key"]
+key = auth.create_api_key(uid, name="skript", kind="human")["key"]
 mit_key = TestClient(app).post("/auth/account/username", json={"username": "per-key"},
                                headers={"Authorization": f"Bearer {key}"})
 r.check("ein API-Key ändert keinen Namen", mit_key.status_code in (401, 403), str(mit_key.status_code))
@@ -134,7 +134,7 @@ r.check("… die alte Adresse bekommt einen Hinweis — ohne Link (nichts, desse
 r.check("… offene Links an die alte Adresse gelten nicht mehr",
         auth.peek_magic(reset_alt, purpose="reset_password") is None)
 r.check("… Sicherheitsereignis mit alt/neu",
-        ("email_changed", {"alt": "carla@example.com", "neu": "carla.neu@example.com"}) in ev, str(ev))
+        ("email_changed", {"old": "carla@example.com", "new": "carla.neu@example.com"}) in ev, str(ev))
 r.check("… derselbe Link ein zweites Mal: ungültig", TestClient(app).post(link).status_code == 400)
 
 # Vergeben/reserviert: kein Link — aber der Hinweis an die eigene Adresse wie bei jedem Antrag
@@ -242,7 +242,7 @@ for i in range(12):
 a_s._hinweis_ausgang.abwarten()
 _ziele = {m[0] for m in post_s if "/auth/email/" in m[2]}
 r.check("ein Konto erreicht mit Wechsel-Links höchstens so viele Adressen wie das Kontingent erlaubt",
-        0 < len(_ziele) <= int(a_s.sec("mail_per_address_max"))
+        0 < len(_ziele) <= int(a_s._sec("mail_per_address_max"))
         and a_s.store._one("SELECT 1 FROM audit WHERE event='mail_ratelimit' AND detail LIKE 'email_change konto=%'")
         is not None, f"{len(_ziele)} Adressen")
 
@@ -388,7 +388,7 @@ a_v, ap_v, post_v, _ = _aufbau()
 uid_v = a_v.create_user("voll", password=PW, email="voll@example.com")
 a_v._postausgang.max_offen = 0
 _antw_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
-# (Mutationsprobe: `bei_ueberlauf=senden.verwerfen` in der Route weglassen → offener Token → rot.)
+# (Mutationsprobe: `on_overflow=senden.verwerfen` in der Route weglassen → offener Token → rot.)
 r.check("Postausgang voll: dieselbe Antwort, kein Link, und kein offener Token bleibt stehen",
         _antw_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
         and a_v.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE purpose='email_change'")["n"] == 1

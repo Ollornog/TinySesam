@@ -45,8 +45,8 @@ ok("version gibt die installierte Version aus")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="neues-geheim-lang-genug\n")
 assert code == 0, aus
-assert auth.check_password("admin", "neues-geheim-lang-genug")
-assert not auth.check_password("admin", "altes-geheim")
+assert auth._check_password("admin", "neues-geheim-lang-genug")
+assert not auth._check_password("admin", "altes-geheim")
 ok("passwd setzt das Passwort (der Weg zurück ohne Mailer und ohne zweiten Admin)")
 
 # offene Sitzungen gelten nach einem Credential-Wechsel nicht weiter
@@ -74,7 +74,7 @@ ok("falscher DB-Pfad → klare Meldung, keine leere Datenbank als Nebenwirkung")
 
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="kurz\n")
 assert code == 1 and "zu kurz" in aus
-assert auth.check_password("admin", "und-noch-eins-lang")
+assert auth._check_password("admin", "und-noch-eins-lang")
 ok("password_min_length gilt auch hier")
 
 # Ohne Konfiguration weiss das CLI nicht, ob eine Kette einen zweiten Faktor erzwingt — es nimmt
@@ -93,7 +93,7 @@ for _schwach, _text in (("Passwort2026!", "leicht zu erraten"), ("admin-admin", 
                         ("y" * 257, "zu lang")):
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin=_schwach + "\n")
     assert code == 1 and _text in aus, (_schwach[:20], aus)
-assert auth.check_password("admin", "und-noch-eins-lang")
+assert auth._check_password("admin", "und-noch-eins-lang")
 ok("passwd: Blockliste, Kontowort und Höchstlänge gelten auch offline")
 
 # A-7: Die Betreiber-Blockliste und der Dienstname galten offline nicht — ein Passwort von der
@@ -112,7 +112,7 @@ assert code == 0, aus    # Gegenprobe: ohne Schalter kennt das CLI die Liste nic
 code, aus = cli("passwd", "--db", db, "--stdin", "--blocklist-file", _liste + ".fehlt", "admin",
                 stdin="noch-ein-anderes\n")
 assert code == 1 and "lässt sich nicht lesen" in aus, aus
-assert auth.check_password("admin", _von_der_liste)
+assert auth._check_password("admin", _von_der_liste)
 ok("passwd liest --blocklist-file (auch Latin-1-Zeilen) und --rp-name wie die Config")
 
 # Die Mindestlänge liest das CLI wie das Web (T-13-Angriff, faktoren × konfiguration): Ein
@@ -125,8 +125,8 @@ for _altwert in ("4", "0"):
     auth.store.set_setting("password_min_length", _altwert)
     code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="k9T#q7\n")   # 6 Zeichen
     assert code == 1 and "zu kurz (min. 8)" in aus, (_altwert, code, aus)
-    assert auth.sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
-    assert auth.check_password("admin", _von_der_liste)
+    assert auth._sec("password_min_length") == 8 == _security.haertung_lesen(auth.store, "password_min_length")
+    assert auth._check_password("admin", _von_der_liste)
 auth.store.set_setting("password_min_length", "12")                 # gültiger Wert: gilt wie im Web
 code, aus = cli("passwd", "--db", db, "--stdin", "admin", stdin="Elf-Zeichen\n")   # 11 Zeichen
 assert code == 1 and "zu kurz (min. 12)" in aus, (code, aus)
@@ -403,9 +403,9 @@ def _abgelaufene_sitzungen():
     return auth.store._one("SELECT COUNT(*) AS n FROM session WHERE user_id=?", (_gc_uid,))["n"]
 
 
-for _ in range(auth.sec("max_login_attempts") + 1):
-    auth.record_login("gc-probe", "198.51.100.7", False, "password")
-assert auth.is_locked("gc-probe", "198.51.100.7")
+for _ in range(auth._sec("max_login_attempts") + 1):
+    auth._record_login("gc-probe", "198.51.100.7", False, "password")
+assert auth._is_locked("gc-probe", "198.51.100.7")
 for _sek in (str(10 ** 20), str(-10 ** 20), "-1"):
     try:
         code, aus = cli("gc", "--db", db, "--attempts-older-than", _sek)
@@ -413,7 +413,7 @@ for _sek in (str(10 ** 20), str(-10 ** 20), "-1"):
         code, aus = f"{type(e).__name__}", str(e)
     assert code == 2 and "--attempts-older-than" in aus, (_sek, code, aus[-200:])
 assert _abgelaufene_sitzungen() == 1, "gc hat gelöscht, obwohl das Argument abgewiesen wurde"
-assert auth.is_locked("gc-probe", "198.51.100.7"), "ein abgewiesener gc-Lauf hat die Sperre aufgehoben"
+assert auth._is_locked("gc-probe", "198.51.100.7"), "ein abgewiesener gc-Lauf hat die Sperre aufgehoben"
 for _sek in (10 ** 20, -10 ** 20, -1, True, float("inf"), "viel"):
     try:
         auth.gc(attempts_older_than_sec=_sek)
@@ -423,7 +423,7 @@ for _sek in (10 ** 20, -10 ** 20, -1, True, float("inf"), "viel"):
     except Exception as e:   # noqa: BLE001 — ein anderer Absturz ist hier der Befund
         _gc_fund = f"{type(e).__name__}: {e}"
     assert _gc_fund is None, (_sek, _gc_fund)
-assert _abgelaufene_sitzungen() == 1 and auth.is_locked("gc-probe", "198.51.100.7")
+assert _abgelaufene_sitzungen() == 1 and auth._is_locked("gc-probe", "198.51.100.7")
 assert auth.gc(attempts_older_than_sec=86400)["sessions"] >= 1 and _abgelaufene_sitzungen() == 0
 code, aus = cli("gc", "--db", db, "--attempts-older-than", "0")
 assert code == 0 and "login_attempts=" in aus, (code, aus)

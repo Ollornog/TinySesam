@@ -66,7 +66,7 @@ ok("Freischaltung pro Bereich getrennt (Passphrase-Bereich separat)")
 
 # Lockout nach zu vielen Fehlversuchen (pseudo-User res:name)
 c2 = TestClient(app)
-GRENZE = auth.sec("resource_max_attempts")
+GRENZE = auth._sec("resource_max_attempts")
 codes = [c2.post("/auth/resource/fotos", data={"secret": "0000", "next": "/"}).status_code
          for _ in range(GRENZE)]
 assert codes == [401] * GRENZE, codes
@@ -95,18 +95,18 @@ for n in bereiche:
 # Seit R7-3 sperrt die ADRESSE schon bei `resource_max_attempts` — die Angriffslage (die Adresse
 # erreicht die Login-IP-Schwelle) lässt sich mit der Vorgabe also gar nicht mehr herstellen.
 # Für diese Probe wird die Bereichs-Schwelle deshalb auf die Login-IP-Schwelle gehoben.
-JE_BEREICH = auth2.sec("resource_max_attempts")     # wie bisher: fünf je Bereich, 15 zusammen
+JE_BEREICH = auth2._sec("resource_max_attempts")     # wie bisher: fünf je Bereich, 15 zusammen
 auth2.set_security("resource_max_attempts",
-                   auth2.sec("max_login_attempts") * auth2.sec("ip_attempt_factor"))
+                   auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor"))
 for n in bereiche:
     for _ in range(JE_BEREICH):
         c3.post(f"/auth/resource/{n}", data={"secret": "0000", "next": "/"})
-IP_GRENZE = auth2.sec("max_login_attempts") * auth2.sec("ip_attempt_factor")
+IP_GRENZE = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
 assert auth2.store.count_fails(0, ip="testclient", method="resource") >= IP_GRENZE, \
     "Angriffslage nicht hergestellt: die Test-IP hat die Login-IP-Schwelle nicht erreicht"
 
 # (a) Der Angriff: Die Anmeldung eines Unbeteiligten von derselben Adresse bleibt offen.
-assert not auth2.is_locked("unbeteiligt", "testclient"), \
+assert not auth2._is_locked("unbeteiligt", "testclient"), \
     "Fehlgriffe an der Bereichs-PIN sperren die Anmeldung Unbeteiligter"
 r = c3.post("/auth/login", data={"username": "unbeteiligt", "password": "Unbeteiligt-Passwort-1"},
             follow_redirects=False)
@@ -142,7 +142,7 @@ auth5 = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db5, rp
 auth5.set_resource_secret("garten", "4711", kind="pin", label="Garten")
 app5 = FastAPI()
 app5.include_router(auth5.router())
-G5 = auth5.sec("resource_max_attempts")
+G5 = auth5._sec("resource_max_attempts")
 fremd = TestClient(app5, client=("198.51.100.66", 40000))
 codes = [fremd.post("/auth/resource/garten", data={"secret": "0000", "next": "/"}).status_code
          for _ in range(G5 + 2)]
@@ -156,7 +156,7 @@ ok("R7-3: ein Fremder sperrt nur seine Adresse, nicht den Bereich")
 # Bereich zu, auch für einen weiteren, unbeteiligten.
 kenner.cookies.clear()
 auth5.store.clear_fails(username="res:garten")
-for i in range(auth5.sec("account_attempt_factor")):
+for i in range(auth5._sec("account_attempt_factor")):
     ci = TestClient(app5, client=(f"198.51.100.{10 + i}", 40000))
     for _ in range(G5):
         ci.post("/auth/resource/garten", data={"secret": "0000", "next": "/"})

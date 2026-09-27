@@ -12,6 +12,7 @@ Nachschlagewerk beantwortet die andere Frage: *„Es gibt da ein Feld — was tu
 Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) setzen Bündel dieser Felder;
 einzelne lassen sich per `**overrides` überschreiben.
 
+**Stufe:** Jedes Feld gehört zur Stufe A — öffentlich, stabil ab 1.0 (siehe [API.md](API.md), „Drei Stufen“), ausser `totp_required` (B).
 
 ## Store
 
@@ -79,7 +80,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt — und nie mehr, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6; dann Einmal-Token oder `tinysesam owner`). Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
-| `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
+| `admin_claim_token_file` | `str` | `""` | 0600-Datei für das Einmal-Token, z.B. /run/tinysesam/admin-claim.token; leer: stderr, wenn es eine Konsole ist, sonst `<db_path>.claim` |
 
 ## Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv.
 
@@ -140,7 +141,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `totp_enabled` | `bool` | `True` | User dürfen TOTP einrichten |
 | `secrets_key_file` | `str` | `""` | Schlüsseldatei für die Verschlüsselung der TOTP-Geheimnisse (H-14/H-15; 32 Byte, Base64). Vorrang hat die Umgebungsvariable TINYSESAM_SECRETS_KEY; ohne beides legt TinySesam `<db_path>.key` an (0600). Ohne Schlüssel sind alle TOTP-Einrichtungen verloren — getrennt von der Datenbank sichern (docs/BETRIEB.md). |
-| `totp_required` | `bool` | `False` | ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
+| `totp_required` | `bool` | `False` | **Stufe B.** ACHTUNG: wirkungslos und deshalb seit 0.18.0 ABGEWIESEN — der Schalter wurde nie gelesen. TOTP verbindlich verlangen geht über die Faktor-Kette: login_chain=['password', 'totp']  (+ login_chain_strict=True) Das Feld bleibt nur stehen, damit ein bestehender Aufruf einen klaren Fehler bekommt statt eines TypeError über ein unbekanntes Argument. |
 | `recovery_code_count` | `int` | `10` | Anzahl Einmal-Recovery-Codes je Erzeugung (verlorener Authenticator) |
 
 ## Passwort-Reset (Forgot-Password per E-Mail; braucht magiclink_enabled + Mailer)
@@ -201,7 +202,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `federation_require_stable_id` | `bool` | `False` | Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**: Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann. |
-| `federation_name_binding_days` | `int` | `30` | Wie lange darf eine Anmeldung über LDAP/SAML ein noch ungebundenes Konto über seinen **Namen** binden (Tage)? Gezählt je Quelle ab dem ersten Start mit eingeschalteter Quelle (für den Bestand: ab dem Update) bzw. ab der Anlage des Kontos, was später ist. Danach bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber bindet dann ausdrücklich: `auth.foederation_nachbinden(quelle)` (Bestand, Trockenlauf als Vorgabe) oder `auth.loese_fremde_bindung(quelle, user_id)` (öffnet die Bindung für dieses Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt). |
+| `federation_name_binding_days` | `int` | `30` | Wie lange darf eine Anmeldung über LDAP/SAML ein noch ungebundenes Konto über seinen **Namen** binden (Tage)? Gezählt je Quelle ab dem ersten Start mit eingeschalteter Quelle (für den Bestand: ab dem Update) bzw. ab der Anlage des Kontos, was später ist. Danach bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber bindet dann ausdrücklich: `auth.federation_bind_existing(source)` (Bestand, Trockenlauf als Vorgabe) oder `auth.federation_unbind(source, user_id)` (öffnet die Bindung für dieses Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt). |
 | `ldap_enabled` | `bool` | `False` | Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap] |
 | `ldap_url` | `str` | `""` | ldap://host:389 oder ldaps://host:636 |
 | `ldap_start_tls` | `bool` | `False` | Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL |

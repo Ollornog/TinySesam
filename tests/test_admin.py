@@ -64,7 +64,7 @@ print("  ✓ Sitzungen einsehbar")
 # Härtung lesen/setzen
 assert "max_login_attempts" in c.get("/auth/admin/api/security").json()
 c.post("/auth/admin/api/security", json={"max_login_attempts": 7})
-assert auth.sec("max_login_attempts") == 7
+assert auth._sec("max_login_attempts") == 7
 print("  ✓ Härtungs-Schwellen im Panel setzbar")
 
 # Version — nur anzeigen. Die früheren Update-Routen sind bewusst weg: über sie konnte ein
@@ -125,7 +125,7 @@ print("  ✓ R6-2: Service-Konto wird weder beim Anlegen noch über die Rollen z
 
 # ---------- R6-4 / B2-9: Härtungs-Schwellen mit Grenzen ----------
 from tinysesam import ConfigError, security  # noqa: E402
-vorher = auth.sec("max_login_attempts")
+vorher = auth._sec("max_login_attempts")
 for boese in ({"rate_limit_max": 0}, {"max_login_attempts": 0}, {"lockout_window_sec": 10**9},
               {"password_min_length": 1}, {"rate_limit_max": "viele"}, {"gibtsnicht": 5},
               {"max_login_attempts": True}):
@@ -133,7 +133,7 @@ for boese in ({"rate_limit_max": 0}, {"max_login_attempts": 0}, {"lockout_window
 # Alles-oder-nichts: ein gültiger Wert neben einem ungültigen wird NICHT geschrieben.
 assert c.post("/auth/admin/api/security",
               json={"max_login_attempts": vorher + 2, "rate_limit_max": 0}).status_code == 400
-assert auth.sec("max_login_attempts") == vorher and auth.sec("rate_limit_max") == 30
+assert auth._sec("max_login_attempts") == vorher and auth._sec("rate_limit_max") == 30
 try:
     auth.set_security("rate_limit_max", 0)
     raise AssertionError("set_security nahm 0 an")
@@ -142,9 +142,9 @@ except ConfigError:
 # Ein Wert, der schon in der Datenbank steht (Fassung ohne Grenzen): Er wird an die nächste
 # Grenze gezogen — 0 legte die Instanz still, die Untergrenze hält sie am Leben.
 auth.store.set_setting("rate_limit_max", "0")
-assert auth.sec("rate_limit_max") == 3, auth.sec("rate_limit_max")
+assert auth._sec("rate_limit_max") == 3, auth._sec("rate_limit_max")
 auth.store.set_setting("rate_limit_max", "keine Zahl")          # nur Unlesbares fällt auf die Vorgabe
-assert auth.sec("rate_limit_max") == 30, auth.sec("rate_limit_max")
+assert auth._sec("rate_limit_max") == 30, auth._sec("rate_limit_max")
 auth.store.set_setting("rate_limit_max", "30")
 print("  ✓ R6-4/B2-9: Grenzen im Panel und in set_security, alles-oder-nichts, Altwert an die Grenze")
 # (Mutationsprobe: in security.pruefe_haertung die Bereichsprüfung auskommentieren → rot.)
@@ -156,16 +156,16 @@ streng = {"max_login_attempts": 2, "pin_max_attempts": 2, "lockout_window_sec": 
           "rate_limit_window_sec": 7200}
 for k, v in streng.items():
     auth.store.set_setting(k, str(v))
-    assert auth.sec(k) == v, (k, auth.sec(k))
+    assert auth._sec(k) == v, (k, auth._sec(k))
 # Jenseits der Grenze: an die Grenze, nicht auf die Vorgabe — die Richtung der Verschärfung bleibt.
 auth.store.set_setting("password_min_length", "200")
-assert auth.sec("password_min_length") == 128, auth.sec("password_min_length")
+assert auth._sec("password_min_length") == 128, auth._sec("password_min_length")
 auth.store.set_setting("lockout_window_sec", str(10**9))
-assert auth.sec("lockout_window_sec") == 30 * 86400, auth.sec("lockout_window_sec")
+assert auth._sec("lockout_window_sec") == 30 * 86400, auth._sec("lockout_window_sec")
 # Was sec() dann liefert, nimmt das Panel auch an — die Logzeile rät zu nichts Unmöglichem.
 assert c.post("/auth/admin/api/security", json={**streng, "password_min_length": 128}).status_code == 200
 for k, v in streng.items():
-    assert auth.sec(k) == v, (k, auth.sec(k))
+    assert auth._sec(k) == v, (k, auth._sec(k))
 auth.set_security("max_login_attempts", 1)                     # ein Versuch: hart, aber zulässig
 for k, v in security.SECURITY_DEFAULTS.items():
     auth.set_security(k, v)
@@ -188,7 +188,7 @@ try:
     raise AssertionError("set_security nahm inf an")
 except ConfigError:
     pass
-assert auth.sec("max_login_attempts") == security.SECURITY_DEFAULTS["max_login_attempts"]
+assert auth._sec("max_login_attempts") == security.SECURITY_DEFAULTS["max_login_attempts"]
 print("  ✓ A4: Infinity im Panel → 400, in set_security → ConfigError")
 # (Mutationsprobe: OverflowError aus dem except in pruefe_haertung nehmen → rot.)
 
@@ -203,7 +203,8 @@ print("  ✓ R6-8: unbrauchbarer Scope/Ablauf → 400 mit Grund (Panel und /auth
 
 # ---------- R6-6: ein Key mintet keinen Key ----------
 # (a) fail-closed für eine Key-Art, die es nicht gibt: Das Admin-Flag fällt weg, nicht nur bei
-#     "automat". Vorher behielt `kind="Automat"` (Tippfehler in der Spalte) die Admin-Rechte.
+#     "automation". Vorher behielt `kind="Automat"` (Tippfehler in der Spalte) die Admin-Rechte —
+#     ein Wert, den auch die Abbildung der Werte bis 0.21.x (`automat`/`mensch`) nicht kennt.
 k = auth.create_api_key(mid, name="ci")
 auth.store._exec("UPDATE api_key SET kind='Automat' WHERE id=?", (k["id"],))
 ohne = TestClient(app)
@@ -220,12 +221,12 @@ finally:
     auth.current_user = echt
 assert not any(x["name"] == "gemintet" for x in auth.list_api_keys(sid))
 print("  ✓ R6-6: unbekannte Key-Art trägt kein Admin-Flag; Panel-Key nur aus einer Sitzung")
-# (Mutationsproben: `art != "mensch"` → `art == "automat"` in current_user → (a) rot;
+# (Mutationsproben: `art != "human"` → `art == "automation"` in current_user → (a) rot;
 #  die `_via`-Prüfung in admin.user_key_create entfernen → (b) rot.)
 
 # ---------- B2-13: das Panel hält dieselbe Passwortregel ein ----------
 # Bis T-13 nahm der Admin-Weg jedes Passwort an — `1` für ein neues Konto, `password` beim
-# Zurücksetzen. (Mutationsprobe: die beiden `passwort_mangel`-Aufrufe in admin.py streichen → rot.)
+# Zurücksetzen. (Mutationsprobe: die beiden `password_policy_error`-Aufrufe in admin.py streichen → rot.)
 r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "1"})
 assert r.status_code == 400 and "zu kurz" in r.json()["detail"], r.text
 r = c.post("/auth/admin/api/users", json={"username": "neu1", "password": "password123"})
@@ -240,9 +241,9 @@ r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "Letmein-
 assert r.status_code == 400 and "leicht zu erraten" in r.json()["detail"], r.text
 r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "x" * 300})
 assert r.status_code == 400 and "zu lang" in r.json()["detail"], r.text
-assert auth.check_password("bob", "bobpw"), "abgelehnt heisst: das alte Passwort gilt weiter"
+assert auth._check_password("bob", "bobpw"), "abgelehnt heisst: das alte Passwort gilt weiter"
 r = c.post(f"/auth/admin/api/users/{_bob}/password", json={"password": "ein-gutes-neues"})
-assert r.status_code == 200 and auth.check_password("bob", "ein-gutes-neues")
+assert r.status_code == 200 and auth._check_password("bob", "ein-gutes-neues")
 # Ohne Passwort anlegen bleibt erlaubt (SSO-/Passkey-Konten).
 assert c.post("/auth/admin/api/users", json={"username": "nurssso"}).status_code == 200
 print("  ✓ B2-13: Anlegen und Zurücksetzen im Panel prüfen Länge, Blockliste und Kontextwörter")

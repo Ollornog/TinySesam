@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS users (
     -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
     -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
     -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
-    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle
+    -- Betreiber vergeben (Panel, API, Umbenennen mit `by_operator=True`) oder aus einer Quelle
     -- (dann sagt `name_quelle`, aus welcher).
     name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
@@ -90,15 +90,16 @@ CREATE TABLE IF NOT EXISTS api_key (
     key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
     roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
     -- Welche Art Key ist das? (R6-5)
-    --   'automat' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
-    --                        erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
-    --   'mensch'           : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
-    --                        Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
-    --                        ein Mensch selbst bedient (CLI am eigenen Rechner).
-    -- Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key eines Admins war eine vollständige
-    -- Admin-Schreib-API, ohne zweiten Faktor und ohne CSRF-Schicht — ein abgeflossener CI-Key
-    -- war die Instanz.
-    kind       TEXT NOT NULL DEFAULT 'automat',
+    --   'automation' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
+    --                           erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
+    --   'human'               : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
+    --                           Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
+    --                           ein Mensch selbst bedient (CLI am eigenen Rechner).
+    -- Bis 0.21.x hiessen die Werte 'automat' und 'mensch' (Schema 12, `_werte_englisch`); gelesen
+    -- werden sie weiter (`KEY_ARTEN_ALT`). Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key
+    -- eines Admins war eine vollständige Admin-Schreib-API, ohne zweiten Faktor und ohne
+    -- CSRF-Schicht — ein abgeflossener CI-Key war die Instanz.
+    kind       TEXT NOT NULL DEFAULT 'automation',
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
     expires_at INTEGER,                          -- NULL = unbefristet
@@ -164,13 +165,13 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
     -- Der Name gehört dem Konto, das sich zuletzt so angemeldet hat (`bindung_name_setzen` löscht
     -- ihn an fremden Bindungen), und kein anderes Konto kann ihn als Name oder Adresse annehmen
-    -- (Kennungs-Trigger, `TinySesam.kennung_vergeben`; Prüfrunde Sperren/Zähler 2026-09-27).
+    -- (Kennungs-Trigger, `TinySesam.identifier_taken`; Prüfrunde Sperren/Zähler 2026-09-27).
     name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
 );
 -- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
 -- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
--- und auch mit selbst gewähltem Namen. Geschrieben von `loese_fremde_bindung`, gelöscht, sobald
+-- und auch mit selbst gewähltem Namen. Geschrieben von `federation_unbind`, gelöscht, sobald
 -- die Bindung steht. Ohne Zeile entscheidet die Frist.
 CREATE TABLE IF NOT EXISTS namensbindung (
     quelle  TEXT NOT NULL,
@@ -328,6 +329,20 @@ def _email_unicode(email: str) -> str:
         return email
 
 
+def key_kind_of(row) -> str:
+    """Die Art einer Key-Zeile mit englischem Namen (Schema 12): `automation` oder `human`.
+
+    Ein Wert bis 0.21.x (`automat`, `mensch`) wird abgebildet (`Store.KEY_ARTEN_ALT`) — eine ältere
+    Fassung, die nach einem Rückschritt auf der Datei lief, schreibt ihn wieder. Leer oder ohne
+    Spalte (Datei vor Schema 7) heisst `automation`. Alles andere bleibt, wie es ist, und gilt, weil
+    es nicht `human` ist, als Automaten-Key (fail-closed, R6-6). Hier und nicht am Manager, damit
+    Router und Admin-Panel es ohne Import des Managers lesen (kein Import-Zyklus)."""
+    try:
+        wert = str(row["kind"] or "automation")
+    except (IndexError, KeyError, TypeError):
+        return "automation"
+    return Store.KEY_ARTEN_ALT.get(wert, wert)
+
 def norm_email(email) -> Optional[str]:
     """E-Mail kanonisch speichern: NFKC, getrimmt, klein, Domain als A-Label. `None` bleibt `None`.
 
@@ -371,7 +386,7 @@ def name_ungueltig(name) -> bool:
     """Enthält ein Benutzername Steuer-, Format- oder Trennzeichen (Cc/Cf/Zl/Zp)?
 
     Solche Zeichen trennen zwei Kennungen, die für einen Menschen und für einen HTTP-Header gleich
-    aussehen: `chefin\\x01` ist für `kennung_vergeben` ein anderer Name als `chefin`, aber die
+    aussehen: `chefin\\x01` ist für `identifier_taken` ein anderer Name als `chefin`, aber die
     Header-Säuberung der Forward-Auth nimmt das Steuerzeichen heraus — die geschützte App bekam
     `Remote-User: chefin` von einem fremden Konto (Angriff auf die dritte Runde). Dieselbe Regel
     wie für Adressen (`valid_email`)."""
@@ -396,9 +411,9 @@ def norm_kennung(kennung) -> str:
     wird erst durch die Faltung zu einem. Gezählt wird bewusst unter der gefalteten EINGABE,
     nicht unter dem Konto, das sie trifft: So verhält sich die Sperre für vorhandene und
     erfundene Kennungen gleich und verrät nicht, welche Adresse zu welchem Benutzernamen
-    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `sperre_aufheben`
+    gehört (Benutzername und Adresse eines Kontos sind deshalb zwei Töpfe; `lift_lockout`
     räumt beide). Namensvetter aus einem Bestand (`Émile`/`émile`) teilen einen Topf; neu
-    anlegen lässt sich keiner mehr (`TinySesam.kennung_vergeben` fragt
+    anlegen lässt sich keiner mehr (`TinySesam.identifier_taken` fragt
     `Store.konto_mit_topf`), und `delete_attempts_for` lässt einen geteilten Topf stehen."""
     k = unicodedata.normalize("NFKC", str(kennung or "")).strip().lower()
     if "@" in k:
@@ -594,6 +609,27 @@ def ersatzname(user_id) -> str:
     return f"gelöscht#{int(user_id)}"
 
 
+#: Schlüssel im Payload eines Adresswechsel-Links bis 0.21.x und ihr englischer Ersatz (Schema 12).
+_PAYLOAD_SCHLUESSEL_ALT = {"email_change": {"alt": "old"}}
+
+
+def payload_lesen(purpose, text) -> Optional[dict]:
+    """Der Payload eines Einmal-Tokens als Dict — mit englischen Schlüsseln (Schema 12).
+
+    Ein Adresswechsel-Link trug bis 0.21.x `{"alt": <bisherige Adresse>}`, seit 0.22.0
+    `{"old": …}`. Ein alter Schlüssel wird abgebildet, auch wenn die Migration ihn nicht mehr
+    erreicht hat — eine ältere Fassung, die nach einem Rückschritt einen Link ausstellte, schreibt
+    ihn wieder so. Ein Schlüssel, der schon englisch dasteht, gewinnt. `None` ohne Payload."""
+    if not text:
+        return None
+    daten = json.loads(text)
+    for alt, neu in _PAYLOAD_SCHLUESSEL_ALT.get(purpose, {}).items():
+        if isinstance(daten, dict) and alt in daten:
+            wert = daten.pop(alt)
+            daten.setdefault(neu, wert)
+    return daten
+
+
 class Store:
     #: Rechte für eine NEU angelegte Datenbank. Hier stehen Passwort-Hashes, TOTP-Geheimnisse
     #: und E-Mail-Adressen; auf einem geteilten Host konnte sie bis 0.18.0 jeder lesen (0644,
@@ -713,9 +749,23 @@ class Store:
     #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
     #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
     #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
-    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Schema 11
-    #:      ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
-    SCHEMA_VERSION = 11
+    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Alles
+    #:      davon additiv und bei jedem Start idempotent — Stand von 0.21.0.
+    #: 12 — 0.22.0: gespeicherte Werte der öffentlichen Oberfläche englisch (PO-Entscheid
+    #:      2026-09-27): `api_key.kind` `automat`/`mensch` → `automation`/`human` (bei JEDEM Start —
+    #:      für Keys, die eine ältere Fassung nach einem Rückschritt ausgestellt hat), im Payload
+    #:      offener Adresswechsel-Links `alt` → `old` (beim Sprung auf 12; `_werte_englisch`).
+    #:      Gelesen wird ein alter Wert trotzdem richtig (`KEY_ARTEN_ALT`, `payload_lesen`). Keine
+    #:      Spalte ändert sich. Der Stempel steigt, weil eine ältere Fassung die neuen Werte ANDERS
+    #:      liest: 0.21.x hält einen `human`-Key für einen Automaten-Key (gilt ohne Sitzung). Sie
+    #:      öffnet die Datei trotzdem, meldet aber beim Start die neuere Schema-Version — Rückweg
+    #:      mit SQL in docs/BETRIEB.md.
+    SCHEMA_VERSION = 12
+
+    #: Die gespeicherten Werte bis 0.21.x und ihr englischer Ersatz (Schema 12). Die Migration
+    #: schreibt um, und wer liest, bildet einen alten Wert trotzdem ab: Eine ältere Fassung, die
+    #: nach einem Rückschritt auf derselben Datei lief, hat wieder alte Werte hinterlassen.
+    KEY_ARTEN_ALT = {"automat": "automation", "mensch": "human"}
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
     #: gerechnet. Wer die Faltung in `norm_kennung` ändert, hebt `SCHEMA_VERSION` und setzt diesen
@@ -748,7 +798,7 @@ class Store:
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
             # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
-            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automat'")],
+            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'")],
             # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
             # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
             # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
@@ -891,6 +941,23 @@ class Store:
                                (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
                 self._name_quelle_nachtragen()
             self._owner_nachziehen()
+            # Schema 12: die gespeicherten Werte englisch (s. `_werte_englisch`). Nur lesbar und
+            # Werte einer älteren Fassung darin: Das darf einen Start nicht verhindern, der bisher
+            # ging — gelesen werden die alten Werte ohnehin richtig. Ein Upgrade dagegen schreibt,
+            # wie jede Migration.
+            try:
+                umgeschrieben = self._werte_englisch(links=vorhanden_vorab < 12)
+            except sqlite3.OperationalError as e:
+                if vorhanden_vorab < self.SCHEMA_VERSION:
+                    raise
+                umgeschrieben = 0
+                logging.getLogger("tinysesam").warning(
+                    "Werte einer älteren Fassung nicht auf die englischen Namen umgeschrieben (%s): "
+                    "Die Datenbank ist nicht schreibbar. Gelesen werden sie trotzdem richtig.", e)
+            if umgeschrieben:
+                logging.getLogger("tinysesam").info(
+                    "%d gespeicherte Werte auf die englischen Namen umgeschrieben (Schema 12: "
+                    "API-Key-Arten, Adresswechsel-Links).", umgeschrieben)
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -955,7 +1022,7 @@ class Store:
             # Die Trigger über die Töpfe (Nachrechnen und Kennungsraum, s. `_trigger_sql`). Eine
             # Datei, auf der sie sich nicht anlegen lassen (nur lesbar), darf den Start nicht
             # verhindern: Dort entsteht ohnehin kein neues Konto, und die Vorprüfung
-            # (`kennung_vergeben`) bleibt. Gesagt wird es trotzdem.
+            # (`identifier_taken`) bleibt. Gesagt wird es trotzdem.
             try:
                 self._trigger_setzen()
             except sqlite3.OperationalError as e:
@@ -1009,7 +1076,7 @@ class Store:
         sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
         (`Alice`/`alice`, `Émile`/`émile`, Vollbreite, Unicode- und A-Label-Domain). Die Datenbank
         kannte bis dahin nur `UNIQUE(username)` (BINARY) und `ux_users_email` — Prüfung
-        (`kennung_vergeben`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
+        (`identifier_taken`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
         derselben Kennung (eine als Name, eine als Adresse) kamen beide durch. Jetzt weist die
         Datenbank einen NEU vergebenen Topf ab, der schon Name oder Adresse eines anderen Kontos
         ist — in derselben Anweisung wie das Schreiben, unter dem einen Schreiber von SQLite.
@@ -1023,7 +1090,7 @@ class Store:
         * `id IS NOT NEW.id` (nur beim UPDATE): Dieselbe Zeile darf Name = Adresse tragen
           (E-Mail-Modus). Beim INSERT steht die Zeile noch nicht in der Tabelle.
         * Zeilen ohne Topf (NULL: ein fremder Schreiber, noch nicht nachgetragen) zählen erst ab
-          dem Nachtrag — den `kennung_vergeben` vor jeder Anlage anstösst.
+          dem Nachtrag — den `identifier_taken` vor jeder Anlage anstösst.
         * **Der Name im Verzeichnis eines ANDEREN Kontos** (`federated_identity.name_topf`, G5)
           zählt mit (Prüfrunde 2026-09-27). Unter einer Kennung prüft die Login-Route zwei
           Geheimnisse — das lokale Passwort des Kontos und das LDAP-Passwort des Eintrags. Nahm
@@ -1100,7 +1167,7 @@ class Store:
 
         Grenzen, bewusst in die sichere Richtung: Ein vom Betreiber umbenanntes Konto trug bis
         dahin dieselbe Zeile (`username_changed`) und bekommt den Merker auch — das Konto bindet
-        dann nicht mehr über den Namen, der Betreiber öffnet es mit `loese_fremde_bindung`. Was die
+        dann nicht mehr über den Namen, der Betreiber öffnet es mit `federation_unbind`. Was die
         Aufbewahrung (`audit_retention_days`) schon gelöscht hat, wird nicht erkannt; 0.20.1 kannte
         das Umbenennen nicht, dort bleibt nur die Registrierung.
 
@@ -1113,6 +1180,46 @@ class Store:
             "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                         (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
+
+    def _werte_englisch(self, links: bool = True) -> int:
+        """Gespeicherte Werte der öffentlichen Oberfläche auf ihre englischen Namen bringen (Schema
+        12, PO-Entscheid 2026-09-27) — ohne Commit, unter `_lock`, Teil von `_migrate`.
+
+        * `api_key.kind`: `automat` → `automation`, `mensch` → `human` (`KEY_ARTEN_ALT`) — die Art
+          sieht jeder, der Keys auflistet (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
+          das Panel). Bei JEDEM Start, nicht nur beim Sprung über den Stempel: Eine ältere Fassung,
+          die nach einem Rückschritt auf der Datei lief, hat wieder alte Werte geschrieben, und sie
+          senkt den Stempel nicht. Die Tabelle ist klein.
+        * Payload offener Adresswechsel-Links (`magic_token`, `purpose='email_change'`): `alt` →
+          `old` (`payload_lesen`) — sichtbar über `peek_magic`/`redeem_magic`. Nur mit
+          `links=True` (beim Sprung auf 12): Die Suche geht durch alle Einmal-Token, und die wachsen
+          bis zum nächsten `gc` — bei jedem Start kostete das einen Lauf durch die Tabelle
+          (gemessen in `tests/test_bestandsdaten.py`, „Aufwand"). Ein Link, den eine ältere Fassung
+          danach ausstellt, bildet `payload_lesen` beim Lesen ab; er verfällt ohnehin bald.
+
+        Idempotent; geschrieben wird nur, wo es etwas umzuschreiben gibt — eine nur lesbare Datei
+        ohne alte Werte startet wie bisher. Rückgabe: die Zahl der geänderten Zeilen.
+
+        Nicht übersetzt wird, was nur innen gelesen wird (die Art einer Serie `fehlserie.art`, die
+        Spaltennamen) und was im Audit-Log steht — dessen Zeilen bleiben, wie sie sind."""
+        n = 0
+        for alt, neu in self.KEY_ARTEN_ALT.items():
+            if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (alt,)).fetchone():
+                n += self.db.execute("UPDATE api_key SET kind=? WHERE kind=?", (neu, alt)).rowcount
+        for purpose, schluessel in (_PAYLOAD_SCHLUESSEL_ALT.items() if links else ()):
+            for alt in schluessel:
+                for z in self.db.execute(
+                        "SELECT token_hash, payload FROM magic_token WHERE purpose=? AND payload LIKE ?",
+                        (purpose, f'%"{alt}"%')).fetchall():
+                    try:
+                        neu_text = json.dumps(payload_lesen(purpose, z["payload"]))
+                    except ValueError:
+                        continue          # kein JSON: nicht von uns, nicht anfassen
+                    if neu_text != z["payload"]:
+                        self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
+                                        (neu_text, z["token_hash"]))
+                        n += 1
+        return n
 
     #: Setting-Schlüssel: Ist `users.name_quelle` für den Bestand nachgetragen (Angriffsrunde 2026-09-26)?
     NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
@@ -1137,7 +1244,7 @@ class Store:
         NULL — für sie bleibt die Frist (`federation_name_binding_days`). Grenze in die sichere
         Richtung: Legt der Betreiber ein Konto an und bindet es binnen zwei Sekunden, gilt es als von
         der Quelle angelegt; eine andere Quelle bindet es dann nur, wenn er sie öffnet
-        (`loese_fremde_bindung`).
+        (`federation_unbind`).
 
         Genau einmal, am Merker `NAME_QUELLE_NACHGETRAGEN` im selben Commit: Liefe es bei jedem Start,
         bekäme ein vom Betreiber umbenanntes Konto seine Quelle zurück."""
@@ -1586,7 +1693,7 @@ class Store:
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
 
         Der Beleg gehört zur Adresse, nicht zum Konto: Seit `users.email_verified` über
-        Rechte entscheidet (`maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
+        Rechte entscheidet (`_maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
         der Beleg der **alten** Adresse auf der **neuen** — gemessen wurde genau das
         (B-umgehung-8 aus T-13): `eve@example.com` (belegt) → `set_email(uid, "boss@example.com")` →
         Erst-Admin über die Allowlist, ohne dass jemand etwas bestätigt hat.
@@ -1696,7 +1803,7 @@ class Store:
         Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
         Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
         (`TinySesam.delete_user`, H-13) — kein Weg, den ein Anonymer auslöst. `gc()`, die
-        Rücknahme und `purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
+        Rücknahme und `_purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
         Grenze auch für die Adresse. Und auch bei der Löschung durch einen Admin nur für eine
         BELEGTE Adresse: Die eines offenen Kontos (Registrierung, Link nie eingelöst) oder
         einer Registrierung ohne Bestätigungspflicht hat ein Fremder eingetippt — ohne diese
@@ -1819,7 +1926,7 @@ class Store:
 
         Der Wächter vor jedem Räumen unter einer Kennung, die das Konto nicht selbst als Name oder
         Adresse führt (G5, G5-N1): unter dem Namen aus dem Verzeichnis (`zaehl_kennungen`) und
-        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam.record_login`). Ein
+        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam._record_login`). Ein
         Verzeichnisfilter über `mail` löst `chefin@example.com` zu einem Dritten auf, dessen
         `mail`-Attribut so lautet; ohne diesen Wächter räumte jede Anmeldung des Dritten die
         Zähler der lokalen Inhaberin dieser Adresse — unbegrenztes Raten gegen ihr Konto.
@@ -1865,7 +1972,7 @@ class Store:
 
     def konto_mit_verzeichnisname(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
         """Das Konto (nicht `ausser`), an dessen Bindung diese Kennung als Name im Verzeichnis steht
-        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.kennung_vergeben` und
+        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.identifier_taken` und
         `tinysesam rename`; die Datenbank prüft dasselbe in den Kennungs-Triggern (`_trigger_sql`).
         Über `ix_fed_name_topf`, kein Scan."""
         topf = norm_kennung(kennung)
@@ -1890,7 +1997,7 @@ class Store:
         2026-09-26 kein Rückweg die Serie unter `alice.neu` — eigene Tippfehler summierten sich
         über die Jahre, und ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus.
 
-        Der eine Leser für jeden Rückweg: `sperre_aufheben`, `_serie_beenden` (Panel-Reset),
+        Der eine Leser für jeden Rückweg: `lift_lockout`, `_serie_beenden` (Panel-Reset),
         `tinysesam passwd` und `tinysesam unlock`."""
         u = self.get_user(user_id)
         if u is None:
@@ -1938,7 +2045,7 @@ class Store:
 
     def verzeichnisname_freigeben(self, name) -> int:
         """Den Namen im Verzeichnis an ALLEN Bindungen löschen — vor der Anlage eines Kontos, das
-        ihn als Namen bekommt (`TinySesam.check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
+        ihn als Namen bekommt (`TinySesam._check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
         eben einen anderen Eintrag unter diesem Namen angemeldet; wo er noch steht, ist er veraltet
         (s. `bindung_name_setzen`) — und ohne das wiese die Datenbank die Anlage ab (Kennungs-
         Trigger). Gibt die Zahl der gelöschten Vermerke zurück."""
@@ -2336,7 +2443,7 @@ class Store:
     def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
         """Ein Konto an eine Kennung binden, die noch niemandem gehört — oder nichts tun (G1).
 
-        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`), die zwischen Prüfung und
+        Für die Bestandsbindung (`TinySesam.federation_bind_existing`), die zwischen Prüfung und
         Schreiben durch ein ganzes Verzeichnis läuft. `link_federated` ersetzt eine Zeile mit
         derselben Kennung (`INSERT OR REPLACE`) — hier nähme das einem Konto, das sich inzwischen
         angemeldet hat, seine Bindung weg. Deshalb in EINER Transaktion: Gehört die Kennung schon
@@ -2369,7 +2476,7 @@ class Store:
             (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
 
     def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
-        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `loese_fremde_bindung`)."""
+        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `federation_unbind`)."""
         self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
                    (quelle, user_id, int(bis)))
 
@@ -2896,7 +3003,7 @@ class Store:
         Fehlversuch in der Tabelle — oder `(None, grund)`, wenn eine Regel greift.
 
         Warum vorab und warum in einer Transaktion (R3-2, R3-7, R7-2): Vorher stand zwischen
-        `is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
+        `_is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
         Millisekunden). Eine parallele Salve von N Anfragen las N-mal denselben Zählerstand
         „noch nicht gesperrt" und durfte N-mal raten — die Grenze galt nur für Angreifer, die
         brav nacheinander fragen. Jetzt reserviert jeder Versuch seinen Platz, bevor er prüft,
@@ -2918,7 +3025,7 @@ class Store:
         erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach
         dem Timeout). Greift eine Regel oder die Serie **nur** wegen solcher Zeilen, ist die
         Antwort `(None, "schwebend")`: noch nicht entschieden, keine Sperre. Der Aufrufer fragt
-        nach einer kurzen Pause erneut (`versuch_beginnen`). Vorher war jede Abweisung in diesem
+        nach einer kurzen Pause erneut (`_versuch_beginnen`). Vorher war jede Abweisung in diesem
         Fenster eine Sperre mit `failed login` für fail2ban und Sperrhinweis an den Inhaber — auch
         wenn danach kein einziger Fehlversuch übrig blieb. Die Salve (R7-2) bleibt gebremst: Sie
         wartet, bis die Vorbuchungen entschieden sind, und bekommt dann die echte Sperre. Greift
@@ -2971,12 +3078,12 @@ class Store:
         `count_fails(nur_bestaetigt=True)` — bis dahin war der Abschluss eines Fehlversuchs ein
         No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
         Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
-        da, und wer gerade wartet (`versuch_beginnen`), läse die Serie um eins zu hoch — an der
+        da, und wer gerade wartet (`_versuch_beginnen`), läse die Serie um eins zu hoch — an der
         Grenze eine Sperre mit Sperrhinweis für nichts.
 
         Mit `serie` gibt es `(vorher, nachher)` zurück: den feststehenden Stand der Serie
         (`_serie_bestaetigt`) vor und nach dem Abschluss, beide in einer Transaktion
-        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `record_login`, ob GENAU
+        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `_record_login`, ob GENAU
         dieser Abschluss die Grenze überschritten hat (p2 F3). Bis 2026-09-27 zählte der Stand bei
         der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
         `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""
@@ -3616,7 +3723,7 @@ class Store:
 
     # ---------- API-Keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
-                    kind: str = "automat") -> int:
+                    kind: str = "automation") -> int:
         cur = self._exec(
             "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at)"
             " VALUES (?,?,?,?,?,?,?,?)",

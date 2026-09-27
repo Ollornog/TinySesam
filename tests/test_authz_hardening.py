@@ -130,7 +130,7 @@ os.unlink(db)
 auth, db = build(admin_enabled=False)    # reine OIDC-App ohne Panel
 assert auth.admin_claim_token() is None, "ohne Panel: kein Token"
 uid = auth.create_user("wer", password="geheim12345")
-assert not auth.consume_admin_claim("egal", auth.store.get_user(uid)), "und nichts einzulösen"
+assert not auth._consume_admin_claim("egal", auth.store.get_user(uid)), "und nichts einzulösen"
 os.unlink(db)
 
 auth, db = build(admin_claim_ttl_min=0)

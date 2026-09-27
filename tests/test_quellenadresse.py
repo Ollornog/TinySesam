@@ -62,7 +62,7 @@ def _aufbau(**cfg):
 
 def _anmelden(auth, name, eintrag):
     auth.ldap = Verzeichnis({name: {"pw": "pw", **eintrag}})
-    u = auth.check_ldap(name, "pw")
+    u = auth._check_ldap(name, "pw")
     auth._hinweis_ausgang.abwarten()
     return u
 
@@ -111,7 +111,7 @@ r.check("Klick auf den Link: die Adresse steht im Konto, MIT Beleg",
         fertig.status_code == 303 and konto["email"] == "bob@example.com" and konto["email_verified"],
         f"{fertig.status_code} {dict(konto)}")
 r.check("… und geht als Remote-Email an die App",
-        auth.forward_response_headers(auth.get_user(u["id"])).get("Remote-Email") == "bob@example.com")
+        auth._forward_response_headers(auth.get_user(u["id"])).get("Remote-Email") == "bob@example.com")
 post.clear()
 _anmelden(auth, "bob", {"email": "bob@example.com", "id": "uuid-bob"})
 r.check("Nach der Bestätigung: keine Links mehr", post == [], str(post))
@@ -208,17 +208,17 @@ r.check("Konfig-Prüfung: mit Beleg-Attribut „vertraute Quelle“, nicht „NI
 
 # ── SAML ─────────────────────────────────────────────────────────────────────────────────────
 a7, _, p7 = _aufbau()
-u7 = a7.check_saml("lena", {"email": ["lena@example.com"]})
+u7 = a7._check_saml("lena", {"email": ["lena@example.com"]})
 a7._hinweis_ausgang.abwarten()
 r.check("SAML, Vorgabe: kein Konto-Attribut, Link an die Adresse aus der Assertion",
         not a7.get_user(u7["id"])["email"] and [m[0] for m in p7] == ["lena@example.com"], str(p7))
 a8, _, p8 = _aufbau(saml_attr_email_verified="email_verified")
-u8 = a8.check_saml("mia", {"email": ["mia@example.com"], "email_verified": ["true"]})
+u8 = a8._check_saml("mia", {"email": ["mia@example.com"], "email_verified": ["true"]})
 a8._hinweis_ausgang.abwarten()
 k8 = a8.get_user(u8["id"])
 r.check("SAML, Beleg-Attribut „true“: Adresse direkt MIT Beleg, kein Link",
         k8["email"] == "mia@example.com" and k8["email_verified"] and p8 == [], f"{dict(k8)} {p8}")
-u8b = a8.check_saml("nils", {"email": ["nils@example.com"], "email_verified": ["false"]})
+u8b = a8._check_saml("nils", {"email": ["nils@example.com"], "email_verified": ["false"]})
 a8._hinweis_ausgang.abwarten()
 r.check("SAML, Beleg-Attribut „false“: Link statt Adresse",
         not a8.get_user(u8b["id"])["email"] and [m[0] for m in p8] == ["nils@example.com"], str(p8))
@@ -230,16 +230,16 @@ r.check("SAML, Beleg-Attribut „false“: Link statt Adresse",
 a10, _, _ = _aufbau(saml_attr_email_verified="email_verified")
 opfer10 = a10.create_user("bob@example.com", password="Opfer-Passwort1", email="bob@example.com")
 a10.store.set_admin(opfer10, True)
-u10 = a10.check_saml("bob@example.com", {"email": ["angreifer@evil.example"], "email_verified": ["true"]})
+u10 = a10._check_saml("bob@example.com", {"email": ["angreifer@evil.example"], "email_verified": ["true"]})
 r.check("SAML, Beleg-Attribut: ein @-Name, der NICHT die belegte Adresse ist, trifft kein lokales Konto",
         u10 is None or (u10["id"] != opfer10 and u10["username"].startswith("saml-") and not u10["is_admin"]),
         str(u10))
-u10b = a10.check_saml("mia@example.com", {"email": ["mia@example.com"], "email_verified": ["true"]})
+u10b = a10._check_saml("mia@example.com", {"email": ["mia@example.com"], "email_verified": ["true"]})
 r.check("… ist er genau die belegte Adresse, bleibt er Kontoname (wie OIDC mit email_verified)",
         u10b is not None and u10b["username"] == "mia@example.com", str(u10b))
 a10c, _, _ = _aufbau(saml_attr_email_verified="email_verified", saml_attr_username="email")
 a10c.create_user("chefin", password="Opfer-Passwort1")
-u10c = a10c.check_saml("id-1", {"email": ["chefin"], "email_verified": ["true"]})
+u10c = a10c._check_saml("id-1", {"email": ["chefin"], "email_verified": ["true"]})
 r.check("… und ein Name aus dem Adress-Attribut, der keine Adresse ist, bleibt unbelegt",
         u10c is None or u10c["username"] != "chefin", str(u10c))
 
@@ -261,14 +261,14 @@ r.check("Beleg-Attribut \" \": die Prüfung sagt „NIE“, und die Laufzeit bef
 
 # (a) Die Zieladresse ist gerade gedrosselt: kein Link — aber nach dem Fenster der Drossel einer.
 g_a, _, p_a = _aufbau()
-for _ in range(int(g_a.sec("mail_per_address_max"))):
-    g_a.rl.allow("wechsel:gerd@example.com", g_a.sec("mail_per_address_max"),
-                 g_a.sec("mail_per_address_window_sec"))
+for _ in range(int(g_a._sec("mail_per_address_max"))):
+    g_a.rl.allow("wechsel:gerd@example.com", g_a._sec("mail_per_address_max"),
+                 g_a._sec("mail_per_address_window_sec"))
 _anmelden(g_a, "gerd", {"email": "gerd@example.com", "id": "uuid-gerd"})
 r.check("G12a: Zieladresse gedrosselt → kein Link, keine Zeile federation_email_confirm",
         p_a == [] and g_a.store._one("SELECT 1 FROM audit WHERE event='federation_email_confirm'") is None,
         str(p_a))
-_vergehen(g_a, int(g_a.sec("mail_per_address_window_sec")) + 1)
+_vergehen(g_a, int(g_a._sec("mail_per_address_window_sec")) + 1)
 _anmelden(g_a, "gerd", {"email": "gerd@example.com", "id": "uuid-gerd"})
 r.check("… nach dem Fenster der Drossel (+15 min) derselbe Tag: der Link kommt",
         [m[0] for m in p_a] == ["gerd@example.com"] and _link(p_a), str(p_a))
@@ -295,7 +295,7 @@ r.check("G12a: erster Versand gescheitert → keine Zeile federation_email_confi
 _anmelden(g_b, "hilde", {"email": "hilde@example.com", "id": "uuid-hilde"})
 r.check("… gleich danach (derselbe Prozess, im Fenster) noch kein neuer Versuch",
         versuche["n"] == 1, str(versuche))
-_vergehen(g_b, int(g_b.sec("mail_per_address_window_sec")) + 1)
+_vergehen(g_b, int(g_b._sec("mail_per_address_window_sec")) + 1)
 _anmelden(g_b, "hilde", {"email": "hilde@example.com", "id": "uuid-hilde"})
 r.check("… nach dem Fenster derselbe Tag: der Link wird zugestellt, jetzt mit Zeile (konto=<id> vorn)",
         [m[0] for m in p_b] == ["hilde@example.com"] and _link(p_b)
@@ -327,7 +327,7 @@ g_d, _, p_d = _aufbau()
 g_d.create_user("karla", email="karla@example.com")
 for _ in range(3):
     _anmelden(g_d, "kurt", {"email": "karla@example.com", "id": "uuid-kurt"})
-    _vergehen(g_d, int(g_d.sec("mail_per_address_window_sec")) + 1)
+    _vergehen(g_d, int(g_d._sec("mail_per_address_window_sec")) + 1)
 _zeilen_d = g_d.store._one("SELECT COUNT(*) AS n FROM audit WHERE event='email_change_taken'")["n"]
 r.check("G12a: vergebene Adresse, drei Anmeldungen im Abstand von 15 min → genau eine Audit-Zeile, kein Link",
         _zeilen_d == 1 and p_d == []
@@ -448,9 +448,9 @@ def _flugfenster(vergeben):
     verz = Verzeichnis({"mallory": {"pw": "pw", "email": "ziel@example.com", "id": "uuid-mallory"}})
     w1.ldap = w2.ldap = verz
     try:
-        u = w1.check_ldap("mallory", "pw")
+        u = w1._check_ldap("mallory", "pw")
         verz.eintraege["mallory"]["email"] = "probe@example.com"     # das eigene `mail` gewechselt
-        w2.check_ldap("mallory", "pw")
+        w2._check_ldap("mallory", "pw")
         w2._hinweis_ausgang.abwarten()
     finally:
         bremse.set()
@@ -480,7 +480,7 @@ g_q._hinweis_ausgang.max_offen = 0
 u_q = _anmelden(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
 _offen_q = g_q.store.offener_token(u_q["id"], "email_change")
 g_q._hinweis_ausgang.max_offen = 50
-_vergehen(g_q, int(g_q.sec("mail_per_address_window_sec")) + 1)
+_vergehen(g_q, int(g_q._sec("mail_per_address_window_sec")) + 1)
 _anmelden(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
 # (Mutationsprobe: `senden.verwerfen()` nach dem Überlauf weglassen → offener Token, kein zweiter
 #  Link → rot.)
@@ -494,7 +494,7 @@ r.check("Warteschlange voll: kein Link, kein offener Token — nach dem Fenster 
 # registriert sich der Inhaber gleich danach, käme sein Anmelde-Link im selben Topf nicht mehr an.
 a9, _, p9 = _aufbau()
 taeter = a9.create_user("taeter", email="taeter@example.com")
-for _ in range(int(a9.sec("mail_per_address_max")) + 2):
+for _ in range(int(a9._sec("mail_per_address_max")) + 2):
     a9.request_email_change(taeter, "spaeter@example.com", BASIS)
 a9.create_user("spaet", email="spaeter@example.com")
 p9.clear()

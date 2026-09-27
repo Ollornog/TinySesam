@@ -77,24 +77,24 @@ auth, app = _app()
 chefin = auth.create_user("chefin", password=PW, is_admin=True)
 auth.set_owner(chefin, True)
 helfer = auth.create_user("helfer", password=PW, is_admin=True)
-anna = auth.create_user("anna", password=PW, email="anna@example.com", name_selbst_gewaehlt=True)
+anna = auth.create_user("anna", password=PW, email="anna@example.com", self_chosen_name=True)
 bert = auth.create_user("bert", password=PW, email="bert@example.com")
 ereignisse: list = []
 auth.on_security_event = lambda e, konto, d: ereignisse.append((e, d))
 ch = _client(app, "helfer")
-id_vorher = auth.forward_response_headers(auth.get_user(anna))["Remote-Id"]
+id_vorher = auth._forward_response_headers(auth.get_user(anna))["Remote-Id"]
 a = ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": "anna.neu"})
 r.check("G13: ein Admin benennt ein fremdes Konto um (Admin-API)",
         a.status_code == 200 and a.json() == {"ok": True, "username": "anna.neu"}
         and auth.store.get_user(anna)["username"] == "anna.neu", f"{a.status_code} {a.text[:160]}")
 r.check("… die Liste im Panel zeigt den neuen Namen, Remote-Id bleibt die Konto-ID",
         any(u["id"] == anna and u["username"] == "anna.neu" for u in ch.get("/auth/admin/api/users").json())
-        and auth.forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_vorher == str(anna))
+        and auth._forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_vorher == str(anna))
 _zeilen = _umbenannt(auth, anna)
 r.check("… GENAU eine Audit-Zeile, als Betreiber und mit dem Admin als Akteur",
         _zeilen == [("anna.neu", "alt=anna durch=betreiber akteur=helfer")], str(_zeilen))
 r.check("… das Sicherheitsereignis erreicht den Inhaber",
-        ("username_changed", {"alt": "anna", "neu": "anna.neu"}) in ereignisse, str(ereignisse))
+        ("username_changed", {"old": "anna", "new": "anna.neu"}) in ereignisse, str(ereignisse))
 r.check("… und der Merker „selbst gewählt“ (G2-N) fällt: der Name steht jetzt für den Betreiber",
         auth.store.get_user(anna)["name_selbst_gewaehlt"] == 0)
 _fehl = {n: ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": n}).status_code

@@ -30,8 +30,9 @@ schwächer oder fällt ein *Protokoll* weg, nicht die Prüfung selbst.
 **Healthcheck.** Das Gateway (`python -m tinysesam.gateway`) bringt `/healthz` mit: ohne Anmeldung
 erreichbar, auch bei `https_mode="force"` über HTTP, Antwort 200 `{"status": "ok"}` oder 503
 `{"status": "degraded"}` — der Fehlertext bleibt im Log, nicht im Netz. Wer TinySesam als Bibliothek
-einbindet, baut denselben Check mit `auth.store.schreibprobe()`: Sie wirft die sqlite3-Ausnahme, wenn
-kein Commit durchgeht. Ein `SELECT 1` genügt nicht — er gelingt auch auf einer nur lesbaren Datei.
+einbindet, baut denselben Check mit `auth.store.schreibprobe()` (Innenleben, Stufe C — ohne
+Zusage, wie alles unter `auth.store`): Sie wirft die sqlite3-Ausnahme, wenn kein Commit durchgeht.
+Ein `SELECT 1` genügt nicht — er gelingt auch auf einer nur lesbaren Datei.
 Geschrieben wird höchstens alle 5 s (`Store.SCHREIBPROBE_SEK`, auch ein Commit einer Anmeldung
 zählt), dazwischen prüft die Probe nur die Verbindung: `/healthz` ist ohne Anmeldung erreichbar, und
 ein Commit je Aufruf liesse jeden, der ihn flutet, die Schreibsperre belegen. Eine gerade nur lesbar
@@ -68,14 +69,16 @@ sha256 (das **Handle**). Mit einem Handle lässt sich eine Sitzung benennen und 
 | Admin | alle Sitzungen sehen | Panel bzw. `GET <admin_path>/api/sessions` (`full` ist das Handle) |
 | Admin | eine / alle eines Kontos beenden | `POST <admin_path>/api/sessions/revoke` mit `{"token": <Handle>}` oder `{"user_id": …}` |
 | Admin | Konto sperren | `POST <admin_path>/api/users/{id}/disable` — beendet alle Sitzungen, widerruft API-Keys und verwirft offene Einmal-Token (Anmelde-, Bestätigungs-, Reset-Link). Die Sperre trägt den Betreiber-Vermerk: Auch ein Bestätigungslink, der erst danach entsteht, hebt sie nicht auf — nur „Entsperren" im Panel (H-18). Sperren aus Fassungen bis 0.19.x hebt die Migration auf Schema 10 auf den Vermerk und verwirft dabei ihre offenen Token, sofern das Audit-Log die Sperre noch kennt — auch eine, die eine ältere Fassung nach einem Rückschritt auf eine Schema-10-Datei gesetzt hat: Jeder Start liest die Audit-Zeilen seit dem letzten Start nach (Setting `panel_sperren_bis`) und warnt im Log, wenn er fündig wird; eine ältere (schon weggeräumte Zeile, `audit_retention_days`) sperrt derselbe Aufruf mit `{"disabled": true}` erneut, ohne zu entsperren — das Panel bietet für ein gesperrtes Konto nur „Entsperren" an. |
-| Code | dasselbe ohne HTTP | `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)`; sperren mit dem Vermerk des Panels: `set_disabled(user_id, True, durch_betreiber=True)` — ohne den Vermerk ist es die Sperre einer ausstehenden Bestätigung, die der Bestätigungslink aufhebt. Sitzungen, Keys und Token räumt das nicht mit ab (`delete_user_sessions`, `revoke_user_api_keys`, `revoke_user_magic_tokens`) |
+| Code | Konto sperren | `auth.set_disabled(user_id, True)` (Stufe A, seit 0.22.0) — genau die Wirkung des Panels, das diese Methode ruft: Betreiber-Vermerk, Sitzungen beenden, API-Keys widerrufen, offene Einmal-Token verwerfen, Audit `user_disable`. `auth.set_disabled(user_id, False)` entsperrt. Ein Owner lässt sich nicht sperren (`StateError`), eine unbekannte ID gibt `False`. Bis 0.21.x stand hier `auth.store.set_disabled(user_id, True, durch_betreiber=True)` — das setzte nur den Vermerk; Sitzungen, Keys und Links blieben gültig. |
+| Code | Sitzungen ohne HTTP | nur über das Innenleben (`auth.store`, Stufe C — keine Zusage, kann sich mit jedem Release ändern): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
 
 Was eine Sitzung **von selbst** beendet: Inaktivität (`session_idle_minutes`, Vorgabe 8 h — für
 jede Sitzung, bei der „Angemeldet bleiben" nicht **ausdrücklich** angehakt wurde, auch eine
 dauerhafte aus OIDC oder einem Anmelde-Link; `session_idle_minutes_remember`, Vorgabe aus), ein Nein des Identity Providers
 bei der Nachprüfung (4a, OIDC) und ihr Ablauf (`session_ttl_hours`, Vorgabe 7 Tage mit
 „Angemeldet bleiben", sonst `session_ttl_transient_hours`), die eigene Passwortänderung (alle
-anderen Sitzungen), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
+anderen Sitzungen — über `POST /auth/password` wie über eine eigene Seite mit `change_password`;
+nur aus einer Sitzung, ein API-Key ändert kein Passwort), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
 des Kontos. Eine Sitzung, deren Konto gesperrt ist, öffnet nichts mehr, auch wenn sie noch nicht
 abgelaufen ist — und kein Anmeldeweg legt einem gesperrten Konto eine neue an (H-18).
 
@@ -83,6 +86,11 @@ Ein **Step-up** (Reauth, erneuter Faktor) gibt der Sitzung ein neues Token (F-06
 noch `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter, damit eine Anfrage aus einem zweiten
 Tab, die in dem Moment schon unterwegs war, nicht scheitert (A-6) — ohne Step-up-Frische (keine
 Sudo-Route), nicht als eigene Sitzung in der Liste, und es endet mit der neuen. `0` = sofort tot.
+Eine eigene Step-up-Seite der App (`confirm_password`, `confirm_pin`, `confirm_totp`, seit 0.22.0)
+verhält sich genauso — `/auth/reauth` ruft dieselben Bausteine: Fehlgriffe zählen im Topf `reauth`
+(`reauth_max_attempts`, nur je Konto) und stehen als `failed verification` im Sicherheits-Log (auf
+diese Zeile bannt fail2ban nicht); die Sperre betrifft den Step-up, nicht die Anmeldung, und läuft
+mit dem Fenster (`lockout_window_sec`) ab.
 
 Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 
@@ -164,8 +172,8 @@ Kennung gehört zwei Konten.
   sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
   (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: im Panel
   („Umbenennen"), mit `tinysesam rename --db <datei> '#<user_id>' <neuer-name>` (G13), der Inhaber
-  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, neu,
-  durch_betreiber=True)` oder
+  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, new_username,
+  by_operator=True)` oder
   `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
   Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
   danach selbst nach.
@@ -181,6 +189,29 @@ Kennung gehört zwei Konten.
   0.20.x dann mit 500 statt mit einer Kollision. Entfernen bei gestoppter Instanz:
   `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — eine neuere
   Fassung legt sie beim nächsten Start wieder an.
+
+## Erst-Admin-Einmal-Token
+
+Gibt es keinen Admin (frische Instanz, oder der Identity Provider hat den letzten entzogen), gibt
+TinySesam ein Einmal-Token für `/auth/claim-admin?token=…` aus — beim Start und im Moment eines
+solchen Entzugs. Wohin, entscheidet, wer mitliest ([T-17](../backlog/T-17-claim-token-nicht-ins-container-log.md)):
+
+| Lage | Wohin das Token geht | Was im Log steht |
+|---|---|---|
+| `admin_claim_token_file` gesetzt | diese Datei, `0600` (auch an einer Konsole) | der Pfad |
+| stderr ist eine Konsole (`isatty`) | stderr | „steht auf der Konsole (stderr), nicht in dieser Zeile" |
+| stderr ist keine Konsole (Container, journal, Pipe) | `<db_path>.claim`, `0600` | der Pfad |
+| … ohne Datenbank-Datei (`:memory:`) oder Datei nicht anlegbar | stderr (Rückfall) | ehrlich: stderr ist keine Konsole, der Wert steht damit im Log des Dienstes |
+
+Im Container also: `docker exec <container> cat /data/app.db.claim` (Pfad aus dem Log), anmelden,
+die URL öffnen. Nach dem Einlösen löscht TinySesam `<db_path>.claim`; gibt es beim Start einen
+Admin, räumt er einen liegengebliebenen Rest weg. Läuft das Token ab, ist der Dateiinhalt ungültig,
+und der nächste Start schreibt ein neues. Eine selbst gewählte `admin_claim_token_file` bleibt
+stehen (ihr Pfad kann ein eingehängtes Geheimnis sein), ihr Inhalt gilt nach dem Einlösen nicht
+mehr. Bis 0.21.x ging das Token ohne `admin_claim_token_file` immer auf stderr — im Container stand
+es damit in `docker logs`, direkt vor der Zeile „Der Wert steht bewusst NICHT im Log". Wer so eine
+Instanz betrieben hat, bevor ein Admin existierte: das Log gilt als Mitwisser; das Token war nur bis
+zum ersten Admin gültig.
 
 ## Owner
 
@@ -246,7 +277,7 @@ Seite gehört und sich nicht ändert:
   lokales Konto nach jemandem aus dem Verzeichnis und erbt bei dessen Anmeldung Kennung und
   Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; Panel und `tinysesam rename`
   benennen als Betreiber um (der Merker fällt), wer aus dem einbettenden Dienst umbenennt, übergibt
-  `auth.change_username(uid, neu, durch_betreiber=True)`. Für den
+  `auth.change_username(uid, new_username, by_operator=True)`. Für den
   Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
   `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
   gelöscht hat, bleibt unerkannt.
@@ -254,7 +285,8 @@ Seite gehört und sich nicht ändert:
   das OIDC, SAML oder LDAP angelegt hat, trägt den Namen, den die Person dort hat — bei einem IdP
   mit Selbstregistrierung einen selbst gewählten (`preferred_username`, NameID, `uid`). Die Anlage
   merkt sich die Quelle (`users.name_quelle`), und eine andere Quelle bindet das Konto nie über den
-  Namen (`grund=name_aus_quelle`); sonst wählt jemand beim IdP `chefin` und bekommt bei der
+  Namen (`name_from_other_source`, im Audit `grund=name_aus_quelle`); sonst wählt jemand beim IdP
+  `chefin` und bekommt bei der
   LDAP-Anmeldung der echten chefin deren Kennung und Gruppen. Dieselbe Quelle ersetzt ihren
   Platzhalter weiter (`ldap_attr_id` später einschalten, s. unten). Umbenennen setzt die Herkunft
   zurück. Bestand: Der erste Start trägt sie einmal nach, wo sie belegt ist — OIDC-Konten (der
@@ -262,49 +294,67 @@ Seite gehört und sich nicht ändert:
   von vor den Kennungen (bis 0.19) bleiben ohne und hängen an der Frist. **Mehrere Quellen aus
   demselben Verzeichnis** (Keycloak vor LDAP, dazu der direkte LDAP-Login): Die zweite Quelle bindet
   ein Konto der ersten nicht über den Namen; einzelne Konten öffnet
-  `auth.loese_fremde_bindung(quelle, user_id)`. Wer eigene Konten aus einem weiteren Identity
-  Provider anlegt, übergibt `create_user(…, name_selbst_gewaehlt=True)`.
+  `auth.federation_unbind(source, user_id)`. Wer eigene Konten aus einem weiteren Identity
+  Provider anlegt, übergibt `create_user(…, self_chosen_name=True)`.
 - **Bestandskonten binden** (F-11, G1): ohne auf die Anmeldung zu warten — ruhende Konten melden
   sich nie an. Die Startmeldung nennt, solange die Frist läuft, je Quelle die Zahl der Konten ohne
   Kennung. Einmal nach dem Update, aus dem einbettenden Dienst:
 
   ```python
-  bericht = auth.foederation_nachbinden("ldap")          # Trockenlauf: schreibt nichts
-  for teil in ("gebunden", "konflikt", "mehrdeutig", "nicht_im_verzeichnis", "ohne_kennung",
-               "abgewiesen", "lokal"):
-      print(teil, [(e["username"], e.get("lokal"), e.get("verzeichnis")) for e in bericht[teil]])
-  auth.foederation_nachbinden("ldap", ausfuehren=True)  # erst nach dem Lesen
+  bericht = auth.federation_bind_existing("ldap")          # Trockenlauf: schreibt nichts
+  for teil in ("bound", "conflict", "ambiguous", "not_in_directory", "no_identifier",
+               "refused", "local_password"):
+      print(teil, [(e["username"], e.get("local"), e.get("directory"), e.get("reason"))
+                   for e in bericht[teil]])
+  auth.federation_bind_existing("ldap", apply=True)       # erst nach dem Lesen
   ```
 
   LDAP sucht je Konto ohne Kennung im Verzeichnis (Dienstkonto oder anonym; bei
   `ldap_user_dn_template` eine BASE-Suche auf den DN — das Verzeichnis muss das Lesen erlauben) und
   verlangt genau einen Eintrag; ein Ausfall bricht vor dem ersten Schreiben ab. SAML hat keinen
-  Suchweg: `zuordnung={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
-  für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`lokal`), selbst
-  gewählte Namen und Namen aus einer anderen Quelle abgewiesen. **Vor `ausfuehren` den Bericht lesen:** War ein Name schon vor dem Lauf
-  wiederverwendet, bindet auch dieser Weg die falsche Person; `lokal` und `verzeichnis` stehen
-  deshalb nebeneinander. Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
+  Suchweg: `mapping={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
+  für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`local_password`),
+  selbst gewählte Namen und Namen aus einer anderen Quelle abgewiesen (`refused`, `reason`). **Vor
+  `apply=True` den Bericht lesen:** War ein Name schon vor dem Lauf wiederverwendet, bindet auch
+  dieser Weg die falsche Person; `local` und `directory` stehen deshalb nebeneinander. Bis 0.21.x
+  hiessen die Teile und Felder deutsch (`gebunden`, `abgewiesen`, `lokal`, `verzeichnis`, `grund` …;
+  Tabelle im CHANGELOG zu 0.22.0). Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
   detail=migration`), der Lauf als Summenzeile im Sicherheits-Log. Ein CLI-Befehl fehlt bewusst:
   LDAP und SAML laufen nur eingebettet.
 - **Ein Konto trägt je Quelle genau eine Kennung.** Taucht im Verzeichnis unter demselben Namen eine
   neue Kennung auf (Konto gelöscht und neu angelegt), wird das lokale Konto **nicht** übernommen.
 - **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot) und **ausdrücklich öffnen** (Frist
-  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.loese_fremde_bindung(quelle,
+  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.federation_unbind(source,
   user_id)` löst die Bindung für LDAP/SAML und öffnet die Bindung über den Namen für die nächste
   Anmeldung — `max(federation_name_binding_days, 1)` Tage lang oder bis sie steht. Der Vorgang
   steht im Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort
   ist die Kennung `sub` des Providers per Definition stabil.
 - **`ldap_attr_id` später einschalten** (Quelle lief bisher ohne Kennung): Die Konten tragen dann nur
   den Herkunfts-Platzhalter und binden sich über den Namen nur in der Frist — nach ihr zuerst
-  `foederation_nachbinden("ldap")` fahren.
+  `federation_bind_existing("ldap")` fahren.
 - **Freigaben je Anwendung** (mehrere OIDC-Clients): `auth.store.drop_oidc_grants_for_user(user_id,
   client=None)` entzieht sie sofort, ohne die Sitzung zu beenden — der Weg, wenn der Provider
-  jemanden von einer Anwendung ausgeschlossen hat.
+  jemanden von einer Anwendung ausgeschlossen hat. Eine öffentliche Methode dafür gibt es noch
+  nicht; `auth.store` ist Innenleben (Stufe C, ohne Zusage).
 - **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen und
   entzogen, wenn sie beim Provider wegfallen — gemappte Rollen seit jeher, seit H-5 auch das
   Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
   CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin. War es der letzte
   Admin, bleibt die Allowlist danach zu (G6, unten).
+- **Gruppen kommen nur, wenn der Provider sie schickt** ([T-16](../backlog/T-16-gruppen-scope-warnung.md)).
+  PocketID (auch Authentik, Keycloak ohne eigenen Mapper) schickt den Claim `groups` nur mit dem
+  Scope `groups`; die Vorgabe `oidc_scopes="openid profile email"` fordert ihn nicht an. Dann
+  weist `oidc_allowed_groups` jeden ab (Audit `oidc_group_denied`), und `oidc_group_role_map`
+  vergibt keine Rolle. Der Start warnt, sobald eine Gruppenregel über den Claim `groups` läuft und
+  der Scope fehlt — je Client, auch für `oidc_clients` mit eigenen `scopes`. Abhilfe:
+  `oidc_scopes="openid profile email groups"` (Gateway: `TINYSESAM_OIDC_SCOPES`). TinySesam
+  fordert nichts von selbst nach: Liefert ein Provider den Claim über einen Mapper ohne Scope, ist
+  die Warnung gegenstandslos, und Entra ID lehnt einen Scope `groups` sogar ab (AADSTS650053; dort
+  kommen Gruppen über „optional claims", die Prüfung schweigt für diesen Issuer). **SAML und LDAP**
+  haben kein Gegenstück in der Konfiguration: Ob der IdP das Attribut `saml_attr_groups` freigibt
+  bzw. das Verzeichnis `ldap_group_attr` (`memberOf`; bei OpenLDAP nur mit dem memberof-Overlay)
+  liefert, steht auf der anderen Seite. Das Symptom ist dasselbe — `saml_denied grund=gruppe`
+  bzw. `ldap_group_denied` im Audit-Log für jeden.
 - **Widerruf folgt dem Provider (4a).** Eine OIDC-Sitzung trägt ihr Refresh-Token (verschlüsselt);
   alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
   Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt
@@ -363,8 +413,10 @@ Seite gehört und sich nicht ändert:
   nach_idp_entzug`). Bis 2026-09-26 beförderte sie die Person im selben Login zurück, als Admin „von
   Hand" und Erst-Owner — ein Recht, das kein Provider mehr entzieht und das sich weder löschen noch
   sperren lässt. Zurück ins Panel führen die Notwege: das Einmal-Token, das TinySesam im Moment des
-  Entzugs ausgibt (stderr bzw. `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim
-  nächsten Start neu), und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
+  Entzugs ausgibt (an einer Konsole auf stderr, sonst in `<db_path>.claim` bzw.
+  `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim nächsten Start neu; s.
+  [Erst-Admin-Einmal-Token](#erst-admin-einmal-token)),
+  und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
   Admin-Gruppe versehentlich nicht mehr (Mapping, Scope), verlieren alle Admins vom Provider das Recht
   auf einmal — **deshalb mindestens einen Owner von Hand halten.**
 - **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,
@@ -431,6 +483,46 @@ Seite gehört und sich nicht ändert:
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
+## Rückschritt auf 0.21.x
+
+0.22.0 hebt den Schema-Stempel der Datenbank auf **12**. Keine Spalte ändert sich, aber zwei
+gespeicherte Werte heissen jetzt englisch wie der Rest der öffentlichen Oberfläche (PO-Entscheid
+2026-09-27): die Art eines API-Keys (`api_key.kind`: `automat` → `automation`, `mensch` → `human`) und
+im offenen Adresswechsel-Link der Schlüssel für die bisherige Adresse (`alt` → `old`, sichtbar über
+`peek_magic`/`redeem_magic`). Der erste Start schreibt sie um und sagt es im Log (`… gespeicherte
+Werte auf die englischen Namen umgeschrieben`). Gelesen wird ein alter Wert weiterhin richtig, und
+jeder Start zieht die API-Keys nach, die eine ältere Fassung inzwischen ausgestellt hat. Die
+Audit-Zeilen bleiben unter 0.22.0, wie sie waren: `apikey_create`/`apikey_use` nennen die Art weiter
+als `art=automat`/`art=mensch`. (Läuft 0.21.x ohne das SQL unten auf der migrierten Datei, schreibt sie
+`art=automation`/`art=human` — sie gibt den gespeicherten Wert roh aus.)
+
+**Was 0.21.x mit einer migrierten Datei macht** (gemessen mit 0.21.0): Sie startet und warnt beim
+Start einmal: `Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11. …`.
+Sie kennt `human` nicht und hält einen solchen Key für einen Automaten-Key — **er wirkt dann ohne
+Sitzung**, mit den Rechten seines Kontos ohne das Admin-Flag. Ein Menschen-Key, der bisher allein
+wertlos war, ist unter 0.21.x allein gültig. `automation`-Keys wirken dort wie `automat`. Den Payload
+der Links liest 0.21.x nicht. Was sie selbst ausstellt, trägt wieder die alten Werte; 0.22.0 liest
+sie und schreibt die Keys beim nächsten Start um.
+
+**Deshalb vor dem ersten Start von 0.21.x** — Dienst gestoppt, Sicherung gezogen (`tinysesam
+backup`, kein `cp`):
+
+```sql
+UPDATE api_key SET kind = 'automat' WHERE kind = 'automation';
+UPDATE api_key SET kind = 'mensch'  WHERE kind = 'human';
+UPDATE magic_token SET payload = json_object('alt', json_extract(payload, '$.old'))
+ WHERE purpose = 'email_change' AND json_extract(payload, '$.old') IS NOT NULL;
+PRAGMA user_version = 11;
+```
+
+Etwa `sqlite3 auth.db < rueckweg.sql`, oder aus Python
+`sqlite3.connect("auth.db").executescript(open("rueckweg.sql").read())`; `json_object` braucht
+SQLite 3.38 oder JSON1 (in den Python-Abbildern enthalten). Danach meldet 0.21.x keine neuere
+Schema-Version mehr, und ein Menschen-Key gilt wieder nur mit Sitzung. Der Stempel 11 ist richtig:
+Es kam keine Spalte hinzu, und ein späterer Start von 0.22.0 migriert erneut. `tests/test_werte_englisch.py`
+führt genau diesen Block aus. Ohne das SQL läuft 0.21.x auch — dann gilt für Menschen-Keys das oben
+Gesagte, bis wieder 0.22.0 startet.
+
 ## Anmeldewege und ihre Stärke
 
 **In der Vorgabe ist TinySesam einfaktorig:** Passwort allein meldet vollständig an. Ein zweiter
@@ -443,13 +535,13 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | Weg (Faktor) | Was er belegt | TOTP danach (ohne Kette) | Anmerkung |
 |---|---|---|---|
 | Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
-| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_als_erstfaktor()`) |
+| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_as_first_factor()`) |
 | Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
 | Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` und in Route-Ketten `require(factors=[…])` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
 | Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
 | Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
-| API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) |
+| API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) und ändert kein Passwort (`POST /auth/password`, `change_password`: 403, seit 0.22.0) |
 
 **Die PIN als Folgefaktor** (G7, seit 2026-09-26): Nach dem ersten Faktor einer Kette fragt
 `/auth/pin` nur die PIN des Kontos der halben Sitzung, ohne Namensfeld — auch mit `pin_login=False`

@@ -75,12 +75,16 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 - **Notify account holders about factor changes — `auth.on_security_event`.** Opt-in hook,
   called as `hook(event, account, details)` with `account = {id, username, email, display_name}`
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
-  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
-  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` and
-  `username_changed` (`details={"alt": …, "neu": …}` — self-service, 2026-09-25) and `api_keys_revoked`
-  (`details={"anzahl": n, "grund": …}` — in bulk on a reset, a block, an admin password reset or
-  `sessions/revoke` with `scope=all`). That includes changes an administrator makes to someone
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled` (`details={"recovery_codes_deleted": n}`),
+  `recovery_codes_generated` (`details={"count": n}`), `recovery_code_used`
+  (`details={"remaining": n}`), `passkey_added` (`details={"name": …}`), `passkey_removed`
+  (`details={"passkey_id": n}`), `api_key_created` (`details={"key_id": n, "name": …}`),
+  `api_key_revoked` (`details={"key_id": n}`), `email_changed` and `username_changed`
+  (`details={"old": …, "new": …}` — self-service, 2026-09-25) and `api_keys_revoked`
+  (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
+  `admin_password_reset`, `sessions_revoked` — in bulk on a reset, a block, an admin password reset
+  or `sessions/revoke` with `scope=all`). The `details` keys and the reasons are English since
+  0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
   mail so it does not assume the holder did it. Apart from the hook, TinySesam sends one mail itself
   when a mailer is configured: a notice to the (verified) address of an account that got locked by
@@ -90,8 +94,17 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that
-  call `totp_confirm(uid, now())` and then `verify_totp(uid, now())` with the same code fail since
-  T-13 — confirm with the previous time step's code instead.
+  call `totp_confirm(uid, now())` and then sign in (`POST /auth/totp`) with the same code fail
+  since T-13 — confirm with the previous time step's code instead.
+- **Your own sign-in, step-up or password-change page: build it on the building blocks.**
+  `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
+  and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the
+  built-in routes — those routes call them. The inner checks (`_check_password`,
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` and their old tier-C names) do none
+  of that: a page built on them lets passwords, PINs and codes be guessed as fast as the server
+  answers, with no line for fail2ban. An API key never counts for these building
+  blocks — it confirms no person and changes no password (`POST /auth/password` refuses it with a
+  403 since 0.22.0).
 
 ## Supported versions
 

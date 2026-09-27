@@ -81,8 +81,8 @@ def wer(u=Depends(auth.require_user)):
 
 c2 = TestClient(app2)
 _admin_id = auth.store.get_user_by_name("admin")["id"]
-_automat = auth.create_api_key(_admin_id, name="ci", kind="automat")
-_mensch = auth.create_api_key(_admin_id, name="cli", kind="mensch")
+_automat = auth.create_api_key(_admin_id, name="ci", kind="automation")
+_mensch = auth.create_api_key(_admin_id, name="cli", kind="human")
 
 # Der Automaten-Key kommt herein, aber ohne das Admin-Flag seines Besitzers.
 _a = c2.get("/wer", headers={"X-API-Key": _automat["key"]})

@@ -131,15 +131,15 @@ for gemischt in ("default-src 'self'; require-sri-for script",
     _gm = TinySesam(_cfg(csp=gemischt))
     assert konfigpruefung.csp_fehler(gemischt) == "", gemischt
     assert any("nicht kennt" in z for z in _fang.zeilen), (gemischt, _fang.zeilen)
-    assert any("nicht kennt" in b for b in _gm.cfg.pruefen()), _gm.cfg.pruefen()
+    assert any("nicht kennt" in b for b in _gm.cfg.validate()), _gm.cfg.validate()
 logging.getLogger("tinysesam.security").removeHandler(_fang)
 assert konfigpruefung.csp_warnung("default-src 'self'; script-src 'none'") == ""
 ok("csp: unbekannte Direktive neben bekannten warnt, statt den Start zu verhindern")
-# … und auch nach dem Aufbau: `pruefen()` meldet einen nachträglich gesetzten Tippfehler.
+# … und auch nach dem Aufbau: `validate()` meldet einen nachträglich gesetzten Tippfehler.
 _nach = TinySesam(_cfg())
 _nach.cfg.csp = "stict"
-assert any("csp=" in b for b in _nach.cfg.pruefen()), _nach.cfg.pruefen()
-ok("csp: pruefen() meldet den nachträglichen Tippfehler")
+assert any("csp=" in b for b in _nach.cfg.validate()), _nach.cfg.validate()
+ok("csp: validate() meldet den nachträglichen Tippfehler")
 
 
 # 8) R8-5, R4-08, R5-2: Härtungskopfzeilen auf JEDER TinySesam-Antwort, nicht nur der Seite —

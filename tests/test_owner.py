@@ -49,7 +49,7 @@ auth_c, _ = _app()
 kandidat = auth_c.create_user("claimer", password=PW)
 token = auth_c.admin_claim_token()
 r.check("… ebenso über /auth/claim-admin (Einmal-Token)",
-        auth_c.consume_admin_claim(token, auth_c.get_user(kandidat))
+        auth_c._consume_admin_claim(token, auth_c.get_user(kandidat))
         and auth_c.store.get_user(kandidat)["is_owner"] == 1)
 
 # ── Bestand: Admins ohne Owner → der älteste Hand-Admin wird Owner ─────────────────────
@@ -102,7 +102,7 @@ r.check("Owner-Konto bleibt, was es war", auth.store.get_user(chefin["id"])["is_
 # ── Nur ein Owner ändert ein Owner-Konto (sonst: Passwort setzen und selbst Owner sein) ─
 r.check("ein Admin ohne Owner-Rolle setzt dem Owner kein Passwort",
         ca.post(f"/auth/admin/api/users/{chefin['id']}/password", json={"password": "Uebernahme-Versuch-1"}).status_code == 403
-        and auth.check_password("chefin", PW) is not None)
+        and auth._check_password("chefin", PW) is not None)
 r.check("… stellt ihm keinen API-Key aus",
         ca.post(f"/auth/admin/api/users/{chefin['id']}/keys", json={"name": "x"}).status_code == 403)
 r.check("… löscht ihm keinen Passkey",

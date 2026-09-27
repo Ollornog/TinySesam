@@ -124,7 +124,7 @@ ok("R4-11: Anmelde-Link geht an die gespeicherte Adresse, nicht an die rohe Eing
 # ---------- R4-04: gedrosselt je ZIELADRESSE (die IP-Drossel schützt kein fremdes Postfach) ----------
 sent.clear()
 auth.rl = type(auth.rl)()   # frischer Limiter: die Zählung oben soll hier nicht mitspielen
-_grenze = auth.sec("mail_per_address_max")
+_grenze = auth._sec("mail_per_address_max")
 _antworten = set()
 for _ in range(_grenze + 3):
     _r = c.post("/auth/magic/request", data={"email": "admin@example.com", "next": "/"})

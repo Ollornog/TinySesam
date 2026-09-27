@@ -120,8 +120,8 @@ def register_passkey_routes(router, auth):
         # entstand er spurlos — wer ihn sich heimlich einrichtete, hinterliess nichts (B5-01).
         auth.audit("passkey_create", u["username"], auth.client_ip(request),
                    f"name={name or 'Passkey'}")
-        auth.sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
-        resp = JSONResponse({"ok": True, "other_sessions": auth.andere_sitzungen(request, u)})  # B1-7
+        auth._sicherheitsereignis("passkey_added", u["id"], name=name or "Passkey")
+        resp = JSONResponse({"ok": True, "other_sessions": auth.count_other_sessions(request, u)})  # B1-7
         # Der Flow ist verbraucht (pop_flow) — das Cookie dazu bindet nichts mehr und ginge nur
         # noch an jede App mit (B-20). OIDC und SAML löschen ihres am Rückweg ebenso.
         auth._flow_cookie_loeschen(resp, _WAFLOW)
@@ -134,7 +134,7 @@ def register_passkey_routes(router, auth):
         # Drosselung wie an jedem anderen Login-Einstieg (B2-10). Ohne sie war dies die einzige
         # Anmeldestrecke ohne Bremse: Jeder Aufruf legte zudem eine `flow`-Zeile an, die erst
         # nach fünf Minuten verfällt — ein bequemer Weg, die Datenbank wachsen zu lassen.
-        if not auth.rate_ok(auth.client_ip(request)):
+        if not auth._rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         opts = generate_authentication_options(rp_id=cfg.rp_id,
                                                user_verification=_uv_anforderung(cfg))
@@ -152,7 +152,7 @@ def register_passkey_routes(router, auth):
         if not flow:
             raise HTTPException(400, auth.t("api.passkey_login_expired"))
         ip_roh = auth.client_ip(request)
-        if not auth.rate_ok(ip_roh):
+        if not auth._rate_ok(ip_roh):
             raise HTTPException(429, auth.t("err.rate"))
         body = await request.body()
         data = _json.loads(body)
@@ -195,7 +195,7 @@ def register_passkey_routes(router, auth):
         # die IP-Sperre haette alle Nutzer hinter demselben Proxy in einen Topf geworfen.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, row["user_id"], "passkey", ip, ua)
-        target = auth.login_redirect_after(request, token, row["user_id"], auth.safe_next(next, request))
+        target = auth._login_redirect_after(request, token, row["user_id"], auth.safe_next(next, request))
         resp = JSONResponse({"ok": True, "redirect": target})
         if is_new:
             auth.set_cookie(resp, token)
@@ -232,4 +232,4 @@ def register_passkey_routes(router, auth):
         # ist 404 und hinterlässt weder Zeile noch Ereignis.
         if not auth.remove_passkey(u["id"], passkey_id, auth.client_ip(request)):
             raise HTTPException(404, auth.t("api.not_found"))
-        return {"ok": True, "other_sessions": auth.andere_sitzungen(request, u)}   # B1-7
+        return {"ok": True, "other_sessions": auth.count_other_sessions(request, u)}   # B1-7

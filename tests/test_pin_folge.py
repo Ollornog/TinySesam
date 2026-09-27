@@ -41,7 +41,7 @@ r = Report("G7 — PIN als Erst- oder Folgefaktor (Serie, Kettenschritt, Gästew
 PW = "Folge-Pin-Pw-15"          # 15 Zeichen: das Passwort meldet hier ggf. allein an (B2-4)
 NEU = "Neues-Pw-G7-123"
 PIN = "4711"
-FOLGE = TinySesam.SERIE_PIN_FOLGE
+FOLGE = TinySesam._SERIE_PIN_FOLGE
 HTML = {"Accept": "text/html"}
 
 
@@ -110,14 +110,14 @@ r.check("(a) nach dem Passwort führt die Kette auf /auth/pin; fünf falsche PIN
         "buchen unter pin_folge, nicht unter pin",
         _nach_pw.headers.get("location", "").startswith("/auth/pin") and _arten(auth, "kette") == {FOLGE: 5},
         f"{_nach_pw.headers.get('location')}, {_arten(auth, 'kette')}")
-# (Mutationsprobe: `serie_art` in `pin_submit` weglassen → {'pin': 5}, der Reset räumt → rot.)
-auth.sperre_aufheben(uid, methoden=("password",))                  # der Weg des Selbstbedienungs-Resets
-r.check("(a) der Selbstbedienungs-Reset (sperre_aufheben mit password) lässt sie stehen, wie TOTP",
+# (Mutationsprobe: `serie_art` in `login_pin` weglassen → {'pin': 5}, der Reset räumt → rot.)
+auth.lift_lockout(uid, methods=("password",))                  # der Weg des Selbstbedienungs-Resets
+r.check("(a) der Selbstbedienungs-Reset (lift_lockout mit password) lässt sie stehen, wie TOTP",
         auth.store.fehlserie("kette") == 5, str(_arten(auth, "kette")))
 _tok = auth.create_magic_token("reset_password", user_id=uid, email="kette@example.com")
 _reset = TestClient(app).post("/auth/reset", data={"token": _tok, "password": NEU}, follow_redirects=False)
 r.check("(a) … auch über den echten POST /auth/reset",
-        _reset.status_code == 303 and auth.store.fehlserie("kette") == 5 and auth.check_password("kette", NEU),
+        _reset.status_code == 303 and auth.store.fehlserie("kette") == 5 and auth._check_password("kette", NEU),
         f"HTTP {_reset.status_code}, {_arten(auth, 'kette')}")
 # Eigene PIN-Seiten schicken den Namen oft mit — auch mit der Adresse des eigenen Kontos bleibt es der
 # Kettenschritt der halben Sitzung (vorher: der Gästeweg, als Erstfaktor gebucht).
@@ -134,7 +134,7 @@ uid_b = _konto(auth_b, "gast")
 for i in range(5):
     _pin(TestClient(app_b), f"000{i}", username="gast")
 _vorher_b = _arten(auth_b, "gast")
-auth_b.sperre_aufheben(uid_b, methoden=("password",))
+auth_b.lift_lockout(uid_b, methods=("password",))
 # (Mutationsprobe: 'pin' aus `_SERIE_RESET_ARTEN` → 5 bleiben → rot.)
 r.check("(b) R2-2: Fehlgriffe über den Gästeweg buchen unter pin, und der Reset räumt sie",
         _vorher_b == {"pin": 5} and auth_b.store.fehlserie("gast") == 0,
@@ -149,7 +149,7 @@ for i in range(4):
     _pin(cc, f"000{i}")
 _vorher_c = _arten(auth_c, "voll")
 _fertig = _pin(cc, PIN)
-# (Mutationsprobe: in `sperre_aufheben` ohne `methoden` nur `_SERIE_RESET_ARTEN` räumen → 4 → rot.)
+# (Mutationsprobe: in `lift_lockout` ohne `methoden` nur `_SERIE_RESET_ARTEN` räumen → 4 → rot.)
 r.check("(c) die volle Anmeldung (richtige PIN im Kettenschritt) beendet die Serie ganz",
         _vorher_c == {FOLGE: 4} and _fertig.headers.get("location") == "/drin"
         and cc.get("/drin").status_code == 200 and auth_c.store.fehlserie("voll") == 0,
@@ -209,7 +209,7 @@ r.check("(e) N1: nach dem Passwort zeigt GET /auth/pin das PIN-Formular — ohne
         and "name=pin" in _seite.text and "name=username" not in _seite.text,
         f"HTTP {_seite.status_code} {_seite.headers.get('location')}")
 _ziel = _pin(ce, PIN)
-# (Mutationsprobe: in `pin_submit` `halb = None` → 404 → rot.)
+# (Mutationsprobe: in `login_pin` `halb = None` → 404 → rot.)
 r.check("(e) N1: … und die richtige PIN macht die Sitzung voll (/drin 200)",
         _ziel.status_code == 303 and _ziel.headers.get("location") == "/drin" and ce.get("/drin").status_code == 200,
         f"HTTP {_ziel.status_code} {_ziel.headers.get('location')}")
@@ -223,7 +223,7 @@ _konto(auth_f, "orakel")
 _falsch_f = _pin(TestClient(app_f), "0000", username="orakel")
 _richtig_f = _pin(TestClient(app_f), PIN, username="orakel")
 _zeilen_f = auth_f.store._one("SELECT COUNT(*) AS n FROM login_attempt")["n"]
-# (Mutationsprobe: in `pin_submit` wieder `cfg.pin_login` statt `pin_als_erstfaktor()` → 401/303 → rot.)
+# (Mutationsprobe: in `login_pin` wieder `cfg.pin_login` statt `pin_as_first_factor()` → 401/303 → rot.)
 r.check("(f) N2: Gast-PIN ohne Passwort → 404, ob falsch oder richtig, und keine Zeile in login_attempt",
         _falsch_f.status_code == 404 and _richtig_f.status_code == 404 and _zeilen_f == 0,
         f"falsch {_falsch_f.status_code}, richtig {_richtig_f.status_code}, Zeilen {_zeilen_f}")
@@ -324,7 +324,7 @@ cj = TestClient(app_j)
 _start_j = _passwort(cj, "klassik")
 _falsch_j, _richtig_j = _pin(cj, "0000"), _pin(cj, PIN)
 _get_j = cj.get("/auth/pin?next=/drin", headers=HTML, follow_redirects=False)
-# (Mutationsprobe: in `pin_submit` wieder `auth.pending_user(request)` → 401/303 → rot.)
+# (Mutationsprobe: in `login_pin` wieder `self.pending_user(request)` → 401/303 → rot.)
 r.check("(j) Fall 1 klassisch, pin_login=False, Konto mit TOTP: die halbe Sitzung (nächster Schritt TOTP) "
         "bekommt auf falsche und richtige PIN 404, ohne Zeile in Serie und login_attempt",
         _start_j.headers.get("location", "").startswith("/auth/totp")
@@ -332,7 +332,7 @@ r.check("(j) Fall 1 klassisch, pin_login=False, Konto mit TOTP: die halbe Sitzun
         and FOLGE not in _arten(auth_j, "klassik") and _pin_zeilen(auth_j) == 0,
         f"falsch {_falsch_j.status_code}, richtig {_richtig_j.status_code}, {_arten(auth_j, 'klassik')}, "
         f"Zeilen {_pin_zeilen(auth_j)}")
-# (Mutationsprobe: in `pin_page` wieder `auth.pending_user(request)` → 200 mit PIN-Formular → rot.)
+# (Mutationsprobe: in `pin_page` wieder `self.pending_user(request)` → 200 mit PIN-Formular → rot.)
 r.check("(j) Fall 1: GET /auth/pin zeigt der halben Sitzung kein PIN-Formular, sondern leitet zur Anmeldung",
         _get_j.status_code == 303 and _get_j.headers.get("location", "").startswith("/auth/login"),
         f"GET {_get_j.status_code} {_get_j.headers.get('location')}")

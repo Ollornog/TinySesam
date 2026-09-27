@@ -171,8 +171,8 @@ from fastapi import Request as _Req, Response as _Resp   # noqa: E402
 def eigen_stepup(request: _Req, code: str = ""):
     antwort = _Resp()
     tok = request.cookies.get(auth_t.session_cookie_name)
-    s = auth_t.session_from_request(request)
-    if s and auth_t.verify_recovery_code(s["user_id"], code):
+    s = auth_t._session_from_request(request)
+    if s and auth_t._verify_recovery_code(s["user_id"], code):
         neu = auth_t.complete_totp(tok)
         if neu:
             auth_t.set_cookie(antwort, neu)
@@ -327,7 +327,7 @@ c4.post("/auth/totp", data={"code": pyotp.TOTP(sec2).now(), "next": "/"}, follow
 assert c4.get("/sudo2", headers=JSON).status_code == 200
 assert c4.post("/auth/totp/recovery", json={}, headers=JSON).status_code == 200
 assert c4.post("/auth/pin/set", json={"pin": "9876"}, headers=JSON).status_code == 200
-assert auth2.verify_user_pin(uid2, "9876")
+assert auth2._verify_user_pin(uid2, "9876")
 ok("frische Sitzung: Recovery-Codes und PIN-Änderung gehen weiter durch (legitimer Weg)")
 
 tok2 = c4.cookies.get("tinysesam_session")
@@ -398,7 +398,7 @@ for pfad in VERWALTUNG:
     erwartet = auth3.t(GRUND.get(pfad, "api.stepup_session"))
     assert antwort.json().get("detail") == erwartet, (pfad, antwort.text[:90])
 assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
-assert auth3.verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
+assert auth3._verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
 ok(f"API-Key (CSRF an): alle {len(VERWALTUNG)} Faktor-Routen → 403, jede mit ihrem Grund")
 
 # ---------- A-umgehung-2: derselbe Riegel gilt für die ANLAGE eines Faktors ----------
@@ -488,7 +488,7 @@ app5.include_router(auth5.router())
 c8 = TestClient(app5)
 assert c8.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
                follow_redirects=False).status_code == 303
-GRENZE_R = auth5.sec("reauth_max_attempts")
+GRENZE_R = auth5._sec("reauth_max_attempts")
 for i in range(GRENZE_R):
     r = c8.post("/auth/reauth", data={"password": f"tippfehler{i}", "next": "/"})
     assert r.status_code == 401, (i, r.status_code)
@@ -496,7 +496,7 @@ assert auth5.store.count_fails(0, username="anna", method="reauth") >= GRENZE_R,
     "die Fehlversuche wurden gar nicht verbucht — der Test misst dann nichts"
 
 # (a) Der Angriff: Die Anmeldung desselben Kontos bleibt offen.
-assert not auth5.is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
+assert not auth5._is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
 frisch5 = TestClient(app5)
 r = frisch5.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
                  follow_redirects=False)
@@ -505,7 +505,7 @@ ok("Fehlversuche an der Reauth-Seite sperren die Anmeldung nicht (eigener Topf)"
 
 # (b) Gebremst wird trotzdem — dort, wo geraten wurde: Der nächste Versuch läuft in die Sperre,
 # auch mit dem richtigen Passwort. Die Schwelle ist verdrahtet, nicht nur vorhanden.
-assert auth5.is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
+assert auth5._is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
 r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"})
 assert r.status_code == 429, f"Step-up-Raten läuft nicht in die Sperre: {r.status_code}"
 ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
@@ -514,7 +514,7 @@ ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
 c9 = TestClient(app5)
 assert c9.post("/auth/login", data={"username": "bea", "password": PW_BEA, "next": "/"},
                follow_redirects=False).status_code == 303
-assert not auth5.is_reauth_locked("bea", "testclient"), \
+assert not auth5._is_reauth_locked("bea", "testclient"), \
     "die Fehlversuche eines Kollegen sperren hinter NAT die Bestätigung eines Unbeteiligten"
 r = c9.post("/auth/reauth", data={"password": PW_BEA, "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"Bestätigung des Unbeteiligten gesperrt: {r.status_code}"
@@ -611,7 +611,7 @@ for pfad in sorted(NUR_SITZUNG & _post6):
     r = TestClient(app6).post(pfad, headers={**JSON, "X-API-Key": key6}, **_nutzlast.get(pfad, {}))
     assert r.status_code in (401, 403), f"{pfad}: API-Key richtet einen Faktor ein ({r.status_code})"
 r = _abgestanden_client().post("/auth/password", headers=JSON, **_nutzlast["/auth/password"])
-assert r.status_code == 403 and auth6.check_password("selbst", "Geheim12345!"), \
+assert r.status_code == 403 and auth6._check_password("selbst", "Geheim12345!"), \
     f"/auth/password ohne das alte Passwort: {r.status_code}"
 for pfad in sorted(set(OFFEN) & _post6):
     ziel = pfad.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))
@@ -775,7 +775,7 @@ os.remove(db7)
 # der das Admin-Flag nie trägt (R6-5), wurden so Key + PIN eine Admin-Sitzung mit Panel,
 # Schlüsselverwaltung und Faktor-Anlage. Mit einer halben fremden Sitzung im Cookie ersetzte
 # dieselbe Anfrage deren Cookie durch die des Key-Kontos.
-# (Mutationsprobe: in `pin_submit` wieder `me = auth.current_user(request)` → (a), (b) und
+# (Mutationsprobe: in `login_pin` wieder `me = self.current_user(request)` → (a), (b) und
 # (d) rot, dazu der Wächter unten; in `pin_page` → (c) rot.)
 db8 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth8 = TinySesam(TinySesamConfig(lang="de", db_path=db8, rp_name="Test", cookie_secure=False,
@@ -787,7 +787,7 @@ auth8.set_pin(uid8, "4711")
 uid8_opfer = auth8.create_user("opfer", password="Geheim-Opfer-8")
 _geheim8 = auth8.totp_begin(uid8_opfer)["secret"]
 assert auth8.totp_confirm(uid8_opfer, pyotp.TOTP(_geheim8).at(time.time() - 30))
-KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automat")["key"]}
+KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automation")["key"]}
 app8 = FastAPI()
 app8.include_router(auth8.router())
 r = TestClient(app8).get("/auth/me", headers={**JSON, **KEY8})
@@ -862,13 +862,28 @@ os.remove(db8)
 # Geprüft wird jede Funktion des Pakets; lokale Helfer (ein nackter Aufruf wie `_nur_sitzung(…)`)
 # zählen mit, auch eine Erwähnung ohne Aufruf (`Depends(auth.current_user)`).
 # `require_session`/`require_mfa` stehen bewusst NICHT in der Liste: Sie weisen einen Key ab.
-# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `pin_submit`,
-# `totp_submit`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
+# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `login_pin`,
+# `login_totp`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
 # dank der Helfer-Verfolgung (ohne sie grün, deshalb die Probe `helfer` im Selbsttest);
 # `session_user()` selbst auf `current_user()` umgebogen → der Wächter bleibt grün, die
 # Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
+# Seit 0.22.0 stehen die Anmeldeschritte in `login_password`/`login_pin`/`login_totp`
+# (die Routen rufen sie): Sie sind selbst Senken — eine Route, die sie mit einem Konto aus einer
+# Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft. Ebenso der Step-up
+# (`confirm_*`, `POST /auth/reauth` ruft sie) und der Passwortwechsel (`change_password`, beendet
+# die anderen Sitzungen des Kontos). Seit diesen Bausteinen misst der Wächter drei Formen mehr:
+# eine Senke, die nur ÜBERGEBEN wird (`run_in_threadpool(auth.change_password, …)` in
+# `POST /auth/password` — kein Aufruf am Attribut, bis dahin unsichtbar); Helfer, die als
+# Methode gerufen werden (`self._nur_mit_sitzung(…)` — sonst prüfte er die Quelle der Bausteine
+# nicht, nur die der Routen); und eine Funktion, die selbst so heisst wie eine Senke: Ihr Rumpf
+# hat Sitzungswirkung, auch wenn er keine andere Senke ruft (`change_password` beendet Sitzungen
+# über den Store). (Mutationsprobe: in `TinySesam._nur_mit_sitzung` `current_user` statt
+# `session_user` → rot an `_bestaetigen`, `confirm_*` und `change_password`; ohne die
+# Methoden-Helfer grün.)
 SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",
-          "set_session_mfa", "set_session_factors", "logout"}
+          "set_session_mfa", "set_session_factors", "logout",
+          "login_password", "login_pin", "login_totp",
+          "confirm_password", "confirm_pin", "confirm_totp", "change_password"}
 KEY_QUELLEN = {"current_user", "_current_user_ermitteln", "require_user", "require_role",
                "require_admin", "_enforce"}
 
@@ -894,10 +909,15 @@ def _sitzungswirkung(quelltext, datei="?"):
     for fn in fns:
         senke, quelle, helfer = False, set(), set()
         for k in _eigene_knoten(fn):
-            if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr in SENKEN:
+            # Aufgerufen oder nur übergeben (`run_in_threadpool(auth.change_password, …)`).
+            if isinstance(k, ast.Attribute) and k.attr in SENKEN:
                 senke = True
             if isinstance(k, ast.Call) and isinstance(k.func, ast.Name) and k.func.id in je_name:
                 helfer.add(k.func.id)
+            if (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)
+                    and isinstance(k.func.value, ast.Name) and k.func.value.id == "self"
+                    and k.func.attr in je_name):
+                helfer.add(k.func.attr)          # `self._nur_mit_sitzung(…)`: Methode desselben Moduls
             name = k.attr if isinstance(k, ast.Attribute) else k.id if isinstance(k, ast.Name) else None
             if name in KEY_QUELLEN:
                 quelle.add(name)
@@ -919,7 +939,7 @@ def _sitzungswirkung(quelltext, datei="?"):
     wirkend, verstoesse = set(), []
     for fn in fns:
         senke, quelle = huelle(fn, set())
-        if senke:
+        if senke or fn.name in SENKEN:        # eine Senke selbst: ihr Rumpf zählt
             wirkend.add(fn.name)
             if quelle:
                 verstoesse.append(f"{datei}:{fn.lineno} {fn.name} ← {sorted(quelle)}")
@@ -936,6 +956,14 @@ _PROBEN = {
     "depends": ("def r(request, u=Depends(auth.require_user)):\n    auth.logout(request, resp)\n", True),
     "sauber": ("def r(request):\n    me = auth.session_user(request)\n"
                "    auth.apply_factor(request, me['id'], 'pin')\n", False),
+    "uebergeben": ("async def r(request):\n    auth.current_user(request)\n"
+                   "    return await run_in_threadpool(auth.change_password, request, 'a', 'b')\n", True),
+    "methode": ("class T:\n    def _h(self, request):\n        return self.current_user(request)\n"
+                "    def c(self, request):\n        u = self._h(request)\n"
+                "        self.store.rotate_session(u, 1)\n", True),
+    "senke_selbst": ("class T:\n    def change_password(self, request):\n"
+                     "        u = self.current_user(request)\n        self.store.delete_user_sessions_except(u)\n",
+                     True),
     "verschachtelt": ("def aussen():\n    auth.current_user(x)\n"
                       "    def innen(request):\n        auth.complete_totp(t)\n", False),
 }
@@ -952,7 +980,9 @@ assert not _verstoesse, ("Konto aus einer Quelle, die einen API-Key annimmt, an 
                          "Sitzungswirkung — `session_user()` nehmen: " + "; ".join(_verstoesse))
 # Ohne Treffer misst der Wächter nichts: Die bekannten Stellen müssen gefunden werden.
 _erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm", "login_submit",
-             "_abmelden", "apply_factor"}
+             "_abmelden", "apply_factor", "login_password", "login_pin", "login_totp",
+             "_bestaetigen", "confirm_password", "confirm_pin", "confirm_totp", "change_password",
+             "change_own_password"}
 assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
 ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
    f"({len(_PROBEN)} Selbstproben)")

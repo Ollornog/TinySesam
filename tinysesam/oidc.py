@@ -586,7 +586,7 @@ def register_oidc_routes(router, auth):
         # auf den der Proxy jeden nicht angemeldeten Besucher schickt — jeder Abbruch, jeder
         # Scanner, jeder Bot liess die Datenbank wachsen, und als einzige flow-erzeugende Route
         # war sie nicht ratenbegrenzt.
-        if not auth.rate_ok(auth.client_ip(request)):
+        if not auth._rate_ok(auth.client_ip(request)):
             raise HTTPException(429, auth.t("err.rate"))
         state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
         # Welche Anwendung gemeint ist, entscheidet sich HIER und wandert in den Flow-Satz —
@@ -716,7 +716,7 @@ def register_oidc_routes(router, auth):
             base_un, i = username, 1
             # Der Ausweichname muss in BEIDEN Namensräumen frei sein (Fund R4-12) — ein Name,
             # der die E-Mail eines bestehenden Kontos ist, besetzt dessen Login-Kennung.
-            while auth.kennung_vergeben(username):
+            while auth.identifier_taken(username):
                 i += 1
                 username = f"{base_un}{i}"
             try:
@@ -752,7 +752,7 @@ def register_oidc_routes(router, auth):
                 # Provider sie nicht belegte, bekommt sie, sobald er es tut — sofern sie frei ist.
                 # Gehört sie schon einem anderen Konto, bleibt es ohne (fail-closed, wie beim
                 # Anlegen); der Betreiber sieht die Zeile.
-                if auth.kennung_vergeben(mail, exclude_id=uid):
+                if auth.identifier_taken(mail, exclude_id=uid):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                "nachgetragen=0")
                 else:
@@ -804,7 +804,7 @@ def register_oidc_routes(router, auth):
         # client_ip statt der rohen Peer-IP — hinter einem Proxy ist der Peer der Proxy.
         ip, ua = auth.client_ip(request), request.headers.get("user-agent")
         token, ok, is_new = auth.apply_factor(request, uid, "oidc", ip, ua,
-                                              email_bestaetigt=mail_bestaetigt)
+                                              email_verified=mail_bestaetigt)
         # 4a: Das Refresh-Token merken — mit ihm fragt TinySesam den Provider regelmässig, ob die
         # Person noch darf (`oidc_session_refresh_minutes`). Ohne Refresh-Token geht das nicht.
         if tok.get("refresh_token"):
@@ -812,9 +812,9 @@ def register_oidc_routes(router, auth):
         # Der Provider hat für DIESE Anwendung zugestimmt — das wird an der Sitzung vermerkt.
         # Für jede andere Anwendung sagt dieser Vermerk nichts; dort fragt `/auth/forward`
         # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).
-        auth.vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
-        target = auth.login_redirect_after(request, token, uid,
-                                           auth.safe_next(flow.get("next") or "", request))
+        auth._vermerke_oidc_freigabe(token, ziel, rollen=_gruppen)
+        target = auth._login_redirect_after(request, token, uid,
+                                            auth.safe_next(flow.get("next") or "", request))
         resp = RedirectResponse(target, 303)
         if is_new:
             auth.set_cookie(resp, token)

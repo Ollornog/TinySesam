@@ -220,11 +220,11 @@ print("  Config-Sanity ok")
 # ---------- Kreuz-Kollision: der ConfigError trägt Feld und Besitzer (R4-12) ----------
 # Zugesagt im CHANGELOG unter „Für einbettende Apps": Der Meldungstext bleibt der von 0.18.x
 # („… ist bereits vergeben"), damit ein Aufrufer, der den Text prüft, an diesem Fix nicht bricht
-# — und unterscheiden lässt sich der Fall jetzt OHNE Textvergleich an `e.feld` und
-# `e.besitzer_id`. Beide Hälften der Zusage waren von keiner einzigen Zeile gedeckt: Mutation
-# M25 (die Attribute nicht mehr setzen) und M34 (Wortlaut zurück auf „… ist bereits als
-# Login-Kennung vergeben") liefen je mit 46/46 grün durch. `grep -rn "besitzer_id" tests/` fand
-# nichts. Genau die Zusage, die den Textvergleich ersetzen sollte, und genau der Textvergleich,
+# — und unterscheiden lässt sich der Fall jetzt OHNE Textvergleich an `e.field` und
+# `e.owner_id` (bis 0.21.x `e.feld`/`e.besitzer_id`). Beide Hälften der Zusage waren von keiner
+# einzigen Zeile gedeckt: Mutation M25 (die Attribute nicht mehr setzen) und M34 (Wortlaut zurück
+# auf „… ist bereits als Login-Kennung vergeben") liefen je mit 46/46 grün durch.
+# `grep -rn "besitzer_id" tests/` fand nichts. Genau die Zusage, die den Textvergleich ersetzen sollte, und genau der Textvergleich,
 # den sie retten sollte.
 from tinysesam import ConfigError  # noqa: E402
 
@@ -239,16 +239,16 @@ for kennung, mail, feld in (("chef@example.com", None, "username"),   # Name == 
         assert "bereits vergeben" in str(e), (
             f"{feld}: Wortlaut geändert ({str(e)!r}) — Aufrufer aus 0.18.x prüfen genau diesen "
             "Text, und der CHANGELOG sagt ihnen zu, dass er bleibt")
-        assert getattr(e, "feld", None) == feld, (
-            f"e.feld ist {getattr(e, 'feld', '<fehlt>')!r}, erwartet {feld!r} — ohne das Attribut "
+        assert getattr(e, "field", None) == feld, (
+            f"e.field ist {getattr(e, 'field', '<fehlt>')!r}, erwartet {feld!r} — ohne das Attribut "
             "bleibt der Textvergleich der einzige Weg, die beiden Fälle zu trennen")
-        assert getattr(e, "besitzer_id", None) == opfer_id, (
-            f"e.besitzer_id ist {getattr(e, 'besitzer_id', '<fehlt>')!r}, erwartet {opfer_id}")
+        assert getattr(e, "owner_id", None) == opfer_id, (
+            f"e.owner_id ist {getattr(e, 'owner_id', '<fehlt>')!r}, erwartet {opfer_id}")
 # Gegenprobe: eine freie Kennung wirft nicht — sonst wäre „wirft immer" auch grün.
 frei_id = auth.create_user("frei", email="frei@example.com")
 assert frei_id and auth.store.get_user(frei_id)["username"] == "frei"
 os.unlink(db)
-print("  Kreuz-Kollision: Wortlaut bleibt, e.feld/e.besitzer_id benennen den Fall ok")
+print("  Kreuz-Kollision: Wortlaut bleibt, e.field/e.owner_id benennen den Fall ok")
 
 # ---------- Der Sperr-Topf faltet wie find_user — auch NFKC und IDNA ----------
 # Die Konto-Schwelle gegen verteiltes Raten zählt unter `norm_kennung()`. Das war strip + lower;
@@ -291,7 +291,7 @@ print(f"  Sperr-Topf: {len(varianten) + 4} Schreibweisen, die find_user demselbe
 auth.set_security("rate_limit_max", 1000)
 app_k = FastAPI()
 app_k.include_router(auth.router())
-DECKEL = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")
+DECKEL = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")
 geprueft = 0
 for i in range(DECKEL + 25):
     ci = TestClient(app_k, client=(f"198.51.100.{i + 1}", 40000))
@@ -303,7 +303,7 @@ r = TestClient(app_k, client=("192.0.2.200", 40000)).post(
     "/auth/login", data={"username": basis, "password": "Richtiges-Passwort-42x"}, follow_redirects=False)
 assert r.status_code == 429, f"die Konto-Schwelle hat bei {geprueft} Versuchen nicht gegriffen: {r.status_code}"
 # Aufheben trifft denselben Topf: gezählt wurde unter der gefalteten Adresse.
-assert auth.sperre_aufheben(opfer_id) == geprueft
+assert auth.lift_lockout(opfer_id) == geprueft
 os.unlink(db)
 print(f"  Sperr-Topf über die Route: {geprueft} geprüft, dann zu (Konto-Schwelle {DECKEL}) ok")
 
@@ -354,14 +354,14 @@ print("  H-13: delete_user räumt die Versuche auch unter NFKC-/IDNA-gefalteter 
 auth, c, db = build()
 auth.set_security("rate_limit_max", 1000)
 voll_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
-# Neu anlegen lässt sich der Namensvetter nicht mehr (`kennung_vergeben` fragt den Topf, seit
+# Neu anlegen lässt sich der Namensvetter nicht mehr (`identifier_taken` fragt den Topf, seit
 # G12c weist auch der Store ihn ab) — er kommt aus einem Bestand von vorher, deshalb als rohes
 # INSERT ohne Topf, wie von einem fremden Schreiber.
 from tinysesam.store import jetzt as _jetzt  # noqa: E402
 clara_id = auth.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
                             ("clara", "clara", _jetzt())).lastrowid
 auth.set_password(clara_id, "Clara-Ascii-2026x")
-fehl = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
+fehl = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
 for i in range(fehl):
     login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
 r = login(TestClient(c.app, client=("192.0.2.50", 40000)), "clara", "Clara-Ascii-2026x")

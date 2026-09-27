@@ -107,7 +107,7 @@ tok_x = re.search(r"/auth/reset\?token=([\w\-]+)", post_x[0]).group(1)
 r = cx.post("/auth/reset", data={"token": tok_x, "password": "frisches-passwort"},
             follow_redirects=False)
 assert r.status_code == 303
-assert ax.check_password("ohne", "frisches-passwort")
+assert ax._check_password("ohne", "frisches-passwort")
 os.remove(db_x)
 ok("Passwort-Reset funktioniert ohne Magic-Link (Kopplung gelöst)")
 
@@ -124,7 +124,7 @@ ok("nach Reset: altes Passwort ungültig, neues gültig")
 # derselben 429 — bis das Fenster ablief oder ein Admin `tinysesam unlock` fuhr. Der Reset
 # prüft die Sperre nicht (unabhängiger Weg, H-10) und hebt jetzt die Passwort-Sperre auf. Die
 # TOTP-Fehlversuche bleiben: Ein Postfach beweist den zweiten Faktor nicht.
-# (Mutationsprobe: `sperre_aufheben` in `reset_submit` streichen → 429 statt 303.)
+# (Mutationsprobe: `lift_lockout` in `reset_submit` streichen → 429 statt 303.)
 db_s = os.path.join(tempfile.mkdtemp(), "t.db")
 post_s = []
 a_s = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_s, cookie_secure=False,
@@ -135,9 +135,9 @@ a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
 app_s = FastAPI()
 app_s.include_router(a_s.router())
 c_s = TestClient(app_s, headers={"Accept": "text/html"})
-for _ in range(a_s.sec("max_login_attempts")):
+for _ in range(a_s._sec("max_login_attempts")):
     assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "vergessen"}).status_code == 401
-a_s.record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
+a_s._record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
 assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
     "Vorbedingung: das Konto ist gesperrt"
 c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
@@ -152,9 +152,9 @@ assert r.status_code == 303, f"nach dem Reset weiter gesperrt: {r.status_code}"
 ok("R4-13/H-10: der Reset läuft an der Sperre vorbei und hebt sie auf")
 # Der Login oben war vollständig und hat damit ohnehin alles geräumt (R7-1); gemessen wird der
 # Reset deshalb am Zähler direkt, mit einem frischen Fehlgriff je Methode.
-a_s.record_login("gesperrt", "testclient", False, "password")
-a_s.record_login("gesperrt", "testclient", False, "totp")
-weg = a_s.sperre_aufheben(a_s.store.get_user_by_name("gesperrt")["id"], methoden=("password",))
+a_s._record_login("gesperrt", "testclient", False, "password")
+a_s._record_login("gesperrt", "testclient", False, "totp")
+weg = a_s.lift_lockout(a_s.store.get_user_by_name("gesperrt")["id"], methods=("password",))
 assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
     "der Reset räumt auch Fehlversuche am zweiten Faktor"
 assert any("fehlversuche_verworfen=" in (z["detail"] or "") for z in a_s.store.recent_audit(20)
@@ -206,7 +206,7 @@ cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
 zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
 assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
-assert ("recovery_code_used", {"verbleibend": 3}) in ereig_r, ereig_r
+assert ("recovery_code_used", {"remaining": 3}) in ereig_r, ereig_r
 seite = cr.get("/auth/account").text
 assert "Nur noch 3 Recovery-Codes" in seite, "die Kontoseite nennt den knappen Rest nicht"
 auth_r.generate_recovery_codes(uid_r)
@@ -281,7 +281,7 @@ finally:
     _security.seclog.removeHandler(_haken_r)
 ok("Fund 4: POST /auth/reset mit totem Token → token_invalid im Audit + „failed verification“ (wie der GET)")
 auth_r.totp_disable(uid_r)
-assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
+assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_deleted": 4}), ereig_r[-1]
 os.remove(db_r)
 
 # ---------- H-4: kein Reset-Link für ein reines SSO-Konto ----------

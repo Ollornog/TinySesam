@@ -190,7 +190,7 @@ ok("csrf_enabled=False → issue_csrf() setzt gar kein Cookie")
 # ---------- C. Ressourcen-Cookie ----------
 auth, _ = baue()
 resp = Response()
-auth.unlock_resource(_FakeReq(), resp, "fotos")
+auth._unlock_resource(_FakeReq(), resp, "fotos")
 gesetzt = gesetzte_cookies(resp)
 assert "__Host-tinysesam_runlock" in gesetzt
 verstoesse = headers.pruefe_cookie_flags(gesetzt, ERWARTUNG)
@@ -234,7 +234,7 @@ for kw, erwartet in (({}, True), ({"cookie_samesite": "strict"}, True),
     resp = Response()
     a.set_cookie(resp, "tok123")
     a.issue_csrf(resp)
-    a.unlock_resource(_FakeReq(), resp, "fotos")
+    a._unlock_resource(_FakeReq(), resp, "fotos")
     gesetzt = gesetzte_cookies(resp)
     assert set(gesetzt) == set(namen), (kw, gesetzt.keys())
     # Jedes `__Host-`-Cookie so, wie der Browser es annimmt — auch das CSRF-Cookie neben einer

@@ -270,7 +270,7 @@ r.check("G5: login_path mit dem Präfix der base_url → Warnung", "login_path='
 # (Mutationsproben: `render_page` ersetzt den Platzhalter nicht → „kein Platzhalter" rot;
 #  `_praefix` ohne base_url-Pfad → G2 rot; forward_login_url wieder mit base+login_path → G1 rot;
 #  Ersatz auch bei eigenen Templates → G3 rot; safe_next ohne Platzhalter-Prüfung → G3 rot;
-#  `pfad` gibt den Pfad unverändert zurück → Umleitungen rot; `_praefix` ohne Formprüfung →
+#  `browser_path` gibt den Pfad unverändert zurück → Umleitungen rot; `_praefix` ohne Formprüfung →
 #  letzte Prüfung rot; `safe_next` ohne request → „ohne next" rot.)
 
 sys.exit(r.done())

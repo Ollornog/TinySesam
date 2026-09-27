@@ -268,7 +268,7 @@ SECURITY_DEFAULTS = {
 #: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
 #:
 #: Ohne Grenzen legte ein Tippfehler im Panel die Instanz still, und zwar dauerhaft: Mit
-#: `rate_limit_max=0` weist `rate_ok` jede Anmeldung ab — auch die der Administratorin, die den
+#: `rate_limit_max=0` weist `_rate_ok` jede Anmeldung ab — auch die der Administratorin, die den
 #: Wert zurückdrehen müsste. Der Wert steht in der Datenbank und überlebt jeden Neustart. Ebenso
 #: `max_login_attempts=0` (jedes Konto gilt sofort als gesperrt) oder ein `lockout_window_sec`
 #: von Jahren. Die Untergrenzen halten den Betrieb am Leben, die Obergrenzen den Schutz:
@@ -346,7 +346,7 @@ def haertung_lesen(store, key: str) -> int:
     """Eine Härtungs-Schwelle aus der Datenbank lesen, wie sie gilt: der Wert aus dem Panel oder
     die Vorgabe, immer innerhalb von `SECURITY_GRENZEN`.
 
-    Der EINE Leseweg für `TinySesam.sec()` und das CLI (`tinysesam passwd`). Das CLI las
+    Der EINE Leseweg für `TinySesam._sec()` und das CLI (`tinysesam passwd`). Das CLI las
     `password_min_length` bis T-13 roh: Ein Altwert aus einer Fassung ohne Grenzen (4, 0) galt im
     Web als 8, offline weiter als 4 — und `passwd` setzte ein Passwort, das jede Web-Setzstelle
     ablehnt. Zwei Lesewege laufen auseinander, und der schwächere entscheidet.
@@ -369,12 +369,12 @@ def haertung_lesen(store, key: str) -> int:
         return wert
 
 # Methoden aus `login_attempt`, die KEIN Anmeldeversuch sind und deshalb nicht in den
-# Login-Lockout (`is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
+# Login-Lockout (`_is_locked`) zählen dürfen — und daneben der Riegel, der jede von ihnen
 # STATTDESSEN bremst.
 #
 # Warum überhaupt: Die Alt-Passwort-Abfrage der Kontoseite, die Step-up-Bestätigung und die
 # Bereichs-PIN verbuchen ihre Fehlversuche in derselben Tabelle wie der Login (R4-10 — sonst
-# wären sie stille Orakel). `is_locked` zählte aber methodenblind, und damit sperrten fünf
+# wären sie stille Orakel). `_is_locked` zählte aber methodenblind, und damit sperrten fünf
 # Tippfehler auf der EIGENEN Kontoseite die Anmeldung für 15 Minuten — abtragen konnte der
 # Nutzer sie durch nichts, denn ein Erfolg räumt nur die Fehlversuche derselben Methode weg.
 # Hinter NAT reichten drei Kollegen mit je fünf Tippfehlern, um einem völlig unbeteiligten
@@ -385,17 +385,17 @@ def haertung_lesen(store, key: str) -> int:
 # sie aus dem Login-Lockout — ohne eigenen Topf wäre sie damit unbegrenzt ratbar. Deshalb
 # steht der Ersatz daneben, `NICHT_LOGIN_METHODEN` wird daraus abgeleitet (eine Methode ohne
 # Riegel lässt sich gar nicht erst eintragen), und ein Test hält die Tabelle gegen die
-# Methoden, mit denen der Router `record_login()` wirklich ruft.
+# Methoden, mit denen der Router `_record_login()` wirklich ruft.
 #
 # Bewusst eine **Ausnahmeliste**, keine Positivliste der Login-Methoden: Eine neue
 # Anmeldemethode zählt damit von sich aus mit. Eine vergessene Zeile kostet hier Bequemlichkeit
 # (eine Sperre zählt strenger als nötig), eine vergessene Zeile in einer Positivliste hätte ein
 # Loch im Lockout gekostet.
 EIGENE_SPERRE = {
-    "password_change": "is_password_change_locked",
-    "reauth": "is_reauth_locked",
-    "resource": "is_resource_locked",
-    "totp_setup": "is_totp_setup_locked",
+    "password_change": "_is_password_change_locked",
+    "reauth": "_is_reauth_locked",
+    "resource": "_is_resource_locked",
+    "totp_setup": "_is_totp_setup_locked",
 }
 
 NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)

@@ -124,7 +124,7 @@ db = os.path.join(tempfile.mkdtemp(), "t.db")
 auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
 if importlib.util.find_spec("redis"):
     assert isinstance(auth.rl, security.RedisRateLimiter)
-    assert auth.rate_ok("ip") is True   # Redis down → Rückfall, der erste Aufruf geht durch
+    assert auth._rate_ok("ip") is True   # Redis down → Rückfall, der erste Aufruf geht durch
     ok("redis_url + redis-Paket → RedisRateLimiter (Redis down → In-Memory-Rückfall)")
 else:
     assert isinstance(auth.rl, security.RateLimiter)
@@ -136,7 +136,7 @@ class CountingLimiter:
     def allow(self, key, mx, win): self.calls += 1; return self.calls <= 2
 
 auth.set_rate_limiter(CountingLimiter())
-assert auth.rate_ok("ip") and auth.rate_ok("ip") and not auth.rate_ok("ip")
+assert auth._rate_ok("ip") and auth._rate_ok("ip") and not auth._rate_ok("ip")
 ok("set_rate_limiter: eigenes Backend wird genutzt")
 os.remove(db)
 

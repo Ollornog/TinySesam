@@ -86,9 +86,9 @@ _store_src = read("tinysesam", "store.py")
 _busy = int(re.search(r"^    BUSY_TIMEOUT_MS = ([\d_]+)", _store_src, re.M).group(1).replace("_", ""))
 assert f"**{_busy // 1000} s**" in betrieb, f"BETRIEB.md nennt nicht die echte Wartezeit ({_busy} ms)"
 assert re.search(r'^HEALTH_PATH = "/healthz"', read("tinysesam", "gateway.py"), re.M) and "/healthz" in betrieb
-_ident = re.search(r"^    IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
+_ident = re.search(r"^    _IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
 _faktoren = re.findall(r'"(\w+)"', _ident)
-assert len(_faktoren) >= 6, f"IDENTIFYING nicht gelesen: {_faktoren}"
+assert len(_faktoren) >= 6, f"_IDENTIFYING nicht gelesen: {_faktoren}"
 _fehlend = [f for f in _faktoren if f"(`{f}`" not in betrieb]
 assert not _fehlend, f"BETRIEB.md: Anmeldeweg ohne Zeile in der Stärke-Tabelle: {_fehlend}"
 print(f"  docs/BETRIEB.md: Wartezeit {_busy // 1000} s, /healthz und alle {len(_faktoren)} "
@@ -1026,19 +1026,54 @@ _sys2.path.insert(0, ROOT)
 from tinysesam import TinySesamConfig as _TSC  # noqa: E402
 assert _zahl == len(_dc_fields(_TSC)), (f"KONFIGURATION.md führt {_zahl} Felder, "
                                         f"TinySesamConfig hat {len(_dc_fields(_TSC))}")
-print(f"  Konfigurations-Nachschlag: {_zahl} Felder, jedes erklärt, Abzug aktuell")
+# Die Stufe (0.22.0): Fast jedes Feld ist A; wer davon abweicht, trägt es in seiner Zeile — sonst
+# läse jemand den Grabstein `totp_required` als Zusage bis 1.0.
+import json as _json_k  # noqa: E402
+_feldstufen = {n: e.get("stufe") for n, e in
+               _json_k.loads(_lies("tests/api_surface.json"))["TinySesamConfig.felder"].items()}
+_nicht_a = sorted(n for n, st in _feldstufen.items() if st != "A")
+assert _nicht_a, "kein Feld ausserhalb der Stufe A — `totp_required` ist B (PO-Entscheid 2026-09-26)"
+for _feld in _nicht_a:
+    assert f"**Stufe {_feldstufen[_feld]}.**" in _zeile(_feld), _zeile(_feld)
+print(f"  Konfigurations-Nachschlag: {_zahl} Felder, jedes erklärt, Abzug aktuell, "
+      f"{len(_nicht_a)} ausserhalb der Stufe A markiert")
 
 # ---------- API-Nachschlag: jede eingefrorene Methode erklärt, Abzug aktuell ----------
 # 68 der 105 eingefrorenen Methoden kamen in keiner Doku vor. Wer TinySesam einbettet, sah eine
 # Zusage („diese Oberfläche bleibt stabil") ohne eine Stelle, an der steht, was sie enthält.
 _api = subprocess.run([sys.executable, "scripts/_api_doku.py", "--dry-run"],
                       cwd=ROOT, capture_output=True, text=True)
-assert _api.returncode == 0, "API.md ist veraltet — `python3 scripts/_api_doku.py` fahren"
+assert _api.returncode == 0, ("API.md ist veraltet oder der Generator weist etwas ab — "
+                              "`python3 scripts/_api_doku.py` fahren\n" + _api.stderr[-400:])
 _apidoc = _lies("API.md")
-# Methoden `### \`name(…)\``, Properties `### \`name\` — Property …` (seit 0.20.1 eingefroren).
-_leer = _re.findall(r"^### `([a-z_][a-z0-9_]*)(?:\(|` — Property).*\n\n—$", _apidoc, _re.M)
-assert not _leer, ("Diese Methoden haben keinen Docstring:\n  " + "\n  ".join(_leer[:8]) +
+# Methoden `### \`name(…)\``, Properties `### \`name\` — Property …` (seit 0.20.1 eingefroren),
+# seit 0.22.0 auch die Konstanten (`— Konstante`, Erklärung aus dem `#:`-Block darüber), die
+# Methoden von TinySesamConfig und die Funktions-Exporte: Mit der Einstufung stehen sie als
+# Zusage (A) oder Baustein (B) da — ohne Erklärung wären sie eine Zusage ins Blaue. Ebenso die
+# Methoden und Konstanten der Ergebnistypen `LoginResult` und `PasswordChangeResult` (0.22.0); ihre
+# Felder prüft der Generator.
+_leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|LoginResult\.|PasswordChangeResult\.)?"
+                    r"[A-Za-z_][A-Za-z0-9_]*)"
+                    r"(?:\(|` — Property|` — Konstante).*\n\n—$", _apidoc, _re.M)
+assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommentar:\n  " +
+                   "\n  ".join(_leer[:8]) +
                    "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
+# Gegliedert nach Stufe (PO-Entscheid 2026-09-26): A und B mit Erklärung, C als Tabelle alter
+# Name → Ersatz (seit 0.22.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
+for _kopf in ("## A · Methoden von `TinySesam`", "## B · Methoden von `TinySesam`",
+              "## A · Ergebnis der Anmelde-Bausteine: `tinysesam.LoginResult`",
+              "## A · Ergebnis des Passwortwechsels: `tinysesam.PasswordChangeResult`",
+              "## C · Veraltet — fällt mit 1.0 weg"):
+    assert _kopf in _apidoc, f"API.md ohne Abschnitt {_kopf!r} — Gliederung nach Stufe fehlt"
+_c_zeilen = _re.findall(r"^\| `(\w+)` \| (?:Methode|Konstante) \| (.+) \|$", _apidoc, _re.M)
+_c_namen = sorted(n for _b, _ee in _json_k.loads(_lies("tests/api_surface.json")).items()
+                  for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("stufe") == "C")
+assert sorted(n for n, _ in _c_zeilen) == _c_namen, (
+    "API.md: die Tabelle „Veraltet“ deckt sich nicht mit den C-Namen der Ablage")
+assert all(_e.strip() and not _e.startswith("—") for _, _e in _c_zeilen), (
+    "API.md: ein C-Name ohne Ersatz in der Tabelle „Veraltet“")
+assert "## Ohne Stufe" not in _apidoc, ("API.md führt Namen ohne Stufe — "
+                                        "`python tests/test_api_surface.py` sagt, welche")
 print(f"  API-Nachschlag: {_apidoc.count(chr(10) + '### ')} Einträge, jeder erklärt, Abzug aktuell")
 
 # ---------- Zahlen in den READMEs: nachgemessen statt nachgepflegt ----------
@@ -1070,6 +1105,32 @@ for _datei, _text in _readmes.items():
     assert set(_gefunden) == {_spanne}, (
         f"{_datei} nennt Python {sorted(set(_gefunden))}, die CI fährt {_spanne}")
 print(f"  READMEs: Python-Spanne stimmt ({_spanne})")
+
+# ---------- Die Stufen der öffentlichen API stehen in beiden READMEs (0.22.0) ----------
+# PO-Entscheid 2026-09-26: B ist „öffentlich für Fortgeschrittene" mit eigenem Doku-Abschnitt.
+# Ein B-Baustein, den keine README nennt, ist eine Zusage, von der niemand weiss — genau der
+# Zustand, den die Einstufung beenden sollte (68 von 105 Methoden standen nirgends). Die Liste
+# kommt aus der Ablage des Wächters, nicht aus diesem Test: Ein neuer B-Name macht ihn rot, bis
+# er in beiden READMEs steht. Die Felder stehen vollständig in KONFIGURATION.md.
+import json as _json  # noqa: E402
+_ablage = _json.loads(_lies("tests/api_surface.json"))
+_stufe_b = sorted({n for _bereich, _eintraege in _ablage.items() if _bereich != "TinySesamConfig.felder"
+                   for n, _e in _eintraege.items() if isinstance(_e, dict) and _e.get("stufe") == "B"})
+assert len(_stufe_b) >= 50, f"nur {len(_stufe_b)} B-Namen in tests/api_surface.json — Ablage kaputt?"
+for _datei, _kopf in (("README.md", "### For advanced use (tier B)"),
+                      ("i18n/README.de.md", "### Für Fortgeschrittene (Stufe B)")):
+    _text = _readmes[_datei]
+    assert _kopf in _text, f"{_datei}: Abschnitt {_kopf!r} fehlt"
+    _abschnitt = _text.split(_kopf, 1)[1].split("\n## ", 1)[0]
+    _fehlt = [n for n in _stufe_b if not _re.search(rf"`[^`\n]*\b{_re.escape(n)}\b[^`\n]*`", _abschnitt)]
+    assert not _fehlt, (f"{_datei}: Diese B-Bausteine fehlen im Abschnitt {_kopf!r}:\n  " +
+                        "\n  ".join(_fehlt))
+    # Was Abnehmer nutzen, aber bis 0.21.0 in keiner README stand (Stufe A).
+    for _name in ("create_user", "has_role", "current_user", "session_cookie_name",
+                  "dataclasses.fields(TinySesamConfig)"):
+        assert _name in _text, f"{_datei} dokumentiert {_name} nicht"
+print(f"  READMEs: alle {len(_stufe_b)} B-Bausteine im Abschnitt für Fortgeschrittene, "
+      "die genutzten A-Namen dokumentiert")
 
 # ---------- Die Installation führt mit dem gepinnten PyPI-Weg ----------
 # Bis 2026-09-27 verbot dieser Wächter jede PyPI-Zeile („erst ab 1.0") — da lag TinySesam seit

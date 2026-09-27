@@ -79,12 +79,17 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 - **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
   gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
-  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
-  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` und
-  `username_changed` (`details={"alt": …, "neu": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
-  (`details={"anzahl": n, "grund": …}` — gesammelt beim Reset, bei der Sperre, beim Admin-Passwort
-  und bei `sessions/revoke` mit `scope=all`). Das gilt auch für Änderungen, die ein Admin im Panel an
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled` (`details={"recovery_codes_deleted": n}`),
+  `recovery_codes_generated` (`details={"count": n}`), `recovery_code_used`
+  (`details={"remaining": n}`), `passkey_added` (`details={"name": …}`), `passkey_removed`
+  (`details={"passkey_id": n}`), `api_key_created` (`details={"key_id": n, "name": …}`),
+  `api_key_revoked` (`details={"key_id": n}`), `email_changed` und `username_changed`
+  (`details={"old": …, "new": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
+  (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
+  `admin_password_reset`, `sessions_revoked` — gesammelt beim Reset, bei der Sperre, beim
+  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Die Schlüssel in `details` und die
+  Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
+  deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die
   Mail also so schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. Ausser dem Hook
   verschickt TinySesam mit konfiguriertem Versand genau eine Mail selbst: den Hinweis an die
@@ -95,9 +100,18 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
-  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` und danach
-  `verify_totp(uid, now())` mit demselben Code rufen, werden seit T-13 rot — dort mit dem Code des
+  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` rufen und sich danach mit
+  demselben Code anmelden (`POST /auth/totp`), werden seit T-13 rot — dort mit dem Code des
   vorigen Zeitschritts bestätigen.
+- **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
+  `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
+  und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau
+  wie die eingebauten Routen — die rufen sie. Die inneren Prüfer (`_check_password`,
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` und ihre alten Namen der Stufe C) tun
+  nichts davon: Auf einer Seite darüber lassen sich Passwörter, PINs und Codes so schnell raten, wie
+  der Server antwortet — ohne Zeile für fail2ban. Ein API-Key zählt bei diesen
+  Bausteinen nie: Er bestätigt keinen Menschen und ändert kein Passwort (`POST /auth/password`
+  weist ihn seit 0.22.0 mit 403 ab).
 
 ## Unterstützte Versionen
 

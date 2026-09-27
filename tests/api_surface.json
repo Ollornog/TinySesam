@@ -1,353 +1,1622 @@
 {
+  "LoginResult": {
+    "REASONS": {
+      "sig": "('ok', 'missing', 'invalid', 'locked', 'locked_series', 'ratelimit', 'directory_down', 'method_disabled', 'no_session')",
+      "stufe": "A"
+    },
+    "done": {
+      "sig": "bool = False",
+      "stufe": "A"
+    },
+    "message": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "next_factor": {
+      "sig": "Optional[str] = None",
+      "stufe": "A"
+    },
+    "next_url": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "ok": {
+      "sig": "bool = <pflicht>",
+      "stufe": "A"
+    },
+    "reason": {
+      "sig": "str = <pflicht>",
+      "stufe": "A"
+    },
+    "redirect": {
+      "sig": "()",
+      "stufe": "A"
+    },
+    "set_cookie": {
+      "sig": "(response) -> 'None'",
+      "stufe": "A"
+    },
+    "status": {
+      "sig": "int = <pflicht>",
+      "stufe": "A"
+    },
+    "user": {
+      "sig": "Optional[dict] = None",
+      "stufe": "A"
+    }
+  },
+  "PasswordChangeResult": {
+    "REASONS": {
+      "sig": "('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')",
+      "stufe": "A"
+    },
+    "api_keys_active": {
+      "sig": "int = 0",
+      "stufe": "A"
+    },
+    "message": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "ok": {
+      "sig": "bool = <pflicht>",
+      "stufe": "A"
+    },
+    "reason": {
+      "sig": "str = <pflicht>",
+      "stufe": "A"
+    },
+    "status": {
+      "sig": "int = <pflicht>",
+      "stufe": "A"
+    }
+  },
   "TinySesam": {
-    "add_messages": "(lang, mapping: 'dict')",
-    "admin_claim_fehlgriff": "(username, ip) -> 'None'",
-    "admin_claim_token": "() -> 'Optional[str]'",
-    "admin_exists": "() -> 'bool'",
-    "admin_router": "()",
-    "all_security": "() -> 'dict'",
-    "andere_sitzungen": "(request, user, token: 'Optional[str]' = None) -> 'int'",
-    "api_key_art": "(key) -> 'str'",
-    "apply_factor": "(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
-    "apply_idp_groups": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
-    "audit": "(event, username=None, ip=None, detail=None)",
-    "change_username": "(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'",
-    "check_ldap": "(username, password) -> 'Optional[dict]'",
-    "check_password": "(username, password) -> 'Optional[dict]'",
-    "check_pin": "(username, pin) -> 'Optional[dict]'",
-    "check_resource": "(name, secret) -> 'bool'",
-    "check_saml": "(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'",
-    "client_ip": "(request: 'Request') -> 'str'",
-    "complete_mfa": "(token)",
-    "complete_totp": "(token) -> 'Optional[str]'",
-    "confirm_email_change": "(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'",
-    "consume_admin_claim": "(token, user) -> 'bool'",
-    "create_api_key": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'",
-    "create_invite": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
-    "create_magic_token": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
-    "create_service": "(username, roles=None, display_name=None) -> 'int'",
-    "create_user": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'",
-    "csrf_rotieren": "(response) -> 'str'",
-    "csrf_token": "(request: 'Optional[Request]' = None) -> 'str'",
-    "current_user": "(request) -> 'Optional[dict]'",
-    "darf_mfa_einrichten": "(user_id: 'int', jetzt: 'Optional[int]' = None) -> 'bool'",
-    "delete_user": "(user_id: 'int') -> 'bool'",
-    "disable_pin": "(user_id)",
-    "ensure_admin": "(username, password) -> 'bool'",
-    "ensure_csrf": "(request: 'Request', response: 'Response') -> 'str'",
-    "factor_entry": "(step, nxt='/') -> 'str'",
-    "find_user": "(identifier) -> 'Optional[dict]'",
-    "flow_cookie_name": "(basis: 'str') -> 'str'",
-    "foederation_nachbinden": "(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'",
-    "forward_login_url": "(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'",
-    "forward_response_headers": "(user) -> 'dict'",
-    "forwarded_url": "(request: 'Request') -> 'str'",
-    "gc": "(attempts_older_than_sec: 'int' = 86400) -> 'dict'",
-    "generate_recovery_codes": "(user_id, n=None) -> 'list'",
-    "get_user": "(user_id) -> 'Optional[dict]'",
-    "grant_mfa_enrollment": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
-    "has_pin": "(user_id) -> 'bool'",
-    "has_role": "(user, role, admin_implies=None) -> 'bool'",
-    "install_error_pages": "(app)",
-    "install_https": "(app)",
-    "is_admin": "(user) -> 'bool'",
-    "is_locked": "(username, ip) -> 'bool'",
-    "is_password_change_locked": "(username, ip) -> 'bool'",
-    "is_pin_locked": "(username, ip, login: 'bool' = True) -> 'bool'",
-    "is_reauth_locked": "(username, ip) -> 'bool'",
-    "is_resource_locked": "(username, ip) -> 'bool'",
-    "is_secure": "(request: 'Request') -> 'bool'",
-    "is_totp_setup_locked": "(username, ip) -> 'bool'",
-    "issue_csrf": "(response: 'Response') -> 'str'",
-    "json_body": "(request: 'Request') -> 'dict'",
-    "kennung_vergeben": "(kennung, exclude_id=None) -> 'Optional[dict]'",
-    "list_api_keys": "(user_id)",
-    "list_resource_secrets": "()",
-    "loese_fremde_bindung": "(quelle: 'str', user_id: 'int') -> 'int'",
-    "login_fresh": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
-    "login_redirect_after": "(request, token, user_id, nxt)",
-    "logout": "(request, response)",
-    "magic_url": "(raw, base_url, purpose='login') -> 'str'",
-    "mail_configured": "() -> 'bool'",
-    "maybe_promote_admin": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
-    "mfa_pending": "(user_id) -> 'bool'",
-    "nach_der_antwort": "(resp, auftrag, bei_ueberlauf=None)",
-    "next_login_step": "(user_id, done)",
-    "nur_foederiert": "(user_id) -> 'bool'",
-    "oidc_anwendung": "(url_oder_host: 'str') -> 'str'",
-    "oidc_freigabe_gueltig": "(token_hash: 'str', client: 'str') -> 'tuple'",
-    "own_events": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
-    "passwort_mangel": "(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
-    "peek_magic": "(raw, purpose=None) -> 'Optional[dict]'",
-    "pending_user": "(request) -> 'Optional[dict]'",
-    "pfad": "(request: 'Optional[Request]', pfad: 'str') -> 'str'",
-    "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
-    "purge_demo": "() -> 'int'",
-    "rate_ok": "(ip, login: 'bool' = True) -> 'bool'",
-    "record_login": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)",
-    "recovery_codes_remaining": "(user_id) -> 'int'",
-    "redeem_magic": "(raw, purpose=None) -> 'Optional[dict]'",
-    "remove_passkey": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
-    "remove_resource_secret": "(name)",
-    "render_page": "(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'",
-    "request_email_change": "(user_id, neu, base_url)",
-    "require": "(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)",
-    "require_admin": "(request: 'Request') -> 'dict'",
-    "require_csrf": "(request: 'Request', submitted)",
-    "require_mfa": "(request: 'Request') -> 'dict'",
-    "require_public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
-    "require_resource": "(name: 'str')",
-    "require_role": "(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)",
-    "require_session": "(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'",
-    "require_user": "(request: 'Request') -> 'dict'",
-    "resource_unlocked": "(request: 'Request', name) -> 'bool'",
-    "revoke_api_key": "(key_id, user_id=None)",
-    "revoke_mfa_enrollment": "(user_id: 'int') -> 'None'",
-    "rotate_session": "(request, response) -> 'Optional[str]'",
-    "router": "()",
-    "safe_next": "(next_: 'str', request: 'Optional[Request]' = None) -> 'str'",
-    "sec": "(key) -> 'int'",
-    "seed_demo": "() -> 'None'",
-    "send_login_link": "(email, base_url, next='/') -> 'bool'",
-    "send_mail": "(to, subject, text, html=None)",
-    "send_password_reset": "(email, base_url) -> 'bool'",
-    "send_signup_notice": "(email, base_url) -> 'bool'",
-    "send_verify_email": "(user_id, email, base_url) -> 'bool'",
-    "session_from_request": "(request)",
-    "session_user": "(request) -> 'Optional[dict]'",
-    "set_cookie": "(response, token, remember: 'Optional[bool]' = None)",
-    "set_mailer": "(fn)",
-    "set_owner": "(user_id: 'int', owner: 'bool') -> 'bool'",
-    "set_password": "(user_id, password)",
-    "set_pin": "(user_id, pin)",
-    "set_rate_limiter": "(limiter)",
-    "set_resource_secret": "(name, secret, kind='pin', label=None)",
-    "set_roles": "(user_id, roles)",
-    "set_security": "(key, value)",
-    "set_template": "(name, fn)",
-    "sicherheitsereignis": "(ereignis: 'str', user_id, **details) -> 'None'",
-    "sperre_aufheben": "(user_id, methoden=None) -> 'int'",
-    "start_session": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
-    "stepup_fresh": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
-    "stepup_options": "(user) -> 'list[str]'",
-    "t": "(key, **fmt) -> 'str'",
-    "token_abgewiesen": "(zweck, request: 'Optional[Request]' = None, grund='ungueltig')",
-    "totp_begin": "(user_id)",
-    "totp_confirm": "(user_id, code) -> 'bool'",
-    "totp_disable": "(user_id)",
-    "totp_enrollment_user": "(request) -> 'Optional[dict]'",
-    "unlock_resource": "(request: 'Request', response, name)",
-    "user_roles": "(user) -> 'list'",
-    "verify_api_key": "(key)",
-    "verify_csrf": "(request: 'Request', submitted) -> 'bool'",
-    "verify_recovery_code": "(user_id, code) -> 'bool'",
-    "verify_totp": "(user_id, code) -> 'bool'",
-    "verify_user_password": "(user_id, password) -> 'bool'",
-    "verify_user_pin": "(user_id, pin) -> 'bool'",
-    "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
-    "version": "() -> 'str'",
-    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'"
+    "add_messages": {
+      "sig": "(lang, mapping: 'dict')",
+      "stufe": "A"
+    },
+    "admin_claim_fehlgriff": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'None'",
+      "stufe": "C",
+      "ziel": "_admin_claim_fehlgriff"
+    },
+    "admin_claim_token": {
+      "sig": "() -> 'Optional[str]'",
+      "stufe": "B"
+    },
+    "admin_exists": {
+      "sig": "() -> 'bool'",
+      "stufe": "B"
+    },
+    "admin_router": {
+      "sig": "()",
+      "stufe": "A"
+    },
+    "after_response": {
+      "sig": "(resp, task, on_overflow=None)",
+      "stufe": "B"
+    },
+    "all_security": {
+      "sig": "() -> 'dict'",
+      "stufe": "B"
+    },
+    "api_key_kind": {
+      "sig": "(key) -> 'str'",
+      "stufe": "B"
+    },
+    "apply_factor": {
+      "sig": "(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
+      "stufe": "B"
+    },
+    "apply_idp_groups": {
+      "sig": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
+      "stufe": "B"
+    },
+    "audit": {
+      "sig": "(event, username=None, ip=None, detail=None)",
+      "stufe": "B"
+    },
+    "browser_path": {
+      "sig": "(request: 'Optional[Request]', path: 'str') -> 'str'",
+      "stufe": "B"
+    },
+    "change_password": {
+      "sig": "(request: 'Request', current: 'str', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
+      "stufe": "A"
+    },
+    "change_username": {
+      "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
+      "stufe": "A"
+    },
+    "check_ldap": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, password) -> 'Optional[dict]'",
+      "stufe": "C",
+      "ziel": "_check_ldap"
+    },
+    "check_password": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, password) -> 'Optional[dict]'",
+      "stufe": "C",
+      "ziel": "_check_password"
+    },
+    "check_pin": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, pin) -> 'Optional[dict]'",
+      "stufe": "C",
+      "ziel": "_check_pin"
+    },
+    "check_resource": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(name, secret) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_check_resource"
+    },
+    "check_saml": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'",
+      "stufe": "C",
+      "ziel": "_check_saml"
+    },
+    "client_ip": {
+      "sig": "(request: 'Request') -> 'str'",
+      "stufe": "B"
+    },
+    "complete_mfa": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(token) -> 'Optional[str]'",
+      "stufe": "C",
+      "ziel": "complete_totp"
+    },
+    "complete_totp": {
+      "sig": "(token) -> 'Optional[str]'",
+      "stufe": "A"
+    },
+    "confirm_email_change": {
+      "sig": "(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'",
+      "stufe": "B"
+    },
+    "confirm_password": {
+      "sig": "(request: 'Request', password: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "confirm_pin": {
+      "sig": "(request: 'Request', pin: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "confirm_totp": {
+      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "consume_admin_claim": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(token, user) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_consume_admin_claim"
+    },
+    "count_other_sessions": {
+      "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
+      "stufe": "B"
+    },
+    "create_api_key": {
+      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
+      "stufe": "A"
+    },
+    "create_invite": {
+      "sig": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
+      "stufe": "A"
+    },
+    "create_magic_token": {
+      "sig": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
+      "stufe": "B"
+    },
+    "create_service": {
+      "sig": "(username, roles=None, display_name=None) -> 'int'",
+      "stufe": "A"
+    },
+    "create_user": {
+      "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, self_chosen_name: 'bool' = False) -> 'int'",
+      "stufe": "A"
+    },
+    "csrf_rotieren": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(response) -> 'str'",
+      "stufe": "C",
+      "ziel": "_csrf_rotieren"
+    },
+    "csrf_token": {
+      "sig": "(request: 'Optional[Request]' = None) -> 'str'",
+      "stufe": "A"
+    },
+    "current_user": {
+      "sig": "(request) -> 'Optional[dict]'",
+      "stufe": "A"
+    },
+    "delete_user": {
+      "sig": "(user_id: 'int') -> 'bool'",
+      "stufe": "B"
+    },
+    "disable_pin": {
+      "sig": "(user_id)",
+      "stufe": "B"
+    },
+    "ensure_admin": {
+      "sig": "(username, password) -> 'bool'",
+      "stufe": "A"
+    },
+    "ensure_csrf": {
+      "sig": "(request: 'Request', response: 'Response') -> 'str'",
+      "stufe": "A"
+    },
+    "factor_entry": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(step, nxt='/') -> 'str'",
+      "stufe": "C",
+      "ziel": "_factor_entry"
+    },
+    "federated_only": {
+      "sig": "(user_id) -> 'bool'",
+      "stufe": "B"
+    },
+    "federation_bind_existing": {
+      "sig": "(source: 'str', *, mapping: 'Optional[dict]' = None, apply: 'bool' = False) -> 'dict'",
+      "stufe": "A"
+    },
+    "federation_unbind": {
+      "sig": "(source: 'str', user_id: 'int') -> 'int'",
+      "stufe": "A"
+    },
+    "find_user": {
+      "sig": "(identifier) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "flow_cookie_name": {
+      "sig": "(base: 'str') -> 'str'",
+      "stufe": "B"
+    },
+    "forward_login_url": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'",
+      "stufe": "C",
+      "ziel": "_forward_login_url"
+    },
+    "forward_response_headers": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user) -> 'dict'",
+      "stufe": "C",
+      "ziel": "_forward_response_headers"
+    },
+    "forwarded_url": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request: 'Request') -> 'str'",
+      "stufe": "C",
+      "ziel": "_forwarded_url"
+    },
+    "gc": {
+      "sig": "(attempts_older_than_sec: 'int' = 86400) -> 'dict'",
+      "stufe": "A"
+    },
+    "generate_recovery_codes": {
+      "sig": "(user_id, n=None) -> 'list'",
+      "stufe": "B"
+    },
+    "get_user": {
+      "sig": "(user_id) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "grant_mfa_enrollment": {
+      "sig": "(user_id: 'int', minutes: 'int' = 60) -> 'int'",
+      "stufe": "A"
+    },
+    "has_pin": {
+      "sig": "(user_id) -> 'bool'",
+      "stufe": "B"
+    },
+    "has_role": {
+      "sig": "(user, role, admin_implies=None) -> 'bool'",
+      "stufe": "A"
+    },
+    "identifier_taken": {
+      "sig": "(identifier, exclude_id=None) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "install_error_pages": {
+      "sig": "(app)",
+      "stufe": "A"
+    },
+    "install_https": {
+      "sig": "(app)",
+      "stufe": "A"
+    },
+    "is_admin": {
+      "sig": "(user) -> 'bool'",
+      "stufe": "A"
+    },
+    "is_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_locked"
+    },
+    "is_password_change_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_password_change_locked"
+    },
+    "is_pin_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip, login: 'bool' = True) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_pin_locked"
+    },
+    "is_reauth_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_reauth_locked"
+    },
+    "is_resource_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_resource_locked"
+    },
+    "is_secure": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request: 'Request') -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_secure"
+    },
+    "is_totp_setup_locked": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_is_totp_setup_locked"
+    },
+    "issue_csrf": {
+      "sig": "(response: 'Response') -> 'str'",
+      "stufe": "A"
+    },
+    "json_body": {
+      "sig": "(request: 'Request') -> 'dict'",
+      "stufe": "B"
+    },
+    "lift_lockout": {
+      "sig": "(user_id, methods=None) -> 'int'",
+      "stufe": "B"
+    },
+    "list_api_keys": {
+      "sig": "(user_id) -> 'list'",
+      "stufe": "B"
+    },
+    "list_resource_secrets": {
+      "sig": "()",
+      "stufe": "B"
+    },
+    "login_fresh": {
+      "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
+      "stufe": "A"
+    },
+    "login_password": {
+      "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "login_pin": {
+      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "login_redirect_after": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request, token, user_id, nxt)",
+      "stufe": "C",
+      "ziel": "_login_redirect_after"
+    },
+    "login_totp": {
+      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "logout": {
+      "sig": "(request, response)",
+      "stufe": "A"
+    },
+    "magic_url": {
+      "sig": "(raw, base_url, purpose='login') -> 'str'",
+      "stufe": "B"
+    },
+    "mail_configured": {
+      "sig": "() -> 'bool'",
+      "stufe": "B"
+    },
+    "maybe_promote_admin": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_maybe_promote_admin"
+    },
+    "mfa_enrollment_allowed": {
+      "sig": "(user_id: 'int', now: 'Optional[int]' = None) -> 'bool'",
+      "stufe": "B"
+    },
+    "mfa_pending": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_mfa_pending"
+    },
+    "next_login_step": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id, done)",
+      "stufe": "C",
+      "ziel": "_next_login_step"
+    },
+    "oidc_anwendung": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(url_oder_host: 'str') -> 'str'",
+      "stufe": "C",
+      "ziel": "_oidc_anwendung"
+    },
+    "oidc_freigabe_gueltig": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(token_hash: 'str', client: 'str') -> 'tuple'",
+      "stufe": "C",
+      "ziel": "_oidc_freigabe_gueltig"
+    },
+    "own_events": {
+      "sig": "(user_id: 'int', limit: 'int' = 20) -> 'list'",
+      "stufe": "B"
+    },
+    "password_policy_error": {
+      "sig": "(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
+      "stufe": "B"
+    },
+    "peek_magic": {
+      "sig": "(raw, purpose=None) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "pending_user": {
+      "sig": "(request) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "public_base": {
+      "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
+      "stufe": "A"
+    },
+    "purge_demo": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "() -> 'int'",
+      "stufe": "C",
+      "ziel": "_purge_demo"
+    },
+    "rate_ok": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(ip, login: 'bool' = True) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_rate_ok"
+    },
+    "record_login": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)",
+      "stufe": "C",
+      "ziel": "_record_login"
+    },
+    "recovery_codes_remaining": {
+      "sig": "(user_id) -> 'int'",
+      "stufe": "B"
+    },
+    "redeem_magic": {
+      "sig": "(raw, purpose=None) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "remove_passkey": {
+      "sig": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
+      "stufe": "B"
+    },
+    "remove_resource_secret": {
+      "sig": "(name)",
+      "stufe": "B"
+    },
+    "render_page": {
+      "sig": "(template, status=200, request: 'Optional[Request]' = None, **ctx) -> 'Response'",
+      "stufe": "A"
+    },
+    "request_email_change": {
+      "sig": "(user_id, new_email, base_url)",
+      "stufe": "B"
+    },
+    "require": {
+      "sig": "(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)",
+      "stufe": "A"
+    },
+    "require_admin": {
+      "sig": "(request: 'Request') -> 'dict'",
+      "stufe": "A"
+    },
+    "require_csrf": {
+      "sig": "(request: 'Request', submitted)",
+      "stufe": "A"
+    },
+    "require_mfa": {
+      "sig": "(request: 'Request') -> 'dict'",
+      "stufe": "A"
+    },
+    "require_public_base": {
+      "sig": "(request: 'Optional[Request]' = None, candidate: 'str' = '') -> 'str'",
+      "stufe": "B"
+    },
+    "require_resource": {
+      "sig": "(name: 'str')",
+      "stufe": "A"
+    },
+    "require_role": {
+      "sig": "(*roles, mfa: 'bool' = False, admin_implies: 'Optional[bool]' = None)",
+      "stufe": "A"
+    },
+    "require_session": {
+      "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'dict'",
+      "stufe": "A"
+    },
+    "require_user": {
+      "sig": "(request: 'Request') -> 'dict'",
+      "stufe": "A"
+    },
+    "resource_unlocked": {
+      "sig": "(request: 'Request', name) -> 'bool'",
+      "stufe": "B"
+    },
+    "revoke_api_key": {
+      "sig": "(key_id, user_id=None)",
+      "stufe": "A"
+    },
+    "revoke_mfa_enrollment": {
+      "sig": "(user_id: 'int') -> 'None'",
+      "stufe": "B"
+    },
+    "rotate_session": {
+      "sig": "(request, response) -> 'Optional[str]'",
+      "stufe": "A"
+    },
+    "router": {
+      "sig": "()",
+      "stufe": "A"
+    },
+    "safe_next": {
+      "sig": "(next_: 'str', request: 'Optional[Request]' = None) -> 'str'",
+      "stufe": "A"
+    },
+    "sec": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(key) -> 'int'",
+      "stufe": "C",
+      "ziel": "_sec"
+    },
+    "seed_demo": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "() -> 'None'",
+      "stufe": "C",
+      "ziel": "_seed_demo"
+    },
+    "send_login_link": {
+      "sig": "(email, base_url, next='/') -> 'bool'",
+      "stufe": "A"
+    },
+    "send_mail": {
+      "sig": "(to, subject, text, html=None)",
+      "stufe": "B"
+    },
+    "send_password_reset": {
+      "sig": "(email, base_url) -> 'bool'",
+      "stufe": "A"
+    },
+    "send_signup_notice": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(email, base_url) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_send_signup_notice"
+    },
+    "send_verify_email": {
+      "sig": "(user_id, email, base_url) -> 'bool'",
+      "stufe": "A"
+    },
+    "session_from_request": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request)",
+      "stufe": "C",
+      "ziel": "_session_from_request"
+    },
+    "session_user": {
+      "sig": "(request) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "set_cookie": {
+      "sig": "(response, token, remember: 'Optional[bool]' = None)",
+      "stufe": "A"
+    },
+    "set_disabled": {
+      "sig": "(user_id: 'int', disabled: 'bool') -> 'bool'",
+      "stufe": "A"
+    },
+    "set_mailer": {
+      "sig": "(fn)",
+      "stufe": "A"
+    },
+    "set_owner": {
+      "sig": "(user_id: 'int', owner: 'bool') -> 'bool'",
+      "stufe": "A"
+    },
+    "set_password": {
+      "sig": "(user_id, password)",
+      "stufe": "A"
+    },
+    "set_pin": {
+      "sig": "(user_id, pin)",
+      "stufe": "A"
+    },
+    "set_rate_limiter": {
+      "sig": "(limiter)",
+      "stufe": "B"
+    },
+    "set_resource_secret": {
+      "sig": "(name, secret, kind='pin', label=None)",
+      "stufe": "A"
+    },
+    "set_roles": {
+      "sig": "(user_id, roles)",
+      "stufe": "B"
+    },
+    "set_security": {
+      "sig": "(key, value)",
+      "stufe": "A"
+    },
+    "set_template": {
+      "sig": "(name, fn)",
+      "stufe": "A"
+    },
+    "sicherheitsereignis": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(ereignis: 'str', user_id, **details) -> 'None'",
+      "stufe": "C",
+      "ziel": "_sicherheitsereignis"
+    },
+    "start_session": {
+      "sig": "(user_id, method, ip=None, ua=None, remember: 'bool' = True) -> 'tuple[str, bool]'",
+      "stufe": "A"
+    },
+    "stepup_fresh": {
+      "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
+      "stufe": "B"
+    },
+    "stepup_options": {
+      "sig": "(user) -> 'list[str]'",
+      "stufe": "A"
+    },
+    "t": {
+      "sig": "(key, **fmt) -> 'str'",
+      "stufe": "B"
+    },
+    "token_abgewiesen": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(zweck, request: 'Optional[Request]' = None, grund='ungueltig')",
+      "stufe": "C",
+      "ziel": "_token_abgewiesen"
+    },
+    "totp_begin": {
+      "sig": "(user_id)",
+      "stufe": "B"
+    },
+    "totp_confirm": {
+      "sig": "(user_id, code) -> 'bool'",
+      "stufe": "B"
+    },
+    "totp_disable": {
+      "sig": "(user_id)",
+      "stufe": "A"
+    },
+    "totp_enrollment_user": {
+      "sig": "(request) -> 'Optional[dict]'",
+      "stufe": "B"
+    },
+    "unlock_resource": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request: 'Request', response, name)",
+      "stufe": "C",
+      "ziel": "_unlock_resource"
+    },
+    "user_roles": {
+      "sig": "(user) -> 'list'",
+      "stufe": "B"
+    },
+    "verify_api_key": {
+      "sig": "(key)",
+      "stufe": "B"
+    },
+    "verify_csrf": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(request: 'Request', submitted) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_verify_csrf"
+    },
+    "verify_recovery_code": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id, code) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_verify_recovery_code"
+    },
+    "verify_totp": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id, code) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_verify_totp"
+    },
+    "verify_user_password": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id, password) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_verify_user_password"
+    },
+    "verify_user_pin": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(user_id, pin) -> 'bool'",
+      "stufe": "C",
+      "ziel": "_verify_user_pin"
+    },
+    "vermerke_oidc_freigabe": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(token: 'str', client: 'str', rollen=None) -> 'None'",
+      "stufe": "C",
+      "ziel": "_vermerke_oidc_freigabe"
+    },
+    "version": {
+      "sig": "() -> 'str'",
+      "stufe": "B"
+    },
+    "versuch_beginnen": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "sig": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'",
+      "stufe": "C",
+      "ziel": "_versuch_beginnen"
+    }
   },
   "TinySesam.eigenschaften": {
-    "csrf_cookie_name": "() -> 'str'",
-    "resource_cookie_name": "() -> 'str'",
-    "session_cookie_name": "() -> 'str'"
+    "csrf_cookie_name": {
+      "sig": "() -> 'str'",
+      "stufe": "A"
+    },
+    "resource_cookie_name": {
+      "sig": "() -> 'str'",
+      "stufe": "A"
+    },
+    "session_cookie_name": {
+      "sig": "() -> 'str'",
+      "stufe": "A"
+    }
   },
   "TinySesam.konstanten": {
-    "APIKEY_AUDIT_FENSTER": "3600",
-    "DEMO_USERS": "('demo', 'demoadmin')",
-    "FOEDERIERTE_FAKTOREN": "('oidc', 'saml')",
-    "FOEDERIERTE_QUELLEN": "('ldap', 'saml')",
-    "FORWARD_HEADERS_DEFAULT": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}",
-    "IDENTIFYING": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
-    "MFA_ENROLLMENT_ARTEN": "('first_login', 'grace', 'strict')",
-    "NACHBINDUNG_GRUENDE": "{'adresse_als_name': 'der Name sagt nichts über die Person (Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht vertraut wird)', 'kennung_ungueltig': 'die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)', 'konflikt': 'die Kennung gehört schon einem anderen Konto', 'anders_gebunden': 'das Konto trägt schon eine andere Kennung', 'name_selbst_gewaehlt': 'der Name ist selbst gewählt (Registrierung oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst', 'name_aus_quelle': 'der Name stammt aus einer anderen Quelle, die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst', 'frist': 'die Frist für die Bindung über den Namen ist abgelaufen (federation_name_binding_days)'}",
-    "NAME_MAX": "150",
-    "RECOVERY_BYTES": "7",
-    "RECOVERY_WARNSCHWELLE": "3",
-    "SEITEN": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')",
-    "SERIE_PIN_FOLGE": "'pin_folge'",
-    "SICHERHEITSEREIGNISSE": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')",
-    "TOKEN_PATHS": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
+    "APIKEY_AUDIT_FENSTER": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "3600",
+      "ziel": "_APIKEY_AUDIT_FENSTER"
+    },
+    "DEMO_USERS": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "('demo', 'demoadmin')",
+      "ziel": "_DEMO_USERS"
+    },
+    "FEDERATED_SOURCES": {
+      "stufe": "B",
+      "wert": "('ldap', 'saml')"
+    },
+    "FOEDERIERTE_FAKTOREN": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "('oidc', 'saml')",
+      "ziel": "_FOEDERIERTE_FAKTOREN"
+    },
+    "FORWARD_HEADERS_DEFAULT": {
+      "stufe": "A",
+      "wert": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}"
+    },
+    "IDENTIFYING": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
+      "ziel": "_IDENTIFYING"
+    },
+    "MFA_ENROLLMENT_MODES": {
+      "stufe": "B",
+      "wert": "('first_login', 'grace', 'strict')"
+    },
+    "NAME_BINDING_REFUSALS": {
+      "stufe": "B",
+      "wert": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
+    },
+    "NAME_MAX": {
+      "stufe": "B",
+      "wert": "150"
+    },
+    "PAGES": {
+      "stufe": "B",
+      "wert": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+    },
+    "RECOVERY_BYTES": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "7",
+      "ziel": "_RECOVERY_BYTES"
+    },
+    "RECOVERY_WARNSCHWELLE": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "3",
+      "ziel": "_RECOVERY_WARNSCHWELLE"
+    },
+    "SECURITY_EVENTS": {
+      "stufe": "A",
+      "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"
+    },
+    "SERIE_PIN_FOLGE": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "'pin_folge'",
+      "ziel": "_SERIE_PIN_FOLGE"
+    },
+    "TOKEN_PATHS": {
+      "stufe": "B",
+      "wert": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
+    }
   },
   "TinySesamConfig.felder": {
-    "account_enabled": "bool = True",
-    "admin_claim_token_file": "str = ''",
-    "admin_claim_ttl_min": "int = 60",
-    "admin_enabled": "bool = True",
-    "admin_identifiers": "list[str] = []",
-    "admin_implies_roles": "bool = True",
-    "admin_path": "str = '/auth/admin'",
-    "admin_require_mfa": "bool = False",
-    "admin_ui_enabled": "bool = True",
-    "allow_signup": "bool = False",
-    "apikey_allow_unlimited": "bool = False",
-    "apikey_default_days": "int = 90",
-    "apikey_enabled": "bool = True",
-    "audit_ip_pseudonymize": "bool = False",
-    "audit_retention_days": "int = 0",
-    "available_roles": "list[str] = []",
-    "base_url": "str = ''",
-    "brand_css": "str = ''",
-    "brand_footer": "object = ''",
-    "brand_head": "str = ''",
-    "brand_header": "object = ''",
-    "brand_icon": "str = ''",
-    "cookie_domain": "str = ''",
-    "cookie_host_prefix": "bool = True",
-    "cookie_path": "str = '/'",
-    "cookie_samesite": "str = 'lax'",
-    "cookie_secure": "bool = True",
-    "csp": "str = 'strict'",
-    "csrf_cookie": "str = 'tinysesam_csrf'",
-    "csrf_enabled": "bool = True",
-    "csrf_origin_check": "bool = True",
-    "db_path": "str = 'tinysesam.db'",
-    "demo_mode": "bool = False",
-    "demo_password": "str = 'demo1234'",
-    "demo_pin": "str = '1234'",
-    "email_change_ttl_min": "int = 60",
-    "federation_email_confirm": "bool = True",
-    "federation_name_binding_days": "int = 30",
-    "federation_require_stable_id": "bool = False",
-    "forward_auth_enabled": "bool = False",
-    "forward_headers": "dict = {}",
-    "group_match": "str = 'exact'",
-    "https_mode": "str = 'warn'",
-    "lang": "str = 'en'",
-    "ldap_allow_plaintext": "bool = False",
-    "ldap_allowed_groups": "list[str] = []",
-    "ldap_attr_email": "str = 'mail'",
-    "ldap_attr_email_verified": "str = ''",
-    "ldap_attr_id": "str = ''",
-    "ldap_attr_name": "str = 'cn'",
-    "ldap_auto_create": "bool = True",
-    "ldap_bind_dn": "str = ''",
-    "ldap_bind_password": "str = ''",
-    "ldap_email_trusted": "bool = False",
-    "ldap_enabled": "bool = False",
-    "ldap_group_attr": "str = 'memberOf'",
-    "ldap_group_role_map": "dict = {}",
-    "ldap_start_tls": "bool = False",
-    "ldap_tls_ca_file": "str = ''",
-    "ldap_tls_verify": "bool = True",
-    "ldap_url": "str = ''",
-    "ldap_user_base": "str = ''",
-    "ldap_user_dn_template": "str = ''",
-    "ldap_user_filter": "str = '(uid={username})'",
-    "login_chain": "list[str] = []",
-    "login_chain_strict": "bool = True",
-    "login_identifier": "str = 'both'",
-    "login_path": "str = '/auth/login'",
-    "login_redirect": "str = '/'",
-    "logout_redirect": "str = '/auth/login'",
-    "magiclink_enabled": "bool = False",
-    "magiclink_require_second_factor": "bool = True",
-    "magiclink_ttl_min": "int = 15",
-    "mail_subject_prefix": "str = ''",
-    "mfa_enrollment": "str = 'first_login'",
-    "mfa_enrollment_grace_days": "int = 7",
-    "notify_login_failures": "bool = True",
-    "oidc_allowed_groups": "list[str] = []",
-    "oidc_apikey_confirm_days": "int = 30",
-    "oidc_auto_create": "bool = True",
-    "oidc_callback_path": "str = '/auth/oidc/callback'",
-    "oidc_client_id": "str = ''",
-    "oidc_client_secret": "str = ''",
-    "oidc_clients": "dict = {}",
-    "oidc_email_verified_default": "bool = False",
-    "oidc_enabled": "bool = False",
-    "oidc_group_claim": "str = 'groups'",
-    "oidc_group_role_map": "dict = {}",
-    "oidc_issuer": "str = ''",
-    "oidc_name": "str = 'SSO'",
-    "oidc_revalidate_minutes": "int = 0",
-    "oidc_rp_logout": "bool = False",
-    "oidc_scopes": "str = 'openid profile email'",
-    "oidc_session_max_unverified_hours": "int = 25",
-    "oidc_session_refresh_minutes": "int = 15",
-    "origin": "str = 'http://localhost:8000'",
-    "passkey_enabled": "bool = False",
-    "passkey_user_verification": "str = 'required'",
-    "password_blocklist_file": "str = ''",
-    "password_enabled": "bool = True",
-    "password_reset_enabled": "bool = False",
-    "pin_enabled": "bool = False",
-    "pin_login": "bool = True",
-    "pin_min_length": "int = 4",
-    "recovery_code_count": "int = 10",
-    "redis_url": "str = ''",
-    "remember_me_enabled": "bool = True",
-    "resource_cookie": "str = 'tinysesam_runlock'",
-    "resource_locks_enabled": "bool = False",
-    "resource_unlock_ttl_hours": "int = 12",
-    "rp_id": "str = 'localhost'",
-    "rp_name": "str = 'TinySesam'",
-    "saml_acs_url": "str = ''",
-    "saml_allowed_groups": "list[str] = []",
-    "saml_attr_email": "str = 'email'",
-    "saml_attr_email_verified": "str = ''",
-    "saml_attr_groups": "str = 'groups'",
-    "saml_attr_id": "str = ''",
-    "saml_attr_name": "str = 'displayName'",
-    "saml_attr_username": "str = ''",
-    "saml_auto_create": "bool = True",
-    "saml_email_trusted": "bool = False",
-    "saml_enabled": "bool = False",
-    "saml_group_role_map": "dict = {}",
-    "saml_idp_entity_id": "str = ''",
-    "saml_idp_sso_url": "str = ''",
-    "saml_idp_x509cert": "str = ''",
-    "saml_name": "str = 'SAML'",
-    "saml_sp_entity_id": "str = ''",
-    "secrets_key_file": "str = ''",
-    "security_log": "str = ''",
-    "self_service_email_change": "bool = True",
-    "self_service_username_change": "bool = True",
-    "session_cookie": "str = 'tinysesam_session'",
-    "session_idle_minutes": "int = 480",
-    "session_idle_minutes_remember": "int = 0",
-    "session_rotation_grace_sec": "int = 10",
-    "session_ttl_hours": "int = 168",
-    "session_ttl_transient_hours": "int = 12",
-    "signup_default_roles": "list[str] = []",
-    "signup_invite_only": "bool = False",
-    "signup_require_email": "bool = True",
-    "signup_verify_email": "bool = False",
-    "smtp_ca_file": "str = ''",
-    "smtp_from": "str = ''",
-    "smtp_host": "str = ''",
-    "smtp_password": "str = ''",
-    "smtp_port": "int = 587",
-    "smtp_ssl": "bool = False",
-    "smtp_starttls": "bool = True",
-    "smtp_timeout": "int = 15",
-    "smtp_user": "str = ''",
-    "stepup_max_age_sec": "int = 900",
-    "stepup_methods": "list[str] = []",
-    "stepup_strict": "bool = False",
-    "totp_enabled": "bool = True",
-    "totp_required": "bool = False",
-    "trusted_proxies": "list[str] = ['127.0.0.1/32', '::1/128']",
-    "trusted_redirect_hosts": "list[str] = []"
+    "account_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "admin_claim_token_file": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "admin_claim_ttl_min": {
+      "feld": "int = 60",
+      "stufe": "A"
+    },
+    "admin_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "admin_identifiers": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "admin_implies_roles": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "admin_path": {
+      "feld": "str = '/auth/admin'",
+      "stufe": "A"
+    },
+    "admin_require_mfa": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "admin_ui_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "allow_signup": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "apikey_allow_unlimited": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "apikey_default_days": {
+      "feld": "int = 90",
+      "stufe": "A"
+    },
+    "apikey_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "audit_ip_pseudonymize": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "audit_retention_days": {
+      "feld": "int = 0",
+      "stufe": "A"
+    },
+    "available_roles": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "base_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "brand_css": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "brand_footer": {
+      "feld": "object = ''",
+      "stufe": "A"
+    },
+    "brand_head": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "brand_header": {
+      "feld": "object = ''",
+      "stufe": "A"
+    },
+    "brand_icon": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "cookie_domain": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "cookie_host_prefix": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "cookie_path": {
+      "feld": "str = '/'",
+      "stufe": "A"
+    },
+    "cookie_samesite": {
+      "feld": "str = 'lax'",
+      "stufe": "A"
+    },
+    "cookie_secure": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "csp": {
+      "feld": "str = 'strict'",
+      "stufe": "A"
+    },
+    "csrf_cookie": {
+      "feld": "str = 'tinysesam_csrf'",
+      "stufe": "A"
+    },
+    "csrf_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "csrf_origin_check": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "db_path": {
+      "feld": "str = 'tinysesam.db'",
+      "stufe": "A"
+    },
+    "demo_mode": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "demo_password": {
+      "feld": "str = 'demo1234'",
+      "stufe": "A"
+    },
+    "demo_pin": {
+      "feld": "str = '1234'",
+      "stufe": "A"
+    },
+    "email_change_ttl_min": {
+      "feld": "int = 60",
+      "stufe": "A"
+    },
+    "federation_email_confirm": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "federation_name_binding_days": {
+      "feld": "int = 30",
+      "stufe": "A"
+    },
+    "federation_require_stable_id": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "forward_auth_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "forward_headers": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "group_match": {
+      "feld": "str = 'exact'",
+      "stufe": "A"
+    },
+    "https_mode": {
+      "feld": "str = 'warn'",
+      "stufe": "A"
+    },
+    "lang": {
+      "feld": "str = 'en'",
+      "stufe": "A"
+    },
+    "ldap_allow_plaintext": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "ldap_allowed_groups": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "ldap_attr_email": {
+      "feld": "str = 'mail'",
+      "stufe": "A"
+    },
+    "ldap_attr_email_verified": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_attr_id": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_attr_name": {
+      "feld": "str = 'cn'",
+      "stufe": "A"
+    },
+    "ldap_auto_create": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "ldap_bind_dn": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_bind_password": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_email_trusted": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "ldap_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "ldap_group_attr": {
+      "feld": "str = 'memberOf'",
+      "stufe": "A"
+    },
+    "ldap_group_role_map": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "ldap_start_tls": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "ldap_tls_ca_file": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_tls_verify": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "ldap_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_user_base": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_user_dn_template": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "ldap_user_filter": {
+      "feld": "str = '(uid={username})'",
+      "stufe": "A"
+    },
+    "login_chain": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "login_chain_strict": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "login_identifier": {
+      "feld": "str = 'both'",
+      "stufe": "A"
+    },
+    "login_path": {
+      "feld": "str = '/auth/login'",
+      "stufe": "A"
+    },
+    "login_redirect": {
+      "feld": "str = '/'",
+      "stufe": "A"
+    },
+    "logout_redirect": {
+      "feld": "str = '/auth/login'",
+      "stufe": "A"
+    },
+    "magiclink_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "magiclink_require_second_factor": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "magiclink_ttl_min": {
+      "feld": "int = 15",
+      "stufe": "A"
+    },
+    "mail_subject_prefix": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "mfa_enrollment": {
+      "feld": "str = 'first_login'",
+      "stufe": "A"
+    },
+    "mfa_enrollment_grace_days": {
+      "feld": "int = 7",
+      "stufe": "A"
+    },
+    "notify_login_failures": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "oidc_allowed_groups": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "oidc_apikey_confirm_days": {
+      "feld": "int = 30",
+      "stufe": "A"
+    },
+    "oidc_auto_create": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "oidc_callback_path": {
+      "feld": "str = '/auth/oidc/callback'",
+      "stufe": "A"
+    },
+    "oidc_client_id": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "oidc_client_secret": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "oidc_clients": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "oidc_email_verified_default": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "oidc_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "oidc_group_claim": {
+      "feld": "str = 'groups'",
+      "stufe": "A"
+    },
+    "oidc_group_role_map": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "oidc_issuer": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "oidc_name": {
+      "feld": "str = 'SSO'",
+      "stufe": "A"
+    },
+    "oidc_revalidate_minutes": {
+      "feld": "int = 0",
+      "stufe": "A"
+    },
+    "oidc_rp_logout": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "oidc_scopes": {
+      "feld": "str = 'openid profile email'",
+      "stufe": "A"
+    },
+    "oidc_session_max_unverified_hours": {
+      "feld": "int = 25",
+      "stufe": "A"
+    },
+    "oidc_session_refresh_minutes": {
+      "feld": "int = 15",
+      "stufe": "A"
+    },
+    "origin": {
+      "feld": "str = 'http://localhost:8000'",
+      "stufe": "A"
+    },
+    "passkey_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "passkey_user_verification": {
+      "feld": "str = 'required'",
+      "stufe": "A"
+    },
+    "password_blocklist_file": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "password_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "password_reset_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "pin_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "pin_login": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "pin_min_length": {
+      "feld": "int = 4",
+      "stufe": "A"
+    },
+    "recovery_code_count": {
+      "feld": "int = 10",
+      "stufe": "A"
+    },
+    "redis_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "remember_me_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "resource_cookie": {
+      "feld": "str = 'tinysesam_runlock'",
+      "stufe": "A"
+    },
+    "resource_locks_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "resource_unlock_ttl_hours": {
+      "feld": "int = 12",
+      "stufe": "A"
+    },
+    "rp_id": {
+      "feld": "str = 'localhost'",
+      "stufe": "A"
+    },
+    "rp_name": {
+      "feld": "str = 'TinySesam'",
+      "stufe": "A"
+    },
+    "saml_acs_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_allowed_groups": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "saml_attr_email": {
+      "feld": "str = 'email'",
+      "stufe": "A"
+    },
+    "saml_attr_email_verified": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_attr_groups": {
+      "feld": "str = 'groups'",
+      "stufe": "A"
+    },
+    "saml_attr_id": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_attr_name": {
+      "feld": "str = 'displayName'",
+      "stufe": "A"
+    },
+    "saml_attr_username": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_auto_create": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "saml_email_trusted": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "saml_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "saml_group_role_map": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "saml_idp_entity_id": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_idp_sso_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_idp_x509cert": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "saml_name": {
+      "feld": "str = 'SAML'",
+      "stufe": "A"
+    },
+    "saml_sp_entity_id": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "secrets_key_file": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "security_log": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "self_service_email_change": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "self_service_username_change": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "session_cookie": {
+      "feld": "str = 'tinysesam_session'",
+      "stufe": "A"
+    },
+    "session_idle_minutes": {
+      "feld": "int = 480",
+      "stufe": "A"
+    },
+    "session_idle_minutes_remember": {
+      "feld": "int = 0",
+      "stufe": "A"
+    },
+    "session_rotation_grace_sec": {
+      "feld": "int = 10",
+      "stufe": "A"
+    },
+    "session_ttl_hours": {
+      "feld": "int = 168",
+      "stufe": "A"
+    },
+    "session_ttl_transient_hours": {
+      "feld": "int = 12",
+      "stufe": "A"
+    },
+    "signup_default_roles": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "signup_invite_only": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "signup_require_email": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "signup_verify_email": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "smtp_ca_file": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "smtp_from": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "smtp_host": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "smtp_password": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "smtp_port": {
+      "feld": "int = 587",
+      "stufe": "A"
+    },
+    "smtp_ssl": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "smtp_starttls": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "smtp_timeout": {
+      "feld": "int = 15",
+      "stufe": "A"
+    },
+    "smtp_user": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "stepup_max_age_sec": {
+      "feld": "int = 900",
+      "stufe": "A"
+    },
+    "stepup_methods": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    },
+    "stepup_strict": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
+    "totp_enabled": {
+      "feld": "bool = True",
+      "stufe": "A"
+    },
+    "totp_required": {
+      "feld": "bool = False",
+      "stufe": "B"
+    },
+    "trusted_proxies": {
+      "feld": "list[str] = ['127.0.0.1/32', '::1/128']",
+      "stufe": "A"
+    },
+    "trusted_redirect_hosts": {
+      "feld": "list[str] = []",
+      "stufe": "A"
+    }
   },
   "TinySesamConfig.methoden": {
-    "active_directory": "(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
-    "enabled_methods": "() -> 'list[str]'",
-    "entra_id": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
-    "local_accounts": "(**overrides)",
-    "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
-    "pin_als_erstfaktor": "() -> 'bool'",
-    "pruefen": "() -> 'list[str]'"
+    "active_directory": {
+      "sig": "(*, ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
+      "stufe": "A"
+    },
+    "enabled_methods": {
+      "sig": "() -> 'list[str]'",
+      "stufe": "B"
+    },
+    "entra_id": {
+      "sig": "(*, tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
+      "stufe": "A"
+    },
+    "local_accounts": {
+      "sig": "(**overrides)",
+      "stufe": "A"
+    },
+    "oidc_gateway": {
+      "sig": "(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
+      "stufe": "A"
+    },
+    "pin_as_first_factor": {
+      "sig": "() -> 'bool'",
+      "stufe": "B"
+    },
+    "validate": {
+      "sig": "() -> 'list[str]'",
+      "stufe": "B"
+    }
   },
-  "exporte": [
-    "ConfigError",
-    "MailNotConfigured",
-    "MissingExtra",
-    "StateError",
-    "TinySesam",
-    "TinySesamConfig",
-    "TinySesamError",
-    "current_version"
-  ]
+  "exporte": {
+    "ConfigError": {
+      "stufe": "A"
+    },
+    "LoginResult": {
+      "stufe": "A"
+    },
+    "MailNotConfigured": {
+      "stufe": "A"
+    },
+    "MissingExtra": {
+      "stufe": "A"
+    },
+    "PasswordChangeResult": {
+      "stufe": "A"
+    },
+    "StateError": {
+      "stufe": "A"
+    },
+    "TinySesam": {
+      "stufe": "A"
+    },
+    "TinySesamConfig": {
+      "stufe": "A"
+    },
+    "TinySesamError": {
+      "stufe": "A"
+    },
+    "current_version": {
+      "stufe": "B"
+    }
+  }
 }

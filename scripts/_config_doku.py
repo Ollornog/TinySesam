@@ -13,6 +13,7 @@ und, wenn keiner dasteht, die Kommentarzeilen direkt darüber.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -20,6 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 QUELLE = ROOT / "tinysesam" / "config.py"
 ZIEL = ROOT / "KONFIGURATION.md"
+#: Die Stufe je Feld (seit 0.22.0) steht beim Wächter der öffentlichen Oberfläche.
+ABLAGE = ROOT / "tests" / "api_surface.json"
 
 KOPF = """# Konfiguration — alle Felder von `TinySesamConfig`
 
@@ -36,6 +39,14 @@ Presets (`TinySesamConfig.local_accounts()`, `.oidc_gateway()`, …) setzen Bün
 einzelne lassen sich per `**overrides` überschreiben.
 
 """
+
+
+def stufen() -> dict:
+    """{feld: stufe} aus `tests/api_surface.json` — leer, wenn es die Datei nicht gibt."""
+    if not ABLAGE.exists():
+        return {}
+    felder = json.loads(ABLAGE.read_text(encoding="utf-8")).get("TinySesamConfig.felder", {})
+    return {n: e.get("stufe") for n, e in felder.items() if isinstance(e, dict)}
 
 
 def felder():
@@ -96,7 +107,16 @@ def bauen() -> str:
     for abschnitt, *_ in alle:
         je_abschnitt[abschnitt] = je_abschnitt.get(abschnitt, 0) + 1
 
-    teile = [KOPF]
+    # Die Stufe (PO-Entscheid 2026-09-26): Fast jedes Feld ist A. Markiert wird nur, was davon
+    # abweicht — in der Bedeutungsspalte, damit die Zeile weiter mit „| `name` |" beginnt.
+    stufe = stufen()
+    abweichend = sorted(n for _, n, *_ in alle if stufe.get(n) != "A")
+    teile = [KOPF, "**Stufe:** Jedes Feld gehört zur Stufe A — öffentlich, stabil ab 1.0 (siehe "
+                   "[API.md](API.md), „Drei Stufen“)"
+             + ("" if not abweichend else
+                ", ausser " + ", ".join(f"`{n}` ({stufe.get(n) or 'ohne Stufe'})"
+                                        for n in abweichend))
+             + ".\n"]
     aktuell = None
     for abschnitt, name, typ, vorgabe, beschreibung in alle:
         if not beschreibung and je_abschnitt[abschnitt] == 1:
@@ -107,6 +127,8 @@ def bauen() -> str:
         vor = vorgabe.replace("field(default_factory=lambda: ", "").replace("field(default_factory=", "")
         vor = vor.rstrip(")") if vor.endswith(")") and "(" not in vor[:-1] else vor
         text = beschreibung.replace("|", "\\|") or "—"
+        if stufe.get(name) != "A" and text != "—":
+            text = f"**Stufe {stufe.get(name) or '?'}.** {text}"
         teile.append(f"| `{name}` | `{typ}` | `{vor}` | {text} |\n")
     zahl = len(alle)
     teile.append(f"\n---\n\n{zahl} Felder, erzeugt aus `tinysesam/config.py`.\n")

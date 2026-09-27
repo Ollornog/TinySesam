@@ -122,11 +122,13 @@ class TinySesamConfig:
                                           # oder `tinysesam owner`).
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
-    # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
-    # Betreibers). Ein Pfad hier: TinySesam legt die Datei mit Rechten 0600 an und schreibt den
-    # Token hinein — der richtige Weg, wenn stderr im journal/in einer Sammelstelle landet.
+    # Wohin der Wert des Einmal-Tokens geschrieben wird. Ein Pfad hier: TinySesam legt die Datei
+    # mit Rechten 0600 an und schreibt den Token hinein. Leer = auf stderr, wenn stderr eine
+    # Konsole ist; sonst (Container, journal, Pipe) seit 0.22.0 nach `<db_path>.claim` (0600,
+    # nach dem Einlösen entfernt) — bis dahin stand er dort in `docker logs` (T-17). Ohne
+    # Datenbank-Datei (`:memory:`) bleibt nur stderr, und das Log sagt es.
     # Der Token steht NIE im security_log (das liest fail2ban, und logrotate hebt es auf).
-    admin_claim_token_file: str = ""      # z.B. /run/tinysesam/admin-claim.token
+    admin_claim_token_file: str = ""      # 0600-Datei für das Einmal-Token, z.B. /run/tinysesam/admin-claim.token; leer: stderr, wenn es eine Konsole ist, sonst `<db_path>.claim`
 
     # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
     demo_mode: bool = False           # Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv
@@ -327,8 +329,8 @@ class TinySesamConfig:
     #: bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an
     #: die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht
     #: (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber
-    #: bindet dann ausdrücklich: `auth.foederation_nachbinden(quelle)` (Bestand, Trockenlauf als
-    #: Vorgabe) oder `auth.loese_fremde_bindung(quelle, user_id)` (öffnet die Bindung für dieses
+    #: bindet dann ausdrücklich: `auth.federation_bind_existing(source)` (Bestand, Trockenlauf als
+    #: Vorgabe) oder `auth.federation_unbind(source, user_id)` (öffnet die Bindung für dieses
     #: Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht
     #: selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt).
     federation_name_binding_days: int = 30
@@ -654,7 +656,7 @@ class TinySesamConfig:
         # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
         return cls(**base)   # type: ignore[arg-type]
 
-    def pruefen(self) -> list[str]:
+    def validate(self) -> list[str]:
         """Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau geändert wurde.
 
         `TinySesam` prüft im Konstruktor und hält danach eine **Referenz** auf dieses Objekt:
@@ -672,7 +674,7 @@ class TinySesamConfig:
         return fehler + warnungen
 
     def _befunde(self) -> tuple[list[str], list[str]]:
-        """(Fehler, Warnungen) getrennt — `pruefen()` gibt beides in einer Liste zurück, und aus
+        """(Fehler, Warnungen) getrennt — `validate()` gibt beides in einer Liste zurück, und aus
         der liess sich nicht mehr lesen, was den Aufbau hätte scheitern lassen. `TinySesam.router()`
         braucht genau diese Unterscheidung (B3-14)."""
         from .konfigpruefung import pruefe
@@ -694,12 +696,12 @@ class TinySesamConfig:
 
     def enabled_methods(self) -> list[str]:
         """Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann
-        (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up
+        (`pin_as_first_factor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up
         nutzbar."""
         m = []
         if self.password_enabled:
             m.append("password")
-        if self.pin_als_erstfaktor():
+        if self.pin_as_first_factor():
             m.append("pin")
         if self.passkey_enabled:
             m.append("passkey")
@@ -711,7 +713,7 @@ class TinySesamConfig:
             m.append("magic")
         return m
 
-    def pin_als_erstfaktor(self) -> bool:
+    def pin_as_first_factor(self) -> bool:
         """Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne
         Sitzung?
 
