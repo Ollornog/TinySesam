@@ -31,7 +31,7 @@ from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
 from .store import (Store, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
-                    valid_email, versuchsfrist as _versuchsfrist)
+                    payload_lesen, valid_email, versuchsfrist as _versuchsfrist)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
 from . import passwords as _pw
@@ -785,19 +785,23 @@ class TinySesam:
         return self.create_user(username, is_service=True, roles=roles, display_name=display_name or username)
 
     def create_api_key(self, user_id, name=None, expires_days=None, roles=None,
-                       kind: str = "automat") -> dict:
+                       kind: str = "automation") -> dict:
         """Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
 
         **Zwei Arten** (R6-5), weil ein Key zwei ganz verschiedene Dinge sein kann:
 
-        * ``kind="automat"`` (Vorgabe) — ein Dienst, ein Skript, eine CI. Er arbeitet allein,
+        * ``kind="automation"`` (Vorgabe) — ein Dienst, ein Skript, eine CI. Er arbeitet allein,
           trägt aber **nie das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin
           verlangt. Bis 0.18.x war ein Key eines Admins eine vollständige Admin-Schreib-API,
           ohne zweiten Faktor und ohne CSRF-Schicht: Nutzer anlegen, `is_admin` setzen,
           Passwörter zurücksetzen. Ein abgeflossener CI-Key war damit die Instanz.
-        * ``kind="mensch"`` — ein Werkzeug, das ein Mensch selbst bedient. Er gilt **nur
+        * ``kind="human"`` — ein Werkzeug, das ein Mensch selbst bedient. Er gilt **nur
           zusammen mit einer gültigen Sitzung desselben Kontos**; dafür trägt er die vollen
           Rechte. Allein abgeflossen ist er wertlos.
+
+        Bis 0.21.x hiessen die Arten `"automat"` und `"mensch"`. Seit 0.22.0 gilt nur der
+        englische Name (ohne Alias, PO-Entscheid 2026-09-27) — ein alter wirft `ConfigError`, der
+        den neuen nennt. Gespeicherte Keys hat die Migration umgeschrieben (Schema 12).
 
         `expires_days` fehlt bei einem Automaten-Key nicht folgenlos: Dann greift
         `apikey_default_days` (Vorgabe 90). `expires_days=0` heisst „unbefristet" und braucht
@@ -811,19 +815,24 @@ class TinySesam:
         Key an** — ein Tippfehler in `roles` gibt also eine Ausnahme, keinen Key. Warum kein
         leerer Scope: Der Grund steht unten am Code, er kehrte die Wirkung ins Gegenteil.
 
-        Zurück kommt `{"id", "key", "prefix", "expires_at", "roles", "verworfene_rollen"}`.
-        `key` ist der Klartext und hier das einzige Mal zu sehen; `verworfene_rollen` nennt, was
-        der Schnitt entfernt hat (dieselbe Angabe steht im Audit-Eintrag).
+        Zurück kommt `{"id", "key", "prefix", "expires_at", "roles", "dropped_roles", "kind"}`.
+        `key` ist der Klartext und hier das einzige Mal zu sehen; `dropped_roles` nennt, was der
+        Schnitt entfernt hat (dieselbe Angabe steht im Audit-Eintrag, dort als
+        `verworfene_rollen=` — die Audit-Zeile bleibt, wie sie war; bis 0.21.x hiess auch der
+        Schlüssel hier so).
         Bis 2026-09-21 wurde die Liste ungeprüft übernommen, und beim Prüfen überschrieb sie die
         Rollen des Kontos. Jeder angemeldete Nutzer konnte sich damit über die Selbstbedienungs-Route
         `POST /auth/apikeys` beliebige Rollen ausstellen — unsichtbar, weil das Konto in der
         Datenbank rollenlos blieb. Im Forward-Auth-Betrieb ging die erfundene Rolle als Remote-Group
         an die nachgelagerte App.
         """
-        if kind not in ("automat", "mensch"):
+        if kind not in self._KEY_ARTEN:
+            neu_name = Store.KEY_ARTEN_ALT.get(str(kind))
             raise ConfigError(
-                f"API-Key-Art {kind!r} gibt es nicht. 'automat' arbeitet allein (ohne Admin-Rechte), "
-                "'mensch' gilt nur zusammen mit einer Sitzung desselben Kontos.")
+                (f"API-Key-Art {kind!r} heisst seit 0.22.0 {neu_name!r}. " if neu_name else
+                 f"API-Key-Art {kind!r} gibt es nicht. ")
+                + "'automation' arbeitet allein (ohne Admin-Rechte), 'human' gilt nur zusammen "
+                  "mit einer Sitzung desselben Kontos.")
         raw = "tsk_" + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(raw.encode()).hexdigest()
         prefix = raw[:12] + "…"
@@ -874,7 +883,7 @@ class TinySesam:
                     "(dann erbt der Key die Rollen des Kontos).")
 
         kid = self.store.add_api_key(user_id, name, prefix, key_hash, roles, expires_at, kind=kind)
-        detail = f"user={user_id} key={kid} name={name} art={kind}"
+        detail = f"user={user_id} key={kid} name={name} art={self._key_art_audit(kind)}"
         if expires_at is None:
             # Ausdrücklich ins Protokoll: Ein unbefristeter Key ist eine Entscheidung, keine
             # Einstellung — wer später fragt „seit wann liegt das Ding herum", findet hier etwas.
@@ -885,7 +894,33 @@ class TinySesam:
         self.audit("apikey_create", self._kontoname(user_id), detail=detail)
         self._sicherheitsereignis("api_key_created", user_id, key_id=kid, name=name or "")
         return {"id": kid, "key": raw, "prefix": prefix, "expires_at": expires_at,
-                "roles": roles, "verworfene_rollen": abgeschnitten, "kind": kind}
+                "roles": roles, "dropped_roles": abgeschnitten, "kind": kind}
+
+    #: Die Arten eines API-Keys (R6-5), seit 0.22.0 englisch: `automation` arbeitet allein und
+    #: trägt nie das Admin-Flag, `human` gilt nur zusammen mit einer Sitzung desselben Kontos.
+    _KEY_ARTEN = ("automation", "human")
+    #: Die Schreibweise in Audit-Zeilen (`apikey_create … art=`, `apikey_use … art=`): die von
+    #: 0.21.x. Audit- und Log-Zeilen ändern sich mit der Übersetzung nicht — Filter der Betreiber
+    #: hängen an ihnen (PO-Entscheid 2026-09-27).
+    _KEY_ART_AUDIT = {neu: alt for alt, neu in Store.KEY_ARTEN_ALT.items()}
+
+    @staticmethod
+    def _key_kind(row) -> str:
+        """Die Art einer Key-Zeile mit englischem Namen (Schema 12).
+
+        Ein Wert bis 0.21.x (`automat`, `mensch`) wird abgebildet (`Store.KEY_ARTEN_ALT`) — eine
+        ältere Fassung, die nach einem Rückschritt auf der Datei lief, schreibt ihn wieder. Leer
+        oder ohne Spalte (Datei vor Schema 7) heisst `automation`. Alles andere bleibt, wie es
+        ist, und gilt, weil es nicht `human` ist, als Automaten-Key (fail-closed, R6-6)."""
+        try:
+            wert = str(row["kind"] or "automation")
+        except (IndexError, KeyError, TypeError):
+            return "automation"
+        return Store.KEY_ARTEN_ALT.get(wert, wert)
+
+    @classmethod
+    def _key_art_audit(cls, kind) -> str:
+        return cls._KEY_ART_AUDIT.get(kind, kind)
 
     def verify_api_key(self, key):
         """(user, key_roles|None) bei gültigem Key, sonst (None, None).
@@ -893,8 +928,9 @@ class TinySesam:
         Die **Art** des Keys steht danach in `self._letzte_key_art` — `current_user()` braucht
         sie, und eine dritte Rückgabe hätte jeden fremden Aufrufer gebrochen (M-1 friert die
         Oberfläche für 1.0 ein). Wer die Art selbst wissen will, nimmt `api_key_kind(key)`.
+        `user` ist ein Konto-Dict wie bei `get_user()` (seit 0.22.0; vorher die Datenbankzeile).
         """
-        self._letzte_key_art = "automat"
+        self._letzte_key_art = "automation"
         if not key or not key.startswith("tsk_"):
             return None, None
         row = self.store.get_api_key_by_hash(hashlib.sha256(key.encode()).hexdigest())
@@ -917,15 +953,12 @@ class TinySesam:
             return None, None
         self.store.touch_api_key(row["id"])
         self._key_protokoll(row, None)
-        try:
-            self._letzte_key_art = str(row["kind"] or "automat")
-        except (IndexError, KeyError):
-            self._letzte_key_art = "automat"      # Zeile aus einer Datei vor Schema 7
+        self._letzte_key_art = self._key_kind(row)
         try:
             kr = json.loads(row["roles"] or "[]")
         except Exception:
             kr = []
-        return u, (kr or None)
+        return self._als_dict(u), (kr or None)
 
     def _key_ruht(self, u) -> Optional[str]:
         """Ruhen die API-Keys dieses Kontos, weil der Identity Provider es nicht (mehr) trägt?
@@ -1003,10 +1036,7 @@ class TinySesam:
         if not self._einmal_je(("apikey", kid, ip, grund), self._APIKEY_AUDIT_FENSTER):
             return
         besitzer = self._kontoname(row["user_id"]) if row is not None else None
-        try:
-            art = str(row["kind"] or "automat") if row is not None else "?"
-        except (IndexError, KeyError):
-            art = "automat"
+        art = self._key_art_audit(self._key_kind(row)) if row is not None else "?"
         if grund is None:
             self.store.audit_log("apikey_use", besitzer, ip, f"key={kid} art={art}")
             return
@@ -1016,12 +1046,10 @@ class TinySesam:
                                 security.fuer_log(besitzer or "-"), security.fuer_log(ip), grund)
 
     def api_key_kind(self, key) -> str:
-        """Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen."""
+        """Die Art eines Keys (`"automation"`/`"human"`, bis 0.21.x `"automat"`/`"mensch"`) —
+        ohne ihn zu benutzen. `""` für einen unbekannten Key."""
         row = self.store.get_api_key_by_hash(hashlib.sha256((key or "").encode()).hexdigest())
-        try:
-            return str(row["kind"] or "automat") if row else ""
-        except (IndexError, KeyError):
-            return "automat"
+        return self._key_kind(row) if row else ""
 
     def _extract_api_key(self, request: Request):
         h = request.headers.get("x-api-key")
@@ -1034,9 +1062,11 @@ class TinySesam:
                 return tok
         return None
 
-    def list_api_keys(self, user_id):
-        """Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe."""
-        return self.store.list_api_keys(user_id)
+    def list_api_keys(self, user_id) -> list:
+        """Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der
+        Ausgabe. Je Key ein Dict (Spalten von `api_key`), `kind` mit englischem Namen (Schema 12;
+        bis 0.21.x die Datenbankzeile mit dem gespeicherten Wert)."""
+        return [{**dict(k), "kind": self._key_kind(k)} for k in self.store.list_api_keys(user_id)]
 
     def revoke_api_key(self, key_id, user_id=None):
         """Einen Key entwerten. Er bleibt in der Liste stehen — wer ihn ausgestellt hat, soll das sehen."""
@@ -1047,14 +1077,23 @@ class TinySesam:
         if besitzer is not None and self.store.count_active_api_keys(besitzer) < vorher:
             self._sicherheitsereignis("api_key_revoked", besitzer, key_id=key_id)
 
+    #: Warum alle Keys eines Kontos widerrufen wurden — `reason` im Ereignis `api_keys_revoked`
+    #: (`on_security_event`). Bis 0.21.x deutsch (`sperre`, `admin_passwort`, `passwort_reset`,
+    #: `sitzungen_beendet`), mit den Schlüsseln `anzahl`/`grund` statt `count`/`reason`.
+    _KEYS_WIDERRUFEN_GRUENDE = ("account_disabled", "admin_password_reset", "password_reset",
+                                "sessions_revoked")
+
     def _keys_widerrufen(self, user_id, grund: str) -> int:
         """Alle gültigen Keys eines Kontos entwerten — und den Inhaber benachrichtigen (Grenze e).
 
         Der eine Weg für Reset, Sperre, Admin-Passwort und `sessions/revoke`: Vorher stand der
-        Widerruf dort nur im Audit-Log, der Inhaber erfuhr nichts."""
+        Widerruf dort nur im Audit-Log, der Inhaber erfuhr nichts. `grund` ist einer aus
+        `_KEYS_WIDERRUFEN_GRUENDE`."""
+        if grund not in self._KEYS_WIDERRUFEN_GRUENDE:
+            raise ValueError(f"unbekannter Grund {grund!r} — erlaubt: {self._KEYS_WIDERRUFEN_GRUENDE}")
         n = self.store.revoke_user_api_keys(user_id)
         if n:
-            self._sicherheitsereignis("api_keys_revoked", user_id, anzahl=n, grund=grund)
+            self._sicherheitsereignis("api_keys_revoked", user_id, count=n, reason=grund)
         return n
 
     def set_password(self, user_id, password):
@@ -1148,7 +1187,13 @@ class TinySesam:
     #: `sessions/revoke` (`api_keys_revoked`, mit Anzahl und Grund). NIST SP 800-63B verlangt, den Inhaber über solche Änderungen zu
     #: benachrichtigen; bis T-13 erfuhr er von keiner (Fund B2-2): Ein Angreifer mit einer
     #: Sitzung konnte TOTP abschalten, einen Passkey hinzufügen oder das Passwort ändern, und der
-    #: Inhaber sah es erst beim nächsten Login — wenn überhaupt.
+    #: Inhaber sah es erst beim nächsten Login — wenn überhaupt. Die Details (drittes Argument
+    #: des Hooks), seit 0.22.0 mit englischen Schlüsseln: `api_key_created` `key_id`, `name`;
+    #: `api_key_revoked` `key_id`; `api_keys_revoked` `count`, `reason` (`account_disabled`,
+    #: `admin_password_reset`, `password_reset`, `sessions_revoked`); `totp_disabled`
+    #: `recovery_codes_deleted`; `recovery_codes_generated` `count`; `recovery_code_used`
+    #: `remaining`; `passkey_added` `name`; `passkey_removed` `passkey_id`; `username_changed`
+    #: und `email_changed` `old`, `new`; die übrigen keine.
     SECURITY_EVENTS = (
         "password_changed", "pin_set", "pin_disabled", "totp_enabled", "totp_disabled",
         "recovery_codes_generated", "recovery_code_used", "passkey_added", "passkey_removed",
@@ -1233,6 +1278,55 @@ class TinySesam:
             return False
         ersatz, n = entfernt
         self.audit("user_delete", ersatz, detail=f"uid={user_id} audit_anonymisiert={n}")
+        return True
+
+    def set_disabled(self, user_id: int, disabled: bool) -> bool:
+        """Ein Konto als Betreiber sperren oder entsperren — mit derselben Wirkung wie das Panel
+        (`POST <admin_path>/api/users/{id}/disable`, das genau diese Methode ruft).
+
+        **Sperren** (`disabled=True`):
+
+        * mit Betreiber-Vermerk: Kein Bestätigungslink hebt die Sperre auf, auch einer nicht, der
+          erst danach entsteht (H-18) — nur `set_disabled(user_id, False)`;
+        * alle Sitzungen des Kontos enden, seine API-Keys werden widerrufen (Ereignis
+          `api_keys_revoked` mit `reason="account_disabled"`), offene Einmal-Token verworfen
+          (Anmelde-, Bestätigungs-, Reset-, Adresswechsel-Link). Der Widerruf der Keys bleibt
+          beim Entsperren bestehen — sonst lebte ein Key wieder auf, von dem niemand mehr weiss;
+        * ein **Owner** lässt sich nicht sperren: `StateError`, und nichts ist geschehen.
+
+        **Entsperren** hebt jede Sperre auf, auch die einer ausstehenden Bestätigung.
+
+        Audit wie im Panel: `user_disable` bzw. `user_enable` mit `uid=<id>` (beim Sperren mit
+        Keys dazu `api_keys_revoked=<n>`) — in einer Anfrage unter dem angemeldeten Konto (dem
+        Admin), ohne Anfrage unter dem betroffenen. Was vom Aufrufer abhängt, prüft die Route: Das
+        Panel lässt niemanden sich selbst sperren und ein Owner-Konto nur von einem Owner ändern.
+        Rückgabe False, wenn es das Konto nicht gibt (dann geschieht nichts).
+
+        Bis 0.21.x zeigte die Doku dafür `auth.store.set_disabled(uid, True, durch_betreiber=True)`
+        — das setzt nur den Vermerk: Sitzungen, Keys und Links blieben gültig. `auth.store` ist
+        Innenleben ohne Zusage (PO-Entscheid 2026-09-27)."""
+        u = self.store.get_user(user_id)
+        if not u:
+            return False
+        uid = int(u["id"])
+        # Zuerst der Vermerk: Bei einem Owner wirft der Store, bevor irgendetwas geschehen ist.
+        self.store.set_disabled(uid, bool(disabled), durch_betreiber=True)
+        keys = 0
+        if disabled:
+            self.store.delete_user_sessions(uid)
+            # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
+            # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
+            # niemand mehr weiss.
+            keys = self._keys_widerrufen(uid, "account_disabled")
+            # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
+            # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
+            self.store.revoke_user_magic_tokens(uid)
+        # Aus einer Anfrage mit angemeldetem Konto (Panel, eigene Admin-Route) nennt `audit()` den
+        # Akteur als Konto — dieselbe Zeile, die das Panel bis 0.21.x selbst schrieb.
+        anfrage = _ANFRAGE.get() or {}
+        self.audit("user_disable" if disabled else "user_enable",
+                   None if anfrage.get("akteur") else str(u["username"]),
+                   detail=f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
         return True
 
     #: Wie die Kontoseite ein Ereignis nennt, wenn es nicht sein eigener Name ist (G12b). Der
@@ -1582,18 +1676,36 @@ class TinySesam:
         self.store.set_setting("demo_users", "")
         return n
 
-    @staticmethod
-    def _als_dict(zeile) -> Optional[dict]:
-        """Eine Datenbankzeile als das zurückgeben, was die Signatur verspricht.
+    #: Was ein Konto-Dict der öffentlichen Oberfläche trägt (`current_user`, `session_user`,
+    #: `pending_user`, `get_user`, `find_user`, `identifier_taken`, `verify_api_key`,
+    #: `LoginResult.user`, die `require_*`-Wächter) — die Spalten, die das Konto beschreiben. Die
+    #: Buchhaltung des Stores bleibt draussen: Zähl-Töpfe (`topf_name`, `topf_mail`),
+    #: Wasserlinien (`name_versuch_ab` …), Herkunft und Selbstwahl des Namens (`name_quelle`,
+    #: `name_selbst_gewaehlt`), die letzte Bestätigung durch den IdP (`idp_bestaetigt_at`). Bis
+    #: 0.21.x ging die ganze Zeile hinaus, mit deutschen Spaltennamen; seit 0.22.0 ist die
+    #: öffentliche Oberfläche englisch (PO-Entscheid 2026-09-27), und Innenleben gehört nicht in
+    #: ihre Zusage. Eine Liste der erlaubten statt der verbotenen Spalten: Eine neue Spalte des
+    #: Stores wird nicht still zur Zusage. Dazu kommen je nach Weg `_via` und `_key_kind`.
+    _KONTO_FELDER = ("id", "username", "display_name", "email", "email_verified", "is_admin",
+                     "is_owner", "roles", "is_service", "disabled", "first_login_at",
+                     "mfa_enroll_until", "created_at")
+
+    @classmethod
+    def _als_dict(cls, zeile) -> Optional[dict]:
+        """Eine Kontozeile als das zurückgeben, was die Signatur verspricht — ein `dict` mit den
+        Feldern aus `_KONTO_FELDER`.
 
         Die nutzerseitigen Methoden sind seit jeher `-> Optional[dict]` annotiert und lieferten
         eine `sqlite3.Row`. Das Paket trägt `Typing :: Typed` und eine `py.typed` — die Zusage
         wurde nur nie gemessen. Praktisch fällt es auf, sobald jemand der Annotation glaubt:
         `u.get("email")` gibt es auf einer Row nicht, und der `AttributeError` kommt aus einer
         Zeile, die laut Typ nicht falsch sein kann. Auf der Store-Ebene bleibt die Row — dort
-        ist sie dokumentiert und gewollt.
+        ist sie dokumentiert und gewollt, samt allen Spalten.
         """
-        return dict(zeile) if zeile is not None else None
+        if zeile is None:
+            return None
+        da = set(zeile.keys())
+        return {k: zeile[k] for k in cls._KONTO_FELDER if k in da}
 
     def get_user(self, user_id) -> Optional[dict]:
         """Ein Konto per ID lesen, oder None."""
@@ -1825,25 +1937,49 @@ class TinySesam:
             return "Platzhalter-Form"
         return None
 
-    #: Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — für Log und Bericht.
+    #: Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — Kürzel und
+    #: Erklärung, für den Bericht von `federation_bind_existing` (`reason`). Seit 0.22.0 englisch
+    #: (PO-Entscheid 2026-09-27); die Kürzel bis 0.21.x stehen weiter in Audit und Sicherheits-Log.
     NAME_BINDING_REFUSALS = {
-        "adresse_als_name": "der Name sagt nichts über die Person (Steuerzeichen, oder der "
-                            "unbelegte mail-Wert einer Quelle, der nicht vertraut wird)",
-        "kennung_ungueltig": "die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)",
-        "konflikt": "die Kennung gehört schon einem anderen Konto",
-        "anders_gebunden": "das Konto trägt schon eine andere Kennung",
-        "name_selbst_gewaehlt": "der Name ist selbst gewählt (Registrierung oder Umbenennen) und "
-                                "sagt nichts darüber, wer im Verzeichnis so heisst",
-        "name_aus_quelle": "der Name stammt aus einer anderen Quelle, die das Konto angelegt hat "
-                           "(OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst",
-        "frist": "die Frist für die Bindung über den Namen ist abgelaufen "
-                 "(federation_name_binding_days)",
+        "address_as_name": "the name says nothing about the person (control characters, or the "
+                           "unverified mail value of a source that is not trusted)",
+        "invalid_identifier": "the identifier is unusable (leading/trailing or control characters, "
+                              "or placeholder form)",
+        "conflict": "the identifier already belongs to another account",
+        "bound_elsewhere": "the account already carries a different identifier",
+        "self_chosen_name": "the name was chosen by the person (sign-up or rename) and says nothing "
+                            "about who has that name in the directory",
+        "name_from_other_source": "the name comes from another source that created the account "
+                                  "(OIDC, SAML or LDAP) and says nothing about who has that name "
+                                  "in this one",
+        "binding_window_expired": "the window for binding by name has passed "
+                                  "(federation_name_binding_days)",
+    }
+    #: Dieselben Gründe in Audit (`<quelle>_namensbindung_zu … grund=`) und Sicherheits-Log: Kürzel
+    #: und Text von 0.21.x. Diese Zeilen ändern sich mit der Übersetzung nicht — Filter der
+    #: Betreiber hängen an ihnen (PO-Entscheid 2026-09-27).
+    _NACHBINDUNG_PROTOKOLL = {
+        "address_as_name": ("adresse_als_name", "der Name sagt nichts über die Person "
+                            "(Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht "
+                            "vertraut wird)"),
+        "invalid_identifier": ("kennung_ungueltig", "die Kennung taugt nicht (Rand-/Steuerzeichen "
+                               "oder Platzhalter-Form)"),
+        "conflict": ("konflikt", "die Kennung gehört schon einem anderen Konto"),
+        "bound_elsewhere": ("anders_gebunden", "das Konto trägt schon eine andere Kennung"),
+        "self_chosen_name": ("name_selbst_gewaehlt", "der Name ist selbst gewählt (Registrierung "
+                             "oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst"),
+        "name_from_other_source": ("name_aus_quelle", "der Name stammt aus einer anderen Quelle, "
+                                   "die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt "
+                                   "nichts darüber, wer in dieser so heisst"),
+        "binding_window_expired": ("frist", "die Frist für die Bindung über den Namen ist "
+                                   "abgelaufen (federation_name_binding_days)"),
     }
 
     def _nachbindung_grund(self, quelle: str, kennung: str, konto, *, name_belegt: bool = True,
                            frist: bool = True) -> Optional[str]:
         """Darf das Konto `konto` über seinen Namen an die fremde Kennung `kennung` gebunden
-        werden? `None` = ja, sonst der Grund (Schlüssel aus `NAME_BINDING_REFUSALS`).
+        werden? `None` = ja, sonst der Grund (Schlüssel aus `NAME_BINDING_REFUSALS`; im Audit
+        und im Sicherheits-Log das Kürzel von 0.21.x, `_NACHBINDUNG_PROTOKOLL`).
 
         EIN Entscheid für die Anmeldung (Lage 4, Ersatz eines Platzhalters, erste Zuordnung ohne
         Kennung — `kennung=""`) und für die Bestandsbindung (`federation_bind_existing`). Kopiert
@@ -1871,16 +2007,16 @@ class TinySesam:
         Die drei letzten hebt eine vom Betreiber geöffnete Bindung auf (`federation_unbind`,
         Tabelle `namensbindung`)."""
         if not name_belegt or name_ungueltig(str(konto["username"] or "")):
-            return "adresse_als_name"
+            return "address_as_name"
         if kennung:
             if self._kennung_formfehler(kennung):
-                return "kennung_ungueltig"
+                return "invalid_identifier"
             anderes = self.store.get_federated_user(quelle, kennung)
             if anderes is not None and int(anderes) != int(konto["id"]):
-                return "konflikt"
+                return "conflict"
             vorhandene = self.store.get_federated_kennung(quelle, konto["id"])
             if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG) and vorhandene != kennung:
-                return "anders_gebunden"
+                return "bound_elsewhere"
         jetzt = _jetzt()
         if self.store.namensbindung_offen(quelle, konto["id"], jetzt):
             return None
@@ -1889,15 +2025,15 @@ class TinySesam:
         except (IndexError, KeyError):
             selbst = False       # Zeile ohne die Spalte (fremde Quelle): wie der Bestand
         if selbst:
-            return "name_selbst_gewaehlt"
+            return "self_chosen_name"
         try:
             herkunft = str(konto["name_quelle"] or "")
         except (IndexError, KeyError):
             herkunft = ""        # Zeile ohne die Spalte (fremde Quelle): wie der Bestand
         if herkunft and herkunft != quelle:
-            return "name_aus_quelle"
+            return "name_from_other_source"
         if frist and not self._namensfrist_offen(quelle, konto, jetzt):
-            return "frist"
+            return "binding_window_expired"
         return None
 
     def _namensbindung_erlaubt(self, quelle: str, kennung: str, konto, username: str) -> bool:
@@ -1906,6 +2042,7 @@ class TinySesam:
         grund = self._nachbindung_grund(quelle, kennung, konto)
         if grund is None:
             return True
+        kuerzel, text = self._NACHBINDUNG_PROTOKOLL.get(grund, (grund, grund))
         tage = int(self.cfg.federation_name_binding_days)
         security.seclog.warning(
             "%s: Konto %s (user_id=%s) wird nicht über den Namen an die Kennung %s gebunden — %s. "
@@ -1914,9 +2051,9 @@ class TinySesam:
             "(%d Tag(e)); den Bestand bindet auth.federation_bind_existing('%s').",
             quelle, security.fuer_log(username), konto["id"],
             security.fuer_log(kennung) if kennung else "(keine)",
-            self.NAME_BINDING_REFUSALS.get(grund, grund), quelle, konto["id"], max(tage, 1), quelle)
+            text, quelle, konto["id"], max(tage, 1), quelle)
         self.audit(f"{quelle}_namensbindung_zu", str(konto["username"]),
-                   detail=f"grund={grund} kennung={kennung or '-'}")
+                   detail=f"grund={kuerzel} kennung={kennung or '-'}")
         return False
 
     def _foederation_seit(self, quelle: str) -> int:
@@ -2013,27 +2150,30 @@ class TinySesam:
 
         Entschieden wird je Konto mit demselben Helfer wie bei der Anmeldung
         (`_nachbindung_grund`, ohne die Frist). Konten mit lokalem Passwort werden nur berichtet
-        (`lokal`): Ihr Name kann einem anderen Menschen gehören als der Eintrag im Verzeichnis —
-        der Betreiber öffnet sie einzeln mit `federation_unbind`.
+        (`local_password`): Ihr Name kann einem anderen Menschen gehören als der Eintrag im
+        Verzeichnis — der Betreiber öffnet sie einzeln mit `federation_unbind`.
 
-        Rückgabe (Listen von Einträgen mit `user_id`, `username`, `lokal` = Anzeigename/Adresse
-        hier, `verzeichnis` = dasselbe im Verzeichnis, `kennung`, bei Abweisungen `grund`):
+        Rückgabe (Listen von Einträgen mit `user_id`, `username`, `local` = Anzeigename/Adresse
+        hier, `directory` = dasselbe im Verzeichnis, `identifier`, bei Abweisungen `reason`):
 
-        * `gebunden` — gebunden (im Trockenlauf: würde gebunden). **Vor `apply` lesen**:
-          War ein Name schon vor dem Lauf wiederverwendet, bindet auch diese Methode die falsche
-          Person — `lokal` und `verzeichnis` nebeneinander zeigen es.
-        * `konflikt` — die Kennung gehört schon einem anderen Konto (`gebunden_an`), oder zwei
+        * `bound` — gebunden (im Trockenlauf: würde gebunden). **Vor `apply` lesen**: War ein
+          Name schon vor dem Lauf wiederverwendet, bindet auch diese Methode die falsche Person —
+          `local` und `directory` nebeneinander zeigen es.
+        * `conflict` — die Kennung gehört schon einem anderen Konto (`bound_to`), oder zwei
           Konten nennen dieselbe
-        * `mehrdeutig` — mehr als ein Eintrag im Verzeichnis
-        * `nicht_im_verzeichnis`, `ohne_kennung` — kein Eintrag bzw. einer ohne stabile Kennung
+        * `ambiguous` — mehr als ein Eintrag im Verzeichnis (`matches`: wie viele)
+        * `not_in_directory`, `no_identifier` — kein Eintrag bzw. einer ohne stabile Kennung
           (`ldap_attr_id`)
-        * `abgewiesen` — mit `grund`: einer aus `NAME_BINDING_REFUSALS` oder `kein_konto`,
-          `dienstkonto`, `gesperrt`, `schon_gebunden`
-        * `lokal` — Konto mit lokalem Passwort, nur berichtet
+        * `refused` — mit `reason`: einer aus `NAME_BINDING_REFUSALS` oder `no_account`,
+          `service_account`, `disabled`, `already_bound`
+        * `local_password` — Konto mit lokalem Passwort, nur berichtet
 
-        Dazu `quelle` und `ausgefuehrt`. Jede Bindung schreibt `<quelle>_kennung_gebunden` mit
-        `detail=migration`, der Lauf eine Summenzeile ins Sicherheits-Log. Einen CLI-Befehl gibt
-        es nicht: LDAP und SAML laufen nur eingebettet, und das CLI kennt die Konfiguration nicht."""
+        Dazu `source` und `applied`. Bis 0.21.x hiessen die Schlüssel und Gründe deutsch
+        (`quelle`, `ausgefuehrt`, `gebunden`, `abgewiesen`/`grund` …; PO-Entscheid 2026-09-27,
+        Tabelle im CHANGELOG zu 0.22.0). Jede Bindung schreibt `<quelle>_kennung_gebunden` mit
+        `detail=migration`, der Lauf eine Summenzeile ins Sicherheits-Log — beide wie bisher.
+        Einen CLI-Befehl gibt es nicht: LDAP und SAML laufen nur eingebettet, und das CLI kennt die
+        Konfiguration nicht."""
         if source not in self.FEDERATED_SOURCES:
             raise ValueError(f"source muss eine von {self.FEDERATED_SOURCES} sein, nicht {source!r}")
         suchen = None
@@ -2049,9 +2189,9 @@ class TinySesam:
             if not callable(suchen):
                 raise ConfigError("Der gesetzte LDAP-Client kann nicht suchen (eintrag_suchen) — "
                                   "mapping={Kontoname: Kennung} übergeben.")
-        bericht: dict = {"quelle": source, "ausgefuehrt": bool(apply), "gebunden": [],
-                         "konflikt": [], "mehrdeutig": [], "nicht_im_verzeichnis": [],
-                         "ohne_kennung": [], "abgewiesen": [], "lokal": []}
+        bericht: dict = {"source": source, "applied": bool(apply), "bound": [],
+                         "conflict": [], "ambiguous": [], "not_in_directory": [],
+                         "no_identifier": [], "refused": [], "local_password": []}
         # Konto → Kennung aus der Zuordnung (None: im Verzeichnis suchen).
         paare: list[tuple[Any, Optional[str]]] = []
         if mapping is None:
@@ -2060,72 +2200,73 @@ class TinySesam:
             for name, wert in mapping.items():
                 k = self.store.get_user_by_name(str(name or "").strip())
                 if k is None:
-                    bericht["abgewiesen"].append({"user_id": None, "username": str(name),
-                                                  "grund": "kein_konto"})
+                    bericht["refused"].append({"user_id": None, "username": str(name),
+                                               "reason": "no_account"})
                 else:
                     paare.append((k, str(wert or "")))
         plan = []
         for konto, vorgabe in paare:
             e: dict = {"user_id": int(konto["id"]), "username": konto["username"],
-                       "lokal": {"name": konto["display_name"], "email": konto["email"]}}
+                       "local": {"name": konto["display_name"], "email": konto["email"]}}
             if konto["is_service"] or konto["disabled"]:
-                bericht["abgewiesen"].append(dict(e, grund="dienstkonto" if konto["is_service"] else "gesperrt"))
+                bericht["refused"].append(dict(e, reason="service_account" if konto["is_service"]
+                                               else "disabled"))
                 continue
             vorhandene = self.store.get_federated_kennung(source, konto["id"])
             if vorhandene and not vorhandene.startswith(self._OHNE_KENNUNG):
-                bericht["abgewiesen"].append(dict(e, kennung=vorhandene, grund=(
-                    "schon_gebunden" if vorgabe is None or vorhandene == vorgabe else "anders_gebunden")))
+                bericht["refused"].append(dict(e, identifier=vorhandene, reason=(
+                    "already_bound" if vorgabe is None or vorhandene == vorgabe else "bound_elsewhere")))
                 continue
             name_belegt = True
             kennung = vorgabe or ""
             if suchen is not None:
                 treffer = suchen(konto["username"])     # VerzeichnisNichtErreichbar bricht ab
                 if not treffer:
-                    bericht["nicht_im_verzeichnis"].append(e)
+                    bericht["not_in_directory"].append(e)
                     continue
                 if len(treffer) > 1:
-                    bericht["mehrdeutig"].append(dict(e, treffer=len(treffer)))
+                    bericht["ambiguous"].append(dict(e, matches=len(treffer)))
                     continue
                 info = treffer[0]
-                e["verzeichnis"] = {"name": info.get("name"), "email": info.get("email")}
+                e["directory"] = {"name": info.get("name"), "email": info.get("email")}
                 kennung = str(info.get("id") or "")
                 name_belegt = self._ldap_name_belegt(konto["username"], info)
             if not kennung:
                 # Keine Kennung, auch eine leere in der Zuordnung: Gebunden würde über den Namen.
-                bericht["ohne_kennung"].append(e)
+                bericht["no_identifier"].append(e)
                 continue
-            e["kennung"] = kennung
+            e["identifier"] = kennung
             grund = self._nachbindung_grund(source, kennung, konto, name_belegt=name_belegt,
                                             frist=False)
-            if grund == "konflikt":
-                bericht["konflikt"].append(dict(e, gebunden_an=self.store.get_federated_user(source, kennung)))
+            if grund == "conflict":
+                bericht["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, kennung)))
             elif grund:
-                bericht["abgewiesen"].append(dict(e, grund=grund))
+                bericht["refused"].append(dict(e, reason=grund))
             elif self.store.get_password_hash(konto["id"]):
-                bericht["lokal"].append(e)
+                bericht["local_password"].append(e)
             else:
                 plan.append(e)
         # Zwei Konten, eine Kennung (Zuordnung mit Dublette): keines.
         from collections import Counter
-        doppelt = {k for k, n in Counter(e["kennung"] for e in plan).items() if n > 1}
-        bericht["konflikt"] += [e for e in plan if e["kennung"] in doppelt]
-        plan = [e for e in plan if e["kennung"] not in doppelt]
+        doppelt = {k for k, n in Counter(e["identifier"] for e in plan).items() if n > 1}
+        bericht["conflict"] += [e for e in plan if e["identifier"] in doppelt]
+        plan = [e for e in plan if e["identifier"] not in doppelt]
         if not apply:
-            bericht["gebunden"] = plan
+            bericht["bound"] = plan
             return bericht
         for e in plan:
             # Atomar gegen eine Anmeldung, die seit der Prüfung gebunden hat (`Store.nachbinden`).
-            if self.store.nachbinden(source, e["kennung"], e["user_id"], _jetzt()):
+            if self.store.nachbinden(source, e["identifier"], e["user_id"], _jetzt()):
                 self.audit(f"{source}_kennung_gebunden", str(e["username"]), detail="migration")
-                bericht["gebunden"].append(e)
+                bericht["bound"].append(e)
             else:
-                bericht["konflikt"].append(dict(e, gebunden_an=self.store.get_federated_user(source, e["kennung"])))
+                bericht["conflict"].append(dict(e, bound_to=self.store.get_federated_user(source, e["identifier"])))
         security.seclog.warning(
             "federation_bind_existing(%s): %d gebunden, %d Konflikt, %d mehrdeutig, %d nicht im "
             "Verzeichnis, %d ohne Kennung, %d abgewiesen, %d mit lokalem Passwort (nur berichtet).",
-            source, len(bericht["gebunden"]), len(bericht["konflikt"]), len(bericht["mehrdeutig"]),
-            len(bericht["nicht_im_verzeichnis"]), len(bericht["ohne_kennung"]),
-            len(bericht["abgewiesen"]), len(bericht["lokal"]))
+            source, len(bericht["bound"]), len(bericht["conflict"]), len(bericht["ambiguous"]),
+            len(bericht["not_in_directory"]), len(bericht["no_identifier"]),
+            len(bericht["refused"]), len(bericht["local_password"]))
         return bericht
 
     def _ldap_vertraut(self, info) -> bool:
@@ -3042,7 +3183,7 @@ class TinySesam:
         # hinterliess es keine Spur, obwohl dabei TOTP UND alle Recovery-Codes fallen.
         self.audit("totp_disable", self._kontoname(user_id), detail=f"user={user_id} recovery_codes_geloescht={offen}")
         if hatte:
-            self._sicherheitsereignis("totp_disabled", user_id, recovery_codes_geloescht=offen)
+            self._sicherheitsereignis("totp_disabled", user_id, recovery_codes_deleted=offen)
 
     # ---------- Recovery-Codes (2FA-Ersatz bei verlorenem Authenticator) ----------
     #: Zufallsbytes je Hälfte eines Recovery-Codes. Zwei Hälften à 7 Byte = **112 Bit**.
@@ -3066,7 +3207,7 @@ class TinySesam:
         self.store.delete_recovery_codes(user_id)
         self.store.add_recovery_codes(user_id, [self._rc_hash(c) for c in codes])
         self.audit("recovery_generate", self._kontoname(user_id), detail=f"user={user_id} n={n}")
-        self._sicherheitsereignis("recovery_codes_generated", user_id, anzahl=n)
+        self._sicherheitsereignis("recovery_codes_generated", user_id, count=n)
         return codes
 
     @staticmethod
@@ -3087,7 +3228,7 @@ class TinySesam:
         rest = self.store.count_recovery_codes(user_id)
         self.audit("recovery_used", self._kontoname(user_id), detail=f"user={user_id} verbleibend={rest}")
         security.seclog.warning("recovery code used user_id=%s verbleibend=%s", user_id, rest)
-        self._sicherheitsereignis("recovery_code_used", user_id, verbleibend=rest)
+        self._sicherheitsereignis("recovery_code_used", user_id, remaining=rest)
         return True
 
     def recovery_codes_remaining(self, user_id) -> int:
@@ -3622,7 +3763,10 @@ class TinySesam:
         return f"{self._gepruefte_basis(base_url)}{pfad}"
 
     def redeem_magic(self, raw, purpose=None) -> Optional[dict]:
-        """Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt)."""
+        """Token einlösen (one-shot). Gibt {purpose,user_id,email,payload} oder None (ungültig/abgelaufen/benutzt).
+
+        `payload` mit englischen Schlüsseln (Schema 12): Ein Adresswechsel-Link trägt `old`, die
+        bisherige Adresse — bis 0.21.x `alt`, das wird beim Lesen abgebildet (`payload_lesen`)."""
         if not raw:
             return None
         h = hashlib.sha256(raw.encode()).hexdigest()
@@ -3632,10 +3776,11 @@ class TinySesam:
         if not self.store.use_magic_token(h):
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": json.loads(row["payload"]) if row["payload"] else None}
+                "payload": payload_lesen(row["purpose"], row["payload"])}
 
     def peek_magic(self, raw, purpose=None) -> Optional[dict]:
-        """Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen)."""
+        """Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen).
+        Rückgabe wie `redeem_magic`."""
         if not raw:
             return None
         row = self.store.get_magic_token(hashlib.sha256(raw.encode()).hexdigest())
@@ -3644,7 +3789,7 @@ class TinySesam:
         if purpose and row["purpose"] != purpose:
             return None
         return {"purpose": row["purpose"], "user_id": row["user_id"], "email": row["email"],
-                "payload": json.loads(row["payload"]) if row["payload"] else None}
+                "payload": payload_lesen(row["purpose"], row["payload"])}
 
     def create_invite(self, email, base_url, roles=None, is_admin=False, ttl_min=None) -> dict:
         """Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token trägt die
@@ -3669,10 +3814,10 @@ class TinySesam:
         """Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist.
         `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`).
         Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter.
-        Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die
-        ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel,
-        `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst
-        nach dieser Sperre entsteht, etwa weil der Aufruf über `after_response` wartet (H-18).
+        Der Link schaltet ein Konto frei, dessen Bestätigung aussteht (Registrierung), nie eines,
+        das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(user_id, True)`) — auch dann
+        nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über
+        `after_response` wartet (H-18).
         Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des
         Kontos ist.
         """
@@ -3766,7 +3911,7 @@ class TinySesam:
             raise ValueError(self.t("api.user_exists")) from None
         self.audit("username_changed", name, ip,
                    f"alt={alt} durch=betreiber" if by_operator else f"alt={alt}")
-        self._sicherheitsereignis("username_changed", user_id, alt=alt, neu=name)
+        self._sicherheitsereignis("username_changed", user_id, old=alt, new=name)
         return name
 
     def request_email_change(self, user_id, new_email, base_url):
@@ -3842,7 +3987,7 @@ class TinySesam:
         # abgelaufen ist, wenn er entsteht.
         raw = self.create_magic_token("email_change", user_id=user_id, email=mail,
                                       ttl_min=(-1 if nein else int(self.cfg.email_change_ttl_min)),
-                                      payload={"alt": konto["email"] or ""})
+                                      payload={"old": konto["email"] or ""})
         url = self.magic_url(raw, base_url, "email_change")
         herkunft = f"konto={int(user_id)} quelle={quelle} " if quelle else ""
         self.audit(nein or "email_change_requested", konto["username"], detail=f"{herkunft}neu={mail}")
@@ -3899,8 +4044,9 @@ class TinySesam:
                                           if "@" in str(i)}
 
     def confirm_email_change(self, raw, ip: Optional[str] = None) -> Optional[str]:
-        """Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines
-        anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
+        """Den Bestätigungslink einlösen. Rückgabe: "ok", "taken" (inzwischen Kennung eines
+        anderen Kontos; bis 0.21.x "vergeben") oder None (ungültig, abgelaufen, benutzt, Konto
+        gesperrt/weg).
 
         Danach ist die neue Adresse die des Kontos, **mit Beleg** (der Klick hat das Postfach
         bewiesen). Im Modus `login_identifier="email"` zieht der Benutzername mit, wenn er die
@@ -3919,10 +4065,10 @@ class TinySesam:
             return None
         if self.identifier_taken(mail, exclude_id=uid):
             self.audit("email_change_taken", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
-            return "vergeben"
+            return "taken"
         if self._allowlist_adresse(mail):     # erst nach dem Antrag in die Liste gekommen
             self.audit("email_change_reserved", konto["username"], ip, f"neu={mail} beim_bestaetigen=1")
-            return "vergeben"
+            return "taken"
         alt = konto["email"] or ""
         # Adresse und (im E-Mail-Modus) der Name in EINER Transaktion: Getrennt geschrieben
         # stand nach einem Fehlschlag des zweiten die neue Adresse neben dem alten Namen.
@@ -3935,11 +4081,11 @@ class TinySesam:
             # anderen Kontos geworden. Dieselbe Antwort wie oben; nichts ist geändert.
             self.audit("email_change_taken", konto["username"], ip,
                        f"neu={mail} beim_bestaetigen=1 wettlauf=1")
-            return "vergeben"
+            return "taken"
         self.store.revoke_user_magic_tokens(uid)
         name = self._kontoname(uid)
         self.audit("email_changed", name, ip, f"alt={alt} neu={mail}")
-        self._sicherheitsereignis("email_changed", uid, alt=alt, neu=mail)
+        self._sicherheitsereignis("email_changed", uid, old=alt, new=mail)
         if alt and self.mail_configured():
             def hinweis():
                 self.send_mail(alt, "Deine E-Mail-Adresse wurde geändert",
@@ -4915,7 +5061,7 @@ class TinySesam:
         if s and s["mfa_ok"]:
             u = self.store.get_user(s["user_id"])
             if u and not u["disabled"]:
-                d = dict(u)
+                d: dict = self._als_dict(u) or {}
                 d["_via"] = "session"
                 return d
         return None
@@ -4931,8 +5077,8 @@ class TinySesam:
             key = self._extract_api_key(request)
             if key:
                 u, key_roles = self.verify_api_key(key)
-                art = getattr(self, "_letzte_key_art", "automat")
-                if u and art == "mensch":
+                art = getattr(self, "_letzte_key_art", "automation")
+                if u and art == "human":
                     # Ein Menschen-Key gilt NUR zusammen mit einer Sitzung desselben Kontos
                     # (R6-5). Allein abgeflossen ist er wertlos — das ist der ganze Unterschied
                     # zum Automaten-Key, und dafür darf er die vollen Rechte tragen.
@@ -4946,11 +5092,12 @@ class TinySesam:
                 if u:
                     d = dict(u)
                     d["_via"] = "apikey"
-                    d["_key_art"] = art
-                    # `!= "mensch"` statt `== "automat"`: fail-closed für jede Art, die es nicht
+                    d["_key_kind"] = art
+                    # `!= "human"` statt `== "automation"`: fail-closed für jede Art, die es nicht
                     # gibt (ein Tippfehler in der Spalte, ein Wert aus einer fremden Fassung).
-                    # Vorher behielt ein Key mit `kind="Automat"` das Admin-Flag (R6-6).
-                    if art != "mensch" and d.get("is_admin"):
+                    # Vorher behielt ein Key mit `kind="Automat"` das Admin-Flag (R6-6). Die
+                    # Werte bis 0.21.x (`mensch`) kommen schon abgebildet an (`_key_kind`).
+                    if art != "human" and d.get("is_admin"):
                         # Der Kern von R6-5: Ein Automaten-Key trägt das Admin-Flag seines
                         # Besitzers NICHT. Vorher war jeder Key eines Admins eine vollständige
                         # Admin-Schreib-API — ohne zweiten Faktor, ohne CSRF-Schicht. Die Rollen
@@ -5755,7 +5902,9 @@ class TinySesam:
         """Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte
         Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen.
         Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht
-        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich.
+        die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich: `unverified_accounts`,
+        `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`,
+        `failure_series` (bis 0.21.x `fehlserien`), gegebenenfalls `audit`.
         `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in
         Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird."""
         older = _jetzt() - _versuchsfrist(attempts_older_than_sec)
@@ -5774,7 +5923,7 @@ class TinySesam:
             "resource_unlocks": self.store.gc_resource_unlocks(),
             "login_attempts": self.store.gc_attempts(older),
             # Nicht ausgelöste Serien nach 90 Tagen Ruhe; ausgelöste bleiben (B2-6).
-            "fehlserien": self.store.gc_fehlserien(
+            "failure_series": self.store.gc_fehlserien(
                 _jetzt() - 90 * 86400, self._sec("account_max_consecutive_failures")),
         }
         tage = int(self.cfg.audit_retention_days or 0)
@@ -6020,9 +6169,13 @@ class TinySesam:
         String → HTML mit Status; Response → 1:1. Ein unbekannter Name ist ein Fehler, kein
         stilles Nichts.
 
-        Unter einem Unterpfad (T-15): `ctx["praefix"]` ist der Präfix, den ein Pfad von TinySesam
-        im Browser braucht (`f"{ctx['praefix']}/auth/logout"`). `ctx["next"]` und `ctx["action"]`
-        sind schon Pfade des Browsers; `ctx["admin_path"]` ist ein Pfad der App (Präfix davor).
+        Unter einem Unterpfad (T-15): `ctx["prefix"]` ist der Präfix, den ein Pfad von TinySesam
+        im Browser braucht (`f"{ctx['prefix']}/auth/logout"`; bis 0.21.x `ctx["praefix"]`).
+        `ctx["next"]` und `ctx["action"]` sind schon Pfade des Browsers; `ctx["admin_path"]` ist
+        ein Pfad der App (Präfix davor). Die Seite `magic_confirm` bekommt `ctx["purpose"]`
+        (`login`, `verify_email`, `email_change`; bis 0.21.x `ctx["zweck"]`). Welche Schlüssel
+        eine Seite bekommt, steht im Docstring ihres eingebauten Renderers
+        (`tinysesam/templates.py`) — seit 0.22.0 alle englisch.
         """
         if name not in self.PAGES:
             raise ConfigError(f"Unbekannte Seite {name!r} — es gibt: {', '.join(self.PAGES)}")
@@ -6056,7 +6209,7 @@ class TinySesam:
         nonce = secrets.token_urlsafe(16)
         ctx.setdefault("nonce", nonce)
         # Für eigene Templates (set_template): der Präfix, den App-Pfade im Browser brauchen (T-15).
-        ctx.setdefault("praefix", self._praefix(request))
+        ctx.setdefault("prefix", self._praefix(request))
         eingebaut = not self.templates.ueberschrieben(template)
         out = self.templates.render(template, self, ctx)
         if isinstance(out, Response):
@@ -6067,7 +6220,7 @@ class TinySesam:
             # eines eigenen Templates bleibt byte-gleich (Gegenprüfung: ein Platzhalter in Daten
             # hätte dort ein geprüftes Ziel nachträglich verändert).
             if eingebaut:
-                out = str(out).replace(_PRAEFIX_PLATZHALTER, ctx["praefix"])
+                out = str(out).replace(_PRAEFIX_PLATZHALTER, ctx["prefix"])
             resp = HTMLResponse(_inject_nonce(out, nonce), status_code=status)
             policy = self._csp_header(nonce)
             if policy:
@@ -7022,7 +7175,7 @@ class TinySesam:
         "gerufen umgeht es den Adressbeleg")
     mfa_pending = Veraltet(
         "_mfa_pending", "ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe "
-        "liefert `auth.store.has_confirmed_totp(user_id)`")
+        "liefert `auth.store.has_confirmed_totp(user_id)` — Innenleben, ohne Zusage")
     next_login_step = Veraltet(
         "_next_login_step", "ohne Ersatz; `require_user`/`require` leiten selbst zum offenen "
         "Faktor")

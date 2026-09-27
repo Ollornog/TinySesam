@@ -618,13 +618,14 @@ def _error(auth, ctx) -> str:
 
 
 def _magic_confirm(auth, ctx) -> str:
-    """ctx: zweck ('login'|'verify_email'), action. Ein Knopf, der den Einmal-Link einlöst (R4-02).
+    """ctx: purpose ('login'|'verify_email'|'email_change'), action. Ein Knopf, der den
+    Einmal-Link einlöst (R4-02).
 
     Der Link aus der Mail löst nicht mehr per GET ein — Mail-Scanner rufen jeden Link auf und
     hätten ihn sonst verbraucht. Erst dieser POST (mit CSRF-Token) tut es."""
     t = auth.t
     knopf = {"verify_email": t("magic.confirm_verify"),
-             "email_change": t("magic.confirm_email_change")}.get(ctx.get("zweck"), t("magic.confirm_login"))
+             "email_change": t("magic.confirm_email_change")}.get(ctx.get("purpose"), t("magic.confirm_login"))
     body = (f"<h1>{_e(t('magic.confirm_title'))}</h1>"
             f"<div class=hint>{_e(t('magic.confirm_hint'))}</div>"
             f"<form method=post action='{_e(ctx.get('action', ''))}'>{_cf(ctx)}"

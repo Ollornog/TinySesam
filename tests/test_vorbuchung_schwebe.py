@@ -639,8 +639,8 @@ stempel = roh.execute("PRAGMA user_version").fetchone()[0]
 roh.close()
 auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, passkey_enabled=False, oidc_enabled=False))
 spalten = {z["name"] for z in auth_o.store._all("PRAGMA table_info(login_attempt)")}
-r.check("eine Datei auf Schema 11 ohne die Spalte bekommt sie beim Start (idempotent)",
-        stempel == Store.SCHEMA_VERSION == 11 and "offen" in spalten
+r.check("eine Datei ab Schema 11 ohne die Spalte bekommt sie beim Start (idempotent)",
+        stempel == Store.SCHEMA_VERSION >= 11 and "offen" in spalten
         and auth_o.store.count_fails(0, username="bert", nur_bestaetigt=True) == 1, f"{stempel} {spalten}")
 auth_o.store.db.close()
 os.remove(db_o)

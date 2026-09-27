@@ -1082,18 +1082,18 @@ auth_e8.revoke_api_key(k1["id"])
 auth_e8.revoke_api_key(k1["id"])                              # zweimal: nur ein Ereignis
 auth_e8.create_api_key(uid_e8, name="a")
 auth_e8.create_api_key(uid_e8, name="b")
-auth_e8._keys_widerrufen(uid_e8, "test")
+auth_e8._keys_widerrufen(uid_e8, "sessions_revoked")
 namen = [e for e, _ in ereignisse]
 r.check("Grenze e: ein einzelner Widerruf meldet api_key_revoked (genau einmal)",
         namen.count("api_key_revoked") == 1, str(namen))
 r.check("… ein gesammelter meldet api_keys_revoked mit Anzahl",
-        ("api_keys_revoked", {"anzahl": 2, "grund": "test"}) in ereignisse, str(ereignisse))
+        ("api_keys_revoked", {"count": 2, "reason": "sessions_revoked"}) in ereignisse, str(ereignisse))
 chef_e8 = auth_e8.create_user("chef-e8", password=PW, is_admin=True)
 auth_e8.create_api_key(uid_e8, name="c")
 ce8 = TestClient(app_e8)
 _login(ce8, "chef-e8", PW)
 ce8.post(f"/auth/admin/api/users/{uid_e8}/disable", json={"disabled": True})
-r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"anzahl": 1, "grund": "sperre"}) in ereignisse,
+r.check("… auch beim Sperren im Panel", ("api_keys_revoked", {"count": 1, "reason": "account_disabled"}) in ereignisse,
         str(ereignisse[-2:]))
 # (Mutationsproben: `seit=since` in `lift_lockout` streichen → (a) rot; `disabled_by` fest auf
 #  None → (b) rot; Index streichen → (c) rot; `_andere_nach_abschluss` leer → (d) rot;
@@ -2101,9 +2101,9 @@ _roh.commit()
 _roh.close()
 _neu = Store(_pfad)
 _tabellen = {z["name"] for z in _neu._all("SELECT name FROM sqlite_master WHERE type='table'")}
-r.check("Schema 10 → 11: `fehlserie` entsteht beim Start, der Stempel zieht nach",
-        "fehlserie" in _tabellen and int(_neu.db.execute("PRAGMA user_version").fetchone()[0]) == 11
-        and Store.SCHEMA_VERSION == 11)
+r.check("Schema 10 → heute: `fehlserie` entsteht beim Start, der Stempel zieht nach",
+        "fehlserie" in _tabellen
+        and int(_neu.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
 _neu.db.close()
 os.remove(_pfad)
 

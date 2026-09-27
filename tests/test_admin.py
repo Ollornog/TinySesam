@@ -203,7 +203,8 @@ print("  ✓ R6-8: unbrauchbarer Scope/Ablauf → 400 mit Grund (Panel und /auth
 
 # ---------- R6-6: ein Key mintet keinen Key ----------
 # (a) fail-closed für eine Key-Art, die es nicht gibt: Das Admin-Flag fällt weg, nicht nur bei
-#     "automat". Vorher behielt `kind="Automat"` (Tippfehler in der Spalte) die Admin-Rechte.
+#     "automation". Vorher behielt `kind="Automat"` (Tippfehler in der Spalte) die Admin-Rechte —
+#     ein Wert, den auch die Abbildung der Werte bis 0.21.x (`automat`/`mensch`) nicht kennt.
 k = auth.create_api_key(mid, name="ci")
 auth.store._exec("UPDATE api_key SET kind='Automat' WHERE id=?", (k["id"],))
 ohne = TestClient(app)
@@ -220,7 +221,7 @@ finally:
     auth.current_user = echt
 assert not any(x["name"] == "gemintet" for x in auth.list_api_keys(sid))
 print("  ✓ R6-6: unbekannte Key-Art trägt kein Admin-Flag; Panel-Key nur aus einer Sitzung")
-# (Mutationsproben: `art != "mensch"` → `art == "automat"` in current_user → (a) rot;
+# (Mutationsproben: `art != "human"` → `art == "automation"` in current_user → (a) rot;
 #  die `_via`-Prüfung in admin.user_key_create entfernen → (b) rot.)
 
 # ---------- B2-13: das Panel hält dieselbe Passwortregel ein ----------

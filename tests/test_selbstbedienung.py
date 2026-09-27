@@ -71,7 +71,7 @@ r.check("… Remote-Id bleibt die Konto-ID, Remote-User folgt dem neuen Namen",
         kopf["Remote-Id"] == id_vorher == str(uid) and kopf["Remote-User"] == "anna.neu")
 r.check("… die Sitzung bleibt (sie hängt an der ID)", c.get("/auth/me").status_code == 200)
 r.check("… Sicherheitsereignis und Audit-Zeile",
-        ("username_changed", {"alt": "anna", "neu": "anna.neu"}) in ev
+        ("username_changed", {"old": "anna", "new": "anna.neu"}) in ev
         and auth.store._one("SELECT 1 FROM audit WHERE event='username_changed'") is not None, str(ev))
 r.check("… Anmelden mit dem neuen Namen geht, mit dem alten nicht",
         _login(app, "anna.neu").get("/auth/me").status_code == 200
@@ -87,7 +87,7 @@ _altern(auth)
 alt_ = c.post("/auth/account/username", json={"username": "anna3"})
 r.check("ohne frischen Step-up → 403 mit Reauth-Hinweis", alt_.status_code == 403
         and alt_.headers.get("x-tinysesam-reauth"), f"{alt_.status_code} {dict(alt_.headers)}")
-key = auth.create_api_key(uid, name="skript", kind="mensch")["key"]
+key = auth.create_api_key(uid, name="skript", kind="human")["key"]
 mit_key = TestClient(app).post("/auth/account/username", json={"username": "per-key"},
                                headers={"Authorization": f"Bearer {key}"})
 r.check("ein API-Key ändert keinen Namen", mit_key.status_code in (401, 403), str(mit_key.status_code))
@@ -134,7 +134,7 @@ r.check("… die alte Adresse bekommt einen Hinweis — ohne Link (nichts, desse
 r.check("… offene Links an die alte Adresse gelten nicht mehr",
         auth.peek_magic(reset_alt, purpose="reset_password") is None)
 r.check("… Sicherheitsereignis mit alt/neu",
-        ("email_changed", {"alt": "carla@example.com", "neu": "carla.neu@example.com"}) in ev, str(ev))
+        ("email_changed", {"old": "carla@example.com", "new": "carla.neu@example.com"}) in ev, str(ev))
 r.check("… derselbe Link ein zweites Mal: ungültig", TestClient(app).post(link).status_code == 400)
 
 # Vergeben/reserviert: kein Link — aber der Hinweis an die eigene Adresse wie bei jedem Antrag

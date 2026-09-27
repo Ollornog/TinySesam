@@ -18,7 +18,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from .errors import ConfigError, StateError
-from .router import _key_art, _mail_basis, gehaertete_route
+from .router import _key_kind, _mail_basis, gehaertete_route
 from . import security
 from .store import name_ungueltig, norm_email, valid_email
 from .templates import brand, favicon_link, inject_nonce as _inject_nonce
@@ -99,7 +99,7 @@ def build_admin_router(auth) -> APIRouter:
     def kview(k):
         return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
                 "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
-                "kind": _key_art(k)}
+                "kind": _key_kind(k)}
 
     # ---------- Benutzer / Service-Accounts ----------
     @ar.get("/api/users")
@@ -168,21 +168,12 @@ def build_admin_router(auth) -> APIRouter:
         ziel = owner_schutz(me, uid)
         if disabled and ziel and ziel["is_owner"]:
             raise HTTPException(400, auth.t("api.owner_protected"))
-        # Mit Betreiber-Vermerk: Kein Bestätigungslink hebt diese Sperre auf, auch einer nicht,
-        # der erst nach ihr entsteht (H-18, zweite Angriffsrunde) — s. `Store.set_disabled`.
-        auth.store.set_disabled(uid, disabled, durch_betreiber=True)
-        keys = 0
-        if disabled:
-            auth.store.delete_user_sessions(uid)
-            # `verify_api_key` lehnt Keys gesperrter Konten schon ab. Trotzdem widerrufen: Wird
-            # das Konto später wieder freigegeben, lebte sonst ein Key wieder auf, von dem
-            # niemand mehr weiss.
-            keys = auth._keys_widerrufen(uid, "sperre")
-            # Dasselbe für offene Einmal-Token: Ein Bestätigungslink aus der Registrierung hob die
-            # Sperre sonst wieder auf (H-18, „deaktiviertes Konto über keinen Pfad").
-            auth.store.revoke_user_magic_tokens(uid)
-        protokoll(request, "user_disable" if disabled else "user_enable",
-              f"uid={uid}" + (f" api_keys_revoked={keys}" if keys else ""))
+        # Die Wirkung steht an EINER Stelle, `auth.set_disabled` (PO-Entscheid 2026-09-27):
+        # Betreiber-Vermerk (kein Bestätigungslink hebt die Sperre auf, H-18), Sitzungen beenden,
+        # Keys widerrufen, offene Links verwerfen, Audit mit dem Admin als Akteur. Eine eigene
+        # Admin-Route der App ruft dieselbe Methode. Hier bleibt, was vom Aufrufer abhängt.
+        if not auth.set_disabled(uid, disabled):
+            raise HTTPException(404, auth.t("api.not_found"))
         return {"ok": True}
 
     @ar.post("/api/users/{uid}/password")
@@ -206,7 +197,7 @@ def build_admin_router(auth) -> APIRouter:
         # Ein Admin setzt ein fremdes Passwort zurück, wenn das Konto verloren oder übernommen
         # ist. Blieben die API-Keys gültig, hätte das Aussperren nur die Haustür geschlossen —
         # der Key ist eine zweite, gleichwertige Anmeldung.
-        keys = auth._keys_widerrufen(uid, "admin_passwort")
+        keys = auth._keys_widerrufen(uid, "admin_password_reset")
         # Und offene Links — ein Adresswechsel aus der übernommenen Sitzung fällt mit (Fund 1).
         auth.store.revoke_user_magic_tokens(uid)
         protokoll(request, "user_password_reset", f"uid={uid} api_keys_revoked={keys}")

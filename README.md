@@ -187,6 +187,18 @@ auth.create_user("bob", password=os.environ["BOB_INITIAL"], display_name="Bob")
 `ensure_admin(…)` is for the first admin, `create_service(…)` for machine accounts
 ([API keys](#api-keys--servicedaemon-accounts)).
 
+**Locking an account as the operator** — the same as “disable” in the panel, which calls it:
+
+```python
+auth.set_disabled(uid, True)     # ends its sessions, revokes its API keys, drops open links
+auth.set_disabled(uid, False)    # unlocks; revoked keys stay revoked
+```
+
+The lock carries the operator mark: no confirmation link lifts it, not even one issued afterwards.
+An owner cannot be locked (`StateError`); an unknown ID returns `False`. Up to 0.21.x the docs
+showed `auth.store.set_disabled(uid, True, durch_betreiber=True)` for this — that only set the mark
+and left sessions, keys and links alive.
+
 **In your app's tests** you want a signed-in client without a login round-trip.
 `start_session` creates a session **without checking anything** — which is exactly why it
 belongs in tests (or behind a factor you verified yourself), never in a login route (that one
@@ -638,7 +650,7 @@ It ends that account's open sessions (`--keep-sessions` keeps them) and writes a
 
 ```python
 auth = TinySesam(TinySesamConfig(db_path="auth.db"))
-auth.set_password(auth.store.get_user_by_name("admin")["id"], "new-password")
+auth.set_password(auth.find_user("admin")["id"], "new-password")
 ```
 
 ## Backups and housekeeping
@@ -653,7 +665,9 @@ python -m tinysesam gc     --db auth.db                      # expired sessions/
 > gives you a torso — measured on a fresh instance with five accounts, the copy did not even
 > contain the `users` table, and you only find out when you restore it. `backup` uses SQLite's
 > online backup: it takes the locks it needs, pulls the WAL in, and writes a file that stands on
-> its own, with the same tight permissions as the source. From Python: `auth.store.backup(path)`.
+> its own, with the same tight permissions as the source. The supported way is this command;
+> `auth.store.backup(path)` does the same from Python, but `auth.store` is internal (tier C, no
+> promise — see [Public API](#public-api-three-tiers)).
 
 `gc` deletes expired sessions, flows, one-time tokens and old login attempts; the audit log is
 left alone on purpose. **Nothing runs it for you** — ready-made unit files are in
@@ -940,13 +954,15 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 - **`require_user` accepts a session OR a valid key** — protected routes are reachable by key without any change; `require_role(...)` honors the key scope.
 - **System daemons** = **service account** (`auth.create_service("backup-daemon", roles=["reader"])`, no login/MFA) + key (`auth.create_api_key(uid, name=…, expires_days=…)` → plaintext **once**). Least privilege via the roles.
 - **Disable instead of delete:** `auth.revoke_api_key(id)` (key disabled, stays in the list). Self-service routes: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
-- **Two kinds of key, and neither one is an admin API.** `kind="automat"` (the default) works
+- **Two kinds of key, and neither one is an admin API.** `kind="automation"` (the default) works
   on its own but **never carries its owner's admin flag** and satisfies no route that requires
-  admin — the way for services, scripts and CI. `kind="mensch"` is only valid **together with a
+  admin — the way for services, scripts and CI. `kind="human"` is only valid **together with a
   live session of the same account**, and in return carries full rights — the way for a tool a
   human drives themselves. On its own, a leaked one is worthless. Until 0.18.x there was one kind,
   and an admin's key was a complete write API: create users, set `is_admin`, reset passwords — no
-  second factor, no CSRF layer. A leaked CI key was the instance.
+  second factor, no CSRF layer. A leaked CI key was the instance. (Up to 0.21.x the kinds were
+  called `automat` and `mensch`; since 0.22.0 those names are an input error that names the new
+  one, and the migration rewrites stored keys — rolling back: `docs/BETRIEB.md`.)
 - **Keys expire by themselves.** Without `expires_days` a key used to live forever, and that was
   the common case. `apikey_default_days` (90) now applies; `expires_days=0` still means
   "unlimited" but needs `apikey_allow_unlimited=True` and lands in the audit entry.
@@ -961,7 +977,7 @@ For **machine access** (scripts, other services, system daemons) — alongside t
 
 Built-in panel at **`/auth/admin`** (`is_admin` only), embeddable with no extra setup:
 
-- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection), password reset, set roles/admin.
+- **Users & service accounts:** create, **explicitly disable/enable** (`disabled` — account stays, login blocked, sessions end immediately; self-lockout protection; in code: `auth.set_disabled`), password reset, set roles/admin.
 - **API keys** per user: generate (shown once) / revoke.
 - **Sessions:** view active ones + end them.
 - **Hardening:** tune the thresholds (attempts/lockout time/rate limit) live.
@@ -1224,8 +1240,23 @@ one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinyS
 `durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 renames them **without an alias** — the
 tier promises only start with this release; the full list old → new is in the
 [CHANGELOG](https://github.com/Ollornog/TinySesam/blob/main/CHANGELOG.md). The guard fails on a
-German word in any tier-A/B name, parameter, config field or error attribute. Values stay as they
-are: audit and log lines (fail2ban), reason codes and report keys.
+German word in any tier-A/B name, parameter, config field or error attribute.
+
+**So are the keys and values** (0.22.0, also without an alias): what the tier-A/B methods return or
+accept (the report of `federation_bind_existing`, `gc()`, `create_api_key`, the reason codes), the
+`details` passed to `on_security_event`, the context of your own pages (`ctx["prefix"]`,
+`ctx["purpose"]`), the JSON of the account and admin routes, and the API key kinds `automation`/
+`human`. The two values that live in the database (the key kind, the `old` address in a pending
+address-change link) are migrated on start (schema 12) and still read correctly in their old form;
+rolling back to 0.21.x takes one SQL block from `docs/BETRIEB.md`. The same guard measures them on a
+probe instance and in the source. **Audit and log lines stay as they are** — fail2ban filters and
+your own filters depend on them (`apikey_create … art=automat` keeps its wording).
+
+**`auth.store` is internal (tier C).** It is the storage layer the built-in routes use; its methods
+have no tier, no promise and no deprecation period, and they may change in any release. Everything
+an app needs has a public method (`set_disabled`, `find_user`, `list_api_keys`, `lift_lockout` …);
+where the docs still mention an `auth.store` call (a health probe, dropping OIDC grants), they say
+so.
 
 **Tier C warns.** Calling an old tier-C name (reading one, for the constants) raises a
 `DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
@@ -1312,7 +1343,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**60 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**61 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

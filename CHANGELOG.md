@@ -8,7 +8,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 (`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten und dieselben Bausteine für
 eigene Step-up- und Passwortwechsel-Seiten (`confirm_password`, `confirm_pin`, `confirm_totp`,
 `change_password`); die internen Namen (Stufe C) warnen und fallen mit 1.0 weg, die deutschen
-Namen der Stufen A und B heissen englisch (ohne Alias). Und zwei Funde aus dem Betrieb: das
+Namen der Stufen A und B heissen englisch (ohne Alias) — ebenso ihre Schlüssel und Werte, auch die
+gespeicherten (Schema 12); die Sperre durch den Betreiber hat eine öffentliche Methode
+(`auth.set_disabled`), `auth.store` ist Innenleben ohne Zusage. Und zwei Funde aus dem Betrieb: das
 Erst-Admin-Token steht im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird
 gemeldet.** Was beim Update auffällt:
 
@@ -60,15 +62,85 @@ gemeldet.** Was beim Update auffällt:
   | `TinySesamConfig.pin_als_erstfaktor()` | `TinySesamConfig.pin_as_first_factor()` | B |
   | `TinySesamConfig.pruefen()` | `TinySesamConfig.validate()` | B |
 
-  **Werte bleiben, wie sie sind** — nur Namen ändern sich: die Grund-Kürzel (`adresse_als_name`,
-  `name_selbst_gewaehlt`, `frist` …, die Schlüssel von `NAME_BINDING_REFUSALS`), Audit-Ereignisse
-  und ihre Details (`ldap_kennung_gebunden`, `durch=betreiber`), die Zeilen für fail2ban, die
-  Schlüssel des Berichts von `federation_bind_existing` (`quelle`, `ausgefuehrt`, `gebunden` …),
-  die Werte von `api_key_kind` (`automat`/`mensch`) und alle Spalten der Datenbank. Geändert haben
-  sich nur Log-Zeilen, die einen Aufruf nennen: die Hinweise auf `auth.federation_unbind(…)`,
-  `auth.federation_bind_existing(…, mapping=…)` und `auth.change_username(…, by_operator=True)`,
-  und die Summenzeile der Bestandsbindung im Sicherheits-Log beginnt mit
-  `federation_bind_existing(<quelle>)`.
+  Die Schlüssel und Werte, die diese Namen zurückgeben oder annehmen, heissen seit dem zweiten
+  PO-Entscheid desselben Tags ebenfalls englisch — nächster Punkt. Audit-Ereignisse und ihre Details
+  (`ldap_kennung_gebunden`, `durch=betreiber`), die Zeilen für fail2ban und alle Spalten der
+  Datenbank bleiben. Geändert haben sich nur Log-Zeilen, die einen Aufruf nennen: die Hinweise auf
+  `auth.federation_unbind(…)`, `auth.federation_bind_existing(…, mapping=…)` und
+  `auth.change_username(…, by_operator=True)`, und die Summenzeile der Bestandsbindung im
+  Sicherheits-Log beginnt mit `federation_bind_existing(<quelle>)`.
+- **Auch die Schlüssel und Werte heissen englisch — ohne Alias, und die Datenbank zieht mit**
+  (PO-Entscheid 2026-09-27, „Alles übersetzen, auch DB-Werte“): was die Stufen A und B
+  zurückgeben oder annehmen, was an `on_security_event` geht, der Kontext eigener Seiten und die
+  JSON-Antworten der Routen. **Wer einen dieser Schlüssel liest oder einen der Werte vergleicht,
+  stellt nach der Tabelle um** — ein alter Schlüssel ist ein `KeyError`, ein alter Wert vergleicht
+  still ungleich; `create_api_key(kind="automat"|"mensch")` und `POST /auth/apikeys` mit einem alten
+  `kind` sind ein Eingabefehler (`ConfigError` bzw. 400), dessen Text den neuen Namen nennt.
+
+  | Wo | bis 0.21.x | ab 0.22.0 |
+  |---|---|---|
+  | `federation_bind_existing()` — Bericht | `quelle`, `ausgefuehrt`, `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen`, `lokal` | `source`, `applied`, `bound`, `conflict`, `ambiguous`, `not_in_directory`, `no_identifier`, `refused`, `local_password` |
+  | … je Eintrag | `lokal`, `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer` | `local`, `directory`, `identifier`, `reason`, `bound_to`, `matches` |
+  | … Gründe (`reason`) ausserhalb von `NAME_BINDING_REFUSALS` | `kein_konto`, `dienstkonto`, `gesperrt`, `schon_gebunden` | `no_account`, `service_account`, `disabled`, `already_bound` |
+  | `NAME_BINDING_REFUSALS` — Schlüssel (die Erklärungen jetzt englisch) | `adresse_als_name`, `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `frist` | `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired` |
+  | `gc()` | `fehlserien` | `failure_series` |
+  | `create_api_key()`, `POST /auth/apikeys` | `verworfene_rollen` | `dropped_roles` |
+  | Art eines API-Keys: `create_api_key(kind=…)` (auch die Vorgabe), `api_key_kind()`, `list_api_keys()`, `GET /auth/apikeys`, `GET <admin_path>/api/users/{id}/keys` | `automat`, `mensch` | `automation`, `human` |
+  | `current_user()` über einen API-Key | `_key_art` | `_key_kind` |
+  | `confirm_email_change()` | `"vergeben"` | `"taken"` |
+  | `peek_magic()`/`redeem_magic()` eines Adresswechsel-Links — `payload` | `alt` | `old` |
+  | `on_security_event`: `username_changed`, `email_changed` | `alt`, `neu` | `old`, `new` |
+  | … `recovery_code_used` | `verbleibend` | `remaining` |
+  | … `recovery_codes_generated` | `anzahl` | `count` |
+  | … `totp_disabled` | `recovery_codes_geloescht` | `recovery_codes_deleted` |
+  | … `api_keys_revoked` | `anzahl`, `grund`: `sperre`, `admin_passwort`, `passwort_reset`, `sitzungen_beendet` | `count`, `reason`: `account_disabled`, `admin_password_reset`, `password_reset`, `sessions_revoked` |
+  | Kontext eigener Seiten (`set_template`) | `ctx["praefix"]`; `ctx["zweck"]` (Seite `magic_confirm`) | `ctx["prefix"]`; `ctx["purpose"]` |
+
+  Die Ereignisnamen (`SECURITY_EVENTS`), die übrigen Gründe (`LoginResult.REASONS` …), die
+  Seitennamen (`PAGES`) und die Schlüssel der übrigen JSON-Antworten waren schon englisch.
+  `own_events()` nennt weiter die Namen der Audit-Ereignisse (darunter deutsche wie
+  `ldap_kennung_gebunden`) — das sind Audit-Werte, und die bleiben.
+
+  **Gespeicherte Werte, Schema 12.** Zwei davon stehen in der Datenbank: die Art jedes API-Keys
+  (`api_key.kind`) und im offenen Adresswechsel-Link die bisherige Adresse (`magic_token.payload`).
+  Der erste Start von 0.22.0 schreibt sie um, hebt den Stempel auf 12 und sagt es im Log (`…
+  gespeicherte Werte auf die englischen Namen umgeschrieben`); keine Spalte ändert sich. Gelesen
+  wird ein alter Wert trotzdem richtig (ein `mensch`-Key gilt als `human`, also nur mit Sitzung),
+  und jeder Start zieht Keys nach, die eine ältere Fassung inzwischen ausgestellt hat.
+  **Rückschritt auf 0.21.x** (gemessen mit 0.21.0): Sie öffnet die Datei und warnt beim Start
+  („Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11 …“), hält einen
+  `human`-Key aber für einen Automaten-Key — **er wirkt dort ohne Sitzung**, mit den Rechten des
+  Kontos ohne Admin-Flag. Vor dem Start einer 0.21.x-Fassung deshalb das SQL aus `docs/BETRIEB.md`
+  („Rückschritt auf 0.21.x“) fahren: `UPDATE api_key SET kind='mensch' WHERE kind='human'` usw.,
+  danach der Stempel zurück auf 11.
+
+  **Audit- und Log-Zeilen bleiben, wie sie waren** — Filter der Betreiber hängen an ihnen. Darin
+  stehen weiter die alten Namen: `apikey_create`/`apikey_use` `art=automat|mensch`,
+  `<quelle>_namensbindung_zu grund=<Kürzel bis 0.21.x>` (etwa `grund=name_aus_quelle`),
+  `totp_disable … recovery_codes_geloescht=`, `recovery_used … verbleibend=`, die Zeilen im
+  Sicherheits-Log (`API-Key der Art 'mensch' ohne passende Sitzung …`, die Begründung einer nicht
+  gebundenen Namensbindung). Wer von einem Wert der Oberfläche auf eine Audit-Zeile schliesst, liest
+  dort also noch die alte Schreibweise.
+- **Konto-Dicts tragen nur noch die Felder des Kontos.** `get_user`, `find_user`,
+  `identifier_taken`, `current_user`, `session_user`, `pending_user`, `verify_api_key`,
+  `LoginResult.user` und die `require_*`-Wächter liefern `id`, `username`, `display_name`, `email`,
+  `email_verified`, `is_admin`, `is_owner`, `roles`, `is_service`, `disabled`, `first_login_at`,
+  `mfa_enroll_until`, `created_at` (dazu je nach Weg `_via`, `_key_kind`). Bis 0.21.x ging die ganze
+  Datenbankzeile hinaus, mit der Buchhaltung des Stores unter deutschen Spaltennamen (`topf_name`,
+  `topf_mail`, `name_quelle`, `name_selbst_gewaehlt`, `idp_bestaetigt_at`, `name_versuch_ab`,
+  `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab`) — Innenleben, das keine Zusage tragen soll.
+  `verify_api_key` gibt als Konto jetzt ein Dict statt einer `sqlite3.Row` zurück, `list_api_keys`
+  eine Liste von Dicts (Spalten von `api_key`, `kind` englisch).
+- **Ein Konto sperrt der Betreiber im Code mit `auth.set_disabled(user_id, True)`** (neu, Stufe A,
+  PO-Entscheid 2026-09-27) — dieselbe Wirkung wie „Sperren“ im Panel, das die Methode ruft:
+  Betreiber-Vermerk, Sitzungen beenden, API-Keys widerrufen, offene Einmal-Token verwerfen, Audit.
+  Bis 0.21.x zeigte `docs/BETRIEB.md` dafür `auth.store.set_disabled(uid, True,
+  durch_betreiber=True)` — **das setzte nur den Vermerk**; Sitzungen, Keys und Links blieben gültig.
+  Wer das so übernommen hat, stellt um. **`auth.store` ist Innenleben** (Stufe C): ohne Stufe,
+  ohne Zusage, ohne Übergangsfrist. Wo die Doku noch einen Aufruf nennt (die Schreibprobe für einen
+  eigenen Healthcheck, `drop_oidc_grants_for_user`, `backup` aus Python), steht das dabei. Das
+  Panel antwortet auf `POST <admin_path>/api/users/{id}/disable` für ein Konto, das es nicht gibt,
+  jetzt 404 statt 200 (bisher „ok“ samt Audit-Zeile, ohne dass etwas geschah).
 - **Die internen Namen (Stufe C) warnen.** 42 Methoden und 7 Konstanten heissen intern jetzt `_name`
   (`check_password` → `_check_password`, `record_login` → `_record_login` …, Liste unter
   „Veraltet“), `complete_mfa` ist ein Alias von `complete_totp`. Der alte Name tut bis 1.0 dasselbe
@@ -132,6 +204,40 @@ gemeldet.** Was beim Update auffällt:
   Claim ohne Scope (Mapper), ist die Warnung gegenstandslos.
 
 ### Hinzugefügt
+
+- **`auth.set_disabled(user_id, disabled)`** (Stufe A, PO-Entscheid 2026-09-27): ein Konto als
+  Betreiber sperren oder entsperren, mit der Wirkung des Panels — Betreiber-Vermerk (kein
+  Bestätigungslink hebt die Sperre auf, auch keiner, der erst danach entsteht, H-18), alle
+  Sitzungen beenden, API-Keys widerrufen (Ereignis `api_keys_revoked` mit
+  `reason="account_disabled"`; beim Entsperren bleiben sie widerrufen), offene Einmal-Token
+  verwerfen, Audit `user_disable`/`user_enable` mit `uid=…` (und `api_keys_revoked=…`). In einer
+  Anfrage steht das angemeldete Konto in der Zeile — genau die Zeile, die das Panel bis 0.21.x
+  selbst schrieb —, ohne Anfrage das betroffene. Ein Owner lässt sich nicht sperren
+  (`StateError`, nichts geschieht), eine unbekannte ID gibt `False`. Was vom Aufrufer abhängt
+  (sich nicht selbst sperren, ein Owner-Konto ändert nur ein Owner), prüft weiter das Panel. Die
+  Route `POST <admin_path>/api/users/{id}/disable` ruft die Methode (eine Quelle).
+- **Wertprüfung im Namens-Wächter** (`tests/test_api_surface.py`, `pruefe_werte`): Neben den Namen
+  misst er jetzt die Schlüssel und Werte der Stufen A und B — an einer Probeinstanz (Ergebnis-Dicts
+  von `gc`, `create_api_key`, `list_api_keys`, `federation_bind_existing` mit allen Teilen und
+  Gründen, `peek_magic`, `confirm_email_change`, die Konto-Dicts, `ConfigError.field`; die
+  Nutzlast jedes Ereignisses an einem Hook; der Kontext eigener Seiten über aufzeichnende Vorlagen;
+  das JSON von `/auth/me`, `/auth/apikeys` und `<admin_path>/api/users` samt `disabled_by`; die
+  gespeicherten Werte in der Datei), an den Konstanten und Konfigurations-Vorgaben und im Quelltext
+  (jeder Aufruf von `_sicherheitsereignis` und `render_page`, jeder Schlüssel, den ein Renderer aus
+  `ctx` liest, jede JSON-Antwort der Routen-Module) — Stand 790 Einträge. Rot bei einem deutschen Wort (dieselbe
+  Liste, um die Wörter und Stämme der Werte ergänzt) und bei jedem Namen bis 0.21.x (`ALTE_WERTE`,
+  auch `alt`, das als englisches Wort nicht in der Liste steht); dazu eine Mindestmenge je Weg,
+  Selbstproben (ein alter Schlüssel in `gc()` einer Unterklasse, in einem Ereignis, im Kontext,
+  in einer JSON-Antwort) und die Verdrahtung.
+- **Tests:** `tests/test_werte_englisch.py` — eine Datei aus 0.21.x (alte Werte, Stempel 11)
+  migriert beim Start, die Keys wirken wie vorher (Menschen-Key nur mit Sitzung), ein zweiter
+  Start ändert nichts; gemischte Werte nach einem Rückschritt (Stempel 12, `mensch`/`automat` und
+  ein Link mit `alt`) wirken richtig, auch ohne Neustart; das SQL aus `docs/BETRIEB.md` stellt den
+  Stand von 0.21.x her und ein späterer Start migriert wieder; nur lesbar startet eine Datei mit
+  alten Werten (Stempel 12), ein Upgrade ohne Schreibrecht bricht ab; die alten Arten sind ein
+  Eingabefehler mit Hinweis; `set_disabled` mit jeder Wirkung, Owner-Schutz, unbekannter ID,
+  derselben Audit-Zeile über das Panel und ein AST-Wächter, dass die Panel-Route nur die Methode
+  ruft.
 
 - **Warnung bei Gruppenregel ohne Scope `groups`** (T-16, Fund aus dem Betrieb 2026-09-27):
   `konfigpruefung` prüft je Client — den Einzel-Client mit `oidc_scopes`, jede Anwendung aus
@@ -229,7 +335,7 @@ gemeldet.** Was beim Update auffällt:
 - **Namens-Wächter über die ganze Oberfläche der Stufen A und B** (`tests/test_api_surface.py`,
   `pruefe_namen`): jeder Name der Ablage in A oder B, die Parameter jeder Methode und Funktion am
   lebenden Objekt, alle Konfigurationsfelder, die öffentlichen Attribute und Konstruktor-Parameter
-  der exportierten Fehlertypen — Stand 593 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
+  der exportierten Fehlertypen — Stand 596 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
   einer Liste, Wortstämme auch mitten im Wort (`SICHERHEITSEREIGNISSE` ist nach dem Zerlegen nur
   eines) und Umlaute. Dazu eine Mindestmenge (je Art ein Pflicht-Eintrag, Zahl der Parameter und
   Felder) gegen eine Messung, die still weniger sieht, und Selbstproben an einer Probeklasse: jeder
@@ -244,9 +350,9 @@ gemeldet.** Was beim Update auffällt:
   übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
-  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 251 (darunter
-  `login_*`, `confirm_*`, `change_password`, die 11 Namen am Ergebnistyp `LoginResult` und die 6
-  an `PasswordChangeResult`), B 64, C 50 von 365 Namen.
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 252 (darunter
+  `login_*`, `confirm_*`, `change_password`, `set_disabled`, die 11 Namen am Ergebnistyp
+  `LoginResult` und die 6 an `PasswordChangeResult`), B 64, C 50 von 366 Namen.
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
   `Veraltet("_name", "<Ersatz>")`: ein Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
@@ -319,6 +425,21 @@ gemeldet.** Was beim Update auffällt:
   eine Maschinen-Anmeldung, das alte Passwort zu kennen macht ihn nicht zum Menschen.
 
 ### Geändert
+
+- **Schlüssel und Werte der Stufen A und B englisch, Schema 12** (PO-Entscheid 2026-09-27): die
+  Tabelle steht unter „Was beim Update auffällt“. `Store.SCHEMA_VERSION` ist 12 — eine
+  Datenmigration ohne neue Spalte, aber mit Werten, die 0.21.x anders liest (ein `human`-Key gälte
+  dort ohne Sitzung); der Stempel ist genau die Stelle, an der eine ältere Fassung davor warnt.
+  `api_key.kind` schreibt jeder Start um, den Payload eines Adresswechsel-Links nur der Sprung auf
+  12 — bei jedem Start ginge die Suche durch alle Einmal-Token (gemessen in
+  `tests/test_bestandsdaten.py`, „Aufwand“: 540 SQLite-Schritte mehr bei 20 000 Token); gelesen
+  werden alte Werte an beiden Stellen richtig. Nur lesbar startet eine Datei mit alten Werten bei
+  Stempel 12 weiter (Warnung im Log). Der Grund des gesammelten Key-Widerrufs kommt aus einer festen
+  Liste (`_KEYS_WIDERRUFEN_GRUENDE`); ein anderer Wert ist ein Programmierfehler (`ValueError`),
+  kein stilles neues Kürzel.
+- **Konto-Dicts nur mit den Feldern des Kontos** (`_KONTO_FELDER` — eine Liste der erlaubten Spalten
+  statt der verbotenen: Eine neue Spalte des Stores wird nicht still zur Zusage).
+- **Die Panel-Route „Sperren“ ruft `auth.set_disabled`**; die Schritte stehen nur noch dort.
 
 - **Die deutschen Namen der Stufen A und B heissen englisch, ohne Alias** (PO-Entscheid
   2026-09-27): 11 Methoden, 5 Konstanten, 2 Methoden von `TinySesamConfig`, 18 Parameter in 14

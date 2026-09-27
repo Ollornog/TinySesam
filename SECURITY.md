@@ -75,12 +75,16 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 - **Notify account holders about factor changes — `auth.on_security_event`.** Opt-in hook,
   called as `hook(event, account, details)` with `account = {id, username, email, display_name}`
   whenever a sign-in factor is created, changed, removed or consumed: `password_changed`,
-  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
-  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` and
-  `username_changed` (`details={"alt": …, "neu": …}` — self-service, 2026-09-25) and `api_keys_revoked`
-  (`details={"anzahl": n, "grund": …}` — in bulk on a reset, a block, an admin password reset or
-  `sessions/revoke` with `scope=all`). That includes changes an administrator makes to someone
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled` (`details={"recovery_codes_deleted": n}`),
+  `recovery_codes_generated` (`details={"count": n}`), `recovery_code_used`
+  (`details={"remaining": n}`), `passkey_added` (`details={"name": …}`), `passkey_removed`
+  (`details={"passkey_id": n}`), `api_key_created` (`details={"key_id": n, "name": …}`),
+  `api_key_revoked` (`details={"key_id": n}`), `email_changed` and `username_changed`
+  (`details={"old": …, "new": …}` — self-service, 2026-09-25) and `api_keys_revoked`
+  (`details={"count": n, "reason": …}`, `reason` one of `password_reset`, `account_disabled`,
+  `admin_password_reset`, `sessions_revoked` — in bulk on a reset, a block, an admin password reset
+  or `sessions/revoke` with `scope=all`). The `details` keys and the reasons are English since
+  0.22.0 (up to 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` with German reasons). That includes changes an administrator makes to someone
   else's account in the panel (password reset, issuing an API key, revoking a passkey) — write the
   mail so it does not assume the holder did it. Apart from the hook, TinySesam sends one mail itself
   when a mailer is configured: a notice to the (verified) address of an account that got locked by

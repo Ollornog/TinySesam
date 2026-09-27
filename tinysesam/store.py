@@ -90,15 +90,16 @@ CREATE TABLE IF NOT EXISTS api_key (
     key_hash   TEXT UNIQUE NOT NULL,            -- sha256(vollständiger Key)
     roles      TEXT NOT NULL DEFAULT '[]',      -- Key-Scope; leer = erbt User-Rollen
     -- Welche Art Key ist das? (R6-5)
-    --   'automat' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
-    --                        erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
-    --   'mensch'           : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
-    --                        Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
-    --                        ein Mensch selbst bedient (CLI am eigenen Rechner).
-    -- Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key eines Admins war eine vollständige
-    -- Admin-Schreib-API, ohne zweiten Faktor und ohne CSRF-Schicht — ein abgeflossener CI-Key
-    -- war die Instanz.
-    kind       TEXT NOT NULL DEFAULT 'automat',
+    --   'automation' (Vorgabe): arbeitet allein, trägt NIE das Admin-Flag seines Besitzers und
+    --                           erfüllt keine Route, die Admin verlangt. Für Dienste und Skripte.
+    --   'human'               : gilt nur ZUSAMMEN mit einer gültigen Sitzung desselben Kontos.
+    --                           Dafür trägt er die vollen Rechte — der Weg für ein Werkzeug, das
+    --                           ein Mensch selbst bedient (CLI am eigenen Rechner).
+    -- Bis 0.21.x hiessen die Werte 'automat' und 'mensch' (Schema 12, `_werte_englisch`); gelesen
+    -- werden sie weiter (`KEY_ARTEN_ALT`). Bis 0.18.x gab es die Unterscheidung nicht: Jeder Key
+    -- eines Admins war eine vollständige Admin-Schreib-API, ohne zweiten Faktor und ohne
+    -- CSRF-Schicht — ein abgeflossener CI-Key war die Instanz.
+    kind       TEXT NOT NULL DEFAULT 'automation',
     created_at INTEGER NOT NULL,
     last_used  INTEGER,
     expires_at INTEGER,                          -- NULL = unbefristet
@@ -594,6 +595,27 @@ def ersatzname(user_id) -> str:
     return f"gelöscht#{int(user_id)}"
 
 
+#: Schlüssel im Payload eines Adresswechsel-Links bis 0.21.x und ihr englischer Ersatz (Schema 12).
+_PAYLOAD_SCHLUESSEL_ALT = {"email_change": {"alt": "old"}}
+
+
+def payload_lesen(purpose, text) -> Optional[dict]:
+    """Der Payload eines Einmal-Tokens als Dict — mit englischen Schlüsseln (Schema 12).
+
+    Ein Adresswechsel-Link trug bis 0.21.x `{"alt": <bisherige Adresse>}`, seit 0.22.0
+    `{"old": …}`. Ein alter Schlüssel wird abgebildet, auch wenn die Migration ihn nicht mehr
+    erreicht hat — eine ältere Fassung, die nach einem Rückschritt einen Link ausstellte, schreibt
+    ihn wieder so. Ein Schlüssel, der schon englisch dasteht, gewinnt. `None` ohne Payload."""
+    if not text:
+        return None
+    daten = json.loads(text)
+    for alt, neu in _PAYLOAD_SCHLUESSEL_ALT.get(purpose, {}).items():
+        if isinstance(daten, dict) and alt in daten:
+            wert = daten.pop(alt)
+            daten.setdefault(neu, wert)
+    return daten
+
+
 class Store:
     #: Rechte für eine NEU angelegte Datenbank. Hier stehen Passwort-Hashes, TOTP-Geheimnisse
     #: und E-Mail-Adressen; auf einem geteilten Host konnte sie bis 0.18.0 jeder lesen (0644,
@@ -713,9 +735,23 @@ class Store:
     #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
     #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
     #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
-    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Schema 11
-    #:      ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
-    SCHEMA_VERSION = 11
+    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Alles
+    #:      davon additiv und bei jedem Start idempotent — Stand von 0.21.0.
+    #: 12 — 0.22.0: gespeicherte Werte der öffentlichen Oberfläche englisch (PO-Entscheid
+    #:      2026-09-27): `api_key.kind` `automat`/`mensch` → `automation`/`human` (bei JEDEM Start —
+    #:      für Keys, die eine ältere Fassung nach einem Rückschritt ausgestellt hat), im Payload
+    #:      offener Adresswechsel-Links `alt` → `old` (beim Sprung auf 12; `_werte_englisch`).
+    #:      Gelesen wird ein alter Wert trotzdem richtig (`KEY_ARTEN_ALT`, `payload_lesen`). Keine
+    #:      Spalte ändert sich. Der Stempel steigt, weil eine ältere Fassung die neuen Werte ANDERS
+    #:      liest: 0.21.x hält einen `human`-Key für einen Automaten-Key (gilt ohne Sitzung). Sie
+    #:      öffnet die Datei trotzdem, meldet aber beim Start die neuere Schema-Version — Rückweg
+    #:      mit SQL in docs/BETRIEB.md.
+    SCHEMA_VERSION = 12
+
+    #: Die gespeicherten Werte bis 0.21.x und ihr englischer Ersatz (Schema 12). Die Migration
+    #: schreibt um, und wer liest, bildet einen alten Wert trotzdem ab: Eine ältere Fassung, die
+    #: nach einem Rückschritt auf derselben Datei lief, hat wieder alte Werte hinterlassen.
+    KEY_ARTEN_ALT = {"automat": "automation", "mensch": "human"}
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
     #: gerechnet. Wer die Faltung in `norm_kennung` ändert, hebt `SCHEMA_VERSION` und setzt diesen
@@ -748,7 +784,7 @@ class Store:
             # Bestandskeys gelten als Automaten-Keys: die engere Auslegung. Ein Key,
             # der bisher Admin-Routen bedienen konnte, verliert das — genau das ist
             # der Sinn von R6-5, und ein abgewiesener Aufruf hinterlässt eine Zeile.
-            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automat'")],
+            "api_key": [("kind", "TEXT NOT NULL DEFAULT 'automation'")],
             # `DEFAULT 1` füllt jede Bestandszeile: Adressen, die vor dieser Spalte entstanden
             # sind, behalten genau ihre bisherige Wirkung. Auf 0 kommt eine Adresse nur, wenn
             # ein Aufrufer sie ausdrücklich ohne Beleg einträgt (OIDC ohne `email_verified`).
@@ -891,6 +927,23 @@ class Store:
                                (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
                 self._name_quelle_nachtragen()
             self._owner_nachziehen()
+            # Schema 12: die gespeicherten Werte englisch (s. `_werte_englisch`). Nur lesbar und
+            # Werte einer älteren Fassung darin: Das darf einen Start nicht verhindern, der bisher
+            # ging — gelesen werden die alten Werte ohnehin richtig. Ein Upgrade dagegen schreibt,
+            # wie jede Migration.
+            try:
+                umgeschrieben = self._werte_englisch(links=vorhanden_vorab < 12)
+            except sqlite3.OperationalError as e:
+                if vorhanden_vorab < self.SCHEMA_VERSION:
+                    raise
+                umgeschrieben = 0
+                logging.getLogger("tinysesam").warning(
+                    "Werte einer älteren Fassung nicht auf die englischen Namen umgeschrieben (%s): "
+                    "Die Datenbank ist nicht schreibbar. Gelesen werden sie trotzdem richtig.", e)
+            if umgeschrieben:
+                logging.getLogger("tinysesam").info(
+                    "%d gespeicherte Werte auf die englischen Namen umgeschrieben (Schema 12: "
+                    "API-Key-Arten, Adresswechsel-Links).", umgeschrieben)
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
             else:
@@ -1113,6 +1166,46 @@ class Store:
             "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
         self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
                         (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
+
+    def _werte_englisch(self, links: bool = True) -> int:
+        """Gespeicherte Werte der öffentlichen Oberfläche auf ihre englischen Namen bringen (Schema
+        12, PO-Entscheid 2026-09-27) — ohne Commit, unter `_lock`, Teil von `_migrate`.
+
+        * `api_key.kind`: `automat` → `automation`, `mensch` → `human` (`KEY_ARTEN_ALT`) — die Art
+          sieht jeder, der Keys auflistet (`list_api_keys`, `api_key_kind`, `GET /auth/apikeys`,
+          das Panel). Bei JEDEM Start, nicht nur beim Sprung über den Stempel: Eine ältere Fassung,
+          die nach einem Rückschritt auf der Datei lief, hat wieder alte Werte geschrieben, und sie
+          senkt den Stempel nicht. Die Tabelle ist klein.
+        * Payload offener Adresswechsel-Links (`magic_token`, `purpose='email_change'`): `alt` →
+          `old` (`payload_lesen`) — sichtbar über `peek_magic`/`redeem_magic`. Nur mit
+          `links=True` (beim Sprung auf 12): Die Suche geht durch alle Einmal-Token, und die wachsen
+          bis zum nächsten `gc` — bei jedem Start kostete das einen Lauf durch die Tabelle
+          (gemessen in `tests/test_bestandsdaten.py`, „Aufwand"). Ein Link, den eine ältere Fassung
+          danach ausstellt, bildet `payload_lesen` beim Lesen ab; er verfällt ohnehin bald.
+
+        Idempotent; geschrieben wird nur, wo es etwas umzuschreiben gibt — eine nur lesbare Datei
+        ohne alte Werte startet wie bisher. Rückgabe: die Zahl der geänderten Zeilen.
+
+        Nicht übersetzt wird, was nur innen gelesen wird (die Art einer Serie `fehlserie.art`, die
+        Spaltennamen) und was im Audit-Log steht — dessen Zeilen bleiben, wie sie sind."""
+        n = 0
+        for alt, neu in self.KEY_ARTEN_ALT.items():
+            if self.db.execute("SELECT 1 FROM api_key WHERE kind=? LIMIT 1", (alt,)).fetchone():
+                n += self.db.execute("UPDATE api_key SET kind=? WHERE kind=?", (neu, alt)).rowcount
+        for purpose, schluessel in (_PAYLOAD_SCHLUESSEL_ALT.items() if links else ()):
+            for alt in schluessel:
+                for z in self.db.execute(
+                        "SELECT token_hash, payload FROM magic_token WHERE purpose=? AND payload LIKE ?",
+                        (purpose, f'%"{alt}"%')).fetchall():
+                    try:
+                        neu_text = json.dumps(payload_lesen(purpose, z["payload"]))
+                    except ValueError:
+                        continue          # kein JSON: nicht von uns, nicht anfassen
+                    if neu_text != z["payload"]:
+                        self.db.execute("UPDATE magic_token SET payload=? WHERE token_hash=?",
+                                        (neu_text, z["token_hash"]))
+                        n += 1
+        return n
 
     #: Setting-Schlüssel: Ist `users.name_quelle` für den Bestand nachgetragen (Angriffsrunde 2026-09-26)?
     NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
@@ -3616,7 +3709,7 @@ class Store:
 
     # ---------- API-Keys ----------
     def add_api_key(self, user_id, name, prefix, key_hash, roles=None, expires_at=None,
-                    kind: str = "automat") -> int:
+                    kind: str = "automation") -> int:
         cur = self._exec(
             "INSERT INTO api_key(user_id, name, prefix, key_hash, roles, kind, created_at, expires_at)"
             " VALUES (?,?,?,?,?,?,?,?)",

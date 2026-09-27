@@ -445,7 +445,7 @@ def build_router(auth) -> APIRouter:
             if not auth.peek_magic(token, purpose="login"):
                 auth._token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return auth.render_page("magic_confirm", request=request, zweck="login",
+            return auth.render_page("magic_confirm", request=request, purpose="login",
                                     action=auth.browser_path(request, f"/auth/magic/{_q(token)}"))
 
         @r.post("/auth/magic/{token}")
@@ -466,7 +466,7 @@ def build_router(auth) -> APIRouter:
             if not auth.peek_magic(token, purpose="verify_email"):
                 auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return auth.render_page("magic_confirm", request=request, zweck="verify_email",
+            return auth.render_page("magic_confirm", request=request, purpose="verify_email",
                                     action=auth.browser_path(request, f"/auth/verify/{_q(token)}"))
 
         @r.post("/auth/verify/{token}")
@@ -669,7 +669,7 @@ def build_router(auth) -> APIRouter:
             # gleichwertige Anmeldung; blieb er gültig, hätte der Reset nur die Haustür
             # geschlossen. (Der Wechsel auf der Kontoseite lässt sie mit Absicht stehen — dort
             # meldet sich der Inhaber mit dem alten Passwort an, das ist ein Routine-Wechsel.)
-            keys = auth._keys_widerrufen(uid, "passwort_reset")
+            keys = auth._keys_widerrufen(uid, "password_reset")
             # Und alle offenen Links (Angriffsrunde Selbstbedienung, Fund 1): Ein Adresswechsel,
             # den ein Eindringling aus seiner Sitzung beantragt hat, überlebte sonst den Reset —
             # der Link liegt in SEINEM Postfach, ein Klick danach, und der nächste Reset ginge an ihn.
@@ -1084,7 +1084,7 @@ def build_router(auth) -> APIRouter:
             if not auth.peek_magic(token, purpose="email_change"):
                 auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            return auth.render_page("magic_confirm", request=request, zweck="email_change",
+            return auth.render_page("magic_confirm", request=request, purpose="email_change",
                                     action=auth.browser_path(request, f"/auth/email/{_q(token)}"))
 
         @r.post("/auth/email/{token}")
@@ -1094,7 +1094,7 @@ def build_router(auth) -> APIRouter:
             if ergebnis is None:
                 auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
-            if ergebnis == "vergeben":
+            if ergebnis == "taken":
                 return auth.render_page("magic_invalid", request=request, status=409)
             ziel = auth.browser_path(request, "/auth/account" if cfg.account_enabled else cfg.login_redirect)
             return RedirectResponse(ziel, 303)
@@ -1149,7 +1149,7 @@ def build_router(auth) -> APIRouter:
         keys_widerrufen = 0
         if scope == "all":
             auth.store.delete_user_sessions(u["id"])          # inkl. aktueller → ausgeloggt
-            keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
+            keys_widerrufen = auth._keys_widerrufen(u["id"], "sessions_revoked")
             auth.store.revoke_user_magic_tokens(u["id"])      # Panik-Taste: auch offene Links (Fund 1)
         else:
             cur = auth._session_from_request(request)
@@ -1367,15 +1367,16 @@ def build_router(auth) -> APIRouter:
         async def apikeys_create(request: Request):
             u = _nur_mit_sitzung(request)
             b = await auth.json_body(request)
-            # `kind` entscheidet, was der Key kann (R6-5): "automat" arbeitet allein, trägt
-            # aber nie das Admin-Flag; "mensch" gilt nur zusammen mit einer Sitzung desselben
-            # Kontos. Die Vorgabe ist die engere der beiden.
+            # `kind` entscheidet, was der Key kann (R6-5): "automation" arbeitet allein, trägt
+            # aber nie das Admin-Flag; "human" gilt nur zusammen mit einer Sitzung desselben
+            # Kontos. Die Vorgabe ist die engere der beiden. Die Namen bis 0.21.x ("automat",
+            # "mensch") sind ein Eingabefehler, dessen Text den neuen nennt (ohne Alias).
             # Ein unbrauchbarer Scope, „unbefristet" ohne Erlaubnis oder eine unbekannte Art
             # sind Eingabefehler, kein Serverfehler — dieselbe Klasse wie R6-8 im Panel.
             try:
                 return auth.create_api_key(u["id"], name=b.get("name"),
                                            expires_days=b.get("expires_days"), roles=b.get("roles"),
-                                           kind=str(b.get("kind") or "automat"))
+                                           kind=str(b.get("kind") or "automation"))
             except (ConfigError, ValueError, TypeError) as e:
                 raise HTTPException(400, auth.t("api.invalid", grund=str(e)))
 
@@ -1413,18 +1414,17 @@ def _mail_basis(auth, request) -> str:
         raise HTTPException(503, auth.t("api.base_missing"))
 
 
-def _key_art(k) -> str:
-    """Die Art eines Key-Datensatzes, verträglich mit Dateien vor Schema 7."""
-    try:
-        return str(k["kind"] or "automat")
-    except (IndexError, KeyError):
-        return "automat"
+def _key_kind(k) -> str:
+    """Die Art eines Key-Datensatzes mit englischem Namen — verträglich mit Dateien vor Schema 7
+    und mit Werten bis 0.21.x (`TinySesam._key_kind`)."""
+    from .manager import TinySesam
+    return TinySesam._key_kind(k)
 
 
 def key_view(k) -> dict:
     return {"id": k["id"], "name": k["name"], "prefix": k["prefix"], "created_at": k["created_at"],
             "last_used": k["last_used"], "expires_at": k["expires_at"], "revoked": bool(k["revoked"]),
-            "kind": _key_art(k)}
+            "kind": _key_kind(k)}
 
 
 def _login_nach_token(auth, request, uid, nxt):

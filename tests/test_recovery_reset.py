@@ -206,7 +206,7 @@ cr.post("/auth/login", data={"username": "rita", "password": "rita-geheim-1-lang
 assert cr.post("/auth/totp", data={"code": codes_r[0], "next": "/"}, follow_redirects=False).status_code == 303
 zeilen = [z for z in auth_r.store.recent_audit(20) if z["event"] == "recovery_used"]
 assert len(zeilen) == 1 and "verbleibend=3" in zeilen[0]["detail"], zeilen
-assert ("recovery_code_used", {"verbleibend": 3}) in ereig_r, ereig_r
+assert ("recovery_code_used", {"remaining": 3}) in ereig_r, ereig_r
 seite = cr.get("/auth/account").text
 assert "Nur noch 3 Recovery-Codes" in seite, "die Kontoseite nennt den knappen Rest nicht"
 auth_r.generate_recovery_codes(uid_r)
@@ -281,7 +281,7 @@ finally:
     _security.seclog.removeHandler(_haken_r)
 ok("Fund 4: POST /auth/reset mit totem Token → token_invalid im Audit + „failed verification“ (wie der GET)")
 auth_r.totp_disable(uid_r)
-assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_geloescht": 4}), ereig_r[-1]
+assert ereig_r[-1] == ("totp_disabled", {"recovery_codes_deleted": 4}), ereig_r[-1]
 os.remove(db_r)
 
 # ---------- H-4: kein Reset-Link für ein reines SSO-Konto ----------

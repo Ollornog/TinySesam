@@ -787,7 +787,7 @@ auth8.set_pin(uid8, "4711")
 uid8_opfer = auth8.create_user("opfer", password="Geheim-Opfer-8")
 _geheim8 = auth8.totp_begin(uid8_opfer)["secret"]
 assert auth8.totp_confirm(uid8_opfer, pyotp.TOTP(_geheim8).at(time.time() - 30))
-KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automat")["key"]}
+KEY8 = {"X-API-Key": auth8.create_api_key(uid8, name="ci", kind="automation")["key"]}
 app8 = FastAPI()
 app8.include_router(auth8.router())
 r = TestClient(app8).get("/auth/me", headers={**JSON, **KEY8})

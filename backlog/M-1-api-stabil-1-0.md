@@ -154,7 +154,9 @@ Ablage von vor 0.22.0 wird ohne Marken eingelesen und ohne Marken verglichen, de
 
 Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
 `on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in
-die Zusage gehören, liegt als offene Frage beim PO.
+die Zusage gehören, liegt als offene Frage beim PO. **Teilweise entschieden 2026-09-27:**
+`auth.store` ist Innenleben, Stufe C, ohne Zusage (Nachtrag unten); `auth.cfg`,
+`on_security_event`, die Routen und die Logger-Namen bleiben offen.
 
 **Nachtrag 2026-09-27 (PO-Entscheid): Die ganze Oberfläche der Stufen A und B heisst englisch,
 ohne Alias.** Nach dem Login-Baustein jetzt der Rest: 11 Methoden, 5 Konstanten, 2 Methoden von
@@ -173,14 +175,45 @@ Objekt, jedes Konfigurationsfeld, die Attribute und Konstruktor-Parameter der Fe
 Einträge; Wörter, Stämme (auch mitten im Wort) und Umlaute; Mindestmenge und Selbstproben. Stand
 unverändert 354 Namen, A 240, B 64, C 50.
 
-Offen (nicht Teil dieses Entscheids, Rückfrage beim PO): Rückgabewerte und Daten tragen noch
+~~Offen (nicht Teil dieses Entscheids, Rückfrage beim PO): Rückgabewerte und Daten tragen noch
 deutsche Schlüssel — der Bericht von `federation_bind_existing` (`quelle`, `ausgefuehrt`,
 `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen`,
 `lokal`, je Eintrag `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer`), `gc()`
 (`fehlserien`), die Nutzlast von `on_security_event` (`alt`, `neu`), die Werte von `api_key_kind`
 (`automat`, `mensch`) und der Kontext für eigene Seiten (`ctx["praefix"]`, `ctx["zweck"]`). Der
 Wächter misst Namen, keine Werte; ob diese Schlüssel vor 1.0 englisch werden, ist eine eigene
-Entscheidung — jede Änderung dort bricht Code, der sie liest.
+Entscheidung — jede Änderung dort bricht Code, der sie liest.~~ **Entschieden 2026-09-27**, s. den
+nächsten Nachtrag.
+
+**Nachtrag 2026-09-27 (PO-Entscheid): Auch Schlüssel und Werte englisch — samt Datenbank.**
+„Alles übersetzen, auch DB-Werte“, ohne Alias (die Zusagen beginnen mit 0.22.0):
+
+- Die Liste von oben ist umgesetzt, dazu, was die Bestandsaufnahme fand: die Gründe im Bericht
+  (`kein_konto` → `no_account` …), die Schlüssel von `NAME_BINDING_REFUSALS` (mit englischer
+  Erklärung), `verworfene_rollen` → `dropped_roles`, `confirm_email_change` → `"taken"`, der
+  Payload eines Adresswechsel-Links (`alt` → `old`), die übrige Nutzlast von `on_security_event`
+  (`verbleibend`, `anzahl`, `grund` mit seinen Werten, `recovery_codes_geloescht`),
+  `current_user()["_key_art"]` → `_key_kind`. Tabelle im CHANGELOG unter „Was beim Update
+  auffällt“. Die Konto-Dicts tragen nur noch die Felder des Kontos — die Buchhaltung des Stores
+  (deutsche Spaltennamen) ging bis 0.21.x mit hinaus.
+- **Gespeichert** sind zwei davon: `api_key.kind` und der Payload offener Adresswechsel-Links.
+  Eine Datenmigration hebt `SCHEMA_VERSION` auf **12** — keine Spalte, aber 0.21.x liest den neuen
+  Wert anders: Ein `human`-Key gilt dort als Automaten-Key und wirkt ohne Sitzung (gemessen mit
+  dem Code aus `v0.21.0`). Der Stempel ist die Stelle, an der eine ältere Fassung warnt; 0.21.x
+  öffnet die Datei mit dieser Warnung. Der Rückweg ist ein SQL-Block in `docs/BETRIEB.md`, den
+  `tests/test_werte_englisch.py` ausführt. Gelesen wird ein alter Wert weiter richtig; die Keys
+  schreibt jeder Start um, den Payload nur der Sprung auf 12 (sonst ein Lauf durch alle
+  Einmal-Token je Start).
+- **Nicht übersetzt:** Audit- und Log-Zeilen (fail2ban, Filter der Betreiber) — darin stehen die
+  alten Namen weiter (`art=automat`, `grund=name_aus_quelle` …); die Art einer Fehlserie
+  (`fehlserie.art`, darunter `pin_folge`), die nur innen gelesen wird; die Spaltennamen.
+- **Wächter:** `pruefe_werte` in `tests/test_api_surface.py` misst die Schlüssel und Werte an einer
+  Probeinstanz, an den Konstanten und im Quelltext (790 Einträge) gegen die Wortliste und die
+  Namen bis 0.21.x.
+- **`auth.set_disabled(user_id, disabled)`** (Stufe A) statt des Rats, `auth.store.set_disabled(…,
+  durch_betreiber=True)` zu rufen, der nur den Vermerk setzte; das Panel ruft die Methode.
+  **`auth.store` ist Innenleben** (Stufe C, keine Zusage) — die Doku sagt das überall, wo sie noch
+  einen Aufruf nennt. Stand 366 Namen: A 252, B 64, C 50.
 
 **Nachtrag 2026-09-27 (PO-Entscheid): Bausteine für eigene Step-up- und Passwortwechsel-Seiten**
 (Stufe A, englisch). Nach dem Login-Baustein fehlte dasselbe für die Bestätigung vor heiklen

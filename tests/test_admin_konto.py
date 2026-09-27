@@ -94,7 +94,7 @@ _zeilen = _umbenannt(auth, anna)
 r.check("… GENAU eine Audit-Zeile, als Betreiber und mit dem Admin als Akteur",
         _zeilen == [("anna.neu", "alt=anna durch=betreiber akteur=helfer")], str(_zeilen))
 r.check("… das Sicherheitsereignis erreicht den Inhaber",
-        ("username_changed", {"alt": "anna", "neu": "anna.neu"}) in ereignisse, str(ereignisse))
+        ("username_changed", {"old": "anna", "new": "anna.neu"}) in ereignisse, str(ereignisse))
 r.check("… und der Merker „selbst gewählt“ (G2-N) fällt: der Name steht jetzt für den Betreiber",
         auth.store.get_user(anna)["name_selbst_gewaehlt"] == 0)
 _fehl = {n: ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": n}).status_code

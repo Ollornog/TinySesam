@@ -182,6 +182,18 @@ auth.create_user("bob", password=os.environ["BOB_START"], display_name="Bob")
 `ensure_admin(…)` ist für den ersten Admin, `create_service(…)` für Maschinenkonten
 ([API-Keys](#api-keys--service-daemon-accounts)).
 
+**Ein Konto als Betreiber sperren** — dasselbe wie „Sperren“ im Panel, das diese Methode ruft:
+
+```python
+auth.set_disabled(uid, True)     # beendet die Sitzungen, widerruft die API-Keys, verwirft offene Links
+auth.set_disabled(uid, False)    # entsperrt; widerrufene Keys bleiben widerrufen
+```
+
+Die Sperre trägt den Betreiber-Vermerk: Kein Bestätigungslink hebt sie auf, auch keiner, der erst
+danach entsteht. Ein Owner lässt sich nicht sperren (`StateError`); eine unbekannte ID gibt `False`.
+Bis 0.21.x zeigte die Doku dafür `auth.store.set_disabled(uid, True, durch_betreiber=True)` — das
+setzte nur den Vermerk, Sitzungen, Keys und Links blieben gültig.
+
 **In den Tests deiner App** brauchst du einen angemeldeten Client ohne den Umweg über den Login.
 `start_session` legt eine Sitzung an, **ohne irgendetwas zu prüfen** — genau deshalb gehört es in
 Tests (oder hinter einen Faktor, den du selbst geprüft hast), nie in eine Login-Route (die nimmt
@@ -639,7 +651,7 @@ Dasselbe aus Python:
 
 ```python
 auth = TinySesam(TinySesamConfig(db_path="auth.db"))
-auth.set_password(auth.store.get_user_by_name("admin")["id"], "neues-passwort")
+auth.set_password(auth.find_user("admin")["id"], "neues-passwort")
 ```
 
 ## Sicherungen und Aufräumen
@@ -654,8 +666,9 @@ python -m tinysesam gc     --db auth.db                      # Abgelaufenes wegr
 > allein liefert einen Torso — gemessen an einer frischen Instanz mit fünf Konten enthielt die
 > Kopie nicht einmal die Tabelle `users`, und das merkt man erst beim Zurückspielen. `backup`
 > nutzt SQLites Online-Backup: Es nimmt die nötigen Sperren, zieht das WAL mit und schreibt eine
-> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Aus Python:
-> `auth.store.backup(pfad)`.
+> Datei, die für sich allein stimmt — mit denselben engen Rechten wie die Quelle. Der zugesagte
+> Weg ist dieses Kommando; `auth.store.backup(pfad)` tut aus Python dasselbe, aber `auth.store` ist
+> Innenleben (Stufe C, keine Zusage — s. [Öffentliche API](#öffentliche-api-drei-stufen)).
 
 `gc` löscht abgelaufene Sitzungen, Flows, Einmal-Token und alte Login-Versuche; das Audit-Log
 bleibt bewusst unangetastet. **Von selbst läuft das nicht** — fertige Unit-Dateien liegen in
@@ -953,14 +966,16 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 - **`require_user` akzeptiert Session ODER gültigen Key** — geschützte Routen sind ohne Änderung auch per Key erreichbar; `require_role(...)` respektiert den Key-Scope.
 - **System-Daemons** = **Service-Account** (`auth.create_service("backup-daemon", roles=["reader"])`, kein Login/MFA) + Key (`auth.create_api_key(uid, name=…, expires_days=…)` → Klartext **einmalig**). Least-Privilege über die Rollen.
 - **Sperren statt löschen:** `auth.revoke_api_key(id)` (Key gesperrt, bleibt in der Liste). Self-Service-Routen: `GET/POST /auth/apikeys`, `POST /auth/apikeys/{id}/revoke`.
-- **Zwei Arten Key, und keine davon ist eine Admin-API.** `kind="automat"` (Vorgabe) arbeitet
+- **Zwei Arten Key, und keine davon ist eine Admin-API.** `kind="automation"` (Vorgabe) arbeitet
   allein, trägt aber **nie das Admin-Flag** seines Besitzers und erfüllt keine Route, die Admin
-  verlangt — der Weg für Dienste, Skripte und CI. `kind="mensch"` gilt nur **zusammen mit einer
+  verlangt — der Weg für Dienste, Skripte und CI. `kind="human"` gilt nur **zusammen mit einer
   gültigen Sitzung desselben Kontos** und trägt dafür die vollen Rechte — der Weg für ein
   Werkzeug, das ein Mensch selbst bedient. Allein abgeflossen ist so einer wertlos. Bis 0.18.x
   gab es eine Art, und der Key eines Admins war eine vollständige Schreib-API: Nutzer anlegen,
   `is_admin` setzen, Passwörter zurücksetzen — ohne zweiten Faktor, ohne CSRF-Schicht. Ein
-  abgeflossener CI-Key war die Instanz.
+  abgeflossener CI-Key war die Instanz. (Bis 0.21.x hiessen die Arten `automat` und `mensch`; seit
+  0.22.0 sind diese Namen ein Eingabefehler, der den neuen nennt, und die Migration schreibt
+  gespeicherte Keys um — Rückschritt: `docs/BETRIEB.md`.)
 - **Ein Key läuft von selbst ab.** Ohne `expires_days` galt er bisher unbefristet, und das war
   der häufigste Fall. Jetzt greift `apikey_default_days` (90); `expires_days=0` heisst weiter
   „unbefristet", braucht aber `apikey_allow_unlimited=True` und steht dann im Audit-Eintrag.
@@ -975,7 +990,7 @@ Für **maschinellen Zugang** (Skripte, andere Dienste, System-Daemons) — paral
 
 Eingebautes Panel unter **`/auth/admin`** (nur `is_admin`), einbindbar ohne Extra-Setup:
 
-- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz), Passwort-Reset, Rollen/Admin setzen.
+- **Benutzer & Service-Accounts:** anlegen, **explizit sperren/entsperren** (`disabled` — Konto bleibt, Login blockiert, Sitzungen enden sofort; Selbst-Sperr-Schutz; im Code: `auth.set_disabled`), Passwort-Reset, Rollen/Admin setzen.
 - **API-Keys** je User: erzeugen (einmalige Anzeige) / widerrufen.
 - **Sitzungen:** aktive einsehen + beenden.
 - **Härtung:** Schwellen (Versuche/Sperrzeit/Rate-Limit) live einstellen.
@@ -1246,9 +1261,24 @@ sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso d
 `durch_betreiber`, `ConfigError.besitzer_id` …). 0.22.0 benennt sie **ohne Alias** um — die
 Zusagen der Stufen beginnen erst mit diesem Release; die ganze Liste alt → neu steht im
 [CHANGELOG](../CHANGELOG.md). Der Wächter wird rot, sobald ein Name, Parameter,
-Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B ein deutsches Wort trägt. Werte
-bleiben, wie sie sind: Audit- und Log-Zeilen (fail2ban), Grund-Kürzel und die Schlüssel eines
-Berichts.
+Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B ein deutsches Wort trägt.
+
+**Ebenso die Schlüssel und Werte** (0.22.0, ebenfalls ohne Alias): was die Methoden der Stufen A/B
+zurückgeben oder annehmen (der Bericht von `federation_bind_existing`, `gc()`, `create_api_key`, die
+Grund-Kürzel), die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`,
+`ctx["purpose"]`), das JSON der Konto- und Admin-Routen und die Arten der API-Keys `automation`/
+`human`. Die zwei Werte, die in der Datenbank stehen (die Art eines Keys, die bisherige Adresse
+`old` in einem offenen Adresswechsel-Link), schreibt der Start um (Schema 12), gelesen werden sie
+auch in alter Form richtig; der Rückschritt auf 0.21.x braucht einen SQL-Block aus
+`docs/BETRIEB.md`. Derselbe Wächter misst sie an einer Probeinstanz und im Quelltext. **Audit- und
+Log-Zeilen bleiben, wie sie sind** — fail2ban und eigene Filter hängen an ihnen
+(`apikey_create … art=automat` behält seinen Wortlaut).
+
+**`auth.store` ist Innenleben (Stufe C).** Das ist die Speicherschicht der eingebauten Routen; ihre
+Methoden haben keine Stufe, keine Zusage und keine Übergangsfrist und können sich mit jedem Release
+ändern. Was eine App braucht, hat eine öffentliche Methode (`set_disabled`, `find_user`,
+`list_api_keys`, `lift_lockout` …); wo die Doku doch einen Aufruf von `auth.store` nennt (eine
+Gesundheitsprobe, das Entziehen von OIDC-Freigaben), sagt sie es dazu.
 
 **Stufe C warnt.** Wer einen alten C-Namen aufruft (bei den Konstanten: liest), bekommt eine
 `DeprecationWarning` mit dem Ersatz; [`API.md`](../API.md) führt jeden auf. Python zeigt diese
@@ -1336,7 +1366,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**60 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**61 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

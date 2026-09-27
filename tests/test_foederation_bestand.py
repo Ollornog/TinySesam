@@ -406,9 +406,10 @@ r.check("… und über OIDC kommt der Angreifer weiter nur in sein eigenes Konto
 # Die Bestandsbindung fragt denselben Entscheid.
 st, _ = _oidc_anmelden(qa, qapp, {"sub": "olli-sub", "preferred_username": "olli"})
 bb = qa.federation_bind_existing("ldap", mapping={"olli": "uuid-olli"})
-r.check("federation_bind_existing: ein OIDC-Konto wird nicht über den Namen gebunden (name_aus_quelle)",
-        [(e["username"], e["grund"]) for e in bb["abgewiesen"]] == [("olli", "name_aus_quelle")]
-        and bb["gebunden"] == [], str(bb))
+r.check("federation_bind_existing: ein OIDC-Konto wird nicht über den Namen gebunden "
+        "(name_from_other_source; im Audit weiter `grund=name_aus_quelle`)",
+        [(e["username"], e["reason"]) for e in bb["refused"]] == [("olli", "name_from_other_source")]
+        and bb["bound"] == [], str(bb))
 
 # Der Betreiber entscheidet ausdrücklich: Dann bindet es.
 qa.federation_unbind("ldap", oc["id"])
@@ -516,32 +517,33 @@ def _gebunden(auth):
 
 vorher = _gebunden(m)
 tr = m.federation_bind_existing("ldap")
-r.check("Trockenlauf (Vorgabe): nichts geschrieben", _gebunden(m) == vorher and tr["ausgefuehrt"] is False
+r.check("Trockenlauf (Vorgabe): nichts geschrieben", _gebunden(m) == vorher and tr["applied"] is False
+        and tr["source"] == "ldap"
         and not _audit(m, "ldap_kennung_gebunden"))
 r.check("… meldet, was gebunden würde (auch nach der Frist und den Platzhalter)",
-        _namen(tr, "gebunden") == ["anna", "ida", "kim", "lea"], str(_namen(tr, "gebunden")))
-anna = next(e for e in tr["gebunden"] if e["username"] == "anna")
+        _namen(tr, "bound") == ["anna", "ida", "kim", "lea"], str(_namen(tr, "bound")))
+anna = next(e for e in tr["bound"] if e["username"] == "anna")
 r.check("… mit Anzeigename und Adresse hier und im Verzeichnis nebeneinander",
-        anna["verzeichnis"] == {"name": "Anna A.", "email": "anna@example.com"}
-        and anna["lokal"]["name"] == "anna" and anna["kennung"] == "u-anna", str(anna))
+        anna["directory"] == {"name": "Anna A.", "email": "anna@example.com"}
+        and anna["local"]["name"] == "anna" and anna["identifier"] == "u-anna", str(anna))
 r.check("… Konflikt (Kennung gehört einem anderen Konto) mit dem Besitzer",
-        [(e["username"], e["gebunden_an"]) for e in tr["konflikt"]] == [("emil", ids["fritz"])], str(tr["konflikt"]))
+        [(e["username"], e["bound_to"]) for e in tr["conflict"]] == [("emil", ids["fritz"])], str(tr["conflict"]))
 r.check("… mehrdeutig, nicht im Verzeichnis, ohne Kennung",
-        _namen(tr, "mehrdeutig") == ["dora"] and tr["mehrdeutig"][0]["treffer"] == 2
-        and _namen(tr, "nicht_im_verzeichnis") == ["bert"] and _namen(tr, "ohne_kennung") == ["cara"])
+        _namen(tr, "ambiguous") == ["dora"] and tr["ambiguous"][0]["matches"] == 2
+        and _namen(tr, "not_in_directory") == ["bert"] and _namen(tr, "no_identifier") == ["cara"])
 r.check("… abgewiesen mit Grund: unbelegter mail-Wert als Name, selbst gewählt, gesperrt",
-        sorted((e["username"], e["grund"]) for e in tr["abgewiesen"])
-        == [("gina", "adresse_als_name"), ("ina", "name_selbst_gewaehlt"), ("jo", "gesperrt")],
-        str(tr["abgewiesen"]))
+        sorted((e["username"], e["reason"]) for e in tr["refused"])
+        == [("gina", "address_as_name"), ("ina", "self_chosen_name"), ("jo", "disabled")],
+        str(tr["refused"]))
 r.check("… Konto mit lokalem Passwort nur berichtet; Service-Konten und gebundene gar nicht gefragt",
-        _namen(tr, "lokal") == ["hans"] and "dienst" not in vz.gefragt and "fritz" not in vz.gefragt,
+        _namen(tr, "local_password") == ["hans"] and "dienst" not in vz.gefragt and "fritz" not in vz.gefragt,
         str(vz.gefragt))
 with Mitschnitt() as log:
     ab = m.federation_bind_existing("ldap", apply=True)
 jetzt_gebunden = _gebunden(m)
 r.check("apply=True: gebunden wie angekündigt, der Platzhalter ist ersetzt",
         all(jetzt_gebunden.get(ids[n]) == f"u-{n}" for n in ("anna", "ida", "kim", "lea"))
-        and _namen(ab, "gebunden") == ["anna", "ida", "kim", "lea"], str(jetzt_gebunden))
+        and _namen(ab, "bound") == ["anna", "ida", "kim", "lea"], str(jetzt_gebunden))
 r.check("… nichts sonst: keine Bindung für hans, ina, gina, emil, jo",
         all(ids[n] not in jetzt_gebunden for n in ("hans", "ina", "gina", "emil", "jo"))
         and jetzt_gebunden[ids["fritz"]] == "u-fritz")
@@ -552,7 +554,7 @@ r.check("… je Bindung Audit `ldap_kennung_gebunden detail=migration`, eine Sum
 u = _anmelden(m, "kim", {"id": "u-kim"})
 r.check("… danach meldet sich das gebundene Konto an (Lage 1)", u is not None and u["id"] == ids["kim"])
 r.check("Zweiter Lauf: die Gebundenen sind keine Kandidaten mehr",
-        m.federation_bind_existing("ldap")["gebunden"] == [])
+        m.federation_bind_existing("ldap")["bound"] == [])
 
 # Ein Ausfall mitten im Lauf: nichts geschrieben.
 w = _ldap()
@@ -576,16 +578,16 @@ zr = z.federation_bind_existing("saml", mapping={"sara": "nid-sara", "tom": "nid
                                                  "zeno": "nid-zeno", "leer": ""}, apply=True)
 r.check("SAML mit mapping: bindet, verweigert die Kennung eines anderen Kontos, meldet Unbekanntes",
         _gebunden(z).get(sara) == "nid-sara" and tom not in _gebunden(z) and leer not in _gebunden(z)
-        and [e["username"] for e in zr["konflikt"]] == ["tom"] and _namen(zr, "ohne_kennung") == ["leer"]
-        and sorted((e["username"], e["grund"]) for e in zr["abgewiesen"])
-        == [("niemand", "kein_konto"), ("zeno", "name_selbst_gewaehlt")], str(zr))
+        and [e["username"] for e in zr["conflict"]] == ["tom"] and _namen(zr, "no_identifier") == ["leer"]
+        and sorted((e["username"], e["reason"]) for e in zr["refused"])
+        == [("niemand", "no_account"), ("zeno", "self_chosen_name")], str(zr))
 u = z._check_saml("nid-sara", {"uid": ["sara"]})
 r.check("… danach meldet sich sara über die NameID an", u is not None and u["id"] == sara)
 zd = _saml()
 zd.create_user("doppel1"), zd.create_user("doppel2")
 zdr = zd.federation_bind_existing("saml", mapping={"doppel1": "nid-d", "doppel2": "nid-d"}, apply=True)
 r.check("Zuordnung mit Dublette (zwei Konten, eine Kennung): keines gebunden",
-        _gebunden(zd) == {} and sorted(e["username"] for e in zdr["konflikt"]) == ["doppel1", "doppel2"])
+        _gebunden(zd) == {} and sorted(e["username"] for e in zdr["conflict"]) == ["doppel1", "doppel2"])
 try:
     zd.federation_bind_existing("saml")
     _saml_ohne = False
@@ -681,7 +683,7 @@ if ldap3 is not None:
         ea, eb = e2e.create_user("alice"), e2e.create_user("bob")
         eb_ber = e2e.federation_bind_existing("ldap", apply=True)
         r.check("ldap3 von Anfang bis Ende: alice an ihre GUID gebunden, bob mehrdeutig",
-                _gebunden(e2e) == {ea: GUID.hex()} and _namen(eb_ber, "mehrdeutig") == ["bob"], str(eb_ber))
+                _gebunden(e2e) == {ea: GUID.hex()} and _namen(eb_ber, "ambiguous") == ["bob"], str(eb_ber))
         # Der Anmeldeweg liest die Kennung genauso (`authenticate` → `_stabile_kennung`): Eine GUID,
         # die zufällig gültiges UTF-8 ist, dekodierte ldap3 ohne Schema zu Text mit Steuerzeichen —
         # die Formprüfung wies sie ab, die Person kam über LDAP nie hinein.
@@ -765,9 +767,10 @@ r.check("Vorbedingung: Datei auf Stempel 11 ohne `namensbindung` und ohne `users
 neu = _ldap(pfad)
 tab = {z["name"] for z in neu.store._all("SELECT name FROM sqlite_master WHERE type='table'")}
 fl = {z["username"]: z["name_selbst_gewaehlt"] for z in neu.store._all("SELECT * FROM users")}
-r.check("Schema 11 ohne die Neuerungen: Tabelle und Spalte kommen dazu, der Stempel bleibt 11",
+r.check("Schema 11 ohne die Neuerungen: Tabelle und Spalte kommen dazu, der Stempel zieht auf den "
+        "heutigen nach (seit 0.22.0: 12)",
         "namensbindung" in tab and len(fl) == 4
-        and int(neu.store.db.execute("PRAGMA user_version").fetchone()[0]) == 11 and Store.SCHEMA_VERSION == 11)
+        and int(neu.store.db.execute("PRAGMA user_version").fetchone()[0]) == Store.SCHEMA_VERSION >= 11)
 r.check("Bestand: Registrierte und selbst Umbenannte tragen den Merker, ein älterer Namensvetter und "
         "ein vom Betreiber angelegtes Konto nicht",
         fl == {"sig": 1, "ren": 1, "alt": 0, "op": 0}, str(fl))

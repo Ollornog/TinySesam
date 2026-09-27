@@ -79,12 +79,17 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 - **Inhaber über Faktor-Änderungen benachrichtigen — `auth.on_security_event`.** Opt-in-Hook,
   gerufen als `hook(ereignis, konto, details)` mit `konto = {id, username, email, display_name}`,
   sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird: `password_changed`,
-  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled`, `recovery_codes_generated`,
-  `recovery_code_used` (`details={"verbleibend": n}`), `passkey_added`, `passkey_removed`,
-  `api_key_created`, `api_key_revoked` (`details={"key_id": n}`), `email_changed` und
-  `username_changed` (`details={"alt": …, "neu": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
-  (`details={"anzahl": n, "grund": …}` — gesammelt beim Reset, bei der Sperre, beim Admin-Passwort
-  und bei `sessions/revoke` mit `scope=all`). Das gilt auch für Änderungen, die ein Admin im Panel an
+  `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disabled` (`details={"recovery_codes_deleted": n}`),
+  `recovery_codes_generated` (`details={"count": n}`), `recovery_code_used`
+  (`details={"remaining": n}`), `passkey_added` (`details={"name": …}`), `passkey_removed`
+  (`details={"passkey_id": n}`), `api_key_created` (`details={"key_id": n, "name": …}`),
+  `api_key_revoked` (`details={"key_id": n}`), `email_changed` und `username_changed`
+  (`details={"old": …, "new": …}` — Selbstbedienung, 2026-09-25) und `api_keys_revoked`
+  (`details={"count": n, "reason": …}`, `reason` eines von `password_reset`, `account_disabled`,
+  `admin_password_reset`, `sessions_revoked` — gesammelt beim Reset, bei der Sperre, beim
+  Admin-Passwort und bei `sessions/revoke` mit `scope=all`). Die Schlüssel in `details` und die
+  Gründe sind seit 0.22.0 englisch (bis 0.21.x `verbleibend`, `alt`/`neu`, `anzahl`/`grund` mit
+  deutschen Gründen). Das gilt auch für Änderungen, die ein Admin im Panel an
   einem fremden Konto vornimmt (Passwort zurücksetzen, API-Key ausstellen, Passkey widerrufen) — die
   Mail also so schreiben, dass sie nicht unterstellt, der Inhaber sei es gewesen. Ausser dem Hook
   verschickt TinySesam mit konfiguriertem Versand genau eine Mail selbst: den Hinweis an die

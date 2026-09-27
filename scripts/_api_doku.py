@@ -297,6 +297,16 @@ def bauen() -> str:
         "nichts wird aus Versehen zugesagt.\n\n"
         f"Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): {felder_a} "
         f"von {len(felder)} in Stufe A, die übrigen unten bei ihrer Stufe.\n\n"
+        "**Englisch, Namen wie Werte** (seit 0.22.0, ohne Alias): Die Namen der Stufen A und B, "
+        "ihre Parameter und die Schlüssel und Werte, die sie zurückgeben oder annehmen — "
+        "Ergebnis-Dicts, die `details` an `on_security_event`, der Kontext eigener Seiten "
+        "(`ctx[\"prefix\"]`, `ctx[\"purpose\"]`), die JSON-Antworten der Routen, die Arten der "
+        "API-Keys (`automation`, `human`). Audit- und Log-Zeilen bleiben, wie sie waren. Die Liste "
+        "alt → neu steht im CHANGELOG zu 0.22.0.\n\n"
+        "**`auth.store` ist Innenleben** (Stufe C): die Speicherschicht der eingebauten Routen, "
+        "ohne Stufe, ohne Zusage und ohne Übergangsfrist — ihre Methoden können sich mit jedem "
+        "Release ändern. Was eine App braucht, steht unten als Methode von `TinySesam` (etwa "
+        "`set_disabled` statt `auth.store.set_disabled`).\n\n"
         f"**Stand:** {' · '.join(f'{s} {n}' for s, n in zahl.items())} Namen"
         + (f", {len(ohne)} ohne Stufe" if ohne else "") + ".\n\n")
 

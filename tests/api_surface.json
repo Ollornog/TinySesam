@@ -209,7 +209,7 @@
       "stufe": "B"
     },
     "create_api_key": {
-      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'",
+      "sig": "(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'",
       "stufe": "A"
     },
     "create_invite": {
@@ -409,7 +409,7 @@
       "stufe": "B"
     },
     "list_api_keys": {
-      "sig": "(user_id)",
+      "sig": "(user_id) -> 'list'",
       "stufe": "B"
     },
     "list_resource_secrets": {
@@ -667,6 +667,10 @@
       "sig": "(response, token, remember: 'Optional[bool]' = None)",
       "stufe": "A"
     },
+    "set_disabled": {
+      "sig": "(user_id: 'int', disabled: 'bool') -> 'bool'",
+      "stufe": "A"
+    },
     "set_mailer": {
       "sig": "(fn)",
       "stufe": "A"
@@ -875,7 +879,7 @@
     },
     "NAME_BINDING_REFUSALS": {
       "stufe": "B",
-      "wert": "{'adresse_als_name': 'der Name sagt nichts über die Person (Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht vertraut wird)', 'kennung_ungueltig': 'die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)', 'konflikt': 'die Kennung gehört schon einem anderen Konto', 'anders_gebunden': 'das Konto trägt schon eine andere Kennung', 'name_selbst_gewaehlt': 'der Name ist selbst gewählt (Registrierung oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst', 'name_aus_quelle': 'der Name stammt aus einer anderen Quelle, die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst', 'frist': 'die Frist für die Bindung über den Namen ist abgelaufen (federation_name_binding_days)'}"
+      "wert": "{'address_as_name': 'the name says nothing about the person (control characters, or the unverified mail value of a source that is not trusted)', 'invalid_identifier': 'the identifier is unusable (leading/trailing or control characters, or placeholder form)', 'conflict': 'the identifier already belongs to another account', 'bound_elsewhere': 'the account already carries a different identifier', 'self_chosen_name': 'the name was chosen by the person (sign-up or rename) and says nothing about who has that name in the directory', 'name_from_other_source': 'the name comes from another source that created the account (OIDC, SAML or LDAP) and says nothing about who has that name in this one', 'binding_window_expired': 'the window for binding by name has passed (federation_name_binding_days)'}"
     },
     "NAME_MAX": {
       "stufe": "B",

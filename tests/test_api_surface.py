@@ -34,7 +34,12 @@ Code im Paket benutzt einen alten Namen, und ab 1.0 steht keiner mehr da.
 
 **Die Stufen A und B heissen englisch** (PO-Entscheid 2026-09-27, `pruefe_namen()`): Kein Name,
 Parameter, Konfigurationsfeld oder Attribut eines Fehlertyps der Stufen A/B trägt ein deutsches
-Wort — gemessen am lebenden Objekt, mit Mindestmenge und Selbstproben.
+Wort — gemessen am lebenden Objekt, mit Mindestmenge und Selbstproben. **Ebenso ihre Schlüssel
+und Werte** (zweiter PO-Entscheid desselben Tags, `pruefe_werte()`): was die Oberfläche zurückgibt
+oder annimmt, die Nutzlast von `on_security_event`, der Kontext eigener Seiten, das JSON der Routen
+und die gespeicherten Werte — an einer Probeinstanz, an den Konstanten und im Quelltext, gegen die
+Wortliste und gegen jeden Namen bis 0.21.x (`ALTE_WERTE`). Audit- und Log-Zeilen misst sie nicht:
+Die bleiben, wie sie sind.
 """
 import ast
 import dataclasses
@@ -49,7 +54,7 @@ import warnings
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
-from tinysesam import LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
+from tinysesam import ConfigError, LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
 from tinysesam._veraltet import BIS, Veraltet
 
 _paket = importlib.import_module("tinysesam")
@@ -1023,9 +1028,9 @@ def selbstpruefung_c() -> None:
 # Ablage, die Parameter jeder Methode und Funktion (am lebenden Objekt), die Konfigurationsfelder
 # und die öffentlichen Attribute und Konstruktor-Parameter der exportierten Fehlertypen
 # (`ConfigError.field`, `MissingExtra(message, extra)`). Stufe C bleibt aussen vor: Das sind die
-# alten Namen, die bis 1.0 als Alias weiterreichen. Nicht gemeint sind Werte — die Grund-Kürzel
-# in `NAME_BINDING_REFUSALS`, Audit- und Log-Zeilen (`login_fail … grund=`, fail2ban) und die
-# Schlüssel eines Berichts bleiben, wie sie sind.
+# alten Namen, die bis 1.0 als Alias weiterreichen. Die Schlüssel und Werte, die diese Oberfläche
+# zurückgibt oder annimmt, misst seit dem zweiten PO-Entscheid desselben Tags `pruefe_werte()`
+# weiter unten; Audit- und Log-Zeilen (`login_fail … grund=`, fail2ban) bleiben, wie sie sind.
 # Der Abschnitt (k) in `tests/test_anmelden.py` misst dazu die Oberfläche des Login-Bausteins samt
 # der Werte von `LoginResult.REASONS` — mit derselben Wortliste (`deutsch_in`).
 # (Mutationsproben: `by_operator` in `change_username` zurück auf `durch_betreiber` → rot;
@@ -1047,14 +1052,17 @@ DEUTSCH = frozenset("""
     sicherheitsereignisse sitzung sitzungen sperre sperren sprache stunden tage ueberlauf und
     vergeben verzeichnis von weg weiter weiterleitung wert werte zahl zeit ziel zu zuordnung zurueck
     zweck
+    abgewiesen anders ausgefuehrt automat dienstkonto gebunden konflikt lokal mehrdeutig mensch
+    schon treffer verbleibend
 """.split())
 #: Deutsche Wortstämme, die auch INNERHALB eines Worts auffallen: Eine Konstante wie
 #: `SICHERHEITSEREIGNISSE` ist nach dem Zerlegen EIN Wort. Nur Stämme ab fünf Buchstaben, die in
 #: keinem englischen Wort stecken (`bindung` ≠ `binding`, `sitzung`, `kennung` …).
 STAMM = ("anmeld", "aufheb", "ausfuehr", "benutzer", "besitzer", "bestaetig", "betreiber",
-         "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "foederi",
-         "gesperrt", "gewaehlt", "gueltig", "kennung", "loesch", "nachricht", "passwort", "pruef",
-         "schluessel", "sicherheit", "sitzung", "ueberlauf", "verzeichnis", "zuordnung")
+         "bindung", "einricht", "ereignis", "ergebnis", "erstfaktor", "fehlgriff", "fehlserie",
+         "foederi", "gesperrt", "gewaehlt", "gueltig", "kennung", "loesch", "nachricht", "passwort",
+         "pruef", "schluessel", "sicherheit", "sitzung", "ueberlauf", "verworfen", "verzeichnis",
+         "zuordnung")
 
 
 def woerter(name: str) -> set:
@@ -1146,7 +1154,7 @@ def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLI
              for wo, name in pflicht if (wo, name) not in namen]
     parameter = sum(1 for wo, _ in namen if wo.endswith("()"))
     felder = sum(1 for wo, _ in namen if wo == "TinySesamConfig.felder")
-    # Stand 0.22.0: 593 Einträge, davon 276 Parameter und 159 Felder — mit Luft nach unten.
+    # Stand 0.22.0: 596 Einträge, davon 278 Parameter und 159 Felder — mit Luft nach unten.
     if len(namen) < mindestens[0] or parameter < mindestens[1] or felder < mindestens[2]:
         fehlt.append(f"zu wenig gemessen: {len(namen)} Namen, {parameter} Parameter, {felder} "
                      f"Felder (erwartet mindestens {'/'.join(map(str, mindestens))})")
@@ -1165,6 +1173,14 @@ def selbstpruefung_namen() -> None:
                     "quelle", "neu", "kandidat", "email_bestaetigt", "jetzt", "basis", "auftrag",
                     "bei_ueberlauf", "methoden", "name_selbst_gewaehlt", "feld", "besitzer_id",
                     "nachricht", "pfad", "darf_mfa_einrichten", "SperreMinuten", "größe",
+                    # Schlüssel und Werte bis 0.21.x (`pruefe_werte`, PO-Entscheid 2026-09-27):
+                    "ausgefuehrt", "gebunden", "konflikt", "mehrdeutig", "nicht_im_verzeichnis",
+                    "ohne_kennung", "abgewiesen", "lokal", "verzeichnis", "gebunden_an", "treffer",
+                    "grund", "kein_konto", "dienstkonto", "gesperrt", "schon_gebunden",
+                    "anders_gebunden", "adresse_als_name", "kennung_ungueltig", "name_aus_quelle",
+                    "frist", "fehlserien", "verworfene_rollen", "verbleibend", "anzahl",
+                    "recovery_codes_geloescht", "automat", "mensch", "praefix", "zweck", "vergeben",
+                    "sperre", "admin_passwort", "passwort_reset", "sitzungen_beendet", "_key_art",
                     # nur über einen Stamm zu finden — zusammengesetzt, kein Wort der Liste:
                     "KENNUNGSRAUM", "passwortregel", "sitzungsdauer", "Verzeichnisname"):
         assert deutsch_in(deutsch), f"{deutsch!r} fällt der Namensprüfung nicht auf"
@@ -1173,7 +1189,17 @@ def selbstpruefung_namen() -> None:
                      "binding", "TinySesam", "base", "base_url", "new_username", "mapping", "apply",
                      "source", "now", "methods", "message", "owner_id", "field", "path",
                      "browser_path", "after_response", "on_overflow", "artifact", "nachos",
-                     "prefix", "background", "validate", "PAGES"):
+                     "prefix", "background", "validate", "PAGES",
+                     # die Schlüssel und Werte seit 0.22.0 — und englische Wörter nahe an der Liste:
+                     "applied", "bound", "conflict", "ambiguous", "not_in_directory",
+                     "no_identifier", "refused", "local_password", "local", "directory",
+                     "bound_to", "matches", "reason", "no_account", "service_account", "disabled",
+                     "already_bound", "bound_elsewhere", "address_as_name", "invalid_identifier",
+                     "self_chosen_name", "name_from_other_source", "binding_window_expired",
+                     "failure_series", "dropped_roles", "remaining", "count",
+                     "recovery_codes_deleted", "automation", "automatic", "human", "purpose",
+                     "taken", "account_disabled", "admin_password_reset", "password_reset",
+                     "sessions_revoked", "_key_kind", "old", "new", "alternative", "schema"):
         assert not deutsch_in(englisch), f"{englisch!r}: Fehlalarm ({deutsch_in(englisch)})"
 
     class Probe:
@@ -1222,6 +1248,353 @@ def selbstpruefung_namen() -> None:
        f"Umlaut — {len(STAMM)} Stämme, {len(DEUTSCH)} Wörter, ohne Fehlalarm bei englischen")
 
 
+# ---------- Schlüssel und Werte der Stufen A und B: englisch (0.22.0) ----------
+# PO-Entscheid 2026-09-27 („Alles übersetzen, auch DB-Werte“): Nach den Namen auch, was die
+# Oberfläche zurückgibt oder annimmt — die Ergebnis-Dicts der Methoden (`gc()`, der Bericht von
+# `federation_bind_existing`, `create_api_key` …), die Nutzlast von `on_security_event`, der Kontext
+# eigener Seiten (`set_template`: `ctx["prefix"]`, `ctx["purpose"]`), die JSON-Antworten der Routen,
+# die Werte von `kind` und was davon in der Datenbank steht. Ohne Alias; gespeicherte Werte zieht
+# die Migration auf Schema 12 nach (`Store._werte_englisch`), gelesen wird ein alter Wert trotzdem
+# (tests/test_bestandsdaten.py). Audit- und Log-Zeilen bleiben, wie sie sind (fail2ban, Filter der
+# Betreiber) — sie misst diese Prüfung nicht.
+#
+# Gemessen wird zweifach: am lebenden Objekt (eine Probeinstanz durchläuft die Wege, ein Hook
+# sammelt die Ereignisse, eigene Vorlagen zeichnen ihren Kontext auf) und im Quelltext (jeder
+# Aufruf von `_sicherheitsereignis`, `render_page`, jeder Schlüssel, den eine eingebaute Seite aus
+# `ctx` liest, jede zurückgegebene JSON-Antwort der Routen). Die Probe sieht, was wirklich
+# hinausgeht; der Quelltext, was die Probe nicht erreicht (etwa `passkey_added` ohne das Extra).
+# (Mutationsproben: `failure_series` in `gc()` zurück auf `fehlserien` → rot; `reason=` in
+# `_keys_widerrufen` zurück auf `grund=` → rot; `ctx.setdefault("prefix", …)` zurück auf
+# `"praefix"` → rot; `create_api_key` schreibt wieder `automat` → rot; die Probe nicht mehr rufen
+# → Verdrahtung rot.)
+
+#: Die Schlüssel und Werte bis 0.21.x — auch die, die als Wort englisch durchgingen (`alt` ist ein
+#: englisches Wort und steht deshalb nicht in `DEUTSCH`). Taucht einer wieder auf, ist das ein
+#: Rückfall, kein neuer Name.
+ALTE_WERTE = frozenset("""
+    quelle ausgefuehrt gebunden konflikt mehrdeutig nicht_im_verzeichnis ohne_kennung abgewiesen
+    lokal verzeichnis kennung grund gebunden_an treffer kein_konto dienstkonto gesperrt
+    schon_gebunden anders_gebunden adresse_als_name kennung_ungueltig name_selbst_gewaehlt
+    name_aus_quelle frist fehlserien verworfene_rollen alt neu anzahl verbleibend
+    recovery_codes_geloescht automat mensch praefix zweck vergeben sperre admin_passwort
+    passwort_reset sitzungen_beendet _key_art
+""".split())
+
+
+def wert_befunde(paare: list) -> list:
+    """Jeder Schlüssel oder Wert mit deutschem Wort oder aus `ALTE_WERTE`, als lesbare Zeile."""
+    return [f"{wo}: {wert!r} ({', '.join(sorted(deutsch_in(wert)) or ['Name bis 0.21.x'])})"
+            for wo, wert in paare if deutsch_in(wert) or wert in ALTE_WERTE]
+
+
+def _schluessel(wo: str, obj) -> list:
+    """[(wo, schluessel)] eines Dicts, rekursiv für Listen und Unter-Dicts."""
+    paare = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            paare.append((wo, str(k)))
+            paare += _schluessel(f"{wo}.{k}", v)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            paare += _schluessel(f"{wo}[]", v)
+    return paare
+
+
+def werte_der_probe(klasse=TinySesam) -> list:
+    """[(wo, schluessel_oder_wert)] — was eine Probeinstanz hinausgibt, auf allen Wegen, die ohne
+    Extra gehen. `klasse` für die Selbstprobe (eine Unterklasse, die einen alten Schlüssel liefert)."""
+    import re as _re
+    import tempfile
+    import pyotp
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    paare: list = []
+    with tempfile.TemporaryDirectory() as verz:
+        post: list = []
+        ereignisse: list = []
+        a = klasse(TinySesamConfig(
+            db_path=os.path.join(verz, "probe.db"), cookie_secure=False, csrf_enabled=False,
+            passkey_enabled=False, pin_enabled=True, magiclink_enabled=True,
+            base_url="https://app.example.com"))
+        a.set_mailer(lambda to, betreff, text, html=None: post.append(text))
+        a.on_security_event = lambda e, konto, details: ereignisse.append((e, konto, details))
+
+        def link(pfad):
+            return next(m.group(1) for t in reversed(post)
+                        for m in [_re.search(rf"{pfad}([A-Za-z0-9_\-]+)", t)] if m)
+
+        uid = a.create_user("probe", password="Probe-Pw-1234", email="probe@example.com")
+        paare += [("get_user()", k) for k in a.get_user(uid)]
+        paare += [("find_user()", k) for k in a.find_user("probe")]
+        paare += [("identifier_taken()", k) for k in a.identifier_taken("probe")]
+        a.set_password(uid, "Neu-Pw-5678xyz")
+        a.set_pin(uid, "4711")
+        a.disable_pin(uid)
+        tb = a.totp_begin(uid)
+        paare += _schluessel("totp_begin()", tb)
+        a.totp_confirm(uid, pyotp.TOTP(tb["secret"]).now())
+        codes = a.generate_recovery_codes(uid)
+        a._verify_recovery_code(uid, codes[0])
+        a.totp_disable(uid)
+        k = a.create_api_key(uid, name="probe")
+        paare += _schluessel("create_api_key()", k) + [("create_api_key().kind", k["kind"])]
+        km = a.create_api_key(uid, name="cli", kind="human")
+        paare += [("create_api_key(kind=).kind", km["kind"])]
+        for e in a.list_api_keys(uid):
+            paare += _schluessel("list_api_keys()[]", e) + [("list_api_keys()[].kind", e["kind"])]
+        paare += [("api_key_kind()", a.api_key_kind(km["key"])), ("api_key_kind()", a.api_key_kind(k["key"]))]
+        konto, _ = a.verify_api_key(k["key"])
+        paare += _schluessel("verify_api_key()[0]", konto)
+        paare += [("api_key.kind (Datenbank)", z["kind"])
+                  for z in a.store._all("SELECT kind FROM api_key")]
+        paare += [("TinySesam._KEY_ARTEN", w) for w in a._KEY_ARTEN]
+        a.revoke_api_key(k["id"])
+        a.change_username(uid, "probe2")
+        a.request_email_change(uid, "neu@example.com", "https://app.example.com")()
+        tok = link("/auth/email/")
+        paare += _schluessel("peek_magic(email_change)", a.peek_magic(tok))
+        paare += [("magic_token.payload (Datenbank)", k2) for z in
+                  a.store._all("SELECT payload FROM magic_token WHERE purpose='email_change'")
+                  for k2 in json.loads(z["payload"] or "{}")]
+        paare += [("confirm_email_change()", a.confirm_email_change(tok))]
+        a.request_email_change(uid, "frei@example.com", "https://app.example.com")()
+        tok = link("/auth/email/")
+        a.create_user("dritte", email="frei@example.com")
+        paare += [("confirm_email_change()", a.confirm_email_change(tok))]
+        inv = a.create_invite("gast@example.com", "https://app.example.com", roles=["leser"])
+        paare += _schluessel("create_invite()", inv) + _schluessel("peek_magic(invite)",
+                                                                   a.peek_magic(inv["token"]))
+        paare += _schluessel("own_events()", a.own_events(uid))
+        paare += _schluessel("all_security()", a.all_security())
+
+        # Eigene Seiten: Welche Schlüssel bekommt eine eigene Vorlage wirklich?
+        kontexte: dict = {}
+
+        def aufzeichnen(name):
+            def fn(auth, ctx):
+                kontexte[name] = sorted(ctx)
+                return "<p>probe</p>"
+            return fn
+        for seite in ("login", "magic_confirm"):
+            a.set_template(seite, aufzeichnen(seite))
+        app = FastAPI()
+        app.include_router(a.router())
+        c = TestClient(app)
+        c.get("/auth/login")
+        c.get(f"/auth/magic/{a.create_magic_token('login', user_id=uid, email='neu@example.com')}")
+        for seite, schluessel in kontexte.items():
+            paare += [(f"set_template({seite!r}) ctx", s) for s in schluessel]
+
+        # JSON der Routen, am lebenden Objekt: Konto-Seite und Admin-API.
+        app.include_router(a.admin_router(), prefix="/probe-admin")
+        a.create_user("chef", password="Chef-Pw-12345", is_admin=True)
+        for name, pw in (("probe2", "Neu-Pw-5678xyz"), ("chef", "Chef-Pw-12345")):
+            k_c = TestClient(app)
+            k_c.post("/auth/login", data={"username": name, "password": pw}, follow_redirects=False)
+            if name == "probe2":
+                paare += _schluessel("GET /auth/me", k_c.get("/auth/me").json())
+                neu_k = k_c.post("/auth/apikeys", json={"name": "json"}).json()
+                paare += _schluessel("POST /auth/apikeys", neu_k)
+                liste = k_c.get("/auth/apikeys").json()
+                paare += _schluessel("GET /auth/apikeys", liste)
+                paare += [("GET /auth/apikeys[].kind", e.get("kind")) for e in liste]
+            else:
+                konten = k_c.get("/probe-admin/api/users").json()
+                paare += _schluessel("GET <admin>/api/users", konten)
+        try:
+            a.create_user("probe2")
+        except ConfigError as e:
+            paare.append(("ConfigError.field", e.field))
+        try:
+            a.create_user("vierte", email="neu@example.com")
+        except ConfigError as e:
+            paare.append(("ConfigError.field", e.field))
+
+        # Ereignisse: der Grund des gesammelten Widerrufs ist ein Wert.
+        a.set_disabled(uid, True)
+        a.store.set_disabled(a.find_user("dritte")["id"], True)     # Sperre einer offenen Bestätigung
+        chef_c = TestClient(app)
+        chef_c.post("/auth/login", data={"username": "chef", "password": "Chef-Pw-12345"},
+                    follow_redirects=False)
+        paare += [("GET <admin>/api/users[].disabled_by", k2["disabled_by"])
+                  for k2 in chef_c.get("/probe-admin/api/users").json() if k2["disabled_by"]]
+        for e, konto_e, details in ereignisse:
+            paare += [(f"on_security_event({e!r}) konto", s) for s in konto_e]
+            paare += _schluessel(f"on_security_event({e!r}) details", details)
+            if "reason" in details:
+                paare.append((f"on_security_event({e!r}).reason", details["reason"]))
+        paare += [("TinySesam._KEYS_WIDERRUFEN_GRUENDE", g) for g in a._KEYS_WIDERRUFEN_GRUENDE]
+
+        # Bestandsbindung: alle Teile des Berichts, Einträge und Gründe.
+        class Verzeichnis:
+            def eintrag_suchen(self, name):
+                return {"anna": [{"id": "u-anna", "name": "Anna", "email": "anna@example.com"}],
+                        "dora": [{"id": "u-d1"}, {"id": "u-d2"}],
+                        "emil": [{"id": "u-fritz"}]}.get(name, [])
+        a.ldap = Verzeichnis()
+        for n in ("anna", "dora", "bert", "emil", "fritz"):
+            a.create_user(n)
+        a.store.link_federated("ldap", "u-fritz", a.find_user("fritz")["id"], 0)
+        a.create_service("dienst")
+        for bericht in (a.federation_bind_existing("ldap"),
+                        a.federation_bind_existing("saml", mapping={"niemand": "x", "anna": "",
+                                                                    "dienst": "d", "probe2": "p"})):
+            paare += _schluessel("federation_bind_existing()", bericht)
+            paare += [("federation_bind_existing()[].reason", e["reason"])
+                      for teil in bericht.values() if isinstance(teil, list)
+                      for e in teil if "reason" in e]
+        paare += [("NAME_BINDING_REFUSALS", g) for g in a.NAME_BINDING_REFUSALS]
+        paare += _schluessel("gc()", a.gc())
+    return paare
+
+
+def werte_der_konstanten(datei: dict) -> list:
+    """[(wo, wert)] — die Werte der Konstanten der Stufen A/B (Elemente, Schlüssel; Fliesstext mit
+    Leerzeichen nicht) und die Vorgaben der Konfigurationsfelder, die wie ein Kürzel aussehen."""
+    paare = []
+    for name, e in (datei.get("TinySesam.konstanten") or {}).items():
+        if not isinstance(e, dict) or e.get("stufe") not in ("A", "B"):
+            continue
+        wert = inspect.getattr_static(TinySesam, name, None)
+        for w in (wert if isinstance(wert, (tuple, list, dict, frozenset, set)) else [wert]):
+            if isinstance(w, str) and " " not in w:
+                paare.append((f"TinySesam.{name}", w))
+    for typ in ERGEBNISTYPEN.values():
+        paare += [(f"{typ.__name__}.REASONS", w) for w in typ.REASONS]
+    for f in dataclasses.fields(TinySesamConfig):
+        if isinstance(f.default, str) and re.fullmatch(r"[A-Za-z_]+", f.default or "-"):
+            paare.append((f"TinySesamConfig.{f.name} (Vorgabe)", f.default))
+    return paare
+
+
+#: Module mit Routen: Was dort zurückgegeben wird, ist eine JSON-Antwort.
+ROUTEN_MODULE = ("router.py", "admin.py", "webauthn_.py", "oidc.py", "saml_.py", "gateway.py")
+
+
+def werte_im_code(quellen: dict) -> list:
+    """[(wo, name)] aus dem Quelltext (`{dateiname: text}`): Schlüsselwörter jedes Aufrufs von
+    `_sicherheitsereignis` (die Nutzlast von `on_security_event`) und `render_page` (der Kontext
+    eigener Seiten), jeder Schlüssel, den ein eingebauter Renderer aus `ctx` liest oder
+    `render_page` hineinlegt, die Schlüssel der `…_ctx`-Helfer, und jeder Schlüssel einer
+    zurückgegebenen JSON-Antwort in einem Routen-Modul."""
+    paare = []
+
+    def konst(k):
+        return k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None
+
+    def dict_schluessel(knoten):
+        if isinstance(knoten, ast.Dict):
+            return [konst(k) for k in knoten.keys if konst(k)]
+        if isinstance(knoten, ast.Call) and getattr(knoten.func, "id", "") == "dict":
+            return [k.arg for k in knoten.keywords if k.arg]
+        if isinstance(knoten, (ast.ListComp, ast.GeneratorExp)):
+            return dict_schluessel(knoten.elt)
+        if isinstance(knoten, ast.List):
+            return [s for e in knoten.elts for s in dict_schluessel(e)]
+        return []
+
+    for datei, text in sorted(quellen.items()):
+        baum = ast.parse(text)
+        for k in ast.walk(baum):
+            if isinstance(k, ast.Call):
+                name = k.func.attr if isinstance(k.func, ast.Attribute) else getattr(k.func, "id", "")
+                if name == "_sicherheitsereignis":
+                    paare += [(f"{datei}: on_security_event-Nutzlast", w.arg) for w in k.keywords if w.arg]
+                elif name == "render_page":
+                    paare += [(f"{datei}: render_page-Kontext", w.arg) for w in k.keywords
+                              if w.arg and w.arg not in ("request", "status")]
+                elif name in ("get", "setdefault") and isinstance(k.func, ast.Attribute) \
+                        and getattr(k.func.value, "id", "") == "ctx" and k.args and konst(k.args[0]):
+                    paare.append((f"{datei}: ctx", konst(k.args[0])))
+                elif name == "JSONResponse" and datei in ROUTEN_MODULE and k.args:
+                    paare += [(f"{datei}: JSON-Antwort", s) for s in dict_schluessel(k.args[0])]
+            elif isinstance(k, ast.Subscript) and getattr(k.value, "id", "") == "ctx" \
+                    and konst(k.slice):
+                paare.append((f"{datei}: ctx", konst(k.slice)))
+            elif isinstance(k, ast.FunctionDef) and k.name.endswith("_ctx"):
+                paare += [(f"{datei}: {k.name}", s) for r in ast.walk(k) if isinstance(r, ast.Return)
+                          and r.value is not None for s in dict_schluessel(r.value)]
+            elif isinstance(k, ast.Return) and k.value is not None and datei in ROUTEN_MODULE:
+                paare += [(f"{datei}: JSON-Antwort", s) for s in dict_schluessel(k.value)]
+    return paare
+
+
+def _quellen(wurzel: str = WURZEL) -> dict:
+    paket = os.path.join(wurzel, "tinysesam")
+    return {n: open(os.path.join(paket, n), encoding="utf-8").read()
+            for n in sorted(os.listdir(paket)) if n.endswith(".py")}
+
+
+#: Was die Wertprüfung mindestens sehen muss — je Weg ein Eintrag, der nur dort vorkommt.
+WERTE_PFLICHT = (("gc()", "failure_series"), ("create_api_key()", "dropped_roles"),
+                 ("create_api_key(kind=).kind", "human"), ("list_api_keys()[].kind", "automation"),
+                 ("api_key.kind (Datenbank)", "human"), ("magic_token.payload (Datenbank)", "old"),
+                 ("peek_magic(email_change).payload", "old"), ("confirm_email_change()", "taken"),
+                 ("federation_bind_existing()", "local_password"),
+                 ("federation_bind_existing().conflict[]", "bound_to"),
+                 ("federation_bind_existing().ambiguous[]", "matches"),
+                 ("federation_bind_existing()[].reason", "no_account"),
+                 ("on_security_event('api_keys_revoked').reason", "account_disabled"),
+                 ("on_security_event('username_changed') details", "old"),
+                 ("set_template('magic_confirm') ctx", "purpose"),
+                 ("set_template('login') ctx", "prefix"),
+                 ("webauthn_.py: on_security_event-Nutzlast", "name"),
+                 ("manager.py: ctx", "prefix"), ("router.py: render_page-Kontext", "purpose"),
+                 ("admin.py: JSON-Antwort", "disabled_by"), ("TinySesam.SECURITY_EVENTS", "api_keys_revoked"),
+                 ("POST /auth/apikeys", "dropped_roles"), ("GET /auth/apikeys[].kind", "automation"),
+                 ("GET <admin>/api/users[].disabled_by", "operator"),
+                 ("GET <admin>/api/users[].disabled_by", "confirmation"), ("ConfigError.field", "email"))
+
+
+def pruefe_werte(datei: dict, klasse=TinySesam, quellen: "dict | None" = None,
+                 pflicht=WERTE_PFLICHT, mindestens: int = 600) -> tuple:
+    """(befunde, zahl) — die ganze Wertprüfung des normalen Laufs, mit Mindestmenge (Stand 0.22.0:
+    790 Einträge, mit Luft nach unten). Dieselbe Funktion prüft die Selbstprobe."""
+    paare = (werte_der_probe(klasse) + werte_der_konstanten(datei)
+             + werte_im_code(_quellen() if quellen is None else quellen))
+    gesehen = set(paare)
+    fehlt = [f"{wo}: {wert!r} wird nicht gemessen — Probe oder Messung kaputt?"
+             for wo, wert in pflicht if (wo, wert) not in gesehen]
+    if len(paare) < mindestens:
+        fehlt.append(f"zu wenig gemessen: {len(paare)} Schlüssel und Werte (erwartet mindestens "
+                     f"{mindestens})")
+    return fehlt + wert_befunde(sorted(gesehen)), len(paare)
+
+
+def selbstpruefung_werte() -> None:
+    """Findet die Wertprüfung einen alten Schlüssel — in der Probe und im Quelltext?"""
+    assert all(wert_befunde([("x", w)]) for w in ALTE_WERTE), "ALTE_WERTE misst nichts"
+    assert not wert_befunde([("x", w)
+                             for w in ("old", "new", "count", "reason", "human", "automation",
+                                       "prefix", "purpose", "taken", "failure_series")]), \
+        "Fehlalarm bei den englischen Werten"
+
+    class Rueckfall(TinySesam):
+        def gc(self, attempts_older_than_sec: int = 86400) -> dict:
+            return {"fehlserien": 0, **super().gc(attempts_older_than_sec)}
+
+    probe = [w for wo, w in werte_der_probe(Rueckfall) if wo == "gc()"]
+    assert "fehlserien" in probe and wert_befunde([("gc()", "fehlserien")]), probe
+    quelle = {"router.py": 'def f(auth, request):\n'
+                           '    auth._sicherheitsereignis("x", 1, anzahl=2)\n'
+                           '    return auth.render_page("p", request=request, zweck="login")\n'
+                           'def g():\n    return {"ok": True, "gebunden": []}\n'
+                           'def _reg_ctx(nxt):\n    return dict(next=nxt, kennung="")\n',
+              "templates.py": 'def _p(auth, ctx):\n    return ctx.get("praefix") + ctx["alt"]\n'}
+    funde = sorted({w for _, w in werte_im_code(quelle) if wert_befunde([("", w)])})
+    assert funde == ["alt", "anzahl", "gebunden", "kennung", "praefix", "zweck"], funde
+    befunde, _ = pruefe_werte({}, quellen={}, pflicht=(("gc()", "gibt-es-nicht"),),
+                              mindestens=10 ** 6)
+    assert "'gibt-es-nicht' wird nicht gemessen" in befunde[0] and "zu wenig gemessen" in befunde[1], \
+        befunde[:2]
+    gerufen = {k.func.id for k in ast.walk(ast.parse(inspect.getsource(main)))
+               if isinstance(k, ast.Call) and isinstance(k.func, ast.Name)}
+    assert "pruefe_werte" in gerufen, "main() ruft pruefe_werte nicht"
+    ok("Wertprüfung schlägt an: ein alter Schlüssel in der Probe (gc), in einem Ereignis, im Kontext "
+       "einer Seite, in einer JSON-Antwort, in einem ctx-Helfer; Mindestmenge und Verdrahtung")
+
+
 def _zaehle_stufen(datei: dict) -> str:
     zahl = {s: 0 for s in STUFEN}
     for je_name in stufen_aus(datei).values():
@@ -1249,6 +1622,7 @@ def main(argv):
     selbstpruefung_stufen(jetzt)
     selbstpruefung_c()
     selbstpruefung_namen()
+    selbstpruefung_werte()
 
     frueher_datei = {}
     if os.path.exists(ABLAGE):
@@ -1309,6 +1683,21 @@ def main(argv):
     else:
         ok(f"Stufen A und B englisch: {n_zahl} Namen, Parameter, Felder und Attribute, kein "
            "deutsches Wort")
+
+    # Die Schlüssel und Werte der Stufen A und B sind englisch (PO-Entscheid 2026-09-27).
+    w_fehler, w_zahl = pruefe_werte(frueher_datei)
+    if w_fehler:
+        rot = True
+        print(f"\n  {len(w_fehler)} Schlüssel/Werte der Stufen A/B deutsch oder von 0.21.x "
+              "(oder Messung zu klein):\n")
+        for zeile in w_fehler:
+            print(f"    WERT         {zeile}")
+        print("\n  Was die öffentliche Oberfläche zurückgibt oder annimmt, ist englisch — Ergebnis-Dicts,")
+        print("  Ereignis-Nutzlast, Kontext eigener Seiten, JSON-Antworten, gespeicherte Werte. Audit-")
+        print("  und Log-Zeilen sind nicht gemeint (die misst diese Prüfung nicht).\n")
+    else:
+        ok(f"Schlüssel und Werte der Stufen A und B englisch: {w_zahl} gemessen (Probeinstanz, "
+           "Konstanten, Quelltext), kein deutsches Wort, keiner von 0.21.x")
 
     if not brueche and not erweiterungen:
         n = sum(len(v) for v in jetzt.values())

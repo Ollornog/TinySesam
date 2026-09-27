@@ -22,7 +22,11 @@ Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_ap
 
 Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
 
-**Stand:** A 251 · B 64 · C 50 Namen.
+**Englisch, Namen wie Werte** (seit 0.22.0, ohne Alias): Die Namen der Stufen A und B, ihre Parameter und die Schlüssel und Werte, die sie zurückgeben oder annehmen — Ergebnis-Dicts, die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`, `ctx["purpose"]`), die JSON-Antworten der Routen, die Arten der API-Keys (`automation`, `human`). Audit- und Log-Zeilen bleiben, wie sie waren. Die Liste alt → neu steht im CHANGELOG zu 0.22.0.
+
+**`auth.store` ist Innenleben** (Stufe C): die Speicherschicht der eingebauten Routen, ohne Stufe, ohne Zusage und ohne Übergangsfrist — ihre Methoden können sich mit jedem Release ändern. Was eine App braucht, steht unten als Methode von `TinySesam` (etwa `set_disabled` statt `auth.store.set_disabled`).
+
+**Stand:** A 252 · B 64 · C 50 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -58,7 +62,7 @@ Die Sitzung mit der PIN des eigenen Kontos frisch bestätigen (Step-up) — wie 
 
 Die Sitzung mit einem TOTP-Code des eigenen Kontos frisch bestätigen (Step-up) — wie `confirm_password`, gedrosselt und gesperrt wie `POST /auth/reauth`.
 
-### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'`
+### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automation') -> 'dict'`
 
 Neuen API-Key erzeugen. Rückgabe enthält 'key' im KLARTEXT — nur EINMAL (danach nur der Hash).
 
@@ -100,7 +104,7 @@ Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — un
 
 ### `gc(attempts_older_than_sec: 'int' = 86400) -> 'dict'`
 
-Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich. `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird.
+Aufräumen: abgelaufene Sessions/Flows/Magic-Tokens/Ressourcen-Unlocks + alte Login-Versuche. Regelmäßig aufrufen (Cron/Startup/Scheduler) — sonst wachsen die Tabellen. Das Audit-Log nur, wenn `audit_retention_days` eine Frist setzt (B5-11) — dann steht die Zahl unter `audit`. Gibt Anzahl gelöschter Zeilen je Bereich: `unverified_accounts`, `sessions`, `flow`, `magic_tokens`, `resource_unlocks`, `login_attempts`, `failure_series` (bis 0.21.x `fehlserien`), gegebenenfalls `audit`. `attempts_older_than_sec` liegt zwischen 0 (alle Fehlversuche) und zehn Jahren in Sekunden, sonst `ValueError`, bevor irgendetwas gelöscht wird.
 
 ### `grant_mfa_enrollment(user_id: 'int', minutes: 'int' = 60) -> 'int'`
 
@@ -212,11 +216,15 @@ Reset-Link an eine E-Mail schicken, WENN ein passender User existiert. Nach auß
 
 ### `send_verify_email(user_id, email, base_url) -> 'bool'`
 
-Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein mit `store.set_disabled(uid, True)` gesperrtes Konto frei (die ausstehende Bestätigung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(uid, True, durch_betreiber=True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `after_response` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
+Den Bestätigungslink für eine Adresse verschicken. False, wenn kein Mailer da ist. `base_url` wird geprüft (`ConfigError` bei einem fremden Host, siehe `magic_url`). Scheitert der Versand, ist der Token entwertet (B6-12) und der Fehler geht weiter. Der Link schaltet ein Konto frei, dessen Bestätigung aussteht (Registrierung), nie eines, das der Betreiber gesperrt hat (Admin-Panel, `set_disabled(user_id, True)`) — auch dann nicht, wenn der Link erst nach dieser Sperre entsteht, etwa weil der Aufruf über `after_response` wartet (H-18). Eingelöst setzt er den Beleg für die Adresse (`email_verified`), solange sie noch die des Kontos ist.
 
 ### `set_cookie(response, token, remember: 'Optional[bool]' = None)`
 
 Session-Cookie setzen. remember=True → persistentes Cookie (max_age = lange TTL); remember=False → reines Session-Cookie (max_age=None, endet beim Browser-Schließen).
+
+### `set_disabled(user_id: 'int', disabled: 'bool') -> 'bool'`
+
+Ein Konto als Betreiber sperren oder entsperren — mit derselben Wirkung wie das Panel (`POST <admin_path>/api/users/{id}/disable`, das genau diese Methode ruft).
 
 ### `set_mailer(fn)`
 
@@ -406,7 +414,7 @@ Alle Härtungs-Schwellen als Dict (Vorgaben, überschrieben von dem, was im Pane
 
 ### `api_key_kind(key) -> 'str'`
 
-Die Art eines Keys ("automat"/"mensch") — ohne ihn zu benutzen.
+Die Art eines Keys (`"automation"`/`"human"`, bis 0.21.x `"automat"`/`"mensch"`) — ohne ihn zu benutzen. `""` für einen unbekannten Key.
 
 ### `apply_factor(request, user_id, factor, ip=None, ua=None, remember=True, email_verified: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'`
 
@@ -430,7 +438,7 @@ Die echte Client-IP. Hinter einem Proxy nur dann aus `X-Forwarded-For`, wenn der
 
 ### `confirm_email_change(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'`
 
-Den Bestätigungslink einlösen. Rückgabe: "ok", "vergeben" (inzwischen Kennung eines anderen Kontos) oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
+Den Bestätigungslink einlösen. Rückgabe: "ok", "taken" (inzwischen Kennung eines anderen Kontos; bis 0.21.x "vergeben") oder None (ungültig, abgelaufen, benutzt, Konto gesperrt/weg).
 
 ### `count_other_sessions(request, user, token: 'Optional[str]' = None) -> 'int'`
 
@@ -484,9 +492,9 @@ JSON-Body robust lesen: ungültiger/leerer Body → 400 statt 500. Erzwingt CSRF
 
 Die Anmelde-Fehlversuche eines Kontos wegräumen; gibt zurück, wie viele es waren.
 
-### `list_api_keys(user_id)`
+### `list_api_keys(user_id) -> 'list'`
 
-Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe.
+Die API-Keys eines Kontos — ohne die Schlüssel selbst, die gibt es nur einmal bei der Ausgabe. Je Key ein Dict (Spalten von `api_key`), `kind` mit englischem Namen (Schema 12; bis 0.21.x die Datenbankzeile mit dem gespeicherten Wert).
 
 ### `list_resource_secrets()`
 
@@ -514,7 +522,7 @@ Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sons
 
 ### `peek_magic(raw, purpose=None) -> 'Optional[dict]'`
 
-Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen).
+Token prüfen OHNE ihn zu verbrauchen (für den Invite-Flow: erst bei Registrierung einlösen). Rückgabe wie `redeem_magic`.
 
 ### `pending_user(request) -> 'Optional[dict]'`
 
@@ -618,9 +626,9 @@ Wert: `('first_login', 'grace', 'strict')`
 
 ### `NAME_BINDING_REFUSALS` — Konstante
 
-Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — für Log und Bericht.
+Warum ein Konto nicht über den Namen gebunden wird (`_nachbindung_grund`) — Kürzel und Erklärung, für den Bericht von `federation_bind_existing` (`reason`).
 
-Schlüssel: `adresse_als_name`, `kennung_ungueltig`, `konflikt`, `anders_gebunden`, `name_selbst_gewaehlt`, `name_aus_quelle`, `frist`
+Schlüssel: `address_as_name`, `invalid_identifier`, `conflict`, `bound_elsewhere`, `self_chosen_name`, `name_from_other_source`, `binding_window_expired`
 
 ### `NAME_MAX` — Konstante
 
@@ -696,7 +704,7 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 | `is_totp_setup_locked` | Methode | `POST /auth/totp/setup` (prüft und bucht atomar) |
 | `login_redirect_after` | Methode | `next_url` bzw. `redirect()` am Ergebnis von `login_password`, `login_pin` oder `login_totp` (nächster Faktor oder `next`) |
 | `maybe_promote_admin` | Methode | `admin_identifiers` oder `ensure_admin`; direkt gerufen umgeht es den Adressbeleg |
-| `mfa_pending` | Methode | Ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe liefert `auth.store.has_confirmed_totp(user_id)` |
+| `mfa_pending` | Methode | Ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe liefert `auth.store.has_confirmed_totp(user_id)` — Innenleben, ohne Zusage |
 | `next_login_step` | Methode | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
 | `oidc_anwendung` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
 | `oidc_freigabe_gueltig` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
@@ -723,4 +731,4 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 
 ---
 
-154 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 10 Exporte, davon 5 Fehlertypen, 17 Namen an den Ergebnistypen `LoginResult`, `PasswordChangeResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.
+155 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 10 Exporte, davon 5 Fehlertypen, 17 Namen an den Ergebnistypen `LoginResult`, `PasswordChangeResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.
