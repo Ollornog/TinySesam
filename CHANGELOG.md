@@ -4,6 +4,22 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
+
+- **Der Release-Trockenlauf läuft auf jedem Pull Request.** Bis hierhin nahm kein Pflicht-Check
+  die gepinnten Bauwerkzeuge (`.github/bau`), die Sperrliste des Abbilds (`deploy/gateway`), das
+  Basis-Abbild im `Dockerfile` und die Actions des Baus ab. Ein Update, das das sdist oder das
+  Abbild bricht, fiel erst beim nächsten Tag auf. Jetzt baut jeder PR Wheel, sdist und das Abbild
+  für beide Plattformen, veröffentlicht aber nichts. Die Suite in `pruefen` überspringt der PR,
+  weil `ci.yml` sie am selben Commit fährt.
+- **Neu `abbild-probe`:** Das Abbild muss starten, bevor es geschoben wird. `scripts/_abbild_probe.sh`
+  baut es, startet es ohne Netz und mit Platzhalter-Werten, wartet auf den HEALTHCHECK aus dem
+  `Dockerfile` und verlangt `/healthz` 200 mit der Version aus `pyproject.toml`. Der Job hat kein
+  Schreibrecht; `image` hängt an ihm.
+- **Neu `pruefsummen`:** Wheel und sdist werden so heruntergeladen, wie `release` und `pypi` sie
+  bekommen, und mit `sha256sum -c` gegen `SHA256SUMS` geprüft. `release` hängt daran.
+- `tests/test_repo.py` hält alle drei Punkte fest.
+
 ### Geändert — Testlauf (für Entwickler; am Paket ändert sich nichts)
 
 - **Die Suiten laufen parallel.** `tests/run_all.py` fährt sie gleichzeitig; wie viele,

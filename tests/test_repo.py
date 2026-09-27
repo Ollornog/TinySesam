@@ -679,6 +679,37 @@ assert "_release.py --pruefen" in _pruef and "if: github.ref_type != 'tag'" in _
     "release.yml: der Trockenlauf prüft nichts (scripts/_release.py --pruefen fehlt)"
 print("  release.yml: ohne Tag ein Trockenlauf — prüfen und bauen ja, veröffentlichen nie")
 
+# Der Trockenlauf ist auch der Pflicht-Check für automatische Updates (PO 2026-09-28): Er läuft auf
+# jedem PR, prüft die heruntergeladenen Artefakte und startet das Abbild, BEVOR veröffentlicht oder
+# geschoben wird. Ohne PR-Trigger nähme kein Pflicht-Check die Bauwerkzeuge, die Sperrliste und das
+# Basis-Abbild ab, und Dependabot mergte sie ungeprüft. (Mutationsproben: `pull_request:` streichen;
+# `abbild-probe` aus `needs:` von `image` nehmen; `pruefsummen` aus `needs:` von `release`; dem
+# Suite-Schritt in `pruefen` ein `if: github.ref_type != 'tag'` geben → je rot.)
+_rel_on = rel.split("\njobs:", 1)[0]
+assert re.search(r"^  pull_request:", _rel_on, re.M), \
+    "release.yml: kein `pull_request`-Trigger — der Trockenlauf ist kein Pflicht-Check mehr"
+_needs = {j: re.search(r"^    needs:\s*(.+)$", "\n".join(z), re.M) for j, z in _rel_jobs.items()}
+_needs = {j: set(re.findall(r"[A-Za-z0-9_-]+", m.group(1))) if m else set() for j, m in _needs.items()}
+assert "pruefsummen" in _needs.get("release", set()), \
+    "release.yml: `release` veröffentlicht, ohne dass `pruefsummen` die Artefakte geprüft hat"
+assert "abbild-probe" in _needs.get("image", set()) and \
+    "needs.abbild-probe.result == 'success'" in " ".join(_rel_jobs.get("image", [])), \
+    "release.yml: `image` schiebt, ohne dass `abbild-probe` das Abbild gestartet hat"
+for _j in ("pruefsummen", "abbild-probe"):
+    assert not any(z.strip().startswith("if:") for z in _rel_jobs.get(_j, []) if z.startswith("    if")), \
+        f"release.yml: `{_j}` hängt an einer Bedingung — er muss auf jedem PR und jedem Tag laufen"
+assert any("sha256sum -c SHA256SUMS" in k for k in _kommandos(_rel_jobs.get("pruefsummen", []))), \
+    "release.yml: `pruefsummen` prüft die Prüfsummen nicht"
+assert any(k.startswith("scripts/_abbild_probe.sh") for k in _kommandos(_rel_jobs.get("abbild-probe", []))), \
+    "release.yml: `abbild-probe` startet das Abbild nicht (scripts/_abbild_probe.sh)"
+# Die Suite in `pruefen` darf NUR auf einem PR ausfallen (dort fährt sie ci.yml) — beim Tag läuft sie.
+_suite = re.search(r"- name: Suite fahren[^\n]*\n((?:\s{8}.*\n)+)", "\n".join(_rel_jobs.get("pruefen", [])) + "\n")
+assert _suite, "release.yml: der Suite-Schritt in `pruefen` fehlt"
+_suite_if = [z.strip() for z in _suite.group(1).splitlines() if z.strip().startswith("if:")]
+assert _suite_if in ([], ["if: github.event_name != 'pull_request'"]), \
+    f"release.yml: die Suite in `pruefen` fällt nicht nur auf PRs aus: {_suite_if}"
+print("  release.yml: der Trockenlauf läuft auf jedem PR; Release und Abbild hängen an Prüfsummen und Startprobe")
+
 # B4-7 — Das Abbild installiert, was die Sperrliste sagt, Byte für Byte. Der Digest-Pin im FROM
 # hält nur das Basis-Abbild; ein `pip install ".[gateway]"` löste bei jedem Bau neu auf.
 SPERRLISTE = "deploy/gateway/requirements.txt"
