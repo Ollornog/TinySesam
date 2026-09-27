@@ -135,8 +135,8 @@ def _alt_offen(auth, name, ip, anzahl):
 
 # ── (a) Das erste Fenster: niemand wird gesperrt, der Notfall-Admin kommt hinein ─────────────
 auth, app, post, db = _aufbau(Verzeichnis("haengt"))
-paar = auth.sec("max_login_attempts")
-schwelle_ip = paar * auth.sec("ip_attempt_factor")
+paar = auth._sec("max_login_attempts")
+schwelle_ip = paar * auth._sec("ip_attempt_factor")
 with Mitschnitt() as log_a, ThreadPoolExecutor(max_workers=schwelle_ip + 4) as pool:
     # Die ungeduldige Alice klickt fünfmal, das Büro hinter derselben NAT-Adresse meldet sich an.
     laufend = [pool.submit(_anmelden, app, "alice") for _ in range(paar)]
@@ -169,7 +169,7 @@ os.remove(db)
 # auf deren Ausgang (oder bekommt ohne Warteplatz sofort den Aufschub) und läuft dann in die Sperre.
 verz_b = Verzeichnis("falsch", dauer=0.3)
 auth, app, post, db = _aufbau(verz_b)
-paar = auth.sec("max_login_attempts")
+paar = auth._sec("max_login_attempts")
 with Mitschnitt() as log_b, ThreadPoolExecutor(max_workers=3 * paar) as pool:
     salve = list(pool.map(lambda i: _anmelden(app, "alice", f"falsch{i}"), range(3 * paar)))
 auth._hinweis_ausgang.abwarten()
@@ -187,7 +187,7 @@ os.remove(db)
 
 # ── (c) Eine offene Vorbuchung, die niemand abschliesst, wird nach der Frist ein Fehlversuch ──
 auth, app, post, db = _aufbau(Verzeichnis("falsch", dauer=0))
-_alt_offen(auth, "alice", NAT[0], auth.sec("max_login_attempts"))
+_alt_offen(auth, "alice", NAT[0], auth._sec("max_login_attempts"))
 zeit_c: list = []
 with Mitschnitt() as log_c:
     status_c = _anmelden(app, "alice", zeit=zeit_c)
@@ -200,7 +200,7 @@ os.remove(db)
 
 # Dasselbe für die Serie (B2-6): Eine alte offene Vorbuchung zählt dort mit.
 auth, app, post, db = _aufbau(Verzeichnis("falsch", dauer=0), max_login_attempts=100)
-grenze_s = auth.sec("account_max_consecutive_failures")
+grenze_s = auth._sec("account_max_consecutive_failures")
 _alt_offen(auth, "alice", "192.0.2.50", grenze_s)
 for _ in range(grenze_s):
     auth.store.fehlserie_erhoehen("alice")
@@ -217,10 +217,10 @@ os.remove(db)
 # die nur schwebend greift. Hier schweben fünf Vorbuchungen von Alice (ein anderer Prozess prüft
 # sie gerade), und die Adresse hat ihre Schwelle mit bestätigten Fehlversuchen schon erreicht.
 auth, app, post, db = _aufbau(Verzeichnis("falsch", dauer=0))
-for _ in range(auth.sec("max_login_attempts")):
+for _ in range(auth._sec("max_login_attempts")):
     auth.store._exec("INSERT INTO login_attempt(ts, username, ip, success, method, offen) "
                      "VALUES (?,'alice',?,0,'password',1)", (jetzt(), NAT[0]))
-for i in range(auth.sec("max_login_attempts") * auth.sec("ip_attempt_factor")):
+for i in range(auth._sec("max_login_attempts") * auth._sec("ip_attempt_factor")):
     auth.store.record_attempt(f"kollege{i}", NAT[0], False, "password")
 zeit_c3: list = []
 with Mitschnitt() as log_c3:
@@ -234,7 +234,7 @@ os.remove(db)
 # ── (d) Die Serie: Eine hängende Vorbuchung an der Grenze löst keine Serien-Sperre aus ─────────
 verz_d = Verzeichnis("haengt")
 auth, app, post, db = _aufbau(verz_d, max_login_attempts=100)
-grenze_s = auth.sec("account_max_consecutive_failures")
+grenze_s = auth._sec("account_max_consecutive_failures")
 for _ in range(grenze_s - 1):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_d, ThreadPoolExecutor(max_workers=2) as pool:
@@ -267,7 +267,7 @@ with Mitschnitt() as log_d3, ThreadPoolExecutor(max_workers=1) as pool:
     time.sleep(HAENGT * 0.4)
     seite_d3 = TestClient(app, client=("192.0.2.61", 40000)).post(
         "/auth/login", data={"username": "alice", "password": "y"}, follow_redirects=False)
-    gesperrt_d3 = auth.is_locked("alice", "192.0.2.62")
+    gesperrt_d3 = auth._is_locked("alice", "192.0.2.62")
     haengend_d3.result(timeout=30)
 auth._hinweis_ausgang.abwarten()
 r.check("Aufschub an der Serien-Grenze: 429 mit dem Text der Fenster-Sperre, nicht der Serien-Sperre",
@@ -336,12 +336,12 @@ os.remove(db)
 
 # ── (h) is_locked: ein Aufschub ist True, aber ohne Sperrmail und ohne `failed login` ─────────
 auth, app, post, db = _aufbau(Verzeichnis("haengt"))
-with Mitschnitt() as log_h, ThreadPoolExecutor(max_workers=auth.sec("max_login_attempts")) as pool:
-    laufend = [pool.submit(_anmelden, app, "alice") for _ in range(auth.sec("max_login_attempts"))]
+with Mitschnitt() as log_h, ThreadPoolExecutor(max_workers=auth._sec("max_login_attempts")) as pool:
+    laufend = [pool.submit(_anmelden, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
     time.sleep(HAENGT * 0.4)
-    gesperrt_h = auth.is_locked("alice", NAT[0])
+    gesperrt_h = auth._is_locked("alice", NAT[0])
     [f.result(timeout=30) for f in laufend]
-    frei_h = not auth.is_locked("alice", NAT[0])
+    frei_h = not auth._is_locked("alice", NAT[0])
 auth._hinweis_ausgang.abwarten()
 r.check("is_locked während schwebender Vorbuchungen: True, danach False", gesperrt_h and frei_h,
         f"{gesperrt_h}, {frei_h}")
@@ -385,7 +385,7 @@ def _serien_zeilen(auth):
 
 auth, app, post, db = _aufbau(Pruefendes(dauer=0.6), max_login_attempts=1000,
                               account_max_consecutive_failures=10)
-grenze_i = auth.sec("account_max_consecutive_failures")
+grenze_i = auth._sec("account_max_consecutive_failures")
 for _ in range(grenze_i - 2):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
@@ -443,9 +443,9 @@ auth_i3.store.fehlserie_loeschen("bert")
 for _ in range(grenze_i - 1):
     auth_i3.store.fehlserie_erhoehen("bert")
 _vor_i3 = _serien_zeilen(auth_i3)
-_v = auth_i3.versuch_beginnen("bert", "192.0.2.60", "pin")
+_v = auth_i3._versuch_beginnen("bert", "192.0.2.60", "pin")
 auth_i3.sperre_aufheben(auth_i3.store.get_user_by_name("bert")["id"])
-auth_i3.record_login("bert", "192.0.2.60", False, "pin", versuch=_v)
+auth_i3._record_login("bert", "192.0.2.60", False, "pin", versuch=_v)
 # (Mutationsprobe: in `record_login` `min(vorgebucht[2], nachher)` durch `vorgebucht[2]` ersetzen → rot.)
 r.check("p2 F3: Buchung über die Grenze, Serie vor dem Abschluss beendet → keine Zeile",
         _v is not None and _serien_zeilen(auth_i3) == _vor_i3, f"{_v} {_serien_zeilen(auth_i3) - _vor_i3}")
@@ -455,10 +455,10 @@ for reihenfolge in ("schwebend zuerst", "feststehend zuerst"):
     for _ in range(grenze_i - 2):
         auth_i3.store.fehlserie_erhoehen("bert")
     _vor = _serien_zeilen(auth_i3)
-    _s = auth_i3.versuch_beginnen("bert", "192.0.2.61", "password", schweben=True)
-    _f = auth_i3.versuch_beginnen("bert", "192.0.2.62", "pin")
+    _s = auth_i3._versuch_beginnen("bert", "192.0.2.61", "password", schweben=True)
+    _f = auth_i3._versuch_beginnen("bert", "192.0.2.62", "pin")
     for v, m in ((_s, "password"), (_f, "pin"))[::1 if reihenfolge == "schwebend zuerst" else -1]:
-        auth_i3.record_login("bert", "192.0.2.61", False, m, versuch=v)
+        auth_i3._record_login("bert", "192.0.2.61", False, m, versuch=v)
     _gemischt.append((reihenfolge, _s is not None and _f is not None, _serien_zeilen(auth_i3) - _vor))
 # (Mutationsprobe: `vorher < max_serie <= nachher` streichen → „schwebend zuerst" 0 Zeilen → rot.)
 r.check("p2 F3: schwebende und sofort feststehende Buchung an der Grenze — in beiden Reihenfolgen genau eine Zeile",

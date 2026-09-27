@@ -95,8 +95,8 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
 - **Ein TOTP-Code gilt genau einmal — auch der Einrichtungscode.** Der Code, der die Einrichtung
   bestätigt, ist danach verbraucht. Unter `login_chain=["password","totp"]` schliesst diese
   Bestätigung den TOTP-Schritt der Anmeldung gleich mit ab; überall sonst braucht die Anmeldung den
-  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` und danach
-  `verify_totp(uid, now())` mit demselben Code rufen, werden seit T-13 rot — dort mit dem Code des
+  *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` rufen und sich danach mit
+  demselben Code anmelden (`POST /auth/totp`), werden seit T-13 rot — dort mit dem Code des
   vorigen Zeitschritts bestätigen.
 
 ## Unterstützte Versionen

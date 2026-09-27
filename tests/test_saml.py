@@ -230,7 +230,7 @@ os.remove(db)
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 uid = auth.create_user("angreifer", email="boss@example.com")
 assert auth.store.get_user(uid)["email_verified"] == 1, "Vorbedingung: das Konto ist belegt"
-auth.FOEDERIERTE_FAKTOREN = ()                 # Schloss 2 ausgehängt
+auth._FOEDERIERTE_FAKTOREN = ()                 # Schloss 2 ausgehängt
 auth.saml = FakeSAML(nameid="angreifer", attrs={"email": ["boss@example.com"]})
 assert TestClient(app).post("/auth/saml/acs", data={"SAMLResponse": "x"},
                             follow_redirects=False).status_code == 303
@@ -239,7 +239,7 @@ assert not auth.get_user(uid)["is_admin"], \
 ok("B-umgehung-10: Schloss 1 einzeln — die ACS-Route reicht „kein Beleg\" durch (ohne FOEDERIERTE_FAKTOREN)")
 # Gegenprobe: Ohne den Durchreicher befördert derselbe Vermerk sofort — das misst, dass oben
 # WIRKLICH die Route entschieden hat.
-assert auth.maybe_promote_admin(auth.get_user(uid), faktor="saml") is True, \
+assert auth._maybe_promote_admin(auth.get_user(uid), faktor="saml") is True, \
     "auch ohne beide Schlösser befördert nichts — dann misst die Prüfung darüber nichts"
 ok("... Gegenprobe: ohne beide Schlösser befördert der Vermerk am Konto sofort")
 os.remove(db)
@@ -248,10 +248,10 @@ os.remove(db)
 # vergisst (`email_bestaetigt=None`), darf über einen föderierten Faktor nicht befördern.
 db, auth, app = build(admin_identifiers=["boss@example.com"])
 uid = auth.create_user("angreifer", email="boss@example.com")     # Beleg am Konto: ja
-assert auth.maybe_promote_admin(auth.get_user(uid), faktor="saml") is False, \
+assert auth._maybe_promote_admin(auth.get_user(uid), faktor="saml") is False, \
     "der Faktor 'saml' verlangt keinen ausdrücklichen Beleg mehr"
 ok("B-umgehung-10: Schloss 2 einzeln — der Faktor 'saml' befördert ohne ausdrücklichen Beleg nicht")
-assert auth.maybe_promote_admin(auth.get_user(uid), email_bestaetigt=True, faktor="saml") is True, \
+assert auth._maybe_promote_admin(auth.get_user(uid), email_bestaetigt=True, faktor="saml") is True, \
     "auch mit Beleg befördert der Faktor nicht — dann misst die Prüfung darüber nichts"
 ok("... Gegenprobe: mit ausdrücklichem Beleg befördert derselbe Aufruf")
 os.remove(db)

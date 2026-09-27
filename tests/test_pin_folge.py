@@ -41,7 +41,7 @@ r = Report("G7 — PIN als Erst- oder Folgefaktor (Serie, Kettenschritt, Gästew
 PW = "Folge-Pin-Pw-15"          # 15 Zeichen: das Passwort meldet hier ggf. allein an (B2-4)
 NEU = "Neues-Pw-G7-123"
 PIN = "4711"
-FOLGE = TinySesam.SERIE_PIN_FOLGE
+FOLGE = TinySesam._SERIE_PIN_FOLGE
 HTML = {"Accept": "text/html"}
 
 
@@ -117,7 +117,7 @@ r.check("(a) der Selbstbedienungs-Reset (sperre_aufheben mit password) lässt si
 _tok = auth.create_magic_token("reset_password", user_id=uid, email="kette@example.com")
 _reset = TestClient(app).post("/auth/reset", data={"token": _tok, "password": NEU}, follow_redirects=False)
 r.check("(a) … auch über den echten POST /auth/reset",
-        _reset.status_code == 303 and auth.store.fehlserie("kette") == 5 and auth.check_password("kette", NEU),
+        _reset.status_code == 303 and auth.store.fehlserie("kette") == 5 and auth._check_password("kette", NEU),
         f"HTTP {_reset.status_code}, {_arten(auth, 'kette')}")
 # Eigene PIN-Seiten schicken den Namen oft mit — auch mit der Adresse des eigenen Kontos bleibt es der
 # Kettenschritt der halben Sitzung (vorher: der Gästeweg, als Erstfaktor gebucht).

@@ -59,7 +59,7 @@ class FakeLDAP:
     def authenticate(self, u, p):
         return {"username": u, "email": None, "name": u, "groups": ["cn=staff,ou=groups"]} if p == "x" else None
 auth.ldap = FakeLDAP()
-u = auth.check_ldap("alice", "x")
+u = auth._check_ldap("alice", "x")
 assert u and auth.has_role(u, "editor")
 ok("LDAP-Login: memberOf 'staff' → Rolle 'editor' (Teilstring-Match)")
 os.remove(db)

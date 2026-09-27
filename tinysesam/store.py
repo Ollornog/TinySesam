@@ -1586,7 +1586,7 @@ class Store:
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
 
         Der Beleg gehört zur Adresse, nicht zum Konto: Seit `users.email_verified` über
-        Rechte entscheidet (`maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
+        Rechte entscheidet (`_maybe_promote_admin`, Stufe 2), wäre ein stehengelassener Vermerk
         der Beleg der **alten** Adresse auf der **neuen** — gemessen wurde genau das
         (B-umgehung-8 aus T-13): `eve@example.com` (belegt) → `set_email(uid, "boss@example.com")` →
         Erst-Admin über die Allowlist, ohne dass jemand etwas bestätigt hat.
@@ -1696,7 +1696,7 @@ class Store:
         Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
         Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
         (`TinySesam.delete_user`, H-13) — kein Weg, den ein Anonymer auslöst. `gc()`, die
-        Rücknahme und `purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
+        Rücknahme und `_purge_demo` räumen Konten ab, die nie jemandem gehörten; dort gilt die
         Grenze auch für die Adresse. Und auch bei der Löschung durch einen Admin nur für eine
         BELEGTE Adresse: Die eines offenen Kontos (Registrierung, Link nie eingelöst) oder
         einer Registrierung ohne Bestätigungspflicht hat ein Fremder eingetippt — ohne diese
@@ -1819,7 +1819,7 @@ class Store:
 
         Der Wächter vor jedem Räumen unter einer Kennung, die das Konto nicht selbst als Name oder
         Adresse führt (G5, G5-N1): unter dem Namen aus dem Verzeichnis (`zaehl_kennungen`) und
-        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam.record_login`). Ein
+        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam._record_login`). Ein
         Verzeichnisfilter über `mail` löst `chefin@example.com` zu einem Dritten auf, dessen
         `mail`-Attribut so lautet; ohne diesen Wächter räumte jede Anmeldung des Dritten die
         Zähler der lokalen Inhaberin dieser Adresse — unbegrenztes Raten gegen ihr Konto.
@@ -1938,7 +1938,7 @@ class Store:
 
     def verzeichnisname_freigeben(self, name) -> int:
         """Den Namen im Verzeichnis an ALLEN Bindungen löschen — vor der Anlage eines Kontos, das
-        ihn als Namen bekommt (`TinySesam.check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
+        ihn als Namen bekommt (`TinySesam._check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
         eben einen anderen Eintrag unter diesem Namen angemeldet; wo er noch steht, ist er veraltet
         (s. `bindung_name_setzen`) — und ohne das wiese die Datenbank die Anlage ab (Kennungs-
         Trigger). Gibt die Zahl der gelöschten Vermerke zurück."""
@@ -2896,7 +2896,7 @@ class Store:
         Fehlversuch in der Tabelle — oder `(None, grund)`, wenn eine Regel greift.
 
         Warum vorab und warum in einer Transaktion (R3-2, R3-7, R7-2): Vorher stand zwischen
-        `is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
+        `_is_locked()` und `record_attempt()` die ganze Passwortprüfung (argon2, zig
         Millisekunden). Eine parallele Salve von N Anfragen las N-mal denselben Zählerstand
         „noch nicht gesperrt" und durfte N-mal raten — die Grenze galt nur für Angreifer, die
         brav nacheinander fragen. Jetzt reserviert jeder Versuch seinen Platz, bevor er prüft,
@@ -2918,7 +2918,7 @@ class Store:
         erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach
         dem Timeout). Greift eine Regel oder die Serie **nur** wegen solcher Zeilen, ist die
         Antwort `(None, "schwebend")`: noch nicht entschieden, keine Sperre. Der Aufrufer fragt
-        nach einer kurzen Pause erneut (`versuch_beginnen`). Vorher war jede Abweisung in diesem
+        nach einer kurzen Pause erneut (`_versuch_beginnen`). Vorher war jede Abweisung in diesem
         Fenster eine Sperre mit `failed login` für fail2ban und Sperrhinweis an den Inhaber — auch
         wenn danach kein einziger Fehlversuch übrig blieb. Die Salve (R7-2) bleibt gebremst: Sie
         wartet, bis die Vorbuchungen entschieden sind, und bekommt dann die echte Sperre. Greift
@@ -2971,12 +2971,12 @@ class Store:
         `count_fails(nur_bestaetigt=True)` — bis dahin war der Abschluss eines Fehlversuchs ein
         No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
         Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
-        da, und wer gerade wartet (`versuch_beginnen`), läse die Serie um eins zu hoch — an der
+        da, und wer gerade wartet (`_versuch_beginnen`), läse die Serie um eins zu hoch — an der
         Grenze eine Sperre mit Sperrhinweis für nichts.
 
         Mit `serie` gibt es `(vorher, nachher)` zurück: den feststehenden Stand der Serie
         (`_serie_bestaetigt`) vor und nach dem Abschluss, beide in einer Transaktion
-        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `record_login`, ob GENAU
+        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `_record_login`, ob GENAU
         dieser Abschluss die Grenze überschritten hat (p2 F3). Bis 2026-09-27 zählte der Stand bei
         der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
         `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""

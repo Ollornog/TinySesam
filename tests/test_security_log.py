@@ -53,8 +53,8 @@ assert os.path.exists(logdatei)
 ok("security_log gesetzt → Datei wird angelegt")
 
 # ein Fehlversuch — genau die Zeile, die deploy/fail2ban/tinysesam-filter.conf matcht
-auth.check_password("anna", "falsch")
-auth.record_login("anna", "203.0.113.7", False, "password")
+auth._check_password("anna", "falsch")
+auth._record_login("anna", "203.0.113.7", False, "password")
 with open(logdatei, encoding="utf-8") as fh:
     inhalt = fh.read()
 assert "failed login user=anna ip=203.0.113.7" in inhalt, inhalt
@@ -497,14 +497,14 @@ uid_f = authf.create_user("anna", "Anna-Passwort-2026")
 # (1) Jede Methode einzeln: Anmeldeversuche treffen die Jail, alles andere nicht.
 for methode in ("password", "pin", "totp"):
     with _Mitschnitt() as m:
-        authf.record_login("anna", "203.0.113.4", False, methode)
+        authf._record_login("anna", "203.0.113.4", False, methode)
     zeile = m.zeilen()[-1]
     assert JAIL.search(zeile), f"{methode}: die Jail sieht den Anmeldeversuch nicht — {zeile!r}"
     assert JAIL.search(zeile).group("host") == "203.0.113.4", zeile
     assert not JAIL_PRUEFUNG.search(zeile), f"{methode} landet in der milderen Jail: {zeile!r}"
 for methode in security.NICHT_LOGIN_METHODEN:
     with _Mitschnitt() as m:
-        authf.record_login("anna", "203.0.113.4", False, methode)
+        authf._record_login("anna", "203.0.113.4", False, methode)
     zeile = m.zeilen()[-1]
     assert not JAIL.search(zeile), f"{methode} trifft die mitgelieferte Login-Jail: {zeile!r}"
     assert JAIL_PRUEFUNG.search(zeile), f"{methode} trifft auch die zweite Jail nicht: {zeile!r}"
@@ -514,16 +514,16 @@ ok("Ereigniswort trennt: nur echte Anmeldeversuche treffen die failregex der Jai
 # (2) Auch die ABWEISUNG (App-Lockout greift schon) hält sich daran — sonst verschöbe sich das
 # Problem nur um eine Zeile: ab der Sperre erzeugt jeder Klick eine weitere.
 authf.store.clear_fails(username="anna")
-for _ in range(authf.sec("max_login_attempts")):
-    authf.record_login("anna", "203.0.113.4", False, "password")
+for _ in range(authf._sec("max_login_attempts")):
+    authf._record_login("anna", "203.0.113.4", False, "password")
 with _Mitschnitt() as m:
-    assert authf.is_locked("anna", "203.0.113.4"), "Vorbedingung: der Login-Lockout greift"
+    assert authf._is_locked("anna", "203.0.113.4"), "Vorbedingung: der Login-Lockout greift"
 assert JAIL.search(m.zeilen()[-1]), f"die Login-Abweisung ist für die Jail unsichtbar: {m.zeilen()[-1]!r}"
 authf.store.clear_fails(username="anna")
-for _ in range(authf.sec("password_change_max_attempts")):
-    authf.record_login("anna", "203.0.113.4", False, "password_change")
+for _ in range(authf._sec("password_change_max_attempts")):
+    authf._record_login("anna", "203.0.113.4", False, "password_change")
 with _Mitschnitt() as m:
-    assert authf.is_password_change_locked("anna", "203.0.113.4"), "Vorbedingung: der eigene Topf greift"
+    assert authf._is_password_change_locked("anna", "203.0.113.4"), "Vorbedingung: der eigene Topf greift"
 zeile = m.zeilen()[-1]
 assert "reason=lockout_password_change" in zeile, zeile
 assert not JAIL.search(zeile), f"die Abweisung des eigenen Topfes trifft die Login-Jail: {zeile!r}"
@@ -567,14 +567,14 @@ dbp = os.path.join(tempfile.mkdtemp(), "t.db")
 authp = TinySesam(TinySesamConfig(db_path=dbp, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de", pin_enabled=True, pin_login=True))
 authp.create_user("paul", "Paul-Passwort-2026")
-for _ in range(authp.sec("pin_max_attempts")):
-    authp.record_login("paul", "203.0.113.5", False, "pin")
+for _ in range(authp._sec("pin_max_attempts")):
+    authp._record_login("paul", "203.0.113.5", False, "pin")
 with _Mitschnitt() as m:
-    assert authp.is_pin_locked("paul", "203.0.113.5"), "Vorbedingung: der PIN-Topf greift"
+    assert authp._is_pin_locked("paul", "203.0.113.5"), "Vorbedingung: der PIN-Topf greift"
 zeilen_p = [z for z in m.zeilen() if "reason=lockout_pin" in z]
 assert zeilen_p and JAIL.search(zeilen_p[-1]), f"die PIN-Sperre weist stumm ab: {m.zeilen()!r}"
 with _Mitschnitt() as m:
-    assert authp.is_pin_locked("paul", "203.0.113.5", login=False)
+    assert authp._is_pin_locked("paul", "203.0.113.5", login=False)
 assert m.zeilen() and not JAIL.search(m.zeilen()[-1]) and JAIL_PRUEFUNG.search(m.zeilen()[-1]), \
     f"auf der Step-up-Seite ist die PIN-Sperre keine Anmeldung: {m.zeilen()!r}"
 ok("is_pin_locked meldet die Abweisung (Login: failed login, Step-up: failed verification)")
@@ -609,7 +609,7 @@ os.remove(dbc)
 dbr = os.path.join(tempfile.mkdtemp(), "t.db")
 authr = TinySesam(TinySesamConfig(db_path=dbr, cookie_secure=False, passkey_enabled=False,
                                   csrf_enabled=False, lang="de"))
-authr.record_login("res:lager", "203.0.113.6", False, "resource")
+authr._record_login("res:lager", "203.0.113.6", False, "resource")
 detail = [z["detail"] for z in authr.store.recent_audit(5) if z["event"] == "login_fail"][0]
 assert "grund=falsches_bereichsgeheimnis" in detail and "kein_konto" not in detail, detail
 ok("Bereichs-PIN: grund=falsches_bereichsgeheimnis statt des irreführenden kein_konto")

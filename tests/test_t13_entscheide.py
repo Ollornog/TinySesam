@@ -133,7 +133,7 @@ for _ in range(9):
 r.check("B2-6: ein erfolgreicher Zugang setzt die Serie zurück (9 + Erfolg + 9 sperrt nicht)",
         _login(TestClient(app), "wechsel", PW).status_code == 303, str(auth.store.fehlserie("wechsel")))
 
-auth.record_login("wechsel", "198.51.100.1", False, "password_change")
+auth._record_login("wechsel", "198.51.100.1", False, "password_change")
 r.check("B2-6: ein Fehlgriff, der keine Anmeldung ist (Passwortwechsel), zählt nicht",
         auth.store.fehlserie("wechsel") == 0, str(auth.store.fehlserie("wechsel")))
 
@@ -179,33 +179,33 @@ for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
     auth.set_security(k, v)
 uid_a = auth.create_user("atom", password=PW)
 for _ in range(9):
-    auth.record_login("atom", "198.51.100.2", False, "password",
-                      versuch=auth.versuch_beginnen("atom", "198.51.100.2", "password"))
-offen = [auth.versuch_beginnen("atom", f"198.51.100.{10 + i}", "password") for i in range(5)]
+    auth._record_login("atom", "198.51.100.2", False, "password",
+                       versuch=auth._versuch_beginnen("atom", "198.51.100.2", "password"))
+offen = [auth._versuch_beginnen("atom", f"198.51.100.{10 + i}", "password") for i in range(5)]
 r.check("B2-6 atomar: an der Grenze kommt genau EIN laufender Versuch durch, nicht jeder",
         sum(1 for v in offen if v is not None) == 1, str(offen))
-auth.record_login("atom", "198.51.100.10", True, "password", versuch=next(v for v in offen if v))
+auth._record_login("atom", "198.51.100.10", True, "password", versuch=next(v for v in offen if v))
 r.check("… und ein richtiger Versuch nimmt seine Vorbuchung zurück, räumt aber nicht die Serie",
         auth.store.fehlserie("atom") == 9, str(auth.store.fehlserie("atom")))
-v = auth.versuch_beginnen("atom", "198.51.100.3", "password")
+v = auth._versuch_beginnen("atom", "198.51.100.3", "password")
 auth._versuch_zuruecknehmen(v)
 r.check("B2-6: ein zurückgenommener Versuch (Verzeichnis-Ausfall) zählt nicht",
         auth.store.fehlserie("atom") == 9, str(auth.store.fehlserie("atom")))
 
 uid_t = auth.create_user("zweit", password=PW)
 for _ in range(10):
-    auth.record_login("zweit", "198.51.100.4", False, "totp",
-                      versuch=auth.versuch_beginnen("zweit", "198.51.100.4", "totp"))
+    auth._record_login("zweit", "198.51.100.4", False, "totp",
+                       versuch=auth._versuch_beginnen("zweit", "198.51.100.4", "totp"))
 auth.sperre_aufheben(uid_t, methoden=("password",))            # Selbstbedienungs-Reset
 r.check("B2-6 + R4-13: der Selbstbedienungs-Reset räumt TOTP-Fehlgriffe der Serie NICHT",
-        auth.store.fehlserie("zweit") == 10 and auth.versuch_beginnen("zweit", "198.51.100.5", "password") is None,
+        auth.store.fehlserie("zweit") == 10 and auth._versuch_beginnen("zweit", "198.51.100.5", "password") is None,
         str(auth.store.fehlserie("zweit")))
 # Umgekehrt die ERSTEN Faktoren: Falsche PINs kann jeder schicken, auch ohne ein Geheimnis zu kennen.
 # Blieben sie nach dem Reset stehen, hülfe der Reset nicht mehr, zu dem die Meldung rät (R2-2).
 uid_pin = auth.create_user("pinopfer", password=PW)
 for _ in range(10):
-    auth.record_login("pinopfer", "198.51.100.8", False, "pin",
-                      versuch=auth.versuch_beginnen("pinopfer", "198.51.100.8", "pin"))
+    auth._record_login("pinopfer", "198.51.100.8", False, "pin",
+                       versuch=auth._versuch_beginnen("pinopfer", "198.51.100.8", "pin"))
 auth.sperre_aufheben(uid_pin, methoden=("password",))          # Selbstbedienungs-Reset
 r.check("B2-6: eine Serie aus falschen PINs (Erstfaktor, von jedem erzeugbar) räumt der Reset",
         auth.store.fehlserie("pinopfer") == 0, str(auth.store.fehlserie("pinopfer")))
@@ -217,8 +217,8 @@ neu_t = cpt.post(f"/auth/admin/api/users/{uid_t}/password", json={"password": "V
 r.check("… der Betreiber räumt sie ganz (Passwort-Reset im Panel, auch den TOTP-Anteil)",
         neu_t.status_code == 200 and auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
 # Und über den Weg, den die Routen nehmen: ein Nicht-Login-Versuch bucht nichts vor.
-v_pc = auth.versuch_beginnen("zweit", "198.51.100.6", "password_change")
-auth.record_login("zweit", "198.51.100.6", False, "password_change", versuch=v_pc)
+v_pc = auth._versuch_beginnen("zweit", "198.51.100.6", "password_change")
+auth._record_login("zweit", "198.51.100.6", False, "password_change", versuch=v_pc)
 r.check("B2-6: ein Fehlgriff am Passwortwechsel (über versuch_beginnen) bucht keine Serie",
         auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
 
@@ -684,7 +684,7 @@ r.check("B2-8: die PIN-Versuche stehen im Panel bei den Sperr-Einstellungen",
         reihe.index("pin_max_attempts") == reihe.index("account_max_consecutive_failures") + 1
         and reihe.index("account_max_consecutive_failures") == reihe.index("account_attempt_factor") + 1,
         str(reihe[:8]))
-for _ in range(auth.sec("pin_max_attempts")):
+for _ in range(auth._sec("pin_max_attempts")):
     TestClient(app).post("/auth/pin", data={"username": "pinnutzer", "pin": "0000"})
 gesperrt = TestClient(app).post("/auth/pin", data={"username": "pinnutzer", "pin": "4711"})
 r.check("B2-8: nach pin_max_attempts Fehlgriffen ist der PIN-Weg zu", gesperrt.status_code == 429,
@@ -749,13 +749,13 @@ konten = [dict(u) for u in a3.store.list_users()]
 k3 = konten[0] if konten else None
 r.check("H-3: ohne Beleg kein Name aus der Adresse, keine Adresse im Konto, kein Remote-Email",
         k3 is not None and k3["username"].startswith("oidc-") and not k3["email"]
-        and not a3.forward_response_headers(k3).get("Remote-Email"), str(k3))
+        and not a3._forward_response_headers(k3).get("Remote-Email"), str(k3))
 a3b, app3b = _oidc({"sub": "h3-2", "email": "belegt@example.com", "email_verified": True})
 _oidc_login(app3b)
 k3b = a3b.store.get_user_by_name("belegt@example.com")
 r.check("… mit Beleg wird sie verwendet (Name, Konto, Remote-Email)",
         k3b is not None and k3b["email"] == "belegt@example.com" and k3b["email_verified"]
-        and a3b.forward_response_headers(k3b).get("Remote-Email") == "belegt@example.com")
+        and a3b._forward_response_headers(k3b).get("Remote-Email") == "belegt@example.com")
 a3c, app3c = _oidc({"sub": "h3-3", "email": "entra@example.com"}, oidc_email_verified_default=True)
 _oidc_login(app3c)
 r.check("… ein Provider ohne Claim zählt nur mit der ausdrücklichen Aussage des Betreibers",
@@ -879,7 +879,7 @@ r.check("… und kein anderes Allowlist-Konto (der Merker gilt für die Instanz)
                 for z in a6.store.recent_audit(20)), str(dict(a6.store.get_user(_vize6))))
 _chef6 = a6.store.get_user_by_name("chef6")
 r.check("G6: der Notweg bleibt — das Einmal-Token macht zum Admin und Owner",
-        a6.consume_admin_claim(a6.admin_claim_token(), _chef6)
+        a6._consume_admin_claim(a6.admin_claim_token(), _chef6)
         and (a6.store.get_user(_chef6["id"])["is_admin"], a6.store.get_user(_chef6["id"])["is_owner"]) == (1, 1))
 # Gegenproben: Der Merker entsteht nur, wenn wirklich kein Admin bleibt, und stört weder die
 # frische Instanz noch den Weg von der Demo in den Betrieb (dort löscht purge_demo den letzten Admin).
@@ -1007,14 +1007,14 @@ import pyotp  # noqa: E402
 # (a) Eine vollständige Anmeldung räumt nur Fehlversuche ab der Anlage des Kontos.
 auth_a8, app_a8 = _app()
 for _ in range(3):
-    auth_a8.record_login("vorher@example.com", "198.51.100.20", False, "password")
+    auth_a8._record_login("vorher@example.com", "198.51.100.20", False, "password")
 auth_a8.store._exec("UPDATE login_attempt SET ts = ts - 3600")
 uid_a8 = auth_a8.create_user("neukonto", password=PW, email="vorher@example.com")
 _login(TestClient(app_a8), "neukonto", PW)
 r.check("Grenze a: Fehlversuche unter der Adresse von VOR der Anlage bleiben nach dem ersten Login stehen",
         auth_a8.store.count_fails(0, username="vorher@example.com") == 3,
         str(auth_a8.store.count_fails(0, username="vorher@example.com")))
-auth_a8.record_login("neukonto", "198.51.100.21", False, "password")
+auth_a8._record_login("neukonto", "198.51.100.21", False, "password")
 _login(TestClient(app_a8), "neukonto", PW)
 r.check("… die eigenen (nach der Anlage) räumt er wie bisher",
         auth_a8.store.count_fails(0, username="neukonto") == 0)
@@ -1147,7 +1147,7 @@ def _hinweis_app(**cfg):
 
 a635, app635, post635 = _hinweis_app()
 a635.create_user("inhaberin", password=PW, email="inhaberin@example.com")
-for _ in range(a635.sec("max_login_attempts") + 2):
+for _ in range(a635._sec("max_login_attempts") + 2):
     _login(TestClient(app635), "inhaberin", "falsch-falsch-falsch")
 a635._hinweis_ausgang.abwarten()
 r.check("ASVS 6.3.5: bei konfiguriertem Versand bekommt die Inhaberin einen Hinweis (Vorgabe an, opt-out)",
@@ -1156,20 +1156,20 @@ r.check("… der Hinweis trägt keinen Link (es gibt keine Basis, die ein Angrei
         post635 and "://" not in post635[0][2], post635[0][2][:120] if post635 else "")
 r.check("… genau einen je Sperrfenster, nicht einen je abgewiesenem Versuch",
         len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
-for _ in range(a635.sec("max_login_attempts") + 2):
+for _ in range(a635._sec("max_login_attempts") + 2):
     _login(TestClient(app635), "niemand", "falsch-falsch-falsch")
 a635._hinweis_ausgang.abwarten()
 r.check("… ein unbekannter Name löst nichts aus (und in der Anfrage geschieht dasselbe)", len(post635) == 1)
 a635u, app635u, post635u = _hinweis_app()
 _u = a635u.create_user("unbelegt", password=PW, email="unbelegt@example.com")
 a635u.store.set_email_verified(_u, False)
-for _ in range(a635u.sec("max_login_attempts") + 2):
+for _ in range(a635u._sec("max_login_attempts") + 2):
     _login(TestClient(app635u), "unbelegt", "falsch-falsch-falsch")
 a635u._hinweis_ausgang.abwarten()
 r.check("… an eine UNBELEGTE Adresse geht nichts (H-3)", post635u == [], str(post635u))
 a635o, app635o, post635o = _hinweis_app(notify_login_failures=False)
 a635o.create_user("still", password=PW, email="still@example.com")
-for _ in range(a635o.sec("max_login_attempts") + 2):
+for _ in range(a635o._sec("max_login_attempts") + 2):
     _login(TestClient(app635o), "still", "falsch-falsch-falsch")
 a635o._hinweis_ausgang.abwarten()
 r.check("… opt-out: notify_login_failures=False schickt nichts", post635o == [], str(post635o))
@@ -1781,20 +1781,20 @@ class _LDAP3:
 a_s1, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", login_identifier="email")
 opfer_s1 = a_s1.create_user("bob@example.com", password=PW, email="bob@example.com", is_admin=True)
-neu_s1 = a_s1.check_saml("bob@example.com", {"email": ["bob@example.com"]})
+neu_s1 = a_s1._check_saml("bob@example.com", {"email": ["bob@example.com"]})
 r.check("Angriff R3/S1: SAML (nicht vertraut) mit der Adresse eines lokalen Kontos als NameID übernimmt es nicht",
         neu_s1 is not None and neu_s1["id"] != opfer_s1 and neu_s1["username"].startswith("saml-")
         and not neu_s1["is_admin"] and a_s1.store.get_federated_kennung("saml", opfer_s1) is None,
         str(neu_s1))
-a_s1.check_saml("BOB@EXAMPLE.COM", {"email": ["bob@example.com"]})
+a_s1._check_saml("BOB@EXAMPLE.COM", {"email": ["bob@example.com"]})
 r.check("… auch nicht in anderer Schreibweise", a_s1.store.get_federated_kennung("saml", opfer_s1) is None)
 
 # S3: ohne stabile Kennung wird ein Adress-Name abgewiesen — nicht bei jedem Login ein neues Konto.
 a_s3, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", saml_attr_id="objectGUID")
 _vorher_s3 = len(a_s3.store.list_users())
-_e1 = a_s3.check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
-_e2 = a_s3.check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
+_e1 = a_s3._check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
+_e2 = a_s3._check_saml("anna@corp.example", {"email": ["anna@corp.example"]})
 r.check("Angriff R3/S3: SAML nicht vertraut, Adress-Name ohne Kennung → abgewiesen, kein Konto je Login",
         _e1 is None and _e2 is None and len(a_s3.store.list_users()) == _vorher_s3)
 
@@ -1804,7 +1804,7 @@ a_s2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_e
 chefin_s2 = a_s2.create_user("chefin@example.com", password=PW, email="chefin@example.com")
 a_s2.ldap = _LDAP3({"chefin@example.com": {"id": "uuid-mallory", "email": "chefin@example.com", "name": "M"}})
 _n_s2 = a_s2.store.user_count()
-neu_s2 = a_s2.check_ldap("chefin@example.com", "x")
+neu_s2 = a_s2._check_ldap("chefin@example.com", "x")
 # Bis 2026-09-27 entstand dabei ein Konto `ldap-…`; seit der Prüfrunde (p1-d) weist die Anmeldung ab —
 # die Adresse gehört lokal einem Konto, der Eintrag führte zu einem anderen.
 r.check("Angriff R3/S2: LDAP nicht vertraut — die eingetippte Adresse wird weder Kontoname noch bindet sie ein Konto",
@@ -1826,7 +1826,7 @@ r.check("Angriff R3/S4: kein Konto mit Steuer-/Formatzeichen im Namen (create_us
 a_s4.create_user("chefin", password=PW)
 _alt_s4 = a_s4.store.create_user("chefin\x01", None, None, False, [], False)       # Bestand am Riegel vorbei
 try:
-    a_s4.forward_response_headers(a_s4.get_user(_alt_s4))
+    a_s4._forward_response_headers(a_s4.get_user(_alt_s4))
     _s4_fwd = False
 except _HTTPEx as e:
     _s4_fwd = e.status_code == 403
@@ -1928,7 +1928,7 @@ a_v1, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_e
 chefin_v1 = a_v1.create_user("chefin", password=PW, is_admin=True)
 a_v1.ldap = _LDAP3({"chefin": {"id": "uuid-mallory", "email": "chefin", "name": "M"}})
 _n_v1 = a_v1.store.user_count()
-neu_v1 = a_v1.check_ldap("chefin", "x")
+neu_v1 = a_v1._check_ldap("chefin", "x")
 # Bis 2026-09-27 legte das ein Konto `ldap-…` an; seit der Prüfrunde (p1-d) weist es ab: Die Kennung
 # `chefin` gehört lokal einem Konto, der Eintrag führte zu einem anderen.
 r.check("Gegenprüfung R3/V1: LDAP nicht vertraut, Eingabe = eigener mail-Wert ohne „@\" → keine Übernahme",
@@ -1937,7 +1937,7 @@ r.check("Gegenprüfung R3/V1: LDAP nicht vertraut, Eingabe = eigener mail-Wert o
 # V2: … und ein UPN (Bind-Kennung, nicht der mail-Wert) bleibt Kontoname, auch ohne Kennung.
 a_v2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
 a_v2.ldap = _LDAP3({"bob@corp.example": {"id": "", "email": "b.mail@corp.example", "name": "Bob"}})
-neu_v2 = a_v2.check_ldap("bob@corp.example", "x")
+neu_v2 = a_v2._check_ldap("bob@corp.example", "x")
 r.check("… ein UPN, der nicht der mail-Wert ist, meldet wie vor dem Fix an (keine Regression)",
         neu_v2 is not None and neu_v2["username"] == "bob@corp.example" and not neu_v2["email"], str(neu_v2))
 
@@ -1946,7 +1946,7 @@ a_v3, _ = _app()
 _zwnj = a_v3.store.create_user("علی‌رضا", None, None, False, [], False)
 _c0 = a_v3.store.create_user("chefin\x01", None, None, False, [], False)
 try:
-    _kopf_v3 = a_v3.forward_response_headers(a_v3.get_user(_zwnj))
+    _kopf_v3 = a_v3._forward_response_headers(a_v3.get_user(_zwnj))
 except _HTTPEx:
     _kopf_v3 = None
 r.check("Gegenprüfung R3/V3: ein Bestandsname mit ZWNJ bekommt seinen Remote-User (kollidiert nicht)",
@@ -1965,13 +1965,13 @@ r.check("… und der Start nennt Bestandsnamen mit Steuer-/Formatzeichen",
 _neu_v3 = a_v3.change_username(_c0, "chefin-neu")
 r.check("… und der Weg, den er nennt (auth.change_username), räumt den Namen auf",
         any("auth.change_username" in m for m in _fang_v3) and _neu_v3 == "chefin-neu"
-        and a_v3.forward_response_headers(a_v3.get_user(_c0))["Remote-User"] == "chefin-neu")
+        and a_v3._forward_response_headers(a_v3.get_user(_c0))["Remote-User"] == "chefin-neu")
 
 # V4: SAML-Kennung mit Rand-Steuerzeichen trifft keine fremde Bindung.
 a_v4, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", saml_email_trusted=True)
-echt_v4 = a_v4.check_saml("chefin", {})
-fremd_v4 = a_v4.check_saml("chefin ", {})
+echt_v4 = a_v4._check_saml("chefin", {})
+fremd_v4 = a_v4._check_saml("chefin ", {})
 r.check("Gegenprüfung R3/V4: NameID `chefin` + U+2028 landet nicht im Konto der gebundenen `chefin`",
         echt_v4 is not None and fremd_v4 is None, f"{echt_v4 and echt_v4['id']} / {fremd_v4}")
 
@@ -1979,7 +1979,7 @@ r.check("Gegenprüfung R3/V4: NameID `chefin` + U+2028 landet nicht im Konto der
 a_v5, _ = _app(saml_enabled=True, saml_idp_entity_id="https://idp.example", saml_idp_sso_url="https://idp.example/sso",
                saml_idp_x509cert="MII", saml_attr_username="email")
 chefin_v5 = a_v5.create_user("chefin", password=PW, is_admin=True)
-neu_v5 = a_v5.check_saml("opaque-mallory", {"email": ["chefin"]})
+neu_v5 = a_v5._check_saml("opaque-mallory", {"email": ["chefin"]})
 r.check("Gegenprüfung R3/V5: SAML-Name aus dem Adress-Attribut (`chefin`) bindet das lokale Konto nicht",
         neu_v5 is not None and neu_v5["id"] != chefin_v5 and neu_v5["username"].startswith("saml-")
         and a_v5.store.get_federated_kennung("saml", chefin_v5) is None, str(neu_v5))

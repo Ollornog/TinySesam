@@ -45,6 +45,46 @@ ROOT = os.path.dirname(HERE)
 SKIP_EXIT = 77
 
 
+def warnfilter() -> str:
+    """`PYTHONWARNINGS`: Ein veralteter TinySesam-Name (Stufe C), gerufen AUS dem Paket selbst, ist
+    ein Fehler — in jeder Suite, nicht nur in einer (0.21.0, PO-Entscheid 2026-09-26).
+
+    Seit 0.21.0 heisst die Implementierung der internen Namen `_name`; der alte Name ist ein
+    Alias, der warnt. Ruft Code im Paket noch den alten Namen, sähe das niemand: Eine
+    `DeprecationWarning` aus einem Bibliotheksmodul zeigt Python ohne Filter gar nicht an. Die
+    AST-Suche in `tests/test_api_surface.py` findet `auth.check_password(…)`, aber kein
+    `getattr(auth, name)` — dieser Filter findet beides, sobald eine Suite den Weg durchläuft.
+
+    Ein `-W`-Filter vergleicht das Modul WÖRTLICH (kein Präfix), deshalb eine Zeile je Modul; die
+    Meldung beginnt mit `TinySesam.` (siehe `tinysesam/_veraltet.py`). Fremde Warnungen, auch
+    fremde `DeprecationWarning`s aus tinysesam-Code, bleiben unberührt.
+    """
+    module = set()
+    for wurzel, ordner, dateien in os.walk(os.path.join(ROOT, "tinysesam")):
+        ordner[:] = [o for o in ordner if o != "__pycache__"]
+        teile = os.path.relpath(wurzel, ROOT).split(os.sep)
+        for f in dateien:
+            if f.endswith(".py"):
+                module.add(".".join(teile if f == "__init__.py" else teile + [f[:-3]]))
+    module = sorted(module)
+    return ",".join(f"error:TinySesam.:DeprecationWarning:{m}" for m in module)
+
+
+def umgebung(sandbox: str) -> dict:
+    """Die Umgebung einer Suite: eigenes Wegwerf-Verzeichnis, Paket im Pfad, Warnfilter."""
+    vorher = os.environ.get("PYTHONWARNINGS", "")
+    return {
+        **os.environ,
+        "PYTHONPATH": ROOT,
+        "TMPDIR": sandbox, "TMP": sandbox, "TEMP": sandbox,
+        "HOME": sandbox,
+        "XDG_CACHE_HOME": os.path.join(sandbox, ".cache"),
+        "XDG_CONFIG_HOME": os.path.join(sandbox, ".config"),
+        "XDG_DATA_HOME": os.path.join(sandbox, ".local", "share"),
+        "PYTHONWARNINGS": ",".join(x for x in (vorher, warnfilter()) if x),
+    }
+
+
 def main(argv):
     # --no-browser: der Browser-Test ist der langsamste. Nur für Zwischenläufe, nie vor einem Push.
     skip_browser = "--no-browser" in argv
@@ -68,15 +108,7 @@ def main(argv):
         # beeinflussen -- und keine Suite die naechste stoeren. Danach wird es geloescht.
         # (Policy: "Tests sind wiederholbar"; Nachweis: `ci-local --full`.)
         sandbox = tempfile.mkdtemp(prefix=f"tinysesam-{name[:-3]}-")
-        env = {
-            **os.environ,
-            "PYTHONPATH": ROOT,
-            "TMPDIR": sandbox, "TMP": sandbox, "TEMP": sandbox,
-            "HOME": sandbox,
-            "XDG_CACHE_HOME": os.path.join(sandbox, ".cache"),
-            "XDG_CONFIG_HOME": os.path.join(sandbox, ".config"),
-            "XDG_DATA_HOME": os.path.join(sandbox, ".local", "share"),
-        }
+        env = umgebung(sandbox)
         try:
             r = subprocess.run([sys.executable, path], cwd=ROOT, env=env,
                                capture_output=True, text=True)

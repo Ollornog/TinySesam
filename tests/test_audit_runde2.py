@@ -60,7 +60,7 @@ auth_a, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
 angreifer = auth_a.create_user("chef@example.com", password="geheim12345",
                                email="angreifer@evil.example")
 r.check("wer sich unter der Admin-ADRESSE als Benutzername registriert, wird nicht Admin",
-        not auth_a.maybe_promote_admin(auth_a.get_user(angreifer)),
+        not auth_a._maybe_promote_admin(auth_a.get_user(angreifer)),
         "er ist Admin — der Wächter prüft die Konfiguration, der Vergleich etwas anderes")
 
 # Eigene Instanz: seit R4-12 kann dieselbe Zeichenfolge nicht Benutzername des einen und
@@ -71,14 +71,14 @@ auth_a2, _ = _app(admin_identifiers=["chef@example.com"], allow_signup=True,
                   magiclink_enabled=True, smtp_host="mail.example.com")
 inhaber = auth_a2.create_user("chefin", password="geheim12345", email="chef@example.com")
 r.check("wer die Adresse wirklich hat, wird es weiterhin",
-        auth_a2.maybe_promote_admin(auth_a2.get_user(inhaber)),
+        auth_a2._maybe_promote_admin(auth_a2.get_user(inhaber)),
         "der vorgesehene Weg ist zu")
 
 # Und umgekehrt: Ein Eintrag OHNE @ gilt nur für den Benutzernamen.
 auth_b, _ = _app(admin_identifiers=["chef"])
 mit_mail = auth_b.create_user("jemand", password="geheim12345", email="chef")
 r.check("ein Allowlist-Name ohne @ wird nicht gegen die E-Mail geprüft",
-        not auth_b.maybe_promote_admin(auth_b.get_user(mit_mail)),
+        not auth_b._maybe_promote_admin(auth_b.get_user(mit_mail)),
         "eine E-Mail, die zufällig wie der Name aussieht, befördert")
 
 
@@ -154,7 +154,7 @@ r.check("die Instanz hat danach immer noch keinen Admin", not auth_f.admin_exist
 # nie schickt, sagt der Betreiber es ausdrücklich (`oidc_email_verified_default=True`).
 r.check("die unbestätigte Adresse wird nicht übernommen und geht nicht als Remote-Email weiter",
         konto is not None and not konto["email"]
-        and not auth_f.forward_response_headers(konto).get("Remote-Email"),
+        and not auth_f._forward_response_headers(konto).get("Remote-Email"),
         f"gespeichert: {konto['email'] if konto else '—'} — die fremde Adresse erreicht die App")
 r.check("… ist aber als unbestätigt vermerkt", konto is not None and not konto["email_verified"],
         "der Vermerk fehlt — dann trägt sie beim nächsten Login wieder Rechte")
@@ -162,7 +162,7 @@ r.check("… ist aber als unbestätigt vermerkt", konto is not None and not kont
 # offen. Derselbe Datensatz über einen lokalen Weg (Magic-Link, Passwort) angemeldet reist mit
 # `email_bestaetigt=None` an — vor dem Vermerk hätte das befördert.
 r.check("auch ein Login OHNE Beleg im Gepäck befördert dieses Konto nicht",
-        not auth_f.maybe_promote_admin(auth_f.get_user(konto["id"])),
+        not auth_f._maybe_promote_admin(auth_f.get_user(konto["id"])),
         "über einen lokalen Weg ist die unbestätigte Adresse doch Erst-Admin-fähig")
 
 # Gegenprobe — ohne sie wäre die Prüfung oben auch dann grün, wenn OIDC gar nichts täte.
@@ -217,9 +217,9 @@ r.check("ein Bestandskonto mit der Adresse wird ohne Beleg nicht nachträglich b
 # Dieselbe Entscheidung direkt an der Quelle — zeigt, dass der Beleg sie trägt und nicht
 # irgendein Nebeneffekt des Flows: dieselbe Zeile, einmal ohne und einmal mit Beleg.
 r.check("maybe_promote_admin verweigert bei email_bestaetigt=False",
-        not auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid), email_bestaetigt=False))
+        not auth_b3._maybe_promote_admin(auth_b3.get_user(alt_uid), email_bestaetigt=False))
 r.check("und befördert bei einem lokalen Login (kein IdP im Spiel) weiterhin",
-        auth_b3.maybe_promote_admin(auth_b3.get_user(alt_uid)),
+        auth_b3._maybe_promote_admin(auth_b3.get_user(alt_uid)),
         "der lokale Weg ist zu — dort verbürgt der Konstruktor-Wächter die Bestätigungsmail")
 # Dass der Beleg dieses Bestandskontos den OIDC-Login mit FEHLENDEM Claim überlebt hat, ist die
 # zweite Hälfte derselben Regel: Schweigen ist keine Aussage. Wäre es eine, hätte der Login
@@ -326,7 +326,7 @@ for faktor, beleg, soll, was in (("saml", None, False, "SAML ohne Beleg (Argumen
                                  ("password", None, True, "lokaler Passwort-Login"),
                                  ("oidc", True, True, "OIDC mit email_verified=true")):
     a_p, uid_p = _bootstrap_probe()
-    ergebnis = a_p.maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
+    ergebnis = a_p._maybe_promote_admin(a_p.get_user(uid_p), beleg, faktor=faktor)
     r.check(f"{was} → Erst-Admin {'JA' if soll else 'NEIN'}", ergebnis is soll,
             f"maybe_promote_admin gab {ergebnis!r} zurück")
 
@@ -350,8 +350,8 @@ class _FakeLDAP:
 
 
 for weg, anlegen in (
-        ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a.check_ldap("mallory", "x"))[1]),
-        ("SAML", lambda a: a.check_saml("mallory", {"email": ["chef@example.com"]}))):
+        ("LDAP", lambda a: (setattr(a, "ldap", _FakeLDAP()), a._check_ldap("mallory", "x"))[1]),
+        ("SAML", lambda a: a._check_saml("mallory", {"email": ["chef@example.com"]}))):
     # Seit dem PO-Entscheid 2026-09-24 sagt der Betreiber, ob er einer Quelle traut
     # (`ldap_email_trusted`, Vorgabe ja; `saml_email_trusted`, Vorgabe nein). Der F-14-Fall ist
     # die Quelle, der er NICHT traut — dann wird die Adresse gar nicht verwendet (wie H-3).
@@ -364,14 +364,14 @@ for weg, anlegen in (
     # Der zweite Sprung: ein Faktor, den sich der Angreifer selbst einrichtet (PIN, Passkey).
     # Er ist nicht föderiert und reicht keinen Beleg — es entscheidet allein der Vermerk.
     r.check(f"… und ein zweiter, selbst eingerichteter Faktor befördert sie nach dem {weg}-Login nicht",
-            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is False,
+            a_v._maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is False,
             "Erst-Admin über einen Umweg — der Riegel hielt nur den ersten Login")
     # Gegenprobe auf derselben Instanz: Trägt die Adresse einen Beleg (Bestätigungsmail,
     # Betreiber), befördert genau derselbe Aufruf. Ohne sie wäre oben auch eine kaputte
     # Beförderung grün.
     a_v.store.set_email(konto["id"], "chef@example.com", verified=True)
     r.check(f"… Gegenprobe: mit Beleg am Konto befördert derselbe Aufruf ({weg})",
-            a_v.maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
+            a_v._maybe_promote_admin(a_v.get_user(konto["id"]), faktor="pin") is True,
             "der Bootstrap-Weg ist ganz zu — dann misst die Prüfung darüber nichts")
 
 
@@ -386,7 +386,7 @@ r.check("ein Adresswechsel per set_email nimmt den Beleg mit weg",
         not a_se.get_user(uid_se)["email_verified"],
         "die neue Adresse trägt den Beleg der alten")
 r.check("… und trägt deshalb auch die Erst-Admin-Entscheidung nicht",
-        a_se.maybe_promote_admin(a_se.get_user(uid_se), faktor="password") is False,
+        a_se._maybe_promote_admin(a_se.get_user(uid_se), faktor="password") is False,
         "Erst-Admin allein durch das Umschreiben einer Adresse")
 # Gegenprobe: Wer einen Beleg für die NEUE Adresse hat, sagt es — dann zählt sie wie immer.
 a_se2, _ = _app(admin_identifiers=["chef@example.com"])
@@ -394,7 +394,7 @@ uid_se2 = a_se2.create_user("eve", email="eve@example.com")
 a_se2.store.set_email(uid_se2, "chef@example.com", verified=True)
 r.check("… mit ausdrücklichem verified=True bleibt der Beleg an der neuen Adresse",
         a_se2.get_user(uid_se2)["email_verified"] == 1
-        and a_se2.maybe_promote_admin(a_se2.get_user(uid_se2), faktor="password") is True,
+        and a_se2._maybe_promote_admin(a_se2.get_user(uid_se2), faktor="password") is True,
         "der belegte Weg ist zu")
 
 
@@ -572,13 +572,13 @@ auth_t.totp_begin(uid_t)
 geheim = auth_t.store.get_totp(uid_t)["secret"]
 auth_t.store.set_totp(uid_t, geheim, confirmed=True)
 code = pyotp.TOTP(geheim).now()
-r.check("ein TOTP-Code gilt beim ersten Mal", auth_t.verify_totp(uid_t, code))
-r.check("derselbe Code gilt kein zweites Mal", not auth_t.verify_totp(uid_t, code),
+r.check("ein TOTP-Code gilt beim ersten Mal", auth_t._verify_totp(uid_t, code))
+r.check("derselbe Code gilt kein zweites Mal", not auth_t._verify_totp(uid_t, code),
         "NIST SP 800-63B: „SHALL accept a given OTP only once while it is valid\"")
 import time as _t  # noqa: E402
 
 r.check("der nächste Zeitschritt geht weiterhin",
-        auth_t.verify_totp(uid_t, pyotp.TOTP(geheim).at(int(_t.time()) + 30)),
+        auth_t._verify_totp(uid_t, pyotp.TOTP(geheim).at(int(_t.time()) + 30)),
         "die Einmal-Buchung sperrt zu viel")
 
 
@@ -607,8 +607,8 @@ _sec.seclog.addHandler(haken)
 try:
     auth_f, _ = _app()
     auth_f.create_user("opfer", password="geheim12345")
-    auth_f.record_login("opfer\nWARNING failed login user=x ip=198.51.100.5 method=password\nx",
-                        "203.0.113.11", success=False, method="password")
+    auth_f._record_login("opfer\nWARNING failed login user=x ip=198.51.100.5 method=password\nx",
+                         "203.0.113.11", success=False, method="password")
 finally:
     _sec.seclog.removeHandler(haken)
 zeilen = [z for z in puffer.getvalue().splitlines() if "failed login" in z]
@@ -630,7 +630,7 @@ auth_g.create_user("anna", password="geheim12345")
 gesperrt = auth_g.create_user("bert", password="geheim12345")
 auth_g.store.set_disabled(gesperrt, True)
 for name in ("anna", "bert", "carla"):
-    auth_g.record_login(name, "203.0.113.9", success=False, method="password")
+    auth_g._record_login(name, "203.0.113.9", success=False, method="password")
 gruende = {z["username"]: (z["detail"] or "") for z in auth_g.store.recent_audit(20)
            if z["event"] == "login_fail"}
 r.check("das Protokoll unterscheidet falsches Geheimnis, gesperrtes und fehlendes Konto",
@@ -1027,7 +1027,7 @@ _rollen_z = _zeilen_t("user_roles")[0]["detail"] or ""
 r.check("R6-7: die Rollenänderung nennt vorher → nachher, samt Admin-Flag",
         "rollen=-->redaktion" in _rollen_z and "admin=0->1" in _rollen_z, _rollen_z)
 c_chef.post(f"/auth/admin/api/users/{_anna_t}/roles", json={"roles": [], "is_admin": False})
-_vorher_ma = auth_t.sec("max_login_attempts")
+_vorher_ma = auth_t._sec("max_login_attempts")
 c_chef.post("/auth/admin/api/security", json={"max_login_attempts": _vorher_ma + 995})
 _sec_z = _zeilen_t("security_update")[0]["detail"] or ""
 r.check("R6-7: die Härtungsänderung nennt den alten und den neuen Wert",
@@ -1181,9 +1181,9 @@ _zonen = {_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::2%z{i}"), _proxy) for i 
 r.check("A-1: wechselnde IPv6-Zonen ergeben EINE Client-IP (ohne Zone)",
         _zonen == {"2001:db8::2"}, f"{_zonen}")
 auth_z, _ = _app(trusted_proxies=["127.0.0.1/32"])
-_erlaubt = sum(auth_z.rate_ok(_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::3%q{i}"), _proxy))
+_erlaubt = sum(auth_z._rate_ok(_sec.client_ip(_Anfr("127.0.0.1", f"2001:db8::3%q{i}"), _proxy))
                for i in range(60))
-_fest = sum(auth_z.rate_ok("2001:db8::4") for _ in range(60))
+_fest = sum(auth_z._rate_ok("2001:db8::4") for _ in range(60))
 r.check("A-1: das Rate-Limit greift bei Zonen-Rotation genauso wie bei fester Adresse",
         _erlaubt == _fest < 60, f"Rotation {_erlaubt}/60, fest {_fest}/60")
 auth_i.store.audit_log("probe_zone", "x", "fe80::1%a\nFAKE 2026-01-01 login admin")
@@ -1199,9 +1199,9 @@ _bob = auth_d.create_user("bob", password="Geheim12345!-lang")
 _kd = TestClient(app_d2)
 _kd.cookies.set(auth_d.cfg.session_cookie, auth_d.store.create_session(_adm, 3600, True, "password"))
 _kd.post(f"/auth/admin/api/users/{_bob}/roles", json={"roles": ["ops"], "is_admin": True})
-auth_d.record_login("bob", "198.51.100.3", False, "password")
-auth_d.record_login("anna.admin@example.com", "198.51.100.4", False, "password")
-auth_d.record_login("Anna.Admin@example.com", "198.51.100.4", False, "password")
+auth_d._record_login("bob", "198.51.100.3", False, "password")
+auth_d._record_login("anna.admin@example.com", "198.51.100.4", False, "password")
+auth_d._record_login("Anna.Admin@example.com", "198.51.100.4", False, "password")
 auth_d.delete_user(_adm)
 _zd = [dict(z) for z in auth_d.store.recent_audit(200)]
 _rollen_d = next(z for z in _zd if z["event"] == "user_roles")
@@ -1536,9 +1536,9 @@ r.check("Funde 12/18: die B6-5-Rücknahme nimmt das Konto aus dem Log, verify_se
 # purge_demo (Demo-Modus aus) — derselbe Weg, auch wenn der Fund ihn nicht nannte.
 _f12_d, _ = _app(demo_mode=True)
 _f12_d.audit("login", "demo", "198.51.100.9")
-_f12_d.purge_demo()
+_f12_d._purge_demo()
 r.check("Funde 12/18: purge_demo nimmt die Demo-Konten ebenso aus dem Log",
-        not [z for z in _f12_d.store._all("SELECT * FROM audit") if z["username"] in _f12_d.DEMO_USERS],
+        not [z for z in _f12_d.store._all("SELECT * FROM audit") if z["username"] in _f12_d._DEMO_USERS],
         f"{[dict(z) for z in _f12_d.store._all('SELECT * FROM audit')]}")
 
 _f12_weg = _aufrufe_ausserhalb("delete_user", _ist_store, {("Store", "konto_entfernen")})

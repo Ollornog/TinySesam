@@ -503,7 +503,7 @@ def build_admin_router(auth) -> APIRouter:
         def admin_page(request: Request):
             guard(request)
             warn = ""
-            if cfg.https_mode == "warn" and not auth.is_secure(request):
+            if cfg.https_mode == "warn" and not auth._is_secure(request):
                 warn = ("<div class=warnbar>⚠ Unverschlüsselt (kein HTTPS) — Zugangsdaten gehen im Klartext. "
                         "Nur im vertrauenswürdigen Netz nutzen oder HTTPS davorschalten.</div>")
             # Mountpunkt → relative API-Basis

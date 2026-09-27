@@ -82,14 +82,14 @@ bert = auth.create_user("bert", password=PW, email="bert@example.com")
 ereignisse: list = []
 auth.on_security_event = lambda e, konto, d: ereignisse.append((e, d))
 ch = _client(app, "helfer")
-id_vorher = auth.forward_response_headers(auth.get_user(anna))["Remote-Id"]
+id_vorher = auth._forward_response_headers(auth.get_user(anna))["Remote-Id"]
 a = ch.post(f"/auth/admin/api/users/{anna}/username", json={"username": "anna.neu"})
 r.check("G13: ein Admin benennt ein fremdes Konto um (Admin-API)",
         a.status_code == 200 and a.json() == {"ok": True, "username": "anna.neu"}
         and auth.store.get_user(anna)["username"] == "anna.neu", f"{a.status_code} {a.text[:160]}")
 r.check("… die Liste im Panel zeigt den neuen Namen, Remote-Id bleibt die Konto-ID",
         any(u["id"] == anna and u["username"] == "anna.neu" for u in ch.get("/auth/admin/api/users").json())
-        and auth.forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_vorher == str(anna))
+        and auth._forward_response_headers(auth.get_user(anna))["Remote-Id"] == id_vorher == str(anna))
 _zeilen = _umbenannt(auth, anna)
 r.check("… GENAU eine Audit-Zeile, als Betreiber und mit dem Admin als Akteur",
         _zeilen == [("anna.neu", "alt=anna durch=betreiber akteur=helfer")], str(_zeilen))

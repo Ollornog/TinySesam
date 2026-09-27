@@ -171,8 +171,8 @@ from fastapi import Request as _Req, Response as _Resp   # noqa: E402
 def eigen_stepup(request: _Req, code: str = ""):
     antwort = _Resp()
     tok = request.cookies.get(auth_t.session_cookie_name)
-    s = auth_t.session_from_request(request)
-    if s and auth_t.verify_recovery_code(s["user_id"], code):
+    s = auth_t._session_from_request(request)
+    if s and auth_t._verify_recovery_code(s["user_id"], code):
         neu = auth_t.complete_totp(tok)
         if neu:
             auth_t.set_cookie(antwort, neu)
@@ -327,7 +327,7 @@ c4.post("/auth/totp", data={"code": pyotp.TOTP(sec2).now(), "next": "/"}, follow
 assert c4.get("/sudo2", headers=JSON).status_code == 200
 assert c4.post("/auth/totp/recovery", json={}, headers=JSON).status_code == 200
 assert c4.post("/auth/pin/set", json={"pin": "9876"}, headers=JSON).status_code == 200
-assert auth2.verify_user_pin(uid2, "9876")
+assert auth2._verify_user_pin(uid2, "9876")
 ok("frische Sitzung: Recovery-Codes und PIN-Änderung gehen weiter durch (legitimer Weg)")
 
 tok2 = c4.cookies.get("tinysesam_session")
@@ -398,7 +398,7 @@ for pfad in VERWALTUNG:
     erwartet = auth3.t(GRUND.get(pfad, "api.stepup_session"))
     assert antwort.json().get("detail") == erwartet, (pfad, antwort.text[:90])
 assert faktoren(auth3, uid3) == vorher3, "ein API-Key darf keinen Faktor abbauen"
-assert auth3.verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
+assert auth3._verify_user_pin(uid3, "1357"), "die PIN darf sich per API-Key nicht ändern lassen"
 ok(f"API-Key (CSRF an): alle {len(VERWALTUNG)} Faktor-Routen → 403, jede mit ihrem Grund")
 
 # ---------- A-umgehung-2: derselbe Riegel gilt für die ANLAGE eines Faktors ----------
@@ -488,7 +488,7 @@ app5.include_router(auth5.router())
 c8 = TestClient(app5)
 assert c8.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
                follow_redirects=False).status_code == 303
-GRENZE_R = auth5.sec("reauth_max_attempts")
+GRENZE_R = auth5._sec("reauth_max_attempts")
 for i in range(GRENZE_R):
     r = c8.post("/auth/reauth", data={"password": f"tippfehler{i}", "next": "/"})
     assert r.status_code == 401, (i, r.status_code)
@@ -496,7 +496,7 @@ assert auth5.store.count_fails(0, username="anna", method="reauth") >= GRENZE_R,
     "die Fehlversuche wurden gar nicht verbucht — der Test misst dann nichts"
 
 # (a) Der Angriff: Die Anmeldung desselben Kontos bleibt offen.
-assert not auth5.is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
+assert not auth5._is_locked("anna", "testclient"), "Step-up-Tippfehler sperren den Login"
 frisch5 = TestClient(app5)
 r = frisch5.post("/auth/login", data={"username": "anna", "password": PW_ANNA, "next": "/"},
                  follow_redirects=False)
@@ -505,7 +505,7 @@ ok("Fehlversuche an der Reauth-Seite sperren die Anmeldung nicht (eigener Topf)"
 
 # (b) Gebremst wird trotzdem — dort, wo geraten wurde: Der nächste Versuch läuft in die Sperre,
 # auch mit dem richtigen Passwort. Die Schwelle ist verdrahtet, nicht nur vorhanden.
-assert auth5.is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
+assert auth5._is_reauth_locked("anna", "testclient"), "kein eigener Lockout für die Bestätigung"
 r = c8.post("/auth/reauth", data={"password": PW_ANNA, "next": "/"})
 assert r.status_code == 429, f"Step-up-Raten läuft nicht in die Sperre: {r.status_code}"
 ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
@@ -514,7 +514,7 @@ ok("…die Bestätigung selbst ist nach reauth_max_attempts gesperrt (429)")
 c9 = TestClient(app5)
 assert c9.post("/auth/login", data={"username": "bea", "password": PW_BEA, "next": "/"},
                follow_redirects=False).status_code == 303
-assert not auth5.is_reauth_locked("bea", "testclient"), \
+assert not auth5._is_reauth_locked("bea", "testclient"), \
     "die Fehlversuche eines Kollegen sperren hinter NAT die Bestätigung eines Unbeteiligten"
 r = c9.post("/auth/reauth", data={"password": PW_BEA, "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, f"Bestätigung des Unbeteiligten gesperrt: {r.status_code}"
@@ -611,7 +611,7 @@ for pfad in sorted(NUR_SITZUNG & _post6):
     r = TestClient(app6).post(pfad, headers={**JSON, "X-API-Key": key6}, **_nutzlast.get(pfad, {}))
     assert r.status_code in (401, 403), f"{pfad}: API-Key richtet einen Faktor ein ({r.status_code})"
 r = _abgestanden_client().post("/auth/password", headers=JSON, **_nutzlast["/auth/password"])
-assert r.status_code == 403 and auth6.check_password("selbst", "Geheim12345!"), \
+assert r.status_code == 403 and auth6._check_password("selbst", "Geheim12345!"), \
     f"/auth/password ohne das alte Passwort: {r.status_code}"
 for pfad in sorted(set(OFFEN) & _post6):
     ziel = pfad.replace("{key_id}", str(auth6.list_api_keys(uid6)[0]["id"]))

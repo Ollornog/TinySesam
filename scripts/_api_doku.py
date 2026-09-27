@@ -11,9 +11,11 @@ enthält. Der Wächter `tests/test_api_surface.py` misst dieselbe Menge — hier
 
 Seit 0.21.0 ist die Oberfläche nicht mehr nur gemessen, sondern **eingestuft** (PO-Entscheid
 2026-09-26): Die Stufe jedes Namens steht in `tests/api_surface.json`, und diese Seite gliedert
-danach — A „öffentlich, stabil ab 1.0", B „für Fortgeschrittene", C „intern" (nur als Liste,
-ohne Erklärung: niemand soll dort einen Baustein finden). Ein Name ohne Stufe landet sichtbar in
-einem eigenen Abschnitt; rot macht ihn der Wächter, nicht diese Seite.
+danach — A „öffentlich, stabil ab 1.0", B „für Fortgeschrittene", C „intern". C steht ohne
+Erklärung da (niemand soll dort einen Baustein finden), aber mit dem Ersatz: Seit 0.21.0 ist jeder
+C-Name ein Alias, der beim Aufruf warnt (`tinysesam/_veraltet.py`), und wer die Warnung sieht,
+sucht hier, was er stattdessen nimmt. Ein Name ohne Stufe landet sichtbar in einem eigenen
+Abschnitt; rot macht ihn der Wächter, nicht diese Seite.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import inspect
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +35,7 @@ ABLAGE = ROOT / "tests" / "api_surface.json"
 import tinysesam as paket  # noqa: E402
 from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import errors as fehler_modul  # noqa: E402
+from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
 
 #: Überschrift und Zusage je Stufe — derselbe Wortlaut wie in den READMEs („Public API: three
 #: tiers" / „Öffentliche API: drei Stufen").
@@ -49,8 +53,9 @@ STUFEN = {
           "ist erlaubt."),
     "C": ("intern",
           "Verdrahtung der eingebauten Routen",
-          "Keine. Bekommt einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, "
-          "der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg."),
+          "Keine. Die Implementierung trägt seit 0.21.0 einen führenden Unterstrich; der alte "
+          "Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und "
+          "fällt dann weg."),
 }
 
 #: Die inneren Prüfer, vor denen der C-Abschnitt ausdrücklich warnt (PO-Befund 2026-09-26). Der
@@ -170,12 +175,19 @@ def bauen() -> str:
     def von(bereich, name):
         return st.get(bereich, {}).get(name)
 
-    methoden = [(n, f) for n, f in inspect.getmembers(TinySesam, callable) if not n.startswith("_")]
-    eigenschaften = [(n, p) for n, p in inspect.getmembers(TinySesam, lambda w: isinstance(w, property))
-                     if not n.startswith("_")]
+    # `getmembers` liest jedes Attribut — auch die Konstanten-Aliase der Stufe C, die beim Lesen
+    # warnen. Das Beschreiben ist kein Gebrauch.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        methoden = [(n, f) for n, f in inspect.getmembers(TinySesam, callable)
+                    if not n.startswith("_")]
+    eigenschaften = [(n, p) for n, p in inspect.getmembers_static(
+                         TinySesam, lambda w: isinstance(w, property)) if not n.startswith("_")]
+    aliase = {n: w for n, w in vars(TinySesam).items() if isinstance(w, Veraltet)}
     konstanten = sorted(n for n, w in vars(TinySesam).items()
                         if not n.startswith("_") and not callable(w)
-                        and not isinstance(w, (property, staticmethod, classmethod)))
+                        and not isinstance(w, (property, staticmethod, classmethod))
+                        and not (isinstance(w, Veraltet) and w.methode))
     presets = [(n, f) for n, f in inspect.getmembers(TinySesamConfig, callable)
                if not n.startswith("_")]
     felder = list(TinySesamConfig.__dataclass_fields__)
@@ -267,23 +279,27 @@ def bauen() -> str:
                f"{erster_satz(getattr(paket, n))}\n\n"
                for n in uebrige if inspect.isfunction(getattr(paket, n))]))
 
-    intern = {}
-    for b, n in alle:
-        if von(b, n) == "C":
-            intern.setdefault(b, []).append(n)
+    intern = [(b, n) for b, n in alle if von(b, n) == "C"]
     if intern:
         teile.append(
-            "## C · Intern — nicht verwenden\n\n"
-            "Diese Namen tragen (noch) keinen Unterstrich, gehören aber nicht zur Zusage. Sie "
-            "bekommen einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der "
-            "beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. **Neu nicht "
-            "verwenden** — für eigene Seiten stehen die Bausteine in A und B.\n\n"
+            f"## C · Veraltet — fällt mit {BIS} weg\n\n"
+            "Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung "
+            f"`_name`; der alte Name bleibt bis {BIS} als Alias, der **beim Aufruf** (Konstanten: "
+            "beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. "
+            "**Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer "
+            "prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit "
+            "`python -W error::DeprecationWarning` laufen.\n\n"
             "**Vorsicht bei den inneren Prüfern** "
             + ", ".join(f"`{n}`" for n in UNGEDROSSELT) + ": Sie drosseln nicht selbst — "
             "Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene "
-            "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.\n\n")
-        for b in sorted(intern):
-            teile.append(f"- **{b}:** " + ", ".join(f"`{n}`" for n in sorted(intern[b])) + "\n")
+            "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.\n\n"
+            "| Alter Name | Art | Ersatz |\n|---|---|---|\n")
+        for b, n in sorted(intern, key=lambda bn: bn[1].lower()):
+            alias = aliase.get(n)
+            art = "Konstante" if b == "TinySesam.konstanten" else "Methode"
+            ersatz = alias.ersatz if alias else "— (kein Alias: Wächter rot)"
+            ersatz = ersatz.removeprefix("stattdessen ").replace("|", "\\|")
+            teile.append(f"| `{n}` | {art} | {ersatz[:1].upper()}{ersatz[1:]} |\n")
         teile.append("\n")
 
     if ohne:

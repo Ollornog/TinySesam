@@ -12,7 +12,7 @@ auth.ensure_admin("admin", "geheim123")
 
 # Härtung schärfer stellen (wie im Admin-Panel) und persistent prüfen
 auth.set_security("max_login_attempts", 3)
-assert auth.sec("max_login_attempts") == 3
+assert auth._sec("max_login_attempts") == 3
 
 app = FastAPI()
 app.include_router(auth.router())
@@ -38,7 +38,7 @@ print("  ✓ nach Entsperren Login OK + login-Audit")
 
 # Settings-Roundtrip (Panel-editierbar)
 auth.set_security("rate_limit_max", 99)
-assert auth.sec("rate_limit_max") == 99 and auth.all_security()["rate_limit_max"] == 99
+assert auth._sec("rate_limit_max") == 99 and auth.all_security()["rate_limit_max"] == 99
 print("  ✓ Härtungs-Settings persistent + über all_security() lesbar")
 
 # Trusted-Proxy: XFF nur von vertrauenswürdigem Peer
@@ -100,12 +100,12 @@ ang.cookies.set(auth2.cfg.session_cookie, tok)
 # (a) Das RICHTIGE Passwort des Opfers ist für diese Sitzung kein Treffer mehr.
 r = ang.post("/auth/password", json={"current": OPFER_PW, "new": "neues-langes-passwort"})
 assert r.status_code == 403, f"fremdes Passwort wurde akzeptiert: {r.status_code}"
-assert auth2.check_password("chef", OPFER_PW) is not None, "Passwort des Opfers wurde verändert"
+assert auth2._check_password("chef", OPFER_PW) is not None, "Passwort des Opfers wurde verändert"
 print("  ✓ /auth/password prüft die eigene Konto-ID, nicht die aufgelöste Login-Kennung")
 
 # (b) Raten wird gedrosselt: spätestens nach password_change_max_attempts kommt 429 statt 403.
 auth2.store.clear_fails(username=_mail("chef"))
-GRENZE = auth2.sec("password_change_max_attempts")
+GRENZE = auth2._sec("password_change_max_attempts")
 codes = [ang.post("/auth/password", json={"current": f"falsch{i}", "new": "neues-langes-passwort"}).status_code
          for i in range(GRENZE + 2)]
 assert 429 in codes, f"kein Lockout auf /auth/password: {codes}"
@@ -124,8 +124,8 @@ print("  ✓ Alt-Passwort-Raten läuft in Sperre + Protokoll (429, login_attempt
 auth2.store.clear_fails(username=_mail("chef"))
 r = ang.post("/auth/password", json={"current": ANG_PW, "new": "neues-langes-passwort"})
 assert r.status_code == 200, f"eigener Passwortwechsel scheitert: {r.status_code} {r.text[:120]}"
-assert auth2.verify_user_password(uid_ang, "neues-langes-passwort"), "neues Passwort nicht gesetzt"
-assert auth2.check_password("chef", OPFER_PW) is not None, "fremdes Konto angefasst"
+assert auth2._verify_user_password(uid_ang, "neues-langes-passwort"), "neues Passwort nicht gesetzt"
+assert auth2._check_password("chef", OPFER_PW) is not None, "fremdes Konto angefasst"
 print("  ✓ eigener Passwortwechsel unverändert möglich")
 
 # (d) Regression: Der Zähler ist METHODENGEBUNDEN. Fehlversuche beim Passwortwechsel sind kein
@@ -143,7 +143,7 @@ for i in range(GRENZE + 1):
     anna.post("/auth/password", json={"current": f"vertippt{i}", "new": "neues-langes-passwort"})
 assert auth2.store.count_fails(0, username="anna", method="password_change") >= GRENZE, \
     "Tippfehler wurden nicht verbucht — der Test messe nichts"
-assert not auth2.is_locked("anna", "testclient"), "Tippfehler am Passwortwechsel sperren den Login"
+assert not auth2._is_locked("anna", "testclient"), "Tippfehler am Passwortwechsel sperren den Login"
 frisch = TestClient(app2)
 r = frisch.post("/auth/login", data={"username": "anna", "password": ANNA_PW}, follow_redirects=False)
 assert r.status_code == 303, f"Login nach Tippfehlern am Passwortwechsel gesperrt: {r.status_code}"
@@ -165,7 +165,7 @@ print("  ✓ Sperre greift am Passwortwechsel selbst und ist entsperrbar")
 # den Login zu verriegeln. Die Fehlversuche kommen hier alle von derselben Test-IP — genau die
 # Lage eines Büros hinter NAT. (Mutationsprobe: `exclude_methods` im IP-Zweig von `is_locked`
 # entfernen → `is_locked("unbeteiligt", …)` wird True und der Login des Dritten 429.)
-IP_GRENZE = auth2.sec("max_login_attempts") * auth2.sec("ip_attempt_factor")
+IP_GRENZE = auth2._sec("max_login_attempts") * auth2._sec("ip_attempt_factor")
 assert auth2.store.count_fails(0, ip="testclient", method="password_change") == 0, \
     "Vorbedingung: die Test-IP startet ohne Fehlversuche am Passwortwechsel"
 for n in range(1, 9):
@@ -182,7 +182,7 @@ for n in range(1, 9):
 assert auth2.store.count_fails(0, ip="testclient", method="password_change") >= IP_GRENZE, \
     "Angriffslage nicht hergestellt: die Test-IP hat die Login-IP-Schwelle nicht erreicht"
 auth2.create_user("unbeteiligt", "Dritte-Passwort-1")
-assert not auth2.is_locked("unbeteiligt", "testclient"), \
+assert not auth2._is_locked("unbeteiligt", "testclient"), \
     "vertippte Kollegen hinter NAT sperren einen Unbeteiligten aus"
 dritter = TestClient(app2)
 r = dritter.post("/auth/login", data={"username": "unbeteiligt", "password": "Dritte-Passwort-1"},
@@ -203,7 +203,7 @@ uid_vierter = auth2.create_user("vierter", "Vierte-Passwort-1")
 vierter = TestClient(app2)
 t4, _ = auth2.start_session(uid_vierter, "password", remember=True)
 vierter.cookies.set(auth2.cfg.session_cookie, t4)
-assert not auth2.is_password_change_locked("vierter", "testclient"), \
+assert not auth2._is_password_change_locked("vierter", "testclient"), \
     "vertippte Kollegen sperren dem Unbeteiligten den eigenen Passwortwechsel"
 r = vierter.post("/auth/password", json={"current": "Vierte-Passwort-1", "new": "neues-langes-passwort"})
 assert r.status_code == 200, f"Passwortwechsel des Unbeteiligten gesperrt: {r.status_code} {r.text[:120]}"
@@ -232,7 +232,7 @@ def _record_login_methoden(pfad: Path) -> set:
     for knoten in ast.walk(baum):
         if not (isinstance(knoten, ast.Call) and isinstance(knoten.func, ast.Attribute)):
             continue
-        if knoten.func.attr != "record_login":
+        if knoten.func.attr != "_record_login":
             continue
         arg = knoten.args[3] if len(knoten.args) > 3 else None
         for kw in knoten.keywords:
@@ -264,8 +264,8 @@ for _m in _sec.NICHT_LOGIN_METHODEN:
     assert callable(riegel), f"{_m} steht in NICHT_LOGIN_METHODEN, hat aber keinen eigenen Topf"
     name = f"probant-{_m}"
     for _ in range(20):
-        auth3.record_login(name, "198.51.100.4", False, _m)
-    assert not auth3.is_locked(name, "198.51.100.4"), \
+        auth3._record_login(name, "198.51.100.4", False, _m)
+    assert not auth3._is_locked(name, "198.51.100.4"), \
         f"Fehlversuche mit method={_m} sperren die Anmeldung (weder Anmeldung noch Ausnahme?)"
     assert riegel(name, "198.51.100.4"), \
         f"method={_m} ist aus dem Login-Lockout genommen, aber {_sec.EIGENE_SPERRE[_m]} bremst nicht"
@@ -327,7 +327,7 @@ app_t = FastAPI()
 app_t.include_router(auth_t.router())
 
 # (1) Passwort-Login (R7-2)
-_langsam(auth_t, "check_password")
+_langsam(auth_t, "_check_password")
 codes = _salve(12, lambda i: TestClient(app_t).post(
     "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
 assert codes.count(401) <= 3, f"R7-2: {codes.count(401)} von 12 parallelen Versuchen durften raten: {codes}"
@@ -339,7 +339,7 @@ auth_t.store.clear_fails(username="toni")
 # Zählen selbst verlangsamt. Wer zählt und danach getrennt bucht, lässt die Salve wieder durch.
 # (Mutationsprobe: `versuch_beginnen` zählt per `count_fails` und bucht danach mit eigenem
 # INSERT → rot.)
-del auth_t.check_password                         # wieder die echte Prüfung
+del auth_t._check_password                         # wieder die echte Prüfung
 _langsam(auth_t.store, "_fails_abfrage", 0.05)
 codes = _salve(12, lambda i: TestClient(app_t).post(
     "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
@@ -349,7 +349,7 @@ print(f"  ✓ …Zählen und Buchen in einer Transaktion ({codes.count(401)} gep
 auth_t.store.clear_fails(username="toni")
 
 # (2) PIN-Login (R3-7) — der kurze Schlüsselraum ist das eigentliche Ziel
-_langsam(auth_t, "check_pin")
+_langsam(auth_t, "_check_pin")
 codes = _salve(12, lambda i: TestClient(app_t).post(
     "/auth/pin", data={"username": "toni", "pin": f"{i:04d}"}).status_code)
 assert codes.count(401) <= 3, f"R3-7: {codes.count(401)} von 12 parallelen PIN-Versuchen durften raten: {codes}"
@@ -363,7 +363,7 @@ c_t = TestClient(app_t)
 assert c_t.post("/auth/login", data={"username": "toni", "password": "Toni-Passwort-2026"},
                 follow_redirects=False).status_code == 303
 halb = c_t.cookies.get(auth_t.cfg.session_cookie)
-_langsam(auth_t, "verify_totp")
+_langsam(auth_t, "_verify_totp")
 
 
 def _totp(i):
@@ -421,7 +421,7 @@ auth_f = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_f, 
 auth_f.create_user("inhaber", "Inhaber-Passwort-1")
 app_f = FastAPI()
 app_f.include_router(auth_f.router())
-G = auth_f.sec("max_login_attempts")
+G = auth_f._sec("max_login_attempts")
 fremd = TestClient(app_f, client=("198.51.100.20", 40000))
 codes = [fremd.post("/auth/login", data={"username": "inhaber", "password": "rate"}).status_code
          for _ in range(G + 1)]
@@ -436,7 +436,7 @@ print("  ✓ R7-6/H-8: ein Fremder sperrt nur das Paar Konto+Adresse, nicht den 
 inhaber.get("/auth/logout")
 # Die Konto-Schwelle bleibt gegen verteiltes Raten: Viele Anschlüsse zusammen sperren das Konto.
 # (Der Login oben war vollständig und hat die Fehlversuche geräumt — R7-1 —, also neu zählen.)
-for i in range(auth_f.sec("account_attempt_factor")):
+for i in range(auth_f._sec("account_attempt_factor")):
     ci = TestClient(app_f, client=(f"198.51.100.{30 + i}", 40000))
     for _ in range(G):
         ci.post("/auth/login", data={"username": "inhaber", "password": "rate"})
@@ -456,8 +456,8 @@ auth_v = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db_v, 
 auth_v.create_user("opfer", "Opfer-Passwort-1", email="opfer@example.com")
 app_v = FastAPI()
 app_v.include_router(auth_v.router())
-G = auth_v.sec("max_login_attempts")
-DECKEL = G * auth_v.sec("account_attempt_factor")
+G = auth_v._sec("max_login_attempts")
+DECKEL = G * auth_v._sec("account_attempt_factor")
 varianten = [" opfer", "opfer ", "\topfer", "OPFER", " Opfer\t", "\xa0opfer", "opfer\n", "  oPfEr  ",
              "\nOPFER", "opfer ", " opfer ", "Opfer"]
 assert all(auth_v.find_user(v) for v in varianten), "die Varianten treffen nicht mehr dasselbe Konto"
@@ -494,7 +494,7 @@ app_m.include_router(auth_m.router())
 c_m = TestClient(app_m)
 for _ in range(2):
     c_m.post("/auth/login", data={"username": "mia", "password": "vertippt"})
-auth_m.record_login("mia", "testclient", False, "password_change")   # eigener Topf, bleibt
+auth_m._record_login("mia", "testclient", False, "password_change")   # eigener Topf, bleibt
 assert c_m.post("/auth/pin", data={"username": "mia", "pin": "24680"},
                 follow_redirects=False).status_code == 303
 assert auth_m.store.count_fails(0, username="mia", method="password") == 0, \
@@ -506,7 +506,7 @@ c_m.get("/auth/logout")
 # Teil-Erfolg: Passwort gelingt, TOTP steht noch aus → die TOTP-Fehlversuche bleiben.
 geheim_m = auth_m.totp_begin(uid_m)["secret"]
 auth_m.totp_confirm(uid_m, pyotp.TOTP(geheim_m).now())
-auth_m.record_login("mia", "testclient", False, "totp")
+auth_m._record_login("mia", "testclient", False, "totp")
 assert c_m.post("/auth/login", data={"username": "mia", "password": "Mia-Passwort-2026"},
                 follow_redirects=False).status_code == 303
 assert auth_m.store.count_fails(0, username="mia", method="totp") == 1, \

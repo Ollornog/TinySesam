@@ -16,13 +16,13 @@ Quelltext.
 |---|---|---|
 | **A — öffentlich, stabil ab 1.0** | dokumentiert und/oder von Einbettenden genutzt | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 ([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.21.0, dem Release, das die Einstufung bringt. |
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten, eigene Mail- und Token-Abläufe, Erweiterungspunkte | Bleibt. Entfernen oder umbauen erst, nachdem eine `DeprecationWarning` zwei Minor-Versionen lang darauf hingewiesen hat. Schwächer als A: Ein Umbau mit Vorlauf ist erlaubt. |
-| **C — intern** | Verdrahtung der eingebauten Routen | Keine. Bekommt einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. |
+| **C — intern** | Verdrahtung der eingebauten Routen | Keine. Die Implementierung trägt seit 0.21.0 einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. |
 
 Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — nichts wird aus Versehen zugesagt.
 
 Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
 
-**Stand:** A 225 · B 64 · C 50 Namen.
+**Stand:** A 225 · B 64 · C 49 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -587,15 +587,64 @@ Die Konfiguration erneut prüfen — für den Fall, dass sie nach dem Aufbau ge�
 
 Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann stimmen, wenn TinySesam als Abhängigkeit in einer fremden App steckt.
 
-## C · Intern — nicht verwenden
+## C · Veraltet — fällt mit 1.0 weg
 
-Diese Namen tragen (noch) keinen Unterstrich, gehören aber nicht zur Zusage. Sie bekommen einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B.
+Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung `_name`; der alte Name bleibt bis 1.0 als Alias, der **beim Aufruf** (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit `python -W error::DeprecationWarning` laufen.
 
 **Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt.
 
-- **TinySesam:** `admin_claim_fehlgriff`, `check_ldap`, `check_password`, `check_pin`, `check_resource`, `check_saml`, `complete_mfa`, `consume_admin_claim`, `csrf_rotieren`, `factor_entry`, `forward_login_url`, `forward_response_headers`, `forwarded_url`, `is_locked`, `is_password_change_locked`, `is_pin_locked`, `is_reauth_locked`, `is_resource_locked`, `is_secure`, `is_totp_setup_locked`, `login_redirect_after`, `maybe_promote_admin`, `mfa_pending`, `next_login_step`, `oidc_anwendung`, `oidc_freigabe_gueltig`, `purge_demo`, `rate_ok`, `record_login`, `sec`, `seed_demo`, `send_signup_notice`, `session_from_request`, `sicherheitsereignis`, `token_abgewiesen`, `unlock_resource`, `verify_csrf`, `verify_recovery_code`, `verify_totp`, `verify_user_password`, `verify_user_pin`, `vermerke_oidc_freigabe`, `versuch_beginnen`
-- **TinySesam.konstanten:** `APIKEY_AUDIT_FENSTER`, `DEMO_USERS`, `FOEDERIERTE_FAKTOREN`, `IDENTIFYING`, `RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE`
+| Alter Name | Art | Ersatz |
+|---|---|---|
+| `admin_claim_fehlgriff` | Methode | Ohne Ersatz; die Route `/auth/claim-admin` protokolliert selbst |
+| `APIKEY_AUDIT_FENSTER` | Konstante | Ohne Ersatz, ein interner Wert |
+| `check_ldap` | Methode | `POST /auth/login` (drosselt, sperrt und fragt das Verzeichnis), eigenes Aussehen per `set_template("login", …)` |
+| `check_password` | Methode | `POST /auth/login` (drosselt und sperrt), eigenes Aussehen per `set_template("login", …)`; `check_password` selbst drosselt nicht |
+| `check_pin` | Methode | `POST /auth/pin` (drosselt und sperrt), eigenes Aussehen per `set_template("pin", …)`; `check_pin` selbst drosselt nicht |
+| `check_resource` | Methode | `POST /auth/resource/{name}` (drosselt und sperrt) bzw. `require_resource` |
+| `check_saml` | Methode | `POST /auth/saml/acs`, das die Signatur der Assertion prüft; `check_saml` vertraut seinen Argumenten |
+| `complete_mfa` | Methode | `complete_totp` (gleiches Verhalten) |
+| `consume_admin_claim` | Methode | Die Route `/auth/claim-admin`, `ensure_admin` oder `admin_identifiers` |
+| `csrf_rotieren` | Methode | `set_cookie` (dreht das CSRF-Token bei der Anmeldung mit) bzw. `issue_csrf` |
+| `DEMO_USERS` | Konstante | Ohne Ersatz; die Demo-Konten heissen `demo` und `demoadmin` (README) |
+| `factor_entry` | Methode | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
+| `FOEDERIERTE_FAKTOREN` | Konstante | Ohne Ersatz, eine innere Entscheidungsliste für den Erst-Admin |
+| `forward_login_url` | Methode | Ohne Ersatz; die Route `/auth/forward` baut die Login-Adresse selbst |
+| `forward_response_headers` | Methode | Ohne Ersatz; welche Header `/auth/forward` setzt, steuert `forward_headers` |
+| `forwarded_url` | Methode | Ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst |
+| `IDENTIFYING` | Konstante | Ohne Ersatz; welche Faktoren identifizieren, steht in docs/BETRIEB.md |
+| `is_locked` | Methode | Die eingebauten Anmelderouten, die atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch |
+| `is_password_change_locked` | Methode | `POST /auth/password` (prüft und bucht atomar) |
+| `is_pin_locked` | Methode | `POST /auth/pin` (prüft und bucht atomar) |
+| `is_reauth_locked` | Methode | `/auth/reauth` (prüft und bucht atomar; `require(mfa=True)` leitet dorthin) |
+| `is_resource_locked` | Methode | `POST /auth/resource/{name}` (prüft und bucht atomar) |
+| `is_secure` | Methode | Ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode` |
+| `is_totp_setup_locked` | Methode | `POST /auth/totp/setup` (prüft und bucht atomar) |
+| `login_redirect_after` | Methode | Ohne Ersatz; die eingebauten Anmelderouten leiten selbst zum nächsten Faktor bzw. zu `next` |
+| `maybe_promote_admin` | Methode | `admin_identifiers` oder `ensure_admin`; direkt gerufen umgeht es den Adressbeleg |
+| `mfa_pending` | Methode | Ohne Ersatz (der Name meint „hat ein bestätigtes TOTP“); dasselbe liefert `auth.store.has_confirmed_totp(user_id)` |
+| `next_login_step` | Methode | Ohne Ersatz; `require_user`/`require` leiten selbst zum offenen Faktor |
+| `oidc_anwendung` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
+| `oidc_freigabe_gueltig` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
+| `purge_demo` | Methode | `demo_mode=False` (räumt die Demo-Konten beim Start) |
+| `rate_ok` | Methode | Die eingebauten Anmelderouten (drosseln je IP) bzw. `set_rate_limiter` |
+| `record_login` | Methode | Die eingebauten Anmelderouten, die jeden Versuch verbuchen; falsch gerufen räumt es fremde Fehlversuchszähler |
+| `RECOVERY_BYTES` | Konstante | Ohne Ersatz, ein interner Wert |
+| `RECOVERY_WARNSCHWELLE` | Konstante | `recovery_codes_remaining` und eine eigene Schwelle |
+| `sec` | Methode | `all_security()` |
+| `seed_demo` | Methode | `demo_mode=True` (legt die Demo-Konten beim Start an) |
+| `send_signup_notice` | Methode | Ohne Ersatz; `POST /auth/register` verschickt den Hinweis selbst |
+| `session_from_request` | Methode | `current_user` bzw. `session_user` |
+| `sicherheitsereignis` | Methode | Ohne Ersatz; TinySesam ruft den Hook `on_security_event` selbst |
+| `token_abgewiesen` | Methode | Ohne Ersatz; die eingebauten Token-Routen protokollieren selbst |
+| `unlock_resource` | Methode | `POST /auth/resource/{name}` (prüft das Geheimnis vorher) |
+| `verify_csrf` | Methode | `require_csrf` |
+| `verify_recovery_code` | Methode | `POST /auth/totp` (nimmt auch Einmal-Codes, drosselt und sperrt); `verify_recovery_code` selbst drosselt nicht |
+| `verify_totp` | Methode | `POST /auth/totp` (drosselt und sperrt); `verify_totp` selbst drosselt nicht |
+| `verify_user_password` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin) bzw. `POST /auth/password`; ungedrosselt |
+| `verify_user_pin` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin); ungedrosselt |
+| `vermerke_oidc_freigabe` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
+| `versuch_beginnen` | Methode | Die eingebauten Anmelderouten, die jeden Versuch atomar vorbuchen |
 
 ---
 
-147 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 8 Exporte, davon 5 Fehlertypen — erzeugt aus den Docstrings und `tests/api_surface.json`.
+147 Methoden, 3 Eigenschaften, 14 Konstanten, 7 Methoden von `TinySesamConfig`, 8 Exporte, davon 5 Fehlertypen — erzeugt aus den Docstrings und `tests/api_surface.json`.

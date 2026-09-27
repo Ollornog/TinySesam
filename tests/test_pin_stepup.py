@@ -250,7 +250,7 @@ auth.store._exec("UPDATE session SET mfa_at=? WHERE token_hash=?",
 assert c.get("/auth/me", headers=J).status_code == 200, "die Sitzung muss gültig bleiben"
 r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])       # (a)
-assert auth.verify_user_pin(uid, "2468"), "die erste PIN muss ankommen"
+assert auth._verify_user_pin(uid, "2468"), "die erste PIN muss ankommen"
 print("  (a) erste PIN ohne jeden Faktor: frische Anmeldung genügt ok")
 
 # Jetzt HAT das Konto einen Faktor → das Ersetzen verlangt wieder eine Bestätigung, und die
@@ -258,13 +258,13 @@ print("  (a) erste PIN ohne jeden Faktor: frische Anmeldung genügt ok")
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 403, (r.status_code, r.text[:120])
 assert r.headers.get("X-TinySesam-Reauth") == "/auth/reauth", dict(r.headers)
-assert auth.verify_user_pin(uid, "2468"), "die alte PIN darf stehen bleiben"
+assert auth._verify_user_pin(uid, "2468"), "die alte PIN darf stehen bleiben"
 seite = c.get("/auth/reauth").text
 assert "name=pin" in seite, "die Reauth-Seite muss jetzt ein PIN-Feld haben"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 303, r.status_code
 assert c.post("/auth/pin/set", json={"pin": "1357"}, headers=J).status_code == 200
-assert auth.verify_user_pin(uid, "1357")
+assert auth._verify_user_pin(uid, "1357")
 print("  PIN ERSETZEN bleibt hinter require_mfa (403 → Reauth per PIN → 200) ok")
 os.unlink(db)
 
@@ -327,7 +327,7 @@ assert c.post("/auth/login", data={"username": "anna", "password": PW, "next": "
 # (a) Frisch angemeldet: Die erste PIN geht durch — die Anmeldung IST hier die Bestätigung.
 r = c.post("/auth/pin/set", json={"pin": "2468"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])
-assert auth.verify_user_pin(uid, "2468")
+assert auth._verify_user_pin(uid, "2468")
 print("  (a) Passwort-Konto, frisch angemeldet: erste PIN geht durch ok")
 
 # (b) Bestätigung abgelaufen, Anmeldung noch jung: 403 — und zwar der, der weiterhilft.
@@ -350,7 +350,7 @@ r = c.post("/auth/reauth", data={"password": PW, "next": "/"}, follow_redirects=
 assert r.status_code == 303, r.status_code
 r = c.post("/auth/pin/set", json={"pin": "1357"}, headers=J)
 assert r.status_code == 200, (r.status_code, r.text[:120])
-assert auth.verify_user_pin(uid, "1357")
+assert auth._verify_user_pin(uid, "1357")
 print("  (c) nach der Bestätigung auf /auth/reauth: erste PIN geht durch ok")
 os.unlink(db)
 
@@ -368,9 +368,9 @@ app = FastAPI()
 app.include_router(auth.router())
 c = TestClient(app, headers=HTML)
 assert login(c).status_code == 303
-for _ in range(int(auth.sec("pin_max_attempts")) + 1):
+for _ in range(int(auth._sec("pin_max_attempts")) + 1):
     c.post("/auth/pin", data={"pin": "0000", "next": "/"})
-assert auth.is_pin_locked("max", "testclient"), "Vorbedingung: die PIN-Anmeldung ist gesperrt"
+assert auth._is_pin_locked("max", "testclient"), "Vorbedingung: die PIN-Anmeldung ist gesperrt"
 time.sleep(1.1)
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/"}, follow_redirects=False)
 assert r.status_code == 429, f"gesperrte PIN wird auf /auth/reauth weiter angenommen: {r.status_code}"

@@ -94,9 +94,19 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 | Bedingung | Stand |
 |---|---|
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
-| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | offen — Schritt 2 |
+| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (49 Aliase, Wächter, Warnfilter in `run_all.py`) |
 | sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | offen — Schritt 3 |
 | zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.21.0 |
+
+**Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
+(42 Methoden, 6 Konstanten; `complete_mfa` zeigt auf `complete_totp`), der alte Name ist ein
+`Veraltet` aus `tinysesam/_veraltet.py` und warnt beim Aufruf genau einmal mit Ersatz. Paket,
+Beispiele, Skripte und Tests rufen nur noch die neuen Namen. Der Wächter hält Ablage und Klasse
+gegeneinander, prüft Warnung, Ziel und Weiterreichen jedes Alias, verbietet alte Namen im eigenen
+Code (AST) und wird mit 1.0 rot, solange noch ein Alias steht; `tests/run_all.py` macht eine solche
+Warnung aus dem Paket selbst zum Fehler. `SERIE_PIN_FOLGE` war nie veröffentlicht und heisst ohne
+Alias `_SERIE_PIN_FOLGE` — Stand jetzt 338 Namen, C 49. Die Ersatztexte der ungedrosselten Prüfer
+nennen die eingebauten Routen; mit Schritt 3 kommt der Baustein dazu, auf den sie zeigen sollen.
 
 Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
 `on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in

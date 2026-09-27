@@ -131,7 +131,7 @@ def _flag(auth, uid):
 
 def _anmelden(auth, name, eintrag, pw="pw"):
     auth.ldap = Verzeichnis({name: dict(eintrag, pw=pw)})
-    return auth.check_ldap(name, pw)
+    return auth._check_ldap(name, pw)
 
 
 # ══ G1: Frist für die Bindung über den Namen ═══════════════════════════════════════════════════
@@ -234,12 +234,12 @@ s = _saml()
 r.check("SAML: der Merker steht nach dem Aufbau", s.store.get_setting("foederation_seit:saml") is not None)
 sam = s.create_user("sam", is_admin=True)
 _altern(s, sam, quelle="saml")
-u = s.check_saml("nid-neu", {"uid": ["sam"]})
+u = s._check_saml("nid-neu", {"uid": ["sam"]})
 r.check("SAML nach der Frist: eine neue NameID unter dem Namen übernimmt das ruhende Konto nicht",
         u is None and s.store.get_federated_kennung("saml", sam) is None
         and [z["detail"] for z in _audit(s, "saml_namensbindung_zu")] == ["grund=frist kennung=nid-neu"])
 sina = s.create_user("sina")
-u = s.check_saml("nid-sina", {"uid": ["sina"]})
+u = s._check_saml("nid-sina", {"uid": ["sina"]})
 r.check("SAML Vorab-Anlage: bindet", u is not None and u["id"] == sina)
 
 # (10) Ohne Kennung: die ERSTE Zuordnung eines vorhandenen Kontos geht durch dieselbe Tür.
@@ -274,7 +274,7 @@ zu = _audit(g, "ldap_namensbindung_zu")
 r.check("PoC: die echte chefin aus dem Verzeichnis landet NICHT in eves Konto, keine Bindung",
         u is None and g.store.get_federated_kennung("ldap", eve) is None, str(u))
 r.check("… eve hat danach keine Rolle `chef`, auch nicht über ihr lokales Passwort",
-        g.check_password("chefin", PW) is not None
+        g._check_password("chefin", PW) is not None
         and "chef" not in g.user_roles(g.store.get_user(eve)))
 r.check("… Abweisung wie Lage 3: Audit mit Grund und Kennung, Logzeile mit dem Weg",
         [z["detail"] for z in zu] == ["grund=name_selbst_gewaehlt kennung=uuid-chefin"]
@@ -299,7 +299,7 @@ r.check("… die Audit-Zeile sagt durch=betreiber",
 s2 = _saml()
 sv = s2.create_user("svenja", password=PW)
 s2.change_username(sv, "saskia")
-u = s2.check_saml("nid-saskia", {"uid": ["saskia"]})
+u = s2._check_saml("nid-saskia", {"uid": ["saskia"]})
 r.check("SAML: ein selbst umbenanntes Konto wird nicht über den Namen gebunden",
         u is None and s2.store.get_federated_kennung("saml", sv) is None)
 n2 = _ldap()
@@ -329,7 +329,7 @@ rid = reg.store.get_user_by_name("chefin")
 r.check("Registrierung (SAML-Instanz): das Konto trägt den Merker",
         antwort.status_code in (200, 303) and rid is not None and _flag(reg, rid["id"]) == 1,
         f"HTTP {antwort.status_code}")
-u = reg.check_saml("nid-chefin", {"uid": ["chefin"]})
+u = reg._check_saml("nid-chefin", {"uid": ["chefin"]})
 r.check("… die SAML-chefin übernimmt das registrierte Konto nicht",
         (u is None or u["id"] != rid["id"]) and reg.store.get_federated_kennung("saml", rid["id"]) is None,
         str(u))
@@ -434,9 +434,9 @@ _ldap_dazu = dict(ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com", 
                   ldap_auto_create=True)
 qs = _saml(ldap_group_role_map={"cn=admins": "__admin__"}, **_ldap_dazu)
 qs.create_user("owner", password=PW, is_admin=True)
-sa = qs.check_saml("nid-angreifer", {"uid": ["chefin"]})
+sa = qs._check_saml("nid-angreifer", {"uid": ["chefin"]})
 u = _anmelden(qs, "chefin", {"id": "uuid-chefin", "groups": ["cn=admins"]}, pw="ldap-pw")
-sa2 = qs.check_saml("nid-angreifer", {"uid": ["chefin"]})
+sa2 = qs._check_saml("nid-angreifer", {"uid": ["chefin"]})
 r.check("PoC a1-01 (SAML): Herkunft saml; die Verzeichnis-Admin landet nicht im SAML-Konto, "
         "und der Angreifer ist danach kein Admin",
         _quelle(qs, sa["id"]) == "saml" and u is None and sa2 is not None and sa2["id"] == sa["id"]
@@ -447,7 +447,7 @@ r.check("PoC a1-01 (SAML): Herkunft saml; die Verzeichnis-Admin landet nicht im 
 # Ohne den Riegel war das keine Rechteausweitung, sondern die Übernahme des Kontos selbst.
 gr = _saml(**_ldap_dazu)
 echt = _anmelden(gr, "chefin", {"id": "uuid-chefin"}, pw="ldap-pw")
-ang = gr.check_saml("nid-angreifer", {"uid": ["chefin"]})
+ang = gr._check_saml("nid-angreifer", {"uid": ["chefin"]})
 r.check("Gegenrichtung: ein SAML-Name bindet das von LDAP angelegte Konto nicht (keine Übernahme)",
         echt is not None and _quelle(gr, echt["id"]) == "ldap" and ang is None
         and gr.store.get_federated_kennung("saml", echt["id"]) is None, str(ang))
@@ -462,7 +462,7 @@ r.check("LDAP ohne Kennung legt an: Herkunft ldap, Platzhalter",
         pit is not None and _quelle(ps, pit["id"]) == "ldap"
         and ps.store.get_federated_kennung("ldap", pit["id"]) == f"{Store.OHNE_KENNUNG}{pit['id']}")
 r.check("… eine andere Quelle (SAML) bindet es nicht über den Namen",
-        ps.check_saml("nid-fremd", {"uid": ["pit"]}) is None)
+        ps._check_saml("nid-fremd", {"uid": ["pit"]}) is None)
 u = _anmelden(ps, "pit", {"id": "uuid-pit"})
 r.check("… dieselbe Quelle ersetzt ihren Platzhalter durch die echte Kennung",
         u is not None and u["id"] == pit["id"] and ps.store.get_federated_kennung("ldap", pit["id"]) == "uuid-pit",
@@ -579,7 +579,7 @@ r.check("SAML mit zuordnung: bindet, verweigert die Kennung eines anderen Kontos
         and [e["username"] for e in zr["konflikt"]] == ["tom"] and _namen(zr, "ohne_kennung") == ["leer"]
         and sorted((e["username"], e["grund"]) for e in zr["abgewiesen"])
         == [("niemand", "kein_konto"), ("zeno", "name_selbst_gewaehlt")], str(zr))
-u = z.check_saml("nid-sara", {"uid": ["sara"]})
+u = z._check_saml("nid-sara", {"uid": ["sara"]})
 r.check("… danach meldet sich sara über die NameID an", u is not None and u["id"] == sara)
 zd = _saml()
 zd.create_user("doppel1"), zd.create_user("doppel2")
@@ -687,7 +687,7 @@ if ldap3 is not None:
         # die Formprüfung wies sie ab, die Person kam über LDAP nie hinein.
         login = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
                       ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
-        ul = login.check_ldap("alice", "pw-alice")
+        ul = login._check_ldap("alice", "pw-alice")
         r.check("ldap3 Anmeldung: dieselbe GUID als Hex, das neue Konto ist an sie gebunden",
                 ul is not None and login.store.get_federated_kennung("ldap", ul["id"]) == GUID.hex(),
                 str(ul and login.store.get_federated_kennung("ldap", ul["id"])))

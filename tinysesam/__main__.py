@@ -69,7 +69,7 @@ def _passwd(argv) -> int:
         if pw != getpass.getpass("Wiederholen:    "):
             print("Die beiden Eingaben sind verschieden.", file=sys.stderr)
             return 1
-    # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam.sec()`: Roh gelesen galt ein
+    # Die Mindestlänge über DENSELBEN Leseweg wie `TinySesam._sec()`: Roh gelesen galt ein
     # Altwert ohne Grenzen (4, 0) hier weiter, während das Web ihn auf 8 zog.
     #
     # Und die STRENGERE der beiden Längen (B2-4): Das CLI liest keine Konfiguration und weiss

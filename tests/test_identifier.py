@@ -291,7 +291,7 @@ print(f"  Sperr-Topf: {len(varianten) + 4} Schreibweisen, die find_user demselbe
 auth.set_security("rate_limit_max", 1000)
 app_k = FastAPI()
 app_k.include_router(auth.router())
-DECKEL = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")
+DECKEL = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")
 geprueft = 0
 for i in range(DECKEL + 25):
     ci = TestClient(app_k, client=(f"198.51.100.{i + 1}", 40000))
@@ -361,7 +361,7 @@ from tinysesam.store import jetzt as _jetzt  # noqa: E402
 clara_id = auth.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
                             ("clara", "clara", _jetzt())).lastrowid
 auth.set_password(clara_id, "Clara-Ascii-2026x")
-fehl = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
+fehl = auth._sec("max_login_attempts") * auth._sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
 for i in range(fehl):
     login(TestClient(c.app, client=(f"198.51.100.{i + 1}", 40000)), "clara", f"falsch-{i}")
 r = login(TestClient(c.app, client=("192.0.2.50", 40000)), "clara", "Clara-Ascii-2026x")

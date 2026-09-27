@@ -273,15 +273,16 @@ Use TinySesam as a pure backend (your own UI).
 > **Caution — the route below has no protection against password guessing.** `check_password`
 > and `check_pin` (likewise `check_ldap`) only compare: lockout, the attempt counter and the
 > series lock live in the built-in routes (`POST /auth/login`, `/auth/pin`), not in these
-> checks. They are internal ([tier C](#public-api-three-tiers)). For your own look, replace only
-> the page — `auth.set_template("login", …)` ([Look & feel](#look--feel)) — and let its form
-> keep posting to the built-in route.
+> checks. They are internal ([tier C](#public-api-three-tiers)): since 0.21.0 the
+> implementation is `_check_password` and so on, and the old names warn until they go with 1.0.
+> For your own look, replace only the page — `auth.set_template("login", …)`
+> ([Look & feel](#look--feel)) — and let its form keep posting to the built-in route.
 
 The pattern this section used to show — kept for the `start_session`/`complete_totp` details,
 not to copy into a login route:
 
 ```python
-user = auth.check_password(username, password)
+user = auth.check_password(username, password)             # tier C: warns since 0.21.0, goes with 1.0
 token, done = auth.start_session(user["id"], "password")   # tuple, not just a token
 auth.set_cookie(resp, token)
 if not done:                      # a second factor is still missing
@@ -1064,12 +1065,19 @@ Not everything without a leading underscore is a promise. Since 0.21.0 every pub
 |---|---|---|
 | **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.21.0. |
 | **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. |
-| **C — internal** | the wiring of the built-in routes | None. Gets a leading underscore; the old name stays as an alias that warns when called until 1.0, then goes. Don't start using them. |
+| **C — internal** | the wiring of the built-in routes | None. Since 0.21.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
 
 A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
 red until then, so nothing becomes a promise by accident. The config fields are tier A (except
 one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinySesamError`,
 `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+**Tier C warns.** Calling an old tier-C name (reading one, for the constants) raises a
+`DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
+lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
+tests once with `python -W error::DeprecationWarning`. A subclass that overrides one of these names
+gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.21.0, so the
+override no longer takes effect.
 
 ### For advanced use (tier B)
 

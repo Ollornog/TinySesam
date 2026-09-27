@@ -37,7 +37,7 @@ VERFAHREN = {
 }
 
 #: Was in einer `login_chain` stehen darf: die Faktoren, die eine Sitzung wirklich bekommen
-#: kann (`TinySesam.IDENTIFYING`) plus `totp`. Bewusst NICHT `VERFAHREN` — dort stehen auch
+#: kann (`TinySesam._IDENTIFYING`) plus `totp`. Bewusst NICHT `VERFAHREN` — dort stehen auch
 #: `ldap` (schreibt den Faktor `password`) und `apikey` (wird nie zum Faktor).
 KETTENSCHRITTE = frozenset({"password", "pin", "oidc", "passkey", "magic", "saml", "totp"})
 

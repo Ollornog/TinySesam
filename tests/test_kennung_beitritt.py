@@ -63,8 +63,8 @@ def _fehlversuche(auth, kennung, ip, n, vorher=0):
     """`n` Fehlversuche unter `kennung` von `ip` — über den Weg der Routen (mit Vorbuchung der
     Serie) —, datiert `vorher` Sekunden zurück."""
     for _ in range(n):
-        v = auth.versuch_beginnen(kennung, ip, "password")
-        auth.record_login(kennung, ip, False, "password", versuch=v)
+        v = auth._versuch_beginnen(kennung, ip, "password")
+        auth._record_login(kennung, ip, False, "password", versuch=v)
     if vorher:
         auth.store._exec("UPDATE login_attempt SET ts = ts - ? WHERE ip = ?", (vorher, ip))
 

@@ -105,7 +105,7 @@ class AnfrageAbgebrochen(VerzeichnisNichtErreichbar):
     anonymen Sitzung grösser als `sockbuf_max_incoming` ist (Vorgabe 262143 Byte).
 
     Für die Login-Route ist es dasselbe wie ein Ausfall (Unterklasse: 503, kein Fehlversuch).
-    `TinySesam.check_ldap` schaltet damit aber den `AusfallMerker` NICHT scharf: Bis zur
+    `TinySesam._check_ldap` schaltet damit aber den `AusfallMerker` NICHT scharf: Bis zur
     Nachbesserung der T-13-Integration tat es das, und EINE präparierte Anmeldung ohne Konto gab
     jeder LDAP-Nutzerin 30 s lang 503 — alle paar Sekunden wiederholt dauerhaft, ohne dass den
     Absender das einen Fehlversuch kostete. Der Merker ist für Fehlschläge da, die HÄNGEN (ohne
@@ -161,7 +161,7 @@ class AusfallMerker:
     """Merkt sich einen Verzeichnis-Ausfall, damit nicht jede Anmeldung bis zum Timeout hängt.
 
     Vorbild ist die Redis-Pause (`security.RedisRateLimiter`). Hier ist sie mehr als Komfort: Die
-    Login-Route bucht jeden Versuch VORAB als Fehlversuch (`versuch_beginnen`, R7-2) und nimmt ihn
+    Login-Route bucht jeden Versuch VORAB als Fehlversuch (`_versuch_beginnen`, R7-2) und nimmt ihn
     bei einem Ausfall erst zurück, wenn `VerzeichnisNichtErreichbar` kommt (F-23). Bei einem
     Verzeichnis, das Pakete verwirft, ist das nach `VERBINDUNGS_TIMEOUT`. Bis dahin zählte jede
     hängende Anmeldung für Konto, Paar und Adresse mit — und zwar während des GANZEN Ausfalls,
@@ -189,7 +189,7 @@ class AusfallMerker:
     beginnen, hängen bis zum Timeout — einmal je Ausfall und je Prozess (der Merker lebt im
     Prozess, bei `--workers N` also N-mal, zeitgleich). Ihre Vorbuchungen sperren aber niemanden
     mehr: Die Login-Route bucht sie als schwebend (`Store.reserve_attempt(schweben=True)`), und
-    wer nur an ihnen scheitern würde, wartet, bis sie entschieden sind (`versuch_beginnen`) —
+    wer nur an ihnen scheitern würde, wartet, bis sie entschieden sind (`_versuch_beginnen`) —
     höchstens `VERBINDUNGS_TIMEOUT + 2` Sekunden, ohne `failed login` und ohne Sperrhinweis. Bis
     2026-09-26 blieb dieses Fenster eine bekannte Lücke: 429 für Unbeteiligte, auch für den
     Notfall-Admin, samt Bann durch fail2ban.

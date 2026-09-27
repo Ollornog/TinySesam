@@ -86,9 +86,9 @@ _store_src = read("tinysesam", "store.py")
 _busy = int(re.search(r"^    BUSY_TIMEOUT_MS = ([\d_]+)", _store_src, re.M).group(1).replace("_", ""))
 assert f"**{_busy // 1000} s**" in betrieb, f"BETRIEB.md nennt nicht die echte Wartezeit ({_busy} ms)"
 assert re.search(r'^HEALTH_PATH = "/healthz"', read("tinysesam", "gateway.py"), re.M) and "/healthz" in betrieb
-_ident = re.search(r"^    IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
+_ident = re.search(r"^    _IDENTIFYING = \(([^)]*)\)", read("tinysesam", "manager.py"), re.M).group(1)
 _faktoren = re.findall(r'"(\w+)"', _ident)
-assert len(_faktoren) >= 6, f"IDENTIFYING nicht gelesen: {_faktoren}"
+assert len(_faktoren) >= 6, f"_IDENTIFYING nicht gelesen: {_faktoren}"
 _fehlend = [f for f in _faktoren if f"(`{f}`" not in betrieb]
 assert not _fehlend, f"BETRIEB.md: Anmeldeweg ohne Zeile in der Stärke-Tabelle: {_fehlend}"
 print(f"  docs/BETRIEB.md: Wartezeit {_busy // 1000} s, /healthz und alle {len(_faktoren)} "
@@ -1054,10 +1054,18 @@ _leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.)?[A-Za-z_][A-Za-z0
 assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommentar:\n  " +
                    "\n  ".join(_leer[:8]) +
                    "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
-# Gegliedert nach Stufe (PO-Entscheid 2026-09-26): A und B mit Erklärung, C nur als Liste.
+# Gegliedert nach Stufe (PO-Entscheid 2026-09-26): A und B mit Erklärung, C als Tabelle alter
+# Name → Ersatz (seit 0.21.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
 for _kopf in ("## A · Methoden von `TinySesam`", "## B · Methoden von `TinySesam`",
-              "## C · Intern — nicht verwenden"):
+              "## C · Veraltet — fällt mit 1.0 weg"):
     assert _kopf in _apidoc, f"API.md ohne Abschnitt {_kopf!r} — Gliederung nach Stufe fehlt"
+_c_zeilen = _re.findall(r"^\| `(\w+)` \| (?:Methode|Konstante) \| (.+) \|$", _apidoc, _re.M)
+_c_namen = sorted(n for _b, _ee in _json_k.loads(_lies("tests/api_surface.json")).items()
+                  for n, _e in _ee.items() if isinstance(_e, dict) and _e.get("stufe") == "C")
+assert sorted(n for n, _ in _c_zeilen) == _c_namen, (
+    "API.md: die Tabelle „Veraltet“ deckt sich nicht mit den C-Namen der Ablage")
+assert all(_e.strip() and not _e.startswith("—") for _, _e in _c_zeilen), (
+    "API.md: ein C-Name ohne Ersatz in der Tabelle „Veraltet“")
 assert "## Ohne Stufe" not in _apidoc, ("API.md führt Namen ohne Stufe — "
                                         "`python tests/test_api_surface.py` sagt, welche")
 print(f"  API-Nachschlag: {_apidoc.count(chr(10) + '### ')} Einträge, jeder erklärt, Abzug aktuell")

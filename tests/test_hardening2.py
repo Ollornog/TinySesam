@@ -49,7 +49,7 @@ ok(f"auth.gc() räumt auf + zählt: {res}")
 from tinysesam import TinySesamConfig as _C  # noqa
 def took(username):
     t = time.perf_counter()
-    auth.check_password(username, "irgendwas")
+    auth._check_password(username, "irgendwas")
     return time.perf_counter() - t
 t_known = took("admin")          # existiert, falsches PW → echter Hash-Verify
 t_unknown = took("gibtsnicht")   # existiert nicht → Dummy-Verify
@@ -125,7 +125,7 @@ ok(f"gescheiterte Schreibzugriffe rollen zurück ({len(schreiber)} Wege), die An
 # Zurückrollen), räumt `reserve_attempt` sie weg, statt jede Anmeldung scheitern zu lassen.
 auth_s.store.db.execute("INSERT INTO setting(key, value) VALUES ('probe_liegengeblieben', '1')")
 assert auth_s.store.db.in_transaction, "Vorbedingung: eine offene Transaktion liegt herum"
-versuch_s = auth_s.versuch_beginnen("sven", "198.51.100.9", "password")
+versuch_s = auth_s._versuch_beginnen("sven", "198.51.100.9", "password")
 assert versuch_s is not None, "der Anmeldeversuch wurde abgewiesen"
 assert not auth_s.store.db.in_transaction
 assert auth_s.store.get_setting("probe_liegengeblieben") is None, \

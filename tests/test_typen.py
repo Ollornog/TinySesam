@@ -61,7 +61,7 @@ uid = auth.create_user("wer", password="geheim12345", email="wer@example.com")
 # Die sechs Methoden, die `Optional[dict]` versprechen — gemessen am echten Rückgabewert.
 for name, wert in (("get_user", auth.get_user(uid)),
                    ("find_user", auth.find_user("wer")),
-                   ("check_password", auth.check_password("wer", "geheim12345")),
+                   ("_check_password", auth._check_password("wer", "geheim12345")),
                    ("current_user", None),
                    ("redeem_magic (leer)", auth.redeem_magic("gibtsnicht")),
                    ("find_user (leer)", auth.find_user("niemand"))):
@@ -75,7 +75,7 @@ for name, wert in (("get_user", auth.get_user(uid)),
                 isinstance(wert, dict), f"liefert {type(wert).__name__}")
 
 # Der Test, an dem ein Nutzer scheiterte: `.get()` gibt es auf einer Row nicht.
-u = auth.check_password("wer", "geheim12345")
+u = auth._check_password("wer", "geheim12345")
 r.check("und ein dict-Zugriff wie .get() funktioniert",
         u is not None and u.get("email") == "wer@example.com",
         "genau hier scheiterte, wer der Annotation glaubte")

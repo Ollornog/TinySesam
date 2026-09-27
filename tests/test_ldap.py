@@ -203,7 +203,7 @@ assert not auth.get_user(uid)["is_admin"], \
 ok("B-umgehung-10: Schloss 1 einzeln — die Login-Route reicht „kein Beleg\" durch, auch bei belegtem Konto")
 # Gegenprobe: Ohne diesen Durchreicher (`email_bestaetigt=None`) befördert derselbe Vermerk
 # sofort — das misst, dass oben WIRKLICH die Route entschieden hat und nicht etwas anderes.
-assert auth.maybe_promote_admin(auth.get_user(uid), faktor="password") is True, \
+assert auth._maybe_promote_admin(auth.get_user(uid), faktor="password") is True, \
     "auch ohne den Durchreicher befördert nichts — dann misst die Prüfung darüber nichts"
 ok("... Gegenprobe: ohne den Durchreicher befördert der Vermerk am Konto sofort")
 os.remove(db)
@@ -681,21 +681,21 @@ db11, auth11, c11 = build(ldap_auto_create=True)
 
 # (1) Neues Konto: wird angelegt UND gebunden.
 auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-alice", "email": "a@corp"}})
-assert auth11.check_ldap("alice", "pw") is not None
+assert auth11._check_ldap("alice", "pw") is not None
 _uid_a = auth11.store.get_user_by_name("alice")["id"]
 assert auth11.store.get_federated_kennung("ldap", _uid_a) == "uuid-alice"
 ok("F-11: ein neu angelegtes Konto wird an die Kennung des Verzeichnisses gebunden")
 
 # (2) Umbenennung im Verzeichnis: dieselbe Kennung, neuer Name → dasselbe Konto.
 auth11.ldap = FakeLDAP({"alice.neu": {"password": "pw", "id": "uuid-alice"}})
-_u = auth11.check_ldap("alice.neu", "pw")
+_u = auth11._check_ldap("alice.neu", "pw")
 assert _u is not None and _u["id"] == _uid_a, f"Umbenennung ergab ein anderes Konto: {_u}"
 assert auth11.store.get_user_by_name("alice.neu") is None, "es wurde ein zweites Konto angelegt"
 ok("F-11: eine Umbenennung im Verzeichnis ist kein Kontowechsel")
 
 # (3) DER ANGRIFF: neue Kennung unter dem alten Namen → abgewiesen.
 auth11.ldap = FakeLDAP({"alice": {"password": "pw", "id": "uuid-FREMD"}})
-assert auth11.check_ldap("alice", "pw") is None, \
+assert auth11._check_ldap("alice", "pw") is None, \
     "ein neues Verzeichniskonto unter demselben Namen hat das lokale Konto übernommen"
 assert any(e["event"] == "ldap_kennung_wechsel" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: ein neues Verzeichniskonto unter altem Namen erbt das lokale Konto NICHT")
@@ -704,19 +704,19 @@ ok("F-11: ein neues Verzeichniskonto unter altem Namen erbt das lokale Konto NIC
 _uid_b = auth11.create_user("bestand")
 assert auth11.store.get_federated_kennung("ldap", _uid_b) is None
 auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-bestand"}})
-assert auth11.check_ldap("bestand", "pw") is not None
+assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-bestand"
 assert any(e["event"] == "ldap_kennung_gebunden" for e in auth11.store.recent_audit(limit=10))
 ok("F-11: ein Bestandskonto wird beim nächsten Login nachgebunden — einmal, mit Audit-Zeile")
 
 # …und danach greift der Riegel aus (3) auch für dieses Konto.
 auth11.ldap = FakeLDAP({"bestand": {"password": "pw", "id": "uuid-anders"}})
-assert auth11.check_ldap("bestand", "pw") is None
+assert auth11._check_ldap("bestand", "pw") is None
 ok("F-11: …danach ist auch dieses Konto gegen den Namenswechsel geschützt")
 
 # Der Betreiber kann die Bindung lösen, wenn im Verzeichnis wirklich umgezogen wurde.
 assert auth11.loese_fremde_bindung("ldap", _uid_b) == 1
-assert auth11.check_ldap("bestand", "pw") is not None
+assert auth11._check_ldap("bestand", "pw") is not None
 assert auth11.store.get_federated_kennung("ldap", _uid_b) == "uuid-anders"
 ok("F-11: der Betreiber löst die Bindung — ein bewusster Schritt, kein Nebeneffekt")
 
@@ -730,7 +730,7 @@ _puffer11 = _io11.StringIO()
 _haken11 = _log11.StreamHandler(_puffer11)
 _sec11.seclog.addHandler(_haken11)
 try:
-    assert auth11b.check_ldap("ohne", "pw") is not None
+    assert auth11b._check_ldap("ohne", "pw") is not None
 finally:
     _sec11.seclog.removeHandler(_haken11)
 assert "keine stabile Kennung" in _puffer11.getvalue(), _puffer11.getvalue()[:200]
@@ -739,7 +739,7 @@ ok("F-11: ein Verzeichnis ohne stabile Kennung meldet sich, sperrt aber niemande
 # …es sei denn, der Betreiber verlangt sie.
 db11c, auth11c, c11c = build(ldap_auto_create=True, federation_require_stable_id=True)
 auth11c.ldap = FakeLDAP({"ohne": {"password": "pw"}})
-assert auth11c.check_ldap("ohne", "pw") is None
+assert auth11c._check_ldap("ohne", "pw") is None
 ok("F-11: federation_require_stable_id=True weist eine Anmeldung ohne Kennung ab")
 
 # A-4 (Angriff auf H-4): Ohne stabile Kennung wurde nie gebunden — das LDAP-Konto galt als lokal
@@ -763,14 +763,14 @@ assert _post11d == [], f"LDAP-Konto ohne Kennung bekam einen Reset-Link: {_post1
 ok("A-4: ein LDAP-Konto ohne stabile Kennung bekommt über den echten Login-Weg keinen Reset-Link")
 # Kommt später eine echte Kennung, ersetzt sie den Platzhalter (Nachbindung, kein Kennungswechsel).
 auth11d.ldap = FakeLDAP({"bob": {"password": "ldappw", "id": "uuid-bob"}})
-assert auth11d.check_ldap("bob", "ldappw") is not None, "der Platzhalter blockiert die echte Kennung"
+assert auth11d._check_ldap("bob", "ldappw") is not None, "der Platzhalter blockiert die echte Kennung"
 assert auth11d.store.get_federated_kennung("ldap", _uid_bob) == "uuid-bob"
 # Eine Kennung in Platzhalter-Form aus dem Verzeichnis wird abgewiesen — sie träfe sonst das
 # Konto, dessen ID sie nennt.
 _adm11d = auth11d.store.get_user_by_name("admin")["id"]
 auth11d.store.link_federated("ldap", f"{auth11d._OHNE_KENNUNG}{_adm11d}", _adm11d, 0)
 auth11d.ldap = FakeLDAP({"mallory": {"password": "m", "id": f"{auth11d._OHNE_KENNUNG}{_adm11d}"}})
-assert auth11d.check_ldap("mallory", "m") is None, "Platzhalter-Kennung übernahm ein fremdes Konto"
+assert auth11d._check_ldap("mallory", "m") is None, "Platzhalter-Kennung übernahm ein fremdes Konto"
 ok("A-4: echte Kennung ersetzt den Platzhalter; Platzhalter-Form aus dem Verzeichnis abgewiesen")
 
 for _d in (db11, db11b, db11c, db11d):
@@ -792,15 +792,15 @@ auth19.ldap = FakeLDAP({
             "groups": ["cn=staff,ou=groups,dc=corp", "cn=nicht-admin,ou=groups,dc=corp",
                        "cn=redaktion-alt,ou=groups,dc=corp"]},
 })
-assert auth19.check_ldap("eve", "x") is None, "staff passt nicht auf cn=staffextern"
+assert auth19._check_ldap("eve", "x") is None, "staff passt nicht auf cn=staffextern"
 assert any(z["event"] == "ldap_group_denied" and z["username"] == "eve"
            for z in auth19.store.recent_audit(20)), "die Abweisung am Gruppen-Gate ist stumm"
 ok("F-19: ldap_allowed_groups=['staff'] lässt cn=staffextern nicht durch (und sagt es im Audit-Log)")
-_mia = auth19.check_ldap("mia", "x")
+_mia = auth19._check_ldap("mia", "x")
 assert _mia is not None and not _mia["is_admin"], "admin passt auf cn=nicht-admin"
 assert auth19.store.get_roles(_mia["id"]) == [], auth19.store.get_roles(_mia["id"])
 ok("F-19: 'admin' und 'cn=redaktion' treffen weder cn=nicht-admin noch cn=redaktion-alt")
-_bob = auth19.check_ldap("bob", "x")
+_bob = auth19._check_ldap("bob", "x")
 assert _bob is not None and _bob["is_admin"], "der exakte CN-Treffer muss weiter greifen"
 assert auth19.store.get_roles(_bob["id"]) == ["redaktion"], auth19.store.get_roles(_bob["id"])
 ok("F-19: der gewohnte Schlüssel ('staff', 'cn=redaktion') greift weiter — Gross/klein egal")
@@ -810,7 +810,7 @@ os.remove(db19)
 db19b, auth19b, _ = build(ldap_allowed_groups=["staff"], group_match="substring")
 auth19b.ldap = FakeLDAP({"eve": {"password": "x", "id": "e1",
                                  "groups": ["cn=staffextern,ou=groups,dc=corp"]}})
-assert auth19b.check_ldap("eve", "x") is not None
+assert auth19b._check_ldap("eve", "x") is not None
 ok("F-19: group_match='substring' holt den Teilstring-Vergleich ausdrücklich zurück")
 os.remove(db19b)
 
@@ -840,7 +840,7 @@ _puffer19 = __import__("io").StringIO()
 _haken19 = __import__("logging").StreamHandler(_puffer19)
 _sec19.seclog.addHandler(_haken19)
 try:
-    _ada = auth19c.check_ldap("ada", "x")
+    _ada = auth19c._check_ldap("ada", "x")
 finally:
     _sec19.seclog.removeHandler(_haken19)
 assert _ada is not None, "README-Schlüssel als ldap_allowed_groups weist jeden ab"
@@ -878,13 +878,13 @@ _haken23 = _log23.StreamHandler(_puffer23)
 _seclog23.addHandler(_haken23)
 try:
     antworten23 = [c23.post("/auth/login", data={"username": "alice", "password": "egal"})
-                   for _ in range(auth23.sec("max_login_attempts") + 2)]
+                   for _ in range(auth23._sec("max_login_attempts") + 2)]
 finally:
     _seclog23.removeHandler(_haken23)
 assert all(a.status_code == 503 for a in antworten23), [a.status_code for a in antworten23]
 assert "nicht erreichbar" in antworten23[0].text, antworten23[0].text[:300]
 assert auth23.store.count_fails(0, username="alice") == 0, "der Ausfall wurde als Fehlversuch verbucht"
-assert not auth23.is_locked("alice", "testclient"), "ein Ausfall sperrt das Konto"
+assert not auth23._is_locked("alice", "testclient"), "ein Ausfall sperrt das Konto"
 assert "failed login" not in _puffer23.getvalue(), "fail2ban bekäme einen Ausfall als Angriff"
 assert "LDAP nicht erreichbar" in _puffer23.getvalue(), _puffer23.getvalue()[:300]
 assert any(z["event"] == "ldap_unavailable" for z in auth23.store.recent_audit(20))
@@ -904,7 +904,7 @@ os.remove(db23)
 # max_login_attempts durch.
 db23a, auth23a, c23a = build()
 auth23a.ldap = AusfallLDAP()
-_max23a = auth23a.sec("max_login_attempts")
+_max23a = auth23a._sec("max_login_attempts")
 _puffer23a = _io23.StringIO()
 _haken23a = _log23.StreamHandler(_puffer23a)
 _seclog23.addHandler(_haken23a)
@@ -916,7 +916,7 @@ finally:
 assert all(s == 503 for s in _antw23a), _antw23a
 assert auth23a.store.count_fails(0, username="admin") == _max23a, \
     "falsches lokales Passwort während des Ausfalls wurde nicht verbucht"
-assert auth23a.is_locked("admin", "testclient"), "lokaler Admin während des Ausfalls unbegrenzt ratbar"
+assert auth23a._is_locked("admin", "testclient"), "lokaler Admin während des Ausfalls unbegrenzt ratbar"
 assert "failed login" in _puffer23a.getvalue(), "fail2ban sieht das Raten am lokalen Konto nicht"
 _r23a = c23a.post("/auth/login", data={"username": "admin", "password": "lokalpw"}, follow_redirects=False)
 assert _r23a.status_code == 429, f"richtiges Passwort kam nach {_max23a} Fehlversuchen durch: {_r23a.status_code}"
@@ -962,7 +962,7 @@ auth24.set_security("rate_limit_max", 1000)          # eine 429 muss aus der Spe
 haengt24 = HaengendesLDAP()
 auth24.ldap = haengt24
 NAT24 = ("198.51.100.7", 40000)
-SCHWELLE24 = auth24.sec("max_login_attempts") * auth24.sec("ip_attempt_factor")
+SCHWELLE24 = auth24._sec("max_login_attempts") * auth24._sec("ip_attempt_factor")
 
 
 def _anmelden24(name, pw="x"):
@@ -1102,19 +1102,19 @@ _uhr_p = [100.0]
 _auth_p._ldap_ausfall = AusfallMerker(uhr=lambda: _uhr_p[0])
 _auth_p.ldap = _launisch = _LaunischesLDAP()
 try:
-    _auth_p.check_ldap("alice", "pw")
+    _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
     pass   # der Merker ist danach scharf — nur das zählt hier
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "kaputt"
 try:
-    _auth_p.check_ldap("alice", "pw")
+    _auth_p._check_ldap("alice", "pw")
     raise AssertionError("Vorbedingung: die Probe hätte mit RuntimeError enden müssen")
 except RuntimeError:
     pass
 _launisch.modus = "gesund"
 try:
-    _info_p = _auth_p.check_ldap("alice", "pw")
+    _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
     raise AssertionError(f"nach einer Probe mit fremder Ausnahme fragt niemand mehr nach: {_e_p}")
 assert _info_p, _info_p
@@ -1124,19 +1124,19 @@ assert _info_p, _info_p
 # streichen → rot.)
 _launisch.modus = "weg"
 try:
-    _auth_p.check_ldap("alice", "pw")
+    _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar:
     pass   # der Merker ist danach scharf — nur das zählt hier
 _uhr_p[0] += AUSFALL_PAUSE_SEK + 1
 _launisch.modus = "abgebrochen"
 try:
-    _auth_p.check_ldap("alice", "pw")
+    _auth_p._check_ldap("alice", "pw")
     raise AssertionError("Vorbedingung: die Probe hätte abgebrochen werden müssen")
 except _ldap_mod.AnfrageAbgebrochen:
     pass
 _launisch.modus = "gesund"
 try:
-    _info_p = _auth_p.check_ldap("alice", "pw")
+    _info_p = _auth_p._check_ldap("alice", "pw")
 except VerzeichnisNichtErreichbar as _e_p:
     raise AssertionError(f"nach einer abgebrochenen Probe fragt niemand mehr nach: {_e_p}")
 assert _info_p, _info_p

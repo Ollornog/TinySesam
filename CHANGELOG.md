@@ -4,8 +4,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
-**Einstufung der öffentlichen API (Stufen A/B/C).** Jeder öffentliche Name trägt jetzt eine Stufe,
-und der Wächter verlangt sie. Was beim Update auffällt:
+**Einstufung der öffentlichen API (Stufen A/B/C) — die internen Namen (Stufe C) warnen und fallen
+mit 1.0 weg.** Was beim Update auffällt:
 
 - **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
   1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
@@ -13,9 +13,17 @@ und der Wächter verlangt sie. Was beim Update auffällt:
   bleibt, wird aber umgebaut oder entfernt, nachdem eine `DeprecationWarning` zwei
   Minor-Versionen lang darauf hingewiesen hat. C gehört nicht zur Zusage und fällt mit 1.0 weg.
   **Wer TinySesam einbettet, sieht in `API.md` nach, welche Stufe seine Aufrufe haben** — dort
-  steht jetzt jeder Name unter seiner Stufe, die C-Namen als Liste (darunter `check_password`,
-  `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs erklären die
-  Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
+  steht jetzt jeder Name unter seiner Stufe, die C-Namen als Tabelle mit ihrem Ersatz (darunter
+  `check_password`, `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs
+  erklären die Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
+- **Die internen Namen (Stufe C) warnen.** 42 Methoden und 6 Konstanten heissen intern jetzt `_name`
+  (`check_password` → `_check_password`, `record_login` → `_record_login` …, Liste unter
+  „Veraltet“), `complete_mfa` ist ein Alias von `complete_totp`. Der alte Name tut bis 1.0 dasselbe
+  wie bisher, löst aber bei jedem Aufruf (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem
+  Ersatz aus. Python zeigt sie ausserhalb von `__main__` nicht an — **wer TinySesam einbettet, lässt
+  seine Tests einmal mit `python -W error::DeprecationWarning` laufen**. Eine Unterklasse von
+  `TinySesam`, die einen dieser Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`:
+  Die eingebauten Routen rufen jetzt `_name`, die Überschreibung wirkt nicht mehr.
 
 ### Hinzugefügt
 
@@ -27,8 +35,22 @@ und der Wächter verlangt sie. Was beim Update auffällt:
   übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
-  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 225, B 64, C 50
-  von 339 Namen.
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 225, B 64, C 49
+  von 338 Namen (`SERIE_PIN_FOLGE`, nie veröffentlicht, heisst ohne Alias `_SERIE_PIN_FOLGE`).
+- **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
+  `Veraltet("_name", "<Ersatz>")`: ein Nicht-Daten-Deskriptor, der unverändert an die Implementierung
+  weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
+  Nachschlagen (`hasattr`, `getmembers`), bei Konstanten beim Lesen; die Warnung zeigt auf den
+  Aufrufer und nennt den Ersatz. Signatur und Docstring kommen vom Ziel, eine Zuweisung am Objekt
+  (Test-Fake) überschreibt weiter. `tests/test_api_surface.py` hält fest: C-Eintrag in der Ablage
+  (mit `ziel`, `seit`, `bis`) genau dann, wenn die Klasse einen Alias trägt; das Ziel heisst `_name`
+  (einzige Ausnahme `complete_mfa` → `complete_totp`, Stufe A); jeder Alias warnt genau einmal, mit
+  Ersatz und „fällt mit 1.0 weg“, auf den Aufrufer, und reicht Argumente unverändert weiter; kein
+  Code in `tinysesam/`, `examples/`, `scripts/` und `web/` benutzt einen alten Namen (AST, im Paket
+  auch als Zeichenkette für `getattr`); ab Version 1.0 ist jeder verbliebene Alias rot. Dazu setzt
+  `tests/run_all.py` für jede Suite einen Warnfilter, der eine solche Warnung aus einem Modul des
+  Pakets zum Fehler macht — so fällt auch ein dynamischer Zugriff auf, sobald eine Suite den Weg
+  durchläuft; der Wächter misst die Wirkung des Filters in einem eigenen Prozess.
 - **README: die Stufen und ein Abschnitt für Fortgeschrittene** (EN/DE). Die B-Bausteine stehen
   gruppiert nach Zweck — eigene Konto-Seite, eigenes Admin-Panel, Mail- und Token-Abläufe, eigene
   Routen und Erweiterungspunkte —, `apply_factor` mit einer eigenen Warnung (hängt einen Faktor
@@ -55,11 +77,55 @@ und der Wächter verlangt sie. Was beim Update auffällt:
 ### Geändert
 
 - **`API.md` ist nach Stufe gegliedert** (A „öffentlich, stabil ab 1.0“, B „für
-  Fortgeschrittene“, C als Liste ohne Erklärung) und erklärt vorab, was jede Stufe zusagt. Neu
+  Fortgeschrittene“, C als Tabelle „Veraltet — fällt mit 1.0 weg“ mit Ersatz statt Erklärung) und
+  erklärt vorab, was jede Stufe zusagt. Neu
   darin: die Konstanten der Stufen A und B (Erklärung aus dem `#:`-Kommentar, dazu der Wert) und
   `tinysesam.current_version()`; die Hygiene-Prüfung verlangt auch für sie eine Erklärung.
   `KONFIGURATION.md` nennt die Stufe der Felder — alle A bis auf den Grabstein `totp_required` (B).
   Bis hierher stand dort „gemessen, nicht ausgewählt“: eingefroren war, was keinen Unterstrich trug.
+
+### Veraltet
+
+- **49 interne Namen (Stufe C) — fallen mit 1.0 weg.** Seit diesem Release heisst die
+  Implementierung `_name`; der alte Name reicht bis 1.0 unverändert weiter und löst beim Aufruf
+  (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
+  führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
+  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: die eingebauten Routen (`POST /auth/login`,
+    `/auth/pin`, `/auth/totp`, `/auth/reauth`, `/auth/resource/{name}`, `/auth/saml/acs`), eigenes
+    Aussehen per `set_template`:** `check_password` → `_check_password`, `check_pin` → `_check_pin`,
+    `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`, `check_resource` →
+    `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
+    `_verify_recovery_code`, `verify_user_password` → `_verify_user_password`, `verify_user_pin` →
+    `_verify_user_pin`.
+  - **Sperren und Buchhaltung — Ersatz: die eingebauten Routen, die atomar prüfen und buchen:**
+    `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`, `is_password_change_locked` →
+    `_is_password_change_locked`, `is_reauth_locked` → `_is_reauth_locked`, `is_resource_locked` →
+    `_is_resource_locked`, `is_totp_setup_locked` → `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`,
+    `record_login` → `_record_login`, `versuch_beginnen` → `_versuch_beginnen`.
+  - **Sitzung, Anmeldekette, CSRF:** `session_from_request` → `_session_from_request` (Ersatz
+    `current_user`/`session_user`), `next_login_step` → `_next_login_step`, `factor_entry` →
+    `_factor_entry`, `login_redirect_after` → `_login_redirect_after`, `csrf_rotieren` →
+    `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`), `verify_csrf` → `_verify_csrf` (Ersatz
+    `require_csrf`), `unlock_resource` → `_unlock_resource`, `mfa_pending` → `_mfa_pending`.
+  - **Erst-Admin, Demo, Protokoll:** `maybe_promote_admin` → `_maybe_promote_admin` (Ersatz
+    `admin_identifiers`/`ensure_admin`), `consume_admin_claim` → `_consume_admin_claim`,
+    `admin_claim_fehlgriff` → `_admin_claim_fehlgriff`, `seed_demo` → `_seed_demo` (Ersatz
+    `demo_mode=True`), `purge_demo` → `_purge_demo` (Ersatz `demo_mode=False`), `send_signup_notice`
+    → `_send_signup_notice`, `sicherheitsereignis` → `_sicherheitsereignis`, `token_abgewiesen` →
+    `_token_abgewiesen`.
+  - **Forward-Auth und mehrere OIDC-Anwendungen:** `forwarded_url` → `_forwarded_url`,
+    `forward_login_url` → `_forward_login_url`, `forward_response_headers` →
+    `_forward_response_headers`, `oidc_anwendung` → `_oidc_anwendung`, `oidc_freigabe_gueltig` →
+    `_oidc_freigabe_gueltig`, `vermerke_oidc_freigabe` → `_vermerke_oidc_freigabe`, `is_secure` →
+    `_is_secure`.
+  - **Härtungswerte:** `sec` → `_sec` (Ersatz `all_security()`).
+  - **Konstanten (warnen beim Lesen):** `APIKEY_AUDIT_FENSTER` → `_APIKEY_AUDIT_FENSTER`,
+    `DEMO_USERS` → `_DEMO_USERS`, `FOEDERIERTE_FAKTOREN` → `_FOEDERIERTE_FAKTOREN`, `IDENTIFYING` →
+    `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE` →
+    `_RECOVERY_WARNSCHWELLE`.
+  - **`complete_mfa` → `complete_totp`** (gleiches Verhalten; kein Unterstrich-Name, der Alias zeigt
+    auf die öffentliche Methode). Im Wächter misst sich jetzt dessen Rückgabetyp mit
+    (`-> Optional[str]`), vorher stand dort keiner.
 
 ## [0.21.0] — 2026-09-27
 

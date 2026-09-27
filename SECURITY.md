@@ -90,8 +90,8 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
 - **A TOTP code is valid exactly once — including the setup code.** The code that confirms the
   setup is consumed. Under `login_chain=["password","totp"]` that confirmation completes the TOTP
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that
-  call `totp_confirm(uid, now())` and then `verify_totp(uid, now())` with the same code fail since
-  T-13 — confirm with the previous time step's code instead.
+  call `totp_confirm(uid, now())` and then sign in (`POST /auth/totp`) with the same code fail
+  since T-13 — confirm with the previous time step's code instead.
 
 ## Supported versions
 

@@ -107,7 +107,7 @@ tok_x = re.search(r"/auth/reset\?token=([\w\-]+)", post_x[0]).group(1)
 r = cx.post("/auth/reset", data={"token": tok_x, "password": "frisches-passwort"},
             follow_redirects=False)
 assert r.status_code == 303
-assert ax.check_password("ohne", "frisches-passwort")
+assert ax._check_password("ohne", "frisches-passwort")
 os.remove(db_x)
 ok("Passwort-Reset funktioniert ohne Magic-Link (Kopplung gelöst)")
 
@@ -135,9 +135,9 @@ a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
 app_s = FastAPI()
 app_s.include_router(a_s.router())
 c_s = TestClient(app_s, headers={"Accept": "text/html"})
-for _ in range(a_s.sec("max_login_attempts")):
+for _ in range(a_s._sec("max_login_attempts")):
     assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "vergessen"}).status_code == 401
-a_s.record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
+a_s._record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
 assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
     "Vorbedingung: das Konto ist gesperrt"
 c_s.post("/auth/forgot", data={"email": "gesperrt@example.com"})
@@ -152,8 +152,8 @@ assert r.status_code == 303, f"nach dem Reset weiter gesperrt: {r.status_code}"
 ok("R4-13/H-10: der Reset läuft an der Sperre vorbei und hebt sie auf")
 # Der Login oben war vollständig und hat damit ohnehin alles geräumt (R7-1); gemessen wird der
 # Reset deshalb am Zähler direkt, mit einem frischen Fehlgriff je Methode.
-a_s.record_login("gesperrt", "testclient", False, "password")
-a_s.record_login("gesperrt", "testclient", False, "totp")
+a_s._record_login("gesperrt", "testclient", False, "password")
+a_s._record_login("gesperrt", "testclient", False, "totp")
 weg = a_s.sperre_aufheben(a_s.store.get_user_by_name("gesperrt")["id"], methoden=("password",))
 assert weg == 1 and a_s.store.count_fails(0, username="gesperrt", method="totp") == 1, \
     "der Reset räumt auch Fehlversuche am zweiten Faktor"

@@ -106,16 +106,16 @@ ok("Abweisung steht im Audit-Log (eine 403 im Proxy-Log sagt nicht, wer woran sc
 # ---------- Login-URL: host-only Cookie darf nicht auf einen fremden Host zeigen ----------
 # Ohne cookie_domain gilt das Cookie nur auf dem Host, auf dem der Login stattfand. Zeigte die
 # Login-URL dann auf base_url, entstünde eine stille Endlosschleife.
-assert auth.forward_login_url("https://app.example.com/geheim").startswith(
+assert auth._forward_login_url("https://app.example.com/geheim").startswith(
     "https://app.example.com/auth/login?next=")
 ok("ohne cookie_domain: Login-URL auf dem angefragten Host (keine Redirect-Schleife)")
 
-assert auth.forward_login_url("https://auth.example.com/x").startswith("https://auth.example.com/auth/login")
+assert auth._forward_login_url("https://auth.example.com/x").startswith("https://auth.example.com/auth/login")
 ok("derselbe Host wie base_url → unverändert")
 
 # Ein gefälschter X-Forwarded-Host kann die Login-URL nicht umbiegen: nur Hosts aus
 # trusted_redirect_hosts kommen infrage.
-assert auth.forward_login_url("https://evil.example/x").startswith("https://auth.example.com/auth/login")
+assert auth._forward_login_url("https://evil.example/x").startswith("https://auth.example.com/auth/login")
 ok("fremder Host ausserhalb trusted_redirect_hosts → bleibt bei base_url")
 
 db2 = os.path.join(tempfile.mkdtemp(), "t.db")
@@ -123,7 +123,7 @@ sso = TinySesam(TinySesamConfig(db_path=db2, csrf_enabled=False, cookie_secure=F
                                 passkey_enabled=False, forward_auth_enabled=True,
                                 base_url="https://auth.example.com", cookie_domain=".example.com",
                                 trusted_redirect_hosts=["app.example.com"]))
-assert sso.forward_login_url("https://app.example.com/geheim").startswith(
+assert sso._forward_login_url("https://app.example.com/geheim").startswith(
     "https://auth.example.com/auth/login?next=")
 ok("mit cookie_domain: zentraler Login auf base_url (echtes SSO über Subdomains)")
 
@@ -158,7 +158,7 @@ assert "Remote-Email" not in r.headers and "Remote-Name" not in r.headers
 ok("die Liste ist vollständig, nicht ergänzend — Weglassen gibt die E-Mail nicht heraus")
 
 # Ohne das Feld bleibt es beim bisherigen Satz
-vorgabe = auth.forward_response_headers(auth.store.get_user_by_name("admin"))
+vorgabe = auth._forward_response_headers(auth.store.get_user_by_name("admin"))
 # Seit 2026-09-25 gehört `Remote-Id` (die Konto-ID) dazu — nicht still: CHANGELOG und die
 # Proxy-Beispiele unter deploy/ nennen ihn, und die Beispiele setzen ihn selbst (sonst reichte der
 # Proxy einen vom Browser gefälschten durch).
@@ -228,7 +228,7 @@ assert "app=app-a.example.com" in r.headers.get("X-TinySesam-Location", ""), r.h
 ok("T-14: angemeldet, aber ohne Freigabe für diese Anwendung → 401 mit app= in der Login-URL")
 
 # Der Provider hat für A zugestimmt.
-auth4.vermerke_oidc_freigabe(_sitzung, "app-a.example.com", rollen=["a-team"])
+auth4._vermerke_oidc_freigabe(_sitzung, "app-a.example.com", rollen=["a-team"])
 r = c14.get("/auth/forward", headers=PROXY_A)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
 
@@ -246,12 +246,12 @@ assert r.status_code == 401 and r.headers.get("X-TinySesam-Reason") == "app-vera
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 401
 # Die Sitzung selbst ist unberührt — das ist der Unterschied zum Abmelden.
 assert auth4.store.get_session(_sitzung) is not None, "die Sitzung darf die abgelaufene Freigabe überleben"
-auth4.vermerke_oidc_freigabe(_sitzung, "app-a.example.com")
+auth4._vermerke_oidc_freigabe(_sitzung, "app-a.example.com")
 assert c14.get("/auth/forward", headers=PROXY_A).status_code == 200
 ok("T-14: nach oidc_revalidate_minutes verfällt die Freigabe (Sitzung bleibt), Bestätigung öffnet wieder")
 
 # Entzug von Hand: eine Anwendung zu, die andere offen.
-auth4.vermerke_oidc_freigabe(_sitzung, "app-b.example.com")
+auth4._vermerke_oidc_freigabe(_sitzung, "app-b.example.com")
 assert c14.get("/auth/forward", headers=PROXY_B).status_code == 200
 _weg = auth4.store.drop_oidc_grant(_h, "app-b.example.com")
 assert _weg == 1
@@ -303,9 +303,9 @@ c15.post("/auth/login", data={"username": "admin", "password": "geheim123", "nex
          follow_redirects=False)
 r = c15.get("/auth/forward", headers=PROXY)
 assert r.status_code == 200, (r.status_code, r.headers.get("X-TinySesam-Reason"))
-assert auth5.oidc_anwendung("https://app.example.com/x") == ""
-assert "app=" not in auth5.forward_login_url("https://app.example.com/x")
-assert auth5.oidc_freigabe_gueltig("egal", "egal") == (True, "")
+assert auth5._oidc_anwendung("https://app.example.com/x") == ""
+assert "app=" not in auth5._forward_login_url("https://app.example.com/x")
+assert auth5._oidc_freigabe_gueltig("egal", "egal") == (True, "")
 ok("T-14: eine Installation mit einem Client verhält sich unverändert (kein app=, keine Freigabe nötig)")
 
 # Die Vorgabe des Gateway-Presets steht hier, damit eine Änderung daran auffällt: Sie ist die

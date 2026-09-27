@@ -102,15 +102,15 @@ def build_router(auth) -> APIRouter:
                                     error=auth.t("err.required"))
         remember_me = _remember(cfg, remember)
         ip = auth.client_ip(request)
-        if not auth.rate_ok(ip):
+        if not auth._rate_ok(ip):
             return auth.render_page("login", request=request, status=429, next=nxt, error=auth.t("err.rate"))
-        # Prüfen und Verbuchen in EINEM Schritt (R7-2): Mit `is_locked()` vorab und
-        # `record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
+        # Prüfen und Verbuchen in EINEM Schritt (R7-2): Mit `_is_locked()` vorab und
+        # `_record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
         # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
-        # Fehlversuch in der Tabelle; `record_login(..., versuch=…)` macht ihn zum Erfolg.
+        # Fehlversuch in der Tabelle; `_record_login(..., versuch=…)` macht ihn zum Erfolg.
         # Mit LDAP schwebt er, bis das Verzeichnis geantwortet hat (G9): Bei einem Ausfall wird er
         # zurückgenommen (F-23), und bis dahin darf er niemanden sperren, sondern nur warten lassen.
-        versuch = auth.versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
+        versuch = auth._versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
         if versuch is None:
             # Eine Serien-Sperre (B2-6) läuft nicht ab — „vorübergehend" wäre gelogen, und der
             # Nutzer braucht den Weg hinaus. Die Meldung verrät nichts über die Existenz des
@@ -122,14 +122,14 @@ def build_router(auth) -> APIRouter:
         # Unerwartetes (Programmfehler im Client, Datenbank weg, eine HTTPException aus der
         # Prüfung) macht den Versuch sofort zum Fehlversuch — im Zweifel strenger, wie bisher.
         # Ohne das schwebte er `Store.VORBUCHUNG_SCHWEBE_SEK` lang und liesse Anmeldungen
-        # derselben Adresse warten (G9). Ab `record_login` ist er abgeschlossen.
+        # derselben Adresse warten (G9). Ab `_record_login` ist er abgeschlossen.
         try:
-            u = auth.check_password(username, password)
+            u = auth._check_password(username, password)
             aus_verzeichnis = False
             if not u and cfg.ldap_enabled:
                 from .ldap_ import VerzeichnisNichtErreichbar
                 try:
-                    u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+                    u = auth._check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
                 except VerzeichnisNichtErreichbar as e:
                     # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
                     # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
@@ -147,16 +147,16 @@ def build_router(auth) -> APIRouter:
                     # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
                     # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
                     # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
-                    # Der Versuch steht seit `versuch_beginnen` schon in der Tabelle (R7-2), als
+                    # Der Versuch steht seit `_versuch_beginnen` schon in der Tabelle (R7-2), als
                     # schwebende Vorbuchung (G9) — ohne lokales Passwort wird er also
                     # zurückgenommen, nicht nur nicht zusätzlich verbucht. Bis dahin lässt er
                     # Anmeldungen, die an ihm scheitern würden, warten, statt sie zu sperren; damit
-                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `check_ldap` nach
+                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `_check_ldap` nach
                     # einem Ausfall eine Pause lang gar nicht erst (`ldap_.AusfallMerker`) und
                     # wirft sofort.
                     lokal = auth.find_user(username)
                     if lokal and auth.store.get_password_hash(lokal["id"]):
-                        auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
+                        auth._record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
                     else:
                         auth._versuch_zuruecknehmen(versuch)
                     return auth.render_page("login", request=request, status=503, next=nxt,
@@ -171,19 +171,19 @@ def build_router(auth) -> APIRouter:
         # Verzeichnis gefragt worden war und abgelehnt hatte.
         # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
         # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
-        # Diesen Fall weist `check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
+        # Diesen Fall weist `_check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
         # Wächter in `_raeumgrenze` bleibt die zweite Sicherung.
-        auth.record_login(username, ip, bool(u), "password", versuch=versuch,
-                          quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
-                                  else "lokal" if u else "lokal+ldap"),
-                          konto=u["id"] if aus_verzeichnis and u else None)
+        auth._record_login(username, ip, bool(u), "password", versuch=versuch,
+                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
+                                   else "lokal" if u else "lokal+ldap"),
+                           konto=u["id"] if aus_verzeichnis and u else None)
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
         # Verzeichnissen von dem gepflegt, dem es gehört, und von niemandem bestätigt. Traut der
         # Betreiber dem Verzeichnis (`ldap_email_trusted`) oder nennt er ein Beleg-Attribut
         # (`ldap_attr_email_verified`), entscheidet der Beleg am Konto (None) — den setzt
-        # `check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein Beleg" mit: Eine
+        # `_check_ldap` nur, wenn die Quelle vertraut ist; sonst reist hier ausdrücklich „kein Beleg" mit: Eine
         # Allowlist-ADRESSE darf über LDAP nicht zum Erst-Admin führen (F-14). Am Faktornamen
         # ist der Weg nicht zu erkennen — LDAP zählt bewusst als `password`.
         token, ok, is_new = auth.apply_factor(request, u["id"], "password", ip,
@@ -194,7 +194,7 @@ def build_router(auth) -> APIRouter:
                                               if aus_verzeichnis else None)
         if cfg.remember_me_enabled and remember_me:
             auth.store.set_session_bleiben(auth.store.session_hash(token))     # F-05: ausdrücklich gewählt
-        resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+        resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
         if is_new:
             auth.set_cookie(resp, token)   # Art des Cookies folgt der Sitzung (A-2)
         return resp
@@ -225,7 +225,7 @@ def build_router(auth) -> APIRouter:
         if not code:
             return auth.render_page("totp", status=400, request=request, next=nxt,
                                     error=auth.t("err.required"))
-        s = auth.session_from_request(request)
+        s = auth._session_from_request(request)
         # Geprüft wird der Code des Kontos, dessen Sitzung danach weiterkommt — beide aus dem
         # Cookie (0.20.1, `session_user`). `current_user()` fiel hier auf einen API-Key zurück,
         # wenn das Konto der Sitzung gesperrt war; dann hätte der Code des Key-Kontos gezählt.
@@ -234,22 +234,22 @@ def build_router(auth) -> APIRouter:
             return RedirectResponse(auth.pfad(request, cfg.login_path), 303)
         ip = auth.client_ip(request)
         # Atomar wie am Login (R3-2): Die Prüfung liegt sonst zwischen Sperre und Zählung.
-        versuch = auth.versuch_beginnen(pu["username"], ip, "totp") if auth.rate_ok(ip) else None
+        versuch = auth._versuch_beginnen(pu["username"], ip, "totp") if auth._rate_ok(ip) else None
         if versuch is None:
             text = auth.t("err.locked_serie" if auth._serie_voll(pu["username"]) else "err.retry")
             return auth.render_page("totp", request=request, status=429, next=nxt, error=text)
         # TOTP-Code ODER Einmal-Recovery-Code akzeptieren
-        if not auth.verify_totp(pu["id"], code) and not auth.verify_recovery_code(pu["id"], code):
-            auth.record_login(pu["username"], ip, False, "totp", versuch=versuch)
+        if not auth._verify_totp(pu["id"], code) and not auth._verify_recovery_code(pu["id"], code):
+            auth._record_login(pu["username"], ip, False, "totp", versuch=versuch)
             return auth.render_page("totp", request=request, status=401, next=nxt, error=auth.t("err.code"))
-        auth.record_login(pu["username"], ip, True, "totp", versuch=versuch)
+        auth._record_login(pu["username"], ip, True, "totp", versuch=versuch)
         sitzungs_token = request.cookies.get(auth.session_cookie_name)   # Klartext nur hier, im Cookie
         # Wird die Sitzung durch diesen Faktor vollwertig, bekommt sie ein neues Token — der
         # Rechtewechsel. Ebenso beim Step-up auf einer schon vollen Sitzung (F-06). In beiden
         # Fällen muss das Cookie mit.
         erneuert = auth.complete_totp(sitzungs_token)
         weiter = erneuert or sitzungs_token
-        antwort = RedirectResponse(auth.login_redirect_after(request, weiter, pu["id"], nxt), 303)
+        antwort = RedirectResponse(auth._login_redirect_after(request, weiter, pu["id"], nxt), 303)
         if erneuert:
             # Wird die Sitzung hier voll (Login), dreht `set_cookie` auch das CSRF-Token; beim
             # Step-up nicht — es würde nur die Formulare der anderen offenen Reiter entwerten.
@@ -320,15 +320,15 @@ def build_router(auth) -> APIRouter:
         # Drossel, eigener Topf und Protokoll wie an jeder anderen OTP-Prüfstelle (B2-12/R3-6).
         # Eigener Topf, weil Einrichten keine Anmeldung ist: Tippfehler hier dürfen den
         # Login-Lockout nicht füllen. Prüfen und Verbuchen in EINEM Schritt wie überall sonst
-        # (R7-2): Mit `is_totp_setup_locked()` vorab und `record_login()` danach lag die
+        # (R7-2): Mit `_is_totp_setup_locked()` vorab und `_record_login()` danach lag die
         # Codeprüfung dazwischen, und eine parallele Salve kam an der Grenze vorbei.
         ip = auth.client_ip(request)
-        versuch = (auth.versuch_beginnen(u["username"], ip, "totp_setup")
-                   if auth.rate_ok(ip, login=False) else None)
+        versuch = (auth._versuch_beginnen(u["username"], ip, "totp_setup")
+                   if auth._rate_ok(ip, login=False) else None)
         if versuch is None:
             raise HTTPException(429, auth.t("api.too_many"))
         ok = auth.totp_confirm(u["id"], code)
-        auth.record_login(u["username"], ip, ok, "totp_setup", versuch=versuch)
+        auth._record_login(u["username"], ip, ok, "totp_setup", versuch=versuch)
         if not (ok and einschreibung):
             # B1-7: Nach einem neuen Faktor das Beenden der übrigen Sitzungen anbieten — die Zahl
             # sagt der Oberfläche, ob es etwas anzubieten gibt.
@@ -337,7 +337,7 @@ def build_router(auth) -> APIRouter:
         # Er ist jetzt verbraucht; hätte der Nutzer ihn an /auth/totp noch einmal getippt, wäre
         # das ein Fehlversuch gewesen — fünfmal, und der Login-Lockout samt fail2ban-Zeilen
         # sperrte das Konto, das sich gerade korrekt eingerichtet hat.
-        auth.record_login(u["username"], ip, True, "totp")
+        auth._record_login(u["username"], ip, True, "totp")
         sitzungs_token = request.cookies.get(auth.session_cookie_name)
         erneuert = auth.complete_totp(sitzungs_token)
         weiter = erneuert or sitzungs_token
@@ -348,7 +348,7 @@ def build_router(auth) -> APIRouter:
         # (password → totp → pin), bleibt sie halb, und das Beenden der übrigen Sitzungen
         # scheiterte mit 401 — die Seite hätte gefragt, der Nutzer zugestimmt, und das verlorene
         # Gerät bliebe angemeldet. Dann lieber kein Angebot; die Kontoseite listet die Sitzungen.
-        antwort = JSONResponse({"ok": True, "next": auth.login_redirect_after(
+        antwort = JSONResponse({"ok": True, "next": auth._login_redirect_after(
             request, weiter, u["id"], auth.safe_next(next, request)),
             "other_sessions": auth.andere_sitzungen(request, u, token=erneuert) if erneuert else 0,
             # Grenze d: Bleibt die Sitzung halb, fragt die Seite trotzdem — eingelöst wird beim
@@ -445,7 +445,7 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(404)
             if not pin or (not folge and not username):
                 return fail(auth.t("err.required"), 400)
-            if not auth.rate_ok(ip):
+            if not auth._rate_ok(ip):
                 return fail(auth.t("err.rate"), 429)
             ident = folge["username"] if folge else username
             if not ident:
@@ -454,22 +454,22 @@ def build_router(auth) -> APIRouter:
             # ist das dankbarste Ziel einer parallelen Salve. Hinter einem erbrachten Faktor
             # bucht die Serie unter eigener Art: Diese Fehlgriffe erzeugt nur, wer den ersten
             # Faktor hat, und ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP, G7).
-            versuch = auth.versuch_beginnen(ident, ip, "pin",
-                                            serie_art=auth.SERIE_PIN_FOLGE if folge else None)
+            versuch = auth._versuch_beginnen(ident, ip, "pin",
+                                             serie_art=auth._SERIE_PIN_FOLGE if folge else None)
             if versuch is None:
                 return fail(auth.t("err.locked_serie" if auth._serie_voll(ident) else "err.locked"), 429)
             if folge:
-                u = auth.get_user(folge["id"]) if auth.verify_user_pin(folge["id"], pin) else None
+                u = auth.get_user(folge["id"]) if auth._verify_user_pin(folge["id"], pin) else None
             else:
-                u = auth.check_pin(ident, pin)
-            auth.record_login(ident, ip, bool(u), "pin", versuch=versuch)
+                u = auth._check_pin(ident, pin)
+            auth._record_login(ident, ip, bool(u), "pin", versuch=versuch)
             if not u:
                 return fail(auth.t("err.credentials"), 401)
             token, ok, is_new = auth.apply_factor(request, u["id"], "pin", ip,
                                                   request.headers.get("user-agent"), remember_me)
             if cfg.remember_me_enabled and remember_me:
                 auth.store.set_session_bleiben(auth.store.session_hash(token))  # F-05: ausdrücklich gewählt
-            resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+            resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
             return resp
@@ -543,21 +543,21 @@ def build_router(auth) -> APIRouter:
             nxt = auth.safe_next(next, request)
             ip = auth.client_ip(request)
             pseudo = f"res:{name}"
-            # Eigener Topf (`is_resource_locked`): Die Bereichs-PIN darf JEDER Besucher
+            # Eigener Topf (`_is_resource_locked`): Die Bereichs-PIN darf JEDER Besucher
             # probieren, und über den Login-Zähler verriegelten diese Fehlgriffe via
             # `ip_attempt_factor` die Anmeldung von Konten, die damit nichts zu tun hatten
             # (drei Bereiche à fünf Fehlgriffe reichten). Gesperrt wird jetzt der Bereich —
             # je Bereich und, weil hier Unangemeldete raten, weiterhin auch je Adresse.
-            versuch = auth.versuch_beginnen(pseudo, ip, "resource") if auth.rate_ok(ip, login=False) else None
+            versuch = auth._versuch_beginnen(pseudo, ip, "resource") if auth._rate_ok(ip, login=False) else None
             if versuch is None:
                 return auth.render_page("resource_unlock", request=request, status=429,
                                         **_res_ctx(row, name, nxt, "Zu viele Versuche — bitte warten."))
-            if not auth.check_resource(name, secret):
-                auth.record_login(pseudo, ip, False, "resource", versuch=versuch)
+            if not auth._check_resource(name, secret):
+                auth._record_login(pseudo, ip, False, "resource", versuch=versuch)
                 return auth.render_page("resource_unlock", request=request, status=401, **_res_ctx(row, name, nxt, "Falsch"))
-            auth.record_login(pseudo, ip, True, "resource", versuch=versuch)
+            auth._record_login(pseudo, ip, True, "resource", versuch=versuch)
             resp = RedirectResponse(nxt, 303)
-            auth.unlock_resource(request, resp, name)
+            auth._unlock_resource(request, resp, name)
             auth.audit("resource_unlock", ip=ip, detail=name)
             return resp
 
@@ -576,7 +576,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next, request)
             ip = auth.client_ip(request)
-            if not auth.rate_ok(ip):
+            if not auth._rate_ok(ip):
                 return auth.render_page("magic_request", request=request, status=429, next=nxt, sent=False,
                                         error=auth.t("err.rate"))
             # Ohne vertrauenswürdige öffentliche Adresse geht KEINE Mail hinaus: der Link
@@ -612,7 +612,7 @@ def build_router(auth) -> APIRouter:
             """Nur noch der Anmelde-Link. E-Mail-Bestätigung und Einladung haben seit 0.16 eigene
             Endpunkte — sonst nahm das Abschalten des Magic-Links beides mit."""
             if not auth.peek_magic(token, purpose="login"):
-                auth.token_abgewiesen("login", request)
+                auth._token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="login",
                                     action=auth.pfad(request, f"/auth/magic/{_q(token)}"))
@@ -622,7 +622,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="login")
             if not data or not data.get("user_id"):
-                auth.token_abgewiesen("login", request)
+                auth._token_abgewiesen("login", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return _login_nach_token(auth, request, data["user_id"],
                                      auth.safe_next((data.get("payload") or {}).get("next") or "", request))
@@ -633,7 +633,7 @@ def build_router(auth) -> APIRouter:
         def verify_confirm(request: Request, token: str):
             """Bestätigungsseite statt Einlösen per GET — Begründung bei `/auth/magic/{token}` (R4-02)."""
             if not auth.peek_magic(token, purpose="verify_email"):
-                auth.token_abgewiesen("verify_email", request)
+                auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="verify_email",
                                     action=auth.pfad(request, f"/auth/verify/{_q(token)}"))
@@ -643,7 +643,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             data = auth.redeem_magic(token, purpose="verify_email")
             if not data or not data.get("user_id"):
-                auth.token_abgewiesen("verify_email", request)
+                auth._token_abgewiesen("verify_email", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             # Nur die Sperre der AUSSTEHENDEN Bestätigung aufheben, nie die des Betreibers (H-18,
@@ -654,14 +654,14 @@ def build_router(auth) -> APIRouter:
             if not auth.store.bestaetigung_freischalten(uid):
                 konto = auth._kontoname(uid)
                 if konto is None:                        # Konto inzwischen gelöscht
-                    auth.token_abgewiesen("verify_email", request)
+                    auth._token_abgewiesen("verify_email", request)
                     return auth.render_page("magic_invalid", request=request, status=400)
                 auth.audit("verify_blocked", konto, auth.client_ip(request),
                            "Konto vom Betreiber gesperrt")
                 return auth.render_page("magic_invalid", request=request, status=403)
             # Der eingelöste Link belegt die Adresse, an die er ging — solange sie noch die des
             # Kontos ist (eine inzwischen geänderte Adresse hat er nicht belegt). Vor der Anmeldung
-            # unten: Dort entscheidet `maybe_promote_admin` über den Vermerk am Konto.
+            # unten: Dort entscheidet `_maybe_promote_admin` über den Vermerk am Konto.
             konto_zeile = auth.store.get_user(uid)
             if (konto_zeile is not None and konto_zeile["email"] and data.get("email")
                     and norm_email(data.get("email")) == konto_zeile["email"]):
@@ -677,7 +677,7 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/invite/{token}")
         def invite_redeem(request: Request, token: str):
             if not auth.peek_magic(token, purpose="invite"):
-                auth.token_abgewiesen("invite", request)
+                auth._token_abgewiesen("invite", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return RedirectResponse(f"{auth.pfad(request, '/auth/register')}?invite={_q(token)}", 303)
 
@@ -694,10 +694,10 @@ def build_router(auth) -> APIRouter:
         # Raten ist also aussichtslos — aber wer es versucht, soll im Log stehen, und zwar
         # als `failed verification` (kein Anmeldeversuch, siehe `security.LOG_PRUEFUNG`).
         ip = auth.client_ip(request)
-        if not auth.rate_ok(ip, login=False):
+        if not auth._rate_ok(ip, login=False):
             raise HTTPException(429, auth.t("api.too_many"))
-        if not auth.consume_admin_claim(token, u):
-            auth.admin_claim_fehlgriff(u["username"], ip)
+        if not auth._consume_admin_claim(token, u):
+            auth._admin_claim_fehlgriff(u["username"], ip)
             raise HTTPException(403, auth.t("err.claim"))
         return RedirectResponse(auth.pfad(request, cfg.admin_path), 303)
 
@@ -751,29 +751,29 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("reauth", request=request, status=403, next=nxt,
                                     username=u["username"], methods=methods,
                                     error=auth.t("err.stepup_none"))
-        # Eigener Topf (`is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
+        # Eigener Topf (`_is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
         # ist keine Anmeldung — wer hier steht, ist bereits angemeldet. Mit dem geteilten
         # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
         # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
         # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
-        versuch = (auth.versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
-                   if auth.rate_ok(ip, login=False) else None)
+        versuch = (auth._versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
+                   if auth._rate_ok(ip, login=False) else None)
         if versuch is None:
             return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.retry"))
         # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
         ok = False
         if "totp" in methods and code:
-            ok = auth.verify_totp(u["id"], code)
+            ok = auth._verify_totp(u["id"], code)
         elif "pin" in methods and pin:
-            ok = auth.verify_user_pin(u["id"], pin)
+            ok = auth._verify_user_pin(u["id"], pin)
         elif "password" in methods and password:
-            ok = auth.verify_user_password(u["id"], password)
-        auth.record_login(u["username"], ip, ok, "reauth", versuch=versuch)
+            ok = auth._verify_user_password(u["id"], password)
+        auth._record_login(u["username"], ip, ok, "reauth", versuch=versuch)
         if not ok:
             return auth.render_page("reauth", request=request, status=401, next=nxt, username=u["username"],
                                     methods=methods, error=auth.t("err.reauth"))
-        s = auth.session_from_request(request)
+        s = auth._session_from_request(request)
         resp = RedirectResponse(nxt, 303)
         if s:
             auth.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
@@ -793,7 +793,7 @@ def build_router(auth) -> APIRouter:
         def forgot_submit(request: Request, email: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             auth.require_csrf(request, csrf_tok)
             ip = auth.client_ip(request)
-            if not auth.rate_ok(ip):
+            if not auth._rate_ok(ip):
                 return auth.render_page("forgot", request=request, status=429, sent=False, error=auth.t("err.rate"))
             base = _mail_basis(auth, request)   # fail closed, siehe /auth/magic/request
             adresse = email.strip()
@@ -813,7 +813,7 @@ def build_router(auth) -> APIRouter:
                 # Ohne Token (Lesezeichen, Crawler) ist das kein vorgelegter Link — kein Eintrag,
                 # sonst meldete das Sicherheits-Log einen Fehlgriff, den es nie gab (A3).
                 if token:
-                    auth.token_abgewiesen("reset_password", request)
+                    auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("reset", request=request, token=token, error="")
 
@@ -834,7 +834,7 @@ def build_router(auth) -> APIRouter:
                 # stand er allein, liessen sich Reset-Token per POST ohne Audit- und
                 # fail2ban-Zeile durchprobieren. Ohne Token kein vorgelegter Link (A3).
                 if token:
-                    auth.token_abgewiesen("reset_password", request)
+                    auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             konto = auth.store.get_user(vorab["user_id"])
             mangel = auth.passwort_mangel(password, username=konto["username"] if konto else None,
@@ -843,7 +843,7 @@ def build_router(auth) -> APIRouter:
                 return auth.render_page("reset", request=request, status=400, token=token, error=mangel)
             data = auth.redeem_magic(token, purpose="reset_password")   # jetzt verbrauchen
             if not data or not data.get("user_id"):
-                auth.token_abgewiesen("reset_password", request)
+                auth._token_abgewiesen("reset_password", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             uid = data["user_id"]
             auth.set_password(uid, password)
@@ -886,7 +886,7 @@ def build_router(auth) -> APIRouter:
                 # Dieselbe Spur wie /auth/invite/<t> und der POST (B5-18): Die Seite antwortet
                 # je nach Token anders (403 oder die vorausgefüllte Adresse) — ohne diese Zeile
                 # liessen sich Einladungs-Token hier still durchprobieren.
-                auth.token_abgewiesen("invite", request)
+                auth._token_abgewiesen("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
@@ -899,12 +899,12 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             nxt = auth.safe_next(next, request)
             ip = auth.client_ip(request)
-            if not auth.rate_ok(ip):
+            if not auth._rate_ok(ip):
                 return auth.render_page("register", request=request, status=429, **_reg_ctx(nxt, invite=invite, email=email,
                                         error=auth.t("err.rate")))
             inv = auth.peek_magic(invite, purpose="invite") if invite else None
             if invite and not inv:
-                auth.token_abgewiesen("invite", request)
+                auth._token_abgewiesen("invite", request)
             if cfg.signup_invite_only and not inv:
                 return auth.render_page("register", request=request, status=403,
                                         **_reg_ctx(nxt, error=auth.t("err.invite_required")))
@@ -994,7 +994,7 @@ def build_router(auth) -> APIRouter:
 
                     def _hinweis():
                         try:
-                            auth.send_signup_notice(adresse, verify_base)
+                            auth._send_signup_notice(adresse, verify_base)
                         except Exception:
                             auth.audit("signup_notice_error", detail=adresse)
                     auth.audit("signup_taken", username, ip, detail=adresse)
@@ -1075,7 +1075,7 @@ def build_router(auth) -> APIRouter:
                     seite, _versand, bei_ueberlauf=lambda: _zuruecknehmen("warteschlange_voll"))
             token, ok, is_new = auth.apply_factor(request, uid, "password", ip,
                                                   request.headers.get("user-agent"), True)
-            resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+            resp = RedirectResponse(auth._login_redirect_after(request, token, uid, nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
             return resp
@@ -1127,16 +1127,16 @@ def build_router(auth) -> APIRouter:
 
         def _forward(request: Request):
             u = auth.current_user(request)   # Session ODER API-Key
-            orig = auth.forwarded_url(request)
+            orig = auth._forwarded_url(request)
             if u:
                 # Schützt diese Installation mehrere Anwendungen, reicht „angemeldet" nicht:
                 # Wer in welche darf, hat der Provider je Client entschieden (T-14). Der Vermerk
                 # dazu hängt an der SITZUNG — ein API-Key hat keinen und ist hier auch nicht
                 # gemeint; für ihn bleibt es bei der bisherigen Antwort.
-                anwendung = auth.oidc_anwendung(orig)
+                anwendung = auth._oidc_anwendung(orig)
                 sitzung = request.cookies.get(auth.session_cookie_name) or ""
                 if anwendung and sitzung:
-                    ja, grund = auth.oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
+                    ja, grund = auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
                     if not ja:
                         # Kein 403: Der Provider soll gefragt werden, nicht der Mensch abgewiesen.
                         # Er hat dort meist noch eine Sitzung, der Sprung ist für ihn ein Flackern.
@@ -1144,7 +1144,7 @@ def build_router(auth) -> APIRouter:
                         # und zwar die des Providers, denn dort wird die Freigabe gepflegt.
                         auth.audit("oidc_app_revalidate", u["username"], auth.client_ip(request),
                                    f"app={anwendung} grund={grund}")
-                        login = auth.forward_login_url(orig, request)
+                        login = auth._forward_login_url(orig, request)
                         return Response(status_code=401,
                                         headers={"X-TinySesam-Location": login,
                                                  "X-TinySesam-Reason": "app-" + grund,
@@ -1161,8 +1161,8 @@ def build_router(auth) -> APIRouter:
                                f"url={security.url_fuer_log(orig)} fehlt={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
                 # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
-                return Response(status_code=200, headers=auth.forward_response_headers(u))
-            login = auth.forward_login_url(orig, request)
+                return Response(status_code=200, headers=auth._forward_response_headers(u))
+            login = auth._forward_login_url(orig, request)
             _forward_abweisung_protokollieren(request, orig)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
@@ -1191,25 +1191,25 @@ def build_router(auth) -> APIRouter:
         # nach wenigen Anläufen sperrt (R4-10; die Login-Schwelle ist `max_login_attempts`,
         # Vorgabe 5 und im Panel einstellbar).
         #
-        # Die Sperre ist ein EIGENER Topf (`is_password_change_locked`, eigene Schwelle
+        # Die Sperre ist ein EIGENER Topf (`_is_password_change_locked`, eigene Schwelle
         # `password_change_max_attempts`), nicht der des Logins: Mit dem geteilten Zähler
         # sperrten fünf Tippfehler hier die Anmeldung für 15 Minuten — samt dieser Route, über
         # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
-        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`rate_ok`),
+        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`_rate_ok`),
         # protokolliert auch.
-        versuch = (auth.versuch_beginnen(u["username"], ip, "password_change")
-                   if auth.rate_ok(ip, login=False) else None)
+        versuch = (auth._versuch_beginnen(u["username"], ip, "password_change")
+                   if auth._rate_ok(ip, login=False) else None)
         if versuch is None:
             raise HTTPException(429, auth.t("api.too_many"))
         # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
-        # `check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
+        # `_check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
         # FREMDES Konto auflösen (Benutzername des Angreifers = E-Mail des Opfers, R4-12).
         # Dann riet man hier nicht sein eigenes Passwort, sondern dessen — und der Treffer
         # setzte still das eigene Passwort, blieb also unsichtbar.
-        richtig = auth.verify_user_password(u["id"], b.get("current") or "")
+        richtig = auth._verify_user_password(u["id"], b.get("current") or "")
         # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
-        # (`record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
-        auth.record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
+        # (`_record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
+        auth._record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
         if not richtig:
             raise HTTPException(403, auth.t("api.password_wrong"))
         new = b.get("new") or ""
@@ -1218,7 +1218,7 @@ def build_router(auth) -> APIRouter:
             raise HTTPException(400, mangel)
         auth.set_password(u["id"], new)
         # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
-        s = auth.session_from_request(request)
+        s = auth._session_from_request(request)
         auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
         # Ein offener Adresswechsel stammt womöglich aus einer der eben beendeten Sitzungen — er
         # fällt mit ihnen (Fund 1). Andere Links (Anmelde-Link, Reset) gehen an die eigene Adresse.
@@ -1247,7 +1247,7 @@ def build_router(auth) -> APIRouter:
             return auth.render_page("account", request=request, user=u, methods=methoden,
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
-                                    recovery_warn=auth.RECOVERY_WARNSCHWELLE,
+                                    recovery_warn=auth._RECOVERY_WARNSCHWELLE,
                                     has_pin=(cfg.pin_enabled and auth.has_pin(u["id"])),
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]),
@@ -1274,7 +1274,7 @@ def build_router(auth) -> APIRouter:
         async def own_username(request: Request):
             b = await auth.json_body(request)
             u = _frisch_fuer_kennung(request)
-            if not auth.rate_ok(auth.client_ip(request), login=False):
+            if not auth._rate_ok(auth.client_ip(request), login=False):
                 raise HTTPException(429, auth.t("api.too_many"))
             try:
                 neu = auth.change_username(u["id"], b.get("username"), auth.client_ip(request))
@@ -1287,7 +1287,7 @@ def build_router(auth) -> APIRouter:
         async def own_email(request: Request):
             b = await auth.json_body(request)
             u = _frisch_fuer_kennung(request)
-            if not auth.rate_ok(auth.client_ip(request), login=False):
+            if not auth._rate_ok(auth.client_ip(request), login=False):
                 raise HTTPException(429, auth.t("api.too_many"))
             try:
                 senden = auth.request_email_change(u["id"], b.get("email"), auth.public_base(request))
@@ -1309,7 +1309,7 @@ def build_router(auth) -> APIRouter:
         def email_confirm_page(request: Request, token: str):
             """Bestätigungsseite statt Einlösen per GET — Link-Scanner lösen nichts ein (R4-02)."""
             if not auth.peek_magic(token, purpose="email_change"):
-                auth.token_abgewiesen("email_change", request)
+                auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             return auth.render_page("magic_confirm", request=request, zweck="email_change",
                                     action=auth.pfad(request, f"/auth/email/{_q(token)}"))
@@ -1319,7 +1319,7 @@ def build_router(auth) -> APIRouter:
             auth.require_csrf(request, csrf_tok)
             ergebnis = auth.confirm_email_change(token, auth.client_ip(request))
             if ergebnis is None:
-                auth.token_abgewiesen("email_change", request)
+                auth._token_abgewiesen("email_change", request)
                 return auth.render_page("magic_invalid", request=request, status=400)
             if ergebnis == "vergeben":
                 return auth.render_page("magic_invalid", request=request, status=409)
@@ -1336,7 +1336,7 @@ def build_router(auth) -> APIRouter:
         # Konto, nicht die eines Automaten (F-09). Ansehen braucht keine frische Bestätigung
         # (ASVS 5.0 7.5.2 verlangt sie nur fürs Beenden), wohl aber eine echte Sitzung.
         auth.require_session(request, u)
-        cur = auth.session_from_request(request)
+        cur = auth._session_from_request(request)
         cur_tok = cur["token_hash"] if cur else None
         out = []
         for s in auth.store.list_sessions(u["id"]):
@@ -1352,7 +1352,7 @@ def build_router(auth) -> APIRouter:
         nichts — vermerkt wird die Zustimmung, eingelöst erst nach dem letzten Faktor. Wer nur den
         ersten Faktor hat, kann damit also nichts beenden, was er nicht ohnehin voll könnte."""
         await auth.json_body(request)                     # CSRF wie jede Schreib-Route
-        s = auth.session_from_request(request)
+        s = auth._session_from_request(request)
         if not s or s["mfa_ok"]:
             raise HTTPException(400, auth.t("api.invalid", grund="keine halbe Anmeldung"))
         auth.store.set_session_andere_beenden(s["token_hash"])
@@ -1379,7 +1379,7 @@ def build_router(auth) -> APIRouter:
             keys_widerrufen = auth._keys_widerrufen(u["id"], "sitzungen_beendet")
             auth.store.revoke_user_magic_tokens(u["id"])      # Panik-Taste: auch offene Links (Fund 1)
         else:
-            cur = auth.session_from_request(request)
+            cur = auth._session_from_request(request)
             auth.store.delete_user_sessions_except(u["id"], cur["token_hash"] if cur else None)
             # Ein offener Adresswechsel kann aus einer der beendeten Sitzungen stammen (Fund 1).
             auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
@@ -1396,7 +1396,7 @@ def build_router(auth) -> APIRouter:
         # OIDC-Provider-Logout (optional): vor dem lokalen Logout prüfen, ob die Sitzung via OIDC lief
         oidc_logout_url = None
         if cfg.oidc_rp_logout and auth.oidc:
-            s = auth.session_from_request(request)
+            s = auth._session_from_request(request)
             factors: list = []
             try:
                 factors = __import__("json").loads(s["factors_done"] or "[]") if s else []
@@ -1521,7 +1521,7 @@ def build_router(auth) -> APIRouter:
             # teuerste Arbeit, die ein Unangemeldeter hier auslösen kann, und bis 0.19.x die
             # einzige Anmelderoute ohne Drossel.
             ip = auth.client_ip(request)
-            if not auth.rate_ok(ip):
+            if not auth._rate_ok(ip):
                 raise HTTPException(429, auth.t("err.rate"))
             form = await request.form()
             base = _saml_basis(request)
@@ -1533,18 +1533,18 @@ def build_router(auth) -> APIRouter:
                 # Lauf gegen einen echten IdP in die falsche Richtung. Der Grund steht im Log.
                 auth.audit("saml_invalid", None, ip, "Assertion abgelehnt (Grund im Sicherheits-Log)")
                 raise HTTPException(400, auth.t("err.saml"))
-            u = auth.check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
+            u = auth._check_saml(data.get("nameid"), data.get("attrs") or {}, ip=ip)
             if not u:
                 # Den Grund (Gruppe, kein Konto, gesperrt, Kennung vergeben) schreibt
-                # `check_saml` selbst ins Audit-Log — hier nur die Antwort an den Browser.
+                # `_check_saml` selbst ins Audit-Log — hier nur die Antwort an den Browser.
                 raise HTTPException(403, auth.t("api.saml_denied"))
             nxt = auth.safe_next(form.get("RelayState") or "", request)
             # SAML kennt kein `email_verified`: Kein Standard-Attribut sagt, dass der IdP die
             # Adresse geprüft hat. Ohne `saml_email_trusted` (Vorgabe) und ohne Beleg-Attribut
             # (`saml_attr_email_verified`) reist hier deshalb „kein Beleg" mit — eine
             # Allowlist-ADRESSE wird über SAML nie zum Erst-Admin (F-14). Mit einem von beiden
-            # zählt der Beleg am Konto, den `check_saml` gesetzt hat. Der Faktor `saml`
-            # steht zusätzlich in `FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
+            # zählt der Beleg am Konto, den `_check_saml` gesetzt hat. Der Faktor `saml`
+            # steht zusätzlich in `_FOEDERIERTE_FAKTOREN`, das Weglassen wäre also kein Loch.
             token, ok, is_new = auth.apply_factor(request, u["id"], "saml",
                                                   auth.client_ip(request),
                                                   request.headers.get("user-agent"),
@@ -1552,7 +1552,7 @@ def build_router(auth) -> APIRouter:
                                                       (cfg.saml_email_trusted or security.beleg_attribut(cfg, "saml"))
                                                       and u.get("email")
                                                       and u.get("email_verified")))
-            resp = RedirectResponse(auth.login_redirect_after(request, token, u["id"], nxt), 303)
+            resp = RedirectResponse(auth._login_redirect_after(request, token, u["id"], nxt), 303)
             if is_new:
                 auth.set_cookie(resp, token)
             # einmal angefordert, einmal eingelöst
@@ -1659,13 +1659,13 @@ def _login_nach_token(auth, request, uid, nxt):
 
     Gemeinsam für Anmelde-Link und E-Mail-Bestätigung: Beide belegen dasselbe — der Empfänger
     hat Zugriff auf das Postfach. Eine globale Faktor-Kette kann trotzdem einen weiteren Schritt
-    verlangen; darum geht der Weg über `apply_factor`/`login_redirect_after` statt direkt in
+    verlangen; darum geht der Weg über `apply_factor`/`_login_redirect_after` statt direkt in
     eine Sitzung.
     """
     from fastapi.responses import RedirectResponse
     token, ok, is_new = auth.apply_factor(request, uid, "magic",
                                           auth.client_ip(request), request.headers.get("user-agent"))
-    resp = RedirectResponse(auth.login_redirect_after(request, token, uid, nxt), 303)
+    resp = RedirectResponse(auth._login_redirect_after(request, token, uid, nxt), 303)
     if is_new:
         auth.set_cookie(resp, token)
     return resp

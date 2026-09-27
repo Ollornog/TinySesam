@@ -159,7 +159,7 @@ _gerufen = set()
 for _datei in (_pl.Path(__file__).resolve().parent.parent / "tinysesam").glob("*.py"):
     for _k in _ast.walk(_ast.parse(_datei.read_text(encoding="utf-8"))):
         if (isinstance(_k, _ast.Call) and isinstance(_k.func, _ast.Attribute)
-                and _k.func.attr == "sicherheitsereignis" and _k.args
+                and _k.func.attr == "_sicherheitsereignis" and _k.args
                 and isinstance(_k.args[0], _ast.Constant)):
             _gerufen.add(_k.args[0].value)
 assert _gerufen == set(auth.SICHERHEITSEREIGNISSE), (sorted(_gerufen), auth.SICHERHEITSEREIGNISSE)
@@ -193,7 +193,7 @@ _sec.seclog.removeHandler(_h)
 auth.on_security_event = None
 assert _r.status_code == 200, "ein fehlschlagender Hook darf den Passwortwechsel nicht kippen"
 assert any("on_security_event fehlgeschlagen" in z and "password_changed" in z for z in _zeilen), _zeilen
-assert auth.check_password("admin", "neuespasswort")
+assert auth._check_password("admin", "neuespasswort")
 ok("on_security_event: Fehler im Hook → Vorgang gilt, Zeile im Sicherheits-Log")
 
 # ---------- Die Lösch-Knöpfe prüfen die Antwort, bevor sie Erfolg melden (R3-3) ----------

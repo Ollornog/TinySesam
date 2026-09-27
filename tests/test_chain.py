@@ -181,7 +181,7 @@ try:
     assert _s and _s["mfa_ok"], "nach der Pflicht-Einrichtung hängt die Sitzung noch im MFA-Schritt"
     # Der alte Weg — denselben Code an /auth/totp noch einmal — ist damit überflüssig: Die
     # Einrichtungsseite leitet mit `next` direkt zum Ziel weiter.
-    assert not auth_e.is_locked("neu", "testclient")
+    assert not auth_e._is_locked("neu", "testclient")
     assert c_e.get("/auth/account", follow_redirects=False).status_code == 200, "nicht voll angemeldet"
 finally:
     _sec_e.seclog.removeHandler(_haken_e)
@@ -199,7 +199,7 @@ assert _ant.status_code == 409, (_ant.status_code, _ant.text)
 assert not auth_e.totp_confirm(uid_e, _folge), "totp_confirm bestätigt ein aktives TOTP erneut"
 assert _ereig_e == ["totp_enabled"], _ereig_e
 assert sum(z["event"] == "totp_enable" for z in auth_e.store.recent_audit(50)) == 1
-assert auth_e.verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
+assert auth_e._verify_totp(uid_e, _folge), "der Folgecode muss für die Anmeldung frei bleiben"
 ok("A-4: bestätigtes TOTP → 409 an /auth/totp/setup, kein zweites totp_enabled")
 
 # B1-7 auch in der Pflicht-Einrichtung: Die Bestätigung meldet `other_sessions`, und zwar gemessen

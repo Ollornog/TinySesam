@@ -201,11 +201,11 @@ auth_b.create_user("ziel", password="Geheim12345!abc")
 
 # Fünf Fehlversuche beim zweiten Faktor …
 for _ in range(5):
-    auth_b.record_login("ziel", "203.0.113.9", success=False, method="totp")
+    auth_b._record_login("ziel", "203.0.113.9", success=False, method="totp")
 offen_vorher = len(auth_b.store.recent_fails("ziel")) if hasattr(auth_b.store, "recent_fails") else None
 
 # … dann ein ERFOLGREICHER Passwort-Login.
-auth_b.record_login("ziel", "203.0.113.9", success=True, method="password")
+auth_b._record_login("ziel", "203.0.113.9", success=True, method="password")
 
 # Die TOTP-Fehlversuche müssen stehen bleiben.
 rest = auth_b.store._all(
@@ -216,8 +216,8 @@ r.check("ein Passwort-Erfolg räumt die TOTP-Fehlversuche NICHT weg", totp_übri
 
 # Gegenprobe: Passwort-Fehlversuche räumt er sehr wohl weg, sonst wäre der Fix eine Bremse.
 for _ in range(3):
-    auth_b.record_login("ziel2", "203.0.113.9", success=False, method="password")
-auth_b.record_login("ziel2", "203.0.113.9", success=True, method="password")
+    auth_b._record_login("ziel2", "203.0.113.9", success=False, method="password")
+auth_b._record_login("ziel2", "203.0.113.9", success=True, method="password")
 pw_übrig = [z["method"] for z in auth_b.store._all(
     "SELECT method FROM login_attempt WHERE username=? COLLATE NOCASE AND success=0",
     ("ziel2",))].count("password")
@@ -620,13 +620,13 @@ r.check("und nicht mehr in der rotierten",
 auth_l, _ = _app()
 auth_l.create_user("ziel3", password="geheim12345")
 for _ in range(10):
-    auth_l.record_login("ziel3", "203.0.113.77", success=False, method="password")
+    auth_l._record_login("ziel3", "203.0.113.77", success=False, method="password")
 
 puffer_l = io.StringIO()
 haken_l = logging.StreamHandler(puffer_l)
 seclog.addHandler(haken_l)
 try:
-    gesperrt = auth_l.is_locked("ziel3", "203.0.113.77")
+    gesperrt = auth_l._is_locked("ziel3", "203.0.113.77")
 finally:
     seclog.removeHandler(haken_l)
 zeile_l = puffer_l.getvalue()
@@ -644,8 +644,8 @@ puffer_r = io.StringIO()
 haken_r = logging.StreamHandler(puffer_r)
 seclog.addHandler(haken_r)
 try:
-    for _ in range(int(auth_l.sec("rate_limit_max")) + 2):
-        auth_l.rate_ok("203.0.113.78")
+    for _ in range(int(auth_l._sec("rate_limit_max")) + 2):
+        auth_l._rate_ok("203.0.113.78")
 finally:
     seclog.removeHandler(haken_r)
 r.check("auch ein Rate-Limit-Treffer steht im Log",
@@ -751,7 +751,7 @@ uid_h = auth_h.create_user("intl", password="geheim12345")
 
 def _kopfwert(roh):
     auth_h.store._exec("UPDATE users SET display_name=? WHERE id=?", (roh, uid_h))
-    kopf = auth_h.forward_response_headers(auth_h.store.get_user(uid_h))
+    kopf = auth_h._forward_response_headers(auth_h.store.get_user(uid_h))
     return kopf["Remote-Name"]
 
 
@@ -913,9 +913,9 @@ r.check("ein Recovery-Code trägt mindestens 64 Bit", hexzeichen * 4 >= 64,
 r.check("die Codes sind untereinander verschieden", len(set(codes)) == len(codes),
         f"{len(codes)} Codes, {len(set(codes))} verschiedene")
 r.check("und ein frisch erzeugter Code löst den zweiten Faktor aus",
-        auth_rc.verify_recovery_code(uid_rc, codes[0]),
+        auth_rc._verify_recovery_code(uid_rc, codes[0]),
         "der Code wird nicht angenommen — dann misst der Test nur Zeichen")
-r.check("ein Code gilt genau einmal", not auth_rc.verify_recovery_code(uid_rc, codes[0]),
+r.check("ein Code gilt genau einmal", not auth_rc._verify_recovery_code(uid_rc, codes[0]),
         "derselbe Code geht ein zweites Mal")
 
 
@@ -1111,13 +1111,22 @@ r.check("...und ohne Konfigurations-Warnung", "Konfiguration:" not in puffer_n.g
 auth_cm, _ = _app()
 r.check("es gibt den klaren Namen complete_totp", hasattr(auth_cm, "complete_totp"),
         "nur der alte Name — dann ist nichts gewonnen")
-r.check("der alte Name complete_mfa bleibt erhalten", hasattr(auth_cm, "complete_mfa"),
+r.check("der alte Name complete_mfa bleibt bis 1.0 erhalten", hasattr(auth_cm, "complete_mfa"),
         "entfernt — das bricht bestehende Aufrufe für einen Namen")
 
-# Und der Alias muss wirklich dasselbe tun, nicht nur existieren.
+# Und der Alias muss wirklich dasselbe tun, nicht nur existieren. Seit 0.21.0 ist er Stufe C:
+# Er warnt beim Aufruf (Wortlaut und Ziel prüft der Wächter tests/test_api_surface.py).
+import warnings as _warnungen  # noqa: E402
+
 uid_cm = auth_cm.create_user("cm", password="geheim12345")
 tok_alt = auth_cm.store.create_session(uid_cm, 3600, False, "password")
-auth_cm.complete_mfa(tok_alt)
+with _warnungen.catch_warnings(record=True) as _gewarnt:
+    _warnungen.simplefilter("always")
+    auth_cm.complete_mfa(tok_alt)
+r.check("complete_mfa warnt als veralteter Alias von complete_totp",
+        [w.category for w in _gewarnt] == [DeprecationWarning]
+        and "complete_totp" in str(_gewarnt[0].message),
+        [str(w.message) for w in _gewarnt])
 tok_neu = auth_cm.store.create_session(uid_cm, 3600, False, "password")
 auth_cm.complete_totp(tok_neu)
 import json as _json  # noqa: E402
@@ -1643,7 +1652,7 @@ def _wege(auth_x, basis):
         ("_verify_mail", lambda: _versende(auth_x._verify_mail(1, "opfer@example.com", basis))),
         ("create_invite", lambda: auth_x.create_invite("gast@example.com", basis)),
         # R4-03: der Hinweis an den Inhaber einer vergebenen Adresse trägt den Weg zur Anmeldung.
-        ("send_signup_notice", lambda: auth_x.send_signup_notice("opfer@example.com", basis)),
+        ("_send_signup_notice", lambda: auth_x._send_signup_notice("opfer@example.com", basis)),
         # Selbstbedienung (2026-09-25): der Link an die NEUE Adresse; auch der Bestätigungsweg für
         # Adressen aus LDAP/SAML läuft hier durch (`_adresse_aus_quelle_belegen`).
         ("request_email_change", lambda: _versende(auth_x.request_email_change(
@@ -1931,7 +1940,7 @@ r.check("/auth/password nimmt das Passwort eines FREMDEN Kontos nicht an",
         fremd.status_code == 403,
         f"HTTP {fremd.status_code} — die Route ist ein Orakel für fremde Passwörter")
 r.check("...und das fremde Passwort gilt unverändert weiter",
-        auth_alt.check_password("chef", PW_INHABER) is not None,
+        auth_alt._check_password("chef", PW_INHABER) is not None,
         "das Geheimnis des Opfers wurde überschrieben")
 eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345!abcd"})
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
@@ -2073,7 +2082,7 @@ r.check("...der zweite Faktor steht danach noch", auth_b21.store.has_confirmed_t
 r.check("...und die Recovery-Codes gehören weiter zu einem gültigen Faktor",
         auth_b21.store.count_recovery_codes(uid_b21) == 10
         and auth_b21.store.has_confirmed_totp(uid_b21)
-        and auth_b21.verify_recovery_code(uid_b21, codes_b21[0]),
+        and auth_b21._verify_recovery_code(uid_b21, codes_b21[0]),
         f"{auth_b21.store.count_recovery_codes(uid_b21)} Codes ohne bestätigtes TOTP = verwaist")
 
 # Nicht nur die Route: Der Wächter sitzt im Manager, damit ihn keine eigene Oberfläche umgeht.

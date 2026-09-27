@@ -269,15 +269,16 @@ TinySesam als reines Backend nutzen (eigene UI).
 > **Vorsicht — die Route unten schützt nicht vor Passwort-Raten.** `check_password` und
 > `check_pin` (ebenso `check_ldap`) vergleichen nur: Sperre, Fehlversuchszähler und Serien-Sperre
 > sitzen in den eingebauten Routen (`POST /auth/login`, `/auth/pin`), nicht in diesen Prüfern.
-> Sie sind intern ([Stufe C](#öffentliche-api-drei-stufen)). Für ein eigenes Aussehen nur die
-> Seite ersetzen — `auth.set_template("login", …)` ([Look & Feel](#look--feel)) — und deren
-> Formular weiter an die eingebaute Route schicken lassen.
+> Sie sind intern ([Stufe C](#öffentliche-api-drei-stufen)): Seit 0.21.0 heisst die
+> Implementierung `_check_password` usw., die alten Namen warnen, bis sie mit 1.0 wegfallen. Für ein
+> eigenes Aussehen nur die Seite ersetzen — `auth.set_template("login", …)`
+> ([Look & Feel](#look--feel)) — und deren Formular weiter an die eingebaute Route schicken lassen.
 
 Das Muster, das dieser Abschnitt bisher zeigte — stehen gelassen wegen der Einzelheiten zu
 `start_session`/`complete_totp`, nicht zum Abschreiben in eine Login-Route:
 
 ```python
-user = auth.check_password(username, password)
+user = auth.check_password(username, password)             # Stufe C: warnt seit 0.21.0, fällt mit 1.0
 token, fertig = auth.start_session(user["id"], "password")   # Tupel, nicht nur ein Token
 auth.set_cookie(resp, token)
 if not fertig:                    # es fehlt noch ein zweiter Faktor
@@ -1084,12 +1085,19 @@ aufgeführt in [`API.md`](../API.md):
 |---|---|---|
 | **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.21.0. |
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. |
-| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Bekommt einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
+| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.21.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
 
 Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
 `tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
 sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso die Fehlertypen
 (`TinySesamError`, `ConfigError`, `StateError`, `MissingExtra`, `MailNotConfigured`).
+
+**Stufe C warnt.** Wer einen alten C-Namen aufruft (bei den Konstanten: liest), bekommt eine
+`DeprecationWarning` mit dem Ersatz; [`API.md`](../API.md) führt jeden auf. Python zeigt diese
+Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
+einmal mit `python -W error::DeprecationWarning` laufen lassen. Eine Unterklasse, die einen dieser
+Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`: Die eingebauten Routen rufen seit
+0.21.0 `_name`, die Überschreibung wirkt nicht mehr.
 
 ### Für Fortgeschrittene (Stufe B)
 
