@@ -94,7 +94,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 | Bedingung | Stand |
 |---|---|
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
-| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (49 Aliase, Wächter, Warnfilter in `run_all.py`) |
+| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (50 Aliase, Wächter, Warnfilter in `run_all.py`) |
 | sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`anmelden_*`, `Anmeldung`, die Routen rufen ihn) |
 | zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.22.0 |
 
@@ -125,6 +125,9 @@ Produktivgang). Sie erscheint mit **0.22.0**: `seit` der Aliase, der Zähler fü
 und die Doku nennen 0.22.0. Weil nur geprüft war, *ob* `seit` dasteht, prüft der Wächter jetzt auch
 den Wert gegen das CHANGELOG (`seit_befunde`): Führt `[Unveröffentlicht]` einen Alias ein, liegt
 `seit` über dem jüngsten Release, sonst ist es genau das einführende Release.
+Eine Folge davon: `SERIE_PIN_FOLGE` war bei Schritt 2 „nie veröffentlicht“ und hiess ohne Alias
+`_SERIE_PIN_FOLGE` — mit 0.21.0 ist er veröffentlicht (G7; dessen CHANGELOG nennt ihn für eigene
+PIN-Seiten). Er ist jetzt ein Alias wie jeder C-Name: Stand 354 Namen, A 240, B 64, C 50.
 
 Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
 Stern der Nur-Schlüsselwort-Parameter fest (`signatur()` setzt die Parameter einzeln zusammen) —

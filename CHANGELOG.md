@@ -17,7 +17,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   steht jetzt jeder Name unter seiner Stufe, die C-Namen als Tabelle mit ihrem Ersatz (darunter
   `check_password`, `check_pin`, `verify_totp`, `record_login`, `is_locked`, `sec`). Die READMEs
   erklären die Stufen („Public API: three tiers“ / „Öffentliche API: drei Stufen“).
-- **Die internen Namen (Stufe C) warnen.** 42 Methoden und 6 Konstanten heissen intern jetzt `_name`
+- **Die internen Namen (Stufe C) warnen.** 42 Methoden und 7 Konstanten heissen intern jetzt `_name`
   (`check_password` → `_check_password`, `record_login` → `_record_login` …, Liste unter
   „Veraltet“), `complete_mfa` ist ein Alias von `complete_totp`. Der alte Name tut bis 1.0 dasselbe
   wie bisher, löst aber bei jedem Aufruf (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem
@@ -78,8 +78,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
   zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 240 (darunter
-  `anmelden_*` und die 11 Namen am Ergebnistyp `Anmeldung`), B 64, C 49 von 353 Namen
-  (`SERIE_PIN_FOLGE`, nie veröffentlicht, heisst ohne Alias `_SERIE_PIN_FOLGE`).
+  `anmelden_*` und die 11 Namen am Ergebnistyp `Anmeldung`), B 64, C 50 von 354 Namen.
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
   `Veraltet("_name", "<Ersatz>")`: ein Nicht-Daten-Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
@@ -147,7 +146,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Veraltet
 
-- **49 interne Namen (Stufe C) — fallen mit 1.0 weg.** Seit diesem Release heisst die
+- **50 interne Namen (Stufe C) — fallen mit 1.0 weg.** Seit diesem Release heisst die
   Implementierung `_name`; der alte Name reicht bis 1.0 unverändert weiter und löst beim Aufruf
   (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
   führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
@@ -185,7 +184,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   - **Konstanten (warnen beim Lesen):** `APIKEY_AUDIT_FENSTER` → `_APIKEY_AUDIT_FENSTER`,
     `DEMO_USERS` → `_DEMO_USERS`, `FOEDERIERTE_FAKTOREN` → `_FOEDERIERTE_FAKTOREN`, `IDENTIFYING` →
     `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE` →
-    `_RECOVERY_WARNSCHWELLE`.
+    `_RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE` → `_SERIE_PIN_FOLGE` (Ersatz `anmelden_pin`; kam mit
+    0.21.0, dessen CHANGELOG ihn für eigene PIN-Seiten nannte — deshalb ein Alias und nicht bloss
+    umbenannt).
   - **`complete_mfa` → `complete_totp`** (gleiches Verhalten; kein Unterstrich-Name, der Alias zeigt
     auf die öffentliche Methode). Im Wächter misst sich jetzt dessen Rückgabetyp mit
     (`-> Optional[str]`), vorher stand dort keiner.

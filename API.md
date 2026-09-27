@@ -22,7 +22,7 @@ Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_ap
 
 Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
 
-**Stand:** A 240 · B 64 · C 49 Namen.
+**Stand:** A 240 · B 64 · C 50 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -674,6 +674,7 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 | `sec` | Methode | `all_security()` |
 | `seed_demo` | Methode | `demo_mode=True` (legt die Demo-Konten beim Start an) |
 | `send_signup_notice` | Methode | Ohne Ersatz; `POST /auth/register` verschickt den Hinweis selbst |
+| `SERIE_PIN_FOLGE` | Konstante | `anmelden_pin` (bucht eine PIN hinter einem erbrachten Faktor selbst unter dieser Serien-Art) |
 | `session_from_request` | Methode | `current_user` bzw. `session_user` |
 | `sicherheitsereignis` | Methode | Ohne Ersatz; TinySesam ruft den Hook `on_security_event` selbst |
 | `token_abgewiesen` | Methode | Ohne Ersatz; die eingebauten Token-Routen protokollieren selbst |
@@ -688,4 +689,4 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 
 ---
 
-150 Methoden, 3 Eigenschaften, 14 Konstanten, 7 Methoden von `TinySesamConfig`, 9 Exporte, davon 5 Fehlertypen, 11 Namen an `Anmeldung` — erzeugt aus den Docstrings und `tests/api_surface.json`.
+150 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 9 Exporte, davon 5 Fehlertypen, 11 Namen an `Anmeldung` — erzeugt aus den Docstrings und `tests/api_surface.json`.

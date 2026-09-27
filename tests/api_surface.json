@@ -857,6 +857,13 @@
       "stufe": "B",
       "wert": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
+    "SERIE_PIN_FOLGE": {
+      "bis": "1.0",
+      "seit": "0.22.0",
+      "stufe": "C",
+      "wert": "'pin_folge'",
+      "ziel": "_SERIE_PIN_FOLGE"
+    },
     "SICHERHEITSEREIGNISSE": {
       "stufe": "A",
       "wert": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')"

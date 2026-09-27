@@ -6812,3 +6812,9 @@ class TinySesam:
     RECOVERY_BYTES = Veraltet("_RECOVERY_BYTES", "ohne Ersatz, ein interner Wert")
     RECOVERY_WARNSCHWELLE = Veraltet(
         "_RECOVERY_WARNSCHWELLE", "stattdessen `recovery_codes_remaining` und eine eigene Schwelle")
+    # Kam mit 0.21.0 (G7) und stand dort im CHANGELOG als Weg für eigene PIN-Seiten
+    # (`versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`) — veröffentlicht, also ein Alias
+    # wie jeder andere C-Name, nicht bloss umbenannt.
+    SERIE_PIN_FOLGE = Veraltet(
+        "_SERIE_PIN_FOLGE", "stattdessen `anmelden_pin` (bucht eine PIN hinter einem erbrachten "
+        "Faktor selbst unter dieser Serien-Art)")
