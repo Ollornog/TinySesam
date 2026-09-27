@@ -78,15 +78,15 @@
       "stufe": "B"
     },
     "anmelden_passwort": {
-      "sig": "(request: 'Request', username: 'str', password: 'str', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
       "stufe": "A"
     },
     "anmelden_pin": {
-      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
       "stufe": "A"
     },
     "anmelden_totp": {
-      "sig": "(request: 'Request', code: 'str', next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'",
+      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'",
       "stufe": "A"
     },
     "api_key_art": {
@@ -106,7 +106,7 @@
       "stufe": "B"
     },
     "change_username": {
-      "sig": "(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'",
+      "sig": "(user_id, neu, ip: 'Optional[str]' = None, *, durch_betreiber: 'bool' = False) -> 'str'",
       "stufe": "A"
     },
     "check_ldap": {
@@ -187,7 +187,7 @@
       "stufe": "A"
     },
     "create_user": {
-      "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'",
+      "sig": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, name_selbst_gewaehlt: 'bool' = False) -> 'int'",
       "stufe": "A"
     },
     "csrf_rotieren": {
@@ -241,7 +241,7 @@
       "stufe": "B"
     },
     "foederation_nachbinden": {
-      "sig": "(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'",
+      "sig": "(quelle: 'str', *, zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'",
       "stufe": "A"
     },
     "forward_login_url": {
@@ -445,7 +445,7 @@
       "stufe": "B"
     },
     "passwort_mangel": {
-      "sig": "(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
+      "sig": "(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'",
       "stufe": "B"
     },
     "peek_magic": {
@@ -1513,7 +1513,7 @@
   },
   "TinySesamConfig.methoden": {
     "active_directory": {
-      "sig": "(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
+      "sig": "(*, ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)",
       "stufe": "A"
     },
     "enabled_methods": {
@@ -1521,7 +1521,7 @@
       "stufe": "B"
     },
     "entra_id": {
-      "sig": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
+      "sig": "(*, tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
       "stufe": "A"
     },
     "local_accounts": {
@@ -1529,7 +1529,7 @@
       "stufe": "A"
     },
     "oidc_gateway": {
-      "sig": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
+      "sig": "(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
       "stufe": "A"
     },
     "pin_als_erstfaktor": {

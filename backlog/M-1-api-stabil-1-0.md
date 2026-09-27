@@ -129,12 +129,11 @@ Eine Folge davon: `SERIE_PIN_FOLGE` war bei Schritt 2 „nie veröffentlicht“ 
 `_SERIE_PIN_FOLGE` — mit 0.21.0 ist er veröffentlicht (G7; dessen CHANGELOG nennt ihn für eigene
 PIN-Seiten). Er ist jetzt ein Alias wie jeder C-Name: Stand 354 Namen, A 240, B 64, C 50.
 
-Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
-Stern der Nur-Schlüsselwort-Parameter fest (`signatur()` setzt die Parameter einzeln zusammen) —
-ein nachträglich eingefügtes `*` vor `next=` wäre ein Bruch, den er nicht meldet, obwohl sein
-Docstring das Gegenteil sagt. Betrifft jede Methode mit `*` (`anmelden_*`, `change_username`,
-`foederation_nachbinden`, `passwort_mangel` …). Die Korrektur ändert viele gemessene Signaturen und
-den Vergleich mit älteren Releases — eigener Schritt, PO-Entscheid.
+~~Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
+Stern der Nur-Schlüsselwort-Parameter fest.~~ **Behoben 2026-09-27:** `signatur()` misst `*` und
+`/` mit (10 Signaturen neu gemessen, keine geändert), ein eingefügtes `*` ist ein Bruch; eine
+Ablage von vor 0.22.0 wird ohne Marken eingelesen und ohne Marken verglichen, der Vergleich mit
+`v0.21.0`/`v0.20.1` meldet nur echte Unterschiede. `API.md` zeigt die Marken ebenfalls.
 
 Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
 `on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in

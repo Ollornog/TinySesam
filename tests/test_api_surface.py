@@ -76,17 +76,39 @@ def ok(name):
     print(f"  ✓ {name}")
 
 
+def parameter_mit_marken(parameter) -> list:
+    """`str(p)` je Parameter, dazu die Marken `*` (davor nur Schlüsselwort) und `/` (davor nur
+    Position) an der Stelle, an der Python sie in der Signatur verlangt.
+
+    Bis 0.22.0 setzte `signatur()` die Parameter einzeln zusammen und verlor dabei beide Marken:
+    `(request, username, password, *, next='')` stand als `(…, password, next='')` in der Ablage.
+    Ein nachträglich eingefügtes `*` — jeder Aufruf `anmelden_passwort(r, u, p, "/start")` bricht
+    — sah damit aus wie keine Änderung (Befund aus Schritt 3 der Einstufung, M-1).
+    """
+    teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
+    for i, p in enumerate(parameter):
+        erster_kw = i == 0 or parameter[i - 1].kind is not p.KEYWORD_ONLY
+        if p.kind is p.KEYWORD_ONLY and not stern and erster_kw:
+            teile.append("*")
+        teile.append(str(p))
+        if p.kind is p.POSITIONAL_ONLY and (i + 1 == len(parameter)
+                                            or parameter[i + 1].kind is not p.POSITIONAL_ONLY):
+            teile.append("/")
+    return teile
+
+
 def signatur(fn) -> str:
     """Die Signatur ohne `self` — Parameternamen und Reihenfolge sind Teil des Versprechens.
 
     Erfasst wird auch, ob ein Parameter keyword-only ist: Genau daran hing der Bruch in 0.15
     (`require_role("editor", True)` meinte einmal `mfa=True` und wäre danach eine zweite Rolle).
+    Seit 0.22.0 wirklich: mit den Marken `*` und `/` (`parameter_mit_marken`).
     """
     try:
         s = inspect.signature(fn)
     except (TypeError, ValueError):
         return "?"
-    teile = [str(p) for name, p in s.parameters.items() if name != "self"]
+    teile = parameter_mit_marken([p for name, p in s.parameters.items() if name != "self"])
     # Der Rückgabetyp gehört dazu. Ohne ihn liesse sich `-> dict` still zu `-> str` ändern:
     # Jeder Aufruf bricht, und der Wächter schwiege — er erfasste nur die Eingänge.
     zurueck = "" if s.return_annotation is inspect.Signature.empty else \
@@ -173,12 +195,30 @@ def anmeldung_oberflaeche() -> dict:
     return ergebnis
 
 
+class OhneMarken(str):
+    """Eine Signatur aus einer Ablage von vor 0.22.0: gemessen OHNE die Marken `*` und `/`.
+
+    Wo die Marken standen, weiss so ein Eintrag nicht mehr. `beurteile()` vergleicht ihn deshalb
+    mit der heutigen Messung ohne Marken (`ohne_marken`) — sonst meldete ein Vergleich mit einem
+    älteren Release jede Methode mit Nur-Schlüsselwort-Parametern als Bruch, und ein echter
+    ginge darin unter. Ein Unterschied in Namen, Reihenfolge, Vorgaben oder Rückgabe bleibt einer.
+    """
+
+
+def ohne_marken(sig: str) -> str:
+    """`(a, *, b=1) -> 'x'` → `(a, b=1) -> 'x'` — die Form, in der vor 0.22.0 gemessen wurde."""
+    rest = _klammer_und_rest(sig)[1]
+    return ("(" + ", ".join(t for t in teile(sig) if t not in ("*", "/")) + ")"
+            + (" " + rest if rest else ""))
+
+
 def messung(datei: dict) -> dict:
     """Die Ablage auf die reine Messung zurückführen — die Form, die `oberflaeche()` liefert.
 
     Verträgt auch die Ablage von vor 0.22.0 (Wert als Zeichenkette, Exporte als Liste): Ein
     Vergleich mit einem älteren Release (`git show v0.21.0:tests/api_surface.json`) soll nicht an
-    der Form scheitern.
+    der Form scheitern. Deren Signaturen kamen ohne die Marken `*`/`/` — sie werden als
+    `OhneMarken` eingelesen und ohne Marken verglichen.
     """
     ergebnis = {}
     for bereich, eintraege in datei.items():
@@ -189,7 +229,8 @@ def messung(datei: dict) -> dict:
         if schluessel is None:
             ergebnis[bereich] = sorted(eintraege)
             continue
-        ergebnis[bereich] = {name: (e[schluessel] if isinstance(e, dict) else e)
+        ergebnis[bereich] = {name: (e[schluessel] if isinstance(e, dict)
+                                    else OhneMarken(e) if schluessel == "sig" else e)
                              for name, e in eintraege.items()}
     return ergebnis
 
@@ -321,10 +362,13 @@ def beurteile(alt: dict, neu: dict, stufen: "dict | None" = None):
         for name in sorted(set(n) - set(a)):
             erweiterungen.append(f"{bereich}.{name} ist neu")
         for name in sorted(set(a) & set(n)):
-            if a[name] == n[name]:
+            jetzt = n[name]
+            if isinstance(a[name], OhneMarken) and isinstance(jetzt, str):
+                jetzt = ohne_marken(jetzt)        # alte Ablage: ohne `*`/`/` gemessen
+            if a[name] == jetzt:
                 continue
             zeile = (f"{bereich}.{name}:\n        vorher {a[name]}\n        jetzt  {n[name]}")
-            if isinstance(a[name], str) and a[name].startswith("(") and nur_erweitert(a[name], n[name]):
+            if isinstance(a[name], str) and a[name].startswith("(") and nur_erweitert(a[name], jetzt):
                 erweiterungen.append(zeile + "\n        (nur angehängt, mit Vorgabewert — "
                                             "bestehende Aufrufe laufen weiter)")
             else:
@@ -356,6 +400,52 @@ def selbstpruefung(jetzt: dict) -> None:
     brueche, _ = beurteile(jetzt, umbenannt)
     assert any("csrf_cookie_name ist fort" in b for b in brueche), brueche
     ok(f"Properties eingefroren ({len(eig)}), ein Umbenennen gälte als Bruch")
+
+
+def selbstpruefung_signatur(jetzt: dict) -> None:
+    """Misst `signatur()` die Marken `*` und `/`, und meldet ein eingefügtes `*` als Bruch? (0.22.0)
+
+    Dazu: Eine Ablage von vor 0.22.0 (ohne Marken gemessen) lässt sich weiter vergleichen — ohne
+    dass jede Methode mit Nur-Schlüsselwort-Parametern als Bruch erscheint, und ohne dass ein
+    echter Unterschied darin verschwindet. Läuft auch vor `--update`.
+    """
+    def probe(self, a, /, b, *, c=1, d: "int" = 2) -> bool:   # noqa: ARG001
+        return True
+
+    def mit_args(self, a, *rest, c=1, **kw):                   # noqa: ARG001
+        return None
+
+    assert signatur(probe) == "(a, /, b, *, c=1, d: 'int' = 2) -> bool", signatur(probe)
+    assert signatur(mit_args) == "(a, *rest, c=1, **kw)", signatur(mit_args)
+    assert signatur(lambda *, x: x) == "(*, x)", signatur(lambda *, x: x)
+    sig = jetzt["TinySesam"]["anmelden_passwort"]
+    assert ", *, next: " in sig, f"anmelden_passwort ohne `*` gemessen: {sig}"
+    # `API.md` zeigt dieselbe Signatur (eigene Kopie in scripts/_api_doku.py, dort fehlten die
+    # Marken genauso).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_api_doku_probe",
+                                                  os.path.join(WURZEL, "scripts", "_api_doku.py"))
+    doku = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(doku)
+    for fn in (probe, mit_args, TinySesam.anmelden_passwort, TinySesamConfig.oidc_gateway):
+        assert doku.signatur(fn) == signatur(fn), (fn, doku.signatur(fn), signatur(fn))
+    # Ein nachträglich eingefügtes `*` (oder `/`) bricht jeden positionellen Aufruf.
+    vorher = {"TinySesam": {"m": "(request, username, next='')"}}
+    for nachher in ("(request, username, *, next='')", "(request, /, username, next='')"):
+        brueche, _ = beurteile(vorher, {"TinySesam": {"m": nachher}})
+        assert brueche and "TinySesam.m:" in brueche[0], (nachher, brueche)
+    assert nur_erweitert("(a, b=1)", "(a, b=1, *, c=2)"), "kw-only mit Vorgabe hinten ist harmlos"
+    assert not nur_erweitert("(a, *, b=1)", "(a, *, b=1, c)"), "kw-only OHNE Vorgabe bricht"
+    # Alte Ablage (Form vor 0.22.0): ohne Marken eingelesen und ohne Marken verglichen.
+    alt = messung({"TinySesam": {"m": "(request, username, next='') -> 'x'",
+                                 "n": "(request, next='')"}, "exporte": ["TinySesam"]})
+    assert isinstance(alt["TinySesam"]["m"], OhneMarken)
+    neu = {"TinySesam": {"m": "(request, username, *, next='') -> 'x'",
+                         "n": "(request, *, weiter='')"}, "exporte": ["TinySesam"]}
+    brueche, erw = beurteile(alt, neu)
+    assert len(brueche) == 1 and brueche[0].startswith("TinySesam.n:") and not erw, (brueche, erw)
+    ok("Signaturen mit `*` und `/`: ein eingefügtes `*` ist ein Bruch, eine Ablage von vor 0.22.0 "
+       "vergleicht ohne Marken")
 
 
 def selbstpruefung_stufen(jetzt: dict) -> None:
@@ -936,6 +1026,7 @@ def _melde_ohne_stufe(fehlt: list) -> None:
 def main(argv):
     jetzt = oberflaeche()
     selbstpruefung(jetzt)
+    selbstpruefung_signatur(jetzt)
     selbstpruefung_stufen(jetzt)
     selbstpruefung_c()
 

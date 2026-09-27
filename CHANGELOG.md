@@ -205,6 +205,22 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
     auf die öffentliche Methode). Im Wächter misst sich jetzt dessen Rückgabetyp mit
     (`-> Optional[str]`), vorher stand dort keiner.
 
+### Behoben
+
+- **Der API-Wächter verlor `*` und `/` in Signaturen.** `signatur()` in
+  `tests/test_api_surface.py` setzte die Parameter einzeln zusammen; die Marken für
+  Nur-Schlüsselwort- (`*`) und Nur-Positions-Parameter (`/`) fielen dabei weg, obwohl der Docstring
+  genau das zu messen versprach. Ein nachträglich eingefügtes `*` — jeder positionelle Aufruf
+  bricht — sah aus wie keine Änderung. Jetzt stehen die Marken in der Ablage (10 Signaturen neu
+  gemessen: `anmelden_*`, `change_username`, `create_user`, `foederation_nachbinden`,
+  `passwort_mangel` und die Presets `active_directory`, `entra_id`, `oidc_gateway` — keine davon
+  hat sich geändert), ein eingefügtes `*` oder `/` ist ein Bruch, ein hinten angehängter
+  Nur-Schlüsselwort-Parameter mit Vorgabe bleibt eine Erweiterung. Eine Ablage von vor 0.22.0
+  (`git show v0.21.0:tests/api_surface.json`) lässt sich weiter vergleichen: Ihre Signaturen
+  werden als „ohne Marken gemessen“ eingelesen und ohne Marken verglichen. Derselbe Fehler stand
+  in `scripts/_api_doku.py` — `API.md` zeigte etwa `anmelden_passwort(…, password, next=…)`, als
+  ginge `next` auch positionell; der Wächter hält beide Fassungen gleich.
+
 ## [0.21.0] — 2026-09-27
 
 **Grosses Release — vor dem Update die Datenbank sichern und die Liste unten lesen.** Es schliesst

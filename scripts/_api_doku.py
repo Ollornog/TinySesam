@@ -99,7 +99,19 @@ def signatur(fn) -> str:
         s = inspect.signature(fn)
     except (TypeError, ValueError):
         return "(…)"
-    teile = [str(p) for name, p in s.parameters.items() if name != "self"]
+    # Mit den Marken `*`/`/` wie im Wächter (`tests/test_api_surface.py`, `parameter_mit_marken`):
+    # Ohne sie stand `anmelden_passwort(…, password, next=…)` hier, als ginge `next` auch
+    # positionell — bis 0.22.0 fehlten beide Marken in dieser Seite.
+    parameter = [p for name, p in s.parameters.items() if name != "self"]
+    teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
+    for i, p in enumerate(parameter):
+        erster_kw = i == 0 or parameter[i - 1].kind is not p.KEYWORD_ONLY
+        if p.kind is p.KEYWORD_ONLY and not stern and erster_kw:
+            teile.append("*")
+        teile.append(str(p))
+        if p.kind is p.POSITIONAL_ONLY and (i + 1 == len(parameter)
+                                            or parameter[i + 1].kind is not p.POSITIONAL_ONLY):
+            teile.append("/")
     zurueck = "" if s.return_annotation is inspect.Signature.empty else \
         f" -> {inspect.formatannotation(s.return_annotation)}"
     return "(" + ", ".join(teile) + ")" + zurueck

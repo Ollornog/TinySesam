@@ -34,19 +34,19 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 
 Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
 
-### `anmelden_passwort(request: 'Request', username: 'str', password: 'str', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+### `anmelden_passwort(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
 
 Mit Kennung und Passwort anmelden — gedrosselt, gezählt und gesperrt wie `POST /auth/login`, die genau diese Methode ruft.
 
-### `anmelden_pin(request: 'Request', pin: 'str', username: 'str' = '', next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+### `anmelden_pin(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'`
 
 Mit der persönlichen PIN anmelden oder den PIN-Schritt erbringen — gedrosselt und gesperrt wie `POST /auth/pin`, die genau diese Methode ruft.
 
-### `anmelden_totp(request: 'Request', code: 'str', next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'`
+### `anmelden_totp(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'`
 
 Den TOTP-Schritt erbringen — mit einem TOTP-Code oder einem Einmal-Code, gedrosselt und gesperrt wie `POST /auth/totp`, die genau diese Methode ruft.
 
-### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
+### `change_username(user_id, neu, ip: 'Optional[str]' = None, *, durch_betreiber: 'bool' = False) -> 'str'`
 
 Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
 
@@ -66,7 +66,7 @@ Einladung erzeugen (+ optional versenden). Rückgabe {url, token}. Der Token tr�
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, *, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
@@ -86,7 +86,7 @@ Bootstrap: legt einen Admin an, WENN noch kein User existiert. True bei Anlage.
 
 Ein gültiges CSRF-Cookie sicherstellen und das Token fürs Formular zurückgeben.
 
-### `foederation_nachbinden(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
+### `foederation_nachbinden(quelle: 'str', *, zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
 
 Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
 
@@ -278,11 +278,11 @@ Werte: `password_changed`, `pin_set`, `pin_disabled`, `totp_enabled`, `totp_disa
 
 `TinySesamConfig` ist eine Dataclass und bleibt eine: `dataclasses.fields(TinySesamConfig)` zählt jedes Feld auf. Presets setzen Bündel dieser Felder, einzelne lassen sich per `**overrides` überschreiben.
 
-### `TinySesamConfig.active_directory(ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
+### `TinySesamConfig.active_directory(*, ldap_url, upn_suffix=None, base_dn=None, bind_dn='', bind_password='', allowed_groups=None, **overrides)`
 
 Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bind per UPN (`upn_suffix="corp.example.com"` → user@corp.example.com) ODER Search-then-Bind über sAMAccountName (`bind_dn`/`bind_password`/`base_dn`). Restliche Felder via **overrides (db_path …).
 
-### `TinySesamConfig.entra_id(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
+### `TinySesamConfig.entra_id(*, tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
 
 Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Tenant-)ID.
 
@@ -290,7 +290,7 @@ Preset: **Entra ID / Azure AD** via OIDC (Cloud-AD). tenant_id = Verzeichnis-(Te
 
 Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
 
-### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
+### `TinySesamConfig.oidc_gateway(*, issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
 
 Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
 
@@ -466,7 +466,7 @@ Reines SSO-Konto: an einen IdP/ein Verzeichnis gebunden und ohne lokales Passwor
 
 Die jüngsten Audit-Ereignisse eines Kontos, für die Kontoseite (H-7).
 
-### `passwort_mangel(password, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
+### `passwort_mangel(password, *, username=None, email=None, api: 'bool' = False) -> 'Optional[str]'`
 
 Die Passwortregel für ein NEUES Passwort — `None` heisst „in Ordnung", sonst der übersetzte Grund (`api=True`: der Text für eine JSON-Antwort).
 
