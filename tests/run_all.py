@@ -120,7 +120,9 @@ def main(argv):
         elif r.returncode == SKIP_EXIT:
             # Die Suite hat selbst abgewunken — der Grund steht in ihrer eigenen Ausgabe.
             grund = (r.stdout or r.stderr or "").strip().splitlines()
-            print(f"  skip {name}" + (f" ({grund[-1][:70]})" if grund else ""))
+            # Nicht kürzen: Die Zeile nennt den Befehl zum Nachinstallieren (`pip install 'tinysesam[…]'`),
+            # und eine Kürzung vor der schliessenden Klammer sah aus wie ein Tippfehler im Befehl.
+            print(f"  skip {name}" + (f" ({grund[-1]})" if grund else ""))
             skipped.append(name)
         else:
             print(f"  FAIL {name}")

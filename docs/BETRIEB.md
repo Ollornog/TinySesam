@@ -492,8 +492,9 @@ im offenen Adresswechsel-Link der Schlüssel für die bisherige Adresse (`alt` �
 `peek_magic`/`redeem_magic`). Der erste Start schreibt sie um und sagt es im Log (`… gespeicherte
 Werte auf die englischen Namen umgeschrieben`). Gelesen wird ein alter Wert weiterhin richtig, und
 jeder Start zieht die API-Keys nach, die eine ältere Fassung inzwischen ausgestellt hat. Die
-Audit-Zeilen bleiben, wie sie waren: `apikey_create`/`apikey_use` nennen die Art weiter als
-`art=automat`/`art=mensch`.
+Audit-Zeilen bleiben unter 0.22.0, wie sie waren: `apikey_create`/`apikey_use` nennen die Art weiter
+als `art=automat`/`art=mensch`. (Läuft 0.21.x ohne das SQL unten auf der migrierten Datei, schreibt sie
+`art=automation`/`art=human` — sie gibt den gespeicherten Wert roh aus.)
 
 **Was 0.21.x mit einer migrierten Datei macht** (gemessen mit 0.21.0): Sie startet und warnt beim
 Start einmal: `Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11. …`.
