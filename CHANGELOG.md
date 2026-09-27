@@ -95,6 +95,20 @@ auffällt:
   `factors=["password"]`. Bis dahin überschrieb die Route-Kette die globale Regel; wer sie als
   eigene, schwächere Anmeldung nutzte (Route `["password"]` ohne TOTP, Route `["magic"]` unter
   `login_chain=["password", "totp"]`), bekommt jetzt den fehlenden Schritt.
+- **LDAP: eine Anmeldung fragt das Verzeichnis insgesamt höchstens 25 s** (Prüfrunde 2026-09-27,
+  `ldap_.GESAMT_FRIST_SEK`). Jede Antwort bekommt ihren Anteil: bei Search-then-Bind mit StartTLS
+  2 s je Antwort des Dienstkontos (mit `ldaps://` 3 s, ohne TLS 4 s), danach die Benutzer-Verbindung
+  den Rest, höchstens 10 s je Antwort. **Ein Verzeichnis, das langsamer antwortet, gilt jetzt als nicht
+  erreichbar** (503, kein Fehlversuch, Pause des Ausfall-Merkers) — vorher wartete jede Antwort bis
+  zu 10 s, eine Anmeldung also bis zu 100 s.
+- **Serien-Sperre: Texte je Ausweg** (Prüfrunde 2026-09-27). Die Anmeldeseite (`err.locked_serie`)
+  nennt zuerst den Betreiber, den Passwort-Reset nur bedingt — für jede Art gleich. Sperrhinweis und
+  Sicherheits-Log (`Anmeldung für user=… gesperrt: … Aufheben: …`) nennen den Reset nur noch, wenn er
+  die Sperre aufhebt (nicht bei Fehlversuchen nach dem Passwort: TOTP, PIN im Kettenschritt). Wer die
+  Logzeile maschinell liest, beachtet den Text nach `Aufheben:`.
+- **`/auth/pin` mit halber Sitzung** prüft die PIN nur noch, wenn sie der offene Schritt der
+  `login_chain` ist (Prüfrunde 2026-09-27); sonst Gästeweg bzw. 404. Im klassischen Modus mit
+  `pin_login=False` ist das wieder das Verhalten von 0.20.x.
 - **Neue CLI-Befehle:** `tinysesam rename --db <datei> <name|#id> <neu>` (Umbenennen als Betreiber,
   G13) und `tinysesam owner --db <datei> <name>` (Notweg zum Owner).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
@@ -133,7 +147,8 @@ auffällt:
   Betreiber der Quelle nicht, geht nach der Anmeldung ein Bestätigungslink an die Adresse aus der
   Quelle — derselbe Weg wie beim Adresswechsel der Selbstbedienung; erst der Klick macht sie zur
   Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens ein zugestellter je
-  Konto und Tag (über alle Worker, G12a), keiner, solange einer offen ist; eine vergebene Adresse
+  Konto und Tag (über alle Worker, G12a), keiner, solange ein Adresswechsel-Link des Kontos offen ist
+  (an welche Adresse auch immer, seit der Prüfrunde 2026-09-27); eine vergebene Adresse
   bekommt keinen, und ihre Abweisung zählt wie ein Versand. Schalter
   `federation_email_confirm` (Vorgabe an; braucht Mailer und `base_url`). Dazu je Quelle ein
   optionales Beleg-Attribut für IdPs, die das führen: `ldap_attr_email_verified`,
@@ -414,7 +429,8 @@ auffällt:
   beide. Fenster und PIN-Topf zählen unverändert als `pin`. Dazu zwei Befunde am selben Weg:
   **N1** — mit `pin_login=False` war eine Kette `password → pin` eine Sackgasse: Der PIN-Schritt lief
   über den Gästeweg, und der antwortete 404. Jetzt erkennt `/auth/pin` die halbe Sitzung wie
-  `/auth/totp` und fragt nur die PIN (ohne Namensfeld); `pin_login` gilt nur für den Gästeweg.
+  `/auth/totp` und fragt nur die PIN (ohne Namensfeld); `pin_login` gilt nur für den Gästeweg — seit
+  der Prüfrunde 2026-09-27 nur, wenn die PIN ihr Kettenschritt ist (p2 F1, unten).
   **N2** — in einer strikten Kette `password → pin` antwortete der Gästeweg ohne Passwort auf eine
   falsche PIN mit 401, auf die richtige mit 303: ein Orakel, und eine zuerst eingegebene PIN erfüllt
   die strikte Kette ohnehin nie. Die PIN ist dort kein Erstfaktor mehr
@@ -424,7 +440,8 @@ auffällt:
   Gästeweg (bei geschlossenem: 404). Die Konto-Seite zeigt ihre PIN-Sektion weiter, wo die Login-Seite
   die PIN nicht mehr anbietet, und auch mit `pin_login=False`, wenn die Kette eine PIN verlangt. Neu
   für eigene PIN-Seiten: `versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`. Der Sperrhinweis per
-  Mail nennt bei der Serie auch den Betreiber als Weg hinaus. **Rückweg:** Eine ältere Fassung zählt
+  Mail nennt bei der Serie auch den Betreiber als Weg hinaus (seit der Prüfrunde 2026-09-27 den Reset
+  nur, wenn er die Serie räumt, unten). **Rückweg:** Eine ältere Fassung zählt
   `pin_folge` mit und räumt es nur mit einer vollen Anmeldung oder durch den Betreiber — strenger.
   Test: `tests/test_pin_folge.py`.
 - **LDAP: eine Verzeichnis-Anmeldung räumt keine fremden Zähler mehr (G5-N1).** Ein Filter über
@@ -474,10 +491,57 @@ auffällt:
   verbleibendes Konto den Topf teilt), frühere Namen und Adressen kommen aus den eigenen
   Wechselzeilen und gelten in ihrer Spanne, und in den eigenen Zeilen werden `alt=`, `neu=` und
   `an=` ersetzt. Test: `tests/test_audit_runde2.py`.
+- **Die halbe Sitzung prüft die PIN nur als ihren Kettenschritt (Prüfrunde 2026-09-27, p2 F1).** Seit
+  G7-N1 genügte `/auth/pin` jede halbe Sitzung. Im klassischen Modus mit `pin_login=False` und einem
+  Konto mit TOTP und PIN bekam, wer nur das Passwort hatte, auf eine falsche PIN 401 und auf die
+  richtige 303 (0.20.x: 404) — ein Orakel. In einer strikten Kette `password → totp → pin` stand eine
+  PIN vor dem TOTP in der Sitzung; deren Reihenfolge war danach nie mehr erfüllbar, und jede weitere
+  Anmeldung im selben Browser hing an ihr fest, bis zum Abmelden. Jetzt gilt die halbe Sitzung (GET
+  und POST) nur, wenn die globale `login_chain` die PIN verlangt, sie noch fehlt und sie — strikt —
+  der nächste Schritt ist; sonst Gästeweg bzw. 404. Test: `tests/test_pin_folge.py` (j);
+  `tests/test_stepup.py` hielt für den klassischen Fall die 401 fest und erwartet wieder 404.
+- **Kein Orakel über das Flugfenster des Postausgangs (p2 F2).** Die Zeile
+  `federation_email_confirm` entsteht erst nach dem Versand, eine Abweisung sofort, und
+  `offener_token` fragte nur nach einem Link an DIESELBE Adresse. Lag der Link an `ziel@` noch im
+  Postausgang (langsames Relay), schickte ein zweiter Worker nach einem Wechsel des eigenen
+  `mail`-Attributs einen an `probe@` — kam er an, war `ziel@` frei; dazu zwei Links an einem Tag.
+  Jetzt hält jeder offene Adresswechsel-Link des Kontos auf (`store.offener_token(…, email=None)`).
+  Test: `tests/test_quellenadresse.py`.
+- **`lockout_serie` genau beim Übergang (p2 F3, schon auf main).** Protokolliert wurde der
+  Serienstand bei der Buchung, samt schwebender Vorbuchungen: Schwebten die Inhaberin (richtiges
+  Passwort) und ein Angreifer an grenze−2 gleichzeitig und beendete ihre volle Anmeldung die Serie,
+  standen `lockout_serie` im Audit-Log und „gesperrt" im Sicherheits-Log, obwohl nichts gesperrt war.
+  Jetzt zählt der feststehende Stand: `store.reserve_attempt` gibt ihn nach der Buchung zurück (eine
+  sofort feststehende Buchung überschreitet die Grenze dort — gemeldet, wenn die Serie beim Abschluss
+  noch steht), `store.finish_attempt(…, serie=)` gibt ihn vor und nach dem Abschluss zurück, beide in
+  einer Transaktion (`BEGIN IMMEDIATE`; eine schwebende überschreitet die Grenze erst dort). Test:
+  `tests/test_vorbuchung_schwebe.py` (echte Salve mit und ohne Schweben: genau eine Zeile).
+- **LDAP: Gesamtfrist, damit eine laufende Anmeldung nie als bestätigter Fehlversuch zählt (p2 V1).**
+  Eine offene Vorbuchung gilt nach `Store.VORBUCHUNG_SCHWEBE_SEK` (30 s) als Fehlversuch eines
+  gestorbenen Prozesses. ldap3 kennt nur eine Frist je Antwort (10 s), und ein Search-then-Bind mit
+  StartTLS wartet bis zu zehnmal — ein langsames, aber antwortendes Verzeichnis liess eine noch
+  laufende Anmeldung als bestätigten Fehlversuch zählen: echte Sperre, Sperrmail und `failed login`
+  für Dritte. Jetzt `ldap_.GESAMT_FRIST_SEK = 25`, verteilt über die Wartestellen (das Dienstkonto
+  höchstens die Hälfte des Rests); reicht der Rest nicht, gilt das Verzeichnis als nicht erreichbar,
+  bevor es gefragt wird — nie als „Passwort falsch". Test: ebenda (ldap3-Attrappe mit eigener Uhr).
+- **Der Ausweg aus der Serie je nach Art.** Der Selbstbedienungs-Reset räumt TOTP und die PIN im
+  Kettenschritt nicht (G7); reichten diese allein bis an die Grenze, nannten Sperrhinweis und
+  Sicherheits-Log trotzdem den Reset — der Inhaber setzte sein Passwort zurück und blieb gesperrt.
+  Jetzt nennen sie ihn nur, wenn er die Sperre aufhebt (`store.fehlserie_ohne`), sonst den Betreiber.
+  Die Anmeldeseite zeigt jedem denselben Text, der zuerst den Betreiber nennt — ein Text je Art
+  verriete, dass jemand am zweiten Faktor rät und das Konto also existiert. Test:
+  `tests/test_pin_folge.py`.
+- **Volle Warteschlange verwirft den Bestätigungslink.** Gab der Hinweis-Postausgang den Versand
+  zurück (Warteschlange voll), blieb der Token des nie zugestellten Links offen und hielt über
+  `offener_token` jeden neuen bis zu seinem Ablauf auf. Jetzt verfällt er sofort; dasselbe gilt für
+  den Adresswechsel der Selbstbedienung (`request_email_change` gibt `senden.verwerfen` mit, die Route
+  reicht es als `bei_ueberlauf` durch). Test: `tests/test_quellenadresse.py`,
+  `tests/test_selbstbedienung.py`.
 - **LDAP: Das erste Fenster eines Ausfalls sperrt niemanden mehr (G9).** Die Login-Route bucht jeden
   Versuch vorab als Fehlversuch (R7-2) und nimmt ihn bei einem Verzeichnis-Ausfall zurück (F-23) —
   erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach dem
-  Timeout (10 s). Vor dem ersten Timeout weiss der Ausfall-Merker noch nichts: Wer in diesen Sekunden
+  Timeout (bis zu 10 s; seit der Gesamtfrist, p2 V1 oben, der Anteil der Wartestelle). Vor dem
+  ersten Timeout weiss der Ausfall-Merker noch nichts: Wer in diesen Sekunden
   anklopfte, sah die hängenden Vorbuchungen als Fehlversuche. Gemessen mit 15 hängenden Anmeldungen
   hinter einer NAT-Adresse: Alice und der Notfall-Admin mit richtigem Passwort bekamen 429, das
   Sicherheits-Log `failed login … reason=lockout_user|lockout_ip` (fail2ban bannte die Adresse), Alice

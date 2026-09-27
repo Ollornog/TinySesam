@@ -392,8 +392,8 @@ def build_router(auth) -> APIRouter:
             Login-Seite bietet die PIN ohnehin an."""
             nxt = auth.safe_next(next, request)
             # Wie beim Absenden: ein API-Key ist ein Gast. Die halbe Sitzung (erster Faktor ja,
-            # Kette offen) liest `pending_user` — wie `/auth/totp` (G7, N1).
-            u = auth.session_user(request) or auth.pending_user(request)
+            # Kette offen) zählt nur, wenn die PIN ihr Kettenschritt ist (G7-N1, p2 F1).
+            u = auth.session_user(request) or auth._pin_kettenschritt(request)
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
             if not cfg.pin_als_erstfaktor():
@@ -422,7 +422,10 @@ def build_router(auth) -> APIRouter:
             # buchten wie die eines Erstfaktors, die ein Selbstbedienungs-Reset räumt (G7).
             # Nennt das Formular ein ANDERES Konto, bleibt es ein Identitätswechsel über den
             # Gästeweg; eigene PIN-Seiten, die den Namen mitschicken, bleiben im Kettenschritt.
-            halb = None if me else auth.pending_user(request)
+            # Die halbe Sitzung zählt nur, wenn die PIN jetzt ihr Kettenschritt ist (p2 F1): Sonst
+            # prüfte sie PINs im klassischen Modus (Orakel mit nur dem Passwort) oder vor dem TOTP
+            # einer strikten Kette, deren Reihenfolge danach nie mehr erfüllbar war.
+            halb = None if me else auth._pin_kettenschritt(request)
             if halb and username:
                 gemeint = auth.find_user(username)
                 if not gemeint or gemeint["id"] != halb["id"]:
@@ -1295,8 +1298,11 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, str(e))
             # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
             # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
+            # Ist die Warteschlange voll, verfällt der Token (`senden.verwerfen`): Ein nie
+            # zugestellter Link hielte sonst den Weg über LDAP/SAML bis zu seinem Ablauf auf.
             antwort = JSONResponse({"ok": True, "sent": True})
-            return auth.nach_der_antwort(antwort, senden) if senden else antwort
+            return auth.nach_der_antwort(antwort, senden, bei_ueberlauf=senden.verwerfen) \
+                if senden else antwort
 
         @r.get("/auth/email/{token}", response_class=HTMLResponse)
         def email_confirm_page(request: Request, token: str):

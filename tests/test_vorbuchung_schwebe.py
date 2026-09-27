@@ -358,6 +358,270 @@ r.check("Ausnahme im Verzeichnis-Client: 500, der Versuch ist ein bestätigter F
         status_f == 500 and zeilen_f == [(0, 0)], f"{status_f}, {zeilen_f}")
 os.remove(db)
 
+# ── (i) p2 F3: `lockout_serie` genau beim Übergang des feststehenden Stands ────────────────────
+# Bis 2026-09-27 protokollierte ein Fehlversuch den Serienstand bei SEINER Buchung, samt schwebender
+# Vorbuchungen. Die Inhaberin (richtiges Passwort) und ein Angreifer (falsch) schweben gleichzeitig,
+# die Serie steht bei grenze−2: Die Inhaberin wird voll angemeldet und beendet die Serie, der
+# Angreifer scheitert mit dem gebuchten Stand = grenze — `lockout_serie` im Audit-Log und „gesperrt“
+# im Sicherheits-Log, obwohl nichts gesperrt war.
+RICHTIG_I = "richtig-im-verz"
+
+
+class Pruefendes(Verzeichnis):
+    """Nimmt genau ein Passwort an, nach `dauer` Sekunden."""
+
+    def authenticate(self, username, password):
+        with self._zaehler:
+            self.fragen += 1
+        time.sleep(self.dauer)
+        if password == RICHTIG_I:
+            return {"username": username, "email": None, "name": username, "groups": [], "id": f"l-{username}"}
+        return None
+
+
+def _serien_zeilen(auth):
+    return auth.store._one("SELECT COUNT(*) AS n FROM audit WHERE event='lockout_serie'")["n"]
+
+
+auth, app, post, db = _aufbau(Pruefendes(dauer=0.6), max_login_attempts=1000,
+                              account_max_consecutive_failures=10)
+grenze_i = auth.sec("account_max_consecutive_failures")
+for _ in range(grenze_i - 2):
+    auth.store.fehlserie_erhoehen("alice")
+with Mitschnitt() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
+    inhaberin = pool.submit(_anmelden, app, "alice", RICHTIG_I, ("198.51.100.1", 40000))
+    time.sleep(0.15)
+    angreifer = pool.submit(_anmelden, app, "alice", "falsch", ("203.0.113.66", 40000))
+    inhaberin, angreifer = inhaberin.result(timeout=30), angreifer.result(timeout=30)
+auth._hinweis_ausgang.abwarten()
+# (Mutationsprobe: in `record_login` wieder `stand = vorgebucht[2]` und `stand == grenze`, dazu in
+#  `reserve_attempt` die Summe statt des feststehenden Stands → eine Zeile → rot.)
+r.check("p2 F3: Inhaberin und Angreifer schweben an grenze−2, die Inhaberin beendet die Serie — "
+        "kein `lockout_serie` im Audit-Log, kein „gesperrt“ im Sicherheits-Log",
+        inhaberin == 303 and angreifer == 401 and auth.store.fehlserie("alice") == 0
+        and _serien_zeilen(auth) == 0 and not log_i.zeilen("gesperrt") and post == [],
+        f"{inhaberin}/{angreifer}, Serie {auth.store.fehlserie('alice')}, Zeilen {_serien_zeilen(auth)}, "
+        f"{log_i.zeilen('gesperrt')} {post}"[:400])
+os.remove(db)
+
+# Gegenprobe: die echte Sperre per Salve — genau eine Zeile, mit Schweben (LDAP) und ohne.
+verz_i2 = Verzeichnis("falsch", dauer=0.3)
+auth, app, post, db = _aufbau(verz_i2, max_login_attempts=1000, account_max_consecutive_failures=10)
+for _ in range(grenze_i - 1):
+    auth.store.fehlserie_erhoehen("alice")
+with Mitschnitt() as log_i2, ThreadPoolExecutor(max_workers=6) as pool:
+    salve_i2 = sorted(pool.map(lambda i: _anmelden(app, "alice", f"falsch{i}", (f"192.0.2.{20 + i}", 40000)),
+                               range(6)))
+auth._hinweis_ausgang.abwarten()
+r.check("p2 F3 Gegenprobe mit LDAP (schwebend): Salve an grenze−1 → eine Frage ans Verzeichnis, Serie "
+        "steht, genau eine Zeile `lockout_serie`",
+        verz_i2.fragen == 1 and salve_i2 == [401] + [429] * 5
+        and auth.store.fehlserie_bestaetigt("alice") == grenze_i and _serien_zeilen(auth) == 1
+        and len(log_i2.zeilen("gesperrt: ")) == 1,
+        f"{verz_i2.fragen} {salve_i2} {auth.store.fehlserie_bestaetigt('alice')} {_serien_zeilen(auth)}")
+os.remove(db)
+
+db_i3 = str(Path(tempfile.mkdtemp()) / "t.db")
+auth_i3 = TinySesam(TinySesamConfig(db_path=db_i3, cookie_secure=False, csrf_enabled=False,
+                                    passkey_enabled=False, oidc_enabled=False, lang="de"))
+for k, v in (("rate_limit_max", 1000), ("max_login_attempts", 1000), ("account_max_consecutive_failures", 10)):
+    auth_i3.set_security(k, v)
+auth_i3.create_user("bert", password=PW)
+app_i3 = FastAPI()
+app_i3.include_router(auth_i3.router())
+for _ in range(grenze_i - 1):
+    auth_i3.store.fehlserie_erhoehen("bert")
+with ThreadPoolExecutor(max_workers=6) as pool:
+    salve_i3 = sorted(pool.map(lambda i: _anmelden(app_i3, "bert", f"falsch{i}", (f"192.0.2.{40 + i}", 40000)),
+                               range(6)))
+r.check("p2 F3 Gegenprobe ohne LDAP (sofort feststehend): Salve an grenze−1 → genau eine Zeile `lockout_serie`",
+        salve_i3 == [401] + [429] * 5 and _serien_zeilen(auth_i3) == 1, f"{salve_i3} {_serien_zeilen(auth_i3)}")
+# Sofort feststehende Buchung über die Grenze, die Serie wird vor ihrem Abschluss beendet (eine volle
+# Anmeldung auf einem anderen Weg): keine Zeile. Und gemischt — eine schwebende und eine sofort
+# feststehende an der Grenze, in beiden Reihenfolgen abgeschlossen: genau eine.
+auth_i3.store.fehlserie_loeschen("bert")
+for _ in range(grenze_i - 1):
+    auth_i3.store.fehlserie_erhoehen("bert")
+_vor_i3 = _serien_zeilen(auth_i3)
+_v = auth_i3.versuch_beginnen("bert", "192.0.2.60", "pin")
+auth_i3.sperre_aufheben(auth_i3.store.get_user_by_name("bert")["id"])
+auth_i3.record_login("bert", "192.0.2.60", False, "pin", versuch=_v)
+# (Mutationsprobe: in `record_login` `min(vorgebucht[2], nachher)` durch `vorgebucht[2]` ersetzen → rot.)
+r.check("p2 F3: Buchung über die Grenze, Serie vor dem Abschluss beendet → keine Zeile",
+        _v is not None and _serien_zeilen(auth_i3) == _vor_i3, f"{_v} {_serien_zeilen(auth_i3) - _vor_i3}")
+_gemischt = []
+for reihenfolge in ("schwebend zuerst", "feststehend zuerst"):
+    auth_i3.store.fehlserie_loeschen("bert")
+    for _ in range(grenze_i - 2):
+        auth_i3.store.fehlserie_erhoehen("bert")
+    _vor = _serien_zeilen(auth_i3)
+    _s = auth_i3.versuch_beginnen("bert", "192.0.2.61", "password", schweben=True)
+    _f = auth_i3.versuch_beginnen("bert", "192.0.2.62", "pin")
+    for v, m in ((_s, "password"), (_f, "pin"))[::1 if reihenfolge == "schwebend zuerst" else -1]:
+        auth_i3.record_login("bert", "192.0.2.61", False, m, versuch=v)
+    _gemischt.append((reihenfolge, _s is not None and _f is not None, _serien_zeilen(auth_i3) - _vor))
+# (Mutationsprobe: `vorher < max_serie <= nachher` streichen → „schwebend zuerst" 0 Zeilen → rot.)
+r.check("p2 F3: schwebende und sofort feststehende Buchung an der Grenze — in beiden Reihenfolgen genau eine Zeile",
+        all(ok_ and n == 1 for _, ok_, n in _gemischt), str(_gemischt))
+auth_i3.store.db.close()
+os.remove(db_i3)
+
+# ── (j) p2 V1: eine Gesamtfrist für die Frage ans Verzeichnis ──────────────────────────────────
+# Die Vorbuchung schwebt höchstens `Store.VORBUCHUNG_SCHWEBE_SEK`; danach gilt sie als Fehlversuch
+# eines gestorbenen Prozesses. ldap3 kennt nur eine Frist je Antwort (10 s), und ein Search-then-Bind
+# mit StartTLS wartet bis zu zehnmal: Ein langsames, aber antwortendes Verzeichnis liess eine noch
+# laufende Anmeldung als bestätigten Fehlversuch zählen. Gemessen mit einem untergeschobenen ldap3 und
+# einer Uhr, die nur die Attrappe vorstellt — ohne echte Wartezeit.
+import types as _types  # noqa: E402
+
+from tinysesam import ldap_ as _ldap_mod  # noqa: E402
+
+
+class _Uhr:
+    def __init__(self):
+        self.t = 1000.0
+
+    def monotonic(self):
+        return self.t
+
+
+def _ldap3_langsam(uhr, antwort_sek, mitschrift):
+    """ldap3-Attrappe: Jede Antwort braucht `antwort_sek`; ist die Frist der Wartestelle kürzer,
+    endet sie nach der Frist mit dem Fehler, den ldap3 dort wirft."""
+    mod = _types.ModuleType("ldap3")
+    mod.NONE, mod.BASE = "NONE", "BASE"
+    mod.AUTO_BIND_NO_TLS, mod.AUTO_BIND_TLS_BEFORE_BIND = "NO_TLS", "TLS_BEFORE_BIND"
+    kern = _types.ModuleType("ldap3.core")
+    lx = _types.ModuleType("ldap3.core.exceptions")
+    for name in ("LDAPException", "LDAPCommunicationError", "LDAPStartTLSError", "LDAPBindError",
+                 "LDAPMaximumRetriesError", "LDAPSSLConfigurationError"):
+        setattr(lx, name, type(name, (Exception,), {}))
+    lx.LDAPSocketOpenError = type("LDAPSocketOpenError", (lx.LDAPCommunicationError,), {})
+    lx.LDAPSocketReceiveError = type("LDAPSocketReceiveError", (lx.LDAPCommunicationError,), {})
+
+    def warten(frist, fehler):
+        if antwort_sek >= frist:
+            uhr.t += frist
+            raise fehler("timed out")
+        uhr.t += antwort_sek
+
+    class Tls:
+        def __init__(self, **kw):
+            pass
+
+    class Server:
+        def __init__(self, url, **kw):
+            self.url, self.connect_timeout = url, kw.get("connect_timeout")
+
+    class Eintrag:
+        entry_dn = "uid=alice,ou=people,dc=example,dc=com"
+
+        def __contains__(self, name):
+            return False
+
+    class Connection:
+        def __init__(self, server, **kw):
+            self.server, self.frist, self.entries = server, kw.get("receive_timeout"), []
+            mitschrift.append((server.connect_timeout, self.frist))
+            if kw.get("auto_bind"):
+                self.open()
+                if kw["auto_bind"] == "TLS_BEFORE_BIND":
+                    self.start_tls()
+                self.bind()
+
+        def open(self):
+            warten(self.server.connect_timeout, lx.LDAPSocketOpenError)
+            if self.server.url.startswith("ldaps://"):
+                warten(self.frist, lx.LDAPSocketReceiveError)       # TLS-Handschlag
+
+        def start_tls(self):
+            warten(self.frist, lx.LDAPSocketReceiveError)           # Antwort auf StartTLS
+            warten(self.frist, lx.LDAPSocketReceiveError)           # TLS-Handschlag
+
+        def bind(self):
+            warten(self.frist, lx.LDAPSocketReceiveError)
+            return True
+
+        def search(self, *a, **kw):
+            warten(self.frist, lx.LDAPSocketReceiveError)
+            self.entries = [Eintrag()]
+            return True
+
+        def unbind(self):
+            pass
+
+    mod.Tls, mod.Server, mod.Connection = Tls, Server, Connection
+    conv = _types.ModuleType("ldap3.utils.conv")
+    conv.escape_filter_chars = lambda v, encoding=None: v
+    dn = _types.ModuleType("ldap3.utils.dn")
+    dn.escape_rdn = lambda v: v
+    return {"ldap3": mod, "ldap3.core": kern, "ldap3.core.exceptions": lx,
+            "ldap3.utils": _types.ModuleType("ldap3.utils"), "ldap3.utils.conv": conv, "ldap3.utils.dn": dn}
+
+
+_LDAP3_NAMEN = ("ldap3", "ldap3.core", "ldap3.core.exceptions", "ldap3.utils", "ldap3.utils.conv",
+                "ldap3.utils.dn")
+
+
+def _langsam_fragen(antwort_sek, **cfg):
+    """(Ausgang, verstrichene Sekunden, Fristen je Verbindung) einer Anmeldung gegen die Attrappe."""
+    uhr, mitschrift = _Uhr(), []
+    vorher = {n: sys.modules.get(n) for n in _LDAP3_NAMEN}
+    zeit_vorher = _ldap_mod.time
+    grund = dict(db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+                 ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="svc",
+                 ldap_user_base="ou=people,dc=example,dc=com")
+    grund.update(cfg)
+    try:
+        sys.modules.update(_ldap3_langsam(uhr, antwort_sek, mitschrift))
+        _ldap_mod.time = uhr
+        start = uhr.t
+        try:
+            ausgang = "angemeldet" if _ldap_mod.LDAPClient(TinySesamConfig(**grund)).authenticate("alice", "pw") \
+                else "abgewiesen"
+        except _ldap_mod.VerzeichnisNichtErreichbar:
+            ausgang = "nicht erreichbar"
+        return ausgang, uhr.t - start, mitschrift
+    finally:
+        _ldap_mod.time = zeit_vorher
+        for n, m in vorher.items():
+            if m is None:
+                sys.modules.pop(n, None)
+            else:
+                sys.modules[n] = m
+
+
+_faelle_j = {"Search-then-Bind + StartTLS": dict(ldap_start_tls=True),
+             "Search-then-Bind, ldaps://": dict(ldap_url="ldaps://verzeichnis.example.com"),
+             "Search-then-Bind, ohne TLS": dict(),
+             "Direkt-Bind + StartTLS": dict(ldap_start_tls=True, ldap_bind_dn="", ldap_bind_password="",
+                                            ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com")}
+_messung_j = {(name, sek): _langsam_fragen(sek, **cfg)[:2]
+              for name, cfg in _faelle_j.items() for sek in (0.01, 1.2, 1.9, 2.9, 4.5, 9.5)}
+_zu_lang_j = {k: v for k, v in _messung_j.items() if v[1] > _ldap_mod.GESAMT_FRIST_SEK}
+# (Mutationsprobe: in `_Frist.je_wartestelle` wieder immer `VERBINDUNGS_TIMEOUT` → bis zu 95 s → rot.)
+r.check("p2 V1: jede Anmeldung gegen ein langsames, aber antwortendes Verzeichnis endet innerhalb der "
+        f"Gesamtfrist ({_ldap_mod.GESAMT_FRIST_SEK} s) — angemeldet oder „nicht erreichbar“, nie „abgewiesen“",
+        not _zu_lang_j and all(a in ("angemeldet", "nicht erreichbar") for a, _ in _messung_j.values()),
+        f"zu lang: {_zu_lang_j}; {[(k, v) for k, v in _messung_j.items() if v[0] == 'abgewiesen']}")
+r.check("… ein schnelles Verzeichnis merkt nichts: angemeldet, das Dienstkonto mit der halben, die "
+        "Benutzer-Verbindung mit der ganzen Restfrist je Antwort (höchstens 10 s)",
+        all(_messung_j[(n, 0.01)][0] == "angemeldet" for n in _faelle_j)
+        and _langsam_fragen(0.01)[2] == [(4, 4), (8, 8)], str(_langsam_fragen(0.01)[2]))
+r.check("… und die Gesamtfrist liegt mit Luft unter der Schwebezeit der Vorbuchung",
+        _ldap_mod.GESAMT_FRIST_SEK + 5 <= Store.VORBUCHUNG_SCHWEBE_SEK,
+        f"{_ldap_mod.GESAMT_FRIST_SEK} / {Store.VORBUCHUNG_SCHWEBE_SEK}")
+_frist_vorher = _ldap_mod.GESAMT_FRIST_SEK
+try:
+    _ldap_mod.GESAMT_FRIST_SEK = 5                    # reicht für keine Sekunde je Wartestelle
+    _knapp_j = _langsam_fragen(0.01, ldap_start_tls=True)
+finally:
+    _ldap_mod.GESAMT_FRIST_SEK = _frist_vorher
+# (Mutationsprobe: `except VerzeichnisNichtErreichbar: raise` in `authenticate` streichen → „abgewiesen“,
+#  ein Fehlversuch für die Langsamkeit des Verzeichnisses → rot.)
+r.check("p2 V1: reicht die Frist nicht, gilt das Verzeichnis als nicht erreichbar, bevor es gefragt wird "
+        "(kein Fehlversuch)", _knapp_j[0] == "nicht erreichbar" and _knapp_j[2] == [], str(_knapp_j))
+
 # ── Ohne LDAP schwebt nichts, und die Spalte kommt auch in eine Datei, die schon Schema 11 trägt ─
 db_o = str(Path(tempfile.mkdtemp()) / "t.db")
 auth_o = TinySesam(TinySesamConfig(db_path=db_o, cookie_secure=False, csrf_enabled=False,

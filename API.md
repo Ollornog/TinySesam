@@ -380,7 +380,7 @@ Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperre
 
 ### `request_email_change(user_id, neu, base_url)`
 
-Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer.
+Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `bei_ueberlauf` für `nach_der_antwort` (seit 2026-09-27).
 
 ### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
 

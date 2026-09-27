@@ -2393,8 +2393,13 @@ class TinySesam:
         # als einen Tag (`email_change_ttl_min`), so lange: Ein zugestellter hält den nächsten
         # Versuch ohnehin bis zu seinem Ablauf auf (`offener_token`), eine Abweisung muss es genauso
         # — und auch dann, wenn der Inhaber seinen offenen Link verwirft (Passwortwechsel).
+        # Jeder offene Link des Kontos hält auf, an welche Adresse auch immer (p2 F2): Die Zeile
+        # `federation_email_confirm` entsteht erst nach dem Versand. Mit dem Filter auf die Adresse
+        # schickte ein zweiter Worker, solange der erste Link noch im Postausgang lag, einen an ein
+        # anderes `mail` — kam er an, war die erste Adresse frei (eine vergebene schreibt ihre
+        # Abweisung sofort), und das Konto bekam zwei Links an einem Tag.
         frist = max(86400, int(self.cfg.email_change_ttl_min) * 60)
-        if self.store.offener_token(u["id"], "email_change", adresse):
+        if self.store.offener_token(u["id"], "email_change"):
             return
         if self.store.quellmail_seit(u["id"], _jetzt() - frist):
             return
@@ -2418,7 +2423,12 @@ class TinySesam:
             if senden():
                 anfrage.run(self.audit, "federation_email_confirm", name,
                             detail=f"konto={uid} quelle={quelle} an={adresse}")
-        self._hinweis_ausgang.einreihen(_versand)
+        if not self._hinweis_ausgang.einreihen(_versand):
+            # Warteschlange voll: Der Link geht nie hinaus. Sein Token verfällt sofort — sonst
+            # hielte er als offener Link (`offener_token`) jeden neuen bis zu seinem Ablauf auf,
+            # ohne dass je einer zugestellt war. Den nächsten Versuch dämpft der Speicher wie
+            # nach einem gescheiterten Versand (`quellmail:<id>`, das Fenster der Mail-Drossel).
+            senden.verwerfen()
 
     # ---------- Passkeys verwalten ----------
     def remove_passkey(self, user_id: int, passkey_id: int, ip: Optional[str] = None) -> bool:
@@ -2697,6 +2707,25 @@ class TinySesam:
         zurückgenommen werden — ein Aufschub zeigt deshalb nie den Text der Serien-Sperre."""
         return (self.store.fehlserie_bestaetigt(norm_kennung(username))
                 >= self.sec("account_max_consecutive_failures"))
+
+    def _serie_reset_hilft(self, username) -> bool:
+        """Hebt ein Selbstbedienungs-Reset die Serien-Sperre unter dieser Kennung auf?
+
+        Er räumt nur die Anteile der ersten Faktoren (`_SERIE_RESET_ARTEN`), nicht TOTP und nicht
+        die PIN im Kettenschritt (`SERIE_PIN_FOLGE`, G7). Stehen die allein an der Grenze, nannten
+        Sperrhinweis und Sicherheits-Log bis 2026-09-27 trotzdem den Reset als Ausweg — der Inhaber
+        setzte sein Passwort zurück und blieb gesperrt. Nur für Texte an Inhaber und Betreiber: Die
+        Anmeldeseite zeigt jedem denselben Text (`err.locked_serie`), sonst verriete sie, dass
+        unter einer Kennung jemand am zweiten Faktor rät — und damit, dass es das Konto gibt."""
+        return (self.store.fehlserie_ohne(norm_kennung(username), self._SERIE_RESET_ARTEN)
+                < self.sec("account_max_consecutive_failures"))
+
+    def _serie_ausweg(self, username) -> str:
+        """Was die Serien-Sperre unter dieser Kennung aufhebt — für das Sicherheits-Log."""
+        if self._serie_reset_hilft(username):
+            return "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`"
+        return ("Anmeldung über einen anderen Weg oder `tinysesam unlock` (ein Passwort-Reset räumt "
+                "die Fehlversuche nach dem Passwort nicht: TOTP, PIN im Kettenschritt)")
 
     def _sperre_pruefen(self, regeln, username, ip, login: bool) -> bool:
         """Die Regeln lesend prüfen; die erste, die greift, wird gemeldet (`_abgewiesen`).
@@ -3675,7 +3704,9 @@ class TinySesam:
         Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben
         oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur
         bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer
-        ungültigen Adresse oder ohne Mailer.
+        ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle
+        Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `bei_ueberlauf` für
+        `nach_der_antwort` (seit 2026-09-27).
 
         Die Antwort an den Anfragenden ist in jedem Fall dieselbe: Ist die Adresse schon Kennung
         eines anderen Kontos (oder steht sie in `admin_identifiers`), geht kein Link hinaus, und
@@ -3771,6 +3802,13 @@ class TinySesam:
                 # immer, und sein Ausbleiben verriete „vergeben".
                 if alt and alt != mail:
                     self._wechsel_antrag_hinweis(alt, name, mail)
+
+        def verwerfen() -> None:
+            """Der Versand fällt aus, bevor er beginnt (Warteschlange voll): Der Token verfällt
+            sofort, wie nach einem gescheiterten Versand (B6-12) — ein nie zugestellter Link hielte
+            sonst als offener den nächsten bis zu seinem Ablauf auf (`offener_token`)."""
+            self.store.expire_magic_token(self._token_hash(raw))
+        senden.verwerfen = verwerfen   # type: ignore[attr-defined]
         return senden
 
     def _wechsel_antrag_hinweis(self, alt, name, neu) -> None:
@@ -4371,6 +4409,26 @@ class TinySesam:
             self._anfrage_merken(request, u)
         return u
 
+    def _pin_kettenschritt(self, request) -> Optional[dict]:
+        """Das Konto der halben Sitzung, wenn die PIN jetzt ihr Kettenschritt ist — sonst None.
+
+        Ja nur, wenn die globale `login_chain` die PIN verlangt, sie in dieser Sitzung noch fehlt
+        und sie, in einer strikten Kette, der nächste Schritt ist. Bis 2026-09-27 genügte jede
+        halbe Sitzung (G7-N1): Im klassischen Modus mit `pin_login=False` prüfte `/auth/pin` dann
+        die PIN für jeden, der nur das Passwort hatte (falsch 401, richtig 303 — dort ein Orakel,
+        das es vorher nicht gab), und in einer strikten Kette `password → totp → pin` stand die PIN
+        vor dem TOTP in der Sitzung. Deren Reihenfolge war danach nie mehr erfüllbar, und jede
+        weitere Anmeldung im selben Browser hing an ihr fest, bis zum Abmelden (p2 F1)."""
+        u = self.pending_user(request)
+        req, strict = self._global_chain()
+        if not u or not req or "pin" not in req:
+            return None
+        s = self.session_from_request(request)
+        done = json.loads(s["factors_done"] or "[]") if s else []
+        if "pin" in done or (strict and self._next_factor(req, strict, done) != "pin"):
+            return None
+        return u
+
     def totp_enrollment_user(self, request) -> Optional[dict]:
         """Wer darf TOTP einrichten, **ohne** schon voll angemeldet zu sein? Sonst None.
 
@@ -4828,10 +4886,16 @@ class TinySesam:
                                "AND ts >= ? LIMIT 1", (u["username"], seit)):
                 return
             betreff = "Gesperrte Anmeldung bei deinem Konto"
+            # Den Reset nur nennen, wenn er die Serie auch räumt (TOTP und die PIN im Kettenschritt
+            # räumt er nicht, `_serie_reset_hilft`).
+            bis = ""
+            if grund == "lockout_serie":
+                bis = (" — bis du dein Passwort zurücksetzt oder der Betreiber sie freigibt"
+                       if self._serie_reset_hilft(username) else
+                       " — bis der Betreiber sie freigibt. Ein Passwort-Reset hebt diese Sperre nicht "
+                       "auf: Die Fehlversuche galten dem Schritt nach dem Passwort")
             text = (f"Für dein Konto „{u['username']}“ gab es mehrere fehlgeschlagene Anmeldeversuche; "
-                    f"die Anmeldung ist deshalb vorübergehend gesperrt"
-                    + (" — bis du dein Passwort zurücksetzt oder der Betreiber sie freigibt"
-                       if grund == "lockout_serie" else "")
+                    f"die Anmeldung ist deshalb vorübergehend gesperrt" + bis
                     + f".\n\nZeitpunkt: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(zeit))}\n"
                     f"Adresse der Versuche: {security.fuer_log(ip) or 'unbekannt'}\n\n"
                     "Warst du das nicht, ändere dein Passwort und richte einen zweiten Faktor ein.")
@@ -4897,14 +4961,16 @@ class TinySesam:
         der Drosselung SEINER IP. Einzelheiten in `_raeumgrenze`."""
         topf = self._topf(username, method)   # derselbe Schlüssel wie beim Zählen
         vorgebucht = self._serie_vorbuchungen.pop(versuch, None) if versuch is not None else None
+        uebergang = None
         if versuch is None:
             self.store.record_attempt(topf, ip, success, method)
         else:
             # Bei einem Erfolg gilt die Vorbuchung in der Serie nicht — zurückgenommen in derselben
             # Transaktion wie der Abschluss (G9). Die Serie davor bleibt: Ein richtiger erster
-            # Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`).
-            self.store.finish_attempt(versuch, bool(success),
-                                      serie=vorgebucht[:2] if success and vorgebucht else None)
+            # Faktor ist noch keine vollständige Anmeldung (`sperre_aufheben`). Bei einem
+            # Fehlversuch sagt der Abschluss, wie die Serie davor und danach feststand (p2 F3).
+            uebergang = self.store.finish_attempt(versuch, bool(success),
+                                                  serie=vorgebucht[:2] if vorgebucht else None)
         if success and quelle:
             self.store.audit_log(f"login_{quelle}", username, ip, f"{method} quelle={quelle}")
         if success:
@@ -4938,19 +5004,30 @@ class TinySesam:
             if method not in security.NICHT_LOGIN_METHODEN:
                 # Die Serie zählt je gefalteter Kennung, wie der Konto-Topf (`_topf`). Vorgebucht
                 # hat sie `versuch_beginnen`; nur ein Weg ohne Vorbuchung zählt hier. Genau beim
-                # Erreichen der Grenze eine Zeile: ab da ist die Anmeldung dauerhaft zu, und der
-                # Betreiber muss wissen, warum sich jemand nicht mehr anmelden kann. Nur EINE
-                # Buchung kann die Grenze erreichen — die Buchungen laufen nacheinander.
-                if vorgebucht:
-                    stand = vorgebucht[2]
+                # Übergang über die Grenze eine Zeile: ab da ist die Anmeldung dauerhaft zu, und
+                # der Betreiber muss wissen, warum sich jemand nicht mehr anmelden kann.
+                #
+                # Der Übergang ist der des FESTSTEHENDEN Stands (p2 F3). Eine sofort feststehende
+                # Buchung (ohne Schweben) überschreitet die Grenze bei der Buchung selbst
+                # (`vorgebucht[2]`, der feststehende Stand danach) — gemeldet wird er, wenn die
+                # Serie beim Abschluss noch steht. Eine schwebende überschreitet sie erst mit ihrem
+                # Abschluss (`vorher < max_serie <= nachher`, in einer Transaktion). Bis 2026-09-27
+                # galt der Stand bei der Buchung, samt schwebender Vorbuchungen: Beendete eine
+                # parallele volle Anmeldung die Serie, stand `lockout_serie` im Protokoll, obwohl
+                # nichts gesperrt war.
+                max_serie = self.sec("account_max_consecutive_failures")
+                if vorgebucht and uebergang:
+                    vorher, nachher = uebergang
+                    stand = nachher
+                    gesperrt = vorher < max_serie <= nachher or max_serie <= min(vorgebucht[2], nachher)
                 else:
                     stand = self.store.fehlserie_erhoehen(norm_kennung(username), method)
-                if stand == self.sec("account_max_consecutive_failures"):
+                    gesperrt = stand == max_serie
+                if gesperrt:
                     self.store.audit_log("lockout_serie", username, ip, f"fehlversuche_in_folge={stand}")
                     security.seclog.warning(
-                        "Anmeldung für user=%s gesperrt: %d Fehlversuche in Folge. Aufheben: "
-                        "Passwort-Reset, Anmeldung über einen anderen Weg oder `tinysesam unlock`.",
-                        security.fuer_log(username), stand)
+                        "Anmeldung für user=%s gesperrt: %d Fehlversuche in Folge. Aufheben: %s.",
+                        security.fuer_log(username), stand, self._serie_ausweg(username))
 
     def _raeumgrenze(self, topf, method, konto: Optional[int] = None) -> Optional[dict]:
         """Ab wo räumt ein Erfolg die Fehlversuche unter `topf`? Schlüsselwörter für

@@ -1360,6 +1360,21 @@ class Store:
         except sqlite3.Error:
             pass     # Verbindung geschlossen o. ä. — dann liegt auch nichts mehr offen
 
+    def _begin_immediate(self) -> None:
+        """`BEGIN IMMEDIATE` für eine selbst geführte Transaktion (unter `_lock`) — Zählen und
+        Buchen in einem Schritt, auch über mehrere Prozesse (`reserve_attempt`, `finish_attempt`)."""
+        if self.db.in_transaction:
+            # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum (ein
+            # Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN unten an ihr —
+            # und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr Inhalt ist der Rest
+            # eines GESCHEITERTEN Schreibzugriffs; er wird verworfen, nicht mitgebucht. Laut, weil
+            # es ein Fehler an anderer Stelle ist.
+            logging.getLogger("tinysesam").warning(
+                "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
+                "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
+            self._verwerfen()
+        self.db.execute("BEGIN IMMEDIATE")
+
     @contextlib.contextmanager
     def _schreibend(self):
         """`_lock` halten, schreiben — und bei einem Fehlschlag die Transaktion VERWERFEN.
@@ -2893,7 +2908,10 @@ class Store:
         `serie=(topf, art, grenze)` bucht dazu die Serie der Fehlversuche in Folge (B2-6) vor —
         in DERSELBEN Transaktion. Die erste Fassung las die Serie davor und zählte sie erst nach
         der Prüfung: Eine parallele Salve an der Grenze las N-mal „noch nicht voll" und durfte
-        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung.
+        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung —
+        der FESTSTEHENDE Stand (`_serie_bestaetigt`, ohne schwebende Vorbuchungen). Erreicht er
+        die Grenze, hat genau diese Buchung die Sperre ausgelöst; eine schwebende erreicht sie hier
+        nie, sie erst bei ihrem Abschluss (`finish_attempt`, Prüfrunde 2026-09-27, p2 F3).
 
         **Schwebend (G9).** `schweben=True` bucht den Versuch mit offenem Ausgang (`offen=1`): Er
         kann ein Fehlversuch werden oder gar keiner (Verzeichnis-Ausfall, F-23 — zurückgenommen
@@ -2908,17 +2926,7 @@ class Store:
         Zeile, die älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch.
         """
         with self._lock:
-            if self.db.in_transaction:
-                # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum
-                # (ein Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN
-                # unten an ihr — und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr
-                # Inhalt ist der Rest eines GESCHEITERTEN Schreibzugriffs; er wird verworfen,
-                # nicht mitgebucht. Laut, weil es ein Fehler an anderer Stelle ist.
-                logging.getLogger("tinysesam").warning(
-                    "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
-                    "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
-                self._verwerfen()
-            self.db.execute("BEGIN IMMEDIATE")
+            self._begin_immediate()
             try:
                 stand = None
                 schwebend = False
@@ -2949,14 +2957,14 @@ class Store:
                     (_now(), username, ip, method, 1 if schweben else 0))
                 if topf_s:
                     self._serie_plus(topf_s, art_s)
-                    stand = self._serie_summe(topf_s)
+                    stand = self._serie_bestaetigt(topf_s)
                 self.db.execute("COMMIT")
                 return cur.lastrowid, stand
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
 
-    def finish_attempt(self, attempt_id, success: bool, serie=None):
+    def finish_attempt(self, attempt_id, success: bool, serie=None) -> Optional[tuple]:
         """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen: Erfolg oder Fehlversuch.
 
         Beides beendet den Schwebezustand (`offen=0`, G9): Ein Fehlversuch zählt ab hier auch für
@@ -2964,15 +2972,27 @@ class Store:
         No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
         Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
         da, und wer gerade wartet (`versuch_beginnen`), läse die Serie um eins zu hoch — an der
-        Grenze eine Sperre mit Sperrhinweis für nichts."""
+        Grenze eine Sperre mit Sperrhinweis für nichts.
+
+        Mit `serie` gibt es `(vorher, nachher)` zurück: den feststehenden Stand der Serie
+        (`_serie_bestaetigt`) vor und nach dem Abschluss, beide in einer Transaktion
+        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `record_login`, ob GENAU
+        dieser Abschluss die Grenze überschritten hat (p2 F3). Bis 2026-09-27 zählte der Stand bei
+        der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
+        `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""
         with self._schreibend():
+            if serie:
+                self._begin_immediate()
+                vorher = self._serie_bestaetigt(serie[0])
             self.db.execute("UPDATE login_attempt SET success=?, offen=0 WHERE id=?",
                             (1 if success else 0, attempt_id))
             if success and serie:
                 self._serie_minus(*serie)
+            stand = (vorher, self._serie_bestaetigt(serie[0])) if serie else None
             self.db.commit()
             self._geschrieben = time.monotonic()
             self._uhr_mitschreiben()
+        return stand
 
     def cancel_attempt(self, attempt_id, serie=None):
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23).
@@ -3077,6 +3097,18 @@ class Store:
             return 0
         with self._lock:
             return self._serie_bestaetigt(topf)
+
+    def fehlserie_ohne(self, topf, arten) -> int:
+        """Die Serie dieser Kennung OHNE die genannten Arten — was ein Räumen nur dieser Arten
+        stehen liesse (etwa der Selbstbedienungs-Reset, der TOTP und `pin_folge` nicht räumt)."""
+        if not topf:
+            return 0
+        arten = [str(a) for a in arten]
+        platz = ",".join("?" for _ in arten)
+        with self._lock:
+            zeile = self.db.execute(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie "
+                                    f"WHERE topf=? AND art NOT IN ({platz})", [topf, *arten]).fetchone()
+        return int(zeile["n"])
 
     def fehlserie_erhoehen(self, topf, art="password") -> int:
         """Einen Fehlversuch an die Serie hängen (Wege ohne Vorbuchung); gibt die neue Summe zurück."""
@@ -3616,9 +3648,17 @@ class Store:
             "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
             (int(seit), *self.QUELLMAIL_ERLEDIGT, f"konto={int(user_id)} %")))
 
-    def offener_token(self, user_id, purpose, email) -> bool:
-        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an
-        diese Adresse? Damit nicht jede Anmeldung einen neuen Bestätigungslink verschickt."""
+    def offener_token(self, user_id, purpose, email=None) -> bool:
+        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks —
+        an diese Adresse, oder ohne `email` an irgendeine? Damit nicht jede Anmeldung einen neuen
+        Bestätigungslink verschickt. Der Weg über LDAP/SAML fragt ohne Adresse (p2 F2): Mit dem
+        Filter auf die Adresse schickte ein zweiter Worker einen Link an eine andere, solange der
+        erste noch im Postausgang lag — und daran, ob er kam, las ein Nutzer, der sein `mail`
+        selbst pflegt, ob die erste Adresse vergeben ist."""
+        if email is None:
+            return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? "
+                                  "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
+                                  (user_id, purpose, _now())))
         return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? AND email=? "
                               "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
                               (user_id, purpose, email, _now())))

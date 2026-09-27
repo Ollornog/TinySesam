@@ -381,6 +381,19 @@ _sf = _spur["frei"]["auth"].store
 r.check("… während der Link an die freie Adresse gilt",
         _sf.offener_token(_spur["frei"]["konto"], "email_change", "neu@example.com"))
 
+# Prüfrunde 2026-09-27: Ist der Postausgang voll, geht der Link nie hinaus — sein Token verfällt
+# sofort. Seit p2 F2 hält jeder offene Link des Kontos den Weg über LDAP/SAML auf; ein nie
+# zugestellter täte das bis zu seinem Ablauf.
+a_v, ap_v, post_v, _ = _aufbau()
+uid_v = a_v.create_user("voll", password=PW, email="voll@example.com")
+a_v._postausgang.max_offen = 0
+_antw_v = _login(ap_v, "voll").post("/auth/account/email", json={"email": "voll.neu@example.com"})
+# (Mutationsprobe: `bei_ueberlauf=senden.verwerfen` in der Route weglassen → offener Token → rot.)
+r.check("Postausgang voll: dieselbe Antwort, kein Link, und kein offener Token bleibt stehen",
+        _antw_v.status_code == 200 and not [m for m in post_v if "/auth/email/" in m[2]]
+        and a_v.store._one("SELECT COUNT(*) AS n FROM magic_token WHERE purpose='email_change'")["n"] == 1
+        and not a_v.store.offener_token(uid_v, "email_change"), f"{_antw_v.status_code} {post_v}")
+
 # Ohne base_url und mit fremdem Host: die Antwort sagt „kein Mailversand", nicht die Interna der
 # Basis-Prüfung (CodeQL py/unreachable-except: `ConfigError` ist ein `ValueError`).
 a_b, ap_b, post_b, _ = _aufbau(base_url="", password_reset_enabled=False)

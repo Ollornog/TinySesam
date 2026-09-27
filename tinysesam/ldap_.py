@@ -118,6 +118,16 @@ class AnfrageAbgebrochen(VerzeichnisNichtErreichbar):
 #: des Betriebssystems (Minuten) — mit einem Worker-Thread je wartendem Nutzer.
 VERBINDUNGS_TIMEOUT = 10
 
+#: Wie lange eine Anmeldung das Verzeichnis INSGESAMT fragen darf, über alle Schritte (Sekunden).
+#: Unter `Store.VORBUCHUNG_SCHWEBE_SEK` (30), mit Luft für den Rest der Route: So lange schwebt die
+#: Vorbuchung der Login-Route (G9); eine ältere offene Zeile gilt als Fehlversuch eines Prozesses,
+#: der gestorben ist. Bis 2026-09-27 gab es nur die Frist je Antwort (`VERBINDUNGS_TIMEOUT`), und
+#: ein Search-then-Bind wartet bis zu zehnmal (je Verbindung Aufbau, TLS-Handschlag, StartTLS,
+#: Bind, Suche): Ein langsames, aber antwortendes Verzeichnis liess eine noch laufende Anmeldung
+#: als bestätigten Fehlversuch zählen — echte Sperre, Sperrmail und `failed login` für Dritte
+#: (Prüfrunde 2026-09-27, p2 V1). Verteilt wird die Frist über die Wartestellen (`_Frist`).
+GESAMT_FRIST_SEK = 25
+
 #: Ab welcher Dauer ein gescheiterter Schritt, der Eingaben des Anmeldenden trug, als „das
 #: Verzeichnis hängt" gilt (Sekunden) — dann schaltet er den `AusfallMerker` scharf wie jeder
 #: Ausfall. Darunter ist es ein Abbruch DIESER Anfrage (`AnfrageAbgebrochen`). Die Grenze trennt
@@ -249,6 +259,39 @@ class AusfallMerker:
             self._probe = False
 
 
+def _wartestellen(cfg) -> int:
+    """Wie oft eine Verbindung höchstens auf eine Antwort des Verzeichnisses wartet: Aufbau, bei
+    `ldaps://` der TLS-Handschlag, bei StartTLS dessen Antwort und Handschlag, Bind, Suche. Jede
+    Stelle hat ihre eigene Frist (`connect_timeout` bzw. `receive_timeout` von ldap3)."""
+    return (3 + (1 if str(cfg.ldap_url or "").lower().startswith("ldaps://") else 0)
+            + (2 if cfg.ldap_start_tls else 0))
+
+
+class _Frist:
+    """Die Gesamtfrist einer Anmeldung (`GESAMT_FRIST_SEK`), verteilt auf die Wartestellen.
+
+    ldap3 kennt nur eine Frist je Antwort, gesetzt beim Aufbau einer Verbindung. Eine Obergrenze
+    für die ganze Anmeldung entsteht deshalb nur, wenn jede Verbindung ihren Anteil bekommt: das
+    Dienstkonto höchstens die Hälfte des Rests (die Benutzer-Verbindung folgt noch), die
+    Benutzer-Verbindung den ganzen Rest — je Wartestelle höchstens `VERBINDUNGS_TIMEOUT`. Ein
+    schnelles Verzeichnis merkt davon nichts: Jede Antwort braucht Millisekunden, die Frist ist
+    nur die Grenze. Reicht der Rest für keine Sekunde je Wartestelle mehr, gilt das Verzeichnis
+    als nicht erreichbar (`VerzeichnisNichtErreichbar`, 503, kein Fehlversuch) — bevor es gefragt
+    wird. Ganze Sekunden: ldap3 packt `receive_timeout` als Ganzzahl in die Socket-Option."""
+
+    def __init__(self):
+        self.ende = time.monotonic() + GESAMT_FRIST_SEK
+
+    def je_wartestelle(self, wartestellen: int) -> int:
+        rest = self.ende - time.monotonic()
+        frist = min(int(VERBINDUNGS_TIMEOUT), int(rest // max(1, wartestellen)))
+        if frist < 1:
+            raise VerzeichnisNichtErreichbar(
+                f"LDAP: Gesamtfrist von {GESAMT_FRIST_SEK} s für eine Anmeldung aufgebraucht "
+                f"(noch {max(0.0, rest):.1f} s für {wartestellen} Antworten)")
+        return frist
+
+
 def _ausfall_arten() -> tuple:
     """Die ldap3-Fehler, die „Verzeichnis nicht erreichbar/benutzbar" heissen — nicht „falsches
     Passwort". Ein falsches Benutzerpasswort wirft keinen davon: `bind()` gibt dann False zurück.
@@ -279,7 +322,8 @@ class LDAPClient:
     def __init__(self, cfg):
         self.cfg = cfg
 
-    def _server(self):
+    def _server(self, frist=None):
+        """`frist`: die Frist des Verbindungsaufbaus (Sekunden); ohne sie `VERBINDUNGS_TIMEOUT`."""
         try:
             import ldap3
         except ModuleNotFoundError as e:
@@ -289,7 +333,7 @@ class LDAPClient:
         # zwar mit Zugangsdaten". Selbst wenn irgendwann jemand eine Connection ohne
         # `auto_referrals=False` anlegt, findet ldap3 dann keinen erlaubten Verweis-Host mehr.
         return ldap3.Server(self.cfg.ldap_url, get_info=ldap3.NONE, allowed_referral_hosts=[],
-                            tls=self._tls(ldap3), connect_timeout=VERBINDUNGS_TIMEOUT)
+                            tls=self._tls(ldap3), connect_timeout=frist or VERBINDUNGS_TIMEOUT)
 
     def _tls(self, ldap3):
         """Die TLS-Einstellungen für `ldaps://` und StartTLS (F-12).
@@ -328,7 +372,12 @@ class LDAPClient:
         except Exception:
             return None
         cfg = self.cfg
-        server = self._server()
+        # Ausserhalb des `try`, wie bisher: Eine ungültige URL oder TLS-Einstellung ist ein Fehler
+        # der Konfiguration und darf nicht als „Passwort falsch" enden. Die Verbindungen bekommen
+        # unten je einen Server mit ihrem Anteil an der Gesamtfrist (`GESAMT_FRIST_SEK`, p2 V1),
+        # das Dienstkonto höchstens die Hälfte des Rests.
+        self._server()
+        frist, stellen = _Frist(), _wartestellen(cfg)
         # Welcher Schritt läuft, seit wann, und trägt er Eingaben des Anmeldenden? Daran hängt,
         # ob ein Fehlschlag das Verzeichnis als Ganzes betrifft oder nur diese Anfrage (s.
         # `AnfrageAbgebrochen`, `HAENGER_SEK`).
@@ -343,12 +392,13 @@ class LDAPClient:
                 # über die Leitung, bevor sie verschlüsselt wurde. Ein Mitleser brauchte nicht
                 # einmal einen Angriff — nur Geduld. `AUTO_BIND_TLS_BEFORE_BIND` ist genau dafür
                 # da; die Benutzer-Verbindung unten machte es von Anfang an richtig.
+                je = frist.je_wartestelle(2 * stellen)
                 svc = ldap3.Connection(
-                    server, user=cfg.ldap_bind_dn or None,
+                    self._server(je), user=cfg.ldap_bind_dn or None,
                     password=cfg.ldap_bind_password or None,
                     auto_bind=(ldap3.AUTO_BIND_TLS_BEFORE_BIND if cfg.ldap_start_tls
                                else ldap3.AUTO_BIND_NO_TLS),
-                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
+                    receive_timeout=je, **_OHNE_REFERRALS)
                 flt = cfg.ldap_user_filter.format(username=escape_filter_chars(username))
                 attrs = _attributliste(cfg)
                 eingabe, seit = True, time.monotonic()        # der Filter trägt den Benutzernamen
@@ -360,8 +410,9 @@ class LDAPClient:
                 user_dn = svc.entries[0].entry_dn
                 svc.unbind()
             # Re-Bind mit dem User-DN + Passwort → prüft das Passwort
-            conn = ldap3.Connection(server, user=user_dn, password=password,
-                                    receive_timeout=VERBINDUNGS_TIMEOUT, **_OHNE_REFERRALS)
+            je = frist.je_wartestelle(stellen)
+            conn = ldap3.Connection(self._server(je), user=user_dn, password=password,
+                                    receive_timeout=je, **_OHNE_REFERRALS)
             # Verbindung und TLS ausdrücklich VOR dem Bind: Scheitern sie, ist vom Anmeldenden
             # noch nichts gesendet — ein Ausfall des Verzeichnisses, gleich wie lange es dauerte.
             eingabe, seit = False, time.monotonic()
@@ -399,6 +450,8 @@ class LDAPClient:
                     f"({cfg.ldap_url})") from e
             raise VerzeichnisNichtErreichbar(
                 f"LDAP-Verzeichnis {cfg.ldap_url} nicht benutzbar: {type(e).__name__}: {e}") from e
+        except VerzeichnisNichtErreichbar:
+            raise                # die Gesamtfrist (`_Frist`) — kein „Passwort falsch"
         except Exception:
             return None
 

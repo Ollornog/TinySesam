@@ -424,6 +424,70 @@ for lauf in (_frei7, _verg7):
 r.check("… nach Ablauf des Links für beide genau ein weiterer",
         _frei7["sicht"][-1] == _verg7["sicht"][-1] == 2, f"{_frei7['sicht']} {_verg7['sicht']}")
 
+# ── Prüfrunde 2026-09-27 (p2 F2): das Flugfenster des Postausgangs ─────────────────────────────
+# Die Zeile `federation_email_confirm` entsteht erst nach dem Versand, die Abweisung einer vergebenen
+# Adresse sofort. `offener_token` fragte nur nach einem Link an DIESELBE Adresse. Liegt der Link an
+# ziel@ noch im Postausgang von Worker 1 (langsames Relay), setzt der Nutzer sein `mail` auf probe@
+# und meldet sich über Worker 2 an: Der schickte einen Link an probe@, wenn ziel@ frei war, und
+# keinen, wenn sie vergeben war — dazu zwei Links am selben Tag. Jetzt hält jeder offene Link auf.
+import threading  # noqa: E402
+
+
+def _flugfenster(vergeben):
+    db = str(Path(tempfile.mkdtemp()) / "t.db")
+    w1, _, post1 = _aufbau(db_path=db)
+    w2, _, post2 = _aufbau(db_path=db)
+    bremse = threading.Event()
+
+    def _langsam(to, betreff, text, html=None):
+        bremse.wait(10)                               # der Link von Worker 1 hängt im Postausgang
+        post1.append((to, betreff, text))
+    w1.set_mailer(_langsam)
+    if vergeben:
+        w1.create_user("opfer", email="ziel@example.com")
+    verz = Verzeichnis({"mallory": {"pw": "pw", "email": "ziel@example.com", "id": "uuid-mallory"}})
+    w1.ldap = w2.ldap = verz
+    try:
+        u = w1.check_ldap("mallory", "pw")
+        verz.eintraege["mallory"]["email"] = "probe@example.com"     # das eigene `mail` gewechselt
+        w2.check_ldap("mallory", "pw")
+        w2._hinweis_ausgang.abwarten()
+    finally:
+        bremse.set()
+    w1._hinweis_ausgang.abwarten()
+    return {"post1": [m[0] for m in post1], "post2": [m[0] for m in post2],
+            "sicht": sorted(e["event"] for e in w2.own_events(u["id"], limit=50)
+                            if e["event"] and e["event"].startswith("email_change"))}
+
+
+_ff_frei, _ff_verg = _flugfenster(False), _flugfenster(True)
+# (Mutationsprobe: in `_adresse_aus_quelle_belegen` wieder `offener_token(…, adresse)` → frei: Post
+#  an probe@ bei Worker 2, zwei Anträge → rot.)
+r.check("p2 F2: Link an ziel@ hängt im Postausgang von Worker 1, `mail` gewechselt, Worker 2 schickt "
+        "keinen an probe@ — ob ziel@ frei oder vergeben ist",
+        _ff_frei["post2"] == [] and _ff_verg["post2"] == []
+        and _ff_frei["post1"] == ["ziel@example.com"] and _ff_verg["post1"] == [],
+        f"frei {_ff_frei} vergeben {_ff_verg}")
+r.check("… und die Kontoseite zeigt in beiden Fällen denselben einen Antrag",
+        _ff_frei["sicht"] == _ff_verg["sicht"] == ["email_change_requested"],
+        f"frei {_ff_frei['sicht']} vergeben {_ff_verg['sicht']}")
+
+# ── Prüfrunde 2026-09-27: volle Warteschlange verwirft den Token ─────────────────────────────────
+# Gibt der Hinweis-Postausgang den Auftrag zurück (Warteschlange voll), geht der Link nie hinaus.
+# Sein Token blieb offen und hielt über `offener_token` jeden neuen Link bis zum Ablauf auf.
+g_q, _, p_q = _aufbau()
+g_q._hinweis_ausgang.max_offen = 0
+u_q = _anmelden(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
+_offen_q = g_q.store.offener_token(u_q["id"], "email_change")
+g_q._hinweis_ausgang.max_offen = 50
+_vergehen(g_q, int(g_q.sec("mail_per_address_window_sec")) + 1)
+_anmelden(g_q, "quentin", {"email": "quentin@example.com", "id": "uuid-quentin"})
+# (Mutationsprobe: `senden.verwerfen()` nach dem Überlauf weglassen → offener Token, kein zweiter
+#  Link → rot.)
+r.check("Warteschlange voll: kein Link, kein offener Token — nach dem Fenster der Drossel kommt der Link",
+        not _offen_q and [m[0] for m in p_q] == ["quentin@example.com"] and _link(p_q),
+        f"offen {_offen_q}, {p_q}")
+
 # ── Kontingent: Wechselanträge auf eine Adresse sperren deren späteren Inhaber nicht aus ─────
 # Jeder Antrag erreicht die Drossel, auch der auf eine vergebene Adresse (G12b). Heikel ist die
 # noch FREIE: Ein Fremder beantragt den Wechsel darauf, bis ihr Kontingent aufgebraucht ist;
