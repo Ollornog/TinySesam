@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from .errors import ConfigError
 from . import security
-from .store import ersatzname, name_ungueltig, norm_email, valid_email
+from .store import ersatzname, key_kind_of, name_ungueltig, norm_email, valid_email
 from . import security
 
 
@@ -1416,9 +1416,8 @@ def _mail_basis(auth, request) -> str:
 
 def _key_kind(k) -> str:
     """Die Art eines Key-Datensatzes mit englischem Namen — verträglich mit Dateien vor Schema 7
-    und mit Werten bis 0.21.x (`TinySesam._key_kind`)."""
-    from .manager import TinySesam
-    return TinySesam._key_kind(k)
+    und mit Werten bis 0.21.x (`store.key_kind_of`)."""
+    return key_kind_of(k)
 
 
 def key_view(k) -> dict:

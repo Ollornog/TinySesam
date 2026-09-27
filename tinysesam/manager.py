@@ -30,7 +30,7 @@ from starlette.responses import Response
 from . import konfigpruefung
 from .errors import ConfigError, StateError
 from .config import TinySesamConfig
-from .store import (Store, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
+from .store import (Store, key_kind_of, name_ungueltig, norm_email, norm_kennung, jetzt as _jetzt,
                     payload_lesen, valid_email, versuchsfrist as _versuchsfrist)
 from .passwords import hash_password, verify_password, needs_rehash, dummy_verify
 from . import passwords as _passwords
@@ -912,11 +912,7 @@ class TinySesam:
         ältere Fassung, die nach einem Rückschritt auf der Datei lief, schreibt ihn wieder. Leer
         oder ohne Spalte (Datei vor Schema 7) heisst `automation`. Alles andere bleibt, wie es
         ist, und gilt, weil es nicht `human` ist, als Automaten-Key (fail-closed, R6-6)."""
-        try:
-            wert = str(row["kind"] or "automation")
-        except (IndexError, KeyError, TypeError):
-            return "automation"
-        return Store.KEY_ARTEN_ALT.get(wert, wert)
+        return key_kind_of(row)
 
     @classmethod
     def _key_art_audit(cls, kind) -> str:

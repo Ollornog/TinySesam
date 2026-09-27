@@ -329,6 +329,20 @@ def _email_unicode(email: str) -> str:
         return email
 
 
+def key_kind_of(row) -> str:
+    """Die Art einer Key-Zeile mit englischem Namen (Schema 12): `automation` oder `human`.
+
+    Ein Wert bis 0.21.x (`automat`, `mensch`) wird abgebildet (`Store.KEY_ARTEN_ALT`) — eine ältere
+    Fassung, die nach einem Rückschritt auf der Datei lief, schreibt ihn wieder. Leer oder ohne
+    Spalte (Datei vor Schema 7) heisst `automation`. Alles andere bleibt, wie es ist, und gilt, weil
+    es nicht `human` ist, als Automaten-Key (fail-closed, R6-6). Hier und nicht am Manager, damit
+    Router und Admin-Panel es ohne Import des Managers lesen (kein Import-Zyklus)."""
+    try:
+        wert = str(row["kind"] or "automation")
+    except (IndexError, KeyError, TypeError):
+        return "automation"
+    return Store.KEY_ARTEN_ALT.get(wert, wert)
+
 def norm_email(email) -> Optional[str]:
     """E-Mail kanonisch speichern: NFKC, getrimmt, klein, Domain als A-Label. `None` bleibt `None`.
 
