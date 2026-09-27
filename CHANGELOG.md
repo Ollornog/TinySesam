@@ -2,11 +2,21 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.21.0] — 2026-09-27
 
-**Die offenen T-13-Punkte, nach Entscheidung des Betreibers — dazu Owner, Inaktivitäts-Timeout,
-verschlüsselte TOTP-Geheimnisse und der Widerruf über den Identity Provider.** Was beim Update
-auffällt:
+**Grosses Release — vor dem Update die Datenbank sichern und die Liste unten lesen.** Es schliesst
+das dritte Audit (T-13) vollständig: alle Befunde, alle als Grenze benannten Reste, zwei
+Prüfrunden gegen die Fixes. Wer es braucht: **jede App unter einem Unterpfad** (T-15 — die
+eingebauten Seiten zeigten bis 0.20.1 aus der Montage heraus), **wer LDAP oder SAML nutzt**
+(Adressen, Bindung über die stabile Kennung, „eine Kennung, ein Konto"), und alle wegen der
+Sicherheitsfixes. Neu dazu: Owner, Benutzername und Adresse in der Selbstbedienung mit `Remote-Id`,
+Widerruf über den Identity Provider, verschlüsselte TOTP-Geheimnisse, Umbenennen durch den
+Betreiber (Panel, `tinysesam rename`), `foederation_nachbinden`. Schema 11 (additiv; 0.20.x öffnet
+die Datei danach nur mit Warnung).
+
+**Beim Update:** `login_path`, `login_redirect`, `logout_redirect` und `admin_path` sind Pfade der
+App **ohne** Unterpfad-Präfix — der kommt aus dem Pfad der `base_url` (T-15, s. „Geändert").
+Was sonst auffällt:
 
 - **Neue Passwörter brauchen 15 Zeichen**, solange das Passwort allein anmelden kann (Vorgabe).
   Bestehende bleiben gültig.
