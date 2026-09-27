@@ -1,7 +1,7 @@
 # Von `repokit sync` erzeugt. Ein Stolperdraht gegen Vergessen,
 # kein Schloss gegen Absicht: wer die Dateien ändert, kann auch
 # dieses Manifest neu schreiben. Er tut es dann wenigstens sichtbar.
-762999b8826652266f06f2a285d654731c98e22bcc742658f2c849ab0eca540b  .githooks/pre-push
+4e108b4d7c8c6d47e3fe2dab1f945cae9aab0df1f1c91b8344dab1f7daaa731f  .githooks/pre-push
 db1b52b38dffdaedd7b75e7bf04ef1eaa20bc447f32c02be2262a3e1f3905784  backlog/README-KONVENTION.md
 9982033589b35537c0771a42a8c2506a5f783b1001f31d7c63d14829f19a4f60  scripts/_backlog.py
 c9c783d74e32cc47dd729968acc0924624d63f9ef15944aeac249755de8e6ef9  scripts/_residue_check.sh
