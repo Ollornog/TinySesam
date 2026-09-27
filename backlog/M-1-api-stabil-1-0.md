@@ -95,7 +95,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 |---|---|
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
 | C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (50 Aliase, Wächter, Warnfilter in `run_all.py`) |
-| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`anmelden_*`, `Anmeldung`, die Routen rufen ihn) |
+| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`login_*`, `LoginResult`, die Routen rufen ihn; englisch seit dem Nachtrag unten) |
 | zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.22.0 |
 
 **Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
@@ -107,11 +107,12 @@ Code (AST) und wird mit 1.0 rot, solange noch ein Alias steht; `tests/run_all.py
 Warnung aus dem Paket selbst zum Fehler. `SERIE_PIN_FOLGE` war nie veröffentlicht und heisst ohne
 Alias `_SERIE_PIN_FOLGE` — Stand nach Schritt 2: 338 Namen, C 49.
 
-**Schritt 3 (2026-09-27): ein sicherer Login-Baustein für eigene Seiten.** Der PO-Befund: Die README
-schickte eigene Login-Seiten zu `check_password` + `start_session`, und die inneren Prüfer drosseln
-nicht. Jetzt gibt es `anmelden_passwort`, `anmelden_pin` und `anmelden_totp` (Stufe A) mit dem
-Ergebnistyp `tinysesam.Anmeldung` (Export, Stufe A): Sie drosseln, zählen und sperren wie die
-eingebauten Routen — weil `POST /auth/login`, `/auth/pin` und `/auth/totp` genau sie rufen und nur
+**Schritt 3 (2026-09-27): ein sicherer Login-Baustein für eigene Seiten.** (Mit den Namen von
+damals — seit dem Nachtrag „Der Login-Baustein heisst englisch“ unten gelten die englischen.) Der
+PO-Befund: Die README schickte eigene Login-Seiten zu `check_password` + `start_session`, und die
+inneren Prüfer drosseln nicht. Jetzt gibt es `anmelden_passwort`, `anmelden_pin` und
+`anmelden_totp` (Stufe A) mit dem Ergebnistyp `tinysesam.Anmeldung` (Export, Stufe A): Sie
+drosseln, zählen und sperren wie die eingebauten Routen — weil `POST /auth/login`, `/auth/pin` und `/auth/totp` genau sie rufen und nur
 noch das Ergebnis rendern (eine Quelle; ein AST-Wächter in `tests/test_anmelden.py` verbietet den
 Routen jeden inneren Prüfer). Gemessen ist die Gleichheit Zeile für Zeile: dieselbe Folge über die
 eingebaute und über eine eigene Route ergibt dieselben Status, Audit-, Log- und Zählerzeilen. Die
@@ -128,6 +129,21 @@ den Wert gegen das CHANGELOG (`seit_befunde`): Führt `[Unveröffentlicht]` eine
 Eine Folge davon: `SERIE_PIN_FOLGE` war bei Schritt 2 „nie veröffentlicht“ und hiess ohne Alias
 `_SERIE_PIN_FOLGE` — mit 0.21.0 ist er veröffentlicht (G7; dessen CHANGELOG nennt ihn für eigene
 PIN-Seiten). Er ist jetzt ein Alias wie jeder C-Name: Stand 354 Namen, A 240, B 64, C 50.
+
+**Nachtrag 2026-09-27 (PO-Entscheid): Der Login-Baustein heisst englisch** und bleibt Stufe A,
+wie der Rest der Stufe-A-Oberfläche: `login_password`, `login_pin`, `login_totp`; der Ergebnistyp
+`tinysesam.LoginResult` (Modul `tinysesam/login_result.py`) mit `ok`, `reason`, `status`,
+`message`, `next_url`, `next_factor`, `done`, `user`, `set_cookie(response)` und `redirect()`;
+die Gründe in `REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`, `ratelimit`,
+`directory_down`, `method_disabled`, `no_session`. Umbenannt vor dem Release und darum **ohne
+Alias** — die Namen aus Schritt 3 (`anmelden_*`, `Anmeldung`, `GRUENDE`, `cookie_setzen` …)
+standen in keinem Release (`git show v0.21.0:tinysesam/manager.py` kennt sie nicht). Nur die
+Namen des Bausteins sind betroffen: Audit- und Log-Zeilen (`login_fail … grund=…`, die Zeilen für
+fail2ban) bleiben, wie sie sind; `reason` ist ein Kürzel für Programme, keine Logzeile. Ein
+Wächter (`tests/test_anmelden.py`, Abschnitt k) misst die Oberfläche des Bausteins am Objekt —
+jede Methode, die ein `LoginResult` liefert, samt Parametern; Typ, Modul, Felder, Methoden,
+`REASONS` — und verlangt: kein deutsches Wort aus einer kurzen Liste, jeder Name Stufe A. Stand
+unverändert 354 Namen, A 240, B 64, C 50.
 
 ~~Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
 Stern der Nur-Schlüsselwort-Parameter fest.~~ **Behoben 2026-09-27:** `signatur()` misst `*` und

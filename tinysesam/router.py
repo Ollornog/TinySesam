@@ -93,18 +93,18 @@ def build_router(auth) -> APIRouter:
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
         # Eine Quelle (0.22.0): Der ganze Ablauf — CSRF, IP-Drossel, Vorbuchung, LDAP-Rückfall,
-        # Audit und Sicherheits-Log, Sitzung — steht in `anmelden_passwort`, dem öffentlichen
+        # Audit und Sicherheits-Log, Sitzung — steht in `login_password`, dem öffentlichen
         # Baustein für eigene Login-Seiten. Hier wird nur das Ergebnis zur Seite. Diese Route ruft
         # keinen inneren Prüfer selbst (Wächter in `tests/test_anmelden.py`).
-        erg = auth.anmelden_passwort(request, username, password, next=next,
-                                     remember=_remember(cfg, remember), csrf=csrf_tok)
-        if erg.grund == "abgeschaltet":
-            raise HTTPException(404, erg.meldung)
+        erg = auth.login_password(request, username, password, next=next,
+                                  remember=_remember(cfg, remember), csrf=csrf_tok)
+        if erg.reason == "method_disabled":
+            raise HTTPException(404, erg.message)
         if not erg:
             # Kein 422-JSON ins Gesicht: die Seite noch einmal, mit Hinweis.
-            return auth.render_page("login", request=request, status=erg.status, next=erg.weiter,
-                                    error=erg.meldung)
-        return erg.weiterleitung()   # Art des Cookies folgt der Sitzung (A-2)
+            return auth.render_page("login", request=request, status=erg.status, next=erg.next_url,
+                                    error=erg.message)
+        return erg.redirect()   # Art des Cookies folgt der Sitzung (A-2)
 
     # ---------- TOTP als Faktor (2. Schritt oder Ketten-/Route-Faktor) ----------
     @r.get("/auth/totp", response_class=HTMLResponse)
@@ -127,15 +127,15 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(""), next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.22.0): `anmelden_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
+        # Eine Quelle (0.22.0): `login_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
         # hängt den Faktor an; hier wird nur das Ergebnis zur Seite.
-        erg = auth.anmelden_totp(request, code, next=next, csrf=csrf_tok)
-        if erg.grund == "keine_sitzung":
-            return erg.weiterleitung()                  # zur Login-Seite, ohne Cookie
+        erg = auth.login_totp(request, code, next=next, csrf=csrf_tok)
+        if erg.reason == "no_session":
+            return erg.redirect()                       # zur Login-Seite, ohne Cookie
         if not erg:
-            return auth.render_page("totp", request=request, status=erg.status, next=erg.weiter,
-                                    error=erg.meldung)
-        return erg.weiterleitung()
+            return auth.render_page("totp", request=request, status=erg.status, next=erg.next_url,
+                                    error=erg.message)
+        return erg.redirect()
 
     # ---------- TOTP einrichten (eingeloggter User) ----------
     @r.get("/auth/totp/setup", response_class=HTMLResponse)
@@ -286,15 +286,15 @@ def build_router(auth) -> APIRouter:
         def pin_submit(request: Request, pin: str = Form(""), username: str = Form(""),
                        next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
             # Eine Quelle (0.22.0): Welche Lage (volle Sitzung, Kettenschritt, Gästeweg), Drossel,
-            # Vorbuchung in Login- und PIN-Topf und Serie stehen in `anmelden_pin`.
-            erg = auth.anmelden_pin(request, pin, username, next=next,
-                                    remember=_remember(cfg, remember), csrf=csrf_tok)
-            if erg.grund == "abgeschaltet":
+            # Vorbuchung in Login- und PIN-Topf und Serie stehen in `login_pin`.
+            erg = auth.login_pin(request, pin, username, next=next,
+                                 remember=_remember(cfg, remember), csrf=csrf_tok)
+            if erg.reason == "method_disabled":
                 raise HTTPException(404)
             if not erg:
-                ctx = {"next": erg.weiter, "error": erg.meldung}
+                ctx = {"next": erg.next_url, "error": erg.message}
                 seite = "login"
-                if erg.naechster == "pin":
+                if erg.next_factor == "pin":
                     # Die PIN steht hinter einem erbrachten Faktor: dieselbe PIN-Seite, ohne
                     # Namensfeld, mit dem Konto der Sitzung (volle oder halbe).
                     seite = "pin"
@@ -302,7 +302,7 @@ def build_router(auth) -> APIRouter:
                     if konto:
                         ctx["username"] = konto["username"]
                 return auth.render_page(seite, status=erg.status, request=request, **ctx)
-            return erg.weiterleitung()
+            return erg.redirect()
 
         @r.post("/auth/pin/set")
         async def pin_set(request: Request):

@@ -7,7 +7,7 @@ Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGEL
 Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
 Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
 die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.22.0 dazu der
-Ergebnistyp der Anmelde-Bausteine (`Anmeldung`: Felder, Methoden, Gründe).
+Ergebnistyp der Anmelde-Bausteine (`LoginResult`: Felder, Methoden, Gründe).
 Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 
     python tests/test_api_surface.py --update      # Änderung übernehmen, danach committen
@@ -43,7 +43,7 @@ import warnings
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
-from tinysesam import Anmeldung, TinySesam, TinySesamConfig
+from tinysesam import LoginResult, TinySesam, TinySesamConfig
 from tinysesam._veraltet import BIS, Veraltet
 
 _paket = importlib.import_module("tinysesam")
@@ -69,7 +69,7 @@ C_SEIT = "0.22.0"
 #: `--update` übernommen, nicht neu gemessen. Die Exporte haben keinen Messwert — nur den Namen.
 MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
             "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
-            "TinySesamConfig.felder": "feld", "exporte": None, "Anmeldung": "sig"}
+            "TinySesamConfig.felder": "feld", "exporte": None, "LoginResult": "sig"}
 
 
 def ok(name):
@@ -82,7 +82,7 @@ def parameter_mit_marken(parameter) -> list:
 
     Bis 0.22.0 setzte `signatur()` die Parameter einzeln zusammen und verlor dabei beide Marken:
     `(request, username, password, *, next='')` stand als `(…, password, next='')` in der Ablage.
-    Ein nachträglich eingefügtes `*` — jeder Aufruf `anmelden_passwort(r, u, p, "/start")` bricht
+    Ein nachträglich eingefügtes `*` — jeder Aufruf `login_password(r, u, p, "/start")` bricht
     — sah damit aus wie keine Änderung (Befund aus Schritt 3 der Einstufung, M-1).
     """
     teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
@@ -174,24 +174,25 @@ def oberflaeche() -> dict:
             "TinySesam.eigenschaften": eigenschaften,
             "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte,
-            "Anmeldung": anmeldung_oberflaeche()}
+            "LoginResult": ergebnistyp_oberflaeche()}
 
 
-def anmeldung_oberflaeche() -> dict:
+def ergebnistyp_oberflaeche() -> dict:
     """Der Ergebnistyp der Anmelde-Bausteine (0.22.0, Stufe A): Felder, Methoden, Gründe.
 
-    Die Exporte erfasst der Wächter nur beim Namen. Für `Anmeldung` genügt das nicht: Wer
-    `erg.naechster` liest oder auf `erg.grund == "gesperrt"` prüft, bricht an einem umbenannten
-    Feld oder einem gestrichenen Grund genauso wie an einer umbenannten Methode. Felder mit Typ
-    und Vorgabe (wie die Konfiguration), Methoden mit Signatur, `GRUENDE` mit dem Wert.
+    Die Exporte erfasst der Wächter nur beim Namen. Für `LoginResult` genügt das nicht: Wer
+    `result.next_factor` liest oder auf `result.reason == "locked"` prüft, bricht an einem
+    umbenannten Feld oder einem gestrichenen Grund genauso wie an einer umbenannten Methode.
+    Felder mit Typ und Vorgabe (wie die Konfiguration), Methoden mit Signatur, `REASONS` mit dem
+    Wert.
     """
     ergebnis = {}
-    for f in dataclasses.fields(Anmeldung):
+    for f in dataclasses.fields(LoginResult):
         vorgabe = "<pflicht>" if f.default is dataclasses.MISSING else repr(f.default)
         ergebnis[f.name] = f"{f.type} = {vorgabe}"
-    ergebnis.update({name: signatur(fn) for name, fn in inspect.getmembers(Anmeldung, inspect.isfunction)
+    ergebnis.update({name: signatur(fn) for name, fn in inspect.getmembers(LoginResult, inspect.isfunction)
                      if not name.startswith("_")})
-    ergebnis["GRUENDE"] = repr(Anmeldung.GRUENDE)
+    ergebnis["REASONS"] = repr(LoginResult.REASONS)
     return ergebnis
 
 
@@ -418,8 +419,8 @@ def selbstpruefung_signatur(jetzt: dict) -> None:
     assert signatur(probe) == "(a, /, b, *, c=1, d: 'int' = 2) -> bool", signatur(probe)
     assert signatur(mit_args) == "(a, *rest, c=1, **kw)", signatur(mit_args)
     assert signatur(lambda *, x: x) == "(*, x)", signatur(lambda *, x: x)
-    sig = jetzt["TinySesam"]["anmelden_passwort"]
-    assert ", *, next: " in sig, f"anmelden_passwort ohne `*` gemessen: {sig}"
+    sig = jetzt["TinySesam"]["login_password"]
+    assert ", *, next: " in sig, f"login_password ohne `*` gemessen: {sig}"
     # `API.md` zeigt dieselbe Signatur (eigene Kopie in scripts/_api_doku.py, dort fehlten die
     # Marken genauso).
     import importlib.util
@@ -427,7 +428,7 @@ def selbstpruefung_signatur(jetzt: dict) -> None:
                                                   os.path.join(WURZEL, "scripts", "_api_doku.py"))
     doku = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(doku)
-    for fn in (probe, mit_args, TinySesam.anmelden_passwort, TinySesamConfig.oidc_gateway):
+    for fn in (probe, mit_args, TinySesam.login_password, TinySesamConfig.oidc_gateway):
         assert doku.signatur(fn) == signatur(fn), (fn, doku.signatur(fn), signatur(fn))
     # Ein nachträglich eingefügtes `*` (oder `/`) bricht jeden positionellen Aufruf.
     vorher = {"TinySesam": {"m": "(request, username, next='')"}}

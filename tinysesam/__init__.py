@@ -9,9 +9,9 @@ Abschnitt „Installation und Updates".
 """
 __version__ = "0.21.0"
 
-from .anmeldung import Anmeldung
 from .config import TinySesamConfig
 from .errors import ConfigError, MailNotConfigured, MissingExtra, StateError, TinySesamError
+from .login_result import LoginResult
 from .manager import TinySesam
 
 
@@ -25,5 +25,5 @@ def current_version() -> str:
         return __version__
 
 
-__all__ = ["TinySesam", "TinySesamConfig", "Anmeldung", "current_version",
+__all__ = ["TinySesam", "TinySesamConfig", "LoginResult", "current_version",
            "TinySesamError", "ConfigError", "MissingExtra", "MailNotConfigured", "StateError"]

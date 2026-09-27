@@ -1,31 +1,39 @@
 {
-  "Anmeldung": {
-    "GRUENDE": {
-      "sig": "('ok', 'leer', 'falsch', 'gesperrt', 'gesperrt_serie', 'ratelimit', 'verzeichnis_weg', 'abgeschaltet', 'keine_sitzung')",
+  "LoginResult": {
+    "REASONS": {
+      "sig": "('ok', 'missing', 'invalid', 'locked', 'locked_series', 'ratelimit', 'directory_down', 'method_disabled', 'no_session')",
       "stufe": "A"
     },
-    "cookie_setzen": {
-      "sig": "(response) -> 'None'",
-      "stufe": "A"
-    },
-    "fertig": {
+    "done": {
       "sig": "bool = False",
       "stufe": "A"
     },
-    "grund": {
-      "sig": "str = <pflicht>",
-      "stufe": "A"
-    },
-    "meldung": {
+    "message": {
       "sig": "str = ''",
       "stufe": "A"
     },
-    "naechster": {
+    "next_factor": {
       "sig": "Optional[str] = None",
+      "stufe": "A"
+    },
+    "next_url": {
+      "sig": "str = ''",
       "stufe": "A"
     },
     "ok": {
       "sig": "bool = <pflicht>",
+      "stufe": "A"
+    },
+    "reason": {
+      "sig": "str = <pflicht>",
+      "stufe": "A"
+    },
+    "redirect": {
+      "sig": "()",
+      "stufe": "A"
+    },
+    "set_cookie": {
+      "sig": "(response) -> 'None'",
       "stufe": "A"
     },
     "status": {
@@ -34,14 +42,6 @@
     },
     "user": {
       "sig": "Optional[dict] = None",
-      "stufe": "A"
-    },
-    "weiter": {
-      "sig": "str = ''",
-      "stufe": "A"
-    },
-    "weiterleitung": {
-      "sig": "()",
       "stufe": "A"
     }
   },
@@ -76,18 +76,6 @@
     "andere_sitzungen": {
       "sig": "(request, user, token: 'Optional[str]' = None) -> 'int'",
       "stufe": "B"
-    },
-    "anmelden_passwort": {
-      "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
-      "stufe": "A"
-    },
-    "anmelden_pin": {
-      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'Anmeldung'",
-      "stufe": "A"
-    },
-    "anmelden_totp": {
-      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'Anmeldung'",
-      "stufe": "A"
     },
     "api_key_art": {
       "sig": "(key) -> 'str'",
@@ -378,12 +366,24 @@
       "sig": "(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'",
       "stufe": "A"
     },
+    "login_password": {
+      "sig": "(request: 'Request', username: 'str', password: 'str', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "login_pin": {
+      "sig": "(request: 'Request', pin: 'str', username: 'str' = '', *, next: 'str' = '', remember: 'Optional[bool]' = None, csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
     "login_redirect_after": {
       "bis": "1.0",
       "seit": "0.22.0",
       "sig": "(request, token, user_id, nxt)",
       "stufe": "C",
       "ziel": "_login_redirect_after"
+    },
+    "login_totp": {
+      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
     },
     "logout": {
       "sig": "(request, response)",
@@ -1542,10 +1542,10 @@
     }
   },
   "exporte": {
-    "Anmeldung": {
+    "ConfigError": {
       "stufe": "A"
     },
-    "ConfigError": {
+    "LoginResult": {
       "stufe": "A"
     },
     "MailNotConfigured": {

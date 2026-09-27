@@ -34,7 +34,7 @@ ZIEL = ROOT / "API.md"
 ABLAGE = ROOT / "tests" / "api_surface.json"
 
 import tinysesam as paket  # noqa: E402
-from tinysesam import Anmeldung, TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import LoginResult, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import errors as fehler_modul  # noqa: E402
 from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
 
@@ -65,7 +65,7 @@ UNGEDROSSELT = ("check_password", "check_pin", "check_ldap", "check_saml")
 
 #: Der sichere Weg für eigene Login-Seiten (0.22.0), auf den der Warnsatz zu C zeigt. Stehen sie
 #: nicht in A, stimmt der Satz nicht mehr.
-BAUSTEINE = ("anmelden_passwort", "anmelden_pin", "anmelden_totp")
+BAUSTEINE = ("login_password", "login_pin", "login_totp")
 
 KOPF = """# API — die öffentliche Oberfläche von `TinySesam`
 
@@ -100,7 +100,7 @@ def signatur(fn) -> str:
     except (TypeError, ValueError):
         return "(…)"
     # Mit den Marken `*`/`/` wie im Wächter (`tests/test_api_surface.py`, `parameter_mit_marken`):
-    # Ohne sie stand `anmelden_passwort(…, password, next=…)` hier, als ginge `next` auch
+    # Ohne sie stand `login_password(…, password, next=…)` hier, als ginge `next` auch
     # positionell — bis 0.22.0 fehlten beide Marken in dieser Seite.
     parameter = [p for name, p in s.parameters.items() if name != "self"]
     teile, stern = [], any(p.kind is p.VAR_POSITIONAL for p in parameter)
@@ -180,30 +180,30 @@ def wert(w) -> str:
     return f"Wert: `{kurz[:197]}…`"
 
 
-def anmeldung_abschnitt(stufe_von) -> str:
+def ergebnistyp_abschnitt(stufe_von) -> str:
     """Der Ergebnistyp der Anmelde-Bausteine: Felder als Tabelle (Erklärung aus dem `#:`-Block),
-    `GRUENDE` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine andere Stufe
+    `REASONS` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine andere Stufe
     gibt es hier nicht, der Wächter misst jeden Namen einzeln."""
-    notiz = kommentare(Anmeldung)
-    # `dataclasses.fields`, nicht `__dataclass_fields__`: Dort stünde `GRUENDE` (ClassVar) mit.
-    felder = [f for f in dataclasses.fields(Anmeldung) if stufe_von(f.name) == "A"]
-    methoden = [(n, f) for n, f in inspect.getmembers(Anmeldung, inspect.isfunction)
+    notiz = kommentare(LoginResult)
+    # `dataclasses.fields`, nicht `__dataclass_fields__`: Dort stünde `REASONS` (ClassVar) mit.
+    felder = [f for f in dataclasses.fields(LoginResult) if stufe_von(f.name) == "A"]
+    methoden = [(n, f) for n, f in inspect.getmembers(LoginResult, inspect.isfunction)
                 if not n.startswith("_") and stufe_von(n) == "A"]
     for f in felder:
-        assert notiz.get(f.name), f"Anmeldung.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
-    teile = [f"## A · Ergebnis der Anmelde-Bausteine: `tinysesam.Anmeldung`\n\n{erster_satz(Anmeldung)} "
+        assert notiz.get(f.name), f"LoginResult.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
+    teile = [f"## A · Ergebnis der Anmelde-Bausteine: `tinysesam.LoginResult`\n\n{erster_satz(LoginResult)} "
              "Zurück von " + ", ".join(f"`{n}`" for n in BAUSTEINE) + ". Eine eingefrorene "
-             "Dataclass; `bool(erg)` ist `erg.ok`. Das Sitzungs-Token ist bewusst kein Feld — "
-             "`cookie_setzen()` und `weiterleitung()` setzen es.\n\n"
+             "Dataclass; `bool(result)` ist `result.ok`. Das Sitzungs-Token ist bewusst kein Feld — "
+             "`set_cookie()` und `redirect()` setzen es.\n\n"
              "| Feld | Typ | Bedeutung |\n|---|---|---|\n"]
     for f in felder:
         teile.append(f"| `{f.name}` | `{f.type}` | {notiz[f.name].replace('|', chr(92) + '|')} |\n")
     teile.append("\n")
-    if stufe_von("GRUENDE") == "A":
-        teile.append(f"### `Anmeldung.GRUENDE` — Konstante\n\n{satz(notiz.get('GRUENDE', ''))}\n\n"
-                     f"{wert(Anmeldung.GRUENDE)}\n\n")
+    if stufe_von("REASONS") == "A":
+        teile.append(f"### `LoginResult.REASONS` — Konstante\n\n{satz(notiz.get('REASONS', ''))}\n\n"
+                     f"{wert(LoginResult.REASONS)}\n\n")
     for n, fn in methoden:
-        teile.append(f"### `Anmeldung.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
+        teile.append(f"### `LoginResult.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
     return "".join(teile)
 
 
@@ -246,13 +246,14 @@ def bauen() -> str:
     notiz = kommentare(TinySesam)
 
     # Wer ohne Stufe ist, steht am Ende sichtbar da — statt still in A zu landen.
-    anmeldung = ([f.name for f in dataclasses.fields(Anmeldung)] + ["GRUENDE"]
-                 + [n for n, _ in inspect.getmembers(Anmeldung, inspect.isfunction) if not n.startswith("_")])
+    ergebnistyp = ([f.name for f in dataclasses.fields(LoginResult)] + ["REASONS"]
+                   + [n for n, _ in inspect.getmembers(LoginResult, inspect.isfunction)
+                      if not n.startswith("_")])
     alle = ([("TinySesam", n) for n, _ in methoden] + [("TinySesam.eigenschaften", n) for n, _ in eigenschaften]
             + [("TinySesam.konstanten", n) for n in konstanten]
             + [("TinySesamConfig.methoden", n) for n, _ in presets]
             + [("TinySesamConfig.felder", n) for n in felder] + [("exporte", n) for n in exporte]
-            + [("Anmeldung", n) for n in anmeldung])
+            + [("LoginResult", n) for n in ergebnistyp])
     zahl = {s: sum(1 for b, n in alle if von(b, n) == s) for s in STUFEN}
     ohne = [(b, n) for b, n in alle if von(b, n) not in STUFEN]
 
@@ -320,10 +321,10 @@ def bauen() -> str:
             "weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er "
             "ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen "
             "sind die Zusage.\n\n"))
-        if s == "A" and von("exporte", "Anmeldung") == "A":
-            teile.append(anmeldung_abschnitt(lambda n: von("Anmeldung", n)))
+        if s == "A" and von("exporte", "LoginResult") == "A":
+            teile.append(ergebnistyp_abschnitt(lambda n: von("LoginResult", n)))
         uebrige = [n for n in exporte if von("exporte", n) == s and n not in dict(typen)
-                   and n != "Anmeldung"]
+                   and n != "LoginResult"]
         klassen = [n for n in uebrige if not inspect.isfunction(getattr(paket, n))]
         teile.append(_abschnitt(
             f"{titel}weitere Exporte von `tinysesam`",
@@ -364,8 +365,8 @@ def bauen() -> str:
 
     teile.append(f"---\n\n{len(methoden)} Methoden, {len(eigenschaften)} Eigenschaften, "
                  f"{len(konstanten)} Konstanten, {len(presets)} Methoden von `TinySesamConfig`, "
-                 f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen, {len(anmeldung)} Namen "
-                 "an `Anmeldung` — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
+                 f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen, {len(ergebnistyp)} Namen "
+                 "an `LoginResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
     return "".join(teile)
 
 

@@ -5,7 +5,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unveröffentlicht]
 
 **Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
-(`anmelden_passwort`, `anmelden_pin`, `anmelden_totp`) für eigene Login-Seiten; die internen Namen
+(`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten; die internen Namen
 (Stufe C) warnen und fallen mit 1.0 weg. Und zwei Funde aus dem Betrieb: das Erst-Admin-Token steht
 im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim
 Update auffällt:
@@ -35,13 +35,13 @@ Update auffällt:
   einen alten Namen am Objekt löst jetzt eine `RuntimeWarning` aus (ohne Filter sichtbar), die das
   Ziel nennt; ein Patch an der Klasse (`mock.patch.object(TinySesam, "check_password", …)`) ersetzt
   den Alias selbst, bleibt unbemerkt und wirkt ebenso wenig.
-- **Eigene Login-Seiten nehmen `anmelden_passwort`** (PO-Befund 2026-09-26). Wer dem Muster „Your
+- **Eigene Login-Seiten nehmen `login_password`** (PO-Befund 2026-09-26). Wer dem Muster „Your
   own login page“ der README bis 0.21.0 gefolgt ist (`check_password` + `start_session`), hat auf
   seiner eigenen Route **keinen Schutz gegen Passwort-Raten** — keine Sperre, keinen Zähler, keine
-  Serie, keine Drossel, keine Zeile für fail2ban. Umstellen auf `auth.anmelden_passwort(request,
-  username, password, next=…, csrf=…)` (für den zweiten Schritt `anmelden_totp`, für die PIN
-  `anmelden_pin`): Es gibt eine `Anmeldung` zurück (`if not erg: …`, sonst
-  `erg.weiterleitung()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
+  Serie, keine Drossel, keine Zeile für fail2ban. Umstellen auf `auth.login_password(request,
+  username, password, next=…, csrf=…)` (für den zweiten Schritt `login_totp`, für die PIN
+  `login_pin`): Es gibt ein `LoginResult` zurück (`if not result: …`, sonst
+  `result.redirect()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
   Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
   Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
 - **Das Erst-Admin-Einmal-Token geht ohne Konsole in eine Datei** (T-17). Gibt es keinen Admin und
@@ -70,39 +70,43 @@ Update auffällt:
   Verzeichnis frei oder nicht) — `docs/BETRIEB.md` nennt das Symptom. Gateway: neue Variable
   `TINYSESAM_OIDC_SCOPES` (Vorgabe `openid profile email`), vorher liess sich der Scope dort gar
   nicht setzen. Test: `tests/test_betriebsfunde.py` (a).
-- **Sicherer Login-Baustein für eigene Seiten: `anmelden_passwort`, `anmelden_pin`,
-  `anmelden_totp`** (Stufe A, PO-Befund 2026-09-26). Jede Methode tut, was die eingebaute Route
+- **Sicherer Login-Baustein für eigene Seiten: `login_password`, `login_pin`,
+  `login_totp`** (Stufe A, PO-Befund 2026-09-26). Jede Methode tut, was die eingebaute Route
   tut — und die eingebaute Route ruft sie (eine Quelle, kein Drift): CSRF prüfen (`csrf=`, sonst
   Header `X-CSRF-Token`; 403), Drossel je IP, den Versuch atomar vorbuchen (Fehlversuche je
   Kennung, Adresse und Paar, Serie; bei der PIN Login- und PIN-Topf, hinter einem erbrachten
   Faktor unter eigener Serien-Art), mit LDAP den Rückfall aufs Verzeichnis samt Schwebe und
   Rücknahme bei einem Ausfall („eine Kennung, ein Konto“ inklusive), Audit- und Sicherheits-Log
-  (dieselben fail2ban-Zeilen), dann die Sitzung bzw. der nächste Faktor. `anmelden_totp` nimmt
+  (dieselben fail2ban-Zeilen), dann die Sitzung bzw. der nächste Faktor. `login_totp` nimmt
   TOTP- und Einmal-Codes, wie `POST /auth/totp`. Erwartbare Ausgänge sind Ergebnisse, keine
   Ausnahmen; geworfen wird nur, was die Route auch wirft (403 bei CSRF, Unerwartetes).
-- **`tinysesam.Anmeldung`** (Export, Stufe A): das Ergebnis — `ok` (auch `bool(erg)`), `grund`
-  (`Anmeldung.GRUENDE`: `ok`, `leer`, `falsch`, `gesperrt`, `gesperrt_serie`, `ratelimit`,
-  `verzeichnis_weg`, `abgeschaltet`, `keine_sitzung`), `status` (der Status der eingebauten Seite),
-  `meldung` (übersetzt), `weiter` (geprüftes Ziel), `naechster` (offener Faktor), `fertig`, `user`
-  (nur bei Erfolg); `cookie_setzen(response)` und `weiterleitung()`. Eine eingefrorene Dataclass;
-  das Sitzungs-Token ist bewusst kein Feld (kein `repr`, kein `asdict`) — fail-closed: Ein
-  Misserfolg trägt keins, wer das Ergebnis ignoriert, meldet niemanden an. `gesperrt` umfasst den
-  Aufschub hinter einer schwebenden Verzeichnis-Anmeldung (G9), sonst verriete der Grund, dass
-  gerade jemand anderes unter der Kennung anmeldet. Der Wächter misst den Typ mit (Bereich
-  `Anmeldung` in `tests/api_surface.json`: Felder mit Typ und Vorgabe, Methoden, `GRUENDE`),
-  `API.md` beschreibt ihn in einem eigenen Abschnitt.
+- **`tinysesam.LoginResult`** (Export, Stufe A): das Ergebnis — `ok` (auch `bool(result)`),
+  `reason` (`LoginResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`,
+  `ratelimit`, `directory_down`, `method_disabled`, `no_session`), `status` (der Status der
+  eingebauten Seite), `message` (übersetzt), `next_url` (geprüftes Ziel), `next_factor` (offener
+  Faktor), `done`, `user` (nur bei Erfolg); `set_cookie(response)` und `redirect()`. Eine
+  eingefrorene Dataclass; das Sitzungs-Token ist bewusst kein Feld (kein `repr`, kein `asdict`) —
+  fail-closed: Ein Misserfolg trägt keins, wer das Ergebnis ignoriert, meldet niemanden an.
+  `locked` umfasst den Aufschub hinter einer schwebenden Verzeichnis-Anmeldung (G9), sonst verriete
+  der Grund, dass gerade jemand anderes unter der Kennung anmeldet. Die Namen des Bausteins sind
+  englisch wie der Rest der Stufe A (PO-Entscheid 2026-09-27); `reason` ist ein Kürzel für
+  Programme — die Audit- und Log-Zeilen (auch die für fail2ban) bleiben, wie sie sind. Der Wächter
+  misst den Typ mit (Bereich `LoginResult` in `tests/api_surface.json`: Felder mit Typ und Vorgabe,
+  Methoden, `REASONS`), `API.md` beschreibt ihn in einem eigenen Abschnitt.
 - **Tests:** `tests/test_anmelden.py` — eine eigene Login-Seite über den Baustein sperrt nach N
-  Fehlversuchen (429 `gesperrt`), drosselt je IP (`ratelimit`) und sperrt die Serie
-  (`gesperrt_serie`); LDAP-Rückfall, Ausfall mit und ohne lokales Passwort, „eine Kennung, ein
+  Fehlversuchen (429 `locked`), drosselt je IP (`ratelimit`) und sperrt die Serie
+  (`locked_series`); LDAP-Rückfall, Ausfall mit und ohne lokales Passwort, „eine Kennung, ein
   Konto“; PIN im Gästeweg und im Kettenschritt, TOTP mit Einmal-Code und ohne Sitzung; CSRF,
   fail-closed, der Ergebnistyp. Dieselbe Folge über die eingebaute Route und über eine eigene
   ergibt dieselben Status, Audit-, Sicherheits-Log-, Versuchs- und Serienzeilen (Passwort, LDAP,
   PIN, TOTP). Ein AST-Wächter hält fest, dass `login_submit`, `pin_submit` und `totp_submit` ihren
   Baustein rufen und keinen inneren Prüfer selbst; das Beispiel der README läuft wörtlich und
-  muss sperren. Der Wächter in `tests/test_stepup.py` zählt `anmelden_*` zu den Stellen mit
+  muss sperren. Der Wächter in `tests/test_stepup.py` zählt `login_*` zu den Stellen mit
   Sitzungswirkung. Ein Fake auf dem alten Namen (`auth.check_password = fake`,
   `mock.patch.object(auth, "rate_ok", …)`) wird nie gerufen und warnt, derselbe auf dem neuen
-  (`auth._check_password`) wirkt.
+  (`auth._check_password`) wirkt. Ein Namens-Wächter misst die Oberfläche des Bausteins am Objekt
+  (jede Methode, die ein `LoginResult` liefert, samt Parametern; Typ, Modul, Felder, Methoden,
+  `REASONS`): kein deutsches Wort, jeder Name in Stufe A.
 
 - **Stufe je öffentlichem Namen, und der Wächter verlangt sie** (PO-Entscheid 2026-09-26).
   `tests/api_surface.json` führt jeden Eintrag als Objekt: der gemessene Wert (`sig`, bei
@@ -113,7 +117,7 @@ Update auffällt:
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
   zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 240 (darunter
-  `anmelden_*` und die 11 Namen am Ergebnistyp `Anmeldung`), B 64, C 50 von 354 Namen.
+  `login_*` und die 11 Namen am Ergebnistyp `LoginResult`), B 64, C 50 von 354 Namen.
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
   `Veraltet("_name", "<Ersatz>")`: ein Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
@@ -168,14 +172,14 @@ Update auffällt:
   bis 0.21.0 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
   README zeigt jetzt zwei sichere Wege: für ein eigenes Aussehen allein die Seite ersetzen
   (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route), für eine eigene
-  Route den Baustein `anmelden_passwort` (bzw. `anmelden_totp`, `anmelden_pin`), den die
+  Route den Baustein `login_password` (bzw. `login_totp`, `login_pin`), den die
   eingebauten Routen selbst rufen; ihr Beispiel läuft im Test wörtlich und muss sperren. Die
   Prüfer stehen in Stufe C, ihre Warnung nennt den Baustein. Ungedrosselt war auch `verify_totp`
-  aus demselben Beispiel — ein sechsstelliger Code; sein Ersatz ist `anmelden_totp`.
+  aus demselben Beispiel — ein sechsstelliger Code; sein Ersatz ist `login_totp`.
 
 ### Geändert
 
-- **`POST /auth/login`, `/auth/pin` und `/auth/totp` sind dünne Hüllen um `anmelden_*`.** Der
+- **`POST /auth/login`, `/auth/pin` und `/auth/totp` sind dünne Hüllen um `login_*`.** Der
   ganze Ablauf zog aus `router.py` in die Bausteine; die Routen rendern nur noch das Ergebnis.
   Antworten, Texte, Audit- und Log-Zeilen bleiben gleich (gemessen gegen eine eigene Route über
   denselben Baustein). Drei Kleinigkeiten ändern sich: Eine unerwartete Ausnahme in der PIN- oder
@@ -200,14 +204,14 @@ Update auffällt:
   Implementierung `_name`; der alte Name reicht bis 1.0 unverändert weiter und löst beim Aufruf
   (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
   führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
-  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: `anmelden_passwort`, `anmelden_pin`,
-    `anmelden_totp` bzw. die eingebauten Routen (`/auth/reauth`, `/auth/resource/{name}`,
+  - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: `login_password`, `login_pin`,
+    `login_totp` bzw. die eingebauten Routen (`/auth/reauth`, `/auth/resource/{name}`,
     `/auth/saml/acs`), eigenes Aussehen per `set_template`:** `check_password` → `_check_password`,
     `check_pin` → `_check_pin`, `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`,
     `check_resource` → `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
     `_verify_recovery_code`, `verify_user_password` → `_verify_user_password`, `verify_user_pin` →
     `_verify_user_pin`.
-  - **Sperren und Buchhaltung — Ersatz: `anmelden_*` bzw. die eingebauten Routen, die atomar prüfen
+  - **Sperren und Buchhaltung — Ersatz: `login_*` bzw. die eingebauten Routen, die atomar prüfen
     und buchen:** `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`,
     `is_password_change_locked` → `_is_password_change_locked`, `is_reauth_locked` →
     `_is_reauth_locked`, `is_resource_locked` → `_is_resource_locked`, `is_totp_setup_locked` →
@@ -215,8 +219,8 @@ Update auffällt:
     `versuch_beginnen` → `_versuch_beginnen`.
   - **Sitzung, Anmeldekette, CSRF:** `session_from_request` → `_session_from_request` (Ersatz
     `current_user`/`session_user`), `next_login_step` → `_next_login_step`, `factor_entry` →
-    `_factor_entry`, `login_redirect_after` → `_login_redirect_after` (Ersatz `weiter` am Ergebnis
-    von `anmelden_*`), `csrf_rotieren` → `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`),
+    `_factor_entry`, `login_redirect_after` → `_login_redirect_after` (Ersatz `next_url` am Ergebnis
+    von `login_*`), `csrf_rotieren` → `_csrf_rotieren` (Ersatz `set_cookie`/`issue_csrf`),
     `verify_csrf` → `_verify_csrf` (Ersatz `require_csrf`), `unlock_resource` → `_unlock_resource`,
     `mfa_pending` → `_mfa_pending`.
   - **Erst-Admin, Demo, Protokoll:** `maybe_promote_admin` → `_maybe_promote_admin` (Ersatz
@@ -234,7 +238,7 @@ Update auffällt:
   - **Konstanten (warnen beim Lesen):** `APIKEY_AUDIT_FENSTER` → `_APIKEY_AUDIT_FENSTER`,
     `DEMO_USERS` → `_DEMO_USERS`, `FOEDERIERTE_FAKTOREN` → `_FOEDERIERTE_FAKTOREN`, `IDENTIFYING` →
     `_IDENTIFYING`, `RECOVERY_BYTES` → `_RECOVERY_BYTES`, `RECOVERY_WARNSCHWELLE` →
-    `_RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE` → `_SERIE_PIN_FOLGE` (Ersatz `anmelden_pin`; kam mit
+    `_RECOVERY_WARNSCHWELLE`, `SERIE_PIN_FOLGE` → `_SERIE_PIN_FOLGE` (Ersatz `login_pin`; kam mit
     0.21.0, dessen CHANGELOG ihn für eigene PIN-Seiten nannte — deshalb ein Alias und nicht bloss
     umbenannt).
   - **`complete_mfa` → `complete_totp`** (gleiches Verhalten; kein Unterstrich-Name, der Alias zeigt
@@ -248,13 +252,13 @@ Update auffällt:
   Nur-Schlüsselwort- (`*`) und Nur-Positions-Parameter (`/`) fielen dabei weg, obwohl der Docstring
   genau das zu messen versprach. Ein nachträglich eingefügtes `*` — jeder positionelle Aufruf
   bricht — sah aus wie keine Änderung. Jetzt stehen die Marken in der Ablage (10 Signaturen neu
-  gemessen: `anmelden_*`, `change_username`, `create_user`, `foederation_nachbinden`,
+  gemessen: `login_*`, `change_username`, `create_user`, `foederation_nachbinden`,
   `passwort_mangel` und die Presets `active_directory`, `entra_id`, `oidc_gateway` — keine davon
   hat sich geändert), ein eingefügtes `*` oder `/` ist ein Bruch, ein hinten angehängter
   Nur-Schlüsselwort-Parameter mit Vorgabe bleibt eine Erweiterung. Eine Ablage von vor 0.22.0
   (`git show v0.21.0:tests/api_surface.json`) lässt sich weiter vergleichen: Ihre Signaturen
   werden als „ohne Marken gemessen“ eingelesen und ohne Marken verglichen. Derselbe Fehler stand
-  in `scripts/_api_doku.py` — `API.md` zeigte etwa `anmelden_passwort(…, password, next=…)`, als
+  in `scripts/_api_doku.py` — `API.md` zeigte etwa `login_password(…, password, next=…)`, als
   ginge `next` auch positionell; der Wächter hält beide Fassungen gleich.
 
 ## [0.21.0] — 2026-09-27

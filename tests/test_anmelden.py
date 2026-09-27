@@ -1,4 +1,4 @@
-"""Der sichere Login-Baustein für eigene Seiten (0.22.0): `anmelden_passwort`, `anmelden_pin`, `anmelden_totp`.
+"""Der sichere Login-Baustein für eigene Seiten (0.22.0): `login_password`, `login_pin`, `login_totp`.
 
 PO-Befund 2026-09-26: Die README zeigte unter „Your own login page“ `check_password` +
 `start_session` als Bausteine. Die inneren Prüfer drosseln nicht — Sperre, Fehlversuchszähler,
@@ -10,6 +10,10 @@ eingebauten Routen rufen DENSELBEN (eine Quelle, kein Drift). Gemessen wird desh
 dass eine eigene Login-Seite über den Baustein geschützt ist, und dass sie sich Zeile für Zeile
 verhält wie die eingebaute Route.
 
+Die Namen sind englisch (PO-Entscheid 2026-09-27, vor dem Release umbenannt, ohne Alias): (k)
+hält fest, dass auf der Stufe-A-Oberfläche des Bausteins kein deutsches Wort steht und jeder
+ihrer Namen Stufe A trägt.
+
   (a) eigene Login-Seite: Sperre nach N Fehlversuchen, IP-Drossel, Serie
   (b) LDAP über den Baustein: Rückfall, Ausfall (503, Rücknahme bzw. Fehlversuch), eine Kennung, ein Konto
   (c) Gleichheit mit der eingebauten Route: Status, Audit-, Sicherheits-Log- und Zählerzeilen
@@ -20,12 +24,15 @@ verhält wie die eingebaute Route.
   (h) eine Quelle: die drei Routen rufen den Baustein und keinen inneren Prüfer
   (i) das Beispiel der README ist selbst geschützt
   (j) Test-Fakes: auf dem alten Namen wirkungslos und laut, auf dem neuen wirksam
+  (k) die Namen: englisch, jeder in Stufe A
 """
 from __future__ import annotations
 
 import ast
 import dataclasses
+import inspect
 import io
+import json
 import logging
 import re
 import sys
@@ -44,12 +51,12 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from tinysesam import Anmeldung, TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import LoginResult, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam.ldap_ import VerzeichnisNichtErreichbar  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Der sichere Login-Baustein für eigene Seiten (anmelden_passwort/_pin/_totp, 0.22.0)")
+r = Report("Der sichere Login-Baustein für eigene Seiten (login_password/_pin/_totp, 0.22.0)")
 PW = "Anmelde-Pw-2026"          # 15 Zeichen: das Passwort meldet allein an (B2-4)
 PIN = "4711"
 IP = ("203.0.113.9", 50000)
@@ -73,34 +80,34 @@ def _app(haertung=None, **cfg):
         # Das Muster der README: bei einem Misserfolg das eigene Formular (hier JSON) mit dem
         # Status der eingebauten Seite, bei Erfolg die Umleitung mit Cookie.
         if not erg:
-            return JSONResponse({"grund": erg.grund, "meldung": erg.meldung, "weiter": erg.weiter,
-                                 "naechster": erg.naechster}, status_code=erg.status)
-        return erg.weiterleitung()
+            return JSONResponse({"reason": erg.reason, "message": erg.message, "next_url": erg.next_url,
+                                 "next_factor": erg.next_factor}, status_code=erg.status)
+        return erg.redirect()
 
     @app.post("/eigen/login")
     def _eigen_login(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), csrf: str = Form("", alias="_csrf"), bleiben: str = Form("")):
-        return antwort(auth.anmelden_passwort(request, username, password, next=next, csrf=csrf,
+        return antwort(auth.login_password(request, username, password, next=next, csrf=csrf,
                                               remember=True if bleiben else None))
 
     @app.post("/eigen/pin")
     def _eigen_pin(request: Request, pin: str = Form(""), username: str = Form(""),
                    next: str = Form(""), csrf: str = Form("", alias="_csrf")):
-        return antwort(auth.anmelden_pin(request, pin, username, next=next, csrf=csrf))
+        return antwort(auth.login_pin(request, pin, username, next=next, csrf=csrf))
 
     @app.post("/eigen/totp")
     def _eigen_totp(request: Request, code: str = Form(""), next: str = Form(""),
                     csrf: str = Form("", alias="_csrf")):
-        return antwort(auth.anmelden_totp(request, code, next=next, csrf=csrf))
+        return antwort(auth.login_totp(request, code, next=next, csrf=csrf))
 
     @app.post("/eigen/json")
     def _eigen_json(request: Request, daten: dict):
         # Der JSON-Weg: kein `csrf`-Argument, das Token kommt im Header X-CSRF-Token.
-        erg = auth.anmelden_passwort(request, daten.get("username", ""), daten.get("password", ""))
+        erg = auth.login_password(request, daten.get("username", ""), daten.get("password", ""))
         if not erg:
-            raise HTTPException(erg.status, erg.meldung)
-        antwort_ = JSONResponse({"weiter": erg.weiter, "fertig": erg.fertig, "naechster": erg.naechster})
-        erg.cookie_setzen(antwort_)
+            raise HTTPException(erg.status, erg.message)
+        antwort_ = JSONResponse({"next_url": erg.next_url, "done": erg.done, "next_factor": erg.next_factor})
+        erg.set_cookie(antwort_)
         return antwort_
 
     @app.get("/drin")
@@ -118,9 +125,9 @@ def _post(client, pfad, **daten):
     return client.post(pfad, data={"next": "/drin", **daten}, follow_redirects=False)
 
 
-def _grund(antwort):
+def _reason(antwort):
     try:
-        return antwort.json().get("grund")
+        return antwort.json().get("reason")
     except ValueError:
         return None
 
@@ -169,7 +176,7 @@ def _serie(auth):
 # Genau der Befund: Eine eigene Route über `check_password` hätte hier fünfmal 401 gesagt und beim
 # sechsten Versuch — dem richtigen Passwort — eine Sitzung aufgemacht. Über den Baustein sperrt sie
 # nach der Grenze, und auch das richtige Passwort kommt dann nicht mehr durch.
-# (Mutationsprobe: in `anmelden_passwort` die Abweisung `if versuch is None:` abschalten → vierte
+# (Mutationsprobe: in `login_password` die Abweisung `if versuch is None:` abschalten → vierte
 # Antwort 401, das richtige Passwort 303 → rot.)
 auth, app = _app(haertung={"max_login_attempts": 3})
 auth.create_user("alice", password=PW)
@@ -177,11 +184,11 @@ c = _client(app)
 with Mitschnitt() as log_a:
     folge_a = [_post(c, "/eigen/login", username="alice", password=f"falsch-{i}") for i in range(5)]
     richtig_a = _post(c, "/eigen/login", username="alice", password=PW)
-r.check("(a) eigene Login-Seite: nach 3 Fehlversuchen 429 `gesperrt` — kein weiteres Raten",
+r.check("(a) eigene Login-Seite: nach 3 Fehlversuchen 429 `locked` — kein weiteres Raten",
         [a.status_code for a in folge_a] == [401, 401, 401, 429, 429]
-        and [_grund(a) for a in folge_a] == ["falsch"] * 3 + ["gesperrt"] * 2
-        and folge_a[3].json()["meldung"] == auth.t("err.locked"),
-        f"{[a.status_code for a in folge_a]} {[_grund(a) for a in folge_a]}")
+        and [_reason(a) for a in folge_a] == ["invalid"] * 3 + ["locked"] * 2
+        and folge_a[3].json()["message"] == auth.t("err.locked"),
+        f"{[a.status_code for a in folge_a]} {[_reason(a) for a in folge_a]}")
 r.check("(a) … auch das richtige Passwort öffnet dann keine Sitzung (429, kein Cookie)",
         richtig_a.status_code == 429 and _sitzung(auth, richtig_a) is None,
         f"HTTP {richtig_a.status_code}, Cookie {_sitzung(auth, richtig_a)!r}")
@@ -202,9 +209,9 @@ c = _client(app, ("198.51.100.44", 1))
 _drossel = [_post(c, "/eigen/login", username=f"konto{i}", password="egal-egal-1") for i in range(6)]
 _anderes_netz = _post(_client(app, ("198.51.100.45", 1)), "/eigen/login", username="bob", password=PW)
 r.check("(a) IP-Drossel: nach rate_limit_max Anfragen 429 `ratelimit` mit dem Text der Drossel",
-        [a.status_code for a in _drossel][-2:] == [429, 429] and _grund(_drossel[-1]) == "ratelimit"
-        and _drossel[-1].json()["meldung"] == auth.t("err.rate"),
-        f"{[(a.status_code, _grund(a)) for a in _drossel]}")
+        [a.status_code for a in _drossel][-2:] == [429, 429] and _reason(_drossel[-1]) == "ratelimit"
+        and _drossel[-1].json()["message"] == auth.t("err.rate"),
+        f"{[(a.status_code, _reason(a)) for a in _drossel]}")
 r.check("(a) … eine andere Adresse meldet sich weiter an (Gegenprobe: die Drossel gilt je IP)",
         _anderes_netz.status_code == 303 and _sitzung(auth, _anderes_netz), f"HTTP {_anderes_netz.status_code}")
 
@@ -217,13 +224,13 @@ with Mitschnitt() as log_s:
         _serie_folge.append(_post(_client(app, (f"192.0.2.{10 + i}", 1)), "/eigen/login",
                                   username="carol", password=f"falsch-{i}"))
     _serie_richtig = _post(_client(app, ("192.0.2.99", 1)), "/eigen/login", username="carol", password=PW)
-r.check("(a) Serie: nach 10 Fehlversuchen in Folge 429 `gesperrt_serie` mit dem Text der Serien-Sperre",
+r.check("(a) Serie: nach 10 Fehlversuchen in Folge 429 `locked_series` mit dem Text der Serien-Sperre",
         [a.status_code for a in _serie_folge] == [401] * 10 + [429]
-        and _grund(_serie_folge[-1]) == "gesperrt_serie"
-        and _serie_folge[-1].json()["meldung"] == auth.t("err.locked_serie"),
-        f"{[(a.status_code, _grund(a)) for a in _serie_folge]}")
+        and _reason(_serie_folge[-1]) == "locked_series"
+        and _serie_folge[-1].json()["message"] == auth.t("err.locked_serie"),
+        f"{[(a.status_code, _reason(a)) for a in _serie_folge]}")
 r.check("(a) … sie läuft nicht ab: auch das richtige Passwort von einer neuen Adresse bleibt draussen",
-        _serie_richtig.status_code == 429 and _grund(_serie_richtig) == "gesperrt_serie",
+        _serie_richtig.status_code == 429 and _reason(_serie_richtig) == "locked_series",
         f"HTTP {_serie_richtig.status_code}")
 r.check("(a) … Audit `lockout_serie` und die Logzeile für den Betreiber",
         any(e[0] == "lockout_serie" for e in _audit(auth))
@@ -285,8 +292,8 @@ r.check("(b) LDAP-Rückfall über den Baustein: Konto aus dem Verzeichnis, Sitzu
         and any(e[0] == "login_ldap" and e[1] == "lena" for e in _audit(auth)),
         f"HTTP {_l_ok.status_code}, {[e[0] for e in _audit(auth)]}")
 _l_falsch = _post(c, "/eigen/login", username="lena", password="falsch-falsch-1")
-r.check("(b) … abgelehnt: 401 `falsch`, login_fail mit quelle=lokal+ldap (beide gefragt)",
-        _l_falsch.status_code == 401 and _grund(_l_falsch) == "falsch"
+r.check("(b) … abgelehnt: 401 `invalid`, login_fail mit quelle=lokal+ldap (beide gefragt)",
+        _l_falsch.status_code == 401 and _reason(_l_falsch) == "invalid"
         and any(e[0] == "login_fail" and "quelle=lokal+ldap" in (e[3] or "") for e in _audit(auth)),
         f"HTTP {_l_falsch.status_code}")
 
@@ -301,10 +308,10 @@ with Mitschnitt() as log_b:
     _weg_lokal = _post(c, "/eigen/login", username="notfall", password="falsch-falsch-1")
     _z = {u: [v for v in _versuche(auth) if v[0] == u] for u in ("verz", "notfall")}
     _weg_richtig = _post(c, "/eigen/login", username="notfall", password=PW)
-r.check("(b) Verzeichnis weg: 503 `verzeichnis_weg` mit dem Text des Ausfalls",
-        _weg_verz.status_code == 503 and _grund(_weg_verz) == "verzeichnis_weg"
-        and _weg_verz.json()["meldung"] == auth.t("err.directory_down"),
-        f"HTTP {_weg_verz.status_code} {_grund(_weg_verz)}")
+r.check("(b) Verzeichnis weg: 503 `directory_down` mit dem Text des Ausfalls",
+        _weg_verz.status_code == 503 and _reason(_weg_verz) == "directory_down"
+        and _weg_verz.json()["message"] == auth.t("err.directory_down"),
+        f"HTTP {_weg_verz.status_code} {_reason(_weg_verz)}")
 r.check("(b) … ohne lokales Passwort ist es kein Fehlversuch: Vorbuchung zurückgenommen, kein `failed login`",
         _z["verz"] == [] and not [z for z in log_b.zeilen("failed login") if "user=verz" in z]
         and log_b.zeilen("LDAP nicht erreichbar user=verz"),
@@ -429,8 +436,8 @@ auth.set_pin(uid, PIN)
 c = _client(app)
 _p_falsch = _post(c, "/eigen/pin", username="hanna", pin="0000")
 _p_ok = _post(c, "/eigen/pin", username="hanna", pin=PIN)
-r.check("(d) Gästeweg: falsche PIN 401 `falsch` (naechster None), richtige PIN 303 mit Sitzung",
-        _p_falsch.status_code == 401 and _grund(_p_falsch) == "falsch" and _p_falsch.json()["naechster"] is None
+r.check("(d) Gästeweg: falsche PIN 401 `invalid` (next_factor None), richtige PIN 303 mit Sitzung",
+        _p_falsch.status_code == 401 and _reason(_p_falsch) == "invalid" and _p_falsch.json()["next_factor"] is None
         and _p_ok.status_code == 303 and c.get("/drin").json() == {"u": "hanna"},
         f"{_p_falsch.status_code} {_p_ok.status_code}")
 
@@ -447,12 +454,12 @@ _k_seite = c.post("/auth/pin", data={"pin": "0001", "next": "/drin"}, headers={"
                   follow_redirects=False)
 _k_ok = _post(c, "/eigen/pin", pin=PIN)
 _gast = _post(_client(app), "/eigen/pin", username="ines", pin=PIN)
-r.check("(d) Kettenschritt: nach dem Passwort führt `weiter` auf /auth/pin, /drin noch zu",
+r.check("(d) Kettenschritt: nach dem Passwort führt `next_url` auf /auth/pin, /drin noch zu",
         _k1.status_code == 303 and _k1.headers["location"].startswith("/auth/pin")
         and _k_drin.status_code != 200,
         f"{_k1.status_code} {_k1.headers.get('location')}")
-r.check("(d) … falsche PIN im Kettenschritt: 401, `naechster` bleibt \"pin\", Serie unter eigener Art",
-        _k_falsch.status_code == 401 and _k_falsch.json()["naechster"] == "pin"
+r.check("(d) … falsche PIN im Kettenschritt: 401, `next_factor` bleibt \"pin\", Serie unter eigener Art",
+        _k_falsch.status_code == 401 and _k_falsch.json()["next_factor"] == "pin"
         and _k_serie == [(TinySesam._SERIE_PIN_FOLGE, 1)],
         f"{_k_falsch.status_code} {_k_falsch.text[:120]} {_k_serie}")
 r.check("(d) … die eingebaute Route zeigt dann wieder die PIN-Seite: ohne Namensfeld, mit dem Konto "
@@ -461,12 +468,12 @@ r.check("(d) … die eingebaute Route zeigt dann wieder die PIN-Seite: ohne Name
         and auth.t("reauth.hint", user="ines") in _k_seite.text, _k_seite.text[:200])
 r.check("(d) … richtige PIN ohne Namensfeld: 303, Sitzung voll",
         _k_ok.status_code == 303 and c.get("/drin").json() == {"u": "ines"}, f"{_k_ok.status_code}")
-r.check("(d) … ohne Sitzung ist die PIN hier kein Erstfaktor: 404 `abgeschaltet`",
-        _gast.status_code == 404 and _grund(_gast) == "abgeschaltet", f"{_gast.status_code} {_gast.text[:80]}")
+r.check("(d) … ohne Sitzung ist die PIN hier kein Erstfaktor: 404 `method_disabled`",
+        _gast.status_code == 404 and _reason(_gast) == "method_disabled", f"{_gast.status_code} {_gast.text[:80]}")
 
 # Ohne `pin_enabled` gibt es die Route nicht — der Baustein sagt dasselbe, auch wenn noch ein
 # PIN-Hash von früher in der Datenbank steht und auch auf einer vollen Sitzung.
-# (Mutationsprobe: in `anmelden_pin` `not cfg.pin_enabled or` streichen → die volle Sitzung
+# (Mutationsprobe: in `login_pin` `not cfg.pin_enabled or` streichen → die volle Sitzung
 # bestätigt die PIN → rot.)
 auth, app = _app(pin_enabled=False)
 uid = auth.create_user("jan", password=PW)
@@ -475,9 +482,9 @@ c = _client(app)
 _p_aus = _post(c, "/eigen/pin", username="jan", pin=PIN)
 _post(c, "/eigen/login", username="jan", password=PW)
 _p_aus_voll = _post(c, "/eigen/pin", pin=PIN)
-r.check("(d) ohne pin_enabled: `abgeschaltet` (404) — als Gast und auf voller Sitzung, trotz PIN-Hash",
-        _p_aus.status_code == 404 and _grund(_p_aus) == "abgeschaltet"
-        and _p_aus_voll.status_code == 404 and _grund(_p_aus_voll) == "abgeschaltet",
+r.check("(d) ohne pin_enabled: `method_disabled` (404) — als Gast und auf voller Sitzung, trotz PIN-Hash",
+        _p_aus.status_code == 404 and _reason(_p_aus) == "method_disabled"
+        and _p_aus_voll.status_code == 404 and _reason(_p_aus_voll) == "method_disabled",
         f"{_p_aus.status_code} {_p_aus_voll.status_code}")
 
 
@@ -495,19 +502,19 @@ _t_ok = _post(c, "/eigen/totp", code=pyotp.TOTP(geheim).now())
 r.check("(e) Passwort mit TOTP: 303 auf /auth/totp, halbe Sitzung (kein /drin)",
         _t1.status_code == 303 and _t1.headers["location"].startswith("/auth/totp") and _halb,
         f"{_t1.status_code} {_t1.headers.get('location')}")
-r.check("(e) … falscher Code: 401 `falsch`, `naechster` bleibt \"totp\", Text des Codes",
-        _t_falsch.status_code == 401 and _t_falsch.json()["naechster"] == "totp"
-        and _t_falsch.json()["meldung"] == auth.t("err.code"), _t_falsch.text[:160])
+r.check("(e) … falscher Code: 401 `invalid`, `next_factor` bleibt \"totp\", Text des Codes",
+        _t_falsch.status_code == 401 and _t_falsch.json()["next_factor"] == "totp"
+        and _t_falsch.json()["message"] == auth.t("err.code"), _t_falsch.text[:160])
 r.check("(e) … richtiger Code: neues Token (Rechtewechsel), Sitzung voll, das halbe Token tot",
         _t_ok.status_code == 303 and _t_ok.headers["location"] == "/drin"
         and _sitzung(auth, _t_ok) not in (None, _halb) and c.get("/drin").json() == {"u": "karl"}
         and auth.store.get_session(_halb) is None, f"{_t_ok.status_code}")
 
 _j = _client(app, ("203.0.113.12", 1)).post("/eigen/json", json={"username": "karl", "password": PW})
-r.check("(e) das Ergebnis nach dem Passwort nennt den offenen Schritt: fertig False, naechster \"totp\", "
-        "weiter auf /auth/totp",
-        _j.status_code == 200 and _j.json()["fertig"] is False and _j.json()["naechster"] == "totp"
-        and _j.json()["weiter"].startswith("/auth/totp"), _j.text[:200])
+r.check("(e) das Ergebnis nach dem Passwort nennt den offenen Schritt: done False, next_factor \"totp\", "
+        "next_url auf /auth/totp",
+        _j.status_code == 200 and _j.json()["done"] is False and _j.json()["next_factor"] == "totp"
+        and _j.json()["next_url"].startswith("/auth/totp"), _j.text[:200])
 
 c2 = _client(app, ("203.0.113.10", 1))
 _post(c2, "/eigen/login", username="karl", password=PW)
@@ -516,17 +523,17 @@ r.check("(e) Einmal-Code statt TOTP: angenommen, wie /auth/totp", _rc.status_cod
         and c2.get("/drin").json() == {"u": "karl"}, f"{_rc.status_code}")
 
 _ohne = _post(_client(app), "/eigen/totp", code="123456")
-r.check("(e) ohne Sitzung: 401 `keine_sitzung`, `weiter` ist die Login-Seite",
-        _ohne.status_code == 401 and _grund(_ohne) == "keine_sitzung"
-        and _ohne.json()["weiter"] == "/auth/login", _ohne.text[:160])
+r.check("(e) ohne Sitzung: 401 `no_session`, `next_url` ist die Login-Seite",
+        _ohne.status_code == 401 and _reason(_ohne) == "no_session"
+        and _ohne.json()["next_url"] == "/auth/login", _ohne.text[:160])
 
 c3 = _client(app, ("203.0.113.11", 1))
 _post(c3, "/eigen/login", username="karl", password=PW)
 _t_sperre = [_post(c3, "/eigen/totp", code=f"00000{i}") for i in range(4)]
-r.check("(e) TOTP-Raten: nach 3 Fehlgriffen 429 `gesperrt` mit dem Text der Seite (err.retry)",
-        [a.status_code for a in _t_sperre] == [401, 401, 401, 429] and _grund(_t_sperre[-1]) == "gesperrt"
-        and _t_sperre[-1].json()["meldung"] == auth.t("err.retry"),
-        f"{[(a.status_code, _grund(a)) for a in _t_sperre]}")
+r.check("(e) TOTP-Raten: nach 3 Fehlgriffen 429 `locked` mit dem Text der Seite (err.retry)",
+        [a.status_code for a in _t_sperre] == [401, 401, 401, 429] and _reason(_t_sperre[-1]) == "locked"
+        and _t_sperre[-1].json()["message"] == auth.t("err.retry"),
+        f"{[(a.status_code, _reason(a)) for a in _t_sperre]}")
 
 
 # Die TOTP-Folge braucht je Lauf das Geheimnis ihrer Instanz (jede würfelt ein eigenes).
@@ -580,7 +587,7 @@ _leer_arg = c_leer.post("/eigen/login", data={"username": "mia", "password": PW,
                         follow_redirects=False)
 r.check("(f) `csrf=None` nimmt den Header X-CSRF-Token (JSON-Weg), ohne ihn 403; ein leeres "
         "Formularfeld fällt NICHT auf den Header zurück (wie die Formular-Route)",
-        _json.status_code == 200 and _json.json()["fertig"] is True and _sitzung(auth, _json)
+        _json.status_code == 200 and _json.json()["done"] is True and _sitzung(auth, _json)
         and _json_ohne.status_code == 403 and _leer_arg.status_code == 403,
         f"{_json.status_code} {_json_ohne.status_code} {_leer_arg.status_code}")
 
@@ -592,9 +599,9 @@ _ergebnisse = {}
 
 @app.post("/eigen/roh")
 def _roh(request: Request, username: str = Form(""), password: str = Form("")):
-    erg = auth.anmelden_passwort(request, username, password, next="/drin")
+    erg = auth.login_password(request, username, password, next="/drin")
     _ergebnisse[password] = erg
-    return erg.weiterleitung()           # das Ergebnis ignoriert — der schlimmste Fall
+    return erg.redirect()                # das Ergebnis ignoriert — der schlimmste Fall
 
 
 c = _client(app)
@@ -605,11 +612,11 @@ r.check("(f) fail-closed: wer das Ergebnis ignoriert und weiterleitet, landet oh
         and _ign_ziel.status_code == 401, f"{_ign.status_code} {dict(_ign.headers)} {_ign_ziel.status_code}")
 c.post("/eigen/roh", data={"username": "nora", "password": PW}, follow_redirects=False)
 _erfolg = _ergebnisse[PW]
-_felder = {f.name for f in dataclasses.fields(Anmeldung)}
+_felder = {f.name for f in dataclasses.fields(LoginResult)}
 r.check("(f) Ergebnistyp: bool = ok, das Token ist kein Feld und steht weder in repr() noch in asdict()",
-        bool(_erfolg) and not bool(_ergebnisse["falsch-1"]) and _erfolg.fertig and _erfolg.user["username"] == "nora"
+        bool(_erfolg) and not bool(_ergebnisse["falsch-1"]) and _erfolg.done and _erfolg.user["username"] == "nora"
         and _ergebnisse["falsch-1"].user is None
-        and _felder == {"ok", "grund", "status", "meldung", "weiter", "naechster", "fertig", "user"}
+        and _felder == {"ok", "reason", "status", "message", "next_url", "next_factor", "done", "user"}
         and _erfolg._token and _erfolg._token not in repr(_erfolg)
         and _erfolg._token not in repr(dataclasses.asdict(_erfolg)),
         repr(_erfolg)[:200])
@@ -619,30 +626,30 @@ try:
 except dataclasses.FrozenInstanceError:
     _eingefroren = True
 _falsch_gebaut = []
-for kw in ({"ok": False, "grund": "erfunden", "status": 400}, {"ok": True, "grund": "falsch", "status": 303},
-           {"ok": False, "grund": "ok", "status": 303}):
+for kw in ({"ok": False, "reason": "erfunden", "status": 400}, {"ok": True, "reason": "invalid", "status": 303},
+           {"ok": False, "reason": "ok", "status": 303}):
     try:
-        Anmeldung(**kw)
+        LoginResult(**kw)
         _falsch_gebaut.append(kw)
     except ValueError:
         pass
-r.check("(f) … eingefroren, und ein Grund ausserhalb von GRUENDE oder ein ok gegen den Grund wirft",
+r.check("(f) … eingefroren, und ein Grund ausserhalb von REASONS oder ein ok gegen den Grund wirft",
         _eingefroren and not _falsch_gebaut, f"{_eingefroren} {_falsch_gebaut}")
 _ersetzt = dataclasses.replace(_erfolg)
 _antwort = JSONResponse({})
-_ersetzt.cookie_setzen(_antwort)
+_ersetzt.set_cookie(_antwort)
 r.check("(f) … eine Kopie per dataclasses.replace trägt kein Token (setzt kein Cookie)",
         "set-cookie" not in {k.lower() for k in _antwort.headers}, str(dict(_antwort.headers)))
-r.check("(f) jeder Grund, den der Baustein liefert, steht in GRUENDE (auch die gemessenen)",
-        {"ok", "leer", "falsch", "gesperrt", "gesperrt_serie", "ratelimit", "verzeichnis_weg", "abgeschaltet",
-         "keine_sitzung"} == set(Anmeldung.GRUENDE), str(Anmeldung.GRUENDE))
+r.check("(f) jeder Grund, den der Baustein liefert, steht in REASONS (auch die gemessenen)",
+        {"ok", "missing", "invalid", "locked", "locked_series", "ratelimit", "directory_down", "method_disabled",
+         "no_session"} == set(LoginResult.REASONS), str(LoginResult.REASONS))
 
 
 # ── (g) Unerwartetes in der Prüfung zählt sofort ──────────────────────────────────────────────────
 # Eine Ausnahme mitten in der Prüfung (Datenbank weg, Schlüssel fehlt) darf den vorgebuchten Versuch
 # nicht offen liegen lassen: Er wird sofort zum Fehlversuch, auch seine Vorbuchung in der Serie ist
 # abgeschlossen. Bis 0.21.0 galt das nur für das Passwort — seit dem Baustein für alle drei Schritte.
-# (Mutationsprobe: in `anmelden_totp` bzw. `anmelden_pin` den `except BaseException`-Zweig streichen → rot.)
+# (Mutationsprobe: in `login_totp` bzw. `login_pin` den `except BaseException`-Zweig streichen → rot.)
 def _kaputt(*_a, **_k):
     raise RuntimeError("Prüfung kaputt (Test)")
 
@@ -679,7 +686,7 @@ INNERE = {"_check_password", "_check_pin", "_check_ldap", "_verify_totp", "_veri
           "_verify_user_pin", "_versuch_beginnen", "_versuch_gescheitert", "_versuch_zuruecknehmen",
           "_record_login", "_rate_ok", "_serie_voll", "apply_factor", "complete_totp", "set_cookie",
           "start_session", "_login_redirect_after", "_pin_kettenschritt"}
-ROUTEN = {"login_submit": "anmelden_passwort", "pin_submit": "anmelden_pin", "totp_submit": "anmelden_totp"}
+ROUTEN = {"login_submit": "login_password", "pin_submit": "login_pin", "totp_submit": "login_totp"}
 
 
 def _routen_befunde(quelltext):
@@ -698,19 +705,19 @@ def _routen_befunde(quelltext):
 
 _router = (ROOT / "tinysesam" / "router.py").read_text(encoding="utf-8")
 _selbst = {
-    "sauber": ("def login_submit(r):\n    erg = auth.anmelden_passwort(r, 'a', 'b')\n    return erg.weiterleitung()\n"
-               "def pin_submit(r):\n    return auth.anmelden_pin(r, '1')\n"
-               "def totp_submit(r):\n    return auth.anmelden_totp(r, '1')\n", []),
-    "doppelt": ("def login_submit(r):\n    auth._check_password('a', 'b')\n    return auth.anmelden_passwort(r, 'a', 'b')\n"
-                "def pin_submit(r):\n    return auth.anmelden_pin(r, '1')\n"
-                "def totp_submit(r):\n    return auth.anmelden_totp(r, '1')\n", ["login_submit ruft _check_password selbst"]),
+    "sauber": ("def login_submit(r):\n    erg = auth.login_password(r, 'a', 'b')\n    return erg.redirect()\n"
+               "def pin_submit(r):\n    return auth.login_pin(r, '1')\n"
+               "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", []),
+    "doppelt": ("def login_submit(r):\n    auth._check_password('a', 'b')\n    return auth.login_password(r, 'a', 'b')\n"
+                "def pin_submit(r):\n    return auth.login_pin(r, '1')\n"
+                "def totp_submit(r):\n    return auth.login_totp(r, '1')\n", ["login_submit ruft _check_password selbst"]),
     "vorbei": ("def login_submit(r):\n    return auth._versuch_beginnen('a', 'b', 'password')\n"
-               "def pin_submit(r):\n    return auth.anmelden_pin(r, '1')\n", None),
+               "def pin_submit(r):\n    return auth.login_pin(r, '1')\n", None),
 }
 for _probe, (_text, _erwartet) in _selbst.items():
     _b = _routen_befunde(_text)
     if _erwartet is None:
-        assert any("ruft anmelden_passwort nicht" in x for x in _b) and any("totp_submit fehlt" in x for x in _b), _b
+        assert any("ruft login_password nicht" in x for x in _b) and any("totp_submit fehlt" in x for x in _b), _b
     else:
         assert _b == _erwartet, (_probe, _b)
 _befunde_h = _routen_befunde(_router)
@@ -723,7 +730,7 @@ r.check("(h) eine Quelle: login_submit, pin_submit, totp_submit rufen ihren Baus
 # Der Befund kam aus der README. Deshalb läuft ihr Beispiel hier wörtlich — mit der Vorgabe-
 # Konfiguration (CSRF an, Secure-Cookies, fünf Fehlversuche je Paar): Es muss nach der Grenze
 # sperren und mit dem richtigen Passwort anmelden. `test_repo.py` führt den Block nur aus.
-# (Mutationsprobe: im README-Beispiel `auth.anmelden_passwort(…)` durch das alte Muster
+# (Mutationsprobe: im README-Beispiel `auth.login_password(…)` durch das alte Muster
 # `auth._check_password` + `start_session` ersetzen → keine 429 → rot.)
 def _readme_beispiel(datei, kopf):
     text = (ROOT / datei).read_text(encoding="utf-8")
@@ -755,7 +762,7 @@ for _datei, _kopf in (("README.md", "## Your own login page\n"), ("i18n/README.d
         "/login", data={"username": "quentin", "password": PW}, follow_redirects=False)
     r.check(f"(i) {_datei}: das Beispiel „eigene Login-Route“ sperrt nach {_grenze} Fehlversuchen (429), "
             "meldet von anderer Adresse an (303, Cookie) und verlangt CSRF (403)",
-            "anmelden_passwort" in _quelle and _folge == [401] * _grenze + [429]
+            "login_password" in _quelle and _folge == [401] * _grenze + [429]
             and _gesperrt.status_code == 429 and _frei.status_code == 303
             and _frei.cookies.get(_auth.session_cookie_name) and _ohne_csrf.status_code == 403,
             f"{_folge} {_gesperrt.status_code} {_frei.status_code} {_ohne_csrf.status_code}")
@@ -763,7 +770,7 @@ for _datei, _kopf in (("README.md", "## Your own login page\n"), ("i18n/README.d
 
 # ── (j) Test-Fakes: auf dem alten Namen wirkungslos, deshalb laut ─────────────────────────────────
 # Befund der Gegenprüfung 2026-09-27: `auth.check_password = fake` wurde 0-mal gerufen, der Login
-# ergab 303 — und niemand warnte. Die Routen rufen `_check_password` (über `anmelden_passwort`).
+# ergab 303 — und niemand warnte. Die Routen rufen `_check_password` (über `login_password`).
 # Seitdem warnt die Zuweisung (RuntimeWarning, `Veraltet.__set__`) und nennt das Ziel; ein Fake
 # auf dem neuen Namen wirkt wie vorher einer auf dem alten.
 # (Mutationsprobe: `__set__`/`__delete__` in `tinysesam/_veraltet.py` streichen → keine Warnung → rot.)
@@ -810,5 +817,106 @@ with warnings.catch_warnings(record=True) as _w_neu:
 r.check("(j) derselbe Fake auf dem neuen Namen (`auth._check_password = fake`) wirkt: gerufen, 401, "
         "keine Warnung",
         _aufrufe and _s_neu == 401 and not _w_neu, f"{_aufrufe} {_s_neu} {[str(w.message) for w in _w_neu]}")
+
+# ── (k) Die Namen: englisch, jeder in Stufe A ─────────────────────────────────────────────────────
+# PO-Entscheid 2026-09-27: Der Baustein heisst englisch wie der Rest der Stufe-A-Oberfläche — vor
+# dem Release umbenannt, ohne Alias (`anmelden_*`/`Anmeldung` waren nie veröffentlicht). Damit kein
+# deutsches Wort zurückkommt (ein neues Feld, ein neuer Grund, ein weiterer Schritt), misst der
+# Wächter die Oberfläche am lebenden Objekt statt an einer Liste: jede öffentliche Methode von
+# `TinySesam`, die ein `LoginResult` zurückgibt, samt ihren Parameternamen; Name und Modul des
+# Typs, seine Felder, öffentlichen Methoden und Konstanten; die Werte von `REASONS`. Jeder Name wird
+# in Wörter zerlegt (`_`, `.` und CamelCase) und gegen eine kurze Liste deutscher Wörter gehalten.
+# Dazu trägt jeder dieser Namen in `tests/api_surface.json` Stufe A — ein Name, der still in B
+# rutscht, verlöre die 1.0-Zusage. Nicht gemeint: Audit- und Log-Zeilen (`login_fail … grund=`,
+# fail2ban) — die sind keine Namen des Bausteins und bleiben, wie sie sind.
+# (Mutationsproben, je einzeln: in `LoginResult.REASONS` einen Grund "gesperrt" anhängen → rot;
+# in `api_surface.json` `LoginResult.done` auf Stufe "B" → rot; eine Methode
+# `anmelden_passkey(self, request) -> LoginResult` in `TinySesam` → rot.)
+DEUTSCH = {"anmelden", "anmeldung", "weiter", "weiterleitung", "naechster", "nächster", "fertig",
+           "grund", "gruende", "gründe", "meldung", "gesperrt", "serie", "falsch", "leer", "abgeschaltet",
+           "keine", "sitzung", "verzeichnis", "weg", "passwort", "kennung", "konto", "ergebnis",
+           "setzen", "ziel"}
+
+
+def _woerter(name: str) -> set:
+    """`LoginResult` → {login, result}, `tinysesam.login_result` → {tinysesam, login, result}."""
+    return {w for w in re.split(r"[_.]", re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()) if w}
+
+
+def _baustein(klasse, typ) -> tuple:
+    """(Methoden, [(wo, name)]) — die Stufe-A-Oberfläche des Bausteins, am Objekt gemessen."""
+    methoden = sorted(n for n, f in vars(klasse).items()
+                      if inspect.isfunction(f) and not n.startswith("_")
+                      and inspect.signature(f).return_annotation in (typ, typ.__name__))
+    namen = {("tinysesam", typ.__name__), ("Modul", typ.__module__)}
+    for n in methoden:
+        namen.add((klasse.__name__, n))
+        namen |= {(f"{klasse.__name__}.{n}()", p) for p in inspect.signature(vars(klasse)[n]).parameters
+                  if p != "self"}
+    namen |= {(typ.__name__, f.name) for f in dataclasses.fields(typ)}
+    namen |= {(typ.__name__, n) for n in vars(typ) if not n.startswith("_")}
+    namen |= {(f"{typ.__name__}.REASONS", w) for w in getattr(typ, "REASONS", ())}
+    return methoden, sorted(namen)
+
+
+def _deutsch(namen) -> list:
+    return [f"{wo}: {name!r} ({', '.join(sorted(_woerter(name) & DEUTSCH))})"
+            for wo, name in namen if _woerter(name) & DEUTSCH]
+
+
+def _stufe_befunde(methoden, typ, ablage) -> list:
+    """Jeder Name des Bausteins steht in der Ablage des Wächters, und zwar in Stufe A."""
+    befunde = []
+    oeffentlich = {f.name for f in dataclasses.fields(typ)} | {n for n in vars(typ) if not n.startswith("_")}
+    for bereich, namen in (("TinySesam", methoden), ("exporte", [typ.__name__]),
+                           (typ.__name__, sorted(oeffentlich))):
+        for n in namen:
+            stufe = ablage.get(bereich, {}).get(n, {}).get("stufe")
+            if stufe != "A":
+                befunde.append(f"{bereich}.{n}: Stufe {stufe!r} statt 'A'")
+    return befunde
+
+
+# Selbstproben: ein deutsches Feld, ein deutscher Grund, ein deutscher Schritt, ein Parameter —
+# jedes muss auffallen; ein englischer Doppelgänger nicht. Eine Liste, die nichts findet, sähe
+# sonst genauso aus wie eine saubere Oberfläche.
+@dataclasses.dataclass(frozen=True)
+class ProbeErgebnis:
+    ok: bool
+    grund: str = ""
+    locked_series: bool = False                   # „series“ ist nicht „serie“ — ganze Wörter
+    REASONS = ("ok", "gesperrt")
+
+
+class ProbeKlasse:
+    def anmelden_passkey(self, request, kennung) -> ProbeErgebnis:     # noqa: ARG002
+        return ProbeErgebnis(ok=True)
+
+    def login_other(self, request) -> ProbeErgebnis:                   # noqa: ARG002
+        return ProbeErgebnis(ok=True)
+
+    def hilfe_ohne_ergebnis(self, weiter):                            # kein Baustein: nicht gemessen
+        return weiter
+
+
+_p_methoden, _p_namen = _baustein(ProbeKlasse, ProbeErgebnis)
+_p_funde = {name for wo, name in _p_namen if _woerter(name) & DEUTSCH}
+assert _p_methoden == ["anmelden_passkey", "login_other"], _p_methoden
+assert _p_funde == {"anmelden_passkey", "kennung", "grund", "gesperrt", "ProbeErgebnis"}, _p_funde
+assert _stufe_befunde(["login_other"], ProbeErgebnis,
+                      {"TinySesam": {"login_other": {"stufe": "B"}}}) [:1] == [
+    "TinySesam.login_other: Stufe 'B' statt 'A'"], "Stufe B muss auffallen"
+
+_methoden_k, _namen_k = _baustein(TinySesam, LoginResult)
+_ablage_k = json.loads((ROOT / "tests" / "api_surface.json").read_text(encoding="utf-8"))
+_deutsch_k = _deutsch(_namen_k)
+_stufe_k = _stufe_befunde(_methoden_k, LoginResult, _ablage_k)
+r.check(f"(k) die Stufe-A-Oberfläche des Bausteins ist englisch: {len(_namen_k)} Namen "
+        f"({', '.join(_methoden_k)}, `{LoginResult.__name__}` mit Feldern, Methoden, Gründen), "
+        "kein deutsches Wort; jeder Name in Stufe A (4 Selbstproben)",
+        {"login_password", "login_pin", "login_totp"} <= set(_methoden_k) and len(_namen_k) >= 35
+        and len(LoginResult.REASONS) >= 9 and not _deutsch_k and not _stufe_k,
+        "; ".join(_deutsch_k + _stufe_k) or f"zu wenig gemessen: {_methoden_k} {len(_namen_k)}")
+
 
 sys.exit(r.done())

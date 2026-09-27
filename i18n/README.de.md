@@ -185,7 +185,7 @@ auth.create_user("bob", password=os.environ["BOB_START"], display_name="Bob")
 **In den Tests deiner App** brauchst du einen angemeldeten Client ohne den Umweg über den Login.
 `start_session` legt eine Sitzung an, **ohne irgendetwas zu prüfen** — genau deshalb gehört es in
 Tests (oder hinter einen Faktor, den du selbst geprüft hast), nie in eine Login-Route (die nimmt
-[`anmelden_passwort`](#eigene-login-seite)):
+[`login_password`](#eigene-login-seite)):
 
 ```python
 token, _ = auth.start_session(uid, "oidc")
@@ -276,7 +276,7 @@ Zwei Wege, je nachdem, was sich ändern soll:
   ([Look & Feel](#look--feel)). Das Formular geht weiter an `POST /auth/login`, und jeder Schutz
   bleibt, wo er ist. Das ist die erste Wahl.
 - **Eine eigene Route** (Single-Page-App, JSON, andere Felder) — den Baustein rufen, den die
-  eingebaute Route selbst ruft: `auth.anmelden_passwort(…)`. Er drosselt, zählt und sperrt genau
+  eingebaute Route selbst ruft: `auth.login_password(…)`. Er drosselt, zählt und sperrt genau
   wie `POST /auth/login`, denn diese Route ist nichts anderes als dieser Aufruf: CSRF-Prüfung,
   Drossel je IP, der vorab gebuchte Versuch (Fehlversuche je Kennung, je Adresse und je Paar,
   die Serien-Sperre), der LDAP-Rückfall („eine Kennung, ein Konto“; ein Ausfall ist kein
@@ -297,30 +297,32 @@ app.include_router(auth.router())
 @app.post("/login")          # ein schlichtes `def`: FastAPI führt es im Threadpool aus
 def login(request: Request, username: str = Form(""), password: str = Form(""),
           next: str = Form(""), csrf: str = Form("", alias="_csrf")):
-    erg = auth.anmelden_passwort(request, username, password, next=next, csrf=csrf)
-    if not erg:              # falsch, gesperrt, gedrosselt, Verzeichnis weg …: keine Sitzung, kein Cookie
-        return HTMLResponse(f"<p>{escape(erg.meldung)}</p>", status_code=erg.status)  # dein Formular
-    return erg.weiterleitung()   # zum offenen Faktor (erg.naechster) oder nach next, Cookie gesetzt
+    result = auth.login_password(request, username, password, next=next, csrf=csrf)
+    if not result:           # falsch, gesperrt, gedrosselt, Verzeichnis weg …: keine Sitzung, kein Cookie
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    return result.redirect()     # zum offenen Faktor (result.next_factor) oder nach next, Cookie gesetzt
 ```
 
-Das Ergebnis, eine `tinysesam.Anmeldung`, trägt `ok` (auch sein Wahrheitswert), `grund` (einer
-aus `Anmeldung.GRUENDE`: `ok`, `leer`, `falsch`, `gesperrt`, `gesperrt_serie`, `ratelimit`,
-`verzeichnis_weg`, `abgeschaltet`, `keine_sitzung`), `status` (was die eingebaute Seite antwortet:
-303, 400, 401, 404, 429, 503), `meldung` (der übersetzte Text), `weiter` (das geprüfte Ziel),
-`naechster` (der offene Faktor, etwa `"totp"`), `fertig` (Sitzung vollständig) und `user` (nur
-bei Erfolg). Ein Misserfolg hat keine Sitzung und setzt kein Cookie — wer das Ergebnis
-ignoriert, meldet niemanden an. Eine JSON-Route, die lieber wirft, schreibt `if not erg: raise
-HTTPException(erg.status, erg.meldung)`, lässt `csrf` weg (dann zählt der Header
-`X-CSRF-Token`) und setzt das Cookie mit `erg.cookie_setzen(response)` an ihrer eigenen Antwort.
+Das Ergebnis, ein `tinysesam.LoginResult`, trägt `ok` (auch sein Wahrheitswert), `reason`
+(einer aus `LoginResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`,
+`ratelimit`, `directory_down`, `method_disabled`, `no_session`), `status` (was die eingebaute
+Seite antwortet: 303, 400, 401, 404, 429, 503), `message` (der übersetzte Text), `next_url` (das
+geprüfte Ziel), `next_factor` (der offene Faktor, etwa `"totp"`), `done` (Sitzung vollständig)
+und `user` (nur bei Erfolg). `reason` ist für Programme gedacht; mit dem Audit- und
+Sicherheits-Log hat es nichts zu tun, dessen Zeilen bleiben, wie sie sind. Ein Misserfolg hat
+keine Sitzung und setzt kein Cookie — wer das Ergebnis ignoriert, meldet niemanden an. Eine
+JSON-Route, die lieber wirft, schreibt `if not result: raise HTTPException(result.status,
+result.message)`, lässt `csrf` weg (dann zählt der Header `X-CSRF-Token`) und setzt das Cookie
+mit `result.set_cookie(response)` an ihrer eigenen Antwort.
 Das Sitzungs-Token ist bewusst kein Feld. Geworfen wird nur `HTTPException(403)` (CSRF, oder ein
 Konto, das eben gesperrt wurde), dazu Unerwartetes — der Versuch zählt dann als Fehlversuch.
 
-Die Schritte nach dem ersten Faktor gehen genauso: `auth.anmelden_totp(request, code, next=…)`
+Die Schritte nach dem ersten Faktor gehen genauso: `auth.login_totp(request, code, next=…)`
 nimmt einen TOTP-Code oder einen Einmal-Code, wie `POST /auth/totp`, und
-`auth.anmelden_pin(request, pin, username, next=…)` arbeitet wie `POST /auth/pin` (im
-Kettenschritt oder auf einer angemeldeten Sitzung ohne `username`). `erg.naechster` sagt deiner
-Seite, welcher Schritt als nächster kommt. Alle drei sind synchron (ein Passwort-Hash, vielleicht
-das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
+`auth.login_pin(request, pin, username, next=…)` arbeitet wie `POST /auth/pin` (im
+Kettenschritt oder auf einer angemeldeten Sitzung ohne `username`). `result.next_factor` sagt
+deiner Seite, welcher Schritt als nächster kommt. Alle drei sind synchron (ein Passwort-Hash,
+vielleicht das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
 `run_in_threadpool`.
 
 > **Ohne diese Bausteine gibt es keinen Schutz gegen Raten.** Die inneren Prüfer
@@ -329,14 +331,15 @@ das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
 > fail2ban. Bis 0.21.0 zeigte dieser Abschnitt `check_password` + `start_session` — eine Route
 > danach lässt jeden Passwörter (oder eine vierstellige PIN, oder einen sechsstelligen Code) so
 > schnell raten, wie der Server antwortet. Sie sind seit 0.22.0 [Stufe C](#öffentliche-api-drei-stufen),
-> warnen beim Aufruf und fallen mit 1.0 weg; ersetzen durch `anmelden_*`.
+> warnen beim Aufruf und fallen mit 1.0 weg; ersetzen durch `login_password`, `login_pin` und
+> `login_totp`.
 
 `start_session` bleibt, für Tests und für einen Faktor, den du selbst geprüft hast — es prüft
 nichts ([Konten im Code](#konten-im-code)). Es gibt `(token, session_ok)` zurück: auspacken —
 wer das Tupel direkt in `set_cookie` reicht, schreibt den String `"('abc…', True)"` ins Cookie,
 und es fliegt keine Ausnahme. Das von `complete_totp` zurückgegebene Token ersetzt das alte, auch
-beim Step-up — es gehört ins Cookie, sonst hält das Cookie eine tote Sitzung. `anmelden_*`
-erledigt beides.
+beim Step-up — es gehört ins Cookie, sonst hält das Cookie eine tote Sitzung. Die Bausteine
+`login_*` erledigen beides.
 
 ### CSRF auf eigenen Seiten
 
@@ -394,7 +397,7 @@ würfelt immer ein **neues** Token und entwertet damit die Formulare in allen an
 ist zum bewussten Erneuern da, nicht zum Rendern einer Seite.
 
 **Anmelden und Abmelden wechseln das Token.** Jede Anmeldung — jeder eingebaute Weg und eine eigene
-Route mit `anmelden_*` (oder `start_session` + `set_cookie`) — setzt in derselben Antwort ein
+Route mit `login_*` (oder `start_session` + `set_cookie`) — setzt in derselben Antwort ein
 frisches Token, `auth.logout()` löscht es. Ein Formular, das in derselben Antwort entsteht, geht nur
 mit dem Antwortparameter (erstes Beispiel): Es holt sein Token *nach* `set_cookie`/`logout` aus
 `ensure_csrf(request, response)`. Eine fertige Antwort (zweites Beispiel) ist gerendert, bevor
@@ -1182,7 +1185,7 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
 - **`apply_factor`** hängt einen Faktor an die Sitzung, **ohne ihn zu prüfen**. Nur rufen, wenn du
   den Faktor selbst geprüft hast, und mit dem Konto aus `session_user()` — der mächtigste Baustein
   hier; ein Fehler davor ist ein Weg hinein. Für Passwort, PIN und TOTP nicht nötig: Die
-  Bausteine `anmelden_*` ([Eigene Login-Seite](#eigene-login-seite), Stufe A) prüfen, drosseln
+  Bausteine `login_*` ([Eigene Login-Seite](#eigene-login-seite), Stufe A) prüfen, drosseln
   und rufen ihn dann selbst.
 
 ## Tests & CI

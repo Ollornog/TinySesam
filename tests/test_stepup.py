@@ -775,7 +775,7 @@ os.remove(db7)
 # der das Admin-Flag nie trägt (R6-5), wurden so Key + PIN eine Admin-Sitzung mit Panel,
 # Schlüsselverwaltung und Faktor-Anlage. Mit einer halben fremden Sitzung im Cookie ersetzte
 # dieselbe Anfrage deren Cookie durch die des Key-Kontos.
-# (Mutationsprobe: in `anmelden_pin` wieder `me = self.current_user(request)` → (a), (b) und
+# (Mutationsprobe: in `login_pin` wieder `me = self.current_user(request)` → (a), (b) und
 # (d) rot, dazu der Wächter unten; in `pin_page` → (c) rot.)
 db8 = os.path.join(tempfile.mkdtemp(), "t.db")
 auth8 = TinySesam(TinySesamConfig(lang="de", db_path=db8, rp_name="Test", cookie_secure=False,
@@ -862,17 +862,17 @@ os.remove(db8)
 # Geprüft wird jede Funktion des Pakets; lokale Helfer (ein nackter Aufruf wie `_nur_sitzung(…)`)
 # zählen mit, auch eine Erwähnung ohne Aufruf (`Depends(auth.current_user)`).
 # `require_session`/`require_mfa` stehen bewusst NICHT in der Liste: Sie weisen einen Key ab.
-# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `anmelden_pin`,
-# `anmelden_totp`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
+# (Mutationsproben, je einzeln: `current_user` statt `session_user` in `login_pin`,
+# `login_totp`, `totp_setup_confirm`, `_abmelden` → Wächter rot; in `_nur_sitzung` → rot nur
 # dank der Helfer-Verfolgung (ohne sie grün, deshalb die Probe `helfer` im Selbsttest);
 # `session_user()` selbst auf `current_user()` umgebogen → der Wächter bleibt grün, die
 # Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
-# Seit 0.22.0 stehen die Anmeldeschritte in `anmelden_passwort`/`anmelden_pin`/`anmelden_totp`
+# Seit 0.22.0 stehen die Anmeldeschritte in `login_password`/`login_pin`/`login_totp`
 # (die Routen rufen sie): Sie sind selbst Senken — eine Route, die sie mit einem Konto aus einer
 # Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft.
 SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",
           "set_session_mfa", "set_session_factors", "logout",
-          "anmelden_passwort", "anmelden_pin", "anmelden_totp"}
+          "login_password", "login_pin", "login_totp"}
 KEY_QUELLEN = {"current_user", "_current_user_ermitteln", "require_user", "require_role",
                "require_admin", "_enforce"}
 
@@ -956,7 +956,7 @@ assert not _verstoesse, ("Konto aus einer Quelle, die einen API-Key annimmt, an 
                          "Sitzungswirkung — `session_user()` nehmen: " + "; ".join(_verstoesse))
 # Ohne Treffer misst der Wächter nichts: Die bekannten Stellen müssen gefunden werden.
 _erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm", "login_submit",
-             "_abmelden", "apply_factor", "anmelden_passwort", "anmelden_pin", "anmelden_totp"}
+             "_abmelden", "apply_factor", "login_password", "login_pin", "login_totp"}
 assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
 ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
    f"({len(_PROBEN)} Selbstproben)")
