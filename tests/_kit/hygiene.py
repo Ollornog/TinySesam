@@ -256,6 +256,21 @@ def _geheimnis_regeln(policy: dict):
     return formate, zuweisung, platzhalter
 
 
+def _geheimnis_kontexte(policy: dict) -> list:
+    """(Art, Muster) je Kontextmuster — case-INsensitiv wie die Zuweisung.
+
+    WARUM (2026-09-27, kit 0.23.0): Gemessen gegen die Sicherungskopien der 47 Fundstellen
+    blieben 25 Dateien mit Geheimnis unerkannt, weil vor dem Wert kein `name=` steht oder
+    der Wert kuerzer als 16 Zeichen ist: Basic-Auth im Code (`Buffer.from('user:pass')`),
+    Zugangsdaten in einer URL, msmtp-/Postfix-Relay-Zeilen, kurze Passwoerter. Jedes Muster
+    hat eine benannte Gruppe `wert`, und fuer sie gelten dieselben Platzhalter- und
+    Aufruf-Regeln wie fuer die Zuweisung — ein neues Muster darf keinen Fehlalarm mitbringen,
+    den die Zuweisung laengst abgestellt hat.
+    """
+    return [(k["art"], re.compile(k["muster"], re.IGNORECASE))
+            for k in policy.get("geheimnis_kontexte", [])]
+
+
 def ist_platzhalter(wert: str, platzhalter: list) -> bool:
     """Ist der zugewiesene Wert ein Platzhalter und damit kein Geheimnis?
 
@@ -290,6 +305,34 @@ def _wert_ist_aufruf(zeile: str, treffer) -> bool:
     return rest.startswith(("::", "->", "(", "()"))
 
 
+def _wert_ist_ausdruck(zeile: str, treffer) -> bool:
+    """Ist der Wert Code statt eines abgelegten Literals? — Aufruf, Verkettung, Abschnitt.
+
+    Drei Kontexte, alle am 2026-09-27 an der gesyncten Doku gemessen, als das Zuweisungsmuster
+    `authToken`/`clientSecret` (Camel-Case) lernte:
+
+    * **Aufruf** — siehe `_wert_ist_aufruf`.
+    * **Verkettung** — `"X_AUTHTOKEN="+cfg.Token`: das Anfuehrungszeichen direkt vor dem Wert
+      SCHLIESST einen String, der Wert steht draussen. Erkannt an der Paritaet: vor einem
+      Literal steht eine ungerade Zahl dieses Zeichens (das oeffnende), vor Code eine gerade.
+    * **Abschnitt** — `API_KEY = abcd1234…`: eine gekuerzte Anzeige ist nicht der Wert.
+    * **Bezeichner in Code** — `ClientSecret: secretHash,` (Go-Struct, Keyword-Argument): ein
+      Wert OHNE Anfuehrungszeichen, dem `,` oder `)` folgt, ist eine Variable. In `.env`,
+      YAML und msmtp endet ein Wert am Zeilenende oder vor einem Kommentar.
+
+    ⚠️ Wie beim Aufruf ueber den KONTEXT geloest, nicht ueber den Wert.
+    """
+    if _wert_ist_aufruf(zeile, treffer):
+        return True
+    start, ende = treffer.start("wert"), treffer.end("wert")
+    vor = zeile[start - 1:start] if start else ""
+    if vor in ("'", '"') and zeile[:start].count(vor) % 2 == 0:
+        return True
+    if vor not in ("'", '"') and zeile[ende:ende + 1] in (",", ")"):
+        return True
+    return zeile[ende:ende + 1] == "…" or treffer.group("wert").endswith("...")
+
+
 def zeilen_wie_grep(inhalt: str) -> list[str]:
     """Zeilen so schneiden, wie Editor, `grep` und der Mensch sie zaehlen: nur an ``\n``.
 
@@ -316,6 +359,7 @@ def geheimnis_zeilen(inhalt: str, policy: dict) -> list[tuple[int, str]]:
     Sitzungsprotokoll und der Wert galt ab da als verbrannt.
     """
     formate, zuweisung, platzhalter = _geheimnis_regeln(policy)
+    kontexte = _geheimnis_kontexte(policy)
     treffer = []
     for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
         for pat in formate:
@@ -323,10 +367,18 @@ def geheimnis_zeilen(inhalt: str, policy: dict) -> list[tuple[int, str]]:
                 treffer.append((n, "Format"))
                 break
         else:
-            m = zuweisung.search(zeile)
-            if m and not ist_platzhalter(m.group("wert"), platzhalter) \
-                  and not _wert_ist_aufruf(zeile, m):
+            # ALLE Zuweisungen der Zeile, nicht nur die erste (kit 0.23.0): in
+            # `TOKEN = process.env.X_TOKEN || '<wert>'` ist die erste ein Verweis, und bis
+            # 2026-09-27 endete die Pruefung dort.
+            if any(not ist_platzhalter(m.group("wert"), platzhalter)
+                   and not _wert_ist_ausdruck(zeile, m) for m in zuweisung.finditer(zeile)):
                 treffer.append((n, "Zuweisung"))
+                continue
+            for art, pat in kontexte:
+                if any(not ist_platzhalter(k.group("wert"), platzhalter)
+                       and not _wert_ist_ausdruck(zeile, k) for k in pat.finditer(zeile)):
+                    treffer.append((n, art))
+                    break
     return treffer
 
 
@@ -417,7 +469,9 @@ def _ere(muster: str, ignoriere_gross_klein: bool = False) -> str:
 def grep_muster(policy: dict) -> list[str]:
     """Die Suchmuster fuer `grep -nIE -f` — Formate und Zuweisung, aus derselben Policy."""
     return [_ere(m) for m in policy["geheimnis_formate"]] + \
-           [_ere(policy["geheimnis_zuweisung"], ignoriere_gross_klein=True)]
+           [_ere(policy["geheimnis_zuweisung"], ignoriere_gross_klein=True)] + \
+           [_ere(k["muster"], ignoriere_gross_klein=True)
+            for k in policy.get("geheimnis_kontexte", [])]
 
 
 def grep_ausnahmen(policy: dict) -> list[str]:
@@ -435,13 +489,27 @@ def grep_ausnahmen(policy: dict) -> list[str]:
     einem Platzhalter faellt in der Shell-Fassung durch. Die Python-Repos haben die
     genaue Fassung.
     """
-    kopf = policy["geheimnis_zuweisung"].split("(?P<wert>")[0]
-    schwanz = "([^A-Za-z0-9/+_.=~-]|$)"
+    koepfe = [policy["geheimnis_zuweisung"]] + \
+             [k["muster"] for k in policy.get("geheimnis_kontexte", [])]
     aus = []
-    for m in policy["geheimnis_platzhalter"]:
-        kern = m[1:] if m.startswith("^") else m
-        kern = kern[:-1] if kern.endswith("$") else kern
-        aus.append(_ere(kopf, ignoriere_gross_klein=True) + _ere(kern) + schwanz)
+    for muster in koepfe:
+        kopf, rest = muster.split("(?P<wert>")
+        # Ein Zeilenanker `^` gilt in der Shell-Kette NICHT: die Ausnahme laeuft ueber die
+        # Ausgabe von `grep -n`, und dort steht `pfad:12:` vor dem Inhalt. Darum darf der
+        # Anker auch hinter einem Doppelpunkt stehen (`[^` in einer Klasse bleibt, wie es ist).
+        kopf = re.sub(r"(?<!\[)\^", "(?:^|:)", kopf)
+        # Der Schwanz ist das Gegenstueck der Wertklasse DIESES Musters: der Platzhalter muss
+        # dort enden, wo das Muster den Wert enden laesst — sonst nimmt die Ausnahme ein
+        # laengeres echtes Geheimnis mit, das nur mit einem Platzhalter BEGINNT.
+        klasse = rest[1:rest.index("]")] if rest.startswith("[") else ""
+        if klasse.startswith("^"):
+            schwanz = "([" + klasse[1:] + "]|$)"
+        else:
+            schwanz = "([^" + (klasse or "A-Za-z0-9/+_.=~-") + "]|$)"
+        for m in policy["geheimnis_platzhalter"]:
+            kern = m[1:] if m.startswith("^") else m
+            kern = kern[:-1] if kern.endswith("$") else kern
+            aus.append(_ere(kopf, ignoriere_gross_klein=True) + _ere(kern) + _ere(schwanz))
     return aus
 
 
