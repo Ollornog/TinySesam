@@ -119,11 +119,15 @@ ok("R7-5: Schlüsselzahl gedeckelt; der Gebremste bleibt gebremst")
 
 # ---------- redis_url gesetzt: mit redis-Paket → RedisRateLimiter, ohne → In-Memory-Fallback ----------
 # (kein Crash in beiden Fällen; ohne laufenden Redis → In-Memory-Rückfall, der erste Aufruf geht durch)
+# Port 1 statt 6379, wie oben: Auf einem Rechner mit einem echten Redis traf die Probe sonst DIESEN —
+# sie schrieb Zähler in eine fremde Datenbank, teilte sie mit jedem gleichzeitigen Lauf und prüfte
+# den Rückfall gar nicht, den sie ankündigt.
 import importlib.util
 db = os.path.join(tempfile.mkdtemp(), "t.db")
-auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://localhost:6379/0", cookie_secure=False))
+auth = TinySesam(TinySesamConfig(csrf_enabled=False, lang="de", db_path=db, redis_url="redis://127.0.0.1:1/0", cookie_secure=False))
 if importlib.util.find_spec("redis"):
     assert isinstance(auth.rl, security.RedisRateLimiter)
+    assert auth.rl._gestoert, "kein Rückfall — die Probe hat ein echtes Redis erreicht"
     assert auth._rate_ok("ip") is True   # Redis down → Rückfall, der erste Aufruf geht durch
     ok("redis_url + redis-Paket → RedisRateLimiter (Redis down → In-Memory-Rückfall)")
 else:

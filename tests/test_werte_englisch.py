@@ -237,12 +237,18 @@ link_b = _link_einfuegen(pfad_b, anna_b, "anna@example.com", "anna.b@example.com
 r.check("Vorbedingung: gemischte Werte bei Stempel 12",
         _stand(pfad_b)[:2] == (12, ["human", "mensch", "automat"]), str(_stand(pfad_b)))
 w_b = _wirkung(b, mensch_b, automat_b)
+# `list_api_keys` sortiert nach `created_at` (Sekunden) absteigend. Der Key aus der Bibliothek und
+# die beiden roh eingefügten entstehen nicht in derselben Sekunde, wenn der Rechner ausgelastet ist
+# (parallele Suiten) — dann stand der jüngste vorn, und die Prüfung der Reihenfolge wurde rot,
+# obwohl jede Art stimmte. Geprüft wird deshalb je Key über seinen Namen.
 r.check("(b) gemischt, ohne Neustart: `mensch` gilt als `human` (nur mit Sitzung), `automat` als "
         "`automation`",
         w_b == {"mensch_allein": 401, "mensch_mit_sitzung": 200, "automat_allein": 200,
                 "automat_kind": "automation"}
         and [b.api_key_kind(k) for k in (neu_b, mensch_b, automat_b)] == ["human", "human", "automation"]
-        and [k["kind"] for k in b.list_api_keys(anna_b)] == ["human", "human", "automation"], str(w_b))
+        and {k["name"]: k["kind"] for k in b.list_api_keys(anna_b)}
+        == {"neu": "human", "alt-mensch": "human", "alt-automat": "automation"},
+        f"{w_b} {[(k['name'], k['kind']) for k in b.list_api_keys(anna_b)]}")
 r.check("(b) … der Link aus 0.21.x zeigt `old`, nicht `alt`",
         b.peek_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
 b.store.db.close()

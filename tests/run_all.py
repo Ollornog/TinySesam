@@ -18,6 +18,17 @@ Jede Suite läuft in einem EIGENEN Wegwerf-Verzeichnis (TMPDIR/HOME/XDG_* zeigen
 dorthin, danach wird es gelöscht). So kann kein Zustand aus einem Lauf den nächsten
 beeinflussen und keine Suite die andere stören — die Tests sind wiederholbar.
 Nachweis: `ci-local --full` fährt die Suite zweimal im selben Baum.
+
+PARALLEL: Die Suiten laufen gleichzeitig, `TINYSESAM_TEST_JOBS` (ganze Zahl ≥ 1) legt fest, wie
+viele; ohne die Variable die Hälfte der Kerne, mindestens eine. Die Ausgabe jeder Suite wird
+gepuffert und in der festen Reihenfolge der Dateinamen ausgegeben — das Protokoll liest sich wie
+ein serieller Lauf und ist bei gleichem Ergebnis Zeile für Zeile gleich. `TINYSESAM_TEST_JOBS=1`
+ist der serielle Lauf von früher: eine Suite nach der anderen, in dieser Reihenfolge.
+Voraussetzung dafür: Keine Suite schreibt in feste Pfade im Baum oder teilt sich etwas mit einer
+anderen (Port, Datei, Datenbank) — jede hat ihr eigenes Wegwerf-Verzeichnis (s. o.).
+
+Gestartet wird jede Suite über `tests/_starter.py`: Der senkt die Hash-Parameter im Testprozess
+ab (dort steht, warum und für welche Suiten nicht). Das Paket selbst hat dafür keinen Schalter.
 """
 import sys
 import os
@@ -25,6 +36,7 @@ import glob
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -43,6 +55,21 @@ ROOT = os.path.dirname(HERE)
 #
 # Jetzt ist "uebersprungen" eine ZUSAGE der Suite, kein Ratespiel ueber fremdes stderr.
 SKIP_EXIT = 77
+
+#: Startet jede Suite (senkt die Hash-Parameter im Testprozess ab, s. dort).
+STARTER = os.path.join(HERE, "_starter.py")
+JOBS_VARIABLE = "TINYSESAM_TEST_JOBS"
+
+#: Diese Suiten starten bei parallelem Lauf ZUERST — die langsamsten, gemessen 2026-09-27 (0.22.0).
+#: Die Liste bestimmt nur, WANN eine Suite anfängt; Ergebnis und Reihenfolge der Ausgabe bleiben
+#: gleich. Ohne sie begannen `test_browser.py` (~80 s, fast nur Warten auf Chrome) und
+#: `test_vorbuchung_schwebe.py` (10 s, absichtliche Wartezeit) als letzte und legten das Ende des
+#: ganzen Laufs fest. Mit einem Job gilt sie nicht — das ist der serielle Lauf von früher. Ein
+#: veralteter Eintrag kostet Zeit, nie ein Ergebnis; dass jeder Eintrag noch eine Suite ist, prüft
+#: `tests/test_testlauf.py`.
+LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_vorbuchung_schwebe.py",
+                "test_audit_runde2.py", "test_t13_entscheide.py", "test_repo.py",
+                "test_admin_konto.py", "test_sicherheit_befunde.py", "test_hardening2.py")
 
 
 def warnfilter() -> str:
@@ -85,6 +112,53 @@ def umgebung(sandbox: str) -> dict:
     }
 
 
+def jobs_bestimmen(roh=None) -> int:
+    """Wie viele Suiten gleichzeitig laufen: `TINYSESAM_TEST_JOBS`, sonst die Hälfte der Kerne.
+
+    Ein Wert, der keine ganze Zahl ≥ 1 ist, ist ein Fehler (`ValueError`) — nicht still die
+    Vorgabe: Wer `TINYSESAM_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
+    das erfahren, statt einen parallelen Lauf für einen seriellen zu halten.
+    """
+    roh = os.environ.get(JOBS_VARIABLE, "") if roh is None else roh
+    if not roh.strip():
+        return max(1, (os.cpu_count() or 1) // 2)
+    try:
+        jobs = int(roh.strip())
+    except ValueError:
+        jobs = 0
+    if jobs < 1:
+        raise ValueError(f"{JOBS_VARIABLE}={roh!r} — erwartet eine ganze Zahl ≥ 1")
+    return jobs
+
+
+def startreihenfolge(files, jobs) -> list:
+    """Die Indizes von `files` in der Reihenfolge, in der die Suiten starten.
+
+    Ein Job: genau die Reihenfolge der Liste (der serielle Lauf). Mehrere: erst `LANGE_ZUERST`,
+    dann der Rest in Listenreihenfolge."""
+    if jobs <= 1:
+        return list(range(len(files)))
+    rang = {name: i for i, name in enumerate(LANGE_ZUERST)}
+    return sorted(range(len(files)),
+                  key=lambda i: (rang.get(os.path.basename(files[i]), len(rang)), i))
+
+
+def suite_fahren(path):
+    """Eine Suite in ihrem eigenen Wegwerf-Verzeichnis; Ausgabe gepuffert (`CompletedProcess`)."""
+    name = os.path.basename(path)
+    # Jede Suite bekommt ein EIGENES Wegwerf-Verzeichnis: TMPDIR, HOME und die
+    # XDG-Pfade zeigen dorthin. Damit kann kein Zustand einen zweiten Lauf
+    # beeinflussen -- und keine Suite die naechste stoeren. Danach wird es geloescht.
+    # (Policy: "Tests sind wiederholbar"; Nachweis: `ci-local --full`.)
+    sandbox = tempfile.mkdtemp(prefix=f"tinysesam-{name[:-3]}-")
+    env = umgebung(sandbox)
+    try:
+        return subprocess.run([sys.executable, STARTER, path], cwd=ROOT, env=env,
+                              capture_output=True, text=True)
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
 def main(argv):
     # --no-browser: der Browser-Test ist der langsamste. Nur für Zwischenläufe, nie vor einem Push.
     skip_browser = "--no-browser" in argv
@@ -95,40 +169,49 @@ def main(argv):
         files = sorted(glob.glob(os.path.join(HERE, "test_*.py")))
     if skip_browser:
         files = [f for f in files if not f.endswith("test_browser.py")]
+    try:
+        jobs = jobs_bestimmen()
+    except ValueError as fehler:
+        print(f"FEHLER: {fehler}", file=sys.stderr)
+        return 2
+    print(f"▸ Test-Jobs: {jobs}", flush=True)
     ok, skipped, failed = [], [], []
-    for path in files:
-        name = os.path.basename(path)
-        if not os.path.exists(path):
-            print(f"  ??   {name} (nicht gefunden)")
-            failed.append(name)
-            continue
-
-        # Jede Suite bekommt ein EIGENES Wegwerf-Verzeichnis: TMPDIR, HOME und die
-        # XDG-Pfade zeigen dorthin. Damit kann kein Zustand einen zweiten Lauf
-        # beeinflussen -- und keine Suite die naechste stoeren. Danach wird es geloescht.
-        # (Policy: "Tests sind wiederholbar"; Nachweis: `ci-local --full`.)
-        sandbox = tempfile.mkdtemp(prefix=f"tinysesam-{name[:-3]}-")
-        env = umgebung(sandbox)
-        try:
-            r = subprocess.run([sys.executable, path], cwd=ROOT, env=env,
-                               capture_output=True, text=True)
-        finally:
-            shutil.rmtree(sandbox, ignore_errors=True)
-        if r.returncode == 0:
-            print(f"  ok   {name}")
-            ok.append(name)
-        elif r.returncode == SKIP_EXIT:
-            # Die Suite hat selbst abgewunken — der Grund steht in ihrer eigenen Ausgabe.
-            grund = (r.stdout or r.stderr or "").strip().splitlines()
-            # Nicht kürzen: Die Zeile nennt den Befehl zum Nachinstallieren (`pip install 'tinysesam[…]'`),
-            # und eine Kürzung vor der schliessenden Klammer sah aus wie ein Tippfehler im Befehl.
-            print(f"  skip {name}" + (f" ({grund[-1]})" if grund else ""))
-            skipped.append(name)
-        else:
-            print(f"  FAIL {name}")
-            sys.stdout.write((r.stdout or "")[-2000:])
-            sys.stderr.write((r.stderr or "")[-2000:])
-            failed.append(name)
+    # Gestartet wird nach `startreihenfolge` (mit einem Job: die Liste, also der serielle Lauf).
+    # Ausgegeben wird in der Reihenfolge der Liste, sobald eine Suite UND alle vor ihr fertig
+    # sind — nie in der Reihenfolge, in der sie zufällig fertig werden.
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    try:
+        laufend = [None] * len(files)
+        for i in startreihenfolge(files, jobs):
+            if os.path.exists(files[i]):
+                laufend[i] = pool.submit(suite_fahren, files[i])
+        for path, zukunft in zip(files, laufend):
+            name = os.path.basename(path)
+            if zukunft is None:
+                print(f"  ??   {name} (nicht gefunden)", flush=True)
+                failed.append(name)
+                continue
+            r = zukunft.result()
+            if r.returncode == 0:
+                print(f"  ok   {name}", flush=True)
+                ok.append(name)
+            elif r.returncode == SKIP_EXIT:
+                # Die Suite hat selbst abgewunken — der Grund steht in ihrer eigenen Ausgabe.
+                grund = (r.stdout or r.stderr or "").strip().splitlines()
+                # Nicht kürzen: Die Zeile nennt den Befehl zum Nachinstallieren (`pip install 'tinysesam[…]'`),
+                # und eine Kürzung vor der schliessenden Klammer sah aus wie ein Tippfehler im Befehl.
+                print(f"  skip {name}" + (f" ({grund[-1]})" if grund else ""), flush=True)
+                skipped.append(name)
+            else:
+                print(f"  FAIL {name}", flush=True)
+                sys.stdout.write((r.stdout or "")[-2000:])
+                sys.stdout.flush()
+                sys.stderr.write((r.stderr or "")[-2000:])
+                sys.stderr.flush()
+                failed.append(name)
+    finally:
+        # Bei Strg-C keine wartenden Suiten mehr anfangen; laufende zu Ende kommen lassen.
+        pool.shutdown(wait=True, cancel_futures=True)
     total = len(files)
     print(f"\n{len(ok)}/{total} grün, {len(skipped)} übersprungen, {len(failed)} fehlgeschlagen")
     if failed:

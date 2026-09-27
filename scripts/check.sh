@@ -51,12 +51,15 @@ else
 fi
 
 step "Website bauen — genau das, was die Pages-Action ausliefert"
-"$PY" -m web.build _site >/dev/null || fail "web.build"
+# In ein Wegwerf-Verzeichnis, nicht nach `_site/` im Baum: Dort lag der Bau still neben einem
+# eigenen `_site/` (und löschte es danach), und zwei Läufe im selben Baum räumten einander weg.
+SITE="$(mktemp -d)"
+trap 'rm -rf "$SITE"' EXIT
+"$PY" -m web.build "$SITE" >/dev/null || fail "web.build"
 for f in index.html demo.html flows.html legal.html theme.css wizard.png \
          demo/login.en.html demo/account.de.html demo/admin.de.html demo/adminapi/api/users; do
-    test -f "_site/$f" || fail "_site/$f fehlt"
+    test -f "$SITE/$f" || fail "_site/$f fehlt"
 done
-rm -rf _site
 echo "  index.html · demo.html (+ Vorschau-Panels) · flows.html · legal.html · Beilagen"
 
 if [[ $FAST -eq 1 ]]; then

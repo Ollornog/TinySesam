@@ -35,9 +35,20 @@ r = Report("Typen — die Zusage `Typing :: Typed`")
 # 120 von 410 blieben damit ungesehen, darunter alle vier Config-Presets (ein Nutzer bekommt
 # dort `Any` und verliert ab da jede Typprüfung). mypy weist im Lauf selbst darauf hin; der
 # Filter auf ": error:" warf den Hinweis weg, der Test war also blind für seine eigene Lücke.
+# `--cache-dir`: mypy legt seinen Cache sonst als `.mypy_cache/` in das Arbeitsverzeichnis — also
+# in den Baum, unsichtbar für `git status` (mypy legt eine eigene `.gitignore` hinein). Zwei Läufe
+# im selben Baum teilten ihn sich, und ein Cache aus einem früheren Lauf hätte den nächsten
+# beeinflusst. Jetzt ein eigener, frischer Ordner je Lauf (TMPDIR ist die Wegwerf-Sandbox).
+cache = tempfile.mkdtemp(prefix="mypy-")
+im_baum = ROOT / ".mypy_cache"
+schon_da = im_baum.exists()
 lauf = subprocess.run([sys.executable, "-m", "mypy", "tinysesam/", "--ignore-missing-imports",
-                       "--check-untyped-defs"],
+                       "--check-untyped-defs", "--cache-dir", cache],
                       cwd=ROOT, capture_output=True, text=True)
+r.check("mypy schreibt seinen Cache in die Sandbox, nicht in den Baum",
+        any(Path(cache).iterdir()) and (schon_da or not im_baum.exists()),
+        f"Cache leer: {not any(Path(cache).iterdir())}, .mypy_cache im Baum angelegt: "
+        f"{not schon_da and im_baum.exists()}")
 fehler = [z for z in lauf.stdout.splitlines() if ": error:" in z]
 r.check("mypy findet keinen Fehler in tinysesam/", not fehler,
         "\n        " + "\n        ".join(fehler[:6]) +
