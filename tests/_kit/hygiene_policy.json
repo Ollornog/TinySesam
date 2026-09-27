@@ -199,6 +199,10 @@
     {
       "art": "Mail-Relay",
       "muster": "static:[^ \\t:]+:(?P<wert>[^ \\t]{6,})"
+    },
+    {
+      "art": "Konstante",
+      "muster": "(?:^|[^A-Za-z0-9_$.])(?:(?:export|public|private|protected|final|static|readonly)[ \\t]+)*(?:const[ \\t]+(?:[A-Za-z_][A-Za-z0-9_|?]*[ \\t]+)?|define\\([ \\t]*[\"'])[A-Za-z0-9_]*(?:passwd|password|passwort|passphrase|secret|token)s?[0-9]*[\"']?[ \\t]*(?::[ \\t]*[A-Za-z_][A-Za-z0-9_|?]*[ \\t]*)?[=,][ \\t]*[\"'](?P<wert>[^\"' \\t]{6,})[\"']"
     }
   ],
   "_geheimnis_kontexte_bedeutung": [
@@ -219,8 +223,15 @@
     "einem Aufruf (client.post(..., data={\"password\": \"...\"})) und Go-Maps mit Variablen. Eine",
     "Konfigurationszeile beginnt mit dem Namen; Code ruft ihn mitten in der Zeile auf. Nach der",
     "Einschraenkung: 2 Fehlalarme, beide in einer Test-Fixture (gezielt im Repo ausgenommen).",
-    "BENANNTE GRENZE: ein Passwort-Literal mitten in einer Zeile (auch 'public const X_PASSWORD = ...')",
+    "BENANNTE GRENZE: ein kurzes Passwort-Literal mitten in einer Codezeile (Aufrufargument)",
     "trifft nur die Zuweisung ab 16 Zeichen.",
+    "",
+    "  Konstante         (kit 0.24.1, T-10) 'public const E2E_TEST_PASSWORD = \"...\"', 'const API_TOKEN = ...',",
+    "                    \"define('DB_PASSWORD', '...')\", TS 'const apiToken: string = ...' — auch unter 16",
+    "                    Zeichen. Das Schluesselwort muss am ENDE des Namens stehen: 'TOKEN_PATTERN',",
+    "                    'PASSWORD_FIELD', 'TOKEN_HEADER' sind Namen UEBER ein Geheimnis, keine Geheimnisse.",
+    "                    Gemeldet 2026-09-27 aus einem Kundenrepo (Model-Klasse, 13 Zeichen, nie gemeldet).",
+    "                    Gemessen ueber acht Repos und die Doku: 0 Fehlalarme; der Realfall wird erkannt.",
     "",
     "BEWUSST NICHT (2026-09-27): SQL-'COPY'-Bloecke und Datenbankdateien. Die Werte stehen dort",
     "tabellarisch ohne Namen; jede Wert-Heuristik (Hex-Laenge, Base64) traefe Commit-SHAs,",
