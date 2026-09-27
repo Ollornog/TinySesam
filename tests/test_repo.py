@@ -708,6 +708,12 @@ assert _suite, "release.yml: der Suite-Schritt in `pruefen` fehlt"
 _suite_if = [z.strip() for z in _suite.group(1).splitlines() if z.strip().startswith("if:")]
 assert _suite_if in ([], ["if: github.event_name != 'pull_request'"]), \
     f"release.yml: die Suite in `pruefen` fällt nicht nur auf PRs aus: {_suite_if}"
+# Der Abbild-Tag ist nur beim Tag der Git-Tag. Auf einem PR ist `github.ref_name` `108/merge` —
+# als Abbild-Tag ungültig, `image` brach am ersten PR mit diesem Trockenlauf daran ab.
+# (Mutationsprobe: `tags:` zurück auf `…:${{ github.ref_name }}` → rot.)
+_abbild_tag = re.search(r"^\s+tags:\s*(.+?)\s*$", _image, re.M)
+assert _abbild_tag and "${{ github.ref_type == 'tag' && github.ref_name || '" in _abbild_tag.group(1), \
+    f"release.yml: der Abbild-Tag nimmt den Ref auch ohne Tag (auf PRs `N/merge`): {_abbild_tag and _abbild_tag.group(1)}"
 print("  release.yml: der Trockenlauf läuft auf jedem PR; Release und Abbild hängen an Prüfsummen und Startprobe")
 
 # B4-7 — Das Abbild installiert, was die Sperrliste sagt, Byte für Byte. Der Digest-Pin im FROM

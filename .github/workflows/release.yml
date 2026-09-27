@@ -341,7 +341,10 @@ jobs:
           # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
           # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
           # andere Version, ohne dass jemand etwas geändert hätte.
-          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
+          # Im Trockenlauf ein fester Name: Auf einem PR heisst der Ref `108/merge`, auf einem
+          # Zweig womöglich `feature/x` — als Abbild-Tag ungültig, der Bau brach daran ab
+          # (gefunden am ersten PR mit diesem Trockenlauf). Geschoben wird er ohnehin nie.
+          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_type == 'tag' && github.ref_name || 'trockenlauf' }}
           outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
           provenance: false
 

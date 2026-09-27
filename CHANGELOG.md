@@ -18,7 +18,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   Schreibrecht; `image` hängt an ihm.
 - **Neu `pruefsummen`:** Wheel und sdist werden so heruntergeladen, wie `release` und `pypi` sie
   bekommen, und mit `sha256sum -c` gegen `SHA256SUMS` geprüft. `release` hängt daran.
-- `tests/test_repo.py` hält alle drei Punkte fest.
+- Der Trockenlauf von einem Zweig, dessen Name einen Schrägstrich enthält (und von jedem PR:
+  `108/merge`), brach bisher am Abbild-Tag ab. Ausserhalb eines Tags heisst das Abbild jetzt
+  `trockenlauf`; geschoben wird es ohnehin nie.
+- `tests/test_repo.py` hält alle Punkte fest.
 
 ### Geändert — Testlauf (für Entwickler; am Paket ändert sich nichts)
 
