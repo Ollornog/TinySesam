@@ -2981,6 +2981,7 @@ class Store:
         der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
         `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""
         with self._schreibend():
+            vorher = None
             if serie:
                 self._begin_immediate()
                 vorher = self._serie_bestaetigt(serie[0])

@@ -556,7 +556,7 @@ r.check("Zweiter Lauf: die Gebundenen sind keine Kandidaten mehr",
 
 # Ein Ausfall mitten im Lauf: nichts geschrieben.
 w = _ldap()
-w1, w2 = w.create_user("wim"), w.create_user("wolf")
+w.create_user("wim"), w.create_user("wolf")
 w.ldap = Verzeichnis({"wim": {"id": "u-wim"}, "wolf": {"id": "u-wolf"}}, ausfall_bei="wolf")
 try:
     w.foederation_nachbinden("ldap", ausfuehren=True)
@@ -582,7 +582,7 @@ r.check("SAML mit zuordnung: bindet, verweigert die Kennung eines anderen Kontos
 u = z.check_saml("nid-sara", {"uid": ["sara"]})
 r.check("… danach meldet sich sara über die NameID an", u is not None and u["id"] == sara)
 zd = _saml()
-d1, d2 = zd.create_user("doppel1"), zd.create_user("doppel2")
+zd.create_user("doppel1"), zd.create_user("doppel2")
 zdr = zd.foederation_nachbinden("saml", zuordnung={"doppel1": "nid-d", "doppel2": "nid-d"}, ausfuehren=True)
 r.check("Zuordnung mit Dublette (zwei Konten, eine Kennung): keines gebunden",
         _gebunden(zd) == {} and sorted(e["username"] for e in zdr["konflikt"]) == ["doppel1", "doppel2"])
@@ -613,80 +613,89 @@ r.check("… und bindet kein Konto ein zweites Mal",
         and st.store.get_federated_user("ldap", "u-k2b") is None)
 
 # ── Der echte Suchweg gegen ldap3 (MOCK_SYNC) ────────────────────────────────────────────────
-import ldap3  # noqa: E402
-
-GUID = bytes(range(16))
-_srv = ldap3.Server("mock-verzeichnis", get_info=ldap3.NONE)
-_fuell = ldap3.Connection(_srv, client_strategy=ldap3.MOCK_SYNC)
-_fuell.strategy.add_entry("cn=svc,dc=example,dc=com", {"objectClass": "person", "userPassword": "svc-pw"})
-_fuell.strategy.add_entry("uid=alice,ou=people,dc=example,dc=com",
-                          {"objectClass": "person", "uid": "alice", "cn": "Alice A.",
-                           "mail": "alice@example.com", "objectGUID": GUID, "userPassword": "pw-alice"})
-_fuell.strategy.add_entry("uid=carl,ou=people,dc=example,dc=com",
-                          {"objectClass": "person", "uid": "carl", "entryUUID": "e-carl"})
-_fuell.strategy.add_entry("uid=bob,ou=people,dc=example,dc=com",
-                          {"objectClass": "person", "uid": "bob", "entryUUID": "e-bob-1"})
-_fuell.strategy.add_entry("uid=bob,ou=extern,ou=people,dc=example,dc=com",
-                          {"objectClass": "person", "uid": "bob", "entryUUID": "e-bob-2"})
-_Echt = ldap3.Connection
-
-
-class _MockVerbindung(_Echt):
-    """Jede Verbindung des Clients geht an das vorbereitete Verzeichnis im Speicher."""
-
-    def __init__(self, server, *args, **kw):
-        kw["client_strategy"] = ldap3.MOCK_SYNC
-        auto = kw.pop("auto_bind", None)       # MOCK_SYNC bindet damit nicht von selbst
-        super().__init__(_srv, *args, **kw)
-        if auto not in (None, False, ldap3.AUTO_BIND_NONE):
-            self.bind()
-
-
-ldap3.Connection = _MockVerbindung
+# Braucht das Extra [ldap]. Ohne es läuft der Rest der Suite (der Job `minimal`), dieser Teil
+# sagt es sichtbar — wie der F-21-Teil in tests/test_saml.py.
 try:
-    such = LDAPClient(TinySesamConfig(
-        db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
-        ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="svc-pw",
-        ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})"))
-    t_alice, t_carl, t_bob, t_leer = (such.eintrag_suchen(x) for x in ("alice", "carl", "bob", "nobody"))
-    r.check("ldap3: objectGUID (Bytes) kommt als Hex, dazu Name und Adresse",
-            len(t_alice) == 1 and t_alice[0]["id"] == GUID.hex() and t_alice[0]["name"] == "Alice A."
-            and t_alice[0]["email"] == "alice@example.com", str(t_alice))
-    r.check("ldap3: entryUUID", [t["id"] for t in t_carl] == ["e-carl"], str(t_carl))
-    r.check("ldap3: zwei Einträge unter dem Namen → beide (genau einer wird verlangt), keiner → leer",
-            sorted(t["id"] for t in t_bob) == ["e-bob-1", "e-bob-2"] and t_leer == [], str(t_bob))
-    tmpl = LDAPClient(TinySesamConfig(
-        db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
-        ldap_allow_plaintext=True, ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"))
-    r.check("ldap3 Direkt-Bind-Vorlage: BASE-Suche auf den gebauten DN (anonym), kein DN → leer",
-            [t["id"] for t in tmpl.eintrag_suchen("carl")] == ["e-carl"] and tmpl.eintrag_suchen("nobody") == [])
-    falsch = LDAPClient(TinySesamConfig(
-        db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
-        ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="falsch",
-        ldap_user_base="ou=people,dc=example,dc=com"))
+    import ldap3  # noqa: E402
+except ImportError:
+    ldap3 = None
+if ldap3 is not None:
+
+    GUID = bytes(range(16))
+    _srv = ldap3.Server("mock-verzeichnis", get_info=ldap3.NONE)
+    _fuell = ldap3.Connection(_srv, client_strategy=ldap3.MOCK_SYNC)
+    _fuell.strategy.add_entry("cn=svc,dc=example,dc=com", {"objectClass": "person", "userPassword": "svc-pw"})
+    _fuell.strategy.add_entry("uid=alice,ou=people,dc=example,dc=com",
+                              {"objectClass": "person", "uid": "alice", "cn": "Alice A.",
+                               "mail": "alice@example.com", "objectGUID": GUID, "userPassword": "pw-alice"})
+    _fuell.strategy.add_entry("uid=carl,ou=people,dc=example,dc=com",
+                              {"objectClass": "person", "uid": "carl", "entryUUID": "e-carl"})
+    _fuell.strategy.add_entry("uid=bob,ou=people,dc=example,dc=com",
+                              {"objectClass": "person", "uid": "bob", "entryUUID": "e-bob-1"})
+    _fuell.strategy.add_entry("uid=bob,ou=extern,ou=people,dc=example,dc=com",
+                              {"objectClass": "person", "uid": "bob", "entryUUID": "e-bob-2"})
+    _Echt = ldap3.Connection
+
+
+    class _MockVerbindung(_Echt):
+        """Jede Verbindung des Clients geht an das vorbereitete Verzeichnis im Speicher."""
+
+        def __init__(self, server, *args, **kw):
+            kw["client_strategy"] = ldap3.MOCK_SYNC
+            auto = kw.pop("auto_bind", None)       # MOCK_SYNC bindet damit nicht von selbst
+            super().__init__(_srv, *args, **kw)
+            if auto not in (None, False, ldap3.AUTO_BIND_NONE):
+                self.bind()
+
+
+    ldap3.Connection = _MockVerbindung
     try:
-        falsch.eintrag_suchen("alice")
-        _dienst = False
-    except VerzeichnisNichtErreichbar:
-        _dienst = True
-    r.check("ldap3: ein abgewiesenes Dienstkonto ist ein Ausfall, kein „nicht im Verzeichnis“", _dienst)
-    e2e = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
-                ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
-    ea, eb = e2e.create_user("alice"), e2e.create_user("bob")
-    eb_ber = e2e.foederation_nachbinden("ldap", ausfuehren=True)
-    r.check("ldap3 von Anfang bis Ende: alice an ihre GUID gebunden, bob mehrdeutig",
-            _gebunden(e2e) == {ea: GUID.hex()} and _namen(eb_ber, "mehrdeutig") == ["bob"], str(eb_ber))
-    # Der Anmeldeweg liest die Kennung genauso (`authenticate` → `_stabile_kennung`): Eine GUID,
-    # die zufällig gültiges UTF-8 ist, dekodierte ldap3 ohne Schema zu Text mit Steuerzeichen —
-    # die Formprüfung wies sie ab, die Person kam über LDAP nie hinein.
-    login = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
-                  ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
-    ul = login.check_ldap("alice", "pw-alice")
-    r.check("ldap3 Anmeldung: dieselbe GUID als Hex, das neue Konto ist an sie gebunden",
-            ul is not None and login.store.get_federated_kennung("ldap", ul["id"]) == GUID.hex(),
-            str(ul and login.store.get_federated_kennung("ldap", ul["id"])))
-finally:
-    ldap3.Connection = _Echt
+        such = LDAPClient(TinySesamConfig(
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+            ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="svc-pw",
+            ldap_user_base="ou=people,dc=example,dc=com", ldap_user_filter="(uid={username})"))
+        t_alice, t_carl, t_bob, t_leer = (such.eintrag_suchen(x) for x in ("alice", "carl", "bob", "nobody"))
+        r.check("ldap3: objectGUID (Bytes) kommt als Hex, dazu Name und Adresse",
+                len(t_alice) == 1 and t_alice[0]["id"] == GUID.hex() and t_alice[0]["name"] == "Alice A."
+                and t_alice[0]["email"] == "alice@example.com", str(t_alice))
+        r.check("ldap3: entryUUID", [t["id"] for t in t_carl] == ["e-carl"], str(t_carl))
+        r.check("ldap3: zwei Einträge unter dem Namen → beide (genau einer wird verlangt), keiner → leer",
+                sorted(t["id"] for t in t_bob) == ["e-bob-1", "e-bob-2"] and t_leer == [], str(t_bob))
+        tmpl = LDAPClient(TinySesamConfig(
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+            ldap_allow_plaintext=True, ldap_user_dn_template="uid={username},ou=people,dc=example,dc=com"))
+        r.check("ldap3 Direkt-Bind-Vorlage: BASE-Suche auf den gebauten DN (anonym), kein DN → leer",
+                [t["id"] for t in tmpl.eintrag_suchen("carl")] == ["e-carl"] and tmpl.eintrag_suchen("nobody") == [])
+        falsch = LDAPClient(TinySesamConfig(
+            db_path=":memory:", ldap_enabled=True, ldap_url="ldap://verzeichnis.example.com",
+            ldap_allow_plaintext=True, ldap_bind_dn="cn=svc,dc=example,dc=com", ldap_bind_password="falsch",
+            ldap_user_base="ou=people,dc=example,dc=com"))
+        try:
+            falsch.eintrag_suchen("alice")
+            _dienst = False
+        except VerzeichnisNichtErreichbar:
+            _dienst = True
+        r.check("ldap3: ein abgewiesenes Dienstkonto ist ein Ausfall, kein „nicht im Verzeichnis“", _dienst)
+        e2e = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
+                    ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
+        ea, eb = e2e.create_user("alice"), e2e.create_user("bob")
+        eb_ber = e2e.foederation_nachbinden("ldap", ausfuehren=True)
+        r.check("ldap3 von Anfang bis Ende: alice an ihre GUID gebunden, bob mehrdeutig",
+                _gebunden(e2e) == {ea: GUID.hex()} and _namen(eb_ber, "mehrdeutig") == ["bob"], str(eb_ber))
+        # Der Anmeldeweg liest die Kennung genauso (`authenticate` → `_stabile_kennung`): Eine GUID,
+        # die zufällig gültiges UTF-8 ist, dekodierte ldap3 ohne Schema zu Text mit Steuerzeichen —
+        # die Formprüfung wies sie ab, die Person kam über LDAP nie hinein.
+        login = _ldap(ldap_url="ldap://verzeichnis.example.com", ldap_bind_dn="cn=svc,dc=example,dc=com",
+                      ldap_bind_password="svc-pw", ldap_user_base="ou=people,dc=example,dc=com")
+        ul = login.check_ldap("alice", "pw-alice")
+        r.check("ldap3 Anmeldung: dieselbe GUID als Hex, das neue Konto ist an sie gebunden",
+                ul is not None and login.store.get_federated_kennung("ldap", ul["id"]) == GUID.hex(),
+                str(ul and login.store.get_federated_kennung("ldap", ul["id"])))
+    finally:
+        ldap3.Connection = _Echt
+
+else:                                                    # pragma: no cover
+    print("  – echter Suchweg gegen ldap3 nicht gefahren (Extra [ldap] fehlt); der Rest der Suite läuft")
 
 # ══ Startmeldung ═══════════════════════════════════════════════════════════════════════════════
 pfad = _db()

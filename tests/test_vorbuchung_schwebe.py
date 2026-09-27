@@ -314,7 +314,7 @@ with Mitschnitt() as log_e, ThreadPoolExecutor(max_workers=3) as pool:
     time.sleep(HAENGT * 0.3)
     wartende = [pool.submit(_anmelden, app, "alice", "x", NAT, zeiten_e) for _ in range(2)]
     status_e = sorted(f.result(timeout=30) for f in wartende)
-    haengend_e = haengend_e.result(timeout=30)
+    haengend_e.result(timeout=30)
 auth._hinweis_ausgang.abwarten()
 zeiten_e.sort()
 r.check("ohne Warteplatz: sofort 429, der andere wartet und bekommt den Ausfall (503)",

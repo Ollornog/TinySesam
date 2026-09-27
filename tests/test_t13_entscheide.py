@@ -408,7 +408,7 @@ _login(TestClient(ap_d), "alice", LPW)
 _alice_d = a_d.store.get_user_by_name("alice")["id"]
 _mallory_d = a_d.create_user("alice.neu", password=MPW)
 a_d.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
-for _runde in range(10):
+for _ in range(10):
     for _ in range(4):
         _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", "falsch-falsch-1")
     _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", MPW)
@@ -465,8 +465,8 @@ except sqlite3.IntegrityError:
     _anlage_a = "IntegrityError"
 # Registrieren gibt es neben LDAP nicht mehr (PO-Entscheid 2026-09-27) — der Aufbau scheitert.
 try:
-    _ldap_mit_signup = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
-                            passkey_enabled=False, allow_signup=True)
+    _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+         passkey_enabled=False, allow_signup=True)
     _reg_a = "gebaut"
 except ConfigError as _e_reg:
     _reg_a = str(_e_reg)
@@ -580,7 +580,7 @@ with redirect_stdout(_aus_x), redirect_stderr(_aus_x):
     try:
         _cli(["unlock", "--db", a_x.cfg.db_path, "x"])
     except SystemExit:
-        pass
+        pass    # das CLI endet mit sys.exit; gemessen wird die Ausgabe und die Datenbank
 _unlock_x = [dict(z) for z in a_x.store._all("SELECT username, detail FROM audit WHERE event='unlock_cli'")]
 r.check("… `tinysesam unlock x` nennt den neuen Inhaber und lässt die eigene Serie des Vorbesitzers stehen",
         [z["username"] for z in _unlock_x] == ["berta"] and a_x.store.fehlserie("x") == 0
@@ -597,7 +597,7 @@ with redirect_stdout(_aus_x2), redirect_stderr(_aus_x2):
     try:
         _cli(["unlock", "--db", a_x.cfg.db_path, "x"])
     except SystemExit:
-        pass
+        pass    # das CLI endet mit sys.exit; gemessen wird die Ausgabe und die Datenbank
 # (Mutationsproben: die zweite Sicherung in `zaehl_kennungen` weglassen → Antons Anmeldung räumt die
 #  Serie → rot; `konto_mit_bindungsname` wieder nach `gebunden_at` → nennt anton → rot.)
 r.check("… im Bestand mit zwei Trägern: der Name zählt für keins, `unlock` nennt keins und räumt nur unter `x`",
@@ -636,7 +636,7 @@ a_m.ldap = _Verzeichnis({"alice": _alice_eintrag, "alice@corp.example": _alice_e
 _login(TestClient(ap_m), "alice", LPW)
 _alice_m = a_m.store.get_user_by_name("alice")["id"]
 _reg_m = a_m.create_user("mallory", password=MPW, email="alice@corp.example")
-for _runde in range(10):
+for _ in range(10):
     for _ in range(4):
         _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", "falsch-falsch-1")
     _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", MPW)

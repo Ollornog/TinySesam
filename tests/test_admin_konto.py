@@ -129,7 +129,7 @@ r.check("G13: im Modus login_identifier=\"email\" folgt der Name der Adresse —
 
 # ── G13: Panel ─────────────────────────────────────────────────────────────────────────────
 _seite = cc.get("/auth/admin").text
-_js = next(s for s in re.findall(r"<script\b[^>]*>(.*?)</script\s*>", _seite, re.S | re.I) if "const ACT={" in s)
+_js = next(s for s in re.findall(r"<script\b[^>]*>(.*?)</script[^>]*>", _seite, re.S | re.I) if "const ACT={" in s)
 _act = set(re.search(r"const ACT=\{([^}]*)\}", _js).group(1).split(","))
 r.check("G13: das Panel hat den Knopf „Umbenennen“ und ruft die Route",
         'on("ren",u.id,u.username)' in _js and "ren" in _act and "/api/users/${id}/username" in _js)

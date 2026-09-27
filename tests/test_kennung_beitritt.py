@@ -135,7 +135,7 @@ r.check("c: ein fremder Fehlversuch aus der Sekunde der Anlage, aber VOR ihr, bl
 # (Mutationsprobe: Wasserlinie + 1 in `WL_VERSUCH` → rot; das hält auch eine zeitabhängige Fassung
 #  mit `ts > seit` draussen, die eigene Versuche derselben Sekunde stehen liesse.)
 a, app, _ = _app()
-uid = a.create_user("sofort", password=PW, email="sofort@example.com")
+a.create_user("sofort", password=PW, email="sofort@example.com")
 _fehlversuche(a, "sofort", EIGEN, 1)
 _fehlversuche(a, "sofort@example.com", EIGEN, 1)
 anm = _login(app, "sofort")
