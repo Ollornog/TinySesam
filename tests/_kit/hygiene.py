@@ -2381,6 +2381,153 @@ def pruefe_fixture_deckt_muster(policy: dict,
 
 
 # ---------------------------------------------------------------------------
+# Optionale Extras: ungeschuetzte Imports in Tests (T-9, 2026-09-27)
+# ---------------------------------------------------------------------------
+# WARUM: `ci-local` installiert die volle Umgebung (`.[all]`). Ein Test, der ein Extra
+# ungeschuetzt importiert, ist dort immer gruen und bricht erst im GitHub-Job `minimal` ab —
+# dreimal passiert (TinySesam: `tomllib` unter 3.10, ein Waechter ohne Extra, zuletzt `ldap3`
+# in PR #101). Dieser Waechter findet die haeufigste Form per AST: ein `import <extra>` in
+# `tests/`, das nicht abgesichert ist. Was AST nicht sieht (die Bibliothek selbst importiert ein
+# Extra transitiv), faengt der schmale Lauf `ci-local --minimal`.
+#
+# Abgesichert heisst: innerhalb von `try` mit `except ImportError`/`ModuleNotFoundError`/`Exception`
+# (oder blankem `except`), innerhalb eines `if` (bedingter Import), oder im selben Block NACH einem
+# Aufruf von `importorskip`/`braucht_modul`/`voraussetzung`, der das Modul nennt; in einer Funktion
+# auch, wenn ein Dekorator `skip…` traegt.
+_EXTRA_MODULE = {  # Paketname -> Importname, wo sie abweichen
+    "pyyaml": ["yaml"], "python-ldap": ["ldap"], "pysaml2": ["saml2"], "python-jose": ["jose"],
+    "pyjwt": ["jwt"], "beautifulsoup4": ["bs4"], "pillow": ["PIL"], "python-multipart": ["multipart"],
+    "psycopg2-binary": ["psycopg2"], "psycopg-binary": ["psycopg"], "python-dateutil": ["dateutil"],
+    "scikit-learn": ["sklearn"], "opencv-python": ["cv2"], "pymupdf": ["fitz", "pymupdf"],
+    "python-magic": ["magic"], "argon2-cffi": ["argon2"], "python-dotenv": ["dotenv"],
+    "pycryptodome": ["Crypto"], "pyopenssl": ["OpenSSL"], "google-auth": ["google.auth"],
+    "xmlsec": ["xmlsec"], "lxml": ["lxml"], "python3-saml": ["onelogin"],
+}
+_TEST_EXTRAS = {"dev", "test", "tests", "testing", "lint", "docs", "all", "typing"}
+_SCHUTZ_AUFRUFE = ("importorskip", "braucht_modul", "voraussetzung")
+
+
+def _paket_name(spec: str) -> str:
+    return re.split(r"[\s\[<>=!~;@(]", spec.strip(), maxsplit=1)[0].lower().replace("_", "-")
+
+
+def _module_von(spec: str, zusatz: dict[str, list[str]] | None) -> list[str]:
+    name = _paket_name(spec)
+    return (zusatz or {}).get(name) or _EXTRA_MODULE.get(name) or [name.replace("-", "_")]
+
+
+def _extra_module(root: str, zusatz: dict[str, list[str]] | None = None) -> dict[str, str] | None:
+    """Importname -> Extra, fuer Module, die NUR ueber ein Extra kommen. None = kein pyproject."""
+    import tomllib
+    pfad = os.path.join(root, "pyproject.toml")
+    if not os.path.exists(pfad):
+        return None
+    with open(pfad, "rb") as fh:
+        projekt = tomllib.load(fh).get("project", {})
+    kern = {m for spec in projekt.get("dependencies", []) for m in _module_von(spec, zusatz)}
+    aus = {}
+    for extra, specs in (projekt.get("optional-dependencies") or {}).items():
+        if extra.lower() in _TEST_EXTRAS:
+            continue
+        for spec in specs:
+            if _paket_name(spec) == _paket_name(projekt.get("name", "")):
+                continue                     # Selbstverweis wie `pkg[ldap]` im Extra `all`
+            for m in _module_von(spec, zusatz):
+                if m not in kern:
+                    aus.setdefault(m, extra)
+    return aus
+
+
+def _schuetzt(knoten, modul: str) -> bool:
+    """Steht in `knoten` (ein Statement) ein Schutz-Aufruf, der `modul` nennt?"""
+    for n in ast.walk(knoten):
+        if isinstance(n, ast.Call):
+            f = n.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+            if name in _SCHUTZ_AUFRUFE and any(
+                    isinstance(a, ast.Constant) and isinstance(a.value, str)
+                    and (a.value == modul or a.value.split(".")[0] == modul.split(".")[0])
+                    for a in n.args):
+                return True
+    return False
+
+
+def _faengt_importfehler(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    namen = []
+    for n in ([handler.type] if not isinstance(handler.type, ast.Tuple) else handler.type.elts):
+        namen.append(n.attr if isinstance(n, ast.Attribute) else getattr(n, "id", ""))
+    return any(x in ("ImportError", "ModuleNotFoundError", "Exception", "BaseException") for x in namen)
+
+
+def pruefe_extras_imports(root: str, dateien: list[str],
+                          zusatz: dict[str, list[str]] | None = None,
+                          auch_minimal: list[str] | None = None) -> list[str]:
+    """Importiert ein Test ein optionales Extra ungeschuetzt? (rot im Job `minimal`)
+
+    `zusatz` ergaenzt die Zuordnung Paketname -> Importname fuer Pakete, bei denen beide
+    abweichen und die hier noch nicht stehen (`{"mein-paket": ["meinmodul"]}`).
+    `auch_minimal` nennt Importnamen, die der Job `minimal` trotzdem installiert (etwa `httpx`
+    fuer den TestClient) — genau die Liste aus dessen `pip install`, nicht mehr.
+    """
+    extras = _extra_module(root, zusatz)
+    if extras:
+        for m in auch_minimal or []:
+            extras.pop(m, None)
+    if extras is None:
+        return []
+    zaehle_fall()                            # pyproject gelesen
+    if not extras:
+        return []
+    befunde = []
+    tests = [f for f in dateien if f.endswith(".py")
+             and (f.startswith("tests/") or "/tests/" in f or os.path.basename(f).startswith("test_")
+                  or os.path.basename(f) == "conftest.py")]
+    for rel in tests:
+        try:
+            baum = ast.parse(_lies(root, rel) or "", filename=rel)
+        except SyntaxError:
+            continue
+
+        def pruefe_block(stmts, geschuetzt: bool, deko_skip: bool = False):
+            for i, st in enumerate(stmts):
+                if isinstance(st, (ast.Import, ast.ImportFrom)):
+                    if isinstance(st, ast.ImportFrom) and (st.level or not st.module):
+                        continue
+                    namen = [a.name for a in st.names] if isinstance(st, ast.Import) else [st.module]
+                    for voll in namen:
+                        top = voll.split(".")[0]
+                        treffer = voll if voll in extras else top if top in extras else None
+                        if not treffer or geschuetzt or deko_skip:
+                            continue
+                        if any(_schuetzt(v, treffer) for v in stmts[:i]):
+                            continue
+                        befunde.append(f"{rel}:{st.lineno}: `import {voll}` — Modul aus dem Extra "
+                                       f"`{extras[treffer]}`, ungeschuetzt; im Job `minimal` "
+                                       f"(ohne Extras) bricht der Test ab. Schutz: try/except "
+                                       f"ImportError, pytest.importorskip oder braucht_modul")
+                elif isinstance(st, ast.Try):
+                    schutz = geschuetzt or any(_faengt_importfehler(h) for h in st.handlers)
+                    pruefe_block(st.body, schutz, deko_skip)
+                    for h in st.handlers:
+                        pruefe_block(h.body, geschuetzt, deko_skip)
+                    pruefe_block(st.orelse, geschuetzt, deko_skip)
+                    pruefe_block(st.finalbody, geschuetzt, deko_skip)
+                elif isinstance(st, ast.If):
+                    pruefe_block(st.body, True, deko_skip)
+                    pruefe_block(st.orelse, True, deko_skip)
+                elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    skip = deko_skip or any("skip" in ast.unparse(d).lower() for d in st.decorator_list)
+                    pruefe_block(st.body, geschuetzt, skip)
+                elif isinstance(st, (ast.With, ast.AsyncWith, ast.For, ast.While)):
+                    pruefe_block(st.body, geschuetzt, deko_skip)
+
+        pruefe_block(baum.body, False)
+    return befunde
+
+
+# ---------------------------------------------------------------------------
 # Stufe 3 (M-1): die Auswertung — und die Hülle um jede Prüfung
 # ---------------------------------------------------------------------------
 # Leere Ausnahmeliste = keine zu weite Ausnahme. Das ist eine wahre Aussage, kein Nichtsehen.

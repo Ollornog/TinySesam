@@ -391,6 +391,11 @@ assert not testdateien, "Testdatei ohne Läufer:\n  " + "\n  ".join(testdateien)
 am_tag = hygiene.pruefe_veroeffentlichen_am_tag(ROOT)
 assert not am_tag, "veröffentlicht ohne Tag:\n  " + "\n  ".join(am_tag)
 
+# Kit 0.24.0 (T-9): ungeschützte Imports optionaler Extras in Tests fallen sonst erst im Job
+# `minimal` auf (PR #101, ldap3). `auch_minimal` = genau das `pip install` jenes Jobs.
+_extras = hygiene.pruefe_extras_imports(ROOT, FILES, auch_minimal=["httpx", "setuptools", "wheel"])
+assert not _extras, "Extra ungeschützt importiert:\n  " + "\n  ".join(_extras)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
 print("  Kit 0.21.8: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer; nichts veröffentlicht ohne Tag")
