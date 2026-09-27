@@ -6,8 +6,9 @@ Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGEL
 
 Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
 Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
-die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.22.0 dazu der
-Ergebnistyp der Anmelde-Bausteine (`LoginResult`: Felder, Methoden, Gründe).
+die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.22.0 dazu die
+Ergebnistypen der Bausteine für eigene Seiten (`LoginResult`, `PasswordChangeResult`: Felder,
+Methoden, Gründe).
 Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 
     python tests/test_api_surface.py --update      # Änderung übernehmen, danach committen
@@ -48,7 +49,7 @@ import warnings
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import importlib
-from tinysesam import LoginResult, TinySesam, TinySesamConfig
+from tinysesam import LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig
 from tinysesam._veraltet import BIS, Veraltet
 
 _paket = importlib.import_module("tinysesam")
@@ -74,7 +75,12 @@ C_SEIT = "0.22.0"
 #: `--update` übernommen, nicht neu gemessen. Die Exporte haben keinen Messwert — nur den Namen.
 MESSWERT = {"TinySesam": "sig", "TinySesam.eigenschaften": "sig",
             "TinySesamConfig.methoden": "sig", "TinySesam.konstanten": "wert",
-            "TinySesamConfig.felder": "feld", "exporte": None, "LoginResult": "sig"}
+            "TinySesamConfig.felder": "feld", "exporte": None, "LoginResult": "sig",
+            "PasswordChangeResult": "sig"}
+
+#: Die Ergebnistypen der Bausteine für eigene Seiten (0.22.0, Stufe A), je mit eigenem Bereich in
+#: der Ablage: `LoginResult` (`login_*`, `confirm_*`), `PasswordChangeResult` (`change_password`).
+ERGEBNISTYPEN = {"LoginResult": LoginResult, "PasswordChangeResult": PasswordChangeResult}
 
 
 def ok(name):
@@ -179,25 +185,25 @@ def oberflaeche() -> dict:
             "TinySesam.eigenschaften": eigenschaften,
             "TinySesamConfig.felder": felder,
             "TinySesamConfig.methoden": presets, "exporte": exporte,
-            "LoginResult": ergebnistyp_oberflaeche()}
+            **{name: ergebnistyp_oberflaeche(typ) for name, typ in ERGEBNISTYPEN.items()}}
 
 
-def ergebnistyp_oberflaeche() -> dict:
-    """Der Ergebnistyp der Anmelde-Bausteine (0.22.0, Stufe A): Felder, Methoden, Gründe.
+def ergebnistyp_oberflaeche(typ=LoginResult) -> dict:
+    """Ein Ergebnistyp der Bausteine für eigene Seiten (0.22.0, Stufe A): Felder, Methoden, Gründe.
 
     Die Exporte erfasst der Wächter nur beim Namen. Für `LoginResult` genügt das nicht: Wer
     `result.next_factor` liest oder auf `result.reason == "locked"` prüft, bricht an einem
     umbenannten Feld oder einem gestrichenen Grund genauso wie an einer umbenannten Methode.
     Felder mit Typ und Vorgabe (wie die Konfiguration), Methoden mit Signatur, `REASONS` mit dem
-    Wert.
+    Wert. Dasselbe gilt für `PasswordChangeResult` (`result.api_keys_active`).
     """
     ergebnis = {}
-    for f in dataclasses.fields(LoginResult):
+    for f in dataclasses.fields(typ):
         vorgabe = "<pflicht>" if f.default is dataclasses.MISSING else repr(f.default)
         ergebnis[f.name] = f"{f.type} = {vorgabe}"
-    ergebnis.update({name: signatur(fn) for name, fn in inspect.getmembers(LoginResult, inspect.isfunction)
+    ergebnis.update({name: signatur(fn) for name, fn in inspect.getmembers(typ, inspect.isfunction)
                      if not name.startswith("_")})
-    ergebnis["REASONS"] = repr(LoginResult.REASONS)
+    ergebnis["REASONS"] = repr(typ.REASONS)
     return ergebnis
 
 
@@ -1084,8 +1090,8 @@ def oberflaeche_namen(datei: dict, klasse=TinySesam, config=TinySesamConfig,
     Parameter und Attribute vom lebenden Objekt — ein neuer Parameter braucht keinen neuen
     Eintrag, um gesehen zu werden."""
     namen = []
-    objekte = {"TinySesam": klasse, "TinySesamConfig.methoden": config, "LoginResult": LoginResult}
-    eigen = {klasse.__name__, config.__name__, LoginResult.__name__}   # haben eigene Bereiche
+    objekte = {"TinySesam": klasse, "TinySesamConfig.methoden": config, **ERGEBNISTYPEN}
+    eigen = {klasse.__name__, config.__name__, *ERGEBNISTYPEN}   # haben eigene Bereiche
     for bereich in sorted(datei):
         eintraege = datei[bereich]
         if not isinstance(eintraege, dict):
@@ -1127,7 +1133,8 @@ NAMEN_PFLICHT = (("TinySesam", "change_username"), ("TinySesam.change_username()
                  ("TinySesamConfig.felder", "federation_name_binding_days"),
                  ("TinySesamConfig.methoden", "validate"), ("TinySesam.eigenschaften", "csrf_cookie_name"),
                  ("ConfigError", "owner_id"), ("MissingExtra()", "message"),
-                 ("LoginResult", "next_factor"), ("exporte", "current_version"))
+                 ("LoginResult", "next_factor"), ("PasswordChangeResult", "api_keys_active"),
+                 ("exporte", "current_version"))
 
 
 def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLICHT,
@@ -1139,7 +1146,7 @@ def pruefe_namen(datei: dict, klasse=TinySesam, paket=_paket, pflicht=NAMEN_PFLI
              for wo, name in pflicht if (wo, name) not in namen]
     parameter = sum(1 for wo, _ in namen if wo.endswith("()"))
     felder = sum(1 for wo, _ in namen if wo == "TinySesamConfig.felder")
-    # Stand 0.22.0: 566 Einträge, davon 260 Parameter und 159 Felder — mit Luft nach unten.
+    # Stand 0.22.0: 593 Einträge, davon 276 Parameter und 159 Felder — mit Luft nach unten.
     if len(namen) < mindestens[0] or parameter < mindestens[1] or felder < mindestens[2]:
         fehlt.append(f"zu wenig gemessen: {len(namen)} Namen, {parameter} Parameter, {felder} "
                      f"Felder (erwartet mindestens {'/'.join(map(str, mindestens))})")

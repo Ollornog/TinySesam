@@ -22,7 +22,7 @@ Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_ap
 
 Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
 
-**Stand:** A 240 · B 64 · C 50 Namen.
+**Stand:** A 251 · B 64 · C 50 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -34,6 +34,10 @@ Eigene Übersetzungen ergänzen/überschreiben (haben Vorrang vor den eingebaute
 
 Eigenständiger Admin-Router (relative Pfade) — an beliebigem Prefix / Sub-App / Port montierbar, oder (admin_ui_enabled=False) nur die JSON-API fürs eigene Panel.
 
+### `change_password(request: 'Request', current: 'str', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'`
+
+Das Passwort des eigenen Kontos ändern — das alte gedrosselt und gesperrt geprüft wie `POST /auth/password`, die genau diese Methode ruft.
+
 ### `change_username(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'`
 
 Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
@@ -41,6 +45,18 @@ Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mi
 ### `complete_totp(token) -> 'Optional[str]'`
 
 Den TOTP-Schritt abschließen: Faktor `totp` an die laufende Sitzung anhängen. Gibt ein neues Sitzungs-Token zurück, das ins Cookie gehört (`neu = auth.complete_totp(token)`, `if neu: auth.set_cookie(resp, neu)`) — das alte ist danach tot, auch beim Step-up.
+
+### `confirm_password(request: 'Request', password: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'`
+
+Die Sitzung mit dem Passwort des eigenen Kontos frisch bestätigen (Step-up) — gedrosselt und gesperrt wie `POST /auth/reauth`, die genau diese Methode ruft.
+
+### `confirm_pin(request: 'Request', pin: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'`
+
+Die Sitzung mit der PIN des eigenen Kontos frisch bestätigen (Step-up) — wie `confirm_password`, gedrosselt und gesperrt wie `POST /auth/reauth`.
+
+### `confirm_totp(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'`
+
+Die Sitzung mit einem TOTP-Code des eigenen Kontos frisch bestätigen (Step-up) — wie `confirm_password`, gedrosselt und gesperrt wie `POST /auth/reauth`.
 
 ### `create_api_key(user_id, name=None, expires_days=None, roles=None, kind: 'str' = 'automat') -> 'dict'`
 
@@ -320,13 +336,13 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ## A · Ergebnis der Anmelde-Bausteine: `tinysesam.LoginResult`
 
-Was ein Anmeldeschritt ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text. Zurück von `login_password`, `login_pin`, `login_totp`. Eine eingefrorene Dataclass; `bool(result)` ist `result.ok`. Das Sitzungs-Token ist bewusst kein Feld — `set_cookie()` und `redirect()` setzen es.
+Was ein Anmeldeschritt oder eine Step-up-Bestätigung ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text. Zurück von `confirm_password`, `confirm_pin`, `confirm_totp`, `login_password`, `login_pin`, `login_totp`. Eine eingefrorene Dataclass; `bool(result)` ist `result.ok`. Das Sitzungs-Token ist bewusst kein Feld — `set_cookie()` und `redirect()` setzen es.
 
 | Feld | Typ | Bedeutung |
 |---|---|---|
-| `ok` | `bool` | Hat der Schritt angemeldet? Genau dann, wenn `reason == "ok"`; `bool(result)` ist derselbe Wert. |
+| `ok` | `bool` | Hat der Schritt angemeldet (bzw. frisch bestätigt)? Genau dann, wenn `reason == "ok"`; `bool(result)` ist derselbe Wert. |
 | `reason` | `str` | Warum (nicht): einer der Werte aus `REASONS`. Für Programme — der Text steht in `message`. |
-| `status` | `int` | Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 404, 429 oder 503. |
+| `status` | `int` | Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 403, 404, 429 oder 503. |
 | `message` | `str` | Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg. |
 | `next_url` | `str` | Das geprüfte Ziel (`safe_next`, mit Montage-Präfix): bei Erfolg der nächste Faktor-Schritt oder `next`, sonst `next` fürs Formular — bei `no_session` die Login-Seite. |
 | `next_factor` | `Optional[str]` | Der offene Faktor nach diesem Schritt (etwa `"totp"`), für eine eigene Seite des nächsten Schritts. Bei einem Fehlschlag im Folgeschritt derselbe Faktor noch einmal, sonst None. |
@@ -335,7 +351,7 @@ Was ein Anmeldeschritt ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Stat
 
 ### `LoginResult.REASONS` — Konstante
 
-Jeder Wert, den `reason` annehmen kann: `ok`; `missing` (Pflichtfeld leer, 400); `invalid` (Passwort, PIN oder Code falsch, 401); `locked` (Sperre nach Fehlversuchen, 429); `locked_series` (zu viele Fehlversuche in Folge, läuft nicht ab, 429); `ratelimit` (Drossel je IP, 429); `directory_down` (LDAP-Verzeichnis nicht erreichbar, 503); `method_disabled` (Verfahren abgeschaltet oder hier kein Erstfaktor, 404); `no_session` (TOTP ohne Sitzung, 401 — nur bei `login_totp`).
+Jeder Wert, den `reason` annehmen kann: `ok`; `missing` (Pflichtfeld leer, 400); `invalid` (Passwort, PIN oder Code falsch, 401); `locked` (Sperre nach Fehlversuchen, 429); `locked_series` (zu viele Fehlversuche in Folge, läuft nicht ab, 429); `ratelimit` (Drossel je IP, 429); `directory_down` (LDAP-Verzeichnis nicht erreichbar, 503); `method_disabled` (Verfahren abgeschaltet oder hier kein Erstfaktor, 404; bei `confirm_*` 403: dieses Konto kann hier nicht mit diesem Verfahren bestätigen, `stepup_options`); `no_session` (ohne Sitzung, 401 — bei `login_totp` und `confirm_*`; bei `confirm_*` 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt).
 
 Wert: `('ok', 'missing', 'invalid', 'locked', 'locked_series', 'ratelimit', 'directory_down', 'method_disabled', 'no_session')`
 
@@ -346,6 +362,24 @@ Eine Umleitung (303) nach `next_url`, mit gesetztem Sitzungs-Cookie, falls es ei
 ### `LoginResult.set_cookie(response) -> 'None'`
 
 Das Sitzungs-Cookie in `response` setzen, falls der Schritt ein neues Token ergeben hat.
+
+## A · Ergebnis des Passwortwechsels: `tinysesam.PasswordChangeResult`
+
+Was ein Passwortwechsel ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text. Zurück von `change_password`. Eine eingefrorene Dataclass; `bool(result)` ist `result.ok`.
+
+| Feld | Typ | Bedeutung |
+|---|---|---|
+| `ok` | `bool` | Ist das neue Passwort gesetzt? Genau dann, wenn `reason == "ok"`; `bool(result)` ist derselbe Wert. |
+| `reason` | `str` | Warum (nicht): einer der Werte aus `REASONS`. Für Programme — der Text steht in `message`. |
+| `status` | `int` | Der HTTP-Status von `POST /auth/password`: 200 bei Erfolg, sonst 400, 401, 403 oder 429. |
+| `message` | `str` | Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg. |
+| `api_keys_active` | `int` | Wie viele API-Keys des Kontos weiter gelten — sie überleben den Wechsel mit Absicht (sie gehören Automatiken), verschwiegen wird es nicht. Nur bei Erfolg, sonst 0. |
+
+### `PasswordChangeResult.REASONS` — Konstante
+
+Jeder Wert, den `reason` annehmen kann: `ok`; `missing` (altes Passwort leer, 400, zählt nicht als Fehlversuch); `invalid` (altes Passwort falsch, 403); `locked` (Sperre nach `password_change_max_attempts` Fehlversuchen, 429); `ratelimit` (Drossel je IP, 429); `policy` (das neue Passwort verletzt die Passwortregel, 400 — der Grund steht in `message`); `no_session` (keine volle Sitzung, 401; 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt).
+
+Wert: `('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')`
 
 ## A · weitere Exporte von `tinysesam`
 
@@ -632,7 +666,7 @@ Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann sti
 
 Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_name`; der alte Name bleibt bis 1.0 als Alias, der **beim Aufruf** (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit `python -W error::DeprecationWarning` laufen.
 
-**Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere Baustein ist `login_password`, `login_pin`, `login_totp` (Stufe A): dieselben Methoden, die die eingebauten Routen rufen.
+**Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere Baustein ist `login_password`, `login_pin`, `login_totp` (Stufe A): dieselben Methoden, die die eingebauten Routen rufen. Für eine eigene Step-up-Seite gilt dasselbe mit `confirm_password`, `confirm_pin`, `confirm_totp`, für einen eigenen Passwortwechsel mit `change_password`.
 
 | Alter Name | Art | Ersatz |
 |---|---|---|
@@ -654,9 +688,9 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 | `forwarded_url` | Methode | Ohne Ersatz; die Route `/auth/forward` liest die Proxy-Header selbst |
 | `IDENTIFYING` | Konstante | Ohne Ersatz; welche Faktoren identifizieren, steht in docs/BETRIEB.md |
 | `is_locked` | Methode | `login_password`, `login_pin` bzw. `login_totp`, die atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch |
-| `is_password_change_locked` | Methode | `POST /auth/password` (prüft und bucht atomar) |
+| `is_password_change_locked` | Methode | `change_password` (prüft und bucht atomar wie `POST /auth/password`) |
 | `is_pin_locked` | Methode | `login_pin` (prüft und bucht atomar wie `POST /auth/pin`) |
-| `is_reauth_locked` | Methode | `/auth/reauth` (prüft und bucht atomar; `require(mfa=True)` leitet dorthin) |
+| `is_reauth_locked` | Methode | `confirm_password`, `confirm_pin` bzw. `confirm_totp` (prüfen und buchen atomar wie `/auth/reauth`, wohin `require(mfa=True)` leitet) |
 | `is_resource_locked` | Methode | `POST /auth/resource/{name}` (prüft und bucht atomar) |
 | `is_secure` | Methode | Ohne Ersatz; die Warnung ohne HTTPS steuert `https_mode` |
 | `is_totp_setup_locked` | Methode | `POST /auth/totp/setup` (prüft und bucht atomar) |
@@ -681,12 +715,12 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 | `unlock_resource` | Methode | `POST /auth/resource/{name}` (prüft das Geheimnis vorher) |
 | `verify_csrf` | Methode | `require_csrf` |
 | `verify_recovery_code` | Methode | `login_totp` (nimmt auch Einmal-Codes, drosselt und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht |
-| `verify_totp` | Methode | `login_totp` (drosselt und sperrt wie `POST /auth/totp`); `verify_totp` selbst drosselt nicht |
-| `verify_user_password` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin) bzw. `POST /auth/password`; ungedrosselt |
-| `verify_user_pin` | Methode | `/auth/reauth` (`require(mfa=True)` leitet dorthin); ungedrosselt |
+| `verify_totp` | Methode | `login_totp` (drosselt und sperrt wie `POST /auth/totp`), für den Step-up `confirm_totp`; `verify_totp` selbst drosselt nicht |
+| `verify_user_password` | Methode | `confirm_password` (Step-up, drosselt und sperrt wie `/auth/reauth`) bzw. `change_password` (wie `POST /auth/password`); `verify_user_password` selbst drosselt nicht |
+| `verify_user_pin` | Methode | `confirm_pin` (Step-up, drosselt und sperrt wie `/auth/reauth`); `verify_user_pin` selbst drosselt nicht |
 | `vermerke_oidc_freigabe` | Methode | Ohne Ersatz; die Zuordnung steht in `oidc_clients` |
 | `versuch_beginnen` | Methode | `login_password`, `login_pin` bzw. `login_totp`, die jeden Versuch atomar vorbuchen |
 
 ---
 
-150 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 9 Exporte, davon 5 Fehlertypen, 11 Namen an `LoginResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.
+154 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 10 Exporte, davon 5 Fehlertypen, 17 Namen an den Ergebnistypen `LoginResult`, `PasswordChangeResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.

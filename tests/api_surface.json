@@ -45,6 +45,32 @@
       "stufe": "A"
     }
   },
+  "PasswordChangeResult": {
+    "REASONS": {
+      "sig": "('ok', 'missing', 'invalid', 'locked', 'ratelimit', 'policy', 'no_session')",
+      "stufe": "A"
+    },
+    "api_keys_active": {
+      "sig": "int = 0",
+      "stufe": "A"
+    },
+    "message": {
+      "sig": "str = ''",
+      "stufe": "A"
+    },
+    "ok": {
+      "sig": "bool = <pflicht>",
+      "stufe": "A"
+    },
+    "reason": {
+      "sig": "str = <pflicht>",
+      "stufe": "A"
+    },
+    "status": {
+      "sig": "int = <pflicht>",
+      "stufe": "A"
+    }
+  },
   "TinySesam": {
     "add_messages": {
       "sig": "(lang, mapping: 'dict')",
@@ -96,6 +122,10 @@
     "browser_path": {
       "sig": "(request: 'Optional[Request]', path: 'str') -> 'str'",
       "stufe": "B"
+    },
+    "change_password": {
+      "sig": "(request: 'Request', current: 'str', new: 'str', *, csrf: 'Optional[str]' = None) -> 'PasswordChangeResult'",
+      "stufe": "A"
     },
     "change_username": {
       "sig": "(user_id, new_username, ip: 'Optional[str]' = None, *, by_operator: 'bool' = False) -> 'str'",
@@ -154,6 +184,18 @@
     "confirm_email_change": {
       "sig": "(raw, ip: 'Optional[str]' = None) -> 'Optional[str]'",
       "stufe": "B"
+    },
+    "confirm_password": {
+      "sig": "(request: 'Request', password: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "confirm_pin": {
+      "sig": "(request: 'Request', pin: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
+    },
+    "confirm_totp": {
+      "sig": "(request: 'Request', code: 'str', *, next: 'str' = '', csrf: 'Optional[str]' = None) -> 'LoginResult'",
+      "stufe": "A"
     },
     "consume_admin_claim": {
       "bis": "1.0",
@@ -1552,6 +1594,9 @@
       "stufe": "A"
     },
     "MissingExtra": {
+      "stufe": "A"
+    },
+    "PasswordChangeResult": {
       "stufe": "A"
     },
     "StateError": {

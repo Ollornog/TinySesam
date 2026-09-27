@@ -5,10 +5,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unveröffentlicht]
 
 **Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
-(`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten; die internen Namen
-(Stufe C) warnen und fallen mit 1.0 weg, die deutschen Namen der Stufen A und B heissen englisch
-(ohne Alias). Und zwei Funde aus dem Betrieb: das Erst-Admin-Token steht im Container nicht mehr
-im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update auffällt:
+(`login_password`, `login_pin`, `login_totp`) für eigene Login-Seiten und dieselben Bausteine für
+eigene Step-up- und Passwortwechsel-Seiten (`confirm_password`, `confirm_pin`, `confirm_totp`,
+`change_password`); die internen Namen (Stufe C) warnen und fallen mit 1.0 weg, die deutschen
+Namen der Stufen A und B heissen englisch (ohne Alias). Und zwei Funde aus dem Betrieb: das
+Erst-Admin-Token steht im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird
+gemeldet.** Was beim Update auffällt:
 
 - **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
   1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
@@ -92,6 +94,29 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   `result.redirect()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
   Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
   Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
+- **Eigene Step-up- und Passwortwechsel-Seiten nehmen `confirm_*` bzw. `change_password`**
+  (PO-Entscheid 2026-09-27). Wer vor einer heiklen Aktion selbst nachfragt und dazu
+  `verify_user_password`, `verify_user_pin` oder `verify_totp` ruft, hat dort **keine Sperre,
+  keinen Zähler und keine Zeile im Sicherheits-Log** — dasselbe gilt für eine eigene Kontoseite, die
+  das alte Passwort so prüft und dann `set_password` ruft. Umstellen auf
+  `auth.confirm_password(request, password, next=…, csrf=…)` (bzw. `confirm_pin`,
+  `confirm_totp`; Ergebnis ein `LoginResult`, bei Erfolg `result.redirect()`) und
+  `auth.change_password(request, current, new, csrf=…)` (Ergebnis ein `PasswordChangeResult`).
+  Beide schützen genau wie `/auth/reauth` und `POST /auth/password`, weil diese Routen sie rufen.
+- **`POST /auth/password` nimmt keinen API-Key mehr** — 403 mit dem Text „Ein Passwort ändert ein
+  Mensch: angemeldete Sitzung nötig, ein API-Key genügt hier nicht“ (`api.password_needs_session`).
+  Bis 0.21.x änderte ein Key zusammen mit dem alten Passwort das Passwort des Kontos und beendete
+  dabei **alle** seine Sitzungen (eine eigene war ja nicht dabei). Wer ein Passwort maschinell
+  setzt, tut das als Betreiber (Panel, `set_password`). Ohne Sitzung steht in der 401 jetzt ein
+  Text („nicht eingeloggt“) statt bloss `Unauthorized`.
+- **Ein leeres Feld ist kein Fehlversuch mehr — und ein nicht angebotenes Verfahren auch nicht.**
+  `/auth/reauth` ohne ausgefülltes Feld antwortet 400 („Bitte alle Felder ausfüllen.“) statt 401,
+  `POST /auth/password` mit leerem `current` 400 statt 403; beide zählen nicht mehr in die Sperre
+  (wie am Login). Schickt ein Formular an `/auth/reauth` ein Verfahren, das dem Konto nicht
+  angeboten wird (`stepup_options()`; die eingebaute Seite zeigt nur die angebotenen — betroffen
+  sind eigene Vorlagen und gebaute Anfragen), ist das 403 ohne Fehlversuch statt 401 mit. Welches
+  Feld zählt, bestimmt wie bisher die Reihenfolge Code, PIN, Passwort; neu ist nur, dass ein
+  ausgefülltes, aber nicht angebotenes Feld nicht mehr still übergangen wird.
 - **Das Erst-Admin-Einmal-Token geht ohne Konsole in eine Datei** (T-17). Gibt es keinen Admin und
   ist stderr kein Terminal (Container, journal, Pipe), steht das Token für `/auth/claim-admin` jetzt
   in `<db_path>.claim` (Rechte 0600), und das Log nennt nur den Pfad — im Container also
@@ -140,7 +165,53 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   englisch wie der Rest der Stufe A (PO-Entscheid 2026-09-27); `reason` ist ein Kürzel für
   Programme — die Audit- und Log-Zeilen (auch die für fail2ban) bleiben, wie sie sind. Der Wächter
   misst den Typ mit (Bereich `LoginResult` in `tests/api_surface.json`: Felder mit Typ und Vorgabe,
-  Methoden, `REASONS`), `API.md` beschreibt ihn in einem eigenen Abschnitt.
+  Methoden, `REASONS`), `API.md` beschreibt ihn in einem eigenen Abschnitt. Auch die
+  Step-up-Bausteine `confirm_*` liefern ihn (s. u.); dort heisst `method_disabled` 403 und
+  `no_session` 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt.
+- **Sichere Bausteine für eigene Step-up-Seiten: `confirm_password`, `confirm_pin`,
+  `confirm_totp`** (Stufe A, PO-Entscheid 2026-09-27). Dasselbe Muster wie `login_*`, für die
+  Bestätigung vor heiklen Aktionen: CSRF prüfen (`csrf=`, sonst Header `X-CSRF-Token`), eine volle
+  Sitzung verlangen (ein API-Key zählt nicht: `no_session`, 403 — auch nicht neben einer halben
+  Sitzung), nur ein Verfahren zulassen, das `stepup_options()` dem Konto anbietet (`stepup_methods`,
+  `stepup_strict`; sonst `method_disabled`, 403, ohne Fehlversuch), je IP drosseln, den Versuch
+  atomar im eigenen Topf vorbuchen (`reauth_max_attempts`; bietet die Seite die PIN an, gilt der
+  PIN-Topf mit, C-3), Audit- und Sicherheits-Log (`failed verification`, `stepup`), dann die
+  Frische (`mfa_at`) mit neuem Sitzungs-Token (F-06) — das alte gilt `session_rotation_grace_sec`
+  lang ohne Frische weiter (A-6). Ein leeres Feld ist `missing` (400) und zählt nicht.
+  `confirm_totp` nimmt keinen Einmal-Code, wie die eingebaute Seite. **Ergebnis ist `LoginResult`**
+  und kein eigener Typ: Eine Bestätigung ist eine erneute Anmeldung an der laufenden Sitzung, die
+  Felder passen ohne Rest (bei Erfolg `done=True`, `next_factor=None`), und `redirect()`/
+  `set_cookie()` setzen das erneuerte Token — ein eigener Typ hätte jedes Feld wiederholt. Drei
+  Namen statt einem `confirm(…, password=…, pin=…, code=…)`: wie `login_*` genau ein Geheimnis je
+  Aufruf, keine Reihenfolge, die still ein Feld übergeht. `POST /auth/reauth` ruft sie.
+- **Sicherer Baustein für eine eigene Passwortwechsel-Seite: `change_password`** (Stufe A):
+  dieselbe Logik wie `POST /auth/password`, die ihn ruft — CSRF, volle Sitzung (kein API-Key),
+  Drossel je IP, Vorbuchung im eigenen Topf (`password_change_max_attempts`, je Konto; ein
+  Tippfehler hier sperrt nicht die Anmeldung, R4-10), das alte Passwort gegen die ID der Sitzung
+  (R4-12), die Passwortregel, bei Erfolg die anderen Sitzungen beenden (die eigene bleibt), offene
+  Adresswechsel-Links verwerfen, Audit `password_change` samt `api_keys_active=n`. Ergebnis ist der
+  neue Export **`tinysesam.PasswordChangeResult`** (Stufe A): `ok` (auch `bool(result)`), `reason`
+  (`PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`, `policy`,
+  `no_session`), `status` (was die Route antwortet: 200, 400, 401, 403, 429), `message` (übersetzt;
+  bei `policy` die verletzte Regel), `api_keys_active` (so viele API-Keys überleben den Wechsel —
+  mit Absicht, verschwiegen wird es nicht). Ein eigener Typ, weil ein Passwortwechsel niemanden
+  anmeldet und kein Token dreht: `next_url`, `next_factor`, `done`, `redirect()` hätten keine
+  Bedeutung, `api_keys_active` hat nur er. Der Wächter misst ihn wie `LoginResult` (eigener
+  Bereich in `tests/api_surface.json`), `API.md` beschreibt ihn in einem eigenen Abschnitt.
+- **Tests:** `tests/test_bestaetigen.py` — eine eigene Step-up-Seite über `confirm_*` sperrt nach N
+  Fehlversuchen im Topf `reauth` (auch das richtige Passwort macht dann nichts frisch, die
+  Anmeldung bleibt offen), drosselt je IP und macht bei Erfolg frisch, mit neuem Token und
+  Gnadenfrist des alten; ohne Sitzung, mit halber Sitzung und mit API-Key (auch neben einer halben
+  Sitzung) keine Wirkung und kein Versuch; nur angebotene Verfahren, leer zählt nicht, PIN-Topf,
+  kein Einmal-Code. Eine eigene Passwortwechsel-Seite über `change_password` sperrt, prüft die
+  Regel, beendet die anderen Sitzungen, verwirft den offenen Adresswechsel und nennt die API-Keys;
+  CSRF über Feld und Header, der Ergebnistyp. Dieselbe Folge über `/auth/reauth` bzw.
+  `POST /auth/password` und über eine eigene Route ergibt dieselben Status, Texte, Audit-,
+  Sicherheits-Log- und Versuchszeilen. Ein AST-Wächter hält fest, dass beide Routen ihren Baustein
+  rufen und keinen inneren Prüfer selbst; die Beispiele der README laufen wörtlich und müssen
+  sperren; die Namen sind englisch und Stufe A. Der Wächter in `tests/test_stepup.py` sieht jetzt
+  auch eine Senke, die nur übergeben wird (`run_in_threadpool(auth.change_password, …)`), Helfer,
+  die als Methode gerufen werden (`self._nur_mit_sitzung`), und prüft den Rumpf einer Senke selbst.
 - **Tests:** `tests/test_anmelden.py` — eine eigene Login-Seite über den Baustein sperrt nach N
   Fehlversuchen (429 `locked`), drosselt je IP (`ratelimit`) und sperrt die Serie
   (`locked_series`); LDAP-Rückfall, Ausfall mit und ohne lokales Passwort, „eine Kennung, ein
@@ -158,7 +229,7 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
 - **Namens-Wächter über die ganze Oberfläche der Stufen A und B** (`tests/test_api_surface.py`,
   `pruefe_namen`): jeder Name der Ablage in A oder B, die Parameter jeder Methode und Funktion am
   lebenden Objekt, alle Konfigurationsfelder, die öffentlichen Attribute und Konstruktor-Parameter
-  der exportierten Fehlertypen — Stand 566 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
+  der exportierten Fehlertypen — Stand 593 Einträge. Rot bei einem deutschen Wort: ganze Wörter aus
   einer Liste, Wortstämme auch mitten im Wort (`SICHERHEITSEREIGNISSE` ist nach dem Zerlegen nur
   eines) und Umlaute. Dazu eine Mindestmenge (je Art ein Pflicht-Eintrag, Zahl der Parameter und
   Felder) gegen eine Messung, die still weniger sieht, und Selbstproben an einer Probeklasse: jeder
@@ -173,8 +244,9 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   übernimmt die Stufen (und alle anderen Entscheidungen am Eintrag) vom selben Namen, vergibt
   aber nie selbst eine: Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis
   jemand entscheidet — ein stilles „A" hätte jede Hilfsmethode ohne Unterstrich für immer
-  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 240 (darunter
-  `login_*` und die 11 Namen am Ergebnistyp `LoginResult`), B 64, C 50 von 354 Namen.
+  zugesagt. Ein gemeldeter Bruch trägt die Stufe des Namens (`[A] …`). Stand: A 251 (darunter
+  `login_*`, `confirm_*`, `change_password`, die 11 Namen am Ergebnistyp `LoginResult` und die 6
+  an `PasswordChangeResult`), B 64, C 50 von 365 Namen.
 - **Stufe C als warnender Alias** (`tinysesam/_veraltet.py`). Jeder C-Name ist ein
   `Veraltet("_name", "<Ersatz>")`: ein Deskriptor, der unverändert an die Implementierung
   weiterreicht und dabei genau eine `DeprecationWarning` auslöst — beim Aufruf, nicht schon beim
@@ -233,6 +305,18 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   eingebauten Routen selbst rufen; ihr Beispiel läuft im Test wörtlich und muss sperren. Die
   Prüfer stehen in Stufe C, ihre Warnung nennt den Baustein. Ungedrosselt war auch `verify_totp`
   aus demselben Beispiel — ein sechsstelliger Code; sein Ersatz ist `login_totp`.
+- **Eigene Step-up- und Passwortwechsel-Seiten hatten nur ungedrosselte Prüfer** (PO-Entscheid
+  2026-09-27). Für die Bestätigung vor heiklen Aktionen und den Passwortwechsel gab es nur die
+  eingebauten Routen; wer eine eigene Seite baute, blieb bei `verify_user_password`,
+  `verify_user_pin`, `verify_totp` und `set_password` — ohne Sperre, Zähler und Log-Zeile, ein
+  unbegrenztes Orakel für das Passwort (und die kurze PIN) eines Kontos, dessen Sitzung man
+  schon hat. Jetzt gibt es `confirm_*` und `change_password` (Stufe A), die eingebauten Routen
+  rufen sie; die Warnungen der alten Prüfer nennen sie.
+- **`POST /auth/password` nahm einen API-Key an.** Das Konto kam aus `current_user()`, und das
+  fällt ohne Sitzung auf den Key zurück: Ein Automaten-Key zusammen mit dem alten Passwort änderte
+  das Passwort eines Menschen und beendete dabei alle seine Sitzungen. `/auth/reauth` weist Keys
+  seit 0.20.1 ab; der Passwortwechsel jetzt auch (403, `api.password_needs_session`). Ein Key ist
+  eine Maschinen-Anmeldung, das alte Passwort zu kennen macht ihn nicht zum Menschen.
 
 ### Geändert
 
@@ -253,6 +337,15 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   `check_pin`, `check_ldap`, `verify_totp`, `verify_recovery_code`, `is_locked`, `is_pin_locked`,
   `rate_ok`, `record_login`, `versuch_beginnen`, `login_redirect_after`) nennen jetzt den
   Baustein statt der Route.
+- **`/auth/reauth` (Absenden) und `POST /auth/password` sind dünne Hüllen um `confirm_*` bzw.
+  `change_password`.** Der Ablauf zog aus `router.py` in die Bausteine; die Routen wählen nur noch
+  das ausgefüllte Feld bzw. lesen das JSON und geben das Ergebnis aus. Antworten, Texte, Audit- und
+  Log-Zeilen bleiben gleich (gemessen gegen eigene Routen über dieselben Bausteine) bis auf die
+  Punkte unter „Was beim Update auffällt“. `POST /auth/password` prüft das alte Passwort jetzt im
+  Threadpool — vorher lief argon2 in der Ereignisschleife und hielt für die Dauer der Prüfung jede
+  andere Anfrage des Workers an. Die Ersatztexte der C-Aliase `verify_user_password`,
+  `verify_user_pin`, `verify_totp`, `is_reauth_locked` und `is_password_change_locked` nennen die
+  neuen Bausteine.
 - **`API.md` ist nach Stufe gegliedert** (A „öffentlich, stabil ab 1.0“, B „für
   Fortgeschrittene“, C als Tabelle „Veraltet — fällt mit 1.0 weg“ mit Ersatz statt Erklärung) und
   erklärt vorab, was jede Stufe zusagt. Neu
@@ -268,14 +361,15 @@ im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim Update a
   (Konstanten: beim Lesen) eine `DeprecationWarning` aus, die den Ersatz nennt. Den Ersatz je Name
   führt `API.md` („C · Veraltet — fällt mit 1.0 weg“). **Mit 1.0 fallen alle alten Namen weg.**
   - **Anmelde-Prüfer ohne eigene Drossel — Ersatz: `login_password`, `login_pin`,
-    `login_totp` bzw. die eingebauten Routen (`/auth/reauth`, `/auth/resource/{name}`,
+    `login_totp`, für den Step-up `confirm_password`, `confirm_pin`, `confirm_totp`, für den
+    Passwortwechsel `change_password` bzw. die eingebauten Routen (`/auth/resource/{name}`,
     `/auth/saml/acs`), eigenes Aussehen per `set_template`:** `check_password` → `_check_password`,
     `check_pin` → `_check_pin`, `check_ldap` → `_check_ldap`, `check_saml` → `_check_saml`,
     `check_resource` → `_check_resource`, `verify_totp` → `_verify_totp`, `verify_recovery_code` →
     `_verify_recovery_code`, `verify_user_password` → `_verify_user_password`, `verify_user_pin` →
     `_verify_user_pin`.
-  - **Sperren und Buchhaltung — Ersatz: `login_*` bzw. die eingebauten Routen, die atomar prüfen
-    und buchen:** `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`,
+  - **Sperren und Buchhaltung — Ersatz: `login_*`, `confirm_*`, `change_password` bzw. die
+    eingebauten Routen, die atomar prüfen und buchen:** `is_locked` → `_is_locked`, `is_pin_locked` → `_is_pin_locked`,
     `is_password_change_locked` → `_is_password_change_locked`, `is_reauth_locked` →
     `_is_reauth_locked`, `is_resource_locked` → `_is_resource_locked`, `is_totp_setup_locked` →
     `_is_totp_setup_locked`, `rate_ok` → `_rate_ok`, `record_login` → `_record_login`,

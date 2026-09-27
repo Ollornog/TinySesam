@@ -1050,8 +1050,10 @@ _apidoc = _lies("API.md")
 # seit 0.22.0 auch die Konstanten (`— Konstante`, Erklärung aus dem `#:`-Block darüber), die
 # Methoden von TinySesamConfig und die Funktions-Exporte: Mit der Einstufung stehen sie als
 # Zusage (A) oder Baustein (B) da — ohne Erklärung wären sie eine Zusage ins Blaue. Ebenso die
-# Methoden und Konstanten des Ergebnistyps `LoginResult` (0.22.0); seine Felder prüft der Generator.
-_leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|LoginResult\.)?[A-Za-z_][A-Za-z0-9_]*)"
+# Methoden und Konstanten der Ergebnistypen `LoginResult` und `PasswordChangeResult` (0.22.0); ihre
+# Felder prüft der Generator.
+_leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|LoginResult\.|PasswordChangeResult\.)?"
+                    r"[A-Za-z_][A-Za-z0-9_]*)"
                     r"(?:\(|` — Property|` — Konstante).*\n\n—$", _apidoc, _re.M)
 assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommentar:\n  " +
                    "\n  ".join(_leer[:8]) +
@@ -1060,6 +1062,7 @@ assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommenta
 # Name → Ersatz (seit 0.22.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
 for _kopf in ("## A · Methoden von `TinySesam`", "## B · Methoden von `TinySesam`",
               "## A · Ergebnis der Anmelde-Bausteine: `tinysesam.LoginResult`",
+              "## A · Ergebnis des Passwortwechsels: `tinysesam.PasswordChangeResult`",
               "## C · Veraltet — fällt mit 1.0 weg"):
     assert _kopf in _apidoc, f"API.md ohne Abschnitt {_kopf!r} — Gliederung nach Stufe fehlt"
 _c_zeilen = _re.findall(r"^\| `(\w+)` \| (?:Methode|Konstante) \| (.+) \|$", _apidoc, _re.M)

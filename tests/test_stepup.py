@@ -869,10 +869,21 @@ os.remove(db8)
 # Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
 # Seit 0.22.0 stehen die Anmeldeschritte in `login_password`/`login_pin`/`login_totp`
 # (die Routen rufen sie): Sie sind selbst Senken — eine Route, die sie mit einem Konto aus einer
-# Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft.
+# Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft. Ebenso der Step-up
+# (`confirm_*`, `POST /auth/reauth` ruft sie) und der Passwortwechsel (`change_password`, beendet
+# die anderen Sitzungen des Kontos). Seit diesen Bausteinen misst der Wächter drei Formen mehr:
+# eine Senke, die nur ÜBERGEBEN wird (`run_in_threadpool(auth.change_password, …)` in
+# `POST /auth/password` — kein Aufruf am Attribut, bis dahin unsichtbar); Helfer, die als
+# Methode gerufen werden (`self._nur_mit_sitzung(…)` — sonst prüfte er die Quelle der Bausteine
+# nicht, nur die der Routen); und eine Funktion, die selbst so heisst wie eine Senke: Ihr Rumpf
+# hat Sitzungswirkung, auch wenn er keine andere Senke ruft (`change_password` beendet Sitzungen
+# über den Store). (Mutationsprobe: in `TinySesam._nur_mit_sitzung` `current_user` statt
+# `session_user` → rot an `_bestaetigen`, `confirm_*` und `change_password`; ohne die
+# Methoden-Helfer grün.)
 SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",
           "set_session_mfa", "set_session_factors", "logout",
-          "login_password", "login_pin", "login_totp"}
+          "login_password", "login_pin", "login_totp",
+          "confirm_password", "confirm_pin", "confirm_totp", "change_password"}
 KEY_QUELLEN = {"current_user", "_current_user_ermitteln", "require_user", "require_role",
                "require_admin", "_enforce"}
 
@@ -898,10 +909,15 @@ def _sitzungswirkung(quelltext, datei="?"):
     for fn in fns:
         senke, quelle, helfer = False, set(), set()
         for k in _eigene_knoten(fn):
-            if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute) and k.func.attr in SENKEN:
+            # Aufgerufen oder nur übergeben (`run_in_threadpool(auth.change_password, …)`).
+            if isinstance(k, ast.Attribute) and k.attr in SENKEN:
                 senke = True
             if isinstance(k, ast.Call) and isinstance(k.func, ast.Name) and k.func.id in je_name:
                 helfer.add(k.func.id)
+            if (isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)
+                    and isinstance(k.func.value, ast.Name) and k.func.value.id == "self"
+                    and k.func.attr in je_name):
+                helfer.add(k.func.attr)          # `self._nur_mit_sitzung(…)`: Methode desselben Moduls
             name = k.attr if isinstance(k, ast.Attribute) else k.id if isinstance(k, ast.Name) else None
             if name in KEY_QUELLEN:
                 quelle.add(name)
@@ -923,7 +939,7 @@ def _sitzungswirkung(quelltext, datei="?"):
     wirkend, verstoesse = set(), []
     for fn in fns:
         senke, quelle = huelle(fn, set())
-        if senke:
+        if senke or fn.name in SENKEN:        # eine Senke selbst: ihr Rumpf zählt
             wirkend.add(fn.name)
             if quelle:
                 verstoesse.append(f"{datei}:{fn.lineno} {fn.name} ← {sorted(quelle)}")
@@ -940,6 +956,14 @@ _PROBEN = {
     "depends": ("def r(request, u=Depends(auth.require_user)):\n    auth.logout(request, resp)\n", True),
     "sauber": ("def r(request):\n    me = auth.session_user(request)\n"
                "    auth.apply_factor(request, me['id'], 'pin')\n", False),
+    "uebergeben": ("async def r(request):\n    auth.current_user(request)\n"
+                   "    return await run_in_threadpool(auth.change_password, request, 'a', 'b')\n", True),
+    "methode": ("class T:\n    def _h(self, request):\n        return self.current_user(request)\n"
+                "    def c(self, request):\n        u = self._h(request)\n"
+                "        self.store.rotate_session(u, 1)\n", True),
+    "senke_selbst": ("class T:\n    def change_password(self, request):\n"
+                     "        u = self.current_user(request)\n        self.store.delete_user_sessions_except(u)\n",
+                     True),
     "verschachtelt": ("def aussen():\n    auth.current_user(x)\n"
                       "    def innen(request):\n        auth.complete_totp(t)\n", False),
 }
@@ -956,7 +980,9 @@ assert not _verstoesse, ("Konto aus einer Quelle, die einen API-Key annimmt, an 
                          "Sitzungswirkung — `session_user()` nehmen: " + "; ".join(_verstoesse))
 # Ohne Treffer misst der Wächter nichts: Die bekannten Stellen müssen gefunden werden.
 _erwartet = {"pin_submit", "reauth_submit", "totp_submit", "totp_setup_confirm", "login_submit",
-             "_abmelden", "apply_factor", "login_password", "login_pin", "login_totp"}
+             "_abmelden", "apply_factor", "login_password", "login_pin", "login_totp",
+             "_bestaetigen", "confirm_password", "confirm_pin", "confirm_totp", "change_password",
+             "change_own_password"}
 assert _erwartet <= _wirkend, f"Wächter findet {sorted(_erwartet - _wirkend)} nicht mehr — Aufbau geändert?"
 ok(f"Wächter: {len(_wirkend)} Stellen mit Sitzungswirkung, keine nimmt ihr Konto aus einer Key-Quelle "
    f"({len(_PROBEN)} Selbstproben)")

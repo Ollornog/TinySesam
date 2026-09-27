@@ -341,6 +341,10 @@ und es fliegt keine Ausnahme. Das von `complete_totp` zurückgegebene Token erse
 beim Step-up — es gehört ins Cookie, sonst hält das Cookie eine tote Sitzung. Die Bausteine
 `login_*` erledigen beides.
 
+Dasselbe Muster gibt es für einen eigenen Step-up ([Eigene Step-up-Seite](#eigene-step-up-seite),
+`confirm_*`) und für den Passwortwechsel ([Eigene Passwortwechsel-Seite](#eigene-passwortwechsel-seite),
+`change_password`).
+
 ### CSRF auf eigenen Seiten
 
 Jedes Formular, das die App selbst rendert, braucht das Token in einem versteckten Feld `_csrf`
@@ -458,6 +462,98 @@ Eine vierstellige PIN hat 10.000 Werte. Das Raten bremsen ihr eigener Zähler (`
 Konto, die Adress-Schwelle beim `ip_attempt_factor`-fachen) und die Sperre nach Fehlversuchen in
 Folge (`account_max_consecutive_failures`, siehe *Härtung*) — beide stehen im Admin-Panel direkt bei
 der Login-Sperre. Nicht gewollt? `pin_login=False`.
+
+## Eigene Step-up-Seite
+
+`Depends(auth.require(mfa=True))` schickt Browser auf die eingebaute Seite `/auth/reauth` und
+antwortet anderen Clients mit 403 samt `X-TinySesam-Reauth` ([oben](#pin-und-step-up-für-sensible-routen)).
+Wer nur ihr Aussehen ändern will, ersetzt die Seite: `auth.set_template("reauth", fn)`. Eine eigene
+Seite — der Dialog einer Single-Page-App, ein Formular vor einem gefährlichen Knopf — ruft den
+Baustein, den die eingebaute Route selbst ruft: `auth.confirm_password(…)`, `auth.confirm_pin(…)`
+oder `auth.confirm_totp(…)`. Sie drosseln, zählen und sperren genau wie `POST /auth/reauth`, denn
+diese Route ist nichts anderes als dieser Aufruf: CSRF-Prüfung, eine volle Sitzung (ein API-Key
+zählt nicht), nur ein Verfahren, das `stepup_options()` diesem Konto anbietet (`stepup_methods`,
+`stepup_strict`), die Drossel je IP, der vorab gebuchte Versuch im eigenen Topf
+(`reauth_max_attempts` — Tippfehler hier sperren nicht die Anmeldung), Audit- und Sicherheits-Log,
+dann die frische Bestätigung mit neuem Sitzungs-Token.
+
+```python
+from html import escape
+
+from fastapi import Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db", lang="de"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.get("/gefaehrlich")         # eine sensible Route: nur mit frischer Bestätigung
+def gefaehrlich(user=Depends(auth.require(mfa=True))):
+    return {"user": user["username"]}
+
+
+@app.post("/bestaetigen")        # ein schlichtes `def`: FastAPI führt es im Threadpool aus
+def bestaetigen(request: Request, password: str = Form(""), next: str = Form(""),
+                csrf: str = Form("", alias="_csrf")):
+    result = auth.confirm_password(request, password, next=next, csrf=csrf)
+    if not result:               # falsch, gesperrt, keine Sitzung, nicht angeboten …: nichts ist frisch
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    return result.redirect()     # nach next, mit dem erneuerten Sitzungs-Cookie
+```
+
+Das Ergebnis ist dasselbe `tinysesam.LoginResult` wie beim Anmelden: Bei Erfolg ist `done` wahr, und
+`redirect()` bzw. `set_cookie(response)` legt das erneuerte Token ins Cookie — das alte gilt noch
+`session_rotation_grace_sec` lang weiter, ohne die Frische. Bei einem Misserfolg ist nichts frisch
+geworden, und `reason` sagt, warum: `missing` (leer, 400, zählt nicht), `invalid` (401), `locked`
+oder `ratelimit` (429), `method_disabled` (403: diesem Konto nicht angeboten; bei leerem
+`stepup_options()` hat es nichts, womit es bestätigen könnte), `no_session` (401 mit der Login-Seite
+als `next_url`; 403, wenn die Anfrage statt einer Sitzung einen API-Key zeigt). `confirm_totp` nimmt
+nur einen TOTP-Code, keinen Einmal-Code — wie die eingebaute Seite. Synchron, wie `login_*`.
+
+## Eigene Passwortwechsel-Seite
+
+Die eingebaute Route ist `POST /auth/password` (JSON mit `current` und `new`; die Konto-Seite
+benutzt sie). Eine eigene Seite ruft den Baustein, den diese Route ruft:
+`auth.change_password(request, current, new, csrf=…)`. Das alte Passwort ist ein Geheimnis wie am
+Login, also gilt derselbe Dreiklang: die Drossel je IP, der vorab gebuchte Versuch im eigenen Topf
+(`password_change_max_attempts`, je Konto — ein Tippfehler hier sperrt nicht die Anmeldung), Audit-
+und Sicherheits-Log. Geprüft wird gegen das Konto der Sitzung, nie gegen einen Namen, der auf jemand
+anderen auflösen könnte; danach das neue gegen die Passwortregel (`password_policy_error`). Bei
+Erfolg enden die anderen Sitzungen des Kontos (die eigene bleibt), offene Adresswechsel-Links fallen
+weg, und API-Keys bleiben mit Absicht gültig — `result.api_keys_active` sagt, wie viele, damit deine
+Seite es auch sagen kann.
+
+```python
+from html import escape
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from tinysesam import TinySesam, TinySesamConfig
+
+auth = TinySesam(TinySesamConfig(db_path="app.db", lang="de"))
+app = FastAPI()
+app.include_router(auth.router())
+
+
+@app.post("/passwort")           # ein schlichtes `def`: FastAPI führt es im Threadpool aus
+def passwort(request: Request, current: str = Form(""), new: str = Form(""),
+             csrf: str = Form("", alias="_csrf")):
+    result = auth.change_password(request, current, new, csrf=csrf)
+    if not result:               # falsch, gesperrt, zu schwach, keine Sitzung …: nichts geändert
+        return HTMLResponse(f"<p>{escape(result.message)}</p>", status_code=result.status)  # dein Formular
+    keys = f" {result.api_keys_active} API-Key(s) gelten weiter." if result.api_keys_active else ""
+    return HTMLResponse(f"<p>Passwort geändert, deine anderen Sitzungen sind abgemeldet.{keys}</p>")
+```
+
+Das Ergebnis ist ein `tinysesam.PasswordChangeResult`: `ok` (auch sein Wahrheitswert), `reason`
+(einer aus `PasswordChangeResult.REASONS`: `ok`, `missing`, `invalid`, `locked`, `ratelimit`,
+`policy`, `no_session`), `status` (was `POST /auth/password` antwortet: 200, 400, 401, 403, 429),
+`message` (der übersetzte Text; bei `policy` die verletzte Regel) und `api_keys_active`. Es braucht
+eine volle Sitzung — ein API-Key zählt nicht (`no_session`, 403): Ein Maschinen-Zugang ändert nicht
+das Passwort eines Menschen. Ein leeres altes Passwort ist `missing` (400) und zählt nicht als
+Fehlversuch. Synchron, wie `login_*`.
 
 ## Den ersten Admin bestimmen
 
@@ -1174,9 +1270,10 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `has_pin`, `disable_pin`, `generate_recovery_codes`, `recovery_codes_remaining`,
   `remove_passkey`, `totp_begin` → `totp_confirm`, `totp_enrollment_user`, `mfa_enrollment_allowed`,
   `federated_only` (reines SSO-Konto: kein Passwort zu ändern), `password_policy_error` (die Regel für
-  ein neues Passwort), `identifier_taken` und `NAME_MAX` (ist ein Name oder eine Adresse frei, wie
-  lang darf er sein), `request_email_change` (Ergebnis an `after_response` geben) →
-  `confirm_email_change`, `stepup_fresh`, `pending_user`, `session_user`.
+  ein neues Passwort; den Wechsel selbst macht `change_password`, Stufe A), `identifier_taken` und
+  `NAME_MAX` (ist ein Name oder eine Adresse frei, wie lang darf er sein), `request_email_change`
+  (Ergebnis an `after_response` geben) → `confirm_email_change`, `stepup_fresh` (den Step-up selbst
+  machen `confirm_*`, Stufe A), `pending_user`, `session_user`.
 - **Eigenes Admin-Panel oder Betreiber-Werkzeuge:** `get_user`, `find_user`, `user_roles`,
   `set_roles`, `delete_user`, `lift_lockout` (wie `tinysesam unlock`), `list_api_keys`,
   `api_key_kind`, `verify_api_key`, `revoke_mfa_enrollment`, `list_resource_secrets`,
@@ -1239,7 +1336,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**59 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**60 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

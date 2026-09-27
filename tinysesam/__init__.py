@@ -13,6 +13,7 @@ from .config import TinySesamConfig
 from .errors import ConfigError, MailNotConfigured, MissingExtra, StateError, TinySesamError
 from .login_result import LoginResult
 from .manager import TinySesam
+from .password_change_result import PasswordChangeResult
 
 
 def current_version() -> str:
@@ -25,5 +26,5 @@ def current_version() -> str:
         return __version__
 
 
-__all__ = ["TinySesam", "TinySesamConfig", "LoginResult", "current_version",
+__all__ = ["TinySesam", "TinySesamConfig", "LoginResult", "PasswordChangeResult", "current_version",
            "TinySesamError", "ConfigError", "MissingExtra", "MailNotConfigured", "StateError"]

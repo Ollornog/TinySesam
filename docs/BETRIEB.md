@@ -75,7 +75,8 @@ jede Sitzung, bei der „Angemeldet bleiben" nicht **ausdrücklich** angehakt wu
 dauerhafte aus OIDC oder einem Anmelde-Link; `session_idle_minutes_remember`, Vorgabe aus), ein Nein des Identity Providers
 bei der Nachprüfung (4a, OIDC) und ihr Ablauf (`session_ttl_hours`, Vorgabe 7 Tage mit
 „Angemeldet bleiben", sonst `session_ttl_transient_hours`), die eigene Passwortänderung (alle
-anderen Sitzungen), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
+anderen Sitzungen — über `POST /auth/password` wie über eine eigene Seite mit `change_password`;
+nur aus einer Sitzung, ein API-Key ändert kein Passwort), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
 des Kontos. Eine Sitzung, deren Konto gesperrt ist, öffnet nichts mehr, auch wenn sie noch nicht
 abgelaufen ist — und kein Anmeldeweg legt einem gesperrten Konto eine neue an (H-18).
 
@@ -83,6 +84,11 @@ Ein **Step-up** (Reauth, erneuter Faktor) gibt der Sitzung ein neues Token (F-06
 noch `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter, damit eine Anfrage aus einem zweiten
 Tab, die in dem Moment schon unterwegs war, nicht scheitert (A-6) — ohne Step-up-Frische (keine
 Sudo-Route), nicht als eigene Sitzung in der Liste, und es endet mit der neuen. `0` = sofort tot.
+Eine eigene Step-up-Seite der App (`confirm_password`, `confirm_pin`, `confirm_totp`, seit 0.22.0)
+verhält sich genauso — `/auth/reauth` ruft dieselben Bausteine: Fehlgriffe zählen im Topf `reauth`
+(`reauth_max_attempts`, nur je Konto) und stehen als `failed verification` im Sicherheits-Log (auf
+diese Zeile bannt fail2ban nicht); die Sperre betrifft den Step-up, nicht die Anmeldung, und läuft
+mit dem Fenster (`lockout_window_sec`) ab.
 
 Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
 
@@ -488,7 +494,7 @@ Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
 | OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
 | Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
 | Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
-| API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) |
+| API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) und ändert kein Passwort (`POST /auth/password`, `change_password`: 403, seit 0.22.0) |
 
 **Die PIN als Folgefaktor** (G7, seit 2026-09-26): Nach dem ersten Faktor einer Kette fragt
 `/auth/pin` nur die PIN des Kontos der halben Sitzung, ohne Namensfeld — auch mit `pin_login=False`

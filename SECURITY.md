@@ -92,6 +92,15 @@ rate limit, open-redirect protection via `safe_next`). Even so: review it yourse
   step of the sign-in; everywhere else the *next* code is needed to sign in. Integration tests that
   call `totp_confirm(uid, now())` and then sign in (`POST /auth/totp`) with the same code fail
   since T-13 — confirm with the previous time step's code instead.
+- **Your own sign-in, step-up or password-change page: build it on the building blocks.**
+  `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
+  and `change_password` (tier A, since 0.22.0) throttle, count, lock and log exactly like the
+  built-in routes — those routes call them. The inner checks (`_check_password`,
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` and their old tier-C names) do none
+  of that: a page built on them lets passwords, PINs and codes be guessed as fast as the server
+  answers, with no line for fail2ban. An API key never counts for these building
+  blocks — it confirms no person and changes no password (`POST /auth/password` refuses it with a
+  403 since 0.22.0).
 
 ## Supported versions
 

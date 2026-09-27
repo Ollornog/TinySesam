@@ -1,4 +1,4 @@
-"""Das Ergebnis eines Anmeldeschritts: `login_password`, `login_pin`, `login_totp` (0.22.0).
+"""Das Ergebnis eines Anmeldeschritts: `login_password`, `login_pin`, `login_totp` — und einer Step-up-Bestätigung: `confirm_password`, `confirm_pin`, `confirm_totp` (0.22.0).
 
 PO-Befund 2026-09-26: Die README zeigte als Weg zu einer eigenen Login-Seite `check_password` +
 `start_session`. Die inneren Prüfer drosseln aber nicht — Sperre, Fehlversuchszähler, Serie,
@@ -9,6 +9,13 @@ Der öffentliche Weg sind seither die drei `login_*`-Methoden. Sie tun genau, wa
 eingebauten Routen tun, weil diese sie aufrufen (eine Quelle, kein Drift). Zurück kommt ein
 `LoginResult`: Erfolg oder der Grund dagegen, mit dem HTTP-Status und dem Text, den die eingebaute
 Seite zeigt.
+
+Seit dem PO-Entscheid vom 2026-09-27 liefern auch die Step-up-Bausteine `confirm_*` (die
+Bestätigung vor heiklen Aktionen, `POST /auth/reauth` ruft sie) ein `LoginResult`: Eine
+Bestätigung ist eine erneute Anmeldung an der laufenden Sitzung, und die Felder passen ohne Rest —
+bei Erfolg `done=True` und kein offener Faktor, `redirect()`/`set_cookie()` setzen das erneuerte
+Token (F-06). Ein eigener Typ hätte jedes Feld und beide Methoden wiederholt, und eine eigene
+Seite lernte zwei Formen für dasselbe Muster.
 
 Die Namen sind englisch (PO-Entscheid 2026-09-27), wie der Rest der Stufe-A-Oberfläche. Die Werte
 von `reason` sind kurze englische Kürzel für Programme; die Audit- und Log-Zeilen (fail2ban!)
@@ -34,18 +41,19 @@ from typing import Any, ClassVar, Optional
 
 @dataclass(frozen=True)
 class LoginResult:
-    """Was ein Anmeldeschritt ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text.
+    """Was ein Anmeldeschritt oder eine Step-up-Bestätigung ergeben hat: Erfolg oder der Grund dagegen, mit HTTP-Status und Text.
 
     `if not result:` fragt nach dem Erfolg (`ok`). Bei Erfolg setzt `result.redirect()` das
     Sitzungs-Cookie und leitet zum nächsten Faktor oder zum Ziel; bei einem Misserfolg gibt es
     keine Sitzung, und `status`/`message` sind das, was die eingebaute Seite zeigen würde.
     """
 
-    #: Hat der Schritt angemeldet? Genau dann, wenn `reason == "ok"`; `bool(result)` ist derselbe Wert.
+    #: Hat der Schritt angemeldet (bzw. frisch bestätigt)? Genau dann, wenn `reason == "ok"`;
+    #: `bool(result)` ist derselbe Wert.
     ok: bool
     #: Warum (nicht): einer der Werte aus `REASONS`. Für Programme — der Text steht in `message`.
     reason: str
-    #: Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 404, 429 oder 503.
+    #: Der HTTP-Status der eingebauten Seite: 303 bei Erfolg, sonst 400, 401, 403, 404, 429 oder 503.
     status: int
     #: Der übersetzte Text für den Nutzer (Sprache aus `config.lang`); leer bei Erfolg.
     message: str = ""
@@ -64,10 +72,12 @@ class LoginResult:
     #: (Passwort, PIN oder Code falsch, 401); `locked` (Sperre nach Fehlversuchen, 429);
     #: `locked_series` (zu viele Fehlversuche in Folge, läuft nicht ab, 429); `ratelimit` (Drossel
     #: je IP, 429); `directory_down` (LDAP-Verzeichnis nicht erreichbar, 503); `method_disabled`
-    #: (Verfahren abgeschaltet oder hier kein Erstfaktor, 404); `no_session` (TOTP ohne Sitzung,
-    #: 401 — nur bei `login_totp`). `locked` umfasst auch den Aufschub hinter einer schwebenden
-    #: Verzeichnis-Anmeldung (G9) — sonst verriete der Grund, dass gerade jemand anderes unter der
-    #: Kennung anmeldet.
+    #: (Verfahren abgeschaltet oder hier kein Erstfaktor, 404; bei `confirm_*` 403: dieses Konto
+    #: kann hier nicht mit diesem Verfahren bestätigen, `stepup_options`); `no_session` (ohne
+    #: Sitzung, 401 — bei `login_totp` und `confirm_*`; bei `confirm_*` 403, wenn die Anfrage
+    #: statt einer Sitzung einen API-Key zeigt). `locked` umfasst auch den Aufschub hinter einer
+    #: schwebenden Verzeichnis-Anmeldung (G9) — sonst verriete der Grund, dass gerade jemand
+    #: anderes unter der Kennung anmeldet.
     REASONS: ClassVar[tuple] = ("ok", "missing", "invalid", "locked", "locked_series", "ratelimit",
                                 "directory_down", "method_disabled", "no_session")
 

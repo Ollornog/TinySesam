@@ -117,9 +117,14 @@ assert "name=pin" in page and "PIN zur Bestätigung" in page
 assert "name=password" not in page, "stepup_methods=['pin'] → kein Passwortfeld"
 r = c.post("/auth/reauth", data={"pin": "9999", "next": "/sensibel"})
 assert r.status_code == 401
-# Passwort wird NICHT akzeptiert, wenn nur PIN erlaubt ist
+# Passwort wird NICHT akzeptiert, wenn nur PIN erlaubt ist. Seit 0.22.0 (`confirm_password`)
+# ist das 403 `method_disabled` und kein Fehlversuch: Geprüft wird ein nicht angebotenes Verfahren
+# gar nicht erst — bis dahin 401, und die Anfrage zählte in den Topf `reauth`.
+_vorher = auth.store.count_fails(0, username="max", method="reauth")
 r = c.post("/auth/reauth", data={"password": "geheim12345-lang-genug", "next": "/sensibel"})
-assert r.status_code == 401, "Passwort darf hier nicht durchgehen"
+assert r.status_code == 403, "Passwort darf hier nicht durchgehen"
+assert auth.store.count_fails(0, username="max", method="reauth") == _vorher, "kein Fehlversuch"
+assert c.get("/sensibel", follow_redirects=False).status_code == 307, "die Sitzung ist nicht frisch"
 r = c.post("/auth/reauth", data={"pin": "2468", "next": "/sensibel"}, follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/sensibel"
 assert c.get("/sensibel", headers={"accept": "application/json"}).json() == {"ok": "max"}

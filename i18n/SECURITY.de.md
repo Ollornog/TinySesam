@@ -98,6 +98,15 @@ Rate-Limit, Open-Redirect-Schutz via `safe_next`). Trotzdem: vor produktivem Ein
   *nächsten* Code. Integrationstests, die `totp_confirm(uid, now())` rufen und sich danach mit
   demselben Code anmelden (`POST /auth/totp`), werden seit T-13 rot — dort mit dem Code des
   vorigen Zeitschritts bestätigen.
+- **Eigene Login-, Step-up- oder Passwortwechsel-Seite: auf den Bausteinen bauen.**
+  `login_password`, `login_pin`, `login_totp`, `confirm_password`, `confirm_pin`, `confirm_totp`
+  und `change_password` (Stufe A, seit 0.22.0) drosseln, zählen, sperren und protokollieren genau
+  wie die eingebauten Routen — die rufen sie. Die inneren Prüfer (`_check_password`,
+  `_verify_user_password`, `_verify_user_pin`, `_verify_totp` und ihre alten Namen der Stufe C) tun
+  nichts davon: Auf einer Seite darüber lassen sich Passwörter, PINs und Codes so schnell raten, wie
+  der Server antwortet — ohne Zeile für fail2ban. Ein API-Key zählt bei diesen
+  Bausteinen nie: Er bestätigt keinen Menschen und ändert kein Passwort (`POST /auth/password`
+  weist ihn seit 0.22.0 mit 403 ab).
 
 ## Unterstützte Versionen
 

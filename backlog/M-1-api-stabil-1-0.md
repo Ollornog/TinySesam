@@ -96,6 +96,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
 | C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (50 Aliase, Wächter, Warnfilter in `run_all.py`) |
 | sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`login_*`, `LoginResult`, die Routen rufen ihn; englisch seit dem Nachtrag unten) |
+| dasselbe für eigene Step-up- und Passwortwechsel-Seiten (PO-Entscheid 2026-09-27) | **gebaut** — `confirm_*` (→ `LoginResult`), `change_password` (→ `PasswordChangeResult`), `/auth/reauth` und `POST /auth/password` rufen sie; Nachtrag unten |
 | zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.22.0 |
 
 **Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
@@ -180,5 +181,30 @@ deutsche Schlüssel — der Bericht von `federation_bind_existing` (`quelle`, `a
 (`automat`, `mensch`) und der Kontext für eigene Seiten (`ctx["praefix"]`, `ctx["zweck"]`). Der
 Wächter misst Namen, keine Werte; ob diese Schlüssel vor 1.0 englisch werden, ist eine eigene
 Entscheidung — jede Änderung dort bricht Code, der sie liest.
+
+**Nachtrag 2026-09-27 (PO-Entscheid): Bausteine für eigene Step-up- und Passwortwechsel-Seiten**
+(Stufe A, englisch). Nach dem Login-Baustein fehlte dasselbe für die Bestätigung vor heiklen
+Aktionen und den eigenen Passwortwechsel: Es gab nur die Routen `/auth/reauth` und
+`POST /auth/password`, und die inneren Prüfer (`_verify_user_password`, `_verify_user_pin`,
+`_verify_totp`) drosseln nicht. Jetzt:
+
+- `confirm_password(request, password, *, next="", csrf=None)`, `confirm_pin(…, pin, …)`,
+  `confirm_totp(…, code, …)` → **`LoginResult`**. Drei Namen wie bei `login_*` statt eines
+  `confirm(…)` mit drei optionalen Feldern: je Aufruf genau ein Geheimnis, keine Reihenfolge, die
+  still ein Feld übergeht. `LoginResult` statt eines eigenen Typs: Eine Bestätigung ist eine
+  erneute Anmeldung an der laufenden Sitzung, die Felder passen ohne Rest, und `redirect()`/
+  `set_cookie()` braucht es für das erneuerte Token. `next` kam gegenüber dem Auftrag hinzu — wie
+  bei `login_*`, damit `redirect()` ein geprüftes Ziel hat.
+- `change_password(request, current, new, *, csrf=None)` → **`PasswordChangeResult`** (neuer
+  Export): `ok`, `reason`, `status`, `message`, `api_keys_active`. Ein eigener Typ, weil ein
+  Passwortwechsel niemanden anmeldet und kein Token dreht.
+- Die Routen sind Hüllen darum; ein AST-Wächter (`tests/test_bestaetigen.py`, h) verbietet ihnen
+  jeden inneren Prüfer, gemessen ist die Gleichheit Zeile für Zeile (g). Drei Verhaltensänderungen
+  an den Routen stehen im CHANGELOG unter „Was beim Update auffällt“: `POST /auth/password` nimmt
+  keinen API-Key mehr (403), ein leeres Feld zählt an beiden nicht mehr, ein nicht angebotenes
+  Verfahren an `/auth/reauth` ist 403 ohne Fehlversuch.
+
+Stand 365 Namen: A 251 (+ 4 Methoden, der Export und 6 Namen an `PasswordChangeResult`), B 64,
+C 50; der Namens-Wächter misst 593 Einträge.
 
 <!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->

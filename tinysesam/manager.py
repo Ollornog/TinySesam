@@ -41,6 +41,7 @@ from . import security
 from .ldap_ import VERBINDUNGS_TIMEOUT as _LDAP_TIMEOUT
 from ._veraltet import Veraltet
 from .login_result import LoginResult
+from .password_change_result import PasswordChangeResult
 
 #: IP und angemeldetes Konto der Anfrage, die gerade bearbeitet wird (B5-02, B5-04).
 #:
@@ -2887,8 +2888,9 @@ class TinySesam:
         kein Warteplatz frei ist. Ohne Deckel hielte eine Salve jeden Worker-Thread fest.
 
         Das Warten blockiert den aufrufenden Thread — richtig für die synchronen Routen (sie laufen
-        im Threadpool). Die einzige asynchrone Route mit Vorbuchung (`password_change`) schwebt nie:
-        Ihr Topf zählt nur die eigene Methode, und die bucht nie offen."""
+        im Threadpool). Auch `POST /auth/password` ruft seine Prüfung seit 0.22.0 im Threadpool
+        (`change_password`); sie schwebt ohnehin nie: Ihr Topf zählt nur die eigene Methode, und
+        die bucht nie offen."""
         if not self._schwebe_plaetze.acquire(blocking=False):
             return None, "schwebend"
         try:
@@ -4520,6 +4522,214 @@ class TinySesam:
         # anderen offenen Reiter.
         erneuert = self.complete_totp(sitzungs_token)
         return self._angemeldet(request, erneuert or sitzungs_token, bool(erneuert), pu["id"], nxt)
+
+    # ---------- Step-up und Passwortwechsel für eigene Seiten (Stufe A, 0.22.0) ----------
+    # PO-Entscheid 2026-09-27: dasselbe Muster wie `login_*` für die Bestätigung vor heiklen
+    # Aktionen (bis dahin nur die eingebaute Seite `/auth/reauth`) und für den eigenen
+    # Passwortwechsel (bis dahin nur `POST /auth/password`). Die inneren Prüfer
+    # (`_verify_user_password`, `_verify_user_pin`, `_verify_totp`) drosseln nicht; diese Methoden
+    # tun, was die Routen tun — weil die Routen sie rufen. `tests/test_bestaetigen.py` hält per AST
+    # fest, dass keine der beiden Routen einen inneren Prüfer selbst ruft, und misst eigene Seiten
+    # gegen die eingebauten (dieselben Status, Audit-, Log- und Zählerzeilen).
+
+    #: Wer eine Bestätigung oder einen Passwortwechsel ohne Sitzung versucht, bekommt `no_session`.
+    #: Zeigt die Anfrage statt einer Sitzung einen API-Key, heisst das 403 mit diesem Text — der
+    #: Key wird dabei nicht geprüft, er zählt hier schlicht nicht (0.20.1).
+    _OHNE_SITZUNG_KEY = {"reauth": "api.stepup_session", "password_change": "api.password_needs_session"}
+
+    def _nur_mit_sitzung(self, request, zweck: str) -> tuple:
+        """(Konto der vollen Sitzung, None) — oder (None, (Status, Textschlüssel)) für `no_session`.
+
+        Das Konto kommt aus `session_user()`, nie aus einem API-Key (0.20.1): `/auth/reauth`
+        prüfte bis dahin den Faktor des Kontos aus `current_user()` und frischte danach die
+        Sitzung aus dem Cookie auf — bei einer HALBEN Sitzung fiel `current_user()` auf den Key
+        zurück, und Automaten-Key plus Passwort ersetzten den zweiten Faktor. Beim Passwortwechsel
+        (seit 0.22.0): Ein Automaten-Key ändert kein Passwort eines Menschen, und ohne eigene
+        Sitzung beendete der Wechsel ALLE Sitzungen des Kontos."""
+        u = self.session_user(request)
+        if u is not None:
+            return u, None
+        if self.cfg.apikey_enabled and self._extract_api_key(request):
+            return None, (403, self._OHNE_SITZUNG_KEY[zweck])
+        return None, (401, "api.not_signed_in")
+
+    def _bestaetigen(self, request: Request, verfahren: str, geheimnis, next: str,
+                     csrf: Optional[str]) -> LoginResult:
+        """Die eine Quelle von `confirm_password`, `confirm_pin` und `confirm_totp` — und damit von
+        `POST /auth/reauth`, die je nach ausgefülltem Feld eine von ihnen ruft."""
+        cfg = self.cfg
+        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+        nxt = self.safe_next(next, request)
+        u, ohne = self._nur_mit_sitzung(request, "reauth")
+        if u is None:
+            return self._anmeldung_nein("no_session", ohne[0], ohne[1],
+                                        self.browser_path(request, cfg.login_path))
+        methods = self.stepup_options(u)
+        if not methods:
+            # Dieses Konto hat kein Verfahren, mit dem es hier bestätigen könnte
+            # (`stepup_strict`, oder noch gar kein Faktor eingerichtet). Der Versuch KANN nicht
+            # gelingen — er wird deshalb nicht als Fehlversuch protokolliert, sonst füttert die
+            # aussichtslose Seite die Sperre desselben Kontos.
+            return self._anmeldung_nein("method_disabled", 403, "err.stepup_none", nxt)
+        if not geheimnis:
+            # Leer ist kein Rateversuch (0.22.0): Bis dahin zählte ein leer abgeschicktes Formular
+            # an `/auth/reauth` als Fehlversuch — wie am Login gilt jetzt `missing`, ohne Buchung.
+            return self._anmeldung_nein("missing", 400, "err.required", nxt)
+        if verfahren not in methods:
+            # Nur ein angebotenes Verfahren zählt (`stepup_options`: `stepup_methods`,
+            # `stepup_strict`). Sonst umginge eine eigene Seite mit Passwortfeld die Vorgabe
+            # `stepup_methods=["totp"]`. Geprüft wird hier nichts — also auch nichts gezählt.
+            return self._anmeldung_nein("method_disabled", 403, "err.reauth", nxt)
+        ip = self.client_ip(request)
+        # Eigener Topf (`_is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
+        # ist keine Anmeldung — wer hier steht, ist bereits angemeldet. Mit dem geteilten
+        # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
+        # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
+        # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf. Bietet die Seite die PIN
+        # an, gilt deren Topf mit (C-3): Eine am Login gesperrte PIN lässt sich hier nicht
+        # weiterraten.
+        drossel_ok = self._rate_ok(ip, login=False)
+        versuch = (self._versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
+                   if drossel_ok else None)
+        if versuch is None:
+            return self._anmeldung_nein("locked" if drossel_ok else "ratelimit", 429, "err.retry", nxt)
+        pruefer = {"totp": self._verify_totp, "pin": self._verify_user_pin,
+                   "password": self._verify_user_password}[verfahren]
+        richtig = pruefer(u["id"], geheimnis)
+        self._record_login(u["username"], ip, richtig, "reauth", versuch=versuch)
+        if not richtig:
+            return self._anmeldung_nein("invalid", 401, "err.reauth", nxt)
+        s = self._session_from_request(request)
+        neu = None
+        if s:
+            self.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
+            # Frisch bestätigt heisst neues Token (F-06): Ein mitgelesenes altes Cookie hielte
+            # sonst genau die Sitzung, die eben Sudo-Rechte bekommen hat. Das alte gilt noch
+            # `session_rotation_grace_sec` lang, ohne Frische (A-6). Das CSRF-Token bleibt.
+            neu = self.store.rotate_session(s["token_hash"], self._gnade())
+        self.audit("stepup", u["username"], ip)
+        return LoginResult._with_session(self, neu, ok=True, reason="ok", status=303, next_url=nxt,
+                                         done=True, user=self.get_user(u["id"]))
+
+    def confirm_password(self, request: Request, password: str, *, next: str = "",
+                         csrf: Optional[str] = None) -> LoginResult:
+        """Die Sitzung mit dem Passwort des eigenen Kontos frisch bestätigen (Step-up) — gedrosselt und gesperrt wie `POST /auth/reauth`, die genau diese Methode ruft.
+
+        Der Baustein für eine eigene Step-up-Seite (Dialog einer Single-Page-App, eigenes
+        Formular vor einer heiklen Aktion). Er prüft das CSRF-Token (`csrf`, sonst Header
+        `X-CSRF-Token`), verlangt eine volle Sitzung (ein API-Key zählt nicht: `no_session`, 403),
+        lässt nur ein Verfahren zu, das `stepup_options()` diesem Konto anbietet, drosselt je IP,
+        bucht den Versuch atomar im eigenen Topf vor (`reauth_max_attempts`, nicht der des
+        Logins), schreibt Audit- und Sicherheits-Log und macht die Sitzung bei Erfolg frisch
+        (`stepup_fresh`, `require(mfa=True)`) — mit neuem Token, das `redirect()`/`set_cookie()`
+        setzen. Zurück kommt ein `LoginResult`:
+
+            result = auth.confirm_password(request, password, next=next, csrf=csrf)
+            if not result:
+                return mein_dialog(fehler=result.message, status=result.status)
+            return result.redirect()     # nach next, mit dem erneuerten Sitzungs-Cookie
+
+        Ein leeres Passwort ist `missing` (400) und zählt nicht. Wirft nur, was die Route auch
+        wirft: `HTTPException(403)` bei falschem CSRF-Token, dazu Unerwartetes. Synchron: aus
+        einer `def`-Route rufen, in einer `async def`-Route über `run_in_threadpool`."""
+        return self._bestaetigen(request, "password", password, next, csrf)
+
+    def confirm_pin(self, request: Request, pin: str, *, next: str = "",
+                    csrf: Optional[str] = None) -> LoginResult:
+        """Die Sitzung mit der PIN des eigenen Kontos frisch bestätigen (Step-up) — wie `confirm_password`, gedrosselt und gesperrt wie `POST /auth/reauth`.
+
+        Wie `confirm_password`, nur mit der PIN (`pin_enabled`, das Konto hat eine). Bietet die
+        Seite die PIN an, gilt zusätzlich der PIN-Topf (C-3): Eine an der PIN-Anmeldung gesperrte
+        PIN lässt sich hier nicht weiterraten. Die Fehlversuche selbst zählen im Topf `reauth`."""
+        return self._bestaetigen(request, "pin", pin, next, csrf)
+
+    def confirm_totp(self, request: Request, code: str, *, next: str = "",
+                     csrf: Optional[str] = None) -> LoginResult:
+        """Die Sitzung mit einem TOTP-Code des eigenen Kontos frisch bestätigen (Step-up) — wie `confirm_password`, gedrosselt und gesperrt wie `POST /auth/reauth`.
+
+        Wie `confirm_password`, nur mit einem TOTP-Code (jeder gilt einmal); ein Einmal-Code
+        (Recovery) zählt hier nicht — wie auf der eingebauten Seite. Nicht zu verwechseln mit
+        `totp_confirm(user_id, code)`, das die Einrichtung von TOTP abschliesst."""
+        return self._bestaetigen(request, "totp", code, next, csrf)
+
+    def change_password(self, request: Request, current: str, new: str, *,
+                        csrf: Optional[str] = None) -> PasswordChangeResult:
+        """Das Passwort des eigenen Kontos ändern — das alte gedrosselt und gesperrt geprüft wie `POST /auth/password`, die genau diese Methode ruft.
+
+        Der Baustein für eine eigene Passwortwechsel-Seite. Er prüft das CSRF-Token (`csrf`, sonst
+        Header `X-CSRF-Token`), verlangt eine volle Sitzung (ein API-Key zählt nicht:
+        `no_session`, 403), drosselt je IP, bucht den Versuch atomar im eigenen Topf vor
+        (`password_change_max_attempts`, nur pro Konto; ein Tippfehler hier sperrt nicht die
+        Anmeldung), prüft das alte Passwort gegen das Konto der Sitzung (nie gegen eine
+        aufgelöste Kennung, R4-12), dann das neue gegen die Passwortregel. Bei Erfolg: neues
+        Passwort, alle ANDEREN Sitzungen beendet (die eigene bleibt), offene Adresswechsel-Links
+        verworfen, Audit `password_change`. Zurück kommt ein `PasswordChangeResult`:
+
+            result = auth.change_password(request, current, new, csrf=csrf)
+            if not result:
+                return mein_formular(fehler=result.message, status=result.status)
+            # result.api_keys_active: so viele API-Keys gelten weiter — sagen, nicht verschweigen
+
+        Ein leeres altes Passwort ist `missing` (400) und zählt nicht. Wirft nur, was die Route
+        auch wirft: `HTTPException(403)` bei falschem CSRF-Token, dazu Unerwartetes. Synchron:
+        aus einer `def`-Route rufen, in einer `async def`-Route über `run_in_threadpool`."""
+        self.require_csrf(request, self._csrf_mitgeschickt(request, csrf))
+
+        def nein(grund, status, text, **werte) -> PasswordChangeResult:
+            return PasswordChangeResult(ok=False, reason=grund, status=status,
+                                        message=self.t(text, **werte) if text else "")
+
+        u, ohne = self._nur_mit_sitzung(request, "password_change")
+        if u is None:
+            return nein("no_session", *ohne)
+        if not current:
+            return nein("missing", 400, "err.required")
+        ip = self.client_ip(request)
+        # Das alte Passwort ist ein Geheimnis wie am Login — also derselbe Dreiklang aus
+        # Drossel, Sperre und Protokoll. Ohne ihn war `/auth/password` ein stilles, unbegrenztes
+        # Passwort-Orakel: beliebig viele Versuche, nie eine 429, keine Zeile im Sicherheits-
+        # Log, kein Fehlversuch in `login_attempt` — während derselbe Fehlversuch am Login
+        # nach wenigen Anläufen sperrt (R4-10; die Login-Schwelle ist `max_login_attempts`,
+        # Vorgabe 5 und im Panel einstellbar).
+        #
+        # Die Sperre ist ein EIGENER Topf (`_is_password_change_locked`, eigene Schwelle
+        # `password_change_max_attempts`), nicht der des Logins: Mit dem geteilten Zähler
+        # sperrten fünf Tippfehler hier die Anmeldung für 15 Minuten — samt dieser Route, über
+        # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
+        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`_rate_ok`),
+        # protokolliert auch.
+        drossel_ok = self._rate_ok(ip, login=False)
+        versuch = self._versuch_beginnen(u["username"], ip, "password_change") if drossel_ok else None
+        if versuch is None:
+            return nein("locked" if drossel_ok else "ratelimit", 429, "api.too_many")
+        # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
+        # `_check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
+        # FREMDES Konto auflösen (Benutzername des Angreifers = E-Mail des Opfers, R4-12).
+        # Dann riet man hier nicht sein eigenes Passwort, sondern dessen — und der Treffer
+        # setzte still das eigene Passwort, blieb also unsichtbar.
+        richtig = self._verify_user_password(u["id"], current)
+        # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
+        # (`_record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
+        self._record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
+        if not richtig:
+            return nein("invalid", 403, "api.password_wrong")
+        mangel = self.password_policy_error(new or "", username=u["username"], email=u.get("email"), api=True)
+        if mangel:
+            return PasswordChangeResult(ok=False, reason="policy", status=400, message=mangel)
+        self.set_password(u["id"], new)
+        # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
+        s = self._session_from_request(request)
+        self.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
+        # Ein offener Adresswechsel stammt womöglich aus einer der eben beendeten Sitzungen — er
+        # fällt mit ihnen (Fund 1). Andere Links (Anmelde-Link, Reset) gehen an die eigene Adresse.
+        self.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
+        # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
+        # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
+        # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
+        # Einbruch das Passwort ändert, muss wissen, dass da noch eine Tür offen ist.
+        aktiv = self.store.count_active_api_keys(u["id"])
+        self.audit("password_change", u["username"], ip, f"api_keys_active={aktiv}" if aktiv else None)
+        return PasswordChangeResult(ok=True, reason="ok", status=200, api_keys_active=aktiv)
 
     def _session_from_request(self, request):
         """Die Sitzungszeile zu diesem Request, oder None. `row["token_hash"]` ist ihr Handle.
@@ -6791,12 +7001,13 @@ class TinySesam:
         "_is_locked", "stattdessen `login_password`, `login_pin` bzw. `login_totp`, die "
         "atomar prüfen und buchen; `is_locked` liest nur und lässt parallele Salven durch")
     is_password_change_locked = Veraltet(
-        "_is_password_change_locked", "stattdessen `POST /auth/password` (prüft und bucht atomar)")
+        "_is_password_change_locked", "stattdessen `change_password` (prüft und bucht atomar wie "
+        "`POST /auth/password`)")
     is_pin_locked = Veraltet(
         "_is_pin_locked", "stattdessen `login_pin` (prüft und bucht atomar wie `POST /auth/pin`)")
     is_reauth_locked = Veraltet(
-        "_is_reauth_locked", "stattdessen `/auth/reauth` (prüft und bucht atomar; "
-        "`require(mfa=True)` leitet dorthin)")
+        "_is_reauth_locked", "stattdessen `confirm_password`, `confirm_pin` bzw. `confirm_totp` "
+        "(prüfen und buchen atomar wie `/auth/reauth`, wohin `require(mfa=True)` leitet)")
     is_resource_locked = Veraltet(
         "_is_resource_locked", "stattdessen `POST /auth/resource/{name}` (prüft und bucht atomar)")
     is_secure = Veraltet(
@@ -6845,14 +7056,15 @@ class TinySesam:
         "_verify_recovery_code", "stattdessen `login_totp` (nimmt auch Einmal-Codes, drosselt "
         "und sperrt wie `POST /auth/totp`); `verify_recovery_code` selbst drosselt nicht")
     verify_totp = Veraltet(
-        "_verify_totp", "stattdessen `login_totp` (drosselt und sperrt wie `POST /auth/totp`); "
-        "`verify_totp` selbst drosselt nicht")
+        "_verify_totp", "stattdessen `login_totp` (drosselt und sperrt wie `POST /auth/totp`), "
+        "für den Step-up `confirm_totp`; `verify_totp` selbst drosselt nicht")
     verify_user_password = Veraltet(
-        "_verify_user_password", "stattdessen `/auth/reauth` (`require(mfa=True)` leitet dorthin) "
-        "bzw. `POST /auth/password`; ungedrosselt")
+        "_verify_user_password", "stattdessen `confirm_password` (Step-up, drosselt und sperrt wie "
+        "`/auth/reauth`) bzw. `change_password` (wie `POST /auth/password`); "
+        "`verify_user_password` selbst drosselt nicht")
     verify_user_pin = Veraltet(
-        "_verify_user_pin", "stattdessen `/auth/reauth` (`require(mfa=True)` leitet dorthin); "
-        "ungedrosselt")
+        "_verify_user_pin", "stattdessen `confirm_pin` (Step-up, drosselt und sperrt wie "
+        "`/auth/reauth`); `verify_user_pin` selbst drosselt nicht")
     vermerke_oidc_freigabe = Veraltet(
         "_vermerke_oidc_freigabe", "ohne Ersatz; die Zuordnung steht in `oidc_clients`")
     versuch_beginnen = Veraltet(

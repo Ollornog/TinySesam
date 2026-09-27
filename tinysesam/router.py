@@ -12,6 +12,7 @@ fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an
 from __future__ import annotations
 import secrets
 from fastapi import APIRouter, Request, Form, HTTPException
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as _StarletteHTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
@@ -541,9 +542,11 @@ def build_router(auth) -> APIRouter:
         gemacht die Sitzung aus dem Cookie: Die halbe Sitzung eines anderen wurde mit dem eigenen
         Key und dem eigenen Passwort voll, und im eigenen Konto ersetzten Automaten-Key und Passwort
         den zweiten Faktor (samt dem Admin-Flag, das der Key allein nicht trägt). Jetzt kommt das
-        Konto aus `session_user()` — der VOLLEN Sitzung eben dieses Cookies, derselben, die unten
-        auffrischt. Frische kann ein Key ohnehin nie erreichen (`stepup_fresh`); zeigt die Anfrage
-        ohne Sitzung einen vor, sagt die Antwort das (403) statt auf die Login-Seite zu leiten.
+        Konto aus `session_user()` — der VOLLEN Sitzung eben dieses Cookies, derselben, die der
+        Step-up auffrischt. Frische kann ein Key ohnehin nie erreichen (`stepup_fresh`); zeigt die
+        Anfrage ohne Sitzung einen vor, sagt die Antwort das (403) statt auf die Login-Seite zu
+        leiten. Nur noch für die Seite (GET): Das Absenden läuft seit 0.22.0 über `confirm_*`,
+        und dort steht dieselbe Regel (`TinySesam._nur_mit_sitzung`).
         """
         u = auth.session_user(request)
         if u is None and cfg.apikey_enabled and auth._extract_api_key(request):
@@ -566,52 +569,29 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/reauth")
     def reauth_submit(request: Request, code: str = Form(""), password: str = Form(""), pin: str = Form(""),
                       next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        auth.require_csrf(request, csrf_tok)
-        u = _nur_sitzung(request)
-        if not u:
-            return RedirectResponse(auth.browser_path(request, cfg.login_path), 303)
-        nxt = auth.safe_next(next, request)
-        ip = auth.client_ip(request)
-        methods = auth.stepup_options(u)
-        if not methods:
-            # Dieses Konto hat kein Verfahren, mit dem es hier bestätigen könnte
-            # (`stepup_strict`, oder noch gar kein Faktor eingerichtet). Der Versuch KANN
-            # nicht gelingen — er wird deshalb nicht als Fehlversuch protokolliert, sonst
-            # füttert die aussichtslose Seite die Brute-Force-Sperre desselben Kontos.
-            return auth.render_page("reauth", request=request, status=403, next=nxt,
-                                    username=u["username"], methods=methods,
-                                    error=auth.t("err.stepup_none"))
-        # Eigener Topf (`_is_reauth_locked`), nicht der des Logins: Eine Step-up-Bestätigung
-        # ist keine Anmeldung — wer hier steht, ist bereits angemeldet. Mit dem geteilten
-        # Zähler sperrten fünf Tippfehler auf dieser Seite die **Anmeldung** desselben
-        # Kontos für `lockout_window_sec`, samt dem korrekten Passwort. Gedrosselt und
-        # protokolliert bleibt der Weg, nur eben in seinem eigenen Topf.
-        versuch = (auth._versuch_beginnen(u["username"], ip, "reauth", auch_pin="pin" in methods)
-                   if auth._rate_ok(ip, login=False) else None)
-        if versuch is None:
-            return auth.render_page("reauth", request=request, status=429, next=nxt, username=u["username"],
-                                    methods=methods, error=auth.t("err.retry"))
-        # Nur ein angebotenes Verfahren zählt — was der Nutzer ausgefüllt hat, entscheidet.
-        ok = False
-        if "totp" in methods and code:
-            ok = auth._verify_totp(u["id"], code)
-        elif "pin" in methods and pin:
-            ok = auth._verify_user_pin(u["id"], pin)
-        elif "password" in methods and password:
-            ok = auth._verify_user_password(u["id"], password)
-        auth._record_login(u["username"], ip, ok, "reauth", versuch=versuch)
-        if not ok:
-            return auth.render_page("reauth", request=request, status=401, next=nxt, username=u["username"],
-                                    methods=methods, error=auth.t("err.reauth"))
-        s = auth._session_from_request(request)
-        resp = RedirectResponse(nxt, 303)
-        if s:
-            auth.store.set_session_mfa(s["token_hash"], True)   # setzt mfa_at=now → wieder frisch
-            # Frisch bestätigt heisst neues Token (F-06): Ein mitgelesenes altes Cookie hielte
-            # sonst genau die Sitzung, die eben Sudo-Rechte bekommen hat.
-            auth.rotate_session(request, resp)
-        auth.audit("stepup", u["username"], ip)
-        return resp
+        # Eine Quelle (0.22.0): CSRF, die Sitzung (nie ein API-Key), die angebotenen Verfahren,
+        # Drossel, Vorbuchung im eigenen Topf, Audit und Sicherheits-Log, Frische und neues Token
+        # stehen in `confirm_totp`/`confirm_pin`/`confirm_password`, den öffentlichen Bausteinen für
+        # eigene Step-up-Seiten. Hier wird nur gewählt, welches Feld ausgefüllt ist — in der
+        # Reihenfolge der Seite —, und das Ergebnis zur Seite. Diese Route ruft keinen inneren
+        # Prüfer selbst (Wächter in `tests/test_bestaetigen.py`).
+        if code:
+            erg = auth.confirm_totp(request, code, next=next, csrf=csrf_tok)
+        elif pin:
+            erg = auth.confirm_pin(request, pin, next=next, csrf=csrf_tok)
+        else:
+            erg = auth.confirm_password(request, password, next=next, csrf=csrf_tok)
+        if erg.reason == "no_session":
+            if erg.status == 403:           # ein API-Key statt einer Sitzung (0.20.1)
+                raise HTTPException(403, erg.message)
+            return erg.redirect()           # zur Login-Seite, ohne Cookie
+        if not erg:
+            # Die Seite noch einmal, mit den Verfahren dieses Kontos (nur zum Anzeigen).
+            u = auth.session_user(request)
+            return auth.render_page("reauth", request=request, status=erg.status, next=erg.next_url,
+                                    username=u["username"] if u else "",
+                                    methods=auth.stepup_options(u) if u else [], error=erg.message)
+        return erg.redirect()               # nach next, mit dem erneuerten Sitzungs-Cookie
 
     # ---------- Passwort vergessen / zurücksetzen (braucht einen Mailer, NICHT den Magic-Link) ----------
     if cfg.password_reset_enabled:
@@ -1009,58 +989,21 @@ def build_router(auth) -> APIRouter:
     # ---------- Eigenes Konto (Selbstverwaltung) ----------
     @r.post("/auth/password")
     async def change_own_password(request: Request):
-        u = auth.current_user(request)
-        if not u:
-            raise HTTPException(401)
+        # Eine Quelle (0.22.0): Sitzung (nie ein API-Key), Drossel, Vorbuchung im eigenen Topf
+        # (R4-10), das alte Passwort gegen die ID der Sitzung (R4-12), die Passwortregel, das
+        # Beenden der anderen Sitzungen, das Verwerfen offener Adresswechsel-Links und das Audit
+        # stehen in `change_password`, dem öffentlichen Baustein für eigene Passwortwechsel-Seiten.
+        # Hier wird nur das JSON gelesen (samt CSRF-Prüfung, wie an jeder Schreib-Route) und das
+        # Ergebnis zur Antwort. Diese Route ruft keinen inneren Prüfer selbst (Wächter in
+        # `tests/test_bestaetigen.py`).
         b = await auth.json_body(request)
-        ip = auth.client_ip(request)
-        # Das alte Passwort ist ein Geheimnis wie am Login — also derselbe Dreiklang aus
-        # Drossel, Sperre und Protokoll. Ohne ihn war diese Route ein stilles, unbegrenztes
-        # Passwort-Orakel: beliebig viele Versuche, nie eine 429, keine Zeile im Sicherheits-
-        # Log, kein Fehlversuch in `login_attempt` — während derselbe Fehlversuch am Login
-        # nach wenigen Anläufen sperrt (R4-10; die Login-Schwelle ist `max_login_attempts`,
-        # Vorgabe 5 und im Panel einstellbar).
-        #
-        # Die Sperre ist ein EIGENER Topf (`_is_password_change_locked`, eigene Schwelle
-        # `password_change_max_attempts`), nicht der des Logins: Mit dem geteilten Zähler
-        # sperrten fünf Tippfehler hier die Anmeldung für 15 Minuten — samt dieser Route, über
-        # die der Nutzer die Sperre hätte abtragen können. Hinter NAT traf es über
-        # `ip_attempt_factor` sogar unbeteiligte Kollegen. Gedrosselt bleibt es (`_rate_ok`),
-        # protokolliert auch.
-        versuch = (auth._versuch_beginnen(u["username"], ip, "password_change")
-                   if auth._rate_ok(ip, login=False) else None)
-        if versuch is None:
-            raise HTTPException(429, auth.t("api.too_many"))
-        # Geprüft wird gegen die **ID** der eigenen Sitzung, nicht gegen die Login-Kennung:
-        # `_check_password(u["username"], …)` lief durch `find_user()` und konnte damit auf ein
-        # FREMDES Konto auflösen (Benutzername des Angreifers = E-Mail des Opfers, R4-12).
-        # Dann riet man hier nicht sein eigenes Passwort, sondern dessen — und der Treffer
-        # setzte still das eigene Passwort, blieb also unsichtbar.
-        richtig = auth._verify_user_password(u["id"], b.get("current") or "")
-        # Eigene Methode: Ein Treffer hier räumt die Fehlversuche des Login-Pfads NICHT weg
-        # (`_record_login` löscht nur die derselben Methode) — die Sperre bleibt, wo sie gilt.
-        auth._record_login(u["username"], ip, richtig, "password_change", versuch=versuch)
-        if not richtig:
-            raise HTTPException(403, auth.t("api.password_wrong"))
-        new = b.get("new") or ""
-        mangel = auth.password_policy_error(new, username=u["username"], email=u.get("email"), api=True)
-        if mangel:
-            raise HTTPException(400, mangel)
-        auth.set_password(u["id"], new)
-        # andere Sitzungen des Users beenden (aktuelle behalten) — Standard nach Credential-Wechsel
-        s = auth._session_from_request(request)
-        auth.store.delete_user_sessions_except(u["id"], s["token_hash"] if s else None)
-        # Ein offener Adresswechsel stammt womöglich aus einer der eben beendeten Sitzungen — er
-        # fällt mit ihnen (Fund 1). Andere Links (Anmelde-Link, Reset) gehen an die eigene Adresse.
-        auth.store.revoke_user_magic_tokens(u["id"], purposes=("email_change",))
-        # API-Keys überleben den eigenen Passwortwechsel mit Absicht: Sie sind für Automatiken
-        # da, und ein Routine-Wechsel soll die nicht reihenweise stilllegen (ein Konto = oft ein
-        # Key = mehrere Integrationen). Verschwiegen wird es trotzdem nicht — wer nach einem
-        # Einbruch das Passwort ändert, muss wissen, dass da noch eine Tür offen ist.
-        aktiv = auth.store.count_active_api_keys(u["id"])
-        auth.audit("password_change", u["username"], auth.client_ip(request),
-                   f"api_keys_active={aktiv}" if aktiv else None)
-        return {"ok": True, "api_keys_active": aktiv}
+        # Im Threadpool: Die Prüfung des alten Passworts (argon2) hielte sonst die Ereignisschleife an.
+        erg = await run_in_threadpool(auth.change_password, request, b.get("current") or "",
+                                      b.get("new") or "",
+                                      csrf=request.headers.get("x-csrf-token") or b.get("_csrf") or "")
+        if not erg:
+            raise HTTPException(erg.status, erg.message)
+        return {"ok": True, "api_keys_active": erg.api_keys_active}
 
     if cfg.account_enabled:
         @r.get("/auth/account", response_class=HTMLResponse)

@@ -34,7 +34,7 @@ ZIEL = ROOT / "API.md"
 ABLAGE = ROOT / "tests" / "api_surface.json"
 
 import tinysesam as paket  # noqa: E402
-from tinysesam import LoginResult, TinySesam, TinySesamConfig  # noqa: E402
+from tinysesam import LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import errors as fehler_modul  # noqa: E402
 from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
 
@@ -66,6 +66,16 @@ UNGEDROSSELT = ("check_password", "check_pin", "check_ldap", "check_saml")
 #: Der sichere Weg für eigene Login-Seiten (0.22.0), auf den der Warnsatz zu C zeigt. Stehen sie
 #: nicht in A, stimmt der Satz nicht mehr.
 BAUSTEINE = ("login_password", "login_pin", "login_totp")
+#: Dasselbe für die Bestätigung vor heiklen Aktionen und den eigenen Passwortwechsel (0.22.0).
+WEITERE_BAUSTEINE = ("confirm_password", "confirm_pin", "confirm_totp", "change_password")
+
+#: Die Ergebnistypen der Bausteine für eigene Seiten (0.22.0, Stufe A), je mit eigenem Abschnitt:
+#: Name → (Typ, Überschrift). Wer sie liefert, sucht der Generator an `TinySesam` selbst
+#: (Rückgabetyp), damit ein neuer Baustein im Text nicht fehlt.
+ERGEBNISTYPEN = {
+    "LoginResult": (LoginResult, "Ergebnis der Anmelde-Bausteine"),
+    "PasswordChangeResult": (PasswordChangeResult, "Ergebnis des Passwortwechsels"),
+}
 
 KOPF = """# API — die öffentliche Oberfläche von `TinySesam`
 
@@ -180,30 +190,41 @@ def wert(w) -> str:
     return f"Wert: `{kurz[:197]}…`"
 
 
-def ergebnistyp_abschnitt(stufe_von) -> str:
-    """Der Ergebnistyp der Anmelde-Bausteine: Felder als Tabelle (Erklärung aus dem `#:`-Block),
-    `REASONS` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine andere Stufe
-    gibt es hier nicht, der Wächter misst jeden Namen einzeln."""
-    notiz = kommentare(LoginResult)
+def liefern(typ) -> list:
+    """Die öffentlichen Methoden von `TinySesam`, die `typ` zurückgeben (am Rückgabetyp erkannt)."""
+    return sorted(n for n, f in vars(TinySesam).items()
+                  if inspect.isfunction(f) and not n.startswith("_")
+                  and inspect.signature(f).return_annotation in (typ, typ.__name__))
+
+
+def ergebnistyp_abschnitt(typ, titel, stufe_von) -> str:
+    """Ein Ergebnistyp der Bausteine für eigene Seiten: Felder als Tabelle (Erklärung aus dem
+    `#:`-Block), `REASONS` mit Wert, die Methoden mit Signatur. Nur die Namen der Stufe A — eine
+    andere Stufe gibt es hier nicht, der Wächter misst jeden Namen einzeln."""
+    name = typ.__name__
+    notiz = kommentare(typ)
     # `dataclasses.fields`, nicht `__dataclass_fields__`: Dort stünde `REASONS` (ClassVar) mit.
-    felder = [f for f in dataclasses.fields(LoginResult) if stufe_von(f.name) == "A"]
-    methoden = [(n, f) for n, f in inspect.getmembers(LoginResult, inspect.isfunction)
+    felder = [f for f in dataclasses.fields(typ) if stufe_von(f.name) == "A"]
+    methoden = [(n, f) for n, f in inspect.getmembers(typ, inspect.isfunction)
                 if not n.startswith("_") and stufe_von(n) == "A"]
     for f in felder:
-        assert notiz.get(f.name), f"LoginResult.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
-    teile = [f"## A · Ergebnis der Anmelde-Bausteine: `tinysesam.LoginResult`\n\n{erster_satz(LoginResult)} "
-             "Zurück von " + ", ".join(f"`{n}`" for n in BAUSTEINE) + ". Eine eingefrorene "
-             "Dataclass; `bool(result)` ist `result.ok`. Das Sitzungs-Token ist bewusst kein Feld — "
-             "`set_cookie()` und `redirect()` setzen es.\n\n"
+        assert notiz.get(f.name), f"{name}.{f.name} ohne `#:`-Erklärung — Zusage ins Blaue"
+    von = liefern(typ)
+    assert von, f"keine Methode von TinySesam liefert {name} — Abschnitt ohne Baustein"
+    token = (" Das Sitzungs-Token ist bewusst kein Feld — `set_cookie()` und `redirect()` setzen es."
+             if hasattr(typ, "set_cookie") else "")
+    teile = [f"## A · {titel}: `tinysesam.{name}`\n\n{erster_satz(typ)} "
+             "Zurück von " + ", ".join(f"`{n}`" for n in von) + ". Eine eingefrorene "
+             f"Dataclass; `bool(result)` ist `result.ok`.{token}\n\n"
              "| Feld | Typ | Bedeutung |\n|---|---|---|\n"]
     for f in felder:
         teile.append(f"| `{f.name}` | `{f.type}` | {notiz[f.name].replace('|', chr(92) + '|')} |\n")
     teile.append("\n")
     if stufe_von("REASONS") == "A":
-        teile.append(f"### `LoginResult.REASONS` — Konstante\n\n{satz(notiz.get('REASONS', ''))}\n\n"
-                     f"{wert(LoginResult.REASONS)}\n\n")
+        teile.append(f"### `{name}.REASONS` — Konstante\n\n{satz(notiz.get('REASONS', ''))}\n\n"
+                     f"{wert(typ.REASONS)}\n\n")
     for n, fn in methoden:
-        teile.append(f"### `LoginResult.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
+        teile.append(f"### `{name}.{n}{signatur(fn)}`\n\n{erster_satz(fn)}\n\n")
     return "".join(teile)
 
 
@@ -246,21 +267,22 @@ def bauen() -> str:
     notiz = kommentare(TinySesam)
 
     # Wer ohne Stufe ist, steht am Ende sichtbar da — statt still in A zu landen.
-    ergebnistyp = ([f.name for f in dataclasses.fields(LoginResult)] + ["REASONS"]
-                   + [n for n, _ in inspect.getmembers(LoginResult, inspect.isfunction)
-                      if not n.startswith("_")])
+    ergebnistyp = [(bereich, n) for bereich, (typ, _) in ERGEBNISTYPEN.items()
+                   for n in ([f.name for f in dataclasses.fields(typ)] + ["REASONS"]
+                             + [m for m, _ in inspect.getmembers(typ, inspect.isfunction)
+                                if not m.startswith("_")])]
     alle = ([("TinySesam", n) for n, _ in methoden] + [("TinySesam.eigenschaften", n) for n, _ in eigenschaften]
             + [("TinySesam.konstanten", n) for n in konstanten]
             + [("TinySesamConfig.methoden", n) for n, _ in presets]
             + [("TinySesamConfig.felder", n) for n in felder] + [("exporte", n) for n in exporte]
-            + [("LoginResult", n) for n in ergebnistyp])
+            + ergebnistyp)
     zahl = {s: sum(1 for b, n in alle if von(b, n) == s) for s in STUFEN}
     ohne = [(b, n) for b, n in alle if von(b, n) not in STUFEN]
 
     for name in UNGEDROSSELT:
         assert von("TinySesam", name) == "C", (
             f"{name} ist nicht mehr Stufe C — den Warnsatz in scripts/_api_doku.py anpassen")
-    for name in BAUSTEINE:
+    for name in BAUSTEINE + WEITERE_BAUSTEINE:
         assert von("TinySesam", name) == "A", (
             f"{name} ist nicht Stufe A — der Warnsatz zu C nennt ihn als sicheren Weg")
 
@@ -321,10 +343,12 @@ def bauen() -> str:
             "weiter, es wird nur unterscheidbar. **Auf den Meldungstext prüft niemand:** er "
             "ist übersetzt und darf sich ändern; die Typen hier und die Attribute an ihnen "
             "sind die Zusage.\n\n"))
-        if s == "A" and von("exporte", "LoginResult") == "A":
-            teile.append(ergebnistyp_abschnitt(lambda n: von("LoginResult", n)))
+        for bereich, (typ, ueberschrift) in ERGEBNISTYPEN.items():
+            if s == "A" and von("exporte", bereich) == "A":
+                teile.append(ergebnistyp_abschnitt(typ, ueberschrift,
+                                                   lambda n, b=bereich: von(b, n)))
         uebrige = [n for n in exporte if von("exporte", n) == s and n not in dict(typen)
-                   and n != "LoginResult"]
+                   and n not in ERGEBNISTYPEN]
         klassen = [n for n in uebrige if not inspect.isfunction(getattr(paket, n))]
         teile.append(_abschnitt(
             f"{titel}weitere Exporte von `tinysesam`",
@@ -348,7 +372,9 @@ def bauen() -> str:
             "Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene "
             "Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere "
             "Baustein ist " + ", ".join(f"`{n}`" for n in BAUSTEINE) + " (Stufe A): dieselben "
-            "Methoden, die die eingebauten Routen rufen.\n\n"
+            "Methoden, die die eingebauten Routen rufen. Für eine eigene Step-up-Seite gilt "
+            "dasselbe mit " + ", ".join(f"`{n}`" for n in WEITERE_BAUSTEINE[:3]) + ", für einen "
+            f"eigenen Passwortwechsel mit `{WEITERE_BAUSTEINE[3]}`.\n\n"
             "| Alter Name | Art | Ersatz |\n|---|---|---|\n")
         for b, n in sorted(intern, key=lambda bn: bn[1].lower()):
             alias = aliase.get(n)
@@ -366,7 +392,8 @@ def bauen() -> str:
     teile.append(f"---\n\n{len(methoden)} Methoden, {len(eigenschaften)} Eigenschaften, "
                  f"{len(konstanten)} Konstanten, {len(presets)} Methoden von `TinySesamConfig`, "
                  f"{len(exporte)} Exporte, davon {len(typen)} Fehlertypen, {len(ergebnistyp)} Namen "
-                 "an `LoginResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
+                 "an den Ergebnistypen " + ", ".join(f"`{n}`" for n in ERGEBNISTYPEN)
+                 + " — erzeugt aus den Docstrings und `tests/api_surface.json`.\n")
     return "".join(teile)
 
 
