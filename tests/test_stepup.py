@@ -867,7 +867,7 @@ os.remove(db8)
 # dank der Helfer-Verfolgung (ohne sie grün, deshalb die Probe `helfer` im Selbsttest);
 # `session_user()` selbst auf `current_user()` umgebogen → der Wächter bleibt grün, die
 # Verhaltensblöcke oben werden rot — beide Schichten sind nötig.)
-# Seit 0.21.0 stehen die Anmeldeschritte in `anmelden_passwort`/`anmelden_pin`/`anmelden_totp`
+# Seit 0.22.0 stehen die Anmeldeschritte in `anmelden_passwort`/`anmelden_pin`/`anmelden_totp`
 # (die Routen rufen sie): Sie sind selbst Senken — eine Route, die sie mit einem Konto aus einer
 # Key-Quelle umgibt, fällt hier auf wie eine, die `apply_factor` ruft.
 SENKEN = {"apply_factor", "start_session", "complete_totp", "complete_mfa", "rotate_session",

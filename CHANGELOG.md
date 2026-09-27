@@ -26,7 +26,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   `TinySesam`, die einen dieser Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`:
   Die eingebauten Routen rufen jetzt `_name`, die Überschreibung wirkt nicht mehr.
 - **Eigene Login-Seiten nehmen `anmelden_passwort`** (PO-Befund 2026-09-26). Wer dem Muster „Your
-  own login page“ der README bis 0.20.1 gefolgt ist (`check_password` + `start_session`), hat auf
+  own login page“ der README bis 0.21.0 gefolgt ist (`check_password` + `start_session`), hat auf
   seiner eigenen Route **keinen Schutz gegen Passwort-Raten** — keine Sperre, keinen Zähler, keine
   Serie, keine Drossel, keine Zeile für fail2ban. Umstellen auf `auth.anmelden_passwort(request,
   username, password, next=…, csrf=…)` (für den zweiten Schritt `anmelden_totp`, für die PIN
@@ -90,7 +90,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   (einzige Ausnahme `complete_mfa` → `complete_totp`, Stufe A); jeder Alias warnt genau einmal, mit
   Ersatz und „fällt mit 1.0 weg“, auf den Aufrufer, und reicht Argumente unverändert weiter; kein
   Code in `tinysesam/`, `examples/`, `scripts/` und `web/` benutzt einen alten Namen (AST, im Paket
-  auch als Zeichenkette für `getattr`); ab Version 1.0 ist jeder verbliebene Alias rot. Dazu setzt
+  auch als Zeichenkette für `getattr`); ab Version 1.0 ist jeder verbliebene Alias rot; `seit`
+  passt zum CHANGELOG — steht der Alias unter „Veraltet“ erst in `[Unveröffentlicht]`, muss `seit`
+  grösser sein als das jüngste Release, sonst genau das Release, das ihn einführt (die Einstufung
+  war mit `seit: 0.21.0` gebaut, dann ging 0.21.0 ohne sie hinaus, und nur das Feld wurde
+  geprüft, nicht sein Wert). Dazu setzt
   `tests/run_all.py` für jede Suite einen Warnfilter, der eine solche Warnung aus einem Modul des
   Pakets zum Fehler macht — so fällt auch ein dynamischer Zugriff auf, sobald eine Suite den Weg
   durchläuft; der Wächter misst die Wirkung des Filters in einem eigenen Prozess.
@@ -112,7 +116,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   (PO-Befund 2026-09-26). Es zeigte `check_password` + `start_session` als Bausteine; die inneren
   Prüfer `check_password`, `check_pin`, `check_ldap` und `check_saml` drosseln aber nicht selbst —
   Sperre, Fehlversuchszähler und Serien-Sperre setzen nur die eingebauten Routen. Wer dem Muster
-  bis 0.20.1 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
+  bis 0.21.0 gefolgt ist, hat auf seiner eigenen Login-Route keinen Schutz gegen Raten. Die
   README zeigt jetzt zwei sichere Wege: für ein eigenes Aussehen allein die Seite ersetzen
   (`set_template("login", …)`, das Formular geht weiter an die eingebaute Route), für eine eigene
   Route den Baustein `anmelden_passwort` (bzw. `anmelden_totp`, `anmelden_pin`), den die

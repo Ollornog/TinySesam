@@ -1,4 +1,4 @@
-"""Das Ergebnis eines Anmeldeschritts: `anmelden_passwort`, `anmelden_pin`, `anmelden_totp` (0.21.0).
+"""Das Ergebnis eines Anmeldeschritts: `anmelden_passwort`, `anmelden_pin`, `anmelden_totp` (0.22.0).
 
 PO-Befund 2026-09-26: Die README zeigte als Weg zu einer eigenen Login-Seite `check_password` +
 `start_session`. Die inneren Prüfer drosseln aber nicht — Sperre, Fehlversuchszähler, Serie,

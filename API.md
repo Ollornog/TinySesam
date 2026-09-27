@@ -14,9 +14,9 @@ Quelltext.
 
 | Stufe | Was | Zusage |
 |---|---|---|
-| **A — öffentlich, stabil ab 1.0** | dokumentiert und/oder von Einbettenden genutzt | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 ([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.21.0, dem Release, das die Einstufung bringt. |
+| **A — öffentlich, stabil ab 1.0** | dokumentiert und/oder von Einbettenden genutzt | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 ([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.22.0, dem Release, das die Einstufung bringt. |
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten, eigene Mail- und Token-Abläufe, Erweiterungspunkte | Bleibt. Entfernen oder umbauen erst, nachdem eine `DeprecationWarning` zwei Minor-Versionen lang darauf hingewiesen hat. Schwächer als A: Ein Umbau mit Vorlauf ist erlaubt. |
-| **C — intern** | Verdrahtung der eingebauten Routen | Keine. Die Implementierung trägt seit 0.21.0 einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. |
+| **C — intern** | Verdrahtung der eingebauten Routen | Keine. Die Implementierung trägt seit 0.22.0 einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und fällt dann weg. |
 
 Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — nichts wird aus Versehen zugesagt.
 
@@ -630,7 +630,7 @@ Installierte Version — bevorzugt die Distribution-Metadaten, die auch dann sti
 
 ## C · Veraltet — fällt mit 1.0 weg
 
-Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung `_name`; der alte Name bleibt bis 1.0 als Alias, der **beim Aufruf** (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit `python -W error::DeprecationWarning` laufen.
+Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_name`; der alte Name bleibt bis 1.0 als Alias, der **beim Aufruf** (Konstanten: beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. **Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer prüfen will, ob seine App einen davon ruft, lässt ihre Tests einmal mit `python -W error::DeprecationWarning` laufen.
 
 **Vorsicht bei den inneren Prüfern** `check_password`, `check_pin`, `check_ldap`, `check_saml`: Sie drosseln nicht selbst — Sperre, Fehlversuchszähler und Serie setzen nur die eingebauten Routen. Eine eigene Login-Seite, die sie aufruft, ist gegen Passwort-Raten ungeschützt. Der sichere Baustein ist `anmelden_passwort`, `anmelden_pin`, `anmelden_totp` (Stufe A): dieselben Methoden, die die eingebauten Routen rufen.
 

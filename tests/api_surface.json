@@ -52,7 +52,7 @@
     },
     "admin_claim_fehlgriff": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'None'",
       "stufe": "C",
       "ziel": "_admin_claim_fehlgriff"
@@ -111,35 +111,35 @@
     },
     "check_ldap": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, password) -> 'Optional[dict]'",
       "stufe": "C",
       "ziel": "_check_ldap"
     },
     "check_password": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, password) -> 'Optional[dict]'",
       "stufe": "C",
       "ziel": "_check_password"
     },
     "check_pin": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, pin) -> 'Optional[dict]'",
       "stufe": "C",
       "ziel": "_check_pin"
     },
     "check_resource": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(name, secret) -> 'bool'",
       "stufe": "C",
       "ziel": "_check_resource"
     },
     "check_saml": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(nameid, attrs, ip: 'Optional[str]' = None) -> 'Optional[dict]'",
       "stufe": "C",
       "ziel": "_check_saml"
@@ -150,7 +150,7 @@
     },
     "complete_mfa": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(token) -> 'Optional[str]'",
       "stufe": "C",
       "ziel": "complete_totp"
@@ -165,7 +165,7 @@
     },
     "consume_admin_claim": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(token, user) -> 'bool'",
       "stufe": "C",
       "ziel": "_consume_admin_claim"
@@ -192,7 +192,7 @@
     },
     "csrf_rotieren": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(response) -> 'str'",
       "stufe": "C",
       "ziel": "_csrf_rotieren"
@@ -227,7 +227,7 @@
     },
     "factor_entry": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(step, nxt='/') -> 'str'",
       "stufe": "C",
       "ziel": "_factor_entry"
@@ -246,21 +246,21 @@
     },
     "forward_login_url": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'",
       "stufe": "C",
       "ziel": "_forward_login_url"
     },
     "forward_response_headers": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user) -> 'dict'",
       "stufe": "C",
       "ziel": "_forward_response_headers"
     },
     "forwarded_url": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request: 'Request') -> 'str'",
       "stufe": "C",
       "ziel": "_forwarded_url"
@@ -303,49 +303,49 @@
     },
     "is_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_locked"
     },
     "is_password_change_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_password_change_locked"
     },
     "is_pin_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip, login: 'bool' = True) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_pin_locked"
     },
     "is_reauth_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_reauth_locked"
     },
     "is_resource_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_resource_locked"
     },
     "is_secure": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request: 'Request') -> 'bool'",
       "stufe": "C",
       "ziel": "_is_secure"
     },
     "is_totp_setup_locked": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip) -> 'bool'",
       "stufe": "C",
       "ziel": "_is_totp_setup_locked"
@@ -380,7 +380,7 @@
     },
     "login_redirect_after": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request, token, user_id, nxt)",
       "stufe": "C",
       "ziel": "_login_redirect_after"
@@ -399,14 +399,14 @@
     },
     "maybe_promote_admin": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'",
       "stufe": "C",
       "ziel": "_maybe_promote_admin"
     },
     "mfa_pending": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id) -> 'bool'",
       "stufe": "C",
       "ziel": "_mfa_pending"
@@ -417,7 +417,7 @@
     },
     "next_login_step": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id, done)",
       "stufe": "C",
       "ziel": "_next_login_step"
@@ -428,14 +428,14 @@
     },
     "oidc_anwendung": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(url_oder_host: 'str') -> 'str'",
       "stufe": "C",
       "ziel": "_oidc_anwendung"
     },
     "oidc_freigabe_gueltig": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(token_hash: 'str', client: 'str') -> 'tuple'",
       "stufe": "C",
       "ziel": "_oidc_freigabe_gueltig"
@@ -466,21 +466,21 @@
     },
     "purge_demo": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "() -> 'int'",
       "stufe": "C",
       "ziel": "_purge_demo"
     },
     "rate_ok": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(ip, login: 'bool' = True) -> 'bool'",
       "stufe": "C",
       "ziel": "_rate_ok"
     },
     "record_login": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)",
       "stufe": "C",
       "ziel": "_record_login"
@@ -571,14 +571,14 @@
     },
     "sec": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(key) -> 'int'",
       "stufe": "C",
       "ziel": "_sec"
     },
     "seed_demo": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "() -> 'None'",
       "stufe": "C",
       "ziel": "_seed_demo"
@@ -597,7 +597,7 @@
     },
     "send_signup_notice": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(email, base_url) -> 'bool'",
       "stufe": "C",
       "ziel": "_send_signup_notice"
@@ -608,7 +608,7 @@
     },
     "session_from_request": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request)",
       "stufe": "C",
       "ziel": "_session_from_request"
@@ -659,7 +659,7 @@
     },
     "sicherheitsereignis": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(ereignis: 'str', user_id, **details) -> 'None'",
       "stufe": "C",
       "ziel": "_sicherheitsereignis"
@@ -686,7 +686,7 @@
     },
     "token_abgewiesen": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(zweck, request: 'Optional[Request]' = None, grund='ungueltig')",
       "stufe": "C",
       "ziel": "_token_abgewiesen"
@@ -709,7 +709,7 @@
     },
     "unlock_resource": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request: 'Request', response, name)",
       "stufe": "C",
       "ziel": "_unlock_resource"
@@ -724,42 +724,42 @@
     },
     "verify_csrf": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(request: 'Request', submitted) -> 'bool'",
       "stufe": "C",
       "ziel": "_verify_csrf"
     },
     "verify_recovery_code": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id, code) -> 'bool'",
       "stufe": "C",
       "ziel": "_verify_recovery_code"
     },
     "verify_totp": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id, code) -> 'bool'",
       "stufe": "C",
       "ziel": "_verify_totp"
     },
     "verify_user_password": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id, password) -> 'bool'",
       "stufe": "C",
       "ziel": "_verify_user_password"
     },
     "verify_user_pin": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(user_id, pin) -> 'bool'",
       "stufe": "C",
       "ziel": "_verify_user_pin"
     },
     "vermerke_oidc_freigabe": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(token: 'str', client: 'str', rollen=None) -> 'None'",
       "stufe": "C",
       "ziel": "_vermerke_oidc_freigabe"
@@ -770,7 +770,7 @@
     },
     "versuch_beginnen": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "sig": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'",
       "stufe": "C",
       "ziel": "_versuch_beginnen"
@@ -793,21 +793,21 @@
   "TinySesam.konstanten": {
     "APIKEY_AUDIT_FENSTER": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "3600",
       "ziel": "_APIKEY_AUDIT_FENSTER"
     },
     "DEMO_USERS": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "('demo', 'demoadmin')",
       "ziel": "_DEMO_USERS"
     },
     "FOEDERIERTE_FAKTOREN": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "('oidc', 'saml')",
       "ziel": "_FOEDERIERTE_FAKTOREN"
@@ -822,7 +822,7 @@
     },
     "IDENTIFYING": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
       "ziel": "_IDENTIFYING"
@@ -841,14 +841,14 @@
     },
     "RECOVERY_BYTES": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "7",
       "ziel": "_RECOVERY_BYTES"
     },
     "RECOVERY_WARNSCHWELLE": {
       "bis": "1.0",
-      "seit": "0.21.0",
+      "seit": "0.22.0",
       "stufe": "C",
       "wert": "3",
       "ziel": "_RECOVERY_WARNSCHWELLE"

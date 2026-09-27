@@ -1,4 +1,4 @@
-"""Der sichere Login-Baustein für eigene Seiten (0.21.0): `anmelden_passwort`, `anmelden_pin`, `anmelden_totp`.
+"""Der sichere Login-Baustein für eigene Seiten (0.22.0): `anmelden_passwort`, `anmelden_pin`, `anmelden_totp`.
 
 PO-Befund 2026-09-26: Die README zeigte unter „Your own login page“ `check_password` +
 `start_session` als Bausteine. Die inneren Prüfer drosseln nicht — Sperre, Fehlversuchszähler,
@@ -45,7 +45,7 @@ from tinysesam.ldap_ import VerzeichnisNichtErreichbar  # noqa: E402
 from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
-r = Report("Der sichere Login-Baustein für eigene Seiten (anmelden_passwort/_pin/_totp, 0.21.0)")
+r = Report("Der sichere Login-Baustein für eigene Seiten (anmelden_passwort/_pin/_totp, 0.22.0)")
 PW = "Anmelde-Pw-2026"          # 15 Zeichen: das Passwort meldet allein an (B2-4)
 PIN = "4711"
 IP = ("203.0.113.9", 50000)
@@ -637,7 +637,7 @@ r.check("(f) jeder Grund, den der Baustein liefert, steht in GRUENDE (auch die g
 # ── (g) Unerwartetes in der Prüfung zählt sofort ──────────────────────────────────────────────────
 # Eine Ausnahme mitten in der Prüfung (Datenbank weg, Schlüssel fehlt) darf den vorgebuchten Versuch
 # nicht offen liegen lassen: Er wird sofort zum Fehlversuch, auch seine Vorbuchung in der Serie ist
-# abgeschlossen. Bis 0.20.1 galt das nur für das Passwort — seit dem Baustein für alle drei Schritte.
+# abgeschlossen. Bis 0.21.0 galt das nur für das Passwort — seit dem Baustein für alle drei Schritte.
 # (Mutationsprobe: in `anmelden_totp` bzw. `anmelden_pin` den `except BaseException`-Zweig streichen → rot.)
 def _kaputt(*_a, **_k):
     raise RuntimeError("Prüfung kaputt (Test)")

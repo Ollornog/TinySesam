@@ -4175,7 +4175,7 @@ class TinySesam:
             return self.store.rotate_session(s["token_hash"], self._gnade())
         return None
 
-    # ---------- Anmelden für eigene Seiten (Stufe A, 0.21.0) ----------
+    # ---------- Anmelden für eigene Seiten (Stufe A, 0.22.0) ----------
     # PO-Befund 2026-09-26: Die README zeigte `check_password` + `start_session` als Bausteine
     # einer eigenen Login-Seite. Die inneren Prüfer drosseln nicht — Sperre, Zähler, Serie und
     # die fail2ban-Zeilen standen nur in den Routen. Diese drei Methoden SIND jetzt die Routen:
@@ -6670,9 +6670,9 @@ class TinySesam:
 
     # ---------- Stufe C: veraltete Namen, fallen mit 1.0 weg ----------
     # PO-Entscheid 2026-09-26: Diese Namen sind Verdrahtung der eingebauten Routen und gehören nicht
-    # zur Zusage (Stufe C). Bis 0.20.x trugen sie keinen Unterstrich und sahen aus wie jede andere
+    # zur Zusage (Stufe C). Bis 0.21.x trugen sie keinen Unterstrich und sahen aus wie jede andere
     # Methode — `check_password` stand sogar als Baustein in der README, obwohl es nicht drosselt.
-    # Seit 0.21.0 heisst die Implementierung `_name`, und TinySesam ruft nur noch diese. Der alte
+    # Seit 0.22.0 heisst die Implementierung `_name`, und TinySesam ruft nur noch diese. Der alte
     # Name bleibt bis 1.0 als Alias, der beim Aufruf (Konstanten: beim Lesen) genau eine
     # `DeprecationWarning` mit dem Ersatz auslöst. `tests/test_api_surface.py` hält die Liste gegen
     # `tests/api_surface.json` (Stufe C), prüft Warnung und Ziel jedes Alias und verbietet, dass
@@ -6682,8 +6682,8 @@ class TinySesam:
     def __init_subclass__(cls, **kwargs):
         """Eine Unterklasse, die einen alten Namen überschreibt, bekommt eine `RuntimeWarning`.
 
-        Bis 0.20.x wirkte eine überschriebene `check_password` auf die eingebauten Routen; seit
-        0.21.0 rufen sie `_check_password`, und die Überschreibung läuft still ins Leere. Bei
+        Bis 0.21.x wirkte eine überschriebene `check_password` auf die eingebauten Routen; seit
+        0.22.0 rufen sie `_check_password`, und die Überschreibung läuft still ins Leere. Bei
         einer Prüfmethode ist das genau die Sorte Änderung, die niemand bemerkt, bis sie zählt —
         deshalb eine Warnung, die ohne Filter sichtbar ist (keine `DeprecationWarning`)."""
         super().__init_subclass__(**kwargs)
@@ -6692,7 +6692,7 @@ class TinySesam:
             if isinstance(alias, Veraltet) and not isinstance(wert, Veraltet):
                 warnings.warn(
                     f"{cls.__name__}.{name} überschreibt einen veralteten Namen und wirkt seit "
-                    f"0.21.0 nicht mehr: TinySesam ruft intern `{alias.ziel}`. {alias.meldung}",
+                    f"0.22.0 nicht mehr: TinySesam ruft intern `{alias.ziel}`. {alias.meldung}",
                     RuntimeWarning, stacklevel=2)
 
     admin_claim_fehlgriff = Veraltet(

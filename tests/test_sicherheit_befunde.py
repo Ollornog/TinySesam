@@ -1114,7 +1114,7 @@ r.check("es gibt den klaren Namen complete_totp", hasattr(auth_cm, "complete_tot
 r.check("der alte Name complete_mfa bleibt bis 1.0 erhalten", hasattr(auth_cm, "complete_mfa"),
         "entfernt — das bricht bestehende Aufrufe für einen Namen")
 
-# Und der Alias muss wirklich dasselbe tun, nicht nur existieren. Seit 0.21.0 ist er Stufe C:
+# Und der Alias muss wirklich dasselbe tun, nicht nur existieren. Seit 0.22.0 ist er Stufe C:
 # Er warnt beim Aufruf (Wortlaut und Ziel prüft der Wächter tests/test_api_surface.py).
 import warnings as _warnungen  # noqa: E402
 

@@ -324,9 +324,9 @@ route, or through `run_in_threadpool` in an `async def` one.
 > **Without these building blocks there is no protection against guessing.** The inner checks
 > `check_password`, `check_pin`, `check_ldap`, `verify_totp` and `verify_recovery_code` only
 > compare: no lockout, no counter, no series lock, no rate limit, no line for fail2ban. Until
-> 0.20.1 this section showed `check_password` + `start_session` — a route built from that lets
+> 0.21.0 this section showed `check_password` + `start_session` — a route built from that lets
 > anyone guess passwords (or a four-digit PIN, or a six-digit code) as fast as the server
-> answers. They are [tier C](#public-api-three-tiers) since 0.21.0, warn when called and go with
+> answers. They are [tier C](#public-api-three-tiers) since 0.22.0, warn when called and go with
 > 1.0; replace them with `anmelden_*`.
 
 `start_session` stays, for tests and for a factor you verified yourself — it checks nothing
@@ -1097,15 +1097,15 @@ A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollor
 
 ## Public API: three tiers
 
-Not everything without a leading underscore is a promise. Since 0.21.0 every public name has a
+Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
 **tier**, recorded in `tests/api_surface.json` and listed with signature and description in
 [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md):
 
 | Tier | What | Promise |
 |---|---|---|
-| **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.21.0. |
+| **A — public, stable from 1.0** | what this README shows, and what embedding apps use | No breaking change across two minor releases — the condition for 1.0. The count starts with 0.22.0. |
 | **B — for advanced use** | building blocks for your own account and admin pages (below) | Stays. Removed or reshaped only after a `DeprecationWarning` across two minor releases. |
-| **C — internal** | the wiring of the built-in routes | None. Since 0.21.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
+| **C — internal** | the wiring of the built-in routes | None. Since 0.22.0 the implementation carries a leading underscore; the old name stays until 1.0 as an alias that warns when called, then goes. Don't start using them. |
 
 A new public name has no tier until someone decides; the guard `tests/test_api_surface.py` stays
 red until then, so nothing becomes a promise by accident. The config fields are tier A (except
@@ -1116,7 +1116,7 @@ one tombstone, marked in `KONFIGURATION.md`), and so are the error types (`TinyS
 `DeprecationWarning` that names the replacement; [`API.md`](https://github.com/Ollornog/TinySesam/blob/main/API.md)
 lists each one. Python hides these warnings outside `__main__` — to find them in your app, run its
 tests once with `python -W error::DeprecationWarning`. A subclass that overrides one of these names
-gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.21.0, so the
+gets a `RuntimeWarning` when it is defined: the built-in routes call `_name` since 0.22.0, so the
 override no longer takes effect.
 
 ### For advanced use (tier B)
@@ -1207,7 +1207,7 @@ package cover them structurally, because they cannot dial out.
 
 Two security audits went through the code in 2026-09 (see the `CHANGELOG`). The version is
 deliberately **not** 1.0 yet: the tier-A surface ([Public API](#public-api-three-tiers)) has to
-hold still for two minor releases first, counted from 0.21.0.
+hold still for two minor releases first, counted from 0.22.0.
 
 MIT license.
 

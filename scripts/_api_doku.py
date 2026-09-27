@@ -9,10 +9,10 @@ enthält. Der Wächter `tests/test_api_surface.py` misst dieselbe Menge — hier
     python3 scripts/_api_doku.py              # schreiben
     python3 scripts/_api_doku.py --dry-run    # nur prüfen (Exit 1 = veraltet)
 
-Seit 0.21.0 ist die Oberfläche nicht mehr nur gemessen, sondern **eingestuft** (PO-Entscheid
+Seit 0.22.0 ist die Oberfläche nicht mehr nur gemessen, sondern **eingestuft** (PO-Entscheid
 2026-09-26): Die Stufe jedes Namens steht in `tests/api_surface.json`, und diese Seite gliedert
 danach — A „öffentlich, stabil ab 1.0", B „für Fortgeschrittene", C „intern". C steht ohne
-Erklärung da (niemand soll dort einen Baustein finden), aber mit dem Ersatz: Seit 0.21.0 ist jeder
+Erklärung da (niemand soll dort einen Baustein finden), aber mit dem Ersatz: Seit 0.22.0 ist jeder
 C-Name ein Alias, der beim Aufruf warnt (`tinysesam/_veraltet.py`), und wer die Warnung sieht,
 sucht hier, was er stattdessen nimmt. Ein Name ohne Stufe landet sichtbar in einem eigenen
 Abschnitt; rot macht ihn der Wächter, nicht diese Seite.
@@ -44,7 +44,7 @@ STUFEN = {
     "A": ("öffentlich, stabil ab 1.0",
           "dokumentiert und/oder von Einbettenden genutzt",
           "Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0 "
-          "([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.21.0, dem Release, "
+          "([M-1](backlog/M-1-api-stabil-1-0.md)). Der Zähler startet mit 0.22.0, dem Release, "
           "das die Einstufung bringt."),
     "B": ("für Fortgeschrittene",
           "Bausteine für eigene Konto- und Admin-Seiten, eigene Mail- und Token-Abläufe, "
@@ -54,7 +54,7 @@ STUFEN = {
           "ist erlaubt."),
     "C": ("intern",
           "Verdrahtung der eingebauten Routen",
-          "Keine. Die Implementierung trägt seit 0.21.0 einen führenden Unterstrich; der alte "
+          "Keine. Die Implementierung trägt seit 0.22.0 einen führenden Unterstrich; der alte "
           "Name bleibt bis 1.0 als Alias, der beim Aufruf eine `DeprecationWarning` auslöst, und "
           "fällt dann weg."),
 }
@@ -63,7 +63,7 @@ STUFEN = {
 #: Text nennt sie beim Namen — steht einer nicht mehr in C, stimmt der Text nicht mehr.
 UNGEDROSSELT = ("check_password", "check_pin", "check_ldap", "check_saml")
 
-#: Der sichere Weg für eigene Login-Seiten (0.21.0), auf den der Warnsatz zu C zeigt. Stehen sie
+#: Der sichere Weg für eigene Login-Seiten (0.22.0), auf den der Warnsatz zu C zeigt. Stehen sie
 #: nicht in A, stimmt der Satz nicht mehr.
 BAUSTEINE = ("anmelden_passwort", "anmelden_pin", "anmelden_totp")
 
@@ -324,7 +324,7 @@ def bauen() -> str:
     if intern:
         teile.append(
             f"## C · Veraltet — fällt mit {BIS} weg\n\n"
-            "Diese Namen gehören nicht zur Zusage. Seit 0.21.0 heisst die Implementierung "
+            "Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung "
             f"`_name`; der alte Name bleibt bis {BIS} als Alias, der **beim Aufruf** (Konstanten: "
             "beim Lesen) eine `DeprecationWarning` mit dem Ersatz auslöst, und fällt dann weg. "
             "**Neu nicht verwenden** — für eigene Seiten stehen die Bausteine in A und B. Wer "

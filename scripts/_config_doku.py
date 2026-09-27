@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 QUELLE = ROOT / "tinysesam" / "config.py"
 ZIEL = ROOT / "KONFIGURATION.md"
-#: Die Stufe je Feld (seit 0.21.0) steht beim Wächter der öffentlichen Oberfläche.
+#: Die Stufe je Feld (seit 0.22.0) steht beim Wächter der öffentlichen Oberfläche.
 ABLAGE = ROOT / "tests" / "api_surface.json"
 
 KOPF = """# Konfiguration — alle Felder von `TinySesamConfig`

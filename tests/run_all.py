@@ -47,9 +47,9 @@ SKIP_EXIT = 77
 
 def warnfilter() -> str:
     """`PYTHONWARNINGS`: Ein veralteter TinySesam-Name (Stufe C), gerufen AUS dem Paket selbst, ist
-    ein Fehler — in jeder Suite, nicht nur in einer (0.21.0, PO-Entscheid 2026-09-26).
+    ein Fehler — in jeder Suite, nicht nur in einer (0.22.0, PO-Entscheid 2026-09-26).
 
-    Seit 0.21.0 heisst die Implementierung der internen Namen `_name`; der alte Name ist ein
+    Seit 0.22.0 heisst die Implementierung der internen Namen `_name`; der alte Name ist ein
     Alias, der warnt. Ruft Code im Paket noch den alten Namen, sähe das niemand: Eine
     `DeprecationWarning` aus einem Bibliotheksmodul zeigt Python ohne Filter gar nicht an. Die
     AST-Suche in `tests/test_api_surface.py` findet `auth.check_password(…)`, aber kein

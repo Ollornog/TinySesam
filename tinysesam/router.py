@@ -92,7 +92,7 @@ def build_router(auth) -> APIRouter:
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                      next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.21.0): Der ganze Ablauf — CSRF, IP-Drossel, Vorbuchung, LDAP-Rückfall,
+        # Eine Quelle (0.22.0): Der ganze Ablauf — CSRF, IP-Drossel, Vorbuchung, LDAP-Rückfall,
         # Audit und Sicherheits-Log, Sitzung — steht in `anmelden_passwort`, dem öffentlichen
         # Baustein für eigene Login-Seiten. Hier wird nur das Ergebnis zur Seite. Diese Route ruft
         # keinen inneren Prüfer selbst (Wächter in `tests/test_anmelden.py`).
@@ -127,7 +127,7 @@ def build_router(auth) -> APIRouter:
 
     @r.post("/auth/totp")
     def totp_submit(request: Request, code: str = Form(""), next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-        # Eine Quelle (0.21.0): `anmelden_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
+        # Eine Quelle (0.22.0): `anmelden_totp` prüft (TOTP- oder Einmal-Code), drosselt, bucht und
         # hängt den Faktor an; hier wird nur das Ergebnis zur Seite.
         erg = auth.anmelden_totp(request, code, next=next, csrf=csrf_tok)
         if erg.grund == "keine_sitzung":
@@ -285,7 +285,7 @@ def build_router(auth) -> APIRouter:
         @r.post("/auth/pin")
         def pin_submit(request: Request, pin: str = Form(""), username: str = Form(""),
                        next: str = Form(""), remember: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-            # Eine Quelle (0.21.0): Welche Lage (volle Sitzung, Kettenschritt, Gästeweg), Drossel,
+            # Eine Quelle (0.22.0): Welche Lage (volle Sitzung, Kettenschritt, Gästeweg), Drossel,
             # Vorbuchung in Login- und PIN-Topf und Serie stehen in `anmelden_pin`.
             erg = auth.anmelden_pin(request, pin, username, next=next,
                                     remember=_remember(cfg, remember), csrf=csrf_tok)

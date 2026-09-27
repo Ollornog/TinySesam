@@ -6,7 +6,7 @@ Releases haben gebrochen, und beide Male fiel es erst beim Schreiben des CHANGEL
 
 Dieser Test schreibt die Oberfläche in `tests/api_surface.json` fest und vergleicht bei jedem Lauf.
 Erfasst werden Methoden, Klassenkonstanten, seit 0.20.1 auch die Properties (die Cookie-Namen),
-die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.21.0 dazu der
+die Konfigurationsfelder mit Vorgabe, die Presets und die Exporte, seit 0.22.0 dazu der
 Ergebnistyp der Anmelde-Bausteine (`Anmeldung`: Felder, Methoden, Gründe).
 Er verbietet nichts — er erzwingt eine **bewusste Entscheidung**:
 
@@ -16,7 +16,7 @@ Was als Bruch gilt, steht unten in `beurteile()`: Entfernt oder umbenannt ist ei
 eine geänderte Signatur meistens auch, etwas Neues ist eine Erweiterung. Die Unterscheidung
 steht im Bericht, damit man nicht jede Zeile selbst nachschlagen muss.
 
-**Seit 0.21.0 trägt jeder Name eine Stufe** (PO-Entscheid 2026-09-26, `STUFEN` unten): A ist
+**Seit 0.22.0 trägt jeder Name eine Stufe** (PO-Entscheid 2026-09-26, `STUFEN` unten): A ist
 dauerhaft öffentlich und die einzige Stufe mit der 1.0-Zusage, B ist für Fortgeschrittene mit
 schwächerer Zusage, C ist intern. Bis dahin war die Oberfläche *gemessen, nicht ausgewählt* —
 eingefroren war, was keinen Unterstrich trug. Die Stufe ist eine Entscheidung, keine Messung:
@@ -25,7 +25,7 @@ eine. Ein neuer Name kommt ohne Stufe herein und hält den Wächter rot, bis jem
 — ein stilles „A" hätte jede Hilfsmethode, die zufällig ohne Unterstrich entsteht, für immer
 zugesagt.
 
-**Stufe C ist seit 0.21.0 nur noch ein Alias** (`tinysesam/_veraltet.py`): Die Implementierung
+**Stufe C ist seit 0.22.0 nur noch ein Alias** (`tinysesam/_veraltet.py`): Die Implementierung
 heisst `_name`, der alte Name reicht bis 1.0 weiter und warnt. Der Wächter hält dazu fest
 (`c_befunde()`): Jeder C-Eintrag ist in der Klasse ein `Veraltet` und umgekehrt, er zeigt auf die
 Unterstrich-Implementierung, sein Aufruf warnt genau einmal mit Ersatz und auf den Aufrufer, kein
@@ -52,7 +52,7 @@ WURZEL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ABLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_surface.json")
 
 #: Die Stufen der öffentlichen Oberfläche (PO-Entscheid 2026-09-26). Nur für A gilt die Zusage
-#: aus M-1 („zwei Minor-Versionen ohne Bruch“); der Zähler startet mit 0.21.0.
+#: aus M-1 („zwei Minor-Versionen ohne Bruch“); der Zähler startet mit 0.22.0.
 STUFEN = {
     "A": "öffentlich, stabil ab 1.0 — ein Bruch setzt die 1.0-Uhr zurück (M-1)",
     "B": "für Fortgeschrittene — entfernen oder umbauen erst nach einer DeprecationWarning "
@@ -62,7 +62,7 @@ STUFEN = {
 }
 
 #: Seit wann die C-Aliase warnen (Zusatzfeld `seit` an jedem C-Eintrag).
-C_SEIT = "0.21.0"
+C_SEIT = "0.22.0"
 
 #: Unter welchem Schlüssel ein Eintrag in `api_surface.json` seinen GEMESSENEN Wert trägt.
 #: Alles andere am Eintrag (`stufe`, später Alias-Angaben) ist Entscheidung und wird von
@@ -156,7 +156,7 @@ def oberflaeche() -> dict:
 
 
 def anmeldung_oberflaeche() -> dict:
-    """Der Ergebnistyp der Anmelde-Bausteine (0.21.0, Stufe A): Felder, Methoden, Gründe.
+    """Der Ergebnistyp der Anmelde-Bausteine (0.22.0, Stufe A): Felder, Methoden, Gründe.
 
     Die Exporte erfasst der Wächter nur beim Namen. Für `Anmeldung` genügt das nicht: Wer
     `erg.naechster` liest oder auf `erg.grund == "gesperrt"` prüft, bricht an einem umbenannten
@@ -176,8 +176,8 @@ def anmeldung_oberflaeche() -> dict:
 def messung(datei: dict) -> dict:
     """Die Ablage auf die reine Messung zurückführen — die Form, die `oberflaeche()` liefert.
 
-    Verträgt auch die Ablage von vor 0.21.0 (Wert als Zeichenkette, Exporte als Liste): Ein
-    Vergleich mit einem älteren Release (`git show v0.20.1:tests/api_surface.json`) soll nicht an
+    Verträgt auch die Ablage von vor 0.22.0 (Wert als Zeichenkette, Exporte als Liste): Ein
+    Vergleich mit einem älteren Release (`git show v0.21.0:tests/api_surface.json`) soll nicht an
     der Form scheitern.
     """
     ergebnis = {}
@@ -204,7 +204,7 @@ def mit_stufen(jetzt: dict, frueher: dict) -> dict:
     ablage = {}
     for bereich, gemessen in jetzt.items():
         alt = frueher.get(bereich, {})
-        if isinstance(alt, list):                     # Form vor 0.21.0: keine Entscheidungen
+        if isinstance(alt, list):                     # Form vor 0.22.0: keine Entscheidungen
             alt = {}
         schluessel = MESSWERT[bereich]
         neu = {}
@@ -232,7 +232,7 @@ def ohne_stufe(datei: dict) -> list:
     for bereich in sorted(datei):
         eintraege = datei[bereich]
         if not isinstance(eintraege, dict):
-            fehlt.append(f"{bereich}: ganze Liste ohne Stufen (Form vor 0.21.0)")
+            fehlt.append(f"{bereich}: ganze Liste ohne Stufen (Form vor 0.22.0)")
             continue
         for name in sorted(eintraege):
             e = eintraege[name]
@@ -359,7 +359,7 @@ def selbstpruefung(jetzt: dict) -> None:
 
 
 def selbstpruefung_stufen(jetzt: dict) -> None:
-    """Schlägt die Stufen-Pflicht an, und vergibt `--update` wirklich keine Stufe? (0.21.0)
+    """Schlägt die Stufen-Pflicht an, und vergibt `--update` wirklich keine Stufe? (0.22.0)
 
     An synthetischen Ablagen aus der echten Messung, damit die Prüfung nicht an der
     eingecheckten Datei hängt, die gerade vollständig sein mag. Läuft auch vor `--update`.
@@ -428,7 +428,7 @@ def vergleiche(frueher_datei: dict, jetzt: dict) -> tuple:
     return bool(fehlt or brueche or erweiterungen), fehlt, brueche, erweiterungen
 
 
-# ---------- Stufe C: die Aliase (0.21.0) ----------
+# ---------- Stufe C: die Aliase (0.22.0) ----------
 # PO-Entscheid 2026-09-26: Ein Name der Stufe C bekommt einen führenden Unterstrich; der alte Name
 # bleibt bis 1.0 als Alias, der beim Aufruf eine DeprecationWarning auslöst. Das ist nur dann
 # wahr, wenn es gemessen wird — ein Alias, der still weiterreicht, oder eine Route, die noch den
@@ -585,19 +585,87 @@ def frist_befunde(datei: dict, version: str) -> list:
             if _version(version) >= _version(e.get("bis", BIS))]
 
 
+#: Der Name des noch offenen Abschnitts im CHANGELOG — was dort steht, ist in keinem Release.
+OFFEN = "Unveröffentlicht"
+
+
+def changelog_veraltet(text: str) -> list:
+    """[(abschnitt, {namen})] in der Reihenfolge des CHANGELOG (neueste zuerst): je Abschnitt
+    `## [X.Y.Z]` bzw. `## [Unveröffentlicht]` die Namen in Backticks unter `### Veraltet`."""
+    abschnitte, akt, in_veraltet = [], None, False
+    for zeile in text.split("\n"):
+        if zeile.startswith("## ["):
+            kopf = zeile[4:].split("]", 1)[0].strip()
+            akt = (kopf, set())
+            abschnitte.append(akt)
+            in_veraltet = False
+        elif zeile.startswith("### "):
+            in_veraltet = akt is not None and zeile[4:].strip().startswith("Veraltet")
+        elif in_veraltet:
+            teile = zeile.split("`")
+            akt[1].update(t for t in teile[1::2] if t.isidentifier())
+    return abschnitte
+
+
+def seit_befunde(datei: dict, changelog: str) -> list:
+    """Stimmt `seit` jedes Alias mit dem Release überein, das ihn einführt? (0.22.0)
+
+    Anlass: Die Einstufung war mit `seit: 0.21.0` gebaut, dann ging 0.21.0 ohne sie hinaus. Ein
+    `seit`, das ein schon veröffentlichtes Release nennt, in dem es den Alias gar nicht gab,
+    schickt jeden, der die Warnung liest, in die falsche Version — und nichts fiel auf, weil
+    nur geprüft wurde, OB das Feld da ist. Die Regel, am CHANGELOG gemessen:
+
+    * Der Alias steht unter `### Veraltet` in genau dem Abschnitt, der ihn einführt — dem
+      ältesten, der ihn dort nennt. Fehlt er überall, ist das rot.
+    * Führt ihn `[Unveröffentlicht]` ein, muss `seit` **grösser** sein als das jüngste Release
+      im CHANGELOG: Das nächste Release bringt ihn, keines der schon draussen ist.
+    * Führt ihn ein Release `[X.Y.Z]` ein, muss `seit` genau `X.Y.Z` sein. Beim Umbenennen von
+      `[Unveröffentlicht]` in das neue Release greift damit dieselbe Regel weiter.
+    """
+    abschnitte = changelog_veraltet(changelog)
+    releases = [kopf for kopf, _ in abschnitte if kopf != OFFEN and kopf[:1].isdigit()]
+    if not releases:
+        return ["CHANGELOG.md: kein Release-Abschnitt `## [X.Y.Z]` gefunden — `seit` der Aliase "
+                "lässt sich nicht prüfen"]
+    juengstes = max(releases, key=_version)
+    befunde = []
+    for (bereich, name), e in sorted(c_eintraege(datei).items()):
+        seit = str(e.get("seit") or "")
+        wo = [kopf for kopf, namen in abschnitte if name in namen]
+        if not wo:
+            befunde.append(f"{bereich}.{name}: CHANGELOG nennt den Alias in keinem Abschnitt unter "
+                           f"„Veraltet“ — dort gehört er hin, mit Ersatz (`seit` {seit!r})")
+            continue
+        einfuehrung = wo[-1]                   # der älteste Abschnitt, der ihn nennt
+        if einfuehrung == OFFEN:
+            if _version(seit) <= _version(juengstes):
+                befunde.append(
+                    f"{bereich}.{name}: `seit` {seit!r}, aber der Alias steht erst unter "
+                    f"[{OFFEN}] — {juengstes} ist schon veröffentlicht und kannte ihn nicht; "
+                    f"`seit` auf das nächste Release setzen (grösser als {juengstes})")
+        elif _version(seit) != _version(einfuehrung):
+            befunde.append(f"{bereich}.{name}: `seit` {seit!r}, eingeführt hat den Alias aber "
+                           f"[{einfuehrung}] (CHANGELOG, „Veraltet“)")
+    return befunde
+
+
 def c_befunde(datei: dict, klasse=TinySesam, version: str = _paket.__version__,
-              wurzel: str = WURZEL) -> tuple:
+              wurzel: str = WURZEL, changelog: "str | None" = None) -> tuple:
     """(befunde, geprüfte Dateien) — die ganze Stufe-C-Prüfung des normalen Laufs."""
     ziele = {name: alias.ziel for name, alias in vars(klasse).items() if isinstance(alias, Veraltet)}
     ziele.update({name: e.get("ziel") or f"_{name}" for (_, name), e in c_eintraege(datei).items()
                   if name not in ziele})
     innen, zahl = interne_aufrufe(ziele, wurzel)
-    return alias_befunde(datei, klasse) + innen + frist_befunde(datei, version), zahl
+    if changelog is None:
+        with open(os.path.join(wurzel, "CHANGELOG.md"), encoding="utf-8") as fh:
+            changelog = fh.read()
+    return (alias_befunde(datei, klasse) + innen + frist_befunde(datei, version)
+            + seit_befunde(datei, changelog)), zahl
 
 
 def pruefe_unterklasse() -> None:
     """Eine Unterklasse, die einen alten Namen überschreibt, muss es erfahren (RuntimeWarning):
-    Seit 0.21.0 rufen die Routen `_name`, die Überschreibung liefe still ins Leere."""
+    Seit 0.22.0 rufen die Routen `_name`, die Überschreibung liefe still ins Leere."""
     with warnings.catch_warnings(record=True) as gewarnt:
         warnings.simplefilter("always")
 
@@ -749,16 +817,39 @@ def selbstpruefung_c() -> None:
     assert zahl == 2 and sorted(b.split(": ")[0] for b in innen) == [
         "examples/e.py:2", "tinysesam/m.py:1", "tinysesam/m.py:3"], (zahl, innen)
     # Frist: ab 1.0 ist jeder verbliebene Alias rot, davor keiner.
-    assert frist_befunde(ablage(), "0.21.0") == [] and frist_befunde(ablage(), "0.99.3") == []
+    assert frist_befunde(ablage(), "0.22.0") == [] and frist_befunde(ablage(), "0.99.3") == []
     assert len(frist_befunde(ablage(), "1.0.0")) == 2 and frist_befunde(ablage(), "1.2")
-    # Der normale Lauf geht durch dieselbe Funktion und sieht alle drei Arten.
-    befunde, _ = c_befunde(ablage(), klasse(Stumm), "1.0.0", probe)
+
+    # `seit` gegen das CHANGELOG (0.22.0): Der Alias steht unter „Veraltet“ im Abschnitt, der ihn
+    # einführt; im offenen Abschnitt ist `seit` grösser als das jüngste Release, sonst genau dieses.
+    def changelog(offen="", release=""):
+        return ("# Changelog\n\n## [Unveröffentlicht]\n\n### Veraltet\n\n" + offen + "\n\n"
+                "## [0.21.0] — 2026-09-27\n\n### Geändert\n\n- `f` und `K` zählen hier nicht\n\n"
+                "### Veraltet\n\n" + release + "\n\n## [0.20.1] — 2026-09-24\n")
+    beide = "- `f` → `_f`, `K` → `_K`"
+    neu = ablage(m__f__seit="0.22.0", k__K__seit="0.21.1")
+    assert seit_befunde(neu, changelog(offen=beide)) == [], seit_befunde(neu, changelog(offen=beide))
+    rot(seit_befunde(ablage(m__f__seit="0.21.0"), changelog(offen=beide)),
+        "TinySesam.f: `seit` '0.21.0', aber der Alias steht erst unter [Unveröffentlicht]")
+    rot(seit_befunde(ablage(k__K__seit="0.19.0"), changelog(offen=beide)),
+        "TinySesam.konstanten.K: `seit` '0.19.0', aber")
+    alt = ablage(m__f__seit="0.21.0", k__K__seit="0.21.0")
+    assert seit_befunde(alt, changelog(release=beide)) == []
+    assert seit_befunde(alt, changelog(offen=beide, release=beide)) == [], "der älteste zählt"
+    rot(seit_befunde(ablage(m__f__seit="0.22.0"), changelog(release=beide)),
+        "TinySesam.f: `seit` '0.22.0', eingeführt hat den Alias aber [0.21.0]")
+    rot(seit_befunde(ablage(), changelog(offen="- `K` → `_K`")), "TinySesam.f: CHANGELOG nennt")
+    rot(seit_befunde(ablage(), "# Changelog\n\n## [Unveröffentlicht]\n"), "kein Release-Abschnitt")
+    # Der normale Lauf geht durch dieselbe Funktion und sieht alle vier Arten.
+    befunde, _ = c_befunde(ablage(m__f__seit="0.21.0", k__K__seit="0.22.0"), klasse(Stumm),
+                           "1.0.0", probe, changelog(offen=beide))
     import shutil
     shutil.rmtree(probe, ignore_errors=True)
-    for art in ("löst 0 Warnungen", "tinysesam/m.py:1", "fallen müssen"):
+    for art in ("löst 0 Warnungen", "tinysesam/m.py:1", "fallen müssen", "kannte ihn nicht"):
         rot(befunde, art)
     ok("Stufe-C-Regeln schlagen an: Alias stumm, falscher stacklevel, verschluckte Argumente, "
-       "eigene Implementierung, Ablage ≠ Klasse, falsches Ziel, interner Aufruf, Frist 1.0")
+       "eigene Implementierung, Ablage ≠ Klasse, falsches Ziel, interner Aufruf, Frist 1.0, "
+       "`seit` gegen das CHANGELOG")
 
 
 def _zaehle_stufen(datei: dict) -> str:
@@ -814,7 +905,7 @@ def main(argv):
     else:
         ok(f"jeder öffentliche Name hat eine Stufe ({_zaehle_stufen(frueher_datei)})")
 
-    # Stufe C (0.21.0): Aliase, keine Aufrufe alter Namen im eigenen Code, Frist 1.0.
+    # Stufe C (0.22.0): Aliase, keine Aufrufe alter Namen im eigenen Code, Frist 1.0.
     c_fehler, c_dateien = c_befunde(frueher_datei)
     assert c_dateien >= 20, f"nur {c_dateien} Dateien nach alten Namen durchsucht — Pfad kaputt?"
     if c_fehler:

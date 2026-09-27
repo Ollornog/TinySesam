@@ -1,8 +1,8 @@
 """Veraltete Namen der Stufe C — bis 1.0 als warnender Alias (PO-Entscheid 2026-09-26).
 
-Stufe C heisst: intern, keine Zusage. Bis 0.20.x trugen diese Namen keinen Unterstrich und
+Stufe C heisst: intern, keine Zusage. Bis 0.21.x trugen diese Namen keinen Unterstrich und
 sahen damit aus wie jede andere Methode — `check_password` stand sogar als Baustein in der
-README, obwohl es nicht drosselt. Seit 0.21.0 heisst die Implementierung `_check_password`; der
+README, obwohl es nicht drosselt. Seit 0.22.0 heisst die Implementierung `_check_password`; der
 alte Name bleibt bis 1.0 als Klassenattribut stehen:
 
     check_password = Veraltet("_check_password", "stattdessen `POST /auth/login` …")

@@ -321,9 +321,9 @@ das Verzeichnis): aus einer `def`-Route rufen, in einer `async def`-Route über
 > **Ohne diese Bausteine gibt es keinen Schutz gegen Raten.** Die inneren Prüfer
 > `check_password`, `check_pin`, `check_ldap`, `verify_totp` und `verify_recovery_code`
 > vergleichen nur: keine Sperre, kein Zähler, keine Serien-Sperre, keine Drossel, keine Zeile für
-> fail2ban. Bis 0.20.1 zeigte dieser Abschnitt `check_password` + `start_session` — eine Route
+> fail2ban. Bis 0.21.0 zeigte dieser Abschnitt `check_password` + `start_session` — eine Route
 > danach lässt jeden Passwörter (oder eine vierstellige PIN, oder einen sechsstelligen Code) so
-> schnell raten, wie der Server antwortet. Sie sind seit 0.21.0 [Stufe C](#öffentliche-api-drei-stufen),
+> schnell raten, wie der Server antwortet. Sie sind seit 0.22.0 [Stufe C](#öffentliche-api-drei-stufen),
 > warnen beim Aufruf und fallen mit 1.0 weg; ersetzen durch `anmelden_*`.
 
 `start_session` bleibt, für Tests und für einen Faktor, den du selbst geprüft hast — es prüft
@@ -1118,15 +1118,15 @@ Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Ga
 
 ## Öffentliche API: drei Stufen
 
-Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.21.0 hat jeder öffentliche Name
+Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
 eine **Stufe**, festgehalten in `tests/api_surface.json` und mit Signatur und Beschreibung
 aufgeführt in [`API.md`](../API.md):
 
 | Stufe | Was | Zusage |
 |---|---|---|
-| **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.21.0. |
+| **A — öffentlich, stabil ab 1.0** | was diese README zeigt, und was einbettende Apps nutzen | Kein Bruch über zwei Minor-Versionen — die Bedingung für 1.0. Gezählt wird ab 0.22.0. |
 | **B — für Fortgeschrittene** | Bausteine für eigene Konto- und Admin-Seiten (unten) | Bleibt. Entfernen oder umbauen erst nach einer `DeprecationWarning` über zwei Minor-Versionen. |
-| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.21.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
+| **C — intern** | die Verdrahtung der eingebauten Routen | Keine. Seit 0.22.0 trägt die Implementierung einen führenden Unterstrich; der alte Name bleibt bis 1.0 als Alias, der beim Aufruf warnt, dann fällt er weg. Nicht neu verwenden. |
 
 Ein neuer öffentlicher Name hat keine Stufe, bis jemand entscheidet; so lange ist der Wächter
 `tests/test_api_surface.py` rot — nichts wird aus Versehen zur Zusage. Die Konfigurationsfelder
@@ -1138,7 +1138,7 @@ sind Stufe A (bis auf einen Grabstein, markiert in `KONFIGURATION.md`), ebenso d
 Warnungen ausserhalb von `__main__` nicht an — um sie in der eigenen App zu finden, deren Tests
 einmal mit `python -W error::DeprecationWarning` laufen lassen. Eine Unterklasse, die einen dieser
 Namen überschreibt, bekommt beim Definieren eine `RuntimeWarning`: Die eingebauten Routen rufen seit
-0.21.0 `_name`, die Überschreibung wirkt nicht mehr.
+0.22.0 `_name`, die Überschreibung wirkt nicht mehr.
 
 ### Für Fortgeschrittene (Stufe B)
 
@@ -1231,7 +1231,7 @@ sie strukturell ab, weil sie nicht nach draussen telefonieren können.
 Zwei Sicherheitsaudits sind im September 2026 durch den Code gegangen (siehe `CHANGELOG`). Die
 Version ist bewusst noch **nicht** 1.0: Die Oberfläche der Stufe A
 ([Öffentliche API](#öffentliche-api-drei-stufen)) muss dafür zwei Minor-Versionen stillhalten,
-gezählt ab 0.21.0.
+gezählt ab 0.22.0.
 
 MIT-Lizenz.
 

@@ -76,7 +76,7 @@ Sperren/Zähler) ist abgeschlossen: Jeder Punkt ist behoben mit Test, per Mutati
 der öffentlichen API in A/B/C** (PO-Entscheid 2026-09-26) — die inhaltliche Frage oben, welche der
 eingefrorenen Namen auf Dauer öffentlich sein sollen. Sie liegt beim PO.
 
-## Stand 2026-09-27: Einstufung gebaut, die Uhr für A startet mit 0.21.0
+## Stand 2026-09-27: Einstufung gebaut, die Uhr für A startet mit 0.22.0
 
 Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebaut ist Schritt 1:
 
@@ -84,7 +84,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
   A 225 (davon 158 Konfigurationsfelder), B 64, C 50. `tests/test_api_surface.py` ist rot, wenn
   einer keine oder eine unbekannte trägt; `--update` übernimmt Stufen, vergibt aber nie eine.
   Damit ist die Frage oben („gemessen, nicht ausgewählt“) beantwortet: Ausgewählt ist, was A ist.
-- **Nur für A gilt die Bedingung „zwei Minor-Versionen ohne Bruch“**, gezählt ab 0.21.0 — dem
+- **Nur für A gilt die Bedingung „zwei Minor-Versionen ohne Bruch“**, gezählt ab 0.22.0 — dem
   Release, das die Einstufung bringt. Ein Bruch an B (nur nach `DeprecationWarning` über zwei
   Minor-Versionen) oder C (intern, fällt mit 1.0) setzt die Uhr nicht zurück; der Wächter meldet
   ihn trotzdem, mit der Stufe davor.
@@ -96,7 +96,7 @@ Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebau
 | Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
 | C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (49 Aliase, Wächter, Warnfilter in `run_all.py`) |
 | sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`anmelden_*`, `Anmeldung`, die Routen rufen ihn) |
-| zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.21.0 |
+| zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.22.0 |
 
 **Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
 (42 Methoden, 6 Konstanten; `complete_mfa` zeigt auf `complete_totp`), der alte Name ist ein
@@ -119,6 +119,12 @@ README zeigt beide Wege (nur Aussehen: `set_template`; eigene Route: `anmelden_p
 Beispiel läuft im Test wörtlich und muss sperren. Die Ersatztexte der C-Aliase nennen den Baustein.
 Der Wächter misst den Ergebnistyp mit (Bereich `Anmeldung`: Felder, Methoden, `GRUENDE`) — Stand
 353 Namen: A 240, B 64, C 49.
+
+**Nachtrag 2026-09-27: 0.21.0 ging ohne die Einstufung hinaus** (vorgezogen für einen
+Produktivgang). Sie erscheint mit **0.22.0**: `seit` der Aliase, der Zähler für A, die Warntexte
+und die Doku nennen 0.22.0. Weil nur geprüft war, *ob* `seit` dasteht, prüft der Wächter jetzt auch
+den Wert gegen das CHANGELOG (`seit_befunde`): Führt `[Unveröffentlicht]` einen Alias ein, liegt
+`seit` über dem jüngsten Release, sonst ist es genau das einführende Release.
 
 Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
 Stern der Nur-Schlüsselwort-Parameter fest (`signatur()` setzt die Parameter einzeln zusammen) —

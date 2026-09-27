@@ -1026,7 +1026,7 @@ _sys2.path.insert(0, ROOT)
 from tinysesam import TinySesamConfig as _TSC  # noqa: E402
 assert _zahl == len(_dc_fields(_TSC)), (f"KONFIGURATION.md führt {_zahl} Felder, "
                                         f"TinySesamConfig hat {len(_dc_fields(_TSC))}")
-# Die Stufe (0.21.0): Fast jedes Feld ist A; wer davon abweicht, trägt es in seiner Zeile — sonst
+# Die Stufe (0.22.0): Fast jedes Feld ist A; wer davon abweicht, trägt es in seiner Zeile — sonst
 # läse jemand den Grabstein `totp_required` als Zusage bis 1.0.
 import json as _json_k  # noqa: E402
 _feldstufen = {n: e.get("stufe") for n, e in
@@ -1047,17 +1047,17 @@ assert _api.returncode == 0, ("API.md ist veraltet oder der Generator weist etwa
                               "`python3 scripts/_api_doku.py` fahren\n" + _api.stderr[-400:])
 _apidoc = _lies("API.md")
 # Methoden `### \`name(…)\``, Properties `### \`name\` — Property …` (seit 0.20.1 eingefroren),
-# seit 0.21.0 auch die Konstanten (`— Konstante`, Erklärung aus dem `#:`-Block darüber), die
+# seit 0.22.0 auch die Konstanten (`— Konstante`, Erklärung aus dem `#:`-Block darüber), die
 # Methoden von TinySesamConfig und die Funktions-Exporte: Mit der Einstufung stehen sie als
 # Zusage (A) oder Baustein (B) da — ohne Erklärung wären sie eine Zusage ins Blaue. Ebenso die
-# Methoden und Konstanten des Ergebnistyps `Anmeldung` (0.21.0); seine Felder prüft der Generator.
+# Methoden und Konstanten des Ergebnistyps `Anmeldung` (0.22.0); seine Felder prüft der Generator.
 _leer = _re.findall(r"^### `((?:TinySesamConfig\.|tinysesam\.|Anmeldung\.)?[A-Za-z_][A-Za-z0-9_]*)"
                     r"(?:\(|` — Property|` — Konstante).*\n\n—$", _apidoc, _re.M)
 assert not _leer, ("Diese Namen haben keinen Docstring bzw. keinen `#:`-Kommentar:\n  " +
                    "\n  ".join(_leer[:8]) +
                    "\n  (Eine eingefrorene Methode ohne Erklärung ist eine Zusage ins Blaue.)")
 # Gegliedert nach Stufe (PO-Entscheid 2026-09-26): A und B mit Erklärung, C als Tabelle alter
-# Name → Ersatz (seit 0.21.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
+# Name → Ersatz (seit 0.22.0 warnt jeder C-Name; wer die Warnung sieht, sucht hier den Ersatz).
 for _kopf in ("## A · Methoden von `TinySesam`", "## B · Methoden von `TinySesam`",
               "## A · Ergebnis der Anmelde-Bausteine: `tinysesam.Anmeldung`",
               "## C · Veraltet — fällt mit 1.0 weg"):
@@ -1103,7 +1103,7 @@ for _datei, _text in _readmes.items():
         f"{_datei} nennt Python {sorted(set(_gefunden))}, die CI fährt {_spanne}")
 print(f"  READMEs: Python-Spanne stimmt ({_spanne})")
 
-# ---------- Die Stufen der öffentlichen API stehen in beiden READMEs (0.21.0) ----------
+# ---------- Die Stufen der öffentlichen API stehen in beiden READMEs (0.22.0) ----------
 # PO-Entscheid 2026-09-26: B ist „öffentlich für Fortgeschrittene" mit eigenem Doku-Abschnitt.
 # Ein B-Baustein, den keine README nennt, ist eine Zusage, von der niemand weiss — genau der
 # Zustand, den die Einstufung beenden sollte (68 von 105 Methoden standen nirgends). Die Liste
@@ -1122,7 +1122,7 @@ for _datei, _kopf in (("README.md", "### For advanced use (tier B)"),
     _fehlt = [n for n in _stufe_b if not _re.search(rf"`[^`\n]*\b{_re.escape(n)}\b[^`\n]*`", _abschnitt)]
     assert not _fehlt, (f"{_datei}: Diese B-Bausteine fehlen im Abschnitt {_kopf!r}:\n  " +
                         "\n  ".join(_fehlt))
-    # Was Abnehmer nutzen, aber bis 0.20.1 in keiner README stand (Stufe A).
+    # Was Abnehmer nutzen, aber bis 0.21.0 in keiner README stand (Stufe A).
     for _name in ("create_user", "has_role", "current_user", "session_cookie_name",
                   "dataclasses.fields(TinySesamConfig)"):
         assert _name in _text, f"{_datei} dokumentiert {_name} nicht"
