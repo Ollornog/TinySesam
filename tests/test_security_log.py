@@ -101,7 +101,14 @@ try:
     tmp2 = tempfile.mkdtemp()
     log2 = os.path.join(tmp2, "security.log")
     db4 = os.path.join(tmp2, "t.db")
-    stderr = io.StringIO()
+
+    class _Konsole(io.StringIO):
+        # stderr an einem Terminal: Nur dann geht der Token auf stderr. Ohne Konsole (Container,
+        # journal) schreibt TinySesam seit 0.22.0 `<db_path>.claim` — tests/test_betriebsfunde.py (b).
+        def isatty(self):
+            return True
+
+    stderr = _Konsole()
     with contextlib.redirect_stderr(stderr):
         auth2 = TinySesam(TinySesamConfig(db_path=db4, security_log=log2, cookie_secure=False,
                                           passkey_enabled=False, allow_signup=True,
@@ -120,7 +127,7 @@ try:
     assert token not in inhalt2, inhalt2
     ok("B5-03: der Tokenwert steht NICHT in der Datei, die fail2ban liest")
 
-    assert "stderr" in inhalt2 and "NICHT im Log" in inhalt2, inhalt2
+    assert "steht auf der Konsole (stderr), nicht in dieser Zeile" in inhalt2, inhalt2
     ok("das Log nennt nur den Abrufweg, nicht den Wert")
 
     modus = stat.S_IMODE(os.stat(log2).st_mode)

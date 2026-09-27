@@ -866,8 +866,14 @@ r.check("G6: der IdP nimmt den letzten Admin — die Allowlist befördert im sel
 r.check("… mit Zeile admin_bootstrap_denied nach_idp_entzug, ohne admin_bootstrap",
         ("admin_bootstrap_denied", "chef6", "nach_idp_entzug") in _audit6
         and not any(e == "admin_bootstrap" for e, _, _ in _audit6), str(_audit6[:6]))
-r.check("… und das Einmal-Token geht sofort an den Betreiber (nicht erst beim nächsten Start)",
-        "claim-admin?token=" in _err6.getvalue(), _err6.getvalue()[-200:])
+# stderr ist hier ein Puffer, keine Konsole (wie im Container) — das Token geht deshalb in
+# `<db_path>.claim` (T-17), nicht auf stderr; `tests/test_betriebsfunde.py` (b) misst beide Wege.
+_datei6 = a6.cfg.db_path + ".claim"
+_tok6 = Path(_datei6).read_text(encoding="utf-8").strip() if os.path.exists(_datei6) else ""
+r.check("… und das Einmal-Token geht sofort an den Betreiber (nicht erst beim nächsten Start) — "
+        "ohne Konsole in <db_path>.claim, nicht auf stderr",
+        bool(_tok6) and _tok6 == a6.admin_claim_token() and _tok6 not in _err6.getvalue(),
+        f"{_datei6} {bool(_tok6)} {_err6.getvalue()[-200:]}")
 with redirect_stderr(io.StringIO()):
     _oidc_login(app6)
 r.check("… auch der nächste Login befördert nicht", not a6.store.get_user_by_name("chef6")["is_admin"])

@@ -80,7 +80,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt — und nie mehr, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6; dann Einmal-Token oder `tinysesam owner`). Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
-| `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
+| `admin_claim_token_file` | `str` | `""` | 0600-Datei für das Einmal-Token, z.B. /run/tinysesam/admin-claim.token; leer: stderr, wenn es eine Konsole ist, sonst `<db_path>.claim` |
 
 ## Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv.
 

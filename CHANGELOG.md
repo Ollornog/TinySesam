@@ -6,7 +6,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 **Einstufung der öffentlichen API (Stufen A/B/C) — dazu der sichere Login-Baustein
 (`anmelden_passwort`, `anmelden_pin`, `anmelden_totp`) für eigene Login-Seiten; die internen Namen
-(Stufe C) warnen und fallen mit 1.0 weg.** Was beim Update auffällt:
+(Stufe C) warnen und fallen mit 1.0 weg. Und zwei Funde aus dem Betrieb: das Erst-Admin-Token steht
+im Container nicht mehr im Log, eine Gruppenregel ohne Scope `groups` wird gemeldet.** Was beim
+Update auffällt:
 
 - **Die öffentliche API hat Stufen** (PO-Entscheid 2026-09-26): **A** öffentlich und stabil ab
   1.0, **B** für Fortgeschrittene (Bausteine für eigene Konto- und Admin-Seiten), **C** intern.
@@ -42,6 +44,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   `erg.weiterleitung()`), und es schützt genau wie `POST /auth/login`, weil diese Route es ruft.
   Wer nur das Aussehen ändern wollte, ersetzt allein die Seite (`set_template("login", …)`).
   Die alten Prüfer warnen seit diesem Release und nennen den Ersatz.
+- **Das Erst-Admin-Einmal-Token geht ohne Konsole in eine Datei** (T-17). Gibt es keinen Admin und
+  ist stderr kein Terminal (Container, journal, Pipe), steht das Token für `/auth/claim-admin` jetzt
+  in `<db_path>.claim` (Rechte 0600), und das Log nennt nur den Pfad — im Container also
+  `docker exec … cat /data/app.db.claim` statt `docker logs`. Nach dem Einlösen verschwindet die
+  Datei. An einer Konsole bleibt es bei stderr; `admin_claim_token_file` geht wie bisher vor. Wer
+  auf die Zeile mit `?token=` in den Logs gewartet hat (Skript, Anleitung), liest jetzt die Datei.
 - **Neue Startwarnung: Gruppenregel ohne Scope `groups`** (T-16). Wer `oidc_allowed_groups` oder
   `oidc_group_role_map` über den Claim `groups` nutzt und den Scope `groups` nicht anfordert,
   sieht beim Start eine Warnung. Bei PocketID (und anderen Providern, die Claims an Scopes binden)
@@ -142,6 +150,17 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Sicherheit
 
+- **Das Erst-Admin-Einmal-Token stand im Container im Log** (T-17, Fund aus dem Betrieb
+  2026-09-27). Ohne `admin_claim_token_file` ging es auf stderr — und direkt danach die Zeile „Der
+  Wert steht bewusst NICHT im Log“. Im Container ist stderr das Log (`docker logs`, jeder
+  Log-Versand): Wer es lesen konnte und ein Konto auf der Instanz hatte, wurde mit dem Token Admin,
+  solange es noch keinen gab. Jetzt: Ist stderr keine Konsole (`sys.stderr.isatty()` falsch),
+  schreibt TinySesam das Token nach `<db_path>.claim` (0600) und nennt nur den Pfad; nach dem
+  Einlösen wird die Datei gelöscht, ein Start mit Admin räumt einen Rest weg, nach dem Verfall ist
+  ihr Inhalt ungültig. Ohne Datenbank-Datei (`:memory:`) oder wenn die Datei nicht entsteht, bleibt
+  nur stderr — und die Log-Zeile sagt dann, dass der Wert im Log des Dienstes steht, statt das
+  Gegenteil zu behaupten. Gilt auch für die Ausgabe im Moment eines IdP-Entzugs (G6). Test:
+  `tests/test_betriebsfunde.py` (b).
 - **Das Muster „Your own login page“ der README war gegen Passwort-Raten ungeschützt**
   (PO-Befund 2026-09-26). Es zeigte `check_password` + `start_session` als Bausteine; die inneren
   Prüfer `check_password`, `check_pin`, `check_ldap` und `check_saml` drosseln aber nicht selbst —

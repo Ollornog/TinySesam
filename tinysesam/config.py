@@ -122,11 +122,13 @@ class TinySesamConfig:
                                           # oder `tinysesam owner`).
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
-    # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
-    # Betreibers). Ein Pfad hier: TinySesam legt die Datei mit Rechten 0600 an und schreibt den
-    # Token hinein — der richtige Weg, wenn stderr im journal/in einer Sammelstelle landet.
+    # Wohin der Wert des Einmal-Tokens geschrieben wird. Ein Pfad hier: TinySesam legt die Datei
+    # mit Rechten 0600 an und schreibt den Token hinein. Leer = auf stderr, wenn stderr eine
+    # Konsole ist; sonst (Container, journal, Pipe) seit 0.22.0 nach `<db_path>.claim` (0600,
+    # nach dem Einlösen entfernt) — bis dahin stand er dort in `docker logs` (T-17). Ohne
+    # Datenbank-Datei (`:memory:`) bleibt nur stderr, und das Log sagt es.
     # Der Token steht NIE im security_log (das liest fail2ban, und logrotate hebt es auf).
-    admin_claim_token_file: str = ""      # z.B. /run/tinysesam/admin-claim.token
+    admin_claim_token_file: str = ""      # 0600-Datei für das Einmal-Token, z.B. /run/tinysesam/admin-claim.token; leer: stderr, wenn es eine Konsole ist, sonst `<db_path>.claim`
 
     # --- Demo-Modus: legt Beispielkonten an und zeigt die Zugangsdaten an. NIEMALS produktiv. ---
     demo_mode: bool = False           # Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv

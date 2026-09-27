@@ -182,6 +182,29 @@ Kennung gehört zwei Konten.
   `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — eine neuere
   Fassung legt sie beim nächsten Start wieder an.
 
+## Erst-Admin-Einmal-Token
+
+Gibt es keinen Admin (frische Instanz, oder der Identity Provider hat den letzten entzogen), gibt
+TinySesam ein Einmal-Token für `/auth/claim-admin?token=…` aus — beim Start und im Moment eines
+solchen Entzugs. Wohin, entscheidet, wer mitliest ([T-17](../backlog/T-17-claim-token-nicht-ins-container-log.md)):
+
+| Lage | Wohin das Token geht | Was im Log steht |
+|---|---|---|
+| `admin_claim_token_file` gesetzt | diese Datei, `0600` (auch an einer Konsole) | der Pfad |
+| stderr ist eine Konsole (`isatty`) | stderr | „steht auf der Konsole (stderr), nicht in dieser Zeile" |
+| stderr ist keine Konsole (Container, journal, Pipe) | `<db_path>.claim`, `0600` | der Pfad |
+| … ohne Datenbank-Datei (`:memory:`) oder Datei nicht anlegbar | stderr (Rückfall) | ehrlich: stderr ist keine Konsole, der Wert steht damit im Log des Dienstes |
+
+Im Container also: `docker exec <container> cat /data/app.db.claim` (Pfad aus dem Log), anmelden,
+die URL öffnen. Nach dem Einlösen löscht TinySesam `<db_path>.claim`; gibt es beim Start einen
+Admin, räumt er einen liegengebliebenen Rest weg. Läuft das Token ab, ist der Dateiinhalt ungültig,
+und der nächste Start schreibt ein neues. Eine selbst gewählte `admin_claim_token_file` bleibt
+stehen (ihr Pfad kann ein eingehängtes Geheimnis sein), ihr Inhalt gilt nach dem Einlösen nicht
+mehr. Bis 0.21.x ging das Token ohne `admin_claim_token_file` immer auf stderr — im Container stand
+es damit in `docker logs`, direkt vor der Zeile „Der Wert steht bewusst NICHT im Log". Wer so eine
+Instanz betrieben hat, bevor ein Admin existierte: das Log gilt als Mitwisser; das Token war nur bis
+zum ersten Admin gültig.
+
 ## Owner
 
 Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens
@@ -377,8 +400,10 @@ Seite gehört und sich nicht ändert:
   nach_idp_entzug`). Bis 2026-09-26 beförderte sie die Person im selben Login zurück, als Admin „von
   Hand" und Erst-Owner — ein Recht, das kein Provider mehr entzieht und das sich weder löschen noch
   sperren lässt. Zurück ins Panel führen die Notwege: das Einmal-Token, das TinySesam im Moment des
-  Entzugs ausgibt (stderr bzw. `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim
-  nächsten Start neu), und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
+  Entzugs ausgibt (an einer Konsole auf stderr, sonst in `<db_path>.claim` bzw.
+  `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim nächsten Start neu; s.
+  [Erst-Admin-Einmal-Token](#erst-admin-einmal-token)),
+  und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
   Admin-Gruppe versehentlich nicht mehr (Mapping, Scope), verlieren alle Admins vom Provider das Recht
   auf einmal — **deshalb mindestens einen Owner von Hand halten.**
 - **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,

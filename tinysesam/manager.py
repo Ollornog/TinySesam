@@ -188,6 +188,19 @@ def _auf_stderr(zeile: str) -> None:
         pass            # kein stderr (pythonw, geschlossener Deskriptor) — kein Grund abzubrechen
 
 
+def _stderr_ist_konsole() -> bool:
+    """Liest hier ein Mensch mit, oder sammelt jemand stderr ein (Container, journal, Pipe)?
+
+    Im Container IST stderr das Log (`docker logs`), unter systemd das Journal. Was „nur für die
+    Konsole des Betreibers" gedacht ist, darf dann nicht dorthin (Fund aus dem Betrieb,
+    2026-09-27). Wie `_auf_stderr` bei jedem Aufruf frisch nachgeschlagen.
+    """
+    try:
+        return bool(sys.stderr is not None and sys.stderr.isatty())
+    except Exception:
+        return False
+
+
 #: Was als CSRF-Token aus einem Cookie übernommen wird (0.20.1). Nur URL-sichere Zeichen — nichts,
 #: was in einem HTML-Attribut, einem Header oder einer Cookie-Zeile etwas anrichtet —, mindestens
 #: so lang wie das, was TinySesam selbst würfelt (`token_urlsafe(24)`: 32 Zeichen, 192 Bit),
@@ -477,6 +490,8 @@ class TinySesam:
         tok = self.admin_claim_token()
         if tok:
             self._admin_claim_bekanntgeben(tok)
+        else:
+            self._claim_datei_weg()          # ein Rest aus einem Lauf ohne Admin (T-17)
 
     # ---------- Owner ----------
     def _erster_owner(self, user_id) -> None:
@@ -1390,6 +1405,29 @@ class TinySesam:
                                 security.fuer_log(user["username"]))
         return True
 
+    def _claim_datei_auto(self) -> str:
+        """`<db_path>.claim` — wohin das Einmal-Token geht, wenn stderr keine Konsole ist (T-17).
+
+        Neben der Datenbank, weil dort ohnehin schreiben darf, wer den Dienst betreibt, und weil
+        auch `<db_path>.key` dort liegt. Leer ohne Datei (`:memory:`): Dann bleibt nur stderr.
+        """
+        db = str(self.cfg.db_path or "").strip()
+        return "" if db in ("", ":memory:") else db + ".claim"
+
+    def _claim_datei_weg(self) -> None:
+        """Die automatisch angelegte Token-Datei entfernen — nach dem Einlösen, und beim Start,
+        wenn es kein Token (mehr) gibt. Eine selbst gewählte `admin_claim_token_file` bleibt
+        stehen (ihr Pfad kann ein eingehängtes Geheimnis sein); ihr Inhalt ist dann ungültig."""
+        pfad = self._claim_datei_auto()
+        if pfad:
+            try:
+                os.remove(pfad)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                security.seclog.warning("Token-Datei %s liess sich nicht entfernen (%s) — ihr "
+                                        "Inhalt ist ungültig.", pfad, type(e).__name__)
+
     def _admin_claim_bekanntgeben(self, token: str) -> None:
         """Den Wert des Erst-Admin-Einmal-Tokens dem **Betreiber** zeigen — nicht dem Log.
 
@@ -1404,10 +1442,28 @@ class TinySesam:
         stderr selbst eingesammelt wird (journal, Container-Logs), nennt der Betreiber mit
         `admin_claim_token_file` eine Datei; die legt TinySesam mit 0600 an. Ins Log kommt nur
         noch, **wo** der Token steht.
+
+        **Seit 0.22.0 (T-17) auch ohne diese Einstellung:** Ist stderr keine Konsole (Container,
+        journal, Pipe — `sys.stderr.isatty()` falsch), schreibt TinySesam den Token nach
+        `<db_path>.claim` (0600) und nennt nur den Pfad. Bis dahin stand er dort im Klartext in
+        `docker logs` — direkt vor der Zeile „Der Wert steht bewusst NICHT im Log". Ohne
+        Datenbank-Datei (`:memory:`) oder wenn die Datei nicht entsteht, bleibt nur stderr, und
+        der Text sagt ehrlich, dass der Wert dann im Log des Dienstes steht. Nach dem Einlösen
+        verschwindet die Datei (`_claim_datei_weg`).
         """
         ttl = self.cfg.admin_claim_ttl_min
         pfad = str(self.cfg.admin_claim_token_file or "").strip()
-        wohin = "auf stderr (Konsole des Betreibers)"
+        konsole = _stderr_ist_konsole()
+        automatisch = False
+        if not pfad and not konsole:
+            pfad = self._claim_datei_auto()
+            automatisch = bool(pfad)
+        # Was die Zeile im Log sagt, muss stimmen — auch im Rückfall. Bis 0.21.x stand dort
+        # „Der Wert steht bewusst NICHT im Log", während er im Container zwei Zeilen darüber stand.
+        wohin = ("steht auf der Konsole (stderr), nicht in dieser Zeile" if konsole else
+                 "steht auf stderr — und stderr ist hier KEINE Konsole: Der Wert steht damit im "
+                 "Log des Dienstes (journal, docker logs). Abhilfe: admin_claim_token_file setzen "
+                 "oder eine Datenbank-Datei statt :memory:")
         geschrieben = False
         if pfad:
             try:
@@ -1422,22 +1478,22 @@ class TinySesam:
                     os.write(fd, (token + "\n").encode("utf-8"))
                 finally:
                     os.close(fd)
-                wohin = f"in {pfad} (Rechte 0600)"
+                wohin = f"steht in {pfad} (Rechte 0600), nicht im Log"
                 geschrieben = True
             except OSError as e:
                 # Kein Grund, den Start zu verweigern — aber der Betreiber muss den Token
                 # bekommen, sonst kommt er nicht an seine eigene Instanz.
-                _auf_stderr(f"TinySesam: admin_claim_token_file {pfad} nicht schreibbar "
+                name = "die Token-Datei" if automatisch else "admin_claim_token_file"
+                _auf_stderr(f"TinySesam: {name} {pfad} nicht schreibbar "
                             f"({type(e).__name__}) — der Token steht stattdessen hier:")
-                wohin = f"auf stderr ({pfad} war nicht schreibbar)"
+                wohin = f"{wohin} ({pfad} war nicht schreibbar: {type(e).__name__})"
         if not geschrieben:
             _auf_stderr(f"TinySesam: Kein Admin vorhanden. Ersten Admin setzen — anmelden, dann "
                         f"/auth/claim-admin?token={token} (gültig {ttl} Minuten, genau einmal "
                         f"einlösbar).")
         security.seclog.warning(
-            "Kein Admin vorhanden. Ein Einmal-Token für /auth/claim-admin wurde ausgegeben %s "
-            "— gültig %d Minuten, genau einmal einlösbar. Der Wert steht bewusst NICHT im Log.",
-            wohin, ttl)
+            "Kein Admin vorhanden. Das Einmal-Token für /auth/claim-admin %s — gültig %d "
+            "Minuten, genau einmal einlösbar.", wohin, ttl)
 
     def admin_claim_token(self) -> Optional[str]:
         """Weg 2: Einmal-Token. Solange kein Admin existiert, gibt es ein Token, das genau einmal
@@ -1469,6 +1525,7 @@ class TinySesam:
         if int(exp) <= _jetzt() or not secrets.compare_digest(token, want):
             return False
         self.store.set_setting("admin_claim", "")     # einmalig
+        self._claim_datei_weg()                        # die Datei trägt nur noch Ungültiges (T-17)
         self.store.set_admin(user["id"], True)
         self._erster_owner(user["id"])
         self.audit("admin_bootstrap", user["username"], detail="claim_token")

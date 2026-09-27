@@ -8,7 +8,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 ## Meilensteine
 
 * ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 14/14 erledigt
-* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 3/3 erledigt
+* ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 4/4 erledigt
 
 ## Aufgaben
 
@@ -28,6 +28,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-14](T-14-mehrere-oidc-clients.md)** Mehrere OIDC-Clients in einer Instanz — die Freigabe je App liegt beim Identity Provider · M-1
 * ☑ **[T-15](T-15-unterpfad-montage.md)** Eingebaute Seiten unter einem Unterpfad montierbar machen · M-2
 * ☑ **[T-16](T-16-gruppen-scope-warnung.md)** Warnen, wenn eine Gruppenregel über den Claim groups läuft und der Scope groups fehlt · M-2
+* ☑ **[T-17](T-17-claim-token-nicht-ins-container-log.md)** Das Erst-Admin-Einmal-Token nicht ins Container-Log schreiben · M-2
 
 ## Fehler
 

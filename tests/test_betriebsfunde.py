@@ -2,19 +2,32 @@
 
   (a) Gruppen-Scope: Eine Gruppenregel über den Claim `groups` ohne den Scope `groups` weist bei
       PocketID jeden still ab — die Konfigurationsprüfung warnt, fordert aber nichts nach.
+  (b) Claim-Token im Container-Log: Ohne Admin ging das Einmal-Token für /auth/claim-admin auf
+      stderr — im Container ist das `docker logs`. Ist stderr keine Konsole, steht es jetzt in
+      `<db_path>.claim` (0600), das Log nennt nur den Pfad und sagt die Wahrheit.
 """
 from __future__ import annotations
 
+import contextlib
+import io
+import logging
 import os
+import stat
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from tinysesam import TinySesamConfig  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from tinysesam import TinySesam, TinySesamConfig  # noqa: E402
 from tinysesam import konfigpruefung  # noqa: E402
+from tinysesam.security import seclog  # noqa: E402
 from _kit.report import Report  # noqa: E402
 
 r = Report("Funde aus dem Betrieb (Gruppen-Scope, Claim-Token)")
@@ -104,5 +117,131 @@ r.check("(a) Gateway: TINYSESAM_ALLOWED_GROUPS ohne TINYSESAM_OIDC_SCOPES warnt;
         _g_vorgabe.oidc_scopes == "openid profile email" and len(_w_vorgabe) == 1
         and _g_mit.oidc_scopes == "openid profile email groups" and not _w_mit,
         f"{_g_vorgabe.oidc_scopes!r} {_w_vorgabe} {_g_mit.oidc_scopes!r} {_w_mit}")
+
+
+# ── (b) Claim-Token im Container-Log ─────────────────────────────────────────────────────────────
+# Gemessen im Container (2026-09-27): stderr IST das Log. Dort stand erst der Token im Klartext,
+# dann die Zeile „Der Wert steht bewusst NICHT im Log". Nachgestellt wird der Container, indem
+# stderr UND der Sicherheits-Logger in denselben Puffer schreiben — das ist `docker logs`.
+# (Mutationsprobe: in `_admin_claim_bekanntgeben` die Bedingung `not konsole` streichen bzw. den
+# Rückfall auf die Datei weglassen → der Token steht wieder im Puffer → rot.)
+PW = "Betrieb-Pw-2026"          # 15 Zeichen: das Passwort meldet allein an
+
+
+class _Konsole(io.StringIO):
+    """stderr an einem Terminal — `isatty()` wahr, sonst ein Puffer wie jeder andere."""
+
+    def isatty(self):
+        return True
+
+
+def _start(stderr, **felder):
+    """TinySesam ohne Admin bauen; stderr und Sicherheits-Log landen gemeinsam in `stderr`."""
+    grund = dict(db_path=str(Path(tempfile.mkdtemp()) / "app.db"), cookie_secure=False,
+                 csrf_enabled=False, passkey_enabled=False, allow_signup=True,
+                 signup_require_email=False)
+    grund.update(felder)
+    haken = logging.StreamHandler(stderr)
+    seclog.addHandler(haken)
+    try:
+        with contextlib.redirect_stderr(stderr):
+            auth = TinySesam(TinySesamConfig(**grund))
+    finally:
+        seclog.removeHandler(haken)
+    return auth
+
+
+# Konsole: wie bisher auf stderr — dort liest ein Mensch mit. Keine Datei.
+_k = _Konsole()
+auth_k = _start(_k)
+_tok_k = auth_k.admin_claim_token()
+_datei_k = auth_k.cfg.db_path + ".claim"
+r.check("(b) stderr ist eine Konsole: der Token steht dort, keine Datei neben der Datenbank, und "
+        "die Log-Zeile sagt „auf der Konsole“ ohne den Wert",
+        f"/auth/claim-admin?token={_tok_k}" in _k.getvalue() and not os.path.exists(_datei_k)
+        and "steht auf der Konsole (stderr), nicht in dieser Zeile" in _k.getvalue()
+        and _k.getvalue().count(_tok_k) == 1, _k.getvalue()[-300:])
+
+# Kein Terminal (Container, journal, Pipe): Datei mit 0600, im „Log" nur der Pfad.
+_c = io.StringIO()
+auth_c = _start(_c)
+_tok_c = auth_c.admin_claim_token()
+_datei_c = auth_c.cfg.db_path + ".claim"
+_inhalt_c = Path(_datei_c).read_text(encoding="utf-8") if os.path.exists(_datei_c) else ""
+r.check("(b) stderr keine Konsole: das Token steht in <db_path>.claim — nur dort",
+        bool(_tok_c) and _inhalt_c == _tok_c + "\n", repr(_inhalt_c))
+r.check("(b) … die Datei hat die Rechte 0600",
+        os.path.exists(_datei_c) and stat.S_IMODE(os.stat(_datei_c).st_mode) == 0o600,
+        oct(stat.S_IMODE(os.stat(_datei_c).st_mode)) if os.path.exists(_datei_c) else "fehlt")
+r.check("(b) … im Log (stderr + Sicherheits-Log) steht der Wert NICHT, wohl aber der Pfad, und der "
+        "Text sagt, wo das Token steht",
+        _tok_c not in _c.getvalue() and "claim-admin?token=" not in _c.getvalue()
+        and f"steht in {_datei_c} (Rechte 0600), nicht im Log" in _c.getvalue()
+        and "bewusst NICHT" not in _c.getvalue(), _c.getvalue()[-300:])
+
+# Die Datei trägt, was sie soll: Einlösen macht zum Admin und räumt sie weg.
+_app_c = FastAPI()
+_app_c.include_router(auth_c.router())
+_cl = TestClient(_app_c)
+_reg = _cl.post("/auth/register", data={"username": "betreiber", "password": PW}, follow_redirects=False)
+_ein = _cl.get(f"/auth/claim-admin?token={_inhalt_c.strip()}", follow_redirects=False)
+r.check("(b) der Token aus der Datei macht den Erst-Admin, danach ist die Datei weg",
+        _reg.status_code == 303 and _ein.status_code == 303
+        and auth_c.store.get_user_by_name("betreiber")["is_admin"] and not os.path.exists(_datei_c),
+        f"{_reg.status_code} {_ein.status_code} {os.path.exists(_datei_c)}")
+
+# Ein Rest aus einem früheren Lauf (etwa: Admin später per CLI gesetzt) verschwindet beim Start.
+Path(_datei_c).write_text("ALT\n", encoding="utf-8")
+_start(io.StringIO(), db_path=auth_c.cfg.db_path)
+r.check("(b) gibt es einen Admin, entfernt der Start eine liegengebliebene <db_path>.claim",
+        not os.path.exists(_datei_c))
+
+# Verfall: Das abgelaufene Token in der Datei gilt nicht mehr; der nächste Start schreibt das neue.
+_v = io.StringIO()
+auth_v = _start(_v)
+_datei_v = auth_v.cfg.db_path + ".claim"
+_alt_v = Path(_datei_v).read_text(encoding="utf-8").strip()
+auth_v.store.set_setting("admin_claim", f"{_alt_v}:{int(time.time()) - 1}")
+_uid_v = auth_v.create_user("spaet", password=PW)
+_abgelaufen = auth_v._consume_admin_claim(_alt_v, auth_v.store.get_user(_uid_v))
+_start(io.StringIO(), db_path=auth_v.cfg.db_path)
+_neu_v = Path(_datei_v).read_text(encoding="utf-8").strip()
+r.check("(b) nach dem Verfall ist der Dateiinhalt ungültig, der nächste Start ersetzt ihn",
+        not _abgelaufen and _neu_v and _neu_v != _alt_v
+        and _neu_v == auth_v.admin_claim_token(), f"{_abgelaufen} {_alt_v[:6]} {_neu_v[:6]}")
+
+# Rückfall ohne Datei: `:memory:` — dann bleibt nur stderr, und der Text sagt ehrlich, was das heisst.
+_m = io.StringIO()
+auth_m = _start(_m, db_path=":memory:")
+_tok_m = auth_m.admin_claim_token()
+r.check("(b) :memory: ohne Konsole: Rückfall auf stderr, und die Log-Zeile sagt, dass der Wert "
+        "damit im Log des Dienstes steht (statt „nicht im Log“)",
+        f"claim-admin?token={_tok_m}" in _m.getvalue()
+        and "stderr ist hier KEINE Konsole: Der Wert steht damit im Log des Dienstes" in _m.getvalue()
+        and "nicht im Log" not in _m.getvalue(), _m.getvalue()[-400:])
+
+# Rückfall, wenn die Datei nicht entsteht (an ihrer Stelle liegt ein Verzeichnis).
+_s = io.StringIO()
+_db_s = str(Path(tempfile.mkdtemp()) / "app.db")
+os.mkdir(_db_s + ".claim")
+auth_s = _start(_s, db_path=_db_s)
+_tok_s = auth_s.admin_claim_token()
+r.check("(b) Datei nicht anlegbar: Rückfall auf stderr mit Grund, ehrlich benannt",
+        f"claim-admin?token={_tok_s}" in _s.getvalue() and "nicht schreibbar" in _s.getvalue()
+        and "Log des Dienstes" in _s.getvalue(), _s.getvalue()[-400:])
+
+# Eine selbst gewählte Datei hat Vorrang — auch an einer Konsole —, und bleibt nach dem Einlösen.
+_eigen = str(Path(tempfile.mkdtemp()) / "claim.token")
+_e = _Konsole()
+auth_e = _start(_e, admin_claim_token_file=_eigen)
+_tok_e = auth_e.admin_claim_token()
+_uid_e = auth_e.create_user("chefin", password=PW)
+_ok_e = auth_e._consume_admin_claim(_tok_e, auth_e.store.get_user(_uid_e))
+r.check("(b) admin_claim_token_file geht vor (auch an einer Konsole): Wert in der Datei, nicht auf "
+        "stderr, keine <db_path>.claim; die eigene Datei bleibt nach dem Einlösen (Inhalt ungültig)",
+        Path(_eigen).read_text(encoding="utf-8") == _tok_e + "\n" and _tok_e not in _e.getvalue()
+        and not os.path.exists(auth_e.cfg.db_path + ".claim") and _ok_e and os.path.exists(_eigen)
+        and not auth_e._consume_admin_claim(_tok_e, auth_e.store.get_user(_uid_e)),
+        _e.getvalue()[-300:])
 
 sys.exit(r.done())

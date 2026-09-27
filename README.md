@@ -474,11 +474,15 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
   not once an identity provider has taken the flag from the instance's last admin either; TinySesam
   then prints the one-time token below right away (or use `tinysesam owner`).
 - **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
-  (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
-  admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
-  route answers 404. The value is deliberately kept out of the security log — that file is what
-  fail2ban reads and logrotate keeps. Where stderr itself is collected (journal, container logs),
-  set `admin_claim_token_file` and TinySesam writes the token to that file with mode `0600`.
+  when stderr is a console (the operator's terminal). Sign in, open `/auth/claim-admin?token=…`,
+  and that account becomes admin. The token is single-use and expires after `admin_claim_ttl_min`;
+  once an admin exists the route answers 404. The value is deliberately kept out of the security
+  log — that file is what fail2ban reads and logrotate keeps. **Where stderr is not a console**
+  (container, journal, a pipe — stderr *is* the log there), TinySesam writes the token to
+  `<db_path>.claim` with mode `0600` instead and logs only that path (`docker exec … cat
+  /data/app.db.claim`); the file is removed once the token is redeemed. Without a database file
+  (`:memory:`) only stderr is left, and the log line says so. `admin_claim_token_file` picks the
+  file yourself (it takes precedence, also at a console).
   **Known limit:** the token is redeemed through a URL (`?token=…`, mirrored into the login
   redirect's `Location` when you are not signed in yet), so it passes through proxy access logs,
   `Referer` and the browser history before it is spent — keep `admin_claim_ttl_min` short and
