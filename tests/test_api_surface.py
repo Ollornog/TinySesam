@@ -821,7 +821,7 @@ def pruefe_unterklasse() -> None:
                 return None
     assert [w.category for w in gewarnt] == [RuntimeWarning], [str(w.message) for w in gewarnt]
     text = str(gewarnt[0].message)
-    assert "_Ueberschreibt.check_password" in text and "`_check_password`" in text, text
+    assert f"{_Ueberschreibt.__name__}.check_password" in text and "`_check_password`" in text, text
     assert os.path.abspath(gewarnt[0].filename) == os.path.abspath(__file__), gewarnt[0].filename
     with warnings.catch_warnings(record=True) as gewarnt:
         warnings.simplefilter("always")
@@ -829,7 +829,7 @@ def pruefe_unterklasse() -> None:
         class _Harmlos(TinySesam):
             def eigene_methode(self):
                 return None
-    assert not gewarnt, [str(w.message) for w in gewarnt]
+    assert not gewarnt, (_Harmlos.__name__, [str(w.message) for w in gewarnt])
     ok("eine Unterklasse, die einen alten Namen überschreibt, bekommt eine RuntimeWarning")
 
 
@@ -1522,8 +1522,12 @@ def werte_im_code(quellen: dict) -> list:
 
 def _quellen(wurzel: str = WURZEL) -> dict:
     paket = os.path.join(wurzel, "tinysesam")
-    return {n: open(os.path.join(paket, n), encoding="utf-8").read()
-            for n in sorted(os.listdir(paket)) if n.endswith(".py")}
+    quellen = {}
+    for n in sorted(os.listdir(paket)):
+        if n.endswith(".py"):
+            with open(os.path.join(paket, n), encoding="utf-8") as fh:
+                quellen[n] = fh.read()
+    return quellen
 
 
 #: Was die Wertprüfung mindestens sehen muss — je Weg ein Eintrag, der nur dort vorkommt.

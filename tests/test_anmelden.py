@@ -239,7 +239,7 @@ r.check("(a) … Audit `lockout_serie` und die Logzeile für den Betreiber",
 
 # Erfolg: Umleitung mit Cookie, Ergebnis vollständig, das Cookie trägt eine volle Sitzung.
 auth, app = _app()
-uid = auth.create_user("dora", password=PW)
+auth.create_user("dora", password=PW)
 c = _client(app)
 _ok = _post(c, "/eigen/login", username="dora", password=PW)
 r.check("(a) Erfolg: 303 nach next, Sitzungs-Cookie gesetzt, die Sitzung trägt /drin",
@@ -333,10 +333,12 @@ auth.create_user("alice.neu", password="Mallory-Pw-15xy")
 auth.ldap = Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
 _fremd = _post(_client(app), "/eigen/login", username="alice.neu", password=LPW)
 r.check("(b) eine Kennung, ein Konto: das LDAP-Passwort einer anderen Person öffnet unter einer lokal "
-        "vergebenen Kennung keine Sitzung (401), Audit `ldap_kennung_abgewiesen`",
+        "vergebenen Kennung keine Sitzung (401), Audit `ldap_kennung_abgewiesen` nennt Alices Konto "
+        "als Inhaber des Verzeichniseintrags",
         _fremd.status_code == 401 and _sitzung(auth, _fremd) is None
-        and any(e[0] == "ldap_kennung_abgewiesen" for e in _audit(auth)),
-        f"HTTP {_fremd.status_code}, {[e[0] for e in _audit(auth)]}")
+        and any(e[0] == "ldap_kennung_abgewiesen" and f"verzeichnis={_alice}" in (e[3] or "")
+                for e in _audit(auth)),
+        f"HTTP {_fremd.status_code}, {[(e[0], e[3]) for e in _audit(auth)][-3:]}")
 
 
 # ── (c) Gleichheit mit der eingebauten Route ──────────────────────────────────────────────────────
@@ -632,7 +634,7 @@ for kw in ({"ok": False, "reason": "erfunden", "status": 400}, {"ok": True, "rea
         LoginResult(**kw)
         _falsch_gebaut.append(kw)
     except ValueError:
-        pass
+        pass  # erwartet: der Konstruktor weist die Kombination ab
 r.check("(f) … eingefroren, und ein Grund ausserhalb von REASONS oder ein ok gegen den Grund wirft",
         _eingefroren and not _falsch_gebaut, f"{_eingefroren} {_falsch_gebaut}")
 _ersetzt = dataclasses.replace(_erfolg)

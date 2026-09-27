@@ -202,7 +202,7 @@ def _totp_einrichten(auth, uid):
 # (Mutationsprobe: in `_bestaetigen` die Abweisung `if versuch is None:` abschalten → vierte
 # Antwort 401, das richtige Passwort 303 → rot.)
 auth, app = _app(haertung={"reauth_max_attempts": 3})
-uid = auth.create_user("alice", password=PW)
+auth.create_user("alice", password=PW)
 c = _anmelden(app, "alice")
 _abgestanden(auth, c)
 with Mitschnitt() as log_a:
@@ -227,7 +227,7 @@ r.check("(a) … eigener Topf: Die Tippfehler hier sperren NICHT die Anmeldung (
 
 # Erfolg: frisch, neues Token (F-06), das alte gilt die Gnadenfrist lang weiter — ohne Frische (A-6).
 auth, app = _app()
-uid = auth.create_user("bert", password=PW)
+auth.create_user("bert", password=PW)
 c = _anmelden(app, "bert")
 _abgestanden(auth, c)
 _alt = c.cookies.get(auth.session_cookie_name)
@@ -524,7 +524,7 @@ for kw in ({"ok": False, "reason": "erfunden", "status": 400}, {"ok": True, "rea
         PasswordChangeResult(**kw)
         _falsch_gebaut.append(kw)
     except ValueError:
-        pass
+        pass  # erwartet: der Konstruktor weist die Kombination ab
 r.check("(f) PasswordChangeResult: Felder ok/reason/status/message/api_keys_active, bool = ok, eingefroren, "
         "ein Grund ausserhalb von REASONS oder ein ok gegen den Grund wirft",
         _felder == {"ok", "reason", "status", "message", "api_keys_active"} and bool(_pc)

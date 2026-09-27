@@ -34,9 +34,12 @@ ZIEL = ROOT / "API.md"
 ABLAGE = ROOT / "tests" / "api_surface.json"
 
 import tinysesam as paket  # noqa: E402
-from tinysesam import LoginResult, PasswordChangeResult, TinySesam, TinySesamConfig  # noqa: E402
-from tinysesam import errors as fehler_modul  # noqa: E402
 from tinysesam._veraltet import BIS, Veraltet  # noqa: E402
+
+# Ein Import des Pakets, die Namen daraus per Zuweisung — nicht zusätzlich `from tinysesam import …`
+# (CodeQL py/import-and-import-from).
+LoginResult, PasswordChangeResult = paket.LoginResult, paket.PasswordChangeResult
+TinySesam, TinySesamConfig, fehler_modul = paket.TinySesam, paket.TinySesamConfig, paket.errors
 
 #: Überschrift und Zusage je Stufe — derselbe Wortlaut wie in den READMEs („Public API: three
 #: tiers" / „Öffentliche API: drei Stufen").

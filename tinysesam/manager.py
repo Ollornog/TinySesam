@@ -1518,7 +1518,7 @@ class TinySesam:
             try:
                 os.remove(pfad)
             except FileNotFoundError:
-                pass
+                pass  # schon weg (nie angelegt oder bereits eingelöst) — genau der Zielzustand
             except OSError as e:
                 security.seclog.warning("Token-Datei %s liess sich nicht entfernen (%s) — ihr "
                                         "Inhalt ist ungültig.", pfad, type(e).__name__)
