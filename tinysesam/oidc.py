@@ -8,6 +8,7 @@ Beide Libs sind optional-Extra `[oidc]`.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import time
 import secrets
 from urllib.parse import urlencode
@@ -722,8 +723,11 @@ def register_oidc_routes(router, auth):
                 # Adresse UND Beleg gehen zusammen ins Konto (F-14): Der Vermerk entscheidet
                 # später über Erst-Admin/Allowlist — unabhängig davon, über welchen Weg dieses
                 # Konto sich das nächste Mal anmeldet.
-                uid = auth.create_user(username, display_name=info.get("name") or username,
-                                       email=belegte_mail, email_verified=bool(belegte_mail))
+                # Der Name kommt vom Provider (`name_quelle`): Eine Anmeldung über LDAP/SAML bindet
+                # dieses Konto nie über ihn (Angriffsrunde 2026-09-26, `_konto_anlegen`).
+                uid = auth._konto_anlegen(username, display_name=info.get("name") or username,
+                                          email=belegte_mail, email_verified=bool(belegte_mail),
+                                          name_quelle="oidc")
             except errors.ConfigError:
                 # Die Kennung der Identität gehört lokal schon jemandem. Fail-closed: kein Konto,
                 # das eine fremde Kennung überschreibt — der Betreiber verknüpft von Hand.
@@ -752,9 +756,15 @@ def register_oidc_routes(router, auth):
                     auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
                                "nachgetragen=0")
                 else:
-                    auth.store.set_email(uid, mail, verified=True)
-                    auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
-                               "beleg=1")
+                    try:
+                        auth.store.set_email(uid, mail, verified=True)
+                        auth.audit("oidc_email_added", str(konto["username"]), auth.client_ip(request),
+                                   "beleg=1")
+                    except sqlite3.IntegrityError:
+                        # Wettlauf (G12c): zwischen Prüfung und Schreiben vergeben — die Datenbank
+                        # entscheidet, das Konto bleibt ohne Adresse wie oben.
+                        auth.audit("oidc_email_taken", str(konto["username"]), auth.client_ip(request),
+                                   "nachgetragen=0 wettlauf=1")
             elif konto and str(konto["email"] or "").lower() == str(mail).strip().lower() \
                     and bool(konto["email_verified"]) is not bool(mail_bestaetigt):
                 auth.store.set_email_verified(uid, mail_bestaetigt)

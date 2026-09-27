@@ -52,9 +52,35 @@ CREATE TABLE IF NOT EXISTS users (
     -- `set_email`. NULL heisst „noch nicht gerechnet" — eine Zeile eines anderen Schreibers
     -- (ältere Fassung nach einem Rückschritt, rohes SQL, eine Umbenennung von Hand, s. die
     -- Trigger in `_migrate`) — und wird nachgetragen (`_toepfe_nachtragen`). '' = keine Adresse.
+    -- Über die Töpfe erzwingt die Datenbank auch den gemeinsamen Kennungsraum (`_trigger_sql`).
     topf_name     TEXT,
     topf_mail     TEXT,
-    idp_bestaetigt_at INTEGER  -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
+    idp_bestaetigt_at INTEGER, -- letzte Bestätigung durch den OIDC-Provider; 0 = Nein, NULL = nie (Fund 8)
+    -- Ab wann gehört die Kennung diesem Konto? (Grenze a, G2) Die höchste `login_attempt.id`
+    -- bzw. `audit.id` in dem Moment, in dem Name oder Adresse in ihren Zähl-Topf kamen — bei der
+    -- Anlage, beim Umbenennen, beim Adresswechsel und beim Nachtrag einer Adresse. Was darunter
+    -- liegt, galt niemandem oder jemand anderem. Eine Id statt einer Zeit: exakt auch innerhalb
+    -- einer Sekunde, und unabhängig von der Uhr. NULL = Bestand von vor dieser Spalte, dann gilt
+    -- die Anlage als Grenze (`created_at`, `anlage_grenze`). Gesetzt von `create_user` und
+    -- `_kennung_setzen`, bei einem fremden Schreiber vom Nachrechnen-Trigger (`_trigger_sql`).
+    name_versuch_ab INTEGER,
+    mail_versuch_ab INTEGER,
+    name_audit_ab   INTEGER,
+    mail_audit_ab   INTEGER,
+    -- Aus welcher föderierten Quelle stammt der Name ('oidc', 'saml', 'ldap')? Gesetzt, wenn die
+    -- Quelle das Konto anlegt; NULL = vom Betreiber vergeben, selbst gewählt oder Bestand von vor
+    -- dieser Spalte. Ein Name aus einer Quelle sagt nichts darüber, wer in einer ANDEREN so heisst:
+    -- `preferred_username` oder `uid` wählt man bei einem IdP mit Selbstregistrierung selbst. Eine
+    -- Anmeldung über eine andere Quelle bindet dieses Konto deshalb nie über den Namen
+    -- (`_nachbindung_grund`, Angriffsrunde 2026-09-26); dieselbe Quelle darf ihren Platzhalter
+    -- weiter durch die echte Kennung ersetzen. Ein Umbenennen setzt sie zurück.
+    name_quelle     TEXT,
+    -- Hat die Person den Namen selbst gewählt (Registrierung, Umbenennen in der Selbstbedienung)?
+    -- 1 = ja: Dann sagt er nichts darüber, wer im Verzeichnis so heisst, und eine Anmeldung über
+    -- LDAP/SAML bindet dieses Konto nie über den Namen (G2-N, `_nachbindung_grund`). 0 = vom
+    -- Betreiber vergeben (Panel, API, Umbenennen mit `durch_betreiber=True`) oder aus einer Quelle
+    -- (dann sagt `name_quelle`, aus welcher).
+    name_selbst_gewaehlt INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS api_key (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +158,25 @@ CREATE TABLE IF NOT EXISTS federated_identity (
     kennung     TEXT NOT NULL,              -- die stabile Kennung aus dem Verzeichnis
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     gebunden_at INTEGER NOT NULL,           -- wann die Bindung entstand (auch: nachgebunden)
+    -- Der Name, unter dem sich das Konto zuletzt über diese Quelle angemeldet hat, im Zähl-Topf
+    -- (`norm_kennung`) — nur wenn er weder Name noch Adresse des Kontos ist (G5). Nach einer
+    -- Umbenennung im Verzeichnis tippt die Person den NEUEN Namen, und unter ihm zählt die Serie
+    -- (B2-6); ohne diese Spalte räumte kein Rückweg sie. NULL = keiner (oder noch nie gesehen).
+    -- Der Name gehört dem Konto, das sich zuletzt so angemeldet hat (`bindung_name_setzen` löscht
+    -- ihn an fremden Bindungen), und kein anderes Konto kann ihn als Name oder Adresse annehmen
+    -- (Kennungs-Trigger, `TinySesam.kennung_vergeben`; Prüfrunde Sperren/Zähler 2026-09-27).
+    name_topf   TEXT,
     PRIMARY KEY (quelle, kennung)
+);
+-- Vom Betreiber geöffnete Bindung über den Namen (G1): Bis `bis` bindet die nächste Anmeldung über
+-- LDAP/SAML dieses Konto über seinen Namen, auch nach der Frist (`federation_name_binding_days`)
+-- und auch mit selbst gewähltem Namen. Geschrieben von `loese_fremde_bindung`, gelöscht, sobald
+-- die Bindung steht. Ohne Zeile entscheidet die Frist.
+CREATE TABLE IF NOT EXISTS namensbindung (
+    quelle  TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bis     INTEGER NOT NULL,
+    PRIMARY KEY (quelle, user_id)
 );
 CREATE TABLE IF NOT EXISTS session (
     token_hash TEXT PRIMARY KEY,               -- sha256(Klartext-Token); der Klartext steht NUR im
@@ -214,7 +258,8 @@ CREATE TABLE IF NOT EXISTS login_attempt (   -- Brute-Force-Regulation
     username TEXT,
     ip       TEXT,
     success  INTEGER NOT NULL,
-    method   TEXT
+    method   TEXT,
+    offen    INTEGER NOT NULL DEFAULT 0      -- 1: vorgebucht, Ausgang noch offen (G9, `reserve_attempt`)
 );
 CREATE TABLE IF NOT EXISTS fehlserie (       -- Fehlversuche IN FOLGE je Kennung, ohne Zeitfenster (B2-6)
     topf    TEXT NOT NULL,                   -- gefaltete Kennung, derselbe Schlüssel wie login_attempt.username
@@ -236,11 +281,16 @@ CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id);
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_cred(user_id);
 -- Grenze c (Integrationsangriff): `anlage_grenze` und `audit_anonymisieren` suchen nach Name und
 -- Zeit. Ohne Index lief das über das ganze Audit-Log — seine Grösse wächst mit der Aufbewahrung.
+-- Nur Name und Zeit: Die Suche im DETAILTEXT (`audit_anonymisieren`) ist eine Teilstring-Suche,
+-- die kein Index eingrenzt — sie bleibt ein Scan, läuft seit G4 aber blockweise ohne Schreibsperre.
 CREATE INDEX IF NOT EXISTS idx_audit_name_ts ON audit(lower(username), ts);
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit(ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_user ON login_attempt(username, ts);
 CREATE INDEX IF NOT EXISTS idx_attempt_ip ON login_attempt(ip, ts);
 CREATE INDEX IF NOT EXISTS idx_apikey_user ON api_key(user_id);
+-- G1: „Welche Konten tragen für diese Quelle noch keine Kennung?" (Startmeldung, Bestandsbindung)
+-- fragt je Konto nach seiner Zeile; ohne Index läse das je Konto alle Bindungen der Quelle.
+CREATE INDEX IF NOT EXISTS idx_fed_quelle_user ON federated_identity(quelle, user_id);
 """
 
 
@@ -354,6 +404,17 @@ def norm_kennung(kennung) -> str:
     if "@" in k:
         return norm_email(k) or ""
     return k
+
+
+def _kennung_sql(wert) -> Optional[str]:
+    """`norm_kennung` für SQLite (`tinysesam_kennung`): NULL bleibt NULL, und ein Fehler wird NULL
+    statt einer Ausnahme mitten in der Abfrage."""
+    if wert is None:
+        return None
+    try:
+        return norm_kennung(wert)
+    except Exception:
+        return None
 
 
 def valid_email(email) -> bool:
@@ -565,6 +626,9 @@ class Store:
         # (vor der Verschlüsselung, H-14/H-15) oder ein gelöschtes Konto bliebe sonst in freien
         # Seiten der Datei — und damit in jeder Sicherung — lesbar, je nach SQLite-Bau.
         self.db.execute("PRAGMA secure_delete=ON")
+        # Der Zähl-Topf als SQL-Funktion — NUR für Abfragen dieser Verbindung (`audit_anonymisieren`),
+        # nie in Schema, Trigger oder Index: Dort bräche sie jeden Schreiber ohne sie (`_trigger_sql`).
+        self.db.create_function("tinysesam_kennung", 1, _kennung_sql, deterministic=True)
         self._lock = threading.Lock()
         self._uhr_gesichert: Optional[float] = None   # monotone Zeit des letzten gesicherten Uhrstands
         self._geschrieben: Optional[float] = None     # monotone Zeit des letzten erfolgreichen Commits
@@ -643,7 +707,14 @@ class Store:
     #:      „vom Identity Provider vergeben" (H-5) — die Spalte selbst bleibt, wie sie ist;
     #:      `users.is_owner` (Owner); `session.zuletzt` (Inaktivitäts-Timeout, F-05);
     #:      `session.andere_beenden` (Grenze d); `oidc_sitzung` (Refresh-Token, 4a);
-    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8)
+    #:      `users.idp_bestaetigt_at` (API-Keys folgen dem IdP, Fund 8); Trigger
+    #:      `trg_users_kennung_insert`/`_update`: Name und Adresse sind EIN Kennungsraum, von der
+    #:      Datenbank erzwungen (G12c; angelegt bei jedem Start, nicht am Stempel);
+    #:      `users.name_versuch_ab`/`mail_versuch_ab`/`name_audit_ab`/`mail_audit_ab`: ab wann eine
+    #:      Kennung dem Konto gehört (G2, NULL im Bestand), dazu die Nachrechnen-Trigger, die sie bei
+    #:      einem fremden Schreiber heben; `federated_identity.name_topf`: der Name im Verzeichnis
+    #:      (G5); `login_attempt.offen`: eine Vorbuchung, deren Ausgang noch offen ist (G9). Schema 11
+    #:      ist unveröffentlicht — alles davon additiv und bei jedem Start idempotent.
     SCHEMA_VERSION = 11
 
     #: Ab diesem Schema-Stand sind `topf_name`/`topf_mail` mit der heutigen `norm_kennung`
@@ -691,7 +762,22 @@ class Store:
                       # 0 für den Bestand; wer Owner wird, entscheidet `Store._owner_nachziehen`.
                       ("is_owner", "INTEGER NOT NULL DEFAULT 0"),
                       # Bestand: unten für OIDC-Konten auf „jetzt" gesetzt (Fund 8).
-                      ("idp_bestaetigt_at", "INTEGER")],
+                      ("idp_bestaetigt_at", "INTEGER"),
+                      # NULL für den Bestand: Grenze ist dann die Anlage, wie bis 2026-09-26 (G2).
+                      # Nicht „jetzt" nachtragen — die Kontoseite zeigte sonst nichts mehr von vor
+                      # dem Update, und eigene Fehlversuche blieben bis zum Fensterende stehen.
+                      ("name_versuch_ab", "INTEGER"), ("mail_versuch_ab", "INTEGER"),
+                      ("name_audit_ab", "INTEGER"), ("mail_audit_ab", "INTEGER"),
+                      # 0 für den Bestand; wer sich registriert oder selbst umbenannt hat, trägt
+                      # es unten einmal nach (`NAME_SELBST_NACHGETRAGEN`, G2-N).
+                      ("name_selbst_gewaehlt", "INTEGER NOT NULL DEFAULT 0"),
+                      # NULL für den Bestand; wo die Herkunft belegt ist, unten einmal nachgetragen
+                      # (`NAME_QUELLE_NACHGETRAGEN`, Angriffsrunde 2026-09-26).
+                      ("name_quelle", "TEXT")],
+            # NULL: noch nie unter einem anderen Namen angemeldet (G5); entsteht beim nächsten Login.
+            "federated_identity": [("name_topf", "TEXT")],
+            # 0 für den Bestand: Jede vorhandene Zeile ist ein abgeschlossener Versuch (G9).
+            "login_attempt": [("offen", "INTEGER NOT NULL DEFAULT 0")],
         }
         # `_schreibend`, nicht nur `_lock`: Der Schluss-Commit unten nimmt DELETE und Stempel mit.
         # Scheitert davor etwas, bliebe ohne Zurückrollen eine Transaktion auf der Verbindung
@@ -798,6 +884,12 @@ class Store:
                                 "AND id IN (SELECT user_id FROM oidc_identity)", (_now(),))
                 self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES ('idp_bestand_gesetzt', ?)",
                                 (str(_now()),))
+            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
+                               (self.NAME_SELBST_NACHGETRAGEN,)).fetchone() is None:
+                self._name_selbst_nachtragen()
+            if self.db.execute("SELECT 1 FROM setting WHERE key=?",
+                               (self.NAME_QUELLE_NACHGETRAGEN,)).fetchone() is None:
+                self._name_quelle_nachtragen()
             self._owner_nachziehen()
             if vorhanden_vorab < 10:
                 self._bestand_nachziehen(True, ohne_topf)
@@ -852,23 +944,216 @@ class Store:
             # (R4-03). `get_user_by_name`/`get_user_by_email` vergleichen mit NOCASE; der
             # UNIQUE-Index auf `username` (BINARY) und `ux_users_email` (`lower(email)`) passen
             # dazu nicht, SQLite las deshalb jede Zeile.
+            # Der Name im Verzeichnis (G5) zählt im Kennungsraum mit (Prüfrunde 2026-09-27) — die
+            # Kennungs-Trigger fragen bei jeder Anlage und jedem Umbenennen nach ihm.
             for sql in ("CREATE INDEX IF NOT EXISTS ix_users_topf_name ON users(topf_name)",
                         "CREATE INDEX IF NOT EXISTS ix_users_topf_mail ON users(topf_mail)",
+                        "CREATE INDEX IF NOT EXISTS ix_fed_name_topf ON federated_identity(name_topf)",
                         "CREATE INDEX IF NOT EXISTS ix_users_name_nocase ON users(username COLLATE NOCASE)",
                         "CREATE INDEX IF NOT EXISTS ix_users_email_nocase ON users(email COLLATE NOCASE)"):
                 self.db.execute(sql)
-            # Ein anderer Schreiber ändert Name oder Adresse, ohne den Topf mitzuführen (eine
-            # ältere Fassung nach einem Rückschritt, die Umbenennung von Hand, zu der der
-            # Kollisions-Wächter beim Start rät): Dann ist der Topf veraltet — und NULL heisst
-            # „nachrechnen". Nur eingebaute SQL-Funktionen: Auch das sqlite3-Werkzeug und ältere
-            # Fassungen müssen weiter schreiben können (eine Python-Funktion im Trigger oder im
-            # Index-Ausdruck bräche jeden Schreiber ohne sie mit „no such function").
-            for spalte, topf in (("username", "topf_name"), ("email", "topf_mail")):
-                self.db.execute(
-                    f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
-                    f"WHEN NEW.{topf} IS OLD.{topf} "
-                    f"BEGIN UPDATE users SET {topf} = NULL WHERE id = NEW.id; END")
+            # Die Trigger über die Töpfe (Nachrechnen und Kennungsraum, s. `_trigger_sql`). Eine
+            # Datei, auf der sie sich nicht anlegen lassen (nur lesbar), darf den Start nicht
+            # verhindern: Dort entsteht ohnehin kein neues Konto, und die Vorprüfung
+            # (`kennung_vergeben`) bleibt. Gesagt wird es trotzdem.
+            try:
+                self._trigger_setzen()
+            except sqlite3.OperationalError as e:
+                logging.getLogger("tinysesam").warning(
+                    "Trigger über Benutzername und Adresse nicht angelegt (%s): Die Datenbank "
+                    "erzwingt den gemeinsamen Kennungsraum erst nach einem Start mit "
+                    "Schreibzugriff.", e)
             self.db.commit()
+
+    #: Meldung der Kennungs-Trigger (`sqlite3.IntegrityError`): Name oder Adresse fällt in den
+    #: Zähl-Topf eines ANDEREN Kontos. Aufrufer erkennen den Fall an `IntegrityError`, nicht am Text.
+    KENNUNG_VERGEBEN = "tinysesam: kennung vergeben"
+
+    #: Die Wasserlinien einer Kennung (G2) als SQL-Ausdruck: die höchste Id, die es JETZT gibt.
+    #: Alles, was danach entsteht, hat eine grössere (`AUTOINCREMENT` vergibt keine Id zweimal).
+    #: Nur eingebaute Funktionen — derselbe Grund wie bei den Triggern.
+    WL_VERSUCH = "(SELECT COALESCE(MAX(id), 0) FROM login_attempt)"
+    WL_AUDIT = "(SELECT COALESCE(MAX(id), 0) FROM audit)"
+
+    @classmethod
+    def _trigger_sql(cls) -> list:
+        """Die Trigger auf `users` als `(name, CREATE-Anweisung)`. Nur eingebaute SQL-Funktionen:
+        Auch das sqlite3-Werkzeug und ältere Fassungen müssen weiter schreiben können (eine
+        Python-Funktion im Trigger oder im Index-Ausdruck bräche jeden Schreiber ohne sie mit
+        „no such function").
+
+        **Nachrechnen** (`trg_users_topf_name`/`_mail`, Schema 10): Ein anderer Schreiber ändert
+        Name oder Adresse, ohne den Topf mitzuführen (eine ältere Fassung nach einem Rückschritt,
+        die Umbenennung von Hand, zu der der Kollisions-Wächter beim Start rät): Dann ist der Topf
+        veraltet — und NULL heisst „nachrechnen". Nur wenn sich der Wert WIRKLICH ändert: Wer
+        dieselbe Adresse erneut setzt, behält seinen Topf (bis 2026-09-26 stand er danach bis zum
+        nächsten Nachtrag auf NULL, und die Kennungs-Trigger sahen das Konto so lange nicht).
+        Derselbe Trigger hebt die Wasserlinien der Kennung (`name_versuch_ab` … , G2) auf den
+        aktuellen Stand: Ein fremder Schreiber hat eine neue Kennung vergeben, und was vorher unter
+        ihr stand, gehörte nicht diesem Konto. Das ist die strengere Richtung — auch bei einer
+        Umbenennung, die nur die Schreibweise ändert. Die eigenen Schreiber lösen ihn nie aus
+        (`_kennung_setzen`); sonst verschöbe schon `B1` → `b1` die Grenze.
+
+        **Wechsel mit Topf** (`trg_users_wechsel_name`/`_mail`, Prüfrunde 2026-09-27): Ein fremder
+        Schreiber, der den Topf SELBST mitführt (`store.set_email` aus 0.20.1 setzt Adresse und
+        `topf_mail` in einer Anweisung), löst den Nachrechnen-Trigger nicht aus — der Topf ändert
+        sich ja. Bis dahin blieb die Wasserlinie dann auf dem Stand der ALTEN Kennung, und die erste
+        volle Anmeldung räumte die Fehlversuche, die ein Fremder vor dem Wechsel unter der neuen
+        gemacht hatte, auch aus der Drosselung seiner IP. Dieser Trigger hebt sie, wenn in derselben
+        Anweisung der Wert UND der Topf wechseln (auf einen Topf, nicht auf NULL). Der Nachtrag
+        (`_toepfe_schreiben`: nur der Topf) feuert ihn nicht, `B1` → `b1` in `_kennung_setzen` auch
+        nicht (dort steht der Topf zwischendurch auf NULL); bei einem echten Wechsel in
+        `_kennung_setzen` setzt er denselben Stand, den die Anweisung schon geschrieben hat.
+
+        **Kennungsraum** (`trg_users_kennung_insert`/`_update`, G12c): Benutzername und Adresse
+        sind EIN Raum (`find_user` sucht in beiden), und der Zähl-Topf faltet gröber als NOCASE
+        (`Alice`/`alice`, `Émile`/`émile`, Vollbreite, Unicode- und A-Label-Domain). Die Datenbank
+        kannte bis dahin nur `UNIQUE(username)` (BINARY) und `ux_users_email` — Prüfung
+        (`kennung_vergeben`) und Schreiben waren getrennt, und zwei gleichzeitige Registrierungen
+        derselben Kennung (eine als Name, eine als Adresse) kamen beide durch. Jetzt weist die
+        Datenbank einen NEU vergebenen Topf ab, der schon Name oder Adresse eines anderen Kontos
+        ist — in derselben Anweisung wie das Schreiben, unter dem einen Schreiber von SQLite.
+        Warum jedes Teil:
+
+        * `UPDATE OF username, email`, nicht `OF topf_*`: Der Nachtrag (`_toepfe_schreiben`)
+          setzt nur Töpfe und prüft deshalb nicht. Ein Bestand mit Kollision bricht den Start nicht.
+        * `NEW IS NOT OLD`: Geprüft wird nur ein neu vergebener Topf. Das erneute Setzen der
+          eigenen Adresse und ein rohes UPDATE (Topf bleibt stehen, der Trigger oben setzt ihn
+          danach auf NULL) gehen durch — eine Kollision im Bestand wird gemeldet, nicht verhindert.
+        * `id IS NOT NEW.id` (nur beim UPDATE): Dieselbe Zeile darf Name = Adresse tragen
+          (E-Mail-Modus). Beim INSERT steht die Zeile noch nicht in der Tabelle.
+        * Zeilen ohne Topf (NULL: ein fremder Schreiber, noch nicht nachgetragen) zählen erst ab
+          dem Nachtrag — den `kennung_vergeben` vor jeder Anlage anstösst.
+        * **Der Name im Verzeichnis eines ANDEREN Kontos** (`federated_identity.name_topf`, G5)
+          zählt mit (Prüfrunde 2026-09-27). Unter einer Kennung prüft die Login-Route zwei
+          Geheimnisse — das lokale Passwort des Kontos und das LDAP-Passwort des Eintrags. Nahm
+          ein lokales Konto den Verzeichnisnamen einer anderen Person an (Selbstbedienung,
+          Registrierung), räumte jede seiner Anmeldungen die Zähler, unter denen gegen deren
+          LDAP-Passwort geraten wurde. Beim UPDATE nur fremde Bindungen (`user_id IS NOT NEW.id`):
+          Wer zu seinem eigenen Verzeichnisnamen zurückkehrt, darf das.
+
+        Die Suche läuft über `ix_users_topf_name`/`ix_users_topf_mail`/`ix_fed_name_topf`, kein
+        Scan: Die Arbeit hängt nicht von der Zahl der Konten ab (Schrittzählung in
+        tests/test_kennungsraum.py und tests/test_audit_runde2.py)."""
+        def neu(spalte, alt, id_aus):
+            andere = "id IS NOT NEW.id AND " if id_aus else ""
+            fremd = "user_id IS NOT NEW.id AND " if id_aus else ""
+            return (f"(NEW.{spalte} IS NOT {alt} AND NEW.{spalte} <> '' AND (EXISTS (SELECT 1 FROM users "
+                    f"WHERE {andere}(topf_name = NEW.{spalte} OR topf_mail = NEW.{spalte})) "
+                    f"OR EXISTS (SELECT 1 FROM federated_identity WHERE {fremd}name_topf = NEW.{spalte})))")
+        abweisen = f"BEGIN SELECT RAISE(ABORT, '{cls.KENNUNG_VERGEBEN}'); END"
+        arten = (("username", "topf_name", "name"), ("email", "topf_mail", "mail"))
+        sql = [(f"trg_users_{topf}",
+                f"CREATE TRIGGER IF NOT EXISTS trg_users_{topf} AFTER UPDATE OF {spalte} ON users "
+                f"WHEN NEW.{topf} IS OLD.{topf} AND NEW.{spalte} IS NOT OLD.{spalte} "
+                f"BEGIN UPDATE users SET {topf} = NULL, {art}_versuch_ab = {cls.WL_VERSUCH}, "
+                f"{art}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+               for spalte, topf, art in arten]
+        sql += [(f"trg_users_wechsel_{art}",
+                 f"CREATE TRIGGER IF NOT EXISTS trg_users_wechsel_{art} AFTER UPDATE OF {topf} ON users "
+                 f"WHEN NEW.{topf} IS NOT NULL AND NEW.{topf} IS NOT OLD.{topf} "
+                 f"AND NEW.{spalte} IS NOT OLD.{spalte} "
+                 f"BEGIN UPDATE users SET {art}_versuch_ab = {cls.WL_VERSUCH}, "
+                 f"{art}_audit_ab = {cls.WL_AUDIT} WHERE id = NEW.id; END")
+                for spalte, topf, art in arten]
+        sql.append(("trg_users_kennung_insert",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_insert BEFORE INSERT ON users "
+                    f"WHEN {neu('topf_name', 'NULL', False)} OR {neu('topf_mail', 'NULL', False)} "
+                    + abweisen))
+        sql.append(("trg_users_kennung_update",
+                    "CREATE TRIGGER IF NOT EXISTS trg_users_kennung_update BEFORE UPDATE OF username, email "
+                    f"ON users WHEN {neu('topf_name', 'OLD.topf_name', True)} "
+                    f"OR {neu('topf_mail', 'OLD.topf_mail', True)} " + abweisen))
+        return sql
+
+    def _trigger_setzen(self) -> None:
+        """Die Trigger aus `_trigger_sql` anlegen — oder ersetzen, wenn eine ältere Fassung sie
+        anders angelegt hat (ohne Commit, unter `_lock`, Teil von `_migrate`).
+
+        `CREATE TRIGGER IF NOT EXISTS` allein liesse einen Trigger aus Schema 10 für immer so
+        stehen, wie er damals war. Verglichen wird mit dem Text in `sqlite_master` (SQLite legt ihn
+        ohne `IF NOT EXISTS` ab; Leerraum zählt nicht). Stimmt er, wird nichts geschrieben — auch
+        nicht auf einer nur lesbaren Datei."""
+        for name, sql in self._trigger_sql():
+            soll = " ".join(sql.replace(" IF NOT EXISTS", "", 1).split())
+            steht = self.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                                    (name,)).fetchone()
+            if steht is not None and " ".join(str(steht[0] or "").split()) == soll:
+                continue
+            if steht is not None:
+                self.db.execute(f"DROP TRIGGER IF EXISTS {name}")
+            self.db.execute(sql)
+
+    #: Setting-Schlüssel: Ist `users.name_selbst_gewaehlt` für den Bestand nachgetragen (G2-N)?
+    NAME_SELBST_NACHGETRAGEN = "name_selbst_nachgetragen"
+
+    def _name_selbst_nachtragen(self) -> None:
+        """`users.name_selbst_gewaehlt` für den Bestand einmal aus dem Audit-Log nachtragen (G2-N;
+        ohne Commit, unter `_lock`, Teil von `_migrate`).
+
+        Die Spalte kam nach 0.20.1; bis dahin hielt nichts fest, woher ein Name stammt. Das
+        Audit-Log weiss es für die beiden Wege, die zählen: `signup` (Registrierung, auch mit
+        Einladung) und `username_changed` (Umbenennen) stehen unter dem Namen, den das Konto danach
+        trug. Gezählt wird nur eine Zeile unter dem HEUTIGEN Namen und ab der Anlage des Kontos —
+        eine ältere gehörte einem anderen Konto mit diesem Namen. Die Suche läuft über
+        `idx_audit_name_ts` (Name, Zeit), nicht durch das ganze Log.
+
+        Grenzen, bewusst in die sichere Richtung: Ein vom Betreiber umbenanntes Konto trug bis
+        dahin dieselbe Zeile (`username_changed`) und bekommt den Merker auch — das Konto bindet
+        dann nicht mehr über den Namen, der Betreiber öffnet es mit `loese_fremde_bindung`. Was die
+        Aufbewahrung (`audit_retention_days`) schon gelöscht hat, wird nicht erkannt; 0.20.1 kannte
+        das Umbenennen nicht, dort bleibt nur die Registrierung.
+
+        Genau einmal, am Merker `NAME_SELBST_NACHGETRAGEN` im selben Commit: Liefe es bei jedem
+        Start, machte die Zeile eines späteren Umbenennens durch den Betreiber das Konto wieder zu
+        einem selbst benannten."""
+        self.db.execute(
+            "UPDATE users SET name_selbst_gewaehlt = 1 WHERE name_selbst_gewaehlt = 0 AND is_service = 0 "
+            "AND EXISTS (SELECT 1 FROM audit a WHERE lower(a.username) = lower(users.username) "
+            "AND a.ts >= users.created_at AND a.event IN ('signup', 'username_changed'))")
+        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                        (self.NAME_SELBST_NACHGETRAGEN, str(_now())))
+
+    #: Setting-Schlüssel: Ist `users.name_quelle` für den Bestand nachgetragen (Angriffsrunde 2026-09-26)?
+    NAME_QUELLE_NACHGETRAGEN = "name_quelle_nachgetragen"
+
+    #: Wie weit Anlage und Bindung einer Quelle auseinanderliegen dürfen, damit die Bindung als „die
+    #: Quelle hat das Konto angelegt" gilt (`_name_quelle_nachtragen`). Beim Anlegen stehen beide in
+    #: derselben Anmeldung, ohne Verzeichnisaufruf dazwischen — Sekundenbruchteile.
+    ANLAGE_TOLERANZ_SEC = 2
+
+    def _name_quelle_nachtragen(self) -> None:
+        """`users.name_quelle` für den Bestand einmal nachtragen, wo die Herkunft belegt ist (ohne
+        Commit, unter `_lock`, Teil von `_migrate`).
+
+        * **OIDC:** Jede Zeile in `oidc_identity` hat seit v0.1 der Callback beim ANLEGEN des Kontos
+          geschrieben — er verknüpft nie ein vorhandenes. Das Konto trägt also den Namen des Providers.
+        * **LDAP/SAML:** Eine Bindung (auch der Platzhalter), die mit der Anlage des Kontos entstand
+          (`gebunden_at` höchstens `ANLAGE_TOLERANZ_SEC` vor oder nach `created_at`). Eine spätere
+          Nachbindung zählt nicht — dann gab es das Konto schon, und sein Name kam von woanders.
+
+        Ausgenommen: Service-Konten und selbst gewählte Namen (der Merker oben trägt sie schon).
+        Konten von vor den Kennungen (F-11, bis 0.19) haben keine Bindung aus der Anlage und bleiben
+        NULL — für sie bleibt die Frist (`federation_name_binding_days`). Grenze in die sichere
+        Richtung: Legt der Betreiber ein Konto an und bindet es binnen zwei Sekunden, gilt es als von
+        der Quelle angelegt; eine andere Quelle bindet es dann nur, wenn er sie öffnet
+        (`loese_fremde_bindung`).
+
+        Genau einmal, am Merker `NAME_QUELLE_NACHGETRAGEN` im selben Commit: Liefe es bei jedem Start,
+        bekäme ein vom Betreiber umbenanntes Konto seine Quelle zurück."""
+        self.db.execute(
+            "UPDATE users SET name_quelle = 'oidc' WHERE name_quelle IS NULL AND is_service = 0 "
+            "AND name_selbst_gewaehlt = 0 AND id IN (SELECT user_id FROM oidc_identity)")
+        aus_anlage = ("FROM federated_identity f WHERE f.user_id = users.id "
+                      "AND abs(f.gebunden_at - users.created_at) <= ?")
+        self.db.execute(
+            f"UPDATE users SET name_quelle = (SELECT f.quelle {aus_anlage} "
+            "ORDER BY f.gebunden_at, f.quelle LIMIT 1) "
+            "WHERE name_quelle IS NULL AND is_service = 0 AND name_selbst_gewaehlt = 0 "
+            f"AND EXISTS (SELECT 1 {aus_anlage})",
+            (self.ANLAGE_TOLERANZ_SEC, self.ANLAGE_TOLERANZ_SEC))
+        self.db.execute("INSERT OR REPLACE INTO setting(key, value) VALUES (?, ?)",
+                        (self.NAME_QUELLE_NACHGETRAGEN, str(_now())))
 
     #: Setting-Schlüssel: bis zu welcher `audit.id` die Panel-Sperren älterer Schreiber schon
     #: nachgezogen sind (`_bestand_nachziehen`). Fehlt er, liest der nächste Start das Audit-Log
@@ -1075,6 +1360,21 @@ class Store:
         except sqlite3.Error:
             pass     # Verbindung geschlossen o. ä. — dann liegt auch nichts mehr offen
 
+    def _begin_immediate(self) -> None:
+        """`BEGIN IMMEDIATE` für eine selbst geführte Transaktion (unter `_lock`) — Zählen und
+        Buchen in einem Schritt, auch über mehrere Prozesse (`reserve_attempt`, `finish_attempt`)."""
+        if self.db.in_transaction:
+            # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum (ein
+            # Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN unten an ihr —
+            # und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr Inhalt ist der Rest
+            # eines GESCHEITERTEN Schreibzugriffs; er wird verworfen, nicht mitgebucht. Laut, weil
+            # es ein Fehler an anderer Stelle ist.
+            logging.getLogger("tinysesam").warning(
+                "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
+                "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
+            self._verwerfen()
+        self.db.execute("BEGIN IMMEDIATE")
+
     @contextlib.contextmanager
     def _schreibend(self):
         """`_lock` halten, schreiben — und bei einem Fehlschlag die Transaktion VERWERFEN.
@@ -1165,22 +1465,122 @@ class Store:
 
     # ---------- Users ----------
     def create_user(self, username, display_name=None, email=None, is_admin=False, roles=None,
-                    is_service=False, email_verified=True) -> int:
+                    is_service=False, email_verified=True, name_selbst_gewaehlt=False,
+                    name_quelle=None) -> int:
+        """Ein Konto anlegen (Rohbaustein; die Prüfungen macht `TinySesam.create_user`).
+
+        Wirft `sqlite3.IntegrityError`, wenn Name oder Adresse schon Kennung eines anderen Kontos
+        ist — auch als Namensvetter im Zähl-Topf (`Alice`/`alice`, s. `_trigger_sql`). Bis
+        2026-09-26 ging das hier durch, sofern nicht genau derselbe Name oder dieselbe Adresse
+        schon stand.
+
+        Name und Adresse gehören dem Konto ab dieser Anweisung: Die Wasserlinien (G2) entstehen im
+        selben INSERT, als höchste Id, die es in `login_attempt` und `audit` gerade gibt. Ebenso der
+        Merker `name_selbst_gewaehlt` (G2-N) und die Herkunft des Namens (`name_quelle`) — zwischen
+        Anlage und Merker liegt keine Anmeldung, die das Konto über den Namen binden könnte."""
         mail = norm_email(email)
         cur = self._exec(
             "INSERT INTO users(username, display_name, email, email_verified, is_admin, roles, "
-            "is_service, created_at, topf_name, topf_mail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "is_service, created_at, topf_name, topf_mail, name_versuch_ab, mail_versuch_ab, "
+            "name_audit_ab, mail_audit_ab, name_selbst_gewaehlt, name_quelle) VALUES (?,?,?,?,?,?,?,?,?,?,"
+            f"{self.WL_VERSUCH},{self.WL_VERSUCH},{self.WL_AUDIT},{self.WL_AUDIT},?,?)",
             (username, display_name or username, mail, 1 if email_verified else 0,
              1 if is_admin else 0,
              json.dumps(list(roles or [])), 1 if is_service else 0, _now(),
-             norm_kennung(username), norm_kennung(mail)))
+             norm_kennung(username), norm_kennung(mail), 1 if name_selbst_gewaehlt else 0,
+             name_quelle or None))
         return cur.lastrowid
 
-    def set_username(self, user_id, username) -> None:
-        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Anweisung.
-        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben."""
+    def _kennung_setzen(self, user_id, spalte: str, wert, topf: str, beleg=None) -> list:
+        """Die Anweisungen, die Name (`spalte="username"`) oder Adresse (`"email"`, mit `beleg`)
+        samt Zähl-Topf ersetzen — für `_umschreiben`.
+
+        Kommt die Kennung damit in einen ANDEREN Topf, gehört sie dem Konto erst ab jetzt: Die
+        Wasserlinien (`name_versuch_ab`/`name_audit_ab` bzw. `mail_…`, G2) gehen in derselben
+        Anweisung auf den aktuellen Stand. Bleibt der Topf (`B1` → `b1`, `u@bücher.example` →
+        `u@xn--bcher-kva.example`), bleiben sie stehen — es ist dieselbe Kennung. SQLite rechnet
+        jeden Ausdruck in SET mit der ALTEN Zeile; der Vergleich sieht also den bisherigen Topf.
+
+        Zwei Anweisungen, weil der Nachrechnen-Trigger (`_trigger_sql`) einen eigenen Schreiber
+        nicht von einem fremden unterscheiden kann: Er feuert, wenn sich der Wert ändert, der Topf
+        aber nicht — und hebt dann die Wasserlinien. Deshalb setzt die erste Anweisung einen
+        gleichbleibenden Topf selbst auf NULL (der Trigger sieht einen geänderten Topf und bleibt
+        still; die Kennungs-Trigger prüfen nichts — es kommt ja keine Kennung hinzu), und die
+        zweite setzt ihn in derselben Transaktion zurück. Sie ändert nur den Topf und löst keinen
+        Trigger aus. Bis 2026-09-26 setzte der Trigger den Topf auf NULL und die zweite Anweisung
+        ihn zurück; mit den Wasserlinien hätte das schon `B1` → `b1` die Grenze verschoben.
+
+        Beim Namen kommt vorne eine dritte dazu (`_verzeichnisname_merken`, Prüfrunde 2026-09-27):
+        Ein Konto mit LDAP-Bindung, dessen Name der Name im Verzeichnis war, behält den alten als
+        Verzeichnisnamen — sonst fiele er beim Umbenennen aus `zaehl_kennungen` und aus dem
+        Kennungsraum, bis zur nächsten erfolgreichen LDAP-Anmeldung."""
+        topf_spalte, art = ("topf_name", "name") if spalte == "username" else ("topf_mail", "mail")
+        gleich = f"CASE WHEN {topf_spalte} IS ? THEN"
+        setzen = (f"{topf_spalte} = {gleich} NULL ELSE ? END, "
+                  f"{art}_versuch_ab = {gleich} {art}_versuch_ab ELSE {self.WL_VERSUCH} END, "
+                  f"{art}_audit_ab = {gleich} {art}_audit_ab ELSE {self.WL_AUDIT} END")
+        erste: tuple
+        if beleg is None:
+            erste = (f"UPDATE users SET {spalte}=?, {setzen} WHERE id=?",
+                     (wert, topf, topf, topf, topf, user_id))
+        else:
+            erste = (f"UPDATE users SET {spalte}=?, email_verified=?, {setzen} WHERE id=?",
+                     (wert, 1 if beleg else 0, topf, topf, topf, topf, user_id))
+        vorab = [self._verzeichnisname_merken(user_id, topf)] if spalte == "username" else []
+        return vorab + [erste, (f"UPDATE users SET {topf_spalte}=? WHERE id=?", (topf, user_id))]
+
+    def _verzeichnisname_merken(self, user_id, neuer_topf) -> tuple:
+        """Die Anweisung, die vor einem Umbenennen den bisherigen Namen als Namen im Verzeichnis
+        an der LDAP-Bindung vermerkt (`federated_identity.name_topf`, G5) — für `_kennung_setzen`.
+
+        Anlass (Prüfrunde 2026-09-27): Heisst ein Konto lokal wie im Verzeichnis, steht dort NULL
+        (`bindung_name_setzen` vermerkt nur einen abweichenden Namen). Benannte der Betreiber
+        (G13, Panel, `tinysesam rename`) oder die Person selbst das Konto um, fiel der
+        Verzeichnisname aus `zaehl_kennungen`: Füllte ein Fremder vorher die Serie darunter, blieb
+        die LDAP-Anmeldung gesperrt — Panel-Reset und volle Anmeldung auf anderem Weg räumten sie
+        nicht, nur `tinysesam unlock <verzeichnisname>`. Und der Name war lokal frei: ein anderes
+        Konto konnte ihn annehmen und mit jeder Anmeldung die Zähler gegen das LDAP-Passwort
+        räumen.
+
+        Nur eine echte Kennung (nicht der Herkunfts-Platzhalter `OHNE_KENNUNG`): Ohne stabile
+        Kennung ordnet LDAP über den Namen zu — nach dem Umbenennen gehört der alte Name nicht
+        mehr zu diesem Konto. Nur wenn NULL steht (ein abweichender Name ist schon vermerkt und
+        der jüngere) und nur, wenn der Topf wirklich wechselt. Gelesen wird der alte Topf in
+        derselben Transaktion, vor dem Schreiben des neuen Namens."""
+        alt = "(SELECT topf_name FROM users WHERE id = ?)"
+        return (f"UPDATE federated_identity SET name_topf = {alt} WHERE quelle = 'ldap' AND user_id = ? "
+                "AND name_topf IS NULL AND substr(kennung, 1, length(?)) <> ? "
+                f"AND {alt} IS NOT NULL AND {alt} <> '' AND {alt} IS NOT ?",
+                (user_id, user_id, self.OHNE_KENNUNG, self.OHNE_KENNUNG, user_id, user_id, user_id,
+                 neuer_topf))
+
+    def _umschreiben(self, schritte) -> None:
+        """Mehrere Anweisungen in EINER Transaktion, ein Commit (wie `_exec`, nur für eine Liste).
+        Scheitert eine — auch an einem Kennungs-Trigger (`IntegrityError`) —, rollt `_schreibend`
+        alle zurück."""
+        with self._schreibend():
+            for sql, args in schritte:
+                self.db.execute(sql, args)
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+
+    def set_username(self, user_id, username, selbst_gewaehlt: Optional[bool] = None) -> None:
+        """Den Benutzernamen ersetzen — samt Zähl-Topf (`topf_name`) in derselben Transaktion.
+        Geprüft wird vorher (`TinySesam.change_username`); hier nur geschrieben. Ist der Name
+        schon Kennung eines anderen Kontos (Name, Adresse oder Namensvetter im Topf), weist die
+        Datenbank ihn ab: `sqlite3.IntegrityError`, nichts geändert.
+
+        `selbst_gewaehlt` setzt den Merker `users.name_selbst_gewaehlt` (G2-N) in derselben
+        Transaktion und löscht die Herkunft `users.name_quelle`: Der neue Name stammt von der Person
+        oder vom Betreiber, nicht mehr aus der Quelle, die das Konto angelegt hat. `None` lässt
+        beide, wie sie sind."""
         name = str(username or "").strip()
-        self._exec("UPDATE users SET username=?, topf_name=? WHERE id=?", (name, norm_kennung(name), user_id))
+        schritte = self._kennung_setzen(user_id, "username", name, norm_kennung(name))
+        if selbst_gewaehlt is not None:
+            schritte.append(("UPDATE users SET name_selbst_gewaehlt=?, name_quelle=NULL WHERE id=?",
+                             (1 if selbst_gewaehlt else 0, user_id)))
+        self._umschreiben(schritte)
 
     def set_email(self, user_id, email, verified: bool = False):
         """Die Adresse ersetzen — **mitsamt ihrem Beleg**, vorgabegemäss „unbestätigt".
@@ -1198,10 +1598,28 @@ class Store:
         ausdrücklich (`set_email(uid, mail, verified=True)`) oder setzt ihn danach mit
         `set_email_verified`. Adresse und Beleg gehen in EINER Anweisung in die Datenbank,
         damit zwischen beiden kein Zustand liegt, in dem die neue Adresse den alten Beleg
-        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Anweisung mit."""
+        trägt. Der Zähl-Topf der Adresse (`topf_mail`) geht in derselben Transaktion mit.
+
+        Ist die Adresse schon Kennung eines anderen Kontos (Adresse, Name oder Namensvetter im
+        Topf), weist die Datenbank sie ab: `sqlite3.IntegrityError`, nichts geändert. Bis
+        2026-09-26 prüfte hier nichts ausser `ux_users_email` (Adresse gegen Adresse)."""
         mail = norm_email(email)
-        self._exec("UPDATE users SET email=?, email_verified=?, topf_mail=? WHERE id=?",
-                   (mail, 1 if verified else 0, norm_kennung(mail), user_id))
+        self._umschreiben(self._kennung_setzen(user_id, "email", mail, norm_kennung(mail), bool(verified)))
+
+    def adresse_wechseln(self, user_id, email, name_folgt: bool = False) -> None:
+        """Die bestätigte neue Adresse eintragen (mit Beleg) und, wenn `name_folgt`, den Namen
+        auf dieselbe Adresse setzen (E-Mail-Modus) — in EINER Transaktion.
+
+        Getrennt geschrieben (`set_email`, dann `set_username`) konnte das zweite scheitern,
+        nachdem das erste schon stand: Adresse neu, Name noch die alte Adresse — und die alte
+        Adresse blieb als Name des Kontos besetzt. Scheitert hier eine Anweisung (die neue
+        Kennung ist inzwischen vergeben: `sqlite3.IntegrityError`), bleibt beides beim Alten."""
+        mail = norm_email(email)
+        topf = norm_kennung(mail)
+        schritte = self._kennung_setzen(user_id, "email", mail, topf, True)
+        if name_folgt:
+            schritte += self._kennung_setzen(user_id, "username", mail, topf)
+        self._umschreiben(schritte)
 
     def set_email_verified(self, user_id, verified: bool):
         """Den Beleg für die Adresse vermerken (`users.email_verified`).
@@ -1269,6 +1687,11 @@ class Store:
         stehen: Ob sie davor oder danach kamen, lässt sich nicht entscheiden, und Stehenlassen
         ist hier die sichere Richtung (sie verfallen mit dem Sperrfenster).
 
+        Seit 2026-09-26 genauer (G2): nicht ab der Anlage, sondern ab dem **Beitritt jeder
+        Kennung** (`kennung_grenzen`) — ein Konto bekommt Namen und Adresse auch später
+        (Umbenennen, Adresswechsel). Auf die Zeile genau, auch in der Sekunde des Beitritts. Die
+        Anlage bleibt der Rückfall für den Bestand ohne Wasserlinie.
+
         `adresse_unbefristet=True` nimmt eine **belegte** Adresse davon aus (`adresse_belegt`):
         Sie gehört nachweislich dem Konto und wird auch in älteren Zeilen ersetzt (die
         Einladung, die zu dem Konto führte). Das ist die bewusste Löschung durch einen Admin
@@ -1291,12 +1714,17 @@ class Store:
             return None
         name, mail = str(u["username"]), (u["email"] or "")
         seit, seit_id = self.anlage_grenze(u)
+        # Genauer als die Anlage: ab wann jede Kennung dem Konto gehörte (G2). Vor dem Löschen
+        # gelesen — danach gibt es die Zeile nicht mehr.
+        grenzen = self.kennung_grenzen(u)
         unbefristet = (mail,) if (adresse_unbefristet and self.adresse_belegt(u)) else ()
         self.delete_user(user_id)
-        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet)
+        self.delete_attempts_for(name, (mail,), nach=seit, unbefristet=unbefristet,
+                                 ab_ids={t: g[0] for t, g in grenzen.items()})
         ersatz = ersatzname(user_id)
         return ersatz, self.audit_anonymisieren(name, ersatz, (mail,), seit=seit, seit_id=seit_id,
-                                                unbefristet=unbefristet)
+                                                unbefristet=unbefristet,
+                                                ab_ids={t: g[1] for t, g in grenzen.items()})
 
     def adresse_belegt(self, user) -> bool:
         """Gehört die Adresse dieses Kontos nachweislich ihm? (`konto_entfernen`, H-13)
@@ -1320,7 +1748,12 @@ class Store:
         return offen is None
 
     def anlage_grenze(self, user) -> tuple[int, int]:
-        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)`.
+        """Ab wo gehört eine Audit-Zeile zu diesem Konto? `(seit, seit_id)` — der Rückfall.
+
+        Seit 2026-09-26 gilt zuerst die Wasserlinie der Kennung (`kennung_grenzen`, G2): Ein
+        Konto, das einen freigewordenen Namen übernimmt, sah hier sonst die Anmeldungen des
+        Vorbesitzers samt dessen IP. Diese Grenze trägt nur noch den Bestand, dessen Konten die
+        Wasserlinie nicht haben.
 
         `seit` ist `created_at` (Unix-Sekunden). Aus der Sekunde der Anlage selbst zählen nur
         Zeilen ab `seit_id`: der Registrierungszeile des Kontos (`signup`, beim Platzhalter
@@ -1381,6 +1814,152 @@ class Store:
             treffer.append(z)
         return min(treffer, key=lambda t: t["id"]) if treffer else None
 
+    def topf_eines_anderen(self, kennung, user_id) -> bool:
+        """Ist diese Kennung (im Zähl-Topf) Name oder Adresse eines ANDEREN Kontos als `user_id`?
+
+        Der Wächter vor jedem Räumen unter einer Kennung, die das Konto nicht selbst als Name oder
+        Adresse führt (G5, G5-N1): unter dem Namen aus dem Verzeichnis (`zaehl_kennungen`) und
+        unter der eingetippten Kennung einer Verzeichnis-Anmeldung (`TinySesam.record_login`). Ein
+        Verzeichnisfilter über `mail` löst `chefin@example.com` zu einem Dritten auf, dessen
+        `mail`-Attribut so lautet; ohne diesen Wächter räumte jede Anmeldung des Dritten die
+        Zähler der lokalen Inhaberin dieser Adresse — unbegrenztes Raten gegen ihr Konto.
+        Geprüft wird beim Räumen, nicht beim Schreiben: Eine Kennung kann den Besitzer wechseln."""
+        return self.konto_mit_topf(kennung, ausser=user_id) is not None
+
+    @staticmethod
+    def _feld(zeile, name):
+        """Eine Spalte der Kontozeile — None, wenn es sie (noch) nicht gibt (Attrappe, altes Dict)."""
+        try:
+            return zeile[name]
+        except (IndexError, KeyError):
+            return None
+
+    def kennung_grenzen(self, user) -> dict:
+        """Ab wo gehört eine Zeile unter Name oder Adresse diesem Konto? (Grenze a, G2)
+
+        `{topf: (versuch_ab, audit_ab)}` für Name und Adresse im Zähl-Topf: Zeilen in
+        `login_attempt` bzw. `audit` mit einer GRÖSSEREN Id gehören dem Konto, die übrigen galten
+        niemandem oder jemand anderem. `None` heisst Bestand (die Spalten kamen erst mit diesem
+        Stand) — dann gilt wie bis 2026-09-26 die Anlage (`created_at`, `anlage_grenze`).
+
+        Bis dahin war die Anlage die Grenze für JEDE Kennung. Ein Konto bekommt eine Kennung aber
+        auch später: beim Umbenennen, beim Adresswechsel, beim Nachtrag einer Adresse aus OIDC.
+        Die Fehlversuche, die ein Fremder vorher unter dem damals freien Namen gemacht hatte,
+        räumte dann die erste volle Anmeldung weg — auch aus der Drosselung seiner IP —, und die
+        Kontoseite zeigte die Anmeldung des Vorbesitzers samt dessen IP.
+
+        Name und Adresse im selben Topf (E-Mail-Modus): die frühere der beiden Wasserlinien —
+        die Kennung gehört dem Konto, seit sie über einen der beiden Wege hinzukam. Ist eine
+        davon NULL, gilt der Rückfall."""
+        aus: dict = {}
+        for spalte, art in (("username", "name"), ("email", "mail")):
+            topf = norm_kennung(self._feld(user, spalte))
+            if not topf:
+                continue
+            werte = tuple(None if w is None else int(w)
+                          for w in (self._feld(user, f"{art}_versuch_ab"), self._feld(user, f"{art}_audit_ab")))
+            if topf in aus:
+                werte = tuple(None if a is None or b is None else min(a, b) for a, b in zip(aus[topf], werte))
+            aus[topf] = werte
+        return aus
+
+    def konto_mit_verzeichnisname(self, kennung, ausser=None) -> Optional[sqlite3.Row]:
+        """Das Konto (nicht `ausser`), an dessen Bindung diese Kennung als Name im Verzeichnis steht
+        (`federated_identity.name_topf`, G5) — oder None. Für `TinySesam.kennung_vergeben` und
+        `tinysesam rename`; die Datenbank prüft dasselbe in den Kennungs-Triggern (`_trigger_sql`).
+        Über `ix_fed_name_topf`, kein Scan."""
+        topf = norm_kennung(kennung)
+        if not topf:
+            return None
+        z = self._one("SELECT user_id FROM federated_identity WHERE name_topf = ? AND user_id IS NOT ? "
+                      "ORDER BY user_id LIMIT 1", (topf, ausser))
+        return self.get_user(z["user_id"]) if z else None
+
+    def zaehl_kennungen(self, user_id) -> set:
+        """Alle Kennungen (im Zähl-Topf), unter denen die Serie (B2-6) dieses Kontos stehen kann.
+
+        Name und Adresse — und der Name, unter dem sich das Konto über eine Verzeichnisquelle
+        anmeldet (`federated_identity.name_topf`, G5), sofern er nicht Name oder Adresse eines
+        ANDEREN Kontos ist (`topf_eines_anderen`) und nicht auch an der Bindung eines anderen
+        steht (Prüfrunde 2026-09-27, p1-a: nach Umbenennen und Wiedervergabe im Verzeichnis trugen
+        zwei Konten denselben Namen, und jede volle Anmeldung des Vorbesitzers beendete die Serie,
+        unter der gegen den neuen Inhaber geraten wurde). Seitdem löscht `bindung_name_setzen` den
+        Namen an fremden Bindungen; stehen zwei im Bestand, zählt er für keins — bis zur nächsten
+        LDAP-Anmeldung unter ihm. Die Serie zählt unter der EINGETIPPTEN Kennung;
+        nach einer Umbenennung im Verzeichnis (lokal `alice`, dort `alice.neu`) räumte bis
+        2026-09-26 kein Rückweg die Serie unter `alice.neu` — eigene Tippfehler summierten sich
+        über die Jahre, und ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus.
+
+        Der eine Leser für jeden Rückweg: `sperre_aufheben`, `_serie_beenden` (Panel-Reset),
+        `tinysesam passwd` und `tinysesam unlock`."""
+        u = self.get_user(user_id)
+        if u is None:
+            return set()
+        kennungen = {norm_kennung(u["username"]), norm_kennung(u["email"])} - {""}
+        for z in self._all("SELECT DISTINCT name_topf FROM federated_identity WHERE user_id=? "
+                           "AND name_topf IS NOT NULL AND name_topf <> ''", (user_id,)):
+            topf = norm_kennung(z["name_topf"])
+            if (topf and topf not in kennungen and not self.topf_eines_anderen(topf, user_id)
+                    and self.konto_mit_verzeichnisname(topf, ausser=user_id) is None):
+                kennungen.add(topf)
+        return kennungen
+
+    def bindung_name_setzen(self, quelle: str, user_id, name) -> bool:
+        """Den Namen, unter dem sich das Konto gerade über `quelle` angemeldet hat, an seiner
+        Bindung vermerken (`federated_identity.name_topf`, G5). Gibt zurück, ob geschrieben wurde.
+
+        Gefaltet (`norm_kennung`) und nur, wenn er weder Name noch Adresse des Kontos ist — die
+        kennen die Rückwege ohnehin; dann steht NULL. Nur der jüngste Name: Nach zwei
+        Umbenennungen im Verzeichnis zählt unter dem ältesten niemand mehr, der sich so anmeldet.
+        Geschrieben wird nur bei einer Änderung, also höchstens ein UPDATE je Anmeldung und im
+        Normalfall keins. Ob der Name Name oder Adresse eines ANDEREN Kontos ist, prüft jeder Leser
+        (`zaehl_kennungen`), nicht dieser Schreiber.
+
+        **Die jüngste Anmeldung unter dem Namen belegt, wem er gehört** (Prüfrunde 2026-09-27,
+        p1-a): Steht derselbe Name an der Bindung eines ANDEREN Kontos, ist er dort veraltet — im
+        Verzeichnis umbenannt und neu vergeben. Er wird dort gelöscht, auch wenn er hier als eigener
+        Name oder eigene Adresse NULL bleibt. Bis dahin trugen beide ihn, jede volle Anmeldung des
+        Vorbesitzers beendete die Serie des neuen Inhabers, und `tinysesam unlock` nannte das Konto
+        mit der jüngeren Bindung statt dem, das sich zuletzt so angemeldet hatte."""
+        u = self.get_user(user_id)
+        if u is None:
+            return False
+        topf = norm_kennung(name)
+        if topf and self.konto_mit_verzeichnisname(topf, ausser=user_id) is not None:
+            self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=? AND user_id IS NOT ?",
+                       (topf, user_id))
+        wert = None if not topf or topf in {norm_kennung(u["username"]), norm_kennung(u["email"])} else topf
+        if self._one("SELECT 1 AS x FROM federated_identity WHERE quelle=? AND user_id=? AND name_topf IS NOT ?",
+                     (quelle, user_id, wert)) is None:
+            return False
+        self._exec("UPDATE federated_identity SET name_topf=? WHERE quelle=? AND user_id=?",
+                   (wert, quelle, user_id))
+        return True
+
+    def verzeichnisname_freigeben(self, name) -> int:
+        """Den Namen im Verzeichnis an ALLEN Bindungen löschen — vor der Anlage eines Kontos, das
+        ihn als Namen bekommt (`TinySesam.check_ldap`, Prüfrunde 2026-09-27). Das Verzeichnis hat
+        eben einen anderen Eintrag unter diesem Namen angemeldet; wo er noch steht, ist er veraltet
+        (s. `bindung_name_setzen`) — und ohne das wiese die Datenbank die Anlage ab (Kennungs-
+        Trigger). Gibt die Zahl der gelöschten Vermerke zurück."""
+        topf = norm_kennung(name)
+        if not topf or self.konto_mit_verzeichnisname(topf) is None:
+            return 0
+        return self._exec("UPDATE federated_identity SET name_topf=NULL WHERE name_topf=?", (topf,)).rowcount
+
+    def konto_mit_bindungsname(self, kennung) -> Optional[sqlite3.Row]:
+        """Das Konto, das sich zuletzt unter dieser Kennung über eine Verzeichnisquelle angemeldet
+        hat (`federated_identity.name_topf`, G5) — für `tinysesam unlock <Name wie eingetippt>`.
+        None, wenn keins oder wenn die Kennung Name oder Adresse eines Kontos ist (dann ist DAS
+        Konto gemeint, `konto_mit_topf`). Mehrere Treffer (Bestand, s. `bindung_name_setzen`):
+        None — welches sich zuletzt so angemeldet hat, steht nirgends. Bis 2026-09-27 war es das
+        zuletzt GEBUNDENE, und `unlock` räumte dessen eigene Serie mit (Prüfrunde, p1-a)."""
+        topf = norm_kennung(kennung)
+        if not topf or self.konto_mit_topf(topf) is not None:
+            return None
+        z = self._all("SELECT DISTINCT user_id FROM federated_identity WHERE name_topf=? LIMIT 2", (topf,))
+        return self.get_user(z[0]["user_id"]) if len(z) == 1 else None
+
     def delete_user(self, user_id):
         """Die Zeilen eines Kontos entfernen — Rohbaustein, nur für `konto_entfernen`.
 
@@ -1389,8 +1968,8 @@ class Store:
         dass es keinen weiteren Aufrufer gibt."""
         with self._schreibend():
             for table in ("api_key", "password_cred", "pin_cred", "totp_cred", "recovery_code",
-                          "webauthn_cred", "oidc_identity", "federated_identity", "session",
-                          "magic_token"):
+                          "webauthn_cred", "oidc_identity", "federated_identity", "namensbindung",
+                          "session", "magic_token"):
                 self.db.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
             self.db.execute("DELETE FROM users WHERE id=?", (user_id,))
             self.db.commit()
@@ -1402,26 +1981,46 @@ class Store:
     def kennungs_kollisionen(self, limit: int = 50) -> list:
         """Konten, deren **Benutzername** die **E-Mail** eines ANDEREN Kontos ist (Fund R4-12).
 
-        Warum das eine eigene Abfrage braucht: Die Tabelle kennt `UNIQUE(username)` und den
-        Index `ux_users_email` auf `lower(email)` — aber **keinen Constraint über beide
-        Spalten**. Eindeutig ist also jeder Namensraum für sich, während `find_user` im
-        Vorgabe-Modus `both` in beiden sucht. `Manager.create_user` prüft kreuzweise, doch
-        Prüfung und INSERT sind nicht atomar (zwei gleichzeitige Registrierungen derselben
-        Kennung — eine als Name, eine als Adresse — kommen beide durch), und in einer Datenbank
-        von VOR dem Fix steht die Kollision längst. Diese Abfrage ist deshalb der Wächter, den
-        die Datenbank nicht stellen kann: Sie nennt, was da ist, statt es zu verhindern.
+        Nur die Kreuz-Richtung; alle Kollisionen im Kennungsraum (auch Name gegen Name, Adresse
+        gegen Adresse) nennt `topf_kollisionen`. Neue verhindert seit 2026-09-26 die Datenbank
+        (`_trigger_sql`); was hier steht, stammt aus dem Bestand (eine ältere Fassung, ein rohes
+        UPDATE, eine Zeile eines fremden Schreibers nach dem Nachtrag ihres Topfs).
 
-        Verglichen wird `COLLATE NOCASE`, also genauso wie `get_user_by_name`/`get_user_by_email`
-        suchen — eine Kollision, die die Anmeldung findet, muss auch hier auffallen.
+        Verglichen wird über den Zähl-Topf (`norm_kennung`). Der faltet gröber als NOCASE, mit dem
+        `get_user_by_name`/`get_user_by_email` suchen — jede Kollision, die die Anmeldung findet,
+        fällt also auch hier auf. Bis 2026-09-26 stand hier NOCASE; `Ärmel`/`ärmel` oder eine
+        Unicode- gegen die A-Label-Domain derselben Adresse fehlten. Eine Zeile ohne Topf (Datei
+        nur lesbar, Nachtrag nicht möglich) zählt nicht mit.
         Zeilen: `(name_id, kennung, mail_id, adresse)`. Ein Konto, das dieselbe Zeichenfolge in
         BEIDEN eigenen Spalten trägt, ist keine Kollision (E-Mail-Modus, vorgesehener Weg).
         """
+        self._toepfe_nachtragen()     # Zeilen eines fremden Schreibers zählen mit
         return self._all(
             "SELECT n.id AS name_id, n.username AS kennung, e.id AS mail_id, e.email AS adresse "
             "FROM users n JOIN users e ON e.id <> n.id "
-            "  AND e.email IS NOT NULL AND e.email <> '' "
-            "  AND e.email = n.username COLLATE NOCASE "
+            "  AND e.topf_mail <> '' AND e.topf_mail = n.topf_name "
             "ORDER BY n.id LIMIT ?", (int(limit),))
+
+    def topf_kollisionen(self, limit: int = 50) -> list:
+        """Alle Kennungen, die mehr als einem Konto gehören — als `[{"kennung", "ids"}, …]`.
+
+        Gezählt wird im Zähl-Topf (`norm_kennung`) über Namen UND Adressen: `Alice`/`alice`,
+        Name = fremde Adresse, zwei Schreibweisen derselben Adresse (`u@bücher.example` und
+        `u@xn--bcher-kva.example`). Ein Konto, dessen Name seine eigene Adresse ist, zählt einmal
+        (das `UNION` fasst die Zeile zusammen). Neue Kollisionen verhindert die Datenbank
+        (`_trigger_sql`); diese Abfrage nennt die aus dem Bestand — für die Startmeldung, die
+        vorher nur die Kreuz-Richtung sah (`kennungs_kollisionen`). `ids` aufsteigend, die
+        Kennungen nach dem ältesten beteiligten Konto. Zeilen eines fremden Schreibers bekommen
+        vorher ihren Topf (`_toepfe_nachtragen`); lässt der sich nicht schreiben (Datei nur
+        lesbar), zählen sie nicht mit."""
+        self._toepfe_nachtragen()
+        zeilen = self._all(
+            "SELECT topf, group_concat(id) AS ids FROM ("
+            "  SELECT id, topf_name AS topf FROM users WHERE topf_name <> ''"
+            "  UNION SELECT id, topf_mail FROM users WHERE topf_mail <> '') "
+            "GROUP BY topf HAVING COUNT(*) > 1 ORDER BY MIN(id) LIMIT ?", (int(limit),))
+        return [{"kennung": z["topf"], "ids": sorted(int(i) for i in str(z["ids"]).split(","))}
+                for z in zeilen]
 
     def list_users(self):
         return self._all("SELECT * FROM users ORDER BY username")
@@ -1730,6 +2329,71 @@ class Store:
         """Die Bindung eines Kontos für eine Quelle lösen (Betreiber-Weg nach einem Umzug)."""
         return self._exec("DELETE FROM federated_identity WHERE quelle=? AND user_id=?",
                           (quelle, user_id)).rowcount
+
+    #: Präfix der Herkunfts-Platzhalter in `federated_identity.kennung` (s. `TinySesam._OHNE_KENNUNG`).
+    OHNE_KENNUNG = "~ohne-kennung:"
+
+    def nachbinden(self, quelle: str, kennung: str, user_id: int, jetzt: int) -> bool:
+        """Ein Konto an eine Kennung binden, die noch niemandem gehört — oder nichts tun (G1).
+
+        Für die Bestandsbindung (`TinySesam.foederation_nachbinden`), die zwischen Prüfung und
+        Schreiben durch ein ganzes Verzeichnis läuft. `link_federated` ersetzt eine Zeile mit
+        derselben Kennung (`INSERT OR REPLACE`) — hier nähme das einem Konto, das sich inzwischen
+        angemeldet hat, seine Bindung weg. Deshalb in EINER Transaktion: Gehört die Kennung schon
+        einem Konto oder trägt dieses Konto schon eine echte Kennung, bleibt alles, wie es ist
+        (`False`). Sonst weicht ein Herkunfts-Platzhalter, die Bindung entsteht, und eine offene
+        Namensbindung (`namensbindung`) ist erledigt."""
+        with self._schreibend():
+            besetzt = self.db.execute(
+                "SELECT 1 FROM federated_identity WHERE quelle=? AND (kennung=? OR "
+                "(user_id=? AND substr(kennung, 1, ?) <> ?)) LIMIT 1",
+                (quelle, kennung, user_id, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG)).fetchone()
+            if besetzt is not None:
+                return False
+            self.db.execute("DELETE FROM federated_identity WHERE quelle=? AND user_id=?", (quelle, user_id))
+            self.db.execute("INSERT INTO federated_identity(quelle, kennung, user_id, gebunden_at) "
+                            "VALUES (?,?,?,?)", (quelle, kennung, user_id, jetzt))
+            self.db.execute("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+        return True
+
+    def ohne_bindung(self, quelle: str) -> list:
+        """Die Konten ohne echte Kennung für diese Quelle — keine Zeile oder nur der
+        Herkunfts-Platzhalter —, ohne Service-Konten (G1). Mit `hat_passwort` (lokales Passwort)."""
+        return self._all(
+            "SELECT u.*, EXISTS (SELECT 1 FROM password_cred p WHERE p.user_id = u.id) AS hat_passwort "
+            "FROM users u WHERE u.is_service = 0 AND NOT EXISTS (SELECT 1 FROM federated_identity f "
+            "WHERE f.quelle = ? AND f.user_id = u.id AND substr(f.kennung, 1, ?) <> ?) ORDER BY u.id",
+            (quelle, len(self.OHNE_KENNUNG), self.OHNE_KENNUNG))
+
+    def namensbindung_oeffnen(self, quelle: str, user_id: int, bis: int) -> None:
+        """Die Bindung über den Namen für dieses Konto bis `bis` öffnen (G1, `loese_fremde_bindung`)."""
+        self._exec("INSERT OR REPLACE INTO namensbindung(quelle, user_id, bis) VALUES (?,?,?)",
+                   (quelle, user_id, int(bis)))
+
+    def namensbindung_offen(self, quelle: str, user_id: int, jetzt: int) -> bool:
+        """Hat der Betreiber die Bindung über den Namen für dieses Konto geöffnet (und läuft sie noch)?"""
+        return self._one("SELECT 1 AS x FROM namensbindung WHERE quelle=? AND user_id=? AND bis > ?",
+                         (quelle, user_id, int(jetzt))) is not None
+
+    def namensbindung_schliessen(self, quelle: str, user_id: int) -> None:
+        """Die geöffnete Bindung über den Namen ist erledigt (die Bindung steht)."""
+        self._exec("DELETE FROM namensbindung WHERE quelle=? AND user_id=?", (quelle, user_id))
+
+    def foederation_seit(self, quelle: str, jetzt: int) -> int:
+        """Der Merker einer föderierten Quelle (`foederation_seit:<quelle>`): ab wann die Frist für
+        die Bindung über den Namen läuft (G1). Beim ersten Aufruf auf `jetzt` gesetzt, danach nie
+        wieder — ein Merker, der bei jedem Start neu gesetzt würde, schenkte jedem Neustart eine
+        neue Frist. `INSERT OR IGNORE`: Starten mehrere Worker gleichzeitig, gewinnt der erste, und
+        alle lesen danach denselben Wert."""
+        schluessel = f"foederation_seit:{quelle}"
+        z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+        if z is None:
+            self._exec("INSERT OR IGNORE INTO setting(key, value) VALUES (?,?)", (schluessel, str(int(jetzt))))
+            z = self._one("SELECT value FROM setting WHERE key=?", (schluessel,))
+        return int(z["value"])
 
     # ---------- Freigaben je Anwendung (T-14) ----------
     # Der Schlüssel ist der **Hash** der Sitzung, nicht der Klartext — dieselbe Regel wie in
@@ -2171,11 +2835,26 @@ class Store:
         self._exec("INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,?,?)",
                    (_now(), username, ip, 1 if success else 0, method))
 
-    @staticmethod
-    def _fails_abfrage(since, username=None, ip=None, method=None, exclude_methods=None):
-        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer."""
+    #: So lange gilt eine Vorbuchung mit offenem Ausgang (`reserve_attempt(schweben=True)`) als
+    #: schwebend, nicht als Fehlversuch (Sekunden, G9). Länger als jede Verzeichnis-Frage bis zu
+    #: ihrem Timeout (`ldap_.VERBINDUNGS_TIMEOUT`, Verbindungsaufbau und Bind je einmal) samt
+    #: Rechenzeit. Eine ältere offene Zeile hat niemand abgeschlossen — der Prozess ist gestorben
+    #: oder hängt; sie zählt dann als Fehlversuch, im Zweifel strenger.
+    VORBUCHUNG_SCHWEBE_SEK = 30
+
+    def _fails_abfrage(self, since, username=None, ip=None, method=None, exclude_methods=None,
+                       ab_id=None, nur_bestaetigt=False):
+        """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer.
+        `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2).
+        `nur_bestaetigt`: ohne die schwebenden Vorbuchungen (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
         q = "SELECT COUNT(*) c FROM login_attempt WHERE success=0 AND ts>=?"
         args = [since]
+        if nur_bestaetigt:
+            q += " AND (offen=0 OR ts<?)"
+            args.append(_now() - self.VORBUCHUNG_SCHWEBE_SEK)
+        if ab_id is not None:
+            q += " AND id>?"
+            args.append(int(ab_id))
         if username:
             q += " AND username=? COLLATE NOCASE"
             args.append(username)
@@ -2191,20 +2870,25 @@ class Store:
             args.extend(exclude_methods)
         return q, args
 
-    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None) -> int:
+    def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
+                    ab_id=None, nur_bestaetigt=False) -> int:
         """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
 
         `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
         was ein Anmeldeversuch war — aber nicht die Alt-Passwort-Abfrage der Kontoseite, die in
         derselben Tabelle liegt (siehe `security.NICHT_LOGIN_METHODEN`). Eine Zeile ohne Methode
         (`NULL`, denkbar aus einem Altbestand) zählt weiter mit: Im Zweifel strenger sperren.
+
+        Vorgabe: Eine schwebende Vorbuchung (`reserve_attempt(schweben=True)`) zählt mit — sie
+        KANN ein Fehlversuch werden. `nur_bestaetigt=True` lässt sie weg (G9).
         """
         if not username and not ip:
             return 0
-        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods)
+        q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id,
+                                      nur_bestaetigt)
         return self._one(q, args)["c"]
 
-    def reserve_attempt(self, username, ip, method, regeln, serie=None) -> tuple:
+    def reserve_attempt(self, username, ip, method, regeln, serie=None, schweben=False) -> tuple:
         """Sperren prüfen und den Versuch **in derselben Transaktion** vorab als Fehlversuch buchen.
 
         `regeln` ist eine Liste `(grund, grenze, filter)`; `filter` sind die Schlüsselwörter von
@@ -2224,56 +2908,108 @@ class Store:
         `serie=(topf, art, grenze)` bucht dazu die Serie der Fehlversuche in Folge (B2-6) vor —
         in DERSELBEN Transaktion. Die erste Fassung las die Serie davor und zählte sie erst nach
         der Prüfung: Eine parallele Salve an der Grenze las N-mal „noch nicht voll" und durfte
-        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung.
+        N-mal raten (gemessen: 15 statt 1). Rückgabe dann `(id, serienstand)` nach der Buchung —
+        der FESTSTEHENDE Stand (`_serie_bestaetigt`, ohne schwebende Vorbuchungen). Erreicht er
+        die Grenze, hat genau diese Buchung die Sperre ausgelöst; eine schwebende erreicht sie hier
+        nie, sie erst bei ihrem Abschluss (`finish_attempt`, Prüfrunde 2026-09-27, p2 F3).
+
+        **Schwebend (G9).** `schweben=True` bucht den Versuch mit offenem Ausgang (`offen=1`): Er
+        kann ein Fehlversuch werden oder gar keiner (Verzeichnis-Ausfall, F-23 — zurückgenommen
+        erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach
+        dem Timeout). Greift eine Regel oder die Serie **nur** wegen solcher Zeilen, ist die
+        Antwort `(None, "schwebend")`: noch nicht entschieden, keine Sperre. Der Aufrufer fragt
+        nach einer kurzen Pause erneut (`versuch_beginnen`). Vorher war jede Abweisung in diesem
+        Fenster eine Sperre mit `failed login` für fail2ban und Sperrhinweis an den Inhaber — auch
+        wenn danach kein einziger Fehlversuch übrig blieb. Die Salve (R7-2) bleibt gebremst: Sie
+        wartet, bis die Vorbuchungen entschieden sind, und bekommt dann die echte Sperre. Greift
+        eine Regel auch mit den bestätigten Zeilen allein, gilt ihr Grund wie bisher; eine offene
+        Zeile, die älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch.
         """
         with self._lock:
-            if self.db.in_transaction:
-                # Das zweite Schloss hinter `_schreibend`: Liegt doch eine Transaktion herum
-                # (ein Schreiber, der beim Fehlschlag nicht zurückrollt), scheiterte das BEGIN
-                # unten an ihr — und mit ihm jede Anmeldung, bis jemand anderes committete. Ihr
-                # Inhalt ist der Rest eines GESCHEITERTEN Schreibzugriffs; er wird verworfen,
-                # nicht mitgebucht. Laut, weil es ein Fehler an anderer Stelle ist.
-                logging.getLogger("tinysesam").warning(
-                    "Offene Transaktion auf der Datenbankverbindung vorgefunden (Rest eines "
-                    "gescheiterten Schreibzugriffs) — verworfen, bevor der Anmeldeversuch zählt.")
-                self._verwerfen()
-            self.db.execute("BEGIN IMMEDIATE")
+            self._begin_immediate()
             try:
                 stand = None
+                schwebend = False
                 topf_s, art_s, grenze_s = serie if serie is not None else (None, None, 0)
-                if topf_s:
-                    if self._serie_summe(topf_s) >= grenze_s:
+                if topf_s and self._serie_summe(topf_s) >= grenze_s:
+                    if self._serie_bestaetigt(topf_s) >= grenze_s:
                         self.db.execute("ROLLBACK")
                         return None, "lockout_serie"
+                    schwebend = True
                 for grund, grenze, filt in regeln:
                     if not filt.get("username") and not filt.get("ip"):
                         continue
                     q, args = self._fails_abfrage(**filt)
+                    if self.db.execute(q, args).fetchone()["c"] < grenze:
+                        continue
+                    # Die Regel greift — auch ohne die schwebenden Vorbuchungen? Dann ist es eine
+                    # Sperre. Sonst weiter: Eine spätere Regel kann bestätigt greifen und geht vor.
+                    q, args = self._fails_abfrage(**filt, nur_bestaetigt=True)
                     if self.db.execute(q, args).fetchone()["c"] >= grenze:
                         self.db.execute("ROLLBACK")
                         return None, grund
+                    schwebend = True
+                if schwebend:
+                    self.db.execute("ROLLBACK")
+                    return None, "schwebend"
                 cur = self.db.execute(
-                    "INSERT INTO login_attempt(ts, username, ip, success, method) VALUES (?,?,?,0,?)",
-                    (_now(), username, ip, method))
+                    "INSERT INTO login_attempt(ts, username, ip, success, method, offen) VALUES (?,?,?,0,?,?)",
+                    (_now(), username, ip, method, 1 if schweben else 0))
                 if topf_s:
                     self._serie_plus(topf_s, art_s)
-                    stand = self._serie_summe(topf_s)
+                    stand = self._serie_bestaetigt(topf_s)
                 self.db.execute("COMMIT")
                 return cur.lastrowid, stand
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
 
-    def finish_attempt(self, attempt_id, success: bool):
-        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen (Fehlversuch bleibt stehen)."""
-        if success:
-            self._exec("UPDATE login_attempt SET success=1 WHERE id=?", (attempt_id,))
+    def finish_attempt(self, attempt_id, success: bool, serie=None) -> Optional[tuple]:
+        """Einen mit `reserve_attempt` vorgebuchten Versuch abschliessen: Erfolg oder Fehlversuch.
 
-    def cancel_attempt(self, attempt_id):
-        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23)."""
-        self._exec("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
+        Beides beendet den Schwebezustand (`offen=0`, G9): Ein Fehlversuch zählt ab hier auch für
+        `count_fails(nur_bestaetigt=True)` — bis dahin war der Abschluss eines Fehlversuchs ein
+        No-op. `serie=(topf, art)` nimmt bei einem Erfolg die Vorbuchung in der Serie in DERSELBEN
+        Transaktion zurück: Getrennt stünde sie dazwischen weder als offen noch als zurückgenommen
+        da, und wer gerade wartet (`versuch_beginnen`), läse die Serie um eins zu hoch — an der
+        Grenze eine Sperre mit Sperrhinweis für nichts.
 
-    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None):
+        Mit `serie` gibt es `(vorher, nachher)` zurück: den feststehenden Stand der Serie
+        (`_serie_bestaetigt`) vor und nach dem Abschluss, beide in einer Transaktion
+        (`BEGIN IMMEDIATE`, auch über mehrere Prozesse). Daran sieht `record_login`, ob GENAU
+        dieser Abschluss die Grenze überschritten hat (p2 F3). Bis 2026-09-27 zählte der Stand bei
+        der Buchung: Hatte in der Zwischenzeit eine volle Anmeldung die Serie beendet, stand
+        `lockout_serie` im Protokoll, obwohl nichts gesperrt war. Ohne `serie` None."""
+        with self._schreibend():
+            vorher = None
+            if serie:
+                self._begin_immediate()
+                vorher = self._serie_bestaetigt(serie[0])
+            self.db.execute("UPDATE login_attempt SET success=?, offen=0 WHERE id=?",
+                            (1 if success else 0, attempt_id))
+            if success and serie:
+                self._serie_minus(*serie)
+            stand = (vorher, self._serie_bestaetigt(serie[0])) if serie else None
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+        return stand
+
+    def cancel_attempt(self, attempt_id, serie=None):
+        """Einen vorgebuchten Versuch zurücknehmen — er war keiner (etwa: Verzeichnis-Ausfall, F-23).
+
+        `serie=(topf, art)` nimmt seine Vorbuchung in der Serie in derselben Transaktion zurück —
+        aus demselben Grund wie bei `finish_attempt` (G9)."""
+        with self._schreibend():
+            self.db.execute("DELETE FROM login_attempt WHERE id=? AND success=0", (attempt_id,))
+            if serie:
+                self._serie_minus(*serie)
+            self.db.commit()
+            self._geschrieben = time.monotonic()
+            self._uhr_mitschreiben()
+
+    def clear_fails(self, username=None, ip=None, method=None, exclude_methods=None, seit=None,
+                    ab_id=None):
         """Fehlversuche loeschen — optional nur die EINER Methode, oder alle AUSSER einigen.
 
         `method` ist keine Feinheit, sondern der Kern: Ohne sie raeumte ein erfolgreicher
@@ -2284,6 +3020,10 @@ class Store:
 
         `exclude_methods` räumt alles ausser den genannten — der Weg nach einer VOLLSTÄNDIGEN
         Anmeldung, die die eigenen Töpfe (Kontoseite, Step-up, Bereich) nicht betrifft.
+
+        `ab_id` räumt nur Zeilen ab der Wasserlinie der Kennung (`kennung_grenzen`, G2): was
+        erst entstand, als die Kennung dem Konto schon gehörte. `seit` ist der Rückfall für den
+        Bestand ohne Wasserlinie (Unix-Sekunden, die Anlage des Kontos, einschliesslich).
         """
         wo: str = ""
         args_m: tuple = ()
@@ -2297,6 +3037,10 @@ class Store:
             # Konto galt — nicht die Fehlversuche unter seinem Namen oder seiner Adresse von vor
             # seiner Anlage (die galten niemandem oder jemand anderem).
             wo, args_m = wo + " AND ts >= ?", args_m + (int(seit),)
+        if ab_id is not None:
+            # Genauer als `seit` (G2): ab dem Beitritt der Kennung, nicht ab der Anlage — und auf
+            # die Zeile genau, auch in der Sekunde des Beitritts.
+            wo, args_m = wo + " AND id > ?", args_m + (int(ab_id),)
         if username:
             self._exec("DELETE FROM login_attempt WHERE username=? COLLATE NOCASE" + wo,
                        (username,) + args_m)
@@ -2319,6 +3063,21 @@ class Store:
                                 (topf,)).fetchone()
         return int(zeile["n"])
 
+    def _serie_bestaetigt(self, topf) -> int:
+        """Die Serie ohne die schwebenden Vorbuchungen (G9) — unter `_lock`, ohne Commit.
+
+        Jede offene Zeile in `login_attempt` hat genau eine Buchung in der Serie unter demselben
+        Topf (`reserve_attempt(schweben=True)` bucht beide in einer Transaktion); eine Zeile, die
+        älter ist als `VORBUCHUNG_SCHWEBE_SEK`, gilt als Fehlversuch und wird nicht abgezogen."""
+        offen = self.db.execute(
+            "SELECT COUNT(*) AS n FROM login_attempt WHERE username=? COLLATE NOCASE AND offen=1 "
+            "AND ts>=?", (topf, _now() - self.VORBUCHUNG_SCHWEBE_SEK)).fetchone()
+        return max(0, self._serie_summe(topf) - int(offen["n"]))
+
+    def _serie_minus(self, topf, art):
+        self.db.execute("UPDATE fehlserie SET anzahl = anzahl - 1 WHERE topf=? AND art=? AND anzahl > 0",
+                        (topf, art or ""))
+
     def _serie_plus(self, topf, art):
         jetzt = _now()
         self.db.execute("INSERT INTO fehlserie(topf, art, anzahl, seit, zuletzt) VALUES (?, ?, 1, ?, ?) "
@@ -2331,6 +3090,26 @@ class Store:
             return 0
         with self._lock:
             return self._serie_summe(topf)
+
+    def fehlserie_bestaetigt(self, topf) -> int:
+        """Wie `fehlserie`, ohne die schwebenden Vorbuchungen (G9): die Fehlversuche in Folge, die
+        feststehen. An ihr hängt die Serien-Sperre; die Summe allein kann noch sinken."""
+        if not topf:
+            return 0
+        with self._lock:
+            return self._serie_bestaetigt(topf)
+
+    def fehlserie_ohne(self, topf, arten) -> int:
+        """Die Serie dieser Kennung OHNE die genannten Arten — was ein Räumen nur dieser Arten
+        stehen liesse (etwa der Selbstbedienungs-Reset, der TOTP und `pin_folge` nicht räumt)."""
+        if not topf:
+            return 0
+        arten = [str(a) for a in arten]
+        platz = ",".join("?" for _ in arten)
+        with self._lock:
+            zeile = self.db.execute(f"SELECT COALESCE(SUM(anzahl), 0) AS n FROM fehlserie "
+                                    f"WHERE topf=? AND art NOT IN ({platz})", [topf, *arten]).fetchone()
+        return int(zeile["n"])
 
     def fehlserie_erhoehen(self, topf, art="password") -> int:
         """Einen Fehlversuch an die Serie hängen (Wege ohne Vorbuchung); gibt die neue Summe zurück."""
@@ -2525,7 +3304,7 @@ class Store:
         self._exec("INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
                    (_now(), event, username, ip, detail))
 
-    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=()) -> int:
+    def delete_attempts_for(self, username, weitere=(), nach=None, unbefristet=(), ab_ids=None) -> int:
         """Die Anmeldeversuche eines Kontos löschen (beim Löschen des Kontos, H-13).
 
         `weitere` sind zusätzliche Kennungen, unter denen es angemeldet werden konnte (die
@@ -2543,6 +3322,10 @@ class Store:
           machte. Die Sekunde selbst bleibt: Ob ein Versuch darin vor oder nach der Anlage kam,
           ist nicht zu entscheiden, und ein stehengebliebener Versuch verfällt mit dem
           Sperrfenster. Kennungen in `unbefristet` gelten ohne diese Grenze.
+          Genauer ist `ab_ids` (`{topf: versuch_ab}` aus `kennung_grenzen`, G2): nur Versuche mit
+          einer grösseren Id als die Wasserlinie der Kennung — ab ihrem BEITRITT (Umbenennen,
+          Adresswechsel), nicht ab der Anlage, und auf die Zeile genau. Wo eine Kennung keine hat
+          (Bestand), gilt `nach`.
         - Führt ein VERBLEIBENDES Konto denselben Topf (ein Namensvetter wie `ｃｌａｒａ`/`clara`
           oder `Émile`/`émile` aus einem Bestand, `konto_mit_topf`), bleibt der Topf unberührt.
           Sonst leerte das Entfernen eines Kontos, das ein Anonymer anlegen und per `gc()`
@@ -2552,9 +3335,15 @@ class Store:
             topf = norm_kennung(wert)
             if not topf or self.konto_mit_topf(topf) is not None:
                 continue
-            ab = -1 if (nach is None or wert in unbefristet) else int(nach)
+            wasserlinie = (ab_ids or {}).get(topf)
+            if wert in unbefristet:
+                grenze, ab = "ts > ?", -1
+            elif wasserlinie is not None:
+                grenze, ab = "id > ?", int(wasserlinie)
+            else:
+                grenze, ab = "ts > ?", (-1 if nach is None else int(nach))
             roh = str(wert)
-            n += self._exec("DELETE FROM login_attempt WHERE ts > ? "
+            n += self._exec(f"DELETE FROM login_attempt WHERE {grenze} "
                             "AND (username = ? OR lower(username) = lower(?) "
                             "OR lower(username) = lower(?))",
                             (ab, topf, roh, roh.strip())).rowcount
@@ -2565,7 +3354,7 @@ class Store:
         return self._exec("DELETE FROM audit WHERE ts < ?", (int(older_than_ts),)).rowcount
 
     def audit_anonymisieren(self, username, ersatz, weitere=(), seit=None, seit_id=0,
-                            unbefristet=()) -> int:
+                            unbefristet=(), ab_ids=None) -> int:
         """Ein Konto aus dem Audit-Log herausnehmen, ohne die Zeilen zu löschen (H-13).
 
         Die Zeile „am 3. um 14:02 wurde ein Passwort zurückgesetzt, von dieser IP" bleibt für
@@ -2582,52 +3371,220 @@ class Store:
         `seit`/`seit_id` beschränken das auf Zeilen ab der Anlage des Kontos (`anlage_grenze`,
         `konto_entfernen`): Was davor unter dem Namen oder mit der Adresse geschrieben wurde,
         gehörte nicht diesem Konto. Kennungen in `unbefristet` gelten ohne die Grenze. Ohne
-        `seit` gilt jede Zeile.
+        `seit` gilt jede Zeile. Genauer ist `ab_ids` (`{topf: audit_ab}` aus `kennung_grenzen`,
+        G2): ab dem Beitritt der Kennung statt ab der Anlage — sonst wurde beim Löschen eines
+        Kontos, das einen freigewordenen Namen übernommen hatte, auch die Zeile des Vorbesitzers
+        umgeschrieben. Wo eine Kennung keine hat (Bestand), gilt `seit`.
+
+        **Die Suche im Detailtext ist ein Scan** — eine Teilstring-Suche (`instr`), die kein
+        B-Tree-Index eingrenzt; `idx_audit_name_ts`/`idx_audit_ts` helfen nur der Spalte
+        `username` und dem Zeitraum ab `seit`. Bei einer unbefristeten Adresse (Löschen durch
+        einen Admin, `adresse_unbefristet`) liest sie das ganze Audit-Log, und das wächst ohne
+        `audit_retention_days` unbegrenzt. Bis 2026-09-26 lief dieser Scan in EINER
+        Schreibtransaktion, unter der Schreibsperre (`_lock`) und mit offener SQLite-Transaktion:
+        Jede Anmeldung, jeder Audit-Eintrag, jeder andere Worker wartete die ganze Suche ab (G4).
+        Jetzt liest sie blockweise nach `id` (`_ANONYM_BLOCK` Zeilen) OHNE Schreibtransaktion und
+        schreibt nur die Treffer, je Block in einer kurzen Transaktion — die Zeile dort frisch
+        gelesen und neu geprüft, damit nichts überschrieben wird, was sich seit dem Lesen geändert
+        hat. Durchsucht wird bis zur jüngsten Zeile beim Beginn der Suche; was danach kommt, schrieb
+        jemand nach dem Löschen.
+
+        **Was die Löschzusage bis 2026-09-27 ausliess** (Prüfrunde Sperren/Zähler, F4 — schon auf
+        main so):
+
+        * **Jede Schreibweise der eingetippten Kennung** (4a): `login_fail` schreibt die ROHE
+          Eingabe (`Émile `, ` emile@example.com`, `ＥＭＩＬＥ@example.com`), gezählt wird sie im
+          Topf (`norm_kennung`). `lower(username)` traf davon nur ASCII-Varianten. Der Blockscan
+          vergleicht deshalb auch die Spalte `username` im Topf (SQL-Funktion `tinysesam_kennung`,
+          nur für Abfragen dieser Verbindung), mit denselben Grenzen je Kennung. Teilt ein
+          VERBLEIBENDES Konto den Topf (Namensvetter aus dem Bestand, wie bei
+          `delete_attempts_for`), bleibt es bei `lower()` — sonst träfe es dessen Zeilen.
+        * **Frühere Namen und Adressen** (4b): aus den eigenen Zeilen `username_changed alt=…` und
+          `email_changed alt=…` (`_fruehere_kennungen`), je in der Spanne, in der das Konto sie
+          trug — die Anmeldung unter dem alten Namen stand sonst mit IP weiter da.
+        * **Werte in den eigenen Zeilen** (4c): In jeder Zeile, deren `username` danach der
+          Ersatzname ist, die Werte von `alt=`, `neu=` und `an=` — der nie eingelöste Adresswechsel,
+          die Adresse aus LDAP/SAML, der alte Name.
         """
         if not username:
             return 0
         import re as _re
-        kennungen = [str(w) for w in (username, *weitere) if w]
         ohne_frist = {str(w) for w in unbefristet if w}
+        offen = self._OHNE_OBERGRENZE
 
         def ab(wert) -> tuple:
-            if seit is None or wert in ohne_frist:
-                return (-1, -1, 0)
-            return (int(seit), int(seit), int(seit_id or 0))
-        grenze = "(ts > ? OR (ts = ? AND id >= ?))"
+            if wert in ohne_frist:
+                return (-1, -1, 0, -1, offen)
+            wasserlinie = (ab_ids or {}).get(norm_kennung(wert))
+            if wasserlinie is not None:
+                return (-1, -1, 0, int(wasserlinie), offen)
+            if seit is None:
+                return (-1, -1, 0, -1, offen)
+            return (int(seit), int(seit), int(seit_id or 0), -1, offen)
+        grenze = "((ts > ? OR (ts = ? AND id >= ?)) AND id > ? AND id <= ?)"
+        anlage = (-1, -1, 0, -1) if seit is None else (int(seit), int(seit), int(seit_id or 0), -1)
+        # Jede Kennung mit ihrer Spanne: die heutigen, dann die früheren (4b) — gelesen, BEVOR
+        # etwas umgeschrieben ist; danach stehen die Zeilen, aus denen sie stammen, unter `ersatz`.
+        kennungen = [(str(w), ab(str(w))) for w in (username, *weitere) if w]
+        kennungen += self._fruehere_kennungen(kennungen, anlage, grenze)
+        # Gefaltet verglichen (4a) nur, wo kein verbleibendes Konto den Topf teilt.
+        falten = {t for t in {norm_kennung(w) for w, _ in kennungen} - {""}
+                  if self.konto_mit_topf(t) is None}
+        # Die Spalte `username`: über `idx_audit_name_ts`, kurz — eine Transaktion.
         with self._schreibend():
             n = 0
-            for wert in kennungen:
+            for wert, grenzwerte in kennungen:
                 n += self.db.execute(
                     f"UPDATE audit SET username=? WHERE lower(username)=lower(?) AND {grenze}",
-                    (ersatz, wert, *ab(wert))).rowcount
-            for wert in kennungen:
-                w = _re.escape(wert)
-                ende = r"(?![\w@.=-])"
-                if "@" in wert:
-                    muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
-                else:
-                    muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
-                zeilen = self.db.execute(
-                    "SELECT id, event, detail FROM audit "
-                    f"WHERE instr(lower(detail), lower(?)) > 0 AND {grenze}",
-                    (wert, *ab(wert))).fetchall()
-                for z in zeilen:
-                    alt = z["detail"] or ""
-                    if "@" in wert:
-                        neu = muster.sub(ersatz, alt)
-                    else:
-                        neu = muster.sub("akteur=" + ersatz, alt)
-                        if z["event"] == "user_create":   # Detail: „<name> service=…"
-                            neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1,
-                                          flags=_re.IGNORECASE)
-                    if neu != alt:
-                        self.db.execute("UPDATE audit SET detail=? WHERE id=?", (neu, z["id"]))
+                    (ersatz, wert, *grenzwerte)).rowcount
             self.db.commit()
+        oben = int(self._one("SELECT max(id) AS m FROM audit")["m"] or 0)
+        for wert, grenzwerte in kennungen:
+            w = _re.escape(wert)
+            ende = r"(?![\w@.=-])"
+            if "@" in wert:
+                muster = _re.compile(r"(?<![\w@.-])" + w + ende, _re.IGNORECASE)
+            else:
+                muster = _re.compile(r"(?<![\w@.-])akteur=" + w + ende, _re.IGNORECASE)
+            topf = norm_kennung(wert)
+            gefaltet = topf in falten
+
+            def umschreiben(event, alt, wert=wert, w=w, muster=muster) -> str:
+                if "@" in wert:
+                    return muster.sub(ersatz, alt)
+                neu = muster.sub("akteur=" + ersatz, alt)
+                if event == "user_create":   # Detail: „<name> service=…"
+                    neu = _re.sub(r"^" + w + r"(?=\s|$)", ersatz, neu, count=1, flags=_re.IGNORECASE)
+                return neu
+
+            def name_trifft(name, topf=topf, gefaltet=gefaltet) -> bool:
+                return gefaltet and name is not None and name != ersatz and norm_kennung(name) == topf
+            # Wo die Suche beginnt: hinter der Wasserlinie, bzw. bei der ersten Zeile ab `seit`
+            # — davor erfüllt keine Zeile die Grenze. `id + 0`, damit SQLite das Minimum über
+            # `idx_audit_ts` sucht (nur die Zeilen ab `seit`) und nicht die Tabelle ab der ersten
+            # `id` entlangläuft, bis `ts` passt — das wäre für ein junges Konto das ganze Log.
+            unten = max(grenzwerte[3], 0)
+            if grenzwerte[0] >= 0:
+                erste = self._one("SELECT min(id + 0) AS m FROM audit WHERE ts >= ?",
+                                  (grenzwerte[0],))["m"]
+                unten = max(unten, int(erste) - 1 if erste is not None else oben)
+            schluss = min(oben, grenzwerte[4])
+            # Die Spalte `username` im Topf (4a) nur, wo gefaltet wird: Die Funktion kostet einen
+            # Python-Aufruf je Zeile.
+            auch_name = "OR tinysesam_kennung(username) = ?" if gefaltet else ""
+            while unten < schluss:
+                bis = min(unten + self._ANONYM_BLOCK, schluss)
+                # Der Block über den Primärschlüssel (`id > ? AND id <= ?`, so steht es im Plan) —
+                # nie über `idx_audit_ts`: Sonst läse jeder Block alle Zeilen ab `seit`, und die
+                # Suche würde quadratisch (tests/test_audit_runde2.py prüft den Plan).
+                kandidaten = {z["id"]: z for z in self._all(
+                    "SELECT id, event, username, detail FROM audit WHERE id > ? AND id <= ? "
+                    f"AND (instr(lower(detail), lower(?)) > 0 {auch_name}) AND {grenze}",
+                    (unten, bis, wert, *((topf,) if gefaltet else ()), *grenzwerte))
+                    if umschreiben(z["event"], z["detail"] or "") != (z["detail"] or "")
+                    or name_trifft(z["username"])}
+                if kandidaten:
+                    with self._schreibend():
+                        for zid in kandidaten:
+                            z = self.db.execute("SELECT event, username, detail FROM audit WHERE id=?",
+                                                (zid,)).fetchone()
+                            if z is None:
+                                continue          # inzwischen weggeräumt (`gc_audit`)
+                            alt = z["detail"] or ""
+                            neu = umschreiben(z["event"], alt)
+                            name = ersatz if name_trifft(z["username"]) else z["username"]
+                            if neu != alt or name != z["username"]:
+                                self.db.execute("UPDATE audit SET username=?, detail=? WHERE id=?",
+                                                (name, neu if neu != alt else z["detail"], zid))
+                                n += name != z["username"]
+                        self.db.commit()
+                unten = bis
+        self._eigene_werte_ersetzen(ersatz, oben)
         return n
 
+    #: Wie viele Audit-Zeilen `audit_anonymisieren` je Block im Detailtext durchsucht, bevor es die
+    #: Schreibsperre für andere freigibt (G4).
+    _ANONYM_BLOCK = 5000
+    #: Obergrenze der Spanne einer HEUTIGEN Kennung (`audit_anonymisieren`): keine.
+    _OHNE_OBERGRENZE = 2 ** 62
+    #: Wie viele frühere Namen bzw. Adressen `_fruehere_kennungen` höchstens zurückverfolgt.
+    _FRUEHERE_MAX = 100
+    #: Der alte Name in `username_changed` (`alt=<name>[ durch=betreiber][ quelle=cli][ akteur=…]`)
+    #: und die alte Adresse in `email_changed` (`alt=<adresse> neu=<adresse>`). Ein Name kann
+    #: Leerzeichen tragen, eine Adresse nicht (`valid_email`).
+    _ALT_NAME = re.compile(r"^alt=(.*?)(?= durch=| quelle=| akteur=|$)")
+    _ALT_MAIL = re.compile(r"^alt=(\S*)")
+    #: Die Werte in den eigenen Zeilen, die eine Kennung tragen (4c): bis zum nächsten ` schlüssel=`.
+    _EIGENE_WERTE = re.compile(r"(?<![\w@.-])(alt|neu|an)=(\S.*?)(?=\s[\w-]+=|$)")
+
+    def _fruehere_kennungen(self, heutige, anlage, grenze) -> list:
+        """Frühere Namen und Adressen eines Kontos, je mit der Spanne, in der es sie trug —
+        `[(kennung, grenzwerte)]` für `audit_anonymisieren` (H-13, Prüfrunde 2026-09-27, 4b).
+        `heutige`: `[(Name, Grenzwerte), (Adresse, Grenzwerte)]`, `anlage`: die Grenze der Anlage
+        ohne Obergrenze.
+
+        Gelesen aus den eigenen Zeilen: `username_changed` steht unter dem NEUEN Namen und nennt den
+        alten (`alt=`), `email_changed` unter dem Namen zur Zeit des Wechsels und nennt die alte
+        Adresse. Rückwärts vom heutigen Namen: Die jüngste Umbenennung in seiner Spanne nennt den
+        Vorgänger. Der gehörte dem Konto bis zu dieser Zeile, ab der Zeile, die IHN einführte — die
+        jüngste Umbenennung unter ihm davor, nicht vor der Anlage —, sonst ab der Anlage. Ebenso die
+        Adressen, aus den Wechselzeilen unter allen Namen. Nicht erfasst: eine Adresse, die ohne
+        `email_changed` kam und ging (Nachtrag aus OIDC/LDAP) — für sie steht keine Zeile. Über
+        `idx_audit_name_ts`, kein Scan."""
+        if not heutige:
+            return []
+        suche = ("SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND event = ? "
+                 f"AND {grenze} ORDER BY id DESC")
+        namen: list = []
+        name, grenzwerte = heutige[0]
+        z = self._one(suche + " LIMIT 1", (name, "username_changed", *grenzwerte))
+        for _ in range(self._FRUEHERE_MAX):
+            m = self._ALT_NAME.match(str(z["detail"] or "")) if z is not None else None
+            alt = m.group(1).strip() if m else ""
+            if z is None or not alt:
+                break
+            bis = int(z["id"])
+            z = self._one(suche + " LIMIT 1", (alt, "username_changed", *anlage, bis - 1))
+            namen.append((alt, (-1, -1, 0, int(z["id"]) - 1, bis) if z is not None else (*anlage, bis)))
+        wechsel: dict = {}
+        for name, grenzwerte in [heutige[0], *namen]:
+            for zeile in self._all(suche + f" LIMIT {self._FRUEHERE_MAX}", (name, "email_changed", *grenzwerte)):
+                wechsel[int(zeile["id"])] = zeile
+        reihe = [wechsel[i] for i in sorted(wechsel, reverse=True)][:self._FRUEHERE_MAX]
+        adressen: list = []
+        for i, zeile in enumerate(reihe):
+            m = self._ALT_MAIL.match(str(zeile["detail"] or ""))
+            alt = m.group(1) if m else ""
+            if not alt:
+                continue
+            bis = int(zeile["id"])
+            vor = reihe[i + 1] if i + 1 < len(reihe) else None
+            adressen.append((alt, (-1, -1, 0, int(vor["id"]) - 1, bis) if vor is not None else (*anlage, bis)))
+        return namen + adressen
+
+    def _eigene_werte_ersetzen(self, ersatz, oben) -> None:
+        """In den Zeilen des gelöschten Kontos (`username` = Ersatzname, bis `oben`) die Werte von
+        `alt=`, `neu=` und `an=` ersetzen (H-13, Prüfrunde 2026-09-27, 4c): den beantragten, nie
+        eingelösten Adresswechsel (`email_change_requested neu=…`), die Adresse aus LDAP/SAML
+        (`federation_email_confirm an=…`), den alten Namen (`username_changed alt=…`). Leere Werte
+        bleiben leer. Über `idx_audit_name_ts`; geschrieben je `_ANONYM_BLOCK` Zeilen, die Zeile
+        frisch gelesen."""
+        def ersetzen(detail) -> str:
+            return self._EIGENE_WERTE.sub(lambda m: f"{m.group(1)}={ersatz}", detail)
+        treffer = [int(z["id"]) for z in self._all(
+            "SELECT id, detail FROM audit WHERE lower(username) = lower(?) AND id <= ?", (ersatz, oben))
+            if z["detail"] and ersetzen(z["detail"]) != z["detail"]]
+        for i in range(0, len(treffer), self._ANONYM_BLOCK):
+            with self._schreibend():
+                for zid in treffer[i:i + self._ANONYM_BLOCK]:
+                    z = self.db.execute("SELECT username, detail FROM audit WHERE id=?", (zid,)).fetchone()
+                    if z is None or z["username"] != ersatz or not z["detail"]:
+                        continue
+                    self.db.execute("UPDATE audit SET detail=? WHERE id=?", (ersetzen(z["detail"]), zid))
+                self.db.commit()
+
     def recent_audit(self, limit=100, username: str | None = None, seit: int | None = None,
-                     seit_id: int = 0):
+                     seit_id: int = 0, ab_id: int | None = None, ohne_events=()):
         """Die jüngsten Audit-Einträge, neueste zuerst.
 
         `username` filtert in SQL, nicht im Aufrufer. Das ist der Unterschied zwischen „die
@@ -2635,16 +3592,25 @@ class Store:
         und genau der zählt im Anlassfall: Eine Brute-Force-Welle schiebt in Minuten Tausende
         Zeilen nach, das gesuchte Konto liegt dann weit hinter jedem Fenster. Aus demselben Grund
         filtert `seit` (Unix-Sekunden, einschliesslich) ebenfalls in SQL; aus der Sekunde `seit`
-        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`).
+        selbst nur Zeilen ab `seit_id` (s. `anlage_grenze`). `ab_id`: nur Zeilen mit einer
+        grösseren Id — die Wasserlinie einer Kennung (`kennung_grenzen`, G2). `ohne_events`
+        lässt diese Ereignisse aus, ebenfalls in SQL: Eine Anzeige, die Zeilen erst danach
+        verwirft, zeigte weniger als `limit` — und die Lücke verriete, dass dort eine lag (G12b).
         """
         bedingungen: list[str] = []
         werte: list[object] = []
+        if ohne_events:
+            bedingungen.append(f"event NOT IN ({','.join('?' * len(ohne_events))})")
+            werte.extend(ohne_events)
         if username:
             bedingungen.append("lower(username)=lower(?)")
             werte.append(username)
         if seit:
             bedingungen.append("(ts > ? OR (ts = ? AND id >= ?))")
             werte.extend((int(seit), int(seit), int(seit_id or 0)))
+        if ab_id is not None:
+            bedingungen.append("id > ?")
+            werte.append(int(ab_id))
         wo = (" WHERE " + " AND ".join(bedingungen)) if bedingungen else ""
         return self._all(f"SELECT * FROM audit{wo} ORDER BY id DESC LIMIT ?", (*werte, limit))
 
@@ -2666,9 +3632,34 @@ class Store:
     def touch_api_key(self, key_id):
         self._exec("UPDATE api_key SET last_used=? WHERE id=?", (_now(), key_id))
 
-    def offener_token(self, user_id, purpose, email) -> bool:
-        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks an
-        diese Adresse? Damit nicht jede Anmeldung einen neuen Bestätigungslink verschickt."""
+    #: Was einen Bestätigungsantrag aus LDAP/SAML für den Tag erledigt (`quellmail_seit`): der
+    #: zugestellte Link und die Abweisung einer vergebenen oder reservierten Adresse.
+    QUELLMAIL_ERLEDIGT = ("federation_email_confirm", "email_change_taken", "email_change_reserved")
+
+    def quellmail_seit(self, user_id, seit) -> bool:
+        """Ist seit `seit` (Unix-Sekunden) ein Bestätigungsantrag für eine Adresse aus LDAP/SAML an
+        diesem Konto erledigt? Zugestellt (G12a: die Zeile `federation_email_confirm`, die erst NACH
+        dem erfolgreichen Versand entsteht) oder abgewiesen, weil die Adresse vergeben oder
+        reserviert ist (`email_change_taken`/`_reserved` aus diesem Weg, Angriffsrunde 2026-09-26 —
+        sonst schrieb jeder Worker seine eigene Zeile, und die Kontoseite zählte mit). Erkannt am
+        Detail, das mit `konto=<id> ` beginnt; die Selbstbedienung schreibt es nicht. Über
+        `idx_audit_ts`, in der Datenbank und damit über alle Worker und jeden Neustart hinweg.
+        Die Id statt des Namens: Ein Umbenennen setzt das Tageskontingent nicht zurück."""
+        return bool(self._one(
+            "SELECT 1 FROM audit WHERE ts >= ? AND event IN (?, ?, ?) AND detail LIKE ? LIMIT 1",
+            (int(seit), *self.QUELLMAIL_ERLEDIGT, f"konto={int(user_id)} %")))
+
+    def offener_token(self, user_id, purpose, email=None) -> bool:
+        """Liegt für dieses Konto schon ein offener (unbenutzter, gültiger) Link dieses Zwecks —
+        an diese Adresse, oder ohne `email` an irgendeine? Damit nicht jede Anmeldung einen neuen
+        Bestätigungslink verschickt. Der Weg über LDAP/SAML fragt ohne Adresse (p2 F2): Mit dem
+        Filter auf die Adresse schickte ein zweiter Worker einen Link an eine andere, solange der
+        erste noch im Postausgang lag — und daran, ob er kam, las ein Nutzer, der sein `mail`
+        selbst pflegt, ob die erste Adresse vergeben ist."""
+        if email is None:
+            return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? "
+                                  "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
+                                  (user_id, purpose, _now())))
         return bool(self._one("SELECT 1 FROM magic_token WHERE user_id=? AND purpose=? AND email=? "
                               "AND used_at IS NULL AND expires_at >= ? LIMIT 1",
                               (user_id, purpose, email, _now())))

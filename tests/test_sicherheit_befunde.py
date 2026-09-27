@@ -1648,6 +1648,11 @@ def _wege(auth_x, basis):
         # Adressen aus LDAP/SAML läuft hier durch (`_adresse_aus_quelle_belegen`).
         ("request_email_change", lambda: _versende(auth_x.request_email_change(
             auth_x.store.get_user_by_name("opfer")["id"], "opfer-neu@example.com", basis))),
+        # …und seit der Angriffsrunde 2026-09-26 über die Hülle mit der Quelle, die
+        # `_adresse_aus_quelle_belegen` ruft (Detail `konto=<id> quelle=…`). Derselbe Link.
+        ("_wechsel_beantragen", lambda: _versende(auth_x._wechsel_beantragen(
+            auth_x.store.get_user_by_name("opfer")["id"], "opfer-quelle@example.com", basis,
+            quelle="ldap"))),
     )
 
 
@@ -1909,7 +1914,11 @@ r.check("create_service nimmt eine vergebene Kennung nicht an", not _dienst_ents
 # /auth/password wenigstens nicht das Geheimnis des anderen prüfen (Kette R4-12 + R4-10).
 auth_alt, app_alt = _app(csrf_enabled=False)
 opfer_alt = auth_alt.create_user("chef", password=PW_INHABER, email="chef@example.com")
-eve_alt = auth_alt.store.create_user("chef@example.com")      # am Wächter vorbei = Altbestand
+# Am Wächter vorbei = Altbestand: ein rohes INSERT ohne Topf (seit G12c weist auch der Store
+# selbst die Kollision ab — der Weg eines fremden Schreibers bleibt).
+from tinysesam.store import jetzt as _jetzt  # noqa: E402
+eve_alt = auth_alt.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                               ("chef@example.com", "chef@example.com", _jetzt())).lastrowid
 auth_alt.set_password(eve_alt, PW_EVE)
 r.check("Vorbedingung: die Kennung des Angreifers löst auf das fremde Konto auf",
         (auth_alt.find_user("chef@example.com") or {}).get("id") == opfer_alt,
@@ -1928,10 +1937,10 @@ eigen = c_alt.post("/auth/password", json={"current": PW_EVE, "new": "Neues12345
 r.check("...prüft aber weiterhin das eigene", eigen.status_code == 200,
         f"HTTP {eigen.status_code}: {eigen.text[:120]}")
 
-# Und der Bestand selbst? Die Datenbank kann diese Kollision nicht verhindern: `UNIQUE(username)`
-# und `ux_users_email` gelten je SPALTE, es gibt keinen Index über beide Namensräume — und
-# `create_user` prüft und INSERTet nicht atomar. Der Wächter kann hier also nur MELDEN, und genau
-# das muss er beim Start tun: Ohne Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
+# Und der Bestand selbst? Neue Kollisionen verhindert seit G12c die Datenbank (Trigger über die
+# Zähl-Töpfe, tests/test_kennungsraum.py); eine, die schon drinsteht (hier: rohes INSERT eines
+# fremden Schreibers), kann der Wächter nur MELDEN, und genau das muss er beim Start tun: Ohne
+# Zeile bleibt ein ausgesperrter Inhaber unerklärlich.
 
 
 def _start_log(db_pfad):
@@ -1946,6 +1955,11 @@ def _start_log(db_pfad):
     return puffer.getvalue()
 
 
+# Die Zeile des fremden Schreibers wieder ohne Topf, wie direkt nach dem rohen INSERT: Seitdem hat
+# ihn ein anderer Weg nachgetragen (seit G2 räumt jede erfolgreiche Anmeldung ab der Wasserlinie des
+# Kontos und sucht es dafür über `konto_mit_topf`). Ohne das misst die Probe nicht mehr, ob
+# `kennungs_kollisionen` selbst nachträgt.
+auth_alt.store._exec("UPDATE users SET topf_name = NULL, topf_mail = NULL WHERE id = ?", (eve_alt,))
 r.check("Vorbedingung: die Kreuz-Kollision steht wirklich in der Datenbank",
         len(auth_alt.store.kennungs_kollisionen()) == 1,
         f"{[dict(z) for z in auth_alt.store.kennungs_kollisionen()]} — dann misst der Test nichts")
@@ -1968,10 +1982,18 @@ r.check("...und nennt Wege, die es wirklich gibt (change_username, store.set_ema
         f"{_text_k[:320]!r}")
 r.check("...und schickt niemanden mehr ins UPDATE von Hand",
         "UPDATE users" not in _text_k, f"{_text_k[:320]!r}")
-r.check("...und verspricht dafür weder Admin-Panel noch CLI",
-        "Kennungen ändern (Admin-Panel oder CLI)" not in _text_k
-        and "weder im Admin-Panel noch im CLI" in _text_k,
-        f"{_text_k[:320]!r} — die Admin-API kennt kein Umbenennen, das CLI keine Kontenverwaltung")
+# Seit G13 (2026-09-26) können Panel und CLI umbenennen — die Meldung nennt beide, und gemessen
+# wird wieder, dass es die genannten Wege gibt: die Route im Admin-Router und das Kommando im CLI.
+# Bis dahin hielt diese Prüfung das Gegenteil fest („weder im Admin-Panel noch im CLI"), weil es
+# damals stimmte.
+from tinysesam.admin import build_admin_router as _bar  # noqa: E402
+import tinysesam.__main__ as _cli_modul  # noqa: E402
+_routen_k = {getattr(_rt, "path", "") for _rt in _bar(auth_alt).routes}
+r.check("...und nennt Panel und CLI — beide Wege gibt es wirklich",
+        "/api/users/<id>/username" in _text_k and "/api/users/{uid}/username" in _routen_k
+        and "tinysesam rename" in _text_k and callable(getattr(_cli_modul, "_rename", None))
+        and "weder im Admin-Panel noch im CLI" not in _text_k,
+        f"{_text_k[:420]!r}, Routen: {sorted(p for p in _routen_k if 'username' in p)}")
 # Der genannte Weg wirkt: Umbenennen löst die Kollision auf, der Start schweigt danach.
 auth_alt.change_username(eve_alt, "eve-umbenannt")
 r.check("...und auth.change_username löst die Kollision tatsächlich auf",

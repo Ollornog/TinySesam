@@ -123,7 +123,8 @@ TinySesamConfig(login_identifier="email")     # nur E-Mail
 
 Die Beschriftung des Feldes zieht automatisch nach, Passwort- **und** PIN-Login halten sich daran.
 Weil die E-Mail eine Login-Kennung ist, wird sie kanonisch gespeichert (getrimmt, klein) und ist
-**eindeutig** (partieller UNIQUE-Index; Konten ohne Adresse bleiben erlaubt). Bei der Registrierung
+**eindeutig** — über Benutzernamen *und* Adressen (eine Kennung gehört nie zwei Konten, auch nicht als
+`Alice`/`alice`), von der Datenbank erzwungen; Konten ohne Adresse bleiben erlaubt. Bei der Registrierung
 ist sie standardmäßig Pflicht — `signup_require_email=False` schaltet das ab. Im Modus `"email"`
 fällt das Benutzernamen-Feld ganz weg: die Adresse *ist* die Kennung. `signup_verify_email=True`
 aktiviert das Konto erst nach Klick auf den Bestätigungslink; das braucht einen Mailer (`set_mailer`
@@ -343,8 +344,9 @@ TinySesamConfig.local_accounts(          # nur Benutzername + Passwort, nirgends
   eingeloggt ist, bekommt nur das fehlende Feld, nicht noch einmal die ganze Login-Seite.
 
 **Die PIN als Weg hinein ist eine bewusste Option.** Mit `pin_enabled=True` ist die PIN in der Vorgabe
-ein Erstfaktor (`pin_login=True`) — praktisch für eine allgemeine Seite, während eine Detailseite mehr
-verlangt:
+ein Erstfaktor (`pin_login=True`) — ausser eine strikte `login_chain` verlangt sie hinter einem anderen
+Faktor, dann ist sie immer nur der nächste Schritt. Praktisch für eine allgemeine Seite, während eine
+Detailseite mehr verlangt:
 
 ```python
 @app.get("/uebersicht")                                 # die PIN genügt
@@ -372,7 +374,8 @@ TinySesamConfig(admin_identifiers=["ich@example.com"])   # Allowlist, jede Login
 - **Allowlist** — der genannte Benutzername bzw. die E-Mail wird beim nächsten erfolgreichen Login
   befördert, egal über welche Methode. Eine **Adresse** zählt dabei nur mit einem Beleg, dass sie
   dem Anmeldenden gehört; über SAML und LDAP gibt es keinen, dort befördert sie nie (s. unten).
-  Danach nie wieder.
+  Danach nie wieder — auch nicht, nachdem ein Identity Provider dem letzten Admin der Instanz das
+  Recht entzogen hat; TinySesam gibt dann sofort das Einmal-Token unten aus (oder `tinysesam owner`).
 - **Einmal-Token** — gibt es keinen Admin, schreibt TinySesam beim Start eine Claim-URL auf
   **stderr** (die Konsole des Betreibers). Anmelden, `/auth/claim-admin?token=…` öffnen, fertig.
   Das Token gilt einmal und läuft nach `admin_claim_ttl_min` ab; sobald ein Admin existiert,
@@ -554,8 +557,9 @@ Nach dem Vorbild von Authelia/Fail2Ban — die Schwellen sind **im Admin-Panel /
 - **Fehlversuche in Folge, ohne Fenster** (`account_max_consecutive_failures`, Vorgabe 100): Jeder
   gescheiterte Anmeldeversuch unter einem Namen verlängert eine Serie; an der Grenze ist die Anmeldung
   gesperrt — und anders als bei den Fenster-Schwellen läuft diese Sperre nicht ab. Sie endet mit einer
-  vollständigen Anmeldung über einen anderen Weg (Passkey, Anmelde-Link, OIDC), einem Passwort-Reset,
-  einem neuen Passwort aus dem Admin-Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das
+  vollständigen Anmeldung über einen anderen Weg (Passkey, Anmelde-Link, OIDC), einem Passwort-Reset
+  (nur der Anteil der Erstfaktoren — TOTP-Fehlgriffe und die einer PIN hinter einem anderen Faktor
+  bleiben), einem neuen Passwort aus dem Admin-Panel oder `tinysesam unlock`. Gezählt wird je Name, ob es das
   Konto gibt oder nicht — die Sperre verrät also nichts. NIST SP 800-63B begrenzt Fehlversuche in
   Folge auf 100: Langsames Raten unter jeder Fenster-Schwelle läuft nicht mehr ewig.
 - **Passwortlänge nach Faktor-Lage:** Ein neues Passwort braucht `password_min_length_single_factor`
@@ -922,8 +926,17 @@ Lokale Passwörter und LDAP koexistieren (erst lokal, dann LDAP). Rollen/2FA/Ket
 > jetzt `entryUUID`/`objectGUID` (`ldap_attr_id`), SAML die `NameID` (`saml_attr_id` für IdPs mit
 > transienten NameIDs). Ein Konto, das schon an eine **andere** Kennung gebunden ist, wird nie
 > übernommen — dieser Fall wird abgewiesen und protokolliert. Konten von vor dieser Fassung
-> binden sich beim nächsten Login selbst nach, einmal, ebenfalls protokolliert. Liefert das
-> Verzeichnis keine Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
+> binden sich beim nächsten Login über den Namen selbst nach, einmal, ebenfalls protokolliert —
+> aber nur in `federation_name_binding_days` (Vorgabe 30) Tagen ab dem ersten Start mit
+> eingeschalteter Quelle bzw. ab der Anlage des Kontos; danach fiele ein ruhendes Konto an die
+> nächste Person, die im Verzeichnis denselben Namen bekommt. Den Rest bindet man ausdrücklich:
+> `auth.foederation_nachbinden("ldap")` (Vorgabe Trockenlauf, `ausfuehren=True` schreibt; SAML
+> mit `zuordnung={name: nameid}`), oder man öffnet ein einzelnes Konto mit
+> `auth.loese_fremde_bindung(quelle, user_id)`. Ein selbst gewählter Name (Registrierung,
+> Umbenennen in der Selbstbedienung) bindet nie über den Namen, ebenso wenig ein Name, den eine
+> andere Quelle beim Anlegen mitgebracht hat (ein über OIDC angelegtes Konto bindet sich nie über
+> den Namen an LDAP oder SAML — beim IdP kann der Name selbst gewählt sein). Liefert das Verzeichnis keine
+> Kennung, entscheidet weiter der Name und eine Logzeile sagt das;
 > `federation_require_stable_id=True` macht daraus eine Abweisung.
 
 > **Verweisen (Referrals) folgt TinySesam nie** — und das steht jetzt im Log. ldap3 verfolgt einen
@@ -1055,7 +1068,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**51 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**57 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

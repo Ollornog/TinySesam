@@ -11,7 +11,7 @@
     "apply_factor": "(request, user_id, factor, ip=None, ua=None, remember=True, email_bestaetigt: 'Optional[bool]' = None) -> 'tuple[str, bool, bool]'",
     "apply_idp_groups": "(user_id, groups, mapping: 'dict', substring: 'Optional[bool]' = None, dn: 'bool' = False)",
     "audit": "(event, username=None, ip=None, detail=None)",
-    "change_username": "(user_id, neu, ip: 'Optional[str]' = None) -> 'str'",
+    "change_username": "(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'",
     "check_ldap": "(username, password) -> 'Optional[dict]'",
     "check_password": "(username, password) -> 'Optional[dict]'",
     "check_pin": "(username, pin) -> 'Optional[dict]'",
@@ -26,7 +26,7 @@
     "create_invite": "(email, base_url, roles=None, is_admin=False, ttl_min=None) -> 'dict'",
     "create_magic_token": "(purpose, user_id=None, email=None, ttl_min=None, payload=None) -> 'str'",
     "create_service": "(username, roles=None, display_name=None) -> 'int'",
-    "create_user": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'",
+    "create_user": "(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'",
     "csrf_rotieren": "(response) -> 'str'",
     "csrf_token": "(request: 'Optional[Request]' = None) -> 'str'",
     "current_user": "(request) -> 'Optional[dict]'",
@@ -38,6 +38,7 @@
     "factor_entry": "(step, nxt='/') -> 'str'",
     "find_user": "(identifier) -> 'Optional[dict]'",
     "flow_cookie_name": "(basis: 'str') -> 'str'",
+    "foederation_nachbinden": "(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'",
     "forward_login_url": "(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'",
     "forward_response_headers": "(user) -> 'dict'",
     "forwarded_url": "(request: 'Request') -> 'str'",
@@ -83,7 +84,7 @@
     "public_base": "(request: 'Optional[Request]' = None, kandidat: 'str' = '') -> 'str'",
     "purge_demo": "() -> 'int'",
     "rate_ok": "(ip, login: 'bool' = True) -> 'bool'",
-    "record_login": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '')",
+    "record_login": "(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)",
     "recovery_codes_remaining": "(user_id) -> 'int'",
     "redeem_magic": "(raw, purpose=None) -> 'Optional[dict]'",
     "remove_passkey": "(user_id: 'int', passkey_id: 'int', ip: 'Optional[str]' = None) -> 'bool'",
@@ -145,7 +146,7 @@
     "verify_user_pin": "(user_id, pin) -> 'bool'",
     "vermerke_oidc_freigabe": "(token: 'str', client: 'str', rollen=None) -> 'None'",
     "version": "() -> 'str'",
-    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'"
+    "versuch_beginnen": "(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'"
   },
   "TinySesam.eigenschaften": {
     "csrf_cookie_name": "() -> 'str'",
@@ -160,10 +161,12 @@
     "FORWARD_HEADERS_DEFAULT": "{'user': 'Remote-User', 'name': 'Remote-Name', 'email': 'Remote-Email', 'groups': 'Remote-Groups', 'id': 'Remote-Id'}",
     "IDENTIFYING": "('password', 'pin', 'oidc', 'passkey', 'magic', 'saml')",
     "MFA_ENROLLMENT_ARTEN": "('first_login', 'grace', 'strict')",
+    "NACHBINDUNG_GRUENDE": "{'adresse_als_name': 'der Name sagt nichts über die Person (Steuerzeichen, oder der unbelegte mail-Wert einer Quelle, der nicht vertraut wird)', 'kennung_ungueltig': 'die Kennung taugt nicht (Rand-/Steuerzeichen oder Platzhalter-Form)', 'konflikt': 'die Kennung gehört schon einem anderen Konto', 'anders_gebunden': 'das Konto trägt schon eine andere Kennung', 'name_selbst_gewaehlt': 'der Name ist selbst gewählt (Registrierung oder Umbenennen) und sagt nichts darüber, wer im Verzeichnis so heisst', 'name_aus_quelle': 'der Name stammt aus einer anderen Quelle, die das Konto angelegt hat (OIDC, SAML oder LDAP), und sagt nichts darüber, wer in dieser so heisst', 'frist': 'die Frist für die Bindung über den Namen ist abgelaufen (federation_name_binding_days)'}",
     "NAME_MAX": "150",
     "RECOVERY_BYTES": "7",
     "RECOVERY_WARNSCHWELLE": "3",
     "SEITEN": "('account', 'error', 'forgot', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')",
+    "SERIE_PIN_FOLGE": "'pin_folge'",
     "SICHERHEITSEREIGNISSE": "('password_changed', 'pin_set', 'pin_disabled', 'totp_enabled', 'totp_disabled', 'recovery_codes_generated', 'recovery_code_used', 'passkey_added', 'passkey_removed', 'api_key_created', 'api_key_revoked', 'api_keys_revoked', 'email_changed', 'username_changed')",
     "TOKEN_PATHS": "{'login': '/auth/magic/{t}', 'verify_email': '/auth/verify/{t}', 'invite': '/auth/invite/{t}', 'reset_password': '/auth/reset?token={t}', 'email_change': '/auth/email/{t}'}"
   },
@@ -205,6 +208,7 @@
     "demo_pin": "str = '1234'",
     "email_change_ttl_min": "int = 60",
     "federation_email_confirm": "bool = True",
+    "federation_name_binding_days": "int = 30",
     "federation_require_stable_id": "bool = False",
     "forward_auth_enabled": "bool = False",
     "forward_headers": "dict = {}",
@@ -333,6 +337,7 @@
     "entra_id": "(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)",
     "local_accounts": "(**overrides)",
     "oidc_gateway": "(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)",
+    "pin_als_erstfaktor": "() -> 'bool'",
     "pruefen": "() -> 'list[str]'"
   },
   "exporte": [

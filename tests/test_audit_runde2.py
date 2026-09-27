@@ -2075,7 +2075,10 @@ def _n5_rate(a, app_, name):
 # Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.
 _n5_b, _n5_bapp = _app(csrf_enabled=False)
 _n5_b.create_user("Özlem", password="Geheim12345!-lang", email="oezlem@example.com")
-_n5_platz = _n5_b.store.create_user("özlem")
+# Rohes INSERT ohne Topf (fremder Schreiber): Seit G12c weist `store.create_user` den
+# Namensvetter selbst ab.
+_n5_platz = _n5_b.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                              ("özlem", "özlem", _store_mod.jetzt())).lastrowid
 # Eine Minute vor den Rateversuchen angelegt — sonst blieben sie schon als Versuche aus der
 # Anlage-Sekunde stehen, und die Probe mässe die Topf-Prüfung nicht.
 _n5_b.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (_n5_platz,))
@@ -2358,5 +2361,252 @@ _n8_funde = (_aufrufe_ausserhalb("delete_user", _nicht_manager, {("Store", "kont
              + _sql_ausserhalb(_N8_ERLAUBT_SQL))
 r.check("N-8 (Wächter): Konten und Passkeys löschen nur die Bausteine — auch nicht per Alias oder SQL",
         not _n8_funde, f"{_n8_funde}")
+
+# ── G4: die Detailsuche beim Anonymisieren hält die Schreibsperre nicht über die ganze Suche ─────
+# Die Suche im Detailtext (`instr`) grenzt kein Index ein; bei einer unbefristeten Adresse (Löschen
+# durch einen Admin) liest sie das ganze Audit-Log. Bis 2026-09-26 tat sie das in EINER
+# Schreibtransaktion unter `_lock` — jede Anmeldung, jeder Audit-Eintrag und jeder andere Worker
+# wartete die ganze Suche ab. Gemessen wird nicht die Uhr, sondern der Ablauf: Ein Schloss, das bei
+# jeder Freigabe einen parallelen Schreiber vorlässt — über dieselbe Instanz (anderer Thread im
+# selben Worker) UND über eine zweite Verbindung ohne Wartezeit (anderer Worker, `timeout=0`; sie
+# scheitert sofort, solange eine Schreibtransaktion offen ist).
+auth_g4, _ = _app()
+st4 = auth_g4.store
+_G4_ZEILEN = 120_000
+st4.db.executemany(
+    "INSERT INTO audit(ts, event, username, ip, detail) VALUES (?,?,?,?,?)",
+    [(1_700_000_000 + i // 10, "apikey_create" if i % 997 == 0 else "login_fail", f"fremd{i % 50}", None,
+      "key=1 akteur=g4opfer" if i % 997 == 0 else
+      "neu=g4opfer@example.com" if i % 1499 == 0 else "password grund=falsch")
+     for i in range(_G4_ZEILEN)])
+st4.db.commit()
+_g4_erste = st4._one("SELECT min(id) AS m FROM audit WHERE detail = 'key=1 akteur=g4opfer'")["m"]
+_g4_treffer = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+
+
+class _G4Schloss:
+    """`Store._lock` mit Haken: Nach jeder Freigabe schreibt ein paralleler Schreiber."""
+
+    def __init__(self, echt):
+        self.echt, self.freigaben, self.haken, self._im_haken = echt, 0, None, False
+
+    def __enter__(self):
+        self.echt.acquire()
+        return self
+
+    def __exit__(self, *a):
+        self.echt.release()
+        self.freigaben += 1
+        if self.haken and not self._im_haken:
+            self._im_haken = True
+            try:
+                self.haken()
+            finally:
+                self._im_haken = False
+
+
+_g4_fremd = sqlite3.connect(auth_g4.cfg.db_path, timeout=0, isolation_level=None)
+_g4_mess = {"intern": 0, "zweite_verbindung": 0, "gesperrt": 0, "block_gelesen": False, "nachgetragen": False,
+            "block_sql": ""}
+
+
+def _g4_parallel():
+    st4.audit_log("g4_parallel", "fremd", None, "intern")            # derselbe Worker, anderer Thread
+    _g4_mess["intern"] += 1
+    try:
+        _g4_fremd.execute("BEGIN IMMEDIATE")                          # anderer Worker, ohne zu warten
+        _g4_fremd.execute("INSERT INTO audit(ts, event, username, detail) VALUES (?,?,?,?)",
+                          (int(_t.time()), "g4_parallel", "fremd", "zweite_verbindung"))
+        _g4_fremd.execute("COMMIT")
+        _g4_mess["zweite_verbindung"] += 1
+    except sqlite3.OperationalError:
+        _g4_mess["gesperrt"] += 1
+    # Zwischen Lesen und Schreiben eines Blocks ändert ein anderer die erste Trefferzeile: Das
+    # Schreiben muss die frische Zeile nehmen, nicht den gelesenen Stand.
+    if _g4_mess["block_gelesen"] and not _g4_mess["nachgetragen"]:
+        _g4_fremd.execute("UPDATE audit SET detail = detail || ' nachtrag=1' WHERE id = ?", (_g4_erste,))
+        _g4_mess["nachgetragen"] = True
+
+
+
+
+def _g4_spur(sql):
+    if "instr(lower(detail)" in sql:        # ein Block der Detailsuche (Parameter eingesetzt)
+        _g4_mess["block_gelesen"] = True
+        _g4_mess["block_sql"] = _g4_mess["block_sql"] or sql
+
+
+st4.db.set_trace_callback(_g4_spur)
+_g4_schloss = _G4Schloss(st4._lock)
+st4._lock = _g4_schloss
+_g4_schloss.haken = _g4_parallel
+try:
+    st4.audit_anonymisieren("g4opfer", "gelöscht#77", ("g4opfer@example.com",),
+                            unbefristet=("g4opfer@example.com",))
+finally:
+    _g4_schloss.haken = None
+    st4._lock = _g4_schloss.echt
+    st4.db.set_trace_callback(None)
+    _g4_fremd.close()
+# Mindestens 20 Freigaben bei 120 000 Zeilen: höchstens 6000 Zeilen unter einer Sperre. Fest, nicht
+# aus `_ANONYM_BLOCK` gerechnet — sonst ginge die Grenze mit, wenn jemand den Block vergrössert.
+_g4_bloecke = 20
+r.check(f"G4: {_G4_ZEILEN} Zeilen — die Suche gibt die Schreibsperre zwischen den Blöcken frei, und "
+        "parallele Schreiber kommen durch (derselbe Worker und ein zweiter ohne Wartezeit)",
+        _g4_schloss.freigaben >= _g4_bloecke and _g4_mess["intern"] >= _g4_bloecke
+        and _g4_mess["zweite_verbindung"] >= _g4_bloecke and _g4_mess["gesperrt"] == 0,
+        f"{_g4_schloss.freigaben} Freigaben, {_g4_mess} bei {_g4_bloecke} Blöcken")
+_g4_rest = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'g4opfer') > 0")["n"]
+_g4_ersetzt = st4._one("SELECT count(*) AS n FROM audit WHERE instr(detail, 'gelöscht#77') > 0")["n"]
+r.check("… und ersetzt trotzdem jeden Treffer im Detailtext (Name als akteur=, Adresse überall)",
+        _g4_treffer > 150 and _g4_rest == 0 and _g4_ersetzt == _g4_treffer,
+        f"vorher {_g4_treffer}, übrig {_g4_rest}, ersetzt {_g4_ersetzt}")
+r.check("… und nimmt beim Schreiben die frische Zeile (ein Nachtrag dazwischen geht nicht verloren)",
+        _g4_mess["nachgetragen"] and st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,))["detail"]
+        == "key=1 akteur=gelöscht#77 nachtrag=1",
+        str(dict(st4._one("SELECT detail FROM audit WHERE id=?", (_g4_erste,)))))
+r.check("… die Zeilen der parallelen Schreiber bleiben, wie sie waren",
+        st4._one("SELECT count(*) AS n FROM audit WHERE event='g4_parallel' AND username='fremd' "
+                 "AND detail IN ('intern', 'zweite_verbindung')")["n"]
+        == _g4_mess["intern"] + _g4_mess["zweite_verbindung"])
+# Und die Suche bleibt linear: Ein Block wird über den Primärschlüssel gelesen (der Plan der
+# Anweisung, wie sie lief), nicht über einen Index auf `ts` — sonst läse jeder Block alles ab `seit`.
+_g4_plan = [str(tuple(z)) for z in st4.db.execute("EXPLAIN QUERY PLAN " + _g4_mess["block_sql"]).fetchall()] \
+    if _g4_mess["block_sql"] else []
+r.check("G4: ein Block liest über den Primärschlüssel (id-Bereich), nicht über einen Index auf ts",
+        len(_g4_plan) == 1 and "INTEGER PRIMARY KEY (rowid>? AND rowid<?)" in _g4_plan[0], str(_g4_plan))
+
+def _g4_schritte_beim_entfernen(name, bestand):
+    uid = auth_g4.create_user(name, password="Geheim-G4-Pw15!")
+    if bestand:   # Konto aus der Zeit vor G2: keine Wasserlinie, es gilt die Anlage (`seit`)
+        st4._exec("UPDATE users SET name_audit_ab = NULL, name_versuch_ab = NULL WHERE id = ?", (uid,))
+    st4.audit_log("apikey_create", "chef", None, f"key=2 akteur={name}")
+    zaehler = [0]
+
+    def schritt():
+        zaehler[0] += 1
+        return 0
+    st4.db.set_progress_handler(schritt, 1000)
+    try:
+        st4.konto_entfernen(uid)
+    finally:
+        st4.db.set_progress_handler(None, 1000)
+    rest = st4._one("SELECT count(*) AS n FROM audit WHERE detail = ?", (f"key=2 akteur={name}",))["n"]
+    return zaehler[0], rest
+
+
+_g4_jung = {"Wasserlinie": _g4_schritte_beim_entfernen("g4jung", False),
+            "Bestand (seit)": _g4_schritte_beim_entfernen("g4bestand", True)}
+r.check("G4: ein junges Konto liest nicht das ganze Log — mit Wasserlinie und im Bestand ab `seit`",
+        all(n < 60 and rest == 0 for n, rest in _g4_jung.values()),
+        f"{_g4_jung} (× 1000 SQLite-Schritte, Zeilen übrig) bei {_G4_ZEILEN} Zeilen")
+# (Mutationsproben, einzeln gefahren: `_ANONYM_BLOCK` auf 10**9 → die erste Prüfung rot
+#  (eine Freigabe statt einer je Block); die Zeile beim Schreiben nicht frisch lesen, sondern den
+#  gelesenen Stand nehmen → „frische Zeile“ rot; `id + 0` → `id` (der Beginn ab `seit` läuft dann
+#  die Tabelle von vorn entlang) → „junges Konto“ rot; den Beginn ganz ignorieren → ebenso; den id-Bereich des Blocks am Primärschlüssel vorbei schreiben (`+id`) →
+#  „über den Primärschlüssel“ rot; die alte Fassung (eine Schreibtransaktion) → die ersten drei rot.)
+
+
+# ── F4 (Prüfrunde Sperren/Zähler 2026-09-27): was die Löschzusage H-13 noch ausliess ───────────────
+# Schon auf main so: Nach dem Löschen standen eingetippte Schreibweisen (4a), frühere Namen und
+# Adressen (4b) und die Werte in den eigenen Zeilen (4c) weiter im Audit-Log.
+_F4_PW = "Loesch-Pw-15xy"
+
+
+def _f4_app():
+    a, ap = _app(csrf_enabled=False, passkey_enabled=False, lang="de")
+    a.set_security("rate_limit_max", 100000)
+    a.set_security("max_login_attempts", 1000)
+    post: list = []
+    a.set_mailer(lambda to, betreff, text, html=None: post.append((to, text)) or True)
+    a.create_user("root", password=_F4_PW, email="root@example.com", is_admin=True)
+    return a, ap, post
+
+
+def _f4_rest(a, *spuren):
+    """Alle Audit-Zeilen, in denen eine der Spuren (casefold) noch in Name oder Detail steht."""
+    aus = []
+    for z in a.store._all("SELECT id, event, username, detail FROM audit ORDER BY id"):
+        text = f"{z['username'] or ''} {z['detail'] or ''}".casefold()
+        if any(s.casefold() in text for s in spuren):
+            aus.append((z["event"], z["username"], z["detail"]))
+    return aus
+
+
+# 4a: `login_fail` schreibt die ROHE Eingabe; gezählt wird im Topf (strip, NFKC, lower).
+_f4a, _f4a_app, _ = _f4_app()
+_f4a_uid = _f4a.create_user("Émile", password=_F4_PW, email="emile@example.com")
+_f4a_c = TestClient(_f4a_app, client=("192.0.2.9", 4000))
+for _eingabe in ("Émile", "émile", "Émile ", " emile@example.com", "ＥＭＩＬＥ@example.com", "ÉMILE"):
+    _f4a_c.post("/auth/login", data={"username": _eingabe, "password": "falsch"}, follow_redirects=False)
+_f4a_vor = len(_f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ"))
+_f4a.delete_user(_f4a_uid)
+_f4a_rest = _f4_rest(_f4a, "émile", "emile@", "ｅｍｉｌｅ")
+# (Mutationsprobe: den Vergleich im Topf aus dem Blockscan nehmen (`auch_name` leer, `name_trifft`
+#  immer falsch) → vier Zeilen bleiben → rot.)
+r.check("F4a: jede eingetippte Schreibweise (Leerraum, Akzent-Grossbuchstabe, Vollbreite) ist nach dem "
+        "Löschen aus dem Audit-Log", _f4a_vor >= 6 and _f4a_rest == [], f"vorher {_f4a_vor}, übrig {_f4a_rest}")
+# Gegenprobe: Teilt ein VERBLEIBENDES Konto den Topf (Namensvetter aus dem Bestand, rohes INSERT),
+# bleibt eine gefaltete Schreibweise stehen — sie kann ihm gehören (wie bei `delete_attempts_for`).
+_f4n, _f4n_app, _ = _f4_app()
+_f4n.create_user("Karl", password=_F4_PW)
+_f4n_platz = _f4n.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                              ("karl", "karl", _store_mod.jetzt() - 60)).lastrowid
+TestClient(_f4n_app, client=("192.0.2.10", 1)).post("/auth/login", data={"username": " KARL ", "password": "x"})
+_f4n.delete_user(_f4n_platz)
+r.check("… ein Topf, den ein verbleibendes Konto teilt, wird nicht gefaltet verglichen (Gegenprobe)",
+        [z for z in _f4_rest(_f4n, " KARL ") if z[0] == "login_fail"] != [],
+        str(_f4_rest(_f4n, "karl")))
+
+# 4b: frühere Namen und Adressen desselben Kontos — umbenannt, Adresse gewechselt, dann gelöscht.
+_f4b, _f4b_app, _f4b_post = _f4_app()
+_f4b_uid = _f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
+_f4b_c = TestClient(_f4b_app, client=("192.0.2.11", 1))
+_f4b_c.post("/auth/login", data={"username": "bob", "password": _F4_PW}, follow_redirects=False)
+_f4b_c.post("/auth/login", data={"username": "bob.alt@example.com", "password": "falsch"}, follow_redirects=False)
+_f4b.change_username(_f4b_uid, "robert")
+_f4b.request_email_change(_f4b_uid, "robert@example.com", "http://testserver")()
+_f4b_link = [t for an, t in _f4b_post if an == "robert@example.com"]
+_f4b_raw = re.search(r"https?://\S+/([A-Za-z0-9_-]{20,})", _f4b_link[-1]).group(1) if _f4b_link else ""
+_f4b_ok = _f4b.confirm_email_change(_f4b_raw)
+# Danach übernimmt jemand den freien Namen und die freie Adresse — dessen Zeilen gehören nicht zum Konto.
+_f4b_grenze = _f4b.store._one("SELECT max(id) AS m FROM audit")["m"]
+_f4b.create_user("bob", password=_F4_PW, email="bob.alt@example.com")
+TestClient(_f4b_app, client=("192.0.2.12", 1)).post("/auth/login", data={"username": "bob", "password": _F4_PW},
+                                                     follow_redirects=False)
+_f4b.delete_user(_f4b_uid)
+_f4b_rest = [z for z in _f4b.store._all("SELECT id, event, username, ip, detail FROM audit WHERE id <= ?",
+                                        (_f4b_grenze,))
+             if z["username"] == "bob" or any(s in f"{z['username']} {z['detail']}".casefold()
+                                               for s in ("robert", "bob.alt@", "alt=bob"))]
+_f4b_spaeter = _f4b.store._all("SELECT event, ip FROM audit WHERE id > ? AND username = 'bob'", (_f4b_grenze,))
+# (Mutationsprobe: `_fruehere_kennungen` gibt [] zurück → die Anmeldung unter `bob` samt IP und der
+#  Fehlversuch unter der alten Adresse bleiben → rot.)
+r.check("F4b: frühere Namen und Adressen — umbenannt, Adresse gewechselt, gelöscht: keine Spur mehr",
+        _f4b_ok == "ok" and _f4b_rest == [], f"{_f4b_ok}, übrig {[dict(z) for z in _f4b_rest]}")
+r.check("… nur in ihrer Spanne: die Zeilen des späteren Trägers von Name und Adresse bleiben (Gegenprobe)",
+        any(z["event"] == "login" and z["ip"] == "192.0.2.12" for z in _f4b_spaeter),
+        str([dict(z) for z in _f4b_spaeter]))
+
+# 4c: die Werte in den eigenen Zeilen — ein nie eingelöster Adresswechsel (`neu=`), die Adresse aus
+# LDAP/SAML (`an=`, wie `_adresse_aus_quelle_belegen` sie schreibt), der alte Name (`alt=`).
+_f4c, _f4c_app, _ = _f4_app()
+_f4c_uid = _f4c.create_user("carla", password=_F4_PW, email="carla@example.com")
+_f4c.request_email_change(_f4c_uid, "carla.neu@example.com", "http://testserver")()
+_f4c.audit("federation_email_confirm", "carla", None, f"konto={_f4c_uid} quelle=ldap an=carla.ldap@example.com")
+_f4c.audit("username_changed", "carla", None, "alt=frueher-carla durch=betreiber akteur=root")
+_f4c.audit("email_change_requested", "root", None, "neu=root.neu@example.com")      # fremde Zeile
+_f4c.delete_user(_f4c_uid)
+_f4c_eigen = [z["detail"] for z in _f4c.store._all("SELECT detail FROM audit WHERE username=?",
+                                                    (f"gelöscht#{_f4c_uid}",))]
+# (Mutationsprobe: `_eigene_werte_ersetzen` abschalten → `neu=carla.neu@…`, `an=…`, `alt=…` bleiben → rot.)
+r.check("F4c: in den eigenen Zeilen sind `neu=`, `an=` und `alt=` ersetzt",
+        _f4_rest(_f4c, "carla") == [] and any("neu=gelöscht#" in d for d in _f4c_eigen)
+        and any("an=gelöscht#" in d for d in _f4c_eigen) and any("alt=gelöscht#" in d for d in _f4c_eigen),
+        f"{_f4_rest(_f4c, 'carla')} {_f4c_eigen}")
+r.check("… `akteur=` in den eigenen Zeilen und die Werte in fremden Zeilen bleiben (Gegenprobe)",
+        any("akteur=root" in d for d in _f4c_eigen)
+        and bool(_f4c.store._one("SELECT 1 AS x FROM audit WHERE username='root' AND detail='neu=root.neu@example.com'")),
+        str(_f4c_eigen))
 
 sys.exit(r.done())

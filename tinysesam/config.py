@@ -68,7 +68,9 @@ class TinySesamConfig:
     pin_enabled: bool = False             # persönliche PIN pro User (Benutzer + PIN)
     pin_login: bool = True                # PIN als Erstfaktor auf der Login-Seite anbieten.
                                           # False = PIN existiert, dient aber NUR als Zusatzfaktor
-                                          # (Route-Kette) bzw. Step-up für sensible Bereiche.
+                                          # (Kettenschritt, Route-Kette) bzw. Step-up für sensible
+                                          # Bereiche. Verlangt eine strikte login_chain die PIN
+                                          # hinter einem anderen Faktor, ist sie dort nie Erstfaktor.
     pin_min_length: int = 4               # Mindestlänge beim Setzen einer PIN
     # Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat
     # (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche.
@@ -114,7 +116,10 @@ class TinySesamConfig:
     login_identifier: str = "both"
     # --- Erst-Admin (Bootstrap) — bewusst NICHT "der erste registrierte User wird Admin" ---
     admin_identifiers: list[str] = field(default_factory=list)  # Benutzername/E-Mail, die beim Login
-                                          # zum Admin befördert werden, SOLANGE es keinen Admin gibt.
+                                          # zum Admin befördert werden, SOLANGE es keinen Admin gibt —
+                                          # und nie mehr, nachdem der Identity Provider der Instanz
+                                          # ihren letzten Admin entzogen hat (G6; dann Einmal-Token
+                                          # oder `tinysesam owner`).
                                           # Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail).
     admin_claim_ttl_min: int = 60         # Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus)
     # Wohin der Wert des Einmal-Tokens geschrieben wird. Leer = auf stderr (Konsole des
@@ -128,7 +133,7 @@ class TinySesamConfig:
     demo_password: str = "demo1234"   # Passwort der Demo-Konten (nur bei demo_mode)
     demo_pin: str = "1234"            # PIN der Demo-Konten (nur bei demo_mode)
 
-    allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort)
+    allow_signup: bool = False            # Selbst-Registrierung (lokaler User+Passwort); nicht neben ldap_enabled
     signup_require_email: bool = True     # E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier)
     signup_verify_email: bool = False     # Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer
     signup_invite_only: bool = False      # Registrierung nur mit gültigem Einladungs-Token
@@ -146,6 +151,7 @@ class TinySesamConfig:
     #: Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt.
     #: Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem
     #: Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an.
+    #: Gilt für die globale Kette und jede Route-Kette (`require(factors=["magic"])`, G10).
     #: `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`).
     magiclink_require_second_factor: bool = True
 
@@ -155,8 +161,9 @@ class TinySesamConfig:
     #: Mailer — ohne ihn gibt es den Weg nicht.
     self_service_email_change: bool = True
     #: Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus
-    #: `login_identifier="email"`, dort folgt der Name der Adresse. Apps hinter Forward-Auth sehen
-    #: danach einen anderen `Remote-User`; stabil ist `Remote-Id` (die Konto-ID).
+    #: `login_identifier="email"`, dort folgt der Name der Adresse, und nicht neben LDAP
+    #: (`ldap_enabled`), dort kommen die Namen aus dem Verzeichnis und nur der Betreiber benennt um.
+    #: Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id`.
     self_service_username_change: bool = True
     email_change_ttl_min: int = 60        # Gültigkeit des Bestätigungslinks für eine neue Adresse
 
@@ -197,8 +204,9 @@ class TinySesamConfig:
     # --- Faktor-Ketten (geordnete Kombinationen) ---
     # Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B.
     # ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls
-    # eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)).
-    # Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User.
+    # eingerichtet). Pro Route verschärfbar: Depends(auth.require(factors=[...], strict=...)) —
+    # zusätzlich, nie statt dieser Kette (seit 2026-09-27). Faktornamen: password, pin, oidc, passkey,
+    # totp, magic. Der erste Faktor identifiziert den User.
     login_chain: list[str] = field(default_factory=list)
     #: Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1)
     #:
@@ -313,7 +321,18 @@ class TinySesamConfig:
     #: Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht
     #: daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann.
     federation_require_stable_id: bool = False
-    ldap_enabled: bool = False        # Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap]
+    #: Wie lange darf eine Anmeldung über LDAP/SAML ein noch ungebundenes Konto über seinen
+    #: **Namen** binden (Tage)? Gezählt je Quelle ab dem ersten Start mit eingeschalteter Quelle
+    #: (für den Bestand: ab dem Update) bzw. ab der Anlage des Kontos, was später ist. Danach
+    #: bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an
+    #: die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht
+    #: (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber
+    #: bindet dann ausdrücklich: `auth.foederation_nachbinden(quelle)` (Bestand, Trockenlauf als
+    #: Vorgabe) oder `auth.loese_fremde_bindung(quelle, user_id)` (öffnet die Bindung für dieses
+    #: Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht
+    #: selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt).
+    federation_name_binding_days: int = 30
+    ldap_enabled: bool = False       # Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap]
     ldap_url: str = ""                    # ldap://host:389 oder ldaps://host:636
     ldap_start_tls: bool = False      # Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL
     #: Das Zertifikat des Verzeichnisses prüfen? Vorgabe **ja** (F-12). Ohne die Prüfung ist
@@ -453,8 +472,12 @@ class TinySesamConfig:
     #: `emailVerified`). Leer = keins.
     saml_attr_email_verified: str = ""
     #: Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid
-    #: 2026-09-25): Nach der Anmeldung geht einmal ein Bestätigungslink an die Adresse aus der Quelle;
-    #: erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`.
+    #: 2026-09-25): Nach der Anmeldung geht ein Bestätigungslink an die Adresse aus der Quelle —
+    #: höchstens ein zugestellter je Konto und Tag (über alle Worker; lebt ein Link länger,
+    #: `email_change_ttl_min`, so lange), keiner, solange einer offen ist; eine Drossel oder ein
+    #: gescheiterter Versand wird nach `mail_per_address_window_sec` erneut versucht. Eine vergebene
+    #: oder reservierte Adresse bekommt keinen, ihre Abweisung zählt wie ein Versand. Erst der Klick
+    #: macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`.
     federation_email_confirm: bool = True
     saml_attr_name: str = "displayName" # SAML-Attribut mit dem Anzeigenamen
     #: Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion.
@@ -670,12 +693,13 @@ class TinySesamConfig:
         return fehler, warnungen
 
     def enabled_methods(self) -> list[str]:
-        """Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier
-        bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar."""
+        """Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann
+        (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up
+        nutzbar."""
         m = []
         if self.password_enabled:
             m.append("password")
-        if self.pin_enabled and self.pin_login:
+        if self.pin_als_erstfaktor():
             m.append("pin")
         if self.passkey_enabled:
             m.append("passkey")
@@ -686,3 +710,22 @@ class TinySesamConfig:
         if self.magiclink_enabled:
             m.append("magic")
         return m
+
+    def pin_als_erstfaktor(self) -> bool:
+        """Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne
+        Sitzung?
+
+        Ja mit `pin_enabled` und `pin_login` — ausser eine strikte `login_chain` verlangt die PIN
+        hinter einem anderen Faktor (G7). Dort erfüllt eine zuerst eingegebene PIN die Kette nie
+        mehr, die Reihenfolge stimmt danach nicht (`_chain_satisfied`). Der Gästeweg nützte also
+        nur Ratenden: Er antwortete ohne das Passwort auf eine falsche PIN mit 401, auf die richtige
+        mit 303. Und über ihn wich jemand mit Postfach und Passwort auf die Art der Serie aus, die
+        ein Selbstbedienungs-Reset räumt. Der PIN-Schritt NACH dem ersten Faktor (halbe Sitzung)
+        hängt an keinem dieser Schalter.
+
+        In einer NICHT strikten Kette bleibt die PIN mit `pin_login` Erstfaktor, auch wenn sie
+        hinten steht — dazu warnt die Konfigurationsprüfung."""
+        if not (self.pin_enabled and self.pin_login):
+            return False
+        kette = list(self.login_chain or [])
+        return not (self.login_chain_strict and "pin" in kette and kette[0] != "pin")

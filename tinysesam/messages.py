@@ -36,6 +36,7 @@ MESSAGES = {
         "api.not_found": 'Not found',
         "api.no_mail": 'Email is not set up here — this cannot be changed without it',
         "api.username_follows_email": 'Here the username is the email address and follows it',
+        "api.username_from_directory": 'Usernames come from the directory here — only the operator can rename an account',
         "api.username_is_address": 'A username may not be an email address other than your own confirmed one',
         "api.last_admin_delete": 'The last administrator cannot be deleted',
         "api.password_req": 'password required',
@@ -87,8 +88,9 @@ MESSAGES = {
         "err.required": "Please fill in every field.",
         "err.rate": "Too many requests — please wait a moment.",
         "err.locked": "Too many failed attempts — temporarily locked.",
-        "err.locked_serie": "Too many failed attempts in a row — sign-in is locked. Reset your "
-                            "password or ask the operator to unlock it.",
+        "err.locked_serie": "Too many failed attempts in a row — sign-in is locked. Ask the operator "
+                            "to unlock it; if the failed attempts were password attempts, resetting "
+                            "your password also works.",
         "err.retry": "Too many attempts — please wait.",
         "err.code": "Wrong code",
         "err.reauth": "Confirmation failed",
@@ -265,6 +267,7 @@ MESSAGES = {
         "admin.enable": "Unlock",
         "admin.disable": "Lock",
         "admin.btn.pw": "PW",
+        "admin.btn.rename": "Rename",
         "admin.btn.roles": "Roles",
         "admin.btn.keys": "Keys",
         "admin.btn.passkeys": "Passkeys",
@@ -278,6 +281,7 @@ MESSAGES = {
         "admin.confirm.disable": "Lock this account?",
         "admin.confirm.enable": "Unlock?",
         "admin.prompt.pw": "New password:",
+        "admin.prompt.username": "New username:",
         "admin.pw_set": "set",
         "admin.roles_groups": "Roles / groups",
         "admin.no_roles": "no roles defined",
@@ -329,6 +333,7 @@ MESSAGES = {
         "api.not_found": 'nicht gefunden',
         "api.no_mail": 'Hier ist kein Mailversand eingerichtet — ohne ihn geht das nicht',
         "api.username_follows_email": 'Hier ist der Benutzername die E-Mail-Adresse und folgt ihr',
+        "api.username_from_directory": 'Benutzernamen kommen hier aus dem Verzeichnis — umbenennen kann nur der Betreiber',
         "api.username_is_address": 'Ein Benutzername darf keine E-Mail-Adresse sein, ausser der eigenen bestätigten',
         "api.last_admin_delete": 'Der letzte Admin kann nicht gelöscht werden',
         "api.password_req": 'password nötig',
@@ -379,8 +384,9 @@ MESSAGES = {
         "err.required": "Bitte alle Felder ausfüllen.",
         "err.rate": "Zu viele Anfragen — bitte kurz warten.",
         "err.locked": "Zu viele Fehlversuche — vorübergehend gesperrt.",
-        "err.locked_serie": "Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. Passwort "
-                            "zurücksetzen oder den Betreiber um Freigabe bitten.",
+        "err.locked_serie": "Zu viele Fehlversuche in Folge — die Anmeldung ist gesperrt. Den "
+                            "Betreiber um Freigabe bitten; galten die Fehlversuche dem Passwort, hilft "
+                            "auch ein Passwort-Reset.",
         "err.retry": "Zu viele Versuche — bitte warten.",
         "err.code": "Code falsch",
         "err.reauth": "Bestätigung fehlgeschlagen",
@@ -547,6 +553,7 @@ MESSAGES = {
         "admin.enable": "Entsperren",
         "admin.disable": "Sperren",
         "admin.btn.pw": "PW",
+        "admin.btn.rename": "Umbenennen",
         "admin.btn.roles": "Rollen",
         "admin.btn.keys": "Keys",
         "admin.btn.passkeys": "Passkeys",
@@ -560,6 +567,7 @@ MESSAGES = {
         "admin.confirm.disable": "Zugang sperren?",
         "admin.confirm.enable": "Entsperren?",
         "admin.prompt.pw": "Neues Passwort:",
+        "admin.prompt.username": "Neuer Benutzername:",
         "admin.pw_set": "gesetzt",
         "admin.roles_groups": "Rollen / Gruppen",
         "admin.no_roles": "keine Rollen definiert",

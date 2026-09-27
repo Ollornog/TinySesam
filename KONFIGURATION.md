@@ -55,7 +55,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `passkey_enabled` | `bool` | `False` | WebAuthn / Passkeys (passwortlos) — braucht [passkey] |
 | `passkey_user_verification` | `str` | `"required"` | Muss der Authenticator den Menschen prüfen (PIN, Fingerabdruck, Gesicht), bevor er signiert? `"required"` (Vorgabe) verlangt es, `"preferred"` bittet darum und nimmt auch ein Nein (B2-10). Warum das zählt: Ein Passkey meldet in TinySesam **allein** an — er ist kein zweiter Faktor, sondern ein vollständiger Login. Ohne Nutzerprüfung belegt er nur den **Besitz** des Schlüssels: Der entsperrte Rechner, der eingesteckte Stick, das kurz aus der Hand gelegte Telefon genügen dann. Mit ihr belegt er Besitz **und** etwas, das nur die Person kann. Bis 0.18.x stand hier „preferred" und die Antwort wurde nicht einmal geprüft — ein Authenticator konnte also nein sagen und galt trotzdem. `"preferred"` ist eine bewusste Entscheidung für einen Bestand alter Authentikatoren und meldet sich beim Start. Wer neu anfängt, lässt es auf `"required"`. |
 | `pin_enabled` | `bool` | `False` | persönliche PIN pro User (Benutzer + PIN) |
-| `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. False = PIN existiert, dient aber NUR als Zusatzfaktor (Route-Kette) bzw. Step-up für sensible Bereiche. |
+| `pin_login` | `bool` | `True` | PIN als Erstfaktor auf der Login-Seite anbieten. False = PIN existiert, dient aber NUR als Zusatzfaktor (Kettenschritt, Route-Kette) bzw. Step-up für sensible Bereiche. Verlangt eine strikte login_chain die PIN hinter einem anderen Faktor, ist sie dort nie Erstfaktor. |
 | `pin_min_length` | `int` | `4` | Mindestlänge beim Setzen einer PIN |
 | `stepup_methods` | `list[str]` | `list` | Womit bestätigt man einen Step-up (require(mfa=True))? Leer = alles, was der User eingerichtet hat (Reihenfolge totp → pin → password). z.B. ["pin"] = PIN für sensible Bereiche. Hat der User keine der genannten Methoden, greift sein bestes verfügbares Verfahren. |
 | `stepup_strict` | `bool` | `False` | Aus dem Wunsch eine Schranke machen: True = wer keines der genannten Verfahren eingerichtet hat, kommt NICHT herein (statt mit dem Passwort zu bestätigen, mit dem er sich gerade angemeldet hat — das ist kein Step-up). Vorgabe False, weil der Bereich sonst für Bestands- konten über Nacht verschlossen wäre; wer `stepup_methods` setzt, um etwas zu erzwingen, will in aller Regel True dazu. |
@@ -77,7 +77,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt. Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
+| `admin_identifiers` | `list[str]` | `list` | Benutzername/E-Mail, die beim Login zum Admin befördert werden, SOLANGE es keinen Admin gibt — und nie mehr, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6; dann Einmal-Token oder `tinysesam owner`). Funktioniert auch mit OIDC/SAML/LDAP (dort meist die E-Mail). |
 | `admin_claim_ttl_min` | `int` | `60` | Gültigkeit des Einmal-Tokens für /auth/claim-admin (0 = aus) |
 | `admin_claim_token_file` | `str` | `""` | z.B. /run/tinysesam/admin-claim.token |
 
@@ -88,7 +88,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `demo_mode` | `bool` | `False` | Beispielkonten anlegen und die Zugangsdaten anzeigen — NIEMALS produktiv |
 | `demo_password` | `str` | `"demo1234"` | Passwort der Demo-Konten (nur bei demo_mode) |
 | `demo_pin` | `str` | `"1234"` | PIN der Demo-Konten (nur bei demo_mode) |
-| `allow_signup` | `bool` | `False` | Selbst-Registrierung (lokaler User+Passwort) |
+| `allow_signup` | `bool` | `False` | Selbst-Registrierung (lokaler User+Passwort); nicht neben ldap_enabled |
 | `signup_require_email` | `bool` | `True` | E-Mail bei der Registrierung Pflicht (eindeutig, s. login_identifier) |
 | `signup_verify_email` | `bool` | `False` | Konto erst nach E-Mail-Bestätigung (Magic-Link) aktiv — braucht Mailer |
 | `signup_invite_only` | `bool` | `False` | Registrierung nur mit gültigem Einladungs-Token |
@@ -108,14 +108,14 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `magiclink_enabled` | `bool` | `False` | Anmeldung per Einmal-Link — braucht einen Mailer |
 | `magiclink_ttl_min` | `int` | `15` | Gültigkeit eines Einmal-Links |
-| `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
+| `magiclink_require_second_factor` | `bool` | `True` | ASVS 6.3.6 (PO-Entscheid 2026-09-24): Hat ein Konto einen zweiten Faktor (TOTP oder Passkey), meldet der Anmelde-Link allein nicht voll an — der Faktor wird danach verlangt. Sonst wäre das Postfach der einzige Schlüssel, auch für ein Konto, das sich mit einem Authenticator geschützt hat. Konten ohne zweiten Faktor meldet der Link weiter allein an. Gilt für die globale Kette und jede Route-Kette (`require(factors=["magic"])`, G10). `False` = der Link genügt immer (Verhalten bis 0.20.x in Ketten wie `["magic"]`). |
 
 ## Selbstbedienung: Adresse und Benutzername (PO-Entscheid 2026-09-25)
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `self_service_email_change` | `bool` | `True` | Jeder ändert seine E-Mail-Adresse selbst (Konto-Seite, frischer Step-up). Die neue gilt erst nach dem Klick auf den Bestätigungslink an sie; die alte bekommt einen Hinweis. Braucht einen Mailer — ohne ihn gibt es den Weg nicht. |
-| `self_service_username_change` | `bool` | `True` | Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus `login_identifier="email"`, dort folgt der Name der Adresse. Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id` (die Konto-ID). |
+| `self_service_username_change` | `bool` | `True` | Jeder ändert seinen Benutzernamen selbst (Konto-Seite, frischer Step-up) — nicht im Modus `login_identifier="email"`, dort folgt der Name der Adresse, und nicht neben LDAP (`ldap_enabled`), dort kommen die Namen aus dem Verzeichnis und nur der Betreiber benennt um. Apps hinter Forward-Auth sehen danach einen anderen `Remote-User`; stabil ist `Remote-Id`. |
 | `email_change_ttl_min` | `int` | `60` | Gültigkeit des Bestätigungslinks für eine neue Adresse |
 
 ## E-Mail-Versand (SMTP; per auth.set_mailer(fn) komplett überschreibbar)
@@ -153,7 +153,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
-| `login_chain` | `list[str]` | `list` | Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B. ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls eingerichtet). Pro Route überschreibbar: Depends(auth.require(factors=[...], strict=...)). Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User. |
+| `login_chain` | `list[str]` | `list` | Globale Standard-Kette erfüllter Faktoren, die eine Sitzung vollständig macht, z.B. ["oidc", "password"] oder ["password", "totp"]. Leer = klassisch (ein Erstfaktor + TOTP falls eingerichtet). Pro Route verschärfbar: Depends(auth.require(factors=[...], strict=...)) — zusätzlich, nie statt dieser Kette (seit 2026-09-27). Faktornamen: password, pin, oidc, passkey, totp, magic. Der erste Faktor identifiziert den User. |
 | `mfa_enrollment` | `str` | `"first_login"` | Wer darf einen von der Kette verlangten zweiten Faktor **selbst** einrichten? (R3-1) `login_chain=["password", "totp"]` liest sich wie „ohne zweiten Faktor kommt niemand rein". Bis 0.18.x stimmte das nicht: Ein Konto ohne TOTP durfte es an genau dieser Stelle selbst einrichten — wer also nur das Passwort hatte, band seinen eigenen Authenticator ein und war voll drin. Die Kette schützte damit alle ausser denen, für die sie gedacht war. * ``"first_login"`` (Vorgabe): erlaubt, solange das Konto noch **nie** vollständig angemeldet war. Ein frisch angelegtes Konto richtet sich beim ersten Mal ein — danach nie wieder. Ohne Frist: Wer sein neues Konto erst in drei Wochen benutzt, soll nicht vor einer verschlossenen Tür stehen. * ``"grace"``: erlaubt innerhalb von `mfa_enrollment_grace_days` nach der Kontoanlage. * ``"strict"``: nie. Die Einrichtung kommt dann vom Betreiber (`auth.grant_mfa_enrollment(uid)`, Admin-Panel oder Einladung). Verlangt die Kette gar keinen zweiten Faktor, greift nichts davon — ein freiwilliges TOTP richtet jeder Angemeldete jederzeit selbst ein, wie bisher. |
 | `mfa_enrollment_grace_days` | `int` | `7` | Nur für `mfa_enrollment="grace"`: Tage ab Kontoanlage. |
 | `login_chain_strict` | `bool` | `True` | Reihenfolge erzwingen (True) oder beliebig (False) |
@@ -201,6 +201,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | Feld | Typ | Vorgabe | Bedeutung |
 |---|---|---|---|
 | `federation_require_stable_id` | `bool` | `False` | Muss eine fremde Identität (LDAP, SAML) eine stabile Kennung mitbringen? Vorgabe **nein**: Ein Verzeichnis, das keine liefert, soll nach dem Update nicht plötzlich niemanden mehr anmelden. Fehlt sie, fällt die Zuordnung auf den Benutzernamen zurück — den ungeschützten Zustand von vor 0.20.0 — und sagt das einmal je Quelle im Sicherheits-Log. True macht daraus eine Abweisung; das ist die sichere Einstellung, sobald das Verzeichnis kann. |
+| `federation_name_binding_days` | `int` | `30` | Wie lange darf eine Anmeldung über LDAP/SAML ein noch ungebundenes Konto über seinen **Namen** binden (Tage)? Gezählt je Quelle ab dem ersten Start mit eingeschalteter Quelle (für den Bestand: ab dem Update) bzw. ab der Anlage des Kontos, was später ist. Danach bindet der Name nicht mehr — sonst fiele ein ruhendes Konto (jemand ist ausgeschieden) an die nächste Person, die im Verzeichnis denselben Namen bekommt, samt Rollen und Admin-Recht (G1). Abgewiesen wird mit einer Logzeile, die Kennung und Abhilfe nennt; der Betreiber bindet dann ausdrücklich: `auth.foederation_nachbinden(quelle)` (Bestand, Trockenlauf als Vorgabe) oder `auth.loese_fremde_bindung(quelle, user_id)` (öffnet die Bindung für dieses Konto). `0` = nur ausdrücklich (auch eine frisch angelegte Vorab-Anlage bindet sich nicht selbst), `-1` = unbegrenzt, das Verhalten bis 0.20.x (die Konfigurationsprüfung warnt). |
 | `ldap_enabled` | `bool` | `False` | Passwörter gegen ein LDAP/AD prüfen statt lokal — braucht [ldap] |
 | `ldap_url` | `str` | `""` | ldap://host:389 oder ldaps://host:636 |
 | `ldap_start_tls` | `bool` | `False` | Nach dem Verbinden auf TLS hochschalten (Port 389); für 636 `ldaps://` in der URL |
@@ -261,7 +262,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `saml_attr_email` | `str` | `"email"` | SAML-Attribut mit der E-Mail-Adresse |
 | `saml_email_trusted` | `bool` | `False` | Adressen aus der Assertion pauschal vertrauen? SAML kennt keinen Beleg. `False` (Vorgabe): Die Adresse wird nicht direkt verwendet — kein Konto-Attribut, kein `Remote-Email`, ein Kontoname mit `@` weicht einem Ersatznamen (wie H-3 bei OIDC); mit `federation_email_confirm` bestätigt der Inhaber sie per Link, oder `saml_attr_email_verified` nennt einen Beleg. `True`: Der IdP prüft jede Adresse (Firmen-IdP ohne Selbstregistrierung). |
 | `saml_attr_email_verified` | `str` | `""` | Attribut der Assertion, dessen wahrer Wert die Adresse belegt (z. B. ein Keycloak-Mapper für `emailVerified`). Leer = keins. |
-| `federation_email_confirm` | `bool` | `True` | Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid 2026-09-25): Nach der Anmeldung geht einmal ein Bestätigungslink an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`. |
+| `federation_email_confirm` | `bool` | `True` | Adressen aus LDAP/SAML, denen nicht vertraut wird, per Link bestätigen lassen (PO-Entscheid 2026-09-25): Nach der Anmeldung geht ein Bestätigungslink an die Adresse aus der Quelle — höchstens ein zugestellter je Konto und Tag (über alle Worker; lebt ein Link länger, `email_change_ttl_min`, so lange), keiner, solange einer offen ist; eine Drossel oder ein gescheiterter Versand wird nach `mail_per_address_window_sec` erneut versucht. Eine vergebene oder reservierte Adresse bekommt keinen, ihre Abweisung zählt wie ein Versand. Erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Braucht Mailer und `base_url`. |
 | `saml_attr_name` | `str` | `"displayName"` | SAML-Attribut mit dem Anzeigenamen |
 | `saml_attr_id` | `str` | `""` | Das Attribut mit der **stabilen** Kennung (F-11). Leer = die `NameID` der Assertion. Sie taugt nur, wenn ihr Format dauerhaft ist: `persistent` oder eine eigene Kennung aus dem Verzeichnis. Ein **transientes** NameID-Format wechselt bei jeder Anmeldung und ist als Bindung wertlos — dann gehört hier ein Attribut hin, das der IdP verlässlich schickt. |
 | `saml_attr_groups` | `str` | `"groups"` | SAML-Attribut mit den Gruppen (für saml_group_role_map) |
@@ -298,4 +299,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-158 Felder, erzeugt aus `tinysesam/config.py`.
+159 Felder, erzeugt aus `tinysesam/config.py`.

@@ -23,10 +23,123 @@ auffällt:
   LDAP-Nutzer beim nächsten Login einen Bestätigungslink.
 - **API-Keys von OIDC-Konten ruhen**, wenn der Provider Nein sagt oder das Konto 30 Tage lang nicht
   bestätigt hat — eine Anmeldung über den Provider weckt sie.
+- **Die Datenbank erzwingt den gemeinsamen Kennungsraum** (G12c): `store.create_user`,
+  `store.set_username` und `store.set_email` werfen `sqlite3.IntegrityError`, wenn Name oder Adresse
+  schon Kennung eines anderen Kontos ist — **auch bei Namensvettern wie `Alice`/`alice`**. Wer den
+  Store direkt aufruft, fängt das. `auth.create_user` wirft im Wettlauf denselben `ConfigError` wie
+  bei einer vergebenen Kennung; `e.besitzer_id` kann dann `None` sein. Die Startmeldung nennt jetzt
+  jede Kollision im Bestand, nicht nur „Name = fremde Adresse".
+- **`tinysesam unlock` nimmt die Kennung wie eingetippt** — Name, Adresse oder den Namen im
+  Verzeichnis — und räumt die Zähler unter ihr auch ohne Konto; Rückgabe 1 nur noch, wenn dort nichts
+  stand (G5). Fehlversuche, die vor einem Umbenennen oder Adresswechsel unter der neuen Kennung
+  gezählt wurden, räumt die nächste Anmeldung nicht mehr weg; sie verfallen mit dem Sperrfenster (G2).
+- **PIN hinter einem anderen Faktor** (G7): Verlangt eine strikte `login_chain` die PIN hinter einem
+  anderen Faktor (`["password", "pin"]`), zeigt die Login-Seite kein PIN-Feld mehr, und `/auth/pin`
+  antwortet ohne Sitzung 404 — der Weg führte nie zur vollen Sitzung. **`pin_login=False` mit so einer
+  Kette funktioniert jetzt** (vorher Sackgasse). Fehlgriffe im PIN-Schritt nach dem ersten Faktor hebt
+  „Passwort vergessen" nicht mehr auf (wie bei TOTP), der Betreiber schon (Panel-Reset, `tinysesam
+  unlock`). Eine App, die unter so einer Kette eine Route-Kette mit der PIN zuerst für Gäste nutzt,
+  verliert diesen Einstieg.
+- **LDAP: Anmeldungen warten kurz, statt gesperrt zu werden** (G9): Im ersten Fenster eines
+  Verzeichnis-Ausfalls kann eine Anmeldung bis zu 12 s dauern, statt sofort 429 zu bekommen. Neu im
+  Sicherheits-Log: `deferred login user=… ip=… reason=pending` — ein Aufschub, keine Sperre; die
+  mitgelieferten fail2ban-Filter treffen die Zeile bewusst nicht.
+- **LDAP/SAML binden ein ungebundenes Konto nur noch 30 Tage lang über den Namen** (G1): gezählt je
+  Quelle ab dem ersten Start nach dem Update bzw. ab der Anlage des Kontos
+  (`federation_name_binding_days`). Danach weist die Anmeldung ab (`<quelle>_namensbindung_zu`,
+  die Logzeile nennt Kennung und Abhilfe). **Den Bestand einmal binden:**
+  `auth.foederation_nachbinden("ldap")` als Trockenlauf lesen, dann mit `ausfuehren=True`; SAML mit
+  `zuordnung={name: nameid}`. Die Startmeldung nennt je Quelle, wie viele Konten es betrifft.
+  `federation_name_binding_days=-1` holt das alte Verhalten zurück. **Selbst registrierte oder
+  selbst umbenannte Konten binden nie über den Namen** (G2-N), **ebenso Konten, die eine andere
+  Quelle angelegt hat** (Angriffsrunde 2026-09-26): Ein über OIDC angelegtes Konto bindet sich nicht
+  über den Namen an LDAP oder SAML, ein über LDAP angelegtes nicht an SAML und umgekehrt — auch im
+  Bestand, soweit die Herkunft belegt ist. Wer mehrere Quellen aus demselben Verzeichnis betreibt,
+  merkt das an `<quelle>_namensbindung_zu grund=name_aus_quelle`; ein einzelnes Konto öffnet
+  `auth.loese_fremde_bindung(quelle, user_id)`.
+- **Nimmt der Identity Provider dem letzten Admin das Recht, bleibt `admin_identifiers` zu** (G6):
+  Die Allowlist befördert danach niemanden mehr. Zurück ins Panel über das Einmal-Token, das
+  TinySesam in dem Moment auf die Konsole schreibt (bzw. in `admin_claim_token_file`), oder
+  `tinysesam owner`. **Mindestens einen Owner von Hand halten.**
+- **Route-Ketten mit dem Anmelde-Link verlangen den zweiten Faktor** (G10): Hat ein Konto TOTP oder
+  einen Passkey, lässt `require(factors=["magic"])` es nach dem Link erst mit diesem Faktor durch —
+  wie die globale Policy (`magiclink_require_second_factor=False` schaltet beides ab).
+- **Adresswechsel auf eine vergebene Adresse sieht jetzt aus wie jeder andere** (G12b): Auch dann
+  geht der Hinweis an die bisherige belegte Adresse, und der Antrag verbraucht das Kontingent des
+  Kontos (`mail_per_address_max` je `mail_per_address_window_sec`). **`request_email_change()` gibt
+  dann trotzdem eine Versandfunktion zurück** — ob ein Link hinausging, sagt ihr Rückgabewert
+  (`senden() -> bool`). Eine App, die `request_email_change(…) is not None` als „Link verschickt"
+  las, liegt damit falsch. Die Konto-Seite zeigt `email_change_taken`/`_reserved` (auch ältere
+  Zeilen) als `email_change_requested` und `federation_email_confirm` gar nicht mehr; das Audit-Log
+  des Betreibers behält die echten Namen.
+- **Bestätigungslinks für Adressen aus LDAP/SAML zählen Versände** (G12a): höchstens ein
+  zugestellter je Konto und Tag (lebt ein Link länger, `email_change_ttl_min`, so lange), jetzt
+  über alle Worker; eine gedrosselte Zieladresse oder ein gescheiterter Versand wird nach
+  `mail_per_address_window_sec` erneut versucht statt am nächsten Tag. Die Abweisung einer
+  vergebenen oder reservierten Adresse zählt genauso. Die Audit-Zeile `federation_email_confirm`
+  entsteht erst nach dem Versand; ihr Detail beginnt mit `konto=<id>`, das der Zeilen
+  `email_change_requested`/`_taken`/`_reserved` aus diesem Weg mit `konto=<id> quelle=<quelle>` —
+  wer das Log maschinell liest, passt den Leser an.
+- **Eine Kennung, ein Konto (Prüfrunde 2026-09-27):** Gehört die eingetippte Kennung lokal einem
+  Konto (Name oder Adresse), der LDAP-Eintrag dazu aber einem anderen — ein lokales Konto heisst wie
+  jemand im Verzeichnis, oder ein Filter über `mail` trifft die Adresse eines lokalen Kontos —,
+  **weist die Anmeldung über LDAP ab** (Fehlversuch, Audit `ldap_kennung_abgewiesen
+  grund=kennung_zweier_konten lokal=<id> verzeichnis=<id|neu>`, Logzeile mit Abhilfe: das lokale
+  Konto umbenennen). Bis dahin meldete sie den Verzeichnis-Eintrag an bzw. legte ein Konto `ldap-…`
+  an. **Der Name, unter dem sich ein anderes Konto über LDAP anmeldet, gilt als vergeben**
+  (Registrierung 409, Umbenennen abgewiesen, `store.create_user`/`set_username` werfen
+  `IntegrityError`), und ein umbenanntes LDAP-Konto behält seinen alten Namen als Verzeichnisnamen.
+- **Neben LDAP keine offene Registrierung und keine Selbst-Umbenennung** (PO-Entscheid 2026-09-27):
+  `allow_signup=True` zusammen mit `ldap_enabled=True` ist ein Aufbaufehler, und
+  `change_username` weist neben LDAP jeden ab, der nicht Betreiber ist (die Konto-Seite bietet es
+  nicht an). Wer sich vorab mit dem Namen oder der Verzeichnisadresse einer Person registrierte
+  oder sich so umbenannte, die sich noch nie angemeldet hat, sperrte sie sonst unter dieser
+  Kennung aus (Folge von „eine Kennung, ein Konto"). Konten legt dort der Betreiber an (Panel,
+  `create_user`), umbenennen ebenso (Panel, `tinysesam rename`).
+- **Route-Ketten verschärfen die globale Regel nur** (PO-Entscheid 2026-09-27): `require(factors=[…])`
+  lässt eine Sitzung, der die globale Anmeldung noch einen Faktor schuldet (TOTP eines Kontos, das
+  eines hat; der nächste Schritt der `login_chain`), erst zu diesem Schritt — auch bei
+  `factors=["password"]`. Bis dahin überschrieb die Route-Kette die globale Regel; wer sie als
+  eigene, schwächere Anmeldung nutzte (Route `["password"]` ohne TOTP, Route `["magic"]` unter
+  `login_chain=["password", "totp"]`), bekommt jetzt den fehlenden Schritt.
+- **LDAP: eine Anmeldung fragt das Verzeichnis insgesamt höchstens 25 s** (Prüfrunde 2026-09-27,
+  `ldap_.GESAMT_FRIST_SEK`). Jede Antwort bekommt ihren Anteil: bei Search-then-Bind mit StartTLS
+  2 s je Antwort des Dienstkontos (mit `ldaps://` 3 s, ohne TLS 4 s), danach die Benutzer-Verbindung
+  den Rest, höchstens 10 s je Antwort. **Ein Verzeichnis, das langsamer antwortet, gilt jetzt als nicht
+  erreichbar** (503, kein Fehlversuch, Pause des Ausfall-Merkers) — vorher wartete jede Antwort bis
+  zu 10 s, eine Anmeldung also bis zu 100 s.
+- **Serien-Sperre: Texte je Ausweg** (Prüfrunde 2026-09-27). Die Anmeldeseite (`err.locked_serie`)
+  nennt zuerst den Betreiber, den Passwort-Reset nur bedingt — für jede Art gleich. Sperrhinweis und
+  Sicherheits-Log (`Anmeldung für user=… gesperrt: … Aufheben: …`) nennen den Reset nur noch, wenn er
+  die Sperre aufhebt (nicht bei Fehlversuchen nach dem Passwort: TOTP, PIN im Kettenschritt). Wer die
+  Logzeile maschinell liest, beachtet den Text nach `Aufheben:`.
+- **`/auth/pin` mit halber Sitzung** prüft die PIN nur noch, wenn sie der offene Schritt der
+  `login_chain` ist (Prüfrunde 2026-09-27); sonst Gästeweg bzw. 404. Im klassischen Modus mit
+  `pin_login=False` ist das wieder das Verhalten von 0.20.x.
+- **Neue CLI-Befehle:** `tinysesam rename --db <datei> <name|#id> <neu>` (Umbenennen als Betreiber,
+  G13) und `tinysesam owner --db <datei> <name>` (Notweg zum Owner).
 - **Vor dem Update die Datenbank sichern** — Schema 11; 0.20.x öffnet sie danach mit Warnung.
 
 ### Hinzugefügt
 
+- **Konten umbenennen als Betreiber (G13).** Bis dahin ging das nur für den Inhaber selbst oder aus
+  dem einbettenden Dienst — auch eine Kennungs-Kollision, die der Start meldet, liess sich weder im
+  Panel noch im CLI auflösen. Jetzt: Panel „Umbenennen", `POST <admin_path>/api/users/{id}/username`
+  (dieselben Regeln wie die Selbstbedienung über `change_username`, dazu der Owner-Schutz; eine
+  Audit-Zeile `username_changed … durch=betreiber akteur=<admin>`) und `tinysesam rename --db <datei>
+  <name|#id> <neuer-name>` (Länge, Steuerzeichen, kreuzweise frei, kein fremder Adress-Name; weist die
+  Datenbank ab, eine klare Meldung; Audit `quelle=cli`). Beide benennen als Betreiber um: Der Merker
+  „selbst gewählt" (G2-N) fällt. Die Startmeldungen zu Kollisionen und Steuerzeichen nennen beide Wege.
+- **Bestandskonten an LDAP/SAML binden: `auth.foederation_nachbinden(quelle, *, zuordnung=None,
+  ausfuehren=False)`** (G1). LDAP sucht je Konto ohne Kennung im Verzeichnis
+  (`LDAPClient.eintrag_suchen`, Dienstkonto oder anonym, genau ein Treffer); SAML und einzelne
+  Konten nehmen `zuordnung={name: kennung}`. Vorgabe Trockenlauf; der Bericht nennt je Konto
+  `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen` (mit
+  Grund, `TinySesam.NACHBINDUNG_GRUENDE`) und `lokal` (Konten mit lokalem Passwort, nur berichtet),
+  mit Anzeigename und Adresse hier und im Verzeichnis nebeneinander. Dazu
+  `federation_name_binding_days`, `create_user(…, name_selbst_gewaehlt=False)` für eigene
+  Registrierungen und für Konten aus einem eigenen Identity Provider, und
+  `change_username(…, durch_betreiber=False)` für das Umbenennen durch den Betreiber (G2-N).
 - **Benutzername und E-Mail-Adresse selbst ändern (PO-Entscheid 2026-09-25).** Auf der Konto-Seite,
   mit frischem Step-up. Die Adresse gilt erst nach dem Klick auf den Link an die neue (mit Beleg),
   die alte bekommt einen Hinweis, offene Links an sie verfallen; eine vergebene Adresse bekommt
@@ -40,8 +153,10 @@ auffällt:
 - **Adressen aus SAML und LDAP per Link bestätigen (PO-Entscheid 2026-09-25).** Traut der
   Betreiber der Quelle nicht, geht nach der Anmeldung ein Bestätigungslink an die Adresse aus der
   Quelle — derselbe Weg wie beim Adresswechsel der Selbstbedienung; erst der Klick macht sie zur
-  Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens einer je Konto und
-  Tag, keiner, solange einer offen ist; eine vergebene Adresse bekommt keinen. Schalter
+  Adresse des Kontos, mit Beleg. Nur für Konten ohne belegte Adresse, höchstens ein zugestellter je
+  Konto und Tag (über alle Worker, G12a), keiner, solange ein Adresswechsel-Link des Kontos offen ist
+  (an welche Adresse auch immer, seit der Prüfrunde 2026-09-27); eine vergebene Adresse
+  bekommt keinen, und ihre Abweisung zählt wie ein Versand. Schalter
   `federation_email_confirm` (Vorgabe an; braucht Mailer und `base_url`). Dazu je Quelle ein
   optionales Beleg-Attribut für IdPs, die das führen: `ldap_attr_email_verified`,
   `saml_attr_email_verified` — ein wahrer Wert (`true`, `1`, `yes`) belegt die Adresse dieses
@@ -102,7 +217,8 @@ auffällt:
   den Bestand beginnt die Frist mit dem Update.
 - **Der Anmelde-Link verlangt den zweiten Faktor, wenn es einen gibt (ASVS 6.3.6, Option C).** Hat
   ein Konto TOTP oder einen Passkey, meldet der Link allein nicht mehr voll an — auch nicht in einer
-  Kette wie `["magic"]` und nicht bei einem Konto nur mit Passkey (die klassische Policy verlangte
+  Kette wie `["magic"]`, nicht in einer Route-Kette `require(factors=["magic"])` (G10) und nicht bei
+  einem Konto nur mit Passkey (die klassische Policy verlangte
   ein eingerichtetes TOTP schon immer). Konten ohne zweiten Faktor meldet der Link weiter allein an.
   Einstellbar: `magiclink_require_second_factor` (Vorgabe an). Ein Konto mit Passkey richtet sich
   einen weiteren Faktor (TOTP-Selbsteinrichtung in einer Kette) nur ein, wenn der Passkey in
@@ -142,6 +258,118 @@ auffällt:
 
 ### Sicherheit
 
+- **Nach einem Entzug durch den Identity Provider öffnet sich die Allowlist nicht wieder (G6).**
+  Gemessen: `admin_identifiers=[chef@…]` und eine Admin-Gruppe beim Provider; fällt die Gruppe weg,
+  nahm H-5 das Flag — und im selben Login beförderte `maybe_promote_admin` (über `apply_factor`, es
+  gab ja keinen Admin) die Person wieder: als Admin „von Hand" (1) UND Erst-Owner, ein Recht, das kein
+  Provider mehr entzieht und das sich weder löschen noch sperren lässt; ebenso jedes andere Konto aus
+  der Liste. Jetzt setzt der Entzug des letzten Admins den Merker `allowlist_nach_idp_entzug`
+  (Setting, kein Schema), danach verweigert die Allowlist (`admin_bootstrap_denied nach_idp_entzug`).
+  Das Einmal-Token für `/auth/claim-admin` geht sofort an den Betreiber (bis dahin nur beim Start),
+  `tinysesam owner` bleibt. Test: `tests/test_t13_entscheide.py`.
+- **Route-Ketten verlangen nach dem Anmelde-Link den zweiten Faktor (G10).** `_link_braucht` lief nur
+  für die globale Policy; `require(factors=["magic"])` liess ein Konto mit TOTP oder Passkey mit dem
+  Postfach allein durch (gemessen: globale Route 401, diese 200). Jetzt dieselbe Regel an beiden
+  Stellen; eine Kette, die `totp`/`passkey` selbst enthält, bekommt keinen Doppelschritt. Test:
+  `tests/test_t13_entscheide.py` (3c).
+- **Bindung über den Namen mit Frist (G1).** Ein Konto ohne Kennung aus LDAP/SAML (Bestand von vor
+  F-11, Vorab-Anlage) band die nächste Anmeldung unter seinem Namen — ohne Grenze für Zeit oder
+  Herkunft, auch den Ersatz eines Herkunfts-Platzhalters, und `federation_require_stable_id`
+  änderte daran nichts. Gemessen: ein ruhendes Konto `jsmith` mit Admin-Recht, zwei Jahre alt; ein
+  neuer Verzeichniseintrag `jsmith` mit fremder Kennung übernahm es samt Admin. Jetzt nur noch
+  `federation_name_binding_days` (Vorgabe 30, `0` = nur ausdrücklich, `-1` = unbegrenzt, darunter
+  ein Aufbaufehler) ab dem Merker der Quelle (`foederation_seit:<quelle>`, einmal gesetzt beim
+  ersten Start mit eingeschalteter Quelle) bzw. der Anlage des Kontos; danach Abweisung wie Lage 3.
+  Dasselbe gilt ohne stabile Kennung für die erste Zuordnung eines vorhandenen Kontos.
+  `loese_fremde_bindung` öffnet die Bindung für ein Konto (Tabelle `namensbindung`), die neue
+  `foederation_nachbinden` bindet den Bestand ausdrücklich — mit demselben Entscheid wie die
+  Anmeldung (`_nachbindung_grund`). Test: `tests/test_foederation_bestand.py`.
+- **Ein selbst gewählter Name bindet nicht über LDAP/SAML (G2-N).** Ein lokales Konto `eve` benannte
+  sich auf der Konto-Seite in `chefin` um, einen Namen, den es nur im Verzeichnis gab; die
+  Anmeldung der echten chefin band deren Kennung an eves Konto, die Rolle aus
+  `ldap_group_role_map` kam dazu — und eve meldete sich weiter mit ihrem Passwort an (vorbestehend
+  auch über `allow_signup`). Jetzt trägt ein Konto aus der Registrierung (auch mit Einladung) oder
+  aus dem Umbenennen der Selbstbedienung den Merker `users.name_selbst_gewaehlt` und wird nie über
+  den Namen gebunden (Audit `<quelle>_namensbindung_zu grund=name_selbst_gewaehlt`); ein vom
+  Betreiber angelegtes oder mit `durch_betreiber=True` umbenanntes nicht. Der Bestand bekommt den
+  Merker beim ersten Start einmal aus dem Audit-Log (`signup`/`username_changed` unter dem heutigen
+  Namen ab der Anlage).
+- **Ein Name aus einer anderen Quelle bindet ebenfalls nicht (Angriffsrunde 2026-09-26).** G2-N
+  kannte nur Registrierung und Umbenennen. Ein Konto, das OIDC, SAML oder LDAP anlegt, trägt aber
+  den Namen, den die Person DORT hat — bei einem IdP mit Selbstregistrierung einen selbst gewählten
+  (`preferred_username`, NameID, `uid`). Gemessen: `chefin` über OIDC, danach die echte chefin über
+  LDAP — ihre Kennung und die Rolle aus `ldap_group_role_map` landeten im OIDC-Konto, und der
+  Angreifer meldete sich weiter über OIDC an; über SAML ebenso, mit `__admin__` bis zum Admin-Flag.
+  Umgekehrt übernahm ein SAML-Selbstregistrant mit `uid=chefin` das von LDAP angelegte Konto selbst.
+  Jetzt merkt sich die Anlage die Quelle (`users.name_quelle`), und eine ANDERE Quelle bindet das
+  Konto nie über den Namen (`grund=name_aus_quelle`); dieselbe Quelle ersetzt ihren Platzhalter
+  weiter durch die echte Kennung. Ein Merker „selbst gewählt" für jede föderierte Anlage (die im
+  Befund empfohlene Form) hätte genau das gebrochen: Nach `ldap_attr_id` wäre jedes LDAP-Konto ohne
+  Kennung abgewiesen worden. Umbenennen setzt die Herkunft zurück. Der Bestand bekommt sie beim
+  ersten Start einmal, wo sie belegt ist: OIDC (der Callback legt jedes verknüpfte Konto selbst an)
+  und eine LDAP/SAML-Bindung aus der Sekunde der Anlage; Konten von vor den Kennungen (bis 0.19)
+  bleiben ohne und hängen an der Frist. Test: `tests/test_foederation_bestand.py`.
+- **`objectGUID` aus den rohen Bytes** (Nebenbefund zu G1): Ohne Schema dekodiert ldap3 einen Wert,
+  der zufällig gültiges UTF-8 ist, zu Text — eine GUID aus Bytes unter 0x80 kam als Text mit
+  Steuerzeichen an, die Formprüfung wies sie als manipuliert ab, und die Person kam über LDAP nie
+  mehr hinein. `objectGUID` wird jetzt immer roh gelesen und als Hex abgelegt, ein anderes
+  `ldap_attr_id` dann, wenn sein Text Steuerzeichen trägt.
+- **Kennungsraum in der Datenbank erzwungen (G12c).** Benutzername und Adresse sind ein Raum
+  (`find_user` sucht in beiden, der Sperrzähler faltet `Alice`/`alice`, `Émile`/`émile`, Vollbreite
+  und Unicode-/A-Label-Domain zusammen), die Datenbank kannte aber nur `UNIQUE(username)` (BINARY)
+  und den Index auf die Adresse. Geprüft wurde vor dem Schreiben (`kennung_vergeben`), getrennt davon
+  geschrieben: Zwei gleichzeitige Anfragen derselben Kennung — eine als Name, eine als Adresse, auch
+  ein Adresswechsel gegen eine Registrierung — kamen beide durch, oder eine endete mit einer 500.
+  Jetzt weisen zwei Trigger über die Zähl-Töpfe (`trg_users_kennung_insert`/`_update`, nur
+  eingebaute SQL-Funktionen, über die vorhandenen Indizes) jede neu vergebene Kennung ab, die schon
+  einem anderen Konto gehört — in derselben Anweisung wie das Schreiben. Der Verlierer eines
+  Wettlaufs bekommt dieselbe Antwort wie bei einer vergebenen Kennung: `ConfigError` aus
+  `create_user` (`e.besitzer_id` kann dann `None` sein), 409 bzw. die neutrale Seite bei der
+  Registrierung, 409 in der Admin-API und beim Bestätigen eines Adresswechsels (Audit
+  `email_change_taken … wettlauf=1`), 400 beim Umbenennen; eine Adresse aus OIDC/LDAP/SAML wird
+  nicht nachgetragen (Audit `<quelle>_email_taken … wettlauf=1`). Der Adresswechsel im Mail-Modus
+  schreibt Adresse und Namen in einer Transaktion (`store.adresse_wechseln`). Bestehende
+  Kollisionen bleiben stehen und lassen sich auflösen; neu: `store.topf_kollisionen()`, und
+  `kennungs_kollisionen()` vergleicht über den Zähl-Topf statt NOCASE. Wer dieselbe Adresse erneut
+  setzt, behält seinen Zähl-Topf (vorher stand er bis zum nächsten Nachtrag auf NULL).
+  ⚠️ **Für direkte Store-Aufrufer:** `store.create_user`/`set_username`/`set_email` werfen
+  `sqlite3.IntegrityError` („tinysesam: kennung vergeben") statt eine Kollision anzulegen.
+  **Rückweg:** Die Trigger bleiben in der Datei und wirken unter 0.20.x weiter; entfernen mit
+  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;`
+  (docs/BETRIEB.md, „Kennungsraum"). Test: `tests/test_kennungsraum.py`.
+- **Kein Orakel für vergebene Adressen beim Adresswechsel (G12b).** Die Antwort war wortgleich, aber
+  drei Kanäle verrieten, ob eine Adresse schon Kennung eines anderen Kontos ist (gemessen): Der
+  Hinweis an die eigene, belegte Adresse kam nur bei einer freien; der Antrag auf eine vergebene
+  kehrte vor der Drossel je Konto zurück — nach drei Proben auf vergebene Adressen ging der Link an
+  eine eigene Kontrolladresse noch hinaus, nach drei auf freie nicht mehr; und die Konto-Seite
+  nannte `email_change_taken` bzw. `_reserved`. Dazu die Laufzeit: vergeben eine geschriebene
+  Zeile und 417 SQLite-Schritte, frei zwei und 450, dazu der Versand nach der Antwort (Median in
+  einem Prozess 2,3 gegen 3,9 ms). Jetzt ein Zweig für jedes Ziel: erst die Drosseln, dann in jedem
+  Fall ein Token (bei „vergeben"/„reserviert" ein Wegwerf-Token, schon bei seiner Anlage
+  abgelaufen, nach dem Muster von R4-03) und eine Audit-Zeile, dann immer ein Sender, der den
+  Hinweis an die eigene Adresse schickt. Die Konto-Seite bildet die Ereignisnamen ab
+  (`own_events`); eine Abweisung beim Bestätigen (409) behält ihren Namen. Gleich sind damit
+  Antwort, Mails an den Antragsteller, Kontingent, Anzeige und die Folge der SQL-Anweisungen.
+  **Verbleibend:** kein Index-Treffer gegen einen Nicht-Treffer (Mikrosekunden), und die Drossel je
+  Ziel (`wechsel:<adresse>`) verrät weiter, ob eine Adresse in den letzten 15 Minuten drei
+  Wechselanträge bekam — unabhängig davon, ob sie vergeben ist. Test:
+  `tests/test_selbstbedienung.py` (G12b), `tests/test_quellenadresse.py` (Kontoseite LDAP).
+- **Bestätigungslinks aus LDAP/SAML: Versände zählen, Versuche dämpfen (G12a).** Das Tageskontingent
+  (`quellmail:<id>`, im Speicher je Prozess) wurde vor dem Versuch verbraucht: Eine gedrosselte
+  Zieladresse oder ein gescheiterter Versand kostete den Link für einen ganzen Tag, und zwei Worker
+  auf einer Datenbank schickten zwei am selben Tag. Jetzt zählt die Datenbank den Versand — die
+  Zeile `federation_email_confirm … konto=<id>` entsteht im Postausgang und nur, wenn die Mail
+  hinausging (`Store.quellmail_seit`, über `idx_audit_ts`) —, und ebenso die Abweisung einer
+  vergebenen oder reservierten Adresse (ihre Zeile `email_change_taken`/`_reserved` beginnt auf
+  diesem Weg mit `konto=<id> quelle=<quelle>`): höchstens ein erledigter Antrag je Konto und Tag,
+  so lange, wie ein Link gilt, wenn das länger ist. Die Abweisung zuerst nur im Speicher zu dämpfen,
+  war ein Orakel (Angriffsrunde 2026-09-26): je Worker und bis zum Neustart eine weitere Zeile, die
+  Kontoseite eines LDAP-Nutzers, der sein `mail` selbst pflegt, zeigte bei einer freien Adresse
+  einen Antrag, bei einer vergebenen mit jedem Worker einen mehr. Der Speicher dämpft nur noch das
+  Vorübergehende im Fenster der Mail-Drossel. `_token_mail` meldet dafür, ob die Mail hinausging.
+  **Verbleibend:** Scheitert der Versand an eine freie Adresse, darf die nächste Anmeldung nach dem
+  Fenster erneut — eine vergebene hat keinen Versand, der scheitern könnte. Test:
+  `tests/test_quellenadresse.py` (G12a, a1-02).
 - **Offene Einmal-Links fallen mit jeder Abwehr** (Angriffsrunde Selbstbedienung, Fund 1): Der
   Passwort-Reset (auch durch den Admin) und „alle Sitzungen beenden" verwerfen alle offenen Links des
   Kontos, der Passwortwechsel auf der Konto-Seite und „andere Sitzungen beenden" offene
@@ -173,8 +401,177 @@ auffällt:
   messbar an der Antwortzeit. Jetzt dieselbe Arbeit (Platzhalter mit Zufallsnamen, von `gc()`
   geräumt). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig; die
   Konfigurationsprüfung warnt davor.
-- **Eine vollständige Anmeldung räumt nur Fehlversuche ab der Kontoanlage** (Grenze a) — nicht die,
-  die vorher unter demselben Namen oder derselben Adresse gezählt wurden.
+- **Eine Kennung gehört dem Konto erst ab ihrem Beitritt** (Grenze a, vollständig mit G2). Eine
+  Anmeldung räumt nur Fehlversuche, die ab dann unter Name oder Adresse gezählt wurden — nicht die, die
+  ein Fremder vorher unter der damals freien Kennung gemacht hatte (sie zählen in der Drosselung seiner
+  IP). Bis 2026-09-26 war die Grenze die Anlage des Kontos: Nach einem Umbenennen, einem Adresswechsel
+  oder dem Nachtrag einer Adresse aus OIDC räumte die erste Anmeldung auch die fremden Versuche weg,
+  die Konto-Seite zeigte die Anmeldung des Vorbesitzers samt IP, und das Löschen schrieb dessen
+  Audit-Zeilen um. Das gilt jetzt für die volle Anmeldung, den Erfolg des ersten Faktors
+  (`record_login`), die Konto-Seite und das Löschen. Die Grenze ist eine Id-Wasserlinie je Kennung
+  (`users.name_versuch_ab`, `mail_versuch_ab`, `name_audit_ab`, `mail_audit_ab`, gesetzt im selben
+  UPDATE wie die Kennung): exakt auch in der Sekunde der Anlage, unabhängig von der Uhr; nur die
+  Schreibweise zu ändern (`B1` → `b1`) verschiebt sie nicht. Ein rohes UPDATE von Name oder Adresse
+  hebt sie (Nachrechnen-Trigger, die strengere Richtung). Bestand: NULL, dann wie bisher die Anlage.
+  Die Serie (B2-6) endet weiter mit der ersten vollen Anmeldung ganz — sie hat keine IP und schützt
+  nur den, dem die Kennung jetzt gehört. Schema bleibt 11 (additiv). Test:
+  `tests/test_kennung_beitritt.py`.
+- **LDAP: die Serie unter dem Namen im Verzeichnis (G5).** Nach einer Umbenennung im Verzeichnis
+  (lokal `alice`, über die stabile Kennung gebunden, dort `alice.neu`) zählt die Serie (B2-6) unter
+  `alice.neu`, geräumt wurde aber nur unter `alice` und der Adresse: Eigene Tippfehler summierten sich
+  über die Jahre, ein Fremder sperrte die Person mit genug Fehlversuchen dauerhaft aus, und der
+  dokumentierte Ausweg `tinysesam unlock alice.neu` brach mit „Kein Konto" ab. Jetzt vermerkt jede
+  erfolgreiche Anmeldung den Verzeichnisnamen an der Bindung (`federated_identity.name_topf`), und
+  volle Anmeldung, Panel-Reset, `tinysesam passwd` und `unlock` räumen ihn mit
+  (`store.zaehl_kennungen`) — nicht, wenn er lokal einem anderen Konto gehört. `unlock` nimmt die
+  Kennung wie eingetippt und räumt auch ohne Konto (Bestand, in dem der Name noch nicht vermerkt ist).
+- **Die PIN hinter einem anderen Faktor ist ein Folgefaktor (G7).** Die Serie (B2-6) zählt je Art,
+  und ein Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren (R2-2). Die Art war die
+  Methode — sie kannte die Stellung nicht: In einer Kette `password → pin` buchten die Fehlgriffe des
+  PIN-Schritts wie die eines Erstfaktors, und wer Postfach und Passwort hatte, bekam je Reset eine
+  frische Serie gegen die PIN. Jetzt entscheidet der Weg: Eine PIN hinter einem schon erbrachten
+  Faktor — halbe Sitzung im Kettenschritt, volle in einer Route-Kette — bucht unter `pin_folge` und
+  bleibt nach dem Reset stehen wie TOTP; eine PIN als Erstfaktor (ohne Sitzung) bucht weiter unter
+  `pin`, die räumt der Reset. Die volle Anmeldung, der Panel-Reset und `tinysesam unlock` räumen
+  beide. Fenster und PIN-Topf zählen unverändert als `pin`. Dazu zwei Befunde am selben Weg:
+  **N1** — mit `pin_login=False` war eine Kette `password → pin` eine Sackgasse: Der PIN-Schritt lief
+  über den Gästeweg, und der antwortete 404. Jetzt erkennt `/auth/pin` die halbe Sitzung wie
+  `/auth/totp` und fragt nur die PIN (ohne Namensfeld); `pin_login` gilt nur für den Gästeweg — seit
+  der Prüfrunde 2026-09-27 nur, wenn die PIN ihr Kettenschritt ist (p2 F1, unten).
+  **N2** — in einer strikten Kette `password → pin` antwortete der Gästeweg ohne Passwort auf eine
+  falsche PIN mit 401, auf die richtige mit 303: ein Orakel, und eine zuerst eingegebene PIN erfüllt
+  die strikte Kette ohnehin nie. Die PIN ist dort kein Erstfaktor mehr
+  (`TinySesamConfig.pin_als_erstfaktor()`, gelesen von Login-Seite und `/auth/pin`). In einer NICHT
+  strikten Kette bleibt sie es; die Konfigurationsprüfung warnt dann und rät zu `pin_login=False`.
+  Nennt das Formular im Kettenschritt ein anderes Konto, bleibt es ein Identitätswechsel über den
+  Gästeweg (bei geschlossenem: 404). Die Konto-Seite zeigt ihre PIN-Sektion weiter, wo die Login-Seite
+  die PIN nicht mehr anbietet, und auch mit `pin_login=False`, wenn die Kette eine PIN verlangt. Neu
+  für eigene PIN-Seiten: `versuch_beginnen(…, serie_art=auth.SERIE_PIN_FOLGE)`. Der Sperrhinweis per
+  Mail nennt bei der Serie auch den Betreiber als Weg hinaus (seit der Prüfrunde 2026-09-27 den Reset
+  nur, wenn er die Serie räumt, unten). **Rückweg:** Eine ältere Fassung zählt
+  `pin_folge` mit und räumt es nur mit einer vollen Anmeldung oder durch den Betreiber — strenger.
+  Test: `tests/test_pin_folge.py`.
+- **LDAP: eine Verzeichnis-Anmeldung räumt keine fremden Zähler mehr (G5-N1).** Ein Filter über
+  `mail` löst die Adresse eines lokalen Kontos auch zu einem Dritten auf, dessen `mail`-Attribut so
+  lautet. Jede Anmeldung des Dritten setzte das Kontofenster der Inhaberin zurück — verteiltes Raten
+  ohne Grenze ausser Serie und IP-Limit. `record_login` hat dafür `konto=` (angehängt, Vorgabe
+  `None`); die mitgelieferte Login-Route reicht es bei einer Verzeichnis-Anmeldung durch.
+- **Eine Kennung prüft nie die Geheimnisse zweier Konten (Prüfrunde 2026-09-27, p1-d).** G5-N1
+  schützte nur eine Richtung. Unter einer Kennung prüfte die Login-Route das lokale Passwort des
+  Kontos UND das LDAP-Passwort des Eintrags, der über die stabile Kennung an ein ANDERES Konto
+  gebunden sein kann. Hiess ein lokales Konto wie eine andere Person im Verzeichnis (nach einer
+  Umbenennung dort, im Panel, im CLI oder in der Selbstbedienung, per Registrierung) oder trug es
+  deren Verzeichnisadresse (Filter über `mail`, `ldap_email_trusted=False`), räumte jede seiner
+  Anmeldungen Fenster und Serie unter dieser Kennung. Gemessen mit allen Vorgaben: 120 Fehlversuche
+  gegen das LDAP-Passwort von einer IP, keine 429, danach öffnete das richtige Passwort die Sitzung
+  der Person. Jetzt weist `check_ldap` ab, wenn der Eintrag zu einem anderen Konto führt als
+  `find_user` — gebunden, über den Namen oder neu angelegt —, bevor irgendetwas geschrieben ist
+  (Konto, Bindung, Rollen, Adresse); die Route verbucht einen Fehlversuch. Und der Name an der
+  Bindung eines anderen Kontos (`federated_identity.name_topf`) ist vergeben: `kennung_vergeben`,
+  die Kennungs-Trigger der Datenbank (Index `ix_fed_name_topf`) und `tinysesam rename`. Test:
+  `tests/test_t13_entscheide.py`.
+- **Nach dem Umbenennen eines LDAP-Kontos bleibt sein alter Name der Name im Verzeichnis (p1-b).**
+  Hiess das Konto lokal wie im Verzeichnis, stand an der Bindung nichts; nach dem Umbenennen
+  räumten Panel-Reset und volle Anmeldung die Serie unter dem Verzeichnisnamen nicht mehr (429 bis
+  `tinysesam unlock`), und der Name war lokal frei. Jetzt vermerkt jedes Umbenennen den alten Namen
+  in derselben Transaktion (nur mit echter Kennung, nicht mit dem Herkunfts-Platzhalter).
+- **Ein veralteter Verzeichnisname räumt keine fremde Serie (p1-a).** Nach Umbenennen und
+  Wiedervergabe im Verzeichnis trugen zwei Konten denselben Namen; jede volle Anmeldung des
+  Vorbesitzers beendete die Serie, unter der gegen den neuen Inhaber geraten wurde, und `tinysesam
+  unlock` nannte das Konto mit der jüngeren Bindung. Jetzt löscht die Anmeldung unter dem Namen ihn
+  an fremden Bindungen, `zaehl_kennungen` prüft fremde Bindungen mit, und `unlock` nennt bei zwei
+  Trägern (Bestand) kein Konto.
+- **Ein Schreiber, der den Zähl-Topf mitführt, hebt die Wasserlinie (p1-c).** `store.set_email` aus
+  0.20.1 (nach einem Rückschritt) setzt Adresse und Topf in einer Anweisung — der Nachrechnen-Trigger
+  feuerte nicht, und die erste volle Anmeldung räumte die Fehlversuche des Fremden unter der neuen
+  Adresse. Neue Trigger `trg_users_wechsel_name`/`_mail`. Test: `tests/test_kennung_beitritt.py`.
+- **Route-Ketten unterschreiten die globale Regel nicht mehr (PO-Entscheid 2026-09-27, „Angleichen").**
+  `require(factors=["password"])` liess ein Konto mit TOTP mit dem Passwort allein auf die Route,
+  `["pin", "password"]` ebenso, und unter `login_chain=["password", "totp"]` genügte das Passwort.
+  Jetzt muss die Sitzung erst für die globale Regel voll sein (`mfa_ok`); eine halbe geht zu deren
+  fehlendem Schritt (`next_login_step`). Kein neuer Parameter. Test: `tests/test_t13_entscheide.py`.
+- **Die Löschzusage (H-13) deckt Schreibweisen, frühere Kennungen und die eigenen Werte (p2 F4,
+  schon auf main).** Nach dem Löschen blieben stehen: `login_fail`-Zeilen mit der ROHEN Eingabe
+  (`Émile `, ` emile@…`, Vollbreite), die Anmeldung unter dem früheren Namen samt IP, `alt=` in
+  `username_changed`/`email_changed` und `neu=`/`an=` eines nie eingelösten Adresswechsels bzw. aus
+  LDAP/SAML. Jetzt vergleicht der Blockscan die Spalte `username` im Zähl-Topf (nicht, wenn ein
+  verbleibendes Konto den Topf teilt), frühere Namen und Adressen kommen aus den eigenen
+  Wechselzeilen und gelten in ihrer Spanne, und in den eigenen Zeilen werden `alt=`, `neu=` und
+  `an=` ersetzt. Test: `tests/test_audit_runde2.py`.
+- **Die halbe Sitzung prüft die PIN nur als ihren Kettenschritt (Prüfrunde 2026-09-27, p2 F1).** Seit
+  G7-N1 genügte `/auth/pin` jede halbe Sitzung. Im klassischen Modus mit `pin_login=False` und einem
+  Konto mit TOTP und PIN bekam, wer nur das Passwort hatte, auf eine falsche PIN 401 und auf die
+  richtige 303 (0.20.x: 404) — ein Orakel. In einer strikten Kette `password → totp → pin` stand eine
+  PIN vor dem TOTP in der Sitzung; deren Reihenfolge war danach nie mehr erfüllbar, und jede weitere
+  Anmeldung im selben Browser hing an ihr fest, bis zum Abmelden. Jetzt gilt die halbe Sitzung (GET
+  und POST) nur, wenn die globale `login_chain` die PIN verlangt, sie noch fehlt und sie — strikt —
+  der nächste Schritt ist; sonst Gästeweg bzw. 404. Test: `tests/test_pin_folge.py` (j);
+  `tests/test_stepup.py` hielt für den klassischen Fall die 401 fest und erwartet wieder 404.
+- **Kein Orakel über das Flugfenster des Postausgangs (p2 F2).** Die Zeile
+  `federation_email_confirm` entsteht erst nach dem Versand, eine Abweisung sofort, und
+  `offener_token` fragte nur nach einem Link an DIESELBE Adresse. Lag der Link an `ziel@` noch im
+  Postausgang (langsames Relay), schickte ein zweiter Worker nach einem Wechsel des eigenen
+  `mail`-Attributs einen an `probe@` — kam er an, war `ziel@` frei; dazu zwei Links an einem Tag.
+  Jetzt hält jeder offene Adresswechsel-Link des Kontos auf (`store.offener_token(…, email=None)`).
+  Test: `tests/test_quellenadresse.py`.
+- **`lockout_serie` genau beim Übergang (p2 F3, schon auf main).** Protokolliert wurde der
+  Serienstand bei der Buchung, samt schwebender Vorbuchungen: Schwebten die Inhaberin (richtiges
+  Passwort) und ein Angreifer an grenze−2 gleichzeitig und beendete ihre volle Anmeldung die Serie,
+  standen `lockout_serie` im Audit-Log und „gesperrt" im Sicherheits-Log, obwohl nichts gesperrt war.
+  Jetzt zählt der feststehende Stand: `store.reserve_attempt` gibt ihn nach der Buchung zurück (eine
+  sofort feststehende Buchung überschreitet die Grenze dort — gemeldet, wenn die Serie beim Abschluss
+  noch steht), `store.finish_attempt(…, serie=)` gibt ihn vor und nach dem Abschluss zurück, beide in
+  einer Transaktion (`BEGIN IMMEDIATE`; eine schwebende überschreitet die Grenze erst dort). Test:
+  `tests/test_vorbuchung_schwebe.py` (echte Salve mit und ohne Schweben: genau eine Zeile).
+- **LDAP: Gesamtfrist, damit eine laufende Anmeldung nie als bestätigter Fehlversuch zählt (p2 V1).**
+  Eine offene Vorbuchung gilt nach `Store.VORBUCHUNG_SCHWEBE_SEK` (30 s) als Fehlversuch eines
+  gestorbenen Prozesses. ldap3 kennt nur eine Frist je Antwort (10 s), und ein Search-then-Bind mit
+  StartTLS wartet bis zu zehnmal — ein langsames, aber antwortendes Verzeichnis liess eine noch
+  laufende Anmeldung als bestätigten Fehlversuch zählen: echte Sperre, Sperrmail und `failed login`
+  für Dritte. Jetzt `ldap_.GESAMT_FRIST_SEK = 25`, verteilt über die Wartestellen (das Dienstkonto
+  höchstens die Hälfte des Rests); reicht der Rest nicht, gilt das Verzeichnis als nicht erreichbar,
+  bevor es gefragt wird — nie als „Passwort falsch". Test: ebenda (ldap3-Attrappe mit eigener Uhr).
+- **Der Ausweg aus der Serie je nach Art.** Der Selbstbedienungs-Reset räumt TOTP und die PIN im
+  Kettenschritt nicht (G7); reichten diese allein bis an die Grenze, nannten Sperrhinweis und
+  Sicherheits-Log trotzdem den Reset — der Inhaber setzte sein Passwort zurück und blieb gesperrt.
+  Jetzt nennen sie ihn nur, wenn er die Sperre aufhebt (`store.fehlserie_ohne`), sonst den Betreiber.
+  Die Anmeldeseite zeigt jedem denselben Text, der zuerst den Betreiber nennt — ein Text je Art
+  verriete, dass jemand am zweiten Faktor rät und das Konto also existiert. Test:
+  `tests/test_pin_folge.py`.
+- **Volle Warteschlange verwirft den Bestätigungslink.** Gab der Hinweis-Postausgang den Versand
+  zurück (Warteschlange voll), blieb der Token des nie zugestellten Links offen und hielt über
+  `offener_token` jeden neuen bis zu seinem Ablauf auf. Jetzt verfällt er sofort; dasselbe gilt für
+  den Adresswechsel der Selbstbedienung (`request_email_change` gibt `senden.verwerfen` mit, die Route
+  reicht es als `bei_ueberlauf` durch). Test: `tests/test_quellenadresse.py`,
+  `tests/test_selbstbedienung.py`.
+- **LDAP: Das erste Fenster eines Ausfalls sperrt niemanden mehr (G9).** Die Login-Route bucht jeden
+  Versuch vorab als Fehlversuch (R7-2) und nimmt ihn bei einem Verzeichnis-Ausfall zurück (F-23) —
+  erst, wenn der Ausfall gemeldet ist, bei einem Verzeichnis, das Pakete verwirft, also nach dem
+  Timeout (bis zu 10 s; seit der Gesamtfrist, p2 V1 oben, der Anteil der Wartestelle). Vor dem
+  ersten Timeout weiss der Ausfall-Merker noch nichts: Wer in diesen Sekunden
+  anklopfte, sah die hängenden Vorbuchungen als Fehlversuche. Gemessen mit 15 hängenden Anmeldungen
+  hinter einer NAT-Adresse: Alice und der Notfall-Admin mit richtigem Passwort bekamen 429, das
+  Sicherheits-Log `failed login … reason=lockout_user|lockout_ip` (fail2ban bannte die Adresse), Alice
+  eine Mail „Gesperrte Anmeldung“ — danach stand kein einziger Fehlversuch in der Tabelle. Jetzt
+  schwebt die Vorbuchung einer LDAP-Anmeldung in der Datenbank (`login_attempt.offen`, Schema bleibt
+  11, additiv), bis das Verzeichnis geantwortet hat. Würde eine Anmeldung **nur** an schwebenden
+  Vorbuchungen scheitern, wartet sie, bis sie entschieden sind — höchstens 12 s
+  (`ldap_.VERBINDUNGS_TIMEOUT` + 2), höchstens 8 Wartende je Prozess —, und läuft dann normal weiter.
+  Wer keinen Warteplatz bekommt oder die Frist überschreitet, bekommt 429 wie bei einer Sperre (kein
+  neues Orakel), im Sicherheits-Log aber `deferred login user=… ip=… reason=pending`: keine Sperre,
+  kein Treffer für die fail2ban-Filter, kein Sperrhinweis, und nie der Text der Serien-Sperre. Eine
+  Regel, die auch mit den bestätigten Fehlversuchen allein greift, sperrt wie bisher — eine Salve
+  falscher Passwörter wartet mit und bekommt danach die echte Sperre (R7-2 bleibt). Eine offene
+  Vorbuchung, die nach 30 s niemand abgeschlossen hat (`Store.VORBUCHUNG_SCHWEBE_SEK`, Prozess
+  gestorben), zählt als Fehlversuch; eine unerwartete Ausnahme in der Prüfung macht den Versuch sofort
+  zu einem. Dazu: Abschluss bzw. Rücknahme eines Versuchs und seiner Vorbuchung in der Serie laufen
+  jetzt in einer Transaktion — getrennt las ein Wartender die Serie dazwischen um eins zu hoch. Neu:
+  `versuch_beginnen(…, schweben=)`, `store.count_fails(…, nur_bestaetigt=)`,
+  `store.reserve_attempt(…, schweben=)` (Antwort `(None, "schwebend")`), `store.finish_attempt(…,
+  serie=)`, `store.cancel_attempt(…, serie=)`, `store.fehlserie_bestaetigt()` — alles angehängt, mit
+  Vorgabe. `is_locked()` meldet einen Aufschub als `True` (mit `deferred login`, ohne Mail). Ohne LDAP
+  schwebt nichts, das Verhalten ist unverändert. **Rückweg:** Eine ältere Fassung kennt die Spalte
+  nicht und zählt offene Zeilen als Fehlversuche wie bisher. Test: `tests/test_vorbuchung_schwebe.py`.
 
 - **Anmeldung gesperrt nach 100 Fehlversuchen in Folge (B2-6).** Die bisherigen Schwellen zählen nur
   im Fenster (`lockout_window_sec`) — wer langsamer rät als die Schwelle, riet beliebig lange. Jetzt
@@ -188,11 +585,11 @@ auffällt:
   90 Tagen Ruhe, ausgelöste nie. Geprüft und vorgebucht wird die Serie **in derselben Transaktion**
   wie der Versuch (eine parallele Salve an der Grenze bekommt einen Versuch, nicht einen je Anfrage);
   ein richtiger erster Faktor nimmt nur seine eigene Vorbuchung zurück, ein Verzeichnis-Ausfall
-  zählt nicht. Der **Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren** (Passwort, PIN —
-  die kann jeder erzeugen, auch ein Fremder ohne Geheimnis); **TOTP-Fehlgriffe bleiben stehen**
-  (derselbe Grund wie R4-13: Das Postfach beweist den zweiten Faktor nicht, und TOTP-Fehlgriffe
-  erzeugt nur, wer das Passwort schon hat). Der Betreiber räumt ganz: Passwort-Reset im Panel,
-  `tinysesam unlock`.
+  zählt nicht. Der **Selbstbedienungs-Reset räumt die Anteile der ersten Faktoren** (Passwort, PIN
+  als Erstfaktor — die kann jeder erzeugen, auch ein Fremder ohne Geheimnis); **TOTP-Fehlgriffe
+  bleiben stehen**, ebenso die einer PIN hinter einem schon erbrachten Faktor (G7) — derselbe Grund
+  wie R4-13: Das Postfach beweist den zweiten Faktor nicht, und diese Fehlgriffe erzeugt nur, wer den
+  ersten schon hat. Der Betreiber räumt ganz: Passwort-Reset im Panel, `tinysesam unlock`.
 - **Passwort-Mindestlänge 15, wenn das Passwort allein anmelden kann (B2-4, NIST SP 800-63B).** Neue
   Schwelle `password_min_length_single_factor` (Panel, Vorgabe 15). Sie gilt, solange die globale
   Kette keinen zweiten Faktor erzwingt — also in der Vorgabe — **und auch dann, wenn Konten den
@@ -215,8 +612,8 @@ auffällt:
   „Email as username", Entra-UPN —, geprüft nach der Unicode-Faltung, also auch `＠`), keine Adresse
   im Konto, kein `Remote-Email`. Liefert der Provider den Beleg
   später, wird sie nachgetragen, sofern sie frei ist. Ein Provider, der den Claim nie schickt (Entra
-  ID), braucht `oidc_email_verified_default=True`. SAML und LDAP sind unverändert (sie liefern keinen
-  Beleg; offen zur Entscheidung).
+  ID), braucht `oidc_email_verified_default=True`. SAML und LDAP liefern keinen Beleg; für sie
+  entscheidet der Betreiber je Quelle („SAML- und LDAP-Adressen" unter Hinzugefügt).
 - **E-Mail-Kollision beim OIDC-Login (F-27)** war bereits abgefangen (409, `oidc_ident_taken`) und
   hat jetzt einen Test; eine unbelegte fremde Adresse kollidiert seit H-3 gar nicht mehr.
 
@@ -252,8 +649,17 @@ auffällt:
   Muster „allgemeine Seite mit PIN, Detailseite mit `require(factors=["pin", "password"])`".
 - Reihenfolge der Härtungswerte im Panel: was zusammen eingestellt wird, steht zusammen.
 - **Das Panel nennt den Grund einer Sperre** (Grenze b): „gesperrt (Bestätigung / App)" (hebt der
-  Bestätigungslink auf) statt nur „gesperrt" (Betreiber).
-- **Indizes auf dem Audit-Log** (Grenze c) für die Suche nach Name und Zeit.
+  Bestätigungslink auf) statt nur „gesperrt" (Betreiber). Der Text kam bis 2026-09-26 nicht im
+  Panel an (die Liste der Panel-Texte kannte ihn nicht, die Plakette blieb leer), ebenso die Texte der
+  Owner-Knöpfe — und „Zum Owner machen / Owner abgeben" war nie verdrahtet, der Klick tat nichts
+  (G3). Ein Test prüft jetzt jeden Text, den das Panel-Skript liest, und jede Aktion, die ein Knopf
+  nennt (`tests/test_admin_konto.py`); der Browser-Test klickt Owner-Knopf und „Umbenennen“.
+- **Indizes auf dem Audit-Log** (Grenze c) für die Suche nach Name und Zeit. Die Suche im Detailtext
+  beim Löschen eines Kontos grenzt kein Index ein (Teilstring) — sie bleibt ein Scan, lief aber in
+  EINER Schreibtransaktion: Bei einem grossen Log wartete jede Anmeldung und jeder andere Worker die
+  ganze Suche ab. Seit G4 liest sie blockweise nach `id` (5000 Zeilen) ohne Schreibsperre und schreibt
+  nur die Treffer in kurzen Transaktionen, die Zeile dort frisch gelesen (`tests/test_audit_runde2.py`,
+  120 000 Zeilen).
 - **Kette mit Pflicht-Einrichtung (password → totp → pin): das Angebot, die übrigen Sitzungen zu
   beenden, kommt wieder** (Grenze d, ASVS 7.4.3). Die Seite fragt nach der Einrichtung; eingelöst
   wird die Zustimmung, sobald der letzte Faktor bestätigt ist (`/auth/sessions/revoke-after-login`,

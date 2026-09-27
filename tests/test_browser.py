@@ -380,6 +380,37 @@ async def run():
         await p.click("[data-on=keys]")
         await asyncio.sleep(0.6)
         assert await p.js("!!document.querySelector('#view #kn')"), "Keys-Knopf ohne Wirkung"
+        # G13/G3: „Umbenennen“ und „Zum Owner machen“ wirken im Browser. Der Owner-Knopf war nie
+        # verdrahtet (fehlte in ACT, der Klick tat nichts), und seine Beschriftung kam nicht an.
+        # Dialoge ersetzt, damit kein echter prompt/confirm/alert die Seite anhält; danach zurück.
+        _st = showcase.auth.store
+        _demo = _st.get_user_by_name("demo")["id"]
+        await p.js("window.prompt=()=>window.__name;window.confirm=()=>true;"
+                   "window.alert=m=>{window.__alert=m};window.__name='demo-probe';true")
+        await p.click(f'[data-on=ren][data-a^="[{_demo},"]')
+        assert _st.get_user(_demo)["username"] == "demo-probe", \
+            f"Umbenennen ohne Wirkung: {_st.get_user(_demo)['username']!r} {await p.js('window.__alert')!r}"
+        await p.js("window.__name='demo';true")
+        await p.click(f'[data-on=ren][data-a^="[{_demo},"]')
+        assert _st.get_user(_demo)["username"] == "demo", "Zurückbenennen ohne Wirkung"
+        # Die Owner-Rolle vergibt nur ein Owner — das Demo-Konto ist keiner, also für diese Probe
+        # dazu gemacht und danach auf den Stand davor zurückgesetzt.
+        _demoadmin = _st.get_user_by_name("demoadmin")["id"]
+        _war_owner = bool(_st.get_user(_demoadmin)["is_owner"])
+        _st.set_owner(_demoadmin, True)
+        try:
+            await p.go("/auth/admin", wait=1.5)
+            await p.js("window.confirm=()=>true;window.alert=m=>{window.__alert=m};true")
+            _knopf = await p.js(f"document.querySelector('[data-on=own][data-a^=\"[{_demo},\"]').textContent.trim()")
+            assert _knopf, "Owner-Knopf ohne Beschriftung"
+            await p.click(f'[data-on=own][data-a^="[{_demo},"]')
+            assert _st.get_user(_demo)["is_owner"], \
+                f"„Zum Owner machen“ ohne Wirkung: {await p.js('window.__alert')!r}"
+            await p.click(f'[data-on=own][data-a^="[{_demo},"]')
+            assert not _st.get_user(_demo)["is_owner"], "„Owner abgeben“ ohne Wirkung"
+        finally:
+            _st.set_owner(_demoadmin, _war_owner)
+        print("  Admin-Panel: Umbenennen und Owner-Knopf wirken (G13, G3)")
         await p.click(".tab[data-on=go]:nth-child(2)")
         await asyncio.sleep(0.6)
         assert await p.js("document.querySelector('.tab.on').textContent") != \

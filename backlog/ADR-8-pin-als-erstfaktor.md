@@ -24,15 +24,19 @@ Anwendungsfall ist real: eine allgemeine Seite hinter einer PIN, eine Detailseit
 Sie bleibt **einstellbar**:
 
 - `pin_login` (Konfiguration, Vorgabe `True`): Mit `False` ist die PIN kein Weg hinein, nur noch
-  Step-up-Faktor.
+  Folgefaktor (Kettenschritt, Route-Kette) und Step-up-Faktor. Verlangt eine strikte `login_chain`
+  die PIN hinter einem anderen Faktor, ist sie auch mit `True` kein Weg hinein
+  (`pin_als_erstfaktor()`, G7 — eine zuerst eingegebene PIN erfüllt diese Kette nie).
 - `pin_max_attempts` (Panel, Vorgabe 5): der eigene PIN-Zähler je Konto, je Adresse das
   `ip_attempt_factor`-fache. Er steht im Panel **direkt bei der Login-Sperre**, weil er dort
   zusammen mit ihr eingestellt wird.
 - `account_max_consecutive_failures` (Panel, Vorgabe 100, B2-6): PIN-Fehlgriffe zählen in die
   Serie. Mehr als 99 Rateversuche am Stück bekommt niemand, auch verteilt nicht. Ein
-  Passwort-Reset der Inhaberin beginnt eine neue Serie — sonst sperrte ein Fremder mit falschen
-  PINs das Konto über den Reset hinaus (R2-2). Wer das Raten ganz ausschliessen will, nimmt die PIN
-  von der Login-Seite (`pin_login=False`).
+  Passwort-Reset der Inhaberin räumt die Fehlgriffe der PIN als Erstfaktor — sonst sperrte ein
+  Fremder mit falschen PINs das Konto über den Reset hinaus (R2-2). Die Fehlgriffe einer PIN hinter
+  einem schon erbrachten Faktor (Art `pin_folge`, G7) räumt er nicht, wie bei TOTP: Die erzeugt nur,
+  wer den ersten Faktor hat. Wer das Raten ganz ausschliessen will, nimmt die PIN von der
+  Login-Seite (`pin_login=False`).
 
 ## Folgen
 

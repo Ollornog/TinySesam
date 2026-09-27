@@ -77,11 +77,16 @@ app2.include_router(auth2.router())
 OPFER_PW = "Opfer-Passwort-2026"
 ANG_PW = "Angreifer-Passwort-1"
 uid_opfer = auth2.create_user("chef", OPFER_PW, email=_mail("chef"), is_admin=True)
-# Die Kollision entsteht über den Store, also am Wächter vorbei — sie stellt damit eine
+# Die Kollision entsteht per rohem INSERT, also am Wächter vorbei — sie stellt damit eine
 # Datenbank von VOR R4-12 dar (Altbestand). Seit R4-12 sperrt `create_user` die beiden
 # Namensräume kreuzweise, eine neue Kollision kann über die API nicht mehr entstehen; eine
 # bestehende wird aber nicht rückwirkend aufgelöst — genau dagegen schützt die ID-Prüfung hier.
-uid_ang = auth2.store.create_user(_mail("chef"), email=_mail("eve"))
+# Seit G12c weist auch `store.create_user` sie ab (Kennungs-Trigger); ein INSERT ohne Topf ist
+# der Weg eines fremden Schreibers (ältere Fassung, sqlite3-Werkzeug), den der Trigger nicht sieht.
+from tinysesam.store import jetzt as _jetzt                                     # noqa: E402
+uid_ang = auth2.store._exec("INSERT INTO users(username, display_name, email, created_at) "
+                            "VALUES (?,?,?,?)", (_mail("chef"), _mail("chef"), _mail("eve"),
+                                                 _jetzt())).lastrowid
 auth2.set_password(uid_ang, ANG_PW)
 
 # Vorbedingung: Die Kennung des Angreifers zeigt tatsächlich auf das fremde Konto. Ohne sie

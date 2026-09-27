@@ -271,6 +271,20 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             " — die Kette ist unerfüllbar, niemand kommt über diesen Schritt hinaus.")
     if "totp" in kette and not _an(config, "totp_enabled"):
         fehler.append("login_chain verlangt 'totp', aber totp_enabled=False — unerfüllbar.")
+    # Eine PIN hinter einem anderen Faktor ist in einer NICHT strikten Kette mit `pin_login`
+    # zugleich Erstfaktor (`pin_als_erstfaktor`): Wer mit ihr beginnt, erfüllt die Kette danach
+    # mit dem Passwort. Dann rät jeder die PIN ohne das Passwort, und ein Selbstbedienungs-Reset
+    # räumt diese Fehlgriffe aus der Serie (R2-2) — die Konfiguration sagt „Folgefaktor", das
+    # Verhalten „Erstfaktor" (G7). In einer strikten Kette schliesst TinySesam den Gästeweg selbst.
+    if ("pin" in kette and kette[0] != "pin" and _an(config, "pin_enabled")
+            and _an(config, "pin_login") and not getattr(config, "login_chain_strict", True)):
+        warnungen.append(
+            f"login_chain={kette} mit login_chain_strict=False nennt 'pin' hinter einem anderen "
+            "Faktor, und pin_login=True bietet die PIN zugleich als Erstfaktor an: Wer mit ihr "
+            "beginnt, rät sie ohne das Passwort, und ein Selbstbedienungs-Reset räumt diese "
+            "Fehlversuche aus der Serie (account_max_consecutive_failures). Soll die PIN nur "
+            "Folgefaktor sein: pin_login=False — der PIN-Schritt nach dem ersten Faktor bleibt "
+            "erreichbar.")
 
     # Hier stand kurzzeitig „resource_locks_enabled braucht pin_enabled". Das war falsch und
     # eine eigene Suite hat es sofort widerlegt: Eine gesperrte Ressource wird mit ihrem EIGENEN
@@ -287,6 +301,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
         fehler.append(
             "allow_signup=True mit password_enabled=False legt Konten an, die sich nie anmelden "
             "können — die Registrierung vergibt ein Passwort, und der Passwort-Login ist aus.")
+    # Offene Registrierung neben LDAP (PO-Entscheid 2026-09-27): Eine Kennung gehört genau einem
+    # Konto — liefert das Verzeichnis unter einer lokal vergebenen Kennung eine andere Person,
+    # weist TinySesam die Anmeldung ab (Prüfrunde p1-d). Wer sich vorab mit dem Namen oder der
+    # Verzeichnisadresse einer Person registriert, die sich noch nie angemeldet hat, sperrte sie
+    # damit aus. TinySesam kennt diese Namen nicht, bevor das Verzeichnis sie nennt — also gibt
+    # es die Kombination nicht. Konten legt dort der Betreiber an (Panel, `create_user`).
+    if _an(config, "allow_signup") and _an(config, "ldap_enabled"):
+        fehler.append(
+            "allow_signup=True neben ldap_enabled=True: Wer sich mit dem Namen oder der Adresse "
+            "einer Person aus dem Verzeichnis registriert, bevor sie sich angemeldet hat, sperrt sie "
+            "unter dieser Kennung aus (eine Kennung gehört genau einem Konto). Registrierung "
+            "ausschalten und Konten im Admin-Panel bzw. mit auth.create_user(...) anlegen.")
 
     # `base_url` fehlte in diesem Modul komplett — und damit fehlte der einzige Hinweis auf
     # den Weg, den R4-01/R8-4 ausnutzt: Ohne sie baut TinySesam absolute Adressen aus dem
@@ -427,6 +453,18 @@ def pruefe(config) -> tuple[list[str], list[str]]:
             f"seinem {_mail_attr}-Wert anmeldet, bekommt einen Ersatznamen (ldap-…) statt dieses "
             "Werts als Kontonamen und wird nie über den Namen einem vorhandenen Konto zugeordnet; "
             "ohne stabile Kennung (ldap_attr_id) wird die Anmeldung abgewiesen.")
+    # G1: Unbegrenzt über den Namen binden ist der Stand bis 0.20.x — und genau die Lücke, die die
+    # Frist schliesst. Erlaubt (Rückweg), aber nicht still.
+    _foederiert = [name for an, name in (("ldap_enabled", "LDAP"), ("saml_enabled", "SAML"))
+                   if _an(config, an)]
+    _tage = _ganzzahl(config, "federation_name_binding_days", 30)
+    if _foederiert and _tage is not None and _tage < 0:
+        warnungen.append(
+            f"federation_name_binding_days={_tage}: {' und '.join(_foederiert)} binden ein "
+            "ungebundenes Konto unbegrenzt über seinen Namen. Ein ruhendes Konto (jemand ist "
+            "ausgeschieden) fällt dann an die nächste Person, die im Verzeichnis denselben Namen "
+            "bekommt — samt Rollen und Admin-Recht. Besser: den Bestand einmal binden "
+            "(auth.foederation_nachbinden(quelle), erst als Trockenlauf) und die Vorgabe (30) lassen.")
 
     # Pfade der App tragen seit T-15 keinen Montage-Präfix mehr — TinySesam setzt ihn aus dem Pfad
     # der base_url davor. Wer ihn für die alte Fassung von Hand eingetragen hat (`/sso/auth/login`),
@@ -657,6 +695,9 @@ ZAHLENGRENZEN = {
     "oidc_apikey_confirm_days": (0, 3660),
     "session_idle_minutes": (0, 365 * 24 * 60),
     "session_idle_minutes_remember": (0, 365 * 24 * 60),
+    # -1 = unbegrenzt (Verhalten bis 0.20.x), 0 = nur ausdrücklich. Darunter ist kein Wert gemeint;
+    # zehn Jahre sind das Äusserste, was noch eine Frist ist.
+    "federation_name_binding_days": (-1, 3660),
 }
 
 

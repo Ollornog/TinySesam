@@ -354,9 +354,12 @@ print("  H-13: delete_user räumt die Versuche auch unter NFKC-/IDNA-gefalteter 
 auth, c, db = build()
 auth.set_security("rate_limit_max", 1000)
 voll_id = auth.create_user("ｃｌａｒａ", "Clara-Voll-2026x")
-# Neu anlegen lässt sich der Namensvetter nicht mehr (`kennung_vergeben` fragt den Topf) — er
-# kommt aus einem Bestand von vorher, deshalb am Manager vorbei direkt in den Store.
-clara_id = auth.store.create_user("clara")
+# Neu anlegen lässt sich der Namensvetter nicht mehr (`kennung_vergeben` fragt den Topf, seit
+# G12c weist auch der Store ihn ab) — er kommt aus einem Bestand von vorher, deshalb als rohes
+# INSERT ohne Topf, wie von einem fremden Schreiber.
+from tinysesam.store import jetzt as _jetzt  # noqa: E402
+clara_id = auth.store._exec("INSERT INTO users(username, display_name, created_at) VALUES (?,?,?)",
+                            ("clara", "clara", _jetzt())).lastrowid
 auth.set_password(clara_id, "Clara-Ascii-2026x")
 fehl = auth.sec("max_login_attempts") * auth.sec("account_attempt_factor")   # Konto-Schwelle über alle Adressen
 for i in range(fehl):

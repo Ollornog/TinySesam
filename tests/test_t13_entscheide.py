@@ -222,6 +222,433 @@ auth.record_login("zweit", "198.51.100.6", False, "password_change", versuch=v_p
 r.check("B2-6: ein Fehlgriff am Passwortwechsel (über versuch_beginnen) bucht keine Serie",
         auth.store.fehlserie("zweit") == 0, str(auth.store.fehlserie("zweit")))
 
+# ── B2-6 × Verzeichnis: die Serie unter dem Namen im Verzeichnis (G5, G5-N1) ────────────────────
+# Die Serie zählt unter der EINGETIPPTEN Kennung. Nach einer Umbenennung im Verzeichnis (lokal
+# `alice`, über entryUUID gebunden, dort `alice.neu`) tippt die Person `alice.neu`. Bis 2026-09-26
+# räumte kein Rückweg die Serie darunter: Eigene Tippfehler summierten sich über die Jahre, ein
+# Fremder sperrte sie mit genug Fehlversuchen dauerhaft aus, und `tinysesam unlock alice.neu` brach
+# mit „Kein Konto" ab.
+class _Verzeichnis:
+    """Attrappe des LDAP-Clients nach dem Bind: der Eintrag zur eingetippten Kennung (bei einem
+    Filter über `uid` UND `mail` auch zur Adresse)."""
+
+    def __init__(self, eintraege):
+        self.eintraege = eintraege
+
+    def authenticate(self, username, password):
+        e = self.eintraege.get(username)
+        if not e or e["pw"] != password:
+            return None
+        return {"username": username, "email": e.get("email"), "name": username, "groups": [],
+                "id": e.get("id"), "email_verified": None}
+
+
+LPW = "Verzeichnis-Pw1"
+auth_v, app_v = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+                     ldap_auto_create=True, passkey_enabled=False)
+for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
+             ("account_max_consecutive_failures", 10)):
+    auth_v.set_security(k, v)
+auth_v.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
+_erst_v = _login(TestClient(app_v), "alice", LPW)
+uid_v = auth_v.store.get_user_by_name("alice")["id"]
+
+
+def _bindungsname(uid):
+    z = auth_v.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (uid,))
+    return z["name_topf"] if z else "(keine Bindung)"
+
+
+_erst_name = _bindungsname(uid_v)
+auth_v.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})     # im Verzeichnis umbenannt
+for _ in range(3):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_drei_v = auth_v.store.fehlserie("alice.neu")
+_voll_v = _login(TestClient(app_v), "alice.neu", LPW)
+# (Mutationsprobe: den Namen aus der Bindung in `Store.zaehl_kennungen` weglassen → 3 → rot.)
+r.check("G5: nach der Umbenennung im Verzeichnis beendet die volle Anmeldung die Serie unter dem "
+        "neuen Namen (und räumt sein Fenster)",
+        _erst_v.status_code == 303 and _drei_v == 3 and _voll_v.status_code == 303
+        and auth_v.store.fehlserie("alice.neu") == 0 and auth_v.store.count_fails(0, username="alice.neu") == 0,
+        f"HTTP {_erst_v.status_code}/{_voll_v.status_code}, Serie {_drei_v} → {auth_v.store.fehlserie('alice.neu')}")
+r.check("… dasselbe Konto; der Verzeichnisname steht an der Bindung — nur weil er nicht der eigene ist",
+        auth_v.store.get_user(uid_v)["username"] == "alice" and _erst_name is None
+        and _bindungsname(uid_v) == "alice.neu", f"{_erst_name!r} → {_bindungsname(uid_v)!r}")
+
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_gesperrt_v = _login(TestClient(app_v), "alice.neu", LPW)
+auth_v._serie_beenden(uid_v)
+# (Mutationsprobe: in `_serie_beenden` wieder nur Name und Adresse → rot.)
+r.check("G5: an der Grenze (429 auch mit dem richtigen Passwort) räumt der Betreiber-Weg "
+        "(`_serie_beenden`) die Serie unter dem Verzeichnisnamen",
+        _gesperrt_v.status_code == 429 and auth_v.store.fehlserie("alice.neu") == 0
+        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
+        f"HTTP {_gesperrt_v.status_code}, Serie {auth_v.store.fehlserie('alice.neu')}")
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+auth_v.create_user("chefin-v", password=PW, is_admin=True)
+_cv = TestClient(app_v)
+_login(_cv, "chefin-v", PW)
+_panel_v = _cv.post(f"/auth/admin/api/users/{uid_v}/password", json={"password": "Betreiber-Pw-15"})
+r.check("… ebenso der Passwort-Reset im Panel", _panel_v.status_code == 200
+        and auth_v.store.fehlserie("alice.neu") == 0, f"HTTP {_panel_v.status_code}, {auth_v.store.fehlserie('alice.neu')}")
+
+
+def _unlock(kennung):
+    aus, fehl, code = io.StringIO(), io.StringIO(), 0
+    with redirect_stdout(aus), redirect_stderr(fehl):
+        try:
+            _cli(["unlock", "--db", auth_v.cfg.db_path, kennung])
+        except SystemExit as e:
+            code = e.code or 0
+    return code, aus.getvalue() + fehl.getvalue()
+
+
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_login(TestClient(app_v), "alice", "falsch-falsch-1")          # der alte Name: im Verzeichnis weg
+_code_v, _text_v = _unlock("alice.neu")
+# (Mutationsprobe: `konto_mit_bindungsname` streichen → das Konto wird nicht gefunden, die Serie
+#  unter `alice` bleibt → rot.)
+r.check("G5: `tinysesam unlock alice.neu` — den Namen wie eingetippt — findet das Konto und beendet "
+        "seine Serie unter allen Kennungen",
+        _code_v == 0 and "Sperre für 'alice.neu' aufgehoben" in _text_v
+        and auth_v.store.fehlserie("alice.neu") == 0 and auth_v.store.fehlserie("alice") == 0,
+        f"exit {_code_v}, {_text_v!r}, Serie {auth_v.store.fehlserie('alice.neu')}/{auth_v.store.fehlserie('alice')}")
+# Bestand: Die Serie ist schon voll, der Verzeichnisname aber nie vermerkt (er entsteht erst mit der
+# nächsten ERFOLGREICHEN Anmeldung — und die ist gesperrt).
+auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
+for _ in range(10):
+    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+_code_b, _text_b = _unlock("alice.neu")
+# (Mutationsprobe: den Abbruch „Kein Konto" vor dem Räumen zurückbauen → rot.)
+r.check("… auch im Bestand ohne Vermerk: kein Konto, aber die Zähler unter der Kennung sind geräumt (rc 0)",
+        _code_b == 0 and "Kein Konto" in _text_b and auth_v.store.fehlserie("alice.neu") == 0
+        and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
+        f"exit {_code_b}, {_text_b!r}, Serie {auth_v.store.fehlserie('alice.neu')}")
+_code_n, _text_n = _unlock("gibt-es-nirgends")
+r.check("… eine Kennung ohne Konto und ohne Zähler bleibt ein Fehler (rc 1)",
+        _code_n == 1 and "Kein Konto" in _text_n, f"exit {_code_n}, {_text_n!r}")
+
+# Der Wächter: Ein Verzeichnisfilter über `mail` löst eine Kennung auch zu einem Dritten auf, dessen
+# `mail`-Attribut die Adresse eines LOKALEN Kontos ist (Vorgabe `ldap_email_trusted=False`). Bis
+# 2026-09-26 räumte jede Anmeldung des Dritten die Zähler der Inhaberin — Fenster (G5-N1) und Serie
+# (G5): unbegrenztes Raten gegen ihr Konto. G5-N1 liess die Anmeldung des Dritten zu und schützte
+# nur die Zähler; die Gegenrichtung blieb offen (die Inhaberin räumte die Zähler, unter denen gegen
+# SEIN LDAP-Passwort geraten wurde). Seit der Prüfrunde 2026-09-27 (p1-d, PO-Entscheid C) prüft eine
+# Kennung nie die Geheimnisse zweier Konten: Die Anmeldung des Dritten wird abgewiesen und als
+# Fehlversuch gebucht, bevor `check_ldap` irgendetwas schreibt.
+import logging as _log_g5  # noqa: E402
+from tinysesam import security as _sec_g5  # noqa: E402
+
+_chefin_w = auth_v.create_user("chefin", password=PW, email="chefin@example.com")
+auth_v.ldap = _Verzeichnis({"chefin@example.com": {"pw": LPW, "id": "uuid-dritter", "email": "chefin@example.com"}})
+for _ in range(4):
+    _login(TestClient(app_v), "chefin@example.com", "falsch-falsch-1")
+_vorher_w = (auth_v.store.count_fails(0, username="chefin@example.com"), auth_v.store.fehlserie("chefin@example.com"))
+_konten_w = auth_v.store.user_count()
+_puffer_w = io.StringIO()
+_haken_w = _log_g5.StreamHandler(_puffer_w)
+_sec_g5.seclog.addHandler(_haken_w)
+try:
+    _dritter = _login(TestClient(app_v), "chefin@example.com", LPW)
+finally:
+    _sec_g5.seclog.removeHandler(_haken_w)
+_abgewiesen_w = [dict(z) for z in auth_v.store._all("SELECT * FROM audit WHERE event='ldap_kennung_abgewiesen'")]
+# (Mutationsprobe: in `_fremde_identitaet_aufloesen` die Prüfung gegen `nur_konto` abschalten → der
+#  Dritte bekommt 303 und ein Konto → rot.)
+r.check("p1-d (C): die Anmeldung eines Verzeichnis-Dritten unter der Adresse eines lokalen Kontos wird "
+        "abgewiesen und als Fehlversuch gebucht — ohne Konto, ohne Bindung",
+        _vorher_w == (4, 4) and _dritter.status_code == 401
+        and auth_v.store.get_federated_user("ldap", "uuid-dritter") is None
+        and auth_v.store.user_count() == _konten_w
+        and auth_v.store.count_fails(0, username="chefin@example.com") == 5
+        and auth_v.store.fehlserie("chefin@example.com") == 5,
+        f"vorher {_vorher_w}, HTTP {_dritter.status_code}, "
+        f"{auth_v.store.count_fails(0, username='chefin@example.com')}/{auth_v.store.fehlserie('chefin@example.com')}")
+r.check("… mit Grund im Audit-Log (kennung_zweier_konten, beide Konten) und Abhilfe im Sicherheits-Log",
+        len(_abgewiesen_w) == 1
+        and _abgewiesen_w[0]["detail"] == f"grund=kennung_zweier_konten lokal={_chefin_w} verzeichnis=neu"
+        and "tinysesam rename" in _puffer_w.getvalue(), f"{_abgewiesen_w} {_puffer_w.getvalue()[:200]!r}")
+_inhaberin = _login(TestClient(app_v), "chefin@example.com", PW)
+# Bis 2026-09-27 hielt diese Gegenprobe gerade den Mangel fest: Die 4 Fehlversuche galten AUCH dem
+# LDAP-Passwort des Dritten, und die Inhaberin räumte sie. Jetzt öffnet unter ihrer Adresse nur ihr
+# eigenes Geheimnis eine Sitzung — ihre Anmeldung räumt, was nur gegen sie gerichtet sein kann.
+r.check("… die Inhaberin räumt beides mit ihrer Anmeldung — unter ihrer Adresse gilt nur noch ihr Geheimnis",
+        _inhaberin.status_code == 303 and auth_v.store.count_fails(0, username="chefin@example.com") == 0
+        and auth_v.store.fehlserie("chefin@example.com") == 0,
+        f"HTTP {_inhaberin.status_code}, {auth_v.store.count_fails(0, username='chefin@example.com')}")
+
+
+# ── Prüfrunde Sperren/Zähler (2026-09-27): eine Kennung, ein Konto ─────────────────────────────
+def _ldap_app():
+    a, ap = _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+                 ldap_auto_create=True, passkey_enabled=False)
+    for k, v in (("max_login_attempts", 1000), ("rate_limit_max", 100000),
+                 ("account_max_consecutive_failures", 10)):
+        a.set_security(k, v)
+    return a, ap
+
+
+def _sitzung_von(a, antwort):
+    tok = antwort.cookies.get(a.session_cookie_name)
+    z = a.store._one("SELECT user_id FROM session WHERE token_hash=?", (a.store.session_hash(tok),)) if tok else None
+    return z["user_id"] if z else None
+
+
+MPW = "Mallory-Pw-15xy"
+# p1-d (C), Bestand: Mallory heisst lokal schon `alice.neu`, BEVOR Alice im Verzeichnis so umbenannt
+# wird. Unter `alice.neu` prüfte die Route dann Mallorys Passwort UND Alices LDAP-Passwort; mit jeder
+# eigenen Anmeldung räumte Mallory Fenster und Serie — 120 Fehlversuche von einer IP, keine Sperre,
+# danach öffnete Alices richtiges Passwort IHRE Sitzung. Jetzt öffnet es unter `alice.neu` nichts.
+a_d, ap_d = _ldap_app()
+a_d.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
+_login(TestClient(ap_d), "alice", LPW)
+_alice_d = a_d.store.get_user_by_name("alice")["id"]
+_mallory_d = a_d.create_user("alice.neu", password=MPW)
+a_d.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
+for _ in range(10):
+    for _ in range(4):
+        _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", "falsch-falsch-1")
+    _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", MPW)
+_ev_d0 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
+_login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", "falsch-falsch-1")
+_ev_d1 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
+_treffer_d = _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", LPW)
+_ev_d2 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
+# (Mutationsprobe: die Prüfung gegen `nur_konto` abschalten → 303, Sitzung von Alice → rot.)
+r.check("p1-d (C): ein lokales Konto unter dem Verzeichnisnamen einer anderen Person — deren richtiges "
+        "LDAP-Passwort öffnet unter dieser Kennung keine Sitzung, das Raten dort ist wertlos",
+        _treffer_d.status_code == 401 and _sitzung_von(a_d, _treffer_d) is None
+        and a_d.store.get_federated_user("ldap", "uuid-alice") == _alice_d
+        and a_d.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alice_d,))["name_topf"] is None,
+        f"HTTP {_treffer_d.status_code}, Sitzung {_sitzung_von(a_d, _treffer_d)}")
+# Die Abweisung entsteht nur, wenn das LDAP-Passwort stimmte — auf Mallorys Kontoseite wäre sie das
+# Orakel. (Mutationsprobe: `ldap_kennung_abgewiesen` aus `_EIGENE_ANSICHT` nehmen → rot.)
+r.check("… und Mallorys Kontoseite sieht einen Treffer wie einen Fehlgriff (kein Orakel über die Abweisung)",
+        len(_ev_d1) - len(_ev_d0) == len(_ev_d2) - len(_ev_d1) == 1 and _ev_d1[0] == _ev_d2[0]
+        and bool(a_d.store._one("SELECT 1 AS x FROM audit WHERE event='ldap_kennung_abgewiesen'")),
+        f"{_ev_d0[:2]} {_ev_d1[:2]} {_ev_d2[:2]}")
+r.check("… Mallorys eigene Anmeldung geht weiter (Gegenprobe)",
+        _login(TestClient(ap_d), "alice.neu", MPW).status_code == 303)
+a_d.change_username(_mallory_d, "mallory", durch_betreiber=True)
+_danach_d = _login(TestClient(ap_d), "alice.neu", LPW)
+r.check("… nach dem Umbenennen durch den Betreiber (die Abhilfe aus der Logzeile) meldet sich Alice unter "
+        "`alice.neu` an", _danach_d.status_code == 303 and _sitzung_von(a_d, _danach_d) == _alice_d,
+        f"HTTP {_danach_d.status_code}")
+
+# p1-d (A): Hat sich Alice unter `alice.neu` angemeldet, steht der Name an ihrer Bindung — und kein
+# anderes Konto kann ihn annehmen: Selbstbedienung, Registrierung, Admin, CLI, die Datenbank selbst.
+a_a, ap_a = _ldap_app()
+a_a.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
+_login(TestClient(ap_a), "alice", LPW)
+_alice_a = a_a.store.get_user_by_name("alice")["id"]
+a_a.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
+_login(TestClient(ap_a), "alice.neu", LPW)
+_mallory_a = a_a.create_user("mallory", password=MPW)
+_vergeben_a = a_a.kennung_vergeben("ALICE.NEU")
+try:
+    a_a.change_username(_mallory_a, "alice.neu", durch_betreiber=True)    # auch der Betreiber nicht
+    _selbst_a = "umbenannt"
+except ValueError:
+    _selbst_a = "abgewiesen"
+try:
+    a_a.store.set_username(_mallory_a, "Alice.Neu")
+    _roh_a = "geschrieben"
+except sqlite3.IntegrityError:
+    _roh_a = "IntegrityError"
+try:
+    a_a.store.create_user("alice.neu")
+    _anlage_a = "angelegt"
+except sqlite3.IntegrityError:
+    _anlage_a = "IntegrityError"
+# Registrieren gibt es neben LDAP nicht mehr (PO-Entscheid 2026-09-27) — der Aufbau scheitert.
+try:
+    _app(ldap_enabled=True, ldap_url="ldap://dummy", ldap_allow_plaintext=True,
+         passkey_enabled=False, allow_signup=True)
+    _reg_a = "gebaut"
+except ConfigError as _e_reg:
+    _reg_a = str(_e_reg)
+_cli_aus_a = io.StringIO()
+with redirect_stdout(_cli_aus_a), redirect_stderr(_cli_aus_a):
+    try:
+        _cli(["rename", "--db", a_a.cfg.db_path, "mallory", "alice.neu"])
+        _cli_a = 0
+    except SystemExit as e:
+        _cli_a = e.code
+# (Mutationsproben: `konto_mit_verzeichnisname` aus `kennung_vergeben` nehmen → die Vorprüfung rot;
+#  den federated-Teil aus den Kennungs-Triggern nehmen → „Datenbank" rot.)
+r.check("p1-d (A): der Verzeichnisname eines anderen Kontos gilt als vergeben (Vorprüfung, jede Schreibweise)",
+        _vergeben_a is not None and _vergeben_a["id"] == _alice_a, str(_vergeben_a))
+r.check("… und die Datenbank weist ihn ab — Umbenennen und Anlegen (Kennungs-Trigger)",
+        _roh_a == "IntegrityError" and _anlage_a == "IntegrityError", f"{_roh_a} {_anlage_a}")
+r.check("… Umbenennen (auch durch den Betreiber) und `tinysesam rename` lehnen ab, Registrieren gibt es "
+        "neben LDAP gar nicht",
+        _selbst_a == "abgewiesen" and "allow_signup" in _reg_a and "ldap_enabled" in _reg_a and _cli_a == 1
+        and "Name im Verzeichnis" in _cli_aus_a.getvalue()
+        and a_a.store.get_user(_mallory_a)["username"] == "mallory",
+        f"{_selbst_a}, Registrierung HTTP {_reg_a}, CLI rc {_cli_a} {_cli_aus_a.getvalue()[:120]!r}")
+# Neben LDAP benennt sich niemand selbst um, auch nicht auf einen freien Namen (PO-Entscheid
+# 2026-09-27): Ein lokales Konto könnte sonst den Verzeichnisnamen einer Person annehmen, die sich
+# noch nie angemeldet hat, und sie aussperren. (Mutationsprobe: die Prüfung in `change_username`
+# abschalten → rot; das Flag der Konto-Seite → rot.)
+try:
+    a_a.change_username(_mallory_a, "mallory2")
+    _ldap_selbst = "umbenannt"
+except ValueError as _e_sb:
+    _ldap_selbst = str(_e_sb)
+_c_sb = TestClient(ap_a)
+_login(_c_sb, "mallory", MPW)
+_seite_sb = _c_sb.get("/auth/account", headers={"accept": "text/html"}).text
+_route_sb = _c_sb.post("/auth/account/username", json={"username": "mallory3"})
+r.check("Neben LDAP: keine Selbst-Umbenennung (Methode, Route, Konto-Seite)",
+        _ldap_selbst == a_a.t("api.username_from_directory") and _route_sb.status_code in (400, 403)
+        and "data-act=setname" not in _seite_sb and a_a.store.get_user(_mallory_a)["username"] == "mallory",
+        f"{_ldap_selbst!r} HTTP {_route_sb.status_code}")
+a_a.change_username(_alice_a, "alice.neu", durch_betreiber=True)
+r.check("… Alices Konto darf ihn annehmen (ihre eigene Bindung zählt nicht)",
+        a_a.store.get_user(_alice_a)["username"] == "alice.neu")
+
+# p1-b: Der Betreiber benennt ein LDAP-Konto um, dessen Name der Verzeichnisname ist (G13). Bis dahin
+# stand an der Bindung NULL (der Name war ja der eigene), und nach dem Umbenennen fiel `alice` aus
+# `zaehl_kennungen` und aus dem Kennungsraum: Füllte ein Fremder die Serie darunter, half weder der
+# Panel-Reset noch eine volle Anmeldung auf anderem Weg (429 bis `tinysesam unlock alice`), und ein
+# anderes Konto konnte sich `alice` nennen.
+a_b, ap_b = _ldap_app()
+a_b.ldap = _Verzeichnis({"alice": {"pw": LPW, "id": "uuid-alice"}})
+_login(TestClient(ap_b), "alice", LPW)
+_alice_b = a_b.store.get_user_by_name("alice")["id"]
+a_b.create_user("chefin-b", password=PW, is_admin=True)
+a_b.change_username(_alice_b, "alice.meier", durch_betreiber=True)
+_kennungen_b = a_b.store.zaehl_kennungen(_alice_b)
+for _i in range(10):
+    _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", "falsch-falsch-1")
+_vor_b = _login(TestClient(ap_b), "alice", LPW).status_code
+_c_b = TestClient(ap_b)
+_login(_c_b, "chefin-b", PW)
+_panel_b = _c_b.post(f"/auth/admin/api/users/{_alice_b}/password", json={"password": "Betreiber-Pw-15"}).status_code
+_nach_b = _login(TestClient(ap_b), "alice", LPW)
+_mallory_b = a_b.create_user("mallory", password=MPW)
+# (Mutationsprobe: `_verzeichnisname_merken` in `_kennung_setzen` weglassen → Serie bleibt, 429, und
+#  `mallory` darf sich `alice` nennen → rot.)
+r.check("p1-b: nach dem Umbenennen durch den Betreiber zählt der alte Name als Verzeichnisname — der "
+        "Panel-Reset räumt die Serie darunter, die LDAP-Anmeldung geht wieder",
+        _kennungen_b == {"alice", "alice.meier"} and _vor_b == 429 and _panel_b == 200
+        and _nach_b.status_code == 303 and _sitzung_von(a_b, _nach_b) == _alice_b,
+        f"{_kennungen_b}, {_vor_b}/{_panel_b}/{_nach_b.status_code}")
+r.check("… und kein anderes Konto kann sich so nennen",
+        a_b.kennung_vergeben("alice", exclude_id=_mallory_b) is not None)
+
+# p1-a: Nach Umbenennen und Wiedervergabe im Verzeichnis trug der Vorbesitzer den Namen weiter an
+# seiner Bindung. Jede volle Anmeldung des Vorbesitzers (und jeder Betreiber-Reset für ihn) beendete
+# die Serie, unter der gegen den NEUEN Inhaber geraten wurde, und `tinysesam unlock x` nannte das
+# Konto mit der jüngeren Bindung und räumte dessen eigene Serie mit.
+a_x, ap_x = _ldap_app()
+a_x.ldap = _Verzeichnis({"x": {"pw": LPW, "id": "uuid-a"}, "berta": {"pw": LPW, "id": "uuid-b"}})
+_login(TestClient(ap_x), "berta", LPW)
+_berta_x = a_x.store.get_user_by_name("berta")["id"]
+a_x.store._exec("UPDATE federated_identity SET gebunden_at = gebunden_at - 100 WHERE user_id=?", (_berta_x,))
+_login(TestClient(ap_x), "x", LPW)
+_anton_x = a_x.store.get_user_by_name("x")["id"]
+a_x.change_username(_anton_x, "anton", durch_betreiber=True)
+a_x.set_password(_anton_x, PW)
+a_x.ldap = _Verzeichnis({"x.alt": {"pw": LPW, "id": "uuid-a"}, "x": {"pw": LPW, "id": "uuid-b"}})
+_login(TestClient(ap_x), "x", LPW)                  # Berta heisst jetzt `x` im Verzeichnis
+
+
+def _bindungsname_x(uid):
+    return a_x.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (uid,))["name_topf"]
+
+
+_namen_x = (_bindungsname_x(_anton_x), _bindungsname_x(_berta_x))
+for _i in range(9):
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 10}", 1)), "x", "falsch-falsch-1")
+_login(TestClient(ap_x), "anton", PW)                # volle Anmeldung des Vorbesitzers
+a_x._serie_beenden(_anton_x)                         # Betreiber-Reset für ihn
+# (Mutationsprobe: das Löschen an fremden Bindungen in `bindung_name_setzen` weglassen → Antons
+#  Bindung behält `x` → rot.)
+r.check("p1-a: die jüngste Anmeldung unter `x` belegt, wem der Name gehört — der Vorbesitzer verliert ihn, "
+        "seine Anmeldung und sein Reset lassen die Serie des neuen Inhabers stehen",
+        _namen_x == (None, "x") and a_x.store.zaehl_kennungen(_anton_x) == {"anton"}
+        and a_x.store.fehlserie("x") == 9, f"{_namen_x}, {a_x.store.zaehl_kennungen(_anton_x)}, {a_x.store.fehlserie('x')}")
+_login(TestClient(ap_x, client=("203.0.113.99", 1)), "x", "falsch-falsch-1")
+for _i in range(3):
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 50}", 1)), "anton", "falsch-falsch-1")
+_aus_x = io.StringIO()
+with redirect_stdout(_aus_x), redirect_stderr(_aus_x):
+    try:
+        _cli(["unlock", "--db", a_x.cfg.db_path, "x"])
+    except SystemExit:
+        pass    # das CLI endet mit sys.exit; gemessen wird die Ausgabe und die Datenbank
+_unlock_x = [dict(z) for z in a_x.store._all("SELECT username, detail FROM audit WHERE event='unlock_cli'")]
+r.check("… `tinysesam unlock x` nennt den neuen Inhaber und lässt die eigene Serie des Vorbesitzers stehen",
+        [z["username"] for z in _unlock_x] == ["berta"] and a_x.store.fehlserie("x") == 0
+        and a_x.store.fehlserie("anton") == 3, f"{_unlock_x}, anton {a_x.store.fehlserie('anton')}")
+# Bestand: Beide tragen den Namen noch (vor diesem Stand geschrieben). Dann zählt er für keins, und
+# `unlock` nennt kein Konto (welches sich zuletzt so angemeldet hat, steht nirgends).
+a_x.store._exec("UPDATE federated_identity SET name_topf='x' WHERE user_id=?", (_anton_x,))
+for _i in range(3):
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", "falsch-falsch-1")
+_login(TestClient(ap_x), "anton", PW)
+_serie_x2 = a_x.store.fehlserie("x")
+_aus_x2 = io.StringIO()
+with redirect_stdout(_aus_x2), redirect_stderr(_aus_x2):
+    try:
+        _cli(["unlock", "--db", a_x.cfg.db_path, "x"])
+    except SystemExit:
+        pass    # das CLI endet mit sys.exit; gemessen wird die Ausgabe und die Datenbank
+# (Mutationsproben: die zweite Sicherung in `zaehl_kennungen` weglassen → Antons Anmeldung räumt die
+#  Serie → rot; `konto_mit_bindungsname` wieder nach `gebunden_at` → nennt anton → rot.)
+r.check("… im Bestand mit zwei Trägern: der Name zählt für keins, `unlock` nennt keins und räumt nur unter `x`",
+        _serie_x2 == 3 and a_x.store.fehlserie("x") == 0
+        and "x" not in a_x.store.zaehl_kennungen(_anton_x) and "x" not in a_x.store.zaehl_kennungen(_berta_x)
+        and "Kein Konto 'x'" in _aus_x2.getvalue(), f"Serie {_serie_x2}, {_aus_x2.getvalue()!r}")
+
+# Ein veralteter Vermerk hält eine neue Person nicht auf: Heisst im Verzeichnis jetzt jemand ANDERES
+# `y` (Wiedervergabe), legt seine erste Anmeldung das Konto `y` an — der Vermerk beim Vorbesitzer ist
+# veraltet und wird gelöscht. (Mutationsprobe: `verzeichnisname_freigeben` in `check_ldap` weglassen →
+# die Anlage scheitert als „vergeben", 401 → rot.)
+a_y, ap_y = _ldap_app()
+a_y.ldap = _Verzeichnis({"y": {"pw": LPW, "id": "uuid-a"}})
+_login(TestClient(ap_y), "y", LPW)
+_alt_y = a_y.store.get_user_by_name("y")["id"]
+a_y.change_username(_alt_y, "yves", durch_betreiber=True)           # vermerkt `y` (p1-b)
+_vermerk_y = a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alt_y,))["name_topf"]
+a_y.ldap = _Verzeichnis({"y.alt": {"pw": LPW, "id": "uuid-a"}, "y": {"pw": LPW, "id": "uuid-c"}})
+_neu_y = _login(TestClient(ap_y), "y", LPW)
+_konto_y = a_y.store.get_user_by_name("y")
+r.check("p1-a: ein neuer Verzeichniseintrag unter einem vermerkten Namen legt sein Konto an; der Vermerk "
+        "beim Vorbesitzer fällt",
+        _vermerk_y == "y" and _neu_y.status_code == 303 and _konto_y is not None
+        and _sitzung_von(a_y, _neu_y) == _konto_y["id"] != _alt_y
+        and a_y.store._one("SELECT name_topf FROM federated_identity WHERE user_id=?", (_alt_y,))["name_topf"] is None,
+        f"Vermerk {_vermerk_y!r}, HTTP {_neu_y.status_code}")
+
+# p1-d (C), Adresse: Filter über uid UND mail, `ldap_email_trusted=False` (Vorgabe) — LDAP-Konten
+# tragen lokal keine Adresse. Ein lokales Konto trägt Alices Verzeichnisadresse (im Befund per
+# Registrierung, die es neben LDAP seit 2026-09-27 nicht mehr gibt; hier vom Betreiber angelegt oder
+# aus dem Bestand); bis 2026-09-27 räumte seine eigene Anmeldung unter der Adresse die Zähler gegen
+# Alices LDAP-Passwort, ohne jede Umbenennung.
+a_m, ap_m = _ldap_app()
+_alice_eintrag = {"pw": LPW, "id": "uuid-alice", "email": "alice@corp.example"}
+a_m.ldap = _Verzeichnis({"alice": _alice_eintrag, "alice@corp.example": _alice_eintrag})
+_login(TestClient(ap_m), "alice", LPW)
+_alice_m = a_m.store.get_user_by_name("alice")["id"]
+_reg_m = a_m.create_user("mallory", password=MPW, email="alice@corp.example")
+for _ in range(10):
+    for _ in range(4):
+        _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", "falsch-falsch-1")
+    _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", MPW)
+_treffer_m = _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", LPW)
+# (Mutationsprobe: die Prüfung gegen `nur_konto` abschalten → 303, Sitzung von Alice → rot.)
+r.check("p1-d (C): ein lokales Konto mit der Verzeichnisadresse einer anderen Person — deren LDAP-Passwort "
+        "öffnet unter der Adresse keine Sitzung",
+        bool(_reg_m) and _treffer_m.status_code == 401 and _sitzung_von(a_m, _treffer_m) is None,
+        f"Registrierung {_reg_m}, HTTP {_treffer_m.status_code}")
+r.check("… unter ihrem Namen meldet sich Alice weiter an (Gegenprobe)",
+        _sitzung_von(a_m, _login(TestClient(ap_m), "alice", LPW)) == _alice_m)
+
 # ── B2-8: PIN als Erstfaktor — ausdrücklich erlaubt, mit eigener Grenze ─────────────────
 auth, app = _app(pin_enabled=True)
 
@@ -415,6 +842,76 @@ r.check("… ein Haken, den der Betreiber neu setzt, bleibt eine 1 (von Hand)",
 # (Mutationsproben: den `elif`-Zweig in apply_idp_groups streichen → „ist das Flag weg" rot;
 #  `u["is_admin"] == 2` → `u["is_admin"]` → „von Hand … nie" rot; in admin.py die Bedingung
 #  „nur bei echter Änderung" streichen → „lässt ein IdP-Admin-Flag, wie es ist" rot.)
+
+# ── G6: nach dem Entzug des letzten Admins durch den IdP öffnet sich die Allowlist nicht wieder ──
+# Gemessen vor dem Fix: Die Allowlist-Person war nach dem Entzug im SELBEN Login wieder Admin — als
+# „von Hand" (1) und Erst-Owner, den kein Provider mehr entzieht (`maybe_promote_admin` über
+# `apply_factor`, weil es in dem Moment keinen Admin gab).
+_C6 = {"sub": "g6-1", "preferred_username": "chef6", "email": "chef6@example.com", "email_verified": True}
+_LISTE6 = ["chef6@example.com", "vize6@example.com"]
+a6, app6 = _oidc({**_C6, "groups": ["admins"]}, oidc_group_role_map=KARTE, admin_identifiers=_LISTE6)
+_oidc_login(app6)
+_chef6 = a6.store.get_user_by_name("chef6")
+r.check("G6: Admin-Gruppe beim IdP → Admin vom IdP (2), kein Owner", (_chef6["is_admin"], _chef6["is_owner"]) == (2, 0),
+        str(dict(_chef6)))
+_vize6 = a6.create_user("vize6", password=PW, email="vize6@example.com")
+_setze(a6, {**_C6, "groups": []})
+_err6 = io.StringIO()
+with redirect_stderr(_err6):
+    _oidc_login(app6)
+_chef6 = a6.store.get_user_by_name("chef6")
+_audit6 = [(z["event"], z["username"], z["detail"]) for z in a6.store.recent_audit(50)]
+r.check("G6: der IdP nimmt den letzten Admin — die Allowlist befördert im selben Login NICHT wieder",
+        (_chef6["is_admin"], _chef6["is_owner"]) == (0, 0), str(dict(_chef6)))
+r.check("… mit Zeile admin_bootstrap_denied nach_idp_entzug, ohne admin_bootstrap",
+        ("admin_bootstrap_denied", "chef6", "nach_idp_entzug") in _audit6
+        and not any(e == "admin_bootstrap" for e, _, _ in _audit6), str(_audit6[:6]))
+r.check("… und das Einmal-Token geht sofort an den Betreiber (nicht erst beim nächsten Start)",
+        "claim-admin?token=" in _err6.getvalue(), _err6.getvalue()[-200:])
+with redirect_stderr(io.StringIO()):
+    _oidc_login(app6)
+r.check("… auch der nächste Login befördert nicht", not a6.store.get_user_by_name("chef6")["is_admin"])
+with redirect_stderr(io.StringIO()):
+    _login(TestClient(app6), "vize6", PW)
+r.check("… und kein anderes Allowlist-Konto (der Merker gilt für die Instanz)",
+        (a6.store.get_user(_vize6)["is_admin"], a6.store.get_user(_vize6)["is_owner"]) == (0, 0)
+        and any(z["event"] == "admin_bootstrap_denied" and z["username"] == "vize6"
+                for z in a6.store.recent_audit(20)), str(dict(a6.store.get_user(_vize6))))
+_chef6 = a6.store.get_user_by_name("chef6")
+r.check("G6: der Notweg bleibt — das Einmal-Token macht zum Admin und Owner",
+        a6.consume_admin_claim(a6.admin_claim_token(), _chef6)
+        and (a6.store.get_user(_chef6["id"])["is_admin"], a6.store.get_user(_chef6["id"])["is_owner"]) == (1, 1))
+# Gegenproben: Der Merker entsteht nur, wenn wirklich kein Admin bleibt, und stört weder die
+# frische Instanz noch den Weg von der Demo in den Betrieb (dort löscht purge_demo den letzten Admin).
+a6h, app6h = _oidc({**_C6, "sub": "g6-h", "groups": ["admins"]}, oidc_group_role_map=KARTE,
+                   admin_identifiers=_LISTE6)
+_oidc_login(app6h)
+a6h.create_user("handchef6", password=PW, is_admin=True)
+_setze(a6h, {**_C6, "sub": "g6-h", "groups": []})
+_oidc_login(app6h)
+r.check("G6: entzieht der IdP einen Admin, während ein Admin von Hand bleibt, entsteht kein Merker",
+        not a6h.store.get_user_by_name("chef6")["is_admin"]
+        and a6h.store.get_setting("allowlist_nach_idp_entzug") is None)
+a6f, app6f = _app(admin_identifiers=_LISTE6)
+_f6 = a6f.create_user("vize6", password=PW, email="vize6@example.com")
+_login(TestClient(app6f), "vize6", PW)
+r.check("G6: frische Instanz — der erste Allowlist-Login wird Admin und Owner",
+        (a6f.store.get_user(_f6)["is_admin"], a6f.store.get_user(_f6)["is_owner"]) == (1, 1))
+_db6d = str(Path(tempfile.mkdtemp()) / "t.db")
+with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+    TinySesam(TinySesamConfig(db_path=_db6d, cookie_secure=False, demo_mode=True))
+    a6d, app6d = _app(db_path=_db6d, admin_identifiers=_LISTE6)
+_d6 = a6d.create_user("vize6", password=PW, email="vize6@example.com")
+_login(TestClient(app6d), "vize6", PW)
+r.check("G6: Demo → Betrieb (purge_demo löscht den Demo-Admin): die Allowlist greift",
+        a6d.store.get_user_by_name("demoadmin") is None
+        and (a6d.store.get_user(_d6)["is_admin"], a6d.store.get_user(_d6)["is_owner"]) == (1, 1),
+        str(dict(a6d.store.get_user(_d6))))
+# (Mutationsproben, einzeln gefahren: die Prüfung des Merkers in `maybe_promote_admin`
+#  abschalten → „befördert … NICHT wieder“, „nächste Login“, „kein anderes Allowlist-Konto“ rot;
+#  das Setzen im Entzugszweig streichen → dieselben rot; `if not self.admin_exists()` streichen →
+#  „kein Merker“ rot; den Merker je Konto statt je Instanz → „kein anderes Allowlist-Konto“ rot;
+#  die Token-Ausgabe streichen → „geht sofort an den Betreiber“ rot.)
 
 # ── F-05: Inaktivitäts-Timeout ────────────────────────────────────────────────────────────
 auth_i, app_i = _app()
@@ -1110,6 +1607,161 @@ r.check("… andere Wege bleiben, wie sie waren (Passwort in der Kette [\"magic\
 # (Mutationsproben: `_link_braucht` in `_session_ok` streichen → die ersten zwei rot; die
 #  Passkey-Zeile streichen → Passkey-Konto rot; den Schalter nicht lesen → „einstellbar" rot.)
 
+# G10: dieselbe Regel in Route-Ketten. Bis 2026-09-26 prüfte `require(factors=["magic"])` nur die
+# eigene Liste — gemessen: Konto mit TOTP, nur Anmelde-Link, globale Route 401, diese Route 200.
+# Das Postfach allein öffnete sie, obwohl `magiclink_require_second_factor` an war.
+def _route_app(**cfg):
+    a, ap = _link_app(**cfg)
+
+    @ap.get("/r")
+    def _r(user=Depends(a.require(factors=["magic"]))):
+        return {"u": user["username"]}
+
+    @ap.get("/r2")
+    def _r2(user=Depends(a.require(factors=["magic", "totp"]))):
+        return {"u": user["username"]}
+    return a, ap
+
+
+def _route_link(a, ap, name):
+    c = TestClient(ap)
+    tok = a.create_magic_token("login", user_id=a.store.get_user_by_name(name)["id"], payload={"next": "/r"})
+    c.post(f"/auth/magic/{tok}", follow_redirects=False)
+    return c
+
+
+def _mit_totp(a, name):
+    uid = a.create_user(name, password=PW, email=f"{name}@example.com")
+    geheim = a.totp_begin(uid)["secret"]
+    a.totp_confirm(uid, pyotp.TOTP(geheim).at(_zeit.time() - 30))
+    return geheim
+
+
+_JSON, _HTML10 = {"accept": "application/json"}, {"accept": "text/html"}
+a10, ap10 = _route_app()
+_g10 = _mit_totp(a10, "rt-totp")
+c10 = _route_link(a10, ap10, "rt-totp")
+_j10 = c10.get("/r", headers=_JSON)
+_h10 = c10.get("/r", headers=_HTML10, follow_redirects=False)
+r.check("G10 (klassisch): Route [\"magic\"], Konto mit TOTP — nach dem Link 401, Schritt totp",
+        _j10.status_code == 401 and _j10.headers.get("x-tinysesam-factor") == "totp",
+        f"HTTP {_j10.status_code} {_j10.headers.get('x-tinysesam-factor')}")
+r.check("… im Browser die Umleitung zum TOTP-Schritt (klassisch)",
+        _h10.status_code == 307 and _h10.headers["location"].startswith("/auth/totp?next=/r"),
+        f"{_h10.status_code} {_h10.headers.get('location')}")
+c10.post("/auth/totp", data={"code": pyotp.TOTP(_g10).now(), "next": "/r"}, follow_redirects=False)
+r.check("… mit dem Code öffnet sich die Route (klassisch)", c10.get("/r", headers=_JSON).json() == {"u": "rt-totp"})
+# Globale Kette [password, totp]: Bis 2026-09-27 öffnete dieselbe Route nach Link und TOTP — ohne das
+# Passwort, das die globale Kette verlangt. Seit „Angleichen" (PO-Entscheid 2026-09-27) verschärft eine
+# Route-Kette nur: erst der fehlende Schritt der globalen Anmeldung, das Passwort.
+a10g, ap10g = _route_app(login_chain=["password", "totp"])
+_g10g = _mit_totp(a10g, "rt-totp")
+c10g = _route_link(a10g, ap10g, "rt-totp")
+_j10g = c10g.get("/r", headers=_JSON)
+_h10g = c10g.get("/r", headers=_HTML10, follow_redirects=False)
+r.check("G10 (globale Kette [password, totp]): Route [\"magic\"] — nach dem Link zuerst der Schritt der "
+        "globalen Kette (password), nicht die Route allein",
+        _j10g.status_code == 401 and _j10g.headers.get("x-tinysesam-factor") == "password"
+        and _h10g.status_code == 307 and _h10g.headers["location"].startswith("/auth/login?next=/r"),
+        f"HTTP {_j10g.status_code} {_j10g.headers.get('x-tinysesam-factor')} {_h10g.headers.get('location')}")
+_login(c10g, "rt-totp", PW)
+_j10g2 = c10g.get("/r", headers=_JSON)
+c10g.post("/auth/totp", data={"code": pyotp.TOTP(_g10g).now(), "next": "/r"}, follow_redirects=False)
+r.check("… dann TOTP, danach öffnet sich die Route (globale Kette)",
+        _j10g2.status_code == 401 and _j10g2.headers.get("x-tinysesam-factor") == "totp"
+        and c10g.get("/r", headers=_JSON).json() == {"u": "rt-totp"},
+        f"HTTP {_j10g2.status_code} {_j10g2.headers.get('x-tinysesam-factor')}")
+a10p, ap10p = _route_app()
+_u10p = a10p.create_user("rt-passkey", password=PW, email="rtp@example.com")
+a10p.store.add_webauthn(_u10p, b"cred-g10", b"pub", 0, "[]", "Laptop")
+_j10p = _route_link(a10p, ap10p, "rt-passkey").get("/r", headers=_JSON)
+r.check("G10: Route [\"magic\"], Konto nur mit Passkey — 401, Schritt passkey",
+        _j10p.status_code == 401 and _j10p.headers.get("x-tinysesam-factor") == "passkey",
+        f"HTTP {_j10p.status_code} {_j10p.headers.get('x-tinysesam-factor')}")
+a10o, ap10o = _route_app()
+a10o.create_user("rt-ohne", password=PW, email="rto@example.com")
+r.check("G10: ohne zweiten Faktor öffnet der Link die Route weiter allein (C, nicht D)",
+        _route_link(a10o, ap10o, "rt-ohne").get("/r", headers=_JSON).json() == {"u": "rt-ohne"})
+# magiclink_require_second_factor=False schaltet die Regel des Anmelde-Links ab — nicht die globale:
+# Die klassische Policy verlangt ein eingerichtetes TOTP ohnehin, und eine Route-Kette unterschreitet
+# sie seit 2026-09-27 nicht mehr. Gemessen am Konto nur mit Passkey (den verlangt nur die Link-Regel).
+a10a, ap10a = _route_app(magiclink_require_second_factor=False)
+_u10a = a10a.create_user("rt-aus", password=PW, email="rta@example.com")
+a10a.store.add_webauthn(_u10a, b"cred-g10a", b"pub", 0, "[]", "Laptop")
+r.check("G10: magiclink_require_second_factor=False gilt auch hier — der Link genügt der Route (Konto mit Passkey)",
+        _route_link(a10a, ap10a, "rt-aus").get("/r", headers=_JSON).json() == {"u": "rt-aus"})
+_mit_totp(a10a, "rt-aus-totp")
+_j10a = _route_link(a10a, ap10a, "rt-aus-totp").get("/r", headers=_JSON)
+r.check("… ein eingerichtetes TOTP verlangt die klassische Regel trotzdem (die Route unterschreitet sie nicht)",
+        _j10a.status_code == 401 and _j10a.headers.get("x-tinysesam-factor") == "totp",
+        f"HTTP {_j10a.status_code} {_j10a.headers.get('x-tinysesam-factor')}")
+a10k, ap10k = _route_app()
+_g10k = _mit_totp(a10k, "rt-kette")
+c10k = _route_link(a10k, ap10k, "rt-kette")
+_vor10k = c10k.get("/r2", headers=_JSON)
+c10k.post("/auth/totp", data={"code": pyotp.TOTP(_g10k).now(), "next": "/r2"}, follow_redirects=False)
+r.check("G10: Route [\"magic\", \"totp\"] — genau ein TOTP-Schritt, danach offen (kein Doppelschritt)",
+        _vor10k.status_code == 401 and _vor10k.headers.get("x-tinysesam-factor") == "totp"
+        and c10k.get("/r2", headers=_JSON).json() == {"u": "rt-kette"},
+        f"HTTP {_vor10k.status_code} {_vor10k.headers.get('x-tinysesam-factor')}")
+# (Mutationsprobe, gefahren: den Aufruf von `_link_braucht` in
+#  `_enforce_route_chain` abschalten → die TOTP-, Passkey- und Ketten-Fälle werden rot.)
+
+# ── Route-Ketten angleichen (PO-Entscheid 2026-09-27): eine Route-Kette verschärft nur ─────────────
+# Bis dahin prüfte `require(factors=[…])` nur die eigene Liste (und nach G10 den Link). Eine halbe
+# Sitzung, der die GLOBALE Regel noch einen Faktor schuldete, kam damit durch: `factors=["password"]`
+# öffnete nach dem Passwort die Route eines Kontos mit TOTP, `["pin", "password"]` nach PIN und
+# Passwort ebenso, und unter `login_chain=["password", "totp"]` genügte das Passwort allein.
+def _kette_app(**cfg):
+    a, ap = _app(pin_enabled=True, **cfg)
+
+    @ap.get("/pw")
+    def _pw(user=Depends(a.require(factors=["password"]))):
+        return {"u": user["username"]}
+
+    @ap.get("/pinpw")
+    def _pinpw(user=Depends(a.require(factors=["pin", "password"]))):
+        return {"u": user["username"]}
+    return a, ap
+
+
+a_k, ap_k = _kette_app()
+_g_k = _mit_totp(a_k, "rk-totp")
+a_k.set_pin(a_k.store.get_user_by_name("rk-totp")["id"], "4711")
+c_k = TestClient(ap_k)
+_login(c_k, "rk-totp", PW)                                           # halbe Sitzung: TOTP fehlt
+_j_k = c_k.get("/pw", headers=_JSON)
+_h_k = c_k.get("/pw", headers=_HTML10, follow_redirects=False)
+# (Mutationsprobe: die Prüfung auf `mfa_ok` in `_enforce_route_chain` abschalten → 200 → rot.)
+r.check("Angleichen: Route [\"password\"], Konto mit TOTP, nur das Passwort — 401, Schritt totp (nicht offen)",
+        _j_k.status_code == 401 and _j_k.headers.get("x-tinysesam-factor") == "totp"
+        and _h_k.status_code == 307 and _h_k.headers["location"].startswith("/auth/totp?next=/pw"),
+        f"HTTP {_j_k.status_code} {_j_k.headers.get('x-tinysesam-factor')} {_h_k.headers.get('location')}")
+c_k.post("/auth/totp", data={"code": pyotp.TOTP(_g_k).now(), "next": "/pw"}, follow_redirects=False)
+r.check("… nach dem TOTP öffnet sich die Route", c_k.get("/pw", headers=_JSON).json() == {"u": "rk-totp"})
+c_kp = TestClient(ap_k)
+c_kp.post("/auth/pin", data={"username": "rk-totp", "pin": "4711"}, follow_redirects=False)
+_login(c_kp, "rk-totp", PW)
+_j_kp = c_kp.get("/pinpw", headers=_JSON)
+r.check("… Route [\"pin\", \"password\"] nach PIN und Passwort: auch dort erst TOTP (die globale Regel)",
+        _j_kp.status_code == 401 and _j_kp.headers.get("x-tinysesam-factor") == "totp",
+        f"HTTP {_j_kp.status_code} {_j_kp.headers.get('x-tinysesam-factor')}")
+a_ko, ap_ko = _kette_app()
+a_ko.create_user("rk-ohne", password=PW)
+c_ko = TestClient(ap_ko)
+_login(c_ko, "rk-ohne", PW)
+r.check("… ohne zweiten Faktor ist die Sitzung nach dem Passwort voll — die Route öffnet sofort (Gegenprobe)",
+        c_ko.get("/pw", headers=_JSON).json() == {"u": "rk-ohne"})
+a_kc, ap_kc = _kette_app(login_chain=["password", "totp"])
+a_kc.create_user("rk-kette", password=PW)
+c_kc = TestClient(ap_kc)
+_login(c_kc, "rk-kette", PW)
+_j_kc = c_kc.get("/pw", headers=_JSON)
+r.check("… login_chain [password, totp], Konto noch ohne TOTP: Route [\"password\"] schickt zur Einrichtung, "
+        "statt nach dem Passwort zu öffnen",
+        _j_kc.status_code == 401 and _j_kc.headers.get("x-tinysesam-factor") == "totp",
+        f"HTTP {_j_kc.status_code} {_j_kc.headers.get('x-tinysesam-factor')}")
+
 # ── Angriff auf die dritte Runde: Funde und ihre Riegel ────────────────────────────────────
 from fastapi import HTTPException as _HTTPEx  # noqa: E402
 from tinysesam import konfigpruefung as _kp3  # noqa: E402
@@ -1151,10 +1803,13 @@ a_s2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_e
                login_identifier="both")
 chefin_s2 = a_s2.create_user("chefin@example.com", password=PW, email="chefin@example.com")
 a_s2.ldap = _LDAP3({"chefin@example.com": {"id": "uuid-mallory", "email": "chefin@example.com", "name": "M"}})
+_n_s2 = a_s2.store.user_count()
 neu_s2 = a_s2.check_ldap("chefin@example.com", "x")
+# Bis 2026-09-27 entstand dabei ein Konto `ldap-…`; seit der Prüfrunde (p1-d) weist die Anmeldung ab —
+# die Adresse gehört lokal einem Konto, der Eintrag führte zu einem anderen.
 r.check("Angriff R3/S2: LDAP nicht vertraut — die eingetippte Adresse wird weder Kontoname noch bindet sie ein Konto",
-        neu_s2 is not None and neu_s2["id"] != chefin_s2 and neu_s2["username"].startswith("ldap-")
-        and not neu_s2["email"] and a_s2.store.get_federated_kennung("ldap", chefin_s2) is None, str(neu_s2))
+        neu_s2 is None and a_s2.store.user_count() == _n_s2
+        and a_s2.store.get_federated_kennung("ldap", chefin_s2) is None, str(neu_s2))
 
 # S4 (hoch, vorbestehend): Steuerzeichen im Kontonamen.
 a_s4, app_s4 = _app(allow_signup=True)
@@ -1272,9 +1927,12 @@ import logging as _log3  # noqa: E402
 a_v1, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)
 chefin_v1 = a_v1.create_user("chefin", password=PW, is_admin=True)
 a_v1.ldap = _LDAP3({"chefin": {"id": "uuid-mallory", "email": "chefin", "name": "M"}})
+_n_v1 = a_v1.store.user_count()
 neu_v1 = a_v1.check_ldap("chefin", "x")
+# Bis 2026-09-27 legte das ein Konto `ldap-…` an; seit der Prüfrunde (p1-d) weist es ab: Die Kennung
+# `chefin` gehört lokal einem Konto, der Eintrag führte zu einem anderen.
 r.check("Gegenprüfung R3/V1: LDAP nicht vertraut, Eingabe = eigener mail-Wert ohne „@\" → keine Übernahme",
-        neu_v1 is not None and neu_v1["id"] != chefin_v1 and neu_v1["username"].startswith("ldap-")
+        neu_v1 is None and a_v1.store.user_count() == _n_v1
         and a_v1.store.get_federated_kennung("ldap", chefin_v1) is None, str(neu_v1))
 # V2: … und ein UPN (Bind-Kennung, nicht der mail-Wert) bleibt Kontoname, auch ohne Kennung.
 a_v2, _ = _app(ldap_enabled=True, ldap_url="ldaps://dir.example.invalid", ldap_email_trusted=False)

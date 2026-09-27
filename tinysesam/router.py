@@ -108,56 +108,75 @@ def build_router(auth) -> APIRouter:
         # `record_login()` danach lag die ganze Passwortprüfung dazwischen, und eine parallele
         # Salve las N-mal „noch nicht gesperrt". Der Versuch steht ab hier schon als
         # Fehlversuch in der Tabelle; `record_login(..., versuch=…)` macht ihn zum Erfolg.
-        versuch = auth.versuch_beginnen(username, ip, "password")
+        # Mit LDAP schwebt er, bis das Verzeichnis geantwortet hat (G9): Bei einem Ausfall wird er
+        # zurückgenommen (F-23), und bis dahin darf er niemanden sperren, sondern nur warten lassen.
+        versuch = auth.versuch_beginnen(username, ip, "password", schweben=cfg.ldap_enabled)
         if versuch is None:
             # Eine Serien-Sperre (B2-6) läuft nicht ab — „vorübergehend" wäre gelogen, und der
             # Nutzer braucht den Weg hinaus. Die Meldung verrät nichts über die Existenz des
-            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht.
+            # Kontos: gezählt wird je Kennung, ob es sie gibt oder nicht. Ein Aufschub (G9) bekommt
+            # dieselbe 429 wie eine Sperre — sonst verriete die Antwort, dass gerade jemand anderes
+            # unter dieser Kennung oder Adresse anmeldet.
             text = auth.t("err.locked_serie" if auth._serie_voll(username) else "err.locked")
             return auth.render_page("login", request=request, status=429, next=nxt, error=text)
-        u = auth.check_password(username, password)
-        aus_verzeichnis = False
-        if not u and cfg.ldap_enabled:
-            from .ldap_ import VerzeichnisNichtErreichbar
-            try:
-                u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
-            except VerzeichnisNichtErreichbar as e:
-                # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
-                # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
-                # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
-                # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
-                # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
-                auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
-                security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
-                                      security.fuer_log(username), security.fuer_log(ip),
-                                      security.fuer_log(str(e)))
-                # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
-                # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
-                # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
-                # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
-                # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
-                # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
-                # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
-                # Der Versuch steht seit `versuch_beginnen` schon als Fehlversuch in der Tabelle
-                # (R7-2) — ohne lokales Passwort wird er also zurückgenommen, nicht nur nicht
-                # zusätzlich verbucht. Bis dahin zählt er mit; damit das nicht bei jedem Anlauf
-                # bis zum Timeout dauert, fragt `check_ldap` nach einem Ausfall eine Pause lang
-                # gar nicht erst (`ldap_.AusfallMerker`) und wirft sofort.
-                lokal = auth.find_user(username)
-                if lokal and auth.store.get_password_hash(lokal["id"]):
-                    auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
-                else:
-                    auth._versuch_zuruecknehmen(versuch)
-                return auth.render_page("login", request=request, status=503, next=nxt,
-                                        error=auth.t("err.directory_down"))
-            aus_verzeichnis = u is not None
+        # Unerwartetes (Programmfehler im Client, Datenbank weg, eine HTTPException aus der
+        # Prüfung) macht den Versuch sofort zum Fehlversuch — im Zweifel strenger, wie bisher.
+        # Ohne das schwebte er `Store.VORBUCHUNG_SCHWEBE_SEK` lang und liesse Anmeldungen
+        # derselben Adresse warten (G9). Ab `record_login` ist er abgeschlossen.
+        try:
+            u = auth.check_password(username, password)
+            aus_verzeichnis = False
+            if not u and cfg.ldap_enabled:
+                from .ldap_ import VerzeichnisNichtErreichbar
+                try:
+                    u = auth.check_ldap(username, password)   # LDAP/lldap-Backend (Faktor 'password')
+                except VerzeichnisNichtErreichbar as e:
+                    # Ein Ausfall ist kein Fehlversuch (F-23): nichts gegen Konto oder IP verbuchen
+                    # und kein `failed login` ins Sicherheits-Log — sonst sperrte ein paar Minuten
+                    # Verzeichnis-Ausfall die Nutzer aus, und fail2ban bannte sie obendrein. Die
+                    # Antwort ist für jedes Konto dieselbe 503, verrät also nichts über dessen
+                    # Existenz (lokal falsches Passwort und unbekannter Name kommen beide hier an).
+                    auth.audit("ldap_unavailable", username, ip, security.fuer_log(str(e))[:300])
+                    security.seclog.error("LDAP nicht erreichbar user=%s ip=%s grund=%s",
+                                          security.fuer_log(username), security.fuer_log(ip),
+                                          security.fuer_log(str(e)))
+                    # …aber nur der Anteil des VERZEICHNISSES ist entschuldigt (A-1). Hat das Konto
+                    # ein lokales Passwort und war es falsch, ist das ein Fehlversuch wie immer —
+                    # sonst wäre jeder Ausfall eine Rate-Pause ohne Kontosperre gegen genau das
+                    # Notfallkonto (lokaler Admin), das man in dem Moment braucht; verteilt über viele
+                    # IPs griffe nur noch das IP-Ratelimit. Die Antwort bleibt 503. Ein lokales Konto
+                    # MIT Passwort lässt sich so während eines Ausfalls an der späteren 429 erkennen —
+                    # dieselbe Sperre, die es im Normalbetrieb auch trifft; das ist der kleinere Preis.
+                    # Der Versuch steht seit `versuch_beginnen` schon in der Tabelle (R7-2), als
+                    # schwebende Vorbuchung (G9) — ohne lokales Passwort wird er also
+                    # zurückgenommen, nicht nur nicht zusätzlich verbucht. Bis dahin lässt er
+                    # Anmeldungen, die an ihm scheitern würden, warten, statt sie zu sperren; damit
+                    # das nicht bei jedem Anlauf bis zum Timeout dauert, fragt `check_ldap` nach
+                    # einem Ausfall eine Pause lang gar nicht erst (`ldap_.AusfallMerker`) und
+                    # wirft sofort.
+                    lokal = auth.find_user(username)
+                    if lokal and auth.store.get_password_hash(lokal["id"]):
+                        auth.record_login(username, ip, False, "password", versuch=versuch, quelle="lokal")
+                    else:
+                        auth._versuch_zuruecknehmen(versuch)
+                    return auth.render_page("login", request=request, status=503, next=nxt,
+                                            error=auth.t("err.directory_down"))
+                aus_verzeichnis = u is not None
+        except BaseException:
+            auth._versuch_gescheitert(versuch)
+            raise
         # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
         # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
         # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
         # Verzeichnis gefragt worden war und abgelehnt hatte.
+        # Aus dem Verzeichnis: das Konto mitgeben, zu dem die Kennung aufgelöst wurde (G5-N1) —
+        # ein Filter über `mail` trifft auch eine Kennung, die lokal einem ANDEREN Konto gehört.
+        # Diesen Fall weist `check_ldap` seit 2026-09-27 ab (eine Kennung, ein Konto); der
+        # Wächter in `_raeumgrenze` bleibt die zweite Sicherung.
         auth.record_login(username, ip, bool(u), "password", versuch=versuch,
                           quelle=("" if not cfg.ldap_enabled else "ldap" if aus_verzeichnis
-                                  else "lokal" if u else "lokal+ldap"))
+                                  else "lokal" if u else "lokal+ldap"),
+                          konto=u["id"] if aus_verzeichnis and u else None)
         if not u:
             return auth.render_page("login", request=request, status=401, next=nxt, error=auth.t("err.credentials"))
         # Kam das Konto aus dem Verzeichnis, ist die E-Mail ein LDAP-Attribut — in vielen
@@ -368,13 +387,16 @@ def build_router(auth) -> APIRouter:
     if cfg.pin_enabled:
         @r.get("/auth/pin", response_class=HTMLResponse)
         def pin_page(request: Request, next: str = "", error: str = ""):
-            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) ohne Benutzerfeld;
-            für Gäste als eigenständige Seite — die Login-Seite bietet die PIN ohnehin an."""
+            """PIN-Eingabe. Für Eingeloggte (PIN als Zusatzfaktor einer Route) und im Kettenschritt
+            nach dem ersten Faktor ohne Benutzerfeld; für Gäste als eigenständige Seite — die
+            Login-Seite bietet die PIN ohnehin an."""
             nxt = auth.safe_next(next, request)
-            u = auth.session_user(request)    # wie beim Absenden: ein API-Key ist ein Gast
+            # Wie beim Absenden: ein API-Key ist ein Gast. Die halbe Sitzung (erster Faktor ja,
+            # Kette offen) zählt nur, wenn die PIN ihr Kettenschritt ist (G7-N1, p2 F1).
+            u = auth.session_user(request) or auth._pin_kettenschritt(request)
             if u:
                 return auth.render_page("pin", request=request, next=nxt, error=error, username=u["username"])
-            if not cfg.pin_login:
+            if not cfg.pin_als_erstfaktor():
                 # PIN ist kein Erstfaktor → Gäste haben hier nichts verloren
                 return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(nxt)}", 303)
             return auth.render_page("pin", request=request, next=nxt, error=error)
@@ -392,32 +414,52 @@ def build_router(auth) -> APIRouter:
             # `pin_login=False` unten griff nicht, geprüft wurde die PIN des Key-Kontos, und
             # `apply_factor` legte mangels Sitzung eine neue, volle an: Automaten-Key + PIN
             # ergaben eine interaktive Sitzung samt Admin-Flag, das der Key allein nie trägt.
-            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_login`.
+            # Ein Key kommt hier nur als Gast an, und für den gilt `pin_als_erstfaktor()`.
             me = auth.session_user(request)
-            page = "pin" if me else "login"
+            # Der Kettenschritt: erster Faktor erbracht, die Sitzung hängt noch (`pending_user`,
+            # wie `/auth/totp`). Bis 2026-09-26 lief er über den Gästeweg — mit `pin_login=False`
+            # war eine Kette `password → pin` darum eine Sackgasse (404), und seine Fehlgriffe
+            # buchten wie die eines Erstfaktors, die ein Selbstbedienungs-Reset räumt (G7).
+            # Nennt das Formular ein ANDERES Konto, bleibt es ein Identitätswechsel über den
+            # Gästeweg; eigene PIN-Seiten, die den Namen mitschicken, bleiben im Kettenschritt.
+            # Die halbe Sitzung zählt nur, wenn die PIN jetzt ihr Kettenschritt ist (p2 F1): Sonst
+            # prüfte sie PINs im klassischen Modus (Orakel mit nur dem Passwort) oder vor dem TOTP
+            # einer strikten Kette, deren Reihenfolge danach nie mehr erfüllbar war.
+            halb = None if me else auth._pin_kettenschritt(request)
+            if halb and username:
+                gemeint = auth.find_user(username)
+                if not gemeint or gemeint["id"] != halb["id"]:
+                    halb = None
+            folge = me or halb      # die PIN steht HINTER einem schon erbrachten Faktor
+            page = "pin" if folge else "login"
 
             def fail(msg, status):
                 ctx = {"next": nxt, "error": msg}
-                if me:
-                    ctx["username"] = me["username"]
+                if folge:
+                    ctx["username"] = folge["username"]
                 return auth.render_page(page, status=status, request=request, **ctx)
 
-            if not me and not cfg.pin_login:
-                raise HTTPException(404)          # PIN ist kein Erstfaktor
-            if not pin or (not me and not username):
+            if not folge and not cfg.pin_als_erstfaktor():
+                # PIN ist kein Erstfaktor — abgeschaltet oder, in einer strikten Kette hinter
+                # einem anderen Faktor, nie mehr erfüllbar (G7: sonst ein Orakel ohne Passwort).
+                raise HTTPException(404)
+            if not pin or (not folge and not username):
                 return fail(auth.t("err.required"), 400)
             if not auth.rate_ok(ip):
                 return fail(auth.t("err.rate"), 429)
-            ident = me["username"] if me else username
+            ident = folge["username"] if folge else username
             if not ident:
                 return fail(auth.t("err.credentials"), 401)
             # Login- und PIN-Topf in einem atomaren Schritt (R3-7): Eine vierstellige PIN
-            # ist das dankbarste Ziel einer parallelen Salve.
-            versuch = auth.versuch_beginnen(ident, ip, "pin")
+            # ist das dankbarste Ziel einer parallelen Salve. Hinter einem erbrachten Faktor
+            # bucht die Serie unter eigener Art: Diese Fehlgriffe erzeugt nur, wer den ersten
+            # Faktor hat, und ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP, G7).
+            versuch = auth.versuch_beginnen(ident, ip, "pin",
+                                            serie_art=auth.SERIE_PIN_FOLGE if folge else None)
             if versuch is None:
                 return fail(auth.t("err.locked_serie" if auth._serie_voll(ident) else "err.locked"), 429)
-            if me:
-                u = auth.get_user(me["id"]) if auth.verify_user_pin(me["id"], pin) else None
+            if folge:
+                u = auth.get_user(folge["id"]) if auth.verify_user_pin(folge["id"], pin) else None
             else:
                 u = auth.check_pin(ident, pin)
             auth.record_login(ident, ip, bool(u), "pin", versuch=versuch)
@@ -938,9 +980,14 @@ def build_router(auth) -> APIRouter:
                     # Sperre und Token: messbar an der Antwortzeit, ein Orakel „Adresse vergeben?"
                     # (T-13, B1-12 / ASVS 6.3.8). Jetzt dieselbe Arbeit in beiden Zweigen; `gc()`
                     # räumt den Platzhalter mit dem Ablauf seines Tokens (R4-09).
-                    platzhalter = auth.create_user(
-                        f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
-                        password=password, roles=[])
+                    try:
+                        platzhalter = auth.create_user(
+                            f"reserviert-{secrets.token_hex(6)}" if name_ist_adresse else username,
+                            password=password, roles=[], name_selbst_gewaehlt=True)
+                    except ConfigError:
+                        # Wettlauf: Der Name ist seit der Prüfung oben vergeben (G12c) — dieselbe
+                        # Antwort, die die Prüfung jetzt gäbe.
+                        return err(auth.t("err.username_taken"), 409)
                     auth.store.set_disabled(platzhalter, True)
                     auth.create_magic_token("verify_email", user_id=platzhalter)
                     adresse = email_final
@@ -963,9 +1010,26 @@ def build_router(auth) -> APIRouter:
             # Anlage — die Einladung des Admins, die Fehlversuche der echten Inhaberin
             # (`Store.konto_entfernen`). Rechte hängen daran nicht: Eine Allowlist-Adresse
             # verlangt bei offener Registrierung ohnehin die Bestätigung (Konstruktor-Wächter).
-            uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
-                                   email=email_final or None,
-                                   email_verified=bool(inv and norm_email(inv.get("email"))))
+            try:
+                # Den Namen hat die Person selbst eingetippt, auch mit Einladung: Er sagt nichts
+                # darüber, wer im Verzeichnis so heisst — LDAP/SAML binden dieses Konto nie über
+                # ihn (G2-N).
+                uid = auth.create_user(username, password=password, is_admin=is_admin, roles=roles,
+                                       email=email_final or None,
+                                       email_verified=bool(inv and norm_email(inv.get("email"))),
+                                       name_selbst_gewaehlt=True)
+            except ConfigError as e:
+                # Wettlauf (G12c): Zwischen den Prüfungen oben und dem Anlegen hat eine
+                # gleichzeitige Anfrage die Kennung belegt, und die Datenbank weist ab. Dieselben
+                # Antworten wie oben — bis dahin eine 500. Ein vergebener Name bleibt sichtbar; eine
+                # vergebene Adresse mit Bestätigungspflicht bekommt die neutrale Seite (R4-03), ohne
+                # sie 409.
+                if getattr(e, "feld", None) == "username" and not name_ist_adresse:
+                    return err(auth.t("err.username_taken"), 409)
+                if verify:
+                    auth.audit("signup_taken", username, ip, detail=f"{email_final} wettlauf=1")
+                    return auth.render_page("register", request=request, **_reg_ctx(nxt, sent_verify=True))
+                return err(auth.t("err.email_taken"), 409)
             if inv:
                 auth.redeem_magic(invite, purpose="invite")   # Einladung jetzt verbrauchen
             auth.audit("signup", username, ip)
@@ -1174,7 +1238,13 @@ def build_router(auth) -> APIRouter:
             u = auth.current_user(request)
             if not u:
                 return RedirectResponse(f"{auth.pfad(request, cfg.login_path)}?next={_q(auth.pfad(request, '/auth/account'))}", 303)
-            return auth.render_page("account", request=request, user=u, methods=cfg.enabled_methods(),
+            # Die Konto-Seite fragt, welche Faktoren ein Konto pflegt, nicht, womit die Login-Seite
+            # beginnt: Eine PIN, die eine strikte Kette nur als Folgefaktor zulässt (G7), braucht
+            # ihre Sektion trotzdem, ebenso eine, die die Kette verlangt (mit `pin_login=False`).
+            methoden = cfg.enabled_methods()
+            if cfg.pin_enabled and (cfg.pin_login or "pin" in (cfg.login_chain or [])) and "pin" not in methoden:
+                methoden.append("pin")
+            return auth.render_page("account", request=request, user=u, methods=methoden,
                                     has_totp=auth.store.has_confirmed_totp(u["id"]),
                                     recovery_left=auth.recovery_codes_remaining(u["id"]),
                                     recovery_warn=auth.RECOVERY_WARNSCHWELLE,
@@ -1182,7 +1252,8 @@ def build_router(auth) -> APIRouter:
                                     is_admin=bool(u["is_admin"]), admin_path=cfg.admin_path,
                                     events=auth.own_events(u["id"]),
                                     username_change=(cfg.self_service_username_change
-                                                     and cfg.login_identifier != "email"),
+                                                     and cfg.login_identifier != "email"
+                                                     and not cfg.ldap_enabled),
                                     email_change=(cfg.self_service_email_change and auth.mail_configured()))
 
     # ---------- Selbstbedienung: Benutzername und Adresse (PO-Entscheid 2026-09-25) ----------
@@ -1228,8 +1299,11 @@ def build_router(auth) -> APIRouter:
                 raise HTTPException(400, str(e))
             # Dieselbe Antwort, ob ein Link hinausgeht oder nicht (vergebene Adresse, Drossel) —
             # und der Versand erst nach der Antwort (R4-05): keine Laufzeit als Orakel.
+            # Ist die Warteschlange voll, verfällt der Token (`senden.verwerfen`): Ein nie
+            # zugestellter Link hielte sonst den Weg über LDAP/SAML bis zu seinem Ablauf auf.
             antwort = JSONResponse({"ok": True, "sent": True})
-            return auth.nach_der_antwort(antwort, senden) if senden else antwort
+            return auth.nach_der_antwort(antwort, senden, bei_ueberlauf=senden.verwerfen) \
+                if senden else antwort
 
         @r.get("/auth/email/{token}", response_class=HTMLResponse)
         def email_confirm_page(request: Request, token: str):

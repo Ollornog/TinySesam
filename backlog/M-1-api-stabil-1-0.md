@@ -68,4 +68,12 @@ Das ist zuerst repariert worden. Alles andere wäre auf Sand gebaut.
 Die vierte Bedingung stand vorher nicht da, weil niemand danach gesucht hatte. Sie gehört dazu:
 Eine stabile Oberfläche über einem Paket mit Rollen-Eskalation misst das Falsche.
 
+## Stand 2026-09-27: T-13 erledigt, offen nur die API-Einstufung
+
+[T-13](T-13-audit-2026-09-22-runde-3.md) (drittes Audit samt Nachträgen, Grenzen und der Prüfrunde
+Sperren/Zähler) ist abgeschlossen: Jeder Punkt ist behoben mit Test, per Mutation belegt, oder als
+„bewusst so, begründet" markiert. Für diesen Meilenstein offen ist damit nur noch die **Einstufung
+der öffentlichen API in A/B/C** (PO-Entscheid 2026-09-26) — die inhaltliche Frage oben, welche der
+eingefrorenen Namen auf Dauer öffentlich sein sollen. Sie liegt beim PO.
+
 <!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->

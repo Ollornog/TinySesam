@@ -212,9 +212,14 @@ os.remove(db)
 # Benutzername und E-Mail sind EIN Kennungs-Raum (`find_user` sucht in beiden Spalten). Die
 # Kreuzprüfung sitzt in `create_user` und trifft damit auch das Auto-Anlegen aus LDAP — und
 # sie muss hier als saubere Abweisung ankommen, nicht als 500 mitten im Anmeldevorgang.
-for was, verzeichnis, kennung in (
-        ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve"),
-        ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com")):
+# Der zweite Fall endet seit der Prüfrunde 2026-09-27 (p1-d) schon VOR der Anlage: Die Kennung
+# `chef@example.com` gehört lokal einem Konto, der Eintrag im Verzeichnis führte zu einem anderen —
+# `ldap_kennung_abgewiesen grund=kennung_zweier_konten` statt `ldap_ident_taken`. Das Ergebnis bleibt.
+for was, verzeichnis, kennung, ereignis in (
+        ("deren Adresse lokal schon Kennung ist", {"password": "x", "email": "chef@example.com"}, "eve",
+         "ldap_ident_taken"),
+        ("deren Name lokal schon Adresse ist", {"password": "x", "email": "eve@example.com"}, "chef@example.com",
+         "ldap_kennung_abgewiesen")):
     # Mit vertrauter Quelle: Nur dann kommt die Adresse überhaupt ins Konto (Vorgabe seit 2026-09-25:
     # nicht vertraut — dann besetzt sie ohnehin nichts).
     db, auth, c = baue_ohne_admin(ldap_email_trusted=True)
@@ -224,7 +229,7 @@ for was, verzeichnis, kennung in (
     assert r.status_code == 401, f"HTTP {r.status_code} — 303 wäre eine besetzte Kennung, 500 ein Defekt"
     assert auth.store.get_user_by_name(kennung) is None, "das Konto entstand trotz Abweisung"
     assert (auth.find_user("chef@example.com") or {})["id"] == lokal, "die Kennung wurde übernommen"
-    assert any(z["event"] == "ldap_ident_taken" for z in auth.store.recent_audit(20)), \
+    assert any(z["event"] == ereignis for z in auth.store.recent_audit(20)), \
         "kein Audit-Eintrag — die Abweisung ist unsichtbar"
     ok(f"R4-12: eine Verzeichnis-Identität, {was}, legt kein Konto an (401, kein 500)")
     os.remove(db)
@@ -930,7 +935,9 @@ os.remove(db23a)
 # lockout_ip`, und fail2ban bannte die Adresse. Und das nicht einmal, sondern bei jedem Anlauf
 # während des ganzen Ausfalls. Jetzt merkt sich der Login den Ausfall: Danach kommt sofort 503,
 # ohne das Verzeichnis erneut zu fragen. (Mutationsprobe: in `check_ldap` den Aufruf
-# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, der Admin bekommt 429 → rot.)
+# `self._ldap_ausfall.zugang()` streichen → die Salve hängt, das Verzeichnis wird bei jedem Anlauf
+# erneut gefragt → rot. Bis G9 bekam dabei auch der Admin 429; seitdem wartet er, bis die
+# schwebenden Vorbuchungen entschieden sind — das misst tests/test_vorbuchung_schwebe.py.)
 from concurrent.futures import ThreadPoolExecutor as _Pool24  # noqa: E402
 
 HAENGT24 = 2.0

@@ -41,7 +41,8 @@ Hang one class in front of your app, done: login page, sessions and route guards
 
 **Combinable in order:**
 any **factor chains** (`login_chain=["oidc","password"]`),
-global or per route (`Depends(auth.require(factors=[...], strict=...))`).
+global or per route (`Depends(auth.require(factors=[...], strict=...))`) — a route chain only ever
+adds to the global rule.
 
 **Roles are optional:**
 most apps only need “logged in / not” (`require_user`).
@@ -127,7 +128,8 @@ TinySesamConfig(login_identifier="email")     # email only
 
 The label of the field follows automatically, and password *and* PIN login both honour it.
 Because the email is a login identifier, it is stored canonically (trimmed, lower-cased) and is
-**unique** (partial UNIQUE index; accounts without an email stay allowed). Registration requires it
+**unique** — across usernames *and* emails (no identifier belongs to two accounts, not even as
+`Alice`/`alice`), enforced by the database; accounts without an email stay allowed. Registration requires it
 by default — `signup_require_email=False` turns that off. In `"email"` mode the registration form
 drops the username field entirely: the address *is* the identifier. `signup_verify_email=True` activates the
 account only after the confirmation link is clicked; it needs a mailer (`set_mailer` or SMTP config)
@@ -341,10 +343,14 @@ TinySesamConfig.local_accounts(          # username + password only, no email an
   TOTP, PIN or password — restricted by `stepup_methods`, otherwise whatever the user has set up
   (`auth.stepup_options(user)`). Freshness expires after `stepup_max_age_sec`.
 - `Depends(auth.require(factors=["password", "pin"]))` → an ordered chain per route. Someone already
-  signed in only gets the missing field, not the whole login page again.
+  signed in only gets the missing field, not the whole login page again. A route chain tightens the
+  global rule and never undercuts it: a session that still owes the global sign-in a factor (TOTP of
+  an account that has one, the next step of `login_chain`) is sent there first — even with
+  `factors=["password"]`.
 
 **A PIN as the way in is a deliberate option.** With `pin_enabled=True` the PIN is a first factor by
-default (`pin_login=True`) — handy for a general page, while a detail page asks for more:
+default (`pin_login=True`) — unless a strict `login_chain` asks for it after another factor, where it
+only ever is the next step. Handy for a general page, while a detail page asks for more:
 
 ```python
 @app.get("/overview")                                   # the PIN is enough
@@ -370,7 +376,9 @@ TinySesamConfig(admin_identifiers=["me@example.com"])   # allowlist, any sign-in
 
 - **Allowlist** — the named username or email is promoted on its next successful sign-in, whatever the
   method. An **address** only counts with proof that it belongs to whoever is signing in; SAML and
-  LDAP offer no such proof, so it never promotes there (see below). After that: never again.
+  LDAP offer no such proof, so it never promotes there (see below). After that: never again — and
+  not once an identity provider has taken the flag from the instance's last admin either; TinySesam
+  then prints the one-time token below right away (or use `tinysesam owner`).
 - **One-time token** — if no admin exists, TinySesam prints a claim URL to **stderr** on startup
   (the operator's console). Sign in, open `/auth/claim-admin?token=…`, and that account becomes
   admin. The token is single-use and expires after `admin_claim_ttl_min`; once an admin exists the
@@ -545,7 +553,8 @@ Modeled on Authelia/Fail2Ban — the thresholds are changeable **in the admin pa
 - **Consecutive failures, no window** (`account_max_consecutive_failures`, default 100): every
   failed sign-in attempt under a name extends a series; at the limit sign-in is locked — and unlike
   the window thresholds this lock does not expire. It ends with a successful full sign-in over
-  another path (passkey, sign-in link, OIDC), a password reset, a new password from the admin panel
+  another path (passkey, sign-in link, OIDC), a password reset (only the first-factor share — failed
+  TOTP codes and a PIN entered after another factor stay), a new password from the admin panel
   or `tinysesam unlock`. Counted per name whether the account exists or not, so the lock reveals
   nothing. NIST SP 800-63B caps consecutive failures at 100: slow guessing below every window
   threshold no longer runs forever.
@@ -803,7 +812,8 @@ All optional (on/off by config), usable individually and combined, front end rep
 - **Step-up / per-route MFA:** `Depends(auth.require(mfa=True))` (sudo freshness `stepup_max_age_sec`,
   → `/auth/reauth`). `admin_require_mfa=True` additionally protects the panel with a fresh confirmation.
 - **Factor chains (ordered):** `login_chain=["oidc","password"]` + `login_chain_strict`; per route
-  `require(factors=[...], strict=...)`. Factors: `password, pin, oidc, passkey, totp, magic`.
+  `require(factors=[...], strict=...)` on top of the global rule. Factors: `password, pin, oidc,
+  passkey, totp, magic`.
 - **PIN per user:** `pin_enabled` — user+PIN, its own strict lockout, combinable with TOTP.
 - **Shared resource secret:** `resource_locks_enabled` — `auth.set_resource_secret(name, secret,
   kind="pin"|"password")`, guard `Depends(auth.require_resource(name))`, with no user account at all.
@@ -898,9 +908,17 @@ Local passwords and LDAP coexist (local first, then LDAP). Roles/2FA/chains appl
 > 0.19.0 you'd land in the same local account with its roles. LDAP now binds `entryUUID` /
 > `objectGUID` (`ldap_attr_id`), SAML the `NameID` (`saml_attr_id` for IdPs that issue transient
 > ones). An account already bound to a *different* key is never taken over — that case is
-> refused and audited. Accounts from before this version bind themselves on their next sign-in,
-> once, also audited. If the directory supplies no stable key, the name still decides and a log
-> line says so; `federation_require_stable_id=True` turns that into a refusal.
+> refused and audited. Accounts from before this version bind themselves by name on their next
+> sign-in, once, also audited — but only within `federation_name_binding_days` (default 30) of the
+> first start with the source enabled or of the account's creation; after that a dormant account
+> would fall to the next person who gets the same name in the directory. Bind the rest explicitly:
+> `auth.foederation_nachbinden("ldap")` (dry run by default, `ausfuehren=True` writes; SAML takes
+> `zuordnung={name: nameid}`), or open a single account with `auth.loese_fremde_bindung(source,
+> user_id)`. A self-chosen name (sign-up, self-service rename) never binds by name, and neither
+> does a name another source brought along when it created the account (an account created via
+> OIDC never binds to LDAP or SAML by name — the name may have been self-chosen at the IdP). If the
+> directory supplies no stable key, the name still decides and a log line says so;
+> `federation_require_stable_id=True` turns that into a refusal.
 
 > **Referrals are never followed** — and that is visible in the log. ldap3 follows a
 > `SearchResultDone resultCode=10` on its own and binds on the host named by the *answer*, with the
@@ -1029,7 +1047,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**51 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**57 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

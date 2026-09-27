@@ -62,7 +62,7 @@ IdP-Gruppen → lokale Rollen (beim Login). Gemappte Rollen werden synchronisier
 
 Einen Vorgang ins Audit-Log schreiben. `detail` nimmt alles, was später die Frage „warum" beantwortet.
 
-### `change_username(user_id, neu, ip: 'Optional[str]' = None) -> 'str'`
+### `change_username(user_id, neu, ip: 'Optional[str]' = None, durch_betreiber: 'bool' = False) -> 'str'`
 
 Den eigenen Benutzernamen ändern. Gibt den neuen Namen zurück, `ValueError` mit dem Grund, wenn er nicht geht.
 
@@ -122,7 +122,7 @@ Einmal-Token erzeugen (Klartext-Rückgabe). Nur der sha256-Hash liegt in der DB.
 
 Service-/Daemon-Account: kein interaktiver Login, nur API-Keys. Rollen = Rechte-Scope.
 
-### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True) -> 'int'`
+### `create_user(username, password=None, is_admin=False, roles=None, display_name=None, email=None, is_service=False, email_verified: 'bool' = True, name_selbst_gewaehlt: 'bool' = False) -> 'int'`
 
 Ein Konto anlegen und seine ID zurückgeben. `is_service=True` für Maschinen: kein Login, nur API-Keys. Eine bereits vergebene Kennung wirft `ConfigError` — **neu auch beim doppelten Benutzernamen**, der bis 0.18.x als `sqlite3.IntegrityError` aus der Datenbank kam (`e.feld`/`e.besitzer_id` sagen, was kollidierte).
 
@@ -169,6 +169,10 @@ Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 ### `flow_cookie_name(basis: 'str') -> 'str'`
 
 Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
+
+### `foederation_nachbinden(quelle: 'str', zuordnung: 'Optional[dict]' = None, ausfuehren: 'bool' = False) -> 'dict'`
+
+Bestandskonten an ihre Kennung in LDAP/SAML binden, ohne auf ihre Anmeldung zu warten (G1).
 
 ### `forward_login_url(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'`
 
@@ -268,7 +272,7 @@ Alle gesperrten Ressourcen (Namen und Beschreibungen, keine Geheimnisse).
 
 ### `loese_fremde_bindung(quelle: 'str', user_id: 'int') -> 'int'`
 
-Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg).
+Die Bindung eines Kontos an eine fremde Identität lösen (Betreiber-Weg) — und die Bindung über den Namen für die nächste Anmeldung öffnen. Gibt die Zahl der gelösten Bindungen zurück (0: das Konto war nicht gebunden).
 
 ### `login_fresh(request: 'Request', user: 'Optional[dict]' = None) -> 'bool'`
 
@@ -292,7 +296,7 @@ Kann überhaupt eine Mail hinausgehen — per SMTP oder per `set_mailer`?
 
 ### `maybe_promote_admin(user, email_bestaetigt: 'Optional[bool]' = None, faktor: 'Optional[str]' = None) -> 'bool'`
 
-Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder.
+Weg 1: Allowlist. Wer in `admin_identifiers` steht, wird beim Login Admin — egal über welche Methode (auch OIDC/SAML/LDAP); eine Allowlist-ADRESSE aber nur mit einem Beleg, dass sie dem Anmeldenden gehört, und über SAML/LDAP gibt es keinen. Danach nie wieder — auch nicht, nachdem der Identity Provider der Instanz ihren letzten Admin entzogen hat (G6).
 
 ### `mfa_pending(user_id) -> 'bool'`
 
@@ -350,7 +354,7 @@ Die von `seed_demo` angelegten Konten wieder entfernen — genau die, keine glei
 
 Darf diese IP noch? Ein Nein schreibt eine Zeile ins Sicherheits-Log (fail2ban liest mit).
 
-### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '')`
+### `record_login(username, ip, success, method, versuch: 'Optional[int]' = None, quelle: 'str' = '', konto: 'Optional[int]' = None)`
 
 Einen Anmeldeversuch verbuchen. Ein Erfolg räumt nur die Fehlversuche DERSELBEN Methode weg.
 
@@ -376,11 +380,11 @@ Eine gesperrte Ressource wieder freigeben (die Sperre entfernen, nicht entsperre
 
 ### `request_email_change(user_id, neu, base_url)`
 
-Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) oder None, wenn nichts zu senden ist. `ValueError` bei einer ungültigen Adresse oder ohne Mailer.
+Den Wechsel auf eine neue Adresse beantragen: Bestätigungslink an die NEUE. Gibt die Versandfunktion zurück (für `nach_der_antwort`) — auch dann, wenn die Adresse vergeben oder reserviert ist und kein Link hinausgeht; `senden()` sagt es mit True/False. None nur bei einer Drossel und für die eigene, schon belegte Adresse. `ValueError` bei einer ungültigen Adresse oder ohne Mailer. Fällt der Versand aus, bevor er beginnt (volle Warteschlange), lässt `senden.verwerfen()` den Token verfallen — als `bei_ueberlauf` für `nach_der_antwort` (seit 2026-09-27).
 
 ### `require(mfa: 'bool' = False, admin: 'bool' = False, role=None, factors: 'Optional[list]' = None, strict: 'Optional[bool]' = None, admin_implies: 'Optional[bool]' = None)`
 
-Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt eine bestimmte Faktor-Kette für diese Route (überschreibt die globale), strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`.
+Allgemeine Guard-Factory für beliebige Kombinationen — der „Flag am Guard"-Weg: `Depends(auth.require(mfa=True))`, `Depends(auth.require(admin=True, mfa=True))`. `role=` nimmt eine Rolle oder mehrere (`role=["redaktion", "lektorat"]` → eine genügt). factors=[...] verlangt für diese Route zusätzlich eine bestimmte Faktor-Kette, strict=True/False steuert die Reihenfolge: `Depends(auth.require(factors=['oidc','password']))`. Die Route-Kette verschärft die globale Regel, sie ersetzt sie nicht: Eine Sitzung, die für die globale Anmeldung noch nicht voll ist (zweiter Faktor offen, Kette unvollständig), geht zuerst zu deren fehlendem Schritt — auch bei `factors=["password"]` (seit 2026-09-27; bis dahin überschrieb die Route-Kette die globale). Lief die Anmeldung über den Anmelde-Link und hat das Konto TOTP oder einen Passkey, verlangt auch eine Route-Kette ihn (`magiclink_require_second_factor`, wie in der globalen Policy).
 
 ### `require_admin(request: 'Request') -> 'dict'`
 
@@ -598,7 +602,7 @@ Der Provider hat für diese Anwendung zugestimmt — an der Sitzung vermerken.
 
 Die laufende Version — fürs Panel. TinySesam aktualisiert sich nicht selbst; das erledigt, wer es installiert hat (gepinnter Tag / Wheel eines Releases).
 
-### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False) -> 'Optional[int]'`
+### `versuch_beginnen(username, ip, method, auch_pin: 'bool' = False, serie_art: 'Optional[str]' = None, schweben: 'bool' = False) -> 'Optional[int]'`
 
 Einen Prüfversuch **atomar** zulassen und vorab als Fehlversuch verbuchen.
 
@@ -626,7 +630,7 @@ Preset: Passwort-Login gegen **Active Directory** (via LDAP). Entweder Direkt-Bi
 
 ### `TinySesamConfig.enabled_methods() -> 'list[str]'`
 
-Erstfaktoren, die die Login-Seite anbietet. Eine PIN mit `pin_login=False` steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
+Erstfaktoren, die die Login-Seite anbietet. Eine PIN, die kein Erstfaktor sein kann (`pin_als_erstfaktor()`), steht hier bewusst NICHT — sie bleibt als Zusatzfaktor/Step-up nutzbar.
 
 ### `TinySesamConfig.entra_id(tenant_id, client_id, client_secret, oidc_name='Microsoft', **overrides)`
 
@@ -639,6 +643,10 @@ Preset: **nur Benutzername + Passwort**, ganz ohne E-Mail.
 ### `TinySesamConfig.oidc_gateway(issuer, client_id, client_secret, base_url, cookie_domain='', trusted_redirect_hosts=None, allowed_groups=None, group_claim='groups', oidc_name='SSO', oidc_scopes='openid profile email', db_path='tinysesam-gateway.db', https_mode='warn', session_ttl_hours=168, trusted_proxies=None, clients=None, revalidate_minutes=60, **overrides)`
 
 Preset: TinySesam als reines **OIDC-Forward-Auth-Gateway** (Authelia-/oauth2-proxy-Stil). Alle anderen Methoden/Features aus, OIDC + Forward-Auth an. Läuft mit `pip install 'tinysesam[oidc]'`. Einzelne Felder via **overrides überschreibbar.
+
+### `TinySesamConfig.pin_als_erstfaktor() -> 'bool'`
+
+Meldet eine PIN als ERSTER Faktor an — auf der Login-Seite und über `/auth/pin` ohne Sitzung?
 
 ### `TinySesamConfig.pruefen() -> 'list[str]'`
 
@@ -670,4 +678,4 @@ Der Vorgang passt nicht zum Zustand des Kontos — und wird deshalb verweigert.
 
 ---
 
-146 Methoden, 3 Eigenschaften, 6 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
+147 Methoden, 3 Eigenschaften, 7 Presets, 5 Fehlertypen — erzeugt aus den Docstrings.
