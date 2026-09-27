@@ -1308,13 +1308,13 @@ Building blocks for pages you build yourself — signatures and descriptions in
 pip install -e '.[all]' setuptools         # + httpx for the FastAPI TestClient (included in [all])
 python tests/run_all.py                    # every suite; exit 0 = green, 1 = failure
 python tests/run_all.py core pin chain     # only some
-TINYSESAM_TEST_JOBS=1 python tests/run_all.py   # one suite after the other
+CI_TEST_JOBS=1 python tests/run_all.py   # one suite after the other
 ```
 
-The suites run **in parallel**: `TINYSESAM_TEST_JOBS` sets how many at once (default: half the CPU
+The suites run **in parallel**: `CI_TEST_JOBS` sets how many at once (default: half the CPU
 cores, at least one; anything but a whole number ≥ 1 is an error). Each suite gets its own
 throwaway directory, and the log lists the suites in file order, not in the order they finish —
-`TINYSESAM_TEST_JOBS=1` is the serial run. The runner starts every suite through `tests/_starter.py`,
+`CI_TEST_JOBS=1` is the serial run. The runner starts every suite through `tests/_starter.py`,
 which lowers the password-hash cost **inside that test process only**. A suite started directly
 (`python tests/test_core.py`) and the package itself always hash with the production parameters —
 there is no setting and no environment variable for them.

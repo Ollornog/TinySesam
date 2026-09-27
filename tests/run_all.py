@@ -19,10 +19,10 @@ dorthin, danach wird es gelöscht). So kann kein Zustand aus einem Lauf den näc
 beeinflussen und keine Suite die andere stören — die Tests sind wiederholbar.
 Nachweis: `ci-local --full` fährt die Suite zweimal im selben Baum.
 
-PARALLEL: Die Suiten laufen gleichzeitig, `TINYSESAM_TEST_JOBS` (ganze Zahl ≥ 1) legt fest, wie
+PARALLEL: Die Suiten laufen gleichzeitig, `CI_TEST_JOBS` (ganze Zahl ≥ 1) legt fest, wie
 viele; ohne die Variable die Hälfte der Kerne, mindestens eine. Die Ausgabe jeder Suite wird
 gepuffert und in der festen Reihenfolge der Dateinamen ausgegeben — das Protokoll liest sich wie
-ein serieller Lauf und ist bei gleichem Ergebnis Zeile für Zeile gleich. `TINYSESAM_TEST_JOBS=1`
+ein serieller Lauf und ist bei gleichem Ergebnis Zeile für Zeile gleich. `CI_TEST_JOBS=1`
 ist der serielle Lauf von früher: eine Suite nach der anderen, in dieser Reihenfolge.
 Voraussetzung dafür: Keine Suite schreibt in feste Pfade im Baum oder teilt sich etwas mit einer
 anderen (Port, Datei, Datenbank) — jede hat ihr eigenes Wegwerf-Verzeichnis (s. o.).
@@ -58,7 +58,7 @@ SKIP_EXIT = 77
 
 #: Startet jede Suite (senkt die Hash-Parameter im Testprozess ab, s. dort).
 STARTER = os.path.join(HERE, "_starter.py")
-JOBS_VARIABLE = "TINYSESAM_TEST_JOBS"
+JOBS_VARIABLE = "CI_TEST_JOBS"
 
 #: Diese Suiten starten bei parallelem Lauf ZUERST — die langsamsten, gemessen 2026-09-27 (0.22.0).
 #: Die Liste bestimmt nur, WANN eine Suite anfängt; Ergebnis und Reihenfolge der Ausgabe bleiben
@@ -113,10 +113,10 @@ def umgebung(sandbox: str) -> dict:
 
 
 def jobs_bestimmen(roh=None) -> int:
-    """Wie viele Suiten gleichzeitig laufen: `TINYSESAM_TEST_JOBS`, sonst die Hälfte der Kerne.
+    """Wie viele Suiten gleichzeitig laufen: `CI_TEST_JOBS`, sonst die Hälfte der Kerne.
 
     Ein Wert, der keine ganze Zahl ≥ 1 ist, ist ein Fehler (`ValueError`) — nicht still die
-    Vorgabe: Wer `TINYSESAM_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
+    Vorgabe: Wer `CI_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
     das erfahren, statt einen parallelen Lauf für einen seriellen zu halten.
     """
     roh = os.environ.get(JOBS_VARIABLE, "") if roh is None else roh

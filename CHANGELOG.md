@@ -7,10 +7,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ### Geändert — Testlauf (für Entwickler; am Paket ändert sich nichts)
 
 - **Die Suiten laufen parallel.** `tests/run_all.py` fährt sie gleichzeitig; wie viele,
-  legt `TINYSESAM_TEST_JOBS` fest (Vorgabe: die Hälfte der Kerne, mindestens eine; ein anderer
+  legt `CI_TEST_JOBS` fest (Vorgabe: die Hälfte der Kerne, mindestens eine; ein anderer
   Wert als eine ganze Zahl ≥ 1 bricht mit Exit 2 ab). Die erste Zeile nennt die Zahl
   (`▸ Test-Jobs: N`), das Protokoll folgt weiter der Reihenfolge der Dateien, und
-  `TINYSESAM_TEST_JOBS=1` ist der serielle Lauf von früher. Gemessen auf 12 Threads (6 Jobs, ohne
+  `CI_TEST_JOBS=1` ist der serielle Lauf von früher. Gemessen auf 12 Threads (6 Jobs, ohne
   Browser-Test): voller Lauf 237 s → 40 s, schmaler Lauf (ohne Extras) 466 s → 42 s; seriell mit
   den billigen Hashes 179 s bzw. 177 s.
 - **Billige Passwort-Hashes nur im Testlauf.** Der Sammellauf startet jede Suite über

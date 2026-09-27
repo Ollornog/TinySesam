@@ -1330,13 +1330,13 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
 pip install -e '.[all]' setuptools         # + httpx für den FastAPI-TestClient (in [all] enthalten)
 python tests/run_all.py                    # alle Suiten; Exit 0 = grün, 1 = Fehlschlag
 python tests/run_all.py core pin chain     # gezielt einzelne
-TINYSESAM_TEST_JOBS=1 python tests/run_all.py   # eine Suite nach der anderen
+CI_TEST_JOBS=1 python tests/run_all.py   # eine Suite nach der anderen
 ```
 
-Die Suiten laufen **parallel**: `TINYSESAM_TEST_JOBS` legt fest, wie viele gleichzeitig (Vorgabe:
+Die Suiten laufen **parallel**: `CI_TEST_JOBS` legt fest, wie viele gleichzeitig (Vorgabe:
 die Hälfte der Kerne, mindestens eine; alles außer einer ganzen Zahl ≥ 1 ist ein Fehler). Jede Suite
 bekommt ihr eigenes Wegwerf-Verzeichnis, und das Protokoll nennt die Suiten in der Reihenfolge der
-Dateien, nicht in der, in der sie fertig werden — `TINYSESAM_TEST_JOBS=1` ist der serielle Lauf. Der
+Dateien, nicht in der, in der sie fertig werden — `CI_TEST_JOBS=1` ist der serielle Lauf. Der
 Sammellauf startet jede Suite über `tests/_starter.py`, der die Kosten des Passwort-Hashings **nur in
 diesem Testprozess** absenkt. Eine direkt gestartete Suite (`python tests/test_core.py`) und das
 Paket selbst hashen immer mit den Produktionswerten — dafür gibt es keine Einstellung und keine

@@ -1,14 +1,14 @@
 """Der Sammellauf selbst: parallel, aber so aussagekräftig wie seriell — und billige Hashes nur im Test.
 
 Seit dem Testlauf-Umbau (nach 0.22.0) fährt `tests/run_all.py` die Suiten gleichzeitig
-(`TINYSESAM_TEST_JOBS`) und startet jede über `tests/_starter.py`, der die Hash-Parameter im
+(`CI_TEST_JOBS`) und startet jede über `tests/_starter.py`, der die Hash-Parameter im
 Testprozess absenkt. Beides spart Zeit — und beides könnte still Aussagekraft kosten. Gemessen wird:
 
 A  eine rote Suite macht den Lauf rot, auch wenn sie parallel läuft, und ihr Grund steht im Log;
 B  die Ausgabe folgt der Reihenfolge der Liste, nicht der Reihenfolge, in der Suiten fertig werden —
    zwei Läufe liefern dasselbe Protokoll;
-C  „parallel" ist wirklich gleichzeitig, `TINYSESAM_TEST_JOBS=1` wirklich der alte serielle Lauf;
-D  ein unbrauchbarer Wert für `TINYSESAM_TEST_JOBS` ist ein Fehler, keine stille Vorgabe;
+C  „parallel" ist wirklich gleichzeitig, `CI_TEST_JOBS=1` wirklich der alte serielle Lauf;
+D  ein unbrauchbarer Wert für `CI_TEST_JOBS` ist ein Fehler, keine stille Vorgabe;
 E  der Warnfilter (veraltete Namen aus dem Paket = Fehler) wirkt auch durch den Starter;
 F  der Starter senkt nur im Sammellauf ab, lässt die Import-Reihenfolge der Suite in Ruhe, und die
    Suiten, die Hash-Parameter oder -Laufzeiten selbst prüfen, rechnen mit den echten Werten;
@@ -141,7 +141,7 @@ seriell = [suite(s, n, spuren) for n in ("test_a.py", "test_ldap.py", "test_z.py
 assert "test_ldap.py" in run_all.LANGE_ZUERST
 lauf_s = sammellauf(seriell, 1, SAMMEL_SPUR=str(spur))
 gelesen = spur.read_text(encoding="utf-8").split("\n")[:-1] if spur.exists() else []
-r.check("C: TINYSESAM_TEST_JOBS=1 ist der serielle Lauf — eine nach der anderen, in Listenfolge",
+r.check("C: CI_TEST_JOBS=1 ist der serielle Lauf — eine nach der anderen, in Listenfolge",
         lauf_s.returncode == 0 and gelesen == ["an test_a.py", "aus test_a.py", "an test_ldap.py",
                                                "aus test_ldap.py", "an test_z.py", "aus test_z.py"],
         f"Exit {lauf_s.returncode}, Spur {gelesen}")
@@ -156,15 +156,15 @@ r.check("C: Startreihenfolge mit einem Job = Liste; mit mehreren die langen zuer
 fehlen = [n for n in run_all.LANGE_ZUERST if not (ROOT / "tests" / n).exists()]
 r.check("C: jeder Eintrag in LANGE_ZUERST ist noch eine Suite", not fehlen, f"{fehlen}")
 
-# ── D: TINYSESAM_TEST_JOBS ────────────────────────────────────────────────────────────────────────
+# ── D: CI_TEST_JOBS ────────────────────────────────────────────────────────────────────────
 r.check("D: ohne Wert die Hälfte der Kerne, mindestens einer; Leerraum stört nicht",
         run_all.jobs_bestimmen("") == max(1, (os.cpu_count() or 1) // 2)
         and run_all.jobs_bestimmen(" 3 ") == 3 and run_all.jobs_bestimmen("1") == 1)
 spur_d = Path(tempfile.mkdtemp(prefix="sammel-d-")) / "spur.txt"
 for kaputt in ("0", "-2", "zwei", "1.5"):
     lauf_d = sammellauf([seriell[0]], kaputt, SAMMEL_SPUR=str(spur_d))
-    r.check(f"D: TINYSESAM_TEST_JOBS={kaputt!r} bricht ab, statt still eine Vorgabe zu nehmen",
-            lauf_d.returncode not in (0, 1) and "TINYSESAM_TEST_JOBS" in lauf_d.stderr
+    r.check(f"D: CI_TEST_JOBS={kaputt!r} bricht ab, statt still eine Vorgabe zu nehmen",
+            lauf_d.returncode not in (0, 1) and "CI_TEST_JOBS" in lauf_d.stderr
             and "Test-Jobs" not in lauf_d.stdout and not spur_d.exists(),
             f"Exit {lauf_d.returncode}: {lauf_d.stdout[-200:]} {lauf_d.stderr[-200:]}")
 lauf_0 = sammellauf([ab_suiten[2]], 2)
@@ -246,7 +246,7 @@ direkt = subprocess.run([sys.executable, str(f / "test_probe.py")], cwd=str(ROOT
                         env={**os.environ, "PYTHONPATH": str(ROOT), "SAMMEL_PROBE": str(probe_direkt),
                              "TINYSESAM_SCRYPT_N": "16", "TINYSESAM_SCRYPT_P": "1",
                              "TINYSESAM_ARGON2_MEMORY_COST": "8", "TINYSESAM_ARGON2_TIME_COST": "1",
-                             "TINYSESAM_HASH_PARAMS": "test", "TINYSESAM_TEST_JOBS": "1"},
+                             "TINYSESAM_HASH_PARAMS": "test", "CI_TEST_JOBS": "1"},
                         capture_output=True, text=True)
 p_direkt = probe_lesen(probe_direkt)
 r.check("F: direkt gestartet rechnet dieselbe Suite mit den Produktionswerten, Variablen hin oder her",
