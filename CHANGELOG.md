@@ -6,6 +6,19 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- **Nach einem Dependabot-Auto-Merge läuft die CI auf main.** Mit `gh pr merge --auto` mergte
+  GitHub im Namen des Workflow-Tokens, und so ein Merge startet keinen Workflow. Nach #114 lief auf
+  main weder CI noch Audit, CodeQL oder Pages. Jetzt startet `dependabot-auto-merge.yml` per
+  `workflow_run`, sobald ein Pflicht-Workflow fertig ist. Es wartet mit Frist, bis GitHub den PR
+  als mergebar meldet, mergt selbst (ohne `--auto`, mit `--match-head-commit`) und stößt danach
+  `ci.yml`, `audit.yml`, `codeql.yml` und `pages.yml` per `workflow_dispatch` an. Ist ein
+  Pflicht-Check rot, bekommt der PR einen Kommentar statt still zu hängen.
+- `tests/test_repo.py`:
+  - Der Auslöser muss genau die Pflicht-Workflows nennen, und angestoßen wird genau, was ein
+    Push auf main starten würde.
+  - `workflow_run` ist erlaubt, aber nur ohne jede Action. Scorecard beanstandet ihn ohnehin nur
+    zusammen mit einem Checkout des PR-Codes.
+  - 10 Mutationen rot.
 - **CodeQL ist Pflicht-Check** (`CodeQL (python)` und das Ergebnis `CodeQL`), damit mergen auch
   codeql-action-Updates selbst. Die Teile einer Action (`github/codeql-action/init` und
   `/analyze`) hebt Dependabot jetzt gemeinsam: Einzeln gehoben liefen sie in verschiedenen Fassungen,
