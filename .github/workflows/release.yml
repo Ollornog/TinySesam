@@ -53,10 +53,22 @@ name: release
 # (`scripts/_release.py --pruefen`: Paket, Modul, READMEs, Compose-Beispiel, CHANGELOG). So ist
 # der Trockenlauf eine Aussage und nicht „übersprungen" — und der Bau läuft genau so wie beim Tag
 # (der Teil, der beim ersten Tag nach zwei Monaten rot war).
+#
+# ── Derselbe Trockenlauf auf JEDEM Pull Request (seit 2026-09-28) ───────────────────────────
+# Updates, die ein Test abnimmt, mergen automatisch (PO-Entscheid 2026-09-28). Die gepinnten
+# Bauwerkzeuge (.github/bau), die Sperrliste des Abbilds (deploy/gateway), das Basis-Abbild im
+# Dockerfile und die Actions des Baus nahm bis dahin KEIN Pflicht-Check ab — ein Bump, der das
+# sdist oder das Abbild bricht, fiel erst beim nächsten Tag auf. Deshalb läuft der Trockenlauf
+# auch auf `pull_request`, und seine Jobs `pruefen`, `bauen`, `pruefsummen`, `abbild-probe` und
+# `image` sind Pflicht-Checks. Veröffentlicht wird dabei nichts: Bei einem PR ist `ref_type`
+# „branch“, jeder veröffentlichende Job hängt am Tag (`tests/test_repo.py` hält beides fest).
+# Nicht abgenommen bleiben die Schritte, die nur beim Tag laufen: GHCR-Anmeldung, Beglaubigungen,
+# SBOM, PyPI-Upload — deren Updates gehen weiter von Hand.
 
 on:
   push:
     tags: ["v*"]
+  pull_request:          # Trockenlauf als Pflicht-Check (siehe oben)
   workflow_dispatch:
 
 permissions:
@@ -101,7 +113,10 @@ jobs:
         if: github.ref_type != 'tag'
         run: python3 scripts/_release.py --pruefen
 
+      # Auf einem PR fährt ci.yml dieselbe Suite am selben Commit (Pflicht-Checks `full`,
+      # `minimal`, `browser`, `repeat`) — hier noch einmal kostete fünf Minuten Wartezeit.
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
+        if: github.event_name != 'pull_request'
         run: |
           sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
           # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline, ohne
@@ -165,8 +180,29 @@ jobs:
           path: dist/SHA256SUMS
           if-no-files-found: error
 
-  release:
+  # Die Artefakte so, wie `release` und `pypi` sie bekommen: heruntergeladen und gegen die
+  # Prüfsummen gehalten. Das ist dieselbe Probe, die jeder Nutzer macht (`sha256sum -c`), und
+  # sie nimmt den Weitergabe-Weg ab — auch auf jedem PR, wo `release` übersprungen ist.
+  pruefsummen:
     needs: bauen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: pypi-dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: pruefsummen
+          path: dist
+      - name: Prüfsummen gegen die heruntergeladenen Artefakte
+        run: |
+          cd dist
+          ls -1 ./*.whl ./*.tar.gz
+          sha256sum -c SHA256SUMS
+
+  release:
+    needs: [bauen, pruefsummen]
     if: github.ref_type == 'tag'   # veröffentlicht — nie aus einem Trockenlauf
     runs-on: ubuntu-latest
     permissions:
@@ -229,10 +265,23 @@ jobs:
   # pip im Abbild aus, die Beglaubigung macht der Job danach über den Digest.
   # Im Trockenlauf wird das Abbild GEBAUT (beide Plattformen), aber nicht geschoben: `release`
   # ist dann übersprungen, deshalb die ausdrückliche Bedingung statt der stillen Vorgabe.
+  # Das Abbild muss STARTEN, bevor es geschoben wird — und auf jedem PR, damit ein Bump der
+  # Sperrliste oder des Basis-Abbilds, der erst zur Laufzeit bricht, rot wird. Eigener Job ohne
+  # Schreibrecht: Hier läuft der Container, also fremder Code; `image` hält `packages: write`.
+  # Gebaut wird für amd64 aus demselben Commit und demselben Dockerfile.
+  abbild-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Abbild bauen, starten, HEALTHCHECK und /healthz prüfen
+        run: scripts/_abbild_probe.sh
+
   image:
-    needs: [bauen, release]
+    needs: [bauen, release, abbild-probe]
     if: >-
-      always() && needs.bauen.result == 'success' &&
+      always() && needs.bauen.result == 'success' && needs.abbild-probe.result == 'success' &&
       (needs.release.result == 'success' || github.ref_type != 'tag')
     runs-on: ubuntu-latest
     permissions:
@@ -292,7 +341,10 @@ jobs:
           # Genau ein Tag, gleich dem Git-Tag. Bewusst KEIN `latest`: ein Tag, der wandert,
           # macht jeden Neustart zum Glücksspiel — dasselbe Compose zöge irgendwann eine
           # andere Version, ohne dass jemand etwas geändert hätte.
-          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_name }}
+          # Im Trockenlauf ein fester Name: Auf einem PR heisst der Ref `108/merge`, auf einem
+          # Zweig womöglich `feature/x` — als Abbild-Tag ungültig, der Bau brach daran ab
+          # (gefunden am ersten PR mit diesem Trockenlauf). Geschoben wird er ohnehin nie.
+          tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_type == 'tag' && github.ref_name || 'trockenlauf' }}
           outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
           provenance: false
 

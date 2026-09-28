@@ -72,6 +72,29 @@ LANGE_ZUERST = ("test_browser.py", "test_ldap.py", "test_vorbuchung_schwebe.py",
                 "test_admin_konto.py", "test_sicherheit_befunde.py", "test_hardening2.py")
 
 
+
+#: So viel vom Ende der Ausgabe einer roten Suite steht im Protokoll — der Zusammenhang.
+FAIL_ENDE = 2000
+
+
+def _fail_ausgabe(aus: str) -> str:
+    """Was unter `FAIL <suite>` steht: jede gescheiterte Prüfung (`FEHL …`) ungekürzt, dann das Ende
+    der Ausgabe ab einer Zeilengrenze.
+
+    Bis 2026-09-28 stand hier nur das Ende (2000 Zeichen). Eine Suite druckt ihre Prüfungen in der
+    Reihenfolge, in der sie laufen — scheiterte eine frühe, stand ihre `FEHL`-Zeile vor dem Ausschnitt
+    und fehlte im Protokoll. Gesehen im CI-Job `repeat`: `FAIL test_vorbuchung_schwebe.py`, darunter
+    „ufschub“ und 42 ok-Zeilen, aber nicht, WAS rot war. Ein Wackeltest, der sich lokal nicht
+    nachstellen lässt, ist ohne diese Zeile nicht aufzuklären.
+    """
+    ende = aus[-FAIL_ENDE:]
+    if len(aus) > FAIL_ENDE and "\n" in ende:
+        ende = ende.split("\n", 1)[1]          # nicht mitten im Wort beginnen
+    davor = [z for z in aus[: len(aus) - len(ende)].splitlines() if z.lstrip().startswith("FEHL ")]
+    kopf = ("  ── gescheiterte Prüfungen oberhalb des Ausschnitts ──\n" + "\n".join(davor) + "\n"
+            "  ── Ende der Ausgabe ──\n") if davor else ""
+    return kopf + ende
+
 def warnfilter() -> str:
     """`PYTHONWARNINGS`: Ein veralteter TinySesam-Name (Stufe C), gerufen AUS dem Paket selbst, ist
     ein Fehler — in jeder Suite, nicht nur in einer (0.22.0, PO-Entscheid 2026-09-26).
@@ -204,7 +227,7 @@ def main(argv):
                 skipped.append(name)
             else:
                 print(f"  FAIL {name}", flush=True)
-                sys.stdout.write((r.stdout or "")[-2000:])
+                sys.stdout.write(_fail_ausgabe(r.stdout or ""))
                 sys.stdout.flush()
                 sys.stderr.write((r.stderr or "")[-2000:])
                 sys.stderr.flush()
