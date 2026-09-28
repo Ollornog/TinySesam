@@ -14,6 +14,14 @@ updates:
       default-days: 3
     schedule:
       interval: monthly
+    groups:
+      # Mehrere Teile EINER Action (`github/codeql-action/init` und `/analyze`) müssen dieselbe
+      # Fassung haben: Einzeln gehoben stand `init` auf 4.38.2 und `analyze` auf 4.38.1, und
+      # CodeQL brach ab („Loaded a configuration file for version '4.38.2', but running version
+      # '4.38.1'“, #110/#111). Deshalb heben sie gemeinsam. `tests/test_repo.py` verlangt eine
+      # solche Gruppe für jede Action, die mit mehreren Unterpfaden benutzt wird.
+      codeql:
+        patterns: ["github/codeql-action*"]
 
   # Gepinnte Python-Abhängigkeiten — dort, wo es Pins GIBT. Bis 0.19.0 stand hier ein Eintrag für
   # `directory: /`, also für die `>=`-Grenzen in pyproject.toml. Der konnte nie etwas tun: Eine

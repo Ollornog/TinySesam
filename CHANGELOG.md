@@ -6,6 +6,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- **CodeQL ist Pflicht-Check** (`CodeQL (python)` und das Ergebnis `CodeQL`), damit mergen auch
+  codeql-action-Updates selbst. Die Teile einer Action (`github/codeql-action/init` und
+  `/analyze`) hebt Dependabot jetzt gemeinsam: Einzeln gehoben liefen sie in verschiedenen Fassungen,
+  und CodeQL brach ab (#110/#111). `tests/test_repo.py` verlangt eine gemeinsame Gruppe für jede
+  Action mit mehreren Unterpfaden und prüft, dass jeder Workflow in `PFLICHT_WORKFLOWS` auf jedem
+  PR läuft.
 - **Dependabot hebt `pydantic-core` nicht mehr allein.** pydantic legt es exakt fest; ein
   Einzel-Bump brach `pip check` im Abbild-Bau und im Audit (#81, #112). Die neuen Pflicht-Checks
   hielten den Auto-Merge von #112 an, wie vorgesehen.

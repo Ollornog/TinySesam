@@ -24,6 +24,7 @@ import pathlib  # noqa: E402
 # — private Infrastruktur, Geheimnisse, SHA-Pins, alles — und der Lauf meldete grün.
 braucht((pathlib.Path(__file__).resolve().parent.parent / ".git").exists(),
         "kein Git-Repo (z.B. ausgepacktes sdist) — die Hygiene misst gegen `git ls-files`")
+import fnmatch
 import os
 import re
 import sys
@@ -616,7 +617,41 @@ assert not _rechte_job(_am_jobs.get("entscheiden", []), _rechte_oben(_am)), \
 _am_merge = [k for k in _kommandos(_am_jobs.get("ausfuehren", [])) if k.startswith("gh pr merge")]
 assert _am_merge and all("--match-head-commit" in k and "--auto" in k for k in _am_merge), \
     f"dependabot-auto-merge.yml: gemergt wird nicht genau der geprüfte Kopf: {_am_merge}"
+# Die Workflows, deren Actions als abgenommen gelten, müssen auf jedem PR laufen — sonst zählte eine
+# Action als geprüft, die der PR nie ausführt. (Mutationsprobe: in `PFLICHT_WORKFLOWS` einen
+# Workflow ohne `pull_request` nennen, etwa `pages.yml` → rot.)
+_pflicht_wf = re.search(r'PFLICHT_WORKFLOWS:\s*"([^"]+)"', _am)
+assert _pflicht_wf, "dependabot-auto-merge.yml: PFLICHT_WORKFLOWS fehlt"
+for _wf in _pflicht_wf.group(1).split():
+    _pfad = f".github/workflows/{_wf}"
+    assert _pfad in FILES, f"PFLICHT_WORKFLOWS nennt {_wf}, den es nicht gibt"
+    _kopf = "\n".join(_code(read(_pfad).split("\njobs:", 1)[0]))
+    assert re.search(r"^  pull_request:", _kopf, re.M) and not re.search(r"^\s+paths(-ignore)?:", _kopf, re.M), \
+        f"PFLICHT_WORKFLOWS: {_wf} läuft nicht auf jedem PR (kein `pull_request` oder mit `paths`)"
 print("  Dependabot-Auto-Merge: Logik ohne Schreibrecht, nur eigene Dependabot-PRs, genau der geprüfte Kopf")
+
+# Eine Action, die mit mehreren Unterpfaden benutzt wird (`github/codeql-action/init` und
+# `/analyze`), muss in EINER Dependabot-Gruppe stehen: Einzeln gehoben liefen die Teile in
+# verschiedenen Fassungen, und CodeQL brach ab (#110/#111). (Mutationsprobe: die Gruppe `codeql`
+# streichen → rot.)
+_teile: dict[str, set] = {}
+for _wf in WORKFLOWS:
+    for _m in re.finditer(r"uses:\s*([\w.-]+/[\w.-]+)/([\w./-]+)@", read(_wf)):
+        _teile.setdefault(_m.group(1), set()).add(_m.group(2))
+_dep_text = "\n".join(_code(read(".github/dependabot.yml")))
+_actions_eintrag = next(e for e in re.split(r"\n  - ", _dep_text)[1:] if e.startswith("package-ecosystem: github-actions"))
+# Je Gruppe ihre Muster — alle Teile müssen in DERSELBEN Gruppe landen, nicht jeder in irgendeiner.
+_gruppen = {}
+for _g in re.finditer(r"^      ([\w-]+):\s*\n((?:        .*\n?)+)", _actions_eintrag, re.M):
+    _pm = re.search(r"patterns:\s*\[([^\]]*)\]", _g.group(2))
+    _gruppen[_g.group(1)] = [m.strip().strip("\"'") for m in _pm.group(1).split(",") if m.strip()] if _pm else []
+for _action, _unter in sorted(_teile.items()):
+    if len(_unter) < 2:
+        continue
+    assert any(all(any(fnmatch.fnmatch(f"{_action}/{u}", m) for m in _ms) for u in _unter)
+               for _ms in _gruppen.values()), \
+        f"dependabot: {_action} wird mit {sorted(_unter)} benutzt, steht aber in keiner gemeinsamen Gruppe"
+print("  Dependabot: Actions mit mehreren Teilen heben gemeinsam")
 
 # B4-6 — Actions, die zur Laufzeit ein Werkzeug nachladen. Der SHA-Pin hält die Action fest, nicht
 # das Werkzeug: Ohne Angabe zieht setup-qemu den `latest`-Tag von tonistiigi/binfmt (privilegiert!),
