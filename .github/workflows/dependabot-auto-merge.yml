@@ -1,44 +1,60 @@
 # Dependabot Auto-Merge (PO 2026-09-28): Lässt sich ein Update automatisieren und nimmt ein Test es
 # ab, laufen Update und Merge automatisch. Majors und alles, was kein Test abnimmt, bleiben von Hand
-# — dann steht ein Kommentar am PR, warum.
+# — dann steht ein Kommentar am PR, warum. Ebenso, wenn ein Pflicht-Check rot ist.
 #
-# Öffentliches Repo mit Pflicht-Checks: GitHubs Auto-Merge wartet auf genau diese Checks
-# (Branch-Protection). Ohne Pflicht-Checks würde `--auto` sofort mergen.
+# WARUM `workflow_run` und nicht `gh pr merge --auto`: Ein Merge mit dem Workflow-Token startet
+# KEINE Workflows („events triggered by the GITHUB_TOKEN … will not create a new workflow run“,
+# GitHub-Doku). Mit `--auto` mergte GitHub später in dessen Namen, und auf main lief danach weder
+# CI noch Audit, CodeQL oder Pages (gesehen an #114). Ausgenommen ist `workflow_dispatch`: Deshalb
+# mergt dieser Workflow selbst, sobald alle Pflicht-Checks grün sind, und stößt danach die
+# Workflows von main an (PO-Entscheid 2026-09-28, Weg b, ohne Geheimnis).
 #
-# Zwei Jobs, aus demselben Grund wie in release.yml (B4-4): Wer ein Schreibrecht hält, führt keine
-# Logik aus. `entscheiden` liest nur (API, kein Checkout, kein PR-Code) und gibt `automatisch` und
-# `grund` aus; `ausfuehren` hält das Schreibrecht und ruft nur `gh pr merge` bzw. `gh pr comment`.
-# `tests/test_repo.py` hält beides fest.
+# Ausgelöst wird er vom Ende JEDES Pflicht-Workflows; welcher zuletzt fertig wird, ist offen. Je
+# Commit läuft nur eine Instanz (`concurrency`). `entscheiden` wartet mit Frist, bis GitHub den PR
+# als CLEAN meldet — erst dann ist auch das CodeQL-Ergebnis da, das nach seinem Workflow kommt.
 #
-# Vorlage: die Prüflogik der Pipeline-Session (2026-09-28), hier geteilt und für TinySesam erweitert.
+# Zwei Jobs, aus demselben Grund wie in release.yml (B4-4): `entscheiden` liest nur (API, kein
+# Checkout, kein PR-Code), `ausfuehren` hält die Schreibrechte und ruft nur `gh pr merge`,
+# `gh workflow run` und `gh pr comment`. `tests/test_repo.py` hält das fest, dazu: Der Auslöser nennt
+# genau die Pflicht-Workflows, und angestoßen wird genau, was ein Push auf main starten würde.
 name: Dependabot Auto-Merge
 
-on: pull_request
+on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
+  workflow_run:
+    workflows: ["tests", "release", "audit", "CodeQL"]
+    types: [completed]
 
 permissions: {}
 
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
 jobs:
   entscheiden:
-    # Hart: Autor Dependabot UND Branch im eigenen Repo — Branchname und Commit-Nachricht kann ein
-    # Fork-PR fälschen. Kein pull_request_target: Fork-Läufe bekommen nur ein Lese-Token.
+    # Nur Läufe aus einem PR im EIGENEN Repo auf einem Dependabot-Zweig. Branchname und
+    # Commit-Nachricht kann ein Fork-PR fälschen — deshalb unten alles noch einmal per API.
     if: >
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: read
+      checks: read
     outputs:
-      automatisch: ${{ steps.pruefung.outputs.automatisch }}
+      aktion: ${{ steps.pruefung.outputs.aktion }}
       grund: ${{ steps.pruefung.outputs.grund }}
+      pr: ${{ steps.pruefung.outputs.pr }}
     steps:
-      - name: Herkunft, Update-Typ und Abnahme prüfen
+      - name: Herkunft, Update-Typ, Abnahme und Pflicht-Checks prüfen
         id: pruefung
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`):
           #   github_actions — nur Actions, die in einem Pflicht-Workflow auf dem PR laufen (unten)
           #   pip            — .github/bau (Job `bauen`), deploy/gateway (`abbild-probe`, `image`),
@@ -47,17 +63,30 @@ jobs:
           # NICHT: docker_compose (deploy/forward-auth) — kein Pflicht-Check startet das Compose.
           AUTO_OEKO: "github_actions pip docker"
           # Die Workflows, deren Jobs Pflicht-Checks sind (Branch-Protection von main). Jeder muss auf
-          # `pull_request` laufen — `tests/test_repo.py` prüft das.
+          # `pull_request` laufen und oben unter `workflows:` stehen — `tests/test_repo.py` prüft das.
           PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml"
         run: |
           set -euo pipefail
-          ausgabe() { echo "automatisch=$1" >> "$GITHUB_OUTPUT"; echo "grund=$2" >> "$GITHUB_OUTPUT"; echo "$1: $2"; }
+          ausgabe() {
+            { echo "aktion=$1"; echo "grund=$2"; echo "pr=${PR:-}"; } >> "$GITHUB_OUTPUT"
+            echo "$1${2:+: $2}"
+          }
+          PR="$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" -q '.[0].number // ""')"
+          [[ "$PR" =~ ^[0-9]+$ ]] || { ausgabe nichts "kein PR zu $HEAD_SHA"; exit 0; }
           # Herkunft per API, nie dem Ereignis glauben: Autor Dependabot, kein Fork, offen, Kopf unverändert.
           J="$(gh api "repos/$REPO/pulls/$PR")"
-          [ "$(jq -r '.user.login' <<<"$J")" = "dependabot[bot]" ] || { ausgabe nein ""; exit 0; }
+          [ "$(jq -r '.user.login' <<<"$J")" = "dependabot[bot]" ] || { ausgabe nichts "Autor ist nicht Dependabot"; exit 0; }
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
-          [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nein ""; exit 0; }
-          [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nein ""; exit 0; }
+          [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nichts "PR nicht offen"; exit 0; }
+          [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf seit dem Lauf bewegt"; exit 0; }
+          # Ein Kommentar je Grund genügt — der Workflow läuft je PR mehrmals.
+          schon_gesagt() {
+            [ "$(gh api "repos/$REPO/issues/$PR/comments" --paginate | jq -s --arg g "$1" \
+              '[.[][] | select(.user.login == "github-actions[bot]" and (.body | contains($g)))] | length')" != "0" ]
+          }
+          kommentar() {
+            if schon_gesagt "$1"; then ausgabe nichts "$1 (schon kommentiert)"; else ausgabe kommentieren "$1"; fi
+          }
           # Ökosystem aus dem Branch, Update-Typ aus ALLEN Commits (der Kopf kann ein Merge sein).
           # Fehlt der Typ, ist es unklar — dann von Hand.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
@@ -92,31 +121,53 @@ jobs:
                 || { GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break; }
             done <<<"$NAMEN"
           fi
-          if [ -n "$GRUND" ]; then ausgabe nein "$GRUND"; else ausgabe ja ""; fi
+          if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi
+          # Warten, bis GitHub den PR als mergebar meldet — mit Frist (höchstens 15 min).
+          for _ in $(seq 1 45); do
+            P="$(gh pr view "$PR" --repo "$REPO" --json state,headRefOid,mergeStateStatus,statusCheckRollup)"
+            [ "$(jq -r '.state' <<<"$P")" = "OPEN" ] || { ausgabe nichts "PR nicht mehr offen"; exit 0; }
+            [ "$(jq -r '.headRefOid' <<<"$P")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf bewegt"; exit 0; }
+            ROT="$(jq -r '[.statusCheckRollup[] | select((.conclusion // "") | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE")) | (.name // .context)] | unique | join(", ")' <<<"$P")"
+            [ -z "$ROT" ] || { kommentar "Pflicht-Check rot ($ROT)"; exit 0; }
+            case "$(jq -r '.mergeStateStatus' <<<"$P")" in
+              CLEAN) ausgabe mergen ""; exit 0 ;;
+              BEHIND|DIRTY) ausgabe nichts "Zweig veraltet oder im Konflikt — Dependabot zieht nach"; exit 0 ;;
+              *) sleep 20 ;;
+            esac
+          done
+          ausgabe nichts "nach 15 min noch nicht mergebar — der nächste fertige Pflicht-Workflow prüft erneut"
 
   ausfuehren:
     needs: entscheiden
+    if: needs.entscheiden.outputs.aktion == 'mergen' || needs.entscheiden.outputs.aktion == 'kommentieren'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+      actions: write       # `gh workflow run` für den Nachlauf auf main
     steps:
-      # Gemergt wird genau der geprüfte Kopf, und erst, wenn die Pflicht-Checks grün sind.
-      - name: Auto-Merge einschalten
-        if: needs.entscheiden.outputs.automatisch == 'ja'
+      # Gemergt wird genau der geprüfte Kopf. Danach der Nachlauf: Was ein Push auf main startet,
+      # stößt hier `workflow_dispatch` an (ein Merge mit dem Workflow-Token startet selbst nichts).
+      - name: Mergen und den Nachlauf auf main anstoßen
+        if: needs.entscheiden.outputs.aktion == 'mergen'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          STANDARD: ${{ github.event.repository.default_branch }}
         run: |
-          gh pr merge "$PR" --repo "$REPO" --auto --squash --delete-branch --match-head-commit "$HEAD_SHA"
+          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+          gh workflow run ci.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run audit.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run codeql.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run pages.yml --repo "$REPO" --ref "$STANDARD"
       - name: Begründen, warum von Hand
-        if: needs.entscheiden.outputs.automatisch == 'nein' && needs.entscheiden.outputs.grund != ''
+        if: needs.entscheiden.outputs.aktion == 'kommentieren'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
           GRUND: ${{ needs.entscheiden.outputs.grund }}
         run: |
           gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."

@@ -14,6 +14,9 @@ on:
     # Montags früh: CodeQL-Abfragen werden weiterentwickelt, ein Fund kann also auch ohne
     # Codeänderung neu auftauchen.
     - cron: "17 5 * * 1"
+  # Der Nachlauf nach einem Dependabot-Auto-Merge (dependabot-auto-merge.yml): Ein Merge mit dem
+  # Workflow-Token startet keinen Push-Lauf, `workflow_dispatch` ist die Ausnahme.
+  workflow_dispatch:
 
 permissions:
   contents: read

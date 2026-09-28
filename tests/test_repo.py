@@ -522,7 +522,7 @@ def _rechte_job(zeilen: list[str], geerbt: set[str]) -> set[str]:
 # `gh pr merge` und `gh pr comment` (Dependabot-Auto-Merge, 2026-09-28) stehen einzeln da — nie
 # `gh pr` pauschal: `gh pr checkout` holte PR-Code in einen Job mit Schreibrecht.
 ERLAUBT_MIT_RECHT = {"echo", "printf", "gh release", "gh attestation", "git log",
-                     "gh pr merge", "gh pr comment"}
+                     "gh pr merge", "gh pr comment", "gh workflow run"}
 
 
 def _befehle(zeile: str) -> list[str]:
@@ -599,35 +599,57 @@ print(f"  {_geprueft_identitaet} Jobs mit Identität/Schreibrecht (jede Schreibw
       f"{'/'.join(sorted(ERLAUBT_MIT_RECHT))}, Checkout nur mit begründeter Ausnahme")
 
 # Dependabot-Auto-Merge (PO 2026-09-28): Die Logik liegt im Job ohne Schreibrecht, der Job mit
-# Schreibrecht ruft nur `gh pr merge`/`gh pr comment` (das prüft die Schleife oben). Hier das
-# Übrige: nur echte Dependabot-PRs aus dem eigenen Repo, kein `pull_request_target`, und gemergt
-# wird genau der geprüfte Kopf. (Mutationsproben: `--match-head-commit` streichen; die
-# `head.repo.full_name`-Bedingung streichen; `on: pull_request_target` → je rot.)
+# Schreibrecht ruft nur `gh pr merge`/`gh workflow run`/`gh pr comment` (das prüft die Schleife oben).
+# Hier das Übrige. (Mutationsproben: `--match-head-commit` streichen; `--auto` ergänzen; die
+# `head_repository`-Bedingung streichen; `on: pull_request_target`; einen Pflicht-Workflow aus
+# `workflows:` nehmen; einen Nachlauf-Anstoß streichen → je rot.)
 _am = read(".github/workflows/dependabot-auto-merge.yml")
 _am_jobs = _jobs(_am)
 _am_on = "\n".join(_code(_am.split("\njobs:", 1)[0]))
-assert re.search(r"^on:\s*pull_request\s*$", _am_on, re.M) and "pull_request_target" not in _am_on, \
-    "dependabot-auto-merge.yml: Trigger muss `pull_request` sein (Fork-Läufe nur mit Lese-Token)"
+# Ausgelöst vom Ende der Pflicht-Workflows, nie von `pull_request_target` (fremder Kontext mit
+# Schreibrecht). `workflow_run` läuft im Kontext von main — PR-Code wird nie ausgecheckt (die
+# Schleife oben verbietet Checkout in Jobs mit Recht; `entscheiden` hat keinen `uses:`).
+assert re.search(r"^  workflow_run:", _am_on, re.M) and "pull_request_target" not in _am_on, \
+    "dependabot-auto-merge.yml: Auslöser muss `workflow_run` sein"
+assert not any("uses:" in z for z in _am_jobs.get("entscheiden", [])), \
+    "dependabot-auto-merge.yml: `entscheiden` nutzt eine Action (Checkout?) — nur API"
 _am_ent = " ".join(z.strip() for z in _am_jobs.get("entscheiden", []))
-assert "github.event.pull_request.user.login == 'dependabot[bot]'" in _am_ent and \
-    "github.event.pull_request.head.repo.full_name == github.repository" in _am_ent, \
-    "dependabot-auto-merge.yml: `entscheiden` prüft nicht hart Autor UND eigenes Repo"
-assert not _rechte_job(_am_jobs.get("entscheiden", []), _rechte_oben(_am)), \
+assert "github.event.workflow_run.event == 'pull_request'" in _am_ent and \
+    "github.event.workflow_run.head_repository.full_name == github.repository" in _am_ent, \
+    "dependabot-auto-merge.yml: `entscheiden` prüft nicht hart PR-Lauf UND eigenes Repo"
+assert not _rechte_job(_am_jobs.get("entscheiden", []), _rechte_oben(_am)) & {"*"} and \
+    not re.search(r"\bwrite\b", " ".join(_am_jobs.get("entscheiden", []))), \
     "dependabot-auto-merge.yml: `entscheiden` hält ein Schreibrecht — die Logik gehört in den Lese-Job"
-_am_merge = [k for k in _kommandos(_am_jobs.get("ausfuehren", [])) if k.startswith("gh pr merge")]
-assert _am_merge and all("--match-head-commit" in k and "--auto" in k for k in _am_merge), \
-    f"dependabot-auto-merge.yml: gemergt wird nicht genau der geprüfte Kopf: {_am_merge}"
-# Die Workflows, deren Actions als abgenommen gelten, müssen auf jedem PR laufen — sonst zählte eine
-# Action als geprüft, die der PR nie ausführt. (Mutationsprobe: in `PFLICHT_WORKFLOWS` einen
-# Workflow ohne `pull_request` nennen, etwa `pages.yml` → rot.)
+_am_kmd = _kommandos(_am_jobs.get("ausfuehren", []))
+_am_merge = [k for k in _am_kmd if k.startswith("gh pr merge")]
+# Ohne `--auto`: Mit `--auto` mergte GitHub später, und der Nachlauf unten liefe ins Leere.
+assert _am_merge and all("--match-head-commit" in k and "--auto" not in k for k in _am_merge), \
+    f"dependabot-auto-merge.yml: gemergt wird nicht direkt genau der geprüfte Kopf: {_am_merge}"
+# Der Auslöser nennt genau die Pflicht-Workflows (per `name:`), sonst merged niemand, wenn ein
+# fehlender zuletzt fertig wird.
 _pflicht_wf = re.search(r'PFLICHT_WORKFLOWS:\s*"([^"]+)"', _am)
 assert _pflicht_wf, "dependabot-auto-merge.yml: PFLICHT_WORKFLOWS fehlt"
-for _wf in _pflicht_wf.group(1).split():
-    _pfad = f".github/workflows/{_wf}"
-    assert _pfad in FILES, f"PFLICHT_WORKFLOWS nennt {_wf}, den es nicht gibt"
-    _kopf = "\n".join(_code(read(_pfad).split("\njobs:", 1)[0]))
-    assert re.search(r"^  pull_request:", _kopf, re.M) and not re.search(r"^\s+paths(-ignore)?:", _kopf, re.M), \
-        f"PFLICHT_WORKFLOWS: {_wf} läuft nicht auf jedem PR (kein `pull_request` oder mit `paths`)"
+_wf_name = {}
+for _wf in WORKFLOWS:
+    _n = re.search(r"^name:\s*(.+?)\s*$", read(_wf), re.M)
+    _wf_name[os.path.basename(_wf)] = _n.group(1).strip("\"'") if _n else None
+_ausloeser = re.search(r"workflows:\s*\[([^\]]*)\]", _am_on)
+_ausloeser = {w.strip().strip("\"'") for w in _ausloeser.group(1).split(",")} if _ausloeser else set()
+assert _ausloeser == {_wf_name.get(w) for w in _pflicht_wf.group(1).split()}, \
+    f"dependabot-auto-merge.yml: `workflows:` {sorted(_ausloeser)} ≠ PFLICHT_WORKFLOWS " \
+    f"{sorted(_wf_name.get(w) or w for w in _pflicht_wf.group(1).split())}"
+# Nachlauf: Was ein Push auf main startet, wird nach dem Merge per `workflow_dispatch` angestoßen —
+# genau das, und jeder davon muss `workflow_dispatch` kennen.
+_auf_main = set()
+for _wf in WORKFLOWS:
+    _kopf = "\n".join(_code(read(_wf).split("\njobs:", 1)[0]))
+    if re.search(r"^  push:\s*\n\s+branches:\s*\[main\]", _kopf, re.M):
+        _auf_main.add(os.path.basename(_wf))
+        assert re.search(r"^  workflow_dispatch:", _kopf, re.M), \
+            f"{_wf} läuft auf main, kennt aber kein `workflow_dispatch` — der Nachlauf kann ihn nicht anstoßen"
+_angestossen = {m.group(1) for k in _am_kmd for m in [re.match(r"gh workflow run (\S+)", k)] if m}
+assert _angestossen == _auf_main, \
+    f"dependabot-auto-merge.yml: Nachlauf {sorted(_angestossen)} ≠ Workflows auf main {sorted(_auf_main)}"
 print("  Dependabot-Auto-Merge: Logik ohne Schreibrecht, nur eigene Dependabot-PRs, genau der geprüfte Kopf")
 
 # Eine Action, die mit mehreren Unterpfaden benutzt wird (`github/codeql-action/init` und
@@ -968,8 +990,16 @@ _alle_wf = {wf: "\n".join(_code(read(wf))) for wf in WORKFLOWS}
 # gingen durch.
 _EREIGNIS = re.compile(r"\bgithub\s*(?:\.\s*|\[\s*['\"])(?:event|head_ref)\b")
 for wf, t in _alle_wf.items():
-    assert not re.search(r"\b(pull_request_target|workflow_run|issue_comment)\b", t), \
+    assert not re.search(r"\b(pull_request_target|issue_comment)\b", t), \
         f"{wf}: gefährlicher Trigger (Scorecard Dangerous-Workflow)"
+    # `workflow_run` läuft mit Schreibrecht im Kontext von main. Scorecard beanstandet ihn nur
+    # zusammen mit einem Checkout des PR-Codes („used in conjunction with an explicit pull request
+    # checkout“, docs/checks.md). Hier strenger: ein `workflow_run`-Workflow nutzt GAR KEINE Action,
+    # nur `gh`/API — so kann kein Code aus dem PR hineinkommen (Dependabot-Auto-Merge, 2026-09-28).
+    # (Mutationsprobe: in dependabot-auto-merge.yml ein `uses: actions/checkout@…` ergänzen → rot.)
+    if re.search(r"\bworkflow_run\b", t):
+        assert not re.search(r"^\s+(?:- )?uses:", t, re.M), \
+            f"{wf}: `workflow_run` mit einer Action — nur API, nie Code aus dem PR (Scorecard Dangerous-Workflow)"
     for k in _kommandos(t.splitlines(), ("run", "script")):
         for ausdruck in re.findall(r"\$\{\{(.*?)\}\}", k):
             assert not _EREIGNIS.search(ausdruck), \
