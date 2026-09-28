@@ -1,11 +1,16 @@
 # Dependabot Auto-Merge (PO 2026-09-28): Lässt sich ein Update automatisieren und nimmt ein Test es
-# ab, laufen Update und Merge automatisch. Majors und alles, was kein Test abnimmt, bleiben von Hand.
+# ab, laufen Update und Merge automatisch. Majors und alles, was kein Test abnimmt, bleiben von Hand
+# — dann steht ein Kommentar am PR, warum.
 #
 # Öffentliches Repo mit Pflicht-Checks: GitHubs Auto-Merge wartet auf genau diese Checks
-# (Branch-Protection). Ohne Pflicht-Checks würde `--auto` sofort mergen — deshalb nur hier.
+# (Branch-Protection). Ohne Pflicht-Checks würde `--auto` sofort mergen.
 #
-# Ohne Fremd-Action: Update-Typ und Ökosystem kommen per API aus der Commit-Nachricht und dem
-# Branchnamen von Dependabot. Kein Checkout, kein PR-Code; Werte über env; `--match-head-commit`.
+# Zwei Jobs, aus demselben Grund wie in release.yml (B4-4): Wer ein Schreibrecht hält, führt keine
+# Logik aus. `entscheiden` liest nur (API, kein Checkout, kein PR-Code) und gibt `automatisch` und
+# `grund` aus; `ausfuehren` hält das Schreibrecht und ruft nur `gh pr merge` bzw. `gh pr comment`.
+# `tests/test_repo.py` hält beides fest.
+#
+# Vorlage: die Prüflogik der Pipeline-Session (2026-09-28), hier geteilt und für TinySesam erweitert.
 name: Dependabot Auto-Merge
 
 on: pull_request
@@ -13,64 +18,104 @@ on: pull_request
 permissions: {}
 
 jobs:
-  automerge:
-    # Hart: Autor Dependabot UND Branch im eigenen Repo — Branchname und Commit-Nachricht
-    # kann ein Fork-PR fälschen. Kein pull_request_target: Fork-Läufe bekommen nur Lese-Token.
+  entscheiden:
+    # Hart: Autor Dependabot UND Branch im eigenen Repo — Branchname und Commit-Nachricht kann ein
+    # Fork-PR fälschen. Kein pull_request_target: Fork-Läufe bekommen nur ein Lese-Token.
     if: >
       github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
+    outputs:
+      automatisch: ${{ steps.pruefung.outputs.automatisch }}
+      grund: ${{ steps.pruefung.outputs.grund }}
     steps:
-      - name: Prüfen und Auto-Merge einschalten
+      - name: Herkunft, Update-Typ und Abnahme prüfen
+        id: pruefung
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # Ökosysteme, die die Pflicht-Checks dieses Repos tatsächlich abnehmen.
-          AUTO_OEKO: "github_actions"
+          # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`):
+          #   github_actions — nur Actions, die in einem Pflicht-Workflow auf dem PR laufen (unten)
+          #   pip            — .github/bau (Job `bauen`), deploy/gateway (`abbild-probe`, `image`),
+          #                    .github/audit (`audit`)
+          #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`)
+          # NICHT: docker_compose (deploy/forward-auth) — kein Pflicht-Check startet das Compose.
+          AUTO_OEKO: "github_actions pip docker"
+          # Die Workflows, deren Jobs Pflicht-Checks sind (Branch-Protection von main).
+          PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml"
         run: |
           set -euo pipefail
+          ausgabe() { echo "automatisch=$1" >> "$GITHUB_OUTPUT"; echo "grund=$2" >> "$GITHUB_OUTPUT"; echo "$1: $2"; }
           # Herkunft per API, nie dem Ereignis glauben: Autor Dependabot, kein Fork, offen, Kopf unverändert.
           J="$(gh api "repos/$REPO/pulls/$PR")"
-          [ "$(jq -r '.user.login' <<<"$J")" = "dependabot[bot]" ] || { echo "Autor ist nicht Dependabot — nichts zu tun"; exit 0; }
+          [ "$(jq -r '.user.login' <<<"$J")" = "dependabot[bot]" ] || { ausgabe nein ""; exit 0; }
           [ "$(jq -r '.head.repo.full_name == .base.repo.full_name' <<<"$J")" = "true" ] || { echo "Fork — Abbruch"; exit 1; }
-          [ "$(jq -r '.state' <<<"$J")" = "open" ] || { echo "PR nicht offen"; exit 0; }
-          [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { echo "Kopf seit dem Lauf bewegt — kein Merge"; exit 0; }
-          # Ökosystem aus dem Branch (dependabot/<ökosystem>/…), Update-Typ aus der Commit-Nachricht
-          # (Block `updated-dependencies`). Fehlt der Typ, gilt es als unklar — dann von Hand. Das
-          # trifft absichtlich Bereichs-Updates (`>=` in pyproject/uv): Dependabot nennt dort keinen.
+          [ "$(jq -r '.state' <<<"$J")" = "open" ] || { ausgabe nein ""; exit 0; }
+          [ "$(jq -r '.head.sha' <<<"$J")" = "$HEAD_SHA" ] || { ausgabe nein ""; exit 0; }
+          # Ökosystem aus dem Branch, Update-Typ aus ALLEN Commits (der Kopf kann ein Merge sein).
+          # Fehlt der Typ, ist es unklar — dann von Hand.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
-          # ALLE Commits des PRs, nicht nur der Kopf: der kann ein Merge-Commit sein. Stammt einer
-          # nicht von Dependabot, steckt fremde Arbeit im PR — dann von Hand.
           COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
           NACHRICHTEN="$(jq -r '.[].commit.message' <<<"$COMMITS")"
           TYPEN="$(grep -oE 'update-type: version-update:semver-(major|minor|patch)' <<<"$NACHRICHTEN" | sort -u || true)"
           GRUND=""
           [ "$(jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$COMMITS")" = "0" ] \
             || GRUND="Commits, die nicht von Dependabot stammen"
-          [ -n "$TYPEN" ] || GRUND="Update-Typ nicht erkennbar"
-          grep -q 'semver-major' <<<"$TYPEN" && GRUND="Major-Update"
-          case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Test nimmt \"$OEKO\" ab}" ;; esac
-          # Actions nur, wenn JEDE aktualisierte Action in ci.yml läuft — dem Workflow der
-          # Pflicht-Checks. Eine Action, die nur ein Release- oder Pages-Workflow nutzt, prüft kein
-          # Test; ihr Bump bräche erst bei der nächsten Veröffentlichung (Einwand 2026-09-28).
+          [ -n "$TYPEN" ] || GRUND="${GRUND:-Update-Typ nicht erkennbar}"
+          if grep -q 'semver-major' <<<"$TYPEN"; then GRUND="Major-Update"; fi
+          case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Pflicht-Check nimmt \"$OEKO\" ab}" ;; esac
+          # Actions nur, wenn JEDE aktualisierte Action in einem Pflicht-Workflow AUF DEM PR läuft:
+          # Jobs und Schritte, die am Tag hängen (`ref_type == 'tag'`), zählen nicht — Anmeldung,
+          # Beglaubigung, SBOM und PyPI-Upload prüft kein PR, ihr Bump bräche erst beim Release.
           if [ -z "$GRUND" ] && [ "$OEKO" = "github_actions" ]; then
-            CI_YML="$(gh api "repos/$REPO/contents/.github/workflows/ci.yml?ref=$HEAD_SHA" -q .content | base64 -d)"
+            LAUFEN=""
+            for wf in $PFLICHT_WORKFLOWS; do
+              TEXT="$(gh api "repos/$REPO/contents/.github/workflows/$wf?ref=$HEAD_SHA" -q .content | base64 -d)"
+              LAUFEN+="$(yq -r '.jobs[]
+                | select(((.if // "") | test("ref_type *== *.tag.")) | not)
+                | .steps[]?
+                | select(((.if // "") | test("ref_type *== *.tag.")) | not)
+                | .uses // ""' <<<"$TEXT" | sed 's/@.*//')"$'\n'
+            done
             NAMEN="$(sed -n 's/^[- ]*dependency-name: *//p' <<<"$NACHRICHTEN" | sort -u)"
             [ -n "$NAMEN" ] || GRUND="aktualisierte Actions nicht erkennbar"
             while IFS= read -r n; do
               [ -z "$n" ] && continue
-              grep -qE "uses:[[:space:]]*${n//./\\.}(/[^@[:space:]]*)?@" <<<"$CI_YML" \
-                || { GRUND="Action \"$n\" läuft nicht in ci.yml"; break; }
+              grep -qxE "${n//./\\.}(/.*)?" <<<"$LAUFEN" \
+                || { GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break; }
             done <<<"$NAMEN"
           fi
-          if [ -n "$GRUND" ]; then
-            gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."
-            exit 0
-          fi
+          if [ -n "$GRUND" ]; then ausgabe nein "$GRUND"; else ausgabe ja ""; fi
+
+  ausfuehren:
+    needs: entscheiden
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Gemergt wird genau der geprüfte Kopf, und erst, wenn die Pflicht-Checks grün sind.
+      - name: Auto-Merge einschalten
+        if: needs.entscheiden.outputs.automatisch == 'ja'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
           gh pr merge "$PR" --repo "$REPO" --auto --squash --delete-branch --match-head-commit "$HEAD_SHA"
+      - name: Begründen, warum von Hand
+        if: needs.entscheiden.outputs.automatisch == 'nein' && needs.entscheiden.outputs.grund != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          GRUND: ${{ needs.entscheiden.outputs.grund }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body "⚠️ Nicht automatisch gemergt: $GRUND. Bitte von Hand prüfen und mergen."

@@ -6,6 +6,16 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- **Dependabot-Updates mergen selbst, wenn ein Pflicht-Check sie abnimmt** (Patch und Minor,
+  nach 3 Tagen Wartezeit). Majors und alles, was kein Pflicht-Check prüft, bleiben von Hand; der PR
+  bekommt dann einen Kommentar, warum. Automatisch gehen `pip` (Bauwerkzeuge, Gateway-Sperrliste,
+  Audit-Werkzeuge), `docker` (Basis-Abbild) und nur die Actions, die in einem Pflicht-Workflow
+  auf dem PR laufen. Anmeldung, Beglaubigung, SBOM und PyPI-Upload laufen nur beim Tag und bleiben
+  deshalb von Hand, ebenso das Compose-Beispiel.
+  `.github/workflows/dependabot-auto-merge.yml` hat zwei Jobs: Die Prüflogik läuft ohne
+  Schreibrecht. Der Job mit Schreibrecht ruft nur `gh pr merge --auto --match-head-commit` oder
+  `gh pr comment`. `tests/test_repo.py` lässt dafür genau diese zwei Befehle zu, nicht `gh pr`
+  pauschal. Die Positivliste vergleicht jetzt bis zu drei Wörter.
 - **Der Release-Trockenlauf läuft auf jedem Pull Request.** Bis hierhin nahm kein Pflicht-Check
   die gepinnten Bauwerkzeuge (`.github/bau`), die Sperrliste des Abbilds (`deploy/gateway`), das
   Basis-Abbild im `Dockerfile` und die Actions des Baus ab. Ein Update, das das sdist oder das
