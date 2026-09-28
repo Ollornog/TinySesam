@@ -25,6 +25,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — Testlauf (für Entwickler; am Paket ändert sich nichts)
 
+- **Unter `FAIL` steht jede gescheiterte Prüfung.** `tests/run_all.py` zeigte von einer roten
+  Suite nur die letzten 2000 Zeichen. Scheiterte eine frühe Prüfung, fehlte ihre `FEHL`-Zeile im
+  Protokoll, so gesehen im CI-Job `repeat`. Jetzt stehen alle `FEHL`-Zeilen oberhalb des
+  Ausschnitts vorneweg, und der Ausschnitt beginnt an einer Zeilengrenze.
 - **Die Suiten laufen parallel.** `tests/run_all.py` fährt sie gleichzeitig; wie viele,
   legt `CI_TEST_JOBS` fest (Vorgabe: die Hälfte der Kerne, mindestens eine; ein anderer
   Wert als eine ganze Zahl ≥ 1 bricht mit Exit 2 ab). Die erste Zeile nennt die Zahl

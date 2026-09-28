@@ -14,6 +14,7 @@ F  der Starter senkt nur im Sammellauf ab, lässt die Import-Reihenfolge der Sui
    Suiten, die Hash-Parameter oder -Laufzeiten selbst prüfen, rechnen mit den echten Werten;
 G  das PAKET hat keinen Schalter, der Hashes schwächt — keine Umgebungsvariable, keine Einstellung;
 H  das Tor (`scripts/check.sh`) baut die Website in ein Wegwerf-Verzeichnis, nicht nach `_site/`.
+I  unter `FAIL` steht jede gescheiterte Prüfung, auch wenn die Ausgabe der Suite lang ist.
 """
 from __future__ import annotations
 
@@ -393,5 +394,30 @@ exec "{sys.executable}" "$@"
             (kopie / "_site" / "eigen.txt").exists() and nachher_h == vorher_h,
             f"eigen.txt da: {(kopie / '_site' / 'eigen.txt').exists()}, neu: "
             f"{sorted(set(nachher_h) - set(vorher_h))}, weg: {sorted(set(vorher_h) - set(nachher_h))}")
+
+
+# ── I: die gescheiterte Prüfung steht im Protokoll, auch bei langer Ausgabe ───────────────────────
+# Bis 2026-09-28 stand unter `FAIL` nur das Ende der Ausgabe (2000 Zeichen). Scheiterte eine frühe
+# Prüfung, fehlte ihre Zeile — gesehen im CI-Job `repeat` bei test_vorbuchung_schwebe.py.
+# (Mutationsprobe: in `_fail_ausgabe` nur `ende` zurückgeben → rot.)
+ordner_i = Path(tempfile.mkdtemp(prefix="sammel-i-"))
+lang = suite(ordner_i, "test_lang_rot.py", """\
+    import sys
+    print("  FEHL frühe Prüfung (Probe 4712): erwartet 1, war 2")
+    for i in range(120):
+        print(f"  ok   spätere Prüfung {i:03d}, die das Ende der Ausgabe füllt")
+    print("120 ok, 1 Fehler")
+    sys.exit(1)
+""")
+lauf_i = sammellauf([lang], 1)
+aus_i = lauf_i.stdout
+r.check("I: die frühe FEHL-Zeile steht unter FAIL, obwohl danach über 2000 Zeichen folgen",
+        lauf_i.returncode == 1 and "FEHL frühe Prüfung (Probe 4712): erwartet 1, war 2" in aus_i
+        and aus_i.index("FAIL test_lang_rot.py") < aus_i.index("Probe 4712"),
+        aus_i[-600:])
+r.check("I: … das Ende der Ausgabe steht weiter da und beginnt an einer Zeilengrenze",
+        "120 ok, 1 Fehler" in aus_i and "── Ende der Ausgabe ──" in aus_i
+        and aus_i.split("── Ende der Ausgabe ──\n", 1)[-1].startswith("  ok   spätere Prüfung"),
+        aus_i.split("── Ende der Ausgabe ──", 1)[-1][:120])
 
 sys.exit(r.done())
