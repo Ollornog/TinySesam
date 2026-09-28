@@ -6,6 +6,9 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- **Dependabot hebt `pydantic-core` nicht mehr allein.** pydantic legt es exakt fest; ein
+  Einzel-Bump brach `pip check` im Abbild-Bau und im Audit (#81, #112). Die neuen Pflicht-Checks
+  hielten den Auto-Merge von #112 an, wie vorgesehen.
 - **Dependabot-Updates mergen selbst, wenn ein Pflicht-Check sie abnimmt** (Patch und Minor,
   nach 3 Tagen Wartezeit). Majors und alles, was kein Pflicht-Check prüft, bleiben von Hand; der PR
   bekommt dann einen Kommentar, warum. Automatisch gehen `pip` (Bauwerkzeuge, Gateway-Sperrliste,

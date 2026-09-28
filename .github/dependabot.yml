@@ -41,6 +41,14 @@ updates:
       alle:
         patterns: ["*"]
         update-types: ["patch", "minor"]
+    # pydantic legt pydantic-core EXAKT fest (`pydantic-core==…`), und pydantic-core erscheint oft
+    # vor dem pydantic, das es verlangt. Die Sperrliste ist ohne Kopfzeile erzeugt, Dependabot hebt
+    # sie also zeilenweise und hob pydantic-core allein: `pip check` im Abbild-Bau und im Audit
+    # wurde rot (#81, #112). pydantic-core wandert deshalb nur mit pydantic mit. Hebt Dependabot
+    # pydantic, bleibt der Pflicht-Check rot, bis die Liste neu erzeugt ist (Befehl im Kopf von
+    # deploy/gateway/requirements.txt), und der Auto-Merge wartet.
+    ignore:
+      - dependency-name: "pydantic-core"
 
   # Der mitgelieferte Referenz-Stack (B4-12): Caddy ist der Netzrand, und sein Pin in
   # deploy/forward-auth/docker-compose.yml alterte bis hierhin, ohne dass jemand es sah — der
