@@ -518,7 +518,10 @@ def _rechte_job(zeilen: list[str], geerbt: set[str]) -> set[str]:
 # Befehle, die ein Job mit Identität oder Schreibrecht in `run:` ausführen darf — eine Positivliste,
 # keine Sperrliste: `curl … | bash`, `git clone … && node …` oder ein neues Werkzeug fielen durch
 # jede Wortliste (A-5). Geprüft wird jedes Glied einer Befehlskette und jede `$( … )`-Ersetzung.
-ERLAUBT_MIT_RECHT = {"echo", "printf", "gh release", "gh attestation", "git log"}
+# `gh pr merge` und `gh pr comment` (Dependabot-Auto-Merge, 2026-09-28) stehen einzeln da — nie
+# `gh pr` pauschal: `gh pr checkout` holte PR-Code in einen Job mit Schreibrecht.
+ERLAUBT_MIT_RECHT = {"echo", "printf", "gh release", "gh attestation", "git log",
+                     "gh pr merge", "gh pr comment"}
 
 
 def _befehle(zeile: str) -> list[str]:
@@ -534,12 +537,15 @@ def _befehle(zeile: str) -> list[str]:
         while woerter and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", woerter[0]):
             woerter.pop(0)           # VAR=wert vor dem Befehl
         if woerter:
-            aus.append(" ".join(woerter[:2]))
+            aus.append(" ".join(woerter[:3]))     # drei Wörter: `gh pr merge` ≠ `gh pr checkout`
     return aus
 
 
 def _erlaubt(befehl: str) -> bool:
-    return befehl.split()[0] in ERLAUBT_MIT_RECHT or befehl in ERLAUBT_MIT_RECHT
+    """Ein Eintrag der Positivliste deckt den Befehl, wenn er ihn Wort für Wort anführt:
+    `gh release` deckt `gh release create`, `gh pr merge` deckt `gh pr checkout` nicht."""
+    woerter = befehl.split()
+    return any(woerter[:len(e.split())] == e.split() for e in ERLAUBT_MIT_RECHT)
 
 
 # Schreibrechte, die mit Checkout auskommen MÜSSEN — je Job genau diese Rechte und der Grund. Der
@@ -590,6 +596,27 @@ assert _ausnahmen_gesehen == set(CHECKOUT_MIT_RECHT), \
 assert _geprueft_identitaet >= 6, f"nur {_geprueft_identitaet} Jobs mit Schreibrecht gefunden — Parser prüfen"
 print(f"  {_geprueft_identitaet} Jobs mit Identität/Schreibrecht (jede Schreibweise): nur "
       f"{'/'.join(sorted(ERLAUBT_MIT_RECHT))}, Checkout nur mit begründeter Ausnahme")
+
+# Dependabot-Auto-Merge (PO 2026-09-28): Die Logik liegt im Job ohne Schreibrecht, der Job mit
+# Schreibrecht ruft nur `gh pr merge`/`gh pr comment` (das prüft die Schleife oben). Hier das
+# Übrige: nur echte Dependabot-PRs aus dem eigenen Repo, kein `pull_request_target`, und gemergt
+# wird genau der geprüfte Kopf. (Mutationsproben: `--match-head-commit` streichen; die
+# `head.repo.full_name`-Bedingung streichen; `on: pull_request_target` → je rot.)
+_am = read(".github/workflows/dependabot-auto-merge.yml")
+_am_jobs = _jobs(_am)
+_am_on = "\n".join(_code(_am.split("\njobs:", 1)[0]))
+assert re.search(r"^on:\s*pull_request\s*$", _am_on, re.M) and "pull_request_target" not in _am_on, \
+    "dependabot-auto-merge.yml: Trigger muss `pull_request` sein (Fork-Läufe nur mit Lese-Token)"
+_am_ent = " ".join(z.strip() for z in _am_jobs.get("entscheiden", []))
+assert "github.event.pull_request.user.login == 'dependabot[bot]'" in _am_ent and \
+    "github.event.pull_request.head.repo.full_name == github.repository" in _am_ent, \
+    "dependabot-auto-merge.yml: `entscheiden` prüft nicht hart Autor UND eigenes Repo"
+assert not _rechte_job(_am_jobs.get("entscheiden", []), _rechte_oben(_am)), \
+    "dependabot-auto-merge.yml: `entscheiden` hält ein Schreibrecht — die Logik gehört in den Lese-Job"
+_am_merge = [k for k in _kommandos(_am_jobs.get("ausfuehren", [])) if k.startswith("gh pr merge")]
+assert _am_merge and all("--match-head-commit" in k and "--auto" in k for k in _am_merge), \
+    f"dependabot-auto-merge.yml: gemergt wird nicht genau der geprüfte Kopf: {_am_merge}"
+print("  Dependabot-Auto-Merge: Logik ohne Schreibrecht, nur eigene Dependabot-PRs, genau der geprüfte Kopf")
 
 # B4-6 — Actions, die zur Laufzeit ein Werkzeug nachladen. Der SHA-Pin hält die Action fest, nicht
 # das Werkzeug: Ohne Angabe zieht setup-qemu den `latest`-Tag von tonistiigi/binfmt (privilegiert!),
