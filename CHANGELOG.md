@@ -6,6 +6,15 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- **Die Zahl paralleler Test-Jobs kommt vom Runner, nicht aus einer Erkennung.** `tests/run_all.py`
+  nahm ohne `CI_TEST_JOBS` die Hälfte von `os.cpu_count()`. Im Container meldet das alle Kerne des
+  Hosts, nicht die CPU-Quote: Ein Runner mit zwei Kernen auf einem Host mit zwölf startete sechs
+  Jobs. Jetzt gilt `CI_TEST_JOBS` (von Hand), sonst `CI_KERNE` (setzt der CI-Runner), sonst 2. Ein
+  ungültiger Wert in einer der beiden Variablen bricht ab. `tests/test_repo.py` ruft dazu die
+  Kit-Prüfung `pruefe_parallel_worker` (Kit 0.27.1).
+- `tests/test_testlauf.py` prüft jetzt, dass jede Suite ihr eigenes Wegwerf-Verzeichnis hat
+  (TMPDIR, HOME, XDG_*) und dass es danach gelöscht ist. Bisher bewachte das nichts: ein
+  gemeinsames, nie gelöschtes Verzeichnis für alle Suiten blieb grün.
 - **Nach einem Dependabot-Auto-Merge läuft die CI auf main.** Mit `gh pr merge --auto` mergte
   GitHub im Namen des Workflow-Tokens, und so ein Merge startet keinen Workflow. Nach #114 lief auf
   main weder CI noch Audit, CodeQL oder Pages. Jetzt startet `dependabot-auto-merge.yml` per

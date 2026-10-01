@@ -14,7 +14,8 @@ F  der Starter senkt nur im Sammellauf ab, lässt die Import-Reihenfolge der Sui
    Suiten, die Hash-Parameter oder -Laufzeiten selbst prüfen, rechnen mit den echten Werten;
 G  das PAKET hat keinen Schalter, der Hashes schwächt — keine Umgebungsvariable, keine Einstellung;
 H  das Tor (`scripts/check.sh`) baut die Website in ein Wegwerf-Verzeichnis, nicht nach `_site/`.
-I  unter `FAIL` steht jede gescheiterte Prüfung, auch wenn die Ausgabe der Suite lang ist.
+I  unter `FAIL` steht jede gescheiterte Prüfung, auch wenn die Ausgabe der Suite lang ist;
+J  jede Suite hat ihr eigenes Wegwerf-Verzeichnis (TMPDIR, HOME, XDG_*), das danach weg ist.
 """
 from __future__ import annotations
 
@@ -157,10 +158,22 @@ r.check("C: Startreihenfolge mit einem Job = Liste; mit mehreren die langen zuer
 fehlen = [n for n in run_all.LANGE_ZUERST if not (ROOT / "tests" / n).exists()]
 r.check("C: jeder Eintrag in LANGE_ZUERST ist noch eine Suite", not fehlen, f"{fehlen}")
 
-# ── D: CI_TEST_JOBS ────────────────────────────────────────────────────────────────────────
-r.check("D: ohne Wert die Hälfte der Kerne, mindestens einer; Leerraum stört nicht",
-        run_all.jobs_bestimmen("") == max(1, (os.cpu_count() or 1) // 2)
-        and run_all.jobs_bestimmen(" 3 ") == 3 and run_all.jobs_bestimmen("1") == 1)
+# ── D: CI_TEST_JOBS / CI_KERNE ──────────────────────────────────────────────────────────────
+r.check("D: CI_TEST_JOBS gilt vor CI_KERNE; Leerraum stört nicht",
+        run_all.jobs_bestimmen(" 3 ", "7") == 3 and run_all.jobs_bestimmen("1", "7") == 1)
+r.check("D: ohne CI_TEST_JOBS gilt CI_KERNE (die Zahl des Runners)",
+        run_all.jobs_bestimmen("", "5") == 5 and run_all.jobs_bestimmen("", " 1 ") == 1)
+# Keine Erkennung: `os.cpu_count()` sieht im Container alle Kerne des Hosts, nicht die Quote.
+r.check("D: ohne beide die feste Vorgabe 2 — keine Erkennung der Kerne",
+        run_all.jobs_bestimmen("", "") == 2 == run_all.JOBS_VORGABE,
+        f"{run_all.jobs_bestimmen('', '')}")
+for kaputt in ("0", "zwei"):
+    try:
+        run_all.jobs_bestimmen("", kaputt)
+        abgelehnt = False
+    except ValueError as fehler:
+        abgelehnt = "CI_KERNE" in str(fehler)
+    r.check(f"D: CI_KERNE={kaputt!r} ist ein Fehler, keine stille Vorgabe", abgelehnt)
 spur_d = Path(tempfile.mkdtemp(prefix="sammel-d-")) / "spur.txt"
 for kaputt in ("0", "-2", "zwei", "1.5"):
     lauf_d = sammellauf([seriell[0]], kaputt, SAMMEL_SPUR=str(spur_d))
@@ -419,5 +432,33 @@ r.check("I: … das Ende der Ausgabe steht weiter da und beginnt an einer Zeilen
         "120 ok, 1 Fehler" in aus_i and "── Ende der Ausgabe ──" in aus_i
         and aus_i.split("── Ende der Ausgabe ──\n", 1)[-1].startswith("  ok   spätere Prüfung"),
         aus_i.split("── Ende der Ausgabe ──", 1)[-1][:120])
+
+# ── J: eigenes Wegwerf-Verzeichnis je Suite ───────────────────────────────────────────────────
+# Die Zusage, auf der der parallele Lauf und „Tests sind wiederholbar" stehen. Bis 2026-10-01 prüfte
+# sie keine Suite: Ein gemeinsames, nie gelöschtes Verzeichnis für alle Suiten blieb grün.
+# (Mutationsprobe: in `suite_fahren` ein festes Verzeichnis nehmen und nicht löschen → rot.)
+ordner_j = Path(tempfile.mkdtemp(prefix="sammel-j-"))
+spur_j = Path(tempfile.mkdtemp(prefix="sammel-j-spur-"))
+rumpf_j = """\
+    import json, os, sys, tempfile
+    from pathlib import Path
+    werte = {k: os.environ.get(k, "") for k in ("TMPDIR", "HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME",
+                                                "XDG_DATA_HOME")}
+    werte["gettempdir"] = tempfile.gettempdir()
+    Path(os.environ["SAMMEL_SPUR_J"], Path(sys.argv[0]).name + ".json").write_text(json.dumps(werte))
+"""
+lauf_j = sammellauf([suite(ordner_j, "test_j1.py", rumpf_j), suite(ordner_j, "test_j2.py", rumpf_j)],
+                    2, SAMMEL_SPUR_J=str(spur_j))
+spuren = [json.loads(f.read_text()) for f in sorted(spur_j.glob("*.json"))]
+r.check("J: beide Suiten liefen und haben ihre Umgebung abgelegt",
+        lauf_j.returncode == 0 and len(spuren) == 2, f"Exit {lauf_j.returncode}, {len(spuren)} Spuren")
+if len(spuren) == 2:
+    eins, zwei = spuren
+    r.check("J: TMPDIR, HOME, XDG_* und gettempdir zeigen in dasselbe Verzeichnis der Suite",
+            all(eins[k] and eins[k].startswith(eins["TMPDIR"]) for k in eins)
+            and all(zwei[k] and zwei[k].startswith(zwei["TMPDIR"]) for k in zwei), f"{spuren}")
+    r.check("J: jede Suite hat ein eigenes Verzeichnis", eins["TMPDIR"] != zwei["TMPDIR"], f"{spuren}")
+    r.check("J: nach dem Lauf sind beide Verzeichnisse weg",
+            not os.path.exists(eins["TMPDIR"]) and not os.path.exists(zwei["TMPDIR"]), f"{spuren}")
 
 sys.exit(r.done())

@@ -752,6 +752,86 @@ def pruefe_kein_self_hosted_runner(root: str, dateien: list[str]) -> list[str]:
     return treffer
 
 
+_WORKER_DATEIEN = (".sh", ".yml", ".yaml", ".toml", ".cfg", ".ini")
+_WORKER_MUSTER = [
+    # vor der Option auch " oder ' — pytest-Optionen stehen in `addopts = "…"` (pyproject.toml)
+    (re.compile(r"(?:^|[\s\"'])(?:-n|--numprocesses)[= ]*(?:auto|logical)\b"), "pytest-xdist mit auto/logical"),
+    (re.compile(r"--processes[= ]*auto\b"), "paratest mit auto"),
+    (re.compile(r"\bnproc\b|_NPROCESSORS_ONLN|\bcpu_count\s*\("), "Kernzahl selbst erkannt (nproc/getconf/cpu_count)"),
+    (re.compile(r"\bxargs\b.*\s-P\s*0\b"), "xargs -P0 (so viele wie möglich)"),
+]
+
+
+_WORKER_PY_AUFRUFE = {"cpu_count", "process_cpu_count", "sched_getaffinity"}
+
+
+def _worker_in_python(root: str, rel: str) -> list[str]:
+    """Python-Testläufer (run_all.py u. ä.) per AST: Aufrufe von cpu_count/sched_getaffinity und ein
+    `nproc` als Programm. AST statt Zeilentext — Docstrings und Kommentare nennen die Regel, ohne sie
+    zu brechen (Gedächtnis: Code-Muster per AST suchen). Seit 0.27.1, Fund aus der TinySesam-Session:
+    `max(1, os.cpu_count()//2)` in tests/run_all.py blieb unter 0.27.0 unsichtbar."""
+    inhalt = _lies(root, rel) or ""
+    try:
+        baum = ast.parse(inhalt)
+    except SyntaxError:
+        return []
+    treffer = []
+    for knoten in ast.walk(baum):
+        if not isinstance(knoten, ast.Call):
+            continue
+        f = knoten.func
+        name = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""
+        if name in _WORKER_PY_AUFRUFE:
+            treffer.append(f"{rel}:{knoten.lineno}: Kernzahl selbst erkannt ({name}) statt CI_KERNE")
+            continue
+        for arg in ast.walk(knoten):
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and re.match(r"^nproc\b", arg.value):
+                treffer.append(f"{rel}:{knoten.lineno}: nproc aufgerufen statt CI_KERNE")
+                break
+    return treffer
+
+
+def pruefe_parallel_worker(root: str, dateien: list[str]) -> list[str]:
+    """Worker-Zahl einer parallelen Suite kommt aus `CI_KERNE`, nie aus einer Erkennung.
+
+    Vertrag seit 2026-10-01 (Konzept „Tests parallel“ auf dem Tower): Der Runner setzt `CI_KERNE`
+    aus seiner CPU-Quote bzw. Speichergrenze. Eine Erkennung im Repo sieht je nach Werkzeug die
+    Quote (nproc: 2) oder alle Host-Kerne (getconf/Python/PHP: 12) — gemessen im selben Container.
+    Mehrere Runner einer Maschine erdrücken sich dann gegenseitig. Also:
+      * kein `-n auto`, `--processes=auto`, `nproc`, `getconf _NPROCESSORS_ONLN`, `cpu_count(`,
+        `xargs -P0` in Skripten, Workflows und Test-Konfiguration;
+      * `--parallel` (artisan test/paratest) nur mit `--processes`, und eine Worker-Angabe bei
+        `pytest -n` / `go test -p` / `--processes` nur mit `CI_KERNE`, keine feste Zahl.
+    Kommentare zählen nicht (Regeln werden dort begründet). Python-Dateien unter tests/ und scripts/
+    prüft `_worker_in_python` per AST (seit 0.27.1).
+    """
+    treffer = []
+    for rel in dateien:
+        name = os.path.basename(rel)
+        if rel.endswith(".py") and rel.startswith(("tests/", "scripts/")) and not rel.startswith("tests/_kit/"):
+            treffer += _worker_in_python(root, rel)
+            continue
+        if not (rel.endswith(_WORKER_DATEIEN) or name == "Makefile" or rel.startswith(".githooks/")):
+            continue
+        inhalt = _lies(root, rel) or ""
+        for n, zeile in enumerate(zeilen_wie_grep(inhalt), 1):
+            code = ohne_yaml_kommentar(zeile)
+            for muster, grund in _WORKER_MUSTER:
+                if muster.search(code):
+                    treffer.append(f"{rel}:{n}: {grund}")
+            if "CI_KERNE" in code:
+                continue
+            if re.search(r"--parallel\b", code) and "--processes" not in code and ("artisan" in code or "paratest" in code):
+                treffer.append(f"{rel}:{n}: --parallel ohne --processes (paratest nimmt dann alle Kerne)")
+            if re.search(r"--processes[= ]*\d", code):
+                treffer.append(f"{rel}:{n}: feste Worker-Zahl statt CI_KERNE")
+            if ("pytest" in code or "addopts" in code) and re.search(r"(?:^|[\s\"'])(?:-n|--numprocesses)[= ]*\d", code):
+                treffer.append(f"{rel}:{n}: feste Worker-Zahl statt CI_KERNE")
+            if "go test" in code and re.search(r"\s-p[= ]*\d", code):
+                treffer.append(f"{rel}:{n}: feste Worker-Zahl statt CI_KERNE")
+    return treffer
+
+
 def pruefe_versionsgleichstand(root: str, weitere: dict[str, str] | None = None) -> list[str]:
     """`pyproject.toml`, CHANGELOG und optionale weitere Quellen nennen dieselbe Version.
 

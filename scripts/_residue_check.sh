@@ -19,12 +19,28 @@
 #                                                     # (CI: pristiner Checkout)
 #
 # Ausnahmen: eine Zeile je Pfadmuster in `.ci-allow-dirty` im Repo-Root (Globs, '#' = Kommentar).
+#
+# AUCH IGNORIERTES ZÄHLT (Kit 0.26.0, T-12): Bis dahin lief `git status` ohne `--ignored`.
+# Ein Test, der in einen ignorierten Pfad schreibt, blieb unsichtbar — in TinySesam lag nach
+# jedem Lauf `.mypy_cache/` im Baum (mypy legt darin eine eigene `.gitignore` an, der Ordner
+# ist also in JEDEM Repo ignoriert). Ignoriert heißt nicht zustandslos: der nächste Lauf
+# erbt ihn, und parallele Läufe teilen ihn.
+# Ausgenommen sind nur Ordner, die das EINRICHTEN anlegt, nicht der Test (STANDARD_IGNORIERT).
+# Über 14 Repos gemessen (2026-09-27): einziger Treffer DashMyBoard mit `.venv/` und
+# `*.egg-info/` aus dem einmaligen Aufsetzen in check.sh.
+# Grenze: `git status` zeigt einen ignorierten Ordner nur als Ganzes. Wächst ein Ordner, der
+# vorher schon da war, sieht der Vergleich das nicht.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 
+# Nur für ignorierte Einträge (`!! `). Globs; `*` überspannt auch `/`.
+STANDARD_IGNORIERT=('.venv/' 'venv/' '*.egg-info/' '*__pycache__/' 'node_modules/' 'vendor/')
+
 snapshot() {
-    git -C "$ROOT" status --porcelain || true
+    # `=matching`, nicht das blanke `--ignored`: das fasst einen neuen Ordner, der nur
+    # Ignoriertes enthält, zu `!! pkg/` zusammen — dann passt `*__pycache__/` nicht mehr.
+    git -C "$ROOT" status --porcelain --ignored=matching || true
 }
 
 # Liest die erlaubten Muster. Fehlt die Datei, ist die Liste leer — fail-closed.
@@ -67,6 +83,12 @@ check() {
         fi
         path="${line:3}"
         skip=0
+        if [[ "$line" == '!! '* ]]; then
+            for pat in "${STANDARD_IGNORIERT[@]}"; do
+                # shellcheck disable=SC2053
+                [[ "$path" == $pat ]] && { skip=1; break; }
+            done
+        fi
         for pat in ${ausnahmen[@]+"${ausnahmen[@]}"}; do
             # Glob-Vergleich ist hier gewollt (Muster aus .ci-allow-dirty).
             # shellcheck disable=SC2053

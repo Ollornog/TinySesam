@@ -20,7 +20,7 @@ beeinflussen und keine Suite die andere stören — die Tests sind wiederholbar.
 Nachweis: `ci-local --full` fährt die Suite zweimal im selben Baum.
 
 PARALLEL: Die Suiten laufen gleichzeitig, `CI_TEST_JOBS` (ganze Zahl ≥ 1) legt fest, wie
-viele; ohne die Variable die Hälfte der Kerne, mindestens eine. Die Ausgabe jeder Suite wird
+viele; ohne sie `CI_KERNE` (setzt der CI-Runner), ohne beide 2. Die Ausgabe jeder Suite wird
 gepuffert und in der festen Reihenfolge der Dateinamen ausgegeben — das Protokoll liest sich wie
 ein serieller Lauf und ist bei gleichem Ergebnis Zeile für Zeile gleich. `CI_TEST_JOBS=1`
 ist der serielle Lauf von früher: eine Suite nach der anderen, in dieser Reihenfolge.
@@ -59,6 +59,10 @@ SKIP_EXIT = 77
 #: Startet jede Suite (senkt die Hash-Parameter im Testprozess ab, s. dort).
 STARTER = os.path.join(HERE, "_starter.py")
 JOBS_VARIABLE = "CI_TEST_JOBS"
+#: Die Worker-Zahl, die der CI-Runner vorgibt. Gilt, wenn `CI_TEST_JOBS` fehlt.
+KERNE_VARIABLE = "CI_KERNE"
+#: Ohne beide Variablen: zwei Jobs — eine sichere Vorgabe, keine Erkennung (s. `jobs_bestimmen`).
+JOBS_VORGABE = 2
 
 #: Diese Suiten starten bei parallelem Lauf ZUERST — die langsamsten, gemessen 2026-09-27 (0.22.0).
 #: Die Liste bestimmt nur, WANN eine Suite anfängt; Ergebnis und Reihenfolge der Ausgabe bleiben
@@ -135,23 +139,32 @@ def umgebung(sandbox: str) -> dict:
     }
 
 
-def jobs_bestimmen(roh=None) -> int:
-    """Wie viele Suiten gleichzeitig laufen: `CI_TEST_JOBS`, sonst die Hälfte der Kerne.
+def jobs_bestimmen(roh=None, kerne=None) -> int:
+    """Wie viele Suiten gleichzeitig laufen: `CI_TEST_JOBS`, sonst `CI_KERNE`, sonst 2.
 
-    Ein Wert, der keine ganze Zahl ≥ 1 ist, ist ein Fehler (`ValueError`) — nicht still die
-    Vorgabe: Wer `CI_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
+    Keine Erkennung der Kerne: Bis 2026-10-01 stand hier `os.cpu_count() // 2`. Im Container sieht
+    `os.cpu_count()` alle Kerne des Hosts, nicht die CPU-Quote des Containers — ein Runner mit zwei
+    Kernen Quote auf einem Host mit zwölf startete sechs Jobs, und mehrere Runner einer Maschine
+    erdrückten sich gegenseitig. Die Zahl kommt deshalb von dem, der die Quote kennt: dem Runner
+    (`CI_KERNE`). `CI_TEST_JOBS` bleibt der Schalter von Hand, z. B. `1` für den seriellen Lauf.
+
+    Ein gesetzter Wert, der keine ganze Zahl ≥ 1 ist, ist ein Fehler (`ValueError`) — nicht still
+    die Vorgabe: Wer `CI_TEST_JOBS=1` für einen seriellen Lauf setzt und sich vertippt, soll
     das erfahren, statt einen parallelen Lauf für einen seriellen zu halten.
     """
     roh = os.environ.get(JOBS_VARIABLE, "") if roh is None else roh
-    if not roh.strip():
-        return max(1, (os.cpu_count() or 1) // 2)
-    try:
-        jobs = int(roh.strip())
-    except ValueError:
-        jobs = 0
-    if jobs < 1:
-        raise ValueError(f"{JOBS_VARIABLE}={roh!r} — erwartet eine ganze Zahl ≥ 1")
-    return jobs
+    kerne = os.environ.get(KERNE_VARIABLE, "") if kerne is None else kerne
+    for variable, wert in ((JOBS_VARIABLE, roh), (KERNE_VARIABLE, kerne)):
+        if not wert.strip():
+            continue
+        try:
+            jobs = int(wert.strip())
+        except ValueError:
+            jobs = 0
+        if jobs < 1:
+            raise ValueError(f"{variable}={wert!r} — erwartet eine ganze Zahl ≥ 1")
+        return jobs
+    return JOBS_VORGABE
 
 
 def startreihenfolge(files, jobs) -> list:
