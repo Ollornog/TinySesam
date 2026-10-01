@@ -397,6 +397,10 @@ assert not am_tag, "veröffentlicht ohne Tag:\n  " + "\n  ".join(am_tag)
 _extras = hygiene.pruefe_extras_imports(ROOT, FILES, auch_minimal=["httpx", "setuptools", "wheel"])
 assert not _extras, "Extra ungeschützt importiert:\n  " + "\n  ".join(_extras)
 
+# Kit 0.27.0: Die Worker-Zahl paralleler Läufe kommt aus `CI_KERNE`, nie aus einer Erkennung.
+_worker = hygiene.pruefe_parallel_worker(ROOT, FILES)
+assert not _worker, "Worker-Zahl nicht aus CI_KERNE:\n  " + "\n  ".join(_worker)
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
 print("  Kit 0.21.8: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer; nichts veröffentlicht ohne Tag")

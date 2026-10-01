@@ -1311,8 +1311,8 @@ python tests/run_all.py core pin chain     # only some
 CI_TEST_JOBS=1 python tests/run_all.py   # one suite after the other
 ```
 
-The suites run **in parallel**: `CI_TEST_JOBS` sets how many at once (default: half the CPU
-cores, at least one; anything but a whole number ≥ 1 is an error). Each suite gets its own
+The suites run **in parallel**: `CI_TEST_JOBS` sets how many at once (otherwise `CI_KERNE`, which
+the CI runner sets; otherwise 2 — no core detection; anything but a whole number ≥ 1 is an error). Each suite gets its own
 throwaway directory, and the log lists the suites in file order, not in the order they finish —
 `CI_TEST_JOBS=1` is the serial run. The runner starts every suite through `tests/_starter.py`,
 which lowers the password-hash cost **inside that test process only**. A suite started directly
