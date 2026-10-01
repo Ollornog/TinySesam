@@ -18,7 +18,7 @@
 # Per DIGEST gepinnt, nicht per Tag: `python:3.14-slim` zeigt heute hierhin und morgen
 # woanders — zwei Bauläufe desselben Commits ergäben verschiedene Abbilder. Anheben:
 #   docker manifest inspect python:3.14-slim   (bzw. Dependabot, s. dependabot.yml)
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 AS build
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS build
 
 # Aus dem Build-Kontext installieren, NICHT aus dem Netz: das Abbild soll genau den Stand
 # enthalten, der hier daneben liegt — nicht das, was `main` gerade zufällig ist.
@@ -51,7 +51,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip uninstall --yes setuptools
 
 # ---------- Laufen ----------
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 
 # `useradd` schreibt das Datum der letzten Passwortänderung nach /etc/shadow — ohne diese Zeile
 # den Tag des Baus, mit ihr den Tag des Commits (shadow ab 4.14 liest SOURCE_DATE_EPOCH).
