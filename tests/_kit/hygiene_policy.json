@@ -254,7 +254,9 @@
     "^<[^>]*>$",
     "^\\*+$",
     "^[A-Z]+(?:-[A-Z]+)+-[0-9]+$",
-    "^[a-z_][a-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+    "^[a-z_][a-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$",
+    "^~/[A-Za-z0-9._-]{1,40}(?:/[A-Za-z0-9._-]{1,40})+$",
+    "^/(?:home|root|etc|opt|var|usr|srv|mnt|media|tmp|run|lib|bin|sbin|dev|boot|proc|sys|data|Users)(?:/[A-Za-z0-9._-]{1,40})+$"
   ],
   "_geheimnis_platzhalter_bedeutung": [
     "NUR Grossbuchstaben/Ziffern/Unterstrich = Platzhaltername (REPLACE_ME_TOKEN)",
@@ -292,7 +294,24 @@
     "ohnehin unabhaengig vom Kontext (GitHub-Token, PEM, AKIA, sk-...).",
     "⚠️ Die Regel dahinter, teuer gelernt: einen Fehlalarm des Geheimnis-Zauns ueber den KONTEXT",
     "beheben, nie ueber den WERT — und wenn eine Wertform doch die richtige Stelle ist, dann die",
-    "engste, die den Fall abdeckt, und jede Lockerung gegen echte Geheimnisse negativ testen."
+    "engste, die den Fall abdeckt, und jede Lockerung gegen echte Geheimnisse negativ testen.",
+    "",
+    "PFAD ZU EINER SCHLUESSELDATEI (kit 0.27.2, 2026-10-03): `TESTLAB_SSH_KEY=~/.ssh/id_ed25519_<host>`",
+    "stand in der gesyncten Doku und wurde als Geheimnis gemeldet — der Wert ist ein PFAD. Die",
+    "Pfad-Regel oben kennt nur `[a-z0-9_.-]` ohne `~` und ohne Grossbuchstaben. Zwei neue, enge",
+    "Regeln, beide mit Pflicht-Segmenten (Pfad = mindestens zwei durch `/` getrennte Teile aus",
+    "`[A-Za-z0-9._-]`, je hoechstens 40 Zeichen, NIE `+` oder `=`):",
+    "  `~/…/…`   Tilde-Pfad. `~` kommt in keinem Aussteller-Format am Anfang vor.",
+    "  `/<wurzel>/…`  absoluter Pfad NUR unter einem bekannten Wurzelverzeichnis (home, root, etc,",
+    "                 opt, var, usr, srv, mnt, media, tmp, run, lib, bin, sbin, dev, boot, proc, sys,",
+    "                 data, Users). Ein Base64-Token beginnt in 1 von 64 Faellen mit `/` — er hat",
+    "                 aber kein Wurzel-Segment und fast immer `+`/`=` oder ein langes Segment.",
+    "`$HOME/…` und `${HOME}/…` brauchen keine Regel: `$` steht nicht in der Wertklasse, die Zuweisung",
+    "trifft dort nie (negativ getestet). Bekannte Formate (ghp_, nbp_ …) schlagen auch in einem Pfad",
+    "an — die Formate laufen VOR den Platzhaltern (nur die Python-Fassung; die grep-Kette entscheidet je",
+    "Zeile und verwirft einen Pfad mit Format im Dateinamen, wie bei der aelteren Pfad-Regel).",
+    "BENANNTE GRENZE: ein Geheimnis in Pfadform (`~/a/b` aus Buchstaben und Ziffern) faellt durch;",
+    "kein Aussteller vergibt solche Werte, bei Dateipfaden sind sie der Normalfall."
   ],
   "artefakt_teile": [
     ".egg-info",
