@@ -2,7 +2,23 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [0.24.1] — 2026-10-07
+## [0.24.2] — 2026-10-07
+
+**Wer es braucht:** Betreiber des Gateways (`tinysesam.gateway`). Kein API-Bruch, kein neues Schema.
+
+### Hinzugefügt
+
+- **Startseite des Gateways:** `/` zeigt Angemeldeten „Angemeldet als …“ mit Abmelden (POST, CSRF), sonst geht es
+  zur Anmeldung. Bis hier antwortete die Adresse des Gateways im Browser mit `{"detail":"Not Found"}`.
+  Neue Seite `gateway_home` (über `set_template` ersetzbar).
+- **Fehlerseiten im Gateway:** Browser bekommen die Fehlerseite im Branding (`install_error_pages`), API-Clients
+  weiter JSON.
+
+### Geändert
+
+- Fehlerseiten zeigen statt Starlettes englischem Standardtext („Not Found“) den Text der eingestellten Sprache,
+  wo es einen gibt (`error.404`, `error.405`). Eigene Meldungen bleiben unverändert.
+
 
 **Wer es braucht:** alle, die 0.24.0 als zentrales Gateway (`gate_link_enabled`) betreiben. Kein API-Bruch,
 kein neues Schema.

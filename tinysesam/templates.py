@@ -728,6 +728,18 @@ def _gate_logged_out(auth, ctx) -> str:
     return _page(auth, t("gate.logged_out_title"), body)
 
 
+def _gateway_home(auth, ctx) -> str:
+    """ctx: user_name. Startseite des Gateways für Angemeldete — wer `/` aufruft, sieht, mit wem er
+    angemeldet ist, und kann sich abmelden. (Bis 0.24.1 antwortete `/` mit JSON-404.)"""
+    t = auth.t
+    body = (f"<h1>{_e(t('gw.title'))}</h1>"
+            f"<div class=hint>{_e(t('gw.signed_in_as', name=ctx.get('user_name', '')))}</div>"
+            f"<div class=hint>{_e(t('gw.hint'))}</div>"
+            f"<form method=post action='__TS_P__/auth/logout'>{_cf(ctx)}"
+            f"<button type=submit>{_e(t('logout'))}</button></form>")
+    return _page(auth, t("gw.title"), body)
+
+
 def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
@@ -891,6 +903,7 @@ DEFAULTS = {
     "logout": _logout,
     "gate_logout": _gate_logout,
     "gate_logged_out": _gate_logged_out,
+    "gateway_home": _gateway_home,
     "login": _login,
     "totp": _totp,
     "reauth": _reauth,

@@ -267,6 +267,11 @@ def _gueltige_regeln(regeln) -> list:
     return [r for r in regeln
             if all(r[2].get(k) for k in ("username", "ip") if k in r[2])]
 
+def _messages_der_sprache(auth) -> dict:
+    from .messages import MESSAGES
+    return MESSAGES.get(auth.cfg.lang) or MESSAGES["en"]
+
+
 class TinySesam:
     def __init__(self, config: TinySesamConfig):
         self._riegel(config, beim_aufbau=True)
@@ -6320,7 +6325,7 @@ class TinySesam:
     #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
     #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
     #: wurde eingetragen und nie aufgerufen.
-    PAGES = ("account", "error", "forgot", "gate_logged_out", "gate_logout", "login", "logout",
+    PAGES = ("account", "error", "forgot", "gate_logged_out", "gate_logout", "gateway_home", "login", "logout",
              "magic_confirm", "magic_invalid",
               "magic_request", "pin", "reauth", "register", "reset", "resource_unlock", "totp",
               "totp_setup")
@@ -6943,8 +6948,18 @@ class TinySesam:
             if loc:   # unser _deny/_deny_stepup/_redirect_factor → Redirect unverändert durchreichen
                 return RedirectResponse(loc, status_code=exc.status_code, headers=headers)
             if _wants_html(request):
+                # Starlettes Standardtext („Not Found“) ist englisch — auf der Seite in der Sprache der
+                # Installation, wo es dafür einen Text gibt. Eigene Meldungen bleiben, wie sie sind.
+                nachricht = exc.detail
+                from http import HTTPStatus as _HS
+                try:
+                    standard = _HS(exc.status_code).phrase
+                except ValueError:
+                    standard = None
+                if nachricht == standard and f"error.{exc.status_code}" in _messages_der_sprache(self):
+                    nachricht = self.t(f"error.{exc.status_code}")
                 return self.render_page("error", status=exc.status_code, request=request,
-                                       code=exc.status_code, message=exc.detail)
+                                       code=exc.status_code, message=nachricht)
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers or None)
 
         @app.exception_handler(Exception)

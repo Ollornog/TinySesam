@@ -895,7 +895,7 @@
     },
     "PAGES": {
       "stufe": "B",
-      "wert": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
+      "wert": "('account', 'error', 'forgot', 'gate_logged_out', 'gate_logout', 'gateway_home', 'login', 'logout', 'magic_confirm', 'magic_invalid', 'magic_request', 'pin', 'reauth', 'register', 'reset', 'resource_unlock', 'totp', 'totp_setup')"
     },
     "RECOVERY_BYTES": {
       "bis": "1.0",

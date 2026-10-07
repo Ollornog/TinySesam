@@ -65,6 +65,8 @@ from .config import TinySesamConfig
 from .manager import TinySesam
 
 
+from starlette.requests import Request as _Request  # Modulebene: FastAPI muss die Annotation auflösen
+
 def _split(name):
     return [x.strip() for x in os.environ.get(name, "").split(",") if x.strip()]
 
@@ -241,9 +243,22 @@ def _sprache() -> str:
 def build_app(cfg: Optional[TinySesamConfig] = None):
     """FastAPI-App für das Gateway bauen (cfg optional; sonst aus Env)."""
     from fastapi import FastAPI
+    from fastapi.responses import RedirectResponse
     auth = TinySesam(cfg or config_from_env())
     app = FastAPI(title="TinySesam OIDC-Gateway")
     app.include_router(auth.router())
+    # Browser bekommen die Fehlerseite im Branding statt `{"detail": "Not Found"}`; API-Clients
+    # weiter JSON (Accept entscheidet, `install_error_pages`).
+    auth.install_error_pages(app)
+
+    @app.get("/", include_in_schema=False)
+    def startseite(request: _Request):
+        """Wer die Adresse des Gateways aufruft, landet nicht im Leeren: angemeldet die Übersicht mit
+        Abmelden, sonst die Anmeldung."""
+        u = auth.session_user(request)
+        if not u:
+            return RedirectResponse(auth.browser_path(request, auth.cfg.login_path), 303)
+        return auth.render_page("gateway_home", request=request, user_name=u["display_name"] or u["username"])
 
     @app.get(HEALTH_PATH, include_in_schema=False)
     def healthz():

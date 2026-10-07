@@ -89,6 +89,26 @@ try:
 except SystemExit:
     ok("fehlende Pflicht-Env → SystemExit (klare Fehlermeldung)")
 
+# ---------- Startseite und Fehlerseiten (0.24.2) ----------
+sapp = gateway.build_app(TinySesamConfig.oidc_gateway(
+    issuer="https://id.example.invalid", client_id="cid", client_secret="sec",
+    base_url="https://auth.example.com", db_path=os.path.join(tempfile.mkdtemp(), "s.db"), lang="de"))
+sc = TestClient(sapp, base_url="https://auth.example.com")
+r = sc.get("/", headers={"Accept": "text/html"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/auth/login", (r.status_code, r.headers.get("location"))
+r = sc.get("/gibtsnicht", headers={"Accept": "text/html"})
+assert r.status_code == 404 and r.headers["content-type"].startswith("text/html") and "<html" in r.text.lower(), r.text[:120]
+assert '"detail"' not in r.text
+assert "Diese Seite gibt es nicht." in r.text and "Not Found" not in r.text, "404-Text nicht übersetzt"
+r = sc.get("/gibtsnicht", headers={"Accept": "application/json"})
+assert r.status_code == 404 and r.json() == {"detail": "Not Found"}
+sauth = sapp.state.auth
+sauth.session_user = lambda request: {"username": "anna", "display_name": "Anna A."}
+r = sc.get("/", headers={"Accept": "text/html"})
+assert r.status_code == 200 and "Angemeldet als Anna A.<" in r.text and "action='/auth/logout'" in r.text, r.text[:300]
+assert "name=_csrf" in r.text or "name='_csrf'" in r.text, "Abmelden-Formular ohne CSRF"
+ok("Gateway: / → Anmeldung bzw. „Angemeldet als …“ mit Abmelden; Browser bekommen die Fehlerseite, API weiter JSON")
+
 # ---------- /healthz: ohne Anmeldung, auch wenn HTTPS erzwungen wird ----------
 # Der Container-HEALTHCHECK spricht den Prozess von innen über HTTP an. Würde die
 # Redirect-Middleware auch ihn umleiten, prüfte der Check nur noch den Redirect.
