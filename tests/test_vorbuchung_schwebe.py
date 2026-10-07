@@ -73,6 +73,20 @@ class Verzeichnis:
         return None                                    # „falsch“: Passwort abgelehnt
 
 
+def warte_bis(bedingung, was, frist=20.0):
+    """Warten, bis `bedingung()` wahr ist — statt einer festen Zeit (T-18).
+
+    Bis 2026-10-07 stand an diesen Stellen `time.sleep(HAENGT * 0.4)` in der Hoffnung, dass die
+    parallelen Anmeldungen bis dahin im hängenden Verzeichnis angekommen sind. Unter Last reichte das
+    einmal nicht (CI-Job repeat, PR #108): Die Vorbedingung wurde gelesen, bevor alle da waren. Jetzt
+    wird gelesen, sobald sie da sind; kommt der Zustand nicht, ist das ein Fehler mit Namen."""
+    ende = time.monotonic() + frist
+    while not bedingung():
+        if time.monotonic() > ende:
+            raise AssertionError(f"Zeitüberschreitung ({frist} s): {was}")
+        time.sleep(0.01)
+
+
 def _aufbau(verzeichnis, **haertung):
     db = str(Path(tempfile.mkdtemp()) / "t.db")
     auth = TinySesam(TinySesamConfig(db_path=db, cookie_secure=False, csrf_enabled=False,
@@ -134,14 +148,15 @@ def _alt_offen(auth, name, ip, anzahl):
 
 
 # ── (a) Das erste Fenster: niemand wird gesperrt, der Notfall-Admin kommt hinein ─────────────
-auth, app, post, db = _aufbau(Verzeichnis("haengt"))
+verz_a = Verzeichnis("haengt")
+auth, app, post, db = _aufbau(verz_a)
 paar = auth._sec("max_login_attempts")
 schwelle_ip = paar * auth._sec("ip_attempt_factor")
 with Mitschnitt() as log_a, ThreadPoolExecutor(max_workers=schwelle_ip + 4) as pool:
     # Die ungeduldige Alice klickt fünfmal, das Büro hinter derselben NAT-Adresse meldet sich an.
     laufend = [pool.submit(_anmelden, app, "alice") for _ in range(paar)]
     laufend += [pool.submit(_anmelden, app, f"kollege{i}") for i in range(schwelle_ip - paar)]
-    time.sleep(HAENGT * 0.4)
+    warte_bis(lambda: verz_a.fragen >= schwelle_ip, f"{schwelle_ip} Anläufe im hängenden Verzeichnis")
     schwebend = auth.store.count_fails(0, ip=NAT[0])
     bestaetigt = auth.store.count_fails(0, ip=NAT[0], nur_bestaetigt=True)
     zeit_admin: list = []
@@ -239,7 +254,7 @@ for _ in range(grenze_s - 1):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_d, ThreadPoolExecutor(max_workers=2) as pool:
     haengend_d = pool.submit(_anmelden, app, "alice", "x", ("192.0.2.60", 40000))
-    time.sleep(HAENGT * 0.4)
+    warte_bis(lambda: verz_d.fragen >= 1, "der hängende Anlauf im Verzeichnis")
     stand_d = (auth.store.fehlserie("alice"), auth.store.fehlserie_bestaetigt("alice"))
     parallel_d = pool.submit(_anmelden, app, "alice", "y", ("192.0.2.61", 40000)).result(timeout=30)
     haengend_d = haengend_d.result(timeout=30)
@@ -264,7 +279,7 @@ for _ in range(grenze_s - 1):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_d3, ThreadPoolExecutor(max_workers=1) as pool:
     haengend_d3 = pool.submit(_anmelden, app, "alice", "x", ("192.0.2.60", 40000))
-    time.sleep(HAENGT * 0.4)
+    warte_bis(lambda: verz_d3.fragen >= 1, "der hängende Anlauf im Verzeichnis")
     seite_d3 = TestClient(app, client=("192.0.2.61", 40000)).post(
         "/auth/login", data={"username": "alice", "password": "y"}, follow_redirects=False)
     gesperrt_d3 = auth._is_locked("alice", "192.0.2.62")
@@ -306,12 +321,13 @@ r.check("…und die Serie steht danach bei 0", auth.store.fehlserie("alice") == 
 os.remove(db)
 
 # ── (e) Warteplätze: Wer keinen bekommt, bekommt sofort den Aufschub — ohne Sperre ────────────
-auth, app, post, db = _aufbau(Verzeichnis("haengt"), max_login_attempts=1)
+verz_e = Verzeichnis("haengt")
+auth, app, post, db = _aufbau(verz_e, max_login_attempts=1)
 auth._schwebe_plaetze = threading.BoundedSemaphore(1)
 zeiten_e: list = []
 with Mitschnitt() as log_e, ThreadPoolExecutor(max_workers=3) as pool:
     haengend_e = pool.submit(_anmelden, app, "alice")
-    time.sleep(HAENGT * 0.3)
+    warte_bis(lambda: verz_e.fragen >= 1, "der hängende Anlauf hält den einen Warteplatz")
     wartende = [pool.submit(_anmelden, app, "alice", "x", NAT, zeiten_e) for _ in range(2)]
     status_e = sorted(f.result(timeout=30) for f in wartende)
     haengend_e.result(timeout=30)
@@ -335,10 +351,11 @@ r.check("Gegenprobe: dieselbe Zeile als `failed login` träfe die Jail",
 os.remove(db)
 
 # ── (h) is_locked: ein Aufschub ist True, aber ohne Sperrmail und ohne `failed login` ─────────
-auth, app, post, db = _aufbau(Verzeichnis("haengt"))
+verz_h = Verzeichnis("haengt")
+auth, app, post, db = _aufbau(verz_h)
 with Mitschnitt() as log_h, ThreadPoolExecutor(max_workers=auth._sec("max_login_attempts")) as pool:
     laufend = [pool.submit(_anmelden, app, "alice") for _ in range(auth._sec("max_login_attempts"))]
-    time.sleep(HAENGT * 0.4)
+    warte_bis(lambda: verz_h.fragen >= auth._sec("max_login_attempts"), "alle Anläufe im hängenden Verzeichnis")
     gesperrt_h = auth._is_locked("alice", NAT[0])
     [f.result(timeout=30) for f in laufend]
     frei_h = not auth._is_locked("alice", NAT[0])
@@ -383,14 +400,14 @@ def _serien_zeilen(auth):
     return auth.store._one("SELECT COUNT(*) AS n FROM audit WHERE event='lockout_serie'")["n"]
 
 
-auth, app, post, db = _aufbau(Pruefendes(dauer=0.6), max_login_attempts=1000,
-                              account_max_consecutive_failures=10)
+verz_i = Pruefendes(dauer=0.6)
+auth, app, post, db = _aufbau(verz_i, max_login_attempts=1000, account_max_consecutive_failures=10)
 grenze_i = auth._sec("account_max_consecutive_failures")
 for _ in range(grenze_i - 2):
     auth.store.fehlserie_erhoehen("alice")
 with Mitschnitt() as log_i, ThreadPoolExecutor(max_workers=2) as pool:
     inhaberin = pool.submit(_anmelden, app, "alice", RICHTIG_I, ("198.51.100.1", 40000))
-    time.sleep(0.15)
+    warte_bis(lambda: verz_i.fragen >= 1, "die Inhaberin im Verzeichnis")
     angreifer = pool.submit(_anmelden, app, "alice", "falsch", ("203.0.113.66", 40000))
     inhaberin, angreifer = inhaberin.result(timeout=30), angreifer.result(timeout=30)
 auth._hinweis_ausgang.abwarten()

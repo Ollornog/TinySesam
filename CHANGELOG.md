@@ -99,6 +99,10 @@ Host (kein Token entstünde); `forward_apps` ohne Forward-Auth; `forward_login="
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- `tests/test_vorbuchung_schwebe.py` wartet nicht mehr eine feste Zeit, bis die parallelen Anmeldungen
+  im hängenden Verzeichnis angekommen sind, sondern auf den Zustand selbst (T-18). Die Suite war einmal
+  unter Last rot, die Ursache vermutlich genau diese Wartestellen.
+
 - **Die Zahl paralleler Test-Jobs kommt vom Runner, nicht aus einer Erkennung.** `tests/run_all.py`
   nahm ohne `CI_TEST_JOBS` die Hälfte von `os.cpu_count()`. Im Container meldet das alle Kerne des
   Hosts, nicht die CPU-Quote: Ein Runner mit zwei Kernen auf einem Host mit zwölf startete sechs
