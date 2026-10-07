@@ -4,6 +4,15 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Messung und Abnahme des Gates (T-24)
+
+- `scripts/gate_messung.py` (mit `hey`): Bei 20 gleichzeitigen Anfragen schafft der Weg über
+  `/auth/forward` rund 3 200 Anfragen pro Sekunde bei 6 ms Median, das Gate-Token rund 40 000 bei 0,4 ms.
+  Ergebnis und Aufbau in `docs/BETRIEB.md`.
+- `deploy/forward-auth/abnahme.sh`: Abnahme eines echten Deployments von aussen (Anmeldung,
+  Remote-User, `/.tinysesam/*`, Share-Pfad und Pfad-Tricks, Gate-Token, Abmelden). Der Caddy-Test fährt
+  es gegen den Testaufbau.
+
 ### Hinzugefügt — Konfigurationsprüfung für den Gate-Betrieb (T-23)
 
 Warnungen, der Start gelingt: `gate_token_ttl_sec` über 900 (Widerrufsverzug); Gate ohne geschützten

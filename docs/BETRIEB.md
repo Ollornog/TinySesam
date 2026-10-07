@@ -519,6 +519,38 @@ Seite gehört und sich nicht ändert:
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
+### Gemessen (T-24, 2026-10-07)
+
+`scripts/gate_messung.py`: TinySesam als ein Prozess (wie das Gateway-Abbild), Caddy 2.11.7 mit
+caddy-jwt v1.4.0 und `Caddyfile.gate`, die Anwendung eine statische Antwort; Last mit `hey`, 3000
+Anfragen je Zeile, alles auf einem Desktop-Rechner (6 Kerne):
+
+| gleichzeitig | Weg | Durchsatz | Median | 95 % |
+|---|---|---|---|---|
+| 1 | `/auth/forward` je Anfrage | 2 450 /s | 0,40 ms | 0,60 ms |
+| 1 | Gate-Token | 7 500 /s | 0,10 ms | 0,20 ms |
+| 20 | `/auth/forward` je Anfrage | 3 200 /s | 6,30 ms | 7,50 ms |
+| 20 | Gate-Token | 40 000 /s | 0,40 ms | 0,90 ms |
+
+Bei einzelnen Anfragen spart das Gate rund 0,3 ms. Der Unterschied entsteht unter Gleichzeitigkeit,
+also genau dann, wenn ein Browser die Assets einer Seite parallel lädt: Eine Prüfung je Anfrage
+stellt sie bei TinySesam in eine Schlange (rund 3 000 Prüfungen pro Sekunde, Median 6 ms), das Token
+prüft Caddy selbst (Faktor 12 bis 13). Steht TinySesam auf einem anderen Rechner als der Proxy, kommt
+je Prüfung der Netzweg dazu — hier fehlt er. Ein erster Versuch mit einem Python-Client mass dessen
+Thread-Verwaltung statt des Gates; deshalb `hey`.
+
+### Abnahme je Anwendung
+
+`deploy/forward-auth/abnahme.sh` prüft ein echtes Deployment von aussen: Anmeldung nötig, ein
+selbst mitgeschickter `Remote-User` öffnet nichts, `/.tinysesam/*` erreicht TinySesam, der Share-Pfad
+ist offen und seine Pfad-Tricks bleiben zu; mit dem Sitzungs-Cookie eines Testkontos dazu Gate-Token,
+verfälschtes Token, „nur hier abmelden“. `tests/test_gate_caddy.py` fährt das Skript gegen den
+Testaufbau, samt Gegenprobe (eine falsche Erwartung muss es rot machen).
+
+```bash
+APP=https://app.example.com SHARE=/s/abc123 SESSION='__Host-tinysesam_session=…' deploy/forward-auth/abnahme.sh
+```
+
 ## Öffentliche Pfade einer Anwendung (Share-Links, T-20)
 
 Beide Caddy-Vorlagen haben einen Block `@share`, der Pfade ohne Anmeldung durchlässt — ohne
