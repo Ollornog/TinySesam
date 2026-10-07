@@ -1237,6 +1237,21 @@ existing forward auth, so a request and its body are not lost.
 - **Cost:** signing out, locking an account or a withdrawn grant only takes effect at the proxy
   once the token expires — `gate_token_ttl_sec`, default 300 seconds.
 
+### Signing in at the gate: invisible or with a page (T-21)
+
+`forward_login="direct"` — **the gateway's default** — sends someone who is not signed in straight to
+the identity provider on a page load and back to the address they asked for; with an existing
+session there, all they see is a redirect. `"page"` (the library default) shows the sign-in page
+first. Per app, including a name on the sign-in page:
+
+```python
+forward_apps={"wiki.example.com": {"name": "Wiki", "login": "page"}}   # "Sign in to Wiki"
+```
+
+Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` requires OIDC to be the only
+method. Background requests (XHR, scripts) still go to the sign-in page: they could not show the
+provider's page, and each would start an OIDC flow of its own.
+
 ## Public API: three tiers
 
 Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
@@ -1373,7 +1388,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**64 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**65 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

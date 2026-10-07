@@ -84,11 +84,23 @@ def build_router(auth) -> APIRouter:
 
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
-    def login_page(request: Request, next: str = "", error: str = ""):
+    def login_page(request: Request, next: str = "", error: str = "", app: str = ""):
         nxt = auth.safe_next(next, request)
+        # `app` (T-14) nur, wenn es einen Client dieses Namens gibt — ein frei erfundener Wert
+        # gehört weder in den Knopf noch in eine Umleitung.
+        registry = getattr(auth, "oidc_clients", None)
+        app = app if (app and registry is not None and registry.mehrere and registry.bekannt(app)) else ""
         if auth.current_user(request):
+            # B-2: Angemeldet, aber ohne (gültige) Freigabe für DIESE Anwendung schickte die Seite
+            # zurück zu `next` — die Forward-Auth schickte wieder hierher, eine Schleife ohne Ende.
+            # Die Freigabe gibt nur der Provider, also dorthin.
+            sitzung = request.cookies.get(auth.session_cookie_name) or ""
+            if app and sitzung and not auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), app)[0]:
+                return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}"
+                                        f"?next={_q(nxt)}&app={_q(app)}", 303)
             return RedirectResponse(nxt, 303)
-        return auth.render_page("login", request=request, next=nxt, error=error)
+        return auth.render_page("login", request=request, next=nxt, error=error, app=app,
+                                app_name=auth._forward_app(nxt)["name"] if "://" in nxt else "")
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
@@ -954,7 +966,9 @@ def build_router(auth) -> APIRouter:
                         # und zwar die des Providers, denn dort wird die Freigabe gepflegt.
                         auth.audit("oidc_app_revalidate", u["username"], auth.client_ip(request),
                                    f"app={anwendung} grund={grund}")
-                        login = auth._forward_login_url(orig, request)
+                        # Direkt zum Provider (B-2): Über die Login-Seite lief es im Kreis, die
+                        # Seite sah die Sitzung und schickte zurück.
+                        login = auth._forward_login_url(orig, request, direkt=True)
                         return Response(status_code=401,
                                         headers={"X-TinySesam-Location": login,
                                                  "X-TinySesam-Reason": "app-" + grund,
@@ -978,7 +992,11 @@ def build_router(auth) -> APIRouter:
                 if gate:
                     kopf["X-TinySesam-Gate-Cookie"] = gate
                 return Response(status_code=200, headers=kopf)
-            login = auth._forward_login_url(orig, request)
+            # Login-Modus der Anwendung (T-21): "direct" führt einen Seitenaufruf gleich zum
+            # Provider; Hintergrund-Anfragen gehen immer zur Login-Seite.
+            direkt = (auth._forward_app(orig)["login"] == "direct" and auth._ist_seitenaufruf(request)
+                      and list(cfg.enabled_methods()) == ["oidc"])
+            login = auth._forward_login_url(orig, request, direkt=direkt)
             _forward_abweisung_protokollieren(request, orig)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,

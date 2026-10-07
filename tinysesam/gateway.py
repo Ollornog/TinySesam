@@ -31,6 +31,10 @@ Konfiguration per Umgebungsvariablen:
                                                (braucht Caddy mit caddy-jwt). Default 0
     TINYSESAM_GATE_TTL_SEC                     Laufzeit des Gate-Tokens (Default 300, 30–3600) —
                                                so lange wirkt ein Widerruf am Proxy nicht
+    TINYSESAM_FORWARD_LOGIN                    direct (Default: Seitenaufruf → Provider → zurück) oder
+                                               page (erst die Login-Seite mit dem Namen der Anwendung)
+    TINYSESAM_FORWARD_APPS                     JSON je Anwendung: {"wiki.example.com": {"name": "Wiki",
+                                               "login": "page"}} — name erscheint auf der Login-Seite
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
@@ -154,8 +158,26 @@ def config_from_env() -> TinySesamConfig:
         clients=clients_from_env(),
         revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
         gate_token_enabled=_schalter("TINYSESAM_GATE"),
+        forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
+        forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
     )
+
+
+def _json_objekt(name: str) -> dict:
+    """Ein JSON-Objekt aus der Umgebung, leer = {}. Kaputtes JSON beendet den Start — still
+    ignoriert gälte für jede Anwendung die Vorgabe, und niemand sähe, warum."""
+    import json
+    roh = os.environ.get(name, "").strip()
+    if not roh:
+        return {}
+    try:
+        wert = json.loads(roh)
+    except ValueError as e:
+        raise SystemExit(f"{name} ist kein gültiges JSON: {e}")
+    if not isinstance(wert, dict):
+        raise SystemExit(f"{name} muss ein Objekt sein: {{\"app.example.com\": {{…}}}}")
+    return wert
 
 
 def _schalter(name: str) -> bool:

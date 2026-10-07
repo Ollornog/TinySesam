@@ -130,6 +130,7 @@ MESSAGES = {
         "login.passkey": "🔑 Sign in with a passkey",
         "login.signup": "Create account",
         "login.forgot": "Forgot password?",
+        "login.for_app": "Sign in to {name}",
         # --- totp ---
         "totp.title": "Confirmation",
         "totp.label": "6-digit code from your authenticator app",
@@ -426,6 +427,7 @@ MESSAGES = {
         "login.passkey": "🔑 Mit Passkey anmelden",
         "login.signup": "Konto erstellen",
         "login.forgot": "Passwort vergessen?",
+        "login.for_app": "Anmelden bei {name}",
         "totp.title": "Bestätigung",
         "totp.label": "6-stelliger Code aus deiner Authenticator-App",
         "totp.submit": "Weiter",

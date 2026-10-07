@@ -6078,7 +6078,38 @@ class TinySesam:
             return f"{proto}://{host}{uri}"
         return h.get("referer") or "/"
 
-    def _forward_login_url(self, orig_url: str, request: Optional[Request] = None) -> str:
+    def _forward_app(self, url_oder_host: str) -> dict:
+        """Die Einstellungen des Gates für eine Anwendung (T-21): `name` und `login`, aus
+        `forward_apps[host]` mit `forward_login` als Rückfall. Der Host ohne Port, klein."""
+        from urllib.parse import urlsplit
+        roh = str(url_oder_host or "")
+        host = ((urlsplit(roh).hostname if "://" in roh else roh.split(":", 1)[0]) or "").lower().rstrip(".")
+        e = {}
+        for h, werte in (self.cfg.forward_apps or {}).items():
+            if str(h).strip().lower().rstrip(".") == host:
+                e = dict(werte or {})
+                break
+        return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login)}
+
+    @staticmethod
+    def _ist_seitenaufruf(request: Optional[Request]) -> bool:
+        """Lädt der Browser hier eine SEITE (und nicht ein Skript, ein Bild, ein XHR)?
+
+        `Sec-Fetch-Mode: navigate` sagt es ausdrücklich; der Proxy reicht die Header der Anfrage an
+        `/auth/forward` weiter. Ohne den Header (ältere Browser, Werkzeuge) zählt `Accept: text/html`.
+        Wozu: Nur ein Seitenaufruf darf direkt zum Provider. Ein Hintergrund-Abruf, der dorthin
+        umgeleitet wird, kann mit der Anmeldeseite des Providers nichts anfangen — und jeder
+        begänne einen eigenen OIDC-Flow (Datenbankzeile, Rate-Limit)."""
+        if request is None:
+            return False
+        h = request.headers
+        modus = (h.get("sec-fetch-mode") or "").strip().lower()
+        if modus:
+            return modus == "navigate"
+        return "text/html" in (h.get("accept") or "").lower()
+
+    def _forward_login_url(self, orig_url: str, request: Optional[Request] = None,
+                           direkt: bool = False) -> str:
         """Zentrale Login-URL (auf base_url bzw. abgeleitet) mit next=<orig_url>.
 
         Ausnahme gegen eine stille Endlosschleife: **ohne `cookie_domain` gilt das Session-Cookie
@@ -6132,7 +6163,10 @@ class TinySesam:
         if base:
             teile = urlsplit(str(base))
             ursprung = f"{teile.scheme}://{teile.netloc}"
-        ziel = f"{ursprung}{self.browser_path(request, self.cfg.login_path)}?next={quote(orig_url or '/', safe='')}"
+        # `direkt` (T-21, und jede Nachprüfung beim Provider, B-2): gleich in die OIDC-Runde statt
+        # auf die Login-Seite.
+        pfad = "/auth/oidc/start" if direkt else self.cfg.login_path
+        ziel = f"{ursprung}{self.browser_path(request, pfad)}?next={quote(orig_url or '/', safe='')}"
         # Schützt diese Installation mehrere Anwendungen, gehört der Ziel-Host in die Login-URL:
         # Nur so weiss `/auth/oidc/start`, für welchen Client es die Runde beginnen muss (T-14).
         # Ohne die Angabe liefe jede Anmeldung über den Vorgabe-Client, und die Freigabe, die der

@@ -594,6 +594,12 @@ def register_oidc_routes(router, auth):
         # eine einzige Adresse eingetragen werden muss) und nicht in den `state` (den liest
         # jeder aus der Adresszeile). `?app=` kommt vom Forward-Auth oder von der Anwendung
         # selbst; ein unbekannter Name landet beim Vorgabe-Client, genau wie bisher (T-14).
+        # Ohne `app` entscheidet der Host von `next` (B-2): Ein Einstieg, der die Angabe verliert
+        # (ein Lesezeichen, eine eigene Login-Seite), begänne sonst mit dem Vorgabe-Client, und die
+        # Freigabe für die Anwendung, zu der es zurückgeht, entstünde nie.
+        if not app and "://" in str(next or ""):
+            from urllib.parse import urlsplit
+            app = urlsplit(str(next)).hostname or ""
         ziel = clients.schluessel_fuer_host(app)
         client = clients[ziel]
         # Das Geheimnis geht als httponly-Cookie an den Browser, nur sein Hash in den Flow-Satz.

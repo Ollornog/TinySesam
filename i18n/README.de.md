@@ -1258,6 +1258,21 @@ Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also n
 - **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
   abläuft — `gate_token_ttl_sec`, Vorgabe 300 Sekunden.
 
+### Anmelden vor dem Gate: unsichtbar oder mit Seite (T-21)
+
+`forward_login="direct"` — **die Vorgabe des Gateways** — schickt einen nicht Angemeldeten beim
+Seitenaufruf gleich zum Identity Provider und danach zurück zur aufgerufenen Adresse; besteht dort
+schon eine Sitzung, sieht er davon nur eine Umleitung. `"page"` (Vorgabe der Bibliothek) zeigt
+erst die Login-Seite. Je Anwendung einstellbar, samt Namen auf der Login-Seite:
+
+```python
+forward_apps={"wiki.example.com": {"name": "Wiki", "login": "page"}}   # „Anmelden bei Wiki"
+```
+
+Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` verlangt OIDC als einzige
+Methode. Hintergrund-Anfragen (XHR, Skripte) gehen auch dann zur Login-Seite: Eine Umleitung zum
+Provider könnten sie nicht anzeigen, und jede begänne einen eigenen OIDC-Flow.
+
 ## Öffentliche API: drei Stufen
 
 Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
@@ -1398,7 +1413,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**64 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**65 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
