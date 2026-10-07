@@ -3,7 +3,7 @@ import os
 import tempfile, os
 from fastapi.testclient import TestClient
 from urllib.parse import parse_qs, urlparse
-from tinysesam import TinySesamConfig
+from tinysesam import TinySesam, TinySesamConfig, security
 from tinysesam import gateway
 
 
@@ -54,6 +54,34 @@ envcfg = gateway.config_from_env()
 assert envcfg.oidc_client_id == "cid" and envcfg.forward_auth_enabled
 assert envcfg.trusted_redirect_hosts == ["app.example.com", "wiki.example.com"]
 ok("config_from_env: Env → Gateway-Config (Hosts geparst)")
+
+assert envcfg.lang == "en"
+os.environ["TINYSESAM_LANG"] = "de"
+assert gateway.config_from_env().lang == "de"
+os.environ["TINYSESAM_LANG"] = "klingonisch"
+try:
+    gateway.config_from_env(); assert False, "unbekannte Sprache startet"
+except SystemExit as e:
+    assert "TINYSESAM_LANG" in str(e)
+del os.environ["TINYSESAM_LANG"]
+ok("TINYSESAM_LANG: Vorgabe en, de wählbar, Unbekanntes → Startfehler")
+
+# Mit dem Code-Austausch ist host-only gewollt — die Warnung „ohne cookie_domain“ wäre ein Fehlalarm.
+import logging as _logging
+_gefangen = []
+_h = _logging.Handler(); _h.emit = lambda rec: _gefangen.append(rec.getMessage())
+security.seclog.addHandler(_h)
+try:
+    for link in (False, True):
+        _gefangen.clear()
+        TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, base_url="https://auth.example.com",
+                                  trusted_redirect_hosts=["app.example.com"], gate_token_enabled=True,
+                                  gate_link_enabled=link))
+        warnt = any("ohne cookie_domain" in m for m in _gefangen)
+        assert warnt is (not link), (link, _gefangen)
+finally:
+    security.seclog.removeHandler(_h)
+ok("Warnung „ohne cookie_domain“ ohne Code-Austausch ja, mit ihm nicht (kein Fehlalarm)")
 
 del os.environ["TINYSESAM_OIDC_ISSUER"]
 try:
