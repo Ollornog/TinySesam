@@ -142,9 +142,11 @@ def caddy_starten():
         umg = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
                "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
-        log = open(os.path.join(_tmp, "caddy.log"), "w")
-        p = subprocess.Popen([CADDY, "run", "--config", datei, "--adapter", "caddyfile"],
-                             stdout=log, stderr=subprocess.STDOUT, env=umg)
+        # Popen gibt dem Kind eine eigene Kopie des Datei-Deskriptors — die des Elternprozesses
+        # darf gleich wieder zu.
+        with open(os.path.join(_tmp, "caddy.log"), "w") as log:
+            p = subprocess.Popen([CADDY, "run", "--config", datei, "--adapter", "caddyfile"],
+                                 stdout=log, stderr=subprocess.STDOUT, env=umg)
         for _ in range(100):
             if p.poll() is not None:
                 break
@@ -154,7 +156,8 @@ def caddy_starten():
             except OSError:
                 time.sleep(0.1)
         p.kill()
-    raise RuntimeError("Caddy startet nicht: " + open(os.path.join(_tmp, "caddy.log")).read()[-2000:])
+    with open(os.path.join(_tmp, "caddy.log"), encoding="utf-8", errors="replace") as log:
+        raise RuntimeError("Caddy startet nicht: " + log.read()[-2000:])
 
 
 _caddy, PORT = caddy_starten()
