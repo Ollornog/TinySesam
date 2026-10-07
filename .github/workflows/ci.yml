@@ -95,6 +95,31 @@ jobs:
       - name: Website-Test
         run: python tests/test_site.py
 
+  # Gate-Token durch einen ECHTEN Caddy mit caddy-jwt (ADR-9). Gebaut wird genau das Abbild aus
+  # deploy/forward-auth/caddy-gate/Dockerfile — dieselben Pins, die ein Betreiber baut. Mit
+  # gesetzter TINYSESAM_GATE_CADDY ist der Test Pflicht: ein fehlender oder falscher Caddy ist
+  # rot, kein Skip. In den übrigen Jobs fehlt die Variable, dort meldet die Suite „übersprungen".
+  gate-caddy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Abhängigkeiten
+        run: pip install -e . uvicorn httpx setuptools wheel
+      - name: Caddy mit caddy-jwt bauen (deploy/forward-auth/caddy-gate)
+        run: |
+          docker build -t caddy-gate deploy/forward-auth/caddy-gate
+          id="$(docker create caddy-gate)"
+          docker cp "$id:/usr/bin/caddy" "$RUNNER_TEMP/caddy-gate"
+          docker rm "$id"
+          "$RUNNER_TEMP/caddy-gate" version
+      - name: Gate-Token durch Caddy
+        run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
+
   # Wiederholbarkeit: dieselbe Suite ZWEIMAL im selben Arbeitsverzeichnis.
   # Ein Test, der beim zweiten Lauf rot wird, ist kaputt — nicht der Code.
   # Danach muss der Baum unverändert sein: eine Suite, die schreibt, ist beim

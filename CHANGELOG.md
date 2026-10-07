@@ -4,6 +4,30 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Gate-Token: der Proxy prüft selbst ([ADR-9](backlog/ADR-9-gate-token-am-proxy.md), T-19)
+
+- **`gate_token_enabled`** (Vorgabe aus; Gateway: `TINYSESAM_GATE=1`): Eine erfolgreiche Prüfung an
+  `/auth/forward` liefert zusätzlich den Header `X-TinySesam-Gate-Cookie` mit einem kurzlebigen,
+  mit Ed25519 signierten Token. Der Proxy legt es als Cookie `__Host-tinysesam_gate` auf den Host der
+  Anwendung und prüft es danach selbst — gemessen durch einen echten Caddy: zehn Asset-Anfragen,
+  null Aufrufe bei TinySesam. Fehlt das Token oder ist es abgelaufen, gilt der bisherige Weg über
+  `/auth/forward`, Methode und Body der Anfrage bleiben dabei erhalten.
+- Ausgestellt nur für eine volle Sitzung (kein API-Key), nur für geschützte Hosts
+  (`trusted_redirect_hosts`, `oidc_clients`, `base_url`) und nur nach bestandener Prüfung. Verlangte
+  Rollen stehen in der Zielgruppe (`app.example.com|roles=admin`), ein Token ohne Rollenangabe gilt
+  an einem Pfad mit Rollen nicht. Die Claims folgen `forward_headers`.
+- **Kein zweites Geheimnis:** Der Signaturschlüssel wird per HKDF aus dem Grundschlüssel der
+  Installation abgeleitet (`TINYSESAM_SECRETS_KEY` bzw. `<db>.key`). Neu: `tinysesam gate-key --db …`
+  gibt den öffentlichen Schlüssel für den Proxy aus; `auth.gate_public_key()` und `auth.gate_issuer()`
+  (Stufe B) liefern dasselbe im Code.
+- Neue Felder `gate_token_ttl_sec` (Vorgabe 300, erlaubt 30–3600 — so lange wirkt ein Widerruf am
+  Proxy nicht) und `gate_cookie_name` (Form `__Host-tinysesam_<name>`, sonst bricht der Start ab).
+  Gateway: `TINYSESAM_GATE_TTL_SEC`.
+- Vorlage `deploy/forward-auth/Caddyfile.gate`, Bau eines Caddy mit dem Plugin caddy-jwt in
+  `deploy/forward-auth/caddy-gate/Dockerfile` (Version und Digest gepinnt, Dependabot hebt das
+  Abbild). Neuer CI-Job `gate-caddy` baut genau dieses Abbild und fährt `tests/test_gate_caddy.py`
+  dagegen.
+
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
 - **Die Zahl paralleler Test-Jobs kommt vom Runner, nicht aus einer Erkennung.** `tests/run_all.py`

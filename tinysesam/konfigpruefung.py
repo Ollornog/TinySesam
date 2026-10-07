@@ -21,6 +21,7 @@ nicht dreimal starten.
 from __future__ import annotations
 
 import os
+import re
 
 from . import security
 
@@ -623,6 +624,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _offene_tore(config, warnungen)
     _gruppen_scope(config, warnungen)
     _kombinationen(config, fehler, warnungen)
+    _gate(config, fehler)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     # --- SMTP-TLS (B3-1, Angriff A4): Seit das Zertifikat geprüft wird, scheitert ein falscher
@@ -699,6 +701,9 @@ ZAHLENGRENZEN = {
     # -1 = unbegrenzt (Verhalten bis 0.20.x), 0 = nur ausdrücklich. Darunter ist kein Wert gemeint;
     # zehn Jahre sind das Äusserste, was noch eine Frist ist.
     "federation_name_binding_days": (-1, 3660),
+    # Laufzeit des Gate-Tokens (ADR-9) = Widerrufsverzug am Proxy. Unter 30 s fragt der Proxy fast
+    # so oft wie ohne Token; über einer Stunde kommt ein Widerruf zu spät, um einer zu sein.
+    "gate_token_ttl_sec": (30, 3600),
 }
 
 
@@ -922,6 +927,30 @@ def _gruppen_scope(config, warnungen: list) -> None:
             "in oidc_scopes aufnehmen (Gateway: TINYSESAM_OIDC_SCOPES; je Anwendung `scopes` im "
             "Eintrag von oidc_clients). Liefert der Provider den Claim ohne eigenen Scope (Mapper, "
             "etwa bei Keycloak), ist diese Warnung gegenstandslos.")
+
+
+def _gate(config, fehler: list) -> None:
+    """Gate-Token (ADR-9, T-19): nur als Teil der Forward-Auth, nur mit einem Cookie, das der
+    Browser ausschliesslich dem Host der Anwendung zurückgibt."""
+    if not _an(config, "gate_token_enabled"):
+        return
+    if not _an(config, "forward_auth_enabled"):
+        fehler.append(
+            "gate_token_enabled=True ohne forward_auth_enabled=True: Das Gate-Token entsteht in der "
+            "Antwort von /auth/forward — ohne die Route gibt es keins, und der Proxy fiele bei jeder "
+            "Anfrage auf eine Prüfung zurück, die nicht existiert.")
+    name = str(getattr(config, "gate_cookie_name", "") or "")
+    # `__Host-`: Der Browser nimmt das Cookie nur mit Secure, Path=/ und OHNE Domain an — es gilt
+    # dann für genau den Host, der es gesetzt hat. Ohne das Präfix verhindert nur unsere eigene
+    # Set-Cookie-Zeile ein Domain-Cookie; mit ihm verhindert es der Browser.
+    # `tinysesam_` danach: Die Vorlagen entfernen jedes `tinysesam_*`-Cookie, bevor die Anfrage
+    # die Anwendung erreicht (B-20). Ein anders benanntes Gate-Cookie läse die Anwendung mit.
+    if not re.fullmatch(r"__Host-tinysesam_[A-Za-z0-9_]+", name):
+        fehler.append(
+            f"gate_cookie_name={name!r} muss die Form __Host-tinysesam_<name> haben: __Host- bindet "
+            "das Cookie an den Host der Anwendung (der Browser nimmt es nur ohne Domain-Angabe an), "
+            "und tinysesam_ sorgt dafür, dass die Proxy-Vorlagen es vor der Anwendung "
+            "entfernen.")
 
 
 def _kombinationen(config, fehler: list, warnungen: list) -> None:

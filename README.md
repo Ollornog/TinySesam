@@ -1218,6 +1218,25 @@ single-route app.
 Programmatically: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 A ready-made [`deploy/forward-auth/docker-compose.yml`](https://github.com/Ollornog/TinySesam/tree/main/deploy/forward-auth/) (gateway + Caddy) ships with it.
 
+### Gate token: the proxy checks for itself (ADR-9)
+
+In front of a third-party app the proxy otherwise asks `/auth/forward` for **every** request —
+every script, stylesheet and icon included. With `gate_token_enabled=True` (gateway:
+`TINYSESAM_GATE=1`) a successful check also returns a short-lived token signed with Ed25519. The
+proxy stores it as the cookie `__Host-tinysesam_gate` on the app's host and from then on checks it
+**itself**; TinySesam is only asked again when it is missing or expired. The way back is the
+existing forward auth, so a request and its body are not lost.
+
+- **Proxy:** Caddy with the [caddy-jwt](https://github.com/ggicci/caddy-jwt) plugin — template
+  [`deploy/forward-auth/Caddyfile.gate`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/Caddyfile.gate),
+  build [`deploy/forward-auth/caddy-gate/Dockerfile`](https://github.com/Ollornog/TinySesam/blob/main/deploy/forward-auth/caddy-gate/Dockerfile).
+- **Key:** derived from the installation's base key (`TINYSESAM_SECRETS_KEY`) — no second secret.
+  `tinysesam gate-key --db …` prints the public half for the proxy.
+- **Roles:** if the proxy requires roles (`X-TinySesam-Roles`), they are part of the token's
+  audience (`app.example.com|roles=admin`); a token issued without roles does not count there.
+- **Cost:** signing out, locking an account or a withdrawn grant only takes effect at the proxy
+  once the token expires — `gate_token_ttl_sec`, default 300 seconds.
+
 ## Public API: three tiers
 
 Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
@@ -1289,6 +1308,8 @@ Building blocks for pages you build yourself — signatures and descriptions in
   `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail and token flows:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url` →
   `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Proxy configuration for the gate token:** `gate_public_key` (`sign_key` for caddy-jwt, same as
+  `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
 - **Your own routes and extension points:** `client_ip` (the real client address behind
   `trusted_proxies`), `json_body` (JSON body with the CSRF check for cookie clients), `browser_path`
   (links to TinySesam pages under a mount prefix), `flow_cookie_name`, `t` (translated text in
@@ -1352,7 +1373,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**62 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**64 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

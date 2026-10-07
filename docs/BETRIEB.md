@@ -247,6 +247,42 @@ mehrere Worker gleichzeitig zum ersten Mal starten).
   Instanz ohne TOTP. Gelöschtes überschreibt SQLite (`secure_delete`), damit ein ersetzter
   Klartext nicht in freien Seiten der Datei bleibt. Einen Schlüsselwechsel (Rotation) gibt es noch nicht.
 - Ebenfalls mit diesem Schlüssel: die Refresh-Tokens der OIDC-Sitzungen (unten).
+- Aus ihm **abgeleitet** (HKDF, eigener Kontext): der Signaturschlüssel der Gate-Token (unten). Wer
+  den Grundschlüssel wechselt, wechselt auch den — der Proxy braucht dann den neuen öffentlichen
+  Schlüssel.
+
+## Gate-Token vor fremden Anwendungen (ADR-9)
+
+Mit `gate_token_enabled=True` (Gateway: `TINYSESAM_GATE=1`) prüft der Proxy ein kurzlebiges
+Cookie selbst und fragt `/auth/forward` erst, wenn es fehlt oder abläuft. Vorlage:
+`deploy/forward-auth/Caddyfile.gate`.
+
+- **Caddy braucht das Plugin caddy-jwt.** Das offizielle Abbild hat es nicht; gebaut wird es aus
+  `deploy/forward-auth/caddy-gate/Dockerfile` (Caddy-Version und Plugin gepinnt). Ein Caddy ohne
+  Plugin startet mit der Vorlage gar nicht (`unrecognized directive: jwtauth`).
+- **Öffentlicher Schlüssel für den Proxy:** `tinysesam gate-key --db <datei>` — mit derselben
+  Umgebung wie der Dienst (`TINYSESAM_SECRETS_KEY` bzw. `--secrets-key-file`). Ohne Grundschlüssel
+  bricht der Befehl ab, statt einen neuen anzulegen. Im Caddyfile als `TS_GATE_PUBKEY`.
+- **Aussteller:** `base_url` ohne Schrägstrich am Ende (`TS_GATE_ISSUER`); ohne `base_url`
+  `tinysesam`.
+- **Zielgruppe:** der Host der Anwendung, bei verlangten Rollen mit deren Angabe:
+  `app.example.com|roles=admin,redaktion` (Rollen sortiert, mehrere `X-TinySesam-Roles`-Angaben mit
+  `;`). Steht in `audience_whitelist` eine andere Zeichenkette, fällt jede Anfrage auf den Rückweg
+  zurück — sicher, nur so langsam wie ohne Gate. Eine Rollenangabe je Host ist der einfache Fall;
+  mehrere Pfade mit verschiedenen Rollen auf demselben Host überschreiben sich das Cookie
+  gegenseitig.
+- **Wann ein Token entsteht:** nur für eine volle Sitzung (kein API-Key), nur für Hosts aus
+  `trusted_redirect_hosts`, `oidc_clients` oder `base_url`, nur nach bestandener Prüfung
+  (Freigabe der Anwendung, Rollen).
+- **Widerruf:** Abmelden, Sperren, eine beim Provider entzogene Freigabe greifen am Proxy erst mit
+  Ablauf des Tokens (`gate_token_ttl_sec`, Vorgabe 300, erlaubt 30–3600). Wer sofort sperren muss:
+  im Caddyfile `audience_whitelist` vorübergehend auf einen Wert setzen, den kein Token trägt, und
+  Caddy neu laden — dann geht jede Anfrage über `/auth/forward`, und dort ist der Widerruf schon
+  wirksam. Nach Ablauf der Laufzeit zurückstellen. **Nicht** den Grundschlüssel wechseln: An ihm
+  hängen die TOTP-Geheimnisse, mit einem anderen startet TinySesam nicht (oben).
+- **Log von Caddy:** Ein abgelaufenes oder fremdes Token schreibt caddy-jwt als `invalid token` auf
+  Stufe `error` — das ist der Rückweg, kein Ausfall. Ebenso jede Anfrage mit einem
+  `Authorization`-Header, der kein Gate-Token ist: caddy-jwt prüft diesen Header immer mit.
 
 ## Föderierte Identitäten verwalten
 

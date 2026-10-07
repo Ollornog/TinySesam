@@ -10,6 +10,7 @@
     unlock --db auth.db <benutzer>   eine Brute-Force-Sperre aufheben
     owner --db auth.db <benutzer>    ein Konto zum Owner machen (Notweg)
     rename --db auth.db <alt> <neu>  ein Konto umbenennen (Kennungs-Kollision auflösen)
+    gate-key --db auth.db            öffentlicher Schlüssel der Gate-Token (für den Proxy, ADR-9)
 
 Bewusst mager. TinySesam installiert sich nicht selbst — ein Auth-Modul, das zur Laufzeit
 Code nachlädt, ist eine Hintertür mit Bedienungsanleitung. Aktualisiert wird von außen:
@@ -455,6 +456,33 @@ def _rename(argv) -> int:
     return 0
 
 
+def _gate_key(argv) -> int:
+    ap = argparse.ArgumentParser(
+        prog="tinysesam gate-key",
+        description="Den öffentlichen Schlüssel der Gate-Token ausgeben (sign_key für caddy-jwt, "
+                    "sign_alg EdDSA). Öffentlich, kein Geheimnis.")
+    ap.add_argument("--db", required=True, help="Pfad zur TinySesam-Datenbank (config.db_path)")
+    ap.add_argument("--secrets-key-file", default="", help="wie config.secrets_key_file")
+    a = ap.parse_args(argv)
+    import os
+    from . import gate, geheimnis
+    # Der Schlüssel wird aus dem Grundschlüssel abgeleitet. Gibt es den noch nicht, legt ihn
+    # `schluessel_laden` an — das darf ein Lesebefehl nicht: Der Proxy bekäme einen Schlüssel,
+    # den der Dienst (mit seiner Umgebung) gar nicht benutzt.
+    if not (os.environ.get(geheimnis.UMGEBUNG, "").strip() or a.secrets_key_file
+            or os.path.exists(a.db + ".key")):
+        print(f"Kein Grundschlüssel: weder {geheimnis.UMGEBUNG} noch --secrets-key-file noch "
+              f"{a.db}.key. Mit derselben Umgebung aufrufen wie den Dienst.", file=sys.stderr)
+        return 1
+    try:
+        schluessel, _herkunft = geheimnis.schluessel_laden(a.db, a.secrets_key_file)
+    except geheimnis.ConfigError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(gate.oeffentlich_b64(gate.schluessel_ableiten(schluessel)))
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "version"
@@ -476,6 +504,8 @@ def main(argv=None):
         sys.exit(_owner(argv[1:]))
     elif cmd == "rename":
         sys.exit(_rename(argv[1:]))
+    elif cmd == "gate-key":
+        sys.exit(_gate_key(argv[1:]))
     else:
         # `--help` ist eine Frage, kein Fehler: Sie gehört nach stdout und endet mit 0. Ein
         # Tippfehler dagegen nach stderr und endet mit 2, sonst merkt kein Skript den Unterschied.
@@ -488,7 +518,8 @@ def main(argv=None):
               "       python -m tinysesam audit  --db <datei> [--user X]\n"
               "       python -m tinysesam unlock --db <datei> <benutzer>\n"
               "       python -m tinysesam owner  --db <datei> <benutzer>\n"
-              "       python -m tinysesam rename --db <datei> <benutzer> <neuer-name>",
+              "       python -m tinysesam rename --db <datei> <benutzer> <neuer-name>\n"
+              "       python -m tinysesam gate-key --db <datei>",
               file=sys.stdout if hilfe else sys.stderr)
         sys.exit(0 if hilfe else 2)
 

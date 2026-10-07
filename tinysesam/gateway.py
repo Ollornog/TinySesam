@@ -26,6 +26,11 @@ Konfiguration per Umgebungsvariablen:
                                                Alternativ je Host zwei Variablen, siehe unten.
     TINYSESAM_OIDC_REVALIDATE_MINUTES          Frist, nach der die Freigabe beim Provider
                                                nachgeprüft wird (Default 60, 0 = nie)
+    TINYSESAM_GATE                             1 = Gate-Token ausstellen (ADR-9): der Proxy prüft
+                                               danach selbst, Vorlage deploy/forward-auth/Caddyfile.gate
+                                               (braucht Caddy mit caddy-jwt). Default 0
+    TINYSESAM_GATE_TTL_SEC                     Laufzeit des Gate-Tokens (Default 300, 30–3600) —
+                                               so lange wirkt ein Widerruf am Proxy nicht
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
@@ -148,7 +153,21 @@ def config_from_env() -> TinySesamConfig:
         trusted_proxies=_split("TINYSESAM_TRUSTED_PROXIES") or ["127.0.0.1/32", "::1/128"],
         clients=clients_from_env(),
         revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
+        gate_token_enabled=_schalter("TINYSESAM_GATE"),
+        gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
     )
+
+
+def _schalter(name: str) -> bool:
+    """Ein Ein/Aus aus der Umgebung. Ein Wert, der weder das eine noch das andere ist, beendet
+    den Start: `TINYSESAM_GATE=ja` still als „aus" zu lesen, hiesse ein Gate, das jede Anfrage
+    weiter prüft, und niemand wüsste, warum es nicht schneller wird."""
+    wert = os.environ.get(name, "").strip().lower()
+    if wert in ("", "0", "false", "no", "off"):
+        return False
+    if wert in ("1", "true", "yes", "on"):
+        return True
+    raise SystemExit(f"{name}={wert!r}: erwartet 1 oder 0 (true/false, yes/no, on/off)")
 
 
 HEALTH_PATH = "/healthz"

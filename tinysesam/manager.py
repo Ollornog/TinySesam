@@ -280,6 +280,12 @@ class TinySesam:
         _schluessel, self._schluessel_herkunft = _geheimnis.schluessel_laden(
             config.db_path, config.secrets_key_file)
         self.store.tresor = _geheimnis.Tresor(_schluessel)
+        # Gate-Token (ADR-9, T-19): Der Signaturschlüssel wird aus demselben Grundschlüssel
+        # abgeleitet — kein zweites Geheimnis zum Sichern und Verteilen. Immer abgeleitet, auch
+        # wenn das Gate aus ist: `tinysesam gate-key` soll den Proxy vorbereiten können, bevor
+        # der Schalter umgelegt wird.
+        from . import gate as _gate
+        self._gate_schluessel = _gate.schluessel_ableiten(_schluessel)
         self.store.geheimnisse_heben()
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
         # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
@@ -5958,18 +5964,77 @@ class TinySesam:
             security.seclog.warning("forward-auth abgewiesen: Kontoname mit Steuerzeichen (user_id=%s)",
                                     user["id"])
             raise HTTPException(403, self.t("api.name_invalid"))
-        werte = {
+        werte = self._forward_werte(user)
+        out = {}
+        for feld, namen in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
+            for name in ([namen] if isinstance(namen, str) else namen):
+                out[name] = self._header_wert(werte[feld])
+        return out
+
+    def _forward_werte(self, user) -> dict:
+        """Die Werte hinter den Forward-Auth-Headern und den Claims des Gate-Tokens — EINE Quelle,
+        damit der Proxy auf beiden Wegen dieselbe Identität weiterreicht."""
+        return {
             "id": str(user["id"]),
             "user": str(user["username"] or ""),
             "name": str(user["display_name"] or user["username"] or ""),
             "email": str(user["email"] or ""),
             "groups": ",".join(self.user_roles(user) + (["admin"] if user["is_admin"] else [])),
         }
-        out = {}
-        for feld, namen in (self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT).items():
-            for name in ([namen] if isinstance(namen, str) else namen):
-                out[name] = self._header_wert(werte[feld])
-        return out
+
+    def gate_public_key(self) -> str:
+        """Der öffentliche Schlüssel der Gate-Token (ADR-9): 32 Rohbytes, Base64 — der Wert für
+        `sign_key` in Caddys `jwtauth` (mit `sign_alg EdDSA`). Öffentlich, kein Geheimnis.
+
+        Er folgt dem Grundschlüssel der Installation (`TINYSESAM_SECRETS_KEY`, `secrets_key_file`
+        bzw. `<db>.key`). Wird der gewechselt, braucht der Proxy diesen Wert neu."""
+        from . import gate as _gate
+        return _gate.oeffentlich_b64(self._gate_schluessel)
+
+    def gate_issuer(self) -> str:
+        """`iss` der Gate-Token: `base_url` ohne Schrägstrich am Ende, ohne sie `"tinysesam"`.
+        Fest statt aus der Anfrage abgeleitet — der Proxy vergleicht es mit seiner Konfiguration."""
+        return (security.normalisiere_basis(str(self.cfg.base_url or "").strip()) or "").rstrip("/") or "tinysesam"
+
+    def _gate_hosts(self) -> set:
+        """Hosts, für die ein Gate-Token ausgestellt wird: die geschützten (`trusted_redirect_hosts`,
+        `oidc_clients`) und der eigene aus `base_url`. Für jeden anderen nicht — `X-Forwarded-Host`
+        kommt vom Aufrufer, und ein Token für einen Host, den diese Installation gar nicht schützt,
+        hätte keinen Zweck ausser dem eines Angreifers."""
+        from urllib.parse import urlsplit
+        hosts = {str(h).strip().lower().rstrip(".") for h in (self.cfg.trusted_redirect_hosts or []) if h}
+        hosts |= {str(h).strip().lower().rstrip(".") for h in (self.cfg.oidc_clients or {}) if h}
+        eigen = urlsplit(self.gate_issuer()).hostname
+        if eigen:
+            hosts.add(eigen.lower())
+        return hosts
+
+    def _gate_cookie(self, request, user, orig_url: str, rollen_gruppen) -> Optional[str]:
+        """Der `Set-Cookie`-Wert mit einem frischen Gate-Token — oder None.
+
+        Nur für eine volle SITZUNG desselben Kontos, nie für einen API-Key: Ein Automat hält
+        kein Cookie, und ein Token aus einem Key lebte im Browser weiter, nachdem der Key
+        widerrufen ist. Nur für einen geschützten Host (`_gate_hosts`). Die verlangten Rollen
+        stehen in der Zielgruppe (`gate.zielgruppe`), damit ein Token aus einer Prüfung ohne
+        Rollen an einem Pfad mit Rollen nicht gilt."""
+        if not self.cfg.gate_token_enabled:
+            return None
+        from urllib.parse import urlsplit
+        from . import gate as _gate
+        host = (urlsplit(orig_url or "").hostname or "").lower().rstrip(".")
+        if not host or host not in self._gate_hosts():
+            return None
+        s = self._session_from_request(request)
+        if not s or not s["mfa_ok"] or s["user_id"] != user["id"]:
+            return None
+        felder = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT
+        werte = self._forward_werte(user)
+        claims = {feld: "".join(z for z in werte[feld] if z >= " " and z != "\x7f") for feld in felder}
+        ttl = int(self.cfg.gate_token_ttl_sec)
+        token = _gate.ausstellen(self._gate_schluessel, iss=self.gate_issuer(),
+                                 aud=_gate.zielgruppe(host, rollen_gruppen), sub=str(user["id"]),
+                                 claims=claims, ttl=ttl, jetzt=_jetzt())
+        return _gate.set_cookie(self.cfg.gate_cookie_name, token, ttl)
 
     @staticmethod
     def _header_wert(wert: str) -> str:

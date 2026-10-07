@@ -1,0 +1,113 @@
+# TinySesam als Gate vor einer fremden Anwendung — mit Gate-Token (ADR-9).
+#
+# Der Unterschied zu ./Caddyfile: Dort fragt Caddy für JEDE Anfrage /auth/forward, auch für jedes
+# Skript, Stylesheet und Icon. Hier prüft Caddy ein kurzlebiges, signiertes Cookie selbst und
+# fragt TinySesam erst, wenn es fehlt oder abgelaufen ist:
+#
+#   Anfrage ──► jwtauth: Gate-Cookie gültig? ──ja──► Anwendung          (kein Aufruf bei TinySesam)
+#                         │ nein (401)
+#                         ▼
+#               handle_errors 401: /auth/forward wie bisher
+#                         ├─ 200 → Anwendung, dazu Set-Cookie mit einem neuen Gate-Token
+#                         ├─ 401 → Login (X-TinySesam-Location)
+#                         └─ 403 → Rolle fehlt
+#
+# Der Rückweg ist die bestehende Forward-Auth, Wort für Wort. Er reicht die Anfrage samt Methode
+# und Body an die Anwendung weiter — ein POST mit abgelaufenem Token geht also nicht verloren.
+#
+# Voraussetzungen:
+#   * Caddy MIT dem Plugin caddy-jwt (github.com/ggicci/caddy-jwt). Das offizielle Abbild hat es
+#     nicht — Bauanleitung: deploy/forward-auth/caddy-gate/Dockerfile.
+#   * TinySesamConfig: forward_auth_enabled=True, gate_token_enabled=True, base_url, cookie_domain
+#     und trusted_redirect_hosts wie in ./Caddyfile (zentrale Anmeldung auf auth.example.com).
+#     Im Gateway-Abbild: TINYSESAM_GATE=1.
+#   * TS_GATE_PUBKEY: der öffentliche Schlüssel, `tinysesam gate-key` gibt ihn aus. Er folgt dem
+#     Grundschlüssel der Installation (TINYSESAM_SECRETS_KEY) — wird der gewechselt, hier neu
+#     eintragen. Öffentlich, kein Geheimnis.
+#   * TS_GATE_ISSUER: base_url von TinySesam, ohne Schrägstrich am Ende.
+#
+# Was es kostet: Ein Widerruf (Abmelden, Sperren, entzogene Freigabe) greift hier erst, wenn das
+# Token abläuft — gate_token_ttl_sec, Vorgabe 300 Sekunden.
+
+# Zentraler Auth-Dienst (TinySesam) — eigene Subdomain
+auth.example.com {
+	reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+}
+
+# Geschützte Anwendung
+app.example.com {
+	# Die Identität setzt NUR dieser Proxy. Ein vom Browser mitgeschickter Remote-User würde
+	# sonst auf jedem Weg durchgereicht, auf dem ihn niemand überschreibt.
+	request_header -Remote-User
+	request_header -Remote-Name
+	request_header -Remote-Email
+	request_header -Remote-Groups
+	request_header -Remote-Id
+
+	route {
+		jwtauth {
+			sign_key {$TS_GATE_PUBKEY}
+			# Fest EdDSA: Mit sign_alg EdDSA ignoriert caddy-jwt das `alg` im Kopf des Tokens.
+			# Ein Token mit `alg: none` oder `HS256` wird damit nicht anders geprüft.
+			sign_alg EdDSA
+			from_cookies __Host-tinysesam_gate
+			issuer_whitelist {$TS_GATE_ISSUER:https://auth.example.com}
+			# Die Zielgruppe ist der Host. Verlangt der Rückweg Rollen (X-TinySesam-Roles unten),
+			# trägt das Token sie mit: `app.example.com|roles=admin,redaktion` — Rollen sortiert,
+			# mehrere Angaben mit `;` getrennt. Genau diese Zeichenkette gehört dann hierher, sonst
+			# fällt jede Anfrage auf den Rückweg zurück (sicher, nur langsam).
+			audience_whitelist app.example.com
+			user_claims sub
+			meta_claims ts_user ts_name ts_email ts_groups ts_id
+		}
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			header_up Remote-User {http.auth.user.ts_user}
+			header_up Remote-Name {http.auth.user.ts_name}
+			header_up Remote-Email {http.auth.user.ts_email}
+			header_up Remote-Groups {http.auth.user.ts_groups}
+			header_up Remote-Id {http.auth.user.ts_id}
+			# Die Cookies von TinySesam erreichen die Anwendung nicht — das Gate-Cookie heisst
+			# ebenfalls tinysesam_* und fällt unter dieselbe Regel (B-20, siehe ./Caddyfile).
+			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			header_up Cookie "^[;\s]+" ""
+		}
+	}
+
+	# Kein oder kein gültiges Gate-Token: der Rückweg über /auth/forward.
+	# Eine 401 der Anwendung selbst landet NICHT hier — reverse_proxy reicht sie als Antwort
+	# durch, handle_errors sieht nur Fehler von Caddy (hier: die Absage von jwtauth).
+	handle_errors 401 {
+		route {
+			reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
+				method GET
+				rewrite /auth/forward
+				header_up X-Forwarded-Method {method}
+				header_up X-Forwarded-Uri {uri}
+				# header_up X-TinySesam-Roles redaktion,admin   # dann audience_whitelist oben anpassen
+				@ok status 200
+				handle_response @ok {
+					request_header Remote-User {rp.header.Remote-User}
+					request_header Remote-Name {rp.header.Remote-Name}
+					request_header Remote-Email {rp.header.Remote-Email}
+					request_header Remote-Groups {rp.header.Remote-Groups}
+					request_header Remote-Id {rp.header.Remote-Id}
+					# Das neue Gate-Token geht mit der Antwort der Anwendung an den Browser.
+					# Platzhalter in Go-kanonischer Form (H-16, siehe ./Caddyfile).
+					header +Set-Cookie {rp.header.X-Tinysesam-Gate-Cookie}
+				}
+				@denied status 401
+				handle_response @denied {
+					redir {rp.header.X-Tinysesam-Location} 302
+				}
+				@norole status 403
+				handle_response @norole {
+					respond "Kein Zugriff: fehlende Rolle." 403
+				}
+			}
+			reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+				header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+				header_up Cookie "^[;\s]+" ""
+			}
+		}
+	}
+}

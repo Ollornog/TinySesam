@@ -20,13 +20,13 @@ Quelltext.
 
 Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — nichts wird aus Versehen zugesagt.
 
-Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 158 von 159 in Stufe A, die übrigen unten bei ihrer Stufe.
+Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 161 von 162 in Stufe A, die übrigen unten bei ihrer Stufe.
 
 **Englisch, Namen wie Werte** (seit 0.22.0, ohne Alias): Die Namen der Stufen A und B, ihre Parameter und die Schlüssel und Werte, die sie zurückgeben oder annehmen — Ergebnis-Dicts, die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`, `ctx["purpose"]`), die JSON-Antworten der Routen, die Arten der API-Keys (`automation`, `human`). Audit- und Log-Zeilen bleiben, wie sie waren. Die Liste alt → neu steht im CHANGELOG zu 0.22.0.
 
 **`auth.store` ist Innenleben** (Stufe C): die Speicherschicht der eingebauten Routen, ohne Stufe, ohne Zusage und ohne Übergangsfrist — ihre Methoden können sich mit jedem Release ändern. Was eine App braucht, steht unten als Methode von `TinySesam` (etwa `set_disabled` statt `auth.store.set_disabled`).
 
-**Stand:** A 252 · B 64 · C 50 Namen.
+**Stand:** A 255 · B 66 · C 50 Namen.
 
 ## A · Methoden von `TinySesam`
 
@@ -468,6 +468,14 @@ Konto zur Login-Kennung suchen — je nach `config.login_identifier`.
 
 Name eines Flow-Cookies (OIDC, SAML, Passkey) — mit `__Host-`, wo möglich (A-1).
 
+### `gate_issuer() -> 'str'`
+
+`iss` der Gate-Token: `base_url` ohne Schrägstrich am Ende, ohne sie `"tinysesam"`. Fest statt aus der Anfrage abgeleitet — der Proxy vergleicht es mit seiner Konfiguration.
+
+### `gate_public_key() -> 'str'`
+
+Der öffentliche Schlüssel der Gate-Token (ADR-9): 32 Rohbytes, Base64 — der Wert für `sign_key` in Caddys `jwtauth` (mit `sign_alg EdDSA`). Öffentlich, kein Geheimnis.
+
 ### `generate_recovery_codes(user_id, n=None) -> 'list'`
 
 Neue Einmal-Codes erzeugen (ersetzt vorhandene). Klartext-Rückgabe NUR EINMAL.
@@ -731,4 +739,4 @@ Diese Namen gehören nicht zur Zusage. Seit 0.22.0 heisst die Implementierung `_
 
 ---
 
-155 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 10 Exporte, davon 5 Fehlertypen, 17 Namen an den Ergebnistypen `LoginResult`, `PasswordChangeResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.
+157 Methoden, 3 Eigenschaften, 15 Konstanten, 7 Methoden von `TinySesamConfig`, 10 Exporte, davon 5 Fehlertypen, 17 Namen an den Ergebnistypen `LoginResult`, `PasswordChangeResult` — erzeugt aus den Docstrings und `tests/api_surface.json`.
