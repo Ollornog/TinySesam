@@ -11,6 +11,7 @@ Die Verfahrens-Routen hängen dabei nicht am Schalter, sondern am fertig **aufge
 fehlt, lässt den Aufbau schon im Konstruktor scheitern — hier kommt er nie an."""
 from __future__ import annotations
 import secrets
+from urllib.parse import urlsplit
 from fastapi import APIRouter, Request, Form, HTTPException
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as _StarletteHTTPException
@@ -91,6 +92,15 @@ def build_router(auth) -> APIRouter:
         registry = getattr(auth, "oidc_clients", None)
         app = app if (app and registry is not None and registry.mehrere and registry.bekannt(app)) else ""
         if auth.current_user(request):
+            sitzung = request.cookies.get(auth.session_cookie_name) or ""
+            ziel_host = (urlsplit(nxt).hostname or "").lower() if "://" in nxt else ""
+            # T-22: Nur von dieser Anwendung abgemeldet — die Seite zeigen, mit „Weiter als …",
+            # statt zurückzuschicken (das wäre eine Schleife mit der Forward-Auth).
+            if sitzung and ziel_host and auth.store.gate_ist_abgemeldet(auth.store.session_hash(sitzung), ziel_host):
+                u = auth.session_user(request)
+                return auth.render_page("login", request=request, next=nxt, error=error, app=app,
+                                        app_name=auth._forward_app(nxt)["name"],
+                                        resume_user=(u["display_name"] or u["username"]) if u else "")
             # B-2: Angemeldet, aber ohne (gültige) Freigabe für DIESE Anwendung schickte die Seite
             # zurück zu `next` — die Forward-Auth schickte wieder hierher, eine Schleife ohne Ende.
             # Die Freigabe gibt nur der Provider, also dorthin.
@@ -957,6 +967,15 @@ def build_router(auth) -> APIRouter:
                 # gemeint; für ihn bleibt es bei der bisherigen Antwort.
                 anwendung = auth._oidc_anwendung(orig)
                 sitzung = request.cookies.get(auth.session_cookie_name) or ""
+                # Nur von dieser Anwendung abgemeldet (T-22): Die Sitzung gilt, nur hier nicht —
+                # bis der Mensch auf der Login-Seite „Weiter als …" wählt. Immer die Seite, nie der
+                # direkte Weg zum Provider: Der meldete lautlos wieder an.
+                _host = (urlsplit(orig).hostname or "").lower()
+                if sitzung and _host and auth.store.gate_ist_abgemeldet(auth.store.session_hash(sitzung), _host):
+                    return Response(status_code=401,
+                                    headers={"X-TinySesam-Location": auth._forward_login_url(orig, request),
+                                             "X-TinySesam-Reason": "app-abgemeldet",
+                                             "WWW-Authenticate": 'FormBased realm="TinySesam"'})
                 if anwendung and sitzung:
                     ja, grund = auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
                     if not ja:
@@ -1009,6 +1028,100 @@ def build_router(auth) -> APIRouter:
         @r.get("/auth/verify")
         def verify_auth(request: Request):
             return _forward(request)
+
+        # ---------- Abmelden an der Anwendung (T-22) ----------
+        # Diese Wege liegen auf dem HOST DER ANWENDUNG (der Proxy reicht /.tinysesam/* an TinySesam):
+        # Nur dort lässt sich das Gate-Cookie löschen, es gilt host-only.
+        GATE_SCOPES = ("app", "all")
+
+        def _gate_logout(request: Request, host: str, scope: str, nxt: str):
+            s = auth._session_from_request(request)
+            u = auth.session_user(request) or auth.pending_user(request)
+            ip = auth.client_ip(request)
+            if scope == "app":
+                if s:
+                    auth.store.gate_abmelden(s["token_hash"], host)
+                if u:
+                    auth.audit("logout_app", u["username"], ip, f"host={host}")
+                resp = RedirectResponse(nxt, 303)
+                auth._gate_cookie_loeschen(resp)
+                return resp
+            # "all": diese Sitzung endet — sie trägt jede Anwendung hinter derselben Anmeldung —, mit
+            # oidc_rp_logout auch die beim Provider, mit dem ID-Token als Hinweis.
+            ziel = None
+            if cfg.oidc_rp_logout and auth.oidc and s:
+                try:
+                    faktoren = __import__("json").loads(s["factors_done"] or "[]")
+                except Exception:
+                    faktoren = []
+                if s["method"] == "oidc" or "oidc" in faktoren:
+                    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                    ziel = _provider_logout_url(s, f"{proto}://{host}/.tinysesam/after-logout")
+            if u:
+                auth.audit("logout", u["username"], ip, f"host={host} scope=all")
+            resp = RedirectResponse(ziel or "/.tinysesam/after-logout", 303)
+            auth.logout(request, resp)
+            auth._gate_cookie_loeschen(resp)
+            return resp
+
+        def _gate_host_oder_404(request: Request) -> str:
+            host = auth._gate_host(request)
+            if not host:
+                raise HTTPException(404, auth.t("api.not_found"))
+            return host
+
+        @r.get("/.tinysesam/logout", response_class=HTMLResponse)
+        def gate_logout_get(request: Request, scope: str = "", next: str = ""):
+            host = _gate_host_oder_404(request)
+            nxt = auth.safe_next(next or "/", request)
+            modus = scope if scope in GATE_SCOPES else auth._forward_app(host)["logout"]
+            name = auth._forward_app(host)["name"]
+            if modus not in GATE_SCOPES:          # "ask"
+                return auth.render_page("gate_logout", request=request, scope="", app_name=name, next=nxt)
+            # Logout-CSRF wie /auth/logout (F-07): von einer fremden Seite erst fragen.
+            if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
+                return auth.render_page("gate_logout", request=request, scope=modus, app_name=name, next=nxt)
+            return _gate_logout(request, host, modus, nxt)
+
+        @r.post("/.tinysesam/logout")
+        def gate_logout_post(request: Request, scope: str = Form(""), next: str = Form(""),
+                             csrf_tok: str = Form("", alias="_csrf")):
+            host = _gate_host_oder_404(request)
+            auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
+            if scope not in GATE_SCOPES:
+                raise HTTPException(400, auth.t("api.invalid", grund="scope (app | all)"))
+            return _gate_logout(request, host, scope, auth.safe_next(next or "/", request))
+
+        @r.get("/.tinysesam/after-logout", response_class=HTMLResponse)
+        def gate_after_logout(request: Request):
+            """Rückweg vom Provider nach dem Abmelden — von TinySesam angestossen oder von der
+            Anwendung selbst (deren RP-Logout mit dieser Adresse als Logout Callback URL). Im
+            zweiten Fall besteht die Sitzung noch: Sie endet hier, von einer fremden Seite aus erst
+            nach Rückfrage (F-07)."""
+            host = _gate_host_oder_404(request)
+            if auth._session_from_request(request):
+                if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
+                    return auth.render_page("gate_logout", request=request, scope="all",
+                                            app_name=auth._forward_app(host)["name"], next="/")
+                return _gate_logout(request, host, "all", "/")
+            resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"])
+            auth._gate_cookie_loeschen(resp)
+            return resp
+
+        @r.post("/auth/gate/resume")
+        def gate_resume(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
+            """„Weiter als …" auf der Login-Seite nach einer Abmeldung nur von dieser Anwendung."""
+            auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
+            nxt = auth.safe_next(next, request)
+            s = auth._session_from_request(request)
+            u = auth.session_user(request)
+            if not s or not u:
+                return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
+            host = (urlsplit(nxt).hostname or "").lower() if "://" in nxt else ""
+            if host:
+                auth.store.gate_fortsetzen(s["token_hash"], host)
+                auth.audit("gate_resume", u["username"], auth.client_ip(request), f"host={host}")
+            return RedirectResponse(nxt, 303)
 
     # ---------- Eigenes Konto (Selbstverwaltung) ----------
     @r.post("/auth/password")
@@ -1186,6 +1299,15 @@ def build_router(auth) -> APIRouter:
                 "api_keys_active": auth.store.count_active_api_keys(u["id"])}
 
     # ---------- Logout / me ----------
+    def _provider_logout_url(s, zurueck: str):
+        """Logout beim Provider, mit dem ID-Token der Anmeldung als Hinweis (T-22) — und mit DEM
+        Client, über den sie lief: PocketID nimmt den Hinweis nur zum passenden Client an."""
+        gespeichert = auth.store.get_oidc_id_token(s["token_hash"]) if s else None
+        client, hinweis = gespeichert if gespeichert else ("", None)
+        registry = getattr(auth, "oidc_clients", None)
+        oidc = registry[client] if (client and registry is not None and registry.bekannt(client)) else auth.oidc
+        return oidc.end_session_url(zurueck, id_token_hint=hinweis)
+
     def _abmelden(request: Request):
         # Protokolliert wird das Konto, dessen Sitzung hier endet — aus dem Cookie (0.20.1,
         # `session_user`), nicht das eines mitgeschickten API-Keys.
@@ -1205,7 +1327,7 @@ def build_router(auth) -> APIRouter:
                 # lokale Logout unten läuft trotzdem, nur eben ohne Provider-Umweg.
                 base = auth.public_base(request)
                 if base:
-                    oidc_logout_url = auth.oidc.end_session_url(base + cfg.logout_redirect)
+                    oidc_logout_url = _provider_logout_url(s, base + cfg.logout_redirect)
         if u:
             auth.audit("logout", u["username"], auth.client_ip(request))
         resp = RedirectResponse(oidc_logout_url or auth.browser_path(request, cfg.logout_redirect), 303)

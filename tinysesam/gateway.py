@@ -33,8 +33,11 @@ Konfiguration per Umgebungsvariablen:
                                                so lange wirkt ein Widerruf am Proxy nicht
     TINYSESAM_FORWARD_LOGIN                    direct (Default: Seitenaufruf → Provider → zurück) oder
                                                page (erst die Login-Seite mit dem Namen der Anwendung)
+    TINYSESAM_FORWARD_LOGOUT                   all (Default: Sitzung und Provider), app (nur diese
+                                               Anwendung) oder ask (fragen) — Weg /.tinysesam/logout
     TINYSESAM_FORWARD_APPS                     JSON je Anwendung: {"wiki.example.com": {"name": "Wiki",
-                                               "login": "page"}} — name erscheint auf der Login-Seite
+                                               "login": "page", "logout": "ask"}} — name erscheint
+                                               auf Login- und Abmeldeseite
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
@@ -160,6 +163,7 @@ def config_from_env() -> TinySesamConfig:
         gate_token_enabled=_schalter("TINYSESAM_GATE"),
         forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
         forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
+        forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
     )
 

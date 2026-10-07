@@ -283,6 +283,20 @@ try:
     assert st == 200 and gate_cookie(h) and gate_cookie(h) != faelle["abgelaufen"]
     ok("abgelaufenes Token + Sitzung → 200 und ein neues Gate-Cookie")
 
+    # ---------- Abmelden an der Anwendung (T-22): /.tinysesam/* geht am Gate vorbei ----------
+    vorher = FORWARD["n"]
+    st, h, _ = anfrage("/.tinysesam/logout?scope=app", sitzung)
+    assert st == 303 and h["Location"] == "/", (st, dict(h))
+    assert any(v.startswith("__Host-tinysesam_gate=;") and "Max-Age=0" in v for v in h.get_all("Set-Cookie") or []), \
+        h.get_all("Set-Cookie")
+    assert FORWARD["n"] == vorher, "der Abmelde-Weg darf nicht durch das Gate (es gibt keine Anmeldung zu prüfen)"
+    st, h, _ = anfrage("/seite", sitzung)
+    assert st == 302 and "/auth/login?next=" in h["Location"], (st, dict(h))
+    ok("/.tinysesam/logout?scope=app durch Caddy: am Gate vorbei, Gate-Cookie gelöscht, danach 302 zur Login-Seite")
+    tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/seite"}, follow_redirects=False)
+    assert anfrage("/seite", sitzung)[0] == 200
+    ok("„Weiter als …“ → die Anwendung lässt wieder durch")
+
     # ---------- der Preis: Widerruf greift erst mit Ablauf ----------
     auth.store.delete_user_sessions(uid)
     assert anfrage("/x", sitzung)[0] == 302

@@ -519,7 +519,31 @@ Seite gehört und sich nicht ändert:
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
+## Abmelden an der Anwendung — Checkliste je Anwendung (T-22)
+
+Je Anwendung hinter dem Gate, in dieser Reihenfolge:
+
+1. **Proxy:** `/.tinysesam/*` an TinySesam (in beiden Caddy-Vorlagen enthalten), vor dem Gate.
+2. **Anwendung:** ihr Abmelde-Link bzw. ihre Weiterleitung nach dem Abmelden zeigt auf
+   `https://<app>/.tinysesam/logout` (mit `?scope=app` oder `?scope=all`, sonst gilt `forward_logout`).
+   Meldet sie sich selbst beim Provider ab (RP-Logout), zeigt ihre Logout Callback URL auf
+   `https://<app>/.tinysesam/after-logout`.
+3. **Provider:** beim OIDC-Client des **Gateways** `https://<app>/.tinysesam/after-logout` als Logout
+   Callback URL eintragen — für jede Anwendung, an der „überall abmelden“ möglich sein soll. Ohne den
+   Eintrag beendet PocketID seine Sitzung trotzdem, zeigt danach aber die eigene Seite statt
+   zurückzuleiten. Bei mehreren Clients (`oidc_clients`) gehört die Adresse zu dem Client, über den die
+   Anmeldung lief.
+4. **Gegenprobe:** abmelden; danach muss die Anwendung zur Anmeldung führen, und bei `all` eine zweite
+   Anwendung im selben Browser spätestens nach `gate_token_ttl_sec`.
+
+`app` und `direct` zusammen: Die Abmeldung „nur hier“ hält, weil die Anwendung danach immer die
+Login-Seite zeigt (nie den direkten Weg zum Provider) — mit „Weiter als …“ für den Weg zurück.
+
 ## Rückschritt auf 0.21.x
+
+(Schema **13**, nach 0.22.0: zwei neue Tabellen `gate_abgemeldet` und `oidc_id_token`, sonst nichts. 0.22.0
+öffnet die Datei mit der Warnung „neuere Schema-Version“ und lässt beide liegen. Es fehlen dann nur
+„nur hier abgemeldet“ und der `id_token_hint` beim Provider-Logout.)
 
 0.22.0 hebt den Schema-Stempel der Datenbank auf **12**. Keine Spalte ändert sich, aber zwei
 gespeicherte Werte heissen jetzt englisch wie der Rest der öffentlichen Oberfläche (PO-Entscheid

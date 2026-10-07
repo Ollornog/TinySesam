@@ -124,8 +124,14 @@ class TinySesamConfig:
     # Anmeldemethode ist; Hintergrund-Anfragen (XHR, Assets) gehen auch dann zur Login-Seite —
     # sonst begänne jede von ihnen einen eigenen Flow. oidc_gateway() setzt "direct".
     forward_login: str = "page"
-    # Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct"}}.
-    # name = Anzeigename auf der Login-Seite, login überschreibt forward_login für diesen Host.
+    # Was „Abmelden" an der Anwendung heisst (T-22), Weg: https://<app>/.tinysesam/logout.
+    # "all" = diese Sitzung beenden (gilt für alle Anwendungen hinter derselben Anmeldung) und mit
+    # oidc_rp_logout auch beim Provider; "app" = nur diese Anwendung: die Sitzung bleibt, der Host
+    # lässt sie erst nach „Weiter als …" auf der Login-Seite wieder durch; "ask" = fragen.
+    forward_logout: str = "all"
+    # Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct",
+    # "logout": "ask"}}. name = Anzeigename auf Login- und Abmeldeseite; login/logout überschreiben
+    # forward_login/forward_logout für diesen Host.
     forward_apps: dict = field(default_factory=dict)
     gate_cookie_name: str = "__Host-tinysesam_gate"  # Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
@@ -640,6 +646,9 @@ class TinySesamConfig:
             # Seitenaufruf → Provider → zurück. Ein Fenster „Bei TinySesam anmelden" mit einem
             # einzigen Knopf wäre nur ein Klick mehr.
             forward_login="direct",
+            # Abmelden beendet auch die Sitzung beim Provider (T-22) — sonst meldete `direct` beim
+            # nächsten Seitenaufruf lautlos wieder an, und „Abmelden" wäre ein Neuladen.
+            oidc_rp_logout=True,
         )
         base.update(overrides)
         # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.

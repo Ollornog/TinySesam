@@ -2,7 +2,7 @@
 id: T-22
 type: Task
 title: "Logout-Modus je App: app, alle, fragen — Kette über den Provider zurück zum Gate"
-status: offen
+status: erledigt
 milestone: M-3
 tags: [gateway, oidc, logout]
 created: 2026-10-03
@@ -26,3 +26,24 @@ Provider-Befund steht in [ADR-9](ADR-9-gate-token-am-proxy.md) (Konsequenzen).
 **Fertig, wenn:** Browser-Test: `app` → diese App verlangt Login, zweite App bleibt offen; `alle` →
 Provider abgemeldet, beide Gates nach ≤ einer Token-Laufzeit zu (eigenes sofort); kein offener
 Redirect über `scope`/Ziel; Mutation je Zweig.
+
+## Erledigt 2026-10-07
+
+Werte englisch: `forward_logout = "all" | "app" | "ask"` (Vorgabe `all`), je Host in `forward_apps`.
+
+- `all` beendet **diese** Sitzung (sie trägt jede Anwendung hinter derselben Anmeldung), nicht alle
+  Sitzungen des Kontos auf anderen Geräten. „Überall“ heisst hier: in allen Anwendungen dieses
+  Browsers. Andere Gate-Cookies dieses Browsers laufen nach `gate_token_ttl_sec` ab.
+  *Der Plan nannte „alle TinySesam-Sitzungen des Benutzers“. Das ist ein anderer Schritt („auf allen
+  Geräten abmelden“) und bleibt beim Konto-Panel.*
+- `app` braucht eine Sperre an der Sitzung (`gate_abgemeldet`, Schema 13). Ohne sie hätte die
+  Forward-Auth die Sitzung beim nächsten Klick wieder durchgelassen. Aufgehoben wird sie mit „Weiter
+  als …“ (`POST /auth/gate/resume`) oder einer neuen Anmeldung mit Ziel dieser Anwendung. Die
+  Forward-Auth schickt dann immer auf die Login-Seite, nie direkt zum Provider (der meldete lautlos
+  wieder an).
+- **`id_token_hint`:** Ohne ihn beendet PocketID (v2.17.0) seine Sitzung nicht. TinySesam speichert
+  das ID-Token verschlüsselt (`oidc_id_token`) und schickt es samt `client_id` des Clients der Anmeldung.
+- Wege auf dem App-Host: `/.tinysesam/logout` (GET/POST), `/.tinysesam/after-logout` (Rückweg vom
+  Provider, beendet eine noch lebende Sitzung — Kette von der Anwendung aus). Cross-site: erst fragen.
+- Doku: Checkliste je Anwendung in `docs/BETRIEB.md`.
+- Test: `tests/test_logout_modi.py`, `tests/test_gate_caddy.py` (Abmelden durch Caddy). 9 Mutationen rot.

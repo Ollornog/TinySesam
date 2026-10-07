@@ -288,7 +288,14 @@ def _login(auth, ctx) -> str:
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
     # Vor einer Anwendung (forward_apps[host].name, T-21) sagt die Seite, wofür man sich anmeldet.
     titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
-    body = f"<h1>{_e(titel)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
+    # Nur von dieser Anwendung abgemeldet (T-22): wieder hinein mit einem Klick, ohne neue Anmeldung.
+    weiter = ""
+    if ctx.get("resume_user"):
+        weiter = (f"<form method=post action='__TS_P__/auth/gate/resume'>"
+                  f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
+                  f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
+                  + (_or if (pw or pin or others) else ""))
+    body = f"<h1>{_e(titel)}</h1>{warn}{err}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
     return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx))
 
 
@@ -689,6 +696,37 @@ def _logout(auth, ctx) -> str:
     return _page(auth, t("logout"), body)
 
 
+def _gate_logout(auth, ctx) -> str:
+    """ctx: scope ("" = fragen, sonst "app"/"all" zur Bestätigung), app_name, next. Liegt auf dem
+    Host der Anwendung unter /.tinysesam/ — die Formulare zielen deshalb relativ auf `logout`."""
+    t = auth.t
+    name = ctx.get("app_name") or t("gate.this_app")
+
+    def knopf(scope, text):
+        return (f"<form method=post action='logout'>{_cf(ctx)}"
+                f"<input type=hidden name=scope value='{_e(scope)}'>"
+                f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
+                f"<button type=submit>{_e(text)}</button></form>")
+
+    if ctx.get("scope") in ("app", "all"):
+        frage = t("gate.confirm_app", name=name) if ctx["scope"] == "app" else t("gate.confirm_all")
+        knoepfe = knopf(ctx["scope"], t("logout"))
+    else:
+        frage = t("gate.ask", name=name)
+        knoepfe = knopf("app", t("gate.only_app", name=name)) + knopf("all", t("gate.everywhere"))
+    body = (f"<h1>{_e(t('logout'))}</h1><div class=hint>{_e(frage)}</div>{knoepfe}"
+            f"<div class=hint><a href='/'>{_e(t('cancel'))}</a></div>")
+    return _page(auth, t("logout"), body)
+
+
+def _gate_logged_out(auth, ctx) -> str:
+    """ctx: app_name. Nach dem Abmelden — mit einem Weg zurück, der eine NEUE Anmeldung beginnt."""
+    t = auth.t
+    body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>"
+            f"<a class=btn2 href='/'>{_e(t('gate.login_again'))}</a>")
+    return _page(auth, t("gate.logged_out_title"), body)
+
+
 def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
@@ -850,6 +888,8 @@ document.getElementById('pkbtn')?.addEventListener('click', async () => {
 
 DEFAULTS = {
     "logout": _logout,
+    "gate_logout": _gate_logout,
+    "gate_logged_out": _gate_logged_out,
     "login": _login,
     "totp": _totp,
     "reauth": _reauth,
