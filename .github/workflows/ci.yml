@@ -32,6 +32,7 @@ jobs:
   # keinen Push blockiert — und NUR dort: ein Gate-Bein gehoert nicht in einen Job,
   # der nicht rot werden kann.
   full:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,7 +46,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Systempaket für SAML (xmlsec)
-        run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
         run: pip install -e '.[all]' setuptools wheel mypy
       - name: Tests
@@ -54,6 +55,7 @@ jobs:
   # Minimal-Install ohne Extras: sichert den stdlib-scrypt-Fallback + Kernpfad ab
   # (Suiten, die zwingend Extras brauchen, werden vom Runner als skip gewertet).
   minimal:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -70,6 +72,7 @@ jobs:
   # Die Seiten im echten Browser: Konsolenfehler, Breiten, Sprachwechsel, Dark-Mode, Login.
   # Ohne diesen Job faellt eine Design-Regression erst dem Nutzer auf.
   browser:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -100,6 +103,7 @@ jobs:
   # gesetzter TINYSESAM_GATE_CADDY ist der Test Pflicht: ein fehlender oder falscher Caddy ist
   # rot, kein Skip. In den übrigen Jobs fehlt die Variable, dort meldet die Suite „übersprungen".
   gate-caddy:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -126,6 +130,7 @@ jobs:
   # nächsten Lauf nicht mehr wiederholbar. Lokales Äquivalent: `ci-local --full`.
   # Bewusst NICHT im pre-push-Hook — das verdoppelte die Wartezeit bei jedem Push.
   repeat:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -139,7 +144,7 @@ jobs:
         with:
           install-dependencies: true
       - name: Systempaket für SAML (xmlsec)
-        run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
         run: pip install -e '.[all]' uvicorn websockets setuptools wheel mypy
       # Vorher-Stand festhalten: Seit Kit 0.20.1 meldet der Check ohne ihn einen veränderten

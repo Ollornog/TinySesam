@@ -138,6 +138,7 @@ jobs:
           ausgabe nichts "nach 15 min noch nicht mergebar — der nächste fertige Pflicht-Workflow prüft erneut"
 
   ausfuehren:
+    timeout-minutes: 10
     needs: entscheiden
     if: needs.entscheiden.outputs.aktion == 'mergen' || needs.entscheiden.outputs.aktion == 'kommentieren'
     runs-on: ubuntu-latest

@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+### Geändert
+
+- **CI: jeder Job mit `timeout-minutes`** (gemessene Höchstdauer × ~3, z. B. `repeat` 30, `full` 15, `image` 30)
+  und `apt-get` mit `Acquire::Retries=3` und `Acquire::http::Timeout=30`. Vorher galt GitHubs Vorgabe von 360 min,
+  und ein hängender Ubuntu-Mirror blockierte PR #135. `tests/test_repo.py` verlangt die Grenze in allen 20 Jobs.
+  Kein Release nötig: Am Paket ändert sich nichts.
+
 ## [0.24.2] — 2026-10-07
 
 **Wer es braucht:** Betreiber des Gateways (`tinysesam.gateway`). Kein API-Bruch, kein neues Schema.

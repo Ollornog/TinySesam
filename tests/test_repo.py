@@ -291,6 +291,23 @@ for needed in ("tests/test_browser.py", "tests/test_repo.py", "tests/test_site.p
                "python -m web.build", "setup-chrome"):
     assert needed in ci, f"CI fährt {needed} nicht"
 
+# Jeder Job trägt eine Zeitgrenze (Pipeline-Register 2026-10-07): Ohne sie gilt GitHubs Vorgabe von 360 min, und
+# ein hängendes `apt-get` blockierte PR #135 so lange, wie `pr-mergen` wartete. Gelesen wird der Text — Jobs
+# sind die Schlüssel mit zwei Leerzeichen unter `jobs:`, die Grenze steht mit vier Leerzeichen im Block.
+_ohne_grenze, _jobs_gesehen = [], 0
+for _wf in sorted(pathlib.Path(ROOT, ".github", "workflows").glob("*.yml")):
+    _rumpf = _wf.read_text(encoding="utf-8").split("\njobs:\n", 1)[1]
+    for _block in re.split(r"\n(?=  [A-Za-z0-9_-]+:\n)", "\n" + _rumpf):
+        _m = re.match(r"\n?  ([A-Za-z0-9_-]+):\n", _block)
+        if not _m:
+            continue
+        _jobs_gesehen += 1
+        if not re.search(r"\n    timeout-minutes: [1-9][0-9]*\n", _block):
+            _ohne_grenze.append(f"{_wf.name}: {_m.group(1)}")
+assert _jobs_gesehen >= 20, f"nur {_jobs_gesehen} Jobs erkannt — Prüfung liest die Workflows nicht mehr"
+assert not _ohne_grenze, "Job ohne timeout-minutes:\n  " + "\n  ".join(_ohne_grenze)
+print(f"  timeout-minutes in allen {_jobs_gesehen} Jobs")
+
 # Öffentliches Repo → niemals self-hosted Runner: ein Fork-PR liefe sonst auf fremder Hardware.
 #
 # Über `hygiene.pruefe_kein_self_hosted_runner`, nicht über eine eigene Textsuche: Die Funktion
