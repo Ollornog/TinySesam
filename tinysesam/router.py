@@ -85,8 +85,11 @@ def build_router(auth) -> APIRouter:
 
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
-    def login_page(request: Request, next: str = "", error: str = "", app: str = ""):
+    def login_page(request: Request, next: str = "", error: str = "", app: str = "", gate_host: str = ""):
         nxt = auth.safe_next(next, request)
+        # Code-Austausch (T-26): `next` ist dann ein Weg des Gateways; welche App gemeint ist, sagt
+        # `gate_host`. Einen Namen zeigt nur ein Host aus `forward_apps` — ein erfundener bleibt namenlos.
+        gh = str(gate_host or "").strip().lower()
         # `app` (T-14) nur, wenn es einen Client dieses Namens gibt — ein frei erfundener Wert
         # gehört weder in den Knopf noch in eine Umleitung.
         registry = getattr(auth, "oidc_clients", None)
@@ -110,7 +113,8 @@ def build_router(auth) -> APIRouter:
                                         f"?next={_q(nxt)}&app={_q(app)}", 303)
             return RedirectResponse(nxt, 303)
         return auth.render_page("login", request=request, next=nxt, error=error, app=app,
-                                app_name=auth._forward_app(nxt)["name"] if "://" in nxt else "")
+                                app_name=auth._forward_app(nxt)["name"] if "://" in nxt
+                                else (auth._forward_app(gh)["name"] if gh else ""))
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
@@ -1218,7 +1222,9 @@ def build_router(auth) -> APIRouter:
                     if auth._forward_app(host)["login"] == "direct" and list(cfg.enabled_methods()) == ["oidc"]:
                         ziel = f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(hier)}"
                     else:
-                        ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}"
+                        # gate_host: Die Anmeldeseite sieht nur `next` (den Weg des Gateways) — ohne den Host
+                        # stünde dort „TinySesam“ statt „Anmelden bei <App>“ (PO 2026-10-08).
+                        ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}&gate_host={_q(host)}"
                     if anwendung:
                         ziel += f"&app={_q(anwendung)}"
                     return RedirectResponse(ziel, 303)

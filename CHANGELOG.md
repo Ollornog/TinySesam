@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.24.4] — 2026-10-08
+
+**Wer es braucht:** Betreiber des zentralen Gateways mit Login-Modus `page`. Kein API-Bruch.
+
+### Geändert
+
+- **Anmeldeseite im Code-Austausch zeigt die App** („Anmelden bei <App>“ statt des Installationsnamens): Der
+  Weg vom Gateway zur Anmeldung trägt jetzt `gate_host`, den Namen liefert `forward_apps`.
+
 ## [0.24.3] — 2026-10-08
 
 **Wer es braucht:** Betreiber des zentralen Gateways mit App-Hosts, die auch an ihm vorbei erreichbar sind (z. B. im
