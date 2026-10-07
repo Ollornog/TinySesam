@@ -303,4 +303,20 @@ assert re.search(r"^\t\t\tsign_alg EdDSA\s*$", site, re.M), "jwtauth ohne festen
 assert "from_cookies __Host-tinysesam_gate" in site
 ok("Vorlage: jeder Remote-*-Header wird erst entfernt, dann auf beiden Wegen gesetzt; sign_alg fest")
 
+# Share-Ausnahme (T-20), in BEIDEN Vorlagen: aus, solange niemand sie setzt; und ohne Identität —
+# auch die normale Vorlage entfernt die Remote-*-Header sonst nirgends vor der Anwendung.
+for _datei in ("deploy/forward-auth/Caddyfile", "deploy/forward-auth/Caddyfile.gate"):
+    _t = (pathlib.Path(__file__).resolve().parent.parent / _datei).read_text(encoding="utf-8")
+    _code = "\n".join(z.split("#", 1)[0] if not z.lstrip().startswith("header_up Cookie") else z
+                      for z in _t.splitlines())
+    _block = re.search(r"handle @share \{(.*?)\n\t\}", _code, re.S)
+    assert _block, f"{_datei}: kein handle @share"
+    assert "{$TS_SHARE_PRAEFIX:^$}" in _code, f"{_datei}: die Share-Ausnahme ist nicht von sich aus aus"
+    assert "vars_regexp share {http.request.orig_uri.path}" in _code, f"{_datei}: Share prüft nicht den rohen Pfad"
+    assert re.search(r"not vars_regexp \{http\.request\.orig_uri\.path\} ", _code), f"{_datei}: ohne Sperre für Pfad-Tricks"
+    for kopfname in TinySesam.FORWARD_HEADERS_DEFAULT.values():
+        assert f"header_up -{kopfname}" in _block.group(1), f"{_datei}: Share reicht {kopfname} vom Browser durch"
+    assert _code.index("handle @share") < _code.index("route {"), f"{_datei}: Share erst nach dem Gate"
+ok("Vorlagen: Share-Ausnahme von sich aus aus, prüft den rohen Pfad, reicht keine Identität durch")
+
 print("Gate-Token OK")

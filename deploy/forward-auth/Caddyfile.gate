@@ -54,6 +54,39 @@ app.example.com {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
 	}
 
+	# Öffentliche Pfade der Anwendung (T-20), etwa Share-Links: ohne Anmeldung, ohne Identität.
+	# TS_SHARE_PRAEFIX ist ein regulärer Ausdruck über den Anfang des Pfads, z. B.
+	#   TS_SHARE_PRAEFIX='^/(s|public/share)/'
+	# Ohne die Variable gilt `^$` — das trifft keinen Pfad, die Ausnahme ist aus.
+	#
+	# Geprüft wird der ROHE Pfad (`orig_uri.path`), nicht der von Caddy bereinigte: Caddy vergleicht
+	# sonst `/x/../s/a` als `/s/a`, reicht der Anwendung aber `/x/../s/a` weiter — und die löst
+	# ihn womöglich anders auf. Abgewiesen wird deshalb jeder Pfad mit `.`- oder `..`-Segment, `;`
+	# (Tomcat/Spring lesen `/s/..;/admin` als `/admin`), Backslash, NUL oder einer kodierten Form
+	# davon (%2e %2f %5c %00 %3b). Gross/klein zählt (`/S/` ist nicht `/s/`). Nachgemessen gegen
+	# Caddy 2.11.7 in tests/test_gate_caddy.py. Nie nach Dateiendung freigeben (`*.js`): Viele
+	# Anwendungen liefern unter `/admin/x.css` dynamischen Inhalt aus.
+	#
+	# Eine Share-Seite lädt meist eigene Skripte und ruft eigene APIs auf — auch die gehören in
+	# den Ausdruck, je Anwendung nachgemessen. Was hier steht, ist öffentlich erreichbar: Eine Lücke
+	# der Anwendung in diesen Pfaden bleibt offen. So eng wie möglich.
+	@share {
+		vars_regexp share {http.request.orig_uri.path} {$TS_SHARE_PRAEFIX:^$}
+		not vars_regexp {http.request.orig_uri.path} (?i)(^|/)\.\.?(/|$)|[;\\\x00]|%(2e|2f|5c|00|3b)
+	}
+	handle @share {
+		reverse_proxy {$TS_APP_UPSTREAM:127.0.0.1:9000} {
+			# Keine Identität auf diesem Weg — auch keine, die der Browser selbst mitschickt.
+			header_up -Remote-User
+			header_up -Remote-Name
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Id
+			header_up Cookie "(^|;)\s*(__Host-|__Secure-)?tinysesam_[^=;]*=[^;]*" ""
+			header_up Cookie "^[;\s]+" ""
+		}
+	}
+
 	route {
 		jwtauth {
 			sign_key {$TS_GATE_PUBKEY}
