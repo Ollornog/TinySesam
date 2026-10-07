@@ -9,7 +9,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 * ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 14/14 erledigt
 * ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 4/6 erledigt
-* ☐ **[M-3](M-3-gate-vor-fremden-apps.md)** Gate vor fremden Apps — schnell, einmal anmelden, sauber abmelden — 5/7 erledigt
+* ☐ **[M-3](M-3-gate-vor-fremden-apps.md)** Gate vor fremden Apps — schnell, einmal anmelden, sauber abmelden — 6/7 erledigt
 
 ## Aufgaben
 
@@ -35,7 +35,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-20](T-20-share-ausnahmen.md)** Share-Ausnahmen je App — exakte Pfadpräfixe vor dem Gate, mit Gegenprobe · M-3
 * ☑ **[T-21](T-21-login-modi.md)** Login-Modus je App: unsichtbar (Vorgabe im Gateway) oder fenster · M-3
 * ☑ **[T-22](T-22-logout-modi.md)** Logout-Modus je App: app, alle, fragen — Kette über den Provider zurück zum Gate · M-3
-* ☐ **[T-23](T-23-konfigpruefung-gate.md)** Konfigurationsprüfung für den Gate-Betrieb · M-3
+* ☑ **[T-23](T-23-konfigpruefung-gate.md)** Konfigurationsprüfung für den Gate-Betrieb · M-3
 * ☐ **[T-24](T-24-gate-abnahme-messung.md)** Abnahme — Messung vorher/nachher und Abnahmetest je App · M-3
 * ☐ **[T-25](T-25-oidc-auf-der-buehne.md)** E2E-Bühne — die OIDC-Zeremonie scheitert am Identity Provider · M-2
 
