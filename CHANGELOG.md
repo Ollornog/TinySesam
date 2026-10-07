@@ -2,7 +2,27 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.23.0] — 2026-10-07
+
+**Kein Bruch** der öffentlichen API — nur Erweiterungen (`tests/api_surface.json`). Neu ist das Gate vor
+fremden Anwendungen ([M-3](backlog/M-3-gate-vor-fremden-apps.md)): Gate-Token, Login- und Logout-Modi,
+Share-Ausnahmen, Messung und Abnahme.
+
+**Was beim Update auffällt:**
+
+- **Schema 13:** Der erste Start legt zwei Tabellen an (`gate_abgemeldet`, `oidc_id_token`). Eine ältere
+  Fassung öffnet die Datei danach mit der Warnung „neuere Schema-Version“ und lässt beide liegen.
+- **Gateway (`oidc_gateway()`, Abbild):** Wer nicht angemeldet ist, geht beim Seitenaufruf jetzt **direkt
+  zum Provider** (`forward_login="direct"`), statt erst die Login-Seite zu sehen. Zurück zum bisherigen
+  Verhalten: `TINYSESAM_FORWARD_LOGIN=page`.
+- **Gateway:** `oidc_rp_logout` ist jetzt an — Abmelden beendet auch die Sitzung beim Provider, mit
+  `id_token_hint`. Für den Rückweg beim Provider `https://<app>/.tinysesam/after-logout` als Logout
+  Callback URL eintragen (`docs/BETRIEB.md`, Checkliste).
+- **Mehrere OIDC-Clients:** Eine Sitzung ohne Freigabe für eine Anwendung geht jetzt zum Provider statt
+  in eine Schleife (B-2) — wer das bisher umgangen hat, kann den Umweg entfernen.
+- Die Caddy-Vorlagen reichen `/.tinysesam/*` an TinySesam und haben einen (ausgeschalteten)
+  Share-Block. Wer eine eigene Fassung pflegt: beide Blöcke übernehmen, sonst geht das Abmelden an der
+  Anwendung ins Leere.
 
 ### Hinzugefügt — Messung und Abnahme des Gates (T-24)
 
@@ -102,11 +122,9 @@ Host (kein Token entstünde); `forward_apps` ohne Forward-Auth; `forward_login="
 - E2E-Bühne: OIDC wieder grün (T-25). Das Testkonto gehört beim Provider jetzt einer Gruppe, die nur für den
   Client der Bühne freigegeben ist. Auf einer frisch gebauten Bühne laufen alle drei Wege grün; ohne die
   Freigabe wird OIDC rot.
-
 - `tests/test_vorbuchung_schwebe.py` wartet nicht mehr eine feste Zeit, bis die parallelen Anmeldungen
   im hängenden Verzeichnis angekommen sind, sondern auf den Zustand selbst (T-18). Die Suite war einmal
   unter Last rot, die Ursache vermutlich genau diese Wartestellen.
-
 - **Die Zahl paralleler Test-Jobs kommt vom Runner, nicht aus einer Erkennung.** `tests/run_all.py`
   nahm ohne `CI_TEST_JOBS` die Hälfte von `os.cpu_count()`. Im Container meldet das alle Kerne des
   Hosts, nicht die CPU-Quote: Ein Runner mit zwei Kernen auf einem Host mit zwölf startete sechs
