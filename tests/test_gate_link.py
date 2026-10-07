@@ -168,6 +168,23 @@ assert b4["gw"].get("/auth/me").status_code == 401, "die Sitzung beim Gateway mu
 assert forward(b4["app"]).status_code == 401
 ok("überall abmelden am App-Host beendet die Sitzung beim Gateway — und damit jede Verbindung")
 
+# ---------- erst nur hier, dann überall abmelden: die Sitzung beim Gateway darf nicht übrig bleiben ----------
+b5 = browser()
+koppeln(b5)
+b5["app"].get("/.tinysesam/logout?scope=app", follow_redirects=False)
+b5["app"].cookies.delete("__Host-tinysesam_link")
+r = b5["app"].get("/.tinysesam/logout?scope=all", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == GW + "/auth/gate/logout?host=app.example.com", r.headers.get("location")
+r = b5["gw"].get("/auth/gate/logout?host=app.example.com", headers={"Sec-Fetch-Site": "cross-site"}, follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/logout", r.headers.get("location")
+assert b5["gw"].get("/auth/me").status_code == 200, "cross-site darf die Sitzung nicht beenden (Logout-CSRF)"
+r = b5["gw"].get("/auth/gate/logout?host=app.example.com", headers={"Sec-Fetch-Site": "same-site"}, follow_redirects=False)
+assert r.status_code == 303 and b5["gw"].get("/auth/me").status_code == 401, (r.status_code, r.headers.get("location"))
+r = b5["gw"].get("/auth/gate/logout?host=app.example.com", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/after-logout", r.headers.get("location")
+assert b5["gw"].get("/auth/gate/logout?host=evil.example.net").status_code == 400
+ok("überall abmelden ohne Verbindung → ans Gateway, dort endet die Sitzung (cross-site erst Rückfrage, keine Schleife)")
+
 # ---------- Konfigurationsprüfung ----------
 try:
     TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, gate_token_enabled=True,

@@ -1074,6 +1074,14 @@ def build_router(auth) -> APIRouter:
                 auth._gate_cookie_loeschen(resp)
                 _link_aufheben(request, resp)
                 return resp
+            # "all" am App-Host OHNE Verbindung (etwa nach „nur hier abmelden“): Die Sitzung liegt beim
+            # Gateway, und nur dort ist ihr Cookie. Hin, dort endet sie — sonst bliebe sie still bestehen.
+            if not s and _link_modus(host):
+                resp = RedirectResponse(f"{auth.gate_issuer()}{auth.browser_path(request, '/auth/gate/logout')}"
+                                        f"?host={_q(host)}", 303)
+                auth._gate_cookie_loeschen(resp)
+                _link_aufheben(request, resp)
+                return resp
             # "all": diese Sitzung endet — sie trägt jede Anwendung hinter derselben Anmeldung —, mit
             # oidc_rp_logout auch die beim Provider, mit dem ID-Token als Hinweis.
             ziel = None
@@ -1227,6 +1235,24 @@ def build_router(auth) -> APIRouter:
                 auth.store.put_flow("gatecode:" + _h(code), {"handle": s["token_hash"], "host": host,
                                                               "rd": f["rd"], "bindung": f["bindung"]}, ttl=120)
                 return RedirectResponse(f"{f['proto']}://{host}/.tinysesam/callback?code={_q(code)}", 303)
+
+            @r.get("/auth/gate/logout")
+            def gate_link_logout(request: Request, host: str = ""):
+                """Auf dem Gateway: „überall abmelden“, angestossen von einem App-Host, der die Sitzung
+                nicht kennt. Von einer fremden Seite aus (Logout-CSRF, F-07) nicht hier, sondern
+                zurück zur Rückfrage auf dem App-Host — dessen Bestätigung kommt dann same-site."""
+                h = str(host or "").strip().lower()
+                if h not in auth._gate_hosts():
+                    raise HTTPException(400, auth.t("api.invalid", grund="host"))
+                if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
+                    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                    return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/logout", 303)
+                if not auth._session_from_request(request):
+                    # Auch hier keine Sitzung: nichts mehr zu beenden. Zurück auf die Abmeldeseite der
+                    # App — NICHT in _gate_logout, das reichte ohne Sitzung wieder hierher (Schleife).
+                    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                    return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/after-logout", 303)
+                return _gate_logout(request, h, "all", "/")
 
             @r.get("/.tinysesam/callback")
             def gate_link_callback(request: Request, code: str = ""):

@@ -565,6 +565,10 @@ das Gateway selbst unter seiner `base_url`.
   Verbindungs-Cookie, das sie trotzdem abgriffe, gälte nur für ihren eigenen Host.
 - **Widerruf:** Sitzung beendet (überall abmelden, Sperre, Admin) → jede Verbindung endet mit ihr; am Proxy
   wie bisher erst mit Ablauf des Gate-Tokens.
+- **Überall abmelden ohne Verbindung** (die App war schon „nur hier“ abgemeldet): Der App-Host reicht an
+  `/auth/gate/logout?host=…` beim Gateway weiter, dort endet die Sitzung. Von einer fremden Seite aus erst
+  die Rückfrage auf dem App-Host (Logout-CSRF).
+- **Sprache:** `TINYSESAM_LANG=de` für deutsche Gateway-Seiten (Vorgabe `en`).
 - **Schema 14:** Tabelle `gate_link`.
 
 ## Öffentliche Pfade einer Anwendung (Share-Links, T-20)

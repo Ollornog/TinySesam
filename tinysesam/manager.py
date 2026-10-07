@@ -427,7 +427,10 @@ class TinySesam:
         # Die Login-URL wird pro Host gebaut (siehe forward_login_url), damit daraus wenigstens
         # keine stille Redirect-Schleife wird. Das ist vorab beweisbar, ohne über die Außenwelt
         # zu raten: die Hosts stehen in der eigenen Konfiguration.
-        if config.forward_auth_enabled and config.base_url and not config.cookie_domain:
+        # Mit dem Code-Austausch (T-26) ist host-only gerade gewollt: Die App-Hosts bekommen eine
+        # Verbindung, keine eigene Anmeldung — die Warnung wäre dort ein Fehlalarm.
+        if (config.forward_auth_enabled and config.base_url and not config.cookie_domain
+                and not getattr(config, "gate_link_enabled", False)):
             from urllib.parse import urlsplit
             own = urlsplit(config.base_url).hostname or ""
             fremd = [h for h in (config.trusted_redirect_hosts or []) if h and h != own]

@@ -44,6 +44,7 @@ Konfiguration per Umgebungsvariablen:
                                                auf Login- und Abmeldeseite
     TINYSESAM_DB                               Default tinysesam-gateway.db
     TINYSESAM_HTTPS_MODE                       off|warn|force (Default warn)
+    TINYSESAM_LANG                             Sprache der Seiten des Gateways: en (Default) oder de
     TINYSESAM_SECURITY_LOG                     Datei für den fail2ban-Logger, z.B.
                                                /var/log/tinysesam/security.log (leer = aus)
     TINYSESAM_HOST / TINYSESAM_PORT            Default 0.0.0.0 / 8000
@@ -166,6 +167,7 @@ def config_from_env() -> TinySesamConfig:
         revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
         gate_token_enabled=_schalter("TINYSESAM_GATE"),
         gate_link_enabled=_schalter("TINYSESAM_GATE_LINK"),
+        lang=_sprache(),
         forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
         forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
         forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",
@@ -224,6 +226,16 @@ def _install_https_except_health(auth, app):
 
     app.add_middleware(_ExceptHealth)
     return "force"
+
+
+def _sprache() -> str:
+    """TINYSESAM_LANG: eine der Sprachen, die TinySesam mitbringt — sonst ein Startfehler statt
+    stiller englischer Seiten."""
+    from .messages import MESSAGES
+    wert = os.environ.get("TINYSESAM_LANG", "").strip().lower() or "en"
+    if wert not in MESSAGES:
+        raise SystemExit(f"TINYSESAM_LANG={wert!r}: bekannt sind {', '.join(sorted(MESSAGES))}")
+    return wert
 
 
 def build_app(cfg: Optional[TinySesamConfig] = None):

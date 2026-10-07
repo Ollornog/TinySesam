@@ -2,6 +2,28 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.24.1] — 2026-10-07
+
+**Wer es braucht:** alle, die 0.24.0 als zentrales Gateway (`gate_link_enabled`) betreiben. Kein API-Bruch,
+kein neues Schema.
+
+Erster Betrieb des zentralen Gateways (0.24.0) im Browser über den öffentlichen Weg — drei Funde.
+
+### Behoben
+
+- **Abmelden „überall“ ließ die Sitzung beim Gateway bestehen**, wenn die App vorher schon „nur hier“
+  abgemeldet war: Ohne Verbindung kannte der App-Host die Sitzung nicht. Jetzt reicht er an
+  `/auth/gate/logout?host=…` beim Gateway weiter, dort endet sie (mit Provider-Logout). Von einer fremden Seite
+  aus erst die Rückfrage auf dem App-Host (Logout-CSRF); ohne Sitzung auch beim Gateway zurück auf
+  `after-logout` statt im Kreis.
+- **Fehlalarm beim Start:** „Forward-Auth ohne cookie_domain … eigene Anmeldung je Host“ erschien auch mit
+  `gate_link_enabled`, wo host-only gewollt ist.
+
+### Hinzugefügt
+
+- **`TINYSESAM_LANG`** (`en`, `de`) im Gateway — bis hier waren seine Seiten immer englisch. Unbekannte Werte
+  sind ein Startfehler.
+
 ## [0.24.0] — 2026-10-07
 
 **Kein Bruch** der öffentlichen API — eine Erweiterung: ein zentrales Gateway für viele Apps, ohne dass die
