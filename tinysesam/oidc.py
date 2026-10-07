@@ -392,9 +392,12 @@ class OIDCClient:
                 security.fuer_log(str(azp)), security.fuer_log(self.client_id))
             raise HTTPException(400, t("api.oidc_audience"))
 
-    def end_session_url(self, post_logout_redirect_uri=None):
+    def end_session_url(self, post_logout_redirect_uri=None, id_token_hint=None):
         """RP-initiated-Logout-URL beim Provider (oder None, wenn nicht unterstützt).
-        Ohne id_token_hint (wird nicht gespeichert) — best effort; manche Provider verlangen es."""
+
+        `id_token_hint` (seit T-22 gespeichert, `Store.get_oidc_id_token`): PocketID beendet seine
+        Sitzung ohne ihn nicht, sondern zeigt eine Rückfrage und leitet danach nicht zurück.
+        Ein abgelaufenes ID-Token ist dafür gültig (OIDC RP-Initiated Logout 1.0, Abschnitt 2)."""
         try:
             ep = self.meta().get("end_session_endpoint")
         except Exception:
@@ -402,6 +405,8 @@ class OIDCClient:
         if not ep:
             return None
         params = {"client_id": self.client_id}
+        if id_token_hint:
+            params["id_token_hint"] = id_token_hint
         if post_logout_redirect_uri:
             params["post_logout_redirect_uri"] = post_logout_redirect_uri
         return ep + ("&" if "?" in ep else "?") + urlencode(params)
@@ -815,6 +820,10 @@ def register_oidc_routes(router, auth):
         # Person noch darf (`oidc_session_refresh_minutes`). Ohne Refresh-Token geht das nicht.
         if tok.get("refresh_token"):
             auth._oidc_sitzung_merken(token, ziel, str(sub), str(tok["refresh_token"]))
+        # Das ID-Token als Abmeldehinweis (T-22): PocketID beendet seine Sitzung nur mit
+        # `id_token_hint`; ohne bleibt der Mensch auf dessen Rückfrage stehen.
+        if tok.get("id_token"):
+            auth.store.set_oidc_id_token(auth.store.session_hash(token), ziel, str(tok["id_token"]))
         # Der Provider hat für DIESE Anwendung zugestimmt — das wird an der Sitzung vermerkt.
         # Für jede andere Anwendung sagt dieser Vermerk nichts; dort fragt `/auth/forward`
         # erneut. Genau das ist der Unterschied zu „angemeldet ja/nein" (T-14).

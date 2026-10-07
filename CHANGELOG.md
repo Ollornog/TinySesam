@@ -4,6 +4,28 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Abmelden an der Anwendung (T-22)
+
+- **`/.tinysesam/logout`** auf dem Host der Anwendung (beide Caddy-Vorlagen reichen `/.tinysesam/*` am
+  Gate vorbei an TinySesam). **`forward_logout`** (Vorgabe `all`) bzw. `forward_apps[host].logout`,
+  im Link überschreibbar mit `?scope=app|all`:
+  - `all` beendet die Sitzung und mit `oidc_rp_logout` die beim Provider. Zurück über
+    `/.tinysesam/after-logout` (beim Provider als Logout Callback URL eintragen), eine Seite
+    „Abgemeldet“.
+  - `app` beendet nur diese Anwendung: Die Sitzung bleibt, der Host lässt sie erst nach „Weiter als …“
+    auf der Login-Seite (`POST /auth/gate/resume`) oder einer neuen Anmeldung wieder durch.
+  - `ask` fragt.
+  Von einer fremden Seite aus (`Sec-Fetch-Site: cross-site`) wird erst gefragt, wie bei `/auth/logout`.
+- **`id_token_hint` beim Logout am Provider.** TinySesam legt das ID-Token der Anmeldung verschlüsselt ab
+  und schickt es mit — samt der `client_id` des Clients, über den die Anmeldung lief. PocketID beendet
+  seine Sitzung ohne den Hinweis nicht, sondern bleibt auf einer Rückfrage stehen. Gilt auch für
+  `/auth/logout`.
+- `oidc_gateway()` setzt jetzt `oidc_rp_logout=True`. Gateway: `TINYSESAM_FORWARD_LOGOUT`, `logout` in
+  `TINYSESAM_FORWARD_APPS`.
+- Neue Seiten `gate_logout` und `gate_logged_out` (über `set_template` ersetzbar).
+- **Schema 13:** Tabellen `gate_abgemeldet` und `oidc_id_token`, additiv. Eine ältere Fassung öffnet die
+  Datei mit der Warnung „neuere Schema-Version“ und lässt beide Tabellen liegen.
+
 ### Hinzugefügt — Login-Modi vor dem Gate (T-21)
 
 - **`forward_login`**: `"page"` (Vorgabe der Bibliothek) schickt einen nicht Angemeldeten auf die

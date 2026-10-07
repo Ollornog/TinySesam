@@ -30,6 +30,16 @@ auth.example.com {
 
 # Geschützte App (kann eine beliebige Fremd-App / statische Site sein)
 app.example.com {
+	# Abmelden an der Anwendung (T-22): /.tinysesam/logout und /.tinysesam/after-logout gehören
+	# TinySesam, nicht der Anwendung — und gehen am Gate vorbei: Abmelden muss auch mit
+	# abgelaufener Anmeldung gehen. Auf diesem Host, weil nur hier das Gate-Cookie gelöscht werden
+	# kann. Der Abmelde-Link der Anwendung zeigt auf https://app.example.com/.tinysesam/logout
+	# (?scope=app|all, sonst gilt forward_logout); beim Provider als Logout Callback URL
+	# https://app.example.com/.tinysesam/after-logout eintragen.
+	handle /.tinysesam/* {
+		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000}
+	}
+
 	route {
 		reverse_proxy {$TS_AUTH_UPSTREAM:127.0.0.1:8000} {
 			method GET

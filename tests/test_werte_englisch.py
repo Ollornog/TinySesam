@@ -172,8 +172,8 @@ a, log_a = _mitschreiben(lambda: _aufbau(pfad_a, post_a))
 nachher_a = _stand(pfad_a)
 r.check("Vorbedingung: die Datei trägt die Werte von 0.21.x und den Stempel 11",
         vorher_a == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(vorher_a))
-r.check("(a) der Start migriert: Stempel 12, `automation`/`human`, Payload `old` — und sagt es im Log",
-        nachher_a == (12, ["human", "automation"], [{"old": "anna@example.com"}])
+r.check("(a) der Start migriert: aktueller Stempel (ab 12), `automation`/`human`, Payload `old` — und sagt es im Log",
+        nachher_a == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}])
         and "3 gespeicherte Werte auf die englischen Namen umgeschrieben" in log_a,
         f"{nachher_a} {log_a[-300:]!r}")
 w_a = _wirkung(a, mensch_a, automat_a)
@@ -234,8 +234,8 @@ neu_b = b.create_api_key(anna_b, name="neu", kind="human")["key"]
 mensch_b = _key_einfuegen(pfad_b, anna_b, "mensch")
 automat_b = _key_einfuegen(pfad_b, anna_b, "automat")
 link_b = _link_einfuegen(pfad_b, anna_b, "anna@example.com", "anna.b@example.com")
-r.check("Vorbedingung: gemischte Werte bei Stempel 12",
-        _stand(pfad_b)[:2] == (12, ["human", "mensch", "automat"]), str(_stand(pfad_b)))
+r.check("Vorbedingung: gemischte Werte beim aktuellen Stempel (ab 12)",
+        _stand(pfad_b)[:2] == (Store.SCHEMA_VERSION, ["human", "mensch", "automat"]), str(_stand(pfad_b)))
 w_b = _wirkung(b, mensch_b, automat_b)
 # `list_api_keys` sortiert nach `created_at` (Sekunden) absteigend. Der Key aus der Bibliothek und
 # die beiden roh eingefügten entstehen nicht in derselben Sekunde, wenn der Rechner ausgelastet ist
@@ -254,7 +254,7 @@ r.check("(b) … der Link aus 0.21.x zeigt `old`, nicht `alt`",
 b.store.db.close()
 b, log_b = _mitschreiben(lambda: _aufbau(pfad_b))
 r.check("(b) der nächste Start schreibt die Keys um (bei jedem Start), den Link nicht (Stempel schon 12)",
-        _stand(pfad_b) == (12, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
+        _stand(pfad_b) == (Store.SCHEMA_VERSION, ["human", "human", "automation"], [{"alt": "anna@example.com"}])
         and "2 gespeicherte Werte" in log_b, f"{_stand(pfad_b)} {log_b[-200:]!r}")
 r.check("(b) … und er gilt weiter, eingelöst mit `old` im Ergebnis",
         b.redeem_magic(link_b, purpose="email_change")["payload"] == {"old": "anna@example.com"})
@@ -281,7 +281,7 @@ if _sql:
             _stand(pfad_c) == (11, ["mensch", "automat"], [{"alt": "anna@example.com"}]), str(_stand(pfad_c)))
     c = _aufbau(pfad_c, post_c)
     r.check("(c) … und ein Start von 0.22.0 danach migriert wieder (Hin und Rück ohne Verlust)",
-            _stand(pfad_c) == (12, ["human", "automation"], [{"old": "anna@example.com"}]), str(_stand(pfad_c)))
+            _stand(pfad_c) == (Store.SCHEMA_VERSION, ["human", "automation"], [{"old": "anna@example.com"}]), str(_stand(pfad_c)))
     c.store.db.close()
 
 # ── (d) Nur lesbar ────────────────────────────────────────────────────────────────────────────────

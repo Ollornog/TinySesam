@@ -221,6 +221,23 @@ CREATE TABLE IF NOT EXISTS oidc_sitzung (    -- Refresh-Token einer OIDC-Sitzung
     erfolg_at   INTEGER,                      -- letzte ERFOLGREICHE Nachprüfung (Obergrenze ohne Nachprüfung); NULL: vor dieser Spalte
     PRIMARY KEY (token_hash, client)
 );
+-- Nur von DIESER Anwendung abgemeldet (T-22, `forward_logout="app"`): Die Sitzung bleibt, die
+-- Forward-Auth lässt sie für diesen Host aber nicht mehr durch, bis der Mensch auf der Login-Seite
+-- ausdrücklich „weiter“ wählt. Ohne die Zeile wäre „nur hier abmelden“ ein Neuladen der Seite.
+CREATE TABLE IF NOT EXISTS gate_abgemeldet (
+    token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
+    host       TEXT NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (token_hash, host)
+);
+-- Das ID-Token der Anmeldung, verschlüsselt (geheimnis.Tresor) — nur als `id_token_hint` für den
+-- Logout beim Provider (T-22). PocketID beendet seine Sitzung ohne den Hinweis nicht, sondern
+-- zeigt eine Rückfrage und leitet danach nicht zurück.
+CREATE TABLE IF NOT EXISTS oidc_id_token (
+    token_hash TEXT PRIMARY KEY REFERENCES session(token_hash) ON DELETE CASCADE,
+    client     TEXT NOT NULL,
+    id_token   TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS flow (            -- kurzlebiger State (OIDC state/nonce, WebAuthn-Challenge)
     key        TEXT PRIMARY KEY,
     data       TEXT NOT NULL,               -- JSON
@@ -760,7 +777,12 @@ class Store:
     #:      liest: 0.21.x hält einen `human`-Key für einen Automaten-Key (gilt ohne Sitzung). Sie
     #:      öffnet die Datei trotzdem, meldet aber beim Start die neuere Schema-Version — Rückweg
     #:      mit SQL in docs/BETRIEB.md.
-    SCHEMA_VERSION = 12
+    #: 13 — `gate_abgemeldet` (nur von einer Anwendung abgemeldet, T-22) und `oidc_id_token` (das
+    #:      ID-Token als Abmeldehinweis für den Provider, verschlüsselt). Additiv; eine ältere Fassung
+    #:      lässt beide Tabellen liegen, dreht sie beim Rotieren einer Sitzung aber nicht mit — die
+    #:      Zeilen fallen dann mit der alten Sitzung weg (Abmeldung „nur hier“ vergessen, Provider-
+    #:      Logout ohne Hinweis), mehr nicht.
+    SCHEMA_VERSION = 13
 
     #: Die gespeicherten Werte bis 0.21.x und ihr englischer Ersatz (Schema 12). Die Migration
     #: schreibt um, und wer liest, bildet einen alten Wert trotzdem ab: Eine ältere Fassung, die
@@ -2573,6 +2595,33 @@ class Store:
         self._exec("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?",
                    (self._handle(neu), self._handle(alt)))
 
+    # ---------- Gate: nur von einer Anwendung abgemeldet (T-22) ----------
+    def gate_abmelden(self, handle, host: str) -> None:
+        self._exec("INSERT OR REPLACE INTO gate_abgemeldet(token_hash, host, at) VALUES (?,?,?)",
+                   (self._handle(handle), str(host).lower(), _now()))
+
+    def gate_ist_abgemeldet(self, handle, host: str) -> bool:
+        return bool(self._one("SELECT 1 FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+                              (self._handle(handle), str(host).lower())))
+
+    def gate_fortsetzen(self, handle, host: str) -> int:
+        return self._exec("DELETE FROM gate_abgemeldet WHERE token_hash=? AND host=?",
+                          (self._handle(handle), str(host).lower())).rowcount
+
+    # ---------- ID-Token als Abmeldehinweis (T-22) ----------
+    def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
+        if self.tresor is None:
+            raise RuntimeError("ID-Tokens werden nur verschlüsselt abgelegt (geheimnis.Tresor).")
+        self._exec("INSERT OR REPLACE INTO oidc_id_token(token_hash, client, id_token) VALUES (?,?,?)",
+                   (self._handle(handle), client, self.tresor.verschluesseln(id_token)))
+
+    def get_oidc_id_token(self, handle) -> Optional[tuple]:
+        """(client, id_token) der Anmeldung dieser Sitzung, entschlüsselt — oder None."""
+        r = self._one("SELECT client, id_token FROM oidc_id_token WHERE token_hash=?", (self._handle(handle),))
+        if not r or self.tresor is None:
+            return None
+        return r["client"], self.tresor.entschluesseln(r["id_token"])
+
     def put_oidc_grant(self, token_hash: str, client: str, jetzt: int, roles=None) -> None:
         """Freigabe eintragen oder bestätigen. `granted_at` bleibt bei einer Bestätigung stehen —
         die Frage „seit wann darf diese Sitzung in diese Anwendung" beantwortet sonst niemand mehr."""
@@ -2740,6 +2789,8 @@ class Store:
                     return None
                 self.db.execute("UPDATE oidc_grant SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("UPDATE gate_abgemeldet SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (neu, alt))
                 if gnade_sek > 0:
                     self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
                                     "nachfolger=? WHERE token_hash=?", (_now() + int(gnade_sek), neu, alt))

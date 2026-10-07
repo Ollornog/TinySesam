@@ -930,8 +930,9 @@ def _gruppen_scope(config, warnungen: list) -> None:
             "etwa bei Keycloak), ist diese Warnung gegenstandslos.")
 
 
-FORWARD_APP_SCHLUESSEL = ("name", "login")
+FORWARD_APP_SCHLUESSEL = ("name", "login", "logout")
 FORWARD_LOGIN = ("page", "direct")
+FORWARD_LOGOUT = ("all", "app", "ask")
 
 
 def _forward_apps(config, fehler: list, warnungen: list) -> None:
@@ -939,6 +940,9 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
     modus = getattr(config, "forward_login", "page")
     if modus not in FORWARD_LOGIN:
         fehler.append(f"forward_login={modus!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
+    abmelden = getattr(config, "forward_logout", "all")
+    if abmelden not in FORWARD_LOGOUT:
+        fehler.append(f"forward_logout={abmelden!r}: erlaubt sind {', '.join(FORWARD_LOGOUT)}.")
     apps = getattr(config, "forward_apps", None) or {}
     if not isinstance(apps, dict):
         fehler.append("forward_apps muss ein Dict sein: {\"app.example.com\": {\"name\": …, \"login\": …}}.")
@@ -957,6 +961,8 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
             fehler.append(f"{wo} kennt {', '.join(fremd)} nicht (erlaubt: {', '.join(FORWARD_APP_SCHLUESSEL)}).")
         if "login" in e and e["login"] not in FORWARD_LOGIN:
             fehler.append(f"{wo}['login']={e['login']!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
+        if "logout" in e and e["logout"] not in FORWARD_LOGOUT:
+            fehler.append(f"{wo}['logout']={e['logout']!r}: erlaubt sind {', '.join(FORWARD_LOGOUT)}.")
         if e.get("login") == "direct":
             direkt.append((wo, "direct"))
         if vertraut and str(host).strip().lower() not in vertraut:

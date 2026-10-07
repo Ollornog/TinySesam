@@ -4326,6 +4326,13 @@ class TinySesam:
         s = self.store.get_session(token)
         done = json.loads(s["factors_done"] or "[]") if s else []
         if s and s["mfa_ok"]:
+            # Wer sich ausdrücklich (wieder) anmeldet, will in die Anwendung, zu der es zurückgeht —
+            # eine frühere Abmeldung „nur hier" (T-22) gilt dafür nicht mehr.
+            if "://" in str(nxt or ""):
+                from urllib.parse import urlsplit
+                ziel = (urlsplit(str(nxt)).hostname or "").lower()
+                if ziel:
+                    self.store.gate_fortsetzen(s["token_hash"], ziel)
             return nxt, None, True
         step = self._next_login_step(user_id, done)
         return (self.browser_path(request, self._factor_entry(step, nxt)) if step else nxt), step, False
@@ -6089,7 +6096,23 @@ class TinySesam:
             if str(h).strip().lower().rstrip(".") == host:
                 e = dict(werte or {})
                 break
-        return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login)}
+        return {"name": str(e.get("name") or ""), "login": str(e.get("login") or self.cfg.forward_login),
+                "logout": str(e.get("logout") or self.cfg.forward_logout)}
+
+    def _gate_host(self, request) -> str:
+        """Der geschützte Host, an den diese Anfrage ging (über den Proxy: X-Forwarded-Host, sonst
+        Host) — oder "", wenn diese Installation ihn nicht schützt. Für die Abmelde-Wege unter
+        `/.tinysesam/`: Sie wirken auf das Gate-Cookie GENAU dieses Hosts."""
+        h = request.headers
+        roh = (h.get("x-forwarded-host") or h.get("host") or "").split(",")[0].strip()
+        host = roh.rsplit(":", 1)[0] if roh.count(":") == 1 else roh
+        host = host.lower().rstrip(".")
+        return host if host and host in self._gate_hosts() else ""
+
+    def _gate_cookie_loeschen(self, response) -> None:
+        """Das Gate-Cookie dieses Hosts löschen (Attribute wie beim Setzen, sonst gilt es nicht)."""
+        response.headers.append("set-cookie", f"{self.cfg.gate_cookie_name}=; Path=/; Max-Age=0; "
+                                              "Secure; HttpOnly; SameSite=Lax")
 
     @staticmethod
     def _ist_seitenaufruf(request: Optional[Request]) -> bool:
@@ -6253,7 +6276,8 @@ class TinySesam:
     #: Der Docstring nannte früher 'magic_sent' und 'resource_pin', die es beide nie gab, und
     #: liess sieben echte weg. Ein Tippfehler blieb dabei folgenlos-still: Die eigene Seite
     #: wurde eingetragen und nie aufgerufen.
-    PAGES = ("account", "error", "forgot", "login", "logout", "magic_confirm", "magic_invalid",
+    PAGES = ("account", "error", "forgot", "gate_logged_out", "gate_logout", "login", "logout",
+             "magic_confirm", "magic_invalid",
               "magic_request", "pin", "reauth", "register", "reset", "resource_unlock", "totp",
               "totp_setup")
 

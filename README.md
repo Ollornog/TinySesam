@@ -1252,6 +1252,24 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` re
 method. Background requests (XHR, scripts) still go to the sign-in page: they could not show the
 provider's page, and each would start an OIDC flow of its own.
 
+### Signing out at the app: here only or everywhere (T-22)
+
+The app's sign-out link points to `https://app.example.com/.tinysesam/logout` — the proxy hands
+`/.tinysesam/*` to TinySesam, past the gate (both Caddy templates do). What happens there is set by
+`forward_logout` or `forward_apps[host].logout` (or `?scope=app|all` in the link):
+
+- **`all`** (default): the session ends — it carries every app behind the same sign-in — and with
+  `oidc_rp_logout` (on in the gateway) the one at the provider too, with the ID token as
+  `id_token_hint`. The way back is `https://app.example.com/.tinysesam/after-logout`: register that
+  address at the provider as a **logout callback URL**.
+- **`app`**: this app only. The session stays; the app lets it through again once you choose
+  “Continue as …” on the sign-in page or sign in anew.
+- **`ask`**: a page asks “Sign out of Wiki only, or everywhere?”.
+
+If the app signs out at the provider itself (its own RP logout), register `…/.tinysesam/after-logout`
+as its logout callback URL as well: the provider then sends you here and the TinySesam session ends
+too. Other apps in the same browser keep their gate token for at most `gate_token_ttl_sec`.
+
 ## Public API: three tiers
 
 Not everything without a leading underscore is a promise. Since 0.22.0 every public name has a
@@ -1388,7 +1406,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**65 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**66 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

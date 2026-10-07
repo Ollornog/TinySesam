@@ -1273,6 +1273,25 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` ve
 Methode. Hintergrund-Anfragen (XHR, Skripte) gehen auch dann zur Login-Seite: Eine Umleitung zum
 Provider könnten sie nicht anzeigen, und jede begänne einen eigenen OIDC-Flow.
 
+### Abmelden an der Anwendung: nur hier oder überall (T-22)
+
+Der Abmelde-Link der Anwendung zeigt auf `https://app.example.com/.tinysesam/logout` — der Proxy reicht
+`/.tinysesam/*` an TinySesam, am Gate vorbei (beide Caddy-Vorlagen tun das). Was dort passiert, sagt
+`forward_logout` bzw. `forward_apps[host].logout` (oder `?scope=app|all` im Link):
+
+- **`all`** (Vorgabe): Die Sitzung endet — sie trägt jede Anwendung hinter derselben Anmeldung — und
+  mit `oidc_rp_logout` (im Gateway an) auch die beim Provider, mit dem ID-Token als `id_token_hint`.
+  Zurück kommt man über `https://app.example.com/.tinysesam/after-logout`: diese Adresse beim Provider
+  als **Logout Callback URL** eintragen.
+- **`app`**: Nur diese Anwendung. Die Sitzung bleibt; die Anwendung lässt sie erst wieder durch, wenn
+  man auf der Login-Seite „Weiter als …“ wählt oder sich neu anmeldet.
+- **`ask`**: Eine Seite fragt „Nur von Wiki abmelden oder überall?“.
+
+Meldet sich die Anwendung selbst beim Provider ab (ihr eigener RP-Logout), trägt man dort ebenfalls
+`…/.tinysesam/after-logout` als Logout Callback URL ein: Der Provider schickt dann hierher, und die Sitzung
+bei TinySesam endet mit. Andere Anwendungen im selben Browser halten ihr Gate-Token höchstens noch
+`gate_token_ttl_sec` lang.
+
 ## Öffentliche API: drei Stufen
 
 Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
@@ -1413,7 +1432,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**65 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**66 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,
