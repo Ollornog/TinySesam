@@ -6016,7 +6016,48 @@ class TinySesam:
             hosts.add(eigen.lower())
         return hosts
 
-    def _gate_cookie(self, request, user, orig_url: str, rollen_gruppen) -> Optional[str]:
+    _GATE_LINK_COOKIE = "__Host-tinysesam_link"
+    _GATE_LINKFLOW_COOKIE = "__Host-tinysesam_linkflow"
+
+    def _gate_link_sitzung(self, request, host: str):
+        """Die Sitzungszeile hinter dem Verbindungs-Cookie dieses App-Hosts (T-26) — oder None.
+
+        Das Cookie gilt nur für den Host, für den es ausgestellt wurde: Die Zeile in `gate_link` trägt
+        ihn, und ein Cookie, das an einem anderen Host auftaucht, findet nichts. Die Sitzung selbst wird
+        mit denselben Regeln geprüft wie über das eigene Cookie (Ablauf, Inaktivität, OIDC-Nachprüfung)."""
+        if not self.cfg.gate_link_enabled or not host:
+            return None
+        roh = request.cookies.get(self._GATE_LINK_COOKIE) or ""
+        if not roh:
+            return None
+        handle = self.store.gate_link_handle(self.store.session_hash(roh), host)
+        if not handle:
+            return None
+        s = self.store.get_session_by_handle(handle)
+        if s is not None and not self._oidc_nachpruefen(s):
+            return None
+        return s
+
+    def _gate_sitzung(self, request, host: str = ""):
+        """Die Sitzung dieser Anfrage für das Gate: das eigene Cookie, sonst die Verbindung des Hosts."""
+        return self._session_from_request(request) or self._gate_link_sitzung(request, host)
+
+    def _gate_set_cookie(self, response, name: str, wert: str, max_age: int) -> None:
+        """Ein host-only Cookie unter `__Host-` — Secure, Path=/, ohne Domain (sonst verwirft es der
+        Browser). Mit `max_age=0` löscht es."""
+        response.headers.append("set-cookie", f"{name}={wert}; Path=/; Max-Age={int(max_age)}; "
+                                              "Secure; HttpOnly; SameSite=Lax")
+
+    def _gate_link_url(self, host: str, orig_url: str, request=None) -> str:
+        """Wohin ein App-Host ohne Verbindung geschickt wird: auf SEINEN `/.tinysesam/start` (T-26)."""
+        from urllib.parse import quote, urlsplit
+        o = urlsplit(orig_url or "")
+        schema = o.scheme if o.scheme in ("http", "https") else "https"
+        netloc = o.netloc or host
+        rest = (o.path or "/") + (("?" + o.query) if o.query else "")
+        return f"{schema}://{netloc}/.tinysesam/start?rd={quote(rest, safe='')}"
+
+    def _gate_cookie(self, request, user, orig_url: str, rollen_gruppen, sitzung=None) -> Optional[str]:
         """Der `Set-Cookie`-Wert mit einem frischen Gate-Token — oder None.
 
         Nur für eine volle SITZUNG desselben Kontos, nie für einen API-Key: Ein Automat hält
@@ -6031,7 +6072,7 @@ class TinySesam:
         host = (urlsplit(orig_url or "").hostname or "").lower().rstrip(".")
         if not host or host not in self._gate_hosts():
             return None
-        s = self._session_from_request(request)
+        s = sitzung if sitzung is not None else self._session_from_request(request)
         if not s or not s["mfa_ok"] or s["user_id"] != user["id"]:
             return None
         felder = self.cfg.forward_headers or self.FORWARD_HEADERS_DEFAULT

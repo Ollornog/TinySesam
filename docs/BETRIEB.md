@@ -551,6 +551,22 @@ Testaufbau, samt Gegenprobe (eine falsche Erwartung muss es rot machen).
 APP=https://app.example.com SHARE=/s/abc123 SESSION='__Host-tinysesam_session=…' deploy/forward-auth/abnahme.sh
 ```
 
+## Ein zentrales Gateway für viele Anwendungen (Code-Austausch, T-26)
+
+`gate_link_enabled=True`, `base_url` = Adresse des Gateways, **kein** `cookie_domain`, `gate_token_enabled=True`.
+Der Proxy reicht auf jedem App-Host `/.tinysesam/*` an das Gateway (beide Vorlagen tun das) und betreibt
+das Gateway selbst unter seiner `base_url`.
+
+- **Ablauf:** App ohne Verbindung → `/.tinysesam/start` (Ablauf + Bindungs-Cookie nur für den App-Host) →
+  `/auth/gate/authorize` beim Gateway (Sitzung, sonst Anmeldung; Freigabe der App beim Provider; „nur hier
+  abgemeldet“ → Seite mit „Weiter als …“) → Einmal-Code, 120 s → `/.tinysesam/callback` (Code, Host und
+  Bindung müssen passen) → Verbindungs-Cookie `__Host-tinysesam_link`, host-only, bis zum Ende der Sitzung.
+- **Was die App sieht:** nichts davon — alle `tinysesam_*`-Cookies entfernt der Proxy vor ihr. Ein
+  Verbindungs-Cookie, das sie trotzdem abgriffe, gälte nur für ihren eigenen Host.
+- **Widerruf:** Sitzung beendet (überall abmelden, Sperre, Admin) → jede Verbindung endet mit ihr; am Proxy
+  wie bisher erst mit Ablauf des Gate-Tokens.
+- **Schema 14:** Tabelle `gate_link`.
+
 ## Öffentliche Pfade einer Anwendung (Share-Links, T-20)
 
 Beide Caddy-Vorlagen haben einen Block `@share`, der Pfade ohne Anmeldung durchlässt — ohne

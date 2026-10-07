@@ -957,27 +957,46 @@ def build_router(auth) -> APIRouter:
                 auth.audit("forward_denied", None, ip,
                            f"grund={grund} url={security.url_fuer_log(orig)}")
 
+        def _link_modus(host: str) -> bool:
+            """Zentrales Gateway mit Code-Austausch (T-26): für einen geschützten App-Host, der nicht
+            der eigene ist. Dort gibt es keine Sitzung, nur die Verbindung des Hosts."""
+            from urllib.parse import urlsplit as _us
+            return bool(cfg.gate_link_enabled and host and host in auth._gate_hosts()
+                        and host != (_us(auth.gate_issuer()).hostname or "").lower())
+
+        def _anmelden_url(orig: str, request: Request, direkt: bool = False) -> str:
+            host = (urlsplit(orig).hostname or "").lower()
+            if _link_modus(host):
+                return auth._gate_link_url(host, orig, request)
+            return auth._forward_login_url(orig, request, direkt=direkt)
+
         def _forward(request: Request):
             u = auth.current_user(request)   # Session ODER API-Key
             orig = auth._forwarded_url(request)
+            _host = (urlsplit(orig).hostname or "").lower()
+            # Die Sitzungszeile, an der Freigabe, Abmeldung „nur hier" und Gate-Token hängen: aus dem
+            # eigenen Cookie, sonst — zentrales Gateway, T-26 — aus der Verbindung dieses Hosts.
+            s = auth._session_from_request(request) if u else None
+            if not u and _link_modus(_host):
+                s = auth._gate_link_sitzung(request, _host)
+                u = auth._konto_der_sitzung(s) if s else None
+            handle = s["token_hash"] if s else ""
             if u:
                 # Schützt diese Installation mehrere Anwendungen, reicht „angemeldet" nicht:
                 # Wer in welche darf, hat der Provider je Client entschieden (T-14). Der Vermerk
                 # dazu hängt an der SITZUNG — ein API-Key hat keinen und ist hier auch nicht
                 # gemeint; für ihn bleibt es bei der bisherigen Antwort.
                 anwendung = auth._oidc_anwendung(orig)
-                sitzung = request.cookies.get(auth.session_cookie_name) or ""
                 # Nur von dieser Anwendung abgemeldet (T-22): Die Sitzung gilt, nur hier nicht —
                 # bis der Mensch auf der Login-Seite „Weiter als …" wählt. Immer die Seite, nie der
                 # direkte Weg zum Provider: Der meldete lautlos wieder an.
-                _host = (urlsplit(orig).hostname or "").lower()
-                if sitzung and _host and auth.store.gate_ist_abgemeldet(auth.store.session_hash(sitzung), _host):
+                if handle and _host and auth.store.gate_ist_abgemeldet(handle, _host):
                     return Response(status_code=401,
-                                    headers={"X-TinySesam-Location": auth._forward_login_url(orig, request),
+                                    headers={"X-TinySesam-Location": _anmelden_url(orig, request),
                                              "X-TinySesam-Reason": "app-abgemeldet",
                                              "WWW-Authenticate": 'FormBased realm="TinySesam"'})
-                if anwendung and sitzung:
-                    ja, grund = auth._oidc_freigabe_gueltig(auth.store.session_hash(sitzung), anwendung)
+                if anwendung and handle:
+                    ja, grund = auth._oidc_freigabe_gueltig(handle, anwendung)
                     if not ja:
                         # Kein 403: Der Provider soll gefragt werden, nicht der Mensch abgewiesen.
                         # Er hat dort meist noch eine Sitzung, der Sprung ist für ihn ein Flackern.
@@ -987,7 +1006,7 @@ def build_router(auth) -> APIRouter:
                                    f"app={anwendung} grund={grund}")
                         # Direkt zum Provider (B-2): Über die Login-Seite lief es im Kreis, die
                         # Seite sah die Sitzung und schickte zurück.
-                        login = auth._forward_login_url(orig, request, direkt=True)
+                        login = _anmelden_url(orig, request, direkt=True)
                         return Response(status_code=401,
                                         headers={"X-TinySesam-Location": login,
                                                  "X-TinySesam-Reason": "app-" + grund,
@@ -1007,7 +1026,7 @@ def build_router(auth) -> APIRouter:
                 kopf = auth._forward_response_headers(u)
                 # Gate-Token (ADR-9): Der Proxy legt es als Cookie auf den Host der Anwendung und
                 # prüft es danach selbst — bis es abläuft, kommt keine Anfrage mehr hier an.
-                gate = auth._gate_cookie(request, u, orig, _required_roles(request))
+                gate = auth._gate_cookie(request, u, orig, _required_roles(request), sitzung=s)
                 if gate:
                     kopf["X-TinySesam-Gate-Cookie"] = gate
                 return Response(status_code=200, headers=kopf)
@@ -1015,7 +1034,7 @@ def build_router(auth) -> APIRouter:
             # Provider; Hintergrund-Anfragen gehen immer zur Login-Seite.
             direkt = (auth._forward_app(orig)["login"] == "direct" and auth._ist_seitenaufruf(request)
                       and list(cfg.enabled_methods()) == ["oidc"])
-            login = auth._forward_login_url(orig, request, direkt=direkt)
+            login = _anmelden_url(orig, request, direkt=direkt)
             _forward_abweisung_protokollieren(request, orig)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig
             return Response(status_code=401, headers={"X-TinySesam-Location": login,
@@ -1034,9 +1053,17 @@ def build_router(auth) -> APIRouter:
         # Nur dort lässt sich das Gate-Cookie löschen, es gilt host-only.
         GATE_SCOPES = ("app", "all")
 
+        def _link_aufheben(request: Request, resp) -> None:
+            """Die Verbindung dieses Browsers zu diesem Host lösen (T-26): Zeile weg, Cookie weg."""
+            roh = request.cookies.get(auth._GATE_LINK_COOKIE) or ""
+            if roh:
+                auth.store.gate_link_entfernen(auth.store.session_hash(roh))
+                auth._gate_set_cookie(resp, auth._GATE_LINK_COOKIE, "", 0)
+
         def _gate_logout(request: Request, host: str, scope: str, nxt: str):
-            s = auth._session_from_request(request)
-            u = auth.session_user(request) or auth.pending_user(request)
+            # Die Sitzung über das eigene Cookie ODER die Verbindung dieses Hosts (T-26).
+            s = auth._gate_sitzung(request, host)
+            u = auth.session_user(request) or auth.pending_user(request) or (auth._konto_der_sitzung(s) if s else None)
             ip = auth.client_ip(request)
             if scope == "app":
                 if s:
@@ -1045,6 +1072,7 @@ def build_router(auth) -> APIRouter:
                     auth.audit("logout_app", u["username"], ip, f"host={host}")
                 resp = RedirectResponse(nxt, 303)
                 auth._gate_cookie_loeschen(resp)
+                _link_aufheben(request, resp)
                 return resp
             # "all": diese Sitzung endet — sie trägt jede Anwendung hinter derselben Anmeldung —, mit
             # oidc_rp_logout auch die beim Provider, mit dem ID-Token als Hinweis.
@@ -1061,7 +1089,12 @@ def build_router(auth) -> APIRouter:
                 auth.audit("logout", u["username"], ip, f"host={host} scope=all")
             resp = RedirectResponse(ziel or "/.tinysesam/after-logout", 303)
             auth.logout(request, resp)
+            # Über die Verbindung angemeldet: Die Sitzung liegt auf dem Gateway, das eigene Cookie gibt
+            # es hier nicht — sie endet über ihr Handle, und mit ihr jede Verbindung (Fremdschlüssel).
+            if s and not auth._session_from_request(request):
+                auth.store.delete_session_by_handle(s["token_hash"])
             auth._gate_cookie_loeschen(resp)
+            _link_aufheben(request, resp)
             return resp
 
         def _gate_host_oder_404(request: Request) -> str:
@@ -1099,7 +1132,7 @@ def build_router(auth) -> APIRouter:
             zweiten Fall besteht die Sitzung noch: Sie endet hier, von einer fremden Seite aus erst
             nach Rückfrage (F-07)."""
             host = _gate_host_oder_404(request)
-            if auth._session_from_request(request):
+            if auth._gate_sitzung(request, host):
                 if (request.headers.get("sec-fetch-site") or "").strip().lower() == "cross-site":
                     return auth.render_page("gate_logout", request=request, scope="all",
                                             app_name=auth._forward_app(host)["name"], next="/")
@@ -1109,19 +1142,117 @@ def build_router(auth) -> APIRouter:
             return resp
 
         @r.post("/auth/gate/resume")
-        def gate_resume(request: Request, next: str = Form(""), csrf_tok: str = Form("", alias="_csrf")):
-            """„Weiter als …" auf der Login-Seite nach einer Abmeldung nur von dieser Anwendung."""
+        def gate_resume(request: Request, next: str = Form(""), gate_host: str = Form(""),
+                        csrf_tok: str = Form("", alias="_csrf")):
+            """„Weiter als …" auf der Login-Seite nach einer Abmeldung nur von dieser Anwendung.
+            `gate_host` (T-26): Beim Code-Austausch steht die Seite auf dem Gateway, `next` zeigt auf
+            dessen eigenen Weg — der Host der Anwendung kommt dann ausdrücklich mit."""
             auth.require_csrf(request, csrf_tok or request.headers.get("x-csrf-token"))
             nxt = auth.safe_next(next, request)
             s = auth._session_from_request(request)
             u = auth.session_user(request)
             if not s or not u:
                 return RedirectResponse(f"{auth.browser_path(request, cfg.login_path)}?next={_q(nxt)}", 303)
-            host = (urlsplit(nxt).hostname or "").lower() if "://" in nxt else ""
+            gh = str(gate_host or "").strip().lower()
+            host = gh if gh in auth._gate_hosts() else ((urlsplit(nxt).hostname or "").lower() if "://" in nxt else "")
             if host:
                 auth.store.gate_fortsetzen(s["token_hash"], host)
                 auth.audit("gate_resume", u["username"], auth.client_ip(request), f"host={host}")
             return RedirectResponse(nxt, 303)
+
+        # ---------- Code-Austausch: zentrales Gateway, Sitzung bleibt auf seinem Host (T-26) ----------
+        if cfg.gate_link_enabled:
+            import hashlib as _hashlib
+
+            def _h(wert: str) -> str:
+                return _hashlib.sha256(str(wert or "").encode()).hexdigest()
+
+            @r.get("/.tinysesam/start")
+            def gate_link_start(request: Request, rd: str = "/"):
+                """Auf dem App-Host: den Austausch beginnen. Der Ablauf wird an DIESEN Browser gebunden
+                (Cookie nur für diesen Host), sonst könnte jemand einem Opfer einen fremden Rückweg
+                unterschieben und es so in sein Konto ziehen."""
+                host = _gate_host_oder_404(request)
+                if not auth._rate_ok(auth.client_ip(request)):
+                    raise HTTPException(429, auth.t("err.rate"))
+                ziel = str(rd or "/")
+                # Nur ein Pfad DIESES Hosts — nie eine fremde Adresse, nie `//` (Schema-relativ).
+                if not ziel.startswith("/") or ziel.startswith("//") or "\\" in ziel:
+                    ziel = "/"
+                proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                ablauf, bindung = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+                auth.store.put_flow("gatelink:" + ablauf, {"host": host, "rd": ziel, "bindung": _h(bindung),
+                                                           "proto": "http" if proto == "http" else "https"}, ttl=600)
+                basis = auth.gate_issuer()
+                resp = RedirectResponse(f"{basis}{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(ablauf)}", 303)
+                auth._gate_set_cookie(resp, auth._GATE_LINKFLOW_COOKIE, bindung, 600)
+                return resp
+
+            @r.get("/auth/gate/authorize", response_class=HTMLResponse)
+            def gate_link_authorize(request: Request, flow: str = ""):
+                """Auf dem Gateway: Sitzung prüfen (sonst anmelden), dann einen Einmal-Code für genau
+                diesen App-Host ausstellen und dorthin zurück."""
+                f = auth.store.pop_flow("gatelink:" + str(flow or ""))
+                if not f or f.get("host") not in auth._gate_hosts():
+                    raise HTTPException(400, auth.t("api.invalid", grund="flow"))
+                host = f["host"]
+                hier = f"{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(flow)}"
+
+                def _zurueck_in_den_ablauf():
+                    # Der Ablauf wartet auf die Anmeldung — dieselbe Kennung, neue Frist.
+                    auth.store.put_flow("gatelink:" + str(flow), f, ttl=600)
+
+                s = auth._session_from_request(request)
+                u = auth._konto_der_sitzung(s) if s else None
+                anwendung = auth._oidc_anwendung(host)
+                if not u:
+                    _zurueck_in_den_ablauf()
+                    if auth._forward_app(host)["login"] == "direct" and list(cfg.enabled_methods()) == ["oidc"]:
+                        ziel = f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(hier)}"
+                    else:
+                        ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}"
+                    if anwendung:
+                        ziel += f"&app={_q(anwendung)}"
+                    return RedirectResponse(ziel, 303)
+                if auth.store.gate_ist_abgemeldet(s["token_hash"], host):
+                    _zurueck_in_den_ablauf()
+                    return auth.render_page("login", request=request, next=hier, app=anwendung,
+                                            app_name=auth._forward_app(host)["name"], gate_host=host,
+                                            resume_user=u["display_name"] or u["username"])
+                if anwendung and not auth._oidc_freigabe_gueltig(s["token_hash"], anwendung)[0]:
+                    _zurueck_in_den_ablauf()
+                    return RedirectResponse(f"{auth.browser_path(request, '/auth/oidc/start')}?next={_q(hier)}"
+                                            f"&app={_q(anwendung)}", 303)
+                code = secrets.token_urlsafe(32)
+                auth.store.put_flow("gatecode:" + _h(code), {"handle": s["token_hash"], "host": host,
+                                                              "rd": f["rd"], "bindung": f["bindung"]}, ttl=120)
+                return RedirectResponse(f"{f['proto']}://{host}/.tinysesam/callback?code={_q(code)}", 303)
+
+            @r.get("/.tinysesam/callback")
+            def gate_link_callback(request: Request, code: str = ""):
+                """Auf dem App-Host: Code einlösen (genau einmal, nur hier, nur in dem Browser, der den
+                Ablauf begann) und die Verbindung für diesen Host anlegen."""
+                host = _gate_host_oder_404(request)
+                f = auth.store.pop_flow("gatecode:" + _h(code)) if code else None
+                bindung = request.cookies.get(auth._GATE_LINKFLOW_COOKIE) or ""
+                if (not f or f.get("host") != host or not bindung
+                        or not secrets.compare_digest(_h(bindung), str(f.get("bindung") or ""))):
+                    security.seclog.warning("gate-link: Rückweg ohne passenden Code oder ohne Bindung — abgewiesen (host=%s)",
+                                            security.fuer_log(host))
+                    raise HTTPException(400, auth.t("api.invalid", grund="code"))
+                s = auth.store.get_session_by_handle(f["handle"])
+                if not s or not s["mfa_ok"]:
+                    raise HTTPException(400, auth.t("api.invalid", grund="session"))
+                verbindung = secrets.token_urlsafe(32)
+                auth.store.gate_link_anlegen(auth.store.session_hash(verbindung), s["token_hash"], host)
+                u = auth._konto_der_sitzung(s)
+                if u:
+                    auth.audit("gate_link", u["username"], auth.client_ip(request), f"host={host}")
+                resp = RedirectResponse(f.get("rd") or "/", 303)
+                restzeit = max(60, int(s["expires_at"]) - int(__import__("time").time()))
+                auth._gate_set_cookie(resp, auth._GATE_LINK_COOKIE, verbindung, restzeit)
+                auth._gate_set_cookie(resp, auth._GATE_LINKFLOW_COOKIE, "", 0)
+                return resp
 
     # ---------- Eigenes Konto (Selbstverwaltung) ----------
     @r.post("/auth/password")

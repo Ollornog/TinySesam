@@ -9,7 +9,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 
 * ☐ **[M-1](M-1-api-stabil-1-0.md)** 1.0 — API stabil genug für PyPI — 14/14 erledigt
 * ☐ **[M-2](M-2-nach-1-0.md)** Nach 1.0 — das veröffentlichte Paket gepflegt halten — 6/6 erledigt
-* ☑ **[M-3](M-3-gate-vor-fremden-apps.md)** Gate vor fremden Apps — schnell, einmal anmelden, sauber abmelden — 7/7 erledigt
+* ☑ **[M-3](M-3-gate-vor-fremden-apps.md)** Gate vor fremden Apps — schnell, einmal anmelden, sauber abmelden — 8/8 erledigt
 
 ## Aufgaben
 
@@ -38,6 +38,7 @@ Konventionen: [README-KONVENTION.md](README-KONVENTION.md).
 * ☑ **[T-23](T-23-konfigpruefung-gate.md)** Konfigurationsprüfung für den Gate-Betrieb · M-3
 * ☑ **[T-24](T-24-gate-abnahme-messung.md)** Abnahme — Messung vorher/nachher und Abnahmetest je App · M-3
 * ☑ **[T-25](T-25-oidc-auf-der-buehne.md)** E2E-Bühne — die OIDC-Zeremonie scheitert am Identity Provider · M-2
+* ☑ **[T-26](T-26-gate-link-code-austausch.md)** Zentrales Gateway mit Code-Austausch — Sitzung bleibt auf dem Gateway, App-Hosts bekommen nur eine eigene Verbindung · M-3
 
 ## Fehler
 

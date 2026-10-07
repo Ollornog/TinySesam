@@ -67,9 +67,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 
 ```bash
-pip install "tinysesam==0.23.0"
+pip install "tinysesam==0.24.0"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all]==0.23.0"
+pip install "tinysesam[all]==0.24.0"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -78,7 +78,7 @@ carries a PEP 740 attestation of the commit it was built from. The same version 
 straight from the tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.23.0"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.0"
 ```
 
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
@@ -840,7 +840,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==0.23.0
+tinysesam[oidc]==0.24.0
 ```
 
 A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
@@ -850,14 +850,14 @@ The same pin via git, if you install that way — note that a **tag can be moved
 immutability pin the commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.23.0
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.0
 ```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.23.0/tinysesam-0.23.0-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.24.0/tinysesam-0.24.0-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -865,7 +865,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.23.0/tiny
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.23.0
+ghcr.io/ollornog/tinysesam:v0.24.0
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -876,9 +876,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.23.0 --owner Ollornog
-gh attestation verify tinysesam-0.23.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.23.0 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.0 --owner Ollornog
+gh attestation verify tinysesam-0.24.0-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.0 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
@@ -1252,6 +1252,15 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` re
 method. Background requests (XHR, scripts) still go to the sign-in page: they could not show the
 provider's page, and each would start an OIDC flow of its own.
 
+### One gateway for many apps, without a shared session cookie (T-26)
+
+With `gate_link_enabled=True` (gateway: `TINYSESAM_GATE_LINK=1`) the session stays on the gateway's host
+(`base_url`, no `cookie_domain`). An app host gets, through a code exchange, only a connection cookie of its
+own that is valid for that host alone: `/.tinysesam/start` (app host) → `/auth/gate/authorize` (gateway,
+sign-in if needed) → `/.tinysesam/callback` (app host, one-time code bound to the browser). No app ever sees
+the session that would get you into the others. Signing out “everywhere” at an app ends the session at the
+gateway and with it every connection.
+
 ### Public paths: share links (T-20)
 
 With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
@@ -1413,7 +1422,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**67 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**68 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

@@ -2,6 +2,30 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.24.0] — 2026-10-07
+
+**Kein Bruch** der öffentlichen API — eine Erweiterung: ein zentrales Gateway für viele Apps, ohne dass die
+Sitzung je eine App erreicht.
+
+**Was beim Update auffällt:**
+
+- **Schema 14:** Der erste Start legt die Tabelle `gate_link` an. Eine ältere Fassung öffnet die Datei mit der
+  Warnung „neuere Schema-Version“ und lässt die Tabelle liegen.
+- Ohne `gate_link_enabled` ändert sich nichts.
+
+### Hinzugefügt — Zentrales Gateway mit Code-Austausch (T-26)
+
+- **`gate_link_enabled`** (Gateway: `TINYSESAM_GATE_LINK=1`): Ein TinySesam schützt viele App-Hosts, ohne dass
+  das Sitzungs-Cookie auf der Elterndomain liegt. Ein App-Host bekommt über `/.tinysesam/start` →
+  `/auth/gate/authorize` → `/.tinysesam/callback` nur ein eigenes Verbindungs-Cookie (`__Host-tinysesam_link`),
+  das ausschliesslich für ihn gilt. Der Einmal-Code gilt 120 s, genau einmal, nur für seinen Host und nur in
+  dem Browser, der den Ablauf begann (Bindungs-Cookie). `rd` nimmt nur Pfade des App-Hosts.
+- `/auth/forward`, Abmelden (`/.tinysesam/logout`, `after-logout`) und „Weiter als …“ verstehen die
+  Verbindung; Abmelden „überall“ an einer App beendet die Sitzung beim Gateway. „Nur hier abmelden“ löst die
+  Verbindung und lässt den nächsten Austausch über „Weiter als …“ laufen.
+- Konfigurationsprüfung: nicht zusammen mit `cookie_domain`, nicht ohne Gate-Token und `base_url`.
+- **Schema 14:** Tabelle `gate_link` (additiv).
+
 ## [0.23.0] — 2026-10-07
 
 **Kein Bruch** der öffentlichen API — nur Erweiterungen (`tests/api_surface.json`). Neu ist das Gate vor
