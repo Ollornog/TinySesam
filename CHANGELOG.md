@@ -99,6 +99,10 @@ Host (kein Token entstünde); `forward_apps` ohne Forward-Auth; `forward_login="
 
 ### Geändert — CI und Release (für Entwickler; am Paket ändert sich nichts)
 
+- E2E-Bühne: OIDC wieder grün (T-25). Das Testkonto gehört beim Provider jetzt einer Gruppe, die nur für den
+  Client der Bühne freigegeben ist. Auf einer frisch gebauten Bühne laufen alle drei Wege grün; ohne die
+  Freigabe wird OIDC rot.
+
 - `tests/test_vorbuchung_schwebe.py` wartet nicht mehr eine feste Zeit, bis die parallelen Anmeldungen
   im hängenden Verzeichnis angekommen sind, sondern auf den Zustand selbst (T-18). Die Suite war einmal
   unter Last rot, die Ursache vermutlich genau diese Wartestellen.

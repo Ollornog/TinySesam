@@ -2,7 +2,7 @@
 id: T-25
 type: Task
 title: E2E-Bühne — die OIDC-Zeremonie scheitert am Identity Provider
-status: offen
+status: erledigt
 milestone: M-2
 tags: [e2e, oidc, stage]
 created: 2026-10-03
@@ -31,3 +31,12 @@ bzw. freigegebene Gruppe des Clients), nicht in der Bühne.
 - Die Gegenprobe hält: Ohne die Freigabe wird OIDC rot und nicht stillschweigend übersprungen.
 
 Verwandt: [T-14](T-14-mehrere-oidc-clients.md) — die Freigabe je App liegt beim Identity Provider.
+
+## Erledigt 2026-10-07
+
+- Beim Provider eine eigene Testgruppe angelegt (PO-Freigabe 2026-10-07). Mitglied ist nur das Testkonto,
+  freigegeben nur für den OIDC-Client der Bühne. Die übrigen Gruppen und Clients sind unverändert.
+- Lauf auf einer **frisch gebauten** Bühne (Stand `main` nach T-18): `passkey: grün · saml: grün · oidc: grün`,
+  OIDC angemeldet als das Testkonto.
+- Gegenprobe: Testkonto aus der Gruppe genommen, derselbe Lauf → `oidc: ROT` („You are not allowed to access
+  this service“), Exit 1 — rot, nicht übersprungen. Danach Mitgliedschaft wiederhergestellt, Bühne abgebaut.
