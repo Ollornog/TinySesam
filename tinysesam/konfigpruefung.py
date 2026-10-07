@@ -624,7 +624,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _offene_tore(config, warnungen)
     _gruppen_scope(config, warnungen)
     _kombinationen(config, fehler, warnungen)
-    _gate(config, fehler)
+    _gate(config, fehler, warnungen)
     _forward_apps(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
@@ -968,6 +968,18 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
         if vertraut and str(host).strip().lower() not in vertraut:
             warnungen.append(f"{wo} steht nicht in trusted_redirect_hosts — für diesen Host gibt es "
                              "keine Rückleitung, die Einstellung greift nie.")
+    if apps and not _an(config, "forward_auth_enabled"):
+        warnungen.append("forward_apps ist gesetzt, forward_auth_enabled aber False — die Einstellungen "
+                         "je Anwendung liest nur die Forward-Auth.")
+    # „Überall abmelden" ohne den Provider, vor einem Gate, das direkt zum Provider schickt: Der
+    # nächste Seitenaufruf meldet lautlos wieder an — das Abmelden wirkt wie ein Neuladen.
+    abmeldungen = [abmelden] + [str(e.get("logout")) for e in apps.values() if isinstance(e, dict) and e.get("logout")]
+    if (direkt and _an(config, "oidc_enabled") and not _an(config, "oidc_rp_logout")
+            and any(a in ("all", "ask") for a in abmeldungen)):
+        warnungen.append(
+            "forward_login='direct' und Abmelden („all“/„ask“), aber oidc_rp_logout=False: Die Sitzung "
+            "beim Provider bleibt, und der nächste Seitenaufruf meldet ohne Zutun wieder an. "
+            "oidc_rp_logout=True setzen (oidc_gateway() tut das).")
     if direkt and _an(config, "forward_auth_enabled"):
         try:
             methoden = list(config.enabled_methods())
@@ -980,7 +992,7 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
                 "gäbe es für die übrigen Methoden keinen Weg auf die Login-Seite.")
 
 
-def _gate(config, fehler: list) -> None:
+def _gate(config, fehler: list, warnungen: list) -> None:
     """Gate-Token (ADR-9, T-19): nur als Teil der Forward-Auth, nur mit einem Cookie, das der
     Browser ausschliesslich dem Host der Anwendung zurückgibt."""
     if not _an(config, "gate_token_enabled"):
@@ -1002,6 +1014,20 @@ def _gate(config, fehler: list) -> None:
             "das Cookie an den Host der Anwendung (der Browser nimmt es nur ohne Domain-Angabe an), "
             "und tinysesam_ sorgt dafür, dass die Proxy-Vorlagen es vor der Anwendung "
             "entfernen.")
+    ttl = _ganzzahl(config, "gate_token_ttl_sec", None)
+    if ttl is not None and 900 < ttl <= 3600:
+        warnungen.append(
+            f"gate_token_ttl_sec={ttl}: So lange wirkt am Proxy weder ein Abmelden in einer anderen "
+            "Anwendung noch eine Sperre oder eine beim Provider entzogene Freigabe. Bis 300 s ist "
+            "der Unterschied zur Prüfung je Anfrage kaum zu spüren; über 15 Minuten ist es ein "
+            "Widerrufsverzug, den man bewusst wollen sollte.")
+    hosts = [h for h in (getattr(config, "trusted_redirect_hosts", None) or []) if h] + \
+            [h for h in (getattr(config, "oidc_clients", None) or {}) if h]
+    if not hosts and not str(getattr(config, "base_url", "") or "").strip():
+        warnungen.append(
+            "gate_token_enabled=True, aber kein geschützter Host: weder trusted_redirect_hosts noch "
+            "oidc_clients noch base_url. Ein Gate-Token entsteht nur für diese Hosts — so für keinen, "
+            "und der Proxy fragt weiter bei jeder Anfrage.")
 
 
 def _kombinationen(config, fehler: list, warnungen: list) -> None:

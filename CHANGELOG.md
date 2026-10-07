@@ -4,6 +4,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Konfigurationsprüfung für den Gate-Betrieb (T-23)
+
+Warnungen, der Start gelingt: `gate_token_ttl_sec` über 900 (Widerrufsverzug); Gate ohne geschützten
+Host (kein Token entstünde); `forward_apps` ohne Forward-Auth; `forward_login="direct"` mit Abmelden
+`all`/`ask`, aber ohne `oidc_rp_logout` — der nächste Seitenaufruf meldete lautlos wieder an.
+
 ### Hinzugefügt — Share-Ausnahmen in den Caddy-Vorlagen (T-20)
 
 - Block `@share` in `Caddyfile` und `Caddyfile.gate`: öffentliche Pfade (Share-Links) ohne
