@@ -64,7 +64,11 @@ try:
 except SystemExit as e:
     assert "TINYSESAM_LANG" in str(e)
 del os.environ["TINYSESAM_LANG"]
-ok("TINYSESAM_LANG: Vorgabe en, de wählbar, Unbekanntes → Startfehler")
+os.environ["TINYSESAM_OIDC_NAME"] = "PocketID"
+assert gateway.config_from_env().oidc_name == "PocketID"
+del os.environ["TINYSESAM_OIDC_NAME"]
+assert gateway.config_from_env().oidc_name == "SSO"
+ok("TINYSESAM_LANG: Vorgabe en, de wählbar, Unbekanntes → Startfehler; TINYSESAM_OIDC_NAME benennt den Knopf")
 
 # Mit dem Code-Austausch ist host-only gewollt — die Warnung „ohne cookie_domain“ wäre ein Fehlalarm.
 import logging as _logging

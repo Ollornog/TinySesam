@@ -721,10 +721,11 @@ def _gate_logout(auth, ctx) -> str:
 
 
 def _gate_logged_out(auth, ctx) -> str:
-    """ctx: app_name. Nach dem Abmelden — mit einem Weg zurück, der eine NEUE Anmeldung beginnt."""
+    """ctx: app_name, again_url (optional, Vorgabe „/“ des Hosts). Nach dem Abmelden — mit einem Weg zurück,
+    der eine NEUE Anmeldung beginnt."""
     t = auth.t
     body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>"
-            f"<a class=btn2 href='/'>{_e(t('gate.login_again'))}</a>")
+            f"<a class=btn2 href='{_e(ctx.get('again_url') or '/')}'>{_e(t('gate.login_again'))}</a>")
     return _page(auth, t("gate.logged_out_title"), body)
 
 

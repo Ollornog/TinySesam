@@ -181,9 +181,12 @@ assert b5["gw"].get("/auth/me").status_code == 200, "cross-site darf die Sitzung
 r = b5["gw"].get("/auth/gate/logout?host=app.example.com", headers={"Sec-Fetch-Site": "same-site"}, follow_redirects=False)
 assert r.status_code == 303 and b5["gw"].get("/auth/me").status_code == 401, (r.status_code, r.headers.get("location"))
 r = b5["gw"].get("/auth/gate/logout?host=app.example.com", follow_redirects=False)
-assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/after-logout", r.headers.get("location")
+assert r.status_code == 303 and r.headers["location"] == "/auth/gate/logged-out?host=app.example.com", r.headers.get("location")
+r = b5["gw"].get("/auth/gate/logged-out?host=app.example.com")
+assert r.status_code == 200 and "href='https://app.example.com/'" in r.text, r.text[-400:]
+assert b5["gw"].get("/auth/gate/logged-out?host=evil.example.net").status_code == 400
 assert b5["gw"].get("/auth/gate/logout?host=evil.example.net").status_code == 400
-ok("überall abmelden ohne Verbindung → ans Gateway, dort endet die Sitzung (cross-site erst Rückfrage, keine Schleife)")
+ok("überall abmelden ohne Verbindung → ans Gateway, dort endet die Sitzung (cross-site erst Rückfrage, keine Schleife); ohne Sitzung „Abgemeldet“ beim Gateway mit Weg zur App")
 
 # ---------- Konfigurationsprüfung ----------
 try:
