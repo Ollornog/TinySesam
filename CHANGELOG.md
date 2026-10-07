@@ -2,14 +2,25 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.24.3] — 2026-10-08
+
+**Wer es braucht:** Betreiber des zentralen Gateways mit App-Hosts, die auch an ihm vorbei erreichbar sind (z. B. im
+VPN direkt). Kein API-Bruch, kein neues Schema.
+
+### Hinzugefügt
+
+- **`/auth/gate/logged-out?host=…`** beim Gateway: „Abgemeldet“ mit „Wieder anmelden“ zu genau dieser App. Für
+  Wege, auf denen der App-Host keinen TinySesam vor sich hat. Dort kann der Proxy der App `/.tinysesam/logout`
+  ans Gateway reichen und landet hier.
+- **`TINYSESAM_OIDC_NAME`** im Gateway: Beschriftung des Anmelde-Knopfs (Vorgabe „SSO“).
 
 ### Geändert
 
+- Abmelden am Gateway ohne Sitzung (`/auth/gate/logout`) führt jetzt auf diese Seite statt auf
+  `/.tinysesam/after-logout` des App-Hosts, den ein Weg am Gate vorbei nicht kennt.
 - **CI: jeder Job mit `timeout-minutes`** (gemessene Höchstdauer × ~3, z. B. `repeat` 30, `full` 15, `image` 30)
   und `apt-get` mit `Acquire::Retries=3` und `Acquire::http::Timeout=30`. Vorher galt GitHubs Vorgabe von 360 min,
   und ein hängender Ubuntu-Mirror blockierte PR #135. `tests/test_repo.py` verlangt die Grenze in allen 20 Jobs.
-  Kein Release nötig: Am Paket ändert sich nichts.
 
 ## [0.24.2] — 2026-10-07
 
@@ -28,6 +39,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - Fehlerseiten zeigen statt Starlettes englischem Standardtext („Not Found“) den Text der eingestellten Sprache,
   wo es einen gibt (`error.404`, `error.405`). Eigene Meldungen bleiben unverändert.
 
+## [0.24.1] — 2026-10-07
 
 **Wer es braucht:** alle, die 0.24.0 als zentrales Gateway (`gate_link_enabled`) betreiben. Kein API-Bruch,
 kein neues Schema.

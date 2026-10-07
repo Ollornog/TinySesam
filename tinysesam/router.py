@@ -1248,11 +1248,22 @@ def build_router(auth) -> APIRouter:
                     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                     return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/logout", 303)
                 if not auth._session_from_request(request):
-                    # Auch hier keine Sitzung: nichts mehr zu beenden. Zurück auf die Abmeldeseite der
-                    # App — NICHT in _gate_logout, das reichte ohne Sitzung wieder hierher (Schleife).
-                    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
-                    return RedirectResponse(f"{'http' if proto == 'http' else 'https'}://{h}/.tinysesam/after-logout", 303)
+                    # Auch hier keine Sitzung: nichts mehr zu beenden. Die Seite „Abgemeldet“ HIER zeigen —
+                    # nicht auf dem App-Host: Wer am Gate vorbeikommt (Mesh), erreicht dort keinen
+                    # TinySesam. Und NICHT in _gate_logout, das reichte ohne Sitzung wieder hierher (Schleife).
+                    return RedirectResponse(f"{auth.browser_path(request, '/auth/gate/logged-out')}?host={_q(h)}", 303)
                 return _gate_logout(request, h, "all", "/")
+
+            @r.get("/auth/gate/logged-out", response_class=HTMLResponse)
+            def gate_link_logged_out(request: Request, host: str = ""):
+                """Auf dem Gateway: „Abgemeldet“ für einen App-Host — mit „Wieder anmelden“ zu DIESER App.
+                Für Wege, auf denen der App-Host keinen TinySesam vor sich hat (Mesh am Gate vorbei)."""
+                h = str(host or "").strip().lower()
+                if h not in auth._gate_hosts():
+                    raise HTTPException(400, auth.t("api.invalid", grund="host"))
+                proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                return auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(h)["name"],
+                                        again_url=f"{'http' if proto == 'http' else 'https'}://{h}/")
 
             @r.get("/.tinysesam/callback")
             def gate_link_callback(request: Request, code: str = ""):
