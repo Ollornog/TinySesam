@@ -648,7 +648,7 @@ Wert: `150`
 
 Die Seiten, die sich ersetzen lassen — dieselbe Liste, die `render_page()` bedient.
 
-Werte: `account`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
+Werte: `account`, `error`, `forgot`, `gate_logged_out`, `gate_logout`, `gateway_home`, `login`, `logout`, `magic_confirm`, `magic_invalid`, `magic_request`, `pin`, `reauth`, `register`, `reset`, `resource_unlock`, `totp`, `totp_setup`
 
 ### `TOKEN_PATHS` — Konstante
 
