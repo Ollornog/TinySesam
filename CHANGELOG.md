@@ -4,6 +4,28 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Login-Modi vor dem Gate (T-21)
+
+- **`forward_login`**: `"page"` (Vorgabe der Bibliothek) schickt einen nicht Angemeldeten auf die
+  Login-Seite, `"direct"` einen Seitenaufruf gleich zum Identity Provider und zurück zur
+  aufgerufenen Adresse. **`oidc_gateway()` setzt `"direct"`** (PO-Entscheid 2026-10-03). Erkannt wird
+  ein Seitenaufruf an `Sec-Fetch-Mode: navigate` (sonst `Accept: text/html`); Hintergrund-Anfragen
+  gehen weiter zur Login-Seite und beginnen so keinen eigenen OIDC-Flow. `direct` verlangt OIDC als
+  einzige Methode, sonst bricht der Start ab.
+- **`forward_apps`** je Host: `name` (Login-Seite „Anmelden bei Wiki“) und `login` (überschreibt
+  `forward_login`). Ein unbekannter Schlüssel oder Wert bricht den Start ab. Gateway:
+  `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON).
+
+### Behoben
+
+- **B-2 — Endlosschleife bei mehreren OIDC-Clients.** War jemand angemeldet, hatte für DIESE
+  Anwendung aber keine (gültige) Freigabe, schickte `/auth/forward` ihn zur Login-Seite, und die schickte
+  ihn — angemeldet — zurück zur Anwendung. Dazu verlor der OIDC-Knopf der Login-Seite den Parameter
+  `app=`, die Runde lief über den Vorgabe-Client, und die Freigabe für die Anwendung entstand nie. Jetzt:
+  Die Nachprüfung führt direkt nach `/auth/oidc/start?app=…`, die Login-Seite schickt eine Sitzung ohne
+  Freigabe zum Provider statt zurück, der Knopf trägt `app=`, und `/auth/oidc/start` ohne `app` nimmt den
+  Client zum Host von `next`.
+
 ### Hinzugefügt — Gate-Token: der Proxy prüft selbst ([ADR-9](backlog/ADR-9-gate-token-am-proxy.md), T-19)
 
 - **`gate_token_enabled`** (Vorgabe aus; Gateway: `TINYSESAM_GATE=1`): Eine erfolgreiche Prüfung an

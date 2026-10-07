@@ -289,7 +289,7 @@
     "forward_login_url": {
       "bis": "1.0",
       "seit": "0.22.0",
-      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None) -> 'str'",
+      "sig": "(orig_url: 'str', request: 'Optional[Request]' = None, direkt: 'bool' = False) -> 'str'",
       "stufe": "C",
       "ziel": "_forward_login_url"
     },
@@ -1084,12 +1084,20 @@
       "feld": "bool = False",
       "stufe": "A"
     },
+    "forward_apps": {
+      "feld": "dict = {}",
+      "stufe": "A"
+    },
     "forward_auth_enabled": {
       "feld": "bool = False",
       "stufe": "A"
     },
     "forward_headers": {
       "feld": "dict = {}",
+      "stufe": "A"
+    },
+    "forward_login": {
+      "feld": "str = 'page'",
       "stufe": "A"
     },
     "gate_cookie_name": {

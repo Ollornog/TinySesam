@@ -625,6 +625,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     _gruppen_scope(config, warnungen)
     _kombinationen(config, fehler, warnungen)
     _gate(config, fehler)
+    _forward_apps(config, fehler, warnungen)
 
     hat_mailer = bool(str(getattr(config, "smtp_host", "") or "").strip())
     # --- SMTP-TLS (B3-1, Angriff A4): Seit das Zertifikat geprüft wird, scheitert ein falscher
@@ -927,6 +928,50 @@ def _gruppen_scope(config, warnungen: list) -> None:
             "in oidc_scopes aufnehmen (Gateway: TINYSESAM_OIDC_SCOPES; je Anwendung `scopes` im "
             "Eintrag von oidc_clients). Liefert der Provider den Claim ohne eigenen Scope (Mapper, "
             "etwa bei Keycloak), ist diese Warnung gegenstandslos.")
+
+
+FORWARD_APP_SCHLUESSEL = ("name", "login")
+FORWARD_LOGIN = ("page", "direct")
+
+
+def _forward_apps(config, fehler: list, warnungen: list) -> None:
+    """Login-Modus und Einstellungen je Anwendung vor dem Gate (T-21)."""
+    modus = getattr(config, "forward_login", "page")
+    if modus not in FORWARD_LOGIN:
+        fehler.append(f"forward_login={modus!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
+    apps = getattr(config, "forward_apps", None) or {}
+    if not isinstance(apps, dict):
+        fehler.append("forward_apps muss ein Dict sein: {\"app.example.com\": {\"name\": …, \"login\": …}}.")
+        return
+    direkt = [("forward_login", modus)] if modus == "direct" else []
+    vertraut = {str(h).strip().lower() for h in (getattr(config, "trusted_redirect_hosts", None) or [])}
+    for host, e in apps.items():
+        wo = f"forward_apps[{host!r}]"
+        if not isinstance(e, dict):
+            fehler.append(f"{wo} muss ein Dict sein.")
+            continue
+        fremd = sorted(set(e) - set(FORWARD_APP_SCHLUESSEL))
+        if fremd:
+            # Ein vertippter Schlüssel (`logn`) gälte sonst still nicht — die Anwendung bekäme
+            # den globalen Modus, und niemand wüsste, warum.
+            fehler.append(f"{wo} kennt {', '.join(fremd)} nicht (erlaubt: {', '.join(FORWARD_APP_SCHLUESSEL)}).")
+        if "login" in e and e["login"] not in FORWARD_LOGIN:
+            fehler.append(f"{wo}['login']={e['login']!r}: erlaubt sind {', '.join(FORWARD_LOGIN)}.")
+        if e.get("login") == "direct":
+            direkt.append((wo, "direct"))
+        if vertraut and str(host).strip().lower() not in vertraut:
+            warnungen.append(f"{wo} steht nicht in trusted_redirect_hosts — für diesen Host gibt es "
+                             "keine Rückleitung, die Einstellung greift nie.")
+    if direkt and _an(config, "forward_auth_enabled"):
+        try:
+            methoden = list(config.enabled_methods())
+        except Exception:
+            methoden = []
+        if methoden != ["oidc"]:
+            fehler.append(
+                f"{direkt[0][0]}='direct' leitet direkt zum Identity Provider — das geht nur, wenn OIDC "
+                f"die einzige Anmeldemethode ist (eingeschaltet: {', '.join(methoden) or 'keine'}). Sonst "
+                "gäbe es für die übrigen Methoden keinen Weg auf die Login-Seite.")
 
 
 def _gate(config, fehler: list) -> None:

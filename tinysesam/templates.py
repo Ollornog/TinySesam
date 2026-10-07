@@ -11,6 +11,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from urllib.parse import quote as _quote
 
 from .theme import TOKENS
 
@@ -268,7 +269,10 @@ def _login(auth, ctx) -> str:
     magic = ""
     if "magic" in methods:
         magic = f"<a class=btn2 href='__TS_P__/auth/magic/request?next={_e(next_)}'>{_e(t('login.magic'))}</a>"
-    oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_e(next_)}'>{_e(cfg.oidc_name)}</a>"
+    # `app` (T-14) wandert mit: Ohne die Angabe begänne der Knopf die Runde mit dem Vorgabe-Client,
+    # und die Freigabe für DIESE Anwendung entstünde nie (B-2).
+    app_q = f"&app={_e(_quote(ctx['app']))}" if ctx.get("app") else ""
+    oidc = (f"<a class=btn2 href='__TS_P__/auth/oidc/start?next={_e(next_)}{app_q}'>{_e(cfg.oidc_name)}</a>"
             if "oidc" in methods else "")
     saml = (f"<a class=btn2 href='__TS_P__/auth/saml/login?next={_e(next_)}'>{_e(cfg.saml_name)}</a>"
             if "saml" in methods else "")
@@ -282,7 +286,9 @@ def _login(auth, ctx) -> str:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
-    body = f"<h1>{_e(cfg.rp_name)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
+    # Vor einer Anwendung (forward_apps[host].name, T-21) sagt die Seite, wofür man sich anmeldet.
+    titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
+    body = f"<h1>{_e(titel)}</h1>{warn}{err}{pw}{pin}{sep}{others}{signup}{js}"
     return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx))
 
 

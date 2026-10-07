@@ -118,6 +118,15 @@ class TinySesamConfig:
     # trusted_redirect_hosts bzw. oidc_clients. Vorlage: deploy/forward-auth/Caddyfile.gate.
     gate_token_enabled: bool = False
     gate_token_ttl_sec: int = 300          # Laufzeit = Widerrufsverzug am Proxy; 30–3600
+    # Wie das Gate einen nicht Angemeldeten anmeldet (T-21): "page" = die Login-Seite von TinySesam
+    # (mit dem Namen der Anwendung aus forward_apps), "direct" = beim Seitenaufruf sofort zum
+    # Identity Provider und zurück zur aufgerufenen Adresse. "direct" nur, wenn OIDC die einzige
+    # Anmeldemethode ist; Hintergrund-Anfragen (XHR, Assets) gehen auch dann zur Login-Seite —
+    # sonst begänne jede von ihnen einen eigenen Flow. oidc_gateway() setzt "direct".
+    forward_login: str = "page"
+    # Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct"}}.
+    # name = Anzeigename auf der Login-Seite, login überschreibt forward_login für diesen Host.
+    forward_apps: dict = field(default_factory=dict)
     gate_cookie_name: str = "__Host-tinysesam_gate"  # Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
@@ -627,6 +636,10 @@ class TinySesamConfig:
             trusted_redirect_hosts=list(trusted_redirect_hosts or []),
             session_ttl_hours=session_ttl_hours, https_mode=https_mode,
             trusted_proxies=list(trusted_proxies or ["127.0.0.1/32", "::1/128"]),
+            # Vor fremden Anwendungen meldet das Gate unsichtbar an (PO-Entscheid 2026-10-03):
+            # Seitenaufruf → Provider → zurück. Ein Fenster „Bei TinySesam anmelden" mit einem
+            # einzigen Knopf wäre nur ein Klick mehr.
+            forward_login="direct",
         )
         base.update(overrides)
         # `base` ist ein Dict gemischter Werte; die Feldtypen prüft die Dataclass zur Laufzeit.
