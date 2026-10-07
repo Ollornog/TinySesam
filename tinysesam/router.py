@@ -971,7 +971,13 @@ def build_router(auth) -> APIRouter:
                                f"url={security.url_fuer_log(orig)} fehlt={';'.join(','.join(g) for g in fehlend)}")
                     return Response(status_code=403, headers={"X-TinySesam-Reason": "role"})
                 # Welche Header das sind, steuert config.forward_headers (Vorgabe: Remote-*).
-                return Response(status_code=200, headers=auth._forward_response_headers(u))
+                kopf = auth._forward_response_headers(u)
+                # Gate-Token (ADR-9): Der Proxy legt es als Cookie auf den Host der Anwendung und
+                # prüft es danach selbst — bis es abläuft, kommt keine Anfrage mehr hier an.
+                gate = auth._gate_cookie(request, u, orig, _required_roles(request))
+                if gate:
+                    kopf["X-TinySesam-Gate-Cookie"] = gate
+                return Response(status_code=200, headers=kopf)
             login = auth._forward_login_url(orig, request)
             _forward_abweisung_protokollieren(request, orig)
             # Caddys forward_auth-Shortcut reicht nur die 401 durch → handle_response/redir nötig

@@ -2,7 +2,7 @@
 id: ADR-9
 type: Decision
 title: Gate vor fremden Apps — der Proxy prüft ein kurzlebiges Gate-Token selbst, TinySesam nur beim Ausstellen
-status: offen
+status: erledigt
 tags: [architektur, forward-auth, gateway, oidc, sso, logout]
 created: 2026-10-03
 ---
@@ -34,20 +34,29 @@ Zweites Ärgernis: Gate und App verlangen je einen eigenen Login.
 **Option 3.**
 
 - **Gate-Token:** JWT, Laufzeit 5–10 min (einstellbar), `aud` = Host der Anwendung, `iss` = Gateway.
-  Asymmetrisch signiert, der Proxy kennt nur den öffentlichen Schlüssel (JWKS). TinySesam prüft beim
+  Ed25519 (`EdDSA`), der Proxy kennt nur den öffentlichen Schlüssel. Abgeleitet aus dem Grundschlüssel
+  der Installation (HKDF), kein zweites Geheimnis; `tinysesam gate-key` gibt den öffentlichen Teil aus. TinySesam prüft beim
   **Ausstellen** alles, was heute `/auth/forward` prüft (Sitzung, Freigabe je App, Rollen) — das Token
   ist dessen zwischengespeichertes Ergebnis.
 - **Cookie:** host-only auf dem App-Host, `HttpOnly`, `Secure`, `SameSite=Lax`, eigener Name.
   Der Proxy **entfernt es aus dem Request**, bevor er ihn an die App reicht.
-- **Die TinySesam-Sitzung ist für die geschützte App unsichtbar.** Sie lebt host-only auf dem Host des
-  Gateways, nie auf der Elterndomain — sonst bekäme jede nicht vertrauenswürdige App das Master-Cookie.
-  Ausstellen deshalb als kleiner Code-Austausch: App-Host `/.sesam/refresh` → Gateway (Sitzung da? sonst
-  Login) → Einmal-Code → App-Host `/.sesam/callback` → Gate-Cookie. Der Proxy leitet `/.sesam/*` an
-  TinySesam.
-- **307, nicht 302**, damit POST/`fetch()` mit abgelaufenem Token Methode und Body behalten.
-- **Proxy-Seite:** Caddy mit dem Plugin `ggicci/caddy-jwt` (`from_cookies`, `audience_whitelist`,
-  `issuer_whitelist`; laut README HS256/RS256 — EdDSA vor der Wahl prüfen). Ungültig → 401 →
-  `handle_errors` → 307 auf `/.sesam/refresh`. nginx/Traefik-Gegenstücke als Beispiele, nicht Pflicht.
+- **Ausstellen auf dem Rückweg, nicht über eigene Routen** (Stand 2026-10-07, mit T-19 gebaut): Fehlt
+  das Token oder ist es ungültig, fällt der Proxy auf die bestehende Forward-Auth zurück
+  (`handle_errors 401` → `/auth/forward`). Deren 200 trägt das neue Token im Header
+  `X-TinySesam-Gate-Cookie`, und der Proxy hängt es als `Set-Cookie` an die Antwort der Anwendung.
+  Die Sitzung sieht TinySesam dabei wie bisher (Cookie über `cookie_domain`, das die Vorlagen vor der
+  Anwendung entfernen, B-20).
+  *Bis 2026-10-07 stand hier ein eigener Code-Austausch (`/.sesam/refresh` → Einmal-Code →
+  `/.sesam/callback`) mit 307-Umleitungen.* Er hätte die Sitzung nur auf dem Gateway-Host gehalten,
+  aber eine zweite Anmelde-Strecke neben der bestehenden gebraucht, und ein POST mit abgelaufenem Token
+  wäre über mehrere Sprünge doch zum GET geworden. Der Rückweg über `/auth/forward` reicht die Anfrage
+  samt Methode und Body an die Anwendung weiter — gemessen mit Caddy 2.11.7 (`tests/test_gate_caddy.py`).
+  Die Frage, ob das Sitzungs-Cookie auf der Elterndomain liegen darf, ist damit nicht neu, sondern die
+  der bestehenden Forward-Auth.
+- **Proxy-Seite:** Caddy mit dem Plugin `ggicci/caddy-jwt` (v1.4.0), `sign_alg EdDSA` mit dem
+  öffentlichen Schlüssel als Base64 — dann ignoriert das Plugin das `alg` im Kopf (im Quelltext
+  nachgesehen). Vorlage `deploy/forward-auth/Caddyfile.gate`. nginx/Traefik-Gegenstücke gibt es
+  noch nicht.
 - **Login einmal, beim Provider:** Gate und App sind je ein eigener OIDC-Client beim selben Provider,
   beide auf dieselbe Gruppe beschränkt. Kein geteilter Client: dessen Geheimnis läge sonst in der
   fremden App. Die App meldet sich danach lautlos an (Provider-Sitzung besteht).

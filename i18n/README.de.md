@@ -1239,6 +1239,25 @@ keine Ein-Routen-App.
 Programmatisch: `TinySesamConfig.oidc_gateway(issuer=…, client_id=…, client_secret=…, base_url=…)`.
 Fertiges [`deploy/forward-auth/docker-compose.yml`](../deploy/forward-auth/) (Gateway + Caddy) liegt bei.
 
+### Gate-Token: der Proxy prüft selbst (ADR-9)
+
+Vor einer fremden Anwendung fragt der Proxy ohne Weiteres für **jede** Anfrage `/auth/forward` —
+auch für jedes Skript, Stylesheet und Icon. Mit `gate_token_enabled=True` (im Gateway
+`TINYSESAM_GATE=1`) liefert eine erfolgreiche Prüfung zusätzlich ein kurzlebiges, mit Ed25519
+signiertes Token. Der Proxy legt es als Cookie `__Host-tinysesam_gate` auf den Host der Anwendung
+und prüft es danach **selbst**; TinySesam wird erst wieder gefragt, wenn es fehlt oder abläuft.
+Der Rückweg ist die bestehende Forward-Auth, eine Anfrage samt Body geht also nicht verloren.
+
+- **Proxy:** Caddy mit dem Plugin [caddy-jwt](https://github.com/ggicci/caddy-jwt) — Vorlage
+  [`deploy/forward-auth/Caddyfile.gate`](../deploy/forward-auth/Caddyfile.gate), Bau
+  [`deploy/forward-auth/caddy-gate/Dockerfile`](../deploy/forward-auth/caddy-gate/Dockerfile).
+- **Schlüssel:** abgeleitet aus dem Grundschlüssel der Installation (`TINYSESAM_SECRETS_KEY`) —
+  kein zweites Geheimnis. Den öffentlichen Teil für den Proxy gibt `tinysesam gate-key --db …` aus.
+- **Rollen:** Verlangt der Proxy Rollen (`X-TinySesam-Roles`), stehen sie in der Zielgruppe des
+  Tokens (`app.example.com|roles=admin`); ein Token ohne Rollenangabe gilt dort nicht.
+- **Preis:** Abmelden, Sperren oder eine entzogene Freigabe greifen am Proxy erst, wenn das Token
+  abläuft — `gate_token_ttl_sec`, Vorgabe 300 Sekunden.
+
 ## Öffentliche API: drei Stufen
 
 Nicht alles ohne führenden Unterstrich ist eine Zusage. Seit 0.22.0 hat jeder öffentliche Name
@@ -1311,6 +1330,8 @@ Bausteine für Seiten, die du selbst baust — Signaturen und Beschreibungen in
   `admin_claim_token`, `audit`, `FEDERATED_SOURCES`, `NAME_BINDING_REFUSALS`.
 - **Mail- und Token-Abläufe:** `mail_configured`, `send_mail`, `create_magic_token` → `magic_url`
   → `peek_magic` / `redeem_magic`, `TOKEN_PATHS`, `require_public_base`.
+- **Proxy-Konfiguration für das Gate-Token:** `gate_public_key` (`sign_key` für caddy-jwt, wie
+  `tinysesam gate-key`), `gate_issuer` (`issuer_whitelist`).
 - **Eigene Routen und Erweiterungspunkte:** `client_ip` (die echte Client-Adresse hinter
   `trusted_proxies`), `json_body` (JSON-Body mit CSRF-Prüfung für Cookie-Clients), `browser_path` (Links
   auf TinySesam-Seiten unter einem Montage-Präfix), `flow_cookie_name`, `t` (übersetzter Text in
@@ -1377,7 +1398,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**62 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**64 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

@@ -72,8 +72,10 @@ updates:
       prefix: "deploy"
 
   # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
+  # Dazu das Caddy mit caddy-jwt für die Gate-Vorlage (ADR-9). Dessen Plugin-Version (ein Go-Modul,
+  # ARG CADDY_JWT) sieht Dependabot nicht — die hebt man von Hand, der CI-Job gate-caddy prüft sie.
   - package-ecosystem: docker
-    directory: /
+    directories: ["/", "/deploy/forward-auth/caddy-gate"]
     # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
     cooldown:
       default-days: 3

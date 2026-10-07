@@ -110,6 +110,15 @@ class TinySesamConfig:
     #   {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"}
     # Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders).
     forward_headers: dict = field(default_factory=dict)
+    # Gate-Token (ADR-9, T-19): Eine erfolgreiche Forward-Auth-Prüfung liefert zusätzlich ein
+    # kurzlebiges, signiertes Token (Ed25519) im Header X-TinySesam-Gate-Cookie. Der Proxy setzt
+    # es als Cookie auf dem Host der Anwendung und prüft es danach selbst (Caddy + caddy-jwt) —
+    # TinySesam wird erst wieder gefragt, wenn es fehlt oder abgelaufen ist. Nur mit
+    # forward_auth_enabled, nur für Sitzungen (nicht für API-Keys) und nur für Hosts aus
+    # trusted_redirect_hosts bzw. oidc_clients. Vorlage: deploy/forward-auth/Caddyfile.gate.
+    gate_token_enabled: bool = False
+    gate_token_ttl_sec: int = 300          # Laufzeit = Widerrufsverzug am Proxy; 30–3600
+    gate_cookie_name: str = "__Host-tinysesam_gate"  # Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     # Womit meldet man sich an? "username" | "email" | "both" (beides im selben Feld erlaubt)

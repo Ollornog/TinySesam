@@ -71,6 +71,9 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `account_enabled` | `bool` | `True` | eingebaute Selbstverwaltungs-Seite /auth/account (überschreibbar) |
 | `forward_auth_enabled` | `bool` | `False` | /auth/forward + /auth/verify für Reverse-Proxy (Caddy/nginx/Traefik) |
 | `forward_headers` | `dict` | `dict` | Welche Header die Forward-Auth-Antwort setzt. Leer = der Authelia-übliche Satz Remote-User/-Name/-Email/-Groups und Remote-Id (die Konto-ID — stabil über Umbenennung und Mailwechsel, seit 2026-09-25). Sonst **Feld → Headername** (oder Liste von Namen); was hier nicht steht, wird NICHT gesetzt. Felder: user · name · email · groups · id. Der Proxy muss JEDEN gesetzten Header selbst setzen (überschreiben) — sonst reicht er einen vom Browser mitgeschickten gleichnamigen durch (deploy/forward-auth/*). {"user": "X-WEBAUTH-USER"}                     → Grafana-Stil, und sonst nichts {"user": ["Remote-User", "X-Auth-Request-User"], "groups": "X-Auth-Request-Groups"} Beim Traefik-/Caddy-Beispiel die durchgereichten Header mitziehen (authResponseHeaders). |
+| `gate_token_enabled` | `bool` | `False` | Gate-Token (ADR-9, T-19): Eine erfolgreiche Forward-Auth-Prüfung liefert zusätzlich ein kurzlebiges, signiertes Token (Ed25519) im Header X-TinySesam-Gate-Cookie. Der Proxy setzt es als Cookie auf dem Host der Anwendung und prüft es danach selbst (Caddy + caddy-jwt) — TinySesam wird erst wieder gefragt, wenn es fehlt oder abgelaufen ist. Nur mit forward_auth_enabled, nur für Sitzungen (nicht für API-Keys) und nur für Hosts aus trusted_redirect_hosts bzw. oidc_clients. Vorlage: deploy/forward-auth/Caddyfile.gate. |
+| `gate_token_ttl_sec` | `int` | `300` | Laufzeit = Widerrufsverzug am Proxy; 30–3600 |
+| `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) |
 | `login_identifier` | `str` | `"both"` | Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
 
@@ -300,4 +303,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-159 Felder, erzeugt aus `tinysesam/config.py`.
+162 Felder, erzeugt aus `tinysesam/config.py`.
