@@ -2,7 +2,16 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
-## [Unveröffentlicht]
+## [0.24.0] — 2026-10-07
+
+**Kein Bruch** der öffentlichen API — eine Erweiterung: ein zentrales Gateway für viele Apps, ohne dass die
+Sitzung je eine App erreicht.
+
+**Was beim Update auffällt:**
+
+- **Schema 14:** Der erste Start legt die Tabelle `gate_link` an. Eine ältere Fassung öffnet die Datei mit der
+  Warnung „neuere Schema-Version“ und lässt die Tabelle liegen.
+- Ohne `gate_link_enabled` ändert sich nichts.
 
 ### Hinzugefügt — Zentrales Gateway mit Code-Austausch (T-26)
 
