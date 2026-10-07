@@ -1252,6 +1252,13 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` re
 method. Background requests (XHR, scripts) still go to the sign-in page: they could not show the
 provider's page, and each would start an OIDC flow of its own.
 
+### Public paths: share links (T-20)
+
+With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
+and without an identity. The raw path is checked; the rule rejects `..`, `;`, backslash, NUL and
+their encoded forms (Tomcat and Spring read `/s/..;/admin` as `/admin`). Off by default. How to
+measure an app's paths: `docs/BETRIEB.md`.
+
 ### Signing out at the app: here only or everywhere (T-22)
 
 The app's sign-out link points to `https://app.example.com/.tinysesam/logout` — the proxy hands

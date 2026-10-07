@@ -1273,6 +1273,13 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` ve
 Methode. Hintergrund-Anfragen (XHR, Skripte) gehen auch dann zur Login-Seite: Eine Umleitung zum
 Provider könnten sie nicht anzeigen, und jede begänne einen eigenen OIDC-Flow.
 
+### Öffentliche Pfade: Share-Links (T-20)
+
+Beide Caddy-Vorlagen lassen mit `TS_SHARE_PRAEFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
+durch, ohne Identität. Geprüft wird der rohe Pfad; `..`, `;`, Backslash, NUL und ihre kodierten Formen
+weist die Regel ab (`/s/..;/admin` lesen Tomcat und Spring als `/admin`). Von sich aus aus. Wie man die
+Pfade einer Anwendung nachmisst: `docs/BETRIEB.md`.
+
 ### Abmelden an der Anwendung: nur hier oder überall (T-22)
 
 Der Abmelde-Link der Anwendung zeigt auf `https://app.example.com/.tinysesam/logout` — der Proxy reicht

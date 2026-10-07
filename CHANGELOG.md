@@ -4,6 +4,16 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt — Share-Ausnahmen in den Caddy-Vorlagen (T-20)
+
+- Block `@share` in `Caddyfile` und `Caddyfile.gate`: öffentliche Pfade (Share-Links) ohne
+  Anmeldung, ohne Identität, ohne TinySesam-Cookies. Aus, bis `TS_SHARE_PRAEFIX` gesetzt ist.
+- Geprüft wird der **rohe** Pfad: Mit Caddys `path`-Matcher kam `/s/..;/admin` durch (Tomcat/Spring:
+  `/admin`), und `/x/../s/a` wurde als `/s/a` verglichen, aber roh weitergereicht. Die Regel weist `.`-
+  und `..`-Segmente, `;`, Backslash, NUL und ihre kodierten Formen ab; `tests/test_gate_caddy.py`
+  misst 16 solcher Pfade gegen Caddy.
+- Die normale Vorlage entfernt auf diesem Weg auch die `Remote-*`-Header des Browsers.
+
 ### Hinzugefügt — Abmelden an der Anwendung (T-22)
 
 - **`/.tinysesam/logout`** auf dem Host der Anwendung (beide Caddy-Vorlagen reichen `/.tinysesam/*` am

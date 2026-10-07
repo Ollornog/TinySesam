@@ -122,6 +122,10 @@ FORWARD["n"] = 0
 
 
 # ---------- Caddy mit der Vorlage aus dem Repo ----------
+#: Öffentliche Pfade für diesen Lauf (T-20) — wie ein Betreiber sie setzen würde.
+SHARE = "^/(s|public/share)/"
+
+
 def caddy_starten():
     """Caddy braucht einen Port, den es selbst bindet — ein gebundener Socket lässt sich nicht
     übergeben. Also einen freien suchen, freigeben und Caddy binden lassen; scheitert das (ein
@@ -140,6 +144,7 @@ def caddy_starten():
         with open(datei, "w", encoding="utf-8") as f:
             f.write(text)
         umg = {**os.environ, "TS_GATE_PUBKEY": auth.gate_public_key(), "TS_GATE_ISSUER": ISS,
+               "TS_SHARE_PRAEFIX": SHARE,
                "TS_AUTH_UPSTREAM": TS, "TS_APP_UPSTREAM": APP, "XDG_DATA_HOME": _tmp,
                "XDG_CONFIG_HOME": _tmp}
         # Popen gibt dem Kind eine eigene Kopie des Datei-Deskriptors — die des Elternprozesses
@@ -296,6 +301,43 @@ try:
     tc.post("/auth/gate/resume", data={"next": f"http://app.example.com:{PORT}/seite"}, follow_redirects=False)
     assert anfrage("/seite", sitzung)[0] == 200
     ok("„Weiter als …“ → die Anwendung lässt wieder durch")
+
+    # ---------- Share-Ausnahme (T-20): öffentlich nur der Präfix, ohne Pfad-Tricks ----------
+    def roh(pfad, kopf=None):
+        """Wie `anfrage`, aber der Pfad geht UNVERÄNDERT auf die Leitung (http.client normalisiert
+        nichts) — sonst prüfte der Test die Pfad-Tricks gar nicht."""
+        import http.client
+        v = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
+        v.putrequest("GET", pfad, skip_host=True)
+        v.putheader("Host", f"app.example.com:{PORT}")
+        for k, w in (kopf or {}).items():
+            v.putheader(k, w)
+        v.endheaders()
+        a = v.getresponse()
+        roh_text = a.read()
+        v.close()
+        try:
+            return a.status, json.loads(roh_text)
+        except ValueError:
+            return a.status, None
+
+    offen = ["/s/abc", "/s/abc/def.js", "/public/share/x", "/s/abc?x=../../admin", "/s/a.b..c"]
+    vorher = FORWARD["n"]
+    for pfad in offen:
+        st, a = roh(pfad, {"Remote-User": "admin", "Cookie": "tinysesam_session=GEHEIM; a=1"})
+        assert st == 200 and a and a["header"].get("Remote-User") is None, (pfad, st, a and a["header"])
+        assert a["header"].get("Cookie") == "a=1", (pfad, a["header"].get("Cookie"))
+    assert FORWARD["n"] == vorher, "ein Share-Pfad darf TinySesam nicht fragen"
+    ok(f"{len(offen)} Share-Pfade offen, ohne TinySesam, ohne Identität (auch keine vom Browser), ohne TinySesam-Cookies")
+
+    zu = ["/s/..;/admin", "/s/%2e%2e;/admin", "/s/abc;jsessionid=1", "/s/..%5cadmin", "/s/..\\admin",
+          "/s%2f..%2fadmin", "/s/abc%00", "/x/../s/abc", "/s/../admin", "/s/./abc", "/S/abc", "//s/abc",
+          "/s/%3b", "/sx/abc", "/s", "/admin/x.js"]
+    for pfad in zu:
+        vorher = FORWARD["n"]
+        st, _ = roh(pfad)
+        assert st == 302 and FORWARD["n"] == vorher + 1, (pfad, st)
+    ok(f"{len(zu)} Pfad-Tricks und Nachbarpfade → durch das Gate (..;, %2e, %5c, NUL, /x/../s/, /S/, //s/ …)")
 
     # ---------- der Preis: Widerruf greift erst mit Ablauf ----------
     auth.store.delete_user_sessions(uid)

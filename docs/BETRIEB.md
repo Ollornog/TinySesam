@@ -519,6 +519,29 @@ Seite gehört und sich nicht ändert:
 - **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
   bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
 
+## Öffentliche Pfade einer Anwendung (Share-Links, T-20)
+
+Beide Caddy-Vorlagen haben einen Block `@share`, der Pfade ohne Anmeldung durchlässt — ohne
+Identität und ohne die Cookies von TinySesam. Von sich aus ist er aus (`^$`); eingeschaltet wird er
+mit `TS_SHARE_PRAEFIX`, einem regulären Ausdruck über den Anfang des Pfads:
+
+```
+TS_SHARE_PRAEFIX='^/(s|index\.php/s|apps/files_sharing/publicpreview)/'
+```
+
+- **Nachmessen statt raten.** Eine Share-Seite lädt eigene Skripte und ruft eigene APIs auf. Die
+  Seite im Browser öffnen (ohne Anmeldung), in den Entwicklerwerkzeugen jede Anfrage ansehen, die mit
+  302 zur Anmeldung geht, und nur aufnehmen, was zur Share-Seite gehört.
+- **Nie nach Dateiendung** (`\.js$`): Viele Anwendungen liefern unter `/admin/x.css` dynamischen
+  Inhalt aus.
+- **Was die Regel abweist** (nachgemessen mit Caddy 2.11.7, `tests/test_gate_caddy.py`): `.`- und
+  `..`-Segmente im rohen Pfad (`/x/../s/a` — Caddy verglich sonst den bereinigten Pfad, die
+  Anwendung bekäme den rohen), `;` (`/s/..;/admin` lesen Tomcat und Spring als `/admin`), Backslash,
+  NUL und ihre kodierten Formen, falsche Gross-/Kleinschreibung (`/S/`), `//s/`. Ein `..` in der
+  Query und in einem Dateinamen (`a.b..c`) bleibt erlaubt.
+- **Was offen bleibt:** Diese Pfade sind öffentlich erreichbar. Eine Lücke der Anwendung dort schützt
+  das Gate nicht — so eng wie möglich.
+
 ## Abmelden an der Anwendung — Checkliste je Anwendung (T-22)
 
 Je Anwendung hinter dem Gate, in dieser Reihenfolge:
