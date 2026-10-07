@@ -77,6 +77,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `forward_logout` | `str` | `"all"` | Was „Abmelden" an der Anwendung heisst (T-22), Weg: https://<app>/.tinysesam/logout. "all" = diese Sitzung beenden (gilt für alle Anwendungen hinter derselben Anmeldung) und mit oidc_rp_logout auch beim Provider; "app" = nur diese Anwendung: die Sitzung bleibt, der Host lässt sie erst nach „Weiter als …" auf der Login-Seite wieder durch; "ask" = fragen. |
 | `forward_apps` | `dict` | `dict` | Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct", "logout": "ask"}}. name = Anzeigename auf Login- und Abmeldeseite; login/logout überschreiben forward_login/forward_logout für diesen Host. |
 | `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App |
+| `gate_link_enabled` | `bool` | `False` | Zentrales Gateway, Sitzung bleibt auf seinem Host (T-26): Ein App-Host bekommt über einen Code-Austausch (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback) nur ein eigenes Verbindungs-Cookie, das ausschliesslich für ihn gilt. Ohne das müsste das Sitzungs-Cookie auf der Elterndomain liegen und erreichte jede App darunter. Verlangt gate_token_enabled und base_url, verträgt sich nicht mit cookie_domain. |
 | `https_mode` | `str` | `"warn"` | off \| warn \| force  — force = HTTP→HTTPS-Redirect; warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel) |
 | `login_identifier` | `str` | `"both"` | Womit meldet man sich an? "username" \| "email" \| "both" (beides im selben Feld erlaubt) |
 
@@ -306,4 +307,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-165 Felder, erzeugt aus `tinysesam/config.py`.
+166 Felder, erzeugt aus `tinysesam/config.py`.

@@ -1252,6 +1252,15 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` re
 method. Background requests (XHR, scripts) still go to the sign-in page: they could not show the
 provider's page, and each would start an OIDC flow of its own.
 
+### One gateway for many apps, without a shared session cookie (T-26)
+
+With `gate_link_enabled=True` (gateway: `TINYSESAM_GATE_LINK=1`) the session stays on the gateway's host
+(`base_url`, no `cookie_domain`). An app host gets, through a code exchange, only a connection cookie of its
+own that is valid for that host alone: `/.tinysesam/start` (app host) → `/auth/gate/authorize` (gateway,
+sign-in if needed) → `/.tinysesam/callback` (app host, one-time code bound to the browser). No app ever sees
+the session that would get you into the others. Signing out “everywhere” at an app ends the session at the
+gateway and with it every connection.
+
 ### Public paths: share links (T-20)
 
 With `TS_SHARE_PRAEFIX='^/(s|public/share)/'` both Caddy templates let paths through without sign-in
@@ -1413,7 +1422,7 @@ without extras (guards the stdlib-scrypt fallback), and a browser job that also 
 
 ## Status
 
-**67 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
+**68 test files, all green** — one per feature, plus a combination matrix (`tests/test_matrix.py`).
 
 Implemented and tested: password/TOTP/sessions/roles, remember-me, step-up and per-route MFA,
 factor chains, personal PIN, shared resource secrets, magic links + mailer hook, registration and

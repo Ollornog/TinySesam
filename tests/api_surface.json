@@ -1108,6 +1108,10 @@
       "feld": "str = '__Host-tinysesam_gate'",
       "stufe": "A"
     },
+    "gate_link_enabled": {
+      "feld": "bool = False",
+      "stufe": "A"
+    },
     "gate_token_enabled": {
       "feld": "bool = False",
       "stufe": "A"

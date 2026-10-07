@@ -233,6 +233,15 @@ CREATE TABLE IF NOT EXISTS gate_abgemeldet (
 -- Das ID-Token der Anmeldung, verschlüsselt (geheimnis.Tresor) — nur als `id_token_hint` für den
 -- Logout beim Provider (T-22). PocketID beendet seine Sitzung ohne den Hinweis nicht, sondern
 -- zeigt eine Rückfrage und leitet danach nicht zurück.
+-- Die Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26): Die Sitzung bleibt
+-- auf dem Host des Gateways; der App-Host bekommt nur ein eigenes Cookie, dessen Hash hier steht.
+-- Es gilt NUR für seinen Host und endet mit der Sitzung (ON DELETE CASCADE).
+CREATE TABLE IF NOT EXISTS gate_link (
+    link_hash  TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL REFERENCES session(token_hash) ON DELETE CASCADE,
+    host       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS oidc_id_token (
     token_hash TEXT PRIMARY KEY REFERENCES session(token_hash) ON DELETE CASCADE,
     client     TEXT NOT NULL,
@@ -782,7 +791,10 @@ class Store:
     #:      lässt beide Tabellen liegen, dreht sie beim Rotieren einer Sitzung aber nicht mit — die
     #:      Zeilen fallen dann mit der alten Sitzung weg (Abmeldung „nur hier“ vergessen, Provider-
     #:      Logout ohne Hinweis), mehr nicht.
-    SCHEMA_VERSION = 13
+    #: 14 — `gate_link`: Verbindung eines App-Hosts zur zentralen Sitzung (Code-Austausch, T-26).
+    #:      Additiv; eine ältere Fassung lässt die Tabelle liegen und dreht sie beim Rotieren nicht mit —
+    #:      der App-Host verliert dann seine Verbindung und holt sich über den Code-Austausch eine neue.
+    SCHEMA_VERSION = 14
 
     #: Die gespeicherten Werte bis 0.21.x und ihr englischer Ersatz (Schema 12). Die Migration
     #: schreibt um, und wer liest, bildet einen alten Wert trotzdem ab: Eine ältere Fassung, die
@@ -2608,6 +2620,19 @@ class Store:
         return self._exec("DELETE FROM gate_abgemeldet WHERE token_hash=? AND host=?",
                           (self._handle(handle), str(host).lower())).rowcount
 
+    # ---------- Verbindung eines App-Hosts zur zentralen Sitzung (T-26) ----------
+    def gate_link_anlegen(self, link_hash: str, handle, host: str) -> None:
+        self._exec("INSERT INTO gate_link(link_hash, token_hash, host, created_at) VALUES (?,?,?,?)",
+                   (link_hash, self._handle(handle), str(host).lower(), _now()))
+
+    def gate_link_handle(self, link_hash: str, host: str) -> Optional[str]:
+        """Das Sitzungs-Handle hinter dieser Verbindung — nur für IHREN Host, sonst None."""
+        r = self._one("SELECT token_hash FROM gate_link WHERE link_hash=? AND host=?", (link_hash, str(host).lower()))
+        return r["token_hash"] if r else None
+
+    def gate_link_entfernen(self, link_hash: str) -> int:
+        return self._exec("DELETE FROM gate_link WHERE link_hash=?", (link_hash,)).rowcount
+
     # ---------- ID-Token als Abmeldehinweis (T-22) ----------
     def set_oidc_id_token(self, handle, client: str, id_token: str) -> None:
         if self.tresor is None:
@@ -2715,12 +2740,21 @@ class Store:
     def get_session(self, token) -> Optional[sqlite3.Row]:
         if not token:
             return None
-        r = self._one("SELECT * FROM session WHERE token_hash=?", (self.session_hash(token),))
+        return self.get_session_by_handle(self.session_hash(token))
+
+    def get_session_by_handle(self, handle) -> Optional[sqlite3.Row]:
+        """Wie `get_session`, aber über das Handle (`token_hash`) — für Wege, die die Sitzung nicht
+        aus dem eigenen Cookie kennen (die Verbindung eines App-Hosts, T-26). Dieselben Prüfungen:
+        Ablauf, Inaktivität, `zuletzt` nachziehen."""
+        h = str(handle or "")
+        if len(h) != 64:
+            return None
+        r = self._one("SELECT * FROM session WHERE token_hash=?", (h,))
         if not r:
             return None
         jetzt = _now()
         if r["expires_at"] < jetzt:
-            self.delete_session(token)
+            self.delete_session_by_handle(h)
             return None
         # Inaktivität (F-05): zusätzlich zur absoluten Laufzeit. Eine abgelaufene Sitzung wird
         # gelöscht, nicht nur abgewiesen — sonst lebte sie mit dem nächsten Zugriff wieder auf.
@@ -2731,7 +2765,7 @@ class Store:
         grenze = self.leerlauf_sek[1 if (r["remember"] and r["bleiben_gewaehlt"]) else 0]
         zuletzt = r["zuletzt"] if r["zuletzt"] is not None else r["created_at"]
         if grenze and jetzt - int(zuletzt) > grenze:
-            self.delete_session(token)
+            self.delete_session_by_handle(h)
             return None
         if jetzt - int(zuletzt) >= self.LEERLAUF_SCHRITT_SEK:
             self._exec("UPDATE session SET zuletzt=? WHERE token_hash=?", (jetzt, r["token_hash"]))
@@ -2791,6 +2825,7 @@ class Store:
                 self.db.execute("UPDATE oidc_sitzung SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("UPDATE gate_abgemeldet SET token_hash=? WHERE token_hash=?", (neu, alt))
                 self.db.execute("UPDATE oidc_id_token SET token_hash=? WHERE token_hash=?", (neu, alt))
+                self.db.execute("UPDATE gate_link SET token_hash=? WHERE token_hash=?", (neu, alt))
                 if gnade_sek > 0:
                     self.db.execute("UPDATE session SET expires_at=MIN(expires_at, ?), mfa_at=NULL, "
                                     "nachfolger=? WHERE token_hash=?", (_now() + int(gnade_sek), neu, alt))

@@ -995,6 +995,20 @@ def _forward_apps(config, fehler: list, warnungen: list) -> None:
 def _gate(config, fehler: list, warnungen: list) -> None:
     """Gate-Token (ADR-9, T-19): nur als Teil der Forward-Auth, nur mit einem Cookie, das der
     Browser ausschliesslich dem Host der Anwendung zurückgibt."""
+    if _an(config, "gate_link_enabled"):
+        # Code-Austausch (T-26): Er ersetzt das Sitzungs-Cookie auf der Elterndomain. Beides zugleich
+        # hiesse, die Sitzung doch wieder an jede App zu schicken — und der Austausch wäre nur Umweg.
+        if not _an(config, "gate_token_enabled"):
+            fehler.append("gate_link_enabled=True ohne gate_token_enabled=True: Der Code-Austausch gibt dem "
+                          "App-Host eine Verbindung, mit der er Gate-Token bekommt — ohne Gate-Token hat sie "
+                          "keinen Zweck.")
+        if str(getattr(config, "cookie_domain", "") or "").strip():
+            fehler.append("gate_link_enabled=True zusammen mit cookie_domain: Der Code-Austausch soll das "
+                          "Sitzungs-Cookie gerade NICHT auf der Elterndomain haben — sonst erreicht es jede "
+                          "App darunter. cookie_domain leer lassen.")
+        if not str(getattr(config, "base_url", "") or "").strip():
+            fehler.append("gate_link_enabled=True ohne base_url: Die App-Hosts schicken zur Anmeldung an "
+                          "die Adresse des Gateways — die steht in base_url.")
     if not _an(config, "gate_token_enabled"):
         return
     if not _an(config, "forward_auth_enabled"):

@@ -1273,6 +1273,15 @@ Gateway: `TINYSESAM_FORWARD_LOGIN`, `TINYSESAM_FORWARD_APPS` (JSON). `direct` ve
 Methode. Hintergrund-Anfragen (XHR, Skripte) gehen auch dann zur Login-Seite: Eine Umleitung zum
 Provider könnten sie nicht anzeigen, und jede begänne einen eigenen OIDC-Flow.
 
+### Ein Gateway für viele Apps, ohne geteiltes Sitzungs-Cookie (T-26)
+
+Mit `gate_link_enabled=True` (Gateway: `TINYSESAM_GATE_LINK=1`) bleibt die Sitzung auf dem Host des Gateways
+(`base_url`, ohne `cookie_domain`). Ein App-Host bekommt über einen Code-Austausch nur ein eigenes
+Verbindungs-Cookie, das ausschliesslich für ihn gilt:
+`/.tinysesam/start` (App-Host) → `/auth/gate/authorize` (Gateway, ggf. Anmeldung) → `/.tinysesam/callback`
+(App-Host, Einmal-Code, an den Browser gebunden). Keine App sieht die Sitzung, mit der man in die anderen
+käme. Abmelden „überall“ an einer App beendet die Sitzung beim Gateway und damit jede Verbindung.
+
 ### Öffentliche Pfade: Share-Links (T-20)
 
 Beide Caddy-Vorlagen lassen mit `TS_SHARE_PRAEFIX='^/(s|public/share)/'` Pfade ohne Anmeldung
@@ -1439,7 +1448,7 @@ zusätzlich die Website baut.
 
 ## Status
 
-**67 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
+**68 Testdateien, alle grün** — eine je Funktion, dazu eine Kombinations-Matrix
 (`tests/test_matrix.py`).
 
 Gebaut und getestet: Passwort/TOTP/Sitzungen/Rollen, Remember-me, Step-up und per-Route-MFA,

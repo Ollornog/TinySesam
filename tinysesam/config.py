@@ -134,6 +134,12 @@ class TinySesamConfig:
     # forward_login/forward_logout für diesen Host.
     forward_apps: dict = field(default_factory=dict)
     gate_cookie_name: str = "__Host-tinysesam_gate"  # Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App
+    # Zentrales Gateway, Sitzung bleibt auf seinem Host (T-26): Ein App-Host bekommt über einen
+    # Code-Austausch (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback) nur ein eigenes
+    # Verbindungs-Cookie, das ausschliesslich für ihn gilt. Ohne das müsste das Sitzungs-Cookie auf der
+    # Elterndomain liegen und erreichte jede App darunter. Verlangt gate_token_enabled und base_url,
+    # verträgt sich nicht mit cookie_domain.
+    gate_link_enabled: bool = False
     https_mode: str = "warn"              # off | warn | force  — force = HTTP→HTTPS-Redirect;
                                           # warn = läuft auch OHNE Zertifikat (mit Warnhinweis im Panel)
     # Womit meldet man sich an? "username" | "email" | "both" (beides im selben Feld erlaubt)

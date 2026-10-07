@@ -29,6 +29,10 @@ Konfiguration per Umgebungsvariablen:
     TINYSESAM_GATE                             1 = Gate-Token ausstellen (ADR-9): der Proxy prüft
                                                danach selbst, Vorlage deploy/forward-auth/Caddyfile.gate
                                                (braucht Caddy mit caddy-jwt). Default 0
+    TINYSESAM_GATE_LINK                        1 = zentrales Gateway mit Code-Austausch (T-26): Sitzung
+                                               bleibt auf TINYSESAM_BASE_URL, jeder App-Host bekommt nur
+                                               ein eigenes Verbindungs-Cookie. Verlangt TINYSESAM_GATE=1
+                                               und KEIN TINYSESAM_COOKIE_DOMAIN. Default 0
     TINYSESAM_GATE_TTL_SEC                     Laufzeit des Gate-Tokens (Default 300, 30–3600) —
                                                so lange wirkt ein Widerruf am Proxy nicht
     TINYSESAM_FORWARD_LOGIN                    direct (Default: Seitenaufruf → Provider → zurück) oder
@@ -161,6 +165,7 @@ def config_from_env() -> TinySesamConfig:
         clients=clients_from_env(),
         revalidate_minutes=int(os.environ.get("TINYSESAM_OIDC_REVALIDATE_MINUTES", "60") or 0),
         gate_token_enabled=_schalter("TINYSESAM_GATE"),
+        gate_link_enabled=_schalter("TINYSESAM_GATE_LINK"),
         forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
         forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
         forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",

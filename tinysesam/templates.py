@@ -291,8 +291,9 @@ def _login(auth, ctx) -> str:
     # Nur von dieser Anwendung abgemeldet (T-22): wieder hinein mit einem Klick, ohne neue Anmeldung.
     weiter = ""
     if ctx.get("resume_user"):
+        gh = f"<input type=hidden name=gate_host value='{_e(ctx['gate_host'])}'>" if ctx.get("gate_host") else ""
         weiter = (f"<form method=post action='__TS_P__/auth/gate/resume'>"
-                  f"<input type=hidden name=next value='{_e(next_)}'>{_cf(ctx)}"
+                  f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
     body = f"<h1>{_e(titel)}</h1>{warn}{err}{weiter}{pw}{pin}{sep}{others}{signup}{js}"

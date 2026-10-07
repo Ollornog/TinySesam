@@ -20,13 +20,13 @@ Quelltext.
 
 Die Stufe steht je Name in `tests/api_surface.json`. Der Wächter `tests/test_api_surface.py` verlangt für jeden öffentlichen Namen eine ausdrückliche: Ein neuer Name kommt ohne Stufe herein und hält ihn rot, bis jemand entscheidet — nichts wird aus Versehen zugesagt.
 
-Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 164 von 165 in Stufe A, die übrigen unten bei ihrer Stufe.
+Die Konfigurationsfelder stehen in [KONFIGURATION.md](KONFIGURATION.md): 165 von 166 in Stufe A, die übrigen unten bei ihrer Stufe.
 
 **Englisch, Namen wie Werte** (seit 0.22.0, ohne Alias): Die Namen der Stufen A und B, ihre Parameter und die Schlüssel und Werte, die sie zurückgeben oder annehmen — Ergebnis-Dicts, die `details` an `on_security_event`, der Kontext eigener Seiten (`ctx["prefix"]`, `ctx["purpose"]`), die JSON-Antworten der Routen, die Arten der API-Keys (`automation`, `human`). Audit- und Log-Zeilen bleiben, wie sie waren. Die Liste alt → neu steht im CHANGELOG zu 0.22.0.
 
 **`auth.store` ist Innenleben** (Stufe C): die Speicherschicht der eingebauten Routen, ohne Stufe, ohne Zusage und ohne Übergangsfrist — ihre Methoden können sich mit jedem Release ändern. Was eine App braucht, steht unten als Methode von `TinySesam` (etwa `set_disabled` statt `auth.store.set_disabled`).
 
-**Stand:** A 258 · B 66 · C 50 Namen.
+**Stand:** A 259 · B 66 · C 50 Namen.
 
 ## A · Methoden von `TinySesam`
 
