@@ -88,6 +88,7 @@ jobs:
   # `tests/test_repo.py` hält das fest: Ein Job mit `id-token: write` oder `contents: write`
   # darf weder das Repo auschecken noch pip, python oder ein Bauwerkzeug starten.
   pruefen:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -118,7 +119,7 @@ jobs:
       - name: Suite fahren, bevor irgendetwas veröffentlicht wird
         if: github.event_name != 'pull_request'
         run: |
-          sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
           # setuptools und wheel gehören dazu: tests/test_packaging.py BAUT das Paket (offline, ohne
           # Isolierung) und überspringt sich ohne Bau-Backend nicht etwa, sondern wird ROT.
           # Genau hier wäre das am teuersten — der Job soll ja prüfen, ob das Paket baut.
@@ -128,6 +129,7 @@ jobs:
           python tests/run_all.py --no-browser
 
   bauen:
+    timeout-minutes: 10
     needs: pruefen
     runs-on: ubuntu-latest
     steps:
@@ -184,6 +186,7 @@ jobs:
   # Prüfsummen gehalten. Das ist dieselbe Probe, die jeder Nutzer macht (`sha256sum -c`), und
   # sie nimmt den Weitergabe-Weg ab — auch auf jedem PR, wo `release` übersprungen ist.
   pruefsummen:
+    timeout-minutes: 10
     needs: bauen
     runs-on: ubuntu-latest
     steps:
@@ -202,6 +205,7 @@ jobs:
           sha256sum -c SHA256SUMS
 
   release:
+    timeout-minutes: 10
     needs: [bauen, pruefsummen]
     if: github.ref_type == 'tag'   # veröffentlicht — nie aus einem Trockenlauf
     runs-on: ubuntu-latest
@@ -239,6 +243,7 @@ jobs:
   # Job beschränkt, der nichts Fremdes ausführt. Und erst nach dem Release: Eine Version auf PyPI
   # ist unwiderruflich; ein GitHub-Release liesse sich zurücknehmen.
   pypi:
+    timeout-minutes: 10
     needs: release
     if: github.ref_type == 'tag'   # ausdrücklich, nicht nur über das übersprungene `release`
     runs-on: ubuntu-latest
@@ -270,6 +275,7 @@ jobs:
   # Schreibrecht: Hier läuft der Container, also fremder Code; `image` hält `packages: write`.
   # Gebaut wird für amd64 aus demselben Commit und demselben Dockerfile.
   abbild-probe:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -279,6 +285,7 @@ jobs:
         run: scripts/_abbild_probe.sh
 
   image:
+    timeout-minutes: 30
     needs: [bauen, release, abbild-probe]
     if: >-
       always() && needs.bauen.result == 'success' && needs.abbild-probe.result == 'success' &&
@@ -351,6 +358,7 @@ jobs:
   # Beglaubigung des Abbilds — getrennt vom Bau, aus demselben Grund wie oben: Die Identität
   # liegt nur in einem Job, der weder auscheckt noch baut. Er kennt nur den Digest.
   image-beglaubigen:
+    timeout-minutes: 10
     needs: image
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest

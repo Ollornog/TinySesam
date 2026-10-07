@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   prerelease:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     continue-on-error: true
     strategy:
@@ -34,7 +35,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           allow-prereleases: true
       - name: Systempaket für SAML (xmlsec)
-        run: sudo apt-get update && sudo apt-get install -y libxmlsec1-dev pkg-config
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
         run: pip install -e '.[all]'
       - name: Tests (Ausfall ist erlaubt — Prerelease)
