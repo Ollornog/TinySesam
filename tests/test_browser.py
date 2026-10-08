@@ -352,8 +352,11 @@ async def run():
                    "document.querySelector('form').submit()")
         await asyncio.sleep(1.5)
         assert not await p.js("!!document.querySelector('pre')"), "422-JSON statt Seite"
-        err = (await p.js("(document.querySelector('.err')||{textContent:''}).textContent")).strip()
+        # Seit 0.24.6 stehen Fehler als Meldung UNTER der Karte (eigener Kasten mit Symbol), nicht mehr in ihr.
+        err = (await p.js("(document.querySelector('.meldungen .meldung.fehler')||{textContent:''}).textContent")).strip()
         assert err, "keine Fehlermeldung"
+        assert await p.js("!document.querySelector('.card .meldung') && !!document.querySelector('.meldung.fehler svg')"), \
+            "Meldung in der Karte oder ohne Symbol"
         print(f"  leeres Formular: {err!r} statt JSON")
 
         # ---------- 8) Login funktioniert — auch wenn der Browser ein Passwort einfüllt ----------

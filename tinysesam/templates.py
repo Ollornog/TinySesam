@@ -91,6 +91,16 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      text-align:center;word-break:break-all}
 .tsmain .warnbar{background:var(--ts-warn-bg);color:var(--ts-warn-ink);padding:9px 12px;
      border-radius:8px;font-size:12px;margin-bottom:10px}
+/* Meldungen (PO 2026-10-08): ein eigener Kasten UNTER der Karte, je Meldung ein Symbol. Hinweis, Warnung und
+   Fehler sehen gleich gebaut aus und unterscheiden sich nur über Farbe und Symbol. */
+.tsmain .meldungen{width:340px;max-width:92vw;display:flex;flex-direction:column;gap:8px}
+.tsmain .meldung{display:flex;align-items:flex-start;gap:10px;padding:11px 14px;font-size:13px;line-height:1.4;
+     border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line)}
+.tsmain .meldung svg{flex:0 0 18px;width:18px;height:18px;margin-top:1px}
+.tsmain .meldung.info{background:var(--ts-info-bg);color:var(--ts-info-ink)}
+.tsmain .meldung.warn{background:var(--ts-warn-bg);color:var(--ts-warn-ink)}
+.tsmain .meldung.fehler{background:var(--ts-err-bg);color:var(--ts-err-ink)}
+.tsmain .meldung.ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink)}
 /* steht NEBEN der Karte, nicht darin — ein Demo-Hinweis ist kein Teil des Formulars */
 .tsmain .demobar{width:340px;max-width:92vw;background:var(--ts-info-bg);color:var(--ts-info-ink);
      padding:11px 14px;border-radius:calc(var(--ts-radius) + 2px);border:1px solid var(--ts-line);
@@ -127,10 +137,11 @@ def brand(value, auth):
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
-         header="", footer=""):
-    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit.
-    `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation drumherum legen kann."""
-    inner = f"<div class=card>{body}</div>" if card else body
+         header="", footer="", unten=""):
+    """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit; `unten` direkt
+    darunter (die Meldungen). `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation
+    drumherum legen kann."""
+    inner = (f"<div class=card>{body}</div>" if card else body) + (unten or "")
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"{favicon_link(brand_icon)}"
@@ -142,13 +153,37 @@ def _shell(title, body, lang="en"):
     return _doc(title, body)
 
 
-def _page(auth, title, body, card=True, top=""):
+def _page(auth, title, body, card=True, top="", unten=""):
     """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon/brand_header/
-    brand_footer) — re-skinnt und umrahmt alle Seiten zentral. `top` landet außerhalb der Karte."""
+    brand_footer) — re-skinnt und umrahmt alle Seiten zentral. `top` landet über der Karte, `unten` darunter."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
                 card, getattr(cfg, "brand_icon", ""), top,
-                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth))
+                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), unten)
+
+
+#: Symbole der Meldungen — Inline-SVG in currentColor (nichts wird nachgeladen), 24er-Raster, nur Striche.
+_SYMBOL = {
+    "info": "<circle cx='12' cy='12' r='9'/><path d='M12 11v5'/><path d='M12 7.5v.5'/>",
+    "warn": "<path d='M12 3.5 21 19.5H3z'/><path d='M12 10v4'/><path d='M12 16.5v.5'/>",
+    "fehler": "<circle cx='12' cy='12' r='9'/><path d='M8.5 8.5l7 7'/><path d='M15.5 8.5l-7 7'/>",
+    "ok": "<circle cx='12' cy='12' r='9'/><path d='M8 12.5l2.8 2.8L16 10'/>",
+}
+
+
+def _meldungen(liste) -> str:
+    """Meldungen als eigener Kasten unter der Karte: `[(art, text), …]`, art ∈ info | ok | warn | fehler.
+    Leere Texte fallen weg; ohne Meldung kein Kasten."""
+    teile = []
+    for art, text in liste:
+        if not text:
+            continue
+        art = art if art in _SYMBOL else "info"
+        rolle = "alert" if art == "fehler" else "status"
+        teile.append(f"<div class='meldung {art}' role={rolle}>"
+                     f"<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' "
+                     f"stroke-linejoin='round' aria-hidden='true'>{_SYMBOL[art]}</svg><span>{_e(text)}</span></div>")
+    return f"<div class=meldungen>{''.join(teile)}</div>" if teile else ""
 
 
 def _e(s) -> str:
@@ -240,10 +275,9 @@ def _login(auth, ctx) -> str:
     next_ = ctx.get("next", "/")
     error = ctx.get("error", "")
     methods = cfg.enabled_methods()
-    warn = f"<div class=warnbar>{_e(ctx['warn'])}</div>" if ctx.get("warn") else ""
-    err = f"<div class=err>{_e(error)}</div>" if error else ""
-    # Hinweis ohne Fehlercharakter, z. B. „Du wurdest abgemeldet“ nach dem Abmelden (PO 2026-10-08).
-    info = f"<div class=hint>{_e(ctx['info'])}</div>" if ctx.get("info") else ""
+    # Meldungen (PO 2026-10-08): Hinweis („Du wurdest abgemeldet“), Warnung und Fehler eines Anmeldeversuchs stehen
+    # gemeinsam in einem eigenen Kasten unter der Karte, je mit Symbol — nicht mehr verstreut in der Karte.
+    meldungen = _meldungen([("info", ctx.get("info")), ("warn", ctx.get("warn")), ("fehler", error)])
     _or = f"<div class=or>{_e(t('or'))}</div>"
     remember = ""
     if cfg.remember_me_enabled:
@@ -298,22 +332,22 @@ def _login(auth, ctx) -> str:
                   f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
-    body = f"<h1>{_e(titel)}</h1>{warn}{info}{err}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
-    return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx))
+    body = f"<h1>{_e(titel)}</h1>{weiter}{pw}{pin}{sep}{others}{signup}{js}"
+    return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx), unten=meldungen)
 
 
 def _totp(auth, ctx) -> str:
     """ctx: next, error."""
     t = auth.t
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    body = (f"<h1>{_e(t('totp.title'))}</h1>{err}"
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    body = (f"<h1>{_e(t('totp.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/totp'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(t('totp.label'))}</label>"
             f"<input name=code class=code inputmode=numeric autocomplete=one-time-code autofocus maxlength=6>"
             f"<button type=submit>{_e(t('totp.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('cancel'))}</a></div>")
-    return _page(auth, t("totp.title"), body)
+    return _page(auth, t("totp.title"), body, unten=meldungen)
 
 
 def _account(auth, ctx) -> str:
@@ -540,12 +574,11 @@ def _register(auth, ctx) -> str:
     t = auth.t
     if ctx.get("sent_verify"):
         body = (f"<h1>{_e(t('reg.verify_title'))}</h1>"
-                f"<div class=ok>{_e(t('reg.verify'))}</div>"
                 f"<div class=hint>{_e(t('reg.verify_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-        return _page(auth, t("reg.verify_title"), body)
+        return _page(auth, t("reg.verify_title"), body, unten=_meldungen([("ok", t("reg.verify"))]))
     cfg = auth.cfg
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
     emailro = " readonly" if ctx.get("invite") and ctx.get("email") else ""
     # Die Felder folgen der Config: im E-Mail-Modus ist die Adresse die Kennung; ein optionales
     # E-Mail-Feld erscheint nur, wenn die App überhaupt etwas damit anfängt (Login-Link,
@@ -556,7 +589,7 @@ def _register(auth, ctx) -> str:
     emailreq = " required" if (cfg.signup_require_email or email_mode) else ""
     user_field = ("" if email_mode else
                   f"<label>{_e(t('reg.user'))}</label><input name=username required autofocus autocomplete=username autocapitalize=none autocorrect=off spellcheck=false>")
-    body = (f"<h1>{_e(t('reg.title'))}</h1>{err}"
+    body = (f"<h1>{_e(t('reg.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/register'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>"
             f"<input type=hidden name=invite value='{_e(ctx.get('invite', ''))}'>{_cf(ctx)}"
@@ -567,7 +600,7 @@ def _register(auth, ctx) -> str:
             f"<label>{_e(t('reg.password'))}</label><input name=password required type=password autocomplete=new-password>"
             f"<button type=submit>{_e(t('reg.submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('reg.have'))}</a></div>")
-    return _page(auth, t("reg.title"), body)
+    return _page(auth, t("reg.title"), body, unten=meldungen)
 
 
 def _magic_request(auth, ctx) -> str:
@@ -575,12 +608,11 @@ def _magic_request(auth, ctx) -> str:
     t = auth.t
     if ctx.get("sent"):
         body = (f"<h1>{_e(t('magic.sent_title'))}</h1>"
-                f"<div class=ok>{_e(t('magic.sent'))}</div>"
                 f"<div class=hint>{_e(t('magic.sent_hint'))}</div>"
                 f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.back_login'))}</a>")
-        return _page(auth, t("magic.sent_title"), body)
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    body = (f"<h1>{_e(t('magic.title'))}</h1>{err}"
+        return _page(auth, t("magic.sent_title"), body, unten=_meldungen([("ok", t("magic.sent"))]))
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    body = (f"<h1>{_e(t('magic.title'))}</h1>"
             f"<div class=hint>{_e(t('magic.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/magic/request'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
@@ -588,7 +620,7 @@ def _magic_request(auth, ctx) -> str:
             f"<input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('magic.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("magic.title"), body)
+    return _page(auth, t("magic.title"), body, unten=meldungen)
 
 
 def _forgot(auth, ctx) -> str:
@@ -597,29 +629,29 @@ def _forgot(auth, ctx) -> str:
     if ctx.get("sent"):
         return _page(auth, t("magic.sent_title"),
                       f"<h1>{_e(t('magic.sent_title'))}</h1>"
-                      f"<div class=ok>{_e(t('magic.sent'))}</div>"
-                      f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    body = (f"<h1>{_e(t('forgot.title'))}</h1>{err}"
+                      f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>",
+                      unten=_meldungen([("ok", t("magic.sent"))]))
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    body = (f"<h1>{_e(t('forgot.title'))}</h1>"
             f"<div class=hint>{_e(t('forgot.hint'))}</div>"
             f"<form method=post action='__TS_P__/auth/forgot'>{_cf(ctx)}"
             f"<label>{_e(t('magic.email'))}</label><input name=email type=email autocomplete=email autofocus>"
             f"<button type=submit>{_e(t('forgot.send'))}</button></form>"
             f"<div class=hint><a href='__TS_P__/auth/login'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("forgot.title"), body)
+    return _page(auth, t("forgot.title"), body, unten=meldungen)
 
 
 def _reset(auth, ctx) -> str:
     """ctx: token, error. Neues Passwort setzen."""
     t = auth.t
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
-    body = (f"<h1>{_e(t('reset.title'))}</h1>{err}"
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
+    body = (f"<h1>{_e(t('reset.title'))}</h1>"
             f"<form method=post action='__TS_P__/auth/reset'>"
             f"<input type=hidden name=token value='{_e(ctx.get('token', ''))}'>{_cf(ctx)}"
             f"<label>{_e(t('reset.new'))}</label>"
             f"<input name=password type=password autocomplete=new-password autofocus>"
             f"<button type=submit>{_e(t('reset.submit'))}</button></form>")
-    return _page(auth, t("reset.title"), body)
+    return _page(auth, t("reset.title"), body, unten=meldungen)
 
 
 def _error(auth, ctx) -> str:
@@ -746,15 +778,14 @@ def _gateway_home(auth, ctx) -> str:
 def _magic_invalid(auth, ctx) -> str:
     t = auth.t
     body = (f"<h1>{_e(t('magic.invalid_title'))}</h1>"
-            f"<div class=err>{_e(t('magic.invalid'))}</div>"
             f"<a class=btn2 href='__TS_P__/auth/login'>{_e(t('magic.to_login'))}</a>")
-    return _page(auth, t("magic.invalid_title"), body)
+    return _page(auth, t("magic.invalid_title"), body, unten=_meldungen([("fehler", t("magic.invalid"))]))
 
 
 def _resource_unlock(auth, ctx) -> str:
     """ctx: name, kind ('pin'|'password'), label, next, error. Geteiltes Ressourcen-Geheimnis."""
     t = auth.t
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
     if ctx.get("kind") == "pin":
         field = "<input name=secret type=password inputmode=numeric autocomplete=off class=code autofocus>"
         lbl = t("res.pin")
@@ -762,12 +793,12 @@ def _resource_unlock(auth, ctx) -> str:
         field = "<input name=secret type=password autocomplete=off autofocus>"
         lbl = t("res.word")
     body = (f"<h1>{_e(ctx.get('label'))}</h1>"
-            f"<div class=hint>{_e(t('res.hint', kind=lbl))}</div>{err}"
+            f"<div class=hint>{_e(t('res.hint', kind=lbl))}</div>"
             f"<form method=post action='__TS_P__/auth/resource/{_e(ctx.get('name'))}'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"<label>{_e(lbl)}</label>{field}"
             f"<button type=submit>{_e(t('res.submit'))}</button></form>")
-    return _page(auth, str(ctx.get("label") or lbl), body)
+    return _page(auth, str(ctx.get("label") or lbl), body, unten=meldungen)
 
 
 def _stepup_field(auth, method, first) -> str:
@@ -797,14 +828,14 @@ def _reauth(auth, ctx) -> str:
     bleibt es beim Passwortfeld.
     """
     t = auth.t
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
     methods = ctx.get("methods")
     methods = ["password"] if methods is None else list(methods)
     kopf = (f"<h1>{_e(t('reauth.title'))}</h1>"
-            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>{err}")
+            f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>")
     fuss = f"<div class=hint><a href='__TS_P__/auth/logout'>{_e(t('logout'))}</a></div>"
     if not methods:
-        return _page(auth, t("reauth.title"), kopf + fuss)
+        return _page(auth, t("reauth.title"), kopf + fuss, unten=meldungen)
     fields = f"<div class=or>{_e(t('or'))}</div>".join(
         _stepup_field(auth, m, i == 0) for i, m in enumerate(methods))
     body = (kopf
@@ -812,19 +843,19 @@ def _reauth(auth, ctx) -> str:
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{fields}<button type=submit>{_e(t('reauth.submit'))}</button></form>"
             + fuss)
-    return _page(auth, t("reauth.title"), body)
+    return _page(auth, t("reauth.title"), body, unten=meldungen)
 
 
 def _pin(auth, ctx) -> str:
     """ctx: next, error, username(optional). PIN-Eingabe — ohne Benutzerfeld, wenn schon eingeloggt."""
     t = auth.t
-    err = f"<div class=err>{_e(ctx.get('error'))}</div>" if ctx.get("error") else ""
+    meldungen = _meldungen([("fehler", ctx.get("error"))])
     known = bool(ctx.get("username"))
     id_label, id_ac = _ident(auth)
     user_field = ("" if known else
                   f"<label>{_e(id_label)}</label><input name=username autofocus autocomplete={id_ac} autocapitalize=none autocorrect=off spellcheck=false>")
     hint = (f"<div class=hint>{_e(t('reauth.hint', user=ctx.get('username')))}</div>" if known else "")
-    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}{err}"
+    body = (f"<h1>{_e(t('pin.title'))}</h1>{hint}"
             f"<form method=post action='__TS_P__/auth/pin'>"
             f"<input type=hidden name=next value='{_e(ctx.get('next', '/'))}'>{_cf(ctx)}"
             f"{user_field}"
@@ -833,7 +864,7 @@ def _pin(auth, ctx) -> str:
             f"{' autofocus' if known else ''}>"
             f"<button type=submit>{_e(t('login.pin_submit'))}</button></form>"
             f"<div class=hint><a href='__TS_P__{_e(auth.cfg.login_path)}'>{_e(t('back'))}</a></div>")
-    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx))
+    return _page(auth, t("pin.title"), body, top=_demobar(auth, pin=True, ctx=ctx), unten=meldungen)
 
 
 def _totp_setup(auth, ctx) -> str:

@@ -2,6 +2,23 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.24.6] — 2026-10-08
+
+**Wer es braucht:** alle mit den eingebauten Seiten. Kein API-Bruch, kein neues Schema. **Wer eigenes CSS hat**
+(`brand_css`) und dort `.err`, `.ok` oder die graue Hinweiszeile der Anmeldeseite gestaltet hat: Diese Meldungen sind
+jetzt `.meldungen > .meldung.{info|ok|warn|fehler}`.
+
+### Geändert
+
+- **Meldungen als eigene Kästen unter der Karte, je mit Symbol.** Bis hier stand jede Seite ihre Meldung selbst in die
+  Karte: Fehler als rote Zeile (`class=err`), Erfolg als `class=ok`, der Hinweis nach dem Abmelden als graue Zeile.
+  Jetzt gibt es vier Arten: Hinweis ⓘ, Erfolg ✓, Warnung ⚠ und Fehler ⊗. Jede ist ein eigener Kasten unter der Karte,
+  gleich breit, mit `role=status` bzw. `role=alert`. Die Symbole sind Inline-SVG in `currentColor` (nichts wird
+  nachgeladen), die Farben kommen aus den bestehenden Tokens `--ts-{info,ok,warn,err}-*`. Umgestellt sind Anmeldung,
+  TOTP, Registrierung, Login-Link, Passwort vergessen und neu setzen, Step-up, PIN, Ressourcen-Entsperren und „Link
+  ungültig“. Das Admin-Panel (breites Layout ohne Karte) behält seinen Warnbalken.
+- `_page`/`_doc` haben einen Platz unter der Karte (`unten`).
+
 ## [0.24.5] — 2026-10-08
 
 **Wer es braucht:** Betreiber des zentralen Gateways mit Login-Modus `page`. Kein API-Bruch, kein neues Schema.
