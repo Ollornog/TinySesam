@@ -28,7 +28,16 @@ auth = TinySesam(TinySesamConfig(
     csrf_enabled=False, lang="de", db_path=os.path.join(tempfile.mkdtemp(), "t.db"), rp_name="Gate",
     passkey_enabled=False, oidc_enabled=False, forward_auth_enabled=True, base_url=GW,
     trusted_redirect_hosts=["app.example.com", "wiki.example.com"], gate_token_enabled=True,
-    gate_link_enabled=True, forward_apps={"app.example.com": {"name": "App"}}))
+    gate_link_enabled=True, forward_apps={"app.example.com": {"name": "App", "login": "page"},
+                                          "wiki.example.com": {"name": "Wiki"}}))
+
+_fa_orig = auth._forward_app
+
+
+def _wiki_direct():
+    """Der Zweig „direct“ für wiki: Die Konfigurationsprüfung verlangt dafür OIDC als einzige Methode, diese Probe
+    meldet sich aber per Passwort an — deshalb nur für die betreffenden Prüfungen umgebogen."""
+    auth._forward_app = lambda h: {**_fa_orig(h), "login": "direct"} if "wiki" in str(h) else _fa_orig(h)
 uid = auth.create_user("anna", PW)
 fa = FastAPI()
 fa.include_router(auth.router())
@@ -185,11 +194,34 @@ r = b5["gw"].get("/auth/gate/logout?host=app.example.com", headers={"Sec-Fetch-S
 assert r.status_code == 303 and b5["gw"].get("/auth/me").status_code == 401, (r.status_code, r.headers.get("location"))
 r = b5["gw"].get("/auth/gate/logout?host=app.example.com", follow_redirects=False)
 assert r.status_code == 303 and r.headers["location"] == "/auth/gate/logged-out?host=app.example.com", r.headers.get("location")
-r = b5["gw"].get("/auth/gate/logged-out?host=app.example.com")
-assert r.status_code == 200 and "href='https://app.example.com/'" in r.text, r.text[-400:]
+r = b5["gw"].get("/auth/gate/logged-out?host=app.example.com", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == APP + "/.tinysesam/start?rd=%2F&abgemeldet=1", r.headers.get("location")
+_wiki_direct()
+r = b5["gw"].get("/auth/gate/logged-out?host=wiki.example.com")
+auth._forward_app = _fa_orig
+assert r.status_code == 200 and "href='https://wiki.example.com/'" in r.text, r.text[-400:]
 assert b5["gw"].get("/auth/gate/logged-out?host=evil.example.net").status_code == 400
 assert b5["gw"].get("/auth/gate/logout?host=evil.example.net").status_code == 400
 ok("überall abmelden ohne Verbindung → ans Gateway, dort endet die Sitzung (cross-site erst Rückfrage, keine Schleife); ohne Sitzung „Abgemeldet“ beim Gateway mit Weg zur App")
+
+# ---------- nach dem Abmelden: Anmeldeseite mit Hinweis statt Zwischenseite (Modus page, PO 2026-10-08) ----------
+b6 = browser()
+r = b6["app"].get("/.tinysesam/after-logout", follow_redirects=False)
+assert r.status_code == 303 and r.headers["location"] == "/.tinysesam/start?rd=%2F&abgemeldet=1", (r.status_code, r.headers.get("location"))
+s = b6["app"].get("/.tinysesam/start?rd=%2F&abgemeldet=1", follow_redirects=False)
+a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
+assert a.status_code == 303 and "abgemeldet=1" in ort(a), ort(a)
+seite = b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query)
+assert "Du wurdest abgemeldet." in seite.text and "Anmelden bei App" in seite.text, seite.text[:400]
+s = b6["app"].get("/.tinysesam/start?rd=%2F", follow_redirects=False)
+a = b6["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
+assert "abgemeldet" not in ort(a) and "abgemeldet" not in b6["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query).text.lower()
+assert "abgemeldet" not in b6["gw"].get("/auth/login?next=/&abgemeldet=0").text.lower()
+_wiki_direct()
+w = TestClient(fa, base_url=WIKI).get("/.tinysesam/after-logout")
+auth._forward_app = _fa_orig
+assert w.status_code == 200 and "Abgemeldet" in w.text, w.status_code
+ok("nach dem Abmelden: Anmeldeseite „Anmelden bei App“ mit „Du wurdest abgemeldet.“ (page); Modus direct behält die Seite")
 
 # ---------- Konfigurationsprüfung ----------
 try:

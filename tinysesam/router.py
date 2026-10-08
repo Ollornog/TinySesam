@@ -85,7 +85,8 @@ def build_router(auth) -> APIRouter:
 
     # ---------- Login (Passwort) ----------
     @r.get("/auth/login", response_class=HTMLResponse)
-    def login_page(request: Request, next: str = "", error: str = "", app: str = "", gate_host: str = ""):
+    def login_page(request: Request, next: str = "", error: str = "", app: str = "", gate_host: str = "",
+                   abgemeldet: str = ""):
         nxt = auth.safe_next(next, request)
         # Code-Austausch (T-26): `next` ist dann ein Weg des Gateways; welche App gemeint ist, sagt
         # `gate_host`. Einen Namen zeigt nur ein Host aus `forward_apps` — ein erfundener bleibt namenlos.
@@ -114,7 +115,8 @@ def build_router(auth) -> APIRouter:
             return RedirectResponse(nxt, 303)
         return auth.render_page("login", request=request, next=nxt, error=error, app=app,
                                 app_name=auth._forward_app(nxt)["name"] if "://" in nxt
-                                else (auth._forward_app(gh)["name"] if gh else ""))
+                                else (auth._forward_app(gh)["name"] if gh else ""),
+                                info=auth.t("login.logged_out") if abgemeldet == "1" else "")
 
     @r.post("/auth/login")
     def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
@@ -1149,7 +1151,12 @@ def build_router(auth) -> APIRouter:
                     return auth.render_page("gate_logout", request=request, scope="all",
                                             app_name=auth._forward_app(host)["name"], next="/")
                 return _gate_logout(request, host, "all", "/")
-            resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"])
+            # Code-Austausch im Modus „page“ (PO 2026-10-08): gleich die Anmeldeseite mit „Du wurdest abgemeldet“,
+            # statt einer Zwischenseite, deren einziger Knopf genau dorthin führt.
+            if _link_modus(host) and auth._forward_app(host)["login"] == "page":
+                resp = RedirectResponse("/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
+            else:
+                resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"])
             auth._gate_cookie_loeschen(resp)
             return resp
 
@@ -1180,7 +1187,7 @@ def build_router(auth) -> APIRouter:
                 return _hashlib.sha256(str(wert or "").encode()).hexdigest()
 
             @r.get("/.tinysesam/start")
-            def gate_link_start(request: Request, rd: str = "/"):
+            def gate_link_start(request: Request, rd: str = "/", abgemeldet: str = ""):
                 """Auf dem App-Host: den Austausch beginnen. Der Ablauf wird an DIESEN Browser gebunden
                 (Cookie nur für diesen Host), sonst könnte jemand einem Opfer einen fremden Rückweg
                 unterschieben und es so in sein Konto ziehen."""
@@ -1194,7 +1201,8 @@ def build_router(auth) -> APIRouter:
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
                 ablauf, bindung = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
                 auth.store.put_flow("gatelink:" + ablauf, {"host": host, "rd": ziel, "bindung": _h(bindung),
-                                                           "proto": "http" if proto == "http" else "https"}, ttl=600)
+                                                           "proto": "http" if proto == "http" else "https",
+                                                           "abgemeldet": abgemeldet == "1"}, ttl=600)
                 basis = auth.gate_issuer()
                 resp = RedirectResponse(f"{basis}{auth.browser_path(request, '/auth/gate/authorize')}?flow={_q(ablauf)}", 303)
                 auth._gate_set_cookie(resp, auth._GATE_LINKFLOW_COOKIE, bindung, 600)
@@ -1225,6 +1233,8 @@ def build_router(auth) -> APIRouter:
                         # gate_host: Die Anmeldeseite sieht nur `next` (den Weg des Gateways) — ohne den Host
                         # stünde dort „TinySesam“ statt „Anmelden bei <App>“ (PO 2026-10-08).
                         ziel = f"{auth.browser_path(request, cfg.login_path)}?next={_q(hier)}&gate_host={_q(host)}"
+                        if f.get("abgemeldet"):
+                            ziel += "&abgemeldet=1"
                     if anwendung:
                         ziel += f"&app={_q(anwendung)}"
                     return RedirectResponse(ziel, 303)
@@ -1268,8 +1278,11 @@ def build_router(auth) -> APIRouter:
                 if h not in auth._gate_hosts():
                     raise HTTPException(400, auth.t("api.invalid", grund="host"))
                 proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+                basis = f"{'http' if proto == 'http' else 'https'}://{h}"
+                if auth._forward_app(h)["login"] == "page":
+                    return RedirectResponse(f"{basis}/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
                 return auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(h)["name"],
-                                        again_url=f"{'http' if proto == 'http' else 'https'}://{h}/")
+                                        again_url=f"{basis}/")
 
             @r.get("/.tinysesam/callback")
             def gate_link_callback(request: Request, code: str = ""):
