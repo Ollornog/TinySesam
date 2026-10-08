@@ -704,7 +704,9 @@ print("  Dependabot: Actions mit mehreren Teilen heben gemeinsam")
 WERKZEUG_PFLICHT = {
     "docker/setup-qemu-action": [r"^\s+image:\s*\S+:[\w.-]+@sha256:[0-9a-f]{64}\s*$"],
     "docker/setup-buildx-action": [r"^\s+version:\s*v\d+\.\d+\.\d+\s*$",
-                                   r"^\s+driver-opts:\s*image=\S+:v[\d.]+@sha256:[0-9a-f]{64}\s*$"],
+                                   r"^\s+driver-opts:\s*image=\S+:v[\d.]+@sha256:[0-9a-f]{64}\s*$",
+                                   # M6/B1: buildx nicht aus dem Actions-Cache (zizmor cache-poisoning).
+                                   r"^\s+cache-binary:\s*false\s*$"],
 }
 # Geprüft und ohne Angabe fest: die Werkzeug-Fassung steht als Konstante im gepinnten Commit.
 WERKZEUG_IM_SHA = {"anchore/sbom-action": "syft als Konstante in src/SyftVersion.ts",

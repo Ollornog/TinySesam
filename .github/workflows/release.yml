@@ -318,6 +318,9 @@ jobs:
         with:
           version: v0.37.1
           driver-opts: image=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          # Kein Binär-Cache: buildx käme sonst aus dem Actions-Cache, den auch PR-Läufe füllen —
+          # im Workflow, der veröffentlicht (zizmor `cache-poisoning`, M6/B1).
+          cache-binary: false
 
       # Container-Registries verlangen kleingeschriebene Repository-Namen; `repository_owner`
       # liefert die Schreibweise des GitHub-Kontos. Groß geschrieben bricht `buildx` ab:
