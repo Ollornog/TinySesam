@@ -180,6 +180,19 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     fehler: list[str] = []
     warnungen: list[str] = []
 
+    # Hintergrundbilder (0.24.8): Eine Adresse landet in einer CSS-url() — ein Anführungszeichen oder eine Klammer wäre
+    # ein Ausbruch aus dem Stylesheet. Hier und nicht erst beim Router, damit auch render_page() ohne Router geschützt ist.
+    for b in getattr(config, "brand_backgrounds", None) or []:
+        if not isinstance(b, str) or not b or any(z in b for z in "'\"()\\<> \t\n"):
+            fehler.append(f"brand_backgrounds: {b!r} — eine Adresse ohne Anführungszeichen, Klammern, Backslash "
+                          f"und Leerzeichen (sie landet in einer CSS-url())")
+        elif not (b.startswith("/") and not b.startswith("//")) and not b.startswith(("https://", "data:image/")):
+            fehler.append(f"brand_backgrounds: {b!r} — erlaubt sind /pfad, data:image/… und https://…")
+    _ziel = getattr(config, "brand_background_credit_url", "")
+    if _ziel and not str(_ziel).startswith(("https://", "http://")):
+        fehler.append("brand_background_credit_url: nur http(s)-Adressen")
+
+
     # Gefragt wird `enabled_methods()` — dieselbe Liste, aus der die Login-Seite ihre Felder
     # baut. Eine zweite, eigene Liste hier hatte genau den Fehler, den sie fangen soll: Sie sah
     # `pin_enabled=True` und übersah `pin_login=False`, und liess damit eine leere Login-Seite
@@ -668,6 +681,7 @@ def pruefe(config) -> tuple[list[str], list[str]]:
 #: jede Step-up-Bestätigung sofort alt. Die Obergrenzen fangen den Einheitenfehler (Minuten statt
 #: Stunden, Sekunden statt Minuten), der eine Frist unbemerkt ver-sechzigfacht.
 ZAHLENGRENZEN = {
+    "brand_background_seconds": (4, 600),   # Standzeit je Hintergrundbild (0.24.8)
     "pin_min_length": (4, 64),
     "apikey_default_days": (0, 3650),
     "admin_claim_ttl_min": (0, 7 * 24 * 60),

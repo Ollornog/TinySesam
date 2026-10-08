@@ -16,6 +16,10 @@ Konfiguration per Umgebungsvariablen:
                                                warnt der Start deshalb laut (B3-9)
     TINYSESAM_OIDC_NAME                        Beschriftung des Anmelde-Knopfs (Default "SSO"), z. B. "PocketID"
     TINYSESAM_BRAND_ICON                       Favicon aller Seiten: Pfad (/…) oder data:image/…-URI, nie eine fremde URL
+    TINYSESAM_BRAND_BACKGROUNDS                Hintergrundbilder (Leerzeichen-getrennt), blenden über; sehr dunkel abgedeckt
+    TINYSESAM_BRAND_BACKGROUNDS_EXTERN         1 = https-Adressen erlaubt (Abruf bei Dritten; sonst Startfehler)
+    TINYSESAM_BRAND_BACKGROUND_SECONDS         Standzeit je Bild (Default 12)
+    TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT/URL Dezenter Hinweis unten rechts, z. B. "Fotos: Unsplash"
     TINYSESAM_GATE_BRAND                       Marke vor den Anwendungen: Anmeldeseite „Anmelden bei <Marke>“
                                                mit „App: <Name>“ darunter (leer = „Anmelden bei <Name>“)
     TINYSESAM_OIDC_SCOPES                      Default "openid profile email". Mit Gruppen bei
@@ -168,6 +172,10 @@ def config_from_env() -> TinySesamConfig:
         oidc_name=os.environ.get("TINYSESAM_OIDC_NAME", "").strip() or "SSO",
         gate_brand=os.environ.get("TINYSESAM_GATE_BRAND", "").strip(),
         brand_icon=_favicon(),
+        brand_backgrounds=_hintergruende(),
+        brand_background_seconds=int(os.environ.get("TINYSESAM_BRAND_BACKGROUND_SECONDS", "12") or 12),
+        brand_background_credit_text=os.environ.get("TINYSESAM_BRAND_BACKGROUND_CREDIT_TEXT", "").strip(),
+        brand_background_credit_url=os.environ.get("TINYSESAM_BRAND_BACKGROUND_CREDIT_URL", "").strip(),
         db_path=os.environ.get("TINYSESAM_DB", "tinysesam-gateway.db"),
         https_mode=os.environ.get("TINYSESAM_HTTPS_MODE", "warn"),
         security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),
@@ -244,6 +252,17 @@ def _favicon() -> str:
     if wert and not (wert.startswith("data:image/") or (wert.startswith("/") and not wert.startswith("//"))):
         raise SystemExit("TINYSESAM_BRAND_ICON: nur ein Pfad (/…) oder eine data:image/…-URI — keine fremde Adresse")
     return wert
+
+
+def _hintergruende() -> list:
+    """TINYSESAM_BRAND_BACKGROUNDS: Hintergrundbilder, durch Leerzeichen getrennt. Eine https-Adresse heisst: jeder
+    Besucher der Anmeldeseite laedt bei diesem Dritten. Das geht nur mit ausdruecklicher Freigabe
+    (TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1) — sonst Startfehler, damit es nie aus Versehen passiert."""
+    bilder = os.environ.get("TINYSESAM_BRAND_BACKGROUNDS", "").split()
+    if any(b.startswith(("http://", "https://", "//")) for b in bilder) and not _schalter("TINYSESAM_BRAND_BACKGROUNDS_EXTERN"):
+        raise SystemExit("TINYSESAM_BRAND_BACKGROUNDS: fremde Adressen nur mit TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1 "
+                         "(jeder Besucher laedt dann bei diesem Dritten)")
+    return bilder
 
 
 def _sprache() -> str:

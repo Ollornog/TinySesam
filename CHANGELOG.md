@@ -4,6 +4,27 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.8] — 2026-10-09
+
+**Wer es braucht:** alle, deren Seiten ein eigenes Gesicht bekommen sollen. Kein API-Bruch, kein neues Schema.
+**Verhaltensänderung:** Ohne `brand_icon` tragen die eingebauten Seiten jetzt ein eingebautes Favicon. Wer keines will,
+setzt `brand_icon="none"`.
+
+### Hinzugefügt
+
+- **Hintergrundbilder** (`brand_backgrounds`, `brand_background_seconds`, `brand_background_credit_text/_url`; Gateway
+  `TINYSESAM_BRAND_BACKGROUNDS…`):
+  - Mehrere Bilder blenden langsam über, darüber liegt eine sehr dunkle Abdunklung. Bei „Bewegung reduzieren“ steht das
+    erste still. Ein dezenter Quellenhinweis steht unten rechts.
+  - Die Bilder stehen im nonce-geschützten Seiten-`<style>`, nie in `style=`. Die strenge CSP bleibt bestehen und gibt
+    für Bilder genau die Herkünfte der eingetragenen https-Adressen frei.
+  - Die Konfigurationsprüfung (schon im Konstruktor) weist Adressen mit Anführungszeichen, Klammern, Backslash oder
+    Leerzeichen ab (CSS-Ausbruch), ebenso `javascript:` und `//`.
+  - Im Gateway sind fremde Adressen nur mit `TINYSESAM_BRAND_BACKGROUNDS_EXTERN=1` erlaubt, sonst bricht der Start ab.
+  - `tests/test_hintergrund.py`. Zwei Mutationen sind rot: ohne Zeichenprüfung und ohne CSP-Erweiterung.
+- **Eingebautes Favicon:** ein schlichter Schlüssel als `data:`-URI, der zwischen hell und dunkel umschaltet. Ohne
+  Favicon fragt der Browser `/favicon.ico` an, vor einem Gate ist das ein geschützter Pfad.
+
 ## [0.24.7] — 2026-10-08
 
 **Wer es braucht:** Gateways vor mehreren Anwendungen einer Firma oder Marke. Kein API-Bruch, kein neues Schema. Ohne

@@ -14,7 +14,16 @@ class TinySesamConfig:
     # --- Branding/Theme: einmal setzen → re-skinnt ALLE eingebauten Seiten (+ Fehlerseiten) ---
     brand_css: str = ""                   # zusätzliches CSS (nach dem Default → überschreibt es)
     brand_head: str = ""                  # zusätzliches <head>-HTML (z.B. Logo-Font, Meta)
-    brand_icon: str = ""                  # Favicon-URL für ALLE eingebauten Seiten (leer = keins)
+    brand_icon: str = ""                  # Favicon-URL für ALLE eingebauten Seiten (leer = eingebautes Standard-
+                                          # Symbol, "none" = keins; seit 0.24.8 — vorher hiess leer „keins“)
+    #: Hintergrundbilder aller eingebauten Seiten (seit 0.24.8): Pfade, data:- oder https-Adressen. Mehrere blenden
+    #: langsam über, darüber liegt eine sehr dunkle Abdunklung; bei „Bewegung reduzieren“ steht das erste still. Eine
+    #: https-Adresse gibt die strenge CSP für genau diese Herkunft frei (img-src). Bilder von Dritten laden heisst:
+    #: der Browser jedes Besuchers meldet sich dort — nur mit Absicht und passender Lizenz.
+    brand_backgrounds: list = field(default_factory=list)
+    brand_background_seconds: int = 12          # Standzeit je Bild beim Überblenden
+    brand_background_credit_text: str = ""      # dezenter Hinweis unten rechts, z. B. "Fotos: Unsplash"
+    brand_background_credit_url: str = ""      # Ziel des Hinweises (nur http/https)
     # Rumpf der Host-App um JEDE eingebaute Seite (Login/PIN/TOTP/Konto/Admin/Fehler): eigene
     # Navigation oben, Fußzeile unten. Entweder HTML-String oder `fn(auth) -> str`, wenn der
     # Inhalt vom Request abhängt (Login-Status, Sprache) — dann pro Aufruf ausgewertet.

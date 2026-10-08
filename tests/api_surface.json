@@ -996,6 +996,22 @@
       "feld": "str = ''",
       "stufe": "A"
     },
+    "brand_background_credit_text": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "brand_background_credit_url": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
+    "brand_background_seconds": {
+      "feld": "int = 12",
+      "stufe": "A"
+    },
+    "brand_backgrounds": {
+      "feld": "list = []",
+      "stufe": "A"
+    },
     "brand_css": {
       "feld": "str = ''",
       "stufe": "A"

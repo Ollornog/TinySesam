@@ -6479,9 +6479,12 @@ class TinySesam:
         if not csp or csp == "off":
             return ""
         if csp == "strict":
+            # Hintergrundbilder von https-Adressen (brand_backgrounds) — genau deren Herkunft, nichts darüber hinaus.
+            fremd = sorted({"https://" + b[len("https://"):].split("/", 1)[0].split("?", 1)[0]
+                            for b in (getattr(self.cfg, "brand_backgrounds", None) or []) if b.startswith("https://")})
             return ("default-src 'self'; "
                     f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
-                    "img-src 'self' data:; base-uri 'none'; "
+                    f"img-src 'self' data:{''.join(' ' + h for h in fremd)}; base-uri 'none'; "
                     "frame-ancestors 'self'; object-src 'none'")
         return csp.replace("{nonce}", nonce)
 

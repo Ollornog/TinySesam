@@ -34,6 +34,8 @@ TOKENS = """
   --ts-ok-bg:#12331f;    --ts-ok-ink:#4ade80;
   --ts-warn-bg:#442006;  --ts-warn-ink:#fdba74;  --ts-warn-line:#7c2d12;
   --ts-info-bg:#12283a;  --ts-info-ink:#60a5fa;
+  --ts-bild-grund:#050608;    /* hinter den Hintergrundbildern (brand_backgrounds) */
+  --ts-bild-decke:rgba(5,6,8,.72);   --ts-bild-decke-rand:rgba(5,6,8,.9);   /* Abdunklung darüber */
   --ts-radius:12px;
   --ts-font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --ts-mono:ui-monospace,Menlo,Consolas,monospace;
