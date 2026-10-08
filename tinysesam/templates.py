@@ -242,6 +242,8 @@ def _login(auth, ctx) -> str:
     methods = cfg.enabled_methods()
     warn = f"<div class=warnbar>{_e(ctx['warn'])}</div>" if ctx.get("warn") else ""
     err = f"<div class=err>{_e(error)}</div>" if error else ""
+    # Hinweis ohne Fehlercharakter, z. B. „Du wurdest abgemeldet“ nach dem Abmelden (PO 2026-10-08).
+    info = f"<div class=hint>{_e(ctx['info'])}</div>" if ctx.get("info") else ""
     _or = f"<div class=or>{_e(t('or'))}</div>"
     remember = ""
     if cfg.remember_me_enabled:
@@ -296,7 +298,7 @@ def _login(auth, ctx) -> str:
                   f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
-    body = f"<h1>{_e(titel)}</h1>{warn}{err}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
+    body = f"<h1>{_e(titel)}</h1>{warn}{info}{err}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
     return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx))
 
 

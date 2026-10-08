@@ -2,6 +2,19 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [0.24.5] — 2026-10-08
+
+**Wer es braucht:** Betreiber des zentralen Gateways mit Login-Modus `page`. Kein API-Bruch, kein neues Schema.
+
+### Geändert
+
+- **Nach dem Abmelden direkt die Anmeldeseite** mit dem Hinweis „Du wurdest abgemeldet.“ statt einer Zwischenseite
+  „Abgemeldet → Wieder anmelden“, deren einziger Knopf genau dorthin führte. Das gilt für den Rückweg vom Provider
+  (`/.tinysesam/after-logout`) und für `/auth/gate/logged-out`, im Code-Austausch mit Login-Modus `page`. Der
+  Hinweis reist im Ablauf mit (`/.tinysesam/start?abgemeldet=1` → Anmeldeseite). Im Modus `direct` bleibt die
+  Seite „Abgemeldet“, denn dort gäbe es keine eigene Anmeldeseite.
+- Die Anmeldeseite kann einen Hinweis ohne Fehlercharakter zeigen (`info`).
+
 ## [0.24.4] — 2026-10-08
 
 **Wer es braucht:** Betreiber des zentralen Gateways mit Login-Modus `page`. Kein API-Bruch.
