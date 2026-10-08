@@ -69,6 +69,23 @@ assert gateway.config_from_env().oidc_name == "PocketID"
 del os.environ["TINYSESAM_OIDC_NAME"]
 assert gateway.config_from_env().oidc_name == "SSO"
 ok("TINYSESAM_LANG: Vorgabe en, de wählbar, Unbekanntes → Startfehler; TINYSESAM_OIDC_NAME benennt den Knopf")
+assert gateway.config_from_env().gate_brand == ""
+os.environ["TINYSESAM_GATE_BRAND"] = "  Firma A  "
+assert gateway.config_from_env().gate_brand == "Firma A"
+del os.environ["TINYSESAM_GATE_BRAND"]
+ok("TINYSESAM_GATE_BRAND: leer per Vorgabe, gesetzt ohne Rand")
+assert gateway.config_from_env().brand_icon == ""
+for gut in ("/favicon.svg", "data:image/png;base64,iVBORw0KGgo="):
+    os.environ["TINYSESAM_BRAND_ICON"] = gut
+    assert gateway.config_from_env().brand_icon == gut, gut
+for fremd in ("https://cdn.example.com/icon.png", "//cdn.example.com/icon.png", "javascript:alert(1)", "data:text/html,x"):
+    os.environ["TINYSESAM_BRAND_ICON"] = fremd
+    try:
+        gateway.config_from_env(); assert False, f"fremdes Favicon angenommen: {fremd}"
+    except SystemExit as e:
+        assert "TINYSESAM_BRAND_ICON" in str(e)
+del os.environ["TINYSESAM_BRAND_ICON"]
+ok("TINYSESAM_BRAND_ICON: Pfad und data:image/ ja; fremde URL, //, javascript:, data:text/ → Startfehler")
 
 # Mit dem Code-Austausch ist host-only gewollt — die Warnung „ohne cookie_domain“ wäre ein Fehlalarm.
 import logging as _logging

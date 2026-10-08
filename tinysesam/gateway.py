@@ -15,6 +15,9 @@ Konfiguration per Umgebungsvariablen:
                                                durch das Tor — ohne Freigabe je Client (unten)
                                                warnt der Start deshalb laut (B3-9)
     TINYSESAM_OIDC_NAME                        Beschriftung des Anmelde-Knopfs (Default "SSO"), z. B. "PocketID"
+    TINYSESAM_BRAND_ICON                       Favicon aller Seiten: Pfad (/…) oder data:image/…-URI, nie eine fremde URL
+    TINYSESAM_GATE_BRAND                       Marke vor den Anwendungen: Anmeldeseite „Anmelden bei <Marke>“
+                                               mit „App: <Name>“ darunter (leer = „Anmelden bei <Name>“)
     TINYSESAM_OIDC_SCOPES                      Default "openid profile email". Mit Gruppen bei
                                                PocketID u. a.: "openid profile email groups" —
                                                ohne den Scope fehlt der Claim, und das Tor weist
@@ -163,6 +166,8 @@ def config_from_env() -> TinySesamConfig:
         allowed_groups=_split("TINYSESAM_ALLOWED_GROUPS"),
         oidc_scopes=os.environ.get("TINYSESAM_OIDC_SCOPES", "").strip() or "openid profile email",
         oidc_name=os.environ.get("TINYSESAM_OIDC_NAME", "").strip() or "SSO",
+        gate_brand=os.environ.get("TINYSESAM_GATE_BRAND", "").strip(),
+        brand_icon=_favicon(),
         db_path=os.environ.get("TINYSESAM_DB", "tinysesam-gateway.db"),
         https_mode=os.environ.get("TINYSESAM_HTTPS_MODE", "warn"),
         security_log=os.environ.get("TINYSESAM_SECURITY_LOG", ""),
@@ -230,6 +235,15 @@ def _install_https_except_health(auth, app):
 
     app.add_middleware(_ExceptHealth)
     return "force"
+
+
+def _favicon() -> str:
+    """TINYSESAM_BRAND_ICON: Favicon aller Seiten des Gateways. Nur vom eigenen Ursprung — ein Pfad (`/…`) oder eine
+    `data:image/…`-URI. Eine fremde URL hiesse, jeder Besucher meldet sich beim Laden der Anmeldeseite bei Dritten."""
+    wert = os.environ.get("TINYSESAM_BRAND_ICON", "").strip()
+    if wert and not (wert.startswith("data:image/") or (wert.startswith("/") and not wert.startswith("//"))):
+        raise SystemExit("TINYSESAM_BRAND_ICON: nur ein Pfad (/…) oder eine data:image/…-URI — keine fremde Adresse")
+    return wert
 
 
 def _sprache() -> str:

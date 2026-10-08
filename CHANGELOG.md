@@ -4,6 +4,23 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.7] — 2026-10-08
+
+**Wer es braucht:** Gateways vor mehreren Anwendungen einer Firma oder Marke. Kein API-Bruch, kein neues Schema. Ohne
+die neue Einstellung sieht niemand etwas Neues.
+
+### Hinzugefügt
+
+- **Marke vor den Anwendungen** (`gate_brand`, im Gateway `TINYSESAM_GATE_BRAND`): Ist sie gesetzt, heißt die
+  Anmeldeseite „Anmelden bei <Marke>“ und nennt darunter die Anwendung („App: <Name>“, aus `forward_apps`). Ohne Marke
+  bleibt es bei „Anmelden bei <Anwendung>“. `tests/test_gate_marke.py` deckt beide Fälle, die Anwendung ohne Namen und
+  das Maskieren ab (Mutation: Marke ignoriert → rot).
+  Mit Marke heißt der Seitentitel „<Marke> Login“.
+- **Favicon im Gateway** (`TINYSESAM_BRAND_ICON` → `brand_icon`, steht damit auf allen eingebauten Seiten). Erlaubt sind
+  nur Werte vom eigenen Ursprung: ein Pfad `/…` oder eine `data:image/…`-URI. Eine fremde URL, `//…`, `javascript:` oder
+  `data:text/…` bricht den Start ab, denn sonst meldete sich jeder Besucher der Anmeldeseite bei Dritten. Getestet,
+  die Mutation ohne die Prüfung ist rot.
+
 ### Geändert
 
 - **CI: `release.yml` lädt buildx nicht aus dem Actions-Cache** (`cache-binary: false` an

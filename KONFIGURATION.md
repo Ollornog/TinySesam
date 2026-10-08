@@ -283,6 +283,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 |---|---|---|---|
 | `rp_id` | `str` | `"localhost"` | Registrable Domain (z.B. app.example.com) — OHNE Schema/Port |
 | `rp_name` | `str` | `"TinySesam"` | Anzeigename der Relying Party |
+| `gate_brand` | `str` | `""` | Marke vor den Anwendungen eines Gateways (z. B. der Name einer Firma). Gesetzt, heißt die Anmeldeseite „Anmelden bei <Marke>“ und nennt darunter die Anwendung („App: <Name>“); leer bleibt es bei „Anmelden bei <Anwendung>“. Reiner Anzeigetext. |
 | `origin` | `str` | `"http://localhost:8000"` | exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste |
 
 ## App-Integration
@@ -307,4 +308,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-166 Felder, erzeugt aus `tinysesam/config.py`.
+167 Felder, erzeugt aus `tinysesam/config.py`.

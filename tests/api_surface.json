@@ -1104,6 +1104,10 @@
       "feld": "str = 'all'",
       "stufe": "A"
     },
+    "gate_brand": {
+      "feld": "str = ''",
+      "stufe": "A"
+    },
     "gate_cookie_name": {
       "feld": "str = '__Host-tinysesam_gate'",
       "stufe": "A"
