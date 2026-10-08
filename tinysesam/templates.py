@@ -146,13 +146,13 @@ def hintergrund(cfg) -> tuple[str, str]:
     n, d, f = len(bilder), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
     t = n * d
     css = [".tsbg{position:fixed;inset:0;z-index:-1;background:var(--ts-bild-grund);overflow:hidden}",
-           ".tsbg i{position:absolute;inset:-2%;background:center/cover no-repeat;opacity:0;"
-           "filter:grayscale(.35) brightness(.55)}",
-           ".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
-           "var(--ts-bild-decke),var(--ts-bild-decke-rand))}",
+           (".tsbg i{position:absolute;inset:-2%;background:center/cover no-repeat;opacity:0;"
+            "filter:grayscale(.35) brightness(.55)}"),
+           (".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
+            "var(--ts-bild-decke),var(--ts-bild-decke-rand))}"),
            "body{background:transparent}",
-           ".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
-           "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}"]
+           (".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
+            "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}")]
     if n == 1:
         css.append(".tsbg i{opacity:.32}")
     else:
