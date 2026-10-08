@@ -74,7 +74,10 @@ s = b["app"].get("/.tinysesam/start?rd=/seite", follow_redirects=False)
 assert any(v.startswith("__Host-tinysesam_linkflow=") for v in s.headers.get_list("set-cookie"))
 a = b["gw"].get(urlsplit(ort(s)).path + "?" + urlsplit(ort(s)).query, follow_redirects=False)
 assert a.status_code == 303 and urlsplit(ort(a)).path == "/auth/login", ort(a)
-ok("Gateway ohne Sitzung → Login, der Ablauf wartet")
+seite = b["gw"].get(urlsplit(ort(a)).path + "?" + urlsplit(ort(a)).query)
+assert "Anmelden bei App" in seite.text, seite.text[:300]
+assert "Anmelden bei" not in b["gw"].get("/auth/login?next=/&gate_host=evil.example.net").text
+ok("Gateway ohne Sitzung → Login „Anmelden bei App“, der Ablauf wartet (fremder gate_host → kein Name)")
 
 cb, code = koppeln(b)
 assert cb.status_code == 303 and ort(cb) == "/seite", (cb.status_code, ort(cb))
