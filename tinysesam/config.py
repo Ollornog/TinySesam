@@ -524,6 +524,10 @@ class TinySesamConfig:
     # --- WebAuthn / Passkey ---
     rp_id: str = "localhost"              # Registrable Domain (z.B. app.example.com) — OHNE Schema/Port
     rp_name: str = "TinySesam"            # Anzeigename der Relying Party
+    #: Marke vor den Anwendungen eines Gateways (z. B. der Name einer Firma). Gesetzt, heißt die Anmeldeseite
+    #: „Anmelden bei <Marke>“ und nennt darunter die Anwendung („App: <Name>“); leer bleibt es bei
+    #: „Anmelden bei <Anwendung>“. Reiner Anzeigetext.
+    gate_brand: str = ""
     origin: str = "http://localhost:8000" # exaktes Origin (Schema+Host+Port) des Browsers; mehrere als Liste
 
     # --- App-Integration ---

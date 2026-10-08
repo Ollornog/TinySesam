@@ -80,6 +80,7 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 .tsmain .or{text-align:center;color:var(--ts-muted);font-size:12px;margin:16px 0 4px}
 .tsmain .hint{color:var(--ts-muted);font-size:12px;text-align:center;margin-top:14px}
 .tsmain .hint a{color:var(--ts-muted)}
+.tsmain p.app{color:var(--ts-muted);text-align:center;margin:-6px 0 18px}
 .tsmain .remember{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:13px;
      color:var(--ts-muted)}
 .tsmain .remember input{width:auto;margin:0}
@@ -322,8 +323,15 @@ def _login(auth, ctx) -> str:
         links.append(f"<a href='__TS_P__/auth/forgot'>{_e(t('login.forgot'))}</a>")
     signup = f"<div class=hint>{' · '.join(links)}</div>" if links else ""
     js = (_csrf_js(auth) + _PASSKEY_LOGIN_JS.replace("__NEXT__", _e(next_))) if "passkey" in methods else ""
-    # Vor einer Anwendung (forward_apps[host].name, T-21) sagt die Seite, wofür man sich anmeldet.
-    titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
+    # Vor einer Anwendung (forward_apps[host].name, T-21) sagt die Seite, wofür man sich anmeldet. Mit einer Marke
+    # (gate_brand) steht die Marke oben und die Anwendung als eigene Zeile darunter.
+    marke = getattr(cfg, "gate_brand", "") or ""
+    if marke:
+        titel = t("login.for_app", name=marke)
+    else:
+        titel = t("login.for_app", name=ctx["app_name"]) if ctx.get("app_name") else cfg.rp_name
+    app_zeile = (f"<p class=app>{_e(t('login.app_line', name=ctx['app_name']))}</p>"
+                 if marke and ctx.get("app_name") else "")
     # Nur von dieser Anwendung abgemeldet (T-22): wieder hinein mit einem Klick, ohne neue Anmeldung.
     weiter = ""
     if ctx.get("resume_user"):
@@ -332,8 +340,9 @@ def _login(auth, ctx) -> str:
                   f"<input type=hidden name=next value='{_e(next_)}'>{gh}{_cf(ctx)}"
                   f"<button type=submit>{_e(t('gate.resume', name=ctx['resume_user']))}</button></form>"
                   + (_or if (pw or pin or others) else ""))
-    body = f"<h1>{_e(titel)}</h1>{weiter}{pw}{pin}{sep}{others}{signup}{js}"
-    return _page(auth, t("login.submit"), body, top=_demobar(auth, ctx=ctx), unten=meldungen)
+    body = f"<h1>{_e(titel)}</h1>{app_zeile}{weiter}{pw}{pin}{sep}{others}{signup}{js}"
+    seitentitel = t("login.brand_title", name=marke) if marke else t("login.submit")
+    return _page(auth, seitentitel, body, top=_demobar(auth, ctx=ctx), unten=meldungen)
 
 
 def _totp(auth, ctx) -> str:
