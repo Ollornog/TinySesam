@@ -190,6 +190,12 @@ class Page:
     async def go(self, path, wait=1.4):
         await self.cmd("Page.navigate", url=BASE + path)
         await asyncio.sleep(wait)
+        # Nicht nur eine feste Pause: Auf einem kalten Runner war die erste Seite nach Chromes Start nach 1,4 s
+        # noch nicht fertig (PR #142, `header.shell` fehlte). Bis zu 15 s auf ein fertiges Dokument warten.
+        for _ in range(60):
+            if await self.js("document.readyState") == "complete":
+                break
+            await asyncio.sleep(0.25)
 
     async def click(self, selector):
         await self.js(f"document.querySelector({selector!r}).click()")
