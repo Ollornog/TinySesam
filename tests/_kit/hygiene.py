@@ -688,6 +688,96 @@ def pruefe_keine_fremdressourcen(root: str, dateien: list[str], policy: dict,
     return sorted(set(treffer))
 
 
+_DOKUMENT = re.compile(r"<head\b", re.I)
+_LINK = re.compile(r"<link\b[^>]*>", re.I | re.S)
+_REL = re.compile(r"""\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+_HREF = re.compile(r"""\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+
+
+def _favicon_links(html: str) -> list[str]:
+    """Die `href` aller `<link>` mit dem rel-Wort `icon` (also `icon` und `shortcut icon`, NICHT `apple-touch-icon`
+    allein — das nimmt kein Browser für den Tab)."""
+    aus = []
+    for tag in _LINK.findall(html):
+        rel = _REL.search(tag)
+        if not rel:
+            continue
+        woerter = (rel.group(1) or rel.group(2) or rel.group(3) or "").lower().split()
+        if "icon" in woerter:
+            href = _HREF.search(tag)
+            aus.append((href.group(1) or href.group(2) or href.group(3) or "") if href else "")
+    return aus
+
+
+def favicon_befunde_html(html: str, eigener_host: str = "") -> list[str]:
+    """Fuer Browser- und Seitentests: hat eine AUSGELIEFERTE Seite ein Favicon, und kommt es vom eigenen Ursprung?
+
+    Die Dateipruefung `pruefe_favicon` sieht nur Seiten, die als Datei im Repo liegen. Seiten aus Code (FastAPI,
+    Python-f-Strings, Server-Templates aus Bausteinen) sieht nur ein Test, der die fertige Seite in der Hand hat —
+    dafuer ist diese Funktion. Leer = in Ordnung.
+
+    `eigener_host`: Host, unter dem die Seite laeuft. Ein Favicon mit fremder Herkunft (`https://anderer/…`, `//…`) ist
+    ein Abruf bei Dritten (Regel fremdressourcen) und wird gemeldet; `data:` und Pfade gehen immer.
+    """
+    if not _DOKUMENT.search(html):
+        return []
+    links = _favicon_links(html)
+    if not links:
+        return ["kein <link rel=\"icon\"> — der Tab zeigt ein leeres oder fremdes Symbol (PO 2026-10-08: Favicon ueberall)"]
+    treffer = []
+    for href in links:
+        h = href.strip()
+        m = re.match(r"(?:https?:)?//([^/:?#]+)", h, re.I)
+        if m and m.group(1).lower() != (eigener_host or "").lower():
+            treffer.append(f"Favicon von {m.group(1)} — ein Abruf bei Dritten; selbst ausliefern oder als data:-URI")
+        if not h:
+            treffer.append("<link rel=\"icon\"> ohne href")
+    return treffer
+
+
+def pruefe_favicon(root: str, dateien: list[str], policy: dict,
+                   ausgenommen: dict[str, str] | None = None) -> list[str]:
+    """Hat jede Webseite im Repo ein Favicon?
+
+    WARUM (PO 2026-10-08, „das favicon ueberall nicht vergessen. bitte auch als test generell ueberall in repos und co
+    einbauen bei websites“): Ohne `<link rel="icon">` fragt der Browser von sich aus `/favicon.ico` an. Je nach Server
+    ergibt das einen 404 im Log, einen geschuetzten Pfad, der auf eine Anmeldung umleitet, oder einen Tab ohne Zeichen,
+    an dem niemand die Seite wiedererkennt. Ein Favicon ist billig, und vergessen wird es genau dort, wo niemand
+    hinschaut: auf Neben- und Demoseiten.
+
+    Geprueft wird jede VOLLSTAENDIGE Seite (traegt ein `<head>`) in HTML und den ueblichen Vorlagen. Teilvorlagen ohne
+    `<head>` (`{% extends %}`, Partials) erben das Favicon und bleiben aussen vor. Gezaehlt wird nur das rel-Wort
+    `icon` — `apple-touch-icon` allein reicht nicht, das nimmt kein Browser fuer den Tab.
+
+    **Was diese Pruefung NICHT sieht** (benannte Grenze): Seiten, die Code zusammenbaut (FastAPI-Antworten,
+    f-Strings). Fuer die gibt es `favicon_befunde_html` — im Browser- oder Seitentest auf die fertige Seite anwenden.
+    Beide Blickwinkel sind noetig, keiner ersetzt den anderen.
+
+    `ausgenommen` ist ein dict `{"<pfad>": "Grund"}`; ein Grund ist Pflicht, eine Ausnahme ohne Treffer wird gemeldet.
+    """
+    ausgenommen = ausgenommen or {}
+    treffer = []
+    for schluessel, grund in sorted(ausgenommen.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {schluessel!r} ohne Begruendung — ein Grund ist Pflicht")
+    endungen = (".html", ".htm", ".j2", ".jinja", ".jinja2", ".twig", ".php", ".hbs", ".erb", ".vue")
+    benutzt = set()
+    for rel, inhalt in _texte(root, dateien, policy):
+        if not rel.endswith(endungen) or _ist_generiert(rel, policy) or not _DOKUMENT.search(inhalt):
+            continue
+        if _favicon_links(inhalt):
+            continue
+        if rel in ausgenommen:
+            benutzt.add(rel)
+            continue
+        zeile = inhalt[:_DOKUMENT.search(inhalt).start()].count("\n") + 1
+        treffer.append(f"{rel}:{zeile}: Seite ohne <link rel=\"icon\"> — Favicon ergaenzen "
+                       f"(eigene Datei oder data:-URI, nie von Dritten)")
+    for schluessel in sorted(set(ausgenommen) - benutzt):
+        treffer.append(f"Ausnahme {schluessel!r} trifft nichts mehr — Eintrag entfernen")
+    return sorted(set(treffer))
+
+
 def pruefe_adressen(root: str, dateien: list[str], policy: dict,
                     zusaetzliche_hosts: list[str] | None = None,
                     belegstellen: list[str] | None = None) -> list[str]:

@@ -397,6 +397,10 @@ assert not schluessel, "Policy-Schlüssel ohne Leser:\n  " + "\n  ".join(schlues
 # Prüfung nicht.
 fremd = hygiene.pruefe_keine_fremdressourcen(ROOT, FILES, POLICY)
 assert not fremd, "Ressourcen von Dritten im Markup:\n  " + "\n  ".join(fremd)
+# Kit 0.28 (PO 2026-10-08): jede vollständige Seite trägt ein Favicon. Die eingebauten Seiten baut der Code; sie
+# prüft tests/test_gate_marke.py (brand_icon) — hier die Dateien im Repo (Website, Demos).
+favicon = hygiene.pruefe_favicon(ROOT, FILES, POLICY)
+assert not favicon, "Seiten ohne Favicon:\n  " + "\n  ".join(favicon)
 
 # Kit 0.21: Von AUSSEN gefragt, ob jede Testdatei überhaupt läuft. Ein nicht verkabelter Test
 # besteht seine eigene Aufruf-Prüfung (die Zeile darunter) dadurch, dass er schweigt. Hier
