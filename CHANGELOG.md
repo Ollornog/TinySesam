@@ -2,6 +2,15 @@
 
 Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keepachangelog.com/de/).
 
+## [Unveröffentlicht]
+
+### Geändert
+
+- **CI: `release.yml` lädt buildx nicht aus dem Actions-Cache** (`cache-binary: false` an
+  `setup-buildx-action`, zizmor `cache-poisoning`, Härtungs-Grundlinie M6/B1). Den Cache füllen auch
+  PR-Läufe; im Workflow, der veröffentlicht, soll das Werkzeug nicht aus ihm stammen.
+  `tests/test_repo.py` verlangt die Angabe (Mutation: Zeile entfernt → rot). Kein Release nötig.
+
 ## [0.24.6] — 2026-10-08
 
 **Wer es braucht:** alle mit den eingebauten Seiten. Kein API-Bruch, kein neues Schema. **Wer eigenes CSS hat**
