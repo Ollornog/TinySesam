@@ -96,7 +96,8 @@ os.unlink(_db)
 _db = _os.path.join(_tf.mkdtemp(), "t.db")
 _a = TinySesam(TinySesamConfig(db_path=_db, csrf_enabled=False, lang="de", passkey_enabled=False))
 _app = FastAPI(); _app.include_router(_a.router())
-assert "rel=icon" not in TestClient(_app).get("/auth/login").text, "ohne brand_icon kein Link"
+assert "rel=icon href='data:image/svg+xml;base64," in TestClient(_app).get("/auth/login").text, \
+    "ohne brand_icon das eingebaute Standard-Favicon (seit 0.24.8)"
 os.unlink(_db)
 print("OK brand_icon: Favicon zentral auf allen eingebauten Seiten")
 

@@ -121,9 +121,55 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
 """
 
 
+#: Eingebautes Favicon (seit 0.24.8): ein schlichter Schlüssel, hell/dunkel umschaltend — als data:-URI, also ohne
+#: Abruf. Ohne Favicon fragt der Browser /favicon.ico an; vor einem Gate ist das ein geschützter Pfad.
+STANDARD_FAVICON = "data:image/svg+xml;base64," + __import__("base64").b64encode(
+    b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><style>path,circle{stroke:#111}"
+    b"@media(prefers-color-scheme:dark){path,circle{stroke:#eee}}</style><g fill='none' stroke-width='3' "
+    b"stroke-linecap='round'><circle cx='11' cy='16' r='6'/><path d='M17 16h12M24 16v5M28 16v4'/></g></svg>").decode()
+
+
 def favicon_link(icon: str) -> str:
-    """Favicon-<link> für die eingebauten Seiten. Eine Stelle, damit keine Seite es vergisst."""
-    return f"<link rel=icon href='{html.escape(icon)}'>" if icon else ""
+    """Favicon-<link> für die eingebauten Seiten. Eine Stelle, damit keine Seite es vergisst. Leer = das eingebaute
+    Standard-Symbol, "none" = keins."""
+    if icon == "none":
+        return ""
+    return f"<link rel=icon href='{html.escape(icon or STANDARD_FAVICON)}'>"
+
+
+def hintergrund(cfg) -> tuple[str, str]:
+    """(CSS, HTML) der rotierenden Hintergrundbilder aus `brand_backgrounds` — leer, wenn keine gesetzt sind. Das Bild
+    steht im (nonce-geschützten) Seiten-<style>, nicht in style=: Die strenge CSP verbietet Inline-Attribute."""
+    bilder = [b for b in (getattr(cfg, "brand_backgrounds", None) or []) if b]
+    if not bilder:
+        return "", ""
+    n, d, f = len(bilder), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
+    t = n * d
+    css = [".tsbg{position:fixed;inset:0;z-index:-1;background:var(--ts-bild-grund);overflow:hidden}",
+           (".tsbg i{position:absolute;inset:-2%;background:center/cover no-repeat;opacity:0;"
+            "filter:grayscale(.35) brightness(.55)}"),
+           (".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
+            "var(--ts-bild-decke),var(--ts-bild-decke-rand))}"),
+           "body{background:transparent}",
+           (".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
+            "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}")]
+    if n == 1:
+        css.append(".tsbg i{opacity:.32}")
+    else:
+        a, b, c = f / t * 100, d / t * 100, (d + f) / t * 100
+        css.append(f"@keyframes tsbg{{0%{{opacity:0}}{a:.3f}%{{opacity:.32}}{b:.3f}%{{opacity:.32}}"
+                   f"{c:.3f}%{{opacity:0}}100%{{opacity:0}}}}")
+        css.append(f".tsbg i{{animation:tsbg {t}s linear infinite}}")
+        css.append("@media(prefers-reduced-motion:reduce){.tsbg i{animation:none}.tsbg i:first-child{opacity:.32}}")
+    for k, b in enumerate(bilder, 1):
+        css.append(f".tsbg i:nth-child({k}){{background-image:url('{b}')"
+                   + (f";animation-delay:{(k - 1) * d}s" if n > 1 else "") + "}")
+    quelle = ""
+    text, ziel = getattr(cfg, "brand_background_credit_text", ""), getattr(cfg, "brand_background_credit_url", "")
+    if text:
+        quelle = (f"<a class=tsbg-quelle href='{html.escape(ziel)}' target=_blank rel='noopener noreferrer'>"
+                  f"{html.escape(text)}</a>" if ziel else f"<span class=tsbg-quelle>{html.escape(text)}</span>")
+    return "".join(css), "<div class=tsbg aria-hidden=true>" + "<i></i>" * n + "</div>" + quelle
 
 
 def brand(value, auth):
@@ -138,7 +184,7 @@ def brand(value, auth):
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
-         header="", footer="", unten=""):
+         header="", footer="", unten="", hg=("", "")):
     """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit; `unten` direkt
     darunter (die Meldungen). `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation
     drumherum legen kann."""
@@ -146,8 +192,8 @@ def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_i
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"{favicon_link(brand_icon)}"
-            f"<title>{html.escape(title)}</title><style>{_CSS}{brand_css or ''}</style>{brand_head or ''}</head>"
-            f"<body>{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
+            f"<title>{html.escape(title)}</title><style>{_CSS}{hg[0]}{brand_css or ''}</style>{brand_head or ''}</head>"
+            f"<body>{hg[1]}{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
 
 
 def _shell(title, body, lang="en"):
@@ -160,7 +206,8 @@ def _page(auth, title, body, card=True, top="", unten=""):
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
                 card, getattr(cfg, "brand_icon", ""), top,
-                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), unten)
+                brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), unten,
+                hintergrund(cfg))
 
 
 #: Symbole der Meldungen — Inline-SVG in currentColor (nichts wird nachgeladen), 24er-Raster, nur Striche.
