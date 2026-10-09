@@ -10,6 +10,7 @@ der Funktion. Wer eine Zeile hier rot sieht, weiss sofort, was wieder möglich i
 """
 from __future__ import annotations
 
+import itertools as _itertools
 import io
 import logging
 import os
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+_FALSCH = _itertools.count()   # immer NEUE falsche Passwörter: eine Wiederholung zählt seit 0.24.9 nur einmal
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -1485,7 +1487,7 @@ def _f12_unbestaetigt():
     a.store._exec("UPDATE users SET created_at=created_at-60 WHERE id=?", (uid,))
     a.audit("signup", _F12_NAME, "203.0.113.66")
     TestClient(app_, client=("198.51.100.7", 1)).post(
-        "/auth/login", data={"username": _F12_MAIL, "password": "falsch-falsch"})
+        "/auth/login", data={"username": _F12_MAIL, "password": f"falsch-falsch-{next(_FALSCH)}"})
     a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=?", (uid,))
     vorher = _f12_spuren(a)
     assert vorher[0] and vorher[1], f"Vorbedingung: Spuren müssen da sein, sonst misst das nichts: {vorher}"
@@ -1653,7 +1655,7 @@ for _n1_lage, _n1_gleich in (("eine Minute davor", False), ("dieselbe Sekunde", 
     # Nach der Anlage: ein Fehlversuch unter dem Namen — der trifft DIESES Konto und geht mit.
     # Er kommt Sekunden später (die Sekunde der Anlage selbst lässt `delete_attempts_for` stehen).
     TestClient(_n1_app, client=("203.0.113.77", 1)).post(
-        "/auth/login", data={"username": _N1_NAME, "password": "falsch-falsch"})
+        "/auth/login", data={"username": _N1_NAME, "password": f"falsch-falsch-{next(_FALSCH)}"})
     _n1_a.store._exec("UPDATE audit SET ts=ts+5 WHERE ip='203.0.113.77'")
     _n1_a.store._exec("UPDATE login_attempt SET ts=ts+5 WHERE ip='203.0.113.77'")
     _n1_a.store._exec("UPDATE magic_token SET expires_at=0 WHERE user_id=? AND purpose='verify_email'",
@@ -2069,7 +2071,7 @@ def _n5_rate(a, app_, name):
     for _i in range(4):
         _cl = TestClient(app_, client=(f"203.0.113.{_i + 1}", 1))
         for _ in range(4):
-            _cl.post("/auth/login", data={"username": name, "password": "falsch-falsch"})
+            _cl.post("/auth/login", data={"username": name, "password": f"falsch-falsch-{next(_FALSCH)}"})
 
 
 # Bestand aus einem Stand vor dieser Prüfung: der Namensvetter liegt schon in der Datenbank.

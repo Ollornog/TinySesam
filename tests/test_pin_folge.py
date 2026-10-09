@@ -19,11 +19,13 @@ Seit der Prüfrunde 2026-09-27 (p2 F1) gilt die halbe Sitzung nur, wenn die PIN 
 """
 from __future__ import annotations
 
+import itertools as _itertools
 import io
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+_FALSCH = _itertools.count()   # immer NEUE falsche Passwörter: eine Wiederholung zählt seit 0.24.9 nur einmal
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -405,7 +407,7 @@ r.check("Konto-Seite: PIN-Sektion unter strikter Kette password → pin (auch mi
 auth_m, app_m, post_m = _app()
 auth_m.create_user("hinweis", password=PW, email="hinweis@example.com")
 for _ in range(10):
-    _passwort(TestClient(app_m), "hinweis", "falsch-falsch-1")
+    _passwort(TestClient(app_m), "hinweis", f"falsch-falsch-1-{next(_FALSCH)}")
 _passwort(TestClient(app_m), "hinweis")
 auth_m._hinweis_ausgang.abwarten()
 _text_m = post_m[0][2] if post_m else ""
@@ -446,7 +448,7 @@ def _serie_ausweg(art):
     with _Log() as log_x:
         if art == "password":
             for _ in range(10):
-                _passwort(TestClient(app_x), name, "falsch-falsch-1")
+                _passwort(TestClient(app_x), name, f"falsch-falsch-{next(_FALSCH)}")
         elif art == "totp":
             geheim = auth_x.totp_begin(uid_x)["secret"]
             auth_x.totp_confirm(uid_x, _pyotp.TOTP(geheim).at(_zeit.time() - 30))

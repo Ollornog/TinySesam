@@ -12,6 +12,7 @@ Fest verankert:
 """
 from __future__ import annotations
 
+import itertools as _itertools
 import io
 import os
 import sqlite3
@@ -20,6 +21,7 @@ import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+_FALSCH = _itertools.count()   # immer NEUE falsche Passwörter: eine Wiederholung zählt seit 0.24.9 nur einmal
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -97,15 +99,15 @@ def _login(client, name, pw):
 
 
 for _ in range(10):
-    _login(c, "serie", "falsch-falsch-falsch")
+    _login(c, "serie", f"falsch-falsch-falsch-{next(_FALSCH)}")
 gesperrt = _login(c, "serie", PW)
 r.check("B2-6: nach 10 Fehlversuchen in Folge sperrt die Anmeldung — auch mit dem richtigen Passwort",
         gesperrt.status_code == 429 and "in Folge" in gesperrt.text, f"HTTP {gesperrt.status_code}")
 r.check("… die Sperre steht genau einmal im Audit-Log",
         sum(1 for z in auth.store.recent_audit(200) if z["event"] == "lockout_serie") == 1)
 for _ in range(10):
-    _login(c, "gibt-es-nicht", "falsch-falsch-falsch")
-fremd = _login(c, "gibt-es-nicht", "falsch-falsch-falsch")
+    _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_FALSCH)}")
+fremd = _login(c, "gibt-es-nicht", f"falsch-falsch-falsch-{next(_FALSCH)}")
 r.check("… ein unbekannter Name bekommt dieselbe Antwort (kein Orakel für vorhandene Konten)",
         fremd.status_code == 429 and "in Folge" in fremd.text, f"HTTP {fremd.status_code}")
 
@@ -126,10 +128,10 @@ r.check("B2-6: ein Reset beendet die Serie (neu binden)", _login(c, "serie", PW)
 
 uid2 = auth.create_user("wechsel", password=PW)
 for _ in range(9):
-    _login(TestClient(app), "wechsel", "falsch-falsch-falsch")
+    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_FALSCH)}")
 _login(TestClient(app), "wechsel", PW)                        # erfolgreicher Zugang
 for _ in range(9):
-    _login(TestClient(app), "wechsel", "falsch-falsch-falsch")
+    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_FALSCH)}")
 r.check("B2-6: ein erfolgreicher Zugang setzt die Serie zurück (9 + Erfolg + 9 sperrt nicht)",
         _login(TestClient(app), "wechsel", PW).status_code == 303, str(auth.store.fehlserie("wechsel")))
 
@@ -138,7 +140,7 @@ r.check("B2-6: ein Fehlgriff, der keine Anmeldung ist (Passwortwechsel), zählt 
         auth.store.fehlserie("wechsel") == 0, str(auth.store.fehlserie("wechsel")))
 
 for _ in range(10):
-    _login(TestClient(app), "wechsel", "falsch-falsch-falsch")
+    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_FALSCH)}")
 admin_id = auth.create_user("chefin", password=PW, is_admin=True)
 ca = TestClient(app)
 _login(ca, "chefin", PW)
@@ -148,7 +150,7 @@ r.check("B2-6: der Passwort-Reset im Panel beendet die Serie",
         f"HTTP {neu.status_code}, Serie {auth.store.fehlserie('wechsel')}")
 
 for _ in range(10):
-    _login(TestClient(app), "wechsel", "falsch-falsch-falsch")
+    _login(TestClient(app), "wechsel", f"falsch-falsch-falsch-{next(_FALSCH)}")
 from tinysesam.__main__ import main as _cli  # noqa: E402
 # Das CLI endet über `sys.exit` — ungefangen beendete das diesen Test mit Exit 0, mitten im Lauf
 # und grün (Skip ist kein Grün).
@@ -262,7 +264,7 @@ def _bindungsname(uid):
 _erst_name = _bindungsname(uid_v)
 auth_v.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})     # im Verzeichnis umbenannt
 for _ in range(3):
-    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 _drei_v = auth_v.store.fehlserie("alice.neu")
 _voll_v = _login(TestClient(app_v), "alice.neu", LPW)
 # (Mutationsprobe: den Namen aus der Bindung in `Store.zaehl_kennungen` weglassen → 3 → rot.)
@@ -276,7 +278,7 @@ r.check("… dasselbe Konto; der Verzeichnisname steht an der Bindung — nur we
         and _bindungsname(uid_v) == "alice.neu", f"{_erst_name!r} → {_bindungsname(uid_v)!r}")
 
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 _gesperrt_v = _login(TestClient(app_v), "alice.neu", LPW)
 auth_v._serie_beenden(uid_v)
 # (Mutationsprobe: in `_serie_beenden` wieder nur Name und Adresse → rot.)
@@ -286,7 +288,7 @@ r.check("G5: an der Grenze (429 auch mit dem richtigen Passwort) räumt der Betr
         and _login(TestClient(app_v), "alice.neu", LPW).status_code == 303,
         f"HTTP {_gesperrt_v.status_code}, Serie {auth_v.store.fehlserie('alice.neu')}")
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 auth_v.create_user("chefin-v", password=PW, is_admin=True)
 _cv = TestClient(app_v)
 _login(_cv, "chefin-v", PW)
@@ -306,8 +308,8 @@ def _unlock(kennung):
 
 
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
-_login(TestClient(app_v), "alice", "falsch-falsch-1")          # der alte Name: im Verzeichnis weg
+    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
+_login(TestClient(app_v), "alice", f"falsch-falsch-1-{next(_FALSCH)}")          # der alte Name: im Verzeichnis weg
 _code_v, _text_v = _unlock("alice.neu")
 # (Mutationsprobe: `konto_mit_bindungsname` streichen → das Konto wird nicht gefunden, die Serie
 #  unter `alice` bleibt → rot.)
@@ -320,7 +322,7 @@ r.check("G5: `tinysesam unlock alice.neu` — den Namen wie eingetippt — finde
 # nächsten ERFOLGREICHEN Anmeldung — und die ist gesperrt).
 auth_v.store._exec("UPDATE federated_identity SET name_topf = NULL")
 for _ in range(10):
-    _login(TestClient(app_v), "alice.neu", "falsch-falsch-1")
+    _login(TestClient(app_v), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 _code_b, _text_b = _unlock("alice.neu")
 # (Mutationsprobe: den Abbruch „Kein Konto" vor dem Räumen zurückbauen → rot.)
 r.check("… auch im Bestand ohne Vermerk: kein Konto, aber die Zähler unter der Kennung sind geräumt (rc 0)",
@@ -345,7 +347,7 @@ from tinysesam import security as _sec_g5  # noqa: E402
 _chefin_w = auth_v.create_user("chefin", password=PW, email="chefin@example.com")
 auth_v.ldap = _Verzeichnis({"chefin@example.com": {"pw": LPW, "id": "uuid-dritter", "email": "chefin@example.com"}})
 for _ in range(4):
-    _login(TestClient(app_v), "chefin@example.com", "falsch-falsch-1")
+    _login(TestClient(app_v), "chefin@example.com", f"falsch-falsch-1-{next(_FALSCH)}")
 _vorher_w = (auth_v.store.count_fails(0, username="chefin@example.com"), auth_v.store.fehlserie("chefin@example.com"))
 _konten_w = auth_v.store.user_count()
 _puffer_w = io.StringIO()
@@ -410,10 +412,10 @@ _mallory_d = a_d.create_user("alice.neu", password=MPW)
 a_d.ldap = _Verzeichnis({"alice.neu": {"pw": LPW, "id": "uuid-alice"}})
 for _ in range(10):
     for _ in range(4):
-        _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", "falsch-falsch-1")
+        _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
     _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", MPW)
 _ev_d0 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
-_login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", "falsch-falsch-1")
+_login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", f"falsch-falsch-1-{next(_FALSCH)}")
 _ev_d1 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
 _treffer_d = _login(TestClient(ap_d, client=("203.0.113.66", 1)), "alice.neu", LPW)
 _ev_d2 = [e["event"] for e in a_d.own_events(_mallory_d, 1000)]
@@ -523,7 +525,7 @@ a_b.create_user("chefin-b", password=PW, is_admin=True)
 a_b.change_username(_alice_b, "alice.meier", by_operator=True)
 _kennungen_b = a_b.store.zaehl_kennungen(_alice_b)
 for _i in range(10):
-    _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", "falsch-falsch-1")
+    _login(TestClient(ap_b, client=(f"203.0.113.{_i + 10}", 1)), "alice", f"falsch-falsch-1-{next(_FALSCH)}")
 _vor_b = _login(TestClient(ap_b), "alice", LPW).status_code
 _c_b = TestClient(ap_b)
 _login(_c_b, "chefin-b", PW)
@@ -563,7 +565,7 @@ def _bindungsname_x(uid):
 
 _namen_x = (_bindungsname_x(_anton_x), _bindungsname_x(_berta_x))
 for _i in range(9):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 10}", 1)), "x", "falsch-falsch-1")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 10}", 1)), "x", f"falsch-falsch-1-{next(_FALSCH)}")
 _login(TestClient(ap_x), "anton", PW)                # volle Anmeldung des Vorbesitzers
 a_x._serie_beenden(_anton_x)                         # Betreiber-Reset für ihn
 # (Mutationsprobe: das Löschen an fremden Bindungen in `bindung_name_setzen` weglassen → Antons
@@ -572,9 +574,9 @@ r.check("p1-a: die jüngste Anmeldung unter `x` belegt, wem der Name gehört —
         "seine Anmeldung und sein Reset lassen die Serie des neuen Inhabers stehen",
         _namen_x == (None, "x") and a_x.store.zaehl_kennungen(_anton_x) == {"anton"}
         and a_x.store.fehlserie("x") == 9, f"{_namen_x}, {a_x.store.zaehl_kennungen(_anton_x)}, {a_x.store.fehlserie('x')}")
-_login(TestClient(ap_x, client=("203.0.113.99", 1)), "x", "falsch-falsch-1")
+_login(TestClient(ap_x, client=("203.0.113.99", 1)), "x", f"falsch-falsch-1-{next(_FALSCH)}")
 for _i in range(3):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 50}", 1)), "anton", "falsch-falsch-1")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 50}", 1)), "anton", f"falsch-falsch-1-{next(_FALSCH)}")
 _aus_x = io.StringIO()
 with redirect_stdout(_aus_x), redirect_stderr(_aus_x):
     try:
@@ -589,7 +591,7 @@ r.check("… `tinysesam unlock x` nennt den neuen Inhaber und lässt die eigene 
 # `unlock` nennt kein Konto (welches sich zuletzt so angemeldet hat, steht nirgends).
 a_x.store._exec("UPDATE federated_identity SET name_topf='x' WHERE user_id=?", (_anton_x,))
 for _i in range(3):
-    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", "falsch-falsch-1")
+    _login(TestClient(ap_x, client=(f"203.0.113.{_i + 70}", 1)), "x", f"falsch-falsch-1-{next(_FALSCH)}")
 _login(TestClient(ap_x), "anton", PW)
 _serie_x2 = a_x.store.fehlserie("x")
 _aus_x2 = io.StringIO()
@@ -638,7 +640,7 @@ _alice_m = a_m.store.get_user_by_name("alice")["id"]
 _reg_m = a_m.create_user("mallory", password=MPW, email="alice@corp.example")
 for _ in range(10):
     for _ in range(4):
-        _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", "falsch-falsch-1")
+        _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", f"falsch-falsch-1-{next(_FALSCH)}")
     _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", MPW)
 _treffer_m = _login(TestClient(ap_m, client=("203.0.113.66", 1)), "alice@corp.example", LPW)
 # (Mutationsprobe: die Prüfung gegen `nur_konto` abschalten → 303, Sitzung von Alice → rot.)
@@ -1154,7 +1156,7 @@ def _hinweis_app(**cfg):
 a635, app635, post635 = _hinweis_app()
 a635.create_user("inhaberin", password=PW, email="inhaberin@example.com")
 for _ in range(a635._sec("max_login_attempts") + 2):
-    _login(TestClient(app635), "inhaberin", "falsch-falsch-falsch")
+    _login(TestClient(app635), "inhaberin", f"falsch-falsch-falsch-{next(_FALSCH)}")
 a635._hinweis_ausgang.abwarten()
 r.check("ASVS 6.3.5: bei konfiguriertem Versand bekommt die Inhaberin einen Hinweis (Vorgabe an, opt-out)",
         len(post635) == 1 and post635[0][0] == "inhaberin@example.com", str(post635))
@@ -1163,20 +1165,20 @@ r.check("… der Hinweis trägt keinen Link (es gibt keine Basis, die ein Angrei
 r.check("… genau einen je Sperrfenster, nicht einen je abgewiesenem Versuch",
         len(post635) == 1 and any(z["event"] == "sperrhinweis" for z in a635.store.recent_audit(50)))
 for _ in range(a635._sec("max_login_attempts") + 2):
-    _login(TestClient(app635), "niemand", "falsch-falsch-falsch")
+    _login(TestClient(app635), "niemand", f"falsch-falsch-falsch-{next(_FALSCH)}")
 a635._hinweis_ausgang.abwarten()
 r.check("… ein unbekannter Name löst nichts aus (und in der Anfrage geschieht dasselbe)", len(post635) == 1)
 a635u, app635u, post635u = _hinweis_app()
 _u = a635u.create_user("unbelegt", password=PW, email="unbelegt@example.com")
 a635u.store.set_email_verified(_u, False)
 for _ in range(a635u._sec("max_login_attempts") + 2):
-    _login(TestClient(app635u), "unbelegt", "falsch-falsch-falsch")
+    _login(TestClient(app635u), "unbelegt", f"falsch-falsch-falsch-{next(_FALSCH)}")
 a635u._hinweis_ausgang.abwarten()
 r.check("… an eine UNBELEGTE Adresse geht nichts (H-3)", post635u == [], str(post635u))
 a635o, app635o, post635o = _hinweis_app(notify_login_failures=False)
 a635o.create_user("still", password=PW, email="still@example.com")
 for _ in range(a635o._sec("max_login_attempts") + 2):
-    _login(TestClient(app635o), "still", "falsch-falsch-falsch")
+    _login(TestClient(app635o), "still", f"falsch-falsch-falsch-{next(_FALSCH)}")
 a635o._hinweis_ausgang.abwarten()
 r.check("… opt-out: notify_login_failures=False schickt nichts", post635o == [], str(post635o))
 # (Mutationsproben: `_sperrhinweis` in `_abgewiesen` nicht rufen → erste Prüfung rot; die Drossel

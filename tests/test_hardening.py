@@ -20,7 +20,7 @@ c = TestClient(app)
 
 # 3 Fehlversuche → danach gesperrt, auch mit RICHTIGEM Passwort
 for i in range(3):
-    assert c.post("/auth/login", data={"username": "admin", "password": "falsch"}).status_code == 401, i
+    assert c.post("/auth/login", data={"username": "admin", "password": f"falsch-{i}"}).status_code == 401, i
 r = c.post("/auth/login", data={"username": "admin", "password": "geheim123"})
 assert r.status_code == 429, f"nach Lockout erwartet 429, war {r.status_code}"
 print("  ✓ Lockout nach 3 Fehlversuchen (blockt auch korrektes Passwort)")
@@ -341,8 +341,9 @@ auth_t.store.clear_fails(username="toni")
 # INSERT → rot.)
 del auth_t._check_password                         # wieder die echte Prüfung
 _langsam(auth_t.store, "_fails_abfrage", 0.05)
+# Neue Passwörter, nicht die der Salve (1): Ein schon probiertes zählt seit 0.24.9 nur einmal.
 codes = _salve(12, lambda i: TestClient(app_t).post(
-    "/auth/login", data={"username": "toni", "password": f"falsch{i}"}).status_code)
+    "/auth/login", data={"username": "toni", "password": f"anders{i}"}).status_code)
 assert codes.count(401) <= 3, f"Zählen und Buchen sind getrennte Schritte: {codes.count(401)} von 12 durch"
 del auth_t.store._fails_abfrage
 print(f"  ✓ …Zählen und Buchen in einer Transaktion ({codes.count(401)} geprüft, {codes.count(429)} gesperrt)")
@@ -423,8 +424,8 @@ app_f = FastAPI()
 app_f.include_router(auth_f.router())
 G = auth_f._sec("max_login_attempts")
 fremd = TestClient(app_f, client=("198.51.100.20", 40000))
-codes = [fremd.post("/auth/login", data={"username": "inhaber", "password": "rate"}).status_code
-         for _ in range(G + 1)]
+codes = [fremd.post("/auth/login", data={"username": "inhaber", "password": f"rate-{_i}"}).status_code
+         for _i in range(G + 1)]
 assert codes == [401] * G + [429], codes
 assert fremd.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"}
                   ).status_code == 429, "die Adresse des Fremden ist für dieses Konto nicht gesperrt"
@@ -438,8 +439,8 @@ inhaber.get("/auth/logout")
 # (Der Login oben war vollständig und hat die Fehlversuche geräumt — R7-1 —, also neu zählen.)
 for i in range(auth_f._sec("account_attempt_factor")):
     ci = TestClient(app_f, client=(f"198.51.100.{30 + i}", 40000))
-    for _ in range(G):
-        ci.post("/auth/login", data={"username": "inhaber", "password": "rate"})
+    for _j in range(G):
+        ci.post("/auth/login", data={"username": "inhaber", "password": f"rate-{i}-{_j}"})
 r = inhaber.post("/auth/login", data={"username": "inhaber", "password": "Inhaber-Passwort-1"})
 assert r.status_code == 429, f"verteiltes Raten über viele Adressen bleibt unbegrenzt: {r.status_code}"
 print("  ✓ …die Konto-Schwelle greift weiter, wenn viele Adressen zusammen raten")
@@ -464,8 +465,8 @@ assert all(auth_v.find_user(v) for v in varianten), "die Varianten treffen nicht
 geprueft = 0
 for i, v in enumerate(varianten):
     ci = TestClient(app_v, client=(f"2001:db8:1::{i:x}", 40000))
-    for _ in range(G):
-        geprueft += ci.post("/auth/login", data={"username": v, "password": "rate"}).status_code == 401
+    for _j in range(G):
+        geprueft += ci.post("/auth/login", data={"username": v, "password": f"rate-{i}-{_j}"}).status_code == 401
 assert geprueft <= DECKEL, \
     f"R7-6/H-8: {geprueft} Versuche über Schreibweisen der Kennung, zugesagt sind höchstens {DECKEL}"
 r = TestClient(app_v, client=("203.0.113.22", 40000)).post(

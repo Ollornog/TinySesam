@@ -15,6 +15,9 @@ import re
 import sys
 import json
 import hashlib
+import hmac
+import threading
+from collections import OrderedDict
 import html as _html
 import secrets
 import sqlite3
@@ -291,6 +294,10 @@ class TinySesam:
         # der Schalter umgelegt wird.
         from . import gate as _gate
         self._gate_schluessel = _gate.schluessel_ableiten(_schluessel)
+        # Eigener Teilschlüssel für die Passwort-Fingerabdrücke: ohne ihn wäre ein abgegriffener Speicherauszug ein
+        # Wörterbuch-Ziel gegen die Tippfehler der echten Passwörter.
+        self._pw_wiederholung_schluessel = hmac.new(_schluessel, b"tinysesam/passwort-wiederholung/v1",
+                                                    hashlib.sha256).digest()
         self.store.geheimnisse_heben()
         # B6-8: Ohne das Extra [argon2] scheitert jede Anmeldung gegen einen argon2-Hash — bis
         # hierher ohne ein Wort, das Konto sah für den Nutzer einfach „falsches Passwort" aus.
@@ -332,6 +339,9 @@ class TinySesam:
         # `_versuch_beginnen` vorgebuchte Serie (B2-6). Im Speicher genügt: Stirbt der Prozess
         # dazwischen, bleibt die Vorbuchung als Fehlversuch stehen — im Zweifel strenger.
         self._serie_vorbuchungen: dict = {}
+        # Fingerabdrücke falscher Passwörter je (Konto, IP) — nur im Speicher, nie auf Platte (`_passwort_wiederholt`).
+        self._pw_wiederholung: "OrderedDict[tuple, list]" = OrderedDict()
+        self._pw_wiederholung_sperre = threading.Lock()
         # Warteplätze für Anmeldungen, die nur wegen schwebender Vorbuchungen nicht weiterkämen
         # (G9, `_versuch_beginnen`) — gedeckelt, damit Wartende nicht alle Worker-Threads belegen.
         self._schwebe_plaetze = threading.BoundedSemaphore(self._SCHWEBE_WARTEPLAETZE)
@@ -3066,6 +3076,49 @@ class TinySesam:
                                 "login" if login else "verification",
                                 security.fuer_log(username) or "-", security.fuer_log(ip))
 
+    #: Höchstzahl gemerkter (Konto, IP)-Paare je Prozess — danach fällt das älteste heraus. Ein Angreifer mit vielen
+    #: Adressen kann damit nur Einträge verdrängen, also Fehlversuche wieder ZÄHLEN lassen, nie weniger.
+    _PW_WIEDERHOLUNG_PAARE = 10000
+
+    def _passwort_wiederholt(self, username, ip, password) -> bool:
+        """Hat dieselbe IP genau dieses falsche Passwort an dieses Konto schon geschickt? Merkt es sich andernfalls.
+
+        Nur nach einem FEHLVERSUCH aufrufen: Ein richtiges Passwort wird nie gemerkt. Gemerkt wird ein HMAC mit einem
+        aus dem Grundschlüssel abgeleiteten Teilschlüssel, auf 64 Bit gekürzt, nur im Speicher und nur
+        `password_repeat_window_sec` lang. Je Prozess: Bei mehreren Workern zählt eine Wiederholung, die ein anderer
+        Worker bekommt, wieder voll — die strengere Richtung.
+
+        Wiederholen bringt einem Angreifer nichts, denn dasselbe Passwort prüft nichts Neues. Jedes ANDERE falsche
+        Passwort zählt weiter voll, und die IP-Drossel (`_rate_ok`) greift vor allem anderen."""
+        n = self._sec("password_repeat_memory")
+        if n <= 0 or not password:
+            return False
+        fenster = self._sec("password_repeat_window_sec")
+        kennung = norm_kennung(username)
+        fp = hmac.new(self._pw_wiederholung_schluessel,
+                      kennung.encode("utf-8", "surrogatepass") + b"\0" + str(password).encode("utf-8", "surrogatepass"),
+                      hashlib.sha256).digest()[:8]
+        schl = (kennung, security.ip_normiert(ip) or str(ip))
+        jetzt = time.monotonic()
+        with self._pw_wiederholung_sperre:
+            liste = [(f, t) for f, t in self._pw_wiederholung.get(schl, ()) if jetzt - t < fenster]
+            treffer = any(hmac.compare_digest(f, fp) for f, _ in liste)
+            if not treffer:
+                liste = (liste + [(fp, jetzt)])[-n:]
+            self._pw_wiederholung[schl] = liste
+            self._pw_wiederholung.move_to_end(schl)
+            while len(self._pw_wiederholung) > self._PW_WIEDERHOLUNG_PAARE:
+                self._pw_wiederholung.popitem(last=False)
+        return treffer
+
+    def _anmeldung_vollstaendig(self, user_id, ip, method) -> None:
+        """Eine Anmeldung ist mit allen Faktoren durch: Audit `login` und die Zeile `login ok` im Sicherheits-Log."""
+        u = self.store.get_user(user_id)
+        name = u["username"] if u else None
+        self.store.audit_log("login", name, ip, method)
+        security.seclog.info("%s user=%s ip=%s method=%s", security.LOG_ERFOLG, security.fuer_log(name or "?"),
+                             security.fuer_log(ip), security.fuer_log(method))
+
     def _versuch_zuruecknehmen(self, versuch) -> None:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
 
@@ -4170,8 +4223,7 @@ class TinySesam:
         token = self._sitzung_anlegen(user_id, self._ttl(remember), mfa_ok, method, ip, ua, remember,
                                       factors=done)
         if mfa_ok:   # voller Login abgeschlossen → Audit
-            u = self.store.get_user(user_id)
-            self.store.audit_log("login", u["username"] if u else None, ip, method)
+            self._anmeldung_vollstaendig(user_id, ip, method)
             self._vermerke_erstlogin(user_id)
             self.lift_lockout(user_id)
         return token, mfa_ok
@@ -4263,8 +4315,7 @@ class TinySesam:
             self._maybe_promote_admin(self.store.get_user(user_id), email_verified,
                                       faktor=factor)
             if ok and not was_ok:
-                u = self.store.get_user(user_id)
-                self.store.audit_log("login", u["username"] if u else None, s["ip"], factor)
+                self._anmeldung_vollstaendig(user_id, s["ip"], factor)
                 self._vermerke_erstlogin(user_id)
                 self.lift_lockout(user_id)
                 # **Neues Token beim Rechtewechsel.** Die Sitzung wird hier vom halben Login
@@ -4376,8 +4427,7 @@ class TinySesam:
         ok = self._session_ok(s["user_id"], done)
         self.store.set_session_factors(s["token_hash"], done, mfa_ok=ok)
         if ok:
-            u = self.store.get_user(s["user_id"])
-            self.store.audit_log("login", u["username"] if u else None, s["ip"], "totp")
+            self._anmeldung_vollstaendig(s["user_id"], s["ip"], "totp")
         if ok and not war_ok:
             self.lift_lockout(s["user_id"])
             # Rechtewechsel → neues Token (OWASP Session Management). Gibt es zurück, damit der
@@ -4526,6 +4576,16 @@ class TinySesam:
         except BaseException:
             self._versuch_gescheitert(versuch)
             raise
+        # Dasselbe falsche Passwort noch einmal (0.24.9): kein neuer Fehlversuch — weder im Fenster noch in der Serie,
+        # und kein `failed login` für fail2ban. Die Antwort ist dieselbe 401 wie bei jedem Fehlversuch.
+        if not u and self._passwort_wiederholt(username, ip, password):
+            self._versuch_zuruecknehmen(versuch)
+            # Im Audit ein `login_fail` wie jeder andere (Kontoseite und Panel zeigen es gleich, kein Orakel), nur der
+            # Grund sagt „wiederholt“.
+            self.store.audit_log("login_fail", username, ip, "password grund=wiederholt")
+            security.seclog.info("%s user=%s ip=%s method=password", security.LOG_WIEDERHOLT,
+                                 security.fuer_log(username), security.fuer_log(ip))
+            return self._anmeldung_nein("invalid", 401, "err.credentials", nxt)
         # Welcher Weg entschieden hat, steht im Audit-Log (F-29): Vorher war eine
         # Verzeichnis-Anmeldung von einer lokalen nicht zu unterscheiden — beide schrieben
         # Faktor `password`, und bei einem Fehlversuch hiess es `grund=kein_konto`, obwohl das
