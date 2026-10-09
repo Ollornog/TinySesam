@@ -136,3 +136,32 @@ assert len(_audit(auth, "login_fail")) == 6 and not _audit(auth, "login_repeat")
 ok("drei Passwörter im Kreis bei Gedächtnis 2: jedes zählt")
 
 print("Passwort-Wiederholung OK")
+
+# (h) `login ok … unban=ja|nein` (0.24.10): ja nur ohne Fehlversuche gegen ANDERE Konten von derselben IP
+print("login ok: unban")
+
+
+def _unban(log):
+    z = _zeilen(log, "login ok")[-1]
+    return z.rsplit("unban=", 1)[1]
+
+
+auth, app, log = _app()
+_login(app, PW)
+assert _unban(log) == "ja", _zeilen(log, "login ok")
+ok("ohne Fehlversuche: unban=ja")
+for i in range(3):
+    _login(app, f"vertippt-{i}-xxxxxxxx")
+_login(app, PW)
+assert _unban(log) == "ja"
+ok("eigene Tippfehler vorher: unban=ja")
+auth.create_user("bob", "Bobs-Passwort-2026")
+for i in range(3):
+    TestClient(app, client=IP_A).post("/auth/login", data={"username": "bob", "password": f"rate-{i}-xxxxxx"})
+_login(app, PW)
+assert _unban(log) == "nein", _zeilen(log, "login ok")
+ok("Fehlversuche gegen ein fremdes Konto von derselben IP: unban=nein")
+_login(app, PW, IP_B)
+assert _unban(log) == "ja"
+ok("dieselbe Anmeldung von einer anderen IP: unban=ja")
+print("login ok: unban OK")

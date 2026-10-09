@@ -3036,7 +3036,7 @@ class Store:
     VORBUCHUNG_SCHWEBE_SEK = 30
 
     def _fails_abfrage(self, since, username=None, ip=None, method=None, exclude_methods=None,
-                       ab_id=None, nur_bestaetigt=False):
+                       ab_id=None, nur_bestaetigt=False, ausser_username=None):
         """Die Zählabfrage für `count_fails` und `reserve_attempt` — eine Regel, zwei Aufrufer.
         `ab_id`: nur Zeilen mit einer grösseren Id (Wasserlinie einer Kennung, G2).
         `nur_bestaetigt`: ohne die schwebenden Vorbuchungen (G9, `VORBUCHUNG_SCHWEBE_SEK`)."""
@@ -3054,6 +3054,9 @@ class Store:
         if ip:
             q += " AND ip=?"
             args.append(ip)
+        if ausser_username:
+            q += " AND username<>? COLLATE NOCASE"
+            args.append(ausser_username)
         if method:
             q += " AND method=?"
             args.append(method)
@@ -3064,7 +3067,7 @@ class Store:
         return q, args
 
     def count_fails(self, since, username=None, ip=None, method=None, exclude_methods=None,
-                    ab_id=None, nur_bestaetigt=False) -> int:
+                    ab_id=None, nur_bestaetigt=False, ausser_username=None) -> int:
         """Fehlversuche im Fenster zählen — optional nur EINE Methode, oder alle AUSSER einigen.
 
         `exclude_methods` ist das Gegenstück zu `method`: Der Login-Lockout will alles zählen,
@@ -3078,7 +3081,7 @@ class Store:
         if not username and not ip:
             return 0
         q, args = self._fails_abfrage(since, username, ip, method, exclude_methods, ab_id,
-                                      nur_bestaetigt)
+                                      nur_bestaetigt, ausser_username)
         return self._one(q, args)["c"]
 
     def reserve_attempt(self, username, ip, method, regeln, serie=None, schweben=False) -> tuple:

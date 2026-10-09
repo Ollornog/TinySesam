@@ -3116,12 +3116,22 @@ class TinySesam:
         return treffer
 
     def _anmeldung_vollstaendig(self, user_id, ip, method) -> None:
-        """Eine Anmeldung ist mit allen Faktoren durch: Audit `login` und die Zeile `login ok` im Sicherheits-Log."""
+        """Eine Anmeldung ist mit allen Faktoren durch: Audit `login` und die Zeile `login ok` im Sicherheits-Log.
+
+        `unban=ja|nein` (0.24.10, PO): Darf ein Wächter (fail2ban) die Sperre dieser IP aufheben? Nur `ja`, wenn von
+        dieser IP im Fenster KEIN Fehlversuch gegen ein ANDERES Konto steht. Sonst hebt ein Angreifer mit eigenem
+        Konto seinen Bann durch eine Anmeldung zwischen zwei Salven auf und rät auf Firewall-Ebene unbegrenzt gegen
+        fremde Konten. Gefragt wird nach fremden Konten, nicht nach dem eigenen: Die eigenen Fehlversuche hat der
+        erfolgreiche Faktor schon geräumt (`_record_login`)."""
         u = self.store.get_user(user_id)
         name = u["username"] if u else None
         self.store.audit_log("login", name, ip, method)
-        security.seclog.info("%s user=%s ip=%s method=%s", security.LOG_ERFOLG, security.fuer_log(name or "?"),
-                             security.fuer_log(ip), security.fuer_log(method))
+        fremd = (self.store.count_fails(self._fenster_beginn(), ip=ip, ausser_username=norm_kennung(name),
+                                        exclude_methods=security.NICHT_LOGIN_METHODEN)
+                 if ip and name else 1)
+        security.seclog.info("%s user=%s ip=%s method=%s unban=%s", security.LOG_ERFOLG,
+                             security.fuer_log(name or "?"), security.fuer_log(ip), security.fuer_log(method),
+                             "ja" if fremd == 0 else "nein")
 
     def _versuch_zuruecknehmen(self, versuch) -> None:
         """Einen vorgebuchten Versuch zurücknehmen — er war keiner (Verzeichnis-Ausfall, F-23).
