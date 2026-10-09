@@ -4,6 +4,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.10] — 2026-10-09
+
+**Wer es braucht:** alle, die nach einer erfolgreichen Anmeldung den fail2ban-Bann einer IP aufheben. Kein API-Bruch.
+
+### Hinzugefügt
+
+- **`login ok … unban=ja|nein`** im Sicherheits-Log:
+  - `ja` steht nur, wenn von dieser IP im Sperrfenster kein Fehlversuch gegen ein **anderes** Konto steht. Eigene
+    Tippfehler vorher stören nicht.
+  - Damit kann ein Angreifer mit eigenem Konto seinen Bann nicht durch eine Anmeldung zwischen zwei Salven aufheben.
+  - Test in `tests/test_passwort_wiederholung.py`. Die Mutation „immer ja“ ist rot.
+
 ## [0.24.9] — 2026-10-09
 
 **Wer es braucht:** alle mit Passwort-Anmeldung, deren Nutzer Geräte mit altem Passwort haben, und alle mit
