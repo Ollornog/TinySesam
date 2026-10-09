@@ -90,7 +90,8 @@ assert len(_zeilen(log, "login ok")) == 1, _zeilen(log, "login ok")
 FAILREGEX = re.compile(r"^\s*WARNING failed login user=.* ip=(?P<host>\S+) method=\S+(?: reason=\S+)?$")
 with open(ROOT / "deploy" / "fail2ban" / "tinysesam-filter.conf", encoding="utf-8") as fh:
     assert "WARNING failed login user=.* ip=<HOST>" in fh.read()
-treffer = [z for z in open(log, encoding="utf-8").read().splitlines() if FAILREGEX.match(z.split(" ", 2)[2])]
+with open(log, encoding="utf-8") as fh:
+    treffer = [z for z in fh.read().splitlines() if FAILREGEX.match(z.split(" ", 2)[2])]
 assert len(treffer) == 1, treffer
 ok("Sicherheits-Log: 1× failed login, 9× repeated login, 1× login ok — nur der erste trifft die failregex")
 
@@ -127,7 +128,7 @@ ok("password_repeat_memory=0: jede Wiederholung zählt, die Sperre greift")
 
 # (e) Kreis aus N+1 Passwörtern
 auth, app, log = _app(password_repeat_memory=2, max_login_attempts=20)
-for runde in range(2):
+for _runde in range(2):
     for i in range(3):
         _login(app, f"kreis-{i}-xxxxxxxx")
 assert len(_audit(auth, "login_fail")) == 6 and not _audit(auth, "login_repeat"), (

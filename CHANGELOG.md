@@ -18,7 +18,7 @@ alte Verhalten will, setzt `password_repeat_memory` auf 0.
   - Ein Handy, das im Takt mit dem alten Passwort anfragt, sperrt weder Konto noch IP, und fail2ban bannt es nicht.
   - Die Wiederholung bekommt dieselbe 401 und erscheint als `login_repeat` im Audit und als `INFO repeated login …`
     im Sicherheits-Log.
-  - Gemerkt wird nur ein 8-Byte-HMAC mit einem abgeleiteten Teilschlüssel, nur im Speicher.
+  - Gemerkt werden nur 8 Byte PBKDF2 (20 000 Runden, Salz aus einem abgeleiteten Teilschlüssel), nur im Speicher.
   - Jedes andere falsche Passwort zählt voll.
   - `tests/test_passwort_wiederholung.py`. Die Mutation ohne Fingerabdruck ist rot (429 ab dem sechsten Versuch).
 - **`INFO login ok user=… ip=… method=…`** im Sicherheits-Log bei jeder vollständigen Anmeldung.

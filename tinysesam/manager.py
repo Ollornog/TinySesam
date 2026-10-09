@@ -16,7 +16,6 @@ import sys
 import json
 import hashlib
 import hmac
-import threading
 from collections import OrderedDict
 import html as _html
 import secrets
@@ -3079,6 +3078,9 @@ class TinySesam:
     #: Höchstzahl gemerkter (Konto, IP)-Paare je Prozess — danach fällt das älteste heraus. Ein Angreifer mit vielen
     #: Adressen kann damit nur Einträge verdrängen, also Fehlversuche wieder ZÄHLEN lassen, nie weniger.
     _PW_WIEDERHOLUNG_PAARE = 10000
+    #: PBKDF2-Runden des Fingerabdrucks: spürbar für einen, der einen Speicherauszug durchprobiert, aber nur wenige
+    #: Millisekunden je Fehlversuch (gemessen 2026-10-09 auf dem Entwicklungsrechner).
+    _PW_WIEDERHOLUNG_RUNDEN = 20000
 
     def _passwort_wiederholt(self, username, ip, password) -> bool:
         """Hat dieselbe IP genau dieses falsche Passwort an dieses Konto schon geschickt? Merkt es sich andernfalls.
@@ -3095,9 +3097,11 @@ class TinySesam:
             return False
         fenster = self._sec("password_repeat_window_sec")
         kennung = norm_kennung(username)
-        fp = hmac.new(self._pw_wiederholung_schluessel,
-                      kennung.encode("utf-8", "surrogatepass") + b"\0" + str(password).encode("utf-8", "surrogatepass"),
-                      hashlib.sha256).digest()[:8]
+        # PBKDF2 statt eines einfachen HMAC: Der Wert entsteht aus einem Passwort, also ein Hash, der Raten teuer macht —
+        # mit einem Geheimnis als Salz, damit ein Speicherauszug ohne den Grundschlüssel nichts hergibt.
+        fp = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8", "surrogatepass"),
+                                 self._pw_wiederholung_schluessel + kennung.encode("utf-8", "surrogatepass"),
+                                 self._PW_WIEDERHOLUNG_RUNDEN)[:8]
         schl = (kennung, security.ip_normiert(ip) or str(ip))
         jetzt = time.monotonic()
         with self._pw_wiederholung_sperre:
