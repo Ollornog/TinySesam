@@ -128,7 +128,7 @@ ok("password_repeat_memory=0: jede Wiederholung zählt, die Sperre greift")
 
 # (e) Kreis aus N+1 Passwörtern
 auth, app, log = _app(password_repeat_memory=2, max_login_attempts=20)
-for _runde in range(2):
+for _ in range(2):
     for i in range(3):
         _login(app, f"kreis-{i}-xxxxxxxx")
 assert len(_audit(auth, "login_fail")) == 6 and not _audit(auth, "login_repeat"), (
