@@ -361,6 +361,10 @@ Dasselbe Muster gibt es für einen eigenen Step-up ([Eigene Step-up-Seite](#eige
 
 Jedes Formular, das die App selbst rendert, braucht das Token in einem versteckten Feld `_csrf`
 (bei `fetch` im Header `X-CSRF-Token`), und der Browser braucht das passende Cookie.
+Das CSRF-Cookie ist absichtlich **nicht** `HttpOnly` (Double-Submit: Das JavaScript der Seite liest es und sendet
+`X-CSRF-Token`). Das ist keine Schwäche: Es ist kein Zugangsnachweis, sondern ein Wert, den eine fremde Herkunft nicht
+lesen kann. Das Sitzungs-Cookie bleibt `HttpOnly`. Meldet ein Scanner „Cookie ohne HttpOnly“ für dieses Cookie, ist das
+erwartet.
 `auth.ensure_csrf(request, response)` erledigt beides: Ein gültiges Token, das der Browser schon
 hat, bleibt — die Formulare in anderen Reitern gelten weiter, und die Antwort bekommt kein
 `Set-Cookie` —, sonst setzt es ein neues, mit denselben Attributen wie `issue_csrf()`. Zurück kommt
