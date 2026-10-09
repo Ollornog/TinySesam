@@ -362,6 +362,9 @@ The same pattern exists for a step-up of your own ([Own step-up page](#own-step-
 
 Every form your app renders itself needs the token in a hidden `_csrf` field (or, for `fetch`,
 in the `X-CSRF-Token` header), and the browser needs the matching cookie.
+The CSRF cookie is deliberately **not** `HttpOnly` (double-submit: page JavaScript reads it to send `X-CSRF-Token`).
+That is not a weakness: it is no credential, only a value an attacker on another origin cannot read; the session cookie
+stays `HttpOnly`. A scanner finding "cookie without HttpOnly" on it is expected.
 `auth.ensure_csrf(request, response)` does both: a valid token the browser already has is reused
 — forms in other tabs stay valid and the response gets no `Set-Cookie` — otherwise it sets a new
 one, with the same attributes as `issue_csrf()`. It returns the token for the form.
