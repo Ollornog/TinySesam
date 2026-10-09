@@ -4,6 +4,32 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.9] — 2026-10-09
+
+**Wer es braucht:** alle mit Passwort-Anmeldung, deren Nutzer Geräte mit altem Passwort haben, und alle mit
+Hintergrundbildern. Kein API-Bruch, kein neues Schema.
+**Verhaltensänderung:** Dasselbe falsche Passwort von derselben IP an dasselbe Konto zählt nur noch einmal. Wer das
+alte Verhalten will, setzt `password_repeat_memory` auf 0.
+
+### Hinzugefügt
+
+- **Wiederholte Passwörter zählen einmal** (`password_repeat_memory`, Vorgabe 5; `password_repeat_window_sec`, Vorgabe
+  24 h; beide im Panel einstellbar):
+  - Ein Handy, das im Takt mit dem alten Passwort anfragt, sperrt weder Konto noch IP, und fail2ban bannt es nicht.
+  - Die Wiederholung bekommt dieselbe 401 und erscheint als `login_repeat` im Audit und als `INFO repeated login …`
+    im Sicherheits-Log.
+  - Gemerkt werden nur 8 Byte PBKDF2 (20 000 Runden, Salz aus einem abgeleiteten Teilschlüssel), nur im Speicher.
+  - Jedes andere falsche Passwort zählt voll.
+  - `tests/test_passwort_wiederholung.py`. Die Mutation ohne Fingerabdruck ist rot (429 ab dem sechsten Versuch).
+- **`INFO login ok user=… ip=… method=…`** im Sicherheits-Log bei jeder vollständigen Anmeldung.
+
+### Geändert
+
+- **Hintergrundbilder heller und schneller da:**
+  - Neue Tokens `--ts-bild-staerke` (.6) und `--ts-bild-hell` (.8), die Abdunklung ist leichter.
+  - Das erste Bild steht nach 0,5 s statt nach 3 s.
+- Der Logger `tinysesam.security` schreibt ab INFO statt WARNING in die Datei.
+
 ## [0.24.8] — 2026-10-09
 
 **Wer es braucht:** alle, deren Seiten ein eigenes Gesicht bekommen sollen. Kein API-Bruch, kein neues Schema.

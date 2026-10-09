@@ -135,8 +135,8 @@ a_s.create_user("gesperrt", "altes-geheimnis-1", email="gesperrt@example.com")
 app_s = FastAPI()
 app_s.include_router(a_s.router())
 c_s = TestClient(app_s, headers={"Accept": "text/html"})
-for _ in range(a_s._sec("max_login_attempts")):
-    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "vergessen"}).status_code == 401
+for _i in range(a_s._sec("max_login_attempts")):
+    assert c_s.post("/auth/login", data={"username": "gesperrt", "password": f"vergessen-{_i}"}).status_code == 401
 a_s._record_login("gesperrt", "testclient", False, "totp")       # ein Fehlgriff am zweiten Faktor
 assert c_s.post("/auth/login", data={"username": "gesperrt", "password": "altes-geheimnis-1"}).status_code == 429, \
     "Vorbedingung: das Konto ist gesperrt"

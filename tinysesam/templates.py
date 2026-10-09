@@ -143,27 +143,30 @@ def hintergrund(cfg) -> tuple[str, str]:
     bilder = [b for b in (getattr(cfg, "brand_backgrounds", None) or []) if b]
     if not bilder:
         return "", ""
+    # f = Überblendzeit zwischen zwei Bildern. Alle Verzögerungen sind um (f − 0,5 s) vorgezogen: Das erste Bild steht nach
+    # einer halben Sekunde, statt erst nach f Sekunden aus dem Schwarz aufzutauchen (PO 2026-10-09).
     n, d, f = len(bilder), int(getattr(cfg, "brand_background_seconds", 12) or 12), 3
     t = n * d
     css = [".tsbg{position:fixed;inset:0;z-index:-1;background:var(--ts-bild-grund);overflow:hidden}",
            (".tsbg i{position:absolute;inset:-2%;background:center/cover no-repeat;opacity:0;"
-            "filter:grayscale(.35) brightness(.55)}"),
+            "filter:grayscale(.25) brightness(var(--ts-bild-hell))}"),
            (".tsbg::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at center,"
             "var(--ts-bild-decke),var(--ts-bild-decke-rand))}"),
            "body{background:transparent}",
            (".tsbg-quelle{position:fixed;right:12px;bottom:8px;font-size:11px;color:var(--ts-muted);opacity:.55;"
             "text-decoration:none}.tsbg-quelle:hover{opacity:.9;text-decoration:underline}")]
     if n == 1:
-        css.append(".tsbg i{opacity:.32}")
+        css.append(".tsbg i{opacity:var(--ts-bild-staerke)}")
     else:
         a, b, c = f / t * 100, d / t * 100, (d + f) / t * 100
-        css.append(f"@keyframes tsbg{{0%{{opacity:0}}{a:.3f}%{{opacity:.32}}{b:.3f}%{{opacity:.32}}"
+        css.append(f"@keyframes tsbg{{0%{{opacity:0}}{a:.3f}%{{opacity:var(--ts-bild-staerke)}}"
+                   f"{b:.3f}%{{opacity:var(--ts-bild-staerke)}}"
                    f"{c:.3f}%{{opacity:0}}100%{{opacity:0}}}}")
         css.append(f".tsbg i{{animation:tsbg {t}s linear infinite}}")
-        css.append("@media(prefers-reduced-motion:reduce){.tsbg i{animation:none}.tsbg i:first-child{opacity:.32}}")
+        css.append("@media(prefers-reduced-motion:reduce){.tsbg i{animation:none}.tsbg i:first-child{opacity:var(--ts-bild-staerke)}}")
     for k, b in enumerate(bilder, 1):
         css.append(f".tsbg i:nth-child({k}){{background-image:url('{b}')"
-                   + (f";animation-delay:{(k - 1) * d}s" if n > 1 else "") + "}")
+                   + (f";animation-delay:{(k - 1) * d - (f - 0.5):g}s" if n > 1 else "") + "}")
     quelle = ""
     text, ziel = getattr(cfg, "brand_background_credit_text", ""), getattr(cfg, "brand_background_credit_url", "")
     if text:

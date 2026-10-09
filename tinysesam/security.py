@@ -226,8 +226,9 @@ def attach_security_log(path: str) -> bool:
     seclog.addHandler(h)
     # Ohne eigenen Level erbt der Logger den der Wurzel; steht der auf ERROR, fehlen genau die
     # WARNING-Zeilen mit den Fehlversuchen.
-    if seclog.level == logging.NOTSET or seclog.level > logging.WARNING:
-        seclog.setLevel(logging.WARNING)
+    # INFO, nicht WARNING (0.24.9): `repeated login` und `login ok` sind INFO-Zeilen und gehören in dieselbe Datei.
+    if seclog.level == logging.NOTSET or seclog.level > logging.INFO:
+        seclog.setLevel(logging.INFO)
     # Erst hier, nach dem Level: Eine Warnung, die der Logger verwirft, ist keine. Eine
     # BESTEHENDE Datei wird nicht umgeschrieben — eine bewusste Freigabe an eine Gruppe
     # (Log-Versand, `adm`) ist eine Entscheidung des Betreibers, keine Lücke. Still bleibt sie
@@ -263,6 +264,11 @@ SECURITY_DEFAULTS = {
     "mail_per_address_max": 3,      # Mails je Zieladresse im Fenster (Anmelde-Link, Reset, Hinweis) — R4-04
     "mail_per_address_window_sec": 900,  # … Fenster dazu; die IP-Drossel allein schützt kein fremdes Postfach
     "totp_setup_max_attempts": 5,   # eigener Zähler für die Bestätigung der TOTP-Einrichtung
+    # Dasselbe falsche Passwort, von derselben IP, an dasselbe Konto zählt nur EINMAL (0.24.9, PO: „gleiches Passwort
+    # 10 mal eintippen ist wohl weniger ein Hackversuch“): ein Handy mit altem Passwort soll weder das Konto noch die
+    # Heim-IP sperren. Gemerkt werden die letzten N Fingerabdrücke je (Konto, IP); 0 schaltet das aus.
+    "password_repeat_memory": 5,
+    "password_repeat_window_sec": 86400,  # … so lange zählt ein gemerkter Fingerabdruck als „schon probiert“
 }
 
 #: Erlaubter Bereich je Härtungs-Schwelle, beide Grenzen eingeschlossen (R6-4, B2-9).
@@ -296,6 +302,8 @@ SECURITY_GRENZEN = {
     "resource_max_attempts": (1, 100),
     "account_attempt_factor": (1, 100),
     "totp_setup_max_attempts": (1, 100),
+    "password_repeat_memory": (0, 50),
+    "password_repeat_window_sec": (60, 7 * 86400),
     "mail_per_address_max": (1, 1000),
     "mail_per_address_window_sec": (60, 86400),
 }
@@ -411,6 +419,11 @@ NICHT_LOGIN_METHODEN = tuple(EIGENE_SPERRE)
 #: bannen will, nimmt die zweite, mildere Jail aus `deploy/fail2ban/`.
 LOG_ANMELDUNG = "failed login"
 LOG_PRUEFUNG = "failed verification"
+#: Ein falsches Passwort, das dieselbe IP an dasselbe Konto schon geschickt hat (`password_repeat_memory`). Bewusst ein
+#: eigenes Wort und INFO: Die mitgelieferte failregex verlangt `WARNING failed login`, diese Zeile zählt also nicht.
+LOG_WIEDERHOLT = "repeated login"
+#: Eine VOLLSTÄNDIGE Anmeldung (alle Faktoren) — für Auswertung und Filter, die eine Sperrtreppe zurücksetzen wollen.
+LOG_ERFOLG = "login ok"
 
 
 def log_ereignis(method) -> str:
