@@ -57,11 +57,11 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`):
           #   github_actions — nur Actions, die in einem Pflicht-Workflow auf dem PR laufen (unten)
-          #   pip            — .github/bau (Job `bauen`), deploy/gateway (`abbild-probe`, `image`),
-          #                    .github/audit (`audit`)
+          #   pip            — .github/bau (Job `bauen`), .github/audit (`audit`)
+          #   uv             — deploy/gateway (`abbild-probe`, `image`, `audit`), seit 2026-10-10 statt pip
           #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`)
           # NICHT: docker_compose (deploy/forward-auth) — kein Pflicht-Check startet das Compose.
-          AUTO_OEKO: "github_actions pip docker"
+          AUTO_OEKO: "github_actions pip uv docker"
           # Die Workflows, deren Jobs Pflicht-Checks sind (Branch-Protection von main). Jeder muss auf
           # `pull_request` laufen und oben unter `workflows:` stehen — `tests/test_repo.py` prüft das.
           PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml"

@@ -5,6 +5,13 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unveröffentlicht]
 
 ### Geändert
+- **Sperrliste des Gateway-Abbilds: Dependabot erzeugt sie ganz neu (uv statt pip).** Neue Eingabe
+  `deploy/gateway/requirements.in` (= `dependencies` + Extra `gateway` + setuptools, ersetzt `bau.in`), Kopf mit der
+  `uv pip compile`-Befehlszeile. Das pip-Ökosystem hob die Liste zeilenweise und trug neue transitive Abhängigkeiten
+  nicht nach (#126). `tests/test_repo.py` hält Eingabe und pyproject gleich, prüft die Befehlszeile und dass kein
+  Ordner pip UND uv zugleich gehört; Auto-Merge nimmt `uv` an.
+
+### Geändert
 - Abhängigkeiten des Gateway-Abbilds (fastapi 0.142.2, cryptography 50.0.2) und der Audit-Werkzeuge (uv 0.12.23 u. a.)
   angehoben, Hash-Listen neu erzeugt. fastapi 0.142 braucht neu `opentelemetry-api`; Dependabots Zeilen-Update (#126)
   nahm die neue Abhängigkeit nicht auf, Abbild-Bau und Audit wurden rot.

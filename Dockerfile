@@ -38,9 +38,9 @@ COPY tinysesam ./tinysesam
 # `SOURCE_DATE_EPOCH` (setzt der Release-Workflow) macht die .pyc-Dateien zeitstempelfrei.
 #
 # `--no-deps` heisst auch: Fehlt in der Sperrliste eine transitive Abhängigkeit, installiert pip
-# trotzdem ohne Murren. Dependabot hebt in einer gehashten Liste nur einzelne Zeilen und trägt
-# keine neue Abhängigkeit nach — ein Bump, der eine mitbringt, ergäbe ein Abbild, das erst beim
-# Start mit ModuleNotFoundError abbricht. `pip check` und der Import fangen das beim BAU ab;
+# trotzdem ohne Murren. Bis 2026-10-10 hob Dependabot die Liste zeilenweise und trug keine neue
+# Abhängigkeit nach (#126: fastapi 0.142 → opentelemetry-api) — ein Abbild, das erst beim Start mit
+# ModuleNotFoundError abbräche. Seitdem erzeugt es die Liste ganz neu (uv-Ökosystem); die Probe bleibt. `pip check` und der Import fangen das beim BAU ab;
 # audit.yml fährt dieselben Schritte bei jedem PR, damit es gar nicht erst bis zum Release kommt.
 ARG SOURCE_DATE_EPOCH
 RUN python -m venv /opt/venv \

@@ -1,0 +1,16 @@
+# Eingabe der Sperrliste des Gateway-Abbilds (requirements.txt daneben, per `uv pip compile` erzeugt).
+# Dieselben Anforderungen wie `dependencies` + Extra `gateway` in pyproject.toml — `tests/test_repo.py`
+# hält beide gleich. Eine eigene Eingabe statt `pyproject.toml --extra gateway`, weil Dependabots
+# uv-Ökosystem genau EINE .in-Datei neu kompiliert (2026-10-10): Das zeilenweise pip-Update trug neue
+# transitive Abhängigkeiten nicht nach (fastapi 0.142 → opentelemetry-api, #126).
+fastapi>=0.133.0
+cryptography>=50.0
+pyotp>=2.9
+python-multipart>=0.0.31
+httpx>=0.27
+authlib>=1.6.12
+uvicorn>=0.30
+# Bau-Backend für `pip install --no-build-isolation .` im Abbild. Steht hier und nicht im
+# pyproject: Mit Bau-Isolierung holte pip sich setuptools ungeprüft in der jeweils neuesten
+# Fassung aus dem Netz — genau die Lücke, die requirements.txt schliessen soll.
+setuptools

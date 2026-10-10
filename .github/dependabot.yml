@@ -32,8 +32,13 @@ updates:
   # Was ausgeliefert oder zum Bauen benutzt wird, steht dagegen gepinnt samt Hashes, und dort
   # hebt Dependabot die Zeilen: die Sperrliste des Gateway-Abbilds, die Bauwerkzeuge von Wheel
   # und sdist, die Werkzeuge des Schwachstellen-Tors.
+  #
+  # Die Sperrliste des Gateway-Abbilds pflegt seit 2026-10-10 der uv-Eintrag darunter: Dieser pip-Eintrag hob sie
+  # zeilenweise und trug neue transitive Abhängigkeiten nicht nach (fastapi 0.142 → opentelemetry-api, #126 rot).
+  # Die zwei Werkzeuglisten bleiben hier — sie heissen `werkzeuge.in`, und ob das uv-Ökosystem dazu die Ausgabedatei
+  # findet, ist im Quelltext nicht eindeutig (es sucht `<name>.txt` oder die .in am Zeilenende des Kopfes).
   - package-ecosystem: pip
-    directories: ["/deploy/gateway", "/.github/bau", "/.github/audit"]
+    directories: ["/.github/bau", "/.github/audit"]
     # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
     cooldown:
       default-days: 3
@@ -49,12 +54,26 @@ updates:
       alle:
         patterns: ["*"]
         update-types: ["patch", "minor"]
-    # pydantic legt pydantic-core EXAKT fest (`pydantic-core==…`), und pydantic-core erscheint oft
-    # vor dem pydantic, das es verlangt. Die Sperrliste ist ohne Kopfzeile erzeugt, Dependabot hebt
-    # sie also zeilenweise und hob pydantic-core allein: `pip check` im Abbild-Bau und im Audit
-    # wurde rot (#81, #112). pydantic-core wandert deshalb nur mit pydantic mit. Hebt Dependabot
-    # pydantic, bleibt der Pflicht-Check rot, bis die Liste neu erzeugt ist (Befehl im Kopf von
-    # deploy/gateway/requirements.txt), und der Auto-Merge wartet.
+
+  # Die Sperrliste des Gateway-Abbilds: deploy/gateway/requirements.txt, per `uv pip compile` aus requirements.in
+  # daneben. Das uv-Ökosystem erkennt die Datei am Kopf (`--output-file`, `--universal`, `--python-version`, Hashes),
+  # hebt mit `-P <paket>==<fassung>` und erzeugt die GANZE Datei neu — neue transitive Abhängigkeiten eingeschlossen
+  # (dependabot-core: uv/lib/dependabot/uv/file_updater/compile_file_updater.rb). Muster: DashMyBoard /app.
+  - package-ecosystem: uv
+    directory: /deploy/gateway
+    # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    groups:
+      # Wie oben: patch und minor gebündelt, Majors einzeln.
+      alle:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
+    # pydantic legt pydantic-core EXAKT fest (`pydantic-core==…`), und pydantic-core erscheint oft vor dem pydantic,
+    # das es verlangt. Zeilenweise gehoben (bis 2026-10-10, pip) wurde `pip check` rot (#81, #112). Neu kompiliert
+    # wäre ein pydantic-core-PR allein nicht auflösbar — es wandert deshalb weiter nur mit pydantic mit.
     ignore:
       - dependency-name: "pydantic-core"
 
