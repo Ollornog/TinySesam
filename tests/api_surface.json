@@ -1112,6 +1112,10 @@
       "feld": "dict = {}",
       "stufe": "A"
     },
+    "forward_logged_out_sec": {
+      "feld": "int = 10",
+      "stufe": "A"
+    },
     "forward_login": {
       "feld": "str = 'page'",
       "stufe": "A"

@@ -4,6 +4,24 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.11] — 2026-10-10
+
+**Wer es braucht:** Gateways im Modus `direct`. Kein API-Bruch, kein neues Schema.
+**Verhaltensänderung:** Im Modus `direct` führt die Seite „Abgemeldet“ nach 10 Sekunden von selbst zurück zur
+Anwendung. Wer sie stehen lassen will, setzt `forward_logged_out_sec` auf 0.
+
+### Hinzugefügt
+
+- **„Abgemeldet“ führt weiter** (`forward_logged_out_sec`, Vorgabe 10, 0–300; Gateway
+  `TINYSESAM_FORWARD_LOGGED_OUT_SEC`):
+  - Nach „überall abmelden“ steht die Seite so lange, mit einem ablaufenden Balken, dann geht es zur Anwendung.
+    Das Gate schickt weiter zum Provider, und dort beginnt eine neue Anmeldung.
+  - Ein `meta refresh` im Kopf, kein Skript. Der Balken ist reines CSS und fällt bei `prefers-reduced-motion` weg.
+  - Gilt auf dem App-Host (`/.tinysesam/after-logout`) und auf dem Gateway (`/auth/gate/logged-out`), nur im
+    Modus `direct`. Im Modus `page` zeigt die Anmeldeseite die Abmeldung selbst.
+  - Tests in `tests/test_gate_link.py` und `tests/test_logout_modi.py`. Rot sind die Mutationen „nie weiter“ und
+    „auch im Modus page weiter“.
+
 ## [0.24.10] — 2026-10-09
 
 **Wer es braucht:** alle, die nach einer erfolgreichen Anmeldung den fail2ban-Bann einer IP aufheben. Kein API-Bruch.

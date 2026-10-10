@@ -1111,6 +1111,14 @@ def build_router(auth) -> APIRouter:
             _link_aufheben(request, resp)
             return resp
 
+        def _weiter_sec(host: str) -> int:
+            """Wartezeit der Seite „Abgemeldet“, bevor sie zur Anwendung zurückführt (PO 2026-10-10) — nur im
+            Modus „direct“: Dort beginnt der Weg „/“ gleich beim Provider eine neue Anmeldung. Im Modus „page“
+            führt er zur eigenen Anmeldeseite, die zeigt die Abmeldung schon selbst."""
+            if auth._forward_app(host)["login"] != "direct":
+                return 0
+            return int(getattr(cfg, "forward_logged_out_sec", 0) or 0)
+
         def _gate_host_oder_404(request: Request) -> str:
             host = auth._gate_host(request)
             if not host:
@@ -1156,7 +1164,8 @@ def build_router(auth) -> APIRouter:
             if _link_modus(host) and auth._forward_app(host)["login"] == "page":
                 resp = RedirectResponse("/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
             else:
-                resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"])
+                resp = auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(host)["name"],
+                                        redirect_sec=_weiter_sec(host))
             auth._gate_cookie_loeschen(resp)
             return resp
 
@@ -1282,7 +1291,7 @@ def build_router(auth) -> APIRouter:
                 if auth._forward_app(h)["login"] == "page":
                     return RedirectResponse(f"{basis}/.tinysesam/start?rd=%2F&abgemeldet=1", 303)
                 return auth.render_page("gate_logged_out", request=request, app_name=auth._forward_app(h)["name"],
-                                        again_url=f"{basis}/")
+                                        again_url=f"{basis}/", redirect_sec=_weiter_sec(h))
 
             @r.get("/.tinysesam/callback")
             def gate_link_callback(request: Request, code: str = ""):

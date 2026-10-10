@@ -79,6 +79,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `gate_token_ttl_sec` | `int` | `300` | Laufzeit = Widerrufsverzug am Proxy; 30–3600 |
 | `forward_login` | `str` | `"page"` | Wie das Gate einen nicht Angemeldeten anmeldet (T-21): "page" = die Login-Seite von TinySesam (mit dem Namen der Anwendung aus forward_apps), "direct" = beim Seitenaufruf sofort zum Identity Provider und zurück zur aufgerufenen Adresse. "direct" nur, wenn OIDC die einzige Anmeldemethode ist; Hintergrund-Anfragen (XHR, Assets) gehen auch dann zur Login-Seite — sonst begänne jede von ihnen einen eigenen Flow. oidc_gateway() setzt "direct". |
 | `forward_logout` | `str` | `"all"` | Was „Abmelden" an der Anwendung heisst (T-22), Weg: https://<app>/.tinysesam/logout. "all" = diese Sitzung beenden (gilt für alle Anwendungen hinter derselben Anmeldung) und mit oidc_rp_logout auch beim Provider; "app" = nur diese Anwendung: die Sitzung bleibt, der Host lässt sie erst nach „Weiter als …" auf der Login-Seite wieder durch; "ask" = fragen. |
+| `forward_logged_out_sec` | `int` | `10` | Seite „Abgemeldet“ im Modus "direct" (PO 2026-10-10): so viele Sekunden stehen lassen, dann von selbst zurück zur Anwendung — das Gate schickt weiter zum Provider, und dort beginnt eine NEUE Anmeldung (der Provider ist mit oidc_rp_logout schon abgemeldet). 0 = stehen lassen, nur der Knopf. 0–300. |
 | `forward_apps` | `dict` | `dict` | Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct", "logout": "ask"}}. name = Anzeigename auf Login- und Abmeldeseite; login/logout überschreiben forward_login/forward_logout für diesen Host. |
 | `gate_cookie_name` | `str` | `"__Host-tinysesam_gate"` | Form __Host-tinysesam_<name>: host-only, und die Vorlagen entfernen es vor der App |
 | `gate_link_enabled` | `bool` | `False` | Zentrales Gateway, Sitzung bleibt auf seinem Host (T-26): Ein App-Host bekommt über einen Code-Austausch (/.tinysesam/start → /auth/gate/authorize → /.tinysesam/callback) nur ein eigenes Verbindungs-Cookie, das ausschliesslich für ihn gilt. Ohne das müsste das Sitzungs-Cookie auf der Elterndomain liegen und erreichte jede App darunter. Verlangt gate_token_enabled und base_url, verträgt sich nicht mit cookie_domain. |
@@ -312,4 +313,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-171 Felder, erzeugt aus `tinysesam/config.py`.
+172 Felder, erzeugt aus `tinysesam/config.py`.

@@ -67,9 +67,9 @@ and the whole **front end replaceable** (`auth.set_template(...)`).
 TinySesam is on **PyPI** (since 0.19.0). Pin the version:
 
 ```bash
-pip install "tinysesam==0.24.10"
+pip install "tinysesam==0.24.11"
 # core: password + TOTP. Everything: [all] — + argon2, QR, OIDC, passkey
-pip install "tinysesam[all]==0.24.10"
+pip install "tinysesam[all]==0.24.11"
 # selective: [argon2] [qr] [oidc] [saml] [ldap] [passkey] [redis] [gateway]
 ```
 
@@ -78,7 +78,7 @@ carries a PEP 740 attestation of the commit it was built from. The same version 
 straight from the tag:
 
 ```bash
-pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.10"
+pip install "tinysesam[all] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.11"
 ```
 
 Drop the `@v…` when you want a **commit** rather than a released version — that pulls the moving
@@ -843,7 +843,7 @@ hole. Established auth projects don't ship such a button, and as of `v0.12.0` ne
 Put a **fixed version** in your app's dependencies — never a branch:
 
 ```
-tinysesam[oidc]==0.24.10
+tinysesam[oidc]==0.24.11
 ```
 
 A released version on PyPI never changes: the same line installs the same code tomorrow. Updating
@@ -853,14 +853,14 @@ The same pin via git, if you install that way — note that a **tag can be moved
 immutability pin the commit (`@a1b2c3d…`):
 
 ```
-tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.10
+tinysesam[oidc] @ git+https://github.com/Ollornog/TinySesam.git@v0.24.11
 ```
 
 Every release also attaches a **wheel** and an **sdist**, with `SHA256SUMS`. To install without
 git and without an index, take the file directly:
 
 ```
-pip install https://github.com/Ollornog/TinySesam/releases/download/v0.24.10/tinysesam-0.24.10-py3-none-any.whl
+pip install https://github.com/Ollornog/TinySesam/releases/download/v0.24.11/tinysesam-0.24.11-py3-none-any.whl
 ```
 
 ### As a gateway (its own container)
@@ -868,7 +868,7 @@ pip install https://github.com/Ollornog/TinySesam/releases/download/v0.24.10/tin
 Every release builds an image for `linux/amd64` and `linux/arm64`:
 
 ```
-ghcr.io/ollornog/tinysesam:v0.24.10
+ghcr.io/ollornog/tinysesam:v0.24.11
 ```
 
 It runs as **non-root** (uid 1000), contains neither `pip` nor `git`, ships a `HEALTHCHECK` on
@@ -879,9 +879,9 @@ who built it. Every release therefore carries a Sigstore-signed provenance attes
 both also stored next to the image in the registry:
 
 ```bash
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.10 --owner Ollornog
-gh attestation verify tinysesam-0.24.10-py3-none-any.whl --owner Ollornog   # wheel and sdist too
-gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.10 --owner Ollornog \
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.11 --owner Ollornog
+gh attestation verify tinysesam-0.24.11-py3-none-any.whl --owner Ollornog   # wheel and sdist too
+gh attestation verify oci://ghcr.io/ollornog/tinysesam:v0.24.11 --owner Ollornog \
     --predicate-type https://spdx.dev/Document                             # the SBOM
 ```
 
@@ -1289,6 +1289,11 @@ The app's sign-out link points to `https://app.example.com/.tinysesam/logout` �
 If the app signs out at the provider itself (its own RP logout), register `…/.tinysesam/after-logout`
 as its logout callback URL as well: the provider then sends you here and the TinySesam session ends
 too. Other apps in the same browser keep their gate token for at most `gate_token_ttl_sec`.
+
+After `all`, the page “Signed out” appears. With `forward_login="direct"` it leads back to the app by itself
+after `forward_logged_out_sec` seconds (default 10, gateway `TINYSESAM_FORWARD_LOGGED_OUT_SEC`, 0 = stay):
+the gate sends you on to the provider, which is signed out as well, so a **new** sign-in begins there. The
+page uses a `meta refresh`, no script. In mode `page` the sign-in page itself says “You have been signed out”.
 
 ## Public API: three tiers
 

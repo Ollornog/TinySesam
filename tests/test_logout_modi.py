@@ -134,6 +134,10 @@ ok("scope=all: Sitzung beendet, Gate-Cookie gelöscht, zum Provider mit id_token
 # Rückweg vom Provider: ohne Sitzung eine Seite „Abgemeldet“, keine Umleitung in eine neue Runde.
 r = TestClient(app).get("/.tinysesam/after-logout", headers=APP, follow_redirects=False)
 assert r.status_code == 200 and "Abgemeldet" in r.text and gate_geloescht(r, auth)
+assert "content='10;url=/'" in r.text, "Modus direct (oidc_gateway): nach 10 s zurück zur Anwendung"
+_pa, _papp = instanz(forward_login="page")
+_pr = TestClient(_papp).get("/.tinysesam/after-logout", headers=APP, follow_redirects=False)
+assert "http-equiv=refresh" not in _pr.text and "Wieder anmelden" in _pr.text, "Modus page: die Seite führt nicht von selbst weiter"
 ok("after-logout ohne Sitzung: Seite „Abgemeldet“ (keine neue Runde), Gate-Cookie gelöscht")
 
 # Kette von der Anwendung aus (deren RP-Logout → Provider → after-logout): die Sitzung lebt noch.
