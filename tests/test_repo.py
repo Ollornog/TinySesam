@@ -919,7 +919,36 @@ for _z in read(SPERRLISTE).splitlines():
 _via -= {"tinysesam", "-r"}
 assert _via and _via <= set(_lock), (f"{SPERRLISTE}: `# via` nennt Pakete, die fehlen: "
                                      f"{sorted(_via - set(_lock))} — neu erzeugen")
-print(f"  Gateway-Abbild: {len(_lock)} Pakete aus gehashter Sperrliste, deckt pyproject ab, kein pip-Upgrade")
+# Seit 2026-10-10 erzeugt Dependabots uv-Ökosystem die Sperrliste neu, aus GENAU EINER Eingabe: requirements.in daneben.
+# (Das zeilenweise pip-Update trug neue transitive Abhängigkeiten nicht nach, #126.) Die Eingabe wiederholt
+# `dependencies` + Extra `gateway` aus pyproject.toml und nennt setuptools — läuft sie auseinander, löst das Abbild
+# etwas anderes auf als das Paket verlangt. Und der Kopf muss tragen, woraus Dependabot die Schalter liest.
+EINGABE = "deploy/gateway/requirements.in"
+_ein = {}
+for _z in read(EINGABE).splitlines():
+    _z = _z.split("#", 1)[0].strip()
+    if _z:
+        _em = re.match(r"^([A-Za-z0-9._-]+)\s*(>=\s*[0-9.]+)?$", _z)
+        assert _em, f"{EINGABE}: unerwartete Zeile {_z!r}"
+        _ein[_em.group(1).lower().replace("_", "-")] = (_em.group(2) or "").replace(" ", "")
+_soll = {"setuptools": ""}
+for _anf in _braucht:
+    _sm = re.match(r"^([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*(>=\s*[0-9.]+)$", _anf)
+    _soll[_sm.group(1).lower().replace("_", "-")] = _sm.group(2).replace(" ", "")
+assert _ein == _soll, (f"{EINGABE} weicht von pyproject (dependencies + gateway) ab: "
+                       f"nur dort {sorted(set(_ein.items()) - set(_soll.items()))}, "
+                       f"nur im pyproject {sorted(set(_soll.items()) - set(_ein.items()))}")
+# Die Befehlszeile selbst, nicht irgendein Kommentar: Dependabot sucht die Schalter zwar im ganzen Text, aber nur diese
+# Zeile sagt, womit die Datei wirklich erzeugt wurde (eine Erwähnung im Erklärtext oben bewiese nichts).
+_kopf = next((z for z in read(SPERRLISTE).splitlines() if z.startswith("#    uv pip compile ")), "")
+for _schalter in ("uv pip compile requirements.in", "--universal", "--generate-hashes",
+                  f"--python-version {re.search(r'^FROM python:(3\.\d+)', dockerfile, re.M).group(1)}",
+                  "--output-file requirements.txt"):
+    assert _schalter in _kopf, f"{SPERRLISTE}: Kopf ohne `{_schalter}` — Dependabot (uv) erzeugt sonst anders neu"
+assert not os.path.exists(os.path.join(ROOT, "deploy/gateway/bau.in")), \
+    "deploy/gateway/bau.in ist zurück — setuptools steht in requirements.in (eine Eingabe für Dependabot)"
+print(f"  Gateway-Abbild: {len(_lock)} Pakete aus gehashter Sperrliste, deckt pyproject ab, kein pip-Upgrade, "
+      f"Eingabe = pyproject")
 
 # B4-2 — Das Schwachstellen-Tor: jede gehashte Liste und beide Auflösungen gehen durch pip-audit,
 # bei jedem PR und nächtlich, und das Tor darf nicht rot werden können, ohne zu blockieren.
@@ -955,8 +984,15 @@ def _dependabot_dirs(oekosystem: str) -> set[str]:
 
 assert "/" not in _dependabot_dirs("pip"), ("dependabot: pip auf `/` liest nur die `>=`-Grenzen "
                                             "und hebt nie etwas — die Böden prüft audit.yml")
+# pip hebt zeilenweise, uv erzeugt aus requirements.in neu (seit 2026-10-10 für deploy/gateway). Ein Ordner gehört
+# genau EINEM der beiden — beide zugleich gäben zwei PRs für denselben Sprung, und der pip-PR wäre wieder der kaputte.
+_pip, _uv = _dependabot_dirs("pip"), _dependabot_dirs("uv")
+assert not _pip & _uv, f"dependabot: pip UND uv für {sorted(_pip & _uv)}"
 for rel in SPERRLISTEN:
-    assert "/" + os.path.dirname(rel) in _dependabot_dirs("pip"), f"Dependabot hebt {rel} nicht"
+    assert "/" + os.path.dirname(rel) in _pip | _uv, f"Dependabot hebt {rel} nicht"
+for _d in _uv:
+    assert os.path.exists(os.path.join(ROOT, _d.lstrip("/"), "requirements.in")), \
+        f"dependabot: uv für {_d}, aber dort fehlt requirements.in (die eine Eingabe, die uv neu kompiliert)"
 for rel in (f for f in FILES if re.search(r"(^|/)(docker-)?compose[^/]*\.ya?ml$", f)):
     assert "/" + os.path.dirname(rel) in _dependabot_dirs("docker-compose"), \
         f"Dependabot sieht {rel} nicht (Eintrag `docker-compose`)"
