@@ -4,6 +4,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert
+- Abhängigkeiten des Gateway-Abbilds (fastapi 0.142.2, cryptography 50.0.2) und der Audit-Werkzeuge (uv 0.12.23 u. a.)
+  angehoben, Hash-Listen neu erzeugt. fastapi 0.142 braucht neu `opentelemetry-api`; Dependabots Zeilen-Update (#126)
+  nahm die neue Abhängigkeit nicht auf, Abbild-Bau und Audit wurden rot.
+
 ## [0.24.11] — 2026-10-10
 
 **Wer es braucht:** Gateways im Modus `direct`. Kein API-Bruch, kein neues Schema.
