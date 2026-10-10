@@ -73,6 +73,9 @@ body{font-family:var(--ts-font);margin:0;min-height:100vh;display:flex;flex-dire
      font-size:15px;cursor:pointer;background:var(--ts-accent);color:var(--ts-accent-ink);
      display:block;text-align:center;text-decoration:none}
 .tsmain .btn2{background:var(--ts-neutral);color:var(--ts-neutral-ink);margin-top:10px}
+.tsmain .tsweiter{height:4px;margin-top:12px;border-radius:2px;background:var(--ts-line);overflow:hidden}
+.tsmain .tsweiter i{display:block;height:100%;width:100%;background:var(--ts-accent);transform-origin:left}
+@media(prefers-reduced-motion:reduce){.tsmain .tsweiter{display:none}}
 .tsmain .err{background:var(--ts-err-bg);color:var(--ts-err-ink);padding:9px 12px;border-radius:8px;
      font-size:13px;margin-bottom:6px}
 .tsmain .ok{background:var(--ts-ok-bg);color:var(--ts-ok-ink);padding:9px 12px;border-radius:8px;
@@ -187,14 +190,14 @@ def brand(value, auth):
 
 
 def _doc(title, body, lang="en", brand_css="", brand_head="", card=True, brand_icon="", top="",
-         header="", footer="", unten="", hg=("", "")):
+         header="", footer="", unten="", hg=("", ""), kopf=""):
     """`top` steht außerhalb der Karte (z.B. der Demo-Hinweis) — direkt darüber, gleich breit; `unten` direkt
     darunter (die Meldungen). `header`/`footer` umschließen die Seite, damit die Host-App ihre Navigation
-    drumherum legen kann."""
+    drumherum legen kann. `kopf` landet im <head> vor dem Branding (etwa ein meta refresh)."""
     inner = (f"<div class=card>{body}</div>" if card else body) + (unten or "")
     return (f"<!doctype html><html lang={html.escape(lang)}><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"{favicon_link(brand_icon)}"
+            f"{favicon_link(brand_icon)}{kopf}"
             f"<title>{html.escape(title)}</title><style>{_CSS}{hg[0]}{brand_css or ''}</style>{brand_head or ''}</head>"
             f"<body>{hg[1]}{header}<div class=tsmain>{top}{inner}</div>{footer}</body></html>")
 
@@ -203,14 +206,14 @@ def _shell(title, body, lang="en"):
     return _doc(title, body)
 
 
-def _page(auth, title, body, card=True, top="", unten=""):
+def _page(auth, title, body, card=True, top="", unten="", kopf=""):
     """Wie _shell, aber mit Branding aus der Config (brand_css/brand_head/brand_icon/brand_header/
     brand_footer) — re-skinnt und umrahmt alle Seiten zentral. `top` landet über der Karte, `unten` darunter."""
     cfg = auth.cfg
     return _doc(title, body, cfg.lang, getattr(cfg, "brand_css", ""), getattr(cfg, "brand_head", ""),
                 card, getattr(cfg, "brand_icon", ""), top,
                 brand(getattr(cfg, "brand_header", ""), auth), brand(getattr(cfg, "brand_footer", ""), auth), unten,
-                hintergrund(cfg))
+                hintergrund(cfg), kopf)
 
 
 #: Symbole der Meldungen — Inline-SVG in currentColor (nichts wird nachgeladen), 24er-Raster, nur Striche.
@@ -814,12 +817,25 @@ def _gate_logout(auth, ctx) -> str:
 
 
 def _gate_logged_out(auth, ctx) -> str:
-    """ctx: app_name, again_url (optional, Vorgabe „/“ des Hosts). Nach dem Abmelden — mit einem Weg zurück,
-    der eine NEUE Anmeldung beginnt."""
+    """ctx: app_name, again_url (optional, Vorgabe „/“ des Hosts), redirect_sec (optional). Nach dem Abmelden — mit
+    einem Weg zurück, der eine NEUE Anmeldung beginnt. Mit `redirect_sec` > 0 (Modus „direct“, PO 2026-10-10) geht
+    es nach so vielen Sekunden von selbst dorthin: ein meta refresh, kein Skript; der Balken läuft nur in CSS ab."""
     t = auth.t
-    body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>"
-            f"<a class=btn2 href='{_e(ctx.get('again_url') or '/')}'>{_e(t('gate.login_again'))}</a>")
-    return _page(auth, t("gate.logged_out_title"), body)
+    ziel = ctx.get("again_url") or "/"
+    try:
+        sek = max(0, min(300, int(ctx.get("redirect_sec") or 0)))
+    except (TypeError, ValueError):
+        sek = 0
+    kopf, weiter = "", ""
+    if sek:
+        kopf = (f"<meta http-equiv=refresh content='{sek};url={_e(ziel)}'>"
+                f"<style>@keyframes tsweiter{{from{{transform:scaleX(1)}}to{{transform:scaleX(0)}}}}"
+                f".tsweiter i{{animation:tsweiter {sek}s linear forwards}}</style>")
+        weiter = (f"<div class=hint role=status>{_e(t('gate.login_soon', n=sek))}</div>"
+                  f"<div class=tsweiter aria-hidden=true><i></i></div>")
+    body = (f"<h1>{_e(t('gate.logged_out_title'))}</h1><div class=hint>{_e(t('gate.logged_out'))}</div>{weiter}"
+            f"<a class=btn2 href='{_e(ziel)}'>{_e(t('gate.login_now') if sek else t('gate.login_again'))}</a>")
+    return _page(auth, t("gate.logged_out_title"), body, kopf=kopf)
 
 
 def _gateway_home(auth, ctx) -> str:

@@ -47,6 +47,9 @@ Konfiguration per Umgebungsvariablen:
                                                page (erst die Login-Seite mit dem Namen der Anwendung)
     TINYSESAM_FORWARD_LOGOUT                   all (Default: Sitzung und Provider), app (nur diese
                                                Anwendung) oder ask (fragen) — Weg /.tinysesam/logout
+    TINYSESAM_FORWARD_LOGGED_OUT_SEC           Modus direct: so lange steht die Seite „Abgemeldet“,
+                                               dann geht es von selbst zurück zur Anwendung und damit
+                                               zur neuen Anmeldung (Default 10, 0 = stehen lassen)
     TINYSESAM_FORWARD_APPS                     JSON je Anwendung: {"wiki.example.com": {"name": "Wiki",
                                                "login": "page", "logout": "ask"}} — name erscheint
                                                auf Login- und Abmeldeseite
@@ -188,6 +191,7 @@ def config_from_env() -> TinySesamConfig:
         forward_login=os.environ.get("TINYSESAM_FORWARD_LOGIN", "").strip() or "direct",
         forward_apps=_json_objekt("TINYSESAM_FORWARD_APPS"),
         forward_logout=os.environ.get("TINYSESAM_FORWARD_LOGOUT", "").strip() or "all",
+        forward_logged_out_sec=int(os.environ.get("TINYSESAM_FORWARD_LOGGED_OUT_SEC", "10") or 0),
         gate_token_ttl_sec=int(os.environ.get("TINYSESAM_GATE_TTL_SEC", "300") or 300),
     )
 

@@ -609,7 +609,10 @@ Je Anwendung hinter dem Gate, in dieser Reihenfolge:
    zurückzuleiten. Bei mehreren Clients (`oidc_clients`) gehört die Adresse zu dem Client, über den die
    Anmeldung lief.
 4. **Gegenprobe:** abmelden; danach muss die Anwendung zur Anmeldung führen, und bei `all` eine zweite
-   Anwendung im selben Browser spätestens nach `gate_token_ttl_sec`.
+   Anwendung im selben Browser spätestens nach `gate_token_ttl_sec`. Im Modus `direct` steht „Abgemeldet“
+   `forward_logged_out_sec` Sekunden (Vorgabe 10), dann folgt die Anmeldeseite des Providers — **mit**
+   Klick auf Anmelden. Meldet der Provider stattdessen still wieder an, hat sein Logout nicht gegriffen
+   (Logout Callback URL aus Punkt 3 prüfen).
 
 `app` und `direct` zusammen: Die Abmeldung „nur hier“ hält, weil die Anwendung danach immer die
 Login-Seite zeigt (nie den direkten Weg zum Provider) — mit „Weiter als …“ für den Weg zurück.

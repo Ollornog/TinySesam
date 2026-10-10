@@ -719,6 +719,9 @@ ZAHLENGRENZEN = {
     # Laufzeit des Gate-Tokens (ADR-9) = Widerrufsverzug am Proxy. Unter 30 s fragt der Proxy fast
     # so oft wie ohne Token; über einer Stunde kommt ein Widerruf zu spät, um einer zu sein.
     "gate_token_ttl_sec": (30, 3600),
+    # Wartezeit auf der Seite „Abgemeldet“, bevor sie zur Anwendung zurückführt. Über fünf Minuten wartet
+    # niemand mehr, dafür gibt es 0 (stehen lassen).
+    "forward_logged_out_sec": (0, 300),
 }
 
 

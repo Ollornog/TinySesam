@@ -223,6 +223,26 @@ auth._forward_app = _fa_orig
 assert w.status_code == 200 and "Abgemeldet" in w.text, w.status_code
 ok("nach dem Abmelden: Anmeldeseite „Anmelden bei App“ mit „Du wurdest abgemeldet.“ (page); Modus direct behält die Seite")
 
+# ---------- Modus direct: „Abgemeldet“ führt nach forward_logged_out_sec von selbst zurück (PO 2026-10-10) ----------
+_wiki_direct()
+w = TestClient(fa, base_url=WIKI).get("/.tinysesam/after-logout")
+g = b6["gw"].get("/auth/gate/logged-out?host=wiki.example.com")
+assert "<meta http-equiv=refresh content='10;url=/'>" in w.text.split("</head>")[0], w.text[:600]
+assert "In 10 Sekunden geht es zur Anmeldung." in w.text and "Jetzt anmelden" in w.text
+assert "content='10;url=https://wiki.example.com/'" in g.text.split("</head>")[0], g.text[:600]
+auth.cfg.forward_logged_out_sec = 0
+w0 = TestClient(fa, base_url=WIKI).get("/.tinysesam/after-logout")
+auth.cfg.forward_logged_out_sec = 10
+auth._forward_app = _fa_orig
+assert "http-equiv=refresh" not in w0.text and "Wieder anmelden" in w0.text and "Sekunden" not in w0.text
+p6 = b6["gw"].get("/auth/gate/logged-out?host=app.example.com", follow_redirects=False)
+assert p6.status_code == 303, "page leitet weiter zur Anmeldeseite, ohne Zwischenseite"
+assert "http-equiv=refresh" not in TestClient(fa, base_url=APP).get("/.tinysesam/after-logout").text
+ok("direct: „Abgemeldet“ mit meta refresh nach 10 s zur App (App-Host und Gateway), 0 = stehen lassen; page ohne")
+assert any("forward_logged_out_sec" in f for f in konfigpruefung.pruefe(TinySesamConfig(
+    db_path=":memory:", forward_logged_out_sec=301))[0])
+ok("forward_logged_out_sec über 300 ist ein Konfigurationsfehler")
+
 # ---------- Konfigurationsprüfung ----------
 try:
     TinySesam(TinySesamConfig(db_path=":memory:", forward_auth_enabled=True, gate_token_enabled=True,

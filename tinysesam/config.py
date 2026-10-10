@@ -138,6 +138,10 @@ class TinySesamConfig:
     # oidc_rp_logout auch beim Provider; "app" = nur diese Anwendung: die Sitzung bleibt, der Host
     # lässt sie erst nach „Weiter als …" auf der Login-Seite wieder durch; "ask" = fragen.
     forward_logout: str = "all"
+    # Seite „Abgemeldet“ im Modus "direct" (PO 2026-10-10): so viele Sekunden stehen lassen, dann von selbst
+    # zurück zur Anwendung — das Gate schickt weiter zum Provider, und dort beginnt eine NEUE Anmeldung
+    # (der Provider ist mit oidc_rp_logout schon abgemeldet). 0 = stehen lassen, nur der Knopf. 0–300.
+    forward_logged_out_sec: int = 10
     # Einstellungen je geschützter Anwendung: {"app.example.com": {"name": "Wiki", "login": "direct",
     # "logout": "ask"}}. name = Anzeigename auf Login- und Abmeldeseite; login/logout überschreiben
     # forward_login/forward_logout für diesen Host.
