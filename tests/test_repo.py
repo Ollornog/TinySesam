@@ -966,9 +966,18 @@ _soll = {"setuptools": ""}
 for _anf in _braucht:
     _sm = re.match(r"^([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*(>=\s*[0-9.]+)$", _anf)
     _soll[_sm.group(1).lower().replace("_", "-")] = _sm.group(2).replace(" ", "")
-assert _ein == _soll, (f"{EINGABE} weicht von pyproject (dependencies + gateway) ab: "
-                       f"nur dort {sorted(set(_ein.items()) - set(_soll.items()))}, "
-                       f"nur im pyproject {sorted(set(_soll.items()) - set(_ein.items()))}")
+# Dieselben Pakete; die Untergrenze im Abbild darf HÖHER liegen als die des Pakets, nie tiefer (seit 2026-10-11).
+# Bis dahin galt Gleichheit — dann blieb jeder uv-PR von Dependabot rot (er hebt nur requirements.in, #159), und
+# die pyproject-Zeile musste von Hand nachgezogen werden. Das Abbild löst mit der höheren Grenze trotzdem nur auf,
+# was das Paket erlaubt; die Zusage des Pakets (seine Mindestfassung) bleibt, wo sie ist.
+# (Mutationsproben: in requirements.in eine Grenze unter die des pyproject senken; ein Paket streichen → je rot.)
+def _fassung(g: str) -> tuple:
+    return tuple(int(t) for t in re.findall(r"\d+", g))
+assert set(_ein) == set(_soll), (f"{EINGABE} nennt andere Pakete als pyproject (dependencies + gateway): "
+                                 f"nur dort {sorted(set(_ein) - set(_soll))}, nur im pyproject {sorted(set(_soll) - set(_ein))}")
+_zu_tief = [f"{p}: {_ein[p] or 'ohne Grenze'} < {_soll[p]}" for p in _soll
+            if _soll[p] and (not _ein[p] or _fassung(_ein[p]) < _fassung(_soll[p]))]
+assert not _zu_tief, f"{EINGABE}: Untergrenze unter der des Pakets: {_zu_tief}"
 # Die Befehlszeile selbst, nicht irgendein Kommentar: Dependabot sucht die Schalter zwar im ganzen Text, aber nur diese
 # Zeile sagt, womit die Datei wirklich erzeugt wurde (eine Erwähnung im Erklärtext oben bewiese nichts).
 _kopf = next((z for z in read(SPERRLISTE).splitlines() if z.startswith("#    uv pip compile ")), "")
