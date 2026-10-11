@@ -4,14 +4,27 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.12] — 2026-10-11
+
+**Wer es braucht:** Apps mit eigenem TinySesam hinter einem TinySesam-Gateway. Kein API-Bruch, kein neues Schema;
+ohne `cookie_prefix` bleibt alles, wie es war.
+
+### Hinzugefügt
+- **`cookie_prefix`** (Vorgabe `tinysesam_`): Präfix der Cookies dieser Installation — Sitzung, CSRF, Freigabe und die
+  Flow-Cookies von OIDC, SAML und Passkey. Für eine App mit eigenem TinySesam **hinter** einem TinySesam-Gateway:
+  Dessen Proxy-Vorlagen entfernen jedes `tinysesam_*`-Cookie vor der App (B-20), auch ihr OIDC-Flow-Cookie — der
+  Rückweg vom Provider wurde abgewiesen („ohne passendes Flow-Cookie“), man landete wieder beim Login. Mit z. B.
+  `cookie_prefix="meineapp_"` kommen ihre Cookies an. Ausdrücklich gesetzte Namen und die Cookies des Gateways
+  (`__Host-tinysesam_gate|link|linkflow`) bleiben. Die Konfigprüfung weist ein kaputtes Präfix ab und ein Gateway
+  (`forward_auth_enabled`) mit fremdem Präfix — dessen Sitzung entfernten die Vorlagen sonst nicht mehr.
+  Test `tests/test_cookie_praefix.py` spielt Start → Proxy-Regel aus `Caddyfile.gate` → Rückweg durch.
+
 ### Geändert
 - **Sperrliste des Gateway-Abbilds: Dependabot erzeugt sie ganz neu (uv statt pip).** Neue Eingabe
   `deploy/gateway/requirements.in` (= `dependencies` + Extra `gateway` + setuptools, ersetzt `bau.in`), Kopf mit der
   `uv pip compile`-Befehlszeile. Das pip-Ökosystem hob die Liste zeilenweise und trug neue transitive Abhängigkeiten
   nicht nach (#126). `tests/test_repo.py` hält Eingabe und pyproject gleich, prüft die Befehlszeile und dass kein
   Ordner pip UND uv zugleich gehört; Auto-Merge nimmt `uv` an.
-
-### Geändert
 - Abhängigkeiten des Gateway-Abbilds (fastapi 0.142.2, cryptography 50.0.2) und der Audit-Werkzeuge (uv 0.12.23 u. a.)
   angehoben, Hash-Listen neu erzeugt. fastapi 0.142 braucht neu `opentelemetry-api`; Dependabots Zeilen-Update (#126)
   nahm die neue Abhängigkeit nicht auf, Abbild-Bau und Audit wurden rot.

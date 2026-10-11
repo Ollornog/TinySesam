@@ -192,6 +192,17 @@ def pruefe(config) -> tuple[list[str], list[str]]:
     if _ziel and not str(_ziel).startswith(("https://", "http://")):
         fehler.append("brand_background_credit_url: nur http(s)-Adressen")
 
+    # Cookie-Präfix (0.24.12): ein Cookie-Name-Anfang, kein `__` (das reservieren `__Host-`/`__Secure-`), und ein Gateway
+    # bleibt bei `tinysesam_` — dessen Sitzung entfernen die Proxy-Vorlagen nur unter diesem Namen vor der App.
+    _praefix = getattr(config, "cookie_prefix", "tinysesam_")
+    if not isinstance(_praefix, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,31}", _praefix):
+        fehler.append(f"cookie_prefix={_praefix!r}: 1–32 Zeichen aus Buchstaben, Ziffern, _ und -, am Anfang ein "
+                      f"Buchstabe oder eine Ziffer (z. B. \"meineapp_\")")
+    elif _an(config, "forward_auth_enabled") and not _praefix.startswith("tinysesam_"):
+        fehler.append(f"cookie_prefix={_praefix!r} mit forward_auth_enabled=True: Die Proxy-Vorlagen entfernen nur "
+                      f"tinysesam_*-Cookies vor der App — die Sitzung dieses Gateways käme dann bei jeder geschützten "
+                      f"App an. Ein Gateway bleibt bei cookie_prefix=\"tinysesam_\"; das Präfix ist für die App dahinter.")
+
 
     # Gefragt wird `enabled_methods()` — dieselbe Liste, aus der die Login-Seite ihre Felder
     # baut. Eine zweite, eigene Liste hier hatte genau den Fehler, den sie fangen soll: Sie sah

@@ -194,6 +194,7 @@ einzelne lassen sich per `**overrides` überschreiben.
 | `cookie_path` | `str` | `"/"` | Pfad, für den die Cookies gelten |
 | `cookie_domain` | `str` | `""` | Leer = Host-only. Für SSO über Subdomains z.B. ".example.com" — dann vertraut TinySesam jedem Host unter dieser Domain: Jeder kann ein Sitzungs-Cookie für die ganze Domain setzen und den Browser so in ein fremdes Konto schieben (bekannte Grenze, SECURITY.md). Leer schützt davor nur, solange das Sitzungs-Cookie `__Host-` trägt (`cookie_host_prefix`). |
 | `cookie_host_prefix` | `bool` | `True` | `__Host-`-Präfix für Sitzungs-, CSRF- und Freigabe-Cookie (H-1). Greift nur, wo der Browser es zulässt: `cookie_secure=True`, `cookie_domain` leer, `cookie_path="/"`. Das CSRF-Cookie ist immer host-only und trägt das Präfix auch bei gesetztem `cookie_domain`. Ein so benanntes Cookie kann keine Nachbar-Subdomain setzen oder überschatten (cookie tossing). Fehlt das Präfix am Sitzungs-Cookie (`cookie_domain` gesetzt, dieser Schalter aus, `cookie_path` ≠ "/" oder `cookie_secure=False`), trägt es nur seinen blanken Namen (`tinysesam_session`), und jeder Host unter der Domain kann eines unterschieben (bekannte Grenze, SECURITY.md). Der Cookie-Name ändert sich damit — beim Update einmal neu anmelden; die Cookies unter den alten Namen löscht TinySesam beim nächsten Anmelden, Step-up oder Abmelden über die eingebauten Routen, `auth.logout()` oder `auth.rotate_session()`. Eigener Code nimmt den Namen aus `auth.csrf_cookie_name`, nicht aus `csrf_cookie`; eigenes JS bekommt ihn von der Seite (Template-Variable oder `<meta>`) oder liest das Token aus dem Formularfeld, das `auth.ensure_csrf()` liefert. |
+| `cookie_prefix` | `str` | `"tinysesam_"` | Präfix der Cookies DIESER Installation (Sitzung, CSRF, Freigabe, Flow von OIDC/SAML/Passkey): Jeder Name, der mit `tinysesam_` beginnt, beginnt dann mit diesem Präfix. Für eine App mit eigenem TinySesam HINTER einem TinySesam-Gateway: Dessen Proxy-Vorlagen entfernen jedes `tinysesam_*`-Cookie vor der App — auch ihr OIDC-Flow-Cookie, und der Rückweg vom Provider scheiterte („ohne passendes Flow-Cookie“). Mit z. B. `"meineapp_"` kommen ihre Cookies an. Ein Gateway selbst (`forward_auth_enabled`) bleibt bei `tinysesam_`: sonst entfernen die Vorlagen seine Sitzung nicht mehr (die Konfigprüfung meldet das). Ausdrücklich gesetzte Namen (`session_cookie="x"`) bleiben, wie sie sind; die Cookies des Gateways (`__Host-tinysesam_gate` u. a.) ebenso. Wechsel = neue Cookie-Namen: einmal neu anmelden. |
 
 ## Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…)
 
@@ -313,4 +314,4 @@ einzelne lassen sich per `**overrides` überschreiben.
 
 ---
 
-172 Felder, erzeugt aus `tinysesam/config.py`.
+173 Felder, erzeugt aus `tinysesam/config.py`.
