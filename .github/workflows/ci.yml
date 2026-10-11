@@ -123,6 +123,22 @@ jobs:
           "$RUNNER_TEMP/caddy-gate" version
       - name: Gate-Token durch Caddy
         run: TINYSESAM_GATE_CADDY="$RUNNER_TEMP/caddy-gate" python tests/test_gate_caddy.py
+      # Abnahme des Referenz-Stacks deploy/forward-auth/docker-compose.yml (seit 2026-10-11): Damit nimmt ein
+      # Pflicht-Check auch die Dependabot-PRs des docker-compose-Eintrags ab, und sie mergen selbst. Die Datei muss
+      # sich auflösen lassen, jedes Abbild darin muss sich unter Tag und Digest ziehen lassen, und das Caddy AUS DER
+      # COMPOSE-DATEI muss die mitgelieferte Caddyfile annehmen.
+      - name: Referenz-Stack (docker-compose) abnehmen
+        run: |
+          set -euo pipefail
+          f=deploy/forward-auth/docker-compose.yml
+          docker compose -f "$f" config --quiet
+          bilder="$(docker compose -f "$f" config --images)"
+          [ -n "$bilder" ] || { echo "keine Abbilder in $f"; exit 1; }
+          while IFS= read -r b; do docker pull -q "$b"; done <<<"$bilder"
+          caddy="$(grep -m1 '^caddy:' <<<"$bilder")" || { echo "kein caddy-Abbild in $f"; exit 1; }
+          docker run --rm -e TS_AUTH_UPSTREAM=tinysesam:8000 -e TS_APP_UPSTREAM=app:9000 \
+            -v "$PWD/deploy/forward-auth/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            "$caddy" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   # Wiederholbarkeit: dieselbe Suite ZWEIMAL im selben Arbeitsverzeichnis.
   # Ein Test, der beim zweiten Lauf rot wird, ist kaputt — nicht der Code.

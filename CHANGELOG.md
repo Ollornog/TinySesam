@@ -4,6 +4,16 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert
+- **Dependabot mergt alles, was die Pflicht-Checks abnehmen, auch Majors** (PO 2026-10-11, bewusste Ausnahme für dieses
+  Repo). Von Hand bleiben nur PRs mit fremden Commits, rote Pflicht-Checks und Actions, die erst am Tag laufen. Ein
+  solcher PR bleibt liegen und erreicht den PO als Meldung. Die Wartezeit von drei Tagen bleibt.
+- **`docker-compose` (deploy/forward-auth) wird abgenommen**: Neuer Schritt im Job `gate-caddy`. Er löst die
+  Compose-Datei auf, zieht jedes Abbild unter Tag und Digest und prüft die Caddyfile mit genau dem Caddy aus der
+  Compose-Datei. Damit mergen auch diese PRs selbst.
+- **`gate-caddy` ist Pflicht-Check.** Bisher fehlte er in der Branch-Protection. Ein Dependabot-PR für das
+  `caddy-gate`-Abbild konnte deshalb mergen, bevor der Job fertig war.
+
 ## [0.24.13] — 2026-10-11
 
 **Wer es braucht:** alle mit `csp='strict'` (Vorgabe). Kein API-Bruch, kein neues Schema.

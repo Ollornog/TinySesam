@@ -1,6 +1,12 @@
 # Dependabot Auto-Merge (PO 2026-09-28): Lässt sich ein Update automatisieren und nimmt ein Test es
-# ab, laufen Update und Merge automatisch. Majors und alles, was kein Test abnimmt, bleiben von Hand
-# — dann steht ein Kommentar am PR, warum. Ebenso, wenn ein Pflicht-Check rot ist.
+# ab, laufen Update und Merge automatisch. Was kein Test abnimmt, bleibt von Hand — dann steht ein
+# Kommentar am PR, warum. Ebenso, wenn ein Pflicht-Check rot ist. Ein liegender Dependabot-PR erreicht
+# den PO als Meldung (ci-wache, „liegt“).
+#
+# MAJORS MERGEN HIER AUCH (PO 2026-10-11, bewusste Ausnahme von der Regel „Majors von Hand“, nur für
+# dieses Repo): „alles in dem repo automatisch mergen wenn alles getestet ist … und nur wenn was bricht
+# ne meldung … auch majors“. Die Abnahme ist dieselbe wie bei Patch/Minor — die Pflicht-Checks. Die
+# Wartezeit von drei Tagen (`cooldown` in dependabot.yml) bleibt.
 #
 # WARUM `workflow_run` und nicht `gh pr merge --auto`: Ein Merge mit dem Workflow-Token startet
 # KEINE Workflows („events triggered by the GITHUB_TOKEN … will not create a new workflow run“,
@@ -60,8 +66,9 @@ jobs:
           #   pip            — .github/bau (Job `bauen`), .github/audit (`audit`)
           #   uv             — deploy/gateway (`abbild-probe`, `image`, `audit`), seit 2026-10-10 statt pip
           #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`)
-          # NICHT: docker_compose (deploy/forward-auth) — kein Pflicht-Check startet das Compose.
-          AUTO_OEKO: "github_actions pip uv docker"
+          #   docker_compose — deploy/forward-auth (`gate-caddy`, Schritt „Referenz-Stack abnehmen“: auflösen,
+          #                    Abbilder ziehen, Caddyfile mit dem Caddy der Compose-Datei prüfen), seit 2026-10-11
+          AUTO_OEKO: "github_actions pip uv docker docker_compose"
           # Die Workflows, deren Jobs Pflicht-Checks sind (Branch-Protection von main). Jeder muss auf
           # `pull_request` laufen und oben unter `workflows:` stehen — `tests/test_repo.py` prüft das.
           PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml"
@@ -87,8 +94,8 @@ jobs:
           kommentar() {
             if schon_gesagt "$1"; then ausgabe nichts "$1 (schon kommentiert)"; else ausgabe kommentieren "$1"; fi
           }
-          # Ökosystem aus dem Branch, Update-Typ aus ALLEN Commits (der Kopf kann ein Merge sein).
-          # Fehlt der Typ, ist es unklar — dann von Hand.
+          # Ökosystem aus dem Branch. Der Update-Typ entscheidet seit 2026-10-11 nichts mehr (auch Majors
+          # mergen, siehe Kopf); er steht nur noch im Protokoll.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
           COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
@@ -97,8 +104,7 @@ jobs:
           GRUND=""
           [ "$(jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$COMMITS")" = "0" ] \
             || GRUND="Commits, die nicht von Dependabot stammen"
-          [ -n "$TYPEN" ] || GRUND="${GRUND:-Update-Typ nicht erkennbar}"
-          if grep -q 'semver-major' <<<"$TYPEN"; then GRUND="Major-Update"; fi
+          echo "Update-Typ: ${TYPEN:-nicht erkennbar}"
           case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Pflicht-Check nimmt \"$OEKO\" ab}" ;; esac
           # Actions nur, wenn JEDE aktualisierte Action in einem Pflicht-Workflow AUF DEM PR läuft:
           # Jobs und Schritte, die am Tag hängen (`ref_type == 'tag'`), zählen nicht — Anmeldung,
