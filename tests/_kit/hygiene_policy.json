@@ -102,6 +102,7 @@
     "  2. ENCRYPTION_KEY=...                          -> Namensteil kennt jetzt blosses 'key'",
     "  3. passphrase: ...                             -> Namensteil erweitert",
     "  4. sk-...                                      -> eigenes Format",
+    "  5. LUKS_PASS=... / DB_PASS=... (2026-10-11)    -> Namensteil kennt jetzt blosses 'pass'",
     "",
     "WARUM PLATZHALTER: Am 2026-09-22 meldete ein laengenbasiertes Muster",
     "'REPLACE_ME_TOKEN' und 'REPLACE_ME_NETBIRD_SETUP_KEY' aus einem Backup als Geheimnis;",
@@ -154,7 +155,7 @@
     "Slack-Token",
     "Proxmox-API-Token; ein Platzhalter dahinter ({TOKEN_ID}, ${VAR}) trifft bewusst nicht"
   ],
-  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:api[_-]?key|access[_-]?key|secret|token|tok|passwd|password|passphrase|credential|pat|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
+  "geheimnis_zuweisung": "(?:^|[^A-Za-z])(?:(?:private|preshared|client|auth|access|refresh|bot|app|admin|master|signing|encryption|session)[_-]?)?(?:api[_-]?key|access[_-]?key|secret|token|tok|passwd|password|passphrase|pass|credential|pat|key)s?[ \\t]*[:=][ \\t]*['\"]?(?P<wert>[A-Za-z0-9/+_.=~-]{16,})",
   "geheimnis_kontexte": [
     {
       "art": "JSON-Schluessel",

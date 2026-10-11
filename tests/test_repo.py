@@ -552,7 +552,8 @@ def _rechte_job(zeilen: list[str], geerbt: set[str]) -> set[str]:
 # `gh pr merge` und `gh pr comment` (Dependabot-Auto-Merge, 2026-09-28) stehen einzeln da — nie
 # `gh pr` pauschal: `gh pr checkout` holte PR-Code in einen Job mit Schreibrecht.
 ERLAUBT_MIT_RECHT = {"echo", "printf", "gh release", "gh attestation", "git log",
-                     "gh pr merge", "gh pr comment", "gh workflow run"}
+                     "gh pr merge", "gh pr comment", "gh workflow run",
+                     "gh pr update-branch"}  # Auto-Merge mit App: veraltete Zweige per Rebase (Kit 0.33)
 
 
 def _befehle(zeile: str) -> list[str]:
@@ -1105,9 +1106,14 @@ for wf, t in _alle_wf.items():
     # checkout“, docs/checks.md). Hier strenger: ein `workflow_run`-Workflow nutzt GAR KEINE Action,
     # nur `gh`/API — so kann kein Code aus dem PR hineinkommen (Dependabot-Auto-Merge, 2026-09-28).
     # (Mutationsprobe: in dependabot-auto-merge.yml ein `uses: actions/checkout@…` ergänzen → rot.)
+    # Einzige Ausnahme seit 2026-10-11 (Kit 0.33, GitHub App): `actions/create-github-app-token`, von
+    # GitHub selbst, per SHA gepinnt — sie stellt nur ein Token aus und fasst keinen PR-Code an.
+    # (Mutationsprobe: die Ausnahme auf `actions/checkout` ausweiten → die Mutationsprobe oben bleibt rot.)
     if re.search(r"\bworkflow_run\b", t):
-        assert not re.search(r"^\s+(?:- )?uses:", t, re.M), \
-            f"{wf}: `workflow_run` mit einer Action — nur API, nie Code aus dem PR (Scorecard Dangerous-Workflow)"
+        _fremd = [u for u in re.findall(r"^\s+(?:- )?uses:\s*(\S+)", t, re.M)
+                  if not re.fullmatch(r"actions/create-github-app-token@[0-9a-f]{40}", u)]
+        assert not _fremd, \
+            f"{wf}: `workflow_run` mit einer Action {_fremd} — nur API, nie Code aus dem PR (Scorecard Dangerous-Workflow)"
     for k in _kommandos(t.splitlines(), ("run", "script")):
         for ausdruck in re.findall(r"\$\{\{(.*?)\}\}", k):
             assert not _EREIGNIS.search(ausdruck), \

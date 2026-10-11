@@ -4,6 +4,12 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert — Auto-Merge mit GitHub App (Kit 0.34.0)
+
+- Veraltete Dependabot-Zweige zieht der Auto-Merge per App-Token und Rebase nach; gemergt wird mit dem App-Token,
+  der Push startet die Workflows auf main selbst. `tests/test_repo.py` lässt im `workflow_run`-Workflow genau
+  `actions/create-github-app-token` (per SHA) zu und `gh pr update-branch` im Job mit Schreibrecht.
+
 ### Geändert — Pages-Actions mergen selbst, Abnahme nach dem Merge (Kit 0.32.0)
 
 - `actions/configure-pages`, `upload-pages-artifact` und `deploy-pages` laufen nur auf main; für
