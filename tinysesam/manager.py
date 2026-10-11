@@ -5385,8 +5385,14 @@ class TinySesam:
 
         Der Pfad muss wörtlich `/` sein: Bei `cookie_path=""` schickt `set_cookie` gar kein
         `Path`-Attribut, und ein `__Host-`-Cookie ohne `Path=/` verwirft der Browser still —
-        dann käme etwa das CSRF-Cookie nie an und jeder POST scheiterte (A-7)."""
+        dann käme etwa das CSRF-Cookie nie an und jeder POST scheiterte (A-7).
+
+        `cookie_prefix` ersetzt ein führendes `tinysesam_` (App mit eigenem TinySesam hinter einem
+        Gateway, dessen Vorlagen jedes `tinysesam_*`-Cookie entfernen). Namen mit `__` bleiben."""
         c = self.cfg
+        praefix = getattr(c, "cookie_prefix", "tinysesam_") or "tinysesam_"
+        if praefix != "tinysesam_" and basis.startswith("tinysesam_"):
+            basis = praefix + basis[len("tinysesam_"):]
         if (getattr(c, "cookie_host_prefix", True) and c.cookie_secure
                 and (host_only or not c.cookie_domain)
                 and c.cookie_path == "/" and not basis.startswith("__")):

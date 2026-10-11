@@ -1044,6 +1044,10 @@
       "feld": "str = '/'",
       "stufe": "A"
     },
+    "cookie_prefix": {
+      "feld": "str = 'tinysesam_'",
+      "stufe": "A"
+    },
     "cookie_samesite": {
       "feld": "str = 'lax'",
       "stufe": "A"

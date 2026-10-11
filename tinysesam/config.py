@@ -323,6 +323,16 @@ class TinySesamConfig:
     #: JS bekommt ihn von der Seite (Template-Variable oder `<meta>`) oder liest das Token aus dem
     #: Formularfeld, das `auth.ensure_csrf()` liefert.
     cookie_host_prefix: bool = True
+    #: Präfix der Cookies DIESER Installation (Sitzung, CSRF, Freigabe, Flow von OIDC/SAML/Passkey):
+    #: Jeder Name, der mit `tinysesam_` beginnt, beginnt dann mit diesem Präfix. Für eine App mit
+    #: eigenem TinySesam HINTER einem TinySesam-Gateway: Dessen Proxy-Vorlagen entfernen jedes
+    #: `tinysesam_*`-Cookie vor der App — auch ihr OIDC-Flow-Cookie, und der Rückweg vom Provider
+    #: scheiterte („ohne passendes Flow-Cookie“). Mit z. B. `"meineapp_"` kommen ihre Cookies an.
+    #: Ein Gateway selbst (`forward_auth_enabled`) bleibt bei `tinysesam_`: sonst entfernen die
+    #: Vorlagen seine Sitzung nicht mehr (die Konfigprüfung meldet das). Ausdrücklich gesetzte Namen
+    #: (`session_cookie="x"`) bleiben, wie sie sind; die Cookies des Gateways (`__Host-tinysesam_gate`
+    #: u. a.) ebenso. Wechsel = neue Cookie-Namen: einmal neu anmelden.
+    cookie_prefix: str = "tinysesam_"
 
     # --- Content-Security-Policy für die EIGENEN Seiten (Login/Account/TOTP/…) ---
     # Die eingebauten Seiten sind nonce-fest gebaut (kein Inline-Handler, kein style=);

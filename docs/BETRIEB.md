@@ -563,6 +563,9 @@ das Gateway selbst unter seiner `base_url`.
   Bindung müssen passen) → Verbindungs-Cookie `__Host-tinysesam_link`, host-only, bis zum Ende der Sitzung.
 - **Was die App sieht:** nichts davon — alle `tinysesam_*`-Cookies entfernt der Proxy vor ihr. Ein
   Verbindungs-Cookie, das sie trotzdem abgriffe, gälte nur für ihren eigenen Host.
+- **App mit eigenem TinySesam dahinter** (0.24.12): Sie setzt `cookie_prefix` (z. B. `"meineapp_"`), sonst entfernt
+  der Proxy auch ihre Cookies — der OIDC-Rückweg scheitert dann am fehlenden Flow-Cookie, man landet wieder beim
+  Login. Das Gateway selbst bleibt bei `tinysesam_`.
 - **Widerruf:** Sitzung beendet (überall abmelden, Sperre, Admin) → jede Verbindung endet mit ihr; am Proxy
   wie bisher erst mit Ablauf des Gate-Tokens.
 - **Überall abmelden ohne Verbindung** (die App war schon „nur hier“ abgemeldet): Der App-Host reicht an
