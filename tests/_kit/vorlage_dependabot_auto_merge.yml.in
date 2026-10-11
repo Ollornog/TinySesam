@@ -10,7 +10,9 @@
 # Von Hand bleiben:
 #   - fremde Commits im PR (nicht von Dependabot),
 #   - ein Ökosystem, das kein Pflicht-Check abnimmt (`AUTO_OEKO`),
-#   - eine Action, die in keinem Pflicht-Workflow AUF DEM PR läuft (nur am Tag, nur auf main),
+#   - eine Action, die in keinem Pflicht-Workflow AUF DEM PR läuft (nur am Tag, nur auf main) — es sei
+#     denn, sie steht in `NACH_MERGE_ABGENOMMEN`: Dann nimmt sie der Nachlauf auf dem Standardzweig ab
+#     (ihr Fehlschlag lässt den alten Stand stehen, z. B. die Pages; ci-wache meldet den roten Lauf),
 #   - ein roter Pflicht-Workflow.
 #
 # WARUM `workflow_run` und nicht `gh pr merge --auto`: Ein Merge mit dem Workflow-Token startet
@@ -120,8 +122,13 @@ jobs:
             [ -n "$NAMEN" ] || GRUND="aktualisierte Actions nicht erkennbar"
             while IFS= read -r n; do
               [ -z "$n" ] && continue
-              grep -qxE "${n//./\\.}(/.*)?" <<<"$LAUFEN" \
-                || { GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break; }
+              grep -qxE "${n//./\\.}(/.*)?" <<<"$LAUFEN" && continue
+              # Abnahme nach dem Merge: nur, was das Repo ausdrücklich so einträgt (die Prüfung im Kit
+              # verlangt, dass die Action in einem Nachlauf-Workflow steht).
+              case " ${NACH_MERGE_ABGENOMMEN:-} " in
+                *" $n "*) echo "Action \"$n\": Abnahme nach dem Merge (Nachlauf)"; continue ;;
+              esac
+              GRUND="Action \"$n\" läuft in keinem Pflicht-Workflow auf dem PR"; break
             done <<<"$NAMEN"
           fi
           if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi

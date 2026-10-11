@@ -158,6 +158,15 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
         elif re.search(r"\bpaths(-ignore)?\s*:", " ".join(pr)):
             probleme.append(f"{wf}: `pull_request` mit Pfadfilter — manche PRs bekämen nie einen Lauf")
     nach = nachlauf(root)
+    # Abnahme nach dem Merge (seit 0.32.0): Jede so eingetragene Action muss in einem Workflow stehen,
+    # den der Nachlauf auf dem Standardzweig startet — sonst nähme sie gar nichts ab, und ihr Update
+    # mergte ungeprüft. (Tag-Workflows zählen nicht: Die laufen erst beim nächsten Release.)
+    mn = re.search(r'NACH_MERGE_ABGENOMMEN:\s*"([^"]*)"', je_repo)
+    for action in (mn.group(1).split() if mn else []):
+        muster = re.compile(r"uses:\s*" + re.escape(action) + r"(/[^@\s]*)?@")
+        if not any(muster.search(wfs[wf]) for wf in nach):
+            probleme.append(f"NACH_MERGE_ABGENOMMEN: {action} läuft in keinem Nachlauf-Workflow "
+                            f"({', '.join(nach) or 'keiner'}) — nach dem Merge nähme sie nichts ab")
     for wf in nach:
         if "workflow_dispatch" not in ausloeser(wfs[wf]):
             probleme.append(f"{wf} läuft auf dem Standardzweig, kennt aber kein `workflow_dispatch` "
