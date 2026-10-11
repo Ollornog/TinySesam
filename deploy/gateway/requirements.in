@@ -3,7 +3,7 @@
 # hält beide gleich. Eine eigene Eingabe statt `pyproject.toml --extra gateway`, weil Dependabots
 # uv-Ökosystem genau EINE .in-Datei neu kompiliert (2026-10-10): Das zeilenweise pip-Update trug neue
 # transitive Abhängigkeiten nicht nach (fastapi 0.142 → opentelemetry-api, #126).
-fastapi>=0.133.0
+fastapi>=0.143.0
 cryptography>=50.0
 pyotp>=2.9
 python-multipart>=0.0.31
