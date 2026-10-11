@@ -90,6 +90,17 @@ updates:
     commit-message:
       prefix: "deploy"
 
+  # Die Wegwerf-Ziele der Generalprobe (release.yml auf jedem PR). Ihr Update nimmt die
+  # Generalprobe selbst ab: Startet Registry oder Paket-Server nicht, ist `generalprobe` rot.
+  - package-ecosystem: docker-compose
+    directory: /.github/generalprobe
+    cooldown:
+      default-days: 3
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+
   # Das Basis-Abbild ist per Digest gepinnt; ohne Dependabot bliebe es für immer stehen.
   # Dazu das Caddy mit caddy-jwt für die Gate-Vorlage (ADR-9). Dessen Plugin-Version (ein Go-Modul,
   # ARG CADDY_JWT) sieht Dependabot nicht — die hebt man von Hand, der CI-Job gate-caddy prüft sie.

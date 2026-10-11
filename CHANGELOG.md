@@ -5,6 +5,14 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unveröffentlicht]
 
 ### Geändert
+- **Generalprobe auf jedem PR** (PO 2026-10-11, „alles automatisieren ohne dass was bricht“): Die Jobs
+  `generalprobe*` in `release.yml` fahren die Actions, die bisher nur am Tag liefen, gegen Wegwerf-Ziele auf dem
+  Runner (`.github/generalprobe/`). Anmeldung und Push gehen an eine lokale Registry, die SBOM kommt aus dem dort
+  geschobenen Abbild, Wheel und sdist gehen an einen lokalen Paket-Server, beglaubigt wird nur eine Probedatei.
+  Damit mergen auch deren Updates selbst. `tests/test_repo.py` verlangt, dass jede Action des Tags in derselben
+  Fassung in der Probe läuft und dass die Probe-Beglaubigung nie ein Artefakt beglaubigt.
+- **Auto-Merge aus der repokit-Vorlage** (Kit 0.30.2): Die Ausnahme für dieses Repo ist jetzt die Regel für alle
+  Repos. Gemergt wird, sobald jeder Pflicht-Workflow für genau diesen Kopf grün ist.
 - **Dependabot mergt alles, was die Pflicht-Checks abnehmen, auch Majors** (PO 2026-10-11, bewusste Ausnahme für dieses
   Repo). Von Hand bleiben nur PRs mit fremden Commits, rote Pflicht-Checks und Actions, die erst am Tag laufen. Ein
   solcher PR bleibt liegen und erreicht den PO als Meldung. Die Wartezeit von drei Tagen bleibt.

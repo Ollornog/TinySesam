@@ -1,28 +1,31 @@
-# Dependabot Auto-Merge (PO 2026-09-28): Lässt sich ein Update automatisieren und nimmt ein Test es
-# ab, laufen Update und Merge automatisch. Was kein Test abnimmt, bleibt von Hand — dann steht ein
-# Kommentar am PR, warum. Ebenso, wenn ein Pflicht-Check rot ist. Ein liegender Dependabot-PR erreicht
-# den PO als Meldung (ci-wache, „liegt“).
+# Dependabot Auto-Merge — aus der Vorlage von repokit (`repokit automerge`), nicht von Hand ändern.
+# Je Repo frei ist nur der Block zwischen „je Repo: Anfang“ und „je Repo: Ende“; den Rest prüft
+# `tests/_kit/automerge.py` gegen die Vorlage (Auslöser und Nachlauf werden aus den Workflows des
+# Repos abgeleitet).
 #
-# MAJORS MERGEN HIER AUCH (PO 2026-10-11, bewusste Ausnahme von der Regel „Majors von Hand“, nur für
-# dieses Repo): „alles in dem repo automatisch mergen wenn alles getestet ist … und nur wenn was bricht
-# ne meldung … auch majors“. Die Abnahme ist dieselbe wie bei Patch/Minor — die Pflicht-Checks. Die
-# Wartezeit von drei Tagen (`cooldown` in dependabot.yml) bleibt.
+# DIE REGEL (PO 2026-10-11, alle Repos): Was die Pflicht-Checks abnehmen, mergt selbst — auch Majors.
+# Eine Meldung gibt es nur, wenn etwas bricht oder nichts abnimmt: Dann steht ein Kommentar am PR,
+# und der liegende PR erreicht den PO über ci-wache („liegt“). Die Wartezeit von drei Tagen
+# (`cooldown` in dependabot.yml) bleibt, damit ein frisch kompromittiertes Release nicht durchläuft.
+# Von Hand bleiben:
+#   - fremde Commits im PR (nicht von Dependabot),
+#   - ein Ökosystem, das kein Pflicht-Check abnimmt (`AUTO_OEKO`),
+#   - eine Action, die in keinem Pflicht-Workflow AUF DEM PR läuft (nur am Tag, nur auf main),
+#   - ein roter Pflicht-Workflow.
 #
 # WARUM `workflow_run` und nicht `gh pr merge --auto`: Ein Merge mit dem Workflow-Token startet
 # KEINE Workflows („events triggered by the GITHUB_TOKEN … will not create a new workflow run“,
-# GitHub-Doku). Mit `--auto` mergte GitHub später in dessen Namen, und auf main lief danach weder
-# CI noch Audit, CodeQL oder Pages (gesehen an #114). Ausgenommen ist `workflow_dispatch`: Deshalb
-# mergt dieser Workflow selbst, sobald alle Pflicht-Checks grün sind, und stößt danach die
-# Workflows von main an (PO-Entscheid 2026-09-28, Weg b, ohne Geheimnis).
+# GitHub-Doku); mit `--auto` lief auf main danach weder CI noch Pages. Ausgenommen ist
+# `workflow_dispatch`: Deshalb mergt dieser Workflow selbst und stößt danach die Workflows an, die
+# ein Push auf den Standardzweig starten würde (Nachlauf).
 #
-# Ausgelöst wird er vom Ende JEDES Pflicht-Workflows; welcher zuletzt fertig wird, ist offen. Je
-# Commit läuft nur eine Instanz (`concurrency`). `entscheiden` wartet mit Frist, bis GitHub den PR
-# als CLEAN meldet — erst dann ist auch das CodeQL-Ergebnis da, das nach seinem Workflow kommt.
+# Ausgelöst vom Ende JEDES Pflicht-Workflows. Gemergt wird erst, wenn für genau diesen Kopf jeder
+# Pflicht-Workflow gelaufen und grün ist — das gilt auch in privaten Repos ohne Branch-Protection.
+# Wer zuletzt fertig wird, mergt; die anderen enden mit „wartet auf …“. Je Kopf läuft nur eine
+# Instanz (`concurrency`).
 #
-# Zwei Jobs, aus demselben Grund wie in release.yml (B4-4): `entscheiden` liest nur (API, kein
-# Checkout, kein PR-Code), `ausfuehren` hält die Schreibrechte und ruft nur `gh pr merge`,
-# `gh workflow run` und `gh pr comment`. `tests/test_repo.py` hält das fest, dazu: Der Auslöser nennt
-# genau die Pflicht-Workflows, und angestoßen wird genau, was ein Push auf main starten würde.
+# Zwei Jobs: `entscheiden` liest nur (API, kein Checkout, kein PR-Code), `ausfuehren` hält die
+# Schreibrechte und ruft nur `gh pr merge`, `gh workflow run` und `gh pr comment`.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
@@ -45,33 +48,36 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository &&
       startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
       checks: read
+      actions: read
     outputs:
       aktion: ${{ steps.pruefung.outputs.aktion }}
       grund: ${{ steps.pruefung.outputs.grund }}
       pr: ${{ steps.pruefung.outputs.pr }}
     steps:
-      - name: Herkunft, Update-Typ, Abnahme und Pflicht-Checks prüfen
+      - name: Herkunft, Abnahme und Pflicht-Workflows prüfen
         id: pruefung
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`):
-          #   github_actions — nur Actions, die in einem Pflicht-Workflow auf dem PR laufen (unten)
+          # --- je Repo: Anfang
+          # Ökosysteme, die die Pflicht-Checks dieses Repos abnehmen (Branch `dependabot/<ökosystem>/…`).
+          #   github_actions — nur Actions, die in einem Pflicht-Workflow auf dem PR laufen; die Actions des
+          #                    Tags (Anmeldung, Push, SBOM, PyPI, Beglaubigung) fährt die Generalprobe
           #   pip            — .github/bau (Job `bauen`), .github/audit (`audit`)
           #   uv             — deploy/gateway (`abbild-probe`, `image`, `audit`), seit 2026-10-10 statt pip
           #   docker         — das Basis-Abbild im Dockerfile (`abbild-probe`, `image`)
-          #   docker_compose — deploy/forward-auth (`gate-caddy`, Schritt „Referenz-Stack abnehmen“: auflösen,
-          #                    Abbilder ziehen, Caddyfile mit dem Caddy der Compose-Datei prüfen), seit 2026-10-11
+          #   docker_compose — deploy/forward-auth (`gate-caddy`, Referenz-Stack) und .github/generalprobe
+          #                    (`generalprobe`: Registry und Paket-Server starten)
           AUTO_OEKO: "github_actions pip uv docker docker_compose"
-          # Die Workflows, deren Jobs Pflicht-Checks sind (Branch-Protection von main). Jeder muss auf
-          # `pull_request` laufen und oben unter `workflows:` stehen — `tests/test_repo.py` prüft das.
+          # Die Workflows, deren Jobs die Abnahme sind. Jeder läuft auf `pull_request` ohne Pfadfilter.
           PFLICHT_WORKFLOWS: "ci.yml release.yml audit.yml codeql.yml"
+          # --- je Repo: Ende
         run: |
           set -euo pipefail
           ausgabe() {
@@ -94,29 +100,30 @@ jobs:
           kommentar() {
             if schon_gesagt "$1"; then ausgabe nichts "$1 (schon kommentiert)"; else ausgabe kommentieren "$1"; fi
           }
-          # Ökosystem aus dem Branch. Der Update-Typ entscheidet seit 2026-10-11 nichts mehr (auch Majors
-          # mergen, siehe Kopf); er steht nur noch im Protokoll.
+          # Ökosystem aus dem Branch (dependabot/<ökosystem>/…). Der Update-Typ entscheidet nichts
+          # (auch Majors mergen, PO 2026-10-11); er steht nur im Protokoll.
           ZWEIG="$(jq -r '.head.ref' <<<"$J")"
           OEKO="${ZWEIG#dependabot/}"; OEKO="${OEKO%%/*}"
           COMMITS="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate)"
           NACHRICHTEN="$(jq -r '.[].commit.message' <<<"$COMMITS")"
           TYPEN="$(grep -oE 'update-type: version-update:semver-(major|minor|patch)' <<<"$NACHRICHTEN" | sort -u || true)"
+          echo "Ökosystem: $OEKO, Update-Typ: ${TYPEN:-nicht erkennbar}"
           GRUND=""
           [ "$(jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length' <<<"$COMMITS")" = "0" ] \
             || GRUND="Commits, die nicht von Dependabot stammen"
-          echo "Update-Typ: ${TYPEN:-nicht erkennbar}"
           case " $AUTO_OEKO " in *" $OEKO "*) ;; *) GRUND="${GRUND:-kein Pflicht-Check nimmt \"$OEKO\" ab}" ;; esac
           # Actions nur, wenn JEDE aktualisierte Action in einem Pflicht-Workflow AUF DEM PR läuft:
-          # Jobs und Schritte, die am Tag hängen (`ref_type == 'tag'`), zählen nicht — Anmeldung,
-          # Beglaubigung, SBOM und PyPI-Upload prüft kein PR, ihr Bump bräche erst beim Release.
+          # Jobs und Schritte, die am Tag hängen, zählen nicht — ihr Bump bräche erst beim Release.
+          # Die Generalprobe (Schritt mit `ref_type != 'tag'` gegen ein Wegwerf-Ziel) zählt.
           if [ -z "$GRUND" ] && [ "$OEKO" = "github_actions" ]; then
+            AM_TAG="ref_type *== *.tag.|startsWith\\(github\\.ref, *.refs/tags"
             LAUFEN=""
             for wf in $PFLICHT_WORKFLOWS; do
               TEXT="$(gh api "repos/$REPO/contents/.github/workflows/$wf?ref=$HEAD_SHA" -q .content | base64 -d)"
-              LAUFEN+="$(yq -r '.jobs[]
-                | select(((.if // "") | test("ref_type *== *.tag.")) | not)
+              LAUFEN+="$(AM_TAG="$AM_TAG" yq -r '.jobs[]
+                | select(((.if // "") | test(strenv(AM_TAG))) | not)
                 | .steps[]?
-                | select(((.if // "") | test("ref_type *== *.tag.")) | not)
+                | select(((.if // "") | test(strenv(AM_TAG))) | not)
                 | .uses // ""' <<<"$TEXT" | sed 's/@.*//')"$'\n'
             done
             NAMEN="$(sed -n 's/^[- ]*dependency-name: *//p' <<<"$NACHRICHTEN" | sort -u)"
@@ -128,20 +135,32 @@ jobs:
             done <<<"$NAMEN"
           fi
           if [ -n "$GRUND" ]; then kommentar "$GRUND"; exit 0; fi
-          # Warten, bis GitHub den PR als mergebar meldet — mit Frist (höchstens 15 min).
-          for _ in $(seq 1 45); do
+          # Jeder Pflicht-Workflow muss für genau diesen Kopf gelaufen und grün sein. Läuft einer
+          # noch, endet dieser Lauf; dessen Ende löst den nächsten Anlauf aus.
+          LAEUFE="$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=100" -q '.workflow_runs')"
+          for wf in $PFLICHT_WORKFLOWS; do
+            L="$(jq -c --arg p ".github/workflows/$wf" '[.[] | select(.path == $p)] | sort_by(.created_at) | last // empty' <<<"$LAEUFE")"
+            [ -n "$L" ] || { ausgabe nichts "wartet auf $wf (noch kein Lauf)"; exit 0; }
+            [ "$(jq -r '.status' <<<"$L")" = "completed" ] || { ausgabe nichts "wartet auf $wf"; exit 0; }
+            ERG="$(jq -r '.conclusion' <<<"$L")"
+            [ "$ERG" = "success" ] || { kommentar "Pflicht-Workflow $wf ist rot ($ERG)"; exit 0; }
+          done
+          # Alle grün. Jetzt noch die Checks, die NACH ihrem Workflow kommen (CodeQL-Ergebnis):
+          # warten, bis GitHub den PR als mergebar meldet und kein Check mehr läuft — mit Frist.
+          for _ in $(seq 1 30); do
             P="$(gh pr view "$PR" --repo "$REPO" --json state,headRefOid,mergeStateStatus,statusCheckRollup)"
             [ "$(jq -r '.state' <<<"$P")" = "OPEN" ] || { ausgabe nichts "PR nicht mehr offen"; exit 0; }
             [ "$(jq -r '.headRefOid' <<<"$P")" = "$HEAD_SHA" ] || { ausgabe nichts "Kopf bewegt"; exit 0; }
-            ROT="$(jq -r '[.statusCheckRollup[] | select((.conclusion // "") | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE")) | (.name // .context)] | unique | join(", ")' <<<"$P")"
-            [ -z "$ROT" ] || { kommentar "Pflicht-Check rot ($ROT)"; exit 0; }
+            ROT="$(jq -r '[.statusCheckRollup[] | select(((.conclusion // .state // "") | test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE")) ) | (.name // .context)] | unique | join(", ")' <<<"$P")"
+            [ -z "$ROT" ] || { kommentar "Check rot ($ROT)"; exit 0; }
+            OFFEN="$(jq -r '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length' <<<"$P")"
             case "$(jq -r '.mergeStateStatus' <<<"$P")" in
-              CLEAN) ausgabe mergen ""; exit 0 ;;
+              CLEAN) [ "$OFFEN" = "0" ] && { ausgabe mergen ""; exit 0; } ;;
               BEHIND|DIRTY) ausgabe nichts "Zweig veraltet oder im Konflikt — Dependabot zieht nach"; exit 0 ;;
-              *) sleep 20 ;;
             esac
+            sleep 20
           done
-          ausgabe nichts "nach 15 min noch nicht mergebar — der nächste fertige Pflicht-Workflow prüft erneut"
+          ausgabe nichts "nach 10 min noch nicht mergebar — der nächste fertige Pflicht-Workflow prüft erneut"
 
   ausfuehren:
     timeout-minutes: 10
@@ -151,11 +170,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      actions: write       # `gh workflow run` für den Nachlauf auf main
+      actions: write       # `gh workflow run` für den Nachlauf
     steps:
-      # Gemergt wird genau der geprüfte Kopf. Danach der Nachlauf: Was ein Push auf main startet,
-      # stößt hier `workflow_dispatch` an (ein Merge mit dem Workflow-Token startet selbst nichts).
-      - name: Mergen und den Nachlauf auf main anstoßen
+      # Gemergt wird genau der geprüfte Kopf. Danach der Nachlauf: Was ein Push auf den
+      # Standardzweig startet, stößt hier `workflow_dispatch` an.
+      - name: Mergen und den Nachlauf anstoßen
         if: needs.entscheiden.outputs.aktion == 'mergen'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -165,8 +184,8 @@ jobs:
           STANDARD: ${{ github.event.repository.default_branch }}
         run: |
           gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
-          gh workflow run ci.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run audit.yml --repo "$REPO" --ref "$STANDARD"
+          gh workflow run ci.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run codeql.yml --repo "$REPO" --ref "$STANDARD"
           gh workflow run pages.yml --repo "$REPO" --ref "$STANDARD"
       - name: Begründen, warum von Hand
