@@ -774,12 +774,43 @@ _AM_TAG = "if: github.ref_type == 'tag'"
 for _j in ("release", "pypi", "image-beglaubigen"):
     _zeilen = [z.strip() for z in _rel_jobs.get(_j, [])]
     assert _AM_TAG in _zeilen, f"release.yml: Job `{_j}` veröffentlicht auch ohne Tag (Knopf = Trockenlauf)"
+# Ausnahme Generalprobe (PO 2026-10-11): `generalprobe-beglaubigen` hält `id-token` OHNE Tag, damit
+# die Beglaubigungs-Actions auf jedem PR laufen. Erlaubt nur so eng: nie am Tag, kein Checkout, keine
+# Umgebung, und beglaubigt wird ausschließlich die Probedatei — nie ein Artefakt, nie ein Abbild.
+# (Mutationsproben: `subject-path: generalprobe.txt` → `dist/*.whl`; ein Checkout im Job; das
+# `if:` auf `== 'tag'` drehen → je rot.)
+_PROBE = "if: github.ref_type != 'tag'"
+_probe_beglaubigt = 0
 for _j, _zeilen in _rel_jobs.items():
     _rechte = " ".join(z.strip() for z in _zeilen)
+    _st = [z.strip() for z in _zeilen]
     if re.search(r"\b(id-token|contents|attestations): write\b", _rechte) or \
             any(z.strip().startswith("environment:") for z in _zeilen):
+        if _j == "generalprobe-beglaubigen":
+            assert _PROBE in _st and _AM_TAG not in _st, f"release.yml: `{_j}` läuft nicht genau ohne Tag"
+            assert not any("actions/checkout" in z for z in _st), f"release.yml: `{_j}` checkt aus"
+            assert not any(z.startswith(("environment:", "subject-name:", "push-to-registry:")) for z in _st), \
+                f"release.yml: `{_j}` nennt eine Umgebung, ein Abbild oder eine Registry"
+            _gegenstand = [z for z in _st if z.startswith("subject-path:")]
+            assert _gegenstand and all(z == "subject-path: generalprobe.txt" for z in _gegenstand), \
+                f"release.yml: `{_j}` beglaubigt mehr als die Probedatei: {_gegenstand}"
+            assert not re.search(r"\bcontents: write\b", _rechte), f"release.yml: `{_j}` hält contents: write"
+            _probe_beglaubigt += 1
+            continue
         assert _AM_TAG in [z.strip() for z in _zeilen], \
             f"release.yml: Job `{_j}` hält eine Identität oder Schreibrecht, hängt aber nicht am Tag"
+assert _probe_beglaubigt == 1, "release.yml: der Job `generalprobe-beglaubigen` fehlt"
+# Jede Action, die nur am Tag läuft, fährt auch die Generalprobe — mit derselben Fassung. Sonst wäre
+# ihr Update ungeprüft (der Auto-Merge ließe es dann liegen, aber das hier sagt es früher).
+_tag_actions, _probe_actions = set(), set()
+for _j, _zeilen in _rel_jobs.items():
+    for _m in re.finditer(r"uses:\s*(\S+@\S+)", "\n".join(_zeilen)):
+        (_probe_actions if _j.startswith("generalprobe") else _tag_actions).add(_m.group(1))
+for _a in ("docker/login-action", "docker/build-push-action", "anchore/sbom-action",
+           "pypa/gh-action-pypi-publish", "actions/attest-build-provenance", "actions/attest-sbom"):
+    _t = {x for x in _tag_actions if x.startswith(_a + "@")}
+    _p = {x for x in _probe_actions if x.startswith(_a + "@")}
+    assert _t and _t == _p, f"release.yml: {_a} — Tag {sorted(_t)} ≠ Generalprobe {sorted(_p)}"
 _image = "\n".join(_rel_jobs.get("image", []))
 assert "push=${{ github.ref_type == 'tag' }}" in _image and "push=true" not in _image, \
     "release.yml: das Abbild wird auch ohne Tag geschoben"

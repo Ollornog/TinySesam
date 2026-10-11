@@ -2079,6 +2079,9 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
 # nicht die Bequemlichkeit des Repos ("haben wir noch nicht eingebaut") — das Zweite
 # gehoert als Ausnahme MIT Grund ins jeweilige Repo, wo es sichtbar bleibt.
 KIT_WERKZEUGE: list[tuple[str, str, str]] = [
+    ("automerge", "pruefe",
+     ("laeuft in jedem Repo ueber `manifest.pruefe` mit (seit 0.30.0) — eine eigene Forderung "
+      "hiesse, denselben Workflow zweimal zu pruefen")),
     ("hygiene", "pruefe_dateien_geschlossen",
      ("prueft den Kit-Quelltext selbst, nicht das aufrufende Repo — sie gehoert in repokits "
       "eigene Suite, und dort laeuft sie")),
@@ -2207,6 +2210,21 @@ _VEROEFFENTLICHT: list[tuple[str, str]] = [
 _NUR_AUFBAU = re.compile(r"actions/(checkout|setup-|cache|download-artifact|upload-artifact)"
                          r"|docker/setup-")
 _AM_TAG = re.compile(r"ref_type\s*==\s*'tag'|startsWith\(github\.ref,\s*'refs/tags")
+# GENERALPROBE (seit 0.30.0, PO 2026-10-11 „alles automatisieren ohne dass was bricht“): Ein
+# Schritt, der NUR ohne Tag läuft und dieselbe Action gegen ein Wegwerf-Ziel fährt (lokale
+# Registry, lokaler Paket-Server, Probedatei), veröffentlicht nichts — er nimmt die Action auf
+# jedem PR ab, damit ihr Update selbst mergen darf. Erlaubt nur ohne echtes Ziel und ohne
+# Geheimnis; ein Release anzulegen ist nie eine Probe.
+_GENERALPROBE = re.compile(r"ref_type\s*!=\s*'tag'")
+
+
+def _ist_generalprobe(bedingung: str) -> bool:
+    """Läuft ein Schritt/Job NUR ohne Tag? `ref_type != 'tag'` genügt nicht, wenn ein `||` daneben
+    steht: `… || github.ref_type != 'tag'` läuft auch am Tag (TinySesam `image`, gefunden 0.30.2)."""
+    return bool(_GENERALPROBE.search(bedingung)) and "||" not in bedingung
+_ECHTES_ZIEL = re.compile(r"ghcr\.io|docker\.io|registry-1\.|pypi\.org|secrets\.|github\.token"
+                          r"|subject-name\s*:|push-to-registry\s*:\s*true", re.I)
+_NIE_PROBE = ("gh release create", "twine upload")
 
 
 def _workflow_bloecke(inhalt: str) -> tuple[bool, list[dict]]:
@@ -2242,6 +2260,7 @@ def _workflow_bloecke(inhalt: str) -> tuple[bool, list[dict]]:
     job: dict | None = None
     job_tiefe = None
     schritt: dict | None = None
+    if_offen: tuple[dict, int] | None = None
     for z in zeilen:
         if re.match(r"^jobs:", z):
             in_jobs = True
@@ -2259,17 +2278,35 @@ def _workflow_bloecke(inhalt: str) -> tuple[bool, list[dict]]:
             continue
         if job is None:
             continue
+        # Fortsetzung eines mehrzeiligen `if: >` / `if: |` (bis 0.30.0 verloren: die Bedingung
+        # stand dann leer da, und ein Job mit `if: >-` am Tag galt als ungedeckt).
+        if if_offen is not None:
+            if z.strip() and tiefe(z) > if_offen[1]:
+                if_offen[0]["if"] += " " + z.strip()
+                if schritt is not None:
+                    schritt["text"] += "\n" + z
+                continue
+            if_offen = None
         # Schritt-Anfang: "- " tiefer als der Jobname
         if re.match(r"^\s+-\s", z) and tiefe(z) > job_tiefe:
             schritt = {"text": z, "if": ""}
             job["steps"].append(schritt)
+            # `- if: …` als ERSTER Schlüssel des Schritts (bis 0.30.0 übersehen: der Schritt galt
+            # als ungedeckt — ein Fehlalarm, gefunden beim Bau der Generalprobe).
+            mif = re.match(r"^(\s+)-\s+if:\s*(.*)$", z)
+            if mif:
+                schritt["if"] += " " + mif.group(2)
+                if mif.group(2).strip() in (">", ">-", "|", "|-"):
+                    if_offen = (schritt, len(mif.group(1)) + 2)
             continue
-        mif = re.match(r"^\s+if:\s*(.*)$", z)
+        mif = re.match(r"^(\s+)if:\s*(.*)$", z)
         if mif:
+            ziel = schritt if schritt is not None else job
+            ziel["if"] += " " + mif.group(2)
+            if mif.group(2).strip() in (">", ">-", "|", "|-"):
+                if_offen = (ziel, len(mif.group(1)))
             if schritt is not None:
-                schritt["if"] += " " + mif.group(1)
-            else:
-                job["if"] += " " + mif.group(1)
+                schritt["text"] += "\n" + z
             continue
         if schritt is not None:
             schritt["text"] += "\n" + z
@@ -2325,15 +2362,24 @@ def pruefe_veroeffentlichen_am_tag(root: str, dateien: list[str] | None = None) 
             continue
         for job in jobs:
             job_am_tag = bool(_AM_TAG.search(job.get("if", "")))
+            job_probe = _ist_generalprobe(job.get("if", ""))
             if job.get("environment") and not job_am_tag:
                 treffer.append(f".github/workflows/{name}:{job['name']}: `environment: "
                                f"{job['environment']}` ohne Tag-Bedingung am Job")
             for s in job["steps"]:
                 if job_am_tag or _AM_TAG.search(s.get("if", "")):
                     continue
+                probe = job_probe or _ist_generalprobe(s.get("if", ""))
                 for muster, bezeichnung in _VEROEFFENTLICHT:
                     if not re.search(muster, s["text"]):
                         continue
+                    if probe and bezeichnung not in _NIE_PROBE:
+                        if not _ECHTES_ZIEL.search(s["text"]):
+                            continue
+                        treffer.append(f".github/workflows/{name}:{job['name']}: Generalprobe "
+                                       f"`{bezeichnung}` nennt ein echtes Ziel oder ein Geheimnis "
+                                       f"— eine Probe läuft nur gegen ein Wegwerf-Ziel")
+                        break
                     if bezeichnung == "build-push-action":
                         # Ein Bau, der NICHT schiebt, veroeffentlicht nichts. `push:` mit einem
                         # Ausdruck (`${{ github.ref_type == 'tag' }}`) ist genau die Loesung und

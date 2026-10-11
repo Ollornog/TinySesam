@@ -153,6 +153,23 @@ if [[ "$refs_tag_geprueft" -gt 0 && "$refs_gesehen" -eq $((refs_tag_geprueft + r
     exit 0
 fi
 
+# ---- Repo-eigener Zusatz (Kit 0.29.0): `.githooks/pre-push.zusatz`, wenn das Repo einen hat.
+# Dieser Hook gehört dem Kit und wird bei jedem Sync überschrieben. Repos mit einer Prüfung, die nur an
+# DIESEM Rechner geht (LinuxTools: der Tower-Teil von check.sh — dragsnap mit cjs, die compose-Gegenprobe),
+# hatten deshalb einen eigenen Hook und konnten das Kit nicht syncen, ohne ihn zu verlieren (2026-10-11).
+# Der Zusatz läuft VOR der Suite und nach den Ausnahmen oben (ein Lösch- oder Tag-Push braucht ihn so wenig
+# wie die Suite). Liegt er da, ist aber nicht ausführbar, bricht der Push ab: ein still übersprungener Zusatz
+# wäre ein grüner Push ohne genau die Prüfung, für die es ihn gibt.
+ZUSATZ="$ROOT/.githooks/pre-push.zusatz"
+if [[ -e "$ZUSATZ" ]]; then
+    if [[ ! -x "$ZUSATZ" ]]; then
+        echo "pre-push: ABGEBROCHEN — $ZUSATZ liegt da, ist aber nicht ausführbar (chmod +x)." >&2
+        exit 1
+    fi
+    echo "pre-push: repo-eigener Zusatz (.githooks/pre-push.zusatz)"
+    ( cd "$ROOT" && "$ZUSATZ" </dev/null ) || { echo "pre-push: ABGEBROCHEN — der Zusatz ist rot." >&2; exit 1; }
+fi
+
 # Spiegelt den Autodetect von ci-local: erst direkt, dann passwortloses sudo.
 # Ein interaktiver sudo-Prompt wäre hier falsch — der Hook darf nicht nach einem
 # Passwort fragen, deshalb nur 'sudo -n'.

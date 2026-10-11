@@ -77,7 +77,22 @@ def pruefe(root: str) -> list[str]:
                 abweichungen.append(f"{rel}: fehlt")
             elif sha256(voll) != erwartet:
                 abweichungen.append(f"{rel}: geändert")
+    # Seit Kit 0.30.0 gehört der Dependabot-Auto-Merge zum Kit (Vorlage + Prüfung, PO 2026-10-11).
+    # Er hängt HIER, weil jedes Repo diese Prüfung schon in seiner Suite fährt — ohne eigene
+    # Verdrahtung, die in einem von zehn Repos vergessen würde.
+    abweichungen.extend(_automerge(root))
     return abweichungen
+
+
+def _automerge(root: str) -> list[str]:
+    pfad = os.path.join(root, "tests", "_kit", "automerge.py")
+    if not os.path.exists(pfad):
+        return []              # Kit vor 0.30.0 — das meldet die Versionsprüfung, nicht diese
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_kit_automerge_aus_dem_repo", pfad)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul.pruefe(root)
 
 
 def version(root: str) -> str | None:

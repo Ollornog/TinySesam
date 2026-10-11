@@ -404,8 +404,12 @@ try:
     # `password:` kommt in Kommentaren vor (die Datei erklärt, warum es keins gibt) — deshalb
     # nur echte YAML-Zuweisungen. Ausgenommen ist `secrets.GITHUB_TOKEN`: Der wird von GitHub
     # je Lauf erzeugt, ist kein gepflegtes Geheimnis und meldet hier das Abbild an GHCR an.
+    # Ausgenommen auch der Wegwerf-Wert der Generalprobe (`password: generalprobe`, seit 2026-10-11):
+    # Er meldet nur an der lokalen Registry und am lokalen Paket-Server auf dem Runner an — genau
+    # dieses Wort, kein Ausdruck, kein Geheimnis. Der echte Upload (Job `pypi`) bleibt ohne Passwort.
     pw_zeilen = [f"Zeile {n + 1}: {z.strip()}" for n, z in enumerate(zeilen)
-                 if _re_pkg.match(r"^\s*password\s*:", z) and "secrets.GITHUB_TOKEN" not in z]
+                 if _re_pkg.match(r"^\s*password\s*:", z) and "secrets.GITHUB_TOKEN" not in z
+                 and z.strip() != "password: generalprobe"]
     assert not pw_zeilen, (f"`password:` im Release-Workflow: {pw_zeilen} — Trusted Publishing "
                            "braucht kein Geheimnis")
     ok("Release veröffentlicht per Trusted Publishing, nur auf einen Tag hin, ohne Geheimnis")

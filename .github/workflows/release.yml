@@ -62,8 +62,17 @@ name: release
 # auch auf `pull_request`, und seine Jobs `pruefen`, `bauen`, `pruefsummen`, `abbild-probe` und
 # `image` sind Pflicht-Checks. Veröffentlicht wird dabei nichts: Bei einem PR ist `ref_type`
 # „branch“, jeder veröffentlichende Job hängt am Tag (`tests/test_repo.py` hält beides fest).
-# Nicht abgenommen bleiben die Schritte, die nur beim Tag laufen: GHCR-Anmeldung, Beglaubigungen,
-# SBOM, PyPI-Upload — deren Updates gehen weiter von Hand.
+# Bis 2026-10-11 nicht abgenommen: die Schritte, die nur beim Tag laufen — GHCR-Anmeldung,
+# Beglaubigungen, SBOM, PyPI-Upload. Deren Updates gingen von Hand.
+#
+# ── GENERALPROBE (seit 2026-10-11, PO: „alles automatisieren ohne dass was bricht“) ─────────────
+# Die Jobs `generalprobe*` fahren GENAU diese Actions auf jedem PR — gegen Wegwerf-Ziele auf dem
+# Runner (.github/generalprobe): Anmeldung und Push an eine lokale Registry, SBOM aus dem dort
+# geschobenen Abbild, Upload von Wheel und sdist an einen lokalen Paket-Server, Beglaubigung einer
+# Probedatei. Veröffentlicht wird nichts: kein ghcr, kein PyPI, keine Beglaubigung eines Artefakts.
+# Die Probe-Beglaubigung hält `id-token`, aber kein Checkout, kein pip, und ihr Gegenstand ist nur
+# `generalprobe.txt` (`tests/test_repo.py` hält das fest). Wer eine Beglaubigung prüft, prüft den
+# Tag mit: `gh attestation verify … --owner Ollornog --source-ref refs/tags/vX.Y.Z`.
 
 on:
   push:
@@ -357,6 +366,148 @@ jobs:
           tags: ghcr.io/${{ env.OWNER_LC }}/tinysesam:${{ github.ref_type == 'tag' && github.ref_name || 'trockenlauf' }}
           outputs: type=image,push=${{ github.ref_type == 'tag' }},rewrite-timestamp=true
           provenance: false
+
+  # ── Generalprobe (siehe Kopf) ──────────────────────────────────────────────────────────────────
+  # Die Abbilder der Wegwerf-Ziele kommen aus .github/generalprobe/docker-compose.yml (Dependabot
+  # hält sie aktuell) — ein `services:`-Abbild direkt im Workflow sähe Dependabot nicht.
+  generalprobe-ziele:
+    if: github.ref_type != 'tag'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      registry: ${{ steps.lesen.outputs.registry }}
+      pypi: ${{ steps.lesen.outputs.pypi }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Abbilder der Wegwerf-Ziele lesen (nur per Digest gepinnt)
+        id: lesen
+        run: |
+          set -euo pipefail
+          for dienst in registry pypi; do
+            abbild="$(yq -r ".services.${dienst}.image" .github/generalprobe/docker-compose.yml)"
+            [[ "$abbild" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "$dienst: $abbild ist nicht per Digest gepinnt"; exit 1; }
+            echo "${dienst}=${abbild}" >> "$GITHUB_OUTPUT"
+          done
+
+  # Ohne Schreibrecht: Hier läuft fremder Code (Bau, Paket-Server). Gebaut wird nur für amd64 und
+  # mit dem Docker-eigenen Builder — `image` baut beide Plattformen schon; hier geht es um Anmeldung,
+  # Push, SBOM und Upload.
+  generalprobe:
+    needs: [bauen, generalprobe-ziele]
+    if: github.ref_type != 'tag'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: ${{ needs.generalprobe-ziele.outputs.registry }}
+        ports:
+          - "127.0.0.1:5000:5000"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Der Paket-Server braucht Argumente (Upload ohne Anmeldung), die ein Dienst nicht kennt.
+      # Er hängt im Netz des Jobs, damit ihn die Upload-Action (ein Container) als `pypi` erreicht.
+      - name: "Generalprobe: Wegwerf-Paketserver starten"
+        env:
+          ABBILD: ${{ needs.generalprobe-ziele.outputs.pypi }}
+        run: |
+          set -euo pipefail
+          netz="$(docker network ls -q --filter name=github_network_)"
+          [ "$(wc -w <<<"$netz")" = "1" ] || { echo "Netz des Jobs nicht eindeutig: '$netz'"; exit 1; }
+          befehl="$(yq -r '.services.pypi.command | join(" ")' .github/generalprobe/docker-compose.yml)"
+          # shellcheck disable=SC2086  # die Argumente aus der Compose-Datei, bewusst zerlegt
+          docker run -d --name pypi --network "$netz" --network-alias pypi -p 127.0.0.1:8080:8080 "$ABBILD" $befehl
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/simple/ >/dev/null && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8080/simple/ >/dev/null
+
+      - name: "Generalprobe: an der Wegwerf-Registry anmelden"
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: localhost:5000
+          username: generalprobe
+          password: generalprobe
+
+      - name: "Generalprobe: Abbild bauen und schieben"
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: localhost:5000/tinysesam:generalprobe
+          provenance: false
+
+      - name: "Generalprobe: SBOM aus dem geschobenen Abbild"
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c  # v0.24.3
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+        with:
+          image: localhost:5000/tinysesam@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: pypi-dist
+          path: dist
+
+      - name: "Generalprobe: Wheel und sdist an den Wegwerf-Paketserver"
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: http://pypi:8080/
+          user: generalprobe
+          password: generalprobe
+          attestations: false
+          print-hash: true
+
+      # Angekommen ist erst, was der Paket-Server ausliefert, und eine SBOM, die das Paket kennt.
+      - name: "Generalprobe: Upload und SBOM nachlesen"
+        run: |
+          set -euo pipefail
+          liste="$(curl -fsS http://127.0.0.1:8080/simple/tinysesam/)"
+          for datei in dist/*.whl dist/*.tar.gz; do
+            grep -qF "$(basename "$datei")" <<<"$liste" || { echo "$(basename "$datei") fehlt auf dem Paket-Server"; exit 1; }
+          done
+          jq -e '[.packages[].name] | index("tinysesam")' sbom.spdx.json >/dev/null \
+            || { echo "SBOM kennt tinysesam nicht"; exit 1; }
+          echo "Upload und SBOM stimmen"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: generalprobe-sbom
+          path: sbom.spdx.json
+          if-no-files-found: error
+
+  # Die Beglaubigung, wie sie `release` und `image-beglaubigen` beim Tag fahren — nur über eine
+  # Probedatei. Kein Checkout, kein pip, kein fremder Code außer den beiden Actions selbst.
+  generalprobe-beglaubigen:
+    needs: generalprobe
+    if: github.ref_type != 'tag'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write      # Sigstore-Identität, wie beim Tag
+      attestations: write  # die Probe-Beglaubigung an GitHub übergeben
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: generalprobe-sbom
+          path: .
+      - name: "Generalprobe: Probedatei"
+        run: echo "TinySesam Generalprobe ${GITHUB_SHA} — kein Artefakt" > generalprobe.txt
+      - name: "Generalprobe: Herkunft beglaubigen"
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: generalprobe.txt
+      - name: "Generalprobe: SBOM beglaubigen"
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-path: generalprobe.txt
+          sbom-path: sbom.spdx.json
 
   # Beglaubigung des Abbilds — getrennt vom Bau, aus demselben Grund wie oben: Die Identität
   # liegt nur in einem Job, der weder auscheckt noch baut. Er kennt nur den Digest.
