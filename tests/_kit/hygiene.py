@@ -1616,9 +1616,20 @@ def pruefe_kit_prueffunktionen_gerufen(root: str, ausgenommen: dict[str, str] | 
     # jedes Repo, aber der Plan kann sich aendern, und ein Repo, das ein Modul nicht hat,
     # kann dessen Pruefung nicht rufen — eine Forderung waere dort ein Fehlalarm, und ein
     # Fehlalarm ist der Anfang jeder Ausnahmeliste, die spaeter etwas Echtes verdeckt.
+    eigenes_modul = __name__.rsplit(".", 1)[-1]
     for modul, funktion in AUSGELIEFERTE_PRUEFUNGEN:
-        if os.path.exists(os.path.join(root, testverzeichnis, "_kit", f"{modul}.py")):
-            angeboten.add(f"{modul}.{funktion}")
+        if not os.path.exists(os.path.join(root, testverzeichnis, "_kit", f"{modul}.py")):
+            continue
+        # Eine Pruefung DIESES Moduls (hygiene) steht ueber die Introspektion oben schon unter
+        # ihrem KURZEN Namen in `angeboten`. Die qualifizierte Form `hygiene.X` waere ein ZWEITER
+        # Eintrag fuer dieselbe Funktion — und eine Ausnahme per Kurzname (wie bei allen anderen
+        # hygiene-Pruefungen) griffe dann nur fuer einen der beiden Namen, der qualifizierte bliebe
+        # gefordert. Also nicht doppelt aufnehmen. Erst mit `pruefe_audit_workflow` (0.31.0)
+        # relevant: die erste AUSGELIEFERTE hygiene-Pruefung, die ein Repo mit Grund AUSNIMMT
+        # statt sie zu rufen (ansible-deploy: kein Python-Dependency-Audit).
+        if modul == eigenes_modul and funktion in angeboten:
+            continue
+        angeboten.add(f"{modul}.{funktion}")
 
     # KIT_WERKZEUGE gilt HIER genauso wie in `pruefe_tabelle_vollstaendig`.
     #
@@ -1819,6 +1830,133 @@ def pruefe_persist_credentials(root: str, dateien: list[str],
     unbekannt = {k for k in ausgenommen if ":" not in k}
     for k in sorted(unbekannt):
         treffer.append(f"Ausnahme {k!r} hat nicht die Form '<workflow.yml>:<job>'")
+
+    return treffer
+
+
+def pruefe_audit_workflow(root: str, dateien: list[str],
+                          ausgenommen: dict[str, str] | None = None) -> list[str]:
+    """Hat das Repo ein scharfes Schwachstellen-Tor? (M6/B1, „Baustein C", 2026-10-11)
+
+    EBENE DIESER REGEL: ein Abhängigkeits-Audit im CI ist eine **PO-Entscheidung**
+    (E4 = maximal, 2026-10-01), kein belegter Standard — `repo-standards.md` kennt es
+    nicht. Wer das weitergibt, nennt die Ebene mit.
+
+    WARUM (M6-Härtungs-Backlog): Dependabot meldet zwar repo-weit, aber eine Meldung ist
+    kein Tor — ein PR mit einer verwundbaren Auflösung würde grün. Das Tor liegt in jedem Repo
+    etwas anders — als eigener Workflow `audit.yml` (C22, FlyingCerts) ODER als Job `audit` in
+    `ci.yml` (FleetCommander) — und ob es *scharf* ist, hing bis hierher an der Aufmerksamkeit.
+    Diese Prüfung macht die Zusagen des Tors mechanisch nachprüfbar, damit B1 nicht an der
+    Erinnerung hängt. Vorlagen: C22 (Python, `pip-audit`), FlyingCerts (Go, `govulncheck`).
+
+    **Was als Audit zählt** (seit 0.31.2 nicht mehr nur `audit*.yml`): ein Workflow unter
+    `.github/workflows/`, der `pip-audit` oder `govulncheck` ruft — egal ob eigene Datei oder
+    Job in `ci.yml`. So wird ein Repo, das das Audit als Job führt, *wirklich* geprüft statt
+    ausgenommen. Zusätzlich gilt eine Datei `audit*.yml` immer als Audit-Träger (und wird dann
+    daraufhin geprüft, dass sie auch ein Werkzeug ruft).
+
+    Geprüft an jedem Audit-Träger:
+
+    1. **Es gibt einen** — sonst rot, außer das Repo ist mit Grund ausgenommen (dict, Grund
+       Pflicht, Muster wie `pruefe_persist_credentials`). Ein Repo ohne aufzulösende
+       Abhängigkeiten (z. B. Collections kommen aus einem CI-Abbild) trägt den Grund ein:
+
+           ausgenommen={"ansible-deploy": "Collections im Abbild ci-ansible, kein Python-Audit"}
+
+       Ist ein Audit DA und zugleich eine Ausnahme gesetzt, ist die Ausnahme eine falsche
+       Einladung (wie ein toter Policy-Schlüssel) → gemeldet.
+    2. **Ein Schwachstellen-Werkzeug** wird gerufen (`pip-audit` oder `govulncheck`).
+    3. **Die Werkzeugliste ist gehasht gepinnt** — bei Python `--require-hashes`, bei Go ein
+       eigenes `.github/audit/go.mod` mit `tool …govulncheck` (Prüfsummen in go.sum). Ein
+       Prüfwerkzeug, das bei jedem Lauf in der neuesten Fassung aus dem Index kommt, ist
+       selbst ein ungeprüfter Teil der Lieferkette.
+    4. **Kein `continue-on-error: true`** im Audit-Träger — ein Tor, das seine eigenen Fehler
+       durchwinkt, ist keines.
+    5. **Null-Fälle-Wächter — NUR wenn der Träger eine Auflösung fährt.** Löst der Workflow
+       Abhängigkeiten erst auf (`uv pip compile`, `pip-compile`, `go list`), muss ein leeres
+       Ergebnis rot werden — sonst prüfte der Lauf nichts. Heuristik (so ehrlich benannt wie
+       gemessen): ein `exit 1` zusammen mit einer Zählung (`-gt 0`/`wc -l`/`grep -c`). Auditiert
+       der Träger dagegen **fertige Lockfiles** direkt (FleetCommander: `pip-audit -r
+       requirements.txt`), gibt es keinen Auflösungsschritt, der leer sein könnte — dann ist der
+       Wächter weder nötig noch gefordert. Die Heuristik erkennt die Bauform der Vorlagen, nicht
+       jede denkbare.
+    """
+    ausgenommen = ausgenommen or {}
+    treffer: list[str] = []
+
+    for name, grund in sorted(ausgenommen.items()):
+        if not str(grund).strip():
+            treffer.append(f"Ausnahme {name!r} ohne Begründung — ein Grund ist Pflicht")
+
+    # Audit-Träger: jeder Workflow, der ein Werkzeug ruft, PLUS jede Datei `audit*.yml` (die dann
+    # daraufhin geprüft wird, dass sie auch eines ruft). (rel, inhalt, ruft_werkzeug).
+    traeger: list[tuple[str, str]] = []
+    for rel in sorted(dateien):
+        if not (rel.startswith(".github/workflows/") and rel.endswith((".yml", ".yaml"))):
+            continue
+        ist_audit_datei = bool(re.match(r"\.github/workflows/audit[\w.-]*\.ya?ml$", rel))
+        inhalt = _lies(root, rel)
+        if inhalt is None:
+            if ist_audit_datei:
+                traeger.append((rel, ""))
+            continue
+        if ist_audit_datei or re.search(r"\bpip-audit\b|\bgovulncheck\b", inhalt):
+            traeger.append((rel, inhalt))
+
+    # Ausgenommen: dann darf es KEIN Audit geben — sonst ist die Ausnahme eine falsche Einladung
+    # (dieselbe Falle wie ein toter Policy-Schlüssel). `zaehle_fall`, damit `pruefe_etwas_gesehen`
+    # den begründeten Leerfall nicht als „nichts gesehen" meldet.
+    if ausgenommen:
+        zaehle_fall(len(ausgenommen))
+        if traeger:
+            treffer.append(
+                f"Ausnahme gesetzt, aber es gibt doch ein Audit ({traeger[0][0]}) — "
+                "Ausnahme entfernen, das Audit wird dann geprüft")
+        return treffer
+
+    if not traeger:
+        treffer.append(
+            "kein Audit — weder ein Workflow `.github/workflows/audit*.yml` noch ein Job, der "
+            "`pip-audit`/`govulncheck` ruft. Ein Schwachstellen-Tor anlegen (Vorlage C22 für "
+            "Python, FlyingCerts für Go) oder, wenn nichts aufzulösen ist, mit Grund in "
+            "`ausgenommen` eintragen")
+        return treffer
+
+    for rel, inhalt in traeger:
+        if re.search(r"continue-on-error:\s*true\b", inhalt):
+            treffer.append(f"{rel}: `continue-on-error: true` — ein Tor, das seine eigenen "
+                           "Fehler durchwinkt, ist keines")
+
+        hat_pip_audit = bool(re.search(r"\bpip-audit\b", inhalt))
+        hat_govulncheck = bool(re.search(r"\bgovulncheck\b", inhalt))
+        if not (hat_pip_audit or hat_govulncheck):
+            treffer.append(f"{rel}: ruft kein Schwachstellen-Werkzeug — `pip-audit` (Python) "
+                           "oder `govulncheck` (Go)")
+            continue
+
+        if hat_pip_audit and "--require-hashes" not in inhalt:
+            treffer.append(f"{rel}: `pip-audit`, aber die Werkzeugliste ist nicht gehasht "
+                           "gepinnt — `--require-hashes` fehlt (Prüfwerkzeug sonst selbst "
+                           "ungeprüfter Teil der Lieferkette)")
+        if hat_govulncheck:
+            go_mod = ".github/audit/go.mod"
+            go_mod_inhalt = _lies(root, go_mod) if go_mod in dateien else None
+            if go_mod_inhalt is None or not re.search(
+                    r"^\s*tool\b[^\n]*govulncheck", go_mod_inhalt, re.M):
+                treffer.append(f"{rel}: `govulncheck` ohne gepinntes Werkzeug-Modul — "
+                               "`.github/audit/go.mod` mit `tool …govulncheck` (Prüfsummen "
+                               "in go.sum) fehlt")
+
+        # Null-Fälle-Wächter NUR bei einem Auflösungsschritt (s. Docstring): auditiert der Träger
+        # fertige Lockfiles direkt, kann nichts „leer aufgelöst" werden.
+        loest_auf = bool(re.search(r"uv pip compile|pip-compile|pip compile|go list", inhalt))
+        if loest_auf:
+            hat_exit1 = bool(re.search(r"\bexit\s+1\b", inhalt))
+            hat_zaehlung = bool(re.search(r"-gt\s+0\b|wc\s+-l\b|grep\s+-c", inhalt))
+            if not (hat_exit1 and hat_zaehlung):
+                treffer.append(f"{rel}: Auflösungsschritt ohne Null-Fälle-Wächter — ein Lauf, "
+                               "der nichts auflöst, muss rot werden (`exit 1` zusammen mit einer "
+                               "Zählung wie `-gt 0`/`wc -l`/`grep -c`)")
 
     return treffer
 
@@ -2063,6 +2201,13 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     # gleichzeitig rot wurden. *Sechs gleichzeitige Fehlalarme sind ein Befund ueber die
     # Pruefung, nicht ueber die Repos.*
     ("backlog", "alle_pruefungen"),
+    # Baustein C des Härtungs-Backlogs (M6/B1): braucht nichts als das Repo, prüft also das
+    # AUFRUFENDE Repo. Sie ist eine hygiene-Funktion und wird dort schon per Introspektion
+    # gefordert; der Eintrag hier macht die Forderung ausdrücklich und dokumentiert, dass sie
+    # GEFORDERT ist (ein Repo ohne aufzulösende Abhängigkeiten nimmt sie mit Grund aus). Das
+    # Werkzeug läuft im Repo-CI (`audit.yml`), nicht hier — diese Prüfung belegt nur, dass es
+    # existiert und scharf ist.
+    ("hygiene", "pruefe_audit_workflow"),
 ]
 
 # Angeboten, aber NICHT gefordert — und jedes mit dem Grund, warum nicht.

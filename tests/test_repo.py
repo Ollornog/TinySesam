@@ -422,6 +422,11 @@ assert not _extras, "Extra ungeschützt importiert:\n  " + "\n  ".join(_extras)
 _worker = hygiene.pruefe_parallel_worker(ROOT, FILES)
 assert not _worker, "Worker-Zahl nicht aus CI_KERNE:\n  " + "\n  ".join(_worker)
 
+# Das Schwachstellen-Tor (Kit 0.31.0, M6/B1): audit.yml mit pip-audit existiert; deshalb GERUFEN.
+_aw = hygiene.pruefe_audit_workflow(ROOT, FILES)
+assert not _aw, "Schwachstellen-Tor fehlt oder ist nicht scharf:\n  " + "\n  ".join(_aw)
+print("  Schwachstellen-Tor: pip-audit gehasht gepinnt, Null-Fälle-Wächter")
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
 print("  Kit 0.21.8: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer; nichts veröffentlicht ohne Tag")
