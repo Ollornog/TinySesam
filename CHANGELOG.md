@@ -4,6 +4,22 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+## [0.24.13] — 2026-10-11
+
+**Wer es braucht:** alle mit `csp='strict'` (Vorgabe). Kein API-Bruch, kein neues Schema.
+**Verhaltensänderung:** Die CSP der eingebauten Seiten trägt `form-action`. Formulare dürfen nur noch an die eigene
+Seite und an die Ziele aus der eigenen Konfiguration senden bzw. dorthin weitergeleitet werden.
+
+### Sicherheit
+- **CSP: `form-action`** (DAST 2026-10-11, ZAP 10055-13 „Failure to Define Directive with No Fallback“): Die Direktive
+  fällt nicht auf `default-src` zurück — ein eingeschleustes Formular durfte bisher überallhin senden. Jetzt
+  `form-action 'self'` plus die Ziele, auf die TinySesam selbst weiterleitet: `base_url`, OIDC-Issuer und sein
+  Abmelde-Endpunkt (sofern schon geladen), SAML-IdP sowie `trusted_redirect_hosts` und Client-Hosts als `name:*`
+  (`safe_next` erlaubt dort jeden Port). Nur `'self'` hätte in Chrome jede Weiterleitung nach dem Absenden auf einen
+  geschützten Host gebrochen (Anmelden mit `next`, Abmelden beim Provider, „Weiter als …“) — Chrome prüft
+  `form-action` auch dort, Firefox nicht. Browser-Test `tests/test_csp_form_action.py`: Weiterleitung auf einen
+  erlaubten Host kommt an, ein Formular an einen fremden Ursprung wird blockiert; zwei Mutationen rot.
+
 ## [0.24.12] — 2026-10-11
 
 **Wer es braucht:** Apps mit eigenem TinySesam hinter einem TinySesam-Gateway. Kein API-Bruch, kein neues Schema;
