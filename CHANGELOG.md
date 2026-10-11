@@ -4,6 +4,13 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert — Pages-Actions mergen selbst, Abnahme nach dem Merge (Kit 0.32.0)
+
+- `actions/configure-pages`, `upload-pages-artifact` und `deploy-pages` laufen nur auf main; für
+  `deploy-pages` gibt es keine öffentliche Probe. Ihre Updates mergen jetzt selbst (`NACH_MERGE_ABGENOMMEN`),
+  der Nachlauf von `pages.yml` nimmt sie ab. Scheitert er, bleibt die alte Seite online, und der rote Lauf
+  wird gemeldet.
+
 ### Geändert
 - **Gateway-Sperrliste darf eine höhere Untergrenze tragen als das Paket** (`tests/test_repo.py`): Bis dahin verlangte
   der Test Gleichheit zwischen `deploy/gateway/requirements.in` und `pyproject.toml`. Damit blieb jeder uv-PR von
