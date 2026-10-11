@@ -5,6 +5,10 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 ## [Unveröffentlicht]
 
 ### Geändert
+- **Gateway-Sperrliste darf eine höhere Untergrenze tragen als das Paket** (`tests/test_repo.py`): Bis dahin verlangte
+  der Test Gleichheit zwischen `deploy/gateway/requirements.in` und `pyproject.toml`. Damit blieb jeder uv-PR von
+  Dependabot rot (#159), denn er hebt nur `requirements.in`. Jetzt gelten dieselben Pakete und keine Grenze unter der
+  des Pakets. So mergen Gateway-Updates selbst, und die Mindestfassung des Pakets bleibt unverändert.
 - **Generalprobe auf jedem PR** (PO 2026-10-11, „alles automatisieren ohne dass was bricht“): Die Jobs
   `generalprobe*` in `release.yml` fahren die Actions, die bisher nur am Tag liefen, gegen Wegwerf-Ziele auf dem
   Runner (`.github/generalprobe/`). Anmeldung und Push gehen an eine lokale Registry, die SBOM kommt aus dem dort
