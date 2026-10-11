@@ -27,7 +27,14 @@
 # Instanz (`concurrency`).
 #
 # Zwei Jobs: `entscheiden` liest nur (API, kein Checkout, kein PR-Code), `ausfuehren` hält die
-# Schreibrechte und ruft nur `gh pr merge`, `gh workflow run` und `gh pr comment`.
+# Schreibrechte und ruft nur `gh pr merge`, `gh pr update-branch`, `gh workflow run` und `gh pr comment`.
+#
+# MIT GITHUB APP (seit 2026-10-11, PO): Liegt im Repo das Secret `AUTOMERGE_APP_KEY` und die Variable
+# `AUTOMERGE_APP_CLIENT_ID`, holt `ausfuehren` ein kurzlebiges App-Token (nur dieses Repo, nur
+# contents/pull-requests/workflows). Damit (1) zieht er einen veralteten Zweig (BEHIND, Branch-Schutz
+# „aktuell“) per Rebase nach — der Autor bleibt Dependabot, die CI läuft neu an, und ihr Ende löst den
+# nächsten Anlauf aus —, und (2) mergt er so, dass der Push auf den Standardzweig die Workflows normal
+# startet; der Nachlauf per `workflow_dispatch` entfällt dann. Ohne App bleibt alles wie vorher.
 name: Dependabot Auto-Merge
 
 on:  # zizmor: ignore[dangerous-triggers] — kein Checkout, kein PR-Code; Herkunft per API geprüft
@@ -51,6 +58,8 @@ jobs:
       startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
     permissions:
       contents: read
       pull-requests: read
@@ -153,7 +162,10 @@ jobs:
             OFFEN="$(jq -r '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED" or (.state // "") == "PENDING")] | length' <<<"$P")"
             case "$(jq -r '.mergeStateStatus' <<<"$P")" in
               CLEAN) [ "$OFFEN" = "0" ] && { ausgabe mergen ""; exit 0; } ;;
-              BEHIND|DIRTY) ausgabe nichts "Zweig veraltet oder im Konflikt — Dependabot zieht nach"; exit 0 ;;
+              BEHIND)
+                if [ "$MIT_APP" = "true" ]; then ausgabe nachziehen "Zweig veraltet"; else ausgabe nichts "Zweig veraltet — ohne App zieht ihn niemand nach (@dependabot rebase)"; fi
+                exit 0 ;;
+              DIRTY) ausgabe nichts "Konflikt — Dependabot zieht selbst nach"; exit 0 ;;
             esac
             sleep 20
           done
@@ -162,17 +174,53 @@ jobs:
   ausfuehren:
     timeout-minutes: 10
     needs: entscheiden
-    if: needs.entscheiden.outputs.aktion == 'mergen' || needs.entscheiden.outputs.aktion == 'kommentieren'
+    if: contains(fromJSON('["mergen", "kommentieren", "nachziehen"]'), needs.entscheiden.outputs.aktion)
     runs-on: ubuntu-latest
+    env:
+      MIT_APP: ${{ secrets.AUTOMERGE_APP_KEY != '' && vars.AUTOMERGE_APP_CLIENT_ID != '' }}
     permissions:
       contents: write
       pull-requests: write
-      actions: write       # `gh workflow run` für den Nachlauf
+      actions: write       # `gh workflow run` für den Nachlauf (ohne App)
     steps:
-      # Gemergt wird genau der geprüfte Kopf. Danach der Nachlauf: Was ein Push auf den
-      # Standardzweig startet, stößt hier `workflow_dispatch` an.
+      - name: App-Token holen (nur dieses Repo, nur die drei Rechte)
+        id: app
+        if: env.MIT_APP == 'true' && needs.entscheiden.outputs.aktion != 'kommentieren'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      # Mit App: Der Merge-Push startet die Workflows des Standardzweigs selbst.
+      - name: Mergen (App)
+        if: needs.entscheiden.outputs.aktion == 'mergen' && env.MIT_APP == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+
+      # Rebase, nicht Merge-Commit: Der Autor der Commits bleibt Dependabot (sonst wären es „fremde
+      # Commits“). Der Push mit dem App-Token startet die CI des PR neu.
+      - name: Veralteten Zweig nachziehen (App)
+        if: needs.entscheiden.outputs.aktion == 'nachziehen' && env.MIT_APP == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.entscheiden.outputs.pr }}
+        run: |
+          gh pr update-branch "$PR" --repo "$REPO" --rebase
+
+      # Ohne App: Gemergt wird genau der geprüfte Kopf, danach der Nachlauf — was ein Push auf den
+      # Standardzweig startet, stößt hier `workflow_dispatch` an (ein Push mit dem Workflow-Token
+      # startet selbst nichts).
       - name: Mergen und den Nachlauf anstoßen
-        if: needs.entscheiden.outputs.aktion == 'mergen'
+        if: needs.entscheiden.outputs.aktion == 'mergen' && env.MIT_APP != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
