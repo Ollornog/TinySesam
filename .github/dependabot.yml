@@ -47,10 +47,10 @@ updates:
     groups:
       # Ein PR je Monat statt einem je Paket — sonst ertrinkt ein Solo-Projekt in Rauschen.
       #
-      # **Nur patch und minor.** Ein Major landete sonst im Sammel-PR und würde mit ihm
-      # durchgewinkt: Dieselbe Prüfung, die für drei harmlose Patches genügt, entscheidet dann
-      # auch über einen Versionssprung mit Bruch. Majors kommen deshalb einzeln — dort ist der
-      # CHANGELOG des Pakets die eigentliche Arbeit, nicht der grüne Haken der CI.
+      # **Nur patch und minor.** Majors kommen einzeln: Bricht einer, ist der rote PR genau diesem
+      # Paket zuzuordnen, statt einen Sammel-PR mit drei harmlosen Patches aufzuhalten. Seit
+      # 2026-10-11 mergen auch Majors selbst, wenn die Pflicht-Checks grün sind (PO, siehe
+      # dependabot-auto-merge.yml).
       alle:
         patterns: ["*"]
         update-types: ["patch", "minor"]
