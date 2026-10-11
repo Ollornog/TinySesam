@@ -62,6 +62,11 @@ jobs:
               -o "$RUNNER_TEMP/neu.txt"
           "$uv" pip compile pyproject.toml --all-extras --resolution lowest-direct \
               --python-version 3.12 --no-header -o "$RUNNER_TEMP/boden.txt"
+          # Null Pakete wären ein grüner Lauf ohne Befund: das ist kein Beleg, sondern ein Fehler.
+          for f in neu boden; do
+            [ "$(grep -cE '^[A-Za-z0-9_.-]+==' "$RUNNER_TEMP/$f.txt")" -gt 0 ] \
+              || { echo "::error::$f: nichts aufgelöst — der Lauf prüfte nichts"; exit 1; }
+          done
 
       # `--strict`: Ein Paket, das pip-audit nicht nachschlagen kann, ist ein Fehler, kein Skip.
       - name: pip-audit
