@@ -6565,8 +6565,47 @@ class TinySesam:
             return ("default-src 'self'; "
                     f"script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
                     f"img-src 'self' data:{''.join(' ' + h for h in fremd)}; base-uri 'none'; "
+                    f"form-action 'self'{''.join(' ' + h for h in self._form_ziele())}; "
                     "frame-ancestors 'self'; object-src 'none'")
         return csp.replace("{nonce}", nonce)
+
+    def _form_ziele(self) -> list:
+        """Wohin ein Formular der eigenen Seiten führen darf, über `'self'` hinaus (0.24.13, `form-action`).
+
+        `form-action` fällt nicht auf `default-src` zurück (DAST 2026-10-11, ZAP 10055-13): Ohne die Direktive darf ein
+        eingeschleustes `<form action=https://fremd>` überallhin senden. Chrome prüft sie auch an der Weiterleitung
+        NACH dem Absenden (Firefox nicht) — deshalb stehen hier die Ziele, auf die TinySesam selbst weiterleitet:
+        die eigene `base_url` (Abmelden auf dem App-Host geht zum Gateway), die geschützten Hosts aus
+        `trusted_redirect_hosts` und den Client-Einträgen (Anmelden, „Weiter als …“, Rücksprung nach dem Abmelden),
+        der OIDC-Provider samt Abmelde-Endpunkt (Abmelden „überall“) und der SAML-IdP. Nur Hosts aus der eigenen
+        Konfiguration, kein Platzhalter; ein Host ohne Schema gilt in der CSP für die Seite mit ihrem Schema (und
+        http→https)."""
+        from urllib.parse import urlsplit
+
+        def host(url):
+            try:
+                n = urlsplit(url if "://" in url else "https://" + url).netloc
+            except ValueError:
+                return ""
+            return n if n and re.fullmatch(r"[A-Za-z0-9.\-\[\]:]+", n) else ""
+
+        c = self.cfg
+        urls = [c.base_url or "", c.oidc_issuer or "", getattr(c, "saml_idp_sso_url", "") or ""]
+        oidc = getattr(self, "oidc", None)
+        meta = getattr(oidc, "_meta", None) if oidc is not None else None
+        if isinstance(meta, dict):
+            # Nur was schon geladen ist — der Kopf einer Antwort löst keinen Netzzugriff aus.
+            urls.append(str(meta.get("end_session_endpoint") or ""))
+        ziele = {host(u) for u in urls if u and "://" in u}
+        # Hosts aus trusted_redirect_hosts (und die Client-Hosts): `safe_next` vergleicht nur den Namen, jeder Port
+        # ist erlaubt. In der CSP gilt ein Host ohne Port nur für den Standardport — deshalb `name:*`, sonst bliebe
+        # eine Weiterleitung hängen, die `next` gerade erlaubt hat.
+        for h in list(c.trusted_redirect_hosts or []) + list(getattr(c, "oidc_clients", None) or {}):
+            n = host(str(h)).rsplit("]", 1)
+            name = (n[0] + "]") if len(n) == 2 else n[0].split(":", 1)[0]
+            if name:
+                ziele.add(name + ":*")
+        return sorted(z for z in ziele if z)
 
     def public_base(self, request: Optional[Request] = None, candidate: str = "") -> str:
         """Die öffentliche Basis-URL für alles, was das Haus verlässt — Mail-Links,
