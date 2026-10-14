@@ -1422,6 +1422,58 @@ def pruefe_uebersetzungs_struktur(root: str, paare: list[tuple[str, str]]) -> li
     return treffer
 
 
+# Schalter von pytest, die ein EIGENES Argument als nächstes Wort nehmen (ohne `=`). Das Wort danach
+# ist dann kein Pfad: `pytest -k tests` wählt Tests nach Namen, es sammelt nicht `tests/`.
+_PYTEST_WERT_SCHALTER = {"-k", "-m", "-p", "-W", "-c", "-o", "-n", "-r", "--rootdir", "--ignore",
+                         "--ignore-glob", "--deselect", "--maxfail", "--tb", "--durations",
+                         "--import-mode", "--junitxml", "--cov", "--basetemp", "--confcutdir",
+                         "--override-ini", "--config-file", "--color", "--log-level"}
+
+
+def _sammellauf_ueber_tests(text: str, testverzeichnis: str = "tests") -> bool:
+    """Ruft `text` pytest mit dem Testverzeichnis selbst als Pfadargument? (0.34.1)
+
+    Unabhängig von der Schalterfolge: `pytest -q -p no:cacheprovider -W "error" tests` zählt,
+    `pytest -k tests`, `pytest tests_extra/x.py` und `pytest tests/test_a.py` (eine einzelne
+    Datei, kein Sammellauf) zählen nicht. Auch die Array-/Variablenform zählt: steht
+    `PYTEST=(python -m pytest -q …)` in einer Zeile und `"${PYTEST[@]}" tests` in einer anderen,
+    ist das derselbe Lauf. Bis 0.34.0 brach ein Schalter mit Argument das Muster, die Prüfung fiel
+    auf den Namensvergleich zurück und meldete jede Testdatei als ungerufen (Fehlalarm).
+    """
+    text = re.sub(r"\\\n", " ", text)  # Zeilenfortsetzung
+    wort = re.escape(testverzeichnis)
+    pfad = re.compile(rf"^(\./)?{wort}/?$")
+
+    def tokens(rest: str) -> list[str]:
+        rest = re.split(r"(?:&&|\|\||;|\||#)", rest, maxsplit=1)[0]
+        return [t.strip("\"'") for t in rest.split()]
+
+    def hat_pfad(toks: list[str]) -> bool:
+        vorher = ""
+        for t in toks:
+            if pfad.match(t) and vorher not in _PYTEST_WERT_SCHALTER:
+                return True
+            vorher = t
+        return False
+
+    # Direkter Aufruf: alles hinter dem Wort `pytest` bis zum Zeilen-/Befehlsende.
+    for zeile in zeilen_wie_grep(text):
+        m = re.search(r"(?<![\w-])pytest\b(.*)", zeile)
+        if m and not re.match(r"\s*#", zeile) and hat_pfad(tokens(m.group(1))):
+            return True
+    # Array-/Variablenform: Name, der pytest enthält, später mit Pfad gerufen.
+    namen = set(re.findall(r"^\s*(?:export\s+|local\s+)?(\w+)=[(\"']?[^\n]*?(?<![\w-])pytest\b",
+                           text, re.M))
+    for name in namen:
+        aufruf = rf"(?:\"?\$\{{{name}\[[@*]\]\}}\"?|\"?\$\{{?{name}\}}?\"?)(.*)"
+        for zeile in zeilen_wie_grep(text):
+            m = re.search(aufruf, zeile)
+            if m and not re.match(rf"\s*{name}=", zeile) and hat_pfad(tokens(m.group(1))):
+                return True
+    return False
+
+
+
 def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
                                laeufer: list[str] | None = None,
                                ausgenommen: dict[str, str] | None = None) -> list[str]:
@@ -1528,7 +1580,7 @@ def pruefe_testdateien_gerufen(root: str, testverzeichnis: str = "tests",
     # `pytest tests/` bzw. `unittest discover` in check.sh: check.sh IST ein Laeufer, hier
     # stellt sich die Frage nach der Verkabelung nicht.
     _check = _lies(root, "scripts/check.sh") or ""
-    if re.search(r"pytest\s+(-[^\s]+\s+)*tests?\b|unittest\s+discover", _check):
+    if _sammellauf_ueber_tests(_check, testverzeichnis) or re.search(r"unittest\s+discover", _check):
         return treffer
 
     muster = os.path.join(root, testverzeichnis, "test_*")
