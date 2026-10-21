@@ -13,6 +13,8 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 - Neue Prüfung auf tote Links und Anker sowie kaputtes Frontmatter in Markdown.
 - Dependabot hebt `actions/create-github-app-token` hier nicht mehr (`ignore`): Den Pin besitzt die Vorlage, er
   kommt mit `repokit sync`. Vorher wurde jeder solche PR nie grün.
+- Audit-Werkzeuge: certifi 2026.10.19 und uv 0.13.4 (PYSEC-2026-4320/-4321). Die Dependabot-PRs hoben je nur eines
+  der beiden, der Pflicht-Check `audit` blieb auf jedem rot.
 
 ### Geändert — Auto-Merge mit GitHub App (Kit 0.34.0)
 
