@@ -15,6 +15,7 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
   kommt mit `repokit sync`. Vorher wurde jeder solche PR nie grün.
 - Audit-Werkzeuge: certifi 2026.10.19 und uv 0.13.4 (PYSEC-2026-4320/-4321). Die Dependabot-PRs hoben je nur eines
   der beiden, der Pflicht-Check `audit` blieb auf jedem rot.
+- certifi 2026.10.19 auch im Gateway-Abbild (`deploy/gateway/requirements.txt`, PYSEC-2026-4320).
 
 ### Geändert — Auto-Merge mit GitHub App (Kit 0.34.0)
 
