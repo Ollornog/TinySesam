@@ -427,6 +427,14 @@ _aw = hygiene.pruefe_audit_workflow(ROOT, FILES)
 assert not _aw, "Schwachstellen-Tor fehlt oder ist nicht scharf:\n  " + "\n  ".join(_aw)
 print("  Schwachstellen-Tor: pip-audit gehasht gepinnt, Null-Fälle-Wächter")
 
+# Kit 0.35.0 (T-16): Textprüfung (tote Links und Anker, Frontmatter) und der Text-Schnellweg
+# (verdrahtet in scripts/check.sh, Erlaubnisliste nur verengt).
+_tx = hygiene.pruefe_texte(ROOT, [d for d in FILES if d.endswith(".md")])
+assert not _tx, "Texte: tote Links/Anker oder kaputtes Frontmatter:\n  " + "\n  ".join(_tx)
+_nt = hygiene.pruefe_nur_text(ROOT)
+assert not _nt, "Text-Schnellweg nicht verdrahtet oder Liste erweitert:\n  " + "\n  ".join(_nt)
+print("  Kit 0.35.0: Texte sauber (Links, Anker, Frontmatter), Text-Schnellweg verdrahtet")
+
 ungerufen = hygiene.pruefe_kit_prueffunktionen_gerufen(ROOT, ausgenommen={})
 assert not ungerufen, "Kit-Prüfung liegt still:\n  " + "\n  ".join(ungerufen)
 print("  Kit 0.21.8: jede Prüfung gerufen, keine Ausnahme nötig; jede Testdatei hat einen Läufer; nichts veröffentlicht ohne Tag")

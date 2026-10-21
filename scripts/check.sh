@@ -42,6 +42,18 @@ fi
 # Version gehoert also zuerst, der Pfad bleibt daneben stehen (er verraet das venv).
 step "Interpreter: $("$PY" -c 'import sys; print(sys.version.split()[0], "@", sys.executable)')"
 
+# Text-Schnellweg (repokit 0.35.0, PO 2026-10-15): Ändert der Stand gegenüber dem Standardzweig nur Text von der
+# Erlaubnisliste des Kits (*.md in der Wurzel, docs/, backlog/, changelog.d/), fährt nur die eigene Prüfung des
+# Texts — tests/test_repo.py: Hygiene, Links, Anker, Frontmatter — und endet. Die Pflicht-Checks laufen trotzdem und
+# melden grün. Entscheidung und Liste: scripts/_nur_text.sh (aus dem Kit); verengen: scripts/nur-text-verengung.txt.
+if grund="$(scripts/_nur_text.sh)"; then
+    step "$grund"
+    "$PY" tests/test_repo.py || fail "Repo-Hygiene"
+    printf '\n\033[32m✓ Nur Text — Hygiene grün\033[0m\n'
+    exit 0
+fi
+step "$grund"
+
 if [[ $FAST -eq 1 ]]; then
     step "Suiten ohne Browser-Test (--fast)"
     "$PY" tests/run_all.py --no-browser || fail "Testsuite"

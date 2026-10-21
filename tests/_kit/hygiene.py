@@ -2307,6 +2307,9 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
 # nicht die Bequemlichkeit des Repos ("haben wir noch nicht eingebaut") — das Zweite
 # gehoert als Ausnahme MIT Grund ins jeweilige Repo, wo es sichtbar bleibt.
 KIT_WERKZEUGE: list[tuple[str, str, str]] = [
+    ("textpruefung", "pruefe",
+     ("laeuft in jedem Repo ueber `hygiene.pruefe_texte` mit (seit 0.35.0) — die Huelle zaehlt die Faelle; der "
+      "Baustein selbst bleibt ohne Repo-Kontext aufrufbar (CLI, dokutool)")),
     ("automerge", "pruefe",
      ("laeuft in jedem Repo ueber `manifest.pruefe` mit (seit 0.30.0) — eine eigene Forderung "
       "hiesse, denselben Workflow zweimal zu pruefen")),
@@ -2976,6 +2979,107 @@ def pruefe_extras_imports(root: str, dateien: list[str],
 # ---------------------------------------------------------------------------
 # Leere Ausnahmeliste = keine zu weite Ausnahme. Das ist eine wahre Aussage, kein Nichtsehen.
 LEER_IST_AUSSAGE.add("pruefe_belegstellen_eng")
+
+
+def pruefe_texte(root: str, dateien: list[str] | None = None, frontmatter: list[str] | None = None) -> list[str]:
+    """Tote Links, tote Anker, Frontmatter in Markdown (seit 0.35.0, T-16) — Hülle um `textpruefung.py`.
+
+    Der Baustein selbst (`tests/_kit/textpruefung.py`) braucht kein Repo und läuft auch allein (CLI, Wurzel und
+    Pfadliste als Argument); hier wird er mit der Dateiliste des Repos gerufen und zählt jede Markdown-Datei als Fall.
+    Er ist der Kern des Text-Schnellwegs: Im Text-Modus fährt check.sh die Hygiene — darin diese Prüfung — und sonst
+    nichts. Ohne `dateien`: alle *.md unter `root`.
+    """
+    import importlib.util
+    pfad = os.path.join(os.path.dirname(os.path.abspath(__file__)), "textpruefung.py")
+    spec = importlib.util.spec_from_file_location("_kit_textpruefung", pfad)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    befunde, n = modul.pruefe(root, dateien, frontmatter)
+    zaehle_fall(n)
+    return befunde
+
+
+NUR_TEXT_SKRIPT = "scripts/_nur_text.sh"
+NUR_TEXT_VERENGUNG = "scripts/nur-text-verengung.txt"
+NUR_TEXT_PRUEFUNG = "tests/test_repo.py"
+
+
+def _nur_text_block_faehrt_pruefung(code: list[str]) -> bool:
+    """Fährt der if-Block ab der ersten `_nur_text.sh`-Zeile bis zu seinem `fi` tests/test_repo.py und endet mit exit?"""
+    for i, z in enumerate(code):
+        if "_nur_text.sh" not in z:
+            continue
+        block = []
+        for z2 in code[i:]:
+            block.append(z2)
+            if z2.strip() == "fi" or z2.rstrip().endswith("; fi") or z2.rstrip().endswith(";fi"):
+                break
+        text = "\n".join(block)
+        return NUR_TEXT_PRUEFUNG in text and re.search(r"\bexit\s+0\b", text) is not None
+    return False
+
+
+def pruefe_nur_text(root: str) -> list[str]:
+    """Text-Schnellweg (seit 0.35.0): verdrahtet, und die Erlaubnisliste wird nur VERENGT.
+
+    WARUM (PO 2026-10-15, Tower-Kontext ci-policy „Text- und Doku-Änderungen: nur ihr eigener Test“): Ein reiner
+    `BACKLOG.md`-PR kostete im FleetCommander ~25 min ci-local und ~1 h CI. Ändert ein PR nur Text, fährt die Pipeline
+    nur die Prüfungen, die Text betreffen — „eine Linie für alle Repos“: Die Entscheidung lebt EINMAL im Kit
+    (`scripts/_nur_text.sh`, Standard-Erlaubnisliste darin), nicht als Eigenbau je Repo.
+
+    Geprüft wird:
+    - `scripts/_nur_text.sh` liegt im Repo (der Inhalt ist Sache des Manifests).
+    - `scripts/nur-text-verengung.txt` (optional) kennt nur Zeilen `aus <Muster>  # Begründung` bzw.
+      `aus alles  # Begründung`. Ein Repo kann die Liste so nur VERENGEN; eine erweiternde Form gibt es nicht, und jede
+      andere Zeile ist ein Befund (das Skript fährt bei ihr ohnehin die volle Suite). Ohne Begründung kein Eintrag.
+    - `scripts/check.sh` ruft `_nur_text.sh` — sonst fährt eine Textänderung weiter die volle Suite, und der Schnellweg
+      steht nur auf dem Papier. Wer bewusst verzichtet (die Doku ist Teil des Produkts, die Suite dauert ohnehin nur
+      Minuten), schreibt `aus alles  # Grund` in die Verengung.
+    Was das Repo im Text-Modus fährt (Hygiene, Changelog-, Link-Prüfungen), entscheidet sein check.sh.
+    """
+    treffer = []
+    if _lies(root, NUR_TEXT_SKRIPT) is None:
+        treffer.append(f"{NUR_TEXT_SKRIPT} fehlt — `repokit sync`")
+    verzicht = False
+    verengung = _lies(root, NUR_TEXT_VERENGUNG)
+    for n, zeile in enumerate(zeilen_wie_grep(verengung or ""), 1):
+        if re.match(r"^\s*(#|$)", zeile):
+            continue
+        m = re.match(r"^aus\s+(\S+)\s+#\s*\S", zeile)
+        if not m:
+            treffer.append(f"{NUR_TEXT_VERENGUNG}:{n}: keine Verengung — erlaubt ist nur `aus <Muster>  # Begründung` "
+                           f"(die Erlaubnisliste lässt sich verengen, nie erweitern)")
+            continue
+        if m[1] == "alles":
+            verzicht = True
+            continue
+        # Das Skript wendet das Muster mit bash `=~` an, also als POSIX-ERE. Python-Schreibweisen wären dort ungültig
+        # (`(?i)`) oder träfen still nichts (`\d`, `\w`, faule Quantoren) — Angriffsrunde 2026-10-21, Fund 1.
+        if re.search(r"\(\?|\\[A-Za-z]|[*+?}]\?", m[1]):
+            treffer.append(f"{NUR_TEXT_VERENGUNG}:{n}: Muster {m[1]!r} ist Python-Schreibweise — das Skript liest "
+                           f"POSIX-ERE (bash `=~`): `[0-9]` statt `\\d`, keine `(?…)`-Gruppen, keine faulen Quantoren")
+            continue
+        try:
+            re.compile(m[1])
+        except re.error as fehler:
+            treffer.append(f"{NUR_TEXT_VERENGUNG}:{n}: Muster {m[1]!r} ungültig ({fehler})")
+    if not verzicht:
+        check = _lies(root, "scripts/check.sh")
+        if check is None:
+            treffer.append("scripts/check.sh fehlt — niemand ruft den Text-Schnellweg")
+        else:
+            code = [z.split("#", 1)[0] for z in zeilen_wie_grep(check)]
+            if not any("_nur_text.sh" in z for z in code):
+                treffer.append("scripts/check.sh ruft scripts/_nur_text.sh nicht — eine Textänderung fährt weiter die "
+                               f"volle Suite. Verdrahten, oder in {NUR_TEXT_VERENGUNG} mit `aus alles  # Grund` "
+                               "begründet verzichten")
+            elif not _nur_text_block_faehrt_pruefung(code):
+                # Der Text-Modus IST tests/test_repo.py: Nur deshalb darf _nur_text.sh dessen Nennungen eines
+                # Dateinamens übergehen. Fährt check.sh im Text-Modus etwas anderes, stimmt diese Ausnahme nicht mehr.
+                treffer.append(f"scripts/check.sh: die Zeile mit _nur_text.sh fährt nicht {NUR_TEXT_PRUEFUNG} — der "
+                               f"Text-Modus ist genau diese Datei (`if grund=\"$(scripts/_nur_text.sh)\"; then … "
+                               f"{NUR_TEXT_PRUEFUNG} …; exit 0; fi`)")
+    return treffer
 
 
 def pruefe_etwas_gesehen(leer_erlaubt: dict[str, str] | None = None) -> list[str]:

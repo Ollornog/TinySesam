@@ -21,6 +21,14 @@ Zusätzlich die Bedingungen, ohne die die Vorlage still falsch wird:
     nie einen Lauf, und der Merge wartet ewig (Skip ist kein Grün).
   - Jeder Nachlauf-Workflow kennt `workflow_dispatch` — sonst kann ihn der Nachlauf nicht anstoßen.
 
+PINS DER VORLAGE (seit 0.36.0, W8): Die Vorlage nennt ihre Actions nur als Platzhalter
+`@@PIN:<owner>/<action>@@`. Den Pin liefert der Spiegel `vorlage_actions.yml` neben ihr — in repokit ein
+echter Workflow (`.github/workflows/vorlage-actions.yml`), den Dependabot dort hebt und der nach dem
+Merge den neuen Pin abnimmt. Vorher stand der SHA wörtlich in der Vorlage: Dependabot hob ihn in jedem
+Ziel-Repo, die Datei wich danach von der Vorlage ab, und der PR wurde nie grün. In den
+Ziel-Repos ignoriert Dependabot diese Actions deshalb (`pruefe` verlangt das); der neue Pin kommt mit
+dem nächsten `repokit sync`.
+
 stdlib-only: kein YAML-Parser. Gelesen wird nur der Kopf (`on:`) und `name:` — Einrückung und
 die üblichen Schreibweisen (Block, Liste, Einzelwort).
 """
@@ -33,6 +41,11 @@ WORKFLOW = ".github/workflows/dependabot-auto-merge.yml"
 # `.yml.in`, nicht `.yml` (0.30.1): Mit Platzhaltern ist die Vorlage kein gültiges YAML, und ein
 # YAML-Lint über alle *.yml eines Repos (ci-infra) wurde daran rot.
 VORLAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vorlage_dependabot_auto_merge.yml.in")
+# Der Spiegel der Pins (siehe Kopf). In repokit ein Symlink auf den Workflow, den Dependabot hebt.
+SPIEGEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vorlage_actions.yml")
+SPIEGEL_WORKFLOW = ".github/workflows/vorlage-actions.yml"
+PIN_PLATZHALTER = re.compile(r"@@PIN:([\w.-]+/[\w./-]+?)@@")
+PIN_ZEILE = re.compile(r"^\s*(?:-\s+)?uses:\s*(([\w.-]+/[\w./-]+?)@[0-9a-f]{40}(?:\s+#.*)?)\s*$")
 ANFANG = "          # --- je Repo: Anfang\n"
 ENDE = "          # --- je Repo: Ende\n"
 STANDARDZWEIGE = ("main", "master")
@@ -121,6 +134,104 @@ def laeuft_auf_standardzweig(text: str) -> bool:
     return not re.search(r"\btags(-ignore)?\s*:", block)
 
 
+def pins(text: str | None = None) -> dict[str, str]:
+    """Action -> `owner/action@<sha>  # vX` aus dem Spiegel (Vorgabe: die Datei neben der Vorlage)."""
+    if text is None:
+        text = _lies(SPIEGEL) or ""
+    aus: dict[str, str] = {}
+    for z in _zeilen(text):
+        m = PIN_ZEILE.match(z)
+        if m:
+            aus.setdefault(m.group(2), m.group(1).rstrip())
+    return aus
+
+
+def vorlagen_actions() -> list[str]:
+    """Die Actions, die die Vorlage über einen Platzhalter nennt."""
+    return sorted(set(PIN_PLATZHALTER.findall(_lies(VORLAGE) or "")))
+
+
+def _dependabot_actions_bloecke(text: str) -> list[tuple[int, list[str]]]:
+    """(Zeilennummer, Zeilen) je `updates:`-Eintrag mit `package-ecosystem: github-actions`.
+
+    Die Einträge sind die Listenpunkte direkt unter `updates:` (gleicher Einzug wie der erste); ein Eintrag
+    reicht bis zum nächsten Punkt dieses Einzugs oder bis zur ersten Zeile mit kleinerem Einzug.
+    """
+    zeilen = _zeilen(text)
+    try:
+        kopf = next(i for i, z in enumerate(zeilen) if re.match(r"^updates\s*:\s*(?:#.*)?$", z))
+    except StopIteration:
+        return []
+    starts: list[int] = []
+    einzug = None
+    ende = len(zeilen)
+    for i in range(kopf + 1, len(zeilen)):
+        z = zeilen[i]
+        if not z.strip() or z.lstrip().startswith("#"):
+            continue
+        tiefe = len(z) - len(z.lstrip())
+        if einzug is None:
+            if not z.lstrip().startswith("- "):
+                return []
+            einzug = tiefe
+        if tiefe < einzug or (tiefe == einzug and not z.lstrip().startswith("- ")):
+            ende = i
+            break
+        if tiefe == einzug:
+            starts.append(i)
+    bloecke = []
+    for n, st in enumerate(starts):
+        block = zeilen[st:(starts[n + 1] if n + 1 < len(starts) else ende)]
+        if any(re.match(r"^\s*(?:-\s+)?package-ecosystem:\s*[\"']?github-actions[\"']?\s*(?:#.*)?$", z)
+               for z in block):
+            bloecke.append((st + 1, block))
+    return bloecke
+
+
+def _ignoriert(block: list[str], action: str) -> bool:
+    """Ignoriert dieser Dependabot-Eintrag `action` VOLLSTÄNDIG (ohne versions/update-types)?"""
+    for i, z in enumerate(block):
+        m = re.match(r"^(\s*)-\s+dependency-name:\s*[\"']?([^\"'\s#]+)[\"']?\s*(?:#.*)?$", z)
+        if not m or m.group(2) != action:
+            continue
+        einzug = len(m.group(1))
+        for z2 in block[i + 1:]:
+            if not z2.strip() or z2.lstrip().startswith("#"):
+                continue
+            tiefe = len(z2) - len(z2.lstrip())
+            if tiefe <= einzug:
+                break
+            if re.match(r"^\s*(versions|update-types)\s*:", z2):
+                return False
+        return True
+    return False
+
+
+def pruefe_dependabot(root: str) -> list[str]:
+    """Hebt Dependabot hier einen Pin, den die Vorlage besitzt? Dann bräche jeder solche PR die Vorlage.
+
+    Im Ziel-Repo muss jeder `github-actions`-Eintrag die Vorlagen-Actions ignorieren; im Haus des
+    Spiegels (repokit) darf er es gerade NICHT — dort soll Dependabot sie heben.
+    """
+    text = _lies(os.path.join(root, ".github", "dependabot.yml"))
+    if text is None:
+        return []
+    spiegel_hier = os.path.exists(os.path.join(root, SPIEGEL_WORKFLOW))
+    fehler = []
+    for nr, block in _dependabot_actions_bloecke(text):
+        for action in vorlagen_actions():
+            ign = _ignoriert(block, action)
+            if spiegel_hier and ign:
+                fehler.append(f".github/dependabot.yml:{nr}: ignoriert {action} — hier liegt der Spiegel "
+                              f"{SPIEGEL_WORKFLOW}, Dependabot soll den Pin genau hier heben")
+            elif not spiegel_hier and not ign:
+                fehler.append(f".github/dependabot.yml:{nr}: github-actions ignoriert {action} nicht — den Pin "
+                              f"besitzt die repokit-Vorlage; ein Bump hier wiche von ihr ab, und der PR würde nie grün. "
+                              f"Eintragen: `ignore: [{{dependency-name: \"{action}\"}}]` (der neue Pin kommt mit "
+                              f"`repokit sync`)")
+    return fehler
+
+
 def nachlauf(root: str) -> list[str]:
     return [n for n, t in _workflows(root).items() if laeuft_auf_standardzweig(t)]
 
@@ -174,6 +285,13 @@ def rendere(root: str, je_repo: str) -> tuple[str, list[str]]:
     workflows = "[" + ", ".join(f'"{n}"' for n in namen) + "]"
     nachlauf_zeilen = "".join(
         f'          gh workflow run {wf} --repo "$REPO" --ref "$STANDARD"\n' for wf in nach)
+    gepinnt = pins()
+    def pin(m: re.Match) -> str:
+        if m.group(1) not in gepinnt:
+            probleme.append(f"Vorlage nennt {m.group(1)}, der Spiegel {os.path.basename(SPIEGEL)} pinnt es nicht")
+            return m.group(0)
+        return gepinnt[m.group(1)]
+    vorlage = PIN_PLATZHALTER.sub(pin, vorlage)
     text = (vorlage.replace("@@WORKFLOWS@@", workflows)
             .replace("@@JE_REPO@@\n", je_repo if je_repo.endswith("\n") else je_repo + "\n")
             .replace("@@NACHLAUF@@\n", nachlauf_zeilen))
@@ -193,6 +311,7 @@ def pruefe(root: str) -> list[str]:
     lässt jeden PR liegen.
     """
     text = _lies(os.path.join(root, WORKFLOW))
+    dependabot = pruefe_dependabot(root)
     if text is None:
         if os.path.exists(os.path.join(root, ".github", "dependabot.yml")):
             return [f"{WORKFLOW} fehlt — Dependabot-PRs blieben liegen (`repokit automerge` baut ihn)"]
@@ -201,7 +320,7 @@ def pruefe(root: str) -> list[str]:
     if block is None:
         return [f"{WORKFLOW}: Block „je Repo: Anfang/Ende“ fehlt — nicht aus der Vorlage gebaut"]
     soll, probleme = rendere(root, block)
-    fehler = [f"{WORKFLOW}: {p}" for p in probleme]
+    fehler = [f"{WORKFLOW}: {p}" for p in probleme] + dependabot
     if text != soll:
         ist_z, soll_z = _zeilen(text), _zeilen(soll)
         for nr, (a, b) in enumerate(zip(ist_z, soll_z), 1):

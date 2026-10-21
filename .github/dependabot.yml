@@ -37,6 +37,10 @@ updates:
   # zeilenweise und trug neue transitive Abhängigkeiten nicht nach (fastapi 0.142 → opentelemetry-api, #126 rot).
   # Die zwei Werkzeuglisten bleiben hier — sie heissen `werkzeuge.in`, und ob das uv-Ökosystem dazu die Ausgabedatei
   # findet, ist im Quelltext nicht eindeutig (es sucht `<name>.txt` oder die .in am Zeilenende des Kopfes).
+    ignore:
+      # Den Pin besitzt die repokit-Vorlage (tests/_kit/vorlage_actions.yml), er kommt mit `repokit sync`.
+      # Ein Bump hier wiche von der Vorlage ab, und der PR würde nie grün (Kit 0.36.0).
+      - dependency-name: "actions/create-github-app-token"
   - package-ecosystem: pip
     directories: ["/.github/bau", "/.github/audit"]
     # Wartezeit vor Versions-Updates (PO 2026-09-28), gilt nicht für Sicherheits-Updates.
