@@ -1,0 +1,55 @@
+# Spiegel der Actions, die die Kit-Vorlagen benutzen (Kit 0.36.0, Register-Eintrag „Pin von
+# create-github-app-token kann Dependabot in keinem Ziel-Repo heben“, 2026-10-21).
+#
+# WARUM: Die Auto-Merge-Vorlage (`kit/tests/_kit/vorlage_dependabot_auto_merge.yml.in`) trug ihren Pin
+# wörtlich. Dependabot hob ihn in jedem Ziel-Repo, die Datei wich danach von der Vorlage ab, und die
+# Kit-Prüfung wurde rot — der PR wurde nie grün. In repokit selbst hob ihn niemand, weil Dependabot
+# `.yml.in` unter `kit/` nicht liest.
+#
+# JETZT: Die Vorlage nennt nur `@@PIN:<action>@@`. Den Pin liefert DIESE Datei; `kit/tests/_kit/
+# vorlage_actions.yml` ist ein Symlink hierher, und `repokit sync` liefert sie als
+# `tests/_kit/vorlage_actions.yml` aus. Dependabot hebt den Pin hier (und im eigenen Auto-Merge im
+# selben PR), die Suite baut die Vorlage mit dem neuen Pin und vergleicht — grün. Die Ziel-Repos
+# ignorieren diese Actions in ihrer dependabot.yml (`automerge.pruefe_dependabot`) und bekommen den Pin
+# mit dem nächsten `repokit sync`.
+#
+# ABNAHME: Läuft keinem Pflicht-Workflow auf dem PR (ein App-Token gibt es dort nicht, Dependabot-PRs
+# sehen die Actions-Secrets nicht). Deshalb steht die Action in repokits Auto-Merge unter
+# NACH_MERGE_ABGENOMMEN: Nach dem Merge holt dieser Lauf auf dem Standardzweig ein echtes App-Token
+# und benutzt es. Bricht der neue Pin, ist dieser Lauf rot, und ci-wache meldet ihn.
+#
+# Jede Action, die eine Kit-Vorlage per @@PIN:…@@ nennt, steht hier genau einmal, mit SHA und
+# Versions-Kommentar (Dependabot liest ihn).
+name: vorlage-actions
+
+# "on" in Anführungszeichen: Die Datei liegt als Kopie in jedem Ziel-Repo (tests/_kit/vorlage_actions.yml), und dort
+# laufen YAML-Prüfer über alle *.yml — ansible-lint/yamllint lesen ein blankes `on:` als Wahrheitswert (yaml[truthy])
+# und wurden beim Rollout von 0.36.2 in ansible-deploy rot. GitHub und Dependabot lesen beide Schreibweisen gleich.
+"on":
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  abnahme:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: App-Token holen (derselbe Aufruf wie im Auto-Merge, nur lesend)
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_KEY }}
+          permission-contents: read
+
+      - name: Token benutzen
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          test "$(gh api "repos/$REPO" -q .full_name)" = "$REPO"
+          echo "App-Token für $REPO funktioniert"
