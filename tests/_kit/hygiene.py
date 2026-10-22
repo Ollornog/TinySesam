@@ -2024,8 +2024,11 @@ def pruefe_audit_workflow(root: str, dateien: list[str],
         if hat_govulncheck:
             go_mod = ".github/audit/go.mod"
             go_mod_inhalt = _lies(root, go_mod) if go_mod in dateien else None
+            # Einzelzeile (`tool …/govulncheck`) ODER Block (`tool ( … )`, so schreibt `go get -tool` mehrere
+            # Werkzeuge). Bis 0.37.0 nur die Einzelzeile — ein gültiges go.mod in Blockform war rot (Fehlalarm,
+            # gefunden 2026-10-22 beim ersten Go-Repo mit zwei Werkzeugen).
             if go_mod_inhalt is None or not re.search(
-                    r"^\s*tool\b[^\n]*govulncheck", go_mod_inhalt, re.M):
+                    r"^\s*tool\b[^\n(]*govulncheck|^\s*tool\s*\([^)]*govulncheck[^)]*\)", go_mod_inhalt, re.M):
                 treffer.append(f"{rel}: `govulncheck` ohne gepinntes Werkzeug-Modul — "
                                "`.github/audit/go.mod` mit `tool …govulncheck` (Prüfsummen "
                                "in go.sum) fehlt")
@@ -2291,6 +2294,11 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     # Werkzeug läuft im Repo-CI (`audit.yml`), nicht hier — diese Prüfung belegt nur, dass es
     # existiert und scharf ist.
     ("hygiene", "pruefe_audit_workflow"),
+    # Go-Variante (0.38.0, PO 2026-10-22): `golang.py` liegt nur in Repos, die `repokit sync --go` gewählt haben —
+    # gefordert also nur dort (die Forderung greift nur, wenn das Modul im Repo liegt, s. oben).
+    ("golang", "pruefe_go_werkzeuge"),
+    ("golang", "pruefe_dependabot_go"),
+    ("golang", "pruefe_go_check_verdrahtet"),
 ]
 
 # Angeboten, aber NICHT gefordert — und jedes mit dem Grund, warum nicht.
