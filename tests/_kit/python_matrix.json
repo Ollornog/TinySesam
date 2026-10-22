@@ -1,16 +1,15 @@
 {
   "_zweck": "Die EINE Quelle fuer die Python-Matrix aller Repos. Das Abbild ci-python-web fuehrt dieselbe Matrix in /opt/ci-matrix; diese Datei ist die Fassung, die auch auf ubuntu-latest und in einem fremden Klon greift (stdlib-only, offline).",
   "_regel": "Die Matrix sind die letzten DREI stable Minors, nach oben begrenzt durch 'obergrenze'. Untergrenze wandert also von selbst mit, sobald eine Version EOL geht. Geprueft wird sie in hygiene.pruefe_python_matrix_regel — sie MELDET, sie aendert nichts.",
-  "_stand": "2026-09-22 (PO-Entscheidung)",
+  "_stand": "2026-10-22 (PO-Entscheid Obergrenze 3.15; Regel PO 2026-09-22)",
 
-  "matrix": ["3.12", "3.13", "3.14"],
+  "matrix": ["3.13", "3.14", "3.15"],
 
   "obergrenze": {
-    "version": "3.14",
-    "begruendung": "3.15 erscheint am 01.10.2026 und kommt nicht automatisch ins Gate: eine Version rueckt erst nach, wenn die Repos, die sie fahren muessen, auf ihr gruen sind (TinySesams nightly-Job laeuft auf 3.15-Prerelease und ist es seit dem 2026-09-19). KORREKTUR 2026-09-24: Bis hierher stand hier, cp315-Wheels fehlten bei PyYAML, aiohttp, PyArrow und PyMongo. Das war als Begruendung unbrauchbar, weil KEIN EINZIGES unserer Repos eines dieser vier Pakete deklariert (gemessen ueber alle pyproject.toml, requirements*.txt und setup.cfg in sieben Repos: null Treffer; endpoint-check und repokit haben gar keine Abhaengigkeiten, PyYAML liegt einmal als Altbestand in einem .venv). Damit konnte TinySesams nightly die Bedingung auch nicht belegen - es nutzt die vier Pakete selbst nicht, sein Gruen heisst 'TinySesam laeuft auf 3.15', nicht 'unsere Wheels sind da'. Die Sperre schuetzte vor einem Risiko, das wir messbar nicht haben, und ihr Beleg beantwortete eine andere Frage. PO-Entscheidung 2026-09-24: Begruendung jetzt korrigieren, ueber das Ausweiten der nightly-Laeufe auf die anderen Repos am 15.10. entscheiden.",
-    "naechste_pruefung": "2026-11-01",
-    "_verschoben": "2026-10-21 (Agent repokit, ohne PO-Entscheid): Die Frist 2026-10-15 lief ab, ohne dass jemand entschied; seitdem war die Hygiene in JEDEM Kit-Repo rot (paperlaiss nightly 2026-10-21 rot, repokits eigene Suite rot). Verschoben, damit die Gates wieder etwas anderes melden als diese eine offene Frage. Die Fragen unten bleiben dem PO gestellt; die Obergrenze zu heben braucht 3.15 im Abbild ci-python-web und eine wandernde Matrix in jedem Repo.",
-    "_am_pruefdatum_zu_entscheiden": "(1) Obergrenze auf 3.15 heben? (2) Brauchen die anderen sechs Repos einen eigenen nightly-Lauf auf der Prerelease, damit 'gruen' etwas ueber SIE aussagt - oder genuegt TinySesam, solange kein Repo fremde Wheels braucht? Frage (2) ist offen gestellt worden, nicht vergessen worden."
+    "version": "3.15",
+    "begruendung": "PO-Entscheid 2026-10-22: 3.15 ins Gate (3.15.0 final 2026-10-09, PEP 790; 3.15.1 am 2026-10-21). Damit wandert nach der Drei-Minors-Regel auch die Untergrenze auf 3.13 (requires-python >=3.13). Vorher geprueft: kein Kit-Repo laeuft auf einem Host mit System-Python 3.12 (FleetWatch und paperless: Debian 13 mit 3.13.5; Abbilder auf python:3.14-slim; ollornog-site hebt seine Basis mit). Bis 2026-10-22 stand hier 3.14 mit Pruefung bis 2026-10-15 (verschoben auf 2026-11-01, weil die Frist ohne Entscheid ablief und alle Repos rot wurden).",
+    "naechste_pruefung": "2027-10-31",
+    "_am_pruefdatum_zu_entscheiden": "3.16 (erwartet 2027-10-06) ins Gate? Vorher messen, ob die Abnehmer (Hosts, Abbilder) 3.14 als neue Untergrenze tragen."
   },
 
   "_releases_quelle": "python.org/downloads (Release-Termine) + devguide.python.org/versions (EOL). 3.15 nach PEP 790; 3.16 ist der fortgeschriebene Jahresrhythmus und noch nicht durch ein PEP belegt.",
@@ -21,7 +20,7 @@
     "3.12": {"erschienen": "2023-10-02", "eol": "2028-10-31"},
     "3.13": {"erschienen": "2024-10-07", "eol": "2029-10-31"},
     "3.14": {"erschienen": "2025-10-07", "eol": "2030-10-31"},
-    "3.15": {"erschienen": "2026-10-01", "eol": "2031-10-31"},
-    "3.16": {"erschienen": "2027-10-01", "eol": "2032-10-31"}
+    "3.15": {"erschienen": "2026-10-09", "eol": "2031-10-31"},
+    "3.16": {"erschienen": "2027-10-06", "eol": "2032-10-31"}
   }
 }

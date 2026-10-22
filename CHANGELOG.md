@@ -4,6 +4,11 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Geändert — Python 3.13–3.15 (Testkit 0.37.0)
+
+- Die Matrix fährt 3.13/3.14/3.15, `requires-python` ist `>=3.13` (die letzten drei stable Python-Reihen; 3.15.0 erschien am 2026-10-09).
+- CI: Wo xmlsec kein Wheel hat (3.15), baut lxml aus dem Quelltext gegen dasselbe libxml2 — sonst scheitert SAML mit „libxml2 library version mismatch“. Nightly-Prerelease jetzt 3.16.
+
 ### Geändert — Testkit 0.36.3: Text-Schnellweg, Textprüfung, Pins der Auto-Merge-Vorlage
 
 - Ändert ein Stand nur Text von der Erlaubnisliste des Kits (`*.md` in der Wurzel, `docs/`, `backlog/`,
