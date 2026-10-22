@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -49,6 +49,15 @@ jobs:
         run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxmlsec1-dev pkg-config
       - name: Install (alle Extras)
         run: pip install -e '.[all]' setuptools wheel mypy
+      # xmlsec hat nicht für jede Python-Reihe ein Wheel (3.15: keins). Dann baut es gegen das libxml2 des Systems,
+      # das lxml-Wheel bringt aber sein eigenes mit — `import xmlsec` scheitert mit „lxml & xmlsec libxml2 library
+      # version mismatch“. In dem Fall lxml aus dem Quelltext gegen dasselbe libxml2 (wie im Abbild ci-python-web).
+      - name: lxml passend zu xmlsec
+        run: |
+          python -c "import xmlsec" 2>/dev/null && exit 0
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libxml2-dev libxslt1-dev
+          pip install --no-binary lxml --force-reinstall --no-deps "lxml==$(python -c 'import importlib.metadata as m; print(m.version("lxml"))')"
+          python -c "import lxml.etree, xmlsec"
       - name: Tests
         run: python tests/run_all.py
 
@@ -63,7 +72,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Install (nur Kern + httpx fürs TestClient-Werkzeug)
         run: pip install -e . httpx setuptools wheel
       - name: Tests (Kern / scrypt-Fallback; Passkey/OIDC-Suiten werden übersprungen)
@@ -80,7 +89,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Chrome installieren
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:
@@ -111,7 +120,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Abhängigkeiten
         run: pip install -e . uvicorn httpx setuptools wheel
       - name: Caddy mit caddy-jwt bauen (deploy/forward-auth/caddy-gate)
@@ -154,7 +163,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
       - name: Chrome installieren
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4  # v2.2.0
         with:

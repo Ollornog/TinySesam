@@ -105,7 +105,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       - name: Tag gegen die Paketversion prüfen
         if: github.ref_type == 'tag'
@@ -147,7 +147,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       # Bit-reproduzierbar (B4-8): Wer denselben Commit mit denselben Bauwerkzeugen baut, bekommt
       # dieselben Prüfsummen wie hier. Drei Zutaten:

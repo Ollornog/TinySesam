@@ -8,7 +8,7 @@ version = "0.24.13"
 # Die Kurzbeschreibung steht im Paketindex neben dem Namen — englisch wie README und Website.
 description = "Small, reusable multi-method authentication for FastAPI: password, PIN, passkey, OIDC, SAML, LDAP, TOTP, magic link, forward-auth"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 # SPDX-Ausdruck nach PEP 639 (T-7): Die Tabellenform `{ text = "MIT" }` nimmt setuptools ab dem
 # 18.02.2027 nicht mehr an. Braucht setuptools >= 77 — das liegt seit 2026-09 in jeder Umgebung,
 # in der gebaut wird (CI-Abbild, GitHub-Jobs, isolierter Bau). Der Lizenz-Classifier entfällt:
@@ -29,9 +29,9 @@ classifiers = [
     # hält beides zusammen. Ein Classifier ist ein Versprechen, keine Hoffnung.
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Internet :: WWW/HTTP :: Session",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
