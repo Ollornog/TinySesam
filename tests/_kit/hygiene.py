@@ -2024,8 +2024,11 @@ def pruefe_audit_workflow(root: str, dateien: list[str],
         if hat_govulncheck:
             go_mod = ".github/audit/go.mod"
             go_mod_inhalt = _lies(root, go_mod) if go_mod in dateien else None
+            # Einzelzeile (`tool …/govulncheck`) ODER Block (`tool ( … )`, so schreibt `go get -tool` mehrere
+            # Werkzeuge). Bis 0.37.0 nur die Einzelzeile — ein gültiges go.mod in Blockform war rot (Fehlalarm,
+            # gefunden 2026-10-22 beim ersten Go-Repo mit zwei Werkzeugen).
             if go_mod_inhalt is None or not re.search(
-                    r"^\s*tool\b[^\n]*govulncheck", go_mod_inhalt, re.M):
+                    r"^\s*tool\b[^\n(]*govulncheck|^\s*tool\s*\([^)]*govulncheck[^)]*\)", go_mod_inhalt, re.M):
                 treffer.append(f"{rel}: `govulncheck` ohne gepinntes Werkzeug-Modul — "
                                "`.github/audit/go.mod` mit `tool …govulncheck` (Prüfsummen "
                                "in go.sum) fehlt")
@@ -2262,6 +2265,9 @@ def pruefe_belegstellen_eng(root: str, dateien: list[str],
 # Namenskonvention definiert, baut die Blindheit mit ein.** Deshalb steht es hier als Liste.
 # Wer eine Pruefung hinzufuegt, traegt sie ein — und `pruefe_tabelle_vollstaendig` unten
 # vergleicht die Tabelle gegen das Modul, damit auch das nicht am Vorsatz haengt.
+# Kit-Module, die nur auf Wunsch ins Repo kommen — Modul -> womit. Fehlt so ein Modul, ist das kein Befund.
+OPTIONALE_MODULE: dict[str, str] = {"golang": "repokit sync --go (0.38.0)"}
+
 AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     ("manifest", "pruefe"),
     # Gefordert, weil sie nichts braucht als das Repo — und weil ihr Zuschnitt ueber ALLE acht
@@ -2291,6 +2297,11 @@ AUSGELIEFERTE_PRUEFUNGEN: list[tuple[str, str]] = [
     # Werkzeug läuft im Repo-CI (`audit.yml`), nicht hier — diese Prüfung belegt nur, dass es
     # existiert und scharf ist.
     ("hygiene", "pruefe_audit_workflow"),
+    # Go-Variante (0.38.0, PO 2026-10-22): `golang.py` liegt nur in Repos, die `repokit sync --go` gewählt haben —
+    # gefordert also nur dort (die Forderung greift nur, wenn das Modul im Repo liegt, s. oben).
+    ("golang", "pruefe_go_werkzeuge"),
+    ("golang", "pruefe_dependabot_go"),
+    ("golang", "pruefe_go_check_verdrahtet"),
 ]
 
 # Angeboten, aber NICHT gefordert — und jedes mit dem Grund, warum nicht.
@@ -2761,6 +2772,11 @@ def pruefe_tabelle_vollstaendig(kit_verzeichnis: str | None = None) -> list[str]
                        f"rufen) oder mit Grund in KIT_WERKZEUGE")
     for m, f in sorted((gefordert | werkzeug) - alle):
         if m == "hygiene":
+            continue
+        # Ein OPTIONALES Modul fehlt in Repos, die es nicht gewählt haben (golang.py nur mit `sync --go`). Seine
+        # Einträge sind dort nicht „umbenannt oder entfernt“, sondern nicht ausgeliefert. Bis 0.38.0 war jedes Repo
+        # ohne Go hier rot (gefunden beim Sync eines PHP-Repos, 2026-10-22). Liegt das Modul da, wird es weiter geprüft.
+        if m in OPTIONALE_MODULE and not os.path.exists(os.path.join(wurzel, f"{m}.py")):
             continue
         treffer.append(f"{m}.{f} steht in der Tabelle, existiert im Kit aber nicht "
                        f"(umbenannt oder entfernt?)")
