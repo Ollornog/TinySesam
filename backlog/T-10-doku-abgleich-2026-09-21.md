@@ -12,8 +12,8 @@ created: 2026-09-21
 
 After [T-8](T-8-reifepruefung-restbefunde.md) and [T-9](T-9-audit-2026-09-21-runde-2.md) a third
 pass, this time **starting from the docs**: every statement about behaviour was measured against
-the code — both READMEs, CHANGELOG, docstrings, `deploy/`, `web/`, backlog, plus the repo docs on
-the tower. **70 places deviated.**
+the code — both READMEs, CHANGELOG, docstrings, `deploy/`, `web/`, backlog, plus the maintainer's internal
+docs. **70 places deviated.**
 
 The yield was not in the outdated sentences. **Ten of the deviations were defects in the code or
 in a shipped template** — visible only because next to them stood a promise that someone read. A

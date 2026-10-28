@@ -176,7 +176,41 @@ assert not hits, "private infrastructure in the public repo:\n  " + "\n  ".join(
 print(f"  no private infrastructure ({len(POLICY['private_muster'])} patterns"
       f" + {len(POLICY['private_namen_sha256_16'])} names)")
 
-# ---------- Documented standards, enforced by machine (context/repo-standards.md) ----------
+# The kit's patterns catch hosts, IPs and names but not a maintainer's own file paths: a workflow
+# comment pointed at a private documentation page in a dot-directory of the home folder and passed unnoticed.
+# Local pattern, built from pieces so that this file does not match itself. Files that the test kit
+# manages (`repokit sync`) are not edited here and therefore not scanned.
+_KIT_VERWALTET = {".githooks/pre-push", "scripts/_nur_text.sh", "scripts/_residue_check.sh",
+                  "scripts/_backlog.py", "backlog/README-KONVENTION.md"}
+_PRIVATER_PFAD = re.compile("(?:~/\\." + "|/ho" + "me/[a-z]|\\." + "claude/)")
+
+
+def private_pfade(dateien, lies):
+    """`datei:zeile` for every line that names a private home-directory path."""
+    treffer = []
+    for rel in dateien:
+        if rel in _KIT_VERWALTET or rel.startswith("tests/_kit/"):
+            continue
+        try:
+            text = lies(rel)
+        except (UnicodeDecodeError, OSError):
+            continue
+        for n, zeile in enumerate(text.split("\n"), 1):
+            if _PRIVATER_PFAD.search(zeile):
+                treffer.append(f"{rel}:{n}")
+    return treffer
+
+
+_pfade = private_pfade(FILES, read)
+assert not _pfade, "private file path in the public repo:\n  " + "\n  ".join(_pfade[:8])
+# Self-probe: the check must see what it is meant to see (a check that cannot fail proves nothing).
+_probe = private_pfade(["probe"], lambda _r: "See " + "~/" + ".cl" + "aude/context/x.md")
+assert _probe == ["probe:1"], _probe
+_probe = private_pfade(["probe"], lambda _r: "cp x " + "/ho" + "me/someone/y")
+assert _probe == ["probe:1"], _probe
+print("  no private home-directory paths in tracked files")
+
+# ---------- Documented standards, enforced by machine ----------
 # A tag can be moved; a commit SHA is the only immutable reference.
 ungepinnt = hygiene.pruefe_actions_sha_gepinnt(ROOT, FILES)
 assert not ungepinnt, "actions not pinned to a commit SHA:\n  " + "\n  ".join(ungepinnt)

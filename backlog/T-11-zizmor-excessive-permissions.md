@@ -46,7 +46,7 @@ wrong in substance.
 ## What remains of it
 
 The second observation of the round is **real and independent of it**:
-`~/.local/bin/ci-local` is a **symlink into a checkout-able working tree**. The local gate thus
+The local `ci-local` wrapper is a **symlink into a checkout-able working tree**. The local gate thus
 depends on the currently checked-out state of `ci-infra` — the same commit was green at 01:31 and
 red at 01:33. Anyone seeing an unexplained push failure here first checks what `ci-infra` is
-currently checked out on. This is tracked in the tower register `context/pipeline-fehler.md`.
+currently checked out on. This is tracked in the maintainer's own pipeline register.
