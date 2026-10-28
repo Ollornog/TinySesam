@@ -1,49 +1,49 @@
 ---
 id: ADR-5
 type: Decision
-title: Rollen im Forward-Auth kommen vom Proxy, nicht aus einer Regeltabelle
+title: Roles in forward auth come from the proxy, not from a rules table
 status: erledigt
 tags: [architektur, forward-auth, rollen]
 created: 2026-09-19
 ---
 
-# ADR-5 — Rollen im Forward-Auth kommen vom Proxy
+# ADR-5 — Roles in forward auth come from the proxy
 
-## Kontext
+## Context
 
-`/auth/forward` war binär: angemeldet oder nicht. Rollen reiste es nur als `Remote-Groups`-Header
-mit, und damit kann ein Reverse-Proxy nichts anfangen — nginx wegen der Phasenreihenfolge nicht,
-Caddy und Traefik stehen vor demselben Problem. Faktisch existierte `require_role` damit nur im
-In-App-Modus ([ADR-3](ADR-3-in-app-statt-proxy.md)), während das README Forward-Auth vor fremde
-Anwendungen verspricht. Aus der Praxis gemeldet (Fremd-Deployment, 2026-09).
+`/auth/forward` was binary: signed in or not. Roles only travelled along as a `Remote-Groups` header,
+and a reverse proxy cannot do anything with that — nginx because of the phase order, and
+Caddy and Traefik face the same problem. In practice `require_role` therefore existed only in
+in-app mode ([ADR-3](ADR-3-in-app-statt-proxy.md)), while the README promises forward auth in front of third-party
+applications. Reported from practice (third-party deployment, 2026-09).
 
-## Optionen
+## Options
 
-1. **Regeltabelle in der Konfiguration** (Authelia-Modell): Pfadmuster → Rollen, ausgewertet gegen
-   das ohnehin übertragene `X-Original-URL`. Zentral sichtbar, im Panel editierbar.
-2. **Der Proxy sagt, was er verlangt**: `?roles=a,b` am Sub-Request bzw. Header
+1. **Rules table in the configuration** (Authelia model): path pattern → roles, evaluated against
+   the `X-Original-URL` that is transmitted anyway. Centrally visible, editable in the panel.
+2. **The proxy states what it requires**: `?roles=a,b` on the sub-request or header
    `X-TinySesam-Roles`.
 
-## Entscheidung
+## Decision
 
-**Option 2.** Die Angabe steht dort, wo der Proxy die Route ohnehin konfiguriert.
+**Option 2.** The specification sits where the proxy configures the route anyway.
 
-## Begründung
+## Rationale
 
-Option 1 macht TinySesam von der Pfadstruktur fremder Anwendungen abhängig: es müsste Muster
-kennen, sortieren und gegen die URL abgleichen — genau die Doppelpflege, wegen der ADR-3 den
-In-App-Schutz zum Grundmodell gemacht hat, nur andersherum. Option 2 hält die Bibliothek
-zustandslos gegenüber fremden Pfaden und ändert nichts für Bestandsnutzer: ohne Angabe bleibt
-`/auth/forward` binär wie zuvor.
+Option 1 makes TinySesam depend on the path structure of third-party applications: it would have to
+know patterns, sort them and match them against the URL — exactly the double maintenance because of which ADR-3 made
+in-app protection the basic model, just the other way round. Option 2 keeps the library
+stateless with respect to third-party paths and changes nothing for existing users: without the specification,
+`/auth/forward` stays binary as before.
 
-## Konsequenzen
+## Consequences
 
-- Mehrere Angaben werden **UND**-verknüpft, Kommas innerhalb einer Angabe ODER. Damit ist die
-  Auswertung fail-closed: Hängt ein Client selbst ein `roles=` oder den Header an, kann er die
-  Prüfung nur verschärfen, nie aufweichen.
-- Fehlt die Rolle, antwortet TinySesam **403, nicht 401**. Ein 401 schickte den bereits
-  Angemeldeten zum Login, der ihn mit derselben fehlenden Rolle zurückschickt — eine Schleife.
-- Die Abweisung geht ins Audit-Log (`forward_role_denied`): Eine 403 im Proxy-Log sagt nicht, wer
-  woran gescheitert ist.
-- `admin_implies_roles` gilt wie bei `require_role` — ein Admin erfüllt die Rolle mit, sofern
-  nicht global abgeschaltet.
+- Multiple specifications are combined with **AND**, commas within one specification are OR. This makes the
+  evaluation fail-closed: if a client attaches a `roles=` or the header itself, it can
+  only tighten the check, never loosen it.
+- If the role is missing, TinySesam answers **403, not 401**. A 401 would send the already
+  signed-in user to the login, which sends them back with the same missing role — a loop.
+- The rejection goes into the audit log (`forward_role_denied`): a 403 in the proxy log does not say who
+  failed at what.
+- `admin_implies_roles` applies as with `require_role` — an admin also satisfies the role, unless
+  disabled globally.

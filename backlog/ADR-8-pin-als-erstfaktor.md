@@ -1,48 +1,48 @@
 ---
 id: ADR-8
 type: Decision
-title: Eine PIN darf der erste Faktor sein — bewusst, einstellbar, mit eigener Grenze
+title: A PIN may be the first factor — deliberate, configurable, with its own limit
 status: erledigt
 tags: [pin, faktoren, härtung]
 created: 2026-09-24
 ---
 
-# ADR-8 — Eine PIN darf der erste Faktor sein
+# ADR-8 — A PIN may be the first factor
 
-## Kontext
+## Context
 
-Das dritte Audit (T-13, Fund **B2-8**) stellte fest: Eine vierstellige PIN ist in TinySesam ein
-vollwertiger, zentral geprüfter Erstfaktor. Nach NIST SP 800-63B ist ein so kurzes Geheimnis als
-alleiniger Faktor schwach — es hat 10.000 Werte.
+The third audit (T-13, finding **B2-8**) established: a four-digit PIN is a full,
+centrally verified first factor in TinySesam. According to NIST SP 800-63B, a secret this short is weak as a
+sole factor — it has 10,000 values.
 
-## Entscheidung
+## Decision
 
-**Die PIN bleibt als Erstfaktor erlaubt** (PO-Entscheid 2026-09-24, „ausdrücklich ja"). Der
-Anwendungsfall ist real: eine allgemeine Seite hinter einer PIN, eine Detailseite hinter mehr —
-über eine Kette je Route (`auth.require(factors=["pin", "password"])`).
+**The PIN stays allowed as a first factor** (PO decision 2026-09-24, "explicitly yes"). The
+use case is real: a general page behind a PIN, a detail page behind more —
+via a per-route chain (`auth.require(factors=["pin", "password"])`).
 
-Sie bleibt **einstellbar**:
+It stays **configurable**:
 
-- `pin_login` (Konfiguration, Vorgabe `True`): Mit `False` ist die PIN kein Weg hinein, nur noch
-  Folgefaktor (Kettenschritt, Route-Kette) und Step-up-Faktor. Verlangt eine strikte `login_chain`
-  die PIN hinter einem anderen Faktor, ist sie auch mit `True` kein Weg hinein
-  (`pin_als_erstfaktor()`, G7 — eine zuerst eingegebene PIN erfüllt diese Kette nie).
-- `pin_max_attempts` (Panel, Vorgabe 5): der eigene PIN-Zähler je Konto, je Adresse das
-  `ip_attempt_factor`-fache. Er steht im Panel **direkt bei der Login-Sperre**, weil er dort
-  zusammen mit ihr eingestellt wird.
-- `account_max_consecutive_failures` (Panel, Vorgabe 100, B2-6): PIN-Fehlgriffe zählen in die
-  Serie. Mehr als 99 Rateversuche am Stück bekommt niemand, auch verteilt nicht. Ein
-  Passwort-Reset der Inhaberin räumt die Fehlgriffe der PIN als Erstfaktor — sonst sperrte ein
-  Fremder mit falschen PINs das Konto über den Reset hinaus (R2-2). Die Fehlgriffe einer PIN hinter
-  einem schon erbrachten Faktor (Art `pin_folge`, G7) räumt er nicht, wie bei TOTP: Die erzeugt nur,
-  wer den ersten Faktor hat. Wer das Raten ganz ausschliessen will, nimmt die PIN von der
-  Login-Seite (`pin_login=False`).
+- `pin_login` (configuration, default `True`): with `False` the PIN is no way in, only
+  a follow-up factor (chain step, route chain) and step-up factor. If a strict `login_chain` requires
+  the PIN behind another factor, it is no way in even with `True`
+  (`pin_als_erstfaktor()`, G7 — a PIN entered first never satisfies this chain).
+- `pin_max_attempts` (panel, default 5): the PIN's own counter per account, per address the
+  `ip_attempt_factor` multiple of it. It sits in the panel **directly next to the login lockout**, because
+  it is set together with it there.
+- `account_max_consecutive_failures` (panel, default 100, B2-6): PIN failures count towards the
+  series. Nobody gets more than 99 guesses in a row, not even spread out. A
+  password reset by the owner clears the failures of the PIN as first factor — otherwise a
+  stranger with wrong PINs would lock the account beyond the reset (R2-2). It does not clear the failures of a PIN behind
+  an already provided factor (kind `pin_folge`, G7), as with TOTP: only
+  someone who has the first factor generates those. Whoever wants to rule out guessing entirely takes the PIN off the
+  login page (`pin_login=False`).
 
-## Folgen
+## Consequences
 
-- Wer die PIN als Erstfaktor einsetzt, nimmt die Stärke eines kurzen Geheimnisses in Kauf. Die
-  Grenzen oben machen daraus höchstens 100 Versuche aus 10.000 in Folge, danach ist neu zu binden.
-- Die Doku nennt das beim Namen (README „PIN und Step-up", `docs/BETRIEB.md`, Tabelle der
-  Anmeldewege) und zeigt das Muster „allgemeine Seite / Detailseite".
-- Gemessen in `tests/test_t13_entscheide.py` (PIN allein → allgemeine Seite, Detailseite verlangt
-  das Passwort, `pin_login=False` nimmt die PIN von der Login-Seite, Reihenfolge im Panel).
+- Whoever uses the PIN as a first factor accepts the strength of a short secret. The limits
+  above make that at most 100 attempts out of 10,000 in a row, after which it must be re-bound.
+- The docs call this by its name (README "PIN and step-up", `docs/BETRIEB.md`, table of
+  sign-in methods) and show the "general page / detail page" pattern.
+- Measured in `tests/test_t13_entscheide.py` (PIN alone → general page, detail page requires
+  the password, `pin_login=False` takes the PIN off the login page, order in the panel).

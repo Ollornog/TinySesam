@@ -1,52 +1,52 @@
 ---
 id: ADR-1
 type: Decision
-title: PyPI-Veröffentlichung bis 1.0 vertagt
+title: PyPI release deferred until 1.0
 status: verworfen
 superseded_by: ADR-6
 tags: [release, supply-chain]
 created: 2026-07-10
 ---
 
-# ADR-1 — PyPI-Veröffentlichung bis 1.0 vertagt
+# ADR-1 — PyPI release deferred until 1.0
 
-> **Überholt durch [ADR-6](ADR-6-pypi-veroeffentlichen.md) (2026-09-21).** Was unten steht, war
-> richtig, solange die Bedingung nicht erfüllt war: Die Entscheidung lautete „bis 1.0 warten", und
-> mit 1.0 ist genau dieser Punkt erreicht. Der Text bleibt stehen, weil die Gründe nicht hinfällig
-> sind — sie sind beantwortet, und ADR-6 sagt womit.
+> **Superseded by [ADR-6](ADR-6-pypi-veroeffentlichen.md) (2026-09-21).** What follows was
+> right as long as the condition was not met: the decision was "wait until 1.0", and
+> with 1.0 exactly that point has been reached. The text stays because the reasons have not
+> become obsolete — they have been answered, and ADR-6 says how.
 
-## Kontext
+## Context
 
-Ein Auth-Paket ließe sich per `pip install` deutlich bequemer einbinden als über einen gepinnten
-Git-Tag. Die Namen sind frei.
+An auth package would be much easier to include via `pip install` than via a pinned
+Git tag. The names are free.
 
-## Optionen
+## Options
 
-1. **Jetzt veröffentlichen** — bequemste Installation, größte Reichweite.
-2. **Bis 1.0 warten** — Installation über gepinnten Git-Tag.
+1. **Publish now** — most convenient installation, widest reach.
+2. **Wait until 1.0** — installation via pinned Git tag.
 
-## Entscheidung
+## Decision
 
-**Warten (2).**
+**Wait (2).**
 
-## Begründung
+## Rationale
 
-- **Jede PyPI-Version ist unwiderruflich.** Die API bewegt sich noch — 0.12.0 hat das
-  Selbst-Update ersatzlos entfernt ([ADR-2](ADR-2-kein-selbst-update.md)). Ein Paket, dessen
-  Oberfläche sich in Monatsabständen ändert, gehört nicht in einen unveränderlichen Index.
-- **Ein Auth-Paket ist ein Supply-Chain-Ziel.** Wer das Konto übernimmt, schiebt Code in fremde
-  Anmeldevorgänge. Der gepinnte Tag verlagert das Vertrauen auf einen Commit-Hash.
+- **Every PyPI version is irrevocable.** The API is still moving — 0.12.0 removed the
+  self-update without replacement ([ADR-2](ADR-2-kein-selbst-update.md)). A package whose
+  surface changes at monthly intervals does not belong in an immutable index.
+- **An auth package is a supply-chain target.** Whoever takes over the account pushes code into other
+  people's sign-in flows. The pinned tag shifts the trust onto a commit hash.
 
-## Konsequenzen
+## Consequences
 
-- Installation läuft bis 1.0 über `pip install git+…@<tag>`.
-- Wenn veröffentlicht wird, dann mit **Trusted Publishing** (PyPI vertraut dem Workflow per OIDC),
-  kein Token im Repo.
-- Zu prüfen bei [M-1](M-1-api-stabil-1-0.md).
+- Until 1.0, installation goes through `pip install git+…@<tag>`.
+- If it is published, then with **Trusted Publishing** (PyPI trusts the workflow via OIDC),
+  no token in the repo.
+- To be checked at [M-1](M-1-api-stabil-1-0.md).
 
-## Nachtrag (2026-09-21)
+## Addendum (2026-09-21)
 
-Eingelöst wurde beides, was hier als Auflage stand: Veröffentlicht wird per **Trusted Publishing**,
-und der Zeitpunkt ist 1.0. Was die Begründung angeht, ist nur der erste Punkt überholt — die API
-wird seit 0.16.0 gemessen statt behauptet. Der zweite (Auth-Paket als Lieferketten-Ziel) gilt
-unverändert; ADR-6 beantwortet ihn, statt ihn zu verwerfen.
+Both conditions set out here have been met: publishing happens via **Trusted Publishing**,
+and the point in time is 1.0. As for the rationale, only the first point is outdated — the API
+has been measured rather than asserted since 0.16.0. The second (auth package as a supply-chain target) still holds
+unchanged; ADR-6 answers it instead of discarding it.

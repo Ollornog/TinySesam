@@ -1,51 +1,52 @@
 ---
 id: T-11
 type: Task
-title: zizmor excessive-permissions — bei Anlage bereits behoben, Eintrag bleibt als Lehre
+title: zizmor excessive-permissions — already fixed when filed, entry stays as a lesson
 status: erledigt
 milestone: M-1
 tags: [ci, sicherheit, workflows]
 created: 2026-09-22
 ---
 
-# T-11 — zizmor: `excessive-permissions` (gegenstandslos)
+# T-11 — zizmor: `excessive-permissions` (moot)
 
-**Angelegt und am selben Tag zurückgezogen.** Der Eintrag bleibt stehen, weil der Fehler
-lehrreicher ist als der angebliche Befund.
+**Filed and withdrawn on the same day.** The entry stays because the mistake is more instructive
+than the alleged finding.
 
-## Was behauptet wurde
+## What was claimed
 
-Bei einer repoübergreifenden CI-Härtung am 2026-09-22 meldete ein Agent, TinySesam sei mit dem
-neuen Gate (`actionlint` + `zizmor` in `ci-local`) rot — **2× `excessive-permissions`**. Daraus
-wurde eine Warnung an die laufende Sitzung und dieser Backlog-Punkt.
+During a cross-repo CI hardening on 2026-09-22 an agent reported that TinySesam was red with the
+new gate (`actionlint` + `zizmor` in `ci-local`) — **2× `excessive-permissions`**. This became a
+warning to the running session and this backlog item.
 
-## Was tatsächlich galt
+## What actually held
 
-Die Befunde waren zu dem Zeitpunkt **schon behoben**: PR #53 (gemergt als `230b10e`, 01:40)
-trägt `pages:write`/`id-token:write` nur noch im deploy-Job von `pages.yml`. Nachgemessen gegen
+The findings were **already fixed** at that point: PR #53 (merged as `230b10e`, 01:40) carries
+`pages:write`/`id-token:write` only in the deploy job of `pages.yml`. Re-measured against
 `origin/main`:
 
 ```
 zizmor --persona=regular  →  26 findings, davon 0 high, 0× excessive-permissions
 ```
 
-Die Gegenmessung lief bewusst **nicht** im Arbeitsbaum (dort stand ein Audit-Branch), sondern
-gegen die aus `origin/main` geholten Workflow-Dateien in einem Wegwerf-Verzeichnis.
+The counter-measurement deliberately did **not** run in the working tree (an audit branch was
+checked out there), but against the workflow files fetched from `origin/main` into a throwaway
+directory.
 
-## Die Lehre
+## The lesson
 
-**Ein Befund altert.** Zwischen Messung und Meldung lagen hier wenige Stunden, und in dieser Zeit
-wurde die Ursache in einem anderen PR behoben. Wer einen fremden Befund weiterreicht, misst ihn
-**gegen den Stand nach**, auf den er sich bezieht — nicht gegen den, bei dem er entstand.
-Zweiter Teil derselben Lehre: Der Agent maß gegen einen Branch, nicht gegen `main`.
+**A finding ages.** Between measurement and report only a few hours lay here, and in that time the
+cause was fixed in another PR. Anyone passing on someone else's finding measures it **against the
+state afterwards** that it refers to — not against the one at which it arose. Second part of the
+same lesson: the agent measured against a branch, not against `main`.
 
-Dieselbe Klasse wie der Fehlalarm `REPLACE_ME_TOKEN` am selben Tag: formal korrekt gemessen,
-inhaltlich falsch.
+Same class as the false alarm `REPLACE_ME_TOKEN` on the same day: formally measured correctly,
+wrong in substance.
 
-## Was davon bestehen bleibt
+## What remains of it
 
-Die zweite Beobachtung der Runde ist **echt und unabhängig davon**:
-`~/.local/bin/ci-local` ist ein **Symlink in einen auscheckbaren Arbeitsbaum**. Das lokale Gate
-hängt damit am gerade ausgecheckten Stand von `ci-infra` — derselbe Commit war um 01:31 grün und
-um 01:33 rot. Wer hier einen unerklärlichen Push-Fehlschlag sieht, prüft zuerst, worauf `ci-infra`
-gerade ausgecheckt ist. Geführt wird das im Tower-Register `context/pipeline-fehler.md`.
+The second observation of the round is **real and independent of it**:
+`~/.local/bin/ci-local` is a **symlink into a checkout-able working tree**. The local gate thus
+depends on the currently checked-out state of `ci-infra` — the same commit was green at 01:31 and
+red at 01:33. Anyone seeing an unexplained push failure here first checks what `ci-infra` is
+currently checked out on. This is tracked in the tower register `context/pipeline-fehler.md`.

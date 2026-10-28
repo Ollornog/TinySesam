@@ -1,243 +1,243 @@
 ---
 id: M-1
 type: Milestone
-title: 1.0 — API stabil genug für PyPI
+title: 1.0 — API stable enough for PyPI
 status: offen
 tags: [release, api]
 created: 2026-07-23
 ---
 
-# M-1 — 1.0: API stabil genug für PyPI
+# M-1 — 1.0: API stable enough for PyPI
 
-**Fertig, wenn:** die öffentliche API sich über zwei Minor-Versionen nicht mehr gebrochen hat,
-die Ceremony-Pfade (Passkey/OIDC/SAML) einmal gegen echte Gegenstellen liefen, und ein Release
-ohne Handgriffe durchläuft.
+**Done when:** the public API has not broken across two minor versions,
+the ceremony paths (passkey/OIDC/SAML) have run once against real counterparts, and a release
+runs through without manual steps.
 
-Erst dann ist PyPI vertretbar — siehe [ADR-1](ADR-1-pypi-vertagt.md). Bis dahin ist der gepinnte
-Git-Tag das ehrlichere Artefakt.
+Only then is PyPI justifiable — see [ADR-1](ADR-1-pypi-vertagt.md). Until then, the pinned
+Git tag is the more honest artifact.
 
-## Offen: die Oberfläche ist gemessen, nicht ausgewählt (2026-09-21)
+## Open: the surface is measured, not selected (2026-09-21)
 
-`tests/api_surface.json` friert **alles ein, was keinen führenden Unterstrich trägt** — 105
-Methoden. 68 davon kamen in keiner Doku vor; sie sind eingefroren, weil sie so aussehen, nicht
-weil jemand entschieden hätte, dass sie zur öffentlichen Oberfläche gehören.
+`tests/api_surface.json` freezes **everything that has no leading underscore** — 105
+methods. 68 of them appeared in no documentation; they are frozen because they look that way, not
+because anyone decided that they belong to the public surface.
 
-Seit 0.18.0 ist die Lage wenigstens sichtbar: Jede dieser Methoden hat einen Docstring, und
-[API.md](../API.md) führt sie vollständig auf (generiert, mit Prüfung). Der Wächter erfasst
-seither auch Rückgabetypen und die **Vorgabewerte** der Config-Felder — ohne die liesse sich
-`session_ttl_hours` still von 168 auf 1 setzen.
+Since 0.18.0 the situation is at least visible: each of these methods has a docstring, and
+[API.md](../API.md) lists them completely (generated, with a check). Since then the guard also covers
+return types and the **default values** of the config fields — without that,
+`session_ttl_hours` could be silently set from 168 to 1.
 
-**Was offen bleibt und vor 1.0 entschieden werden muss:** Welche dieser 105 Namen sollen auf
-Dauer öffentlich sein? Alles einzufrieren ist die sichere, aber teure Antwort — jede interne
-Umbenennung wird dann zum Bruch. Die Entscheidung ist inhaltlich (was verspricht TinySesam?)
-und gehört nicht in einen Reparaturlauf.
+**What remains open and must be decided before 1.0:** which of these 105 names should be public
+for good? Freezing everything is the safe but expensive answer — every internal
+rename then becomes a breakage. The decision is one of substance (what does TinySesam promise?)
+and does not belong in a repair run.
 
-## Stand: wieder offen (2026-09-21, nach der Reifeprüfung)
+## Status: open again (2026-09-21, after the maturity review)
 
-Der Meilenstein war für einen Tag geschlossen und ist es nicht mehr. Eine Reifeprüfung mit vier
-unabhängigen Blickwinkeln (Sicherheit, Paket/Installation, API-Vertrag, Betrieb) fand **47 Befunde**;
-12 davon wurden einzeln nachgestellt — **12 haltbar, 11 als Blocker bestätigt**.
+The milestone was closed for a day and is no longer. A maturity review from four
+independent angles (security, package/installation, API contract, operations) found **47 findings**;
+12 of them were reproduced individually — **12 held up, 11 confirmed as blockers**.
 
-Darunter sechs Sicherheitslücken, jede mit eigenem Nachstellungs-Skript belegt: Rollen-Eskalation
-über selbst ausgestellte API-Keys, Konto-Unterschiebung über OIDC (`state` ohne Browser-Bindung)
-und SAML (`InResponseTo` ungeprüft), sechs schreibende Routen ohne CSRF-Prüfung (darunter
-„2FA abschalten", ohne Audit-Eintrag), eine zurücksetzbare Brute-Force-Sperre und ein
-Admin-Bootstrap, bei dem der Erste gewinnt, der die Adresse eintippt.
+Among them six security holes, each proven with its own reproduction script: role escalation
+via self-issued API keys, account injection via OIDC (`state` without browser binding)
+and SAML (`InResponseTo` unchecked), six writing routes without a CSRF check (including
+"disable 2FA", with no audit entry), a resettable brute-force lockout and an
+admin bootstrap where whoever types in the address first wins.
 
-**Ein Auth-Paket mit Rollen-Eskalation trägt kein „Production/Stable", und eine PyPI-Version ist
-unwiderruflich.** Deshalb 0.18.0 statt 1.0.0.
+**An auth package with role escalation does not carry "Production/Stable", and a PyPI version is
+irrevocable.** Hence 0.18.0 instead of 1.0.0.
 
-### Warum es niemandem auffiel — der Befund hinter den Befunden
+### Why nobody noticed — the finding behind the findings
 
-`tests/run_all.py` hat echte Fehlschläge als **„übersprungen"** verbucht. Die Suite war grün, weil
-sie nicht gemessen hat. Selbst der schlimmste Fall blieb dadurch unsichtbar: `pip install tinysesam`
-mit Vorgabe-Konfiguration startet nicht (`ModuleNotFoundError: webauthn`) — der allererste Schritt
-jedes neuen Nutzers, und die CI konnte es nicht sehen.
+`tests/run_all.py` booked real failures as **"skipped"**. The suite was green because
+it did not measure. Even the worst case remained invisible as a result: `pip install tinysesam`
+with default configuration does not start (`ModuleNotFoundError: webauthn`) — the very first step
+of every new user, and CI could not see it.
 
-Das ist zuerst repariert worden. Alles andere wäre auf Sand gebaut.
+That was repaired first. Everything else would have been built on sand.
 
-### Die Bedingungen, Stand jetzt
+### The conditions, as they stand now
 
-| Bedingung | Stand |
+| Condition | Status |
 |---|---|
-| Zeremonien gegen echte Gegenstellen | erfüllt |
-| Release ohne Handgriffe | erfüllt |
-| zwei Minor-Versionen ohne API-Bruch | **Uhr startet mit 0.18.0 neu** |
-| **keine offenen Sicherheitsbefunde** | **neu — siehe M-2** |
+| Ceremonies against real counterparts | met |
+| Release without manual steps | met |
+| Two minor versions without API breakage | **clock restarts with 0.18.0** |
+| **No open security findings** | **new — see M-2** |
 
-Die vierte Bedingung stand vorher nicht da, weil niemand danach gesucht hatte. Sie gehört dazu:
-Eine stabile Oberfläche über einem Paket mit Rollen-Eskalation misst das Falsche.
+The fourth condition was not there before because nobody had looked for it. It belongs here:
+a stable surface on top of a package with role escalation measures the wrong thing.
 
-## Stand 2026-09-27: T-13 erledigt, offen nur die API-Einstufung
+## Status 2026-09-27: T-13 done, only the API classification remains open
 
-[T-13](T-13-audit-2026-09-22-runde-3.md) (drittes Audit samt Nachträgen, Grenzen und der Prüfrunde
-Sperren/Zähler) ist abgeschlossen: Jeder Punkt ist behoben mit Test, per Mutation belegt, oder als
-„bewusst so, begründet" markiert. Für diesen Meilenstein offen ist damit nur noch die **Einstufung
-der öffentlichen API in A/B/C** (PO-Entscheid 2026-09-26) — die inhaltliche Frage oben, welche der
-eingefrorenen Namen auf Dauer öffentlich sein sollen. Sie liegt beim PO.
+[T-13](T-13-audit-2026-09-22-runde-3.md) (third audit including addenda, boundaries and the review round
+locks/counters) is complete: every point is fixed with a test, proven by mutation, or marked
+"deliberately so, with reasons". What remains open for this milestone is only the **classification
+of the public API into A/B/C** (PO decision 2026-09-26) — the question of substance above, which of the
+frozen names should be public for good. It rests with the PO.
 
-## Stand 2026-09-27: Einstufung gebaut, die Uhr für A startet mit 0.22.0
+## Status 2026-09-27: classification built, the clock for A starts with 0.22.0
 
-Der PO hat die Stufen am 2026-09-26 entschieden („klingt gut — go“); gebaut ist Schritt 1:
+The PO decided on the tiers on 2026-09-26 ("sounds good — go"); step 1 is built:
 
-- **Jeder der 339 öffentlichen Namen trägt eine Stufe** in `tests/api_surface.json` —
-  A 225 (davon 158 Konfigurationsfelder), B 64, C 50. `tests/test_api_surface.py` ist rot, wenn
-  einer keine oder eine unbekannte trägt; `--update` übernimmt Stufen, vergibt aber nie eine.
-  Damit ist die Frage oben („gemessen, nicht ausgewählt“) beantwortet: Ausgewählt ist, was A ist.
-- **Nur für A gilt die Bedingung „zwei Minor-Versionen ohne Bruch“**, gezählt ab 0.22.0 — dem
-  Release, das die Einstufung bringt. Ein Bruch an B (nur nach `DeprecationWarning` über zwei
-  Minor-Versionen) oder C (intern, fällt mit 1.0) setzt die Uhr nicht zurück; der Wächter meldet
-  ihn trotzdem, mit der Stufe davor.
-- `API.md` gliedert nach Stufe, die READMEs erklären die Stufen und führen die B-Bausteine im
-  Abschnitt für Fortgeschrittene.
+- **Each of the 339 public names carries a tier** in `tests/api_surface.json` —
+  A 225 (of which 158 configuration fields), B 64, C 50. `tests/test_api_surface.py` is red if
+  one carries none or an unknown one; `--update` carries tiers over but never assigns one.
+  That answers the question above ("measured, not selected"): what is selected is what is A.
+- **The condition "two minor versions without breakage" applies only to A**, counted from 0.22.0 — the
+  release that brings the classification. A breakage in B (only after a `DeprecationWarning` over two
+  minor versions) or C (internal, falls with 1.0) does not reset the clock; the guard reports
+  it anyway, with the previous tier.
+- `API.md` is organized by tier, the READMEs explain the tiers and list the B building blocks in the
+  section for advanced users.
 
-| Bedingung | Stand |
+| Condition | Status |
 |---|---|
-| Einstufung der öffentlichen API | **gebaut** (Stufen, Wächter, Doku) |
-| C-Namen mit Unterstrich, alter Name als warnender Alias bis 1.0 | **gebaut** (50 Aliase, Wächter, Warnfilter in `run_all.py`) |
-| sicherer Baustein für eigene Login-Seiten (die inneren Prüfer drosseln nicht, PO-Befund) | **gebaut** — Schritt 3 (`login_*`, `LoginResult`, die Routen rufen ihn; englisch seit dem Nachtrag unten) |
-| dasselbe für eigene Step-up- und Passwortwechsel-Seiten (PO-Entscheid 2026-09-27) | **gebaut** — `confirm_*` (→ `LoginResult`), `change_password` (→ `PasswordChangeResult`), `/auth/reauth` und `POST /auth/password` rufen sie; Nachtrag unten |
-| zwei Minor-Versionen ohne Bruch **an Stufe A** | Uhr startet mit 0.22.0 |
+| Classification of the public API | **built** (tiers, guard, docs) |
+| C names with underscore, old name as warning alias until 1.0 | **built** (50 aliases, guard, warning filter in `run_all.py`) |
+| Safe building block for custom login pages (the inner verifiers do not throttle, PO finding) | **built** — step 3 (`login_*`, `LoginResult`, the routes call it; English since the addendum below) |
+| The same for custom step-up and password-change pages (PO decision 2026-09-27) | **built** — `confirm_*` (→ `LoginResult`), `change_password` (→ `PasswordChangeResult`), `/auth/reauth` and `POST /auth/password` call them; addendum below |
+| Two minor versions without breakage **in tier A** | clock starts with 0.22.0 |
 
-**Schritt 2 (2026-09-27): Stufe C ist ein warnender Alias.** Die Implementierung heisst `_name`
-(42 Methoden, 6 Konstanten; `complete_mfa` zeigt auf `complete_totp`), der alte Name ist ein
-`Veraltet` aus `tinysesam/_veraltet.py` und warnt beim Aufruf genau einmal mit Ersatz. Paket,
-Beispiele, Skripte und Tests rufen nur noch die neuen Namen. Der Wächter hält Ablage und Klasse
-gegeneinander, prüft Warnung, Ziel und Weiterreichen jedes Alias, verbietet alte Namen im eigenen
-Code (AST) und wird mit 1.0 rot, solange noch ein Alias steht; `tests/run_all.py` macht eine solche
-Warnung aus dem Paket selbst zum Fehler. `SERIE_PIN_FOLGE` war nie veröffentlicht und heisst ohne
-Alias `_SERIE_PIN_FOLGE` — Stand nach Schritt 2: 338 Namen, C 49.
+**Step 2 (2026-09-27): tier C is a warning alias.** The implementation is called `_name`
+(42 methods, 6 constants; `complete_mfa` points to `complete_totp`), the old name is a
+`Veraltet` (deprecated) from `tinysesam/_veraltet.py` and warns on call exactly once with the replacement. Package, examples,
+scripts and tests only call the new names. The guard holds storage and class
+against each other, checks warning, target and forwarding of every alias, forbids old names in the own
+code (AST) and turns red with 1.0 as long as an alias still stands; `tests/run_all.py` turns such a
+warning from the package itself into an error. `SERIE_PIN_FOLGE` had never been published and is called `_SERIE_PIN_FOLGE` without
+an alias — state after step 2: 338 names, C 49.
 
-**Schritt 3 (2026-09-27): ein sicherer Login-Baustein für eigene Seiten.** (Mit den Namen von
-damals — seit dem Nachtrag „Der Login-Baustein heisst englisch“ unten gelten die englischen.) Der
-PO-Befund: Die README schickte eigene Login-Seiten zu `check_password` + `start_session`, und die
-inneren Prüfer drosseln nicht. Jetzt gibt es `anmelden_passwort`, `anmelden_pin` und
-`anmelden_totp` (Stufe A) mit dem Ergebnistyp `tinysesam.Anmeldung` (Export, Stufe A): Sie
-drosseln, zählen und sperren wie die eingebauten Routen — weil `POST /auth/login`, `/auth/pin` und `/auth/totp` genau sie rufen und nur
-noch das Ergebnis rendern (eine Quelle; ein AST-Wächter in `tests/test_anmelden.py` verbietet den
-Routen jeden inneren Prüfer). Gemessen ist die Gleichheit Zeile für Zeile: dieselbe Folge über die
-eingebaute und über eine eigene Route ergibt dieselben Status, Audit-, Log- und Zählerzeilen. Die
-README zeigt beide Wege (nur Aussehen: `set_template`; eigene Route: `anmelden_passwort`), ihr
-Beispiel läuft im Test wörtlich und muss sperren. Die Ersatztexte der C-Aliase nennen den Baustein.
-Der Wächter misst den Ergebnistyp mit (Bereich `Anmeldung`: Felder, Methoden, `GRUENDE`) — Stand
-353 Namen: A 240, B 64, C 49.
+**Step 3 (2026-09-27): a safe login building block for custom pages.** (With the names of
+that time — since the addendum "The login building block is named in English" below the English ones apply.) The
+PO finding: the README sent custom login pages to `check_password` + `start_session`, and the
+inner verifiers do not throttle. Now there are `anmelden_passwort`, `anmelden_pin` and
+`anmelden_totp` (tier A) with the result type `tinysesam.Anmeldung` (export, tier A): they
+throttle, count and lock like the built-in routes — because `POST /auth/login`, `/auth/pin` and `/auth/totp` call exactly them and only
+render the result (one source; an AST guard in `tests/test_anmelden.py` forbids the
+routes any inner verifier). Equality is measured line by line: the same sequence over the
+built-in and over a custom route yields the same status, audit, log and counter lines. The
+README shows both ways (looks only: `set_template`; custom route: `anmelden_passwort`), its
+example runs verbatim in the test and must lock. The replacement texts of the C aliases name the building block.
+The guard also measures the result type (area `Anmeldung`: fields, methods, `GRUENDE`) — state
+353 names: A 240, B 64, C 49.
 
-**Nachtrag 2026-09-27: 0.21.0 ging ohne die Einstufung hinaus** (vorgezogen für einen
-Produktivgang). Sie erscheint mit **0.22.0**: `seit` der Aliase, der Zähler für A, die Warntexte
-und die Doku nennen 0.22.0. Weil nur geprüft war, *ob* `seit` dasteht, prüft der Wächter jetzt auch
-den Wert gegen das CHANGELOG (`seit_befunde`): Führt `[Unveröffentlicht]` einen Alias ein, liegt
-`seit` über dem jüngsten Release, sonst ist es genau das einführende Release.
-Eine Folge davon: `SERIE_PIN_FOLGE` war bei Schritt 2 „nie veröffentlicht“ und hiess ohne Alias
-`_SERIE_PIN_FOLGE` — mit 0.21.0 ist er veröffentlicht (G7; dessen CHANGELOG nennt ihn für eigene
-PIN-Seiten). Er ist jetzt ein Alias wie jeder C-Name: Stand 354 Namen, A 240, B 64, C 50.
+**Addendum 2026-09-27: 0.21.0 went out without the classification** (brought forward for a
+production go-live). It appears with **0.22.0**: `seit` (since) of the aliases, the counter for A, the warning texts
+and the docs name 0.22.0. Because only the *presence* of `seit` was checked, the guard now also checks
+the value against the CHANGELOG (`seit_befunde`): if `[Unveröffentlicht]` introduces an alias, `seit` is above
+the latest release, otherwise it is exactly the introducing release.
+One consequence: `SERIE_PIN_FOLGE` was "never published" at step 2 and was called `_SERIE_PIN_FOLGE` without an alias
+— with 0.21.0 it is published (G7; its CHANGELOG names it for custom
+PIN pages). It is now an alias like every C name: state 354 names, A 240, B 64, C 50.
 
-**Nachtrag 2026-09-27 (PO-Entscheid): Der Login-Baustein heisst englisch** und bleibt Stufe A,
-wie der Rest der Stufe-A-Oberfläche: `login_password`, `login_pin`, `login_totp`; der Ergebnistyp
-`tinysesam.LoginResult` (Modul `tinysesam/login_result.py`) mit `ok`, `reason`, `status`,
-`message`, `next_url`, `next_factor`, `done`, `user`, `set_cookie(response)` und `redirect()`;
-die Gründe in `REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`, `ratelimit`,
-`directory_down`, `method_disabled`, `no_session`. Umbenannt vor dem Release und darum **ohne
-Alias** — die Namen aus Schritt 3 (`anmelden_*`, `Anmeldung`, `GRUENDE`, `cookie_setzen` …)
-standen in keinem Release (`git show v0.21.0:tinysesam/manager.py` kennt sie nicht). Nur die
-Namen des Bausteins sind betroffen: Audit- und Log-Zeilen (`login_fail … grund=…`, die Zeilen für
-fail2ban) bleiben, wie sie sind; `reason` ist ein Kürzel für Programme, keine Logzeile. Ein
-Wächter (`tests/test_anmelden.py`, Abschnitt k) misst die Oberfläche des Bausteins am Objekt —
-jede Methode, die ein `LoginResult` liefert, samt Parametern; Typ, Modul, Felder, Methoden,
-`REASONS` — und verlangt: kein deutsches Wort aus einer kurzen Liste, jeder Name Stufe A. Stand
-unverändert 354 Namen, A 240, B 64, C 50.
+**Addendum 2026-09-27 (PO decision): The login building block is named in English** and stays tier A,
+like the rest of the tier A surface: `login_password`, `login_pin`, `login_totp`; the result type
+`tinysesam.LoginResult` (module `tinysesam/login_result.py`) with `ok`, `reason`, `status`,
+`message`, `next_url`, `next_factor`, `done`, `user`, `set_cookie(response)` and `redirect()`;
+the reasons in `REASONS`: `ok`, `missing`, `invalid`, `locked`, `locked_series`, `ratelimit`,
+`directory_down`, `method_disabled`, `no_session`. Renamed before the release and therefore **without
+an alias** — the names from step 3 (`anmelden_*`, `Anmeldung`, `GRUENDE`, `cookie_setzen` …)
+were in no release (`git show v0.21.0:tinysesam/manager.py` does not know them). Only the
+names of the building block are affected: audit and log lines (`login_fail … grund=…`, the lines for
+fail2ban) stay as they are; `reason` is a short code for programs, not a log line. A
+guard (`tests/test_anmelden.py`, section k) measures the surface of the building block on the object —
+every method that returns a `LoginResult`, including parameters; type, module, fields, methods,
+`REASONS` — and demands: no German word from a short list, every name tier A. State
+unchanged at 354 names, A 240, B 64, C 50.
 
-~~Offen für diesen Meilenstein, als Befund aus Schritt 3: Der Wächter hält Signaturen ohne den
-Stern der Nur-Schlüsselwort-Parameter fest.~~ **Behoben 2026-09-27:** `signatur()` misst `*` und
-`/` mit (10 Signaturen neu gemessen, keine geändert), ein eingefügtes `*` ist ein Bruch; eine
-Ablage von vor 0.22.0 wird ohne Marken eingelesen und ohne Marken verglichen, der Vergleich mit
-`v0.21.0`/`v0.20.1` meldet nur echte Unterschiede. `API.md` zeigt die Marken ebenfalls.
+~~Open for this milestone, as a finding from step 3: the guard records signatures without the
+star of keyword-only parameters.~~ **Fixed 2026-09-27:** `signatur()` measures `*` and
+`/` too (10 signatures re-measured, none changed), an inserted `*` is a breakage; a
+storage file from before 0.22.0 is read in without marks and compared without marks, the comparison with
+`v0.21.0`/`v0.20.1` reports only real differences. `API.md` shows the marks as well.
 
-Nicht gemessen und damit ausserhalb der Einstufung: Instanzattribute (`auth.store`, `auth.cfg`,
-`on_security_event` …), die HTTP-Routen und die Logger-Namen (`tinysesam.security`). Ob sie in
-die Zusage gehören, liegt als offene Frage beim PO. **Teilweise entschieden 2026-09-27:**
-`auth.store` ist Innenleben, Stufe C, ohne Zusage (Nachtrag unten); `auth.cfg`,
-`on_security_event`, die Routen und die Logger-Namen bleiben offen.
+Not measured and thus outside the classification: instance attributes (`auth.store`, `auth.cfg`,
+`on_security_event` …), the HTTP routes and the logger names (`tinysesam.security`). Whether they belong in
+the commitment is an open question with the PO. **Partly decided 2026-09-27:**
+`auth.store` is internals, tier C, without commitment (addendum below); `auth.cfg`,
+`on_security_event`, the routes and the logger names remain open.
 
-**Nachtrag 2026-09-27 (PO-Entscheid): Die ganze Oberfläche der Stufen A und B heisst englisch,
-ohne Alias.** Nach dem Login-Baustein jetzt der Rest: 11 Methoden, 5 Konstanten, 2 Methoden von
-`TinySesamConfig`, 18 Parameter in 14 Methoden, `ConfigError.feld`/`.besitzer_id` →
-`.field`/`.owner_id` und `MissingExtra(nachricht, …)` → `MissingExtra(message, …)` (Tabelle im
-CHANGELOG unter „Was beim Update auffällt“). Anders als beim Baustein standen diese Namen in
-0.21.0 — sie fallen trotzdem **ohne Alias**, weil die Zusagen der Stufen erst mit 0.22.0 beginnen
-und keiner der bekannten Abnehmer einen davon benutzt (geprüft: kein Aufruf, kein Parameter, kein
-Konfigurationsfeld). Die Stufen bleiben, wie sie waren. Kein Konfigurationsfeld war betroffen —
-sie hiessen schon englisch. Werte bleiben: Grund-Kürzel, Audit- und Log-Zeilen, die Schlüssel des
-Berichts von `federation_bind_existing`, Datenbank-Spalten.
+**Addendum 2026-09-27 (PO decision): The whole surface of tiers A and B is named in English,
+without alias.** After the login building block, now the rest: 11 methods, 5 constants, 2 methods of
+`TinySesamConfig`, 18 parameters in 14 methods, `ConfigError.feld`/`.besitzer_id` →
+`.field`/`.owner_id` and `MissingExtra(nachricht, …)` → `MissingExtra(message, …)` (table in the
+CHANGELOG under "What stands out on update"). Unlike with the building block, these names were in
+0.21.0 — they are dropped **without an alias** nonetheless, because the commitments of the tiers only begin with 0.22.0
+and none of the known consumers uses any of them (checked: no call, no parameter, no configuration
+field). The tiers stay as they were. No configuration field was affected —
+they were already named in English. Values stay: reason codes, audit and log lines, the keys of the
+report of `federation_bind_existing`, database columns.
 
-Der Namens-Wächter aus Abschnitt (k) ist dafür auf die ganze Oberfläche ausgedehnt
-(`tests/test_api_surface.py`, `pruefe_namen`): jeder Name in A oder B, jeder Parameter am lebenden
-Objekt, jedes Konfigurationsfeld, die Attribute und Konstruktor-Parameter der Fehlertypen — 566
-Einträge; Wörter, Stämme (auch mitten im Wort) und Umlaute; Mindestmenge und Selbstproben. Stand
-unverändert 354 Namen, A 240, B 64, C 50.
+The name guard from section (k) has been extended to the whole surface
+(`tests/test_api_surface.py`, `pruefe_namen`): every name in A or B, every parameter on the live
+object, every configuration field, the attributes and constructor parameters of the error types — 566
+entries; words, stems (also in the middle of a word) and umlauts; minimum set and self-probes. State
+unchanged at 354 names, A 240, B 64, C 50.
 
-~~Offen (nicht Teil dieses Entscheids, Rückfrage beim PO): Rückgabewerte und Daten tragen noch
-deutsche Schlüssel — der Bericht von `federation_bind_existing` (`quelle`, `ausgefuehrt`,
+~~Open (not part of this decision, to be asked of the PO): return values and data still carry
+German keys — the report of `federation_bind_existing` (`quelle`, `ausgefuehrt`,
 `gebunden`, `konflikt`, `mehrdeutig`, `nicht_im_verzeichnis`, `ohne_kennung`, `abgewiesen`,
-`lokal`, je Eintrag `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer`), `gc()`
-(`fehlserien`), die Nutzlast von `on_security_event` (`alt`, `neu`), die Werte von `api_key_kind`
-(`automat`, `mensch`) und der Kontext für eigene Seiten (`ctx["praefix"]`, `ctx["zweck"]`). Der
-Wächter misst Namen, keine Werte; ob diese Schlüssel vor 1.0 englisch werden, ist eine eigene
-Entscheidung — jede Änderung dort bricht Code, der sie liest.~~ **Entschieden 2026-09-27**, s. den
-nächsten Nachtrag.
+`lokal`, per entry `verzeichnis`, `kennung`, `grund`, `gebunden_an`, `treffer`), `gc()`
+(`fehlserien`), the payload of `on_security_event` (`alt`, `neu`), the values of `api_key_kind`
+(`automat`, `mensch`) and the context for custom pages (`ctx["praefix"]`, `ctx["zweck"]`). The
+guard measures names, not values; whether these keys become English before 1.0 is a decision of its own
+— any change there breaks code that reads them.~~ **Decided 2026-09-27**, see the
+next addendum.
 
-**Nachtrag 2026-09-27 (PO-Entscheid): Auch Schlüssel und Werte englisch — samt Datenbank.**
-„Alles übersetzen, auch DB-Werte“, ohne Alias (die Zusagen beginnen mit 0.22.0):
+**Addendum 2026-09-27 (PO decision): Keys and values in English too — database included.**
+"Translate everything, DB values too", without alias (the commitments begin with 0.22.0):
 
-- Die Liste von oben ist umgesetzt, dazu, was die Bestandsaufnahme fand: die Gründe im Bericht
-  (`kein_konto` → `no_account` …), die Schlüssel von `NAME_BINDING_REFUSALS` (mit englischer
-  Erklärung), `verworfene_rollen` → `dropped_roles`, `confirm_email_change` → `"taken"`, der
-  Payload eines Adresswechsel-Links (`alt` → `old`), die übrige Nutzlast von `on_security_event`
-  (`verbleibend`, `anzahl`, `grund` mit seinen Werten, `recovery_codes_geloescht`),
-  `current_user()["_key_art"]` → `_key_kind`. Tabelle im CHANGELOG unter „Was beim Update
-  auffällt“. Die Konto-Dicts tragen nur noch die Felder des Kontos — die Buchhaltung des Stores
-  (deutsche Spaltennamen) ging bis 0.21.x mit hinaus.
-- **Gespeichert** sind zwei davon: `api_key.kind` und der Payload offener Adresswechsel-Links.
-  Eine Datenmigration hebt `SCHEMA_VERSION` auf **12** — keine Spalte, aber 0.21.x liest den neuen
-  Wert anders: Ein `human`-Key gilt dort als Automaten-Key und wirkt ohne Sitzung (gemessen mit
-  dem Code aus `v0.21.0`). Der Stempel ist die Stelle, an der eine ältere Fassung warnt; 0.21.x
-  öffnet die Datei mit dieser Warnung. Der Rückweg ist ein SQL-Block in `docs/BETRIEB.md`, den
-  `tests/test_werte_englisch.py` ausführt. Gelesen wird ein alter Wert weiter richtig; die Keys
-  schreibt jeder Start um, den Payload nur der Sprung auf 12 (sonst ein Lauf durch alle
-  Einmal-Token je Start).
-- **Nicht übersetzt:** Audit- und Log-Zeilen (fail2ban, Filter der Betreiber) — darin stehen die
-  alten Namen weiter (`art=automat`, `grund=name_aus_quelle` …); die Art einer Fehlserie
-  (`fehlserie.art`, darunter `pin_folge`), die nur innen gelesen wird; die Spaltennamen.
-- **Wächter:** `pruefe_werte` in `tests/test_api_surface.py` misst die Schlüssel und Werte an einer
-  Probeinstanz, an den Konstanten und im Quelltext (790 Einträge) gegen die Wortliste und die
-  Namen bis 0.21.x.
-- **`auth.set_disabled(user_id, disabled)`** (Stufe A) statt des Rats, `auth.store.set_disabled(…,
-  durch_betreiber=True)` zu rufen, der nur den Vermerk setzte; das Panel ruft die Methode.
-  **`auth.store` ist Innenleben** (Stufe C, keine Zusage) — die Doku sagt das überall, wo sie noch
-  einen Aufruf nennt. Stand 366 Namen: A 252, B 64, C 50.
+- The list from above is implemented, plus what the inventory found: the reasons in the report
+  (`kein_konto` → `no_account` …), the keys of `NAME_BINDING_REFUSALS` (with an English
+  explanation), `verworfene_rollen` → `dropped_roles`, `confirm_email_change` → `"taken"`, the
+  payload of an email-change link (`alt` → `old`), the remaining payload of `on_security_event`
+  (`verbleibend`, `anzahl`, `grund` with its values, `recovery_codes_geloescht`),
+  `current_user()["_key_art"]` → `_key_kind`. Table in the CHANGELOG under "What stands out
+  when updating". The account dicts now carry only the account's fields — the store's bookkeeping
+  (German column names) went out with them up to 0.21.x.
+- Two of these are **stored**: `api_key.kind` and the payload of open email-change links.
+  A data migration raises `SCHEMA_VERSION` to **12** — no column, but 0.21.x reads the new
+  value differently: a `human` key counts there as an automaton key and takes effect without a session (measured with
+  the code from `v0.21.0`). The stamp is the place where an older version warns; 0.21.x
+  opens the file with that warning. The way back is an SQL block in `docs/BETRIEB.md` that
+  `tests/test_werte_englisch.py` executes. An old value continues to be read correctly; the keys
+  are rewritten by every start, the payload only by the jump to 12 (otherwise a pass through all
+  one-time tokens on every start).
+- **Not translated:** audit and log lines (fail2ban, operators' filters) — the
+  old names remain in them (`art=automat`, `grund=name_aus_quelle` …); the kind of a failure series
+  (`fehlserie.art`, among them `pin_folge`), which is only read internally; the column names.
+- **Guard:** `pruefe_werte` in `tests/test_api_surface.py` measures the keys and values on a probe
+  instance, on the constants and in the source code (790 entries) against the word list and the
+  names up to 0.21.x.
+- **`auth.set_disabled(user_id, disabled)`** (tier A) instead of the advice to call `auth.store.set_disabled(…,
+  durch_betreiber=True)`, which only set the note; the panel calls the method.
+  **`auth.store` is internals** (tier C, no commitment) — the docs say so everywhere they still
+  name a call. State 366 names: A 252, B 64, C 50.
 
-**Nachtrag 2026-09-27 (PO-Entscheid): Bausteine für eigene Step-up- und Passwortwechsel-Seiten**
-(Stufe A, englisch). Nach dem Login-Baustein fehlte dasselbe für die Bestätigung vor heiklen
-Aktionen und den eigenen Passwortwechsel: Es gab nur die Routen `/auth/reauth` und
-`POST /auth/password`, und die inneren Prüfer (`_verify_user_password`, `_verify_user_pin`,
-`_verify_totp`) drosseln nicht. Jetzt:
+**Addendum 2026-09-27 (PO decision): Building blocks for custom step-up and password-change pages**
+(tier A, English). After the login building block, the same was missing for confirmation before sensitive
+actions and for a custom password change: there were only the routes `/auth/reauth` and
+`POST /auth/password`, and the inner verifiers (`_verify_user_password`, `_verify_user_pin`,
+`_verify_totp`) do not throttle. Now:
 
 - `confirm_password(request, password, *, next="", csrf=None)`, `confirm_pin(…, pin, …)`,
-  `confirm_totp(…, code, …)` → **`LoginResult`**. Drei Namen wie bei `login_*` statt eines
-  `confirm(…)` mit drei optionalen Feldern: je Aufruf genau ein Geheimnis, keine Reihenfolge, die
-  still ein Feld übergeht. `LoginResult` statt eines eigenen Typs: Eine Bestätigung ist eine
-  erneute Anmeldung an der laufenden Sitzung, die Felder passen ohne Rest, und `redirect()`/
-  `set_cookie()` braucht es für das erneuerte Token. `next` kam gegenüber dem Auftrag hinzu — wie
-  bei `login_*`, damit `redirect()` ein geprüftes Ziel hat.
-- `change_password(request, current, new, *, csrf=None)` → **`PasswordChangeResult`** (neuer
-  Export): `ok`, `reason`, `status`, `message`, `api_keys_active`. Ein eigener Typ, weil ein
-  Passwortwechsel niemanden anmeldet und kein Token dreht.
-- Die Routen sind Hüllen darum; ein AST-Wächter (`tests/test_bestaetigen.py`, h) verbietet ihnen
-  jeden inneren Prüfer, gemessen ist die Gleichheit Zeile für Zeile (g). Drei Verhaltensänderungen
-  an den Routen stehen im CHANGELOG unter „Was beim Update auffällt“: `POST /auth/password` nimmt
-  keinen API-Key mehr (403), ein leeres Feld zählt an beiden nicht mehr, ein nicht angebotenes
-  Verfahren an `/auth/reauth` ist 403 ohne Fehlversuch.
+  `confirm_totp(…, code, …)` → **`LoginResult`**. Three names as with `login_*` instead of one
+  `confirm(…)` with three optional fields: exactly one secret per call, no order that
+  silently skips a field. `LoginResult` instead of a type of its own: a confirmation is a
+  renewed sign-in on the running session, the fields fit without remainder, and `redirect()`/
+  `set_cookie()` is needed for the renewed token. `next` was added relative to the assignment — as
+  with `login_*`, so that `redirect()` has a checked target.
+- `change_password(request, current, new, *, csrf=None)` → **`PasswordChangeResult`** (new
+  export): `ok`, `reason`, `status`, `message`, `api_keys_active`. A type of its own, because a
+  password change signs nobody in and does not rotate a token.
+- The routes are wrappers around them; an AST guard (`tests/test_bestaetigen.py`, h) forbids them
+  any inner verifier, equality is measured line by line (g). Three behaviour changes
+  to the routes are in the CHANGELOG under "What stands out on update": `POST /auth/password` takes
+  no API key any more (403), an empty field no longer counts at either, a method not offered
+  at `/auth/reauth` is 403 without a failed attempt.
 
-Stand 365 Namen: A 251 (+ 4 Methoden, der Export und 6 Namen an `PasswordChangeResult`), B 64,
-C 50; der Namens-Wächter misst 593 Einträge.
+State 365 names: A 251 (+ 4 methods, the export and 6 names on `PasswordChangeResult`), B 64,
+C 50; the name guard measures 593 entries.
 
-<!-- Was vorher hier stand (Schliessung mit 1.0.0), ist mit dem Meilenstein selbst hinfaellig. -->
+<!-- What used to be here (closing with 1.0.0) is obsolete together with the milestone itself. -->

@@ -1,34 +1,34 @@
 ---
 id: T-20
 type: Task
-title: Share-Ausnahmen je App — exakte Pfadpräfixe vor dem Gate, mit Gegenprobe
+title: Share exceptions per app — exact path prefixes before the gate, with a control test
 status: erledigt
 milestone: M-3
 tags: [gateway, caddy, share]
 created: 2026-10-03
 ---
 
-# T-20 — Share-Ausnahmen
+# T-20 — Share exceptions
 
-Apps mit Share-Links brauchen öffentliche Pfade. Die Ausnahme steht im Proxy **vor** dem Gate.
+Apps with share links need public paths. The exception sits in the proxy **before** the gate.
 
-**Zu tun:** Doku + Beispiel (Caddy `handle @share`), Muster für bekannte Apps als Startpunkt (je App
-selbst nachmessen: Share-Seiten laden eigene Assets und API-Aufrufe). Nie Endungs-Matcher.
-`Remote-User` auch hier entfernen. Kleines Prüfwerkzeug oder Testmuster: ein Pfad **außerhalb** der
-Liste (auch mit `..`, `%2e`, doppeltem Schrägstrich) muss 401 bzw. 307 liefern.
+**To do:** docs + example (Caddy `handle @share`), patterns for known apps as a starting point (measure
+each app yourself: share pages load their own assets and API calls). Never extension matchers.
+Remove `Remote-User` here too. Small check tool or test pattern: a path **outside** the
+list (also with `..`, `%2e`, double slash) must return 401 or 307.
 
-**Fertig, wenn:** Beispiel und Gegenprobe im Repo, Konfigurationsprüfung (T-23) warnt vor Endungen.
+**Done when:** example and control test in the repo, configuration check (T-23) warns about extensions.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-- `@share` in beiden Caddy-Vorlagen, aus bis `TS_SHARE_PRAEFIX` gesetzt ist.
-- **Messung vor der Regel** (Caddy 2.11.7): Der `path`-Matcher vergleicht den bereinigten Pfad und
-  unterscheidet nicht nach Gross-/Kleinschreibung, reicht der Anwendung aber den rohen weiter.
-  `/s/..;/admin`, `/s/..%5cadmin` und `/s/abc%00` kamen durch, `/x/../s/abc` und `/S/abc` ebenso.
-  Deshalb prüft die Regel `orig_uri.path` mit einem Ausdruck und weist Tricks gesondert ab.
-- Kein „Prüfwerkzeug“ im Paket: Die Gegenprobe gegen eine echte Anwendung ist deren Share-Seite im
-  Browser (Anleitung `docs/BETRIEB.md`). Für die Vorlage selbst misst `tests/test_gate_caddy.py`
-  16 Tricks und Nachbarpfade sowie 5 offene Pfade.
-- Der Punkt aus T-23 („Konfigurationsprüfung warnt vor Endungen“) entfällt: Die Liste steht im Proxy,
-  TinySesam sieht sie nicht. Der Wächter in `tests/test_gate.py` hält die Form der Vorlagen fest.
-- Mutation: 5 Eingriffe in die Vorlagen, alle rot.
+- `@share` in both Caddy templates, off until `TS_SHARE_PRAEFIX` is set.
+- **Measurement before the rule** (Caddy 2.11.7): The `path` matcher compares the cleaned path and
+  does not distinguish upper/lower case, but passes the raw one on to the application.
+  `/s/..;/admin`, `/s/..%5cadmin` and `/s/abc%00` got through, `/x/../s/abc` and `/S/abc` likewise.
+  That is why the rule checks `orig_uri.path` with an expression and rejects tricks separately.
+- No "check tool" in the package: the control test against a real application is its share page in the
+  browser (instructions `docs/BETRIEB.md`). For the template itself `tests/test_gate_caddy.py` measures
+  16 tricks and neighbouring paths as well as 5 open paths.
+- The point from T-23 ("configuration check warns about extensions") is dropped: the list sits in the proxy,
+  TinySesam does not see it. The guard in `tests/test_gate.py` holds the shape of the templates.
+- Mutation: 5 interventions in the templates, all red.

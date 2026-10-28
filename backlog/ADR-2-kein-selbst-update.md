@@ -1,36 +1,36 @@
 ---
 id: ADR-2
 type: Decision
-title: Kein Selbst-Update — die Version bestimmt, wer installiert
+title: No self-update — whoever installs decides the version
 status: erledigt
 tags: [sicherheit, release]
 created: 2026-07-09
 ---
 
-# ADR-2 — Kein Selbst-Update
+# ADR-2 — No self-update
 
-## Kontext
+## Context
 
-Bis 0.11 konnte sich TinySesam über eine Panel-Route selbst aktualisieren (`updater.py`,
+Up to 0.11, TinySesam could update itself through a panel route (`updater.py`,
 `update_mode`, `update_pin`).
 
-## Entscheidung
+## Decision
 
-**Ersatzlos entfernt in 0.12.0.** Ein Hygiene-Test hält den Knopf draußen.
+**Removed without replacement in 0.12.0.** A hygiene test keeps the button out.
 
-## Begründung
+## Rationale
 
-Ein Auth-Dienst, der sich selbst Code nachlädt, hebelt genau die Kontrolle aus, für die er da ist:
-Wer das Panel übernimmt, übernimmt die nächste Version. Aktualisieren ist Sache dessen, der
-installiert — über die Paketverwaltung oder das Container-Abbild.
+An auth service that fetches code for itself undermines exactly the control it exists for:
+whoever takes over the panel takes over the next version. Updating is the job of whoever
+installs — through the package manager or the container image.
 
-## Konsequenzen
+## Consequences
 
-- `update_mode` und `update_pin` sind fort und dürfen nicht zurückkommen; ein Test erzwingt das.
-- Wer aktualisiert, tauscht Tag oder Abbild-Digest.
-- Die CLI bleibt mager — aber **mager heisst nicht leer**. Ergänzt 2026-09 um
-  `tinysesam passwd --db <datei> <benutzer>`: Das Kommando lädt nichts nach und spricht keinen
-  laufenden Dienst an, sondern öffnet eine Datenbankdatei, auf die man ohnehin Dateizugriff
-  braucht. Es ist der Ausweg aus der Sackgasse, in die ein Preset ohne Mailer führt (kein
-  „Passwort vergessen", kein Magic-Link, Erst-Admin-Wege nur solange kein Admin existiert).
-  Die Grenze dieser Entscheidung ist **Code nachladen**, nicht **offline warten**.
+- `update_mode` and `update_pin` are gone and must not come back; a test enforces that.
+- Whoever updates swaps the tag or image digest.
+- The CLI stays lean — but **lean does not mean empty**. Extended in 2026-09 by
+  `tinysesam passwd --db <file> <user>`: the command fetches nothing and talks to no
+  running service, but opens a database file that one needs file access to anyway. It is the
+  way out of the dead end that a preset without a mailer leads to (no
+  "forgot password", no magic link, first-admin paths only while no admin exists).
+  The boundary of this decision is **fetching code**, not **maintaining offline**.

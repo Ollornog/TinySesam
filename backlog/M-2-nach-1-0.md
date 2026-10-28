@@ -1,21 +1,21 @@
 ---
 id: M-2
 type: Milestone
-title: Nach 1.0 — das veröffentlichte Paket gepflegt halten
+title: After 1.0 — keeping the published package maintained
 status: offen
 tags: [release, wartung]
 created: 2026-09-21
 ---
 
-# M-2 — Nach 1.0: das veröffentlichte Paket gepflegt halten
+# M-2 — After 1.0: keeping the published package maintained
 
-**Fertig, wenn:** nichts mehr offen ist, was ein Nutzer des veröffentlichten Pakets merken würde —
-weder beim Installieren noch beim Betreiben.
+**Done when:** nothing is open any more that a user of the published package would notice —
+neither when installing nor when operating.
 
-Mit [M-1](M-1-api-stabil-1-0.md) **soll** die Bibliothek auf PyPI gehen
-([ADR-6](ADR-6-pypi-veroeffentlichen.md)) — veröffentlicht ist sie noch nicht, und M-1 steht nach
-der Reifeprüfung wieder auf `offen`. Ausgeliefert ist 0.18.0 über den gepinnten Git-Tag. Der
-Massstab dieses Meilensteins gilt also ab dem Tag der Veröffentlichung: Bis 1.0 heisst er „läuft
-im Repo", danach „kommt beim Fremden richtig an". Hier sammeln sich die Punkte, die aus dieser Verschiebung folgen — Fristen des
-Bau-Werkzeugs, Lücken, die beim Herrichten für die Veröffentlichung aufgefallen sind, und alles,
-was eine Hauptversion kosten würde, wenn es zu spät bemerkt wird.
+With [M-1](M-1-api-stabil-1-0.md) the library **is to** go to PyPI
+([ADR-6](ADR-6-pypi-veroeffentlichen.md)) — it is not yet published, and M-1 is back at `offen`
+after the maturity review. 0.18.0 was delivered via the pinned Git tag. The
+yardstick of this milestone therefore applies from the day of publication: until 1.0 it means "works
+in the repo", afterwards "arrives correctly at a stranger's". This is where the points collect that follow from this shift — deadlines of the
+build tooling, gaps noticed while preparing for publication, and everything
+that would cost a major version if noticed too late.

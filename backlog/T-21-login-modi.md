@@ -1,42 +1,42 @@
 ---
 id: T-21
 type: Task
-title: "Login-Modus je App: unsichtbar (Vorgabe im Gateway) oder fenster"
+title: "Login mode per app: invisible (gateway default) or window"
 status: erledigt
 milestone: M-3
 tags: [gateway, oidc, login]
 created: 2026-10-03
 ---
 
-# T-21 — Login-Modi
+# T-21 — Login modes
 
-Heute schickt das Gate bei 401 immer auf die TinySesam-Login-Seite, dort steht der OIDC-Knopf
-(`/auth/oidc/start?next=…`). Das ist der Modus `fenster` ohne App-Bezug.
+Today the gate sends to the TinySesam login page on 401, where the OIDC button is
+(`/auth/oidc/start?next=…`). That is the mode `fenster` (window) without any reference to the app.
 
-**Zu tun:**
-- `unsichtbar`: die Login-URL des Gates zeigt direkt auf `/auth/oidc/start?next=<Startadresse>` (bzw. den
-  Client der App, T-14). **Vorgabe im Gateway-Preset** (PO 2026-10-03); in der Bibliothek bleibt die
-  Vorgabe die Login-Seite. Nur zulässig, wenn OIDC die einzige Methode ist.
-- `fenster`: Login-Seite mit Name und Icon der App („In *App X* anmelden“), Aussehen über das Theme.
-- Je App einstellbar (`oidc_clients`-Eintrag / Gateway-Variable).
-- Fehlerfall beim Provider (Absage, Gruppe fehlt) darf nicht in eine Umleitungsschleife laufen:
-  sichtbare Fehlerseite.
+**To do:**
+- `unsichtbar` (invisible): the login URL of the gate points directly to `/auth/oidc/start?next=<start address>` (or the
+  client of the app, T-14). **Default in the gateway preset** (PO 2026-10-03); in the library the
+  default stays the login page. Only permitted if OIDC is the only method.
+- `fenster` (window): login page with the name and icon of the app ("Sign in to *App X*"), appearance via the theme.
+- Configurable per app (`oidc_clients` entry / gateway variable).
+- An error case at the provider (refusal, group missing) must not run into a redirect loop:
+  visible error page.
 
-**Fertig, wenn:** Browser-Test beider Modi, Schleifentest bei Absage, Doku EN/DE, Mutation.
+**Done when:** browser test of both modes, loop test on refusal, docs EN/DE, mutation.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-Die Werte heissen englisch (Regel der Stufen A/B): `forward_login = "page" | "direct"`, je Host in
-`forward_apps` (`name`, `login`) statt im Eintrag von `oidc_clients` — die Einstellung gilt auch für
-eine Installation mit nur einem Client.
+The values are named in English (rule of stages A/B): `forward_login = "page" | "direct"`, per host in
+`forward_apps` (`name`, `login`) instead of in the entry of `oidc_clients` — the setting also applies to
+an installation with only one client.
 
-- `direct` nur für **Seitenaufrufe** (`Sec-Fetch-Mode: navigate`, sonst `Accept: text/html`); jede
-  andere Anfrage geht zur Login-Seite. Ohne das hätte jede XHR einer abgelaufenen Sitzung einen
-  eigenen OIDC-Flow begonnen (Datenbankzeile, Rate-Limit von `/auth/oidc/start`).
-- `direct` nur mit OIDC als einziger Methode — beim Start geprüft und zur Laufzeit noch einmal.
-- Absage des Providers: Der Callback antwortet mit einer Fehlerseite, nicht mit einer Umleitung —
-  keine Schleife.
-- **Icon** der Anwendung auf der Login-Seite: nicht gebaut. Es bräuchte eine Bilddatei, die TinySesam
-  selbst ausliefert (keine fremde Quelle) — offen als Wunsch, kein Task.
-- Beim Bau gefunden und behoben: [B-2](B-2-schleife-ohne-app-freigabe.md).
-- Test: `tests/test_login_modi.py`, 9 Mutationen rot.
+- `direct` only for **page requests** (`Sec-Fetch-Mode: navigate`, otherwise `Accept: text/html`); every
+  other request goes to the login page. Without that, every XHR of an expired session would have started
+  its own OIDC flow (database row, rate limit of `/auth/oidc/start`).
+- `direct` only with OIDC as the only method — checked at startup and once more at runtime.
+- Refusal by the provider: the callback answers with an error page, not with a redirect —
+  no loop.
+- **Icon** of the application on the login page: not built. It would need an image file that TinySesam
+  delivers itself (no foreign source) — open as a wish, not a task.
+- Found and fixed during the build: [B-2](B-2-schleife-ohne-app-freigabe.md).
+- Test: `tests/test_login_modi.py`, 9 mutations red.

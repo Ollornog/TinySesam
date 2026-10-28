@@ -1,42 +1,42 @@
 ---
 id: T-25
 type: Task
-title: E2E-Bühne — die OIDC-Zeremonie scheitert am Identity Provider
+title: E2E stage — the OIDC ceremony fails at the identity provider
 status: erledigt
 milestone: M-2
 tags: [e2e, oidc, stage]
 created: 2026-10-03
 ---
 
-# T-25 — OIDC auf der E2E-Bühne wieder grün
+# T-25 — OIDC on the E2E stage green again
 
-Seit v0.20.1 läuft `tests/e2e_stage.py` auf der Bühne ([T-6](T-6-stage-per-playbook.md)) für Passkey und SAML grün,
-für **OIDC rot**. Der Provider (PocketID) lehnt die Anmeldung ab mit „You are not allowed to access this service“.
+Since v0.20.1 `tests/e2e_stage.py` has run green on the stage ([T-6](T-6-stage-per-playbook.md)) for passkey and SAML,
+**red for OIDC**. The provider (PocketID) rejects the sign-in with "You are not allowed to access this service".
 
-**Ursache:** Das Testkonto gehört keiner Gruppe, die für den OIDC-Client der Bühne freigegeben ist. Seit PocketID v2
-ist ein Client ohne Gruppenfreigabe für niemanden offen. Das ist kein Fehler in TinySesam, aber solange OIDC rot ist,
-prüft der E2E-Lauf nur zwei der drei Wege aus [T-1](T-1-e2e-gegen-echten-idp.md).
+**Cause:** The test account does not belong to a group that is approved for the stage's OIDC client. Since PocketID v2
+a client without group approval is open to nobody. This is not a bug in TinySesam, but as long as OIDC is red,
+the E2E run checks only two of the three routes from [T-1](T-1-e2e-gegen-echten-idp.md).
 
-## Die Bühne wird je Lauf neu gebaut
+## The stage is rebuilt for each run
 
-Entscheidung vom 2026-10-03: Die Bühne ist kein Dauerbetrieb. Sie wird aufgebaut, der Lauf fährt, danach wird sie
-abgebaut. Die Freigabe muss deshalb dort liegen, wo sie einen Neubau überlebt: beim Provider (Gruppe des Testkontos
-bzw. freigegebene Gruppe des Clients), nicht in der Bühne.
+Decision of 2026-10-03: The stage is not permanent operation. It is set up, the run goes, afterwards it is
+torn down. The approval must therefore live where it survives a rebuild: at the provider (group of the test account
+or approved group of the client), not in the stage.
 
-## Fertig, wenn
+## Done when
 
-- Das Testkonto beim Provider einer Gruppe angehört, die für den Client der Bühne freigegeben ist, oder der Client
-  eine eigene Testgruppe freigibt.
-- Ein Lauf auf einer **frisch gebauten** Bühne alle drei Wege grün meldet.
-- Die Gegenprobe hält: Ohne die Freigabe wird OIDC rot und nicht stillschweigend übersprungen.
+- The test account belongs, at the provider, to a group that is approved for the stage's client, or the client
+  approves a test group of its own.
+- A run on a **freshly built** stage reports all three routes green.
+- The control run holds: without the approval OIDC turns red and is not silently skipped.
 
-Verwandt: [T-14](T-14-mehrere-oidc-clients.md) — die Freigabe je App liegt beim Identity Provider.
+Related: [T-14](T-14-mehrere-oidc-clients.md) — the approval per app lies with the identity provider.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-- Beim Provider eine eigene Testgruppe angelegt (PO-Freigabe 2026-10-07). Mitglied ist nur das Testkonto,
-  freigegeben nur für den OIDC-Client der Bühne. Die übrigen Gruppen und Clients sind unverändert.
-- Lauf auf einer **frisch gebauten** Bühne (Stand `main` nach T-18): `passkey: grün · saml: grün · oidc: grün`,
-  OIDC angemeldet als das Testkonto.
-- Gegenprobe: Testkonto aus der Gruppe genommen, derselbe Lauf → `oidc: ROT` („You are not allowed to access
-  this service“), Exit 1 — rot, nicht übersprungen. Danach Mitgliedschaft wiederhergestellt, Bühne abgebaut.
+- A separate test group was created at the provider (PO approval 2026-10-07). Only the test account is a member,
+  approved only for the stage's OIDC client. The other groups and clients are unchanged.
+- Run on a **freshly built** stage (state of `main` after T-18): `passkey: grün · saml: grün · oidc: grün`,
+  OIDC signed in as the test account.
+- Control run: test account taken out of the group, same run → `oidc: ROT` ("You are not allowed to access
+  this service"), exit 1 — red, not skipped. Afterwards membership restored, stage torn down.

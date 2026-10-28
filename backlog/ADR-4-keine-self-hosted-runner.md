@@ -1,32 +1,32 @@
 ---
 id: ADR-4
 type: Decision
-title: CI bleibt auf gehosteten Runnern — self-hosted ausgeschlossen
+title: CI stays on hosted runners — self-hosted ruled out
 status: erledigt
 tags: [ci, sicherheit]
 created: 2026-07-10
 ---
 
-# ADR-4 — CI bleibt auf gehosteten Runnern
+# ADR-4 — CI stays on hosted runners
 
-## Kontext
+## Context
 
-Für private Projekte liegt es nahe, eigene Runner zu betreiben. Für dieses **öffentliche** Repo
-wurde geprüft, ob das auch hier sinnvoll wäre.
+For private projects it is natural to run your own runners. For this **public** repo,
+we checked whether that would make sense here too.
 
-## Entscheidung
+## Decision
 
-**Ausgeschlossen, nicht aufgeschoben.** Die CI läuft auf `ubuntu-latest`.
+**Ruled out, not postponed.** CI runs on `ubuntu-latest`.
 
-## Begründung
+## Rationale
 
-Bei einem öffentlichen Repo kann jeder einen Fork-PR öffnen, dessen Workflow dann auf fremder
-Hardware liefe. Nicht-ephemere Runner sind damit dauerhaft kompromittierbar — GitHub rät
-ausdrücklich davon ab.
+In a public repo anyone can open a fork PR, whose workflow would then run on your own
+hardware. Non-ephemeral runners can therefore be compromised permanently — GitHub explicitly
+advises against it.
 
-**Kosten sind kein Gegenargument:** öffentliche Repos haben unbegrenzte Minuten.
+**Cost is no counter-argument:** public repos have unlimited minutes.
 
-## Konsequenzen
+## Consequences
 
-- `runs-on: ubuntu-latest` ist hier eine Sicherheitsentscheidung, keine Beiläufigkeit.
-- Die Zeile darf nicht auf `self-hosted` wechseln.
+- `runs-on: ubuntu-latest` is a security decision here, not an incidental detail.
+- The line must not switch to `self-hosted`.

@@ -1,38 +1,38 @@
 ---
 id: T-23
 type: Task
-title: Konfigurationsprüfung für den Gate-Betrieb
+title: Configuration check for gate operation
 status: erledigt
 milestone: M-3
 tags: [gateway, konfiguration]
 created: 2026-10-03
 ---
 
-# T-23 — Konfigurationsprüfung
+# T-23 — Configuration check
 
-**Warnungen bzw. Fehler in `konfigpruefung.py`:**
-- `login=unsichtbar` + `logout=app` → Warnung: die App ist nach dem nächsten Klick lautlos wieder
-  angemeldet, „nur App abmelden“ wirkt praktisch nicht.
-- `unsichtbar` bei mehr als einer Anmeldemethode → Fehler.
-- Cookie-Domain auf Elterndomain im Gate-Betrieb → Fehler (Sitzung wäre für jede geschützte App lesbar).
-- Share-Ausnahme mit Dateiendung statt Präfix → Warnung (wo die Liste in TinySesam bekannt ist).
-- Gate-Token-Laufzeit über 15 min → Warnung (Widerrufsverzug).
+**Warnings or errors in `konfigpruefung.py`:**
+- `login=unsichtbar` + `logout=app` → warning: the app is silently signed in again after the next click,
+  "sign out of the app only" has practically no effect.
+- `unsichtbar` with more than one sign-in method → error.
+- Cookie domain on the parent domain in gate operation → error (the session would be readable by every protected app).
+- Share exception with a file extension instead of a prefix → warning (where the list is known in TinySesam).
+- Gate token lifetime over 15 min → warning (revocation delay).
 
-**Fertig, wenn:** je Regel Test + Mutation.
+**Done when:** per rule a test + mutation.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-Gegen den gebauten Stand nachgeprüft — drei der geplanten Regeln waren überholt:
+Re-checked against the built state — three of the planned rules were obsolete:
 
-- `unsichtbar` + `logout=app` → **keine** Warnung: Die Sperre an der Sitzung (T-22) hält auch mit
-  `direct`, die Anwendung zeigt danach die Login-Seite mit „Weiter als …“.
-- Cookie-Domain auf der Elterndomain → **kein** Fehler: Das ist das bestehende Forward-Auth-Modell (die
-  Vorlagen entfernen die TinySesam-Cookies vor der Anwendung, B-20); der geplante Code-Austausch, für den
-  die Regel gedacht war, entfiel mit ADR-9.
-- Share-Endungen → entfällt (die Liste steht im Proxy, T-20).
-- Schon beim Bau der Funktionen eingebaut (Fehler): `direct` neben anderen Methoden (T-21),
-  unbekannte Werte/Schlüssel in `forward_apps` (T-21/T-22), Cookie-Name, Laufzeit, Gate ohne
-  Forward-Auth (T-19).
+- `unsichtbar` + `logout=app` → **no** warning: the lock on the session (T-22) holds even with `direct`,
+  the application then shows the login page with "Continue as …".
+- Cookie domain on the parent domain → **no** error: that is the existing forward-auth model (the
+  templates remove the TinySesam cookies before the application, B-20); the planned code exchange, for which
+  the rule was intended, was dropped with ADR-9.
+- Share extensions → dropped (the list sits in the proxy, T-20).
+- Built in already when building the functions (error): `direct` next to other methods (T-21),
+  unknown values/keys in `forward_apps` (T-21/T-22), cookie name, lifetime, gate without
+  forward auth (T-19).
 
-Neu (Warnungen): Laufzeit über 900 s, Gate ohne geschützten Host, `forward_apps` ohne Forward-Auth,
-`direct` + Abmelden `all`/`ask` ohne `oidc_rp_logout`. Test `tests/test_konfig_gate.py`, 5 Mutationen rot.
+New (warnings): lifetime over 900 s, gate without a protected host, `forward_apps` without forward auth,
+`direct` + sign-out `all`/`ask` without `oidc_rp_logout`. Test `tests/test_konfig_gate.py`, 5 mutations red.

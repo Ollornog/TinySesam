@@ -1,33 +1,33 @@
 ---
 id: ADR-3
 type: Decision
-title: Schutz in der App pro Route, nicht auf Proxy-Ebene
+title: Protection in the app per route, not at proxy level
 status: erledigt
 tags: [architektur, auth, forward-auth]
 created: 2026-07-06
 ---
 
-# ADR-3 — Schutz in der App, nicht auf Proxy-Ebene
+# ADR-3 — Protection in the app, not at proxy level
 
-## Kontext
+## Context
 
-Zwei verbreitete Muster: Forward-Auth am Reverse-Proxy (wie Authelia, oauth2-proxy) oder eine
-Abhängigkeit an der einzelnen Route in der Anwendung.
+Two common patterns: forward auth at the reverse proxy (like Authelia, oauth2-proxy) or a
+dependency on the individual route in the application.
 
-## Entscheidung
+## Decision
 
-**In der App, pro Route** (Dependency an der Route oder an einem Sub-Router). Der Webserver
-terminiert nur TLS und reicht alle Pfade durch.
+**In the app, per route** (dependency on the route or on a sub-router). The web server
+only terminates TLS and passes all paths through.
 
-## Begründung
+## Rationale
 
-Für **eigene** Anwendungen ist das die richtige Naht: Öffentliche Vorschauen bleiben offen,
-während einzelne Bereiche eine Anmeldung verlangen — beides im selben Deployment, ohne dass ein
-Proxy die Pfadmuster nachbauen muss. Eine Proxy-Lösung hinkt bei jeder neuen Route hinterher.
+For **your own** applications this is the right seam: public previews stay open
+while individual areas require sign-in — both in the same deployment, without a
+proxy having to replicate the path patterns. A proxy solution lags behind with every new route.
 
-## Konsequenzen
+## Consequences
 
-- Für **fremde** Anwendungen, die man nicht anfassen kann, gibt es zusätzlich den Forward-Auth-Modus
-  (`/auth/forward`, `/auth/verify`, Gateway-Preset). Das ist ein **eigener Betriebsmodus**, kein
-  Ersatz für das Grundmodell.
-- OIDC-`state`/`nonce` und die WebAuthn-Challenge liegen serverseitig im Store, nicht im Client.
+- For **third-party** applications that cannot be touched, there is additionally the forward-auth mode
+  (`/auth/forward`, `/auth/verify`, gateway preset). That is a **separate operating mode**, not a
+  replacement for the basic model.
+- OIDC `state`/`nonce` and the WebAuthn challenge live server-side in the store, not in the client.

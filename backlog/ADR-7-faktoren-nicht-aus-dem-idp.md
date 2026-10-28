@@ -1,71 +1,71 @@
 ---
 id: ADR-7
 type: Decision
-title: TOTP-Geheimnisse und PINs kommen nie aus dem Identitätsanbieter
+title: TOTP secrets and PINs never come from the identity provider
 status: erledigt
 tags: [architektur, oidc, mfa, pocketid]
 created: 2026-09-22
 ---
 
-# ADR-7 — TOTP-Geheimnisse und PINs kommen nie aus dem Identitätsanbieter
+# ADR-7 — TOTP secrets and PINs never come from the identity provider
 
-## Kontext
+## Context
 
-Beim Symbiose-Audit mit PocketID (2026-09-22) kam die Frage auf, ob sich der zweite Faktor
-zentral im Identitätsanbieter (IdP) pflegen lässt: PocketID kann jedem Benutzer beliebige
-**Custom Claims** mitgeben, und diese Claims stehen im ID-Token. Ein `totp_secret` oder eine
-`tinysesam_pin` dort einzutragen, wäre auf den ersten Blick bequem — eine Stelle für alle Dienste,
-kein zweites Enrollment, und ein Wechsel des Authenticators wäre eine Änderung im IdP-Panel.
+During the symbiosis audit with PocketID (2026-09-22) the question arose whether the second factor
+can be maintained centrally in the identity provider (IdP): PocketID can give every user arbitrary
+**custom claims**, and these claims appear in the ID token. Entering a `totp_secret` or a
+`tinysesam_pin` there would at first glance be convenient — one place for all services,
+no second enrollment, and switching authenticators would be a change in the IdP panel.
 
-Die Frage ist berechtigt, weil TinySesam in dieser Installation hinter PocketID steht und die
-Benutzerverwaltung dort liegt. Sie ist trotzdem mit Nein zu beantworten, und zwar aus einem Grund,
-der nichts mit PocketID zu tun hat.
+The question is legitimate because TinySesam sits behind PocketID in this installation and
+user management lives there. It must nevertheless be answered with no, and for a reason
+that has nothing to do with PocketID.
 
-## Optionen
+## Options
 
-1. **Custom Claim im ID-Token.** Der IdP trägt das TOTP-Geheimnis (bzw. die PIN) als Claim ein,
-   TinySesam liest es beim Login und prüft den eingegebenen Code dagegen.
-2. **Abruf über die IdP-API.** TinySesam holt das Geheimnis bei Bedarf über eine API des IdP,
-   statt es im Token zu transportieren.
-3. **Faktoren bleiben lokal.** TinySesam verwaltet TOTP und PIN selbst; der IdP liefert
-   Identität, Gruppen und Freigabe — nicht Geheimnisse.
+1. **Custom claim in the ID token.** The IdP carries the TOTP secret (or the PIN) as a claim,
+   TinySesam reads it at login and checks the entered code against it.
+2. **Retrieval via the IdP API.** TinySesam fetches the secret on demand through an API of the IdP
+   instead of transporting it in the token.
+3. **Factors stay local.** TinySesam manages TOTP and PIN itself; the IdP supplies
+   identity, groups and approval — not secrets.
 
-## Entscheidung
+## Decision
 
-**Option 3.** TOTP-Geheimnisse und PINs bleiben in TinySesams eigener Datenbank.
+**Option 3.** TOTP secrets and PINs stay in TinySesam's own database.
 
-## Begründung
+## Rationale
 
-**Ein Claim geht an jeden Client, nicht an einen.** Custom Claims hängen in PocketID am Benutzer,
-nicht am OIDC-Client. Ein Geheimnis dort steht damit im ID-Token **jeder** Anwendung, bei der sich
-dieser Benutzer anmeldet — in dieser Installation sind das dreizehn. Der zweite Faktor wäre nach
-einem einzigen Login bei irgendeiner davon bekannt. Was als „eine Stelle für alle" gedacht war,
-ist „ein Leck bei jedem".
+**A claim goes to every client, not to one.** In PocketID, custom claims attach to the user,
+not to the OIDC client. A secret there therefore appears in the ID token of **every** application this user
+signs in to — in this installation that is thirteen. The second factor would be known after
+a single login to any one of them. What was meant as "one place for all"
+is "a leak at every one".
 
-**Ein zweiter Faktor, den der erste mitliefert, ist keiner.** Das ID-Token ist das Ergebnis des
-ersten Faktors. Käme das TOTP-Geheimnis darin mit, hätte wer auch immer diesen Anmeldevorgang
-abschließt, damit sofort auch den zweiten. Zwei Faktoren müssen aus zwei Quellen stammen, sonst
-sind sie einer mit zwei Eingabefeldern.
+**A second factor that the first one delivers is not one.** The ID token is the result of the
+first factor. If the TOTP secret came along in it, whoever completes this sign-in flow
+would immediately have the second factor too. Two factors must come from two sources, otherwise
+they are one with two input fields.
 
-**Auch Option 2 löst das nicht.** Ein Abruf über die API verkleinert den Empfängerkreis, aber das
-Geheimnis liegt dann in zwei Systemen statt in einem, und die Frage „wem gehört der Faktor" ist
-weiter unbeantwortet. Ein TOTP-Geheimnis ist ein *Verifikationsgeheimnis*: Es gehört dorthin, wo
-geprüft wird, und nirgendwo sonst. Dieselbe Überlegung schließt aus, es im IdP zu spiegeln.
+**Option 2 does not solve this either.** Retrieval via the API narrows the circle of recipients, but the
+secret then lies in two systems instead of one, and the question "who owns the factor" is
+still unanswered. A TOTP secret is a *verification secret*: it belongs where
+verification happens, and nowhere else. The same reasoning rules out mirroring it in the IdP.
 
-**Die Arbeitsteilung bleibt sauber.** Der IdP beantwortet: Wer ist das, in welchen Gruppen ist er,
-darf er diesen Client benutzen. TinySesam beantwortet: Reicht mir das für diese Route, und welchen
-zusätzlichen Beleg verlange ich. Das ist die Trennung, die auch ADR-5 (Rollen im Forward-Auth) und
-ADR-3 (In-App statt Proxy) tragen.
+**The division of labour stays clean.** The IdP answers: who is this, which groups is the user in,
+may the user use this client. TinySesam answers: is that enough for this route, and which
+additional proof do I require. That is the separation that ADR-5 (roles in forward auth) and
+ADR-3 (in-app instead of proxy) also carry.
 
-## Folgen
+## Consequences
 
-- Wer TOTP oder PIN nutzt, richtet sie **in TinySesam** ein. Ein zweites Enrollment ist der Preis,
-  und er ist der richtige.
-- Aus dem IdP kommen weiter: Identität (`sub`), E-Mail mit `email_verified`, Gruppen, und über die
-  Client-Freigabe die Antwort, ob dieser Benutzer diese Anwendung überhaupt benutzen darf
+- Whoever uses TOTP or PIN sets them up **in TinySesam**. A second enrollment is the price,
+  and it is the right one.
+- The following still come from the IdP: identity (`sub`), email with `email_verified`, groups, and via the
+  client approval the answer to whether this user may use this application at all
   (→ [T-14](T-14-mehrere-oidc-clients.md)).
-- **Nicht betroffen** ist die Frage, ob TinySesam einem im IdP durchgeführten MFA vertraut: Das ist
-  eine andere Entscheidung (`amr`/`acr` im Token auswerten) und steht hier nicht zur Debatte.
-- Diese ADR beantwortet nur die Herkunft der **Geheimnisse**. Dass ein im IdP gesperrter oder
-  gelöschter Benutzer in TinySesam zeitnah nachvollzogen werden muss, ist ein eigener Punkt
-  (Widerrufslücke, siehe T-13 und die Symbiose-Untersuchung).
+- **Not affected** is the question of whether TinySesam trusts an MFA performed in the IdP: that is
+  a different decision (evaluating `amr`/`acr` in the token) and is not up for debate here.
+- This ADR only answers where the **secrets** come from. That a user blocked or
+  deleted in the IdP must be reflected promptly in TinySesam is a separate point
+  (revocation gap, see T-13 and the symbiosis investigation).

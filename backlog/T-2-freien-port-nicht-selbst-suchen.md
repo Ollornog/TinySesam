@@ -1,36 +1,36 @@
 ---
 id: T-2
 type: Task
-title: Browser-Test soll den freien Port nicht selbst suchen
+title: Browser test should not look for a free port itself
 status: erledigt
 milestone: M-1
 tags: [testing, browser, flaky]
 created: 2026-07-10
 ---
 
-# T-2 — Freien Port nicht selbst suchen
+# T-2 — Do not look for a free port yourself
 
-`tests/test_browser.py: free_port()` bindet einen Port, schließt ihn und gibt die Nummer zurück.
-**Dazwischen kann ein anderer Prozess ihn belegen** — eine klassische Race Condition, die den Test
-selten und unerklärlich rot macht.
+`tests/test_browser.py: free_port()` binds a port, closes it and returns the number.
+**In between, another process can take it** — a classic race condition that makes the test fail
+rarely and inexplicably.
 
-## Lösung
+## Solution
 
-Chrome mit `--remote-debugging-port=0` starten und die tatsächliche Nummer aus `DevToolsActivePort`
-im Profilverzeichnis lesen. In einem Schwesterprojekt bewährt.
+Start Chrome with `--remote-debugging-port=0` and read the actual number from `DevToolsActivePort`
+in the profile directory. Proven in a sibling project.
 
-**Fertig, wenn:** `free_port()` entfällt und die Suite auch bei parallelen Läufen grün bleibt.
+**Done when:** `free_port()` is gone and the suite stays green even with parallel runs.
 
-## Erledigt (2026-09-19)
+## Done (2026-09-19)
 
-Die Chrome-Hälfte war bereits gebaut (`--remote-debugging-port=0` + `DevToolsActivePort`); offen
-blieb der **uvicorn-Testserver**, der denselben Fehler hatte.
+The Chrome half was already built (`--remote-debugging-port=0` + `DevToolsActivePort`); what
+remained was the **uvicorn test server**, which had the same bug.
 
-Gelöst nicht durch besseres Suchen, sondern indem die Lücke verschwindet: Der Socket wird gebunden
-und **gebunden gelassen**, dann an `uvicorn.Server.run(sockets=[...])` übergeben. Zwischen „Port
-ermittelt" und „Port belegt" gibt es damit keinen Moment mehr, in dem ihn jemand anders nehmen
-könnte. `free_port()` ist ersatzlos fort.
+Solved not by searching better, but by making the gap disappear: the socket is bound and **kept
+bound**, then handed to `uvicorn.Server.run(sockets=[...])`. There is no longer a moment between
+"port determined" and "port taken" in which anyone else could grab it. `free_port()` is gone
+without replacement.
 
-Geprüft mit vier parallelen Läufen der Browser-Suite auf demselben Rechner — alle grün. Ein
-direkter Negativtest ist nicht sinnvoll konstruierbar: Race Conditions tauchen selten auf, der
-Beleg ist das strukturelle Verschwinden des Fensters.
+Verified with four parallel runs of the browser suite on the same machine — all green. A direct
+negative test cannot sensibly be constructed: race conditions show up rarely, the evidence is the
+structural disappearance of the window.

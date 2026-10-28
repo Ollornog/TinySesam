@@ -1,652 +1,651 @@
-# Betrieb — was TinySesam tut, wenn etwas ausfällt
+# Operations — what TinySesam does when something fails
 
-Diese Seite ist für den Betreiber: Was passiert, wenn ein Teil wegbricht, wie man Sitzungen und
-fremde Identitäten verwaltet, und wie stark die einzelnen Anmeldewege wirklich sind. Die READMEs
-zeigen, wie man TinySesam einbaut; hier steht, womit man danach rechnen muss.
+This page is for the operator: what happens when a component drops out, how to manage sessions and
+foreign identities, and how strong the individual sign-in methods really are. The READMEs show how
+to build TinySesam in; this page says what to expect afterwards.
 
-Jede Aussage hier ist am Code nachgestellt. Wo ein Verhalten eine bekannte Schwäche ist, steht die
-Backlog-Kennung dabei ([T-13](../backlog/T-13-audit-2026-09-22-runde-3.md)).
+Every statement here has been reproduced against the code. Where a behaviour is a known weakness, the
+backlog ID is given ([T-13](../backlog/T-13-audit-2026-09-22-runde-3.md)).
 
-## Ausfallverhalten
+## Failure behaviour
 
-Grundregel: **Fällt eine Prüfinstanz aus, wird nicht angemeldet** (fail-closed). Zwei bewusste
-Ausnahmen stehen unten ausdrücklich dabei (Redis, Sicherheits-Log): Dort wird eine *Bremse*
-schwächer oder fällt ein *Protokoll* weg, nicht die Prüfung selbst.
+Basic rule: **if a checking component fails, nobody is signed in** (fail-closed). Two deliberate
+exceptions are listed explicitly below (Redis, security log): there a *throttle* becomes weaker or a
+*log* is lost, not the check itself.
 
-| Was fällt aus | Was der Nutzer sieht | Was der Betreiber sieht |
+| What fails | What the user sees | What the operator sees |
 |---|---|---|
-| **Datenbank nur lesbar** (Read-only-Mount, Rechte nach einem Rückspielen) | Anmeldung scheitert mit 500, sobald eine Sitzung geschrieben wird. Bestehende Sitzungen lesen weiter. | Gateway: `/healthz` → **503** `degraded` (Schreibprobe, B6-4). Log: `Healthcheck: Datenbank nicht beschreibbar`. |
-| **Datenbank-Volume voll** | wie oben, sobald SQLite neuen Platz braucht | `/healthz` → 503, **wenn** die Schreibprobe Platz braucht. Eine Probe, die in schon belegte Seiten schreibt, sieht einen fast vollen Datenträger nicht — Plattenplatz gehört zusätzlich in die Überwachung des Hosts. |
-| **Datenbank gesperrt** (zweiter Schreiber: weiterer Worker, `tinysesam` auf der Kommandozeile, Sicherung) | Die Anfrage wartet bis zu **10 s** (`Store.BUSY_TIMEOUT_MS`, B6-11), dann 500 (`database is locked`). Die nächste Anfrage läuft normal: Ein gescheiterter Schreibzugriff rollt zurück und lässt keine Transaktion offen. | die 500 steht im Log des ASGI-Servers. `/healthz` wartet ebenso und meldet erst nach 10 s 503 — der HEALTHCHECK des Abbilds wartet deshalb 12 s. Bis zur Integration von T-13 hinterliess ein solcher Fehlschlag (auch der Schreibprobe von `/healthz`) eine offene Transaktion, und jede folgende Anmeldung endete mit 500, bis zufällig ein anderer Schreibzugriff committete. Findet der Anmeldeweg trotzdem eine vor, verwirft er sie und schreibt `Offene Transaktion … verworfen` ins Log — das ist dann ein Fehler an anderer Stelle. |
-| **Redis** (`redis_url`) nicht erreichbar | nichts: Anmeldungen gehen weiter | **gedrosselt je Prozess** — ein eingebauter In-Memory-Limiter übernimmt (bei `--workers N` also bis zu N-mal so grosszügig, aber eine Grenze; B6-1). Gemeldet wird der Wechsel, nicht jede Anfrage: einmal `Redis-Rate-Limit nicht erreichbar …`, einmal bei der Rückkehr (B6-2); schon der Start fragt Redis per `ping`. Nach einem Fehler ruht Redis 30 s, dann folgt der nächste Versuch. Die Kontosperre (in der Datenbank) greift unverändert. |
-| **SMTP / Mailer** | Magic-Link und „Passwort vergessen": dieselbe Erfolgsseite wie immer (keine Konto-Enumeration), aber keine Mail. Registrierung mit Bestätigungsmail: ebenfalls die übliche Seite („Mail unterwegs"); das eben angelegte Konto wird wieder entfernt und die Registrierung lässt sich wiederholen (B6-5). Ist gar kein Mailer eingerichtet (kein `smtp_host`, kein `set_mailer`), lehnt die Registrierung mit Bestätigung sofort mit 500 ab. | Audit: `magic_send_error`, `reset_send_error` bzw. `verify_send_error` (mit „Konto entfernt"). Das Token der nicht zugestellten Mail ist sofort abgelaufen (B6-12) — ein Relay, das die Mail doch noch nachreicht, trägt einen toten Link. |
-| **OIDC-Provider** | Neue Anmeldungen über OIDC scheitern (Fehlerseite). Bestehende Sitzungen laufen weiter bis `session_ttl_hours`. | Mit mehreren Anwendungen und `oidc_revalidate_minutes`: Nach Ablauf der Frist schickt Forward-Auth den Nutzer zum Provider — ist der weg, endet der Zugang zu **dieser** Anwendung (fail-closed). |
-| **LDAP-Server** | 503 „Verzeichnis nicht erreichbar" — für jedes Konto dieselbe Antwort. Lokale Konten mit eigenem Passwort (der Notfall-Admin) melden sich weiter an. | Ein Ausfall ist kein Fehlversuch: keine Sperre, kein `failed login` (F-23); ein falsches **lokales** Passwort zählt weiter (A-1). Audit `ldap_unavailable`, im Sicherheits-Log `LDAP nicht erreichbar user=… grund=…`. Nach dem ersten Fehlschlag, der das Verzeichnis als Ganzes betrifft (Verbindungsaufbau, TLS, Dienstkonto, oder eine Frage, die bis zum Timeout hing), fragt TinySesam das Verzeichnis **30 s lang gar nicht** (`ldap_.AUSFALL_PAUSE_SEK`), danach fragt eine einzelne Anmeldung nach. Bricht das Verzeichnis nur **eine** Anfrage schnell ab, nachdem deren Eingaben gesendet waren (etwa slapd bei einer PDU über `sockbuf_max_incoming`), bekommt nur diese 503 (`grund=LDAP: nur diese Anfrage abgebrochen …` im Sicherheits-Log) — sonst schaltete eine präparierte Anmeldung LDAP für alle ab. Benutzernamen über 256 und Passwörter über 1024 Zeichen (`ldap_.LDAP_NAME_MAX`, `LDAP_PASSWORT_MAX`) gehen gar nicht erst ans Verzeichnis und zählen wie ein falsches Passwort (401, `failed login`); Ausfall und Rückkehr stehen je einmal im Log (`LDAP-Verzeichnis nicht erreichbar (…)`, `… wieder erreichbar`). Ohne diese Pause hing bei einem Verzeichnis, das Pakete verwirft, jeder Anlauf bis zum Timeout (10 s, `ldap_.VERBINDUNGS_TIMEOUT`). **Das erste Fenster** (bis zum ersten Timeout, je Ausfall und Prozess) hängt weiter, sperrt aber niemanden mehr (G9): Die Vorbuchung einer LDAP-Anmeldung schwebt (`login_attempt.offen`), bis das Verzeichnis geantwortet hat. Wer nur an schwebenden Vorbuchungen scheitern würde — die Kollegen hinter derselben NAT-Adresse, der Notfall-Admin —, wartet, bis sie entschieden sind: höchstens 12 s, höchstens 8 Wartende je Prozess. Danach 503 bzw. die Anmeldung; wer keinen Warteplatz bekommt oder die Frist überschreitet, bekommt 429 mit `deferred login user=… ip=… reason=pending` im Sicherheits-Log — **keine** Sperre, kein `failed login` (fail2ban bannt nicht), kein Sperrhinweis. Eine Salve falscher Passwörter wartet mit und bekommt danach die echte Sperre (R7-2). Eine offene Vorbuchung, die nach 30 s niemand abgeschlossen hat (`Store.VORBUCHUNG_SCHWEBE_SEK`, Prozess gestorben), zählt als Fehlversuch. Damit eine noch laufende Anmeldung nie so zählt, hat jede Frage ans Verzeichnis **insgesamt höchstens 25 s** (`ldap_.GESAMT_FRIST_SEK`, seit 2026-09-27): Jede Antwort bekommt ihren Anteil — das Dienstkonto höchstens die Hälfte des Rests, die Benutzer-Verbindung den Rest, je Antwort höchstens 10 s. Bei Search-then-Bind mit StartTLS sind das 2 s je Antwort des Dienstkontos (ldaps 3 s, ohne TLS 4 s), danach für die Benutzer-Verbindung bis zu 5 s (ldaps 6 s, ohne TLS 8 s). Ein Verzeichnis, das langsamer antwortet, gilt als nicht erreichbar (503, kein Fehlversuch). Ein Verzeichnis im selben Netz braucht Millisekunden. |
-| **Extra fehlt zur Laufzeit** (`[oidc]`, `[saml]`, `[ldap]`, `[passkey]`) | Anmeldung über dieses Verfahren scheitert mit einer lesbaren Meldung | Beim Start eine Warnzeile mit `pip install 'tinysesam[…]'` (der Start selbst bleibt möglich — ein eigener Client lässt sich setzen); beim ersten Versuch `MissingExtra` mit dem Paketnamen statt einer 500 aus der Tiefe. |
-| **Extra `[argon2]` fehlt** (neues Abbild, venv neu aufgesetzt) | Jedes Konto mit argon2-Hash: „Passwort falsch". | Beim Start eine Zeile mit der Zahl der betroffenen Hashes und `pip install 'tinysesam[argon2]'`; im Betrieb einmal je Prozess dieselbe Abhilfe (B6-8). scrypt-Hashes prüft jede Installation. |
-| **Systemuhr springt zurück** (NTP, Pi ohne Pufferbatterie, VM-Snapshot) | nichts — Fristen laufen normal weiter | Warnzeile `Die Systemuhr steht … hinter der zuletzt benutzten Zeit`. TinySesam zählt monoton weiter; abgelaufene Sitzungen, Einmal-Token und Step-ups leben nicht wieder auf (B6-9). Über einen **Neustart** trägt die Datenbank den Stand: Sie sichert ihn höchstens jede Minute (`uhr_stand`, bei jedem Schreibzugriff und bei der Schreibprobe von `/healthz`). Was in der Zeit danach ablief — die letzte Minute, oder die ganze Ruhezeit einer Instanz ohne Healthcheck und ohne Anmeldungen —, gilt nach einem Boot mit altem Datum wieder, bis die Uhr diesen Abstand aufgeholt hat. Sprang die Uhr einmal falsch nach **vorn**, bleiben Zeitstempel dort, bis die Wanduhr aufholt. |
-| **Sicherheits-Log** (`security_log`) nicht schreibbar | nichts | Beim Start: `security_log … nicht schreibbar — fail2ban bekommt nichts zu lesen`. Angemeldet wird trotzdem — ein fehlendes Protokoll ist kein Grund, den Dienst stillzulegen. |
+| **Database read-only** (read-only mount, permissions after a restore) | Sign-in fails with 500 as soon as a session is written. Existing sessions keep reading. | Gateway: `/healthz` → **503** `degraded` (write probe, B6-4). Log: `Healthcheck: Datenbank nicht beschreibbar`. |
+| **Database volume full** | as above, as soon as SQLite needs new space | `/healthz` → 503, **if** the write probe needs space. A probe that writes into pages that are already allocated does not see an almost full disk — disk space belongs in the host's monitoring as well. |
+| **Database locked** (second writer: another worker, `tinysesam` on the command line, a backup) | The request waits up to **10 s** (`Store.BUSY_TIMEOUT_MS`, B6-11), then 500 (`database is locked`). The next request runs normally: a failed write rolls back and leaves no transaction open. | the 500 appears in the ASGI server's log. `/healthz` waits the same way and reports 503 only after 10 s — the image's HEALTHCHECK therefore waits 12 s. Until T-13 was integrated, such a failure (also of the write probe of `/healthz`) left a transaction open, and every following sign-in ended with 500 until some other write happened to commit. If the sign-in path finds one anyway, it discards it and writes `Offene Transaktion … verworfen` to the log — that then points to a bug elsewhere. |
+| **Redis** (`redis_url`) unreachable | nothing: sign-ins continue | **throttled per process** — a built-in in-memory limiter takes over (with `--workers N` up to N times as generous, but still a limit; B6-1). The switch is reported, not every request: once `Redis-Rate-Limit nicht erreichbar …`, once on return (B6-2); the start already asks Redis with `ping`. After an error Redis rests for 30 s, then the next attempt follows. The account lockout (in the database) applies unchanged. |
+| **SMTP / mailer** | Magic link and "forgot password": the same success page as always (no account enumeration), but no mail. Registration with confirmation mail: likewise the usual page ("Mail on its way"); the account just created is removed again and the registration can be repeated (B6-5). If no mailer is set up at all (no `smtp_host`, no `set_mailer`), registration with confirmation is rejected immediately with 500. | Audit: `magic_send_error`, `reset_send_error` or `verify_send_error` (with "account removed"). The token of the undelivered mail has expired immediately (B6-12) — a relay that delivers the mail after all carries a dead link. |
+| **OIDC provider** | New sign-ins via OIDC fail (error page). Existing sessions keep running until `session_ttl_hours`. | With several applications and `oidc_revalidate_minutes`: after the period expires, forward-auth sends the user to the provider — if that is gone, access to **this** application ends (fail-closed). |
+| **LDAP server** | 503 "directory not reachable" — the same answer for every account. Local accounts with their own password (the emergency admin) keep signing in. | An outage is not a failed attempt: no lockout, no `failed login` (F-23); a wrong **local** password still counts (A-1). Audit `ldap_unavailable`, in the security log `LDAP nicht erreichbar user=… grund=…`. After the first failure that affects the directory as a whole (connection setup, TLS, service account, or a question that hung until the timeout), TinySesam **does not ask the directory at all for 30 s** (`ldap_.AUSFALL_PAUSE_SEK`), after that a single sign-in probes again. If the directory aborts only **one** request quickly after its inputs were sent (e.g. slapd on a PDU above `sockbuf_max_incoming`), only that one gets 503 (`grund=LDAP: nur diese Anfrage abgebrochen …` in the security log) — otherwise a crafted sign-in would switch LDAP off for everyone. User names above 256 and passwords above 1024 characters (`ldap_.LDAP_NAME_MAX`, `LDAP_PASSWORT_MAX`) never reach the directory and count like a wrong password (401, `failed login`); outage and return are logged once each (`LDAP-Verzeichnis nicht erreichbar (…)`, `… wieder erreichbar`). Without this pause, with a directory that drops packets, every attempt hung until the timeout (10 s, `ldap_.VERBINDUNGS_TIMEOUT`). **The first window** (until the first timeout, per outage and process) still hangs, but no longer locks anyone out (G9): the pre-booking of an LDAP sign-in stays pending (`login_attempt.offen`) until the directory has answered. Anyone who would fail only because of pending pre-bookings — the colleagues behind the same NAT address, the emergency admin — waits until they are decided: at most 12 s, at most 8 waiters per process. After that 503 or the sign-in; anyone who gets no waiting slot or exceeds the deadline gets 429 with `deferred login user=… ip=… reason=pending` in the security log — **no** lockout, no `failed login` (fail2ban does not ban), no lockout notice. A salvo of wrong passwords waits along and then gets the real lockout (R7-2). An open pre-booking that nobody has completed after 30 s (`Store.VORBUCHUNG_SCHWEBE_SEK`, process died) counts as a failed attempt. So that a sign-in that is still running never counts that way, every question to the directory has **at most 25 s in total** (`ldap_.GESAMT_FRIST_SEK`, since 2026-09-27): each answer gets its share — the service account at most half of the remainder, the user connection the rest, at most 10 s per answer. With search-then-bind and StartTLS that is 2 s per service-account answer (ldaps 3 s, without TLS 4 s), then up to 5 s for the user connection (ldaps 6 s, without TLS 8 s). A directory that answers more slowly counts as unreachable (503, no failed attempt). A directory on the same network needs milliseconds. |
+| **Extra missing at runtime** (`[oidc]`, `[saml]`, `[ldap]`, `[passkey]`) | Sign-in via this method fails with a readable message | At start a warning line with `pip install 'tinysesam[…]'` (the start itself remains possible — a custom client can be set); on the first attempt `MissingExtra` with the package name instead of a 500 from deep inside. |
+| **Extra `[argon2]` missing** (new image, venv rebuilt) | Every account with an argon2 hash: "wrong password". | At start a line with the number of affected hashes and `pip install 'tinysesam[argon2]'`; during operation the same remedy once per process (B6-8). Every installation verifies scrypt hashes. |
+| **System clock jumps back** (NTP, Pi without backup battery, VM snapshot) | nothing — deadlines keep running normally | Warning line `Die Systemuhr steht … hinter der zuletzt benutzten Zeit`. TinySesam keeps counting monotonically; expired sessions, one-time tokens and step-ups do not come back to life (B6-9). Across a **restart** the database carries the state: it saves it at most once a minute (`uhr_stand`, on every write and on the write probe of `/healthz`). What expired in the time after that — the last minute, or the whole idle period of an instance without healthcheck and without sign-ins — is valid again after a boot with an old date, until the clock has caught up that gap. If the clock once jumped wrongly **forward**, timestamps stay there until the wall clock catches up. |
+| **Security log** (`security_log`) not writable | nothing | At start: `security_log … nicht schreibbar — fail2ban bekommt nichts zu lesen`. Sign-in continues anyway — a missing log is no reason to shut the service down. |
 
-**Healthcheck.** Das Gateway (`python -m tinysesam.gateway`) bringt `/healthz` mit: ohne Anmeldung
-erreichbar, auch bei `https_mode="force"` über HTTP, Antwort 200 `{"status": "ok"}` oder 503
-`{"status": "degraded"}` — der Fehlertext bleibt im Log, nicht im Netz. Wer TinySesam als Bibliothek
-einbindet, baut denselben Check mit `auth.store.schreibprobe()` (Innenleben, Stufe C — ohne
-Zusage, wie alles unter `auth.store`): Sie wirft die sqlite3-Ausnahme, wenn kein Commit durchgeht.
-Ein `SELECT 1` genügt nicht — er gelingt auch auf einer nur lesbaren Datei.
-Geschrieben wird höchstens alle 5 s (`Store.SCHREIBPROBE_SEK`, auch ein Commit einer Anmeldung
-zählt), dazwischen prüft die Probe nur die Verbindung: `/healthz` ist ohne Anmeldung erreichbar, und
-ein Commit je Aufruf liesse jeden, der ihn flutet, die Schreibsperre belegen. Eine gerade nur lesbar
-gewordene Datenbank meldet der Check deshalb spätestens nach 5 s.
+**Healthcheck.** The gateway (`python -m tinysesam.gateway`) ships `/healthz`: reachable without
+sign-in, also over HTTP with `https_mode="force"`, answer 200 `{"status": "ok"}` or 503
+`{"status": "degraded"}` — the error text stays in the log, not on the network. If you embed
+TinySesam as a library, build the same check with `auth.store.schreibprobe()` (internals, tier C —
+without commitment, like everything under `auth.store`): it raises the sqlite3 exception if no commit
+goes through. A `SELECT 1` is not enough — it also succeeds on a read-only file.
+It writes at most every 5 s (`Store.SCHREIBPROBE_SEK`, a commit of a sign-in counts too), in between
+the probe only checks the connection: `/healthz` is reachable without sign-in, and one commit per call
+would let anyone who floods it occupy the write lock. A database that has just become read-only is
+therefore reported by the check after 5 s at the latest.
 
-**Aufräumen.** Abgelaufene Sitzungen, Flows, Einmal-Token und alte Fehlversuche bleiben liegen, bis
-jemand `auth.gc()` bzw. `tinysesam gc` aufruft (regelmässig, z.B. per Timer). Gelesen werden sie
-nicht mehr — aber die Tabellen wachsen. Das Audit-Log räumt `gc` bewusst nicht ab (B5-11).
+**Housekeeping.** Expired sessions, flows, one-time tokens and old failed attempts stay around until
+someone calls `auth.gc()` or `tinysesam gc` (regularly, e.g. by timer). They are no longer read —
+but the tables grow. `gc` deliberately does not clean up the audit log (B5-11).
 
-**Löschen und das Audit-Log.** Ein gelöschtes Konto wird im Audit-Log zu `gelöscht#<id>` (H-13) —
-auch im Detailtext (`akteur=<name>`, die Adresse). Name und Zeit sucht ein Index; die Suche im
-Detailtext ist eine Teilstring-Suche, die kein Index eingrenzt, und liest bei einer bestätigten
-Adresse (Löschen im Panel) das ganze Log — dessen Grösse wächst ohne `audit_retention_days`
-(Vorgabe 0 = unbegrenzt). Seit 2026-09-26 läuft sie in Blöcken zu 5000 Zeilen ohne Schreibsperre
-dazwischen (G4): Anmeldungen und andere Worker warten nicht mehr die ganze Suche ab; das Löschen
-selbst dauert so lange, wie das Log gross ist. Seit 2026-09-27 (Prüfrunde, F4) auch: jede
-Schreibweise, unter der jemand die Kennung eingetippt hat (`login_fail` schreibt die rohe Eingabe —
-verglichen im Zähl-Topf, nicht, wenn ein verbleibendes Konto ihn teilt), frühere Namen und Adressen
-des Kontos (aus seinen Zeilen `username_changed`/`email_changed`, je in der Zeit, in der es sie trug)
-und in seinen eigenen Zeilen die Werte von `alt=`, `neu=` und `an=`. Nicht erfasst: eine Adresse,
-die ohne `email_changed` kam und ging (Nachtrag aus OIDC/LDAP), und der Name im Verzeichnis.
+**Deleting and the audit log.** A deleted account becomes `gelöscht#<id>` in the audit log (H-13) —
+also in the detail text (`akteur=<name>`, the address). Name and time are searched by an index; the
+search in the detail text is a substring search that no index narrows down, and for a confirmed
+address (deleting in the panel) it reads the whole log — whose size grows without
+`audit_retention_days` (default 0 = unlimited). Since 2026-09-26 it runs in blocks of 5000 rows
+without a write lock in between (G4): sign-ins and other workers no longer wait out the whole
+search; the deletion itself takes as long as the log is large. Since 2026-09-27 (audit round, F4)
+also: every spelling under which someone typed the identifier (`login_fail` writes the raw input —
+compared in the counting bucket, not if a remaining account shares it), earlier names and addresses
+of the account (from its `username_changed`/`email_changed` rows, each for the time it carried them)
+and, in its own rows, the values of `alt=`, `neu=` and `an=`. Not covered: an address that came and
+went without `email_changed` (added later from OIDC/LDAP), and the name in the directory.
 
-## Sitzungen verwalten
+## Managing sessions
 
-Eine Sitzung ist eine Zeile in `session`; im Cookie steht das Token, in der Datenbank nur dessen
-sha256 (das **Handle**). Mit einem Handle lässt sich eine Sitzung benennen und beenden, aber nicht
-übernehmen.
+A session is a row in `session`; the cookie holds the token, the database only its sha256 (the
+**handle**). With a handle a session can be named and ended, but not taken over.
 
-| Wer | Was | Wie |
+| Who | What | How |
 |---|---|---|
-| Nutzer | eigene Sitzungen ansehen | `GET /auth/sessions` (Anlage, IP, Methode, Browser, „diese hier") |
-| Nutzer | andere eigene Sitzungen beenden | `POST /auth/sessions/revoke` mit `{"scope": "others"}` — API-Keys bleiben, die Antwort nennt ihre Zahl |
-| Nutzer | alles beenden (Panik-Taste) | `{"scope": "all"}` — beendet auch die aktuelle Sitzung **und widerruft alle API-Keys** |
-| Admin | alle Sitzungen sehen | Panel bzw. `GET <admin_path>/api/sessions` (`full` ist das Handle) |
-| Admin | eine / alle eines Kontos beenden | `POST <admin_path>/api/sessions/revoke` mit `{"token": <Handle>}` oder `{"user_id": …}` |
-| Admin | Konto sperren | `POST <admin_path>/api/users/{id}/disable` — beendet alle Sitzungen, widerruft API-Keys und verwirft offene Einmal-Token (Anmelde-, Bestätigungs-, Reset-Link). Die Sperre trägt den Betreiber-Vermerk: Auch ein Bestätigungslink, der erst danach entsteht, hebt sie nicht auf — nur „Entsperren" im Panel (H-18). Sperren aus Fassungen bis 0.19.x hebt die Migration auf Schema 10 auf den Vermerk und verwirft dabei ihre offenen Token, sofern das Audit-Log die Sperre noch kennt — auch eine, die eine ältere Fassung nach einem Rückschritt auf eine Schema-10-Datei gesetzt hat: Jeder Start liest die Audit-Zeilen seit dem letzten Start nach (Setting `panel_sperren_bis`) und warnt im Log, wenn er fündig wird; eine ältere (schon weggeräumte Zeile, `audit_retention_days`) sperrt derselbe Aufruf mit `{"disabled": true}` erneut, ohne zu entsperren — das Panel bietet für ein gesperrtes Konto nur „Entsperren" an. |
-| Code | Konto sperren | `auth.set_disabled(user_id, True)` (Stufe A, seit 0.22.0) — genau die Wirkung des Panels, das diese Methode ruft: Betreiber-Vermerk, Sitzungen beenden, API-Keys widerrufen, offene Einmal-Token verwerfen, Audit `user_disable`. `auth.set_disabled(user_id, False)` entsperrt. Ein Owner lässt sich nicht sperren (`StateError`), eine unbekannte ID gibt `False`. Bis 0.21.x stand hier `auth.store.set_disabled(user_id, True, durch_betreiber=True)` — das setzte nur den Vermerk; Sitzungen, Keys und Links blieben gültig. |
-| Code | Sitzungen ohne HTTP | nur über das Innenleben (`auth.store`, Stufe C — keine Zusage, kann sich mit jedem Release ändern): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
+| User | view own sessions | `GET /auth/sessions` (created, IP, method, browser, "this one") |
+| User | end other own sessions | `POST /auth/sessions/revoke` with `{"scope": "others"}` — API keys stay, the response gives their count |
+| User | end everything (panic button) | `{"scope": "all"}` — also ends the current session **and revokes all API keys** |
+| Admin | see all sessions | panel or `GET <admin_path>/api/sessions` (`full` is the handle) |
+| Admin | end one / all of an account | `POST <admin_path>/api/sessions/revoke` with `{"token": <handle>}` or `{"user_id": …}` |
+| Admin | disable account | `POST <admin_path>/api/users/{id}/disable` — ends all sessions, revokes API keys and discards open one-time tokens (sign-in, confirmation, reset link). The block carries the operator flag: even a confirmation link that only comes into existence afterwards does not lift it — only "Unlock" in the panel does (H-18). Blocks from versions up to 0.19.x are raised to the flag by the migration to schema 10, which discards their open tokens, provided the audit log still knows the block — also one that an older version set after a rollback to a schema-10 file: every start re-reads the audit rows since the last start (setting `panel_sperren_bis`) and warns in the log when it finds something; an older one (row already removed, `audit_retention_days`) is blocked again by the same call with `{"disabled": true}`, without unlocking — for a disabled account the panel offers only "Unlock". |
+| Code | disable account | `auth.set_disabled(user_id, True)` (tier A, since 0.22.0) — exactly the effect of the panel, which calls this method: operator flag, end sessions, revoke API keys, discard open one-time tokens, audit `user_disable`. `auth.set_disabled(user_id, False)` unlocks. An owner cannot be disabled (`StateError`), an unknown ID returns `False`. Up to 0.21.x this read `auth.store.set_disabled(user_id, True, durch_betreiber=True)` — that only set the flag; sessions, keys and links stayed valid. |
+| Code | sessions without HTTP | only via the internals (`auth.store`, tier C — no commitment, may change with every release): `auth.store.list_sessions(user_id)`, `delete_session_by_handle(handle)`, `delete_user_sessions(user_id)`, `delete_user_sessions_except(user_id, handle)` |
 
-Was eine Sitzung **von selbst** beendet: Inaktivität (`session_idle_minutes`, Vorgabe 8 h — für
-jede Sitzung, bei der „Angemeldet bleiben" nicht **ausdrücklich** angehakt wurde, auch eine
-dauerhafte aus OIDC oder einem Anmelde-Link; `session_idle_minutes_remember`, Vorgabe aus), ein Nein des Identity Providers
-bei der Nachprüfung (4a, OIDC) und ihr Ablauf (`session_ttl_hours`, Vorgabe 7 Tage mit
-„Angemeldet bleiben", sonst `session_ttl_transient_hours`), die eigene Passwortänderung (alle
-anderen Sitzungen — über `POST /auth/password` wie über eine eigene Seite mit `change_password`;
-nur aus einer Sitzung, ein API-Key ändert kein Passwort), ein Passwort-Reset per Link (alle), ein Admin-Reset des Passworts, die Sperre
-des Kontos. Eine Sitzung, deren Konto gesperrt ist, öffnet nichts mehr, auch wenn sie noch nicht
-abgelaufen ist — und kein Anmeldeweg legt einem gesperrten Konto eine neue an (H-18).
+What ends a session **by itself**: inactivity (`session_idle_minutes`, default 8 h — for every
+session where "Stay signed in" was not **explicitly** ticked, also a permanent one from OIDC or a
+sign-in link; `session_idle_minutes_remember`, default off), a no from the identity provider
+during the re-check (4a, OIDC) and its expiry (`session_ttl_hours`, default 7 days with
+"Stay signed in", otherwise `session_ttl_transient_hours`), the account's own password change (all
+other sessions — via `POST /auth/password` as well as via an own page with `change_password`;
+only from a session, an API key does not change a password), a password reset by link (all), an
+admin reset of the password, the disabling of the account. A session whose account is disabled opens
+nothing any more, even if it has not yet expired — and no sign-in method creates a new one for a
+disabled account (H-18).
 
-Ein **Step-up** (Reauth, erneuter Faktor) gibt der Sitzung ein neues Token (F-06). Das alte gilt
-noch `session_rotation_grace_sec` (Vorgabe 10) Sekunden weiter, damit eine Anfrage aus einem zweiten
-Tab, die in dem Moment schon unterwegs war, nicht scheitert (A-6) — ohne Step-up-Frische (keine
-Sudo-Route), nicht als eigene Sitzung in der Liste, und es endet mit der neuen. `0` = sofort tot.
-Eine eigene Step-up-Seite der App (`confirm_password`, `confirm_pin`, `confirm_totp`, seit 0.22.0)
-verhält sich genauso — `/auth/reauth` ruft dieselben Bausteine: Fehlgriffe zählen im Topf `reauth`
-(`reauth_max_attempts`, nur je Konto) und stehen als `failed verification` im Sicherheits-Log (auf
-diese Zeile bannt fail2ban nicht); die Sperre betrifft den Step-up, nicht die Anmeldung, und läuft
-mit dem Fenster (`lockout_window_sec`) ab.
+A **step-up** (reauth, renewed factor) gives the session a new token (F-06). The old one stays valid
+for `session_rotation_grace_sec` (default 10) seconds, so that a request from a second tab that was
+already in flight at that moment does not fail (A-6) — without step-up freshness (no sudo route), not
+as a session of its own in the list, and it ends with the new one. `0` = dead immediately.
+An app's own step-up page (`confirm_password`, `confirm_pin`, `confirm_totp`, since 0.22.0)
+behaves the same way — `/auth/reauth` calls the same building blocks: failed attempts count in the
+bucket `reauth` (`reauth_max_attempts`, per account only) and appear as `failed verification` in the
+security log (fail2ban does not ban on this line); the lockout affects the step-up, not the sign-in,
+and expires with the window (`lockout_window_sec`).
 
-Was sie **nicht** beendet — bewusst benannt, weil man es erwartet:
+What it does **not** end — named deliberately, because one expects it:
 
-- **Mit „Angemeldet bleiben" kein Inaktivitäts-Timeout** (Vorgabe von
-  `session_idle_minutes_remember`): Die Sitzung lebt bis zu ihrem absoluten Ablauf, auch unbenutzt.
-- **Der Identity Provider ohne Refresh-Token.** Gibt er keine aus, bleibt die Sitzung nach einer
-  Sperre dort bis zum Ablauf gültig (4a greift nicht). Die Nachprüfung je Anwendung
-  (`oidc_revalidate_minutes`, nur mit mehreren Clients) begrenzt das für Forward-Auth; sonst ist
-  der Weg: im Panel sperren oder die Sitzungen des Kontos beenden.
-- **API-Keys** hängen an keiner Sitzung: „andere beenden" lässt sie stehen, „alles beenden", die
-  Sperre und der Admin-Reset widerrufen sie — **ein Nein des Identity Providers (4a) nicht**.
-- **Step-up** ist eine Frist an der Sitzung (`stepup_max_age_sec`, Vorgabe 15 min), keine eigene
-  Sitzung: Sie verfällt, die Sitzung bleibt.
+- **With "Stay signed in" no inactivity timeout** (default of
+  `session_idle_minutes_remember`): the session lives until its absolute expiry, even unused.
+- **The identity provider without a refresh token.** If it issues none, the session stays valid
+  there after a block until expiry (4a does not apply). The per-application re-check
+  (`oidc_revalidate_minutes`, only with several clients) limits that for forward-auth; otherwise
+  the way is: disable in the panel or end the account's sessions.
+- **API keys** hang on no session: "end others" leaves them standing, "end everything", the
+  block and the admin reset revoke them — **a no from the identity provider (4a) does not**.
+- **Step-up** is a deadline on the session (`stepup_max_age_sec`, default 15 min), not a session
+  of its own: it lapses, the session stays.
 
-## Benutzername und Adresse ändern (Selbstbedienung)
+## Changing username and address (self-service)
 
-Seit 2026-09-25 ändert jeder beides selbst auf der Konto-Seite, mit frischem Step-up — den
-Benutzernamen nicht neben LDAP (`ldap_enabled`, seit 2026-09-27): Dort kommen die Namen aus dem
-Verzeichnis, und ein lokales Konto könnte den Namen einer Person annehmen, die sich noch nie
-angemeldet hat, und sie damit aussperren (eine Kennung gehört genau einem Konto). Umbenennen dort
-nur als Betreiber (Panel, `tinysesam rename`); aus demselben Grund ist `allow_signup` neben LDAP ein
-Aufbaufehler. Alles, was am
-Konto hängt — Sitzungen, Keys, Faktoren, Rollen, Bindungen an OIDC/LDAP/SAML —, hängt an der
-**Konto-ID** und bleibt. Nach aussen ändert sich `Remote-User` bzw. `Remote-Email`; stabil ist
-**`Remote-Id`** — eine App ordnet Nutzer darüber zu.
+Since 2026-09-25 everyone changes both on the account page, with a fresh step-up — the
+username not alongside LDAP (`ldap_enabled`, since 2026-09-27): there the names come from the
+directory, and a local account could take the name of a person who has never signed in
+and thereby lock them out (an identifier belongs to exactly one account). Renaming there
+only as operator (panel, `tinysesam rename`); for the same reason `allow_signup` alongside LDAP is a
+setup error. Everything that hangs on the
+account — sessions, keys, factors, roles, bindings to OIDC/LDAP/SAML — hangs on the
+**account ID** and stays. Outwardly `Remote-User` and `Remote-Email` change; stable is
+**`Remote-Id`** — an app should map users by that.
 
-> **Namen werden wieder frei.** Wird ein Konto gelöscht oder umbenannt, kann ein anderes Konto den
-> Namen (oder die Adresse) übernehmen und trägt ihn dann als `Remote-User` in jede App. Eine App,
-> die Rechte am Namen festmacht („alice darf Projekt X"), gibt sie damit dem Nachfolger. Rechte
-> immer an `Remote-Id` binden.
+> **Names become free again.** If an account is deleted or renamed, another account can take over
+> the name (or address) and then carries it as `Remote-User` into every app. An app that ties rights
+> to the name ("alice may use project X") hands them to the successor. Always bind rights
+> to `Remote-Id`.
 >
-> In TinySesam selbst beginnt eine Kennung für das Konto mit ihrem **Beitritt** — Anlage,
-> Umbenennen, Adresswechsel, Nachtrag einer Adresse (G2, seit 2026-09-26; bis dahin mit der Anlage
-> des Kontos). Was vorher unter ihr stand, gehört nicht dazu: Fehlversuche eines Fremden unter dem
-> damals freien Namen räumt die Anmeldung des neuen Inhabers nicht weg (sie zählen weiter in der
-> Drosselung der IP, von der sie kamen), die Konto-Seite zeigt keine Anmeldung des Vorbesitzers, und
-> das Löschen schreibt dessen Audit-Zeilen nicht um. Die Serie der Fehlversuche in Folge (B2-6)
-> endet dagegen mit der ersten vollen Anmeldung ganz: Sie hat keine IP und schützt nur den, dem die
-> Kennung jetzt gehört. Konten aus der Zeit davor haben keine solche Grenze gespeichert — für sie
-> gilt weiter die Anlage.
+> Inside TinySesam itself, an identifier starts for the account with its **joining** — creation,
+> renaming, address change, adding an address later (G2, since 2026-09-26; until then with the creation
+> of the account). What stood under it before does not belong to it: failed attempts by a stranger under the
+> then free name are not cleared by the new holder's sign-in (they keep counting in the
+> throttle of the IP they came from), the account page shows no sign-in of the previous owner, and
+> deleting does not rewrite that owner's audit rows. The series of consecutive failed attempts (B2-6),
+> by contrast, ends entirely with the first full sign-in: it has no IP and protects only whoever the
+> identifier now belongs to. Accounts from before then have no such boundary stored — for them the
+> creation still applies.
 
-| | Regel |
+| | Rule |
 |---|---|
-| Benutzername | frei in Namen UND Adressen; keine Steuerzeichen, höchstens 150 Zeichen; kein `@`, ausser der eigenen bestätigten Adresse; kein Name aus `admin_identifiers` (dieselbe Antwort wie „vergeben"); im Modus `login_identifier="email"` nicht selbst änderbar — der Name folgt der Adresse. Ein selbst gewählter Name bindet nie über LDAP/SAML (G2-N, s. „Föderierte Identitäten"). Schalter `self_service_username_change` |
-| Benutzername, als Betreiber (G13) | Panel „Umbenennen" bzw. `POST <admin_path>/api/users/{id}/username` mit `{"username": …}` — dieselben Regeln (400 mit Grund), dazu der Owner-Schutz: ein Owner-Konto benennt nur ein Owner um. Unabhängig von `self_service_username_change`. Der Name gilt als vom Betreiber vergeben: Der Merker „selbst gewählt" (G2-N) fällt, die Audit-Zeile sagt `durch=betreiber akteur=<admin>`. Ohne laufenden Dienst: `tinysesam rename --db <datei> <name> <neuer-name>` (`#<id>` statt des Namens, etwa für einen Namen mit Steuerzeichen) — dieselben Grundregeln; einen Namen aus `admin_identifiers` und den Mail-Modus kennt das CLI nicht (es liest keine Konfiguration), und `on_security_event` feuert dort nicht. Audit `username_changed … quelle=cli` |
-| Adresse | Link an die NEUE (`email_change_ttl_min`, Vorgabe 60); erst der Klick macht sie zur Adresse des Kontos, mit Beleg. Eine vergebene Adresse bekommt keinen Link — sonst ist alles gleich (kein Orakel, G12b): dieselbe Antwort, derselbe Hinweis an die eigene Adresse, dasselbe Kontingent des Kontos, dieselbe Anzeige auf der Konto-Seite und dieselbe Arbeit der Datenbank (ein Wegwerf-Token, der schon bei seiner Anlage abgelaufen ist; `gc()` räumt ihn). Eine Adresse aus `admin_identifiers` bekommt ebenso keinen Link — sonst trüge ein fremdes Konto nach einem gutgläubigen Klick des Inhabers die belegte Allowlist-Adresse und wäre Erst-Admin. Beim Klick wird beides noch einmal geprüft (409). Die Mail nennt das Konto; schon der Antrag geht als Hinweis (ohne Link) an die bisherige belegte Adresse — bei jedem Ziel, auch einem vergebenen. Ein offener Wechsel fällt mit jeder Abwehr: Passwort-Reset (auch durch den Admin), Passwortwechsel, „alle/andere Sitzungen beenden" — sonst klickte ein Eindringling, der ihn aus seiner Sitzung beantragt hat, danach seinen Link. Danach: offene Links an die alte Adresse ungültig, Hinweis an die alte (ASVS 6.3.7). Braucht einen Mailer. Schalter `self_service_email_change` |
+| Username | free in names AND addresses; no control characters, at most 150 characters; no `@`, except the own confirmed address; no name from `admin_identifiers` (same answer as "taken"); in the mode `login_identifier="email"` not changeable by oneself — the name follows the address. A self-chosen name never binds via LDAP/SAML (G2-N, see "Managing federated identities"). Switch `self_service_username_change` |
+| Username, as operator (G13) | panel "Rename" or `POST <admin_path>/api/users/{id}/username` with `{"username": …}` — the same rules (400 with reason), plus the owner protection: an owner account is renamed only by an owner. Independent of `self_service_username_change`. The name counts as assigned by the operator: the "self-chosen" flag (G2-N) is dropped, the audit row says `durch=betreiber akteur=<admin>`. Without a running service: `tinysesam rename --db <file> <name> <new-name>` (`#<id>` instead of the name, e.g. for a name with control characters) — the same basic rules; the CLI knows neither a name from `admin_identifiers` nor the mail mode (it reads no configuration), and `on_security_event` does not fire there. Audit `username_changed … quelle=cli` |
+| Address | link to the NEW one (`email_change_ttl_min`, default 60); only the click makes it the account's address, with proof. An address already taken gets no link — otherwise everything is the same (no oracle, G12b): the same answer, the same notice to the own address, the same quota of the account, the same display on the account page and the same work of the database (a throwaway token that has already expired at creation; `gc()` clears it). An address from `admin_identifiers` likewise gets no link — otherwise a foreign account would, after the holder's good-faith click, carry the allowlist address in use and be first admin. At the click both are checked once more (409). The mail names the account; the request itself already goes as a notice (without link) to the previous confirmed address — for every target, also a taken one. An open change falls with every defence: password reset (also by the admin), password change, "end all/other sessions" — otherwise an intruder who requested it from their session would click their link afterwards. Afterwards: open links to the old address invalid, notice to the old one (ASVS 6.3.7). Needs a mailer. Switch `self_service_email_change` |
 
-Ereignisse: `username_changed`, `email_changed` (`on_security_event`), Audit-Zeilen
+Events: `username_changed`, `email_changed` (`on_security_event`), audit rows
 `username_changed`, `email_change_requested`, `email_change_taken`, `email_change_reserved`
-(Allowlist-Adresse), `email_changed`, `federation_email_confirm` (Link an eine Adresse aus
-LDAP/SAML, erst nach dem Versand geschrieben, Detail `konto=<id> quelle=… an=…`); die Zeilen
-`email_change_*` aus diesem Weg beginnen mit `konto=<id> quelle=…`. Die Konto-Seite
-zeigt einen Antrag immer als `email_change_requested` und `federation_email_confirm` gar nicht
-(G12b) — die echten Namen stehen nur im Audit-Log des Betreibers; eine Abweisung beim Bestätigen
-(`beim_bestaetigen=1`, 409) behält dort ihren Namen. Die Links
-eines Wechsels haben ein eigenes Kontingent je Zieladresse (Topf `wechsel`) — Anträge Fremder auf
-eine Adresse verbrauchen nicht das des Anmelde-Links — und eines je Konto
-(`mail_per_address_max` im Fenster `mail_per_address_window_sec`, Audit `mail_ratelimit`), damit
-ein Konto keine Mails an beliebig viele fremde Adressen streut. Derselbe Weg bestätigt Adressen aus LDAP und
-SAML (Tabelle unter „Föderierte Identitäten verwalten").
+(allowlist address), `email_changed`, `federation_email_confirm` (link to an address from
+LDAP/SAML, written only after sending, detail `konto=<id> quelle=… an=…`); the rows
+`email_change_*` from this path begin with `konto=<id> quelle=…`. The account page
+always shows a request as `email_change_requested` and `federation_email_confirm` not at all
+(G12b) — the real names appear only in the operator's audit log; a rejection at confirmation
+(`beim_bestaetigen=1`, 409) keeps its name there. The links
+of a change have their own quota per target address (bucket `wechsel`) — requests by strangers for
+an address do not use up that of the sign-in link — and one per account
+(`mail_per_address_max` in the window `mail_per_address_window_sec`, audit `mail_ratelimit`), so that
+an account does not scatter mails to arbitrarily many foreign addresses. The same path confirms addresses from LDAP and
+SAML (table under "Managing federated identities").
 
-## Kennungsraum: Name und Adresse gehören zusammen
+## Identifier space: name and address belong together
 
-`find_user` sucht eine Kennung in Benutzernamen UND Adressen, und der Sperrzähler faltet gröber als
-die Datenbank (NFKC, klein, IDNA: `Alice`/`alice`, `Émile`/`émile`, `ｂｏｂ`/`bob`,
-`u@bücher.example`/`u@xn--bcher-kva.example`). Beide Spalten sind deshalb **ein** Raum: Keine
-Kennung gehört zwei Konten.
+`find_user` looks an identifier up in usernames AND addresses, and the lockout counter folds more
+coarsely than the database (NFKC, lowercase, IDNA: `Alice`/`alice`, `Émile`/`émile`, `ｂｏｂ`/`bob`,
+`u@bücher.example`/`u@xn--bcher-kva.example`). Both columns are therefore **one** space: no
+identifier belongs to two accounts.
 
-- **Seit 2026-09-26 erzwingt das die Datenbank** (Trigger `trg_users_kennung_insert` und
-  `trg_users_kennung_update` über die Zähl-Töpfe `topf_name`/`topf_mail`). Vorher prüfte nur
-  TinySesam vor dem Schreiben; zwei gleichzeitige Anfragen derselben Kennung (zwei Worker, eine als
-  Name, eine als Adresse) kamen beide durch oder endeten mit einer 500. Jetzt bekommt der Verlierer
-  dieselbe Antwort wie bei einer vergebenen Kennung — 409, bei der Registrierung mit Bestätigung die
-  neutrale Seite. Wer den Store direkt aufruft (`store.create_user`, `set_username`, `set_email`),
-  bekommt `sqlite3.IntegrityError` („tinysesam: kennung vergeben").
-- **Kollisionen im Bestand** (aus einer älteren Fassung, einem rohen UPDATE, einer Zeile eines
-  fremden Schreibers) bleiben stehen — der Start scheitert nicht daran, und nichts wird automatisch
-  umbenannt, denn welches Konto die Kennung behält, entscheidet der Betreiber. Verschlimmern lassen
-  sie sich nicht mehr. Der Start meldet jede mit den beteiligten Konten
-  (`Kennung '<x>': user_id=…, user_id=…`), bis sie aufgelöst ist. Auflösen: im Panel
-  („Umbenennen"), mit `tinysesam rename --db <datei> '#<user_id>' <neuer-name>` (G13), der Inhaber
-  auf der Konto-Seite; aus dem einbettenden Dienst `auth.change_username(user_id, new_username,
-  by_operator=True)` oder
-  `store.set_email(user_id, adresse)` (legt die Adresse unbestätigt ab, `verified=True` für einen
-  Beleg); als letzter Weg ein UPDATE von Hand bei gestoppter Instanz — TinySesam rechnet den Topf
-  danach selbst nach.
-- **Grenzen:** Eine Zeile eines fremden Schreibers (ältere Fassung nach einem Rückschritt,
-  sqlite3-Werkzeug) trägt keinen Topf und zählt für die Trigger erst, wenn TinySesam ihn
-  nachgetragen hat — beim Start und vor jeder Anlage. Ändert ein fremder Schreiber Name oder
-  Adresse, gilt die Kennung als eben erst beigetreten (Trigger `trg_users_topf_name`/`_mail`):
-  strenger, nie lockerer. Ein rohes UPDATE, das in eine Kollision hinein
-  umbenennt, wird nicht verhindert, nur beim nächsten Start gemeldet. Lassen sich die Trigger nicht
-  anlegen (Datei nur lesbar), startet TinySesam trotzdem und sagt es im Log.
-- **Rückweg auf 0.20.x:** Die Trigger bleiben in der Datei und wirken dort weiter (0.20.x schreibt
-  die Töpfe mit; nur eingebaute SQL-Funktionen, also kein „no such function"). Im Wettlauf antwortet
-  0.20.x dann mit 500 statt mit einer Kollision. Entfernen bei gestoppter Instanz:
-  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — eine neuere
-  Fassung legt sie beim nächsten Start wieder an.
+- **Since 2026-09-26 the database enforces this** (triggers `trg_users_kennung_insert` and
+  `trg_users_kennung_update` over the counting buckets `topf_name`/`topf_mail`). Before, only
+  TinySesam checked before writing; two simultaneous requests for the same identifier (two workers, one as
+  name, one as address) both got through or ended with a 500. Now the loser gets
+  the same answer as for a taken identifier — 409, with registration with confirmation the
+  neutral page. Whoever calls the store directly (`store.create_user`, `set_username`, `set_email`)
+  gets `sqlite3.IntegrityError` ("tinysesam: kennung vergeben").
+- **Collisions in existing data** (from an older version, a raw UPDATE, a row from a
+  foreign writer) stay in place — the start does not fail on them, and nothing is renamed
+  automatically, because which account keeps the identifier is for the operator to decide. They cannot
+  be made worse any more. The start reports each with the accounts involved
+  (`Kennung '<x>': user_id=…, user_id=…`) until it is resolved. Resolve: in the panel
+  ("Rename"), with `tinysesam rename --db <file> '#<user_id>' <new-name>` (G13), the holder
+  on the account page; from the embedding service `auth.change_username(user_id, new_username,
+  by_operator=True)` or
+  `store.set_email(user_id, address)` (stores the address unconfirmed, `verified=True` for
+  proof); as a last resort a manual UPDATE with the instance stopped — TinySesam then recomputes the bucket
+  itself.
+- **Limits:** A row from a foreign writer (older version after a rollback,
+  sqlite3 tool) carries no bucket and counts for the triggers only once TinySesam has
+  filled it in — at start and before every creation. If a foreign writer changes name or
+  address, the identifier counts as having only just joined (triggers `trg_users_topf_name`/`_mail`):
+  stricter, never looser. A raw UPDATE that renames into a collision
+  is not prevented, only reported at the next start. If the triggers cannot
+  be created (file read-only), TinySesam starts anyway and says so in the log.
+- **Rollback to 0.20.x:** The triggers stay in the file and keep acting there (0.20.x writes
+  the buckets along; only built-in SQL functions, so no "no such function"). In a race 0.20.x
+  then answers with 500 instead of a collision. Remove with the instance stopped:
+  `DROP TRIGGER trg_users_kennung_insert; DROP TRIGGER trg_users_kennung_update;` — a newer
+  version recreates them at the next start.
 
-## Erst-Admin-Einmal-Token
+## First-admin one-time token
 
-Gibt es keinen Admin (frische Instanz, oder der Identity Provider hat den letzten entzogen), gibt
-TinySesam ein Einmal-Token für `/auth/claim-admin?token=…` aus — beim Start und im Moment eines
-solchen Entzugs. Wohin, entscheidet, wer mitliest ([T-17](../backlog/T-17-claim-token-nicht-ins-container-log.md)):
+If there is no admin (fresh instance, or the identity provider withdrew the last one),
+TinySesam issues a one-time token for `/auth/claim-admin?token=…` — at start and at the moment of
+such a withdrawal. Where it goes is decided by who reads along ([T-17](../backlog/T-17-claim-token-nicht-ins-container-log.md)):
 
-| Lage | Wohin das Token geht | Was im Log steht |
+| Situation | Where the token goes | What the log says |
 |---|---|---|
-| `admin_claim_token_file` gesetzt | diese Datei, `0600` (auch an einer Konsole) | der Pfad |
-| stderr ist eine Konsole (`isatty`) | stderr | „steht auf der Konsole (stderr), nicht in dieser Zeile" |
-| stderr ist keine Konsole (Container, journal, Pipe) | `<db_path>.claim`, `0600` | der Pfad |
-| … ohne Datenbank-Datei (`:memory:`) oder Datei nicht anlegbar | stderr (Rückfall) | ehrlich: stderr ist keine Konsole, der Wert steht damit im Log des Dienstes |
+| `admin_claim_token_file` set | that file, `0600` (also on a console) | the path |
+| stderr is a console (`isatty`) | stderr | "is on the console (stderr), not in this line" |
+| stderr is not a console (container, journal, pipe) | `<db_path>.claim`, `0600` | the path |
+| … without database file (`:memory:`) or file cannot be created | stderr (fallback) | honestly: stderr is not a console, so the value stands in the service's log |
 
-Im Container also: `docker exec <container> cat /data/app.db.claim` (Pfad aus dem Log), anmelden,
-die URL öffnen. Nach dem Einlösen löscht TinySesam `<db_path>.claim`; gibt es beim Start einen
-Admin, räumt er einen liegengebliebenen Rest weg. Läuft das Token ab, ist der Dateiinhalt ungültig,
-und der nächste Start schreibt ein neues. Eine selbst gewählte `admin_claim_token_file` bleibt
-stehen (ihr Pfad kann ein eingehängtes Geheimnis sein), ihr Inhalt gilt nach dem Einlösen nicht
-mehr. Bis 0.21.x ging das Token ohne `admin_claim_token_file` immer auf stderr — im Container stand
-es damit in `docker logs`, direkt vor der Zeile „Der Wert steht bewusst NICHT im Log". Wer so eine
-Instanz betrieben hat, bevor ein Admin existierte: das Log gilt als Mitwisser; das Token war nur bis
-zum ersten Admin gültig.
+In a container therefore: `docker exec <container> cat /data/app.db.claim` (path from the log), sign in,
+open the URL. After redemption TinySesam deletes `<db_path>.claim`; if there is an admin at start,
+it clears a leftover. If the token expires, the file content is invalid,
+and the next start writes a new one. A self-chosen `admin_claim_token_file` stays
+(its path may be a mounted secret), its content is no longer valid after redemption.
+Up to 0.21.x the token without `admin_claim_token_file` always went to stderr — in a container it
+therefore stood in `docker logs`, directly before the line "The value is deliberately NOT in the log". Whoever ran such an
+instance before an admin existed: the log counts as an accomplice; the token was valid only until
+the first admin.
 
 ## Owner
 
-Owner sind Admins, die sich nicht löschen, sperren oder entmachten lassen. Es gibt immer mindestens
-einen; die Rolle lässt sich weitergeben, mehrere können Owner sein. Nur ein Owner vergibt sie, und
-nur ein Owner ändert ein Owner-Konto (Passwort, API-Keys, Passkeys, Sitzungen, Sperre, Rollen) — sonst setzte
-ein Admin dem Owner ein Passwort und wäre selbst einer.
+Owners are admins who cannot be deleted, disabled or stripped of their rights. There is always at least
+one; the role can be passed on, several can be owners. Only an owner grants it, and
+only an owner changes an owner account (password, API keys, passkeys, sessions, block, roles) — otherwise
+an admin would set the owner's password and be one themselves.
 
-| Was | Wie |
+| What | How |
 |---|---|
-| Owner vergeben / abgeben | Panel „Zum Owner machen" / „Owner abgeben" bzw. `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — nur als Owner; abgeben nur, wenn ein anderer bleibt |
-| Code | `auth.set_owner(uid, True|False)` (`StateError` beim letzten Owner, `ConfigError` bei Service-/gesperrtem Konto) |
-| Härtungswerte (Sperrschwellen, Rate-Limits, Passwortlängen, PIN-Versuche) | speichert nur ein Owner (`POST <admin_path>/api/security`, sonst 403); lesen darf jeder Admin. Ohne Owner im Bestand wie bisher jeder Admin |
-| Notweg (kein Owner kommt mehr heran) | `tinysesam owner --db <datei> <benutzer>` — wer die Datenbank hat, betreibt die Instanz ohnehin |
-| Erster Owner | der erste Admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); im Bestand der älteste **aktive**, von Hand gesetzte Admin — kein Service-Konto, nicht gesperrt (`owner_grant` im Audit-Log). Gibt es keinen (nur Admins vom Identity Provider oder gesperrte), bleibt die Instanz ohne Owner und das Log nennt den Notweg |
+| Grant / give up owner | panel "Make owner" / "Give up owner" or `POST <admin_path>/api/users/{id}/owner` `{"owner": true|false}` — only as owner; giving up only if another remains |
+| Code | `auth.set_owner(uid, True|False)` (`StateError` for the last owner, `ConfigError` for a service / disabled account) |
+| Hardening values (lockout thresholds, rate limits, password lengths, PIN attempts) | only an owner saves them (`POST <admin_path>/api/security`, otherwise 403); any admin may read. With no owner in the data as before any admin |
+| Emergency route (no owner can reach it any more) | `tinysesam owner --db <file> <user>` — whoever has the database operates the instance anyway |
+| First owner | the first admin (`/auth/claim-admin`, `admin_identifiers`, `ensure_admin`); in existing data the oldest **active**, manually set admin — no service account, not disabled (`owner_grant` in the audit log). If there is none (only admins from the identity provider or disabled ones), the instance stays without owner and the log names the emergency route |
 
-Ein Owner ist immer ein Admin „von Hand" (`is_admin=1`): Kein Identity Provider nimmt ihm das Recht (H-5).
+An owner is always an admin "by hand" (`is_admin=1`): no identity provider takes the right from them (H-5).
 
-## Schlüssel der TOTP-Geheimnisse
+## Keys for the TOTP secrets
 
-TOTP-Geheimnisse liegen AES-256-GCM-verschlüsselt in der Datenbank (H-14/H-15, Pflicht). Der
-Schlüssel (32 Byte, Base64) kommt aus `TINYSESAM_SECRETS_KEY`, sonst aus `secrets_key_file`, sonst
-aus `<db_path>.key` (beim ersten Start angelegt, 0600, mit Warnung im Log; atomar, auch wenn
-mehrere Worker gleichzeitig zum ersten Mal starten).
+TOTP secrets are stored AES-256-GCM-encrypted in the database (H-14/H-15, mandatory). The
+key (32 bytes, Base64) comes from `TINYSESAM_SECRETS_KEY`, otherwise from `secrets_key_file`, otherwise
+from `<db_path>.key` (created at the first start, 0600, with a warning in the log; atomic, even if
+several workers start for the first time simultaneously).
 
-- **Getrennt sichern.** Ohne den Schlüssel sind alle TOTP-Einrichtungen verloren; die Datenbank
-  allein nützt dafür nichts — und genau das ist der Zweck. `tinysesam backup` erinnert daran.
-- **Neben der Datenbank** schützt er gegen eine Datenbankdatei, die allein abfliesst, nicht gegen
-  eine Sicherung des ganzen Verzeichnisses. Für echte Trennung über die Umgebung oder eine Datei an
-  einem anderen Ort (Docker-Secret).
-- **Falscher Schlüssel** → der Start bricht ab (`ConfigError`), statt jede TOTP-Anmeldung still
-  scheitern zu lassen — geprüft an TOTP-Geheimnissen und Refresh-Tokens, also auch auf einer
-  Instanz ohne TOTP. Gelöschtes überschreibt SQLite (`secure_delete`), damit ein ersetzter
-  Klartext nicht in freien Seiten der Datei bleibt. Einen Schlüsselwechsel (Rotation) gibt es noch nicht.
-- Ebenfalls mit diesem Schlüssel: die Refresh-Tokens der OIDC-Sitzungen (unten).
-- Aus ihm **abgeleitet** (HKDF, eigener Kontext): der Signaturschlüssel der Gate-Token (unten). Wer
-  den Grundschlüssel wechselt, wechselt auch den — der Proxy braucht dann den neuen öffentlichen
-  Schlüssel.
+- **Back it up separately.** Without the key all TOTP setups are lost; the database
+  alone is of no use for that — and that is exactly the point. `tinysesam backup` reminds you of this.
+- **Next to the database** it protects against a database file that leaks on its own, not against
+  a backup of the whole directory. For real separation use the environment or a file in
+  another place (Docker secret).
+- **Wrong key** → the start aborts (`ConfigError`) instead of letting every TOTP sign-in fail
+  silently — checked against TOTP secrets and refresh tokens, so also on an
+  instance without TOTP. SQLite overwrites deleted data (`secure_delete`), so that a replaced
+  plaintext does not remain in free pages of the file. A key change (rotation) does not exist yet.
+- Also with this key: the refresh tokens of the OIDC sessions (below).
+- **Derived** from it (HKDF, own context): the signing key of the gate tokens (below). Whoever
+  changes the base key also changes that one — the proxy then needs the new public
+  key.
 
-## Gate-Token vor fremden Anwendungen (ADR-9)
+## Gate token in front of third-party applications (ADR-9)
 
-Mit `gate_token_enabled=True` (Gateway: `TINYSESAM_GATE=1`) prüft der Proxy ein kurzlebiges
-Cookie selbst und fragt `/auth/forward` erst, wenn es fehlt oder abläuft. Vorlage:
+With `gate_token_enabled=True` (gateway: `TINYSESAM_GATE=1`) the proxy checks a short-lived
+cookie itself and asks `/auth/forward` only when it is missing or expires. Template:
 `deploy/forward-auth/Caddyfile.gate`.
 
-- **Caddy braucht das Plugin caddy-jwt.** Das offizielle Abbild hat es nicht; gebaut wird es aus
-  `deploy/forward-auth/caddy-gate/Dockerfile` (Caddy-Version und Plugin gepinnt). Ein Caddy ohne
-  Plugin startet mit der Vorlage gar nicht (`unrecognized directive: jwtauth`).
-- **Öffentlicher Schlüssel für den Proxy:** `tinysesam gate-key --db <datei>` — mit derselben
-  Umgebung wie der Dienst (`TINYSESAM_SECRETS_KEY` bzw. `--secrets-key-file`). Ohne Grundschlüssel
-  bricht der Befehl ab, statt einen neuen anzulegen. Im Caddyfile als `TS_GATE_PUBKEY`.
-- **Aussteller:** `base_url` ohne Schrägstrich am Ende (`TS_GATE_ISSUER`); ohne `base_url`
+- **Caddy needs the plugin caddy-jwt.** The official image does not have it; it is built from
+  `deploy/forward-auth/caddy-gate/Dockerfile` (Caddy version and plugin pinned). A Caddy without
+  the plugin does not start at all with the template (`unrecognized directive: jwtauth`).
+- **Public key for the proxy:** `tinysesam gate-key --db <file>` — with the same
+  environment as the service (`TINYSESAM_SECRETS_KEY` or `--secrets-key-file`). Without a base key
+  the command aborts instead of creating a new one. In the Caddyfile as `TS_GATE_PUBKEY`.
+- **Issuer:** `base_url` without a trailing slash (`TS_GATE_ISSUER`); without `base_url`
   `tinysesam`.
-- **Zielgruppe:** der Host der Anwendung, bei verlangten Rollen mit deren Angabe:
-  `app.example.com|roles=admin,redaktion` (Rollen sortiert, mehrere `X-TinySesam-Roles`-Angaben mit
-  `;`). Steht in `audience_whitelist` eine andere Zeichenkette, fällt jede Anfrage auf den Rückweg
-  zurück — sicher, nur so langsam wie ohne Gate. Eine Rollenangabe je Host ist der einfache Fall;
-  mehrere Pfade mit verschiedenen Rollen auf demselben Host überschreiben sich das Cookie
-  gegenseitig.
-- **Wann ein Token entsteht:** nur für eine volle Sitzung (kein API-Key), nur für Hosts aus
-  `trusted_redirect_hosts`, `oidc_clients` oder `base_url`, nur nach bestandener Prüfung
-  (Freigabe der Anwendung, Rollen).
-- **Widerruf:** Abmelden, Sperren, eine beim Provider entzogene Freigabe greifen am Proxy erst mit
-  Ablauf des Tokens (`gate_token_ttl_sec`, Vorgabe 300, erlaubt 30–3600). Wer sofort sperren muss:
-  im Caddyfile `audience_whitelist` vorübergehend auf einen Wert setzen, den kein Token trägt, und
-  Caddy neu laden — dann geht jede Anfrage über `/auth/forward`, und dort ist der Widerruf schon
-  wirksam. Nach Ablauf der Laufzeit zurückstellen. **Nicht** den Grundschlüssel wechseln: An ihm
-  hängen die TOTP-Geheimnisse, mit einem anderen startet TinySesam nicht (oben).
-- **Log von Caddy:** Ein abgelaufenes oder fremdes Token schreibt caddy-jwt als `invalid token` auf
-  Stufe `error` — das ist der Rückweg, kein Ausfall. Ebenso jede Anfrage mit einem
-  `Authorization`-Header, der kein Gate-Token ist: caddy-jwt prüft diesen Header immer mit.
+- **Audience:** the application's host, with required roles including their specification:
+  `app.example.com|roles=admin,redaktion` (roles sorted, several `X-TinySesam-Roles` entries joined
+  with `;`). If `audience_whitelist` contains a different string, every request falls back to the
+  fallback path — safe, just as slow as without the gate. One role specification per host is the simple case;
+  several paths with different roles on the same host overwrite each other's cookie.
+- **When a token is issued:** only for a full session (no API key), only for hosts from
+  `trusted_redirect_hosts`, `oidc_clients` or `base_url`, only after the check has passed
+  (approval of the application, roles).
+- **Revocation:** signing out, blocking, an approval withdrawn at the provider take effect at the proxy only when
+  the token expires (`gate_token_ttl_sec`, default 300, allowed 30–3600). If you must block immediately:
+  in the Caddyfile temporarily set `audience_whitelist` to a value that no token carries, and
+  reload Caddy — then every request goes through `/auth/forward`, where the revocation is already
+  effective. Restore after the lifetime has expired. **Do not** change the base key: the
+  TOTP secrets hang on it, TinySesam does not start with a different one (above).
+- **Caddy log:** An expired or foreign token is written by caddy-jwt as `invalid token` at level
+  `error` — that is the fallback path, not an outage. So is every request with an
+  `Authorization` header that is not a gate token: caddy-jwt always checks this header too.
 
-## Föderierte Identitäten verwalten
+## Managing federated identities
 
-Eine fremde Identität wird an ein lokales Konto **gebunden** — über eine Kennung, die der fremden
-Seite gehört und sich nicht ändert:
+A foreign identity is **bound** to a local account — via an identifier that belongs to the foreign
+side and does not change:
 
-| Quelle | Gebunden über | Tabelle |
+| Source | Bound via | Table |
 |---|---|---|
 | OIDC | `iss` + `sub` | `oidc_identity` |
 | LDAP | `objectGUID` / `entryUUID` (`_stabile_kennung`) | `federated_identity` (`quelle="ldap"`) |
 | SAML | `NameID` | `federated_identity` (`quelle="saml"`) |
 
-- **Erste Anmeldung**: Gibt es noch keine Bindung, wird das Konto über den Namen gesucht bzw. mit
-  `*_auto_create` angelegt und dann gebunden. Ein vorhandenes, noch ungebundenes Konto bindet die
-  Anmeldung über seinen **Namen** nur noch in einer Frist (G1, seit 2026-09-26):
-  `federation_name_binding_days` (Vorgabe 30) Tage ab dem ersten Start mit eingeschalteter Quelle —
-  für den Bestand also ab dem Update — bzw. ab der Anlage des Kontos, was später ist (eine
-  Vorab-Anlage im Panel hat ihre eigene Frist). Danach wird abgewiesen: Ein ruhendes Konto
-  (jemand ist ausgeschieden) fiele sonst samt Rollen und Admin-Recht an die nächste Person, die im
-  Verzeichnis denselben Namen bekommt. Die Abweisung schreibt `<quelle>_namensbindung_zu` ins
-  Audit-Log und eine Zeile ins Sicherheits-Log mit Kennung und Abhilfe. `0` = nur ausdrücklich,
-  `-1` = unbegrenzt wie bis 0.20.x (die Konfigurationsprüfung warnt). Dasselbe gilt für den Ersatz
-  eines Herkunfts-Platzhalters und — bei einer Quelle ohne stabile Kennung — für die erste
-  Zuordnung eines vorhandenen Kontos.
-- **Ein selbst gewählter Name bindet nie über den Namen** (G2-N): Konten aus der Registrierung
-  (auch mit Einladung) und Konten, die sich auf der Konto-Seite umbenannt haben
-  (`users.name_selbst_gewaehlt`), bindet keine Anmeldung über LDAP/SAML — sonst benennt sich ein
-  lokales Konto nach jemandem aus dem Verzeichnis und erbt bei dessen Anmeldung Kennung und
-  Gruppen. Ein vom Betreiber angelegtes Konto trägt den Merker nicht; Panel und `tinysesam rename`
-  benennen als Betreiber um (der Merker fällt), wer aus dem einbettenden Dienst umbenennt, übergibt
-  `auth.change_username(uid, new_username, by_operator=True)`. Für den
-  Bestand trägt der erste Start den Merker einmal aus dem Audit-Log nach (`signup`,
-  `username_changed` unter dem heutigen Namen, ab der Anlage) — was die Aufbewahrung schon
-  gelöscht hat, bleibt unerkannt.
-- **Ein Name aus einer anderen Quelle bindet ebenfalls nie** (Angriffsrunde 2026-09-26): Ein Konto,
-  das OIDC, SAML oder LDAP angelegt hat, trägt den Namen, den die Person dort hat — bei einem IdP
-  mit Selbstregistrierung einen selbst gewählten (`preferred_username`, NameID, `uid`). Die Anlage
-  merkt sich die Quelle (`users.name_quelle`), und eine andere Quelle bindet das Konto nie über den
-  Namen (`name_from_other_source`, im Audit `grund=name_aus_quelle`); sonst wählt jemand beim IdP
-  `chefin` und bekommt bei der
-  LDAP-Anmeldung der echten chefin deren Kennung und Gruppen. Dieselbe Quelle ersetzt ihren
-  Platzhalter weiter (`ldap_attr_id` später einschalten, s. unten). Umbenennen setzt die Herkunft
-  zurück. Bestand: Der erste Start trägt sie einmal nach, wo sie belegt ist — OIDC-Konten (der
-  Callback legt jedes verknüpfte Konto selbst an) und Bindungen aus der Sekunde der Anlage; Konten
-  von vor den Kennungen (bis 0.19) bleiben ohne und hängen an der Frist. **Mehrere Quellen aus
-  demselben Verzeichnis** (Keycloak vor LDAP, dazu der direkte LDAP-Login): Die zweite Quelle bindet
-  ein Konto der ersten nicht über den Namen; einzelne Konten öffnet
-  `auth.federation_unbind(source, user_id)`. Wer eigene Konten aus einem weiteren Identity
-  Provider anlegt, übergibt `create_user(…, self_chosen_name=True)`.
-- **Bestandskonten binden** (F-11, G1): ohne auf die Anmeldung zu warten — ruhende Konten melden
-  sich nie an. Die Startmeldung nennt, solange die Frist läuft, je Quelle die Zahl der Konten ohne
-  Kennung. Einmal nach dem Update, aus dem einbettenden Dienst:
+- **First sign-in**: If there is no binding yet, the account is looked up by name or created with
+  `*_auto_create` and then bound. An existing, still unbound account binds the
+  sign-in via its **name** only within a deadline (G1, since 2026-09-26):
+  `federation_name_binding_days` (default 30) days from the first start with the source switched on —
+  for existing data therefore from the update — or from the creation of the account, whichever is later (a
+  pre-creation in the panel has its own deadline). After that it is rejected: a dormant account
+  (someone has left) would otherwise fall, with roles and admin right, to the next person who gets the same
+  name in the directory. The rejection writes `<quelle>_namensbindung_zu` to the audit log
+  and a line to the security log with identifier and remedy. `0` = only explicitly,
+  `-1` = unlimited as up to 0.20.x (the configuration check warns). The same applies to the replacement
+  of an origin placeholder and — for a source without a stable identifier — to the first
+  assignment of an existing account.
+- **A self-chosen name never binds via the name** (G2-N): accounts from registration
+  (also with an invitation) and accounts that were renamed on the account page
+  (`users.name_selbst_gewaehlt`) are bound by no sign-in via LDAP/SAML — otherwise a
+  local account names itself after someone from the directory and, at that person's sign-in, inherits identifier and
+  groups. An account created by the operator does not carry the flag; panel and `tinysesam rename`
+  rename as operator (the flag is dropped), whoever renames from the embedding service passes
+  `auth.change_username(uid, new_username, by_operator=True)`. For existing
+  data the first start fills in the flag once from the audit log (`signup`,
+  `username_changed` under today's name, from creation on) — what the retention has already
+  deleted remains undetected.
+- **A name from another source likewise never binds** (attack round 2026-09-26): An account
+  that OIDC, SAML or LDAP created carries the name the person has there — with an IdP
+  with self-registration a self-chosen one (`preferred_username`, NameID, `uid`). The creation
+  remembers the source (`users.name_quelle`), and another source never binds the account via the
+  name (`name_from_other_source`, in the audit `grund=name_aus_quelle`); otherwise someone picks
+  `chefin` at the IdP and, at the
+  LDAP sign-in of the real chefin, gets her identifier and groups. The same source keeps replacing its
+  placeholder (switching on `ldap_attr_id` later, see below). Renaming resets the origin.
+  Existing data: the first start fills it in once where it is documented — OIDC accounts (the
+  callback creates every linked account itself) and bindings from the second of creation; accounts
+  from before the identifiers (up to 0.19) stay without and hang on the deadline. **Several sources from the
+  same directory** (Keycloak in front of LDAP, plus the direct LDAP login): the second source does not bind
+  an account of the first via the name; individual accounts are opened with
+  `auth.federation_unbind(source, user_id)`. Whoever creates their own accounts from a further identity
+  provider passes `create_user(…, self_chosen_name=True)`.
+- **Binding existing accounts** (F-11, G1): without waiting for the sign-in — dormant accounts
+  never sign in. While the deadline runs, the start message names the number of accounts without
+  identifier per source. Once after the update, from the embedding service:
 
   ```python
-  bericht = auth.federation_bind_existing("ldap")          # Trockenlauf: schreibt nichts
+  bericht = auth.federation_bind_existing("ldap")          # dry run: writes nothing
   for teil in ("bound", "conflict", "ambiguous", "not_in_directory", "no_identifier",
                "refused", "local_password"):
       print(teil, [(e["username"], e.get("local"), e.get("directory"), e.get("reason"))
                    for e in bericht[teil]])
-  auth.federation_bind_existing("ldap", apply=True)       # erst nach dem Lesen
+  auth.federation_bind_existing("ldap", apply=True)       # only after reading
   ```
 
-  LDAP sucht je Konto ohne Kennung im Verzeichnis (Dienstkonto oder anonym; bei
-  `ldap_user_dn_template` eine BASE-Suche auf den DN — das Verzeichnis muss das Lesen erlauben) und
-  verlangt genau einen Eintrag; ein Ausfall bricht vor dem ersten Schreiben ab. SAML hat keinen
-  Suchweg: `mapping={"kontoname": "nameid", …}` (etwa aus einem Export des IdP) — dasselbe geht
-  für einzelne LDAP-Konten. Konten mit lokalem Passwort werden nur berichtet (`local_password`),
-  selbst gewählte Namen und Namen aus einer anderen Quelle abgewiesen (`refused`, `reason`). **Vor
-  `apply=True` den Bericht lesen:** War ein Name schon vor dem Lauf wiederverwendet, bindet auch
-  dieser Weg die falsche Person; `local` und `directory` stehen deshalb nebeneinander. Bis 0.21.x
-  hiessen die Teile und Felder deutsch (`gebunden`, `abgewiesen`, `lokal`, `verzeichnis`, `grund` …;
-  Tabelle im CHANGELOG zu 0.22.0). Jede Bindung steht im Audit-Log (`<quelle>_kennung_gebunden
-  detail=migration`), der Lauf als Summenzeile im Sicherheits-Log. Ein CLI-Befehl fehlt bewusst:
-  LDAP und SAML laufen nur eingebettet.
-- **Ein Konto trägt je Quelle genau eine Kennung.** Taucht im Verzeichnis unter demselben Namen eine
-  neue Kennung auf (Konto gelöscht und neu angelegt), wird das lokale Konto **nicht** übernommen.
-- **Umzug im Verzeichnis** (die alte Kennung ist wirklich tot) und **ausdrücklich öffnen** (Frist
-  verpasst, selbst gewählter Name, Name aus einer anderen Quelle, Vorab-Anlage mit `0`): `auth.federation_unbind(source,
-  user_id)` löst die Bindung für LDAP/SAML und öffnet die Bindung über den Namen für die nächste
-  Anmeldung — `max(federation_name_binding_days, 1)` Tage lang oder bis sie steht. Der Vorgang
-  steht im Audit-Log (`<quelle>_kennung_geloest`). Für OIDC gibt es keinen eigenen Aufruf — dort
-  ist die Kennung `sub` des Providers per Definition stabil.
-- **`ldap_attr_id` später einschalten** (Quelle lief bisher ohne Kennung): Die Konten tragen dann nur
-  den Herkunfts-Platzhalter und binden sich über den Namen nur in der Frist — nach ihr zuerst
-  `federation_bind_existing("ldap")` fahren.
-- **Freigaben je Anwendung** (mehrere OIDC-Clients): `auth.store.drop_oidc_grants_for_user(user_id,
-  client=None)` entzieht sie sofort, ohne die Sitzung zu beenden — der Weg, wenn der Provider
-  jemanden von einer Anwendung ausgeschlossen hat. Eine öffentliche Methode dafür gibt es noch
-  nicht; `auth.store` ist Innenleben (Stufe C, ohne Zusage).
-- **Gruppen aus dem Provider** (`apply_idp_groups`) werden bei jeder Anmeldung übernommen und
-  entzogen, wenn sie beim Provider wegfallen — gemappte Rollen seit jeher, seit H-5 auch das
-  Admin-Flag, **sofern der Provider es vergeben hat** (`users.is_admin=2`). Ein Admin aus Panel,
-  CLI, `admin_identifiers` oder `/auth/claim-admin` bleibt, ein Owner ohnehin. War es der letzte
-  Admin, bleibt die Allowlist danach zu (G6, unten).
-- **Gruppen kommen nur, wenn der Provider sie schickt** ([T-16](../backlog/T-16-gruppen-scope-warnung.md)).
-  PocketID (auch Authentik, Keycloak ohne eigenen Mapper) schickt den Claim `groups` nur mit dem
-  Scope `groups`; die Vorgabe `oidc_scopes="openid profile email"` fordert ihn nicht an. Dann
-  weist `oidc_allowed_groups` jeden ab (Audit `oidc_group_denied`), und `oidc_group_role_map`
-  vergibt keine Rolle. Der Start warnt, sobald eine Gruppenregel über den Claim `groups` läuft und
-  der Scope fehlt — je Client, auch für `oidc_clients` mit eigenen `scopes`. Abhilfe:
-  `oidc_scopes="openid profile email groups"` (Gateway: `TINYSESAM_OIDC_SCOPES`). TinySesam
-  fordert nichts von selbst nach: Liefert ein Provider den Claim über einen Mapper ohne Scope, ist
-  die Warnung gegenstandslos, und Entra ID lehnt einen Scope `groups` sogar ab (AADSTS650053; dort
-  kommen Gruppen über „optional claims", die Prüfung schweigt für diesen Issuer). **SAML und LDAP**
-  haben kein Gegenstück in der Konfiguration: Ob der IdP das Attribut `saml_attr_groups` freigibt
-  bzw. das Verzeichnis `ldap_group_attr` (`memberOf`; bei OpenLDAP nur mit dem memberof-Overlay)
-  liefert, steht auf der anderen Seite. Das Symptom ist dasselbe — `saml_denied grund=gruppe`
-  bzw. `ldap_group_denied` im Audit-Log für jeden.
-- **Widerruf folgt dem Provider (4a).** Eine OIDC-Sitzung trägt ihr Refresh-Token (verschlüsselt);
-  alle `oidc_session_refresh_minutes` (Vorgabe 15) stösst die nächste Anfrage den Tausch an — je
-  Client eine Zeile, im Hintergrund (die Anfrage wartet nicht auf den Provider; das Ergebnis gilt
-  ab der Anfrage danach), und von vielen parallelen Anfragen tauscht genau eine. Gesperrte Konten
-  fragt niemand nach. Verweigert der Provider, endet die Sitzung (`oidc_widerruf`), und die
-  API-Keys des Kontos **ruhen** (unten); frische Gruppen werden neu bewertet (ein Gruppen-
-  Claim, der ganz fehlt, ändert nichts). Nicht erreichbar → Sitzung bleibt, neuer Versuch nach einer
-  Minute. **Voraussetzung:** Der Provider gibt Refresh-Tokens aus (bei manchen nur mit Scope
-  `offline_access`, dann `oidc_scopes` ergänzen). Gibt er keine, bleibt es beim Stand davor: Die
-  Sitzung läuft bis `session_ttl_hours`. **Obergrenze ohne Ja:** Hat der Provider eine Sitzung
-  `oidc_session_max_unverified_hours` lang (Vorgabe 25) nicht bestätigt — dauerhafter Fehler des
-  Clients, Provider weg —, endet sie (`oidc_unbestaetigt` im Audit-Log). Das ist kein Nein des
-  Providers: Die API-Keys ruhen dadurch nicht. Preis: Ist der Provider länger als die Grenze weg,
-  sind danach alle OIDC-Sitzungen abgemeldet. `0` = keine Grenze.
-- **API-Keys folgen dem Provider (Fund 8).** Für Konten mit OIDC-Bindung gilt ein Key nur, solange
-  der Provider das Konto trägt: Sagt er bei 4a Nein (auch: aus der erlaubten Gruppe genommen),
-  ruhen die Keys sofort (`api_keys_ruhen` im Audit-Log, Abweisung `idp_nein`). Und ohne Bestätigung
-  binnen `oidc_apikey_confirm_days` (Vorgabe 30; Login über den Provider oder Refresh-Tausch mit
-  Ja) ruhen sie ebenfalls (`idp_unbestaetigt`) — so fällt auch jemand auf, der nur noch per Skript
-  arbeitet und keine Sitzung hat, die 4a nachprüfen könnte. **Gelöscht wird nichts**: Ein
-  `invalid_grant` unterscheidet nicht zwischen „gesperrt" und „abgelaufen" (RFC 6749 5.2) — die
-  nächste Anmeldung über den Provider weckt die Keys. Reine Automatik gehört auf ein Service-Konto
-  (keine OIDC-Bindung, nicht betroffen). Bestand: Die Frist beginnt mit dem Update. `0` schaltet nur
-  die Frist ab, das Nein zählt weiter. Mit Keycloak beachten: Läuft dort die SSO-Sitzung per
-  Leerlauf ab, antwortet der Refresh ebenfalls `invalid_grant` — dann endet auch die
-  TinySesam-Sitzung, und die Keys ruhen bis zum nächsten Login. **Ein Fehler des Clients ist kein
-  Nein**: `invalid_client` (nach einer Secret-Rotation), `unauthorized_client`,
-  `unsupported_grant_type`, jede 401 und jede 5xx zählen wie ein nicht erreichbarer Provider und
-  stehen als Warnung im Sicherheits-Log; jede andere 4xx ist ein Nein. Wird eine Anwendung aus
-  `oidc_clients` genommen oder beim Provider neu angelegt (andere `client_id`), verwirft 4a ihre
-  Zeilen — die Sitzungen laufen dann bis zu ihrem Ablauf, ohne Nachprüfung.
-- **Serien-Sperre (B2-6) und LDAP-Umbenennung:** Gezählt wird unter dem eingetippten Namen.
-  Heisst ein Konto im Verzeichnis inzwischen anders als lokal (gebunden über die stabile Kennung),
-  vermerkt jede erfolgreiche Anmeldung den Verzeichnisnamen an der Bindung
-  (`federated_identity.name_topf`, nur den jüngsten), und alle Rückwege räumen ihn mit: die volle
-  Anmeldung, der Passwort-Reset im Panel, `tinysesam passwd` und `tinysesam unlock` (G5, seit
-  2026-09-26; bis dahin räumten sie nur den lokalen Namen und die Adresse, und
-  `unlock <verzeichnisname>` brach mit „Kein Konto" ab). `tinysesam unlock` nimmt die Kennung wie
-  eingetippt — Name, Adresse oder Verzeichnisname. Findet es kein Konto (Bestand: der Name ist noch
-  nicht vermerkt, und die Anmeldung, die ihn vermerken würde, ist gesperrt), räumt es trotzdem die
-  Zähler unter dieser Kennung und sagt das; Rückgabe 1 nur, wenn dort nichts stand. Gehört der
-  Verzeichnisname lokal einem ANDEREN Konto (als Name oder Adresse), bleibt dessen Serie stehen.
-  Seit 2026-09-27 (Prüfrunde Sperren/Zähler): **Eine Kennung prüft nie die Geheimnisse zweier
-  Konten.** Gehört die eingetippte Kennung lokal einem Konto und führt der LDAP-Eintrag zu einem
-  anderen, weist die Anmeldung ab (Fehlversuch, `ldap_kennung_abgewiesen grund=kennung_zweier_konten
-  lokal=<id> verzeichnis=<id|neu>`); Abhilfe ist, das lokale Konto umzubenennen (Panel, `tinysesam
-  rename`) oder den Namen im Verzeichnis. Der Name an der Bindung eines Kontos ist für alle anderen
-  vergeben (Registrierung, Umbenennen, Admin-API, CLI, Datenbank), und wer ein LDAP-Konto umbenennt,
-  dessen Name der Verzeichnisname war, lässt ihn als Verzeichnisnamen stehen — der Panel-Reset
-  räumt die Serie darunter weiter. Den Namen trägt nur das Konto, das sich zuletzt so angemeldet
-  hat; tragen ihn zwei (Bestand), zählt er für keins, und `unlock` räumt unter ihm, ohne ein Konto zu
-  nennen.
-- **`admin_identifiers` nach einem IdP-Entzug (H-5, G6):** Entzieht der Provider der Instanz ihren
-  **letzten** Admin, befördert die Allowlist danach niemanden mehr — weder diese Person noch ein
-  anderes Konto aus der Liste (Setting `allowlist_nach_idp_entzug`, Audit `admin_bootstrap_denied
-  nach_idp_entzug`). Bis 2026-09-26 beförderte sie die Person im selben Login zurück, als Admin „von
-  Hand" und Erst-Owner — ein Recht, das kein Provider mehr entzieht und das sich weder löschen noch
-  sperren lässt. Zurück ins Panel führen die Notwege: das Einmal-Token, das TinySesam im Moment des
-  Entzugs ausgibt (an einer Konsole auf stderr, sonst in `<db_path>.claim` bzw.
-  `admin_claim_token_file`, gültig `admin_claim_ttl_min`, danach beim nächsten Start neu; s.
-  [Erst-Admin-Einmal-Token](#erst-admin-einmal-token)),
-  und `tinysesam owner --db <datei> <benutzer>`. Liefert der Provider die
-  Admin-Gruppe versehentlich nicht mehr (Mapping, Scope), verlieren alle Admins vom Provider das Recht
-  auf einmal — **deshalb mindestens einen Owner von Hand halten.**
-- **Adressen ohne Beleg** (OIDC ohne `email_verified=true`) werden nicht verwendet: kein Kontoname,
-  keine Adresse im Konto, kein `Remote-Email` (H-3). Liefert der Provider den Beleg später, wird sie
-  nachgetragen, wenn sie frei ist. Für einen Provider, der den Claim nie schickt, aber jede Adresse
-  prüft: `oidc_email_verified_default=True`.
-- **SAML und LDAP liefern keinen Beleg** — der Betreiber sagt je Quelle, ob er ihren Adressen traut
-  (PO-Entscheide 2026-09-24 und 2026-09-25):
+  LDAP searches, for each account without identifier, in the directory (service account or anonymous; with
+  `ldap_user_dn_template` a BASE search on the DN — the directory must allow reading) and
+  requires exactly one entry; an outage aborts before the first write. SAML has no
+  search path: `mapping={"accountname": "nameid", …}` (e.g. from an export of the IdP) — the same works
+  for individual LDAP accounts. Accounts with a local password are only reported (`local_password`),
+  self-chosen names and names from another source are rejected (`refused`, `reason`). **Before
+  `apply=True` read the report:** if a name had already been reused before the run, this path too
+  binds the wrong person; `local` and `directory` therefore appear side by side. Up to 0.21.x
+  the parts and fields were German (`gebunden`, `abgewiesen`, `lokal`, `verzeichnis`, `grund` …;
+  table in the CHANGELOG for 0.22.0). Every binding is in the audit log (`<quelle>_kennung_gebunden
+  detail=migration`), the run as a summary line in the security log. A CLI command is deliberately missing:
+  LDAP and SAML run only embedded.
+- **An account carries exactly one identifier per source.** If a new identifier appears in the directory under the same
+  name (account deleted and recreated), the local account is **not** taken over.
+- **Move in the directory** (the old identifier is really dead) and **opening explicitly** (deadline
+  missed, self-chosen name, name from another source, pre-creation with `0`): `auth.federation_unbind(source,
+  user_id)` dissolves the binding for LDAP/SAML and opens binding via the name for the next
+  sign-in — for `max(federation_name_binding_days, 1)` days or until it is in place. The operation
+  is in the audit log (`<quelle>_kennung_geloest`). For OIDC there is no call of its own — there
+  the identifier `sub` of the provider is stable by definition.
+- **Switching on `ldap_attr_id` later** (source has so far run without identifier): The accounts then carry only
+  the origin placeholder and bind via the name only within the deadline — after it run
+  `federation_bind_existing("ldap")` first.
+- **Approvals per application** (several OIDC clients): `auth.store.drop_oidc_grants_for_user(user_id,
+  client=None)` withdraws them immediately without ending the session — the way when the provider
+  has excluded someone from an application. There is no public method for it yet;
+  `auth.store` is internals (tier C, without commitment).
+- **Groups from the provider** (`apply_idp_groups`) are taken over at every sign-in and
+  withdrawn when they disappear at the provider — mapped roles always, since H-5 also the
+  admin flag, **provided the provider granted it** (`users.is_admin=2`). An admin from panel,
+  CLI, `admin_identifiers` or `/auth/claim-admin` stays, an owner anyway. If it was the last
+  admin, the allowlist stays closed afterwards (G6, below).
+- **Groups come only if the provider sends them** ([T-16](../backlog/T-16-gruppen-scope-warnung.md)).
+  PocketID (also Authentik, Keycloak without its own mapper) sends the claim `groups` only with the
+  scope `groups`; the default `oidc_scopes="openid profile email"` does not request it. Then
+  `oidc_allowed_groups` rejects everyone (audit `oidc_group_denied`), and `oidc_group_role_map`
+  assigns no role. The start warns as soon as a group rule runs via the claim `groups` and
+  the scope is missing — per client, also for `oidc_clients` with their own `scopes`. Remedy:
+  `oidc_scopes="openid profile email groups"` (gateway: `TINYSESAM_OIDC_SCOPES`). TinySesam
+  requests nothing on its own: if a provider delivers the claim through a mapper without a scope, the
+  warning is moot, and Entra ID even rejects a scope `groups` (AADSTS650053; there
+  groups come via "optional claims", the check stays silent for this issuer). **SAML and LDAP**
+  have no counterpart in the configuration: whether the IdP releases the attribute `saml_attr_groups`
+  or the directory delivers `ldap_group_attr` (`memberOf`; with OpenLDAP only with the memberof overlay)
+  is decided on the other side. The symptom is the same — `saml_denied grund=gruppe`
+  or `ldap_group_denied` in the audit log for everyone.
+- **Revocation follows the provider (4a).** An OIDC session carries its refresh token (encrypted);
+  every `oidc_session_refresh_minutes` (default 15) the next request triggers the exchange — one row
+  per client, in the background (the request does not wait for the provider; the result applies
+  from the request after), and of many parallel requests exactly one exchanges. Disabled accounts
+  are not asked about. If the provider refuses, the session ends (`oidc_widerruf`), and the
+  account's API keys **rest** (below); fresh groups are re-evaluated (a group
+  claim that is missing entirely changes nothing). Not reachable → session stays, new attempt after one
+  minute. **Prerequisite:** The provider issues refresh tokens (with some only with scope
+  `offline_access`, then add to `oidc_scopes`). If it issues none, it stays at the earlier state: the
+  session runs until `session_ttl_hours`. **Upper limit without a yes:** If the provider has not confirmed a session
+  for `oidc_session_max_unverified_hours` (default 25) — permanent client error,
+  provider gone —, it ends (`oidc_unbestaetigt` in the audit log). That is not a no from the
+  provider: the API keys do not rest because of it. Price: if the provider is away for longer than the limit,
+  all OIDC sessions are signed out afterwards. `0` = no limit.
+- **API keys follow the provider (finding 8).** For accounts with an OIDC binding a key is valid only as long as
+  the provider backs the account: if it says no at 4a (also: removed from the allowed group),
+  the keys rest immediately (`api_keys_ruhen` in the audit log, rejection `idp_nein`). And without confirmation
+  within `oidc_apikey_confirm_days` (default 30; login via the provider or refresh exchange with
+  yes) they rest as well (`idp_unbestaetigt`) — so someone who now works only by script
+  and has no session that 4a could re-check is caught too. **Nothing is deleted**: an
+  `invalid_grant` does not distinguish between "blocked" and "expired" (RFC 6749 5.2) — the
+  next sign-in via the provider wakes the keys. Pure automation belongs on a service account
+  (no OIDC binding, not affected). Existing data: the deadline starts with the update. `0` switches off only
+  the deadline, the no still counts. With Keycloak note: if the SSO session expires there through
+  idling, the refresh likewise answers `invalid_grant` — then the
+  TinySesam session ends too, and the keys rest until the next login. **A client error is not a
+  no**: `invalid_client` (after a secret rotation), `unauthorized_client`,
+  `unsupported_grant_type`, every 401 and every 5xx count like an unreachable provider and
+  appear as a warning in the security log; every other 4xx is a no. If an application is taken out of
+  `oidc_clients` or recreated at the provider (different `client_id`), 4a discards its
+  rows — the sessions then run until their expiry, without re-check.
+- **Series lockout (B2-6) and LDAP renaming:** Counting happens under the typed name.
+  If an account is meanwhile named differently in the directory than locally (bound via the stable identifier),
+  every successful sign-in records the directory name on the binding
+  (`federated_identity.name_topf`, only the most recent), and all fallback paths clear it too: the full
+  sign-in, the password reset in the panel, `tinysesam passwd` and `tinysesam unlock` (G5, since
+  2026-09-26; until then they cleared only the local name and the address, and
+  `unlock <directory name>` aborted with "no account"). `tinysesam unlock` takes the identifier as
+  typed — name, address or directory name. If it finds no account (existing data: the name is not yet
+  recorded, and the sign-in that would record it is blocked), it still clears the
+  counters under this identifier and says so; return 1 only if nothing stood there. If the
+  directory name locally belongs to ANOTHER account (as name or address), that account's series stays.
+  Since 2026-09-27 (audit round lockouts/counters): **An identifier never checks the secrets of two
+  accounts.** If the typed identifier locally belongs to one account and the LDAP entry leads to another,
+  the sign-in is rejected (failed attempt, `ldap_kennung_abgewiesen grund=kennung_zweier_konten
+  lokal=<id> verzeichnis=<id|neu>`); the remedy is to rename the local account (panel, `tinysesam
+  rename`) or the name in the directory. The name on an account's binding is taken for all others
+  (registration, renaming, admin API, CLI, database), and whoever renames an LDAP account
+  whose name was the directory name leaves it standing as the directory name — the panel reset
+  keeps clearing the series under it. Only the account that last signed in this way carries the name;
+  if two carry it (existing data), it counts for neither, and `unlock` clears under it without naming an
+  account.
+- **`admin_identifiers` after an IdP withdrawal (H-5, G6):** If the provider withdraws the instance's
+  **last** admin, the allowlist promotes nobody afterwards — neither this person nor any
+  other account from the list (setting `allowlist_nach_idp_entzug`, audit `admin_bootstrap_denied
+  nach_idp_entzug`). Until 2026-09-26 it promoted the person back in the same login, as admin "by
+  hand" and first owner — a right that no provider withdraws any more and that can be neither deleted nor
+  disabled. The emergency routes lead back into the panel: the one-time token that TinySesam issues at the moment of
+  the withdrawal (on a console to stderr, otherwise in `<db_path>.claim` or
+  `admin_claim_token_file`, valid `admin_claim_ttl_min`, after that renewed at the next start; see
+  [First-admin one-time token](#first-admin-one-time-token)),
+  and `tinysesam owner --db <file> <user>`. If the provider accidentally no longer delivers the
+  admin group (mapping, scope), all admins from the provider lose the right
+  at once — **therefore keep at least one owner by hand.**
+- **Addresses without proof** (OIDC without `email_verified=true`) are not used: no account name,
+  no address in the account, no `Remote-Email` (H-3). If the provider delivers the proof later, it is
+  filled in if it is free. For a provider that never sends the claim but verifies every address:
+  `oidc_email_verified_default=True`.
+- **SAML and LDAP deliver no proof** — the operator says per source whether to trust its addresses
+  (PO decisions 2026-09-24 and 2026-09-25):
 
-  | Schalter | Vorgabe | vertraut | nicht vertraut |
+  | Switch | Default | trusted | not trusted |
   |---|---|---|---|
-  | `ldap_email_trusted` | **aus** | Adresse gilt als belegt: ins Konto, als `Remote-Email`, trägt Rechte bis zum Erst-Admin über `admin_identifiers` | Adresse nicht direkt verwendet (wie H-3); Bestätigung per Link (unten) |
-  | `saml_email_trusted` | **aus** | wie oben | wie oben; dazu weicht ein Kontoname mit `@` (NameID emailAddress, UPN) einem Ersatznamen `saml-<hash>` |
+  | `ldap_email_trusted` | **off** | Address counts as proven: into the account, as `Remote-Email`, carries rights up to first admin via `admin_identifiers` | Address not used directly (as H-3); confirmation by link (below) |
+  | `saml_email_trusted` | **off** | as above | as above; in addition an account name with `@` (NameID emailAddress, UPN) gives way to a substitute name `saml-<hash>` |
 
-  Drei Wege zum Vertrauen, vom schwächsten zum stärksten Anspruch an die Quelle:
+  Three ways to trust, from the weakest to the strongest demand on the source:
 
-  1. **Bestätigung per Link — der Normalweg**, sobald Mail eingerichtet ist
-     (`federation_email_confirm`, Vorgabe an; braucht Mailer und `base_url`). Nach der Anmeldung
-     geht ein Link an die Adresse aus der Quelle; erst der Klick macht sie zur Adresse des Kontos,
-     mit Beleg. Derselbe Weg wie beim Adresswechsel der Selbstbedienung. Nur für Konten ohne
-     belegte Adresse, keiner, solange ein Adresswechsel-Link des Kontos offen ist — an welche Adresse
-     auch immer (seit 2026-09-27; vorher nur an dieselbe: Solange der erste Link im Postausgang lag,
-     schickte ein zweiter Worker einen an ein inzwischen geändertes `mail`, und ob er kam, verriet, ob
-     die erste Adresse vergeben war) —, und höchstens ein **zugestellter** Link je
-     Konto und Tag (lebt ein Link länger, `email_change_ttl_min`, so lange) — über alle Worker,
-     gezählt an der Audit-Zeile `federation_email_confirm`, die erst nach dem Versand entsteht
-     (G12a). Eine gedrosselte Adresse oder ein gescheiterter Versand wird nach
-     `mail_per_address_window_sec` erneut versucht. Gehört die Adresse schon einem anderen Konto
-     (oder steht sie in `admin_identifiers`), geht kein Link hinaus; die Abweisung
-     (`email_change_taken` bzw. `_reserved`, Detail `konto=<id> quelle=…`) zählt wie ein Versand,
-     ebenfalls über alle Worker — sonst verriete ihre Zahl auf der Konto-Seite, ob eine fremde
-     Adresse vergeben ist (Angriffsrunde 2026-09-26). Bleibt: Scheitert der Versand an eine freie
-     Adresse, versucht es die nächste Anmeldung nach dem Fenster erneut. Dasselbe gilt, wenn der
-     Postausgang voll ist: Der Link verfällt sofort, statt als offener den nächsten bis zu seinem
-     Ablauf aufzuhalten (ebenso beim Adresswechsel der Selbstbedienung).
-  2. **Beleg-Attribut** für IdPs, die es führen: `ldap_attr_email_verified` bzw.
-     `saml_attr_email_verified` nennt ein Attribut, dessen wahrer Wert (`true`, `1`, `yes`) die
-     Adresse DIESES Logins belegt — z. B. ein Keycloak-Mapper auf `emailVerified`. Nur tragfähig,
-     wenn Nutzer das Attribut nicht selbst setzen können. Es belegt die **Adresse, nicht den
-     Namen**: Bei SAML bleibt ein Kontoname mit `@` (NameID emailAddress) nur, wenn er genau die
-     belegte Adresse ist — sonst Ersatzname `saml-…` und keine Zuordnung über den Namen, wie bei
-     OIDC mit `email_verified`.
-  3. **Pauschaler Schalter** für gepflegte Quellen: `ldap_email_trusted=True` für ein Verzeichnis,
-     in dem niemand sein `mail`-Attribut selbst ändert; `saml_email_trusted=True` für einen
-     Firmen-IdP ohne Selbstregistrierung. Wer ihn setzt, wo Nutzer ihre Adresse selbst pflegen,
-     öffnet F-14 wieder: Jemand trägt sich die Adresse aus `admin_identifiers` ein und ist beim
-     ersten Login Erst-Admin.
+  1. **Confirmation by link — the normal way**, as soon as mail is set up
+     (`federation_email_confirm`, default on; needs mailer and `base_url`). After the sign-in
+     a link goes to the address from the source; only the click makes it the account's address,
+     with proof. The same path as the address change of self-service. Only for accounts without a
+     proven address, none while an address-change link of the account is open — to whatever address
+     (since 2026-09-27; before only to the same one: as long as the first link sat in the outbox,
+     a second worker sent one to a `mail` that had meanwhile changed, and whether it arrived revealed whether
+     the first address was taken) —, and at most one **delivered** link per
+     account and day (if a link lives longer, `email_change_ttl_min`, for that long) — across all workers,
+     counted on the audit row `federation_email_confirm`, which comes into being only after sending
+     (G12a). A throttled address or a failed send is retried after
+     `mail_per_address_window_sec`. If the address already belongs to another account
+     (or is in `admin_identifiers`), no link goes out; the rejection
+     (`email_change_taken` or `_reserved`, detail `konto=<id> quelle=…`) counts like a send,
+     likewise across all workers — otherwise its count on the account page would reveal whether a foreign
+     address is taken (attack round 2026-09-26). Remaining: if sending to a free
+     address fails, the next sign-in tries again after the window. The same applies if the
+     outbox is full: the link expires immediately, instead of holding up the next one as an open one until its
+     expiry (likewise for the address change of self-service).
+  2. **Proof attribute** for IdPs that carry one: `ldap_attr_email_verified` or
+     `saml_attr_email_verified` names an attribute whose true value (`true`, `1`, `yes`) proves
+     the address of THIS login — e.g. a Keycloak mapper on `emailVerified`. Viable only
+     if users cannot set the attribute themselves. It proves the **address, not the
+     name**: with SAML an account name with `@` (NameID emailAddress) stays only if it is exactly the
+     proven address — otherwise substitute name `saml-…` and no assignment via the name, as with
+     OIDC with `email_verified`.
+  3. **Blanket switch** for maintained sources: `ldap_email_trusted=True` for a directory
+     in which nobody changes their `mail` attribute themselves; `saml_email_trusted=True` for a
+     company IdP without self-registration. Whoever sets it where users maintain their address themselves
+     reopens F-14: someone enters the address from `admin_identifiers` and is first admin at the
+     first login.
 
-  Vertraut belegt ein Login dieselbe Adresse, die schon am Konto steht, nur nach oben; ein Konto
-  ohne Adresse bekommt sie, wenn sie frei ist. Ein neuer Wert in der Quelle ändert die Adresse
-  eines bestehenden Kontos nicht — das tut der Inhaber selbst über die Konto-Seite.
-  Bei nicht vertrauter Quelle wird ein unbelegter Name **nie über den Namen** einem vorhandenen
-  Konto zugeordnet — nur über die stabile Kennung, sonst abgewiesen. Unbelegt: bei SAML ein Name
-  mit `@` (NameID emailAddress) oder einer aus dem Adress-Attribut selbst (`saml_attr_username` =
-  `saml_attr_email`); bei LDAP eine Eingabe, die dem `mail`-Wert des gefundenen Eintrags gleicht
-  (ein Filter wie `(|(uid={username})(mail={username}))`, auch mit `mail=chefin` ohne `@`). Ein UPN
-  als Bind-Kennung bleibt Kontoname. Trifft ein solcher Filter die Kennung eines ANDEREN lokalen
-  Kontos, wird die Anmeldung des Verzeichnis-Eintrags abgewiesen (seit 2026-09-27,
-  `grund=kennung_zweier_konten`; von 2026-09-26 an räumte sie nur die Fehlversuche der Inhaberin
-  nicht, davor setzte jede Anmeldung des Dritten deren Kontofenster zurück). Neue Konten mit einem
-  unbelegten Namen heissen `saml-…` bzw. `ldap-…`. Wer diese
-  Namen nicht will und dem IdP traut, setzt den Schalter. Eine Kennung mit Rand-Leerraum oder
-  Steuerzeichen weist TinySesam ab, statt sie zu trimmen (sie fiele sonst auf eine fremde Bindung).
-- **Erst-Admin**: Eine föderierte Adresse macht nur mit Beleg zum Admin (`email_verified` bei OIDC;
-  bei SAML/LDAP der Schalter oben). Der sichere Weg ist `/auth/claim-admin` (F-14).
+  A trusted login that proves the same address already on the account only upgrades it; an account
+  without an address gets it if it is free. A new value in the source does not change the address
+  of an existing account — the holder does that themselves via the account page.
+  With a source that is not trusted, an unproven name is **never assigned via the name** to an existing
+  account — only via the stable identifier, otherwise rejected. Unproven: with SAML a name
+  with `@` (NameID emailAddress) or one from the address attribute itself (`saml_attr_username` =
+  `saml_attr_email`); with LDAP an input that equals the `mail` value of the entry found
+  (a filter like `(|(uid={username})(mail={username}))`, also with `mail=chefin` without `@`). A UPN
+  as bind identifier remains an account name. If such a filter hits the identifier of ANOTHER local
+  account, the sign-in of the directory entry is rejected (since 2026-09-27,
+  `grund=kennung_zweier_konten`; from 2026-09-26 on it merely did not clear the holder's failed attempts,
+  before that every sign-in of the third party reset her account window). New accounts with an
+  unproven name are named `saml-…` or `ldap-…`. Whoever does not want these
+  names and trusts the IdP sets the switch. An identifier with edge whitespace or
+  control characters is rejected by TinySesam instead of trimmed (it would otherwise fall onto a foreign binding).
+- **First admin**: A federated address makes an admin only with proof (`email_verified` for OIDC;
+  for SAML/LDAP the switch above). The safe way is `/auth/claim-admin` (F-14).
 
-### Gemessen (T-24, 2026-10-07)
+### Measured (T-24, 2026-10-07)
 
-`scripts/gate_messung.py`: TinySesam als ein Prozess (wie das Gateway-Abbild), Caddy 2.11.7 mit
-caddy-jwt v1.4.0 und `Caddyfile.gate`, die Anwendung eine statische Antwort; Last mit `hey`, 3000
-Anfragen je Zeile, alles auf einem Desktop-Rechner (6 Kerne):
+`scripts/gate_messung.py`: TinySesam as one process (like the gateway image), Caddy 2.11.7 with
+caddy-jwt v1.4.0 and `Caddyfile.gate`, the application a static response; load with `hey`, 3000
+requests per row, all on a desktop machine (6 cores):
 
-| gleichzeitig | Weg | Durchsatz | Median | 95 % |
+| concurrent | Path | Throughput | Median | 95 % |
 |---|---|---|---|---|
-| 1 | `/auth/forward` je Anfrage | 2 450 /s | 0,40 ms | 0,60 ms |
-| 1 | Gate-Token | 7 500 /s | 0,10 ms | 0,20 ms |
-| 20 | `/auth/forward` je Anfrage | 3 200 /s | 6,30 ms | 7,50 ms |
-| 20 | Gate-Token | 40 000 /s | 0,40 ms | 0,90 ms |
+| 1 | `/auth/forward` per request | 2 450 /s | 0.40 ms | 0.60 ms |
+| 1 | gate token | 7 500 /s | 0.10 ms | 0.20 ms |
+| 20 | `/auth/forward` per request | 3 200 /s | 6.30 ms | 7.50 ms |
+| 20 | gate token | 40 000 /s | 0.40 ms | 0.90 ms |
 
-Bei einzelnen Anfragen spart das Gate rund 0,3 ms. Der Unterschied entsteht unter Gleichzeitigkeit,
-also genau dann, wenn ein Browser die Assets einer Seite parallel lädt: Eine Prüfung je Anfrage
-stellt sie bei TinySesam in eine Schlange (rund 3 000 Prüfungen pro Sekunde, Median 6 ms), das Token
-prüft Caddy selbst (Faktor 12 bis 13). Steht TinySesam auf einem anderen Rechner als der Proxy, kommt
-je Prüfung der Netzweg dazu — hier fehlt er. Ein erster Versuch mit einem Python-Client mass dessen
-Thread-Verwaltung statt des Gates; deshalb `hey`.
+For single requests the gate saves about 0.3 ms. The difference arises under concurrency,
+that is exactly when a browser loads a page's assets in parallel: a check per request
+puts them in a queue at TinySesam (about 3 000 checks per second, median 6 ms), the token
+is checked by Caddy itself (factor 12 to 13). If TinySesam sits on a different machine than the proxy, the network path
+is added per check — it is missing here. A first attempt with a Python client measured its
+thread management instead of the gate; hence `hey`.
 
-### Abnahme je Anwendung
+### Acceptance per application
 
-`deploy/forward-auth/abnahme.sh` prüft ein echtes Deployment von aussen: Anmeldung nötig, ein
-selbst mitgeschickter `Remote-User` öffnet nichts, `/.tinysesam/*` erreicht TinySesam, der Share-Pfad
-ist offen und seine Pfad-Tricks bleiben zu; mit dem Sitzungs-Cookie eines Testkontos dazu Gate-Token,
-verfälschtes Token, „nur hier abmelden“. `tests/test_gate_caddy.py` fährt das Skript gegen den
-Testaufbau, samt Gegenprobe (eine falsche Erwartung muss es rot machen).
+`deploy/forward-auth/abnahme.sh` checks a real deployment from outside: sign-in required, a
+self-supplied `Remote-User` opens nothing, `/.tinysesam/*` reaches TinySesam, the share path
+is open and its path tricks stay shut; with the session cookie of a test account additionally gate token,
+tampered token, "sign out only here". `tests/test_gate_caddy.py` runs the script against the
+test setup, including a counter-check (a wrong expectation must turn it red).
 
 ```bash
 APP=https://app.example.com SHARE=/s/abc123 SESSION='__Host-tinysesam_session=…' deploy/forward-auth/abnahme.sh
 ```
 
-## Ein zentrales Gateway für viele Anwendungen (Code-Austausch, T-26)
+## One central gateway for many applications (code exchange, T-26)
 
-`gate_link_enabled=True`, `base_url` = Adresse des Gateways, **kein** `cookie_domain`, `gate_token_enabled=True`.
-Der Proxy reicht auf jedem App-Host `/.tinysesam/*` an das Gateway (beide Vorlagen tun das) und betreibt
-das Gateway selbst unter seiner `base_url`.
+`gate_link_enabled=True`, `base_url` = address of the gateway, **no** `cookie_domain`, `gate_token_enabled=True`.
+On every app host the proxy forwards `/.tinysesam/*` to the gateway (both templates do this) and serves
+the gateway itself under its `base_url`.
 
-- **Ablauf:** App ohne Verbindung → `/.tinysesam/start` (Ablauf + Bindungs-Cookie nur für den App-Host) →
-  `/auth/gate/authorize` beim Gateway (Sitzung, sonst Anmeldung; Freigabe der App beim Provider; „nur hier
-  abgemeldet“ → Seite mit „Weiter als …“) → Einmal-Code, 120 s → `/.tinysesam/callback` (Code, Host und
-  Bindung müssen passen) → Verbindungs-Cookie `__Host-tinysesam_link`, host-only, bis zum Ende der Sitzung.
-- **Was die App sieht:** nichts davon — alle `tinysesam_*`-Cookies entfernt der Proxy vor ihr. Ein
-  Verbindungs-Cookie, das sie trotzdem abgriffe, gälte nur für ihren eigenen Host.
-- **App mit eigenem TinySesam dahinter** (0.24.12): Sie setzt `cookie_prefix` (z. B. `"meineapp_"`), sonst entfernt
-  der Proxy auch ihre Cookies — der OIDC-Rückweg scheitert dann am fehlenden Flow-Cookie, man landet wieder beim
-  Login. Das Gateway selbst bleibt bei `tinysesam_`.
-- **Widerruf:** Sitzung beendet (überall abmelden, Sperre, Admin) → jede Verbindung endet mit ihr; am Proxy
-  wie bisher erst mit Ablauf des Gate-Tokens.
-- **Überall abmelden ohne Verbindung** (die App war schon „nur hier“ abgemeldet): Der App-Host reicht an
-  `/auth/gate/logout?host=…` beim Gateway weiter, dort endet die Sitzung. Von einer fremden Seite aus erst
-  die Rückfrage auf dem App-Host (Logout-CSRF).
-- **Sprache:** `TINYSESAM_LANG=de` für deutsche Gateway-Seiten (Vorgabe `en`).
-- **Schema 14:** Tabelle `gate_link`.
+- **Flow:** app without a connection → `/.tinysesam/start` (flow + binding cookie only for the app host) →
+  `/auth/gate/authorize` at the gateway (session, otherwise sign-in; approval of the app at the provider; "signed out
+  only here" → page with "Continue as …") → one-time code, 120 s → `/.tinysesam/callback` (code, host and
+  binding must match) → connection cookie `__Host-tinysesam_link`, host-only, until the end of the session.
+- **What the app sees:** none of this — the proxy removes all `tinysesam_*` cookies before it. A
+  connection cookie that it picked up anyway would be valid only for its own host.
+- **App with its own TinySesam behind it** (0.24.12): It sets `cookie_prefix` (e.g. `"myapp_"`), otherwise the
+  proxy removes its cookies too — the OIDC return then fails for lack of the flow cookie, and one lands at the
+  login again. The gateway itself stays with `tinysesam_`.
+- **Revocation:** session ended (sign out everywhere, block, admin) → every connection ends with it; at the proxy
+  as before only when the gate token expires.
+- **Sign out everywhere without a connection** (the app was already signed out "only here"): The app host forwards to
+  `/auth/gate/logout?host=…` at the gateway, where the session ends. From a foreign site, the confirmation
+  prompt on the app host comes first (logout CSRF).
+- **Language:** `TINYSESAM_LANG=de` for German gateway pages (default `en`).
+- **Schema 14:** table `gate_link`.
 
-## Öffentliche Pfade einer Anwendung (Share-Links, T-20)
+## Public paths of an application (share links, T-20)
 
-Beide Caddy-Vorlagen haben einen Block `@share`, der Pfade ohne Anmeldung durchlässt — ohne
-Identität und ohne die Cookies von TinySesam. Von sich aus ist er aus (`^$`); eingeschaltet wird er
-mit `TS_SHARE_PRAEFIX`, einem regulären Ausdruck über den Anfang des Pfads:
+Both Caddy templates have a block `@share` that lets paths through without sign-in — without
+identity and without the TinySesam cookies. By default it is off (`^$`); it is switched on
+with `TS_SHARE_PRAEFIX`, a regular expression over the beginning of the path:
 
 ```
 TS_SHARE_PRAEFIX='^/(s|index\.php/s|apps/files_sharing/publicpreview)/'
 ```
 
-- **Nachmessen statt raten.** Eine Share-Seite lädt eigene Skripte und ruft eigene APIs auf. Die
-  Seite im Browser öffnen (ohne Anmeldung), in den Entwicklerwerkzeugen jede Anfrage ansehen, die mit
-  302 zur Anmeldung geht, und nur aufnehmen, was zur Share-Seite gehört.
-- **Nie nach Dateiendung** (`\.js$`): Viele Anwendungen liefern unter `/admin/x.css` dynamischen
-  Inhalt aus.
-- **Was die Regel abweist** (nachgemessen mit Caddy 2.11.7, `tests/test_gate_caddy.py`): `.`- und
-  `..`-Segmente im rohen Pfad (`/x/../s/a` — Caddy verglich sonst den bereinigten Pfad, die
-  Anwendung bekäme den rohen), `;` (`/s/..;/admin` lesen Tomcat und Spring als `/admin`), Backslash,
-  NUL und ihre kodierten Formen, falsche Gross-/Kleinschreibung (`/S/`), `//s/`. Ein `..` in der
-  Query und in einem Dateinamen (`a.b..c`) bleibt erlaubt.
-- **Was offen bleibt:** Diese Pfade sind öffentlich erreichbar. Eine Lücke der Anwendung dort schützt
-  das Gate nicht — so eng wie möglich.
+- **Measure instead of guess.** A share page loads its own scripts and calls its own APIs. Open the
+  page in the browser (without signing in), look in the developer tools at every request that goes with
+  302 to the sign-in, and include only what belongs to the share page.
+- **Never by file extension** (`\.js$`): Many applications serve dynamic content
+  under `/admin/x.css`.
+- **What the rule rejects** (measured with Caddy 2.11.7, `tests/test_gate_caddy.py`): `.` and
+  `..` segments in the raw path (`/x/../s/a` — Caddy would otherwise compare the cleaned path, the
+  application would get the raw one), `;` (`/s/..;/admin` is read by Tomcat and Spring as `/admin`), backslash,
+  NUL and their encoded forms, wrong upper/lower case (`/S/`), `//s/`. A `..` in the
+  query and in a file name (`a.b..c`) remains allowed.
+- **What stays open:** These paths are publicly reachable. A vulnerability of the application there is not protected
+  by the gate — keep them as narrow as possible.
 
-## Abmelden an der Anwendung — Checkliste je Anwendung (T-22)
+## Signing out at the application — checklist per application (T-22)
 
-Je Anwendung hinter dem Gate, in dieser Reihenfolge:
+For each application behind the gate, in this order:
 
-1. **Proxy:** `/.tinysesam/*` an TinySesam (in beiden Caddy-Vorlagen enthalten), vor dem Gate.
-2. **Anwendung:** ihr Abmelde-Link bzw. ihre Weiterleitung nach dem Abmelden zeigt auf
-   `https://<app>/.tinysesam/logout` (mit `?scope=app` oder `?scope=all`, sonst gilt `forward_logout`).
-   Meldet sie sich selbst beim Provider ab (RP-Logout), zeigt ihre Logout Callback URL auf
+1. **Proxy:** `/.tinysesam/*` to TinySesam (contained in both Caddy templates), before the gate.
+2. **Application:** its sign-out link or its redirect after signing out points to
+   `https://<app>/.tinysesam/logout` (with `?scope=app` or `?scope=all`, otherwise `forward_logout` applies).
+   If it signs out at the provider itself (RP logout), its Logout Callback URL points to
    `https://<app>/.tinysesam/after-logout`.
-3. **Provider:** beim OIDC-Client des **Gateways** `https://<app>/.tinysesam/after-logout` als Logout
-   Callback URL eintragen — für jede Anwendung, an der „überall abmelden“ möglich sein soll. Ohne den
-   Eintrag beendet PocketID seine Sitzung trotzdem, zeigt danach aber die eigene Seite statt
-   zurückzuleiten. Bei mehreren Clients (`oidc_clients`) gehört die Adresse zu dem Client, über den die
-   Anmeldung lief.
-4. **Gegenprobe:** abmelden; danach muss die Anwendung zur Anmeldung führen, und bei `all` eine zweite
-   Anwendung im selben Browser spätestens nach `gate_token_ttl_sec`. Im Modus `direct` steht „Abgemeldet“
-   `forward_logged_out_sec` Sekunden (Vorgabe 10), dann folgt die Anmeldeseite des Providers — **mit**
-   Klick auf Anmelden. Meldet der Provider stattdessen still wieder an, hat sein Logout nicht gegriffen
-   (Logout Callback URL aus Punkt 3 prüfen).
+3. **Provider:** enter `https://<app>/.tinysesam/after-logout` as Logout
+   Callback URL in the OIDC client of the **gateway** — for every application where "sign out everywhere" should be possible. Without
+   the entry PocketID ends its session anyway, but afterwards shows its own page instead of
+   redirecting back. With several clients (`oidc_clients`) the address belongs to the client through which the
+   sign-in ran.
+4. **Counter-check:** sign out; afterwards the application must lead to the sign-in, and with `all` a second
+   application in the same browser at the latest after `gate_token_ttl_sec`. In mode `direct` "Signed out"
+   is shown for `forward_logged_out_sec` seconds (default 10), then the provider's sign-in page follows — **with**
+   a click on Sign in. If the provider instead silently signs in again, its logout has not taken effect
+   (check the Logout Callback URL from point 3).
 
-`app` und `direct` zusammen: Die Abmeldung „nur hier“ hält, weil die Anwendung danach immer die
-Login-Seite zeigt (nie den direkten Weg zum Provider) — mit „Weiter als …“ für den Weg zurück.
+`app` and `direct` together: signing out "only here" holds because the application afterwards always shows the
+login page (never the direct path to the provider) — with "Continue as …" for the way back.
 
-## Rückschritt auf 0.21.x
+## Rückschritt auf 0.21.x (rollback to 0.21.x)
 
-(Schema **13**, nach 0.22.0: zwei neue Tabellen `gate_abgemeldet` und `oidc_id_token`, sonst nichts. 0.22.0
-öffnet die Datei mit der Warnung „neuere Schema-Version“ und lässt beide liegen. Es fehlen dann nur
-„nur hier abgemeldet“ und der `id_token_hint` beim Provider-Logout.)
+(Schema **13**, after 0.22.0: two new tables `gate_abgemeldet` and `oidc_id_token`, nothing else. 0.22.0
+opens the file with the warning "newer schema version" and leaves both in place. Only
+"signed out only here" and the `id_token_hint` at the provider logout are then missing.)
 
-0.22.0 hebt den Schema-Stempel der Datenbank auf **12**. Keine Spalte ändert sich, aber zwei
-gespeicherte Werte heissen jetzt englisch wie der Rest der öffentlichen Oberfläche (PO-Entscheid
-2026-09-27): die Art eines API-Keys (`api_key.kind`: `automat` → `automation`, `mensch` → `human`) und
-im offenen Adresswechsel-Link der Schlüssel für die bisherige Adresse (`alt` → `old`, sichtbar über
-`peek_magic`/`redeem_magic`). Der erste Start schreibt sie um und sagt es im Log (`… gespeicherte
-Werte auf die englischen Namen umgeschrieben`). Gelesen wird ein alter Wert weiterhin richtig, und
-jeder Start zieht die API-Keys nach, die eine ältere Fassung inzwischen ausgestellt hat. Die
-Audit-Zeilen bleiben unter 0.22.0, wie sie waren: `apikey_create`/`apikey_use` nennen die Art weiter
-als `art=automat`/`art=mensch`. (Läuft 0.21.x ohne das SQL unten auf der migrierten Datei, schreibt sie
-`art=automation`/`art=human` — sie gibt den gespeicherten Wert roh aus.)
+0.22.0 raises the schema stamp of the database to **12**. No column changes, but two
+stored values are now named in English like the rest of the public surface (PO decision
+2026-09-27): the kind of an API key (`api_key.kind`: `automat` → `automation`, `mensch` → `human`) and,
+in the open address-change link, the key for the previous address (`alt` → `old`, visible via
+`peek_magic`/`redeem_magic`). The first start rewrites them and says so in the log (`… gespeicherte
+Werte auf die englischen Namen umgeschrieben`). An old value is still read correctly, and
+every start updates the API keys that an older version has meanwhile issued. The
+audit rows stay under 0.22.0 as they were: `apikey_create`/`apikey_use` keep naming the kind
+as `art=automat`/`art=mensch`. (If 0.21.x runs on the migrated file without the SQL below, it writes
+`art=automation`/`art=human` — it outputs the stored value raw.)
 
-**Was 0.21.x mit einer migrierten Datei macht** (gemessen mit 0.21.0): Sie startet und warnt beim
-Start einmal: `Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11. …`.
-Sie kennt `human` nicht und hält einen solchen Key für einen Automaten-Key — **er wirkt dann ohne
-Sitzung**, mit den Rechten seines Kontos ohne das Admin-Flag. Ein Menschen-Key, der bisher allein
-wertlos war, ist unter 0.21.x allein gültig. `automation`-Keys wirken dort wie `automat`. Den Payload
-der Links liest 0.21.x nicht. Was sie selbst ausstellt, trägt wieder die alten Werte; 0.22.0 liest
-sie und schreibt die Keys beim nächsten Start um.
+**What 0.21.x does with a migrated file** (measured with 0.21.0): It starts and warns once at
+start: `Die Datenbank trägt Schema-Version 12, diese TinySesam-Fassung kennt nur 11. …`.
+It does not know `human` and takes such a key for an automation key — **it then acts without a
+session**, with the rights of its account without the admin flag. A human key that was previously worthless on its own
+is valid on its own under 0.21.x. `automation` keys act there like `automat`. The payload
+of the links is not read by 0.21.x. What it issues itself carries the old values again; 0.22.0 reads
+them and rewrites the keys at the next start.
 
-**Deshalb vor dem ersten Start von 0.21.x** — Dienst gestoppt, Sicherung gezogen (`tinysesam
-backup`, kein `cp`):
+**Therefore before the first start of 0.21.x** — service stopped, backup taken (`tinysesam
+backup`, not `cp`):
 
 ```sql
 UPDATE api_key SET kind = 'automat' WHERE kind = 'automation';
@@ -656,82 +655,82 @@ UPDATE magic_token SET payload = json_object('alt', json_extract(payload, '$.old
 PRAGMA user_version = 11;
 ```
 
-Etwa `sqlite3 auth.db < rueckweg.sql`, oder aus Python
-`sqlite3.connect("auth.db").executescript(open("rueckweg.sql").read())`; `json_object` braucht
-SQLite 3.38 oder JSON1 (in den Python-Abbildern enthalten). Danach meldet 0.21.x keine neuere
-Schema-Version mehr, und ein Menschen-Key gilt wieder nur mit Sitzung. Der Stempel 11 ist richtig:
-Es kam keine Spalte hinzu, und ein späterer Start von 0.22.0 migriert erneut. `tests/test_werte_englisch.py`
-führt genau diesen Block aus. Ohne das SQL läuft 0.21.x auch — dann gilt für Menschen-Keys das oben
-Gesagte, bis wieder 0.22.0 startet.
+For example `sqlite3 auth.db < rueckweg.sql`, or from Python
+`sqlite3.connect("auth.db").executescript(open("rueckweg.sql").read())`; `json_object` needs
+SQLite 3.38 or JSON1 (included in the Python images). Afterwards 0.21.x no longer reports a newer
+schema version, and a human key again applies only with a session. The stamp 11 is correct:
+no column was added, and a later start of 0.22.0 migrates again. `tests/test_werte_englisch.py`
+runs exactly this block. Without the SQL 0.21.x runs too — then what was said above applies to human keys
+until 0.22.0 starts again.
 
-## Anmeldewege und ihre Stärke
+## Sign-in methods and their strength
 
-**In der Vorgabe ist TinySesam einfaktorig:** Passwort allein meldet vollständig an. Ein zweiter
-Faktor gilt erst, wenn der Nutzer TOTP einrichtet (dann wird es bei jedem Login verlangt) oder der
-Betreiber eine Kette erzwingt (`login_chain=["password", "totp"]`, `login_chain_strict=True`).
+**By default TinySesam is single-factor:** a password alone signs in completely. A second
+factor applies only when the user sets up TOTP (then it is required at every login) or the
+operator enforces a chain (`login_chain=["password", "totp"]`, `login_chain_strict=True`).
 
-Ohne Kette gilt die **klassische Policy**: ein identifizierender Faktor, dazu TOTP, *falls* das
-Konto eines hat. Daraus folgen unterschiedlich starke Wege zum selben Konto:
+Without a chain the **classic policy** applies: one identifying factor, plus TOTP *if* the
+account has one. From this follow ways of differing strength to the same account:
 
-| Weg (Faktor) | Was er belegt | TOTP danach (ohne Kette) | Anmerkung |
+| Way (factor) | What it proves | TOTP afterwards (without chain) | Remark |
 |---|---|---|---|
-| Passwort (`password`) | Wissen | ja, wenn eingerichtet | auch LDAP läuft als `password` |
-| PIN (`pin`, mit `pin_login`) | Wissen (kurz) | ja, wenn eingerichtet | schwächer als ein Passwort, als Erstfaktor bewusst erlaubt (ADR-8); Sperre über `pin_max_attempts` und die Serie (`account_max_consecutive_failures`). Verlangt eine strikte Kette die PIN hinter einem anderen Faktor, ist sie nie Erstfaktor: kein Feld auf der Login-Seite, `/auth/pin` ohne Sitzung 404 (G7, `pin_as_first_factor()`) |
-| Passkey (`passkey`) | Besitz + Nutzerprüfung (`passkey_user_verification="required"`) | **nein** — gilt allein als vollwertig | stärkster Weg, wenn UV erzwungen ist (B2-10) |
-| Anmelde-Link (`magic`) | Zugriff aufs Postfach | ja, wenn eingerichtet — ebenso ein Passkey, und das auch in einer Kette wie `["magic"]` und in Route-Ketten `require(factors=[…])` (`magiclink_require_second_factor`, Vorgabe an) | ohne zweiten Faktor ist das Postfach der einzige Faktor (ASVS 6.3.6) |
-| OIDC (`oidc`) / SAML (`saml`) | was der Provider geprüft hat | ja, wenn lokal eingerichtet | TinySesam sieht nicht, ob der Provider MFA verlangt hat |
-| Passwort-Reset per Link | Postfach → neues Passwort | ja, beim anschliessenden Login | beendet alle Sitzungen, meldet selbst nicht an |
-| Recovery-Code | Ersatz für TOTP, einmalig | — | nur im TOTP-Schritt |
-| API-Key | Besitz des Schlüssels | nie (kein interaktiver Faktor) | trägt als Automaten-Key kein Admin-Flag, erreicht keine Step-up-Route (R6-5, R3-3) und ändert kein Passwort (`POST /auth/password`, `change_password`: 403, seit 0.22.0) |
+| Password (`password`) | knowledge | yes, if set up | LDAP also runs as `password` |
+| PIN (`pin`, with `pin_login`) | knowledge (short) | yes, if set up | weaker than a password, deliberately allowed as first factor (ADR-8); lockout via `pin_max_attempts` and the series (`account_max_consecutive_failures`). If a strict chain requires the PIN behind another factor, it is never first factor: no field on the login page, `/auth/pin` without a session 404 (G7, `pin_as_first_factor()`) |
+| Passkey (`passkey`) | possession + user verification (`passkey_user_verification="required"`) | **no** — counts as fully valid on its own | strongest way when UV is enforced (B2-10) |
+| Sign-in link (`magic`) | access to the mailbox | yes, if set up — likewise a passkey, also in a chain like `["magic"]` and in route chains `require(factors=[…])` (`magiclink_require_second_factor`, default on) | without a second factor the mailbox is the only factor (ASVS 6.3.6) |
+| OIDC (`oidc`) / SAML (`saml`) | what the provider has checked | yes, if set up locally | TinySesam does not see whether the provider demanded MFA |
+| Password reset by link | mailbox → new password | yes, at the subsequent login | ends all sessions, does not sign in by itself |
+| Recovery code | replacement for TOTP, one-time | — | only in the TOTP step |
+| API key | possession of the key | never (no interactive factor) | as an automation key carries no admin flag, reaches no step-up route (R6-5, R3-3) and changes no password (`POST /auth/password`, `change_password`: 403, since 0.22.0) |
 
-**Die PIN als Folgefaktor** (G7, seit 2026-09-26): Nach dem ersten Faktor einer Kette fragt
-`/auth/pin` nur die PIN des Kontos der halben Sitzung, ohne Namensfeld — auch mit `pin_login=False`
-(vorher eine Sackgasse); ebenso mit voller Sitzung in einer Route-Kette. Die halbe Sitzung gilt dort
-nur, wenn die globale `login_chain` die PIN verlangt, sie noch fehlt und sie — in einer strikten
-Kette — der nächste Schritt ist (seit 2026-09-27): Im klassischen Modus mit `pin_login=False` prüfte
-`/auth/pin` sonst für jeden, der nur das Passwort hatte, die PIN (falsch 401, richtig 303), und in
-`password → totp → pin` stand eine PIN vor dem TOTP in der Sitzung, deren Reihenfolge danach nie mehr
-erfüllbar war. Sonst ist es der Gästeweg (bzw. 404). Fehlgriffe dort zählen in der
-Serie als `pin_folge`: Ein Selbstbedienungs-Reset räumt sie nicht (wie TOTP — sie erzeugt nur, wer
-den ersten Faktor hat), die volle Anmeldung, der Passwort-Reset im Panel und `tinysesam unlock`
-schon. Fehlgriffe einer PIN als Erstfaktor (ohne Sitzung) räumt der Reset weiter (R2-2). In einer
-**nicht** strikten Kette bleibt die PIN mit `pin_login=True` zugleich Erstfaktor, auch wenn sie hinten
-steht — ohne Passwort ratbar, und der Reset räumt diese Fehlversuche; die Konfigurationsprüfung warnt
-dort. Soll sie nur Folgefaktor sein: `pin_login=False`.
+**The PIN as follow-up factor** (G7, since 2026-09-26): After the first factor of a chain,
+`/auth/pin` asks only for the PIN of the account of the half-open session, without a name field — also with `pin_login=False`
+(before a dead end); likewise with a full session in a route chain. The half-open session counts there
+only if the global `login_chain` requires the PIN, it is still missing and — in a strict
+chain — it is the next step (since 2026-09-27): In classic mode with `pin_login=False`, `/auth/pin`
+otherwise checked the PIN for everyone who had only the password (wrong 401, right 303), and in
+`password → totp → pin` a PIN stood in the session before the TOTP whose order could afterwards never be
+fulfilled. Otherwise it is the guest path (or 404). Failed attempts there count in the
+series as `pin_folge`: A self-service reset does not clear them (like TOTP — only whoever has
+the first factor produces them), the full sign-in, the password reset in the panel and `tinysesam unlock`
+do. Failed attempts of a PIN as first factor (without a session) are still cleared by the reset (R2-2). In a
+**non**-strict chain the PIN with `pin_login=True` remains at the same time a first factor, even if it comes
+last — guessable without a password, and the reset clears these failed attempts; the configuration check warns
+there. If it should be only a follow-up factor: `pin_login=False`.
 
-**Der Ausweg aus der Serien-Sperre** (seit 2026-09-27): Reichen die Fehlversuche nach dem Passwort
-(TOTP, `pin_folge`) allein bis an die Grenze, hebt ein Passwort-Reset die Sperre nicht auf. Sperrhinweis
-und Sicherheits-Log (`Anmeldung für user=… gesperrt: … Aufheben: …`) nennen den Reset dann nicht: der
-Hinweis nur den Betreiber (`tinysesam unlock`, Passwort-Reset im Panel), das Log dazu die Anmeldung
-über einen anderen Weg; die
-Anmeldeseite zeigt jedem denselben Text („Den Betreiber um Freigabe bitten; galten die Fehlversuche
-dem Passwort, hilft auch ein Passwort-Reset") — ein eigener Text je Art verriete, dass jemand am
-zweiten Faktor rät und das Konto also existiert. Die Audit-Zeile `lockout_serie` entsteht genau beim
-Übergang des feststehenden Stands über die Grenze (seit 2026-09-27; vorher auch, wenn eine
-gleichzeitige volle Anmeldung die Serie schon beendet hatte).
+**The way out of the series lockout** (since 2026-09-27): If the failed attempts after the password
+(TOTP, `pin_folge`) alone reach the limit, a password reset does not lift the lockout. Lockout notice
+and security log (`Anmeldung für user=… gesperrt: … Aufheben: …`) then do not name the reset: the
+notice names only the operator (`tinysesam unlock`, password reset in the panel), the log in addition the sign-in
+by another way; the
+sign-in page shows everyone the same text ("Ask the operator for approval; if the failed attempts
+were for the password, a password reset also helps") — a separate text per kind would reveal that someone is guessing the
+second factor and the account therefore exists. The audit row `lockout_serie` arises exactly at the
+transition of the settled state across the limit (since 2026-09-27; before also when a
+simultaneous full sign-in had already ended the series).
 
-**Die Stärke eines Kontos ist die seines schwächsten eingeschalteten Wegs.** Ein Konto mit TOTP oder
-Passkey ist über den Anmelde-Link genauso gut geschützt wie über das Passwort — ohne zweiten Faktor
-ist der Anmelde-Link so stark wie das Postfach. Das gilt auch in einer Route-Kette wie
-`require(factors=["magic"])`: Hat das Konto TOTP oder einen Passkey, verlangt sie ihn nach dem Link
-(G10, seit 2026-09-26; bis dahin öffnete das Postfach allein die Route). **Eine Route-Kette
-verschärft die globale Regel nur** (PO-Entscheid 2026-09-27, „Angleichen"): Schuldet die Sitzung der
-globalen Anmeldung noch einen Faktor — TOTP eines Kontos, das eines hat, oder den nächsten Schritt
-der `login_chain` —, geht sie zuerst dorthin, auch bei `require(factors=["password"])`; erst danach
-zählt die Liste der Route. Bis dahin überschrieb die Route-Kette die globale Policy, und
-`["password"]` liess ein Konto mit TOTP mit dem Passwort allein hinein. ASVS 6.3.4 („alle Wege
-gleich stark") erfüllt die Vorgabe trotzdem **nicht** — der Anmelde-Link ohne zweiten Faktor bleibt
-so stark wie das Postfach; eine Kette tut es.
+**The strength of an account is that of its weakest enabled way.** An account with TOTP or
+passkey is protected via the sign-in link just as well as via the password — without a second factor
+the sign-in link is as strong as the mailbox. This also holds in a route chain like
+`require(factors=["magic"])`: if the account has TOTP or a passkey, it requires it after the link
+(G10, since 2026-09-26; until then the mailbox alone opened the route). **A route chain
+only tightens the global rule** (PO decision 2026-09-27, "align"): if the session still owes the
+global sign-in a factor — TOTP of an account that has one, or the next step
+of the `login_chain` —, it goes there first, even with `require(factors=["password"])`; only afterwards
+does the route's list count. Until then the route chain overrode the global policy, and
+`["password"]` let an account with TOTP in with the password alone.
+ASVS 6.3.4 ("all ways equally strong") is nevertheless **not** met by default — the sign-in link without a second factor stays
+as strong as the mailbox; a chain does meet it.
 
-## Was für ASVS Level 3 fehlt
+## What is missing for ASVS Level 3
 
-TinySesam zielt auf Level 2. Vier Anforderungen aus V6.3 (ASVS 5.0) gehören zu Level 3 (B1-12). Seit
-2026-09-24 sind drei davon erfüllt (6.3.5, 6.3.7, 6.3.8 mit Bestätigung), 6.3.6 für Konten mit
-zweitem Faktor:
+TinySesam targets Level 2. Four requirements from V6.3 (ASVS 5.0) belong to Level 3 (B1-12). Since
+2026-09-24 three of them are met (6.3.5, 6.3.7, 6.3.8 with confirmation), 6.3.6 for accounts with
+a second factor:
 
-| ASVS | Anforderung | Stand |
+| ASVS | Requirement | Status |
 |---|---|---|
-| 6.3.5 | Nutzer über verdächtige Anmeldeversuche benachrichtigen | erfüllt, sobald Versand konfiguriert ist: Greift eine Konto-Sperre (Fenster oder Serie), geht ein Hinweis an die belegte Adresse — höchstens einer je Sperrfenster, ohne Link (`notify_login_failures`, Vorgabe an). Nachgeschlagen und verschickt im Hintergrund, die Antwort verrät weder Existenz noch Laufzeit |
-| 6.3.6 | E-Mail weder als alleiniger noch als zweiter Faktor | teilweise (PO-Entscheid 2026-09-24, Option C): Hat ein Konto TOTP oder Passkey, verlangt die Anmeldung über den Anmelde-Link ihn zusätzlich (`magiclink_require_second_factor`, Vorgabe an; `False` = der Link genügt). Konten ohne zweiten Faktor meldet der Link weiter allein an — dort ist das Postfach der einzige Faktor. Streng erfüllt nur ohne `magiclink_enabled` |
-| 6.3.7 | Nutzer nach Änderung ihrer Anmeldedaten benachrichtigen | erfüllt über den Opt-in-Hook `on_security_event` (H-6): Er läuft, sobald ein Anmeldefaktor angelegt, geändert, entfernt oder verbraucht wird (Passwort samt Reset, PIN, TOTP, Wiederherstellungscodes, Passkey), auch wenn ein Admin im Panel eingreift, und seit 2026-09-24 auch beim Widerruf von API-Keys (`api_key_revoked`, gesammelt `api_keys_revoked`). Die Mail verschickt der Hook (s. SECURITY.md). Ohne Hook wird nur protokolliert. Umbenennen (Konto-Seite seit 2026-09-25, Panel seit 2026-09-26) meldet `username_changed`, der bestätigte Adresswechsel der Konto-Seite `email_changed` (die alte Adresse bekommt ohnehin einen Hinweis); `tinysesam rename` und `store.set_email` direkt sind Werkzeuge für den Betreiber und lösen den Hook nicht aus |
-| 6.3.8 | Gültige Konten nicht aus Fehlschlägen ableitbar | erfüllt mit `signup_verify_email=True`: gleiche Antwort und Rechenzeit am Login (`dummy_verify`) und an der Registrierung (dieselbe Arbeit in beiden Zweigen, 2026-09-24). Ohne Bestätigung verrät die Registrierung vergebene Adressen zwangsläufig (sofortige Anmeldung vs. 409) — die Konfigurationsprüfung warnt |
+| 6.3.5 | Notify users of suspicious sign-in attempts | met as soon as sending is configured: if an account lockout takes effect (window or series), a notice goes to the proven address — at most one per lockout window, without a link (`notify_login_failures`, default on). Looked up and sent in the background, the response reveals neither existence nor runtime |
+| 6.3.6 | Email neither as sole nor as second factor | partly (PO decision 2026-09-24, option C): if an account has TOTP or passkey, the sign-in via the sign-in link requires it in addition (`magiclink_require_second_factor`, default on; `False` = the link suffices). Accounts without a second factor are still signed in by the link alone — there the mailbox is the only factor. Strictly met only without `magiclink_enabled` |
+| 6.3.7 | Notify users after a change of their credentials | met via the opt-in hook `on_security_event` (H-6): it runs as soon as a sign-in factor is created, changed, removed or consumed (password including reset, PIN, TOTP, recovery codes, passkey), also when an admin intervenes in the panel, and since 2026-09-24 also on the revocation of API keys (`api_key_revoked`, collectively `api_keys_revoked`). The hook sends the mail (see SECURITY.md). Without a hook it only logs. Renaming (account page since 2026-09-25, panel since 2026-09-26) reports `username_changed`, the confirmed address change of the account page `email_changed` (the old address gets a notice anyway); `tinysesam rename` and `store.set_email` directly are operator tools and do not trigger the hook |
+| 6.3.8 | Valid accounts not derivable from failures | met with `signup_verify_email=True`: same response and computing time at login (`dummy_verify`) and at registration (the same work in both branches, 2026-09-24). Without confirmation, registration inevitably reveals taken addresses (immediate sign-in vs. 409) — the configuration check warns |

@@ -1,79 +1,79 @@
 ---
 id: T-14
 type: Task
-title: Mehrere OIDC-Clients in einer Instanz — die Freigabe je App liegt beim Identity Provider
+title: Multiple OIDC clients in one instance — per-app approval lives at the identity provider
 status: erledigt
 milestone: M-1
 tags: [oidc, forward-auth, gateway, autorisierung, pocketid]
 created: 2026-09-21
 ---
 
-# T-14 — Mehrere OIDC-Clients in einer Instanz
+# T-14 — Multiple OIDC clients in one instance
 
-**Anforderung des Betreibers (2026-09-21, Pflicht):** Eine TinySesam-Installation schützt mehrere
-Anwendungen (Hosts). Wer in welche Anwendung darf, wird **im Identity Provider** entschieden — bei
-PocketID über die Gruppenfreigabe je OIDC-Client —, nicht in TinySesam und nicht im Proxy. Da diese
-Freigabe beim IdP **pro Client** gilt, braucht jede geschützte Anwendung ihren eigenen Client.
+**Operator requirement (2026-09-21, mandatory):** One TinySesam installation protects several
+applications (hosts). Who may enter which application is decided **at the identity provider** — in
+PocketID through the group approval per OIDC client —, not in TinySesam and not in the proxy. Since this
+approval at the IdP applies **per client**, every protected application needs its own client.
 
-TinySesam kennt heute genau ein `oidc_client_id`/`oidc_client_secret`. Die einzige Lösung war
-bisher eine Gateway-Instanz je Anwendung — drei Container, drei Datenbanken, drei Audit-Logs,
-drei Admin-Panels für dieselben Nutzer. Das ist die Aufgabe, die dieser Eintrag abschafft.
+Today TinySesam knows exactly one `oidc_client_id`/`oidc_client_secret`. The only solution so far was
+one gateway instance per application — three containers, three databases, three audit logs,
+three admin panels for the same users. That is the task this entry abolishes.
 
-## Was zu tun ist
+## What to do
 
-- [x] **`oidc_clients`**: Zuordnung geschützter Host → Client (`client_id`, `client_secret`,
-      optional `scopes`, `allowed_groups`, `group_role_map`). Der bisherige Einzel-Client bleibt
-      als Vorgabe („alle Hosts") — bestehende Konfigurationen laufen unverändert.
-- [x] **Eine Callback-URL für alle Clients** (`base_url` + `oidc_callback_path`): Welcher Client
-      gemeint ist, steht im Flow im Store, nicht in der URL. Beim IdP zeigen alle Clients auf
-      dieselbe Adresse.
-- [x] **Die Sitzung merkt sich die Freigaben**: je Client, für den der IdP den Nutzer angemeldet
-      hat, ein Eintrag mit Zeitstempel. Rollen aus `group_role_map` werden je Client geführt,
-      nicht global.
-- [x] **`/auth/forward` für einen Host ohne Freigabe** startet die OIDC-Runde mit dem Client
-      dieses Hosts (Ziel-Host aus `X-Forwarded-Host`, nur aus `trusted_redirect_hosts`/
-      `protected_hosts`). Der IdP hat seine Sitzung noch, prüft nur die Freigabe — eine
-      Weiterleitung, kein neuer Passkey. Lehnt der IdP ab, zeigt er seine Absage; TinySesam
-      hinterlässt eine Audit-Zeile mit Client und Grund.
-- [x] **Widerruf folgt dem IdP** (Anforderung aus demselben Gespräch, siehe den PocketID-Bericht
-      des dritten Audits): Die Freigabe je Client verfällt nach `oidc_revalidate_minutes`; die
-      nächste Anfrage prüft über Refresh-Token oder Introspection beim IdP nach — verweigert er,
-      ist die Freigabe für diesen Client weg, die Sitzung für die anderen bleibt. So wird auch
-      der Gruppenentzug im IdP binnen Minuten wirksam, und eine Löschung dort trifft alle Clients.
-- [x] **Gateway-Umgebungsvariablen**: `TINYSESAM_OIDC_CLIENTS` als JSON oder je Host
-      `TINYSESAM_OIDC_CLIENT_<HOST>_ID/_SECRET`; `deploy/forward-auth/` bekommt ein Beispiel mit
-      zwei Hosts und zwei Clients.
-- [x] **Konfigprüfung**: Host ohne Client, Client ohne Secret, Host nicht in `protected_hosts`,
-      Vorgabe-Client fehlt bei Hosts ohne Eintrag — alles beim Aufbau melden.
-- [x] **Tests**: zwei Hosts, zwei Clients gegen die OIDC-Attrappe aus `tests/test_oidc_jwks.py`;
-      Freigabe für A gilt nicht für B; Absage des IdP für B lässt A unberührt; Widerruf je Client;
-      Bestandskonfiguration mit Einzel-Client verhält sich exakt wie vorher (`test_api_surface`).
-- [x] **Doku**: README-Abschnitt „Mehrere Anwendungen, ein TinySesam" in beiden Sprachen,
-      `KONFIGURATION.md` (generiert), CHANGELOG.
+- [x] **`oidc_clients`**: mapping from protected host to client (`client_id`, `client_secret`,
+      optional `scopes`, `allowed_groups`, `group_role_map`). The existing single client stays
+      as the default ("all hosts") — existing configurations keep running unchanged.
+- [x] **One callback URL for all clients** (`base_url` + `oidc_callback_path`): Which client is
+      meant is kept in the store within the flow, not in the URL. At the IdP all clients point to the
+      same address.
+- [x] **The session remembers the approvals**: for each client for which the IdP has signed the user
+      in, one entry with a timestamp. Roles from `group_role_map` are kept per client,
+      not globally.
+- [x] **`/auth/forward` for a host without approval** starts the OIDC round with the client
+      of that host (target host from `X-Forwarded-Host`, only from `trusted_redirect_hosts`/
+      `protected_hosts`). The IdP still has its session and only checks the approval — a
+      redirect, no new passkey. If the IdP refuses, it shows its own refusal; TinySesam
+      leaves an audit line with client and reason.
+- [x] **Revocation follows the IdP** (requirement from the same conversation, see the PocketID report
+      of the third audit): The approval per client expires after `oidc_revalidate_minutes`; the
+      next request re-checks with the IdP via refresh token or introspection — if it refuses,
+      the approval for this client is gone, the session for the other clients stays. This way a
+      group removal in the IdP takes effect within minutes, and a deletion there affects all clients.
+- [x] **Gateway environment variables**: `TINYSESAM_OIDC_CLIENTS` as JSON or per host
+      `TINYSESAM_OIDC_CLIENT_<HOST>_ID/_SECRET`; `deploy/forward-auth/` gets an example with
+      two hosts and two clients.
+- [x] **Configuration check**: host without client, client without secret, host not in `protected_hosts`,
+      default client missing for hosts without an entry — report everything at startup.
+- [x] **Tests**: two hosts, two clients against the OIDC dummy from `tests/test_oidc_jwks.py`;
+      approval for A does not apply to B; refusal by the IdP for B leaves A untouched; revocation per client;
+      existing configuration with a single client behaves exactly as before (`test_api_surface`).
+- [x] **Docs**: README section "Multiple applications, one TinySesam" in both languages,
+      `KONFIGURATION.md` (generated), CHANGELOG.
 
-**Fertig, wenn:** eine Instanz drei Hosts mit drei IdP-Clients schützt, die Freigabe je Host
-ausschliesslich vom IdP kommt, ein Gruppenentzug dort innerhalb der eingestellten Frist wirkt, und
-eine Konfiguration mit nur einem Client sich um kein Byte anders verhält als in 0.18.0.
+**Done when:** one instance protects three hosts with three IdP clients, the approval per host
+comes exclusively from the IdP, a group removal there takes effect within the configured period, and
+a configuration with only one client behaves not one byte differently than in 0.18.0.
 
-## Warum vor 1.0
+## Why before 1.0
 
-`oidc_clients` ändert die Form der OIDC-Konfiguration. Das ist nach dem Einfrieren der API
-([M-1](M-1-api-stabil-1-0.md)) teurer als davor. Der Einzel-Client bleibt als Sonderfall der
-Zuordnung erhalten, damit der Übergang kein Bruch ist.
+`oidc_clients` changes the shape of the OIDC configuration. That is more expensive after freezing
+the API ([M-1](M-1-api-stabil-1-0.md)) than before. The single client stays as a special case of the
+mapping, so that the transition is not a break.
 
-## Umgesetzt am 2026-09-22
+## Implemented on 2026-09-22
 
-Gebaut wie oben beschrieben, mit zwei Abweichungen, die beim Bauen entstanden sind:
+Built as described above, with two deviations that arose during the build:
 
-- **Kein `protected_hosts` als eigenes Feld.** Welche Hosts geschützt sind, sagen bereits die
-  Schlüssel von `oidc_clients` und `trusted_redirect_hosts`. Ein drittes Feld hätte dieselbe
-  Aussage ein drittes Mal geführt — mit der Möglichkeit, dass die drei auseinanderlaufen.
-- **Die Nachprüfung geht über den Provider, nicht über einen Refresh-Token.** Der stille Weg
-  hätte ein benutzbares Geheimnis je Sitzung in die Datenbank gelegt. Der Sprung beantwortet
-  dieselbe Frage, braucht keines, und die Absage kommt vom Provider selbst — also von dort, wo
-  die Freigabe gepflegt wird.
+- **No `protected_hosts` as a field of its own.** Which hosts are protected is already given by the keys of
+  `oidc_clients` and `trusted_redirect_hosts`. A third field would have stated the same
+  thing a third time — with the possibility that the three drift apart.
+- **The re-check goes through the provider, not through a refresh token.** The silent route
+  would have put a usable secret per session into the database. The redirect answers
+  the same question, needs none, and the refusal comes from the provider itself — that is, from where
+  the approval is maintained.
 
-**Offen geblieben:** In-App-Betrieb (also ohne Proxy) prüft die Freigabe je Anwendung nicht —
-dort gibt es keinen Ziel-Host, den man fragen könnte. Wer mehrere Anwendungen in **einem**
-FastAPI-Prozess montiert, braucht dafür einen eigenen Weg; das ist ein anderer Fall als der, für
-den dieser Eintrag geschrieben wurde.
+**Still open:** In-app operation (i.e. without a proxy) does not check the approval per application —
+there is no target host there that could be asked. Anyone who mounts several applications in **one**
+FastAPI process needs a separate route for that; that is a different case from the one this entry
+was written for.

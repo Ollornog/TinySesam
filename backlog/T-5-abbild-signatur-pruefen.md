@@ -1,39 +1,40 @@
 ---
 id: T-5
 type: Task
-title: Abbild-Signatur und SBOM erwägen
+title: Consider image signature and SBOM
 status: erledigt
 milestone: M-1
 tags: [release, supply-chain, container]
 created: 2026-07-10
 ---
 
-# T-5 — Abbild-Signatur / SBOM
+# T-5 — Image signature / SBOM
 
-Ein Digest belegt **Unverändertheit**, aber nicht **Herkunft**. `cosign` plus Provenance-Attestation
-würde die Lücke schließen.
+A digest proves **unchanged**, but not **origin**. `cosign` plus a provenance attestation would
+close the gap.
 
-**Erst sinnvoll, wenn Fremde das Abbild produktiv einsetzen** — vorher ist es Zeremonie ohne
-Publikum. Vor 1.0 bewerten, nicht vorher bauen.
+**Only worth it once outsiders run the image in production** — before that it is ceremony without
+an audience. Evaluate before 1.0, do not build earlier.
 
-## Erledigt (2026-09-19)
+## Done (2026-09-19)
 
-Vorgezogen auf Entscheidung des Projektinhabers. Die Einschätzung oben bleibt stehen: Sie war der
-Grund fürs Warten, nicht ein Argument dagegen — und der Aufwand fiel kleiner aus als gedacht, weil
-es ohne eigene Schlüssel geht.
+Brought forward on the project owner's decision. The assessment above stands: it was the reason
+for waiting, not an argument against — and the effort turned out smaller than thought, because it
+works without keys of our own.
 
-Umgesetzt im Release-Workflow, für **beide** Artefaktarten (Abbild wie Wheel/sdist):
+Implemented in the release workflow, for **both** kinds of artifact (image as well as
+wheel/sdist):
 
-- **Herkunft:** `actions/attest-build-provenance` erzeugt eine über Sigstore signierte Attestation.
-  Signiert wird mit der OIDC-Identität des Workflows — kein Schlüssel, den man herausgeben, und
-  keiner, den man verlieren kann. Die Attestation des Abbilds landet zusätzlich in der Registry
-  (`push-to-registry`), ist also auch ohne dieses Repo prüfbar.
-- **SBOM:** aus dem **geschobenen** Abbild erzeugt (per Digest), nicht aus dem Bauverzeichnis —
-  sonst beschriebe sie etwas anderes als das Ausgelieferte. Ebenfalls beglaubigt.
-- BuildKits eigene Provenance bleibt aus: Sie ist **unsigniert** und belegt damit genau das nicht,
-  worum es hier geht.
-- Die Rechte wandern vom Workflow in die einzelnen Jobs (`contents: read` global), damit
-  `id-token`/`attestations` nur dort gelten, wo sie gebraucht werden.
+- **Provenance:** `actions/attest-build-provenance` produces an attestation signed via Sigstore.
+  Signing uses the workflow's OIDC identity — no key to hand out and none to lose. The image's
+  attestation also lands in the registry (`push-to-registry`), so it can be verified even without
+  this repo.
+- **SBOM:** generated from the **pushed** image (by digest), not from the build directory —
+  otherwise it would describe something other than what is delivered. Also attested.
+- BuildKit's own provenance stays off: it is **unsigned** and so does not prove exactly what this
+  is about.
+- Permissions move from the workflow into the individual jobs (`contents: read` globally), so that
+  `id-token`/`attestations` apply only where they are needed.
 
-Geprüft wird beim nächsten Release — vorher gibt es kein Artefakt, an dem sich das zeigen liesse.
-Der Befehl steht in beiden READMEs: `gh attestation verify … --owner Ollornog`.
+Verified at the next release — until then there is no artifact on which this could be shown.
+The command is in both READMEs: `gh attestation verify … --owner Ollornog`.

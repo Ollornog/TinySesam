@@ -1,132 +1,132 @@
 ---
 id: T-9
 type: Task
-title: Befunde des zweiten Audits (vier Blickwinkel) abarbeiten
+title: Work through the findings of the second audit (four perspectives)
 status: erledigt
 milestone: M-1
 tags: [sicherheit, betrieb, tests, audit]
 created: 2026-09-21
 ---
 
-# T-9 — zweites Audit, 2026-09-21
+# T-9 — second audit, 2026-09-21
 
-Nach [T-8](T-8-reifepruefung-restbefunde.md) ein zweiter Durchgang mit vier unabhängigen
-Blickwinkeln, diesmal **auf den frischen Code selbst** gerichtet: Was ist an den Fixes falsch?
-**43 Befunde, 5 davon Blocker** — und mehrere sind Regressionen der Reparaturen aus T-8. Das ist
-der Wert eines zweiten Blicks: Wer eine Lücke schliesst, prüft seinen eigenen Verschluss nicht.
+After [T-8](T-8-reifepruefung-restbefunde.md) a second pass with four independent perspectives,
+this time aimed **at the fresh code itself**: what is wrong with the fixes?
+**43 findings, 5 of them blockers** — and several are regressions of the repairs from T-8. That is
+the value of a second look: whoever closes a hole does not check their own seal.
 
-Jeder Punkt wird wie in T-8 erst am Code nachgestellt, bevor er angefasst wird.
+As in T-8, every item is first reproduced against the code before it is touched.
 
-## Blocker
+## Blockers
 
-- [x] **Erst-Admin über den BENUTZERNAMEN kapern.** Der T-8-Wächter verlangt bei offener
-      Registrierung eine *E-Mail* in `admin_identifiers` — `maybe_promote_admin` verglich aber
-      weiter „Name ODER E-Mail". Wer sich als `username="chef@example.com"` registriert und sein
-      eigenes Postfach bestätigt, wurde Erst-Admin. Die Lücke war nur verschoben.
-- [x] **`tinysesam backup` migriert die Quelldatenbank.** `_oeffne()` nimmt den vollen
-      `Store`-Konstruktor, der `_migrate()` fährt — **bevor** kopiert wird. Wer vor dem Update
-      das einzig Richtige tut und sichert, hebt damit die laufende Installation auf das neue
-      Schema, während der alte Code läuft. Der Rückweg ist danach zu, und eine Datei im alten
-      Schema existiert nirgends mehr. Gilt für `gc` genauso.
-- [x] **Rücksicherung ist nicht dokumentiert und schlägt still fehl.** Nach einem Absturz liegen
-      `-wal`/`-shm` herum; ein `cp sicherung.db auth.db` wird beim Start von der liegengebliebenen
-      WAL überschrieben — der alte Stand ist zurück, `integrity_check` sagt `ok`.
-- [x] **`konfigpruefung.py` prüft ein Feld, das es nicht gibt** (`ldap_server` statt `ldap_url`).
-      Zwei Fehler in einer Zeile: Die Warnung feuert bei **jeder** LDAP-Konfiguration, und die
-      gemeinte Prüfung findet **nie** statt. Die eigenen Presets lösen sie aus.
-- [x] **Der PyPI-Geheimnis-Check lässt sich mit einem `name:` aushebeln**
-      (`test_packaging.py:235`). Ein Schritt in gewöhnlicher Schreibweise mit
-      `password: ${{ secrets.… }}` läuft grün durch. Vor einer Erstveröffentlichung der teuerste.
+- [x] **Hijack the first admin via the USERNAME.** The T-8 guard requires an *email* in
+      `admin_identifiers` when registration is open — but `maybe_promote_admin` still compared
+      "name OR email". Anyone who registers as `username="chef@example.com"` and confirms their
+      own mailbox became first admin. The hole had only moved.
+- [x] **`tinysesam backup` migrates the source database.** `_oeffne()` takes the full
+      `Store` constructor, which runs `_migrate()` — **before** copying. Anyone who does the one
+      right thing before the update and takes a backup thereby lifts the running installation to
+      the new schema while the old code is running. The way back is closed afterwards, and a file
+      in the old schema exists nowhere any more. Applies to `gc` just the same.
+- [x] **Restoring is not documented and fails silently.** After a crash `-wal`/`-shm` are lying
+      around; a `cp backup.db auth.db` is overwritten at startup by the leftover WAL — the old
+      state is back, `integrity_check` says `ok`.
+- [x] **`konfigpruefung.py` checks a field that does not exist** (`ldap_server` instead of
+      `ldap_url`). Two errors in one line: the warning fires on **every** LDAP configuration, and
+      the intended check **never** takes place. Our own presets trigger it.
+- [x] **The PyPI secret check can be defeated with a `name:`**
+      (`test_packaging.py:235`). A step written the usual way with
+      `password: ${{ secrets.… }}` passes green. The most expensive one before a first publication.
 
-## Rechte und Zugriff
+## Permissions and access
 
-- [x] **Leerer API-Key-Scope wurde zu „erbt alles".** `["tippfehler"]` schrumpft auf `[]`, und
-      `[]` heisst im Schema „kein Scope". Ein Scope, der begrenzen sollte, erweiterte.
-- [x] Ein **gescopter API-Key stellt sich selbst einen weiteren mit allen Besitzer-Rollen aus**
-      (`create_api_key` schneidet gegen die Konto-, nicht gegen die effektiven Rollen).
-- [x] **Die CSRF-Prüfung hat einen vom Client gewählten Ausschalter:** ein beliebiger
-      `X-API-Key`-Header überspringt sie — auch bei `apikey_enabled=False`, auch wenn danach die
-      Sitzung benutzt wird.
-- [x] `POST /auth/magic/request` ohne CSRF-Prüfung (einzige zustandsändernde Route ohne).
-- [x] **Das Admin-Panel würfelt bei jedem Aufruf ein neues CSRF-Token** (= [B-1](B-1-admin-panel-rotiert-csrf.md),
-      lag auf M-2). Durch die neuen CSRF-Prüfungen trifft es jetzt mehr Wege als bei der Meldung.
-- [x] `login_chain` akzeptiert `ldap`/`apikey` als Schritt — beide können nie erfüllt werden.
-- [x] `pin_login=False` wird von der „keine Anmelde-Methode"-Prüfung nicht gesehen → leere
-      Login-Seite, kein Fund.
+- [x] **An empty API key scope became "inherits everything".** `["tippfehler"]` shrinks to `[]`,
+      and `[]` means "no scope" in the schema. A scope that was meant to limit, extended.
+- [x] A **scoped API key issues itself another one with all owner roles**
+      (`create_api_key` intersects against the account roles, not against the effective roles).
+- [x] **The CSRF check has an off switch chosen by the client:** any
+      `X-API-Key` header skips it — even with `apikey_enabled=False`, even if the session is used
+      afterwards.
+- [x] `POST /auth/magic/request` without CSRF check (the only state-changing route without one).
+- [x] **The admin panel rolls a new CSRF token on every call** (= [B-1](B-1-admin-panel-rotiert-csrf.md),
+      was on M-2). Through the new CSRF checks it now hits more paths than at the time of the report.
+- [x] `login_chain` accepts `ldap`/`apikey` as a step — neither can ever be fulfilled.
+- [x] `pin_login=False` is not seen by the "no sign-in method" check → empty
+      login page, no finding.
 
-## Krypto und Sitzungen
+## Crypto and sessions
 
-- [x] **Die Migration ist nicht atomar.** `ALTER TABLE` committet für sich; ein Abbruch davor
-      hinterlässt Klartext-Token in der Spalte `token_hash` — dauerhaft, weil die
-      Erkennungsbedingung danach nie wieder wahr wird. Alle betroffenen Anmeldungen sind tot.
-- [x] **Die Migration verträgt keinen zweiten Prozess** (`uvicorn --workers N`): `no such column:
-      "token"`, der Worker stirbt beim Start.
-- [x] **Ein TOTP-Code gilt 90 Sekunden lang beliebig oft** — zwei getrennte Clients melden sich
-      mit demselben Code voll an. NIST SP 800-63B: „SHALL accept a given OTP only once".
-- [x] `resource_unlock.token` liegt im **Klartext** in der Datenbank (identisch mit dem Cookie) —
-      dasselbe Bedrohungsmodell, das die Sitzungs-Umstellung begründet.
-- [x] Recovery-Codes: 64 bit mit ungesalzenem sha256 — NIST verlangt unter 112 bit ein
-      Passwort-Hashverfahren.
-- [x] scrypt-Fallback unter den OWASP-Parametern (`N=2^15, p=1` ist keine zugelassene Kombination).
-- [x] scrypt-Hashes werden **nie** auf argon2 gehoben, auch wenn das Extra nachinstalliert wird.
-- [x] Sitzungs-Token wird beim Rechtewechsel (zweiter Faktor) nicht erneuert.
-- [x] CSRF-Token wird beim Login nicht rotiert (naives Double-Submit).
+- [x] **The migration is not atomic.** `ALTER TABLE` commits on its own; an abort before it
+      leaves plain-text tokens in the column `token_hash` — permanently, because the
+      detection condition never becomes true again afterwards. All affected sign-ins are dead.
+- [x] **The migration does not tolerate a second process** (`uvicorn --workers N`): `no such column:
+      "token"`, the worker dies at startup.
+- [x] **A TOTP code is valid for 90 seconds, any number of times** — two separate clients sign in
+      fully with the same code. NIST SP 800-63B: "SHALL accept a given OTP only once".
+- [x] `resource_unlock.token` is in the database in **plain text** (identical to the cookie) —
+      the same threat model that justifies the session switch.
+- [x] Recovery codes: 64 bit with unsalted sha256 — NIST requires a password hashing scheme below
+      112 bit.
+- [x] scrypt fallback below the OWASP parameters (`N=2^15, p=1` is not an approved combination).
+- [x] scrypt hashes are **never** upgraded to argon2, even if the extra is installed later.
+- [x] Session token is not renewed on a change of privileges (second factor).
+- [x] CSRF token is not rotated at login (naive double submit).
 
-## Betrieb
+## Operations
 
-- [x] **fail2ban lässt sich gegen Dritte richten:** Der Benutzername geht ungefiltert ins Log;
-      ein `\n` darin erzeugt eine gefälschte Zeile mit fremder IP, während die echte unsichtbar
-      wird. Gegen echtes fail2ban 1.1.1 belegt.
-- [x] Die mitgelieferte **fail2ban-Jail kann im mitgelieferten Compose nichts lesen** — dort wird
-      weder `TINYSESAM_SECURITY_LOG` gesetzt noch ein Logverzeichnis gemountet.
-- [x] `/auth/oidc/start` ist die einzige flow-erzeugende Route **ohne Rate-Limit**; jeder Abbruch
-      hinterlässt eine Zeile. `gc` gibt den Platz nicht zurück (kein `VACUUM`).
-- [x] **Störfall-Diagnose:** falsches Passwort, deaktiviertes Konto und Tippfehler im Namen sind
-      im Protokoll byte-identisch; eine aktive Sperre steht gar nicht im Audit; OIDC-Abweisungen
-      (Gruppe fehlt / kein Konto) hinterlassen nichts. Es gibt keinen CLI-Weg ans Audit-Log.
-- [x] Der **Healthcheck merkt einen Datenbankschaden nicht** — `/healthz` bleibt 200, während
-      jede angemeldete Anfrage 500 liefert.
-- [x] **Rollback-Falle:** Alter Code auf neuer Datei startet, `/healthz` grün, Konten lesbar,
-      jede Sitzungsoperation wirft. Nirgends dokumentiert.
-- [x] Keine Timer-/Cron-Vorlage für `gc`, obwohl die README darauf verweist.
-- [x] Kein Wort zur Aufbewahrung des Audit-Logs (speichert IP-Adressen).
+- [x] **fail2ban can be turned against third parties:** the username goes unfiltered into the log;
+      a `\n` in it creates a forged line with a foreign IP, while the real one becomes invisible.
+      Proven against real fail2ban 1.1.1.
+- [x] The shipped **fail2ban jail cannot read anything in the shipped compose** — there neither
+      `TINYSESAM_SECURITY_LOG` is set nor a log directory mounted.
+- [x] `/auth/oidc/start` is the only flow-creating route **without a rate limit**; every abort
+      leaves a row. `gc` does not give the space back (no `VACUUM`).
+- [x] **Incident diagnosis:** wrong password, deactivated account and typo in the name are
+      byte-identical in the log; an active lockout is not in the audit at all; OIDC rejections
+      (group missing / no account) leave nothing. There is no CLI way to the audit log.
+- [x] The **health check does not notice database damage** — `/healthz` stays 200 while
+      every signed-in request returns 500.
+- [x] **Rollback trap:** old code on a new file starts, `/healthz` green, accounts readable,
+      every session operation throws. Not documented anywhere.
+- [x] No timer/cron template for `gc`, although the README refers to it.
+- [x] Not a word on retention of the audit log (it stores IP addresses).
 
-## Die eigenen Prüfungen
+## The checks themselves
 
-- [x] **Im git-worktree überspringt sich die gesamte Hygiene** (`.git` ist dort eine Datei, nicht
-      ein Verzeichnis) — und `run_all` meldet grün.
-- [x] **`run_all.py` kennt keinen Boden:** Exit 0 auch bei „0 grün, alles übersprungen".
-- [x] `test_repo.py` fängt `import subprocess`, aber nicht `from subprocess import run` oder
-      `os.system` — obwohl daneben eine Sicherheitsaussage steht.
-- [x] `test_api_surface.py` friert Klassenattribute nicht ein — `FORWARD_HEADERS_DEFAULT` ist in
-      der Doku eine Zusage und liesse sich still ändern.
-- [x] `test_kern_install.py` misst an zwei Stellen **Textvorkommen statt Verhalten**.
-- [x] `test_typen.py` fährt mypy ohne `--check-untyped-defs`: 120 von 410 Funktionen werden nie
-      geprüft, darunter alle vier Presets (Nutzer sehen dort `Any`).
-- [x] Die Konstruktor-Wächter sind durch Ändern der Config **nach** dem Bau umgehbar — das
-      eigene `examples/showcase.py` tut genau das.
-- [x] `forward_headers={"user": None}` passiert den Wächter und kippt jeden Forward-Auth-Request
-      in ein 500; `{"user": 123}` tötet den Konstruktor mit rohem `TypeError`.
-- [x] `_fehlt_extra` in `webauthn_.py` ist toter Code; der Passkey-Fall wirft `RuntimeError`
-      statt `MissingExtra`.
-- [x] `ldap_.authenticate()` **verschluckt** das fehlende Extra und antwortet wie bei einem
-      falschen Passwort; `saml_.metadata()` importiert ungeschützt → 500.
+- [x] **In a git worktree the entire hygiene suite skips itself** (`.git` is a file there, not a
+      directory) — and `run_all` reports green.
+- [x] **`run_all.py` has no floor:** exit 0 even for "0 green, everything skipped".
+- [x] `test_repo.py` catches `import subprocess`, but not `from subprocess import run` or
+      `os.system` — although a security statement sits next to it.
+- [x] `test_api_surface.py` does not freeze class attributes — `FORWARD_HEADERS_DEFAULT` is a
+      promise in the docs and could be changed silently.
+- [x] `test_kern_install.py` measures **text occurrences instead of behaviour** in two places.
+- [x] `test_typen.py` runs mypy without `--check-untyped-defs`: 120 of 410 functions are never
+      checked, including all four presets (users see `Any` there).
+- [x] The constructor guards can be bypassed by changing the config **after** construction — our
+      own `examples/showcase.py` does exactly that.
+- [x] `forward_headers={"user": None}` passes the guard and turns every forward-auth request
+      into a 500; `{"user": 123}` kills the constructor with a raw `TypeError`.
+- [x] `_fehlt_extra` in `webauthn_.py` is dead code; the passkey case raises `RuntimeError`
+      instead of `MissingExtra`.
+- [x] `ldap_.authenticate()` **swallows** the missing extra and answers as for a wrong
+      password; `saml_.metadata()` imports unguarded → 500.
 
-## Stand: abgearbeitet (2026-09-21)
+## Status: worked through (2026-09-21)
 
-**Alle 43 Befunde bearbeitet.** Jeder wurde erst am Code nachgestellt, bevor er angefasst wurde;
-die Belege stecken in `tests/test_audit_runde2.py` (36 Prüfungen) und in der bestehenden
-Sicherheits-Suite.
+**All 43 findings handled.** Each was first reproduced against the code before it was touched;
+the evidence is in `tests/test_audit_runde2.py` (36 checks) and in the existing
+security suite.
 
-Die drei Regressionen von heute früh sind der eigentliche Ertrag dieser Runde: Der
-Erst-Admin-Wächter prüfte die *Konfiguration* und liess den *Vergleich* unverändert; die
-API-Key-Beschneidung machte aus „keine passende Rolle" ein „erbt alles"; und `tinysesam backup`
-migrierte die Datei, die es sichern sollte. Alle drei entstanden beim Schliessen einer Lücke —
-keiner davon wäre ohne einen zweiten, unabhängigen Blick aufgefallen.
+The three regressions from this morning are the real yield of this round: the first-admin guard
+checked the *configuration* and left the *comparison* unchanged; the API key trimming turned
+"no matching role" into "inherits everything"; and `tinysesam backup` migrated the file it was
+supposed to back up. All three arose while closing a hole — none of them would have been noticed
+without a second, independent look.
 
-## Widerlegt
+## Refuted
 
-- **„CSRF-Ausnahme für API-Keys ist kein Bypass"** (Blickwinkel Krypto) gegen **„vom Client
-  wählbarer Ausschalter"** (Blickwinkel Sicherheitsfixes): Der zweite hat recht und hat es
-  belegt — der Header wird nicht validiert, und danach greift die Sitzung. Der erste hat nur
-  die CORS-Seite betrachtet.
+- **"CSRF exception for API keys is not a bypass"** (crypto perspective) versus **"off switch
+  chosen by the client"** (security-fix perspective): the second is right and proved it —
+  the header is not validated, and afterwards the session takes effect. The first only looked at
+  the CORS side.

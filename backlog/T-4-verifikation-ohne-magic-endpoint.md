@@ -1,39 +1,38 @@
 ---
 id: T-4
 type: Task
-title: E-Mail-Verifikation und Einladung ohne Magic-Link-Endpunkt
+title: Email verification and invitation without the magic-link endpoint
 status: erledigt
 milestone: M-1
 tags: [mail, registrierung]
 created: 2026-07-10
 ---
 
-# T-4 — Verifikation/Einladung vom Magic-Link entkoppeln
+# T-4 — Decouple verification/invitation from the magic link
 
-E-Mail-Verifikation und Einladung nutzen aktuell denselben Endpunkt wie der Magic-Link
-(`/auth/magic/{token}`). Wer Magic-Link abschaltet, verliert damit auch Verifikation und Einladung
-— zwei Dinge, die nichts miteinander zu tun haben.
+Email verification and invitation currently use the same endpoint as the magic link
+(`/auth/magic/{token}`). Anyone who turns off magic link thereby also loses verification and
+invitation — two things that have nothing to do with each other.
 
-**Fertig, wenn:** beide Wege einen eigenen Endpunkt haben und Magic-Link unabhängig abschaltbar ist.
+**Done when:** both paths have their own endpoint and magic link can be turned off independently.
 
-## Erledigt (2026-09-19)
+## Done (2026-09-19)
 
-Drei Wege statt der erwarteten zwei — beim Umbau fiel auf, dass der **Passwort-Reset** denselben
-Fehler hatte: seine Route verlangte `password_reset_enabled AND magiclink_enabled`, obwohl sie
-ihren eigenen Endpunkt längst besaß. Sie hängt jetzt nur noch am eigenen Schalter.
+Three paths instead of the expected two — during the rework it turned out that **password reset**
+had the same flaw: its route required `password_reset_enabled AND magiclink_enabled`, although it
+had long had its own endpoint. It now depends only on its own switch.
 
-| Zweck | vorher | jetzt |
+| Purpose | before | now |
 |---|---|---|
-| Anmelde-Link | `/auth/magic/{token}` | unverändert |
-| Adresse bestätigen | `/auth/magic/{token}` | `/auth/verify/{token}` (an `signup_verify_email`) |
-| Einladung | `/auth/magic/{token}` → Redirect | `/auth/invite/{token}` (an `allow_signup`) |
-| Passwort-Reset | `/auth/magic/{token}` → Redirect | `/auth/reset?token=…` direkt im Link |
+| Sign-in link | `/auth/magic/{token}` | unchanged |
+| Confirm address | `/auth/magic/{token}` | `/auth/verify/{token}` (tied to `signup_verify_email`) |
+| Invitation | `/auth/magic/{token}` → redirect | `/auth/invite/{token}` (tied to `allow_signup`) |
+| Password reset | `/auth/magic/{token}` → redirect | `/auth/reset?token=…` directly in the link |
 
-Die Links entstehen zweckabhängig aus `TinySesam.TOKEN_PATHS` (`magic_url(raw, base, purpose)`).
-`/auth/magic/{token}` nimmt nur noch `login`-Token an und weist andere ab, **ohne sie zu
-verbrauchen** — ein falsch geratener Endpunkt macht den Token nicht wertlos.
+The links are built per purpose from `TinySesam.TOKEN_PATHS` (`magic_url(raw, base, purpose)`).
+`/auth/magic/{token}` now only accepts `login` tokens and rejects others **without consuming
+them** — a wrongly guessed endpoint does not make the token worthless.
 
-**Harter Schnitt, bewusst** (PO-Entscheidung): bereits verschickte `/auth/magic/…`-Bestätigungs-
-und Einladungslinks sind ungültig. Der Verteiler `_magic_dispatch` ist entfallen; geblieben ist
-eine gemeinsame Anmelde-Hilfe für die beiden Wege, die tatsächlich dasselbe belegen (Zugriff aufs
-Postfach).
+**Hard cut, deliberate** (PO decision): confirmation and invitation links already sent as
+`/auth/magic/…` are invalid. The dispatcher `_magic_dispatch` is gone; what remains is a shared
+sign-in helper for the two paths that really prove the same thing (access to the mailbox).

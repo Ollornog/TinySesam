@@ -1,79 +1,79 @@
 ---
 id: ADR-9
 type: Decision
-title: Gate vor fremden Apps — der Proxy prüft ein kurzlebiges Gate-Token selbst, TinySesam nur beim Ausstellen
+title: Gate in front of third-party apps — the proxy verifies a short-lived gate token itself, TinySesam only when issuing
 status: erledigt
 tags: [architektur, forward-auth, gateway, oidc, sso, logout]
 created: 2026-10-03
 ---
 
-# ADR-9 — Gate-Token am Proxy statt Unteranfrage je Request
+# ADR-9 — Gate token at the proxy instead of a subrequest per request
 
-## Kontext
+## Context
 
-Für **fremde** Anwendungen, deren Sicherheit man nicht trauen will, steht TinySesam als Gate davor
-(Forward-Auth-Modus, [ADR-3](ADR-3-in-app-statt-proxy.md) Konsequenzen). Heute fragt der Proxy für
-**jeden** Request `/auth/forward` — auch für jedes Skript, Stylesheet und Icon. TinySesam sucht dabei
-die Sitzung im Store, prüft die Freigabe je Anwendung ([T-14](T-14-mehrere-oidc-clients.md)) und die
-Rollen ([ADR-5](ADR-5-rollen-im-forward-auth.md)). Aus dem Betrieb vor einer Fremd-App (zuvor mit
-einem anderen Forward-Auth-Dienst): **die Prüfung selbst** war der spürbare Preis, nicht der Netzweg.
+For **third-party** applications whose security you do not want to trust, TinySesam stands in front as a gate
+(forward-auth mode, [ADR-3](ADR-3-in-app-statt-proxy.md) consequences). Today the proxy asks `/auth/forward` for
+**every** request — also for every script, stylesheet and icon. In doing so TinySesam looks up the
+session in the store, checks the approval per application ([T-14](T-14-mehrere-oidc-clients.md)) and the
+roles ([ADR-5](ADR-5-rollen-im-forward-auth.md)). From operation in front of a third-party app (previously with
+another forward-auth service): **the check itself** was the noticeable price, not the network path.
 
-Zweites Ärgernis: Gate und App verlangen je einen eigenen Login.
+A second annoyance: gate and app each demand their own login.
 
-## Optionen
+## Options
 
-1. **Forward-Auth wie bisher, mit Cache in TinySesam** (Sitzungs-Hash → Ergebnis, ~30 s). Billiger,
-   aber jede Anfrage bleibt ein Hop durch Python.
-2. **Pfad-Ausnahmen für Assets** (`*.js`, `/static/*`). Verworfen: Endungs-Matcher sind das klassische
-   Loch — App-Router liefern unter `/admin/x.css` dynamischen Inhalt.
-3. **Kurzlebiges, signiertes Gate-Token, das der Proxy selbst prüft.** TinySesam wird nur gefragt,
-   wenn das Token fehlt oder abgelaufen ist.
+1. **Forward auth as before, with a cache in TinySesam** (session hash → result, ~30 s). Cheaper,
+   but every request remains a hop through Python.
+2. **Path exceptions for assets** (`*.js`, `/static/*`). Rejected: extension matchers are the classic
+   hole — app routers serve dynamic content under `/admin/x.css`.
+3. **Short-lived, signed gate token that the proxy verifies itself.** TinySesam is only asked
+   when the token is missing or expired.
 
-## Entscheidung
+## Decision
 
 **Option 3.**
 
-- **Gate-Token:** JWT, Laufzeit 5–10 min (einstellbar), `aud` = Host der Anwendung, `iss` = Gateway.
-  Ed25519 (`EdDSA`), der Proxy kennt nur den öffentlichen Schlüssel. Abgeleitet aus dem Grundschlüssel
-  der Installation (HKDF), kein zweites Geheimnis; `tinysesam gate-key` gibt den öffentlichen Teil aus. TinySesam prüft beim
-  **Ausstellen** alles, was heute `/auth/forward` prüft (Sitzung, Freigabe je App, Rollen) — das Token
-  ist dessen zwischengespeichertes Ergebnis.
-- **Cookie:** host-only auf dem App-Host, `HttpOnly`, `Secure`, `SameSite=Lax`, eigener Name.
-  Der Proxy **entfernt es aus dem Request**, bevor er ihn an die App reicht.
-- **Ausstellen auf dem Rückweg, nicht über eigene Routen** (Stand 2026-10-07, mit T-19 gebaut): Fehlt
-  das Token oder ist es ungültig, fällt der Proxy auf die bestehende Forward-Auth zurück
-  (`handle_errors 401` → `/auth/forward`). Deren 200 trägt das neue Token im Header
-  `X-TinySesam-Gate-Cookie`, und der Proxy hängt es als `Set-Cookie` an die Antwort der Anwendung.
-  Die Sitzung sieht TinySesam dabei wie bisher (Cookie über `cookie_domain`, das die Vorlagen vor der
-  Anwendung entfernen, B-20).
-  *Bis 2026-10-07 stand hier ein eigener Code-Austausch (`/.sesam/refresh` → Einmal-Code →
-  `/.sesam/callback`) mit 307-Umleitungen.* Er hätte die Sitzung nur auf dem Gateway-Host gehalten,
-  aber eine zweite Anmelde-Strecke neben der bestehenden gebraucht, und ein POST mit abgelaufenem Token
-  wäre über mehrere Sprünge doch zum GET geworden. Der Rückweg über `/auth/forward` reicht die Anfrage
-  samt Methode und Body an die Anwendung weiter — gemessen mit Caddy 2.11.7 (`tests/test_gate_caddy.py`).
-  Die Frage, ob das Sitzungs-Cookie auf der Elterndomain liegen darf, ist damit nicht neu, sondern die
-  der bestehenden Forward-Auth.
-- **Proxy-Seite:** Caddy mit dem Plugin `ggicci/caddy-jwt` (v1.4.0), `sign_alg EdDSA` mit dem
-  öffentlichen Schlüssel als Base64 — dann ignoriert das Plugin das `alg` im Kopf (im Quelltext
-  nachgesehen). Vorlage `deploy/forward-auth/Caddyfile.gate`. nginx/Traefik-Gegenstücke gibt es
-  noch nicht.
-- **Login einmal, beim Provider:** Gate und App sind je ein eigener OIDC-Client beim selben Provider,
-  beide auf dieselbe Gruppe beschränkt. Kein geteilter Client: dessen Geheimnis läge sonst in der
-  fremden App. Die App meldet sich danach lautlos an (Provider-Sitzung besteht).
-- **Login-Modus je App:** `unsichtbar` (**Vorgabe im Gateway**, PO 2026-10-03) leitet direkt zum
-  Provider und zurück zur Startadresse; `fenster` zeigt „In *App X* anmelden“.
-- **Logout-Modus je App:** `app` · `alle` · `fragen` ([T-22](T-22-logout-modi.md)).
-- **Share-Pfade:** exakte Präfixe je App, vor dem Gate, nie nach Dateiendung ([T-20](T-20-share-ausnahmen.md)).
+- **Gate token:** JWT, lifetime 5–10 min (configurable), `aud` = host of the application, `iss` = gateway.
+  Ed25519 (`EdDSA`), the proxy knows only the public key. Derived from the installation's base key
+  (HKDF), no second secret; `tinysesam gate-key` prints the public part. When
+  **issuing**, TinySesam checks everything that `/auth/forward` checks today (session, approval per app, roles) — the token
+  is its cached result.
+- **Cookie:** host-only on the app host, `HttpOnly`, `Secure`, `SameSite=Lax`, own name.
+  The proxy **removes it from the request** before passing it to the app.
+- **Issuing on the way back, not via separate routes** (as of 2026-10-07, built with T-19): if
+  the token is missing or invalid, the proxy falls back to the existing forward auth
+  (`handle_errors 401` → `/auth/forward`). Its 200 carries the new token in the header
+  `X-TinySesam-Gate-Cookie`, and the proxy attaches it as `Set-Cookie` to the application's response.
+  TinySesam sees the session as before (cookie via `cookie_domain`, which the templates remove before the
+  application, B-20).
+  *Until 2026-10-07 this contained a separate code exchange (`/.sesam/refresh` → one-time code →
+  `/.sesam/callback`) with 307 redirects.* It would have kept the session only on the gateway host,
+  but would have needed a second sign-in path next to the existing one, and a POST with an expired token
+  would have turned into a GET after several hops anyway. The way back via `/auth/forward` passes the request
+  on to the application with method and body — measured with Caddy 2.11.7 (`tests/test_gate_caddy.py`).
+  The question of whether the session cookie may sit on the parent domain is thus not new, but that
+  of the existing forward auth.
+- **Proxy side:** Caddy with the plugin `ggicci/caddy-jwt` (v1.4.0), `sign_alg EdDSA` with the
+  public key as Base64 — then the plugin ignores the `alg` in the header (checked in the
+  source code). Template `deploy/forward-auth/Caddyfile.gate`. nginx/Traefik counterparts do not
+  exist yet.
+- **Login once, at the provider:** gate and app are each their own OIDC client at the same provider,
+  both restricted to the same group. No shared client: its secret would otherwise sit in the
+  third-party app. The app then signs in silently (provider session exists).
+- **Login mode per app:** `unsichtbar` (invisible; **default in the gateway**, PO 2026-10-03) redirects directly to the
+  provider and back to the start address; `fenster` (window) shows "Sign in to *App X*".
+- **Logout mode per app:** `app` · `alle` · `fragen` ([T-22](T-22-logout-modi.md)).
+- **Share paths:** exact prefixes per app, before the gate, never by file extension ([T-20](T-20-share-ausnahmen.md)).
 
-## Konsequenzen
+## Consequences
 
-- **Widerruf verzögert:** Sperre oder Logout greifen am Proxy erst mit Ablauf des Tokens. Der eigene
-  Logout-Weg (`/.sesam/logout`) löscht das Cookie sofort; andere Apps folgen nach ≤ einer Laufzeit.
-- **Abhängigkeit vom Proxy-Plugin.** Wer kein Plugin bauen kann, bleibt bei `/auth/forward` (bleibt
-  unverändert bestehen).
-- **Header-Auth** (`Remote-User` aus den Claims) wird möglich, aber nur für Apps, die das als Modus
-  anbieten; der Proxy entfernt einen mitgeschickten `Remote-User` **immer**, auch auf Share-Pfaden.
-- Die Share-Ausnahme bleibt echte Angriffsfläche der fremden App — unvermeidlich, deshalb eng.
-- Provider-Befund (PocketID v2.17.0, Code `backend/internal/oidc/end_session_*.go`): RP-initiierter
-  Logout mit `id_token_hint`, Ziel aus den je Client hinterlegten **Logout Callback URLs**, `state` wird
-  angehängt; der Provider beendet dabei **seine eigene Sitzung**; kein Back-/Front-Channel-Logout.
+- **Delayed revocation:** a block or logout takes effect at the proxy only when the token expires. The own
+  logout path (`/.sesam/logout`) deletes the cookie immediately; other apps follow after ≤ one lifetime.
+- **Dependency on the proxy plugin.** Whoever cannot build a plugin stays with `/auth/forward` (it remains
+  unchanged).
+- **Header auth** (`Remote-User` from the claims) becomes possible, but only for apps that offer it as a mode;
+  the proxy **always** removes a `Remote-User` sent along, also on share paths.
+- The share exception remains real attack surface of the third-party app — unavoidable, hence narrow.
+- Provider finding (PocketID v2.17.0, code `backend/internal/oidc/end_session_*.go`): RP-initiated
+  logout with `id_token_hint`, target from the **Logout Callback URLs** stored per client, `state` is
+  appended; the provider ends **its own session** in the process; no back-/front-channel logout.

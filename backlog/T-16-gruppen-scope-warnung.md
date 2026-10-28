@@ -1,41 +1,41 @@
 ---
 id: T-16
 type: Task
-title: Warnen, wenn eine Gruppenregel über den Claim groups läuft und der Scope groups fehlt
+title: Warn when a group rule runs through the groups claim and the groups scope is missing
 status: erledigt
 milestone: M-2
 tags: [oidc, gruppen, konfiguration, pocketid, betrieb]
 created: 2026-09-27
 ---
 
-# T-16 — Gruppen-Scope: warnen statt still abweisen
+# T-16 — Groups scope: warn instead of silently rejecting
 
-**Fund aus dem Betrieb (2026-09-27, Einbau in eine App mit PocketID):** `oidc_allowed_groups` war
-gesetzt, `oidc_group_claim` stand auf der Vorgabe `groups`, `oidc_scopes` auf der Vorgabe
-`openid profile email`. PocketID schickt den Claim `groups` nur mit dem Scope `groups` — jeder
-wurde abgewiesen („keine passende Gruppe“, Audit `oidc_group_denied`), und nichts beim Start
-deutete auf die Ursache. Mit `oidc_group_role_map` wäre es leiser gewesen: keine Rolle, kein Fehler.
+**Finding from operation (2026-09-27, integration into an app with PocketID):** `oidc_allowed_groups` was
+set, `oidc_group_claim` was on the default `groups`, `oidc_scopes` on the default
+`openid profile email`. PocketID sends the `groups` claim only with the `groups` scope — everyone
+was rejected ("no matching group", audit `oidc_group_denied`), and nothing at startup
+pointed to the cause. With `oidc_group_role_map` it would have been quieter: no role, no error.
 
-**Fertig, wenn:** die Konfigurationsprüfung warnt, sobald eine Gruppenregel (`oidc_allowed_groups`
-oder `oidc_group_role_map`) über den Claim `groups` läuft und der Scope `groups` nicht angefordert
-wird — je Client, auch für `oidc_clients` mit eigenen `scopes`; eine Warnung, kein Fehler, und
-kein automatisches Nachfordern (andere Provider liefern den Claim über einen Mapper ohne Scope,
-manche lehnen einen unbekannten Scope ab); das Gateway den Scope überhaupt setzen kann; Test und
-Mutation.
+**Done when:** the configuration check warns as soon as a group rule (`oidc_allowed_groups`
+or `oidc_group_role_map`) runs through the `groups` claim and the `groups` scope is not requested
+— per client, also for `oidc_clients` with their own `scopes`; a warning, not an error, and
+no automatic requesting (other providers deliver the claim through a mapper without a scope,
+some reject an unknown scope); the gateway can set the scope at all; test and
+mutation.
 
-## Erledigt 2026-09-27
+## Done 2026-09-27
 
-- `konfigpruefung._gruppen_scope()`: eine Warnung, die die betroffenen Clients nennt und den Weg
-  (`oidc_scopes`, Gateway `TINYSESAM_OIDC_SCOPES`, `scopes` am Eintrag). Schweigt für Entra ID
-  (`login.microsoftonline.com`): Dort ist `groups` kein Scope, der Rat bräche die Anmeldung
-  (AADSTS650053); Gruppen kommen als „optional claim“.
-- Gateway: neue Variable `TINYSESAM_OIDC_SCOPES` (Vorgabe `openid profile email`). Ohne sie nahm
-  das Preset immer die Vorgabe — der Rat der Warnung wäre im Gateway nicht umsetzbar gewesen.
-- **SAML und LDAP:** kein Gegenstück in der Konfiguration. Es gibt dort keine Scopes; ob der IdP
-  das Gruppenattribut freigibt oder das Verzeichnis `memberOf` liefert (OpenLDAP: memberof-Overlay),
-  steht auf der anderen Seite. `docs/BETRIEB.md` nennt das Symptom (Audit `saml_denied
-  grund=gruppe` bzw. `ldap_group_denied` für jeden).
-- Test: `tests/test_betriebsfunde.py` (a) — Warnung mit allowed_groups und mit dem Rollen-Mapping,
-  keine mit Scope, ohne Regel, mit anderem Claim, ohne OIDC, bei Entra ID; je Anwendung; Gateway
-  mit und ohne `TINYSESAM_OIDC_SCOPES`. Doku: README EN/DE (Rollen & Gruppen), `docs/BETRIEB.md`,
-  Compose-Beispiel, CHANGELOG.
+- `konfigpruefung._gruppen_scope()`: one warning that names the affected clients and the way
+  (`oidc_scopes`, gateway `TINYSESAM_OIDC_SCOPES`, `scopes` on the entry). Silent for Entra ID
+  (`login.microsoftonline.com`): there `groups` is not a scope, the advice would break the sign-in
+  (AADSTS650053); groups arrive as an "optional claim".
+- Gateway: new variable `TINYSESAM_OIDC_SCOPES` (default `openid profile email`). Without it the
+  preset always took the default — the warning's advice would not have been actionable in the gateway.
+- **SAML and LDAP:** no counterpart in the configuration. There are no scopes there; whether the IdP
+  releases the group attribute or the directory delivers `memberOf` (OpenLDAP: memberof overlay)
+  is determined on the other side. `docs/BETRIEB.md` names the symptom (audit `saml_denied
+  grund=gruppe` or `ldap_group_denied` for everyone).
+- Test: `tests/test_betriebsfunde.py` (a) — warning with allowed_groups and with the role mapping,
+  none with scope, without rule, with a different claim, without OIDC, with Entra ID; per application; gateway
+  with and without `TINYSESAM_OIDC_SCOPES`. Docs: README EN/DE (Roles & groups), `docs/BETRIEB.md`,
+  compose example, CHANGELOG.

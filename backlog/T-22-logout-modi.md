@@ -1,49 +1,49 @@
 ---
 id: T-22
 type: Task
-title: "Logout-Modus je App: app, alle, fragen — Kette über den Provider zurück zum Gate"
+title: "Logout mode per app: app, all, ask — chain via the provider back to the gate"
 status: erledigt
 milestone: M-3
 tags: [gateway, oidc, logout]
 created: 2026-10-03
 ---
 
-# T-22 — Logout-Modi
+# T-22 — Logout modes
 
-Provider-Befund steht in [ADR-9](ADR-9-gate-token-am-proxy.md) (Konsequenzen).
+The provider finding is in [ADR-9](ADR-9-gate-token-am-proxy.md) (consequences).
 
-**Zu tun:**
-- `/.sesam/logout?scope=app` — Gate-Cookie dieses Hosts löschen, Freigabe dieser App in der Sitzung
-  verwerfen; Provider und andere Apps bleiben angemeldet. Die App leitet dafür **direkt** hierher,
-  ohne den Provider zu rufen (dessen End-Session beendet immer die Provider-Sitzung).
-- `/.sesam/logout?scope=all` — Ziel der Kette App → Provider-End-Session → **Logout Callback URL** →
-  hier: **alle** TinySesam-Sitzungen des Benutzers beenden, Gate-Cookie löschen; ruft das Gate selbst
-  ab, zusätzlich RP-Logout beim Provider. `state` prüfen, Ziel nur aus `trusted_redirect_hosts`.
-- `fragen` — Seite mit „Nur *App X*“ und „Überall abmelden“ (für Apps, die nur eine Logout-URL kennen).
-- `oidc_rp_logout=True` als Vorgabe im Gateway-Preset.
-- Doku: Checkliste je App (Logout-Ziel in der App, Logout Callback URL beim Provider, Modus im Gate).
+**To do:**
+- `/.sesam/logout?scope=app` — delete the gate cookie of this host, discard the approval of this app in the
+  session; provider and other apps stay signed in. For this the app redirects **directly** here,
+  without calling the provider (whose end-session always ends the provider session).
+- `/.sesam/logout?scope=all` — target of the chain app → provider end-session → **Logout Callback URL** →
+  here: end **all** TinySesam sessions of the user, delete the gate cookie; if the gate itself is
+  called, additionally RP logout at the provider. Check `state`, target only from `trusted_redirect_hosts`.
+- `fragen` (ask) — page with "Only *App X*" and "Sign out everywhere" (for apps that only know one logout URL).
+- `oidc_rp_logout=True` as default in the gateway preset.
+- Docs: checklist per app (logout target in the app, Logout Callback URL at the provider, mode in the gate).
 
-**Fertig, wenn:** Browser-Test: `app` → diese App verlangt Login, zweite App bleibt offen; `alle` →
-Provider abgemeldet, beide Gates nach ≤ einer Token-Laufzeit zu (eigenes sofort); kein offener
-Redirect über `scope`/Ziel; Mutation je Zweig.
+**Done when:** browser test: `app` → this app demands login, a second app stays open; `alle` (all) →
+provider signed out, both gates closed after ≤ one token lifetime (its own immediately); no open
+redirect via `scope`/target; mutation per branch.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-Werte englisch: `forward_logout = "all" | "app" | "ask"` (Vorgabe `all`), je Host in `forward_apps`.
+Values in English: `forward_logout = "all" | "app" | "ask"` (default `all`), per host in `forward_apps`.
 
-- `all` beendet **diese** Sitzung (sie trägt jede Anwendung hinter derselben Anmeldung), nicht alle
-  Sitzungen des Kontos auf anderen Geräten. „Überall“ heisst hier: in allen Anwendungen dieses
-  Browsers. Andere Gate-Cookies dieses Browsers laufen nach `gate_token_ttl_sec` ab.
-  *Der Plan nannte „alle TinySesam-Sitzungen des Benutzers“. Das ist ein anderer Schritt („auf allen
-  Geräten abmelden“) und bleibt beim Konto-Panel.*
-- `app` braucht eine Sperre an der Sitzung (`gate_abgemeldet`, Schema 13). Ohne sie hätte die
-  Forward-Auth die Sitzung beim nächsten Klick wieder durchgelassen. Aufgehoben wird sie mit „Weiter
-  als …“ (`POST /auth/gate/resume`) oder einer neuen Anmeldung mit Ziel dieser Anwendung. Die
-  Forward-Auth schickt dann immer auf die Login-Seite, nie direkt zum Provider (der meldete lautlos
-  wieder an).
-- **`id_token_hint`:** Ohne ihn beendet PocketID (v2.17.0) seine Sitzung nicht. TinySesam speichert
-  das ID-Token verschlüsselt (`oidc_id_token`) und schickt es samt `client_id` des Clients der Anmeldung.
-- Wege auf dem App-Host: `/.tinysesam/logout` (GET/POST), `/.tinysesam/after-logout` (Rückweg vom
-  Provider, beendet eine noch lebende Sitzung — Kette von der Anwendung aus). Cross-site: erst fragen.
-- Doku: Checkliste je Anwendung in `docs/BETRIEB.md`.
-- Test: `tests/test_logout_modi.py`, `tests/test_gate_caddy.py` (Abmelden durch Caddy). 9 Mutationen rot.
+- `all` ends **this** session (it carries every application behind the same sign-in), not all
+  sessions of the account on other devices. "Everywhere" here means: in all applications of this
+  browser. Other gate cookies of this browser expire after `gate_token_ttl_sec`.
+  *The plan said "all TinySesam sessions of the user". That is a different step ("sign out on all
+  devices") and stays with the account panel.*
+- `app` needs a lock on the session (`gate_abgemeldet`, schema 13). Without it the forward auth
+  would have let the session through again on the next click. It is lifted with "Continue
+  as …" (`POST /auth/gate/resume`) or a new sign-in targeting this application. The
+  forward auth then always sends to the login page, never directly to the provider (which would
+  silently sign in again).
+- **`id_token_hint`:** Without it PocketID (v2.17.0) does not end its session. TinySesam stores
+  the ID token encrypted (`oidc_id_token`) and sends it together with the `client_id` of the client of the sign-in.
+- Routes on the app host: `/.tinysesam/logout` (GET/POST), `/.tinysesam/after-logout` (return path from the
+  provider, ends a still living session — chain starting from the application). Cross-site: ask first.
+- Docs: checklist per application in `docs/BETRIEB.md`.
+- Test: `tests/test_logout_modi.py`, `tests/test_gate_caddy.py` (sign-out through Caddy). 9 mutations red.

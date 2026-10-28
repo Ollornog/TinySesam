@@ -1,55 +1,55 @@
 ---
 id: T-7
 type: Task
-title: "Lizenzangabe auf den SPDX-Ausdruck umstellen (Frist: 18.02.2027)"
+title: "Switch the license declaration to the SPDX expression (deadline: 2027-02-18)"
 status: erledigt
 milestone: M-2
 tags: [packaging, frist]
 created: 2026-09-21
 ---
 
-# T-7 — Lizenzangabe auf den SPDX-Ausdruck umstellen
+# T-7 — Switch the license declaration to the SPDX expression
 
-**Frist steht fest:** setuptools meldet beim Bau
+**The deadline is fixed:** setuptools reports during the build
 
 > `project.license` as a TOML table is deprecated …
 > By 2027-Feb-18, you need to update your project and remove deprecated calls
 > or your builds will no longer be supported.
 
-Betroffen sind zwei Stellen in `pyproject.toml`: `license = { text = "MIT" }` und der Classifier
-`License :: OSI Approved :: MIT License`. Beide ersetzt PEP 639 durch
+Two places in `pyproject.toml` are affected: `license = { text = "MIT" }` and the classifier
+`License :: OSI Approved :: MIT License`. PEP 639 replaces both with
 
 ```toml
 license = "MIT"
 license-files = ["LICENSE"]
 ```
 
-## Warum es 2026-09 nicht schon geschehen ist
+## Why it did not happen already in 2026-09
 
-Der SPDX-Ausdruck verlangt **setuptools ≥ 77**. Gebaut wird aber nicht nur mit dem neuesten:
-`tests/test_packaging.py` baut Wheel und sdist **offline und ohne Bau-Isolierung**, also mit dem
-setuptools, das in der jeweiligen Umgebung liegt — im lokalen CI-Abbild ist das eine ältere
-Fassung, die `license` als Zeichenkette zurückweist. Die Umstellung würde die Suite dort brechen,
-und eine Suite, die nur auf dem Papier grün ist, wäre der schlechtere Tausch.
+The SPDX expression requires **setuptools ≥ 77**. But builds are not only made with the newest:
+`tests/test_packaging.py` builds wheel and sdist **offline and without build isolation**, i.e. with
+the setuptools that happens to be in the given environment — in the local CI image that is an older
+version, which rejects `license` as a string. The switch would break the suite there, and a suite
+that is green only on paper would be the worse trade.
 
-Die veröffentlichten Artefakte entstehen davon unberührt mit dem neuesten setuptools (`python -m
-build` baut isoliert) — die Metadaten im Index sind also heute schon die aktuellen
+The published artifacts are built unaffected by this with the newest setuptools (`python -m
+build` builds isolated) — so the metadata in the index is already the current one today
 (Metadata 2.4).
 
-## Erledigt 2026-09-25
+## Done 2026-09-25
 
-Alle Umgebungen, in denen gebaut wird, bringen setuptools ≥ 77 mit (CI-Abbild `ci-python-web`: 84,
-GitHub-Jobs installieren das neueste, der Release baut isoliert). Umgestellt: `license = "MIT"`,
-`license-files = ["LICENSE"]`, `build-system.requires = ["setuptools>=77"]`, Lizenz-Classifier
-entfernt. `tests/test_packaging.py` prüft `License-Expression` und `License-File`, lehnt einen
-Lizenz-Classifier daneben ab und bricht mit älterem setuptools laut ab statt kryptisch. Der Bau
-meldet keine Deprecation mehr. Mutationen: anderer Ausdruck → rot; Classifier zurück → der Bau
-selbst lehnt ab.
+All environments in which builds are made bring setuptools ≥ 77 (CI image `ci-python-web`: 84,
+GitHub jobs install the newest, the release builds isolated). Switched: `license = "MIT"`,
+`license-files = ["LICENSE"]`, `build-system.requires = ["setuptools>=77"]`, license classifier
+removed. `tests/test_packaging.py` checks `License-Expression` and `License-File`, rejects a
+license classifier alongside, and aborts loudly with an older setuptools instead of cryptically.
+The build no longer reports a deprecation. Mutations: different expression → red; classifier back →
+the build itself rejects.
 
-## Fertig, wenn
+## Done when
 
-1. Die Umgebungen, in denen die Suite läuft, bringen setuptools ≥ 77 mit.
-2. `pyproject.toml` nennt `license = "MIT"` + `license-files`, der Lizenz-Classifier ist raus.
-3. `tests/test_packaging.py` prüft weiter die Lizenz — dann über `License-Expression` statt über
-   den Classifier — und ist in allen Umgebungen grün.
-4. Der Bau meldet keine Deprecation mehr.
+1. The environments in which the suite runs bring setuptools ≥ 77.
+2. `pyproject.toml` names `license = "MIT"` + `license-files`, the license classifier is gone.
+3. `tests/test_packaging.py` keeps checking the license — now via `License-Expression` instead of
+   the classifier — and is green in all environments.
+4. The build no longer reports a deprecation.

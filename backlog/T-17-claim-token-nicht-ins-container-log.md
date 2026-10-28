@@ -1,42 +1,42 @@
 ---
 id: T-17
 type: Task
-title: Das Erst-Admin-Einmal-Token nicht ins Container-Log schreiben
+title: Do not write the first-admin one-time token to the container log
 status: erledigt
 milestone: M-2
 tags: [sicherheit, erst-admin, container, betrieb, log]
 created: 2026-09-27
 ---
 
-# T-17 — Claim-Token: stderr ist im Container das Log
+# T-17 — Claim token: in a container, stderr is the log
 
-**Fund aus dem Betrieb (2026-09-27, Start im Container ohne Admin):** TinySesam schrieb die
-Claim-URL mit dem Einmal-Token auf stderr und direkt danach die Zeile „Der Wert steht bewusst NICHT
-im Log“. Im Container IST stderr das Log (`docker logs`, jeder Log-Versand) — der Wert stand also
-genau dort, zwei Zeilen über der Beteuerung. `admin_claim_token_file` hätte es verhindert, aber
-nichts wies darauf hin, und die Vorgabe traf den häufigsten Betrieb.
+**Finding from operation (2026-09-27, start in a container without an admin):** TinySesam wrote the
+claim URL with the one-time token to stderr and directly after it the line "The value is deliberately NOT
+in the log". In a container stderr IS the log (`docker logs`, every log shipping) — so the value stood
+exactly there, two lines above the assurance. `admin_claim_token_file` would have prevented it, but
+nothing pointed to it, and the default hit the most common operation.
 
-**Fertig, wenn:** ohne `admin_claim_token_file` und ohne Konsole (`sys.stderr.isatty()` falsch)
-das Token in einer Datei mit `0600` neben der Datenbank steht und stderr/das Log nur den Pfad
-nennt; der Text ehrlich sagt, wo das Token steht (auch im Rückfall auf stderr bei `:memory:` oder
-einer nicht anlegbaren Datei); dasselbe für die Ausgabe im Moment eines IdP-Entzugs (G6); die
-Datei nach dem Einlösen verschwindet bzw. nach dem Verfall ungültig ist; Tests für Konsole und
-keine Konsole, Rechte, kein Token im Log-Text; Mutation.
+**Done when:** without `admin_claim_token_file` and without a console (`sys.stderr.isatty()` false)
+the token sits in a file with `0600` next to the database and stderr/the log only
+name the path; the text says honestly where the token is (also in the fallback to stderr with `:memory:` or
+a file that cannot be created); the same for the output at the moment of an IdP revocation (G6); the
+file disappears after redemption or is invalid after expiry; tests for console and
+no console, permissions, no token in the log text; mutation.
 
-## Erledigt 2026-09-27
+## Done 2026-09-27
 
-- `TinySesam._admin_claim_bekanntgeben`: Konsole → stderr wie bisher; keine Konsole →
-  `<db_path>.claim` (0600, ohne `O_TRUNC` geöffnet, Rechte am Deskriptor gesetzt, dann
-  abgeschnitten — derselbe Weg wie für `admin_claim_token_file`), im Log nur der Pfad. Rückfall
-  auf stderr ohne Datenbank-Datei oder wenn die Datei nicht entsteht, dann mit dem Satz, dass der
-  Wert im Log des Dienstes steht. `admin_claim_token_file` geht vor, auch an einer Konsole.
-- Aufräumen: `_consume_admin_claim` löscht `<db_path>.claim` nach dem Einlösen; ein Start mit
-  Admin räumt einen Rest weg. Nach dem Verfall gilt der Inhalt nicht mehr, der nächste Start
-  schreibt ein neues Token. Eine selbst gewählte Datei bleibt stehen (Inhalt ungültig).
-- Die Ausgabe nach einem IdP-Entzug (G6) läuft durch dieselbe Methode.
-- Tests: `tests/test_betriebsfunde.py` (b) — Konsole und Container (stderr und Sicherheits-Log in
-  einem Puffer, wie `docker logs`), Rechte 0600, Einlösen aus der Datei, Aufräumen, Verfall,
-  `:memory:`, nicht anlegbare Datei, eigene Datei an der Konsole. Angepasst:
-  `tests/test_security_log.py` (Konsole ausdrücklich), `tests/test_t13_entscheide.py` (G6 ohne
-  Konsole: Datei). Doku: README EN/DE, `docs/BETRIEB.md` („Erst-Admin-Einmal-Token“),
-  `KONFIGURATION.md`, fail2ban-Jail, CHANGELOG.
+- `TinySesam._admin_claim_bekanntgeben`: console → stderr as before; no console →
+  `<db_path>.claim` (0600, opened without `O_TRUNC`, permissions set on the descriptor, then
+  truncated — the same route as for `admin_claim_token_file`), only the path in the log. Fallback
+  to stderr without a database file or if the file is not created, then with the sentence that the
+  value is in the service's log. `admin_claim_token_file` takes precedence, even at a console.
+- Cleanup: `_consume_admin_claim` deletes `<db_path>.claim` after redemption; a start with an
+  admin removes a leftover. After expiry the content no longer counts, the next start
+  writes a new token. A self-chosen file stays in place (content invalid).
+- The output after an IdP revocation (G6) goes through the same method.
+- Tests: `tests/test_betriebsfunde.py` (b) — console and container (stderr and security log in
+  one buffer, like `docker logs`), permissions 0600, redemption from the file, cleanup, expiry,
+  `:memory:`, file that cannot be created, own file at the console. Adapted:
+  `tests/test_security_log.py` (console explicitly), `tests/test_t13_entscheide.py` (G6 without
+  console: file). Docs: README EN/DE, `docs/BETRIEB.md` ("First-admin one-time token"),
+  `KONFIGURATION.md`, fail2ban jail, CHANGELOG.

@@ -1,55 +1,55 @@
 ---
 id: T-15
 type: Task
-title: Eingebaute Seiten unter einem Unterpfad montierbar machen
+title: Make built-in pages mountable under a subpath
 status: erledigt
 milestone: M-2
 tags: [routen, templates, deployment]
 created: 2026-09-22
 ---
 
-# T-15 — Eingebaute Seiten unter einem Unterpfad montierbar machen
+# T-15 — Make built-in pages mountable under a subpath
 
-`base_url` trägt den Unterpfad, und die **verschickten Links** tragen ihn seit 0.19 genau einmal
-(Reset, Anmelde-Link, Bestätigung, Einladung; gemessen in `tests/test_sicherheit_befunde.py`).
-Die **eingebauten Seiten** tragen ihn nicht: Formularziele und Verweise in `templates.py` stehen
-als wurzel-absolute Pfade (`/auth/register`, `/auth/forgot`, `/auth/magic/request`, `/auth/totp`,
-…), und die Umleitungen nehmen `login_path`/`login_redirect`/`logout_redirect` unverändert.
+`base_url` carries the subpath, and the **links that are sent** have carried it exactly once since 0.19
+(reset, sign-in link, confirmation, invitation; measured in `tests/test_sicherheit_befunde.py`).
+The **built-in pages** do not carry it: form targets and links in `templates.py` are
+root-absolute paths (`/auth/register`, `/auth/forgot`, `/auth/magic/request`, `/auth/totp`,
+…), and the redirects take `login_path`/`login_redirect`/`logout_redirect` unchanged.
 
-Montiert man die App unter `--root-path /sso` hinter einem Proxy, der `/sso` abschneidet, zeigt
-jeder dieser Pfade aus der Montage heraus: Der Besucher landet auf `https://example.com/auth/login`
-statt `…/sso/auth/login` — 404. Die Bestätigungsmail funktioniert dabei, die Anmeldung nicht.
+If the app is mounted under `--root-path /sso` behind a proxy that strips `/sso`, each of these paths
+points out of the mount: the visitor lands on `https://example.com/auth/login`
+instead of `…/sso/auth/login` — 404. The confirmation mail works in that case, the sign-in does not.
 
-**Stand heute:** Die Doku sagt genau das (README, `i18n/README.de.md`, `KONFIGURATION.md`,
-CHANGELOG): Der Unterpfad gehört in `base_url` und gilt für die verschickten Links; die eingebauten
-Seiten setzen voraus, dass die App an der Wurzel ihres Hosts liegt. Eine Grenze, die ausgesprochen
-ist, statt einer Zusage, die nicht trägt (Befund B-regression-3, dritte Audit-Runde).
+**Current state:** The docs say exactly that (README, `i18n/README.de.md`, `KONFIGURATION.md`,
+CHANGELOG): the subpath belongs in `base_url` and applies to the links that are sent; the built-in
+pages assume that the app sits at the root of its host. A limit that is stated out loud,
+instead of a promise that does not hold (finding B-regression-3, third audit round).
 
-**Fertig, wenn:** die Seiten ihre Ziele aus **einer** Quelle ableiten (`root_path` der Anfrage bzw.
-ein Feld wie `mount_prefix`), eine Montage unter `/sso` ohne weitere Einstellung durch Login,
-Registrierung, Magic-Link, Reset und Konto-Seite trägt, und ein Test das an einer echten Montage
-misst — nicht an einer nachgebauten URL. Erst dann darf in der Doku „trägt den Unterpfad" ohne
-Einschränkung stehen.
+**Done when:** the pages derive their targets from **one** source (the request's `root_path` or
+a field like `mount_prefix`), a mount under `/sso` without any further setting carries through login,
+registration, magic link, reset and account page, and a test measures that on a real mount — not
+on a reconstructed URL. Only then may the docs say "carries the subpath" without
+qualification.
 
-## Erledigt 2026-09-25
+## Done 2026-09-25
 
-Eine Quelle: `TinySesam._praefix(request)` nimmt den Pfad der `base_url`, ohne sie `scope["root_path"]`
-(Gegenprüfung: nur so stimmen Guards einer Host-App ausserhalb der Montage und ein Proxy, der ohne
-`--root-path` abschneidet). Form geprüft: nur
-`/teil/teil` aus A–Z a–z 0–9 . _ ~ -, sonst leer und eine Warnung — der Wert landet unmaskiert
-in Attributen und Skripten). Die eingebauten Seiten schreiben `__TS_P__` vor jeden Pfad der App
-(Formulare, Links, fetch-Aufrufe), `render_page` setzt den Präfix ein; ein eigenes Template ohne
-Platzhalter bleibt unberührt. Umleitungen auf Pfade der App gehen über `auth.pfad(request, p)`;
-ein `next`-Ziel ist schon ein Pfad des Browsers und bekommt keinen zweiten. `safe_next(next,
-request)` gibt dem Rückfall `login_redirect` den Präfix; die Routen haben `next=""` statt `"/"`
-als Vorgabe, damit ein fehlendes `next` wirklich auf `login_redirect` führt (so stand es schon in
-der Konfiguration). Gemessen in `tests/test_unterpfad.py` an einer Starlette-Montage, an einem
-Scope wie von `uvicorn --root-path` und an der Wurzel (unverändert), sechs Mutationen rot.
+One source: `TinySesam._praefix(request)` takes the path of `base_url`, and without it `scope["root_path"]`
+(counter-check: only this way do the guards of a host app outside the mount and a proxy that strips without
+`--root-path` come out right). Form checked: only
+`/part/part` of A–Z a–z 0–9 . _ ~ -, otherwise empty and a warning — the value ends up unmasked
+in attributes and scripts). The built-in pages write `__TS_P__` in front of every path of the app
+(forms, links, fetch calls), `render_page` inserts the prefix; a custom template without
+the placeholder stays untouched. Redirects to paths of the app go through `auth.pfad(request, p)`;
+a `next` target is already a path of the browser and gets no second prefix. `safe_next(next,
+request)` gives the fallback `login_redirect` the prefix; the routes have `next=""` instead of `"/"`
+as default, so that a missing `next` really leads to `login_redirect` (that is how it already stood in
+the configuration). Measured in `tests/test_unterpfad.py` on a Starlette mount, on a
+scope as produced by `uvicorn --root-path` and at the root (unchanged), six mutations red.
 
-**Gegenprüfung (ein Angreifer):** 3 mittel (Forward-Auth-URL ohne Präfix, Host-App-Guard,
-Platzhalter-Ersatz über Daten und eigene Templates → Open Redirect in eigenen Templates), 2
-niedrig, 3 info — alle behoben, 12 Mutationen rot.
+**Counter-check (one attacker):** 3 medium (forward-auth URL without prefix, host-app guard,
+placeholder replacement via data and custom templates → open redirect in custom templates), 2
+low, 3 info — all fixed, 12 mutations red.
 
-**Grenze:** `FastAPI(root_path=...)` an der App selbst lässt den Pfad der Anfrage ohne Präfix —
-Seiten und Umleitungen stimmen, aber `next=`-Ziele aus `request.url.path` zeigen aus der Montage
-heraus. Der Weg ist `--root-path` am Server oder eine Montage (README).
+**Limit:** `FastAPI(root_path=...)` on the app itself leaves the request path without a prefix —
+pages and redirects are right, but `next=` targets from `request.url.path` point out of the mount.
+The route is `--root-path` on the server or a mount (README).

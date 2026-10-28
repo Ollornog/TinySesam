@@ -1,63 +1,63 @@
 ---
 id: T-1
 type: Task
-title: End-to-End-Test gegen einen echten Identity Provider
+title: End-to-end test against a real identity provider
 status: erledigt
 milestone: M-1
 tags: [testing, passkey, oidc, saml]
 created: 2026-07-10
 ---
 
-# T-1 — End-to-End-Test gegen einen echten IdP
+# T-1 — End-to-end test against a real IdP
 
-**Der größte verbliebene blinde Fleck.** Passkey/WebAuthn, OIDC und SAML sind bisher nur
-**struktur-getestet**: Die Ceremony gegen einen echten Browser auf einer echten HTTPS-Domain,
-gegen einen echten IdP, hat nie stattgefunden. Ein Fehler dort fiele erst im Betrieb auf.
+**The biggest remaining blind spot.** Passkey/WebAuthn, OIDC and SAML have so far only been
+**structure-tested**: the ceremony has never run in a real browser on a real HTTPS domain against
+a real IdP. A bug there would only show up in production.
 
-## Was fehlt
+## What is missing
 
-- Öffentlich erreichbare Domain mit gültigem Zertifikat (WebAuthn verlangt eine echte `rp_id`
-  und HTTPS)
-- Ein IdP mit registriertem Client
-- Ein Passkey-fähiger Browser
+- A publicly reachable domain with a valid certificate (WebAuthn requires a real `rp_id` and
+  HTTPS)
+- An IdP with a registered client
+- A passkey-capable browser
 
-## Wie
+## How
 
-Dieselbe CDP-Suite wie `tests/test_browser.py`, aber mit `BASE_URL=https://…` gegen die deployte
-Instanz — also ein **Smoke-Test nach dem Deploy**, kein CI-Test. WebAuthn lässt sich über CDP mit
-`WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator` fahren, ohne echten Sicherheitsschlüssel.
+The same CDP suite as `tests/test_browser.py`, but with `BASE_URL=https://…` against the deployed
+instance — so a **smoke test after deploy**, not a CI test. WebAuthn can be driven over CDP with
+`WebAuthn.enable` + `WebAuthn.addVirtualAuthenticator`, without a real security key.
 
-## Warum kein CI-Test
+## Why not a CI test
 
-Die CI hat keine Domain, kein Zertifikat und keinen IdP. Ein Test, der das vortäuscht, prüft die
-Attrappe — nicht die Ceremony.
+CI has no domain, no certificate and no IdP. A test that fakes them checks the dummy — not the
+ceremony.
 
-**Fertig, wenn:** ein Lauf gegen eine echte Instanz alle drei Wege durchspielt und rot wird, wenn
-man ihn absichtlich bricht.
+**Done when:** a run against a real instance plays through all three paths and turns red when it
+is deliberately broken.
 
-## Erledigt (2026-09-19)
+## Done (2026-09-19)
 
-`tests/e2e_stage.py`, gefahren gegen eine ausgerollte Instanz mit echter Domain und echtem
-Zertifikat. Alle drei Wege laufen durch: Passkey (Registrierung über die eingebaute Konto-Seite,
-danach passwortlose Anmeldung — virtueller Authenticator, aber echte `rp_id`), SAML gegen einen
-echten IdP, OIDC gegen einen echten Provider.
+`tests/e2e_stage.py`, run against a deployed instance with a real domain and a real certificate.
+All three paths run through: passkey (registration via the built-in account page, then passwordless
+sign-in — virtual authenticator, but real `rp_id`), SAML against a real IdP, OIDC against a real
+provider.
 
-Beide Hälften des Kriteriums geprüft:
+Both halves of the criterion verified:
 
-| Lauf | Exit |
+| Run | Exit |
 |---|---|
-| alles richtig konfiguriert | 0 |
-| falsches Passwort am IdP | **1** |
-| Credential, das der Provider nicht kennt | **1** |
-| ohne Konfiguration (übersprungen) | 0 — nichts geprüft ist kein Fehler |
+| everything configured correctly | 0 |
+| wrong password at the IdP | **1** |
+| credential the provider does not know | **1** |
+| without configuration (skipped) | 0 — checking nothing is not a failure |
 
-**Der Lauf hat sofort etwas gefunden**, wofür dieser Eintrag da war: Eine abgelehnte SAML-Assertion
-zeigte die *Magic-Link*-Fehlerseite und hinterliess keine Logzeile — die Ursache (`Invalid issuer`,
-weil Keycloaks Entity-ID nicht die SSO-URL ist) war nur durch Patchen der Bibliothek zu finden.
-Behoben; der Grund geht jetzt an `tinysesam.security`.
+**The run found something immediately**, which is what this entry was for: a rejected SAML
+assertion showed the *magic-link* error page and left no log line — the cause (`Invalid issuer`,
+because Keycloak's entity ID is not the SSO URL) could only be found by patching the library.
+Fixed; the reason is now passed on to `tinysesam.security`.
 
-Was der Lauf beim Bauen über sich selbst gelernt hat, steht im CHANGELOG: auf Zustände warten statt
-auf die Uhr, hinter sich aufräumen, Rate-Limit als Rate-Limit melden.
+What the run learned about itself while being built is in the CHANGELOG: wait for states instead of
+the clock, clean up after itself, report a rate limit as a rate limit.
 
-**Nicht Teil dieses Eintrags:** Die Bühne wurde von Hand aufgebaut. Sie reproduzierbar zu machen
-(ein Playbook, das aus einem frischen Wegwerf-CT die Stage baut) steht als eigene Aufgabe.
+**Not part of this entry:** the stage was set up by hand. Making it reproducible (a playbook that
+builds the stage from a fresh throwaway CT) is its own task.

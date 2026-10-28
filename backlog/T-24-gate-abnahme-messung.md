@@ -1,30 +1,30 @@
 ---
 id: T-24
 type: Task
-title: Abnahme — Messung vorher/nachher und Abnahmetest je App
+title: Acceptance — before/after measurement and acceptance test per app
 status: erledigt
 milestone: M-3
 tags: [gateway, messung, test]
 created: 2026-10-03
 ---
 
-# T-24 — Abnahme
+# T-24 — Acceptance
 
-- Messung mit einer asset-lastigen Beispielseite: Ladezeit und Zahl der TinySesam-Aufrufe mit
-  `/auth/forward` gegen Gate-Token. Ergebnis in `docs/BETRIEB.md`.
-- Abnahmetest-Muster je App (Skript/Testvorlage): ungeschützter Pfad → Login; Share-Pfad offen;
-  Pfad neben dem Share-Präfix zu; Logout `app`/`alle` wie in T-22; Header-Spoofing (`Remote-User`)
-  wirkungslos.
+- Measurement with an asset-heavy sample page: load time and number of TinySesam calls with
+  `/auth/forward` versus gate token. Result in `docs/BETRIEB.md`.
+- Acceptance test pattern per app (script/test template): unprotected path → login; share path open;
+  path next to the share prefix closed; logout `app`/`alle` as in T-22; header spoofing (`Remote-User`)
+  ineffective.
 
-**Fertig, wenn:** Messwerte stehen in der Doku, Abnahmemuster liegt unter `deploy/forward-auth/`.
+**Done when:** measured values are in the docs, the acceptance pattern lies under `deploy/forward-auth/`.
 
-## Erledigt 2026-10-07
+## Done 2026-10-07
 
-- Messung `scripts/gate_messung.py`, Werte in `docs/BETRIEB.md`. Ehrlich: Bei einzelnen Anfragen spart
-  das Gate nur rund 0,3 ms; der Gewinn (Faktor 12–13) entsteht unter Gleichzeitigkeit. Der erste Versuch
-  mit einem Python-Client ergab das Gegenteil (Gate langsamer) — er mass den Client. Mit `hey` und einer
-  statischen Anwendung stimmt das Bild; der Python-Client ist verworfen.
-- Abnahmemuster `deploy/forward-auth/abnahme.sh` (bash + curl, `--path-as-is`), im Caddy-Test gegen den
-  Testaufbau gefahren, mit Gegenprobe; 3 Mutationen am Skript rot.
-- Header-Spoofing lässt sich von aussen nur als „öffnet nichts“ prüfen. Dass die Anwendung keinen
-  fremden `Remote-User` sieht, prüft `tests/test_gate_caddy.py` an der Attrappe.
+- Measurement `scripts/gate_messung.py`, values in `docs/BETRIEB.md`. Honestly: for single requests
+  the gate saves only about 0.3 ms; the gain (factor 12–13) arises under concurrency. The first attempt
+  with a Python client gave the opposite (gate slower) — it measured the client. With `hey` and a
+  static application the picture is right; the Python client is discarded.
+- Acceptance pattern `deploy/forward-auth/abnahme.sh` (bash + curl, `--path-as-is`), run in the Caddy test against
+  the test setup, with a control run; 3 mutations on the script red.
+- Header spoofing can be checked from outside only as "opens nothing". That the application does not see a
+  foreign `Remote-User` is checked by `tests/test_gate_caddy.py` against the dummy.
