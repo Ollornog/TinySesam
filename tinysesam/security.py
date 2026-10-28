@@ -55,6 +55,11 @@ def fuer_log(wert) -> str:
     keine Anmeldung, sondern ein Versuch, das Log zu fluten).
     """
     text = "".join(z for z in str(wert if wert is not None else "") if not _zeilenbrecher(z))
+    # Wirkungslos — `_zeilenbrecher` hat jeden Umbruch schon entfernt —, aber die Form, die CodeQL
+    # als Filter gegen Log-Injektion kennt (`ReplaceLineBreaksSanitizer`: `.replace("\n", …)`).
+    # Ohne sie meldet `py/log-injection` jede Zeile, deren Werte durch diese Funktion laufen, und
+    # jede Meldung musste von Hand als Fehlalarm geschlossen werden (zuletzt #266).
+    text = text.replace("\n", "")
     return (text[:64] + "…") if len(text) > 64 else text
 
 

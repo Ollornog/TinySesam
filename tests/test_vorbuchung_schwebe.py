@@ -340,6 +340,13 @@ deferred = log_e.zeilen("deferred login")
 r.check("ohne Warteplatz: `deferred login … reason=pending` im Log, kein `failed login`, keine Mail",
         len(deferred) == 1 and "user=alice" in deferred[0] and "reason=pending" in deferred[0]
         and not log_e.zeilen("failed login") and post == [], f"{log_e.zeilen()} {post}"[:400])
+# Name und Adresse kommen roh aus der Anfrage: Ein Umbruch darin darf keine zweite Zeile erzeugen, sonst
+# schreibt ein Angreifer eine erfundene `failed login`-Zeile mit fremder IP, die fail2ban zählt (CodeQL #266).
+with Mitschnitt() as log_e2:
+    auth._aufgeschoben("alice\nWARNING failed login user=x ip=198.51.100.7", "203.0.113.9\r\nip=198.51.100.8")
+r.check("Aufschub mit Umbruch in Name und Adresse: genau eine Zeile, keine erfundene `failed login`",
+        len(log_e2.zeilen()) == 1 and not log_e2.zeilen("failed login\n")
+        and log_e2.zeilen()[0].startswith("WARNING deferred login user=alice"), f"{log_e2.zeilen()}")
 
 # ── (g) Die mitgelieferten fail2ban-Filter treffen den Aufschub nicht ──────────────────────
 jail, jail_pruefung = _failregex("tinysesam-filter.conf"), _failregex("tinysesam-verify-filter.conf")

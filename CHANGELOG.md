@@ -4,6 +4,18 @@ Alle nennenswerten Änderungen. Format lose nach [Keep a Changelog](https://keep
 
 ## [Unveröffentlicht]
 
+### Sicherheit — authlib-Boden 1.9.1, setuptools 84.2.1, Log-Filter für CodeQL
+
+- Untergrenze `authlib>=1.9.1` (Extras `oidc`, `gateway`, `all`; vorher 1.6.12): Die niedrigste erlaubte Auflösung
+  zog eine Fassung mit sieben bekannten Lücken (CVE-2026-96760, CVE-2026-114614 bis -114618, CVE-2026-114620; Fixes
+  in 1.8.0, 1.9.0 und 1.9.1). Der nächtliche `audit` war deshalb seit Tagen rot. `tests/test_packaging.py` hält den
+  neuen Boden fest.
+- setuptools 84.2.1 im Gateway-Abbild (`deploy/gateway/requirements.txt`) und in den Bauwerkzeugen
+  (`.github/bau/requirements.txt`), GHSA-xmj3-9gf7-h52w.
+- `security.fuer_log` entfernt Umbrüche zusätzlich per `.replace("\n", "")`. Das ändert nichts an der Wirkung, ist
+  aber die Form, die CodeQL als Filter gegen Log-Injektion erkennt (#266, `deferred login`). Neuer Test: Ein Umbruch
+  in Name oder Adresse erzeugt in der Aufschub-Zeile keine zweite Zeile.
+
 ### Geändert — Python 3.13–3.15 (Testkit 0.37.0)
 
 - Die Matrix fährt 3.13/3.14/3.15, `requires-python` ist `>=3.13` (die letzten drei stable Python-Reihen; 3.15.0 erschien am 2026-10-09).
